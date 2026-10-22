@@ -23,6 +23,7 @@ The newest version heading collects changes until that version ships.
 - The SQL Server (mssql) extension integration and the `dataLineageViz.database.connectionProvider` setting; databases connect through built-in connections only. Projects saved with an mssql connection keep it without the password; set the password with **Update Database Password**.
 
 ### Fixed
+- Updating a legacy bookmark preserves the current object selection when older identifier spellings are ambiguous.
 - A branch may prune an unvisited shared neighbor already kept elsewhere without removing the node or its saved column mappings; conflicting actions in one reply remain rejected.
 - Longer report section labels are accepted unchanged in reports and repairs; blank and duplicate labels remain rejected.
 - Exact numeric text in exploration depth and other union fields is decoded once and logged; ambiguous or numerically lossy values are rejected.

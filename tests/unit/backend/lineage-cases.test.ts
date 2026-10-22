@@ -1670,6 +1670,9 @@ describe('passthrough candidates at the next object', () => {
       expect.objectContaining({ hop_node: c, from_node: b, from_col: 'X', to_node: t, to_col: 'Z' }),
     ]);
     expect(engine.columnAspect!.edges.some(edge => edge.from_node === b && edge.from_col === 'Y')).toBe(false);
+    expect(engine.columnAspect!.edges.map(edge => `${edge.from_node}.${edge.from_col}->${edge.to_node}.${edge.to_col}`)).toEqual([
+      `${a}.X->${b}.X`, `${a}.Y->${b}.Y`, `${b}.X->${t}.Z`,
+    ]);
   });
 });
 

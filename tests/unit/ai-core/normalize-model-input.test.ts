@@ -6,7 +6,7 @@ import { HumanMessage } from '@langchain/core/messages';
 import { VscodeModelPort } from '../../../src/ai/model/vscodeModelPort';
 import { markObjectIdField, normalizeModelInput } from '../../../src/ai/tools/normalizeModelInput';
 import { ExplorationDepthSelectionSchema } from '../../../src/engine/shared/explorationDepthContract';
-import { SearchObjectsInputSchema, StartExplorationFreshProviderInputSchema } from '../../../src/ai/tools/toolSchemas';
+import { GetScopeBundleInputSchema, SearchObjectsInputSchema, StartExplorationFreshProviderInputSchema } from '../../../src/ai/tools/toolSchemas';
 
 const schema = z.object({
   rows: z.array(z.object({ id: z.string(), n: z.number(), on: z.boolean() })),
@@ -188,4 +188,63 @@ describe('normalizeModelInput id-form search', () => {
       { query: 'srv.db.dbo.FactSales' },
     ]) expect(normalizeModelInput(SearchObjectsInputSchema, input)).toEqual({ input, fixes: [] });
   });
+});
+
+
+describe('normalizeModelInput union decoding', () => {
+  it('decodes the real optional scope-depth union without changing the submitted payload', () => {
+    const input = { origin: '[dbo].[Orders]', upstream_depth: '2', downstream_depth: '0' };
+    const result = normalizeModelInput(GetScopeBundleInputSchema, input);
+    expect(result.input).toEqual({ origin: '[dbo].[Orders]', upstream_depth: 2, downstream_depth: 0 });
+    expect(GetScopeBundleInputSchema.safeParse(result.input).success).toBe(true);
+    expect(input.upstream_depth).toBe('2');
+    expect(result.fixes.map(fix => [fix.path, fix.before, fix.after])).toEqual([
+      ['upstream_depth', '2', 2], ['downstream_depth', '0', 0],
+    ]);
+  });
+
+  it.each(['-1', '1.5', 'all the way', '9007199254740993', '1.0000000000000001', '9007199254740991.1'])(
+    'preserves a depth rejected by its numeric bounds: %s', depth => {
+      const input = { origin: '[dbo].[Orders]', depth };
+      const result = normalizeModelInput(GetScopeBundleInputSchema, input);
+      expect(result).toEqual({ input, fixes: [] });
+      expect(GetScopeBundleInputSchema.safeParse(result.input).success).toBe(false);
+    },
+  );
+
+  it('keeps a valid string arm and refuses differently decoded union branches', () => {
+    const textual = z.object({ value: z.union([z.number(), z.string()]) });
+    const input = { value: '2' };
+    expect(normalizeModelInput(textual, input)).toEqual({ input, fixes: [] });
+    const ambiguous = z.object({ value: z.union([
+      z.object({ x: z.number(), y: z.string() }),
+      z.object({ x: z.string(), y: z.number() }),
+    ]) });
+    const raw = { value: { x: '2', y: '3' } };
+    expect(normalizeModelInput(ambiguous, raw)).toEqual({ input: raw, fixes: [] });
+  });
+
+  it('decodes nested object/list and scalar unions through nullable and optional wrappers', () => {
+    const schema = z.object({ value: z.union([
+      z.object({ rows: z.array(z.object({ n: z.union([z.number(), z.literal('all')]) })) }),
+      z.literal('none'),
+    ]).nullable().optional() });
+    const result = normalizeModelInput(schema, { value: JSON.stringify({ rows: JSON.stringify([{ n: '2' }]) }) });
+    expect(result.input).toEqual({ value: { rows: [{ n: 2 }] } });
+    expect(schema.safeParse(result.input).success).toBe(true);
+    expect(result.fixes.map(fix => fix.path)).toEqual(['value', 'value.rows', 'value.rows.0.n']);
+  });
+});
+
+
+it('retains issue-path decoding for records and tuples', () => {
+  const schema = z.object({ record: z.record(z.string(), z.number()), tuple: z.tuple([z.object({ n: z.number() })]) });
+  const result = normalizeModelInput(schema, { record: { count: '2' }, tuple: ['{"n":"3"}'] });
+  expect(result.input).toEqual({ record: { count: 2 }, tuple: [{ n: 3 }] });
+  expect(schema.safeParse(result.input).success).toBe(true);
+});
+
+it.each(['0.0000001', '001.2300', '-0', '1' + '0'.repeat(21)])('decodes an exact finite numeric spelling %s', text => {
+  const schema = z.object({ n: z.number() });
+  expect(normalizeModelInput(schema, { n: text }).input).toEqual({ n: Number(text) });
 });

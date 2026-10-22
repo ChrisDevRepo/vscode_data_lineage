@@ -1366,14 +1366,14 @@ export function App() {
     if (!activeProjectId) return;
     const existing = filterProfiles.find(p => p.id === profileId);
     if (!existing) return;
-    // The current filter replaces the saved one, so only the references the update keeps are reconciled.
-    let updated: FilterProfile = { ...existing, filter: serializeFilter(filter) };
+    // Reconcile stored references before replacing the filter with current canonical IDs.
+    let updated = existing;
     if (model) {
       const reconciled = reconcileSavedView(updated, model);
       updated = reconciled.profile;
       if (reconciled.unresolved.length) vscodeApi.postMessage({ type: 'show-warning', text: `Saved view has ${reconciled.unresolved.length} unresolved object or schema reference(s). Those references were not restored.` });
     }
-    persistFilterProfile(updated);
+    persistFilterProfile({ ...updated, filter: serializeFilter(filter) });
   }, [activeProjectId, filter, filterProfiles, persistFilterProfile, model, vscodeApi]);
 
   /** Saves the result of an interactive trace as a permanent bookmark. */

@@ -1,4 +1,4 @@
-import type { ZodType } from 'zod';
+import { z, type ZodType } from 'zod';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveModelNodeId } from '../support/modelReferences';
 import { splitSqlName, stripBrackets } from '../../utils/sql';
@@ -175,44 +175,65 @@ function respellSearch(record: Record<string, unknown>, path: PropertyKey[], fix
   }
 }
 
-/** Decodes only schema-directed types; union branches must admit one unique result. */
-function decodeText(schema: ZodType, input: unknown, path: PropertyKey[] = [], rounds = 0): { readonly input: unknown; readonly fixes: ModelInputFix[] } {
-  const unchanged = { input, fixes: [] as ModelInputFix[] };
-  if (schema.safeParse(input).success) return unchanged;
-  const chain = unwrap(schema);
-  const core = chain[chain.length - 1]._zod.def as { type: string; shape?: Record<string, ZodType>; element?: ZodType; options?: readonly ZodType[] };
-  if (core.type === 'union' && core.options) {
-    const candidates = core.options.map(option => ({ option, decoded: decodeText(option, input, path, rounds) }))
+/** Decodes values through the schema; union branches must agree on one valid result. */
+function decodeText(schema: ZodType, input: unknown, path: PropertyKey[] = [], rounds = MAX_ROUNDS): { readonly input: unknown; readonly fixes: ModelInputFix[] } {
+  if (schema.safeParse(input).success || rounds === 0) return { input, fixes: [] };
+  if (schema instanceof z.ZodOptional || schema instanceof z.ZodNullable || schema instanceof z.ZodDefault
+    || schema instanceof z.ZodPrefault || schema instanceof z.ZodCatch || schema instanceof z.ZodReadonly
+    || schema instanceof z.ZodNonOptional) return decodeText(schema.unwrap() as ZodType, input, path, rounds);
+  if (schema instanceof z.ZodPipe) return decodeText(schema.in as ZodType, input, path, rounds);
+  if (schema instanceof z.ZodUnion) {
+    const candidates = schema.options.map(option => option as ZodType).map(option => ({ option, decoded: decodeText(option, input, path, rounds) }))
       .filter(({ option, decoded }) => decoded.fixes.length > 0 && option.safeParse(decoded.input).success);
     const first = candidates[0]?.decoded;
-    return first && candidates.every(({ decoded }) => isDeepStrictEqual(decoded.input, first.input)) ? first : unchanged;
+    return first && candidates.every(({ decoded }) => isDeepStrictEqual(decoded.input, first.input))
+      ? first : { input, fixes: [] };
+  }
+  const expected = schema instanceof z.ZodObject ? 'object' : schema instanceof z.ZodArray ? 'array'
+    : schema instanceof z.ZodNumber ? 'number' : schema instanceof z.ZodBoolean ? 'boolean' : undefined;
+  if (typeof input === 'string' && expected) {
+    const after = decodeExact(input, expected);
+    if (after === undefined) return { input, fixes: [] };
+    const nested = decodeText(schema, after, path, rounds - 1);
+    return { input: nested.input, fixes: [{ path: path.join('.'), before: input, after }, ...nested.fixes] };
   }
   const fixes: ModelInputFix[] = [];
   let current = input;
-  if (typeof current === 'string') {
-    if (rounds >= MAX_ROUNDS) return unchanged;
-    const after = decodeExact(current, core.type);
-    if (after === undefined) return unchanged;
-    fixes.push({ path: path.join('.'), before: current, after });
-    current = after;
-    rounds += 1;
-  }
-  if (core.type === 'array' && Array.isArray(current) && core.element) {
-    const entries = current;
-    current = entries.map((entry, index) => {
-      const decoded = decodeText(core.element as ZodType, entry, [...path, index], rounds);
-      fixes.push(...decoded.fixes);
-      return decoded.input;
-    });
-  } else if (core.type === 'object' && core.shape && typeof current === 'object' && current !== null && !Array.isArray(current)) {
-    const record = { ...current } as Record<string, unknown>;
-    for (const [key, child] of Object.entries(core.shape)) {
-      if (!Object.prototype.hasOwnProperty.call(record, key)) continue;
-      const decoded = decodeText(child, record[key], [...path, key], rounds);
-      record[key] = decoded.input;
-      fixes.push(...decoded.fixes);
+  const visit = (child: ZodType, key: string | number, value: unknown): void => {
+    const decoded = decodeText(child, value, [...path, key], rounds);
+    if (decoded.fixes.length === 0) return;
+    if (fixes.length === 0) current = structuredClone(input);
+    (current as Record<string | number, unknown>)[key] = decoded.input;
+    fixes.push(...decoded.fixes);
+  };
+  if (schema instanceof z.ZodArray && Array.isArray(input)) {
+    input.forEach((value, index) => visit(schema.element as ZodType, index, value));
+  } else if (schema instanceof z.ZodObject && typeof input === 'object' && input !== null && !Array.isArray(input)) {
+    const record = input as Record<string, unknown>;
+    for (const [key, child] of Object.entries(schema.shape)) {
+      if (Object.prototype.hasOwnProperty.call(record, key)) visit(child as ZodType, key, record[key]);
     }
-    current = record;
+  } else {
+    // Other schema compositions retain the existing issue-path decoding contract.
+    const parsed = schema.safeParse(input);
+    if (!parsed.success) for (const issue of parsed.error.issues) {
+      if (issue.code !== 'invalid_type' || issue.path.length === 0) continue;
+      const parentPath = issue.path.slice(0, -1);
+      const key = issue.path[issue.path.length - 1];
+      const parent = parentPath.reduce<unknown>((node, step) => (node as Record<PropertyKey, unknown> | undefined)?.[step], input);
+      const value = (parent as Record<PropertyKey, unknown> | undefined)?.[key];
+      if (typeof value !== 'string') continue;
+      const after = decodeExact(value, issue.expected);
+      if (after === undefined) continue;
+      if (fixes.length === 0) current = structuredClone(input);
+      const target = parentPath.reduce<unknown>((node, step) => (node as Record<PropertyKey, unknown>)[step], current);
+      (target as Record<PropertyKey, unknown>)[key] = after;
+      fixes.push({ path: [...path, ...issue.path].join('.'), before: value, after });
+    }
+    if (fixes.length > 0) {
+      const nested = decodeText(schema, current, path, rounds - 1);
+      return { input: nested.input, fixes: [...fixes, ...nested.fixes] };
+    }
   }
-  return fixes.length > 0 ? { input: current, fixes } : unchanged;
+  return { input: current, fixes };
 }
