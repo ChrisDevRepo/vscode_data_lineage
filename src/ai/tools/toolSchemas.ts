@@ -847,7 +847,9 @@ export function validateHopSubmissionShape(
 }
 
 /** The way out of a rejected finding, offered with the last repair opportunity. */
-export const SUBMIT_FINDINGS_WAY_OUT = 'If a reference cannot be mapped, remove it and record it in sections or as a question. An empty column_flow ends the arriving columns.';
+export const SUBMIT_FINDINGS_REFERENCE_WAY_OUT = 'If a reference cannot be mapped, remove it and record it in sections or as a question.';
+/** The reference-removal cue plus column-flow termination guidance for the last repair opportunity. */
+export const SUBMIT_FINDINGS_WAY_OUT = `${SUBMIT_FINDINGS_REFERENCE_WAY_OUT} An empty column_flow ends the arriving columns.`;
 
 /** Zod schema for `get_neighbor_columns` tool input. */
 export const GetNeighborColumnsInputSchema = z.object({

@@ -673,7 +673,7 @@ function zodRejectionErrors(error: z.ZodError, input: unknown, schema?: z.ZodTyp
     const known = errors.get(key);
     const allowed = [...new Set([...(known?.allowed ?? []), ...(fault.allowed ?? [])])];
     const got = gotOf(received, typeName);
-    errors.set(key, { ...known, ...fault, path: joined, ...(allowed.length ? { allowed } : {}), ...(got !== undefined ? { got } : {}) });
+    errors.set(key, { ...known, ...fault, path: joined, ...(known?.allowed !== undefined || fault.allowed !== undefined ? { allowed } : {}), ...(got !== undefined ? { got } : {}) });
   };
   const visit = (issues: readonly z.core.$ZodIssue[], prefix: readonly PropertyKey[]): void => {
     for (const issue of issues) {
@@ -690,7 +690,7 @@ function zodRejectionErrors(error: z.ZodError, input: unknown, schema?: z.ZodTyp
         for (const key of issue.keys) add(key.length > KEY_ECHO_MAX_CHARS ? path : [...path, key], { issue: 'Unrecognized key', ...(allowed.length ? { allowed } : {}) }, undefined);
       } else if (issue.code === 'invalid_type') {
         const text = enrichedIssueMessage(issue, received);
-        add(path, { issue: missing ?? (text === baseIssueMessage(issue) ? 'Wrong type' : text), expected: issue.expected }, received, true);
+        add(path, { issue: missing ?? (text === baseIssueMessage(issue) ? 'Wrong type' : text), expected: issue.expected, ...(issue.expected === 'never' ? { allowed: [] } : {}) }, received, true);
       } else if (issue.code === 'invalid_value') {
         add(path, { issue: missing ?? INVALID_VALUE_REASON, allowed: issue.values.map(String) }, received);
       } else {
@@ -714,7 +714,14 @@ export function exampleForFields(schema: z.ZodType, fields: readonly string[]): 
     const [name] = field.split('.');
     const node = jsonSchemaNodeAt(schema, [name!]);
     const target = node && unwrapNullable(node);
-    if (target?.properties || target?.items) return { [name!]: exampleOf(target) };
+    if (target?.properties || target?.items) {
+      const owner = schema instanceof z.ZodObject ? schema.shape[name!] : undefined;
+      if (!owner) return undefined;
+      const example = exampleOf(target);
+      if (owner.safeParse(example).success) return { [name!]: example };
+      if (Array.isArray(example) && owner.safeParse([]).success) return { [name!]: [] };
+      return undefined;
+    }
   }
   return undefined;
 }

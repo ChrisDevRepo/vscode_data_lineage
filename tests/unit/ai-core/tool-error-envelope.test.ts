@@ -55,6 +55,29 @@ describe("tool-error-envelope", () => {
     expect(exampleForFields(schema, ['items.0.extra'])).toEqual({ items: [{ name: '...' }] });
     expect(exampleForFields(schema, ['mode', 'count'])).toBeUndefined();
   });
+  it.each([
+    { owner: z.array(z.object({ id: z.never(), reason: z.string() }).strict()).optional(), expected: { items: [] } },
+    { owner: z.array(z.object({ id: z.never() }).strict()).min(1).optional(), expected: undefined },
+    { owner: z.array(z.never()).min(1), expected: undefined },
+    { owner: z.array(z.string().min(5)).refine(value => value.length > 0), expected: undefined },
+    { owner: z.object({ value: z.string().min(5) }).strict(), expected: undefined },
+    { owner: z.array(z.object({ id: z.enum(['valid']) }).strict()), expected: { items: [{ id: 'valid' }] } },
+  ])('publishes only an example accepted by its owning field: $expected', ({ owner, expected }) => {
+    const schema = z.object({ required: z.string(), items: owner }).strict();
+    const example = exampleForFields(schema, ['items.0.id']);
+    expect(example).toEqual(expected);
+    if (example !== undefined) expect(owner.safeParse((example as { items: unknown }).items).success).toBe(true);
+  });
+  it('retains the empty allowed set of a native never fault in form feedback', () => {
+    const schema = z.object({ items: z.array(z.object({ id: z.never() }).strict()) }).strict();
+    const input = { items: [{ id: 'invalid' }] };
+    const parsed = schema.safeParse(input);
+    if (parsed.success) throw new Error('Expected a never fault');
+    const rejection = rejectionFromZodError(parsed.error, { code: 'invalid_input', input, schema, form: true });
+    expect(JSON.parse(rejectionModelContent(rejection)).errors).toEqual([
+      expect.objectContaining({ path: 'items.0.id', allowed: [], allowed_meaning: 'nothing is allowed here: withdraw the field' }),
+    ]);
+  });
   it('defers resend scope to a draft owner without losing or recomputing field repair facts', () => {
     const schema = z.object({ name: z.string() }).strict();
     const input = { name: 42 };

@@ -885,6 +885,30 @@ describe('submit_findings rejection form', () => {
     expect(third.content).not.toContain('Missing');
   });
 
+  it('offers a schema-valid empty correction for a never-valued prune while holding the mapped facts', async () => {
+    const { engine, send } = hop();
+    const flow = [
+      { out_col: 'Value', upstream_columns: [{ node: source, col: 'C0' }] },
+      { out_col: 'Other', upstream_columns: [{ node: other, col: 'Value' }] },
+    ];
+    const invalidPrune = [{ id: absent, reason: 'Outside.' }];
+    await send({ ...base, column_flow: flow, prune_neighbors: invalidPrune });
+    const second = await send({ focus_node_id: root, prune_neighbors: invalidPrune });
+    expect(second.rejection.resend).toEqual(['prune_neighbors']);
+    expect(second.rejection.errors).toEqual([expect.objectContaining({ path: 'prune_neighbors.0.id', allowed: [],
+      allowed_meaning: 'nothing is allowed here: withdraw the field' })]);
+    expect(second.rejection.example).toEqual({ prune_neighbors: [] });
+    expect(second.rejection.way_out).toBe('If a reference cannot be mapped, remove it and record it in sections or as a question.');
+    const schema = submitFindingsSchemaForMode('ct', 'technical', false, engine.hopSubmitColumns, engine.heldColumnFlow);
+    expect(schema.safeParse({ focus_node_id: root, ...second.rejection.example }).success).toBe(true);
+    const held = structuredClone(engine.toJSON().engineInternals.heldFinding?.finding);
+    const third = await send({ focus_node_id: root, prune_neighbors: [] });
+    expect(third.attempt.stop).toBe('phase_complete');
+    expect(engine.columnAspect?.edges).toHaveLength(2);
+    expect(engine.columnAspect?.edges).toEqual(expect.arrayContaining(flow.map(entry =>
+      expect.objectContaining({ from_node: entry.upstream_columns[0].node, from_col: entry.upstream_columns[0].col, to_node: root, to_col: entry.out_col }))));
+    expect(engine.getDetailSlots()).toEqual(expect.arrayContaining([expect.objectContaining({ sections: held?.sections })]));
+  });
   it('withdraws an omitted failing optional field and names it in the acknowledgement', async () => {
     const { engine, send } = hop();
     const first = await send({ ...base, column_flow: terminals, prune_neighbors: [{ id: absent, reason: 'Outside.' }] });
