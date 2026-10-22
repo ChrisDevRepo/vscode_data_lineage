@@ -285,6 +285,8 @@ const ColumnAspectEdgeSchema = z.object({
 export type ColumnAspectEdge = z.infer<typeof ColumnAspectEdgeSchema>;
 
 const ColumnAspectSchema = z.object({
+  /** Frozen asked identities for preview rows; absent in older saved views. */
+  requested: z.object({ node: z.string(), columns: z.array(z.string()) }).strict().optional(),
   edges: z.array(ColumnAspectEdgeSchema),
 }).strict();
 

@@ -1,5 +1,7 @@
 /** Owns handlers/presentResult.ts functional CT coverage, origin closure and committed graph amendments. */
 import { describe, expect, it, vi } from 'vitest';
+import { NavigationEngine } from '../../../src/ai/sm/smBase';
+import { buildGraphologyGraph } from '../../../src/engine/graphBuilder';
 import { AiSession } from '../../../src/ai/session/session';
 import { executePresentResult } from '../../../src/ai/tools/handlers/presentResult';
 import type { ToolServices } from '../../../src/ai/tools/handlers/toolServices';
@@ -225,4 +227,30 @@ describe('CT chain-coverage rejection', () => {
     }, services));
     expect(repaired).toMatchObject({ success: true });
   });
+});
+
+
+it('retains frozen asked columns from the completed engine through result storage and the preview artifact', async () => {
+  const origin = normalizeName('dbo.Target', false);
+  const model = buildModel([{ fullName: '[dbo].[Target]', type: 'table', columns: ['Value', 'Unmapped'].map(name => ({ name, type: 'int', nullable: 'NULL', extra: '' })) }], []);
+  const engine = new NavigationEngine(model, buildGraphologyGraph(model), () => {}, {});
+  expect(engine.init({ origin, question: 'Trace Value and Unmapped.', direction: 'upstream', analysisMode: 'ct', targetColumns: ['Value', 'Unmapped'],
+    depthIntent: { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } },
+  })).toEqual({ ok: true });
+  engine.getHopContext();
+  const fullResult = engine.getResult();
+  const { session, services } = completedWorld(model, { nodeIds: [], edges: [], source: 'column_trace' });
+  session.stateMachine = engine;
+  session.storeSmResult(fullResult, session.turnEpoch);
+  const expected = { node: origin, columns: ['Value', 'Unmapped'] };
+  expect(session.resultGraph?.columnAspect).toEqual({ edges: [], requested: expected });
+  const answer = JSON.parse(await executePresentResult({ name: 'Asked columns', summary: 'No accepted value mappings.',
+    sections: [{ label: 'Target', node_ids: [origin], text: 'No value source was mapped.' }],
+    highlight_groups: [{ label: 'Target', color: 'target', node_ids: [origin] }],
+  }, services));
+  expect(answer).toMatchObject({ success: true });
+  expect(session.presentationArtifact?.aiMetadata.columnAspect).toEqual({ edges: [], requested: expected });
+  expect(fullResult.columnAspect?.target_columns).toEqual(['Value', 'Unmapped']);
+  expect(session.resultGraph?.columnAspect?.requested?.columns).not.toBe(fullResult.columnAspect?.target_columns);
+  expect(session.presentationArtifact?.aiMetadata.columnAspect?.requested?.columns).not.toBe(session.resultGraph?.columnAspect?.requested?.columns);
 });

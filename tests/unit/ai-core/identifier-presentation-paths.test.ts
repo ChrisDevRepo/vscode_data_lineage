@@ -13,6 +13,7 @@ import { presentRunRecall } from '../../../src/ai/tools/screenStatePresenter';
 import { validatePresentResult } from '../../../src/ai/tools/presentResult';
 import { presentResultRepairPatchSchemaForFields } from '../../../src/ai/tools/toolSchemas';
 import { DEFAULT_TURN_TOKEN_BUDGET } from '../../../src/ai/support/tokenBudget';
+import { reconcileAiView } from '../../../src/components/aiViewReconcile';
 import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
 
 function neighborWorld(cs: boolean) {
@@ -226,4 +227,16 @@ describe('present_result id rejection route', () => {
       expect(presentResultRepairPatchSchemaForFields(result.repairFields).safeParse({ sections: [{ label: 'Report', node_ids: ['[dbo].[a]'] }], add_node_ids: ['[dbo].[x]'] }).success).toBe(true);
     }
   });
+});
+
+
+it.each([false, true])('retains requested-column descriptors while reconciling object spellings (CS=%s)', cs => {
+  const model = buildModel([{ fullName: '[dbo].[Target]', type: 'table', columns: [{ name: 'Value', type: 'int', nullable: 'NOT NULL', extra: '' }] }], [], undefined, undefined, true, undefined, cs);
+  const metadata = { createdAt: '2026-10-22', modelName: 'Test', highlightGroups: [], badges: [],
+    columnAspect: { edges: [], requested: { node: cs ? 'dbo.Target' : 'DBO.TARGET', columns: ['[Value]'] } } };
+  const before = structuredClone(metadata);
+  const canonical = normalizeName('dbo.Target', cs);
+  expect(reconcileAiView([canonical], metadata, model).metadata.columnAspect).toEqual({ edges: [], requested: { node: canonical, columns: ['[Value]'] } });
+  expect(reconcileAiView([], metadata, model, () => null).metadata.columnAspect).toEqual({ edges: [] });
+  expect(metadata).toEqual(before);
 });

@@ -777,3 +777,50 @@ describe('buildColumnTraceView — objects without a column relation', () => {
     expect([...index.down.keys(), ...index.up.keys()].every(key => !key.includes('sparchiveoldorders'))).toBe(true);
   });
 });
+
+
+describe('buildColumnTraceView — requested columns independent of relations', () => {
+  it.each([false, true])('keeps zero-edge requested rows with metadata names and isolated threads (CS=%s)', cs => {
+    const origin = 'dbo.t';
+    const objects = mkObjects({ ...mkObj(origin), columnNames: new Map([
+      [normalizeColName('Value', cs), 'Value'], [normalizeColName('value', cs), cs ? 'value' : 'Value'],
+    ]) });
+    const input = { relations: [], objects, identifierCaseSensitive: cs, config: DEFAULT_CONFIG,
+      requested: { node: origin, columns: ['[Value]', cs ? '"value"' : '"VALUE"'] } };
+    const before = structuredClone(input.requested);
+    const view = buildColumnTraceView(input);
+    expect(findNode(view, origin).rows.map(row => row.name)).toEqual(cs ? ['Value', 'value'] : ['Value']);
+    expect(view.edges).toEqual([]);
+    expect(view.portBridges).toEqual([]);
+    const key = columnRowKey(origin, 'Value', cs);
+    expect(columnThread(buildColumnThreadIndex(view), key)).toEqual(new Set([key]));
+    expect(input.requested).toEqual(before);
+  });
+
+  it('adds an unmapped asked row without changing real relations or the source-free born hub thread', () => {
+    const [source, procedure, target] = ['dbo.s', 'dbo.p', 'dbo.t'];
+    const objects = mkObjects(mkObj(source), mkObj(procedure, 'procedure'), mkObj(target));
+    const relations: ColumnTraceRelation[] = [
+      { hopNode: procedure, fromNode: source, fromCol: 'Qty', toNode: target, toCol: 'Total', transforms: ['compute'] },
+      { hopNode: procedure, fromNode: procedure, fromCol: 'Born', toNode: target, toCol: 'Born' },
+    ];
+    const baseline = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
+    const input = { relations, objects, config: DEFAULT_CONFIG, requested: { node: target, columns: ['Total', 'Missing', 'Born'] } };
+    const view = buildColumnTraceView(input);
+    expect(findNode(view, target).rows.map(row => row.name).sort()).toEqual(['Born', 'Missing', 'Total']);
+    expect(view.edges).toEqual(baseline.edges);
+    expect(view.portBridges).toEqual(baseline.portBridges);
+    const index = buildColumnThreadIndex(view);
+    expect(columnThread(index, columnRowKey(target, 'Born'))).toEqual(new Set([
+      columnRowKey(procedure, 'Born'), columnRowKey(target, 'Born'),
+    ]));
+    expect(columnThread(index, columnRowKey(target, 'Total'))).toEqual(columnThread(buildColumnThreadIndex(baseline), columnRowKey(target, 'Total')));
+    expect(columnThread(index, columnRowKey(target, 'Missing'))).toEqual(new Set([columnRowKey(target, 'Missing')]));
+  });
+
+  it('keeps old relation-only bookmarks rowless when no requested descriptor was saved', () => {
+    const view = buildColumnTraceView({ relations: [], objects: mkObjects(mkObj('dbo.t')), config: DEFAULT_CONFIG });
+    expect(findNode(view, 'dbo.t').rows).toEqual([]);
+    expect(view.edges).toEqual([]);
+  });
+});

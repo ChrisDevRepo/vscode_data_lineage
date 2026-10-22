@@ -853,10 +853,11 @@ export function GraphCanvas({
     );
   }, [aiPanelOpen, dockPosition, aiDescription, fitView]);
 
-  /** Column-level rendering of the active trace; null when the run recorded no column findings. */
+  /** Column-level rendering of the active trace; null when the run has neither column findings nor presented asked rows. */
   const columnTraceView = useMemo(() => {
-    const relations = activeAiMetadata?.columnAspect?.edges;
-    if (!relations?.length) return null;
+    const aspect = activeAiMetadata?.columnAspect;
+    if (!aspect || (!aspect.edges.length && !aspect.requested?.columns.length)) return null;
+    const { edges: relations, requested } = aspect;
     try {
       const identifierKey = (id: string): string => schemaKey(id, model?.identifierCaseSensitive);
       const columnTypesByNode = new Map<string, ReadonlyMap<string, string>>();
@@ -880,7 +881,9 @@ export function GraphCanvas({
           columnNames: columnNamesByNode.get(identifierKey(node.id)),
         });
       }
+      if (!relations.length && (!requested || !objects.has(identifierKey(requested.node)))) return null;
       return buildColumnTraceView({
+        requested,
         identifierCaseSensitive: model?.identifierCaseSensitive,
         relations,
         objects,

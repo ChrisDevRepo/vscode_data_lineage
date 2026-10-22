@@ -4,9 +4,9 @@
  *
  * The column view is a second rendering of a scope the object view already shows: each traced
  * column becomes a row inside its object, and each recorded column relation becomes an edge between
- * two row handles. Every value here is derived from `AIViewMetadata.columnAspect.edges` and the
- * per-relation transform classes — this module never asks the host for more data and never
- * mutates the object-view model.
+ * two row handles. Rows also retain explicitly asked columns from `AIViewMetadata.columnAspect`.
+ * Edges and transform classes remain recorded facts. This module never asks the host for more data
+ * and never mutates the object-view model.
  */
 
 import { AI_BADGE_BAND, AI_NOTE_BAND, dagreLayout } from './graphBuilder';
@@ -132,6 +132,8 @@ export interface ColumnTraceViewInput {
   identifierCaseSensitive?: boolean;
   /** Recorded column relations from `AIViewMetadata.columnAspect.edges`. */
   relations: ColumnTraceRelation[];
+  /** Frozen asked identities, retained as rows without inventing relations. */
+  requested?: { node: string; columns: readonly string[] };
   /** Object identity for every presented node, keyed by {@link schemaKey} under the source policy. */
   objects: Map<string, ColumnTraceViewObject>;
   /** Dependency edges of the object view between presented objects, by node id. */
@@ -451,6 +453,12 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
       note: relation.note,
     });
   });
+
+  const requested = input.requested;
+  const origin = requested && input.objects.get(schemaKey(requested.node, input.identifierCaseSensitive));
+  if (origin && requested) {
+    for (const column of requested.columns) touchRow(getAcc(origin), column, input.identifierCaseSensitive);
+  }
 
   for (const object of input.objects.values()) getAcc(object);
 

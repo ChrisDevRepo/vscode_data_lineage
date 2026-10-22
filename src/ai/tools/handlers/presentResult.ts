@@ -542,6 +542,9 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         layoutDirection: validation.layout_direction,
         ...(resultGraph.columnAspect ? {
           columnAspect: {
+            ...(resultGraph.columnAspect.requested ? { requested: {
+              node: resultGraph.columnAspect.requested.node, columns: [...resultGraph.columnAspect.requested.columns],
+            } } : {}),
             edges: resultGraph.columnAspect.edges.map(e => ({
               hopNode:  e.hop_node,
               fromNode: e.from_node,

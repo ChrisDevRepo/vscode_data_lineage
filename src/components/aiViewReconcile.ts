@@ -36,6 +36,8 @@ export function reconcileAiView(nodeIds: string[], metadata: AIViewMetadata, mod
     return nodeId ? [{ ...item, nodeId }] : [];
   });
 
+  const requested = metadata.columnAspect?.requested;
+  const requestedNode = requested ? canonicalize(requested.node) : null;
   const reconciled: AIViewMetadata = {
     ...metadata,
     highlightGroups: metadata.highlightGroups.map(group => ({ ...group, nodeIds: mapIds(group.nodeIds) })),
@@ -44,6 +46,7 @@ export function reconcileAiView(nodeIds: string[], metadata: AIViewMetadata, mod
     ...(metadata.notes ? { notes: remapNodeText(metadata.notes) } : {}),
     ...(metadata.columnAspect ? {
       columnAspect: {
+        ...(requested && requestedNode ? { requested: { node: requestedNode, columns: [...requested.columns] } } : {}),
         edges: metadata.columnAspect.edges.flatMap(edge => {
           const hopNode = canonicalize(edge.hopNode), fromNode = canonicalize(edge.fromNode), toNode = canonicalize(edge.toNode);
           if (savedResolver && (!hopNode || !fromNode || !toNode)) return [];

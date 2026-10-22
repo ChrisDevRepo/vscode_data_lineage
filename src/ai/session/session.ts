@@ -725,7 +725,8 @@ export class AiSession {
       ...(fullResult.columnAspect ? {
         columnAspect: {
           edges: fullResult.columnAspect.edges,
-          },
+          requested: { node: fullResult.originNodeId, columns: [...fullResult.columnAspect.target_columns] },
+        },
       } : {}),
     };
     return guard;

@@ -200,3 +200,25 @@ describe('AIViewMetadata.columnAspect edge transforms', () => {
       .toEqual(['combine', 'filter']);
   });
 });
+
+
+describe('AIViewMetadata requested columns', () => {
+  const requested = { node: '[dbo].[Target]', columns: ['Value', 'Unmapped'] };
+  const metadata = { ...baseAiMetadata, columnAspect: { edges: [], requested } };
+  it('round-trips the descriptor through the strict preview boundary', () => {
+    const preview = ExtensionToWebviewMsgSchema.safeParse({ type: 'ai-view-preview', name: 'Trace', nodeIds: [requested.node], aiMetadata: metadata });
+    expect(preview.success).toBe(true);
+    expect(preview.success && preview.data.type === 'ai-view-preview' && preview.data.aiMetadata.columnAspect).toEqual(metadata.columnAspect);
+  });
+  it('round-trips the descriptor through persisted project reading', () => {
+    const saved = ProjectReadSchema.safeParse({ id: 'project', name: 'AW', createdAt: baseAiMetadata.createdAt, updatedAt: baseAiMetadata.createdAt,
+      connection: dacpacConn, filterProfiles: [{ id: 'view', name: 'Trace', createdAt: baseAiMetadata.createdAt,
+        filter: { schemas: [], types: [], hideIsolated: false, focusSchemas: [], showExternalRefs: true, externalRefTypes: [] }, aiMetadata: metadata }] });
+    expect(saved.success).toBe(true);
+    expect(saved.success && saved.data.filterProfiles![0]?.aiMetadata?.columnAspect).toEqual(metadata.columnAspect);
+  });
+  it.each([{ node: requested.node, columns: 'Value' }, { node: requested.node, columns: ['Value'], extra: true }, { columns: ['Value'] }])('rejects a malformed descriptor: %j', invalid => {
+    expect(ExtensionToWebviewMsgSchema.safeParse({ type: 'ai-view-preview', name: 'Trace', nodeIds: [requested.node],
+      aiMetadata: { ...baseAiMetadata, columnAspect: { edges: [], requested: invalid } } }).success).toBe(false);
+  });
+});

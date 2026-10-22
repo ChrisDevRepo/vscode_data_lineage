@@ -60,7 +60,7 @@ export interface ResultGraph {
   /** The `explorationRunId` that authored {@link sections} — distinguishes sections a later render may retain from ones left over from a previous run. */
   sectionsRunId?: string;
   /** Column lineage chain from a CT session. */
-  columnAspect?: { edges: ColumnEdge[] };
+  columnAspect?: { edges: ColumnEdge[]; requested?: { node: string; columns: string[] } };
 }
 
 /** Schema version of the AI output-templates contract (the `aiOutputTemplates.yaml` structure). */
