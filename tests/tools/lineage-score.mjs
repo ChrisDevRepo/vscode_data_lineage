@@ -558,11 +558,11 @@ export async function hydrateLangfuseRun(runDir, config, { fetchImpl = fetch, in
   mkdirSync(directory, { recursive: true });
   const authorization = `Basic ${Buffer.from(`${config.publicKey}:${config.secretKey}`).toString('base64')}`;
   const get = async path => {
-    const now = Date.now();
-    const slot = Math.max(now, nextLangfuseReadAt);
-    nextLangfuseReadAt = slot + intervalMs;
-    const delay = slot - now;
-    if (delay) await new Promise(resolve => setTimeout(resolve, delay));
+    let delay;
+    while ((delay = nextLangfuseReadAt - Date.now()) > 0) {
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+    nextLangfuseReadAt = Date.now() + intervalMs;
     let response;
     try { response = await fetchImpl(new URL(path, base), { headers: { Authorization: authorization }, redirect: 'error', signal: AbortSignal.timeout(30000) }); }
     catch { throw new Error('Langfuse stored evidence read failed.'); }
