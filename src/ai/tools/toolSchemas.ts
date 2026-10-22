@@ -5,7 +5,6 @@ import { markIdFormSearch, markObjectIdField } from './normalizeModelInput';
 import { normalizeColName } from '../../utils/sql';
 import { MAX_ID_LIST_LENGTH, SCREEN_STATE_MAX_IDS, ColumnTransformClassSchema, DIRECT_TRANSFORM_CLASSES } from '../../engine/shared/bridgeContract';
 import {
-  ExplorationDepthLimitSchema,
   ExplorationDepthSelectionSchema,
 } from '../../engine/shared/explorationDepthContract';
 import { REJECTION_CODES } from '../support/rejectionCodes';
@@ -39,27 +38,6 @@ export const ClassificationValueSchema = z.enum(['business', 'technical', 'both'
     + '"technical": execution mechanics, indexes, performance, query shapes, or loading patterns. "both": explicitly requested dual perspective. Required for fresh proposals.',
   );
 
-const SupplementNodeIdsSchema = z.array(z.string().min(1)).min(1).max(MAX_ID_LIST_LENGTH).describe(
-  'Resolved object IDs that require new per-node analysis in the completed exploration; use present_result add_node_ids for presentation-only additions.',
-);
-/** Chain extension of a supplement: the named objects plus everything reachable from them. */
-const SupplementChainSchema = z.object({
-  direction: z.enum(['upstream', 'downstream']).describe('"upstream" walks toward the sources, "downstream" toward the consumers.'),
-  depth: ExplorationDepthLimitSchema.describe('Steps to walk from each named object; "all" follows the chain to its end.'),
-}).strict();
-
-const SupplementSchema = z.object({
-  nodeIds: SupplementNodeIdsSchema,
-  chain: SupplementChainSchema.optional().describe(
-    'Set when the user asks to follow the named objects further, e.g. "all the way to the source": every object '
-    + 'reachable in that direction inside the approved schema selection is analysed and joins the same graph. Omit to add the named objects only; a named table also brings in its next objects in the approved direction.',
-  ),
-}).strict().describe(
-  'Completed-session analysis extension, sent alone: a supplement call carries no other field — it runs in the '
-  + "approved trace's scope. nodeIds lie inside the approved schema selection; an object outside it "
-  + 'needs a fresh proposal (origin, no supplement).',
-);
-
 /** Single source for the `depth` describe text on both {@link StartExplorationInputSchema} and every provider branch spread through `StartPatchFields` — one canonical home instead of a second literal duplicating it. Required for a fresh proposal, like {@link ClassificationValueSchema}; a refine may omit it to keep the reviewed proposal's depth. The per-side `0` clause matches {@link ExplorationDepthSelectionSchema}'s own contract (`explorationDepthContract.ts`) and `isReachableInApprovedDirection` (`smBase.ts`): 0 is a permanent border for the rest of the session, not merely a one-time skip of the initial seed. */
 const DEPTH_DESCRIPTION =
   'Starting scope: {upstream, downstream}, each {levels, exactness}; upstream levels reach the sources, downstream levels reach the consumers that read the origin. levels is a non-negative integer or "all"; 0 permanently closes that side for the session. levels "all", exact, only when the user asks for the complete chain on that side; a count the user states is that count, exact ("direct" is 1); with neither, levels 3, approximate. exactness is "exact" for a user-specified bound; use "approximate" when the count is your own estimate — an approximate count above 0 does not bound the scope, which runs until the filters or the border stop it. Required for a fresh proposal; omit on a refine to keep the reviewed depth.';
@@ -69,8 +47,8 @@ const StartDepthSchema = ExplorationDepthSelectionSchema.nullish().describe(DEPT
 const ANALYSIS_MODE_DESCRIPTION =
   'Required for fresh exploration: "bb" traces whole objects; "ct" traces named columns. Default to "bb" when unclear.';
 
-/** Issue text when a start_exploration call carries neither an origin nor a supplement. */
-const START_SHAPE_REQUIRED_MESSAGE = "Either 'origin' (fresh proposal) or 'supplement' with nodeIds must be provided.";
+/** Issue text when a start_exploration call carries neither an origin nor a proposal revision. */
+const START_SHAPE_REQUIRED_MESSAGE = "Provide origin for a fresh approval proposal, or proposalRevision to refine the pending one.";
 
 /** Recovery when column trace is requested without named columns. The schema issue and the rejection hint are this one string. */
 export const CT_TARGET_COLUMNS_RECOVERY =
@@ -107,26 +85,13 @@ export const StartExplorationInputSchema = z.object({
   scopeNotes: ScopeNotesValueSchema.optional(),
   mission_brief: MissionBriefValueSchema.optional(),
   classification: ClassificationValueSchema.optional(),
-  /** Post-synthesis supplement: extend the existing archive with explicit nodes. Runs through the SM hop loop; slots merge into the existing `AiMemoryManager`. No `origin` needed — the existing exploration is the origin. Fails if no completed engine is attached to the session. */
-  supplement: SupplementSchema.optional(),
 }).strict().superRefine((data, ctx) => {
   const isProposalRefine = data.proposalRevision !== undefined;
-  if (!data.origin && !data.supplement && !isProposalRefine) {
+  if (!data.origin && !isProposalRefine) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: START_SHAPE_REQUIRED_MESSAGE,
       params: { startIssue: 'start_shape_required' },
-    });
-  }
-  if (isProposalRefine && data.supplement) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['supplement'], message: 'A proposal refinement cannot be a completed-session supplement.' });
-  }
-  if (data.origin && data.supplement) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['supplement'],
-      message: 'origin and supplement cannot be sent together: send supplement alone to add objects to the completed analysis, or origin without supplement to start a new exploration.',
-      params: { startIssue: 'start_shape_conflict' },
     });
   }
   if (data.origin && !isProposalRefine && !data.analysisMode) {
@@ -231,11 +196,6 @@ const StartRefineProviderSchema = z.object({
   }
 });
 
-/** Completed-session supplement branch. `nodeIds` is always required and non-empty. */
-const StartSupplementProviderSchema = z.object({
-  supplement: SupplementSchema,
-}).strict();
-
 /** Fresh-entry model contract selected for `sm_entry` before the first approval gate. */
 export const StartExplorationFreshProviderInputSchema = z.object({
   ...StartPatchFields,
@@ -253,39 +213,14 @@ export const StartExplorationFreshProviderInputSchema = z.object({
 /** Gate-refinement model contract selected only while revising a pending proposal. */
 export const StartExplorationRefineProviderInputSchema = StartRefineProviderSchema;
 
-/** Completed-session (follow-up) model contract: one flat object admitting either an explicit supplement or a fresh re-proposal, never a top-level `anyOf`/`oneOf`. */
-export const StartExplorationCompletedProviderInputSchema = z.object({
-  ...StartPatchFields,
-  origin: StartOriginSchema.optional(),
-  analysisMode: z.enum(['bb', 'ct']).optional().describe(
-    ANALYSIS_MODE_DESCRIPTION,
-  ),
-  classification: ClassificationValueSchema.optional(),
-  targetColumns: z.array(ColumnIdentifierSchema).optional().describe(
-    TARGET_COLUMNS_PHASE_DESCRIPTION,
-  ),
-  supplement: SupplementSchema.optional(),
-}).strict().superRefine((data, ctx) => {
-  const proposalKeys = Object.keys(data).filter(key => key !== 'supplement' && data[key as keyof typeof data] !== undefined);
-  if (data.supplement && proposalKeys.length > 0) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['supplement'],
-      message: 'A supplement carries only `supplement`.',
-      params: { hint: `Remove ${proposalKeys.map(key => `\`${key}\``).join(', ')}.` },
-    });
-  }
-  if (!data.supplement && !data.origin) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['origin'], message: START_SHAPE_REQUIRED_MESSAGE });
-  }
-});
+/** Follow-ups needing new SQL use the same explicit scope and approval contract as a fresh exploration. */
+export const StartExplorationCompletedProviderInputSchema = StartExplorationFreshProviderInputSchema;
 
 /** Canonical all-phase contract used by persistent VS Code/Copilot registration and manifest parity. API InstructionPlans replace it with exactly one phase-specific schema before each model call. */
 export const StartExplorationProviderInputSchema = z.union([
   StartFreshBbProviderSchema,
   StartFreshCtProviderSchema,
   StartRefineProviderSchema,
-  StartSupplementProviderSchema,
 ]);
 /** A `get_scope_bundle` depth: a non-negative integer or `"all"`. */
 const ScopeDepthSchema = z.union([z.number().int().min(0), z.literal('all')]);
@@ -905,8 +840,6 @@ export const SearchDdlInputSchema = z.object({
   types: z.array(z.enum(['view', 'procedure', 'function'])).optional().describe('Optional body-type filter; omit to search all three.'),
 }).strict();
 
-/** Hard cap on a `sections[].label`. The label's shape is owned by the field's own `.describe()`, which states its role and deliberately no character target. */
-const PRESENT_RESULT_SECTION_LABEL_MAX = 90;
 /** Identity of a section label: whitespace collapsed, trimmed, case-folded. Two labels with the same key name the same section, in a submission, a repair patch and a committed report alike. */
 export function normalizePresentSectionLabel(label: string): string {
   return label.replace(/\s+/g, ' ').trim().toLowerCase();
@@ -988,7 +921,7 @@ const HighlightGroupSchema = z.object({
 
 /** One final report section: a label that becomes both the section heading and the graph badge, the nodes it explains, and its detail body. */
 const PresentResultSectionSchema = z.object({
-  label: z.string().max(PRESENT_RESULT_SECTION_LABEL_MAX).regex(/\S/, 'Section label must not be blank.').min(1, 'Section label is required — provide a short final label for this detail section').describe('What the section\'s nodes share, as heading and badge (30 chars). No object names. Unique after trimming, whitespace collapse and lowercasing.'),
+  label: z.string().regex(/\S/, 'Section label must not be blank.').min(1, 'Section label is required — provide a short final label for this detail section').describe('What the section\'s nodes share, as heading and badge (30 chars). No object names. Unique after trimming, whitespace collapse and lowercasing.'),
   node_ids: z.array(NodeIdSchema).describe('Nodes this section documents; put each node in one section. Empty array when it documents none.'),
   text: z.string().regex(/\S/, 'Must contain non-whitespace text.').min(1, 'Section is missing text — every final section label requires one detail body').describe('Required detail body for this section label.'),
 }, {

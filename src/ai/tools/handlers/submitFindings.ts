@@ -35,11 +35,12 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       }
       /** A rejection that owes fields carries one example of the first structured field and the way out, for the last repair opportunity. */
       const reject = (rejection: ToolRejection): string => {
-        const example = rejection.resend ? exampleForFields(schema, rejection.resend) : undefined;
+        const owesFields = (rejection.resend?.length ?? 0) > 0;
+        const example = owesFields ? exampleForFields(schema, rejection.resend!) : undefined;
         const emptyExit = example !== undefined && Object.entries(example as Record<string, unknown>).some(([field, value]) =>
           field !== 'column_flow' && Array.isArray(value) && value.length === 0 && (rejection.issuePaths?.length ?? 0) > 0
           && rejection.issuePaths!.every(path => path.split('.')[0] === field));
-        return s.logAndReturn('lineage_submit_findings', rejection.resend
+        return s.logAndReturn('lineage_submit_findings', owesFields
           ? { ...rejection, wayOut: emptyExit ? SUBMIT_FINDINGS_REFERENCE_WAY_OUT : SUBMIT_FINDINGS_WAY_OUT, ...(example !== undefined ? { example } : {}) } : rejection, normalized.input);
       };
       const parsed = schema.safeParse(normalized.input);

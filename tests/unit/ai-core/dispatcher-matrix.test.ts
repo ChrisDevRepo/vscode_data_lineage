@@ -843,6 +843,32 @@ describe('submit_findings rejection form', () => {
     return { engine, send };
   }
 
+  it.each(['map', 'prune', 'question'] as const)('repairs a missing neighbor outcome by %s through the served handler with held findings', async outcome => {
+    const { engine, send } = hop();
+    const before = engine.toJSON();
+    const flow = [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0' }] }, terminals[1]];
+    const first = await send({ ...base, column_flow: flow });
+    expect(first.attempt.rejections).toHaveLength(1);
+    expect(JSON.stringify(first.rejection)).toContain(other);
+    expect(JSON.stringify(first.rejection)).toMatch(/map.*prune.*question/i);
+    expect(first.rejection.resend).toEqual([]);
+    expect(first.rejection).not.toHaveProperty('way_out');
+    expect(first.rejection).not.toHaveProperty('example');
+    expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
+    expect(engine.toJSON().agenda).toEqual(before.agenda);
+    expect(engine.getDetailSlots()).toEqual([]);
+    expect(engine.heldPartsOfCurrentFocus()).toMatchObject({ summary: true, sections: ['technical'], resend: [] });
+    const patch = outcome === 'map' ? { column_flow: [...flow, { out_col: 'Other', upstream_columns: [{ node: other, col: 'Value' }] }] }
+      : outcome === 'prune' ? { prune_neighbors: [{ id: other, reason: 'No value contribution.' }] }
+      : { questions: [{ nodeId: other, question: 'Explain the neighboring SQL.' }] };
+    const second = await send({ focus_node_id: root, ...patch });
+    expect(second.attempt.rejections).toEqual([]);
+    expect(second.attempt.stop).toBe('phase_complete');
+    expect(engine.columnAspect?.edges).toEqual(expect.arrayContaining([expect.objectContaining({ from_node: source, to_node: root })]));
+    expect(engine.getDetailSlots()).toEqual(expect.arrayContaining([expect.objectContaining({ summary: base.summary })]));
+    expect(engine.toJSON().removedSet.includes(other)).toBe(outcome === 'prune');
+  });
+
   it('reports every independently decidable fault in one rejection, with the accepted values', async () => {
     const { send } = hop();
     const first = await send({ ...base, column_flow: [
@@ -868,7 +894,7 @@ describe('submit_findings rejection form', () => {
       prune_neighbors: [{ id: absent, reason: 'Outside.' }], column_flow: missingColumn });
     expect(paths(first.rejection).sort()).toEqual(['badge_label', 'column_flow.0.upstream_columns.0.col', 'prune_neighbors.0.id', 'questions.0.nodeId']);
     expect([...first.rejection.resend].sort()).toEqual(['badge_label', 'column_flow', 'prune_neighbors', 'questions']);
-    const second = await send({ focus_node_id: root, badge_label: 'Source role', questions: [], prune_neighbors: [], column_flow: missingColumn });
+    const second = await send({ focus_node_id: root, badge_label: 'Source role', questions: [source, other].map(nodeId => ({ nodeId, question: 'Explain this neighboring SQL.' })), prune_neighbors: [], column_flow: missingColumn });
     expect(second.attempt.rejections).toHaveLength(1);
     expect(paths(second.rejection)).toEqual(['column_flow.0.upstream_columns.0.col']);
     expect(second.rejection.resend).toEqual(['column_flow']);
@@ -911,7 +937,7 @@ describe('submit_findings rejection form', () => {
   });
   it('withdraws an omitted failing optional field and names it in the acknowledgement', async () => {
     const { engine, send } = hop();
-    const first = await send({ ...base, column_flow: terminals, prune_neighbors: [{ id: absent, reason: 'Outside.' }] });
+    const first = await send({ ...base, column_flow: terminals, questions: [source, other].map(nodeId => ({ nodeId, question: 'Explain this neighboring SQL.' })), prune_neighbors: [{ id: absent, reason: 'Outside.' }] });
     expect(first.rejection.resend).toEqual(['prune_neighbors']);
     const second = await send({ focus_node_id: root });
     expect(second.attempt.stop).toBe('phase_complete');

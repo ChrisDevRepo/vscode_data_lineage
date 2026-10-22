@@ -574,7 +574,7 @@ export function baselineApprovalForTurn(
     const calls = response.toolCalls.filter(call => call.name === 'lineage_start_exploration');
     if (calls.length !== 1) throw new Error('Baseline gate has no unambiguous start proposal.');
     const start = StartExplorationInputSchema.parse(calls[0].input);
-    if (!start.origin || !start.depth || !start.classification || !start.analysisMode || start.proposalRevision || start.supplement)
+    if (!start.origin || !start.depth || !start.classification || !start.analysisMode || start.proposalRevision)
       throw new Error('Baseline lacks a complete fresh approved proposal.');
     const approvedWorkload = project({ ...start, origin: state.engineInternals.originNodeId,
       excludeTypes: state.engineInternals.excludedTypes, excludeSchemas: state.engineInternals.excludedSchemas,

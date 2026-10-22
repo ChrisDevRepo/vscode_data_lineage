@@ -163,9 +163,9 @@ export function turnTokenBudgetFromSettings(config: NumericSettingReader, modelW
 export interface ProposedScope {
   /** Every node in the scope, tables included. */
   readonly nodes: number;
-  /** Hops the run takes: those already taken plus one per procedure, view or function still to visit, queued table and supplement target. */
+  /** Hops the run takes: those already taken plus one per procedure, view or function still to visit; tables take no hop. */
   readonly rounds: number;
-  /** Distinct starting columns selected for the trace at the origin; 0 for a BB scope and for a supplement. */
+  /** Distinct starting columns selected for the trace at the origin; 0 for a BB scope. */
   readonly columns: number;
 }
 
@@ -179,21 +179,18 @@ interface ScopeRefusal {
   readonly text: string;
   /** Shown when a refinement broke the limit and the held proposal stays open. */
   readonly refineText: string;
-  /** Shown when a supplement to a completed exploration broke the limit. */
-  readonly supplementText: string;
 }
 
-/** Builds the three user texts of one refusal from the limit reached and the way out. */
+/** Builds the user texts of one refusal from the limit reached and the way out. */
 function scopeRefusal(limit: ScopeRefusalLimit, reached: string, wayOut: string): ScopeRefusal {
   return {
     limit,
     text: `Analysis cannot start: ${reached} — ${wayOut} and ask again.`,
     refineText: `The change was not applied: ${reached}. The previous plan is still open — approve it, or change it again after you ${wayOut}.`,
-    supplementText: `The supplement was not applied: ${reached}. The completed analysis is unchanged — ${wayOut} and ask again.`,
   };
 }
 
-/** The one exploration admission check, run on the dry-run proposal before the approval card, on a scope change and on a supplement: the run's hops against `ai.maxRounds`, then the trace's starting columns against `ai.maxTraceColumns`. Columns tracked hop by hop are never counted. A refusal is the user's to act on — the model never narrows a scope to fit. */
+/** The one exploration admission check, run on the dry-run proposal before the approval card, on a scope change: the run's hops against `ai.maxRounds`, then the trace's starting columns against `ai.maxTraceColumns`. Columns tracked hop by hop are never counted. A refusal is the user's to act on — the model never narrows a scope to fit. */
 export function checkScopeAdmission(budget: TurnTokenBudget, scope: ProposedScope): ScopeRefusal | null {
   const { maxRounds, maxTraceColumns } = budget.exploration;
   if (scope.rounds > maxRounds) {

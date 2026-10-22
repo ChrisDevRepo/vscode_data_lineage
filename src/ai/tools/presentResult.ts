@@ -385,17 +385,16 @@ interface EvidenceBlock {
   readonly raw: string;
 }
 
-/** Reports which captured SQL blocks the rendered report shows, by whitespace-insensitive match of the block body — so a block expanded from its id and one the author wrote out both count. */
+/** Reports captured SQL whose exact fenced body is absent; enclosing Markdown indentation is not SQL content. */
 export function evidenceCoverage(
   blocks: ReadonlyMap<string, EvidenceBlock>,
   renderedTexts: readonly string[],
 ): { readonly served: number; readonly unusedIds: string[] } {
-  const squash = (text: string): string => text.replace(/\s+/g, '');
-  const rendered = squash(renderedTexts.join('\n'));
+  const rendered = new Set(renderedTexts.flatMap(text => [...locateSqlFences(text)].map(fence => fenceBodyKey(fence.lines))));
   const unusedIds: string[] = [];
   for (const block of blocks.values()) {
-    const body = squash(block.raw.split('\n').slice(1, -1).join('\n'));
-    if (!rendered.includes(body)) unusedIds.push(block.id);
+    const body = block.raw.split('\n').slice(1, -1).join('\n');
+    if (!rendered.has(body)) unusedIds.push(block.id);
   }
   return { served: blocks.size, unusedIds };
 }

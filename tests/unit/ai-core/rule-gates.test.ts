@@ -235,7 +235,6 @@ const MULTI_SITE_REJECTION_CODES = [
   REJECTION_CODES.staleTurn,
   REJECTION_CODES.invalidInput,
   REJECTION_CODES.notFound,
-  REJECTION_CODES.supplementRequiresCompleteEngine,
   REJECTION_CODES.invalidRegex,
 ] as const;
 
@@ -257,12 +256,11 @@ describe('rejection codes — one home per multi-site code', () => {
     expect(offenders, 'every emission site interpolates REJECTION_CODES').toEqual([]);
   });
 
-  it('keeps the five codes exported with their wire values unchanged', () => {
+  it('keeps the live multi-site codes exported with their wire values unchanged', () => {
     expect(MULTI_SITE_REJECTION_CODES).toEqual([
       'stale_turn',
       'invalid_input',
       'not_found',
-      'supplement_requires_complete_engine',
       'invalid_regex',
     ]);
   });

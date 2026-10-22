@@ -30,7 +30,7 @@ const SILENT_LOGGER = {
 } as unknown as Logger;
 
 /** One captured SQL block on {@link ORIGIN}, assigned id `S1` by `assignEvidenceIds`. */
-function seedSession(): AiSession {
+function seedSession(sql = CAPTURED_SQL): AiSession {
   const session = new AiSession();
   const resultGraph: ResultGraph = {
     nodeIds: [ORIGIN],
@@ -42,7 +42,7 @@ function seedSession(): AiSession {
   session.resultGraph = resultGraph;
   session.memory.storeDetail(
     node(ORIGIN, 'Orders', 'table'),
-    [{ angle: 'technical', text: `Loads orders.\n\`\`\`sql\n${CAPTURED_SQL}\n\`\`\`` }],
+    [{ angle: 'technical', text: `Loads orders.\n\`\`\`sql\n${sql}\n\`\`\`` }],
     'Loads orders.',
   );
   return session;
@@ -71,7 +71,7 @@ function basePayload(extra: Record<string, unknown>): Record<string, unknown> {
   return {
     name: 'Orders Lineage',
     summary: 'How Orders is populated.',
-    sections: [{ label: 'Source', node_ids: [ORIGIN], text: 'Orders is the origin.' }],
+    sections: [{ label: 'Source', node_ids: [ORIGIN], text: 'Orders is the origin.\n```sql S1\n```' }],
     highlight_groups: [{ label: 'Flow', color: 'source', node_ids: [ORIGIN] }],
     ...extra,
   };
@@ -82,6 +82,38 @@ function description(session: AiSession): string {
 }
 
 describe('presentation SQL-reference fence boundary', () => {
+  it('never accepts a preview that drops a captured SQL block', async () => {
+    const session = seedSession();
+    const submitted = await run(session, basePayload({ sections: [{ label: 'Source', node_ids: [ORIGIN], text: 'Orders is the origin.' }] }));
+    // Captured SQL must reach every accepted preview, even when synthesis omitted its ref.
+    if (submitted.success !== true) {
+      expect(session.presentationArtifact).toBeFalsy();
+      const repaired = await run(session, basePayload({
+        sections: [{ label: 'Source', node_ids: [ORIGIN], text: 'Orders is the origin.\n```sql S1\n```' }],
+      }));
+      expect(repaired.success).toBe(true);
+    }
+    expect(description(session)).toContain(CAPTURED_SQL);
+  });
+
+  it.each([
+    ["SELECT 'a b' AS Label;", "SELECT 'a  b' AS Label;"],
+    ['SELECT 1 -- comment\n+ 2;', 'SELECT 1 -- comment + 2;'],
+  ])('does not treat changed SQL whitespace as captured evidence: %s', async (writtenSql, capturedSql) => {
+    const session = seedSession(capturedSql);
+    const epoch = session.beginTurn();
+    const input = basePayload({ title: 'Held title', intro: `An authored alternative.\n\`\`\`sql\n${writtenSql}\n\`\`\``,
+      sections: [{ label: 'Source', node_ids: [ORIGIN], text: 'Orders is the origin.' }] });
+    const failed = JSON.parse(await executePresentResult(input, services(session, epoch)));
+    expect(failed).toMatchObject({ code: 'validation', issuePaths: ['sections'] });
+    expect(failed.reason).toContain('S1');
+    expect(session.presentationArtifact).toBeFalsy();
+    expect(session.presentResultRepairDraft.get()).toEqual(input);
+    const repaired = JSON.parse(await executePresentResult({ sections: [{ label: 'Source', text: 'Orders is the origin.\n```sql S1\n```' }] }, services(session, epoch)));
+    expect(repaired.success).toBe(true);
+    for (const retained of ['Held title', writtenSql, capturedSql]) expect(description(session)).toContain(retained);
+  });
+
   it('rejects all unclosed reference openers without consuming the following business prose', async () => {
     const session = seedSession();
     const malformed = Array.from({ length: 55 }, (_, index) => `Rule ${index + 1} stays in the report.\n\`\`\`sql S1\n`).join('\n');
@@ -191,7 +223,7 @@ describe('presentation SQL-reference fence boundary', () => {
     }
   });
 
-  it('resolves a reference by the completion numbering after a later edit removed an earlier slot node', async () => {
+  it('keeps completion numbering and captured SQL after a later edit removes a slot node from the view', async () => {
     const session = new AiSession();
     const PRUNED = '[dbo].[Staging]';
     // Completion served two slots, S1 on PRUNED and S2 on ORIGIN; a follow-up then pruned PRUNED from the view.
@@ -199,8 +231,9 @@ describe('presentation SQL-reference fence boundary', () => {
     session.memory.storeDetail(node(ORIGIN, 'Orders', 'table'), [{ angle: 'technical', text: `Loads orders.\n\`\`\`sql\n${CAPTURED_SQL}\n\`\`\`` }], 'Loads orders.');
     session.resultGraph = { nodeIds: [ORIGIN], evidenceNodeIds: [PRUNED, ORIGIN], edges: [], source: 'graph', originNodeId: ORIGIN };
     expect((await run(session, basePayload({ intro: '```sql S2\n```' }))).success).toBe(true);
-    expect(description(session)).toContain(CAPTURED_SQL);
-    expect(description(session)).not.toContain('SELECT 1 AS staged');
+    expect(description(session)).toMatch(/^```sql\nSELECT \* FROM Staging\.Orders/);
+    expect(description(session)).toContain('SELECT 1 AS staged');
+    expect(session.presentationArtifact?.nodeIds).toEqual([ORIGIN]);
   });
 
   it('rejects a closed unknown reference and leaves non-SQL markdown prose untouched', async () => {
@@ -305,7 +338,7 @@ describe('merged report section repair diagnosis', () => {
     expect(session.presentResultRepairDraft.get()).toEqual(held);
     expect(rejected.hint).toContain('sections: resend only the entries you add or change');
     expect(rejected.hint).not.toContain('repeating the unflagged elements exactly as first sent');
-    const corrected = JSON.parse(await executePresentResult({ sections: [{ label: 'Source', node_ids: [ORIGIN], text: 'Corrected source detail.' }] }, services(session, epoch)));
+    const corrected = JSON.parse(await executePresentResult({ sections: [{ label: 'Source', node_ids: [ORIGIN], text: 'Corrected source detail.\n```sql S1\n```' }] }, services(session, epoch)));
     expect(corrected.success).toBe(true);
     expect(description(session)).toContain('Corrected source detail.');
   });
@@ -355,7 +388,7 @@ describe('merged report section repair diagnosis', () => {
     session.explorationRunId = 'run-1';
     session.phase = { kind: 'completed' };
     session.resultGraph = { ...session.resultGraph!, sectionsRunId: 'run-1', sections: [
-      { label: 'Alpha', node_ids: [ORIGIN], text: 'Alpha body.' },
+      { label: 'Alpha', node_ids: [ORIGIN], text: `Alpha body.\n\`\`\`sql\n${CAPTURED_SQL}\n\`\`\`` },
       { label: 'Beta', node_ids: [ORIGIN], text: 'Beta body.' },
     ] } as ResultGraph;
     const first = await run(session, { is_update: true, sections: [{ label: 'Invented One' }, { label: 'Invented Two' }] });
@@ -371,13 +404,13 @@ describe('merged report section repair diagnosis', () => {
     session.explorationRunId = 'run-1';
     session.phase = { kind: 'completed' };
     session.resultGraph = { ...session.resultGraph!, sectionsRunId: 'run-1', sections: [
-      { label: 'Alpha', node_ids: [ORIGIN], text: 'Alpha body.' },
+      { label: 'Alpha', node_ids: [ORIGIN], text: `Alpha body.\n\`\`\`sql\n${CAPTURED_SQL}\n\`\`\`` },
     ] } as ResultGraph;
     const first = await run(session, { is_update: true, sections: [{ label: 'Alpha', text: 'New Alpha body.' }, { label: 'Invented' }] });
     expect(first.hint).toContain('sections');
     expect(first.hint).not.toContain('every field except name, summary, highlight_groups.');
-    const second = await run(session, { is_update: true, name: 'Renamed', summary: 'Same report.', highlight_groups: [{ label: 'Feed', color: 'source', node_ids: [ORIGIN] }], sections: [{ label: 'Alpha', node_ids: [ORIGIN], text: 'New Alpha body.' }] });
+    const second = await run(session, { is_update: true, name: 'Renamed', summary: 'Same report.', highlight_groups: [{ label: 'Feed', color: 'source', node_ids: [ORIGIN] }], sections: [{ label: 'Alpha', node_ids: [ORIGIN], text: 'New Alpha body.\n```sql S1\n```' }] });
     expect(second.success).toBe(true);
-    expect(session.resultGraph?.sections?.map(sec => sec.text)).toEqual(['New Alpha body.']);
+    expect(session.resultGraph?.sections?.map(sec => sec.text)).toEqual([`New Alpha body.\n\`\`\`sql\n${CAPTURED_SQL}\n\`\`\``]);
   });
 });

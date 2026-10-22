@@ -63,7 +63,7 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_start_exploration', title: 'Start Exploration', inputSchema: StartExplorationProviderInputSchema, tags: ['lineage', 'lineage-engine'], effect: 'session_start',
     userDescription: 'Start an autonomous exploration of database objects for data flow, business rules, or investigations.',
-    modelDescription: 'Proposes an autonomous hop-by-hop exploration for user approval: a new trace from `origin`, a revision via `proposalRevision`, or a `supplement` of named objects after completed exploration.',
+    modelDescription: 'Proposes a hop-by-hop exploration from `origin` for user approval, or revises its pending proposal via `proposalRevision`.',
     progressLabel: 'Starting exploration…',
   },
   {

@@ -15,7 +15,7 @@ export type LmStage =
   | { kind: 'active'; mode: ActiveMode }
   /** Post-agenda-drain report authoring. */
   | { kind: 'synthesis' }
-  /** Post-synthesis follow-up: refinement, explicit-node supplements, or a fresh proposal. */
+  /** Post-synthesis follow-up: presentation edits or a fresh approval proposal. */
   | { kind: 'completed' }
   /** Read-only registration for a caller without a chat turn. */
   | { kind: 'external' };

@@ -238,8 +238,8 @@ export interface RouteOutcome {
   accepted: boolean;
   /** True when queued as a post-synthesis follow-up offer (SM mode, out of scope). */
   deferred?: boolean;
-  /** Reason for deferral: - `depth` — route target lies past a depth border the user stated; user will see it as a follow-up offer. - `out_of_direction` — route target exists but is not reachable in the approved traversal direction; never loaded, so a named question is recorded as a follow-up offer. - `excluded` — route target exists but is outside the user's approved exclude filters; never loaded, so a named question is recorded as a follow-up offer. - `schema` — route target's schema is outside the session's GUI schema filter, not a user-authored exclusion; never loaded, so a named question is recorded as a follow-up offer that can be granted through a new proposal. - `already_visited` — route target was already analyzed on an earlier hop; visit-once, no new hop. - `already_pruned` — same as `already_visited`, for a node pruned on an earlier hop. - `not_followed` — a CT neighbor the submission neither named, pruned nor mapped a column to; not visited. */
-  reason?: 'depth' | 'out_of_direction' | 'excluded' | 'schema' | 'not_followed' | SettledRouteReason;
+  /** Reason for deferral: - `depth` — route target lies past a depth border the user stated; user will see it as a follow-up offer. - `out_of_direction` — route target exists but is not reachable in the approved traversal direction; never loaded, so a named question is recorded as a follow-up offer. - `excluded` — route target exists but is outside the user's approved exclude filters; never loaded, so a named question is recorded as a follow-up offer. - `schema` — route target's schema is outside the session's GUI schema filter, not a user-authored exclusion; never loaded, so a named question is recorded as a follow-up offer that can be granted through a new proposal. - `already_visited` — route target was already analyzed on an earlier hop; visit-once, no new hop. - `already_pruned` — same as `already_visited`, for a node pruned on an earlier hop. */
+  reason?: 'depth' | 'out_of_direction' | 'excluded' | 'schema' | SettledRouteReason;
 }
 
 /** Route reasons for a target an earlier hop already settled (visit-once). */
@@ -247,24 +247,6 @@ type SettledRouteReason = 'already_visited' | 'already_pruned';
 
 /** Per-node enqueue disposition: settled by an earlier hop or not enqueued for a scope/depth reason. */
 export type RouteSkipDisposition = SettledRouteReason | 'not_enqueued';
-
-/** Chain extension of a supplement: walk from each named id in one direction, `depth` steps or to the end (`'all'`). */
-export interface SupplementChain {
-  /** Direction to walk from each named id. */
-  direction: 'upstream' | 'downstream';
-  /** Steps to walk, or `'all'` to walk to the end of the chain. */
-  depth: number | 'all';
-}
-
-/** Per-node drop notice from `supplementAgenda`. */
-export interface SupplementSkip {
-  /** Node id as supplied in the supplement request (verbatim, not lowercased). */
-  nodeId: string;
-  /** Reason for the drop: - `unresolved` — node id does not exist in the loaded graph model. - `excluded` — node exists but is outside the user's own approved exclude filters (`excludedNodeIds` / `excludedTypes` / a schema the user typed that the GUI does not hide). - `out_of_allowlist` — node exists, but its schema is unticked in the GUI schema filter (the session allowlist) — including a schema the user also typed, since the GUI hides it anyway. `hint` always accompanies this reason. - `not_connected_to_trace` — node exists and is not excluded, but has no dependency path to the retained trace through retained objects or ids named in the same request — the wire form of `REJECTION_CODES.notConnectedToTrace`. `hint` always accompanies this reason and names any pruned or untraced connectors the request must name to join it. */
-  reason: 'excluded' | 'out_of_allowlist' | 'unresolved' | 'not_connected_to_trace';
-  /** Recovery text for the model, populated for `not_connected_to_trace` — naming the listed connectors, or a separate exploration on the id directly, is the repair. Also populated for `out_of_allowlist` — starting a new `lineage_start_exploration` proposal that names it reopens the `confirm_sm_start` gate for the user's approval. */
-  hint?: string;
-}
 
 /** The outcome of a `submitFindings` operation — a discriminated **ack | reject** union (the engine's only two responses to a hop submission, looping until the engine drains the agenda). */
 export type SubmitResult =
@@ -661,7 +643,7 @@ export interface EngineInternalsSnapshot {
   pendingLeads: PendingLead[];
   /** The `init` params snapshot kept for the refine re-run. */
   initSnapshot: EngineInitSnapshot | null;
-  /** Explicit post-completion follow-up targets; absent in older saved runs. */
+  /** Legacy follow-up targets accepted when reading older snapshots; current runs omit this field. */
   supplementNodeIds?: string[];
   /** Accepted prune/keep votes not yet resolved because another sender remains live. */
   pruneBallots?: Array<{ nodeId: string; votes: Array<{ senderId: string; vote: 'prune' | 'keep' }> }>;
@@ -759,7 +741,8 @@ export type InvalidRouteKind = | 'absent_contributor'
       | 'prune_unsupported'
       | 'prune_question_conflict'
       | 'question_not_neighbor'
-      | 'question_closed';
+      | 'question_closed'
+      | 'neighbor_outcome_missing';
 
 /** Represents an invalid route returned during validation. */
 export interface InvalidRoute {

@@ -16,17 +16,11 @@ export const REJECTION_CODES = {
   invalidInput: 'invalid_input',
   /** A node id, origin or detail lookup resolved to nothing in the loaded model. */
   notFound: 'not_found',
-  /** `supplement` was requested without a prior exploration in `complete` status to extend; the next call is a fresh proposal, never a resend. */
-  supplementRequiresCompleteEngine: 'supplement_requires_complete_engine',
-  /** `supplement` named no node to extend; the repair is to answer, never to resend an empty list. */
-  supplementEmpty: 'supplement_empty',
-  /** Every id named in a `supplement` request was refused — unresolved (no such object), or stopped by the border (excluded, out-of-allowlist, or not connected to the trace) — distinct from {@link supplementEmpty}, whose list of ids was empty to begin with. The repair is a corrective tool call (a new `lineage_start_exploration` proposal for a border refusal), never a resend of this supplement. */
-  supplementAllRefused: 'supplement_all_refused',
   /** A regex search/grep pattern failed to compile or exceeded the length/complexity budget. */
   invalidRegex: 'invalid_regex',
   /** A discovery-phase scope-expanding catalog request exceeded the turn's node/token budget. */
   overDiscoveryBudget: 'over_discovery_budget',
-  /** A proposal, scope change or supplement exceeded `ai.maxRounds` or `ai.maxTraceColumns` at admission; no approval card is opened. */
+  /** A proposal or scope change exceeded `ai.maxRounds` or `ai.maxTraceColumns` at admission; no approval card is opened. */
   overActiveScopeBudget: 'over_active_scope_budget',
   /** Consent-gate marker sharing the rejection envelope without being a rejection (`isConsentGateRejection`). */
   actionRequired: 'action_required',
@@ -78,6 +72,4 @@ export const REJECTION_CODES = {
   unknownTool: 'unknown_tool',
   /** The synthetic structured-output call was missing, duplicated or schema-invalid (`structuredOutput.ts`, `vscodeModelPort.ts`). */
   invalidStructuredOutput: 'invalid_structured_output',
-  /** A `supplement`/`start_exploration` id resolves to a real node with no dependency path (in either direction) to the traced graph — refused, never silently admitted (`smBase.ts` `admitSupplementTargets`). */
-  notConnectedToTrace: 'not_connected_to_trace',
 } as const;

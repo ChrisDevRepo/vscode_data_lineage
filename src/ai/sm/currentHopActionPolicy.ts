@@ -22,6 +22,8 @@ interface CurrentHopActionPolicyInput {
   removedIds: ReadonlySet<string>;
   /** Nodes whose authored detail is already committed. */
   notedIds: ReadonlySet<string>;
+  /** Nodes kept by a different branch; a prune here is a losing vote. */
+  keptIds: ReadonlySet<string>;
   /** Nodes already queued for a hop of their own. */
   agendaIds: ReadonlySet<string>;
 }
@@ -30,7 +32,7 @@ interface CurrentHopActionPolicyInput {
 interface CurrentHopActionPolicyResult {
   /** Refused or unknown actions that reject this submission atomically. */
   invalidRoutes: InvalidRoute[];
-  /** Resolved prune targets that are not the origin and not already visited, queued, noted or removed. */
+  /** Resolved prune targets that are not the origin and not already visited, noted or removed; another branch may have queued them. */
   acceptedPruneIds: string[];
 }
 
@@ -61,7 +63,7 @@ export function evaluateCurrentHopActionPolicy(input: CurrentHopActionPolicyInpu
       invalidRoutes.push({ kind: 'prune_noop_analyzed', id, path: target.path, reason: `\`${id}\` is already recorded as an analyzed node.` });
       continue;
     }
-    if (input.agendaIds.has(id)) {
+    if (input.agendaIds.has(id) && !input.keptIds.has(id)) {
       invalidRoutes.push({
         kind: 'prune_noop_queued',
         id,

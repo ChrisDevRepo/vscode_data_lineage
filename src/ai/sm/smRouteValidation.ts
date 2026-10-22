@@ -24,6 +24,8 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<Exclude<InvalidRouteKind, 'prune_
   prune_unsupported: 'Remove this protected id from prune_neighbors.',
   question_not_neighbor: 'Use an eligible neighbor, or drop this question and keep the fact in sections.',
   question_closed: 'Remove this visited or pruned neighbor from questions.',
+  // The missing outcome names alternatives without invalidating a supplied field.
+  neighbor_outcome_missing: '',
 };
 
 /** Machine error code per validation kind; unlisted kinds fall back to routeValidationFailed. */

@@ -100,12 +100,3 @@ export function evaluateParallelStartRule(
     detail: { next_action: 'submit_findings' },
   });
 }
-
-/** Supplement path requires a completed engine archive. */
-export function evaluateSupplementPrereqRule(engineStatus: string | null): InteractionRuleResult {
-  if (engineStatus === 'complete') return null;
-  return makeRejection({
-    code: REJECTION_CODES.supplementRequiresCompleteEngine,
-    hint: `supplement requires a completed prior exploration. Current engine status: ${engineStatus ?? 'none'}. Start a fresh exploration instead (omit the 'supplement' field, provide 'origin').`,
-  });
-}

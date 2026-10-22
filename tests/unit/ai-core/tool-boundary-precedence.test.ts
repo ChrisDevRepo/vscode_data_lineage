@@ -7,7 +7,7 @@ import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
 import { executeSubmitFindings } from '../../../src/ai/tools/handlers/submitFindings';
 import { executePruneCurrent } from '../../../src/ai/tools/handlers/pruneCurrent';
 import { executeStartExploration } from '../../../src/ai/tools/handlers/startExploration';
-import { StartExplorationInputSchema, PruneCurrentInputSchema, presentResultSchemaForPhase, submitFindingsSchemaForMode } from '../../../src/ai/tools/toolSchemas';
+import { StartExplorationInputSchema, StartExplorationCompletedProviderInputSchema, StartExplorationProviderInputSchema, PruneCurrentInputSchema, presentResultSchemaForPhase, submitFindingsSchemaForMode } from '../../../src/ai/tools/toolSchemas';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import Ajv from 'ajv';
 import { makeGraph, makeIndexedModel, makeModel, makeNode } from '../helpers/modelFixtures';
@@ -533,6 +533,17 @@ describe('lineage_prune_current boundary', () => {
 });
 
 describe('lineage_start_exploration boundary', () => {
+  it('serves a fresh approval proposal after completion, with no direct supplement branch', () => {
+    const proposal = { origin: OTHER, analysisMode: 'bb', classification: 'technical',
+      depth: { upstream: { levels: 1, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } };
+    const legacy = { supplement: { nodeIds: [OTHER] } };
+    expect(StartExplorationCompletedProviderInputSchema.safeParse(proposal).success).toBe(true);
+    expect(StartExplorationCompletedProviderInputSchema.safeParse(legacy).success).toBe(false);
+    expect(StartExplorationProviderInputSchema.safeParse(legacy).success).toBe(false);
+    const validate = new Ajv({ strict: false }).compile(toModelJsonSchema(StartExplorationCompletedProviderInputSchema));
+    expect(validate(proposal)).toBe(true);
+    expect(validate(legacy)).toBe(false);
+  });
   it('rejects string depth without decoding it into a number', () => {
     const payload = { origin: ORIGIN, analysisMode: 'bb', classification: 'technical',
       depth: { upstream: { levels: '2', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } };
@@ -553,13 +564,13 @@ describe('lineage_start_exploration boundary', () => {
     expect(result).toMatchObject({ code: 'missing_field', detail: { issues: [expect.objectContaining({ path: '(root)', code: 'missing_field' })] } });
   });
 
-  it('answers an origin plus supplement with the two valid call shapes and no keep-every-field tail', async () => {
+  it('directs an origin plus legacy supplement to a fresh approval proposal', async () => {
     const { session, model, graph } = ctWorld();
     session.stateMachine = null;
     const { services } = stubToolServices({ session, model, graph });
     const text = await executeStartExploration({ origin: ORIGIN, analysisMode: 'bb', classification: 'technical', depth: { upstream: { levels: 1, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } }, supplement: { nodeIds: [OTHER] } } as never, services);
-    expect(text).toMatch(/supplement alone/);
-    expect(text).toMatch(/origin without supplement/);
+    expect(text).toMatch(/new exploration/);
+    expect(text).toMatch(/origin and scope, without supplement/);
     expect(text).not.toContain('keep every other field unchanged');
   });
 
@@ -749,7 +760,7 @@ describe('lineage_submit_findings boundary', () => {
       ...(schemaPath.startsWith('sections') || schemaPath === 'prune_neighbors' ? { sections: complete.sections } : {}),
       ...(schemaPath === 'column_flow' ? { column_flow: complete.column_flow } : {}),
       ...(schemaPath === 'prune_neighbors' ? { prune_neighbors: [] } : {}),
-      ...(schemaPath === 'questions' || schemaPath === 'prune_neighbors' ? { questions: complete.questions } : {}),
+      ...(schemaPath === 'questions' || schemaPath === 'prune_neighbors' || (mode === 'bb' && schemaPath.startsWith('sections')) ? { questions: complete.questions } : {}),
     };
     const accepted = JSON.parse(executeSubmitFindings(correction, services));
     expect(accepted).toMatchObject({ ok: true, next_focus: BRANCH });

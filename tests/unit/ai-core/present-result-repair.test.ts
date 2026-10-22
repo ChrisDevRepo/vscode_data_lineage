@@ -325,7 +325,7 @@ describe('indexed repair transactions', () => {
         { label: 'Target', color: 'target', node_ids: ['target'] },
       ]),
       sections: [
-        { label: 'z'.repeat(91), node_ids: ['source'], text: '   ' },
+        { label: '   ', node_ids: ['source'], text: '   ' },
         { label: 'Target', node_ids: ['target'], text: 'Existing target detail.' },
       ],
     } as PresentResultInput;

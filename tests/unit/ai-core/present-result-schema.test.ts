@@ -45,15 +45,19 @@ describe('present-result schema and provider contract', () => {
     );
   });
 
-  it('preserves long view names, report headings and legend text while bounding node badges', () => {
+  it('accepts long section labels unchanged in final reports and repairs', () => {
     const text = 'x'.repeat(2000);
     const input = { ...resultWith([{ label: ` ${text} `, color: 'source', node_ids: [nodeId] }]), name: text, title: text };
     const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(PresentResultModelSchema));
     expect(PresentResultModelSchema.parse(input)).toEqual(input);
     expect(wire(input)).toBe(true);
     const badge = { ...input, sections: [{ label: 'x'.repeat(91), node_ids: [nodeId], text }] };
-    expect(PresentResultModelSchema.safeParse(badge).success).toBe(false);
-    expect(wire(badge)).toBe(false);
+    expect(PresentResultModelSchema.parse(badge)).toEqual(badge);
+    expect(wire(badge)).toBe(true);
+    const patch = { sections: badge.sections };
+    const repair = presentResultRepairPatchSchemaForFields(['sections']);
+    expect(repair.parse(patch)).toEqual(patch);
+    expect(new Ajv({ strict: false }).compile(toModelJsonSchema(repair))(patch)).toBe(true);
   });
 
   it.each([

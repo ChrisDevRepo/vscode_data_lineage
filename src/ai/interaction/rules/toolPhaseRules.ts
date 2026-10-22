@@ -14,7 +14,7 @@ function offPolicyHint(toolName: string, stage: LmStage): string {
     case 'lineage_get_context':
     case 'lineage_get_screen_state':
     case 'lineage_detect_graph_patterns':
-      return 'Submit findings for the current focus: every open neighbor you do not prune is visited next, so the agenda is delivered explicitly - searching mid-hop is unnecessary.';
+      return 'Submit findings for the current focus using the supplied SQL and neighbor context; searching mid-hop is unnecessary.';
     case 'lineage_start_exploration':
       return 'Exploration is already in progress. Continue the agenda via submit_findings.';
     case 'lineage_present_result':

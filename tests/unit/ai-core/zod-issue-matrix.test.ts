@@ -109,9 +109,9 @@ describe('Zod issue matrix', () => {
   });
 
   it('too_big on a string: measures the text, states the cap and the shorten action, never a cut', () => {
-    const r = reject(PresentResultModelSchema, { ...render, sections: [{ label: 'x'.repeat(200), text: 'Source detail.', node_ids: ['dbo.a'] }] });
-    expect(r.reason).toContain('200 chars, limit 90');
-    expect(r.hint).toContain('Shorten "sections.0.label" to at most 90 characters; the engine never truncates authored text.');
+    const r = reject(SubmitFindingsBbInputSchema, { focus_node_id: 'dbo.a', summary: 'Source detail.', sections: { technical: 'Source detail.' }, badge_label: 'x'.repeat(200) });
+    expect(r.reason).toContain('200 chars, limit 50');
+    expect(r.hint).toContain('Shorten "badge_label" to at most 50 characters; the engine never truncates authored text.');
     expect(r.hint).toContain(INVALID_TOOL_INPUT_REPAIR_HINT);
   });
 

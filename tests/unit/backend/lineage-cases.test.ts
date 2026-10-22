@@ -877,7 +877,9 @@ describe('current task completeness before advancement', () => {
     expect((context.neighbors as HopNeighborDisclosure[]).find(neighbor => neighbor.id === source)?.can_map).toBe(border === 'admitted');
     const result = engine.submitFindings({ focus_node_id: writer, summary: 'No output is recorded.',
       sections: [{ angle: 'technical', text: 'The upstream evidence is retained.' }], column_flow: [], questions: [] });
-    expect(result).toMatchObject({ ok: true, ...(border === 'admitted' ? { route_outcomes: [{ nodeId: source, accepted: false, reason: 'not_followed' }] } : {}) });
+    expect(result).toMatchObject(border === 'admitted'
+      ? { code: 'route_validation_failed', detail: [expect.objectContaining({ kind: 'neighbor_outcome_missing', id: source })] }
+      : { ok: true });
   });
 
   it.each(['depth', 'direction', 'excluded', 'admitted'] as const)('filters write destinations against the %s scope boundary', border => {
@@ -1113,10 +1115,10 @@ describe('current task completeness before advancement', () => {
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: neighbor }, analysis_mode: 'bb' });
     expect(engine.columnAspect?.edges).toEqual([]);
   });
-  it('reports an unnamed, unmapped CT neighbor as not followed without synthesizing a purpose or column mapping', () => {
+  it('rejects an unnamed, unmapped CT neighbor without synthesizing a purpose or column mapping', () => {
     const engine = world();
     expect(engine.submitFindings({ ...finding, column_flow: [terminal('Value'), terminal('Other')] })).toMatchObject({
-      ok: true, route_outcomes: [{ nodeId: neighbor, accepted: false, reason: 'not_followed' }] });
+      code: 'route_validation_failed', detail: [expect.objectContaining({ kind: 'neighbor_outcome_missing', id: neighbor })] });
     expect(engine.toJSON().agenda).toEqual([]);
     expect(engine.columnAspect?.edges).toEqual([]);
   });
@@ -1399,7 +1401,7 @@ describe('shared object dispatch', () => {
     expect(engine.getCurrentTasks()).toContainEqual(expect.objectContaining({ sourceRefs: [{ node: stored, col: 'Value' }] }));
   });
 
-  it.each(['bb', 'ct'] as const)('preserves queued work and continues a new %s column continuation without an authored question', analysisMode => {
+  it.each(['bb', 'ct'] as const)('preserves queued work with a new %s authored mapping or relevance question', analysisMode => {
     const root = '[d].[root]', branch = '[d].[branch]', stored = '[d].[stored]';
     const nodes = [
       makeNode({ id: root, schema: 'd', name: 'root', type: 'view', columns: ['Value', 'Other'].map(column),
@@ -1421,7 +1423,8 @@ describe('shared object dispatch', () => {
     const before = engine.toJSON();
     expect(before.agenda.some(entry => entry.nodeId === stored)).toBe(true);
     expect(engine.submitFindings({ ...guardRecord(branch), ...(analysisMode === 'ct'
-      ? { column_flow: [{ out_col: 'Other', upstream_columns: [{ node: stored, col: 'Other' }] }] } : {}) }))
+      ? { column_flow: [{ out_col: 'Other', upstream_columns: [{ node: stored, col: 'Other' }] }] }
+      : { questions: [{ nodeId: stored, question: 'Trace stored Other.' }] }) }))
       .toMatchObject({ ok: true, route_outcomes: [{ nodeId: stored, accepted: true }] });
     expect(engine.investigationTasks.filter(task => task.nodeId === stored).map(task => task.question)).toContain('Trace stored Value.');
     if (analysisMode === 'ct') expect(engine.toJSON().agenda).toMatchObject([{ nodeId: stored, activeColumns: ['Value', 'Other'] }]);
@@ -1547,7 +1550,7 @@ describe('result dispositions', () => {
     expect(result.edges.map(([from, to]) => `${from}->${to}`).sort()).toEqual([`${used}->${writer}`, `${writer}->${target}`]);
     expect(result.detail_slots.map(slot => slot.nodeId).sort()).toEqual(kept);
   });
-  it('advertises can_prune=false when removing an open neighbor is refused by pruneRefusal', () => {
+  it('accepts a losing prune of an unvisited neighbor mapped by an earlier branch', () => {
     const origin = '[d].[Proc]', focus = '[d].[Src]', sink = '[d].[Sink]';
     const nodes = [
       makeNode({ id: origin, schema: 'd', name: 'Proc', type: 'procedure', bodyScript: 'CREATE PROCEDURE d.Proc AS INSERT INTO d.Sink(X) SELECT X FROM d.Src;' }),
@@ -1564,8 +1567,18 @@ describe('result dispositions', () => {
     })).toHaveProperty('ok', true);
     const hop = engine.getHopContext();
     expect(hop).toMatchObject({ focus_node: { id: focus } });
-    expect(hop && 'neighbors' in hop ? hop.neighbors?.find(n => n.id === sink) : undefined).toMatchObject({ id: sink, can_question: true, can_prune: false });
-    expect(engine.hopSubmitColumns.neighbors).toContainEqual({ id: sink, can_question: true, can_prune: false });
+    expect(hop && 'neighbors' in hop ? hop.neighbors?.find(n => n.id === sink) : undefined).toMatchObject({ id: sink, can_question: true, can_prune: true });
+    expect(engine.hopSubmitColumns.neighbors).toContainEqual({ id: sink, can_question: true, can_prune: true });
+    const edges = engine.columnAspect!.edges.slice();
+    const accepted = engine.submitFindings({ ...guardRecord(focus),
+      prune_neighbors: [{ id: sink, reason: 'No relevant value from this branch.' }],
+    });
+    expect(accepted, JSON.stringify(accepted)).toHaveProperty('ok', true);
+    expect(engine.toJSON().removedSet).toEqual([]);
+    expect(engine.columnAspect!.edges).toEqual(edges);
+    expect(engine.getHopContext()).toMatchObject({ done: true });
+    expect(engine.columnAspect!.edges.map(edge => `${edge.from_node}.${edge.from_col}->${edge.to_node}.${edge.to_col}`).sort())
+      .toEqual([`${focus}.X->${sink}.X`]);
   });
 });
 
@@ -1868,7 +1881,11 @@ describe('CT boundary rejects instead of dropping a column reference', () => {
     expect(rejection).toMatchObject({ code: 'route_validation_failed',
       issuePaths: ['prune_neighbors.0.id', 'column_flow.0.upstream_columns.0'],
       detail: [expect.objectContaining({ path: 'prune_neighbors.0.id', allowed_values: [stranger] })] });
-    expectUnchangedRouting(engine.toJSON(), before);
+    const after = engine.toJSON();
+    expectUnchangedRouting(after, before);
+    expect(after.visited).toEqual(before.visited);
+    expect(after.engineInternals.investigationTasks).toEqual(before.engineInternals.investigationTasks);
+    expect(after.engineInternals.pruneBallots).toEqual(before.engineInternals.pruneBallots);
     expect(engine.getDetailSlots()).toEqual([]);
     const repair = toHopFinding(submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns, engine.heldColumnFlow)
       .parse({ focus_node_id: origin, column_flow: flow, prune_neighbors: [prunes[1]], questions: [{ nodeId: source, question: 'Resolve Amount.' }] }));
@@ -1938,5 +1955,75 @@ describe('current task endpoints come from the engine', () => {
     expect(engine.taskEndpoints(task)).toEqual({ assigned: [{ node: origin, col: 'Total' }], external: [] });
     expect(buildCurrentTaskBlock([{ ...task, endpoints: engine.taskEndpoints(task) }], ['total'])).toContain(`<assigned_endpoints>${origin}.Total:`);
     expect(buildCurrentTaskBlock([task], ['total'])).not.toContain('<assigned_endpoints>');
+  });
+});
+
+describe('authored outcomes for every open neighbor', () => {
+  it.each((['bb', 'ct'] as const).flatMap(mode => (['upstream', 'downstream', 'bidirectional'] as const).map(direction => ({ mode, direction }))))('requires an authored decision in $mode / $direction', ({ mode, direction }) => {
+    const root = '[d].[Root]', up = '[d].[Supplier]', down = '[d].[Consumer]';
+    const nodes = [root, up, down].map(id => makeNode({ id, schema: 'd', name: id, type: 'view',
+      columns: [{ name: 'Value', type: 'int', nullable: 'NULL', extra: '' }], bodyScript: 'SELECT 1 AS Value;' }));
+    const edges: [string, string][] = [[up, root], [root, down]];
+    const engine = new NavigationEngine(makeModel(nodes, edges, ['d']), makeGraph(nodes, edges), () => {}, {});
+    expect(engine.init({ origin: root, question: 'Explain Value.', analysisMode: mode, direction,
+      ...(mode === 'ct' ? { targetColumns: ['Value'] } : {}),
+      depthIntent: { upstream: { levels: direction === 'downstream' ? 0 : 1, exactness: 'exact' },
+        downstream: { levels: direction === 'upstream' ? 0 : 1, exactness: 'exact' } } })).toHaveProperty('ok', true);
+    engine.getHopContext();
+    const before = engine.toJSON();
+    // A local CT output generates downstream carry, but states no decision about the consumer.
+    const result = engine.submitFindings({ focus_node_id: root, summary: 'Local constant.',
+      sections: [{ angle: 'technical', text: 'Value is a constant.' }], ...(mode === 'ct' ? { column_flow: [{ out_col: 'Value', upstream_columns: [] }] } : {}) });
+    const required = direction === 'upstream' ? [up] : direction === 'downstream' ? [down] : [up, down];
+    expect(result, `${mode}/${direction}`).toMatchObject({ code: 'route_validation_failed',
+      detail: required.map(id => expect.objectContaining({ kind: 'neighbor_outcome_missing', id })) });
+    for (const id of required) expect(JSON.stringify(result)).toContain(id);
+    expect(JSON.stringify(result)).toMatch(/map.*prune.*question/i);
+    const after = engine.toJSON();
+    expectUnchangedRouting(after, before);
+    expect(after.visited).toEqual(before.visited);
+    expect(after.engineInternals.investigationTasks).toEqual(before.engineInternals.investigationTasks);
+    expect(after.engineInternals.pruneBallots).toEqual(before.engineInternals.pruneBallots);
+    expect(engine.getDetailSlots()).toEqual([]);
+    expect(engine.currentFocus).toBe(root);
+    expect(engine.heldPartsOfCurrentFocus()).toMatchObject({ summary: true, sections: ['technical'], resend: [] });
+    expect(engine.submitFindings({ focus_node_id: root, summary: '', sections: [] })).toHaveProperty('code', 'route_validation_failed');
+    expect(engine.submitFindings({ focus_node_id: root, summary: '', sections: [], questions: [], prune_neighbors: [],
+      ...(mode === 'ct' ? { column_flow: [] } : {}) })).toHaveProperty('code', 'route_validation_failed');
+    expect(engine.submitFindings({ focus_node_id: root, summary: '', sections: [],
+      questions: required.map(nodeId => ({ nodeId, question: 'Explain your role in Value.' })) })).toHaveProperty('ok', true);
+    expect(engine.toJSON().engineInternals.investigationTasks).toEqual(expect.arrayContaining(required.map(nodeId =>
+      expect.objectContaining({ nodeId, question: 'Explain your role in Value.' }))));
+  });
+});
+
+describe('authored column endpoints and downstream decisions', () => {
+  it('counts a written table as mapped while requiring a separate outcome for an untouched consumer', () => {
+    const root = '[d].[Root]', writer = '[d].[Writer]', stored = '[d].[Stored]', consumer = '[d].[Consumer]';
+    const column = { name: 'Value', type: 'int', nullable: 'NULL', extra: '' };
+    const nodes = [
+      makeNode({ id: root, schema: 'd', name: 'Root', type: 'view', columns: [column], bodyScript: 'SELECT 1 AS Value;' }),
+      makeNode({ id: writer, schema: 'd', name: 'Writer', type: 'procedure', bodyScript: 'INSERT d.Stored(Value) SELECT Value FROM d.Root;' }),
+      makeNode({ id: stored, schema: 'd', name: 'Stored', type: 'table', columns: [column] }),
+      makeNode({ id: consumer, schema: 'd', name: 'Consumer', type: 'view', columns: [column], bodyScript: 'EXEC d.Writer;' }),
+    ];
+    const edges: [string, string][] = [[root, writer], [writer, stored], [writer, consumer]];
+    const engine = new NavigationEngine(makeIndexedModel(nodes, edges), makeGraph(nodes, edges), () => {}, {});
+    expect(engine.init({ origin: root, question: 'Trace Value.', analysisMode: 'ct', targetColumns: ['Value'], direction: 'downstream',
+      depthIntent: { upstream: { levels: 0, exactness: 'exact' }, downstream: { levels: 'all', exactness: 'exact' } } })).toHaveProperty('ok', true);
+    engine.getHopContext();
+    expect(engine.submitFindings({ focus_node_id: root, summary: 'Local value.', sections: [{ angle: 'technical', text: 'Value is constant.' }],
+      column_flow: [{ out_col: 'Value', upstream_columns: [] }], questions: [{ nodeId: writer, question: 'Where does Value land?' }] })).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: writer } });
+    const before = engine.toJSON();
+    const flow = [{ out_col: 'Value', writes_to: { node: stored, col: 'Value' }, upstream_columns: [{ node: root, col: 'Value' }] }];
+    const result = engine.submitFindings({ focus_node_id: writer, summary: 'Persists Value.', sections: [{ angle: 'technical', text: 'Declared insert.' }], column_flow: flow });
+    expect(result).toMatchObject({ code: 'route_validation_failed', detail: [expect.objectContaining({ kind: 'neighbor_outcome_missing', id: consumer })] });
+    expectUnchangedRouting(engine.toJSON(), before);
+    const schema = submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns, engine.heldColumnFlow);
+    const repair = { focus_node_id: writer, questions: [{ nodeId: consumer, question: 'How does it use the procedure result?' }] };
+    expect(engine.submitFindings(toHopFinding(schema.parse(repair)))).toHaveProperty('ok', true);
+    expect(engine.columnAspect?.edges).toEqual([expect.objectContaining({ from_node: root, from_col: 'Value', to_node: stored, to_col: 'Value' })]);
+    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: consumer }, analysis_mode: 'bb' });
   });
 });

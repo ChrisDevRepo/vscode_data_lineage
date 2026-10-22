@@ -16,7 +16,6 @@ import {
   evaluateBbTargetColumnsRule,
   evaluateAlreadyStartedRule,
   evaluateParallelStartRule,
-  evaluateSupplementPrereqRule,
   resolveCanonicalQuestion,
 } from '../../interaction/rules/startExplorationRules';
 import type { ToolServices } from './toolServices';
@@ -25,7 +24,7 @@ import { REJECTION_CODES } from '../../support/rejectionCodes';
 import { checkScopeAdmission } from '../../support/tokenBudget';
 import { makeRejection } from '../../support/toolErrorEnvelope';
 
-/** Validates an exploration proposal and either opens its approval gate or resumes an approved supplement. */
+/** Validates a fresh or refined exploration proposal and opens its approval gate. */
 export async function executeStartExploration(input: unknown, s: ToolServices): Promise<string> {
     try {
       const loggedInput = redactMissionBriefForLog(input);
@@ -49,6 +48,16 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         }
       }
 
+      // A completed answer grants no consent to read new SQL. Legacy callers receive the same
+      // fresh-proposal route the model is offered; the prior result and memory stay untouched.
+      if (input && typeof input === 'object' && Object.prototype.hasOwnProperty.call(input, 'supplement')) {
+        return s.logAndReturn('lineage_start_exploration', makeRejection({
+          code: 'fresh_proposal_required',
+          reason: 'Additional SQL requires a new exploration with its own approval card.',
+          hint: 'Return to discovery and submit a fresh proposal with origin and scope, without supplement.',
+        }), loggedInput);
+      }
+
       const parsed = StartExplorationInputSchema.safeParse(input);
       if (!parsed.success) {
         const rawObject = input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {};
@@ -57,75 +66,6 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       const data = parsed.data;
       if (data.mission_brief !== undefined) {
         s.logger.debug(`[Mission] provenance=tool_payload len=${data.mission_brief.length}`);
-      }
-
-      const applyFollowUpContext = (): void => {
-        if (data.classification) sess.setClassification(data.classification);
-        if (data.mission_brief !== undefined) sess.memory.setMissionBrief(data.mission_brief);
-        const canonicalQuestion = resolveCanonicalQuestion({
-          lastDiscoveryQuestion: sess.lastDiscoveryQuestion,
-          currentTurnPrompt: sess.currentTurnPrompt,
-          modelQuestion: data.question,
-          pendingInitQuestion: undefined,
-        });
-        if (data.question && data.question !== canonicalQuestion) {
-          s.logger.debug('[AI] [StartExploration] model question discarded — a higher-priority question source is in force (supplement)');
-        }
-        if (canonicalQuestion) sess.memory.setUserQuestion(canonicalQuestion);
-      };
-
-      if (data.supplement && !data.origin) {
-        const priorEngine = sess.stateMachine as NavigationEngine | null;
-        const supplementPrereq = evaluateSupplementPrereqRule(priorEngine?.status ?? null);
-        if (supplementPrereq) {
-          return s.logAndReturn('lineage_start_exploration', supplementPrereq, loggedInput);
-        }
-        if (!priorEngine) {
-          throw new Error('[start_exploration] supplement prerequisite passed without a prior engine');
-        }
-        const supplementIds = data.supplement.nodeIds ?? [];
-        const supplementScope = priorEngine.measureSupplementScope(supplementIds, data.supplement.chain);
-        const supplementRefusal = checkScopeAdmission(s.budget, supplementScope);
-        if (supplementRefusal) {
-          s.logger.debug(`[ScopeBudget] supplement refused limit=${supplementRefusal.limit} nodes=${supplementScope.nodes} rounds=${supplementScope.rounds} columns=${supplementScope.columns}`);
-          return s.logAndReturn('lineage_start_exploration', makeRejection({
-            code: REJECTION_CODES.overActiveScopeBudget,
-            reason: supplementRefusal.supplementText,
-            detail: { limit: supplementRefusal.limit, nodes: supplementScope.nodes, rounds: supplementScope.rounds, columns: supplementScope.columns },
-          }), loggedInput);
-        }
-        const res = priorEngine.supplementAgenda(supplementIds, [], data.supplement.chain);
-        if ('code' in res) return s.logAndReturn('lineage_start_exploration', res, loggedInput);
-        if (res.skippedDetails.length > 0) {
-          s.logger.debug(`[${sess.id}] supplement skippedIds=[${sanitizeForLog(res.skippedDetails.map(d => `${d.nodeId}:${d.reason}`).join(','))}]`);
-        }
-        if (res.agendaed === 0) {
-          s.logger.info(`[${sess.id}] [Phase] completed (supplement refused, nothing admitted) — nodeIds=${data.supplement.nodeIds?.length ?? 0} agendaed=0 skipped=${res.skipped}`);
-          const unresolvedIds = res.skippedDetails.filter(skip => skip.reason === 'unresolved').map(skip => skip.nodeId);
-          const borderSkips = res.skippedDetails.filter(skip => skip.reason !== 'unresolved');
-          const hint = [
-            'No id in this supplement was admitted into this trace (the rejection reason lists each id with its refusal), so there is nothing to explore. Do not resend this supplement.',
-            ...(unresolvedIds.length > 0
-              ? [`${unresolvedIds.join(', ')} ${unresolvedIds.length === 1 ? 'does' : 'do'} not resolve to an object in the loaded graph: call lineage_search_objects with each named identifier to resolve the canonical schema-qualified id before proposing it.`]
-              : []),
-            ...borderSkips.map(skip => skip.hint
-              ?? `${skip.nodeId} is excluded by the approved scope: to analyse it, start a new lineage_start_exploration proposal (origin + scope, no supplement) that names it without that exclusion, for the user to approve at the confirm_sm_start gate.`),
-          ].join(' ');
-          return s.logAndReturn('lineage_start_exploration', makeRejection({
-            code: REJECTION_CODES.supplementAllRefused,
-            reason: `Supplement refused, nothing admitted: ${res.skippedDetails.map(skip => `${skip.nodeId} (${skip.reason})`).join(', ')}`,
-            hint,
-            detail: { skippedDetails: res.skippedDetails },
-          }), loggedInput);
-        }
-        const admittedIds = supplementIds.filter(
-          id => !res.skippedDetails.some(skip => identifierKey(skip.nodeId) === identifierKey(id)),
-        );
-        applyFollowUpContext();
-        sess.enterExploring(s.turnEpoch(sess));
-        s.logger.info(`[${sess.id}] [Phase] completed → exploring (supplement) — nodeIds=${data.supplement.nodeIds?.length ?? 0} agendaed=${res.agendaed} skipped=${res.skipped}`);
-        const hopCtx = priorEngine.getHopContext();
-        return s.logAndReturn('lineage_start_exploration', { ok: true, supplement: res, admittedIds, ...hopCtx }, loggedInput);
       }
 
       if (data.proposalRevision !== undefined && !isRefining) {

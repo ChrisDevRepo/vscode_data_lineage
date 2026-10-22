@@ -308,8 +308,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         if (outOfScope.length > 0) {
           return rejectGraphEdit('add_node_ids', makeRejection({
             code: REJECTION_CODES.validation,
-            reason: `add_node_ids names objects this exploration has not analysed: ${quoteIds(outOfScope)}.`,
-            hint: 'Rendering reveals analysed objects only. If the user asked to add these objects, call lineage_start_exploration {"supplement":{"nodeIds":[...]}} — that analyses them into this graph — then render. Otherwise do not render them: name them in your chat answer and ask which to add.',
+            reason: `add_node_ids names objects outside this exploration's approved scope: ${quoteIds(outOfScope)}.`,
+            hint: 'To read new SQL, return to discovery and propose a new exploration for approval. Keep this render within the approved scope.',
             issuePaths: ['add_node_ids'],
           }));
         }
@@ -423,6 +423,16 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         const slotChars = sess.memory.getResult().detail_slots
           .reduce((total, slot) => total + slot.sections.reduce((sum, section) => sum + section.text.length, 0), 0);
         const coverage = evidenceCoverage(evidenceBlocks, [renderInput.title, renderInput.intro, renderInput.closing, ...(renderInput.sections ?? []).map(sec => sec.text)].filter((text): text is string => text !== undefined));
+        if (evidenceViolations.length === 0 && coverage.unusedIds.length > 0) {
+          evidenceViolations.push({
+            field: 'sections',
+            missingContent: true,
+            messages: [`Captured SQL block(s) missing from the preview: ${quoteIds(coverage.unusedIds)}. Include their SQL or references in the report.`],
+            repairFields: ['sections'],
+            paths: ['sections'],
+            entryIds: coverage.unusedIds,
+          });
+        }
         s.logger.debug(
           `[Presentation] retention — slotChars=${slotChars} sectionChars=${presentInput.sections.reduce((sum, sec) => sum + sec.text.length, 0)} ` +
           `sections(nodes:chars)=[${presentInput.sections.map(sec => `${sec.node_ids?.length ?? 0}:${sec.text.length}`).join(', ')}] ` +

@@ -50,15 +50,15 @@ Database connections use SQL login or Microsoft Entra ID. AI trace files are wri
 
 `@lineage` runs in VS Code Chat with your selected compatible model provider. A hosted provider needs network access; offline AI depends on whether your provider supports local operation. Its catalog tools read the loaded graph and SQL definitions; it cannot connect to a database or run SQL. Its result is a highlighted subgraph with a written explanation.
 
-A small question is answered directly in chat. A larger one becomes an exploration plan that you approve, change or cancel; the approved plan is then walked object by object, and the findings are written up as the answer and a result graph.
+A small question is answered in chat; a larger one becomes a plan you approve, change or cancel before its object-by-object walk. New SQL work after an answer needs a fresh approval card; view or text edits can reuse the completed result.
 
 ### Exploration
 
-Each SQL step is a **hop**: the AI reads the current object's definition, records findings and column mappings, and may ask a neighbor a question or prune it. The engine continues mapped neighbors itself; in CT an unnamed, unmapped neighbor is reported as not followed. The engine answers ACK or REJECT before committing; a correction resends only the failed parts. The AI does not classify the current object as analyze or passthrough. These checks establish mechanical validity, not correct SQL interpretation.
+Each SQL step is a **hop**: the AI reads the current object's definition, records findings and states a mapping, question or prune for every open neighbor. A missing outcome is rejected; valid fields stay held for an action-only correction. The engine continues mapped neighbors and answers ACK or REJECT before committing. The AI does not classify the current object as analyze or passthrough. These checks establish mechanical validity, not correct SQL interpretation.
 
 The backend owns routing and visit-once scheduling. One neighbor projection supplies action capabilities to context, schemas, routing and rejection choices. A hop can change only its current findings and propose actions for its eligible unvisited neighbors; a distant object is not a valid neighbor prune target. Visited neighbors remain available as evidence but receive no new work or changes to their committed findings.
 
-The backend manages neighbor pruning and graph connectivity: a prune requests removal, while committed mappings and connectivity to the origin are preserved. Table identifiers and columns are normalized according to SQL comparison rules, preserving the original spelling in the findings.
+The backend manages pruning and connectivity while preserving committed mappings and the origin path. Identifier normalization preserves authored spelling. Report rendering requires every served captured SQL block; an omission requests a focused repair while valid content stays held.
 
 The engine retains tables and external storage objects in the result and forwards their incoming questions automatically to eligible neighbors in the approved direction. The same route handles a table named by an approved follow-up. Qualified column endpoints travel as unconfirmed candidates, without invented value edges: each receiving SQL object establishes which values it writes or uses. Unused candidates end independently at that object, preserving table evidence and sibling branches. Stored DDL and column expressions remain available as metadata; a procedure, view or function with unavailable SQL still needs an explicit uncertainty finding.
 

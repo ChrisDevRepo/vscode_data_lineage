@@ -1,4 +1,5 @@
 import type { ZodType } from 'zod';
+import { isDeepStrictEqual } from 'node:util';
 import { resolveModelNodeId } from '../support/modelReferences';
 import { splitSqlName, stripBrackets } from '../../utils/sql';
 
@@ -35,7 +36,11 @@ const MAX_ROUNDS = 8;
 
 /** The single decoded value of `text` when it is exactly the expected type, otherwise `undefined`. */
 function decodeExact(text: string, expected: string): unknown {
-  if (expected === 'number') return /^-?\d+(\.\d+)?$/.test(text.trim()) ? Number(text) : undefined;
+  if (expected === 'number') {
+    if (!/^-?\d+(\.\d+)?$/.test(text.trim())) return undefined;
+    const number = Number(text);
+    return Number.isFinite(number) && decimalValue(text.trim()) === decimalValue(Number.isInteger(number) ? BigInt(number).toString() : String(number)) ? number : undefined;
+  }
   if (expected === 'boolean') return text === 'true' ? true : text === 'false' ? false : undefined;
   if (expected !== 'object' && expected !== 'array') return undefined;
   let decoded: unknown;
@@ -43,6 +48,16 @@ function decodeExact(text: string, expected: string): unknown {
   const isArray = Array.isArray(decoded);
   if (expected === 'array') return isArray ? decoded : undefined;
   return typeof decoded === 'object' && decoded !== null && !isArray ? decoded : undefined;
+}
+
+/** Compares decimal values without losing digits through a floating-point conversion. */
+function decimalValue(text: string): string {
+  const [coefficient, exponent = '0'] = text.toLowerCase().split('e');
+  const [whole, fraction = ''] = coefficient.split('.');
+  let digits = BigInt(whole + fraction);
+  let scale = Number(exponent) - fraction.length;
+  while (digits !== 0n && digits % 10n === 0n) { digits /= 10n; scale += 1; }
+  return `${digits}e${digits === 0n ? 0 : scale}`;
 }
 
 /**
@@ -160,29 +175,44 @@ function respellSearch(record: Record<string, unknown>, path: PropertyKey[], fix
   }
 }
 
-/** Decodes text where the schema expects an object, list, number or true/false, round by round. */
-function decodeText(schema: ZodType, input: unknown): { readonly input: unknown; readonly fixes: ModelInputFix[] } {
+/** Decodes only schema-directed types; union branches must admit one unique result. */
+function decodeText(schema: ZodType, input: unknown, path: PropertyKey[] = [], rounds = 0): { readonly input: unknown; readonly fixes: ModelInputFix[] } {
+  const unchanged = { input, fixes: [] as ModelInputFix[] };
+  if (schema.safeParse(input).success) return unchanged;
+  const chain = unwrap(schema);
+  const core = chain[chain.length - 1]._zod.def as { type: string; shape?: Record<string, ZodType>; element?: ZodType; options?: readonly ZodType[] };
+  if (core.type === 'union' && core.options) {
+    const candidates = core.options.map(option => ({ option, decoded: decodeText(option, input, path, rounds) }))
+      .filter(({ option, decoded }) => decoded.fixes.length > 0 && option.safeParse(decoded.input).success);
+    const first = candidates[0]?.decoded;
+    return first && candidates.every(({ decoded }) => isDeepStrictEqual(decoded.input, first.input)) ? first : unchanged;
+  }
   const fixes: ModelInputFix[] = [];
   let current = input;
-  for (let round = 0; round < MAX_ROUNDS; round += 1) {
-    const parsed = schema.safeParse(current);
-    if (parsed.success) break;
-    let fixed = false;
-    for (const issue of parsed.error.issues) {
-      if (issue.code !== 'invalid_type' || issue.path.length === 0) continue;
-      const parent = issue.path.slice(0, -1).reduce<unknown>((node, key) => (node as Record<PropertyKey, unknown> | undefined)?.[key], current);
-      const key = issue.path[issue.path.length - 1];
-      const value = (parent as Record<PropertyKey, unknown> | undefined)?.[key];
-      if (typeof value !== 'string') continue;
-      const after = decodeExact(value, issue.expected);
-      if (after === undefined) continue;
-      if (!fixed) current = structuredClone(current);
-      const target = issue.path.slice(0, -1).reduce<unknown>((node, step) => (node as Record<PropertyKey, unknown>)[step], current);
-      (target as Record<PropertyKey, unknown>)[key] = after;
-      fixes.push({ path: issue.path.join('.'), before: value, after });
-      fixed = true;
-    }
-    if (!fixed) break;
+  if (typeof current === 'string') {
+    if (rounds >= MAX_ROUNDS) return unchanged;
+    const after = decodeExact(current, core.type);
+    if (after === undefined) return unchanged;
+    fixes.push({ path: path.join('.'), before: current, after });
+    current = after;
+    rounds += 1;
   }
-  return { input: current, fixes };
+  if (core.type === 'array' && Array.isArray(current) && core.element) {
+    const entries = current;
+    current = entries.map((entry, index) => {
+      const decoded = decodeText(core.element as ZodType, entry, [...path, index], rounds);
+      fixes.push(...decoded.fixes);
+      return decoded.input;
+    });
+  } else if (core.type === 'object' && core.shape && typeof current === 'object' && current !== null && !Array.isArray(current)) {
+    const record = { ...current } as Record<string, unknown>;
+    for (const [key, child] of Object.entries(core.shape)) {
+      if (!Object.prototype.hasOwnProperty.call(record, key)) continue;
+      const decoded = decodeText(child, record[key], [...path, key], rounds);
+      record[key] = decoded.input;
+      fixes.push(...decoded.fixes);
+    }
+    current = record;
+  }
+  return fixes.length > 0 ? { input: current, fixes } : unchanged;
 }
