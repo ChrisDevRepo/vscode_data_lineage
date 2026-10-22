@@ -244,7 +244,7 @@ export class ColumnTracer {
           continue;
         }
       }
-      const toNodeForEdge = toNodeId ?? focusId;
+      const toNodeForEdge = toNodeId;
 
       for (let refIndex = 0; refIndex < entry.upstream_columns.length; refIndex++) {
         const cont = entry.upstream_columns[refIndex];
@@ -273,6 +273,7 @@ export class ColumnTracer {
           continue;
         }
 
+        if (!toNodeForEdge) continue;
         stagedEdges.push({
           hop: 0,
           hop_node: focusId,
@@ -465,6 +466,7 @@ export function resolveColumnFlowTarget(
       writerEdge: { toNode, toCol: entry.writes_to.col },
     };
   }
+  if (nodeMap.get(focusId)?.type === 'procedure') return null;
   return { attributionTo: focusId, attributionCol: entry.out_col, writerEdge: null };
 }
 

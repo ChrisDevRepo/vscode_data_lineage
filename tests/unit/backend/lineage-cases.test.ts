@@ -203,7 +203,7 @@ describe('declared contributor identities', () => {
   it('stages a valid neighbor-column pair that does not sit on the requested chain', () => {
     const result = run({ id: 'detached-source-array', active: ['Tracked'], focus: 'writer', out: 'Other', direction: 'downstream',
       roots: [{ node: 'writer', col: 'Tracked' }],
-      nodes: [{ id: 'writer', type: 'procedure' }, { id: 'source', type: 'table', columns: ['Other'] }], expect: {},
+      nodes: [{ id: 'writer', type: 'view', columns: ['Tracked', 'Other'] }, { id: 'source', type: 'table', columns: ['Other'] }], expect: {},
     }, [{ node: 'source', col: 'Other' }]);
     expect(result.invalidRoutes).toEqual([]);
     expect(result.stagedEdges).toEqual([expect.objectContaining({
@@ -1478,8 +1478,13 @@ describe('result dispositions', () => {
     const payload = { focus_node_id: procedure, summary: 'The procedure inserts X into Stored beyond the requested limit.',
       sections: { technical: 'INSERT d.Stored(X) SELECT X FROM d.Input; Stored is beyond downstream one.' },
       column_flow: [{ out_col: 'X', upstream_columns: [{ node: input, col: 'X' }], writes_to: null }] };
+    const before = engine.toJSON().columnAspect;
+    expect(engine.submitFindings(toHopFinding(schema.parse({ ...payload, column_flow: [{
+      out_col: 'X', upstream_columns: [{ node: input, col: 'Missing' }], writes_to: null,
+    }] })))).toMatchObject({ code: 'contributor_col_not_on_source', issuePaths: ['column_flow.0.upstream_columns.0.col'] });
+    expect(engine.toJSON().columnAspect).toEqual(before);
     expect(engine.submitFindings(toHopFinding(schema.parse(payload)))).toHaveProperty('ok', true);
-    expect(engine.columnAspect!.edges).toMatchObject([{ from_node: input, from_col: 'X', to_node: procedure, to_col: 'X' }]);
+    expect(engine.columnAspect!.edges).toEqual([]);
     expect(engine.columnAspect!.edges.some(edge => edge.from_node === stored || edge.to_node === stored)).toBe(false);
   });
 

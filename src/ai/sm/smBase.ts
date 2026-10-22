@@ -2397,6 +2397,7 @@ export class NavigationEngine implements IHopStateMachine {
       if (traceDirection === 'upstream') {
         for (const [index, entry] of finding.column_flow.entries()) {
           if (entrySides && !entrySides.some(side => side.index === index && side.upstream)) continue;
+          if (!resolveColumnFlowTarget(entry, focusId, this.nodeMap, this.identifierCaseSensitive)) continue;
           for (const ref of entry.upstream_columns) {
             const nid = ref.node;
             if (!attachedUpstream.has(endpointKey(nid, ref.col))) continue;
@@ -2504,9 +2505,9 @@ export class NavigationEngine implements IHopStateMachine {
     if (this.tracer && !unavailable.has('column_flow')) {
       const accounted = new Set<string>();
       for (const entry of finding.column_flow ?? []) {
-        accounted.add(endpointKey(focusId, entry.out_col));
-        const target = entry.returns_to ?? resolveColumnFlowTarget(entry, focusId, this.nodeMap, this.identifierCaseSensitive);
-        if (target) accounted.add('node' in target ? endpointKey(target.node, target.col) : endpointKey(target.attributionTo, target.attributionCol));
+        const target = resolveColumnFlowTarget(entry, focusId, this.nodeMap, this.identifierCaseSensitive);
+        if (target) accounted.add(endpointKey(focusId, entry.out_col));
+        if (target) accounted.add(endpointKey(target.attributionTo, target.attributionCol));
         for (const ref of entry.upstream_columns) if (mapped.has(endpointKey(ref.node, ref.col))) accounted.add(endpointKey(ref.node, ref.col));
       }
       for (const route of routeRequests) if (route.callerContext && acceptedNids.has(route.nodeId)) accounted.add(endpointKey(route.callerContext.node, route.callerContext.col));

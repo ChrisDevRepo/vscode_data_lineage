@@ -16,7 +16,7 @@ The newest version heading collects changes until that version ships.
 - A hop no longer needs a question or prune for every neighbor. The engine continues mapped neighbors with the column instruction; a column-trace neighbor that is neither named nor mapped is reported as not followed.
 - Column-trace hops record every valid neighbor-and-column mapping; attachment to the requested columns selects continuation. Procedure writes retain real source-to-target pairs without duplicate procedure-column edges; writes with no source column retain their procedure-to-target edge, and asked columns keep a preview row even without a mapping.
 - Indexed report repairs share field detection, schemas and merging, with shorter correction instructions.
-- At a procedure hop, each column-trace mapping must name the neighbor table column it writes (`writes_to`), or `null` when the procedure writes no neighbor table. Edges no longer attach to the procedure itself because the field was left out.
+- At a procedure hop, each column-trace mapping must name the neighbor table column it writes (`writes_to`), or `null` when the procedure writes no neighbor table. A null destination retains the findings without creating procedure-column edges or continuation.
 - A column-trace source that lists roles must include a value role (`pass_through`, `compute` or `aggregate`); `combine` and `filter` are only extra roles beside one. A column that only filters or joins rows is rejected with one fixed message and is described in sections instead of drawn as an edge. Leaving the roles out is still accepted.
 
 ### Removed
