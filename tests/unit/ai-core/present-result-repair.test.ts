@@ -281,7 +281,9 @@ describe('indexed repair transactions', () => {
 
     expect(store.get()?.highlight_groups).toEqual(draft.highlight_groups);
     expect(store.get()?.title).toBeUndefined();
-    expect(schema.safeParse({ highlight_groups: [{ index: 0, label: 'Sources' }] }).success).toBe(false);
+    // A shape-rejected optional field may be withdrawn by omission; the indexed label leaf may not.
+    expect(schema.safeParse({ highlight_groups: [{ index: 0, label: 'Sources' }] }).success).toBe(true);
+    expect(schema.safeParse({ title: 'Result lineage' }).success).toBe(false);
     const patch = schema.parse({
       title: 'Result lineage',
       highlight_groups: [{ index: 0, label: 'Sources' }],
