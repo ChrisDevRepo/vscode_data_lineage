@@ -288,7 +288,7 @@ export class ColumnTracer {
       const writerEdge = resolvedTarget?.writerEdge ?? null;
       const writerTargetObj = writerEdge ? nodeMap.get(writerEdge.toNode) : null;
       if (writerEdge && writerTargetObj && !SCRIPT_TYPES.has(writerTargetObj.type)
-        && (entry.upstream_columns.length === 0 || stagedEdges.length > stagedBeforeEntry)) {
+        && entry.upstream_columns.length === 0) {
         stagedEdges.push({
           hop: 0,
           hop_node: focusId,

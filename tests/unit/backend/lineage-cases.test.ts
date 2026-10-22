@@ -1647,6 +1647,10 @@ describe('passthrough candidates at the next object', () => {
     expect(logs.some(message => message.includes('columns end') && message.includes(`${b}.Y`))).toBe(true);
     expect(engine.getHopContext()).toHaveProperty('done', true);
     expect(engine.getResult().node_states.find(state => state.nodeId === t)).toMatchObject({ action: 'passthrough', source: 'engine', columns: ['Z'] });
+    expect(engine.columnAspect!.edges).toEqual([
+      ...['X', 'Y'].map(col => expect.objectContaining({ hop_node: a, from_node: a, from_col: col, to_node: b, to_col: col })),
+      expect.objectContaining({ hop_node: c, from_node: b, from_col: 'X', to_node: t, to_col: 'Z' }),
+    ]);
     expect(engine.columnAspect!.edges.some(edge => edge.from_node === b && edge.from_col === 'Y')).toBe(false);
   });
 });

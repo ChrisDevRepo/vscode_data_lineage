@@ -2425,7 +2425,8 @@ export class NavigationEngine implements IHopStateMachine {
           if (flowingDownstream.has(outputKey)) {
             outputs.set(outputKey, output);
             const writer = resolved.writerEdge;
-            if (writer && stagedColumnEdges.some(edge => edge.from_node === focusId
+            // Only source-free writes carry a procedure-born output to its other consumers.
+            if (writer && entry.upstream_columns.length === 0 && stagedColumnEdges.some(edge => edge.from_node === focusId
               && this.columnKey(edge.from_col) === this.columnKey(entry.out_col)
               && edge.to_node === writer.toNode && this.columnKey(edge.to_col) === this.columnKey(writer.toCol))) {
               const localOutput = { node: focusId, col: entry.out_col };
