@@ -315,7 +315,8 @@ const ColumnRefSchema = z.object({
   node: z.string().describe('Node id of the source column.'),
   col: z.string().describe('Source column name on that node.'),
   transforms: z.array(ColumnTransformClassSchema).min(1, { message: DIRECT_ROLE_MESSAGE, abort: true })
-    .refine(roles => roles.some(role => DIRECT_TRANSFORM_CLASSES.includes(role)), DIRECT_ROLE_MESSAGE).optional().describe(
+    .refine(roles => roles.some(role => DIRECT_TRANSFORM_CLASSES.includes(role)), DIRECT_ROLE_MESSAGE)
+    .meta({ contains: { enum: [...DIRECT_TRANSFORM_CLASSES] } }).optional().describe(
     'Role of this source column: pass_through (unchanged), compute (expression or CASE operand), aggregate (aggregate argument). ' +
     'combine or filter only as an extra role beside one of these, never alone. Omit when the SQL does not show the role.',
   ),
