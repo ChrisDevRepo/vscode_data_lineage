@@ -6,6 +6,7 @@ The newest version heading collects changes until that version ships.
 ## [1.2.6] - 2026-10-08
 
 ### Added
+- Expanded parser regression coverage for batch boundaries, external-table creation, DMV dependency direction and metadata, and elapsed-time scaling.
 - The output log warns when a module uses a cursor or dynamic SQL, which are not fully supported, with the module count (the debug log names the modules); the references the parser captures still load.
 
 ### Changed

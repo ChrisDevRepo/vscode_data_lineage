@@ -132,10 +132,13 @@ describe('the ANSI-89 comma-list scan is linear in the size of the body', () => 
 
   it.each(inputs)('%s', (_name, build) => {
     const times = fastestSeconds(SIZES_KB.map(kb => build(kb)));
-    expect(Math.max(...times.wall)).toBeLessThan(MAX_SECONDS);
-    times.cpu.slice(1).forEach((time, i) => {
-      // a floor keeps a sub-millisecond baseline from turning timer noise into a ratio
-      expect(time / Math.max(times.cpu[i], 0.01)).toBeLessThan(MAX_RATIO_PER_DOUBLING);
-    });
+    expect(Math.max(...times.wall), 'elapsed time stays below the wall-clock cap').toBeLessThan(MAX_SECONDS);
+    for (const [metric, values] of Object.entries(times)) {
+      values.slice(1).forEach((time, i) => {
+        // a floor keeps a sub-millisecond baseline from turning timer noise into a ratio
+        expect(time / Math.max(values[i], 0.01), `${metric} scaling from ${SIZES_KB[i]} to ${SIZES_KB[i + 1]} KB`)
+          .toBeLessThan(MAX_RATIO_PER_DOUBLING);
+      });
+    }
   });
 });

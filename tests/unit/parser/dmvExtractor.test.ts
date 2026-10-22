@@ -389,6 +389,65 @@ function testConstraintMapsEnrichColumns() {
 }
 
 
+it('keeps metadata-backed directions for unqualified reads and writes in the same body', () => {
+  const model = buildModelFromDmv({
+    nodes: rawResult(nodeFields, [
+      ['dbo', 'WriteTarget', 'U ', null], ['dbo', 'ReadSource', 'U ', null],
+      ['dbo', 'TestFallbackSP', 'P ', 'CREATE PROCEDURE dbo.TestFallbackSP AS UPDATE WriteTarget SET x = 1; SELECT * FROM ReadSource'],
+    ]),
+    columns: rawResult(columnFields, []),
+    dependencies: rawResult(dependencyFields, [
+      ['dbo', 'TestFallbackSP', 'dbo', 'WriteTarget'], ['dbo', 'TestFallbackSP', 'dbo', 'ReadSource'],
+    ]),
+  });
+  expect(model.edges).toEqual(expect.arrayContaining([
+    expect.objectContaining({ source: '[dbo].[testfallbacksp]', target: '[dbo].[writetarget]' }),
+    expect.objectContaining({ source: '[dbo].[readsource]', target: '[dbo].[testfallbacksp]' }),
+  ]));
+});
+
+it('keeps the cross-database read and local write with DMV virtual-node metadata', () => {
+  const model = buildModelFromDmv({
+    nodes: rawResult(nodeFields, [
+      ['dbo', 'Sales', 'U ', null],
+      ['dbo', 'spLoadFromArchive', 'P ', 'CREATE PROCEDURE [dbo].[spLoadFromArchive] AS\nINSERT INTO [dbo].[Sales]\nSELECT * FROM [ArchiveDB].[dbo].[ArchivedSales]'],
+    ]),
+    columns: rawResult(columnFields, []),
+    dependencies: rawResult([...dependencyFields, 'referenced_database'], [
+      ['dbo', 'spLoadFromArchive', 'dbo', 'Sales', null],
+      ['dbo', 'spLoadFromArchive', 'dbo', 'ArchivedSales', 'ArchiveDB'],
+    ]),
+  });
+  const external = model.nodes.find(node => node.externalType === 'db');
+  expect(external).toBeDefined();
+  expect(external?.externalDatabase?.toLowerCase()).toBe('archivedb');
+  expect(external?.schema).toBe('');
+  expect(external!.name.toLowerCase()).toContain('archivedsales');
+  expect(model.edges).toEqual(expect.arrayContaining([
+    expect.objectContaining({ source: external!.id, target: '[dbo].[sploadfromarchive]' }),
+    expect.objectContaining({ source: '[dbo].[sploadfromarchive]', target: '[dbo].[sales]' }),
+  ]));
+  expect(model.nodes).toHaveLength(3);
+});
+
+it('suppresses a same-database DMV reference with the original local read object present', () => {
+  const model = buildModelFromDmv({
+    nodes: rawResult(nodeFields, [
+      ['dbo', 'Sales', 'U ', null], ['dbo', 'ArchivedSales', 'U ', null],
+      ['dbo', 'spLoad', 'P ', 'CREATE PROCEDURE [dbo].[spLoad] AS SELECT * FROM [dbo].[ArchivedSales]'],
+    ]),
+    columns: rawResult(columnFields, []),
+    dependencies: rawResult([...dependencyFields, 'referenced_database'], [
+      ['dbo', 'spLoad', 'dbo', 'ArchivedSales', 'MyDB'], ['dbo', 'spLoad', 'dbo', 'Sales', null],
+    ]),
+  }, 'MyDB');
+  expect(model.nodes.some(node => node.externalType === 'db')).toBe(false);
+  expect(model.nodes).toHaveLength(3);
+  expect(model.edges).toEqual(expect.arrayContaining([
+    expect.objectContaining({ source: '[dbo].[archivedsales]', target: '[dbo].[spload]' }),
+  ]));
+});
+
 it('maps referenced_database rows to three-part dependencies resolved against the current database', () => {
   const model = buildModelFromDmv({
     nodes: rawResult(nodeFields, [['dbo', 'Sales', 'U ', null], ['dbo', 'spLoad', 'P ', 'CREATE PROCEDURE [dbo].[spLoad] AS SELECT 1']]),

@@ -5757,3 +5757,17 @@ cases:
     description: Comment removal cannot join identifier and trailing alias text
     sql: SELECT * FROM dbo.Foo/* note */Bar;
     sources: [dbo.Foo]
+  - id: go-between-two-source-statements
+    description: A FROM after GO remains a source alongside the preceding batch source
+    sql: "SELECT * FROM dbo.A\nGO\nSELECT * FROM dbo.B"
+    sources: [dbo.A, dbo.B]
+  - id: go-between-insert-and-source-statement
+    description: A FROM after GO remains a source alongside the preceding batch target
+    sql: "INSERT INTO dbo.Log(Msg) VALUES (1)\nGO\nSELECT * FROM dbo.T"
+    sources: [dbo.T]
+    targets: [dbo.Log]
+  - id: unquoted-cetas-standalone
+    description: An unquoted external table created from a SELECT retains its own source and target
+    sql: CREATE EXTERNAL TABLE ext.T WITH (LOCATION='/x', DATA_SOURCE=ds, FILE_FORMAT=ff) AS SELECT * FROM dbo.S
+    sources: [dbo.S]
+    targets: [ext.T]
