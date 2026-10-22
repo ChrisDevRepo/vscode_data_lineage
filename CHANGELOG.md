@@ -16,7 +16,7 @@ The newest version heading collects changes until that version ships.
 - `focus_node_id` is optional on hop commands: an omitted id means the dispatched hop, which the acknowledgement names; a different id is still rejected.
 - Every open neighbor needs an authored column mapping, question or prune. A missing outcome is rejected without committing; valid fields remain held for an action-only correction.
 - Column-trace hops record every valid neighbor-and-column mapping; attachment to the requested columns selects continuation. Procedure writes retain real source-to-target pairs without duplicate procedure-column edges; writes with no source column retain their procedure-to-target edge, and asked columns keep a preview row even without a mapping.
-- Indexed report repairs share field detection, schemas and merging, with shorter correction instructions.
+- Indexed report repairs share field detection, schemas and merging; optional fields rejected for their shape may be omitted on retry, with valid report content retained.
 - At a procedure hop, each column-trace mapping must name the neighbor table column it writes (`writes_to`), or `null` when the procedure writes no neighbor table. A null destination retains the findings without creating procedure-column edges or continuation.
 - Native tool schemas and runtime validation require a column-trace source that lists roles to include a value role (`pass_through`, `compute` or `aggregate`); `combine` and `filter` are only extra roles beside one. A column that only filters or joins rows is rejected with one fixed message and is described in sections instead of drawn as an edge. Leaving the roles out is still accepted.
 
@@ -34,7 +34,7 @@ The newest version heading collects changes until that version ships.
 - An object passed through without analysis forwards the same question, carried columns and caller output to each next object once, as tables do, so chains of such objects no longer double the queued work at every fork and merge.
 - Investigation and follow-up ids are sequence numbers instead of a short hash, so two distinct investigations can no longer collide and stop the exploration with an error; caller-context columns are matched with the source's identifier case rule.
 - A function without declared columns now gets column-trace edges: its column names are accepted unverified like those of a procedure or external object, as a source and as the output of its own hop, but it is never offered as its own source. Tables and views without column metadata are still refused.
-- Exploration depth is strict only for a level count or complete chain the user stated; a vague request starts at an approximate 3 levels instead of a strict single level or the whole graph.
+- Exploration depth is strict only for a level count or complete chain the user stated; a vague request starts at an approximate 3 levels. The approval card identifies the origin and explains that approximate depth is not a limit.
 - The served `out_col` is limited to the columns arriving at an upstream hop.
 - Column-trace hops describe column_flow as one entry per arriving column, restore the recipe depth items (rules and branches, mapping, loading, error handling, gaps), and ask kept neighbors for their rules and thresholds.
 - Equivalent SQL identifier delimiters, outside whitespace and source-permitted casing bind to known object identities without changing authored content or guessing missing names.

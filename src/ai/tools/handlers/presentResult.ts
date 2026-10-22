@@ -162,7 +162,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         rejection.hint = [
           rejection.hint,
           held && authorization ? repair ?? presentResultRepairInstruction(authorization.fields, presentResultStage,
-            (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes, authorization.sectionLeaves) : INVALID_TOOL_INPUT_REPAIR_HINT,
+            (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes, authorization.sectionLeaves, held) : INVALID_TOOL_INPUT_REPAIR_HINT,
         ].filter(Boolean).join(' ');
         return reject(rejection);
       }
@@ -188,7 +188,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
             hint: [
               `To fix: add ${body}: under the offending label, or move its node_ids into an exact held label. Nothing from the rejected call was stored.`,
               presentResultRepairInstruction(authorization.fields, presentResultStage,
-                (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes),
+                (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes, undefined, held),
             ].join(' '),
             issuePaths: ['sections'],
           }));
@@ -206,7 +206,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
             code: REJECTION_CODES.validation, input: { sections: presentInput.sections }, schema: mergedSchema, resend: 'owner',
           });
           rejection.hint = [rejection.hint, hint ?? presentResultRepairInstruction(authorization.fields, presentResultStage,
-            (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes, authorization.sectionLeaves)].filter(Boolean).join(' ');
+            (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes, authorization.sectionLeaves, held)].filter(Boolean).join(' ');
           return reject(rejection);
         }
       } else {

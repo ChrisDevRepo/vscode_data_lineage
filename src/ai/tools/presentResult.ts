@@ -235,10 +235,13 @@ export function presentResultRepairInstruction(
   sectionsHeld = true,
   highlightLabelIndexes?: readonly number[],
   sectionLeaves?: PresentResultRepairAuthorization['sectionLeaves'],
+  held?: Partial<PresentResultInput>,
 ): string {
   const wholeFields = resendList.filter(field => field === 'highlight_groups' && !highlightLabelIndexes);
+  const optionalFields = resendList.filter(field => held && !(field in held) && PresentResultModelSchema.shape[field].isOptional());
   return [
-    `You may repair the held draft by calling lineage_present_result with only these corrected fields: ${resendList.join(', ')}.`,
+    `Call lineage_present_result with only these corrected fields: ${resendList.join(', ')}.`,
+    optionalFields.length ? `Omit faulty optional fields (${optionalFields.join(', ')}) to withdraw them.` : '',
     resendList.includes('sections') && !sectionLeaves
       ? (sectionsHeld ? keyedResendRule('sections', 'label', [stage === 'visual_preview' ? 'start' : 'text', 'node_ids']) : 'No section is held: resend every section.')
       : '',
@@ -301,7 +304,7 @@ export function holdRejectedPresentResult(
     ? ` sections for ${quoteIds(unkept)} were not held: the committed report has no body for them. Its sections are ${quoteIds((committed ?? []).map(sec => sec.label))}; omit sections to keep the committed report.`
     : '';
   return `${heldDescription}${unheld} ${presentResultRepairInstruction(fields, stage,
-    Array.isArray(kept.sections) && kept.sections.length > 0, highlightLabelIndexes, sectionLeaves)}`;
+    Array.isArray(kept.sections) && kept.sections.length > 0, highlightLabelIndexes, sectionLeaves, kept)}`;
 }
 
 type PresentNote = NonNullable<PresentResultInput['notes']>[number];

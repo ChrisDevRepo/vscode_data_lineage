@@ -262,16 +262,18 @@ export function renderScopeCardMd(
   proposal: Pick<PendingExplorationProposal, 'revision' | 'init' | 'classification' | 'summary'>,
 ): string {
   const { summary } = proposal;
-  const lines: string[] = [planHeading(proposal.revision), ''];
+  const lines: string[] = [planHeading(proposal.revision), '', `- **Origin:** ${code(summary.origin)}`];
 
   const { upstream, downstream } = summary.depthIntent;
+  const sides = summary.direction === 'bidirectional' ? ['upstream', 'downstream'] as const : [summary.direction];
   const sidesEqual = upstream.levels === downstream.levels && upstream.exactness === downstream.exactness;
   const depth = summary.direction === 'bidirectional' && sidesEqual
     ? `${depthValue(upstream.levels, upstream.exactness === 'exact')} each way`
-    : (summary.direction === 'bidirectional' ? ['upstream', 'downstream'] as const : [summary.direction])
+    : sides
       .map(side => `${depthValue(summary.depthIntent[side].levels, summary.depthIntent[side].exactness === 'exact')} ${side}`)
       .join(' · ');
-  lines.push(`- **Depth:** ${depth}`);
+  const approximate = sides.some(side => summary.depthIntent[side].exactness === 'approximate' && summary.depthIntent[side].levels !== 'all' && summary.depthIntent[side].levels !== 0);
+  lines.push(`- **Depth:** ${depth}${approximate ? ' (≈ is not a limit)' : ''}`);
   lines.push(`- **Scope:** ≈${plural(summary.hopCount, 'hop')} · ≈${plural(summary.scopeCount, 'node')}`);
   lines.push(`- **Schemas:** ${schemasLine(summary, CARD_SCHEMA_NAMES)}`);
   const columns = summary.analysisMode === 'ct' && summary.targetColumns?.length

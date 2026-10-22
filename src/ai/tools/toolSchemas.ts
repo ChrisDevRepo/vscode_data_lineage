@@ -1157,14 +1157,15 @@ export function presentResultRepairPatchSchemaForFields(
     labelIndexes.map(index => ({ index, fields: ['label'] })), HighlightGroupSchema.shape, 'highlight_groups') });
   if (sectionRepairs) staged = staged.extend({ sections: indexedRepairList(sectionRepairs,
     preview ? previewSchemas(previewBlockCount).section.shape : PresentResultSectionSchema.shape, 'sections') });
+  const optionalKeys = keys.filter(key => PresentResultModelSchema.shape[key].isOptional());
   const declared = labelIndexes || sectionRepairs
-    ? staged.required(Object.fromEntries(keys.map(key => [key, true])) as Record<string, true>)
+    ? staged.required(Object.fromEntries(keys.filter(key => !optionalKeys.includes(key)).map(key => [key, true])) as Record<string, true>)
     // A committed report keeps its sections when the repair omits them, so a lone `sections` field is optional then.
-    : keys.length === 1 && !(retainable && keys[0] === 'sections')
+    : keys.length === 1 && optionalKeys.length === 0 && !(retainable && keys[0] === 'sections')
     ? (staged as z.ZodObject<z.ZodRawShape>).required({ [keys[0]]: true })
     : staged;
   const strict = declared.strict().superRefine((data, ctx) => {
-    if (keys.length < 2) return;
+    if (keys.length < 2 || optionalKeys.length === keys.length) return;
     const touchesAuthorizedField = keys.some(
       key => (data as Record<string, unknown>)[key] !== undefined,
     );
