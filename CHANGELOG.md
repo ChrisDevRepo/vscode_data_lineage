@@ -55,6 +55,9 @@ The newest version heading collects changes until that version ships.
 - A DACPAC three-part name to another database no longer resolves to a local object with the same schema and name; the DACPAC name is its current database, as on a live connection.
 - Reconnecting a database project by server now matches a saved connection whose server is written with a `tcp:` prefix.
 
+### Dependencies
+- Security updates: DOMPurify.
+
 ## [1.2.5] - 2026-10-07
 
 ### Changed

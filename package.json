@@ -915,7 +915,7 @@
     "@monaco-editor/react": "4.7.0",
     "@xyflow/react": "12.11.6",
     "comlink": "4.4.2",
-    "dompurify": "3.4.16",
+    "dompurify": "3.4.17",
     "fast-xml-parser": "5.11.1",
     "graphology": "0.26.0",
     "graphology-components": "1.5.4",
