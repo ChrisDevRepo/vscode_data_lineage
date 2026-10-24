@@ -459,8 +459,8 @@ export function buildCurrentTaskBlock(
   if (columnTraceColumns && columnTraceColumns.length > 0) {
     lines.push(
       `  <column_trace>`,
-      `    Arriving column names: [${columnTraceColumns.map(escapePromptText).join(', ')}]`,
-      ...(referenceOnly ? [] : [`    Resolve the tasks above. Record SQL-supported mappings in \`column_flow\`, including downstream renames; keep unrelated column analysis in \`sections\`.`]),
+      `    Active columns: [${columnTraceColumns.map(escapePromptText).join(', ')}]`,
+      ...(referenceOnly ? [] : [`    These are the incoming column tasks. Record their real contributors and resolved outputs in \`column_flow\`, including downstream renames proved by the SQL; keep unrelated column analysis in \`sections\`.`]),
       `  </column_trace>`,
     );
   }

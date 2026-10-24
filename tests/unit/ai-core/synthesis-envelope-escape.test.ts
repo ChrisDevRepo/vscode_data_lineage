@@ -89,7 +89,7 @@ describe('buildSynthesisEnvelopeMessage — untrusted-JSON wrap for the synthesi
       const envelope = buildSmCompletionEnvelope(surfaceResult(), 'How is Net computed?');
       expect(Object.keys(envelope).sort()).toEqual(['done', 'ok', 'result', 'synthesis_reminder']);
       expect(Object.keys(envelope.result).sort()).toEqual(['detail_slots', 'node_states', 'originNodeId', 'scope', 'suggested_sections']);
-      expect(envelope.result.scope).toEqual({ node_ids: [view, table] });
+      expect(envelope.result.scope).toEqual({ nodes: 2, edges: 1, node_ids: [view, table] });
       expect(envelope.synthesis_reminder.startsWith('## Answer this question\n"How is Net computed?"')).toBe(true);
       expect(envelope.synthesis_reminder).toContain(`Analyzed nodes (engine flow facts):\n- ${view} — view: inputs: ${table}; outputs: (none)`);
     });

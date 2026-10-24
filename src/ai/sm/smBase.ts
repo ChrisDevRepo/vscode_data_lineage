@@ -2421,10 +2421,13 @@ export class NavigationEngine implements IHopStateMachine {
       for (const id of this.requiredNeighborIds(focusId)) {
         if (requested.has(id) || prunedNeighborNids.has(id)) continue;
         if (!mappedNeighborIds.has(id)) {
+          // In CT, column_flow is offered only for a neighbor that can be a value source (incoming edge) or write target here; a downstream reader is never mapped as a source.
+          const mapsHere = this.currentHopAnalysisMode !== 'ct' || (this.mappableNeighborIds(focusId).has(id)
+            && (this.graph.inNeighbors(focusId).includes(id) || (this.nodeMap.get(focusId)?.type === 'procedure' && this.writeTargetNodeIds(focusId).includes(id))));
           invalidRoutes.push({ kind: 'neighbor_outcome_missing', id,
             alternatives: ['questions', ...(neighbors.get(id)?.can_prune && !this.neighborPruneRefusal(focusId, [id], acceptedNids, stagedColumnEdges ?? []) ? ['prune_neighbors'] : []),
-              ...(this.currentHopAnalysisMode === 'ct' ? ['column_flow'] : [])],
-            reason: `Neighbor \`${id}\` has no authored outcome. Map its value in column_flow (CT), prune it in prune_neighbors if allowed, or keep / question it in questions. Send the complete list for any action field you change, including entries you keep.` });
+              ...(this.currentHopAnalysisMode === 'ct' && mapsHere ? ['column_flow'] : [])],
+            reason: `Neighbor \`${id}\` has no authored outcome. ${this.currentHopAnalysisMode === 'ct' && !mapsHere ? 'Keep / question it in questions, or prune it in prune_neighbors if allowed' : `${mapsHere ? 'Map its value in column_flow (CT), prune' : 'Prune'} it in prune_neighbors if allowed, or keep / question it in questions`}. Send the complete list for any action field you change, including entries you keep.` });
           continue;
         }
         // The authored mapping supplies the outcome; its qualified column question travels separately.

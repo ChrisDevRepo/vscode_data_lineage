@@ -2047,7 +2047,10 @@ describe('authored outcomes for every open neighbor', () => {
     expect(result, `${mode}/${direction}`).toMatchObject({ code: 'route_validation_failed',
       detail: required.map(id => expect.objectContaining({ kind: 'neighbor_outcome_missing', id })) });
     for (const id of required) expect(JSON.stringify(result)).toContain(id);
-    expect(JSON.stringify(result)).toMatch(/map.*prune.*question/i);
+    // column_flow is offered only for a neighbor that can supply the focus's value; a downstream reader is never mapped as a source, and in CT its keep / question option comes first.
+    const mapsSupplier = mode === 'bb' || direction !== 'downstream';
+    expect(JSON.stringify(result)).toMatch(mapsSupplier ? /map.*prune.*question/i : mode === 'ct' ? /question.*prune/i : /prune.*question/i);
+    if (mode === 'ct' && direction !== 'upstream') expect(JSON.stringify(result)).toContain(`Neighbor \`${down}\` has no authored outcome. Keep / question it in questions, or prune it`);
     const after = engine.toJSON();
     expectUnchangedRouting(after, before);
     expect(after.visited).toEqual(before.visited);
@@ -2055,7 +2058,7 @@ describe('authored outcomes for every open neighbor', () => {
     expect(after.engineInternals.pruneBallots).toEqual(before.engineInternals.pruneBallots);
     expect(engine.getDetailSlots()).toEqual([]);
     expect(engine.currentFocus).toBe(root);
-    expect(engine.heldPartsOfCurrentFocus()).toMatchObject({ summary: true, sections: ['technical'], resend: ['questions', 'prune_neighbors', ...(mode === 'ct' ? ['column_flow'] : [])] });
+    expect(engine.heldPartsOfCurrentFocus()).toMatchObject({ summary: true, sections: ['technical'], resend: ['questions', 'prune_neighbors', ...(mode === 'ct' && direction !== 'downstream' ? ['column_flow'] : [])] });
     expect(engine.submitFindings({ focus_node_id: root, summary: '', sections: [] })).toHaveProperty('code', 'route_validation_failed');
     expect(engine.submitFindings({ focus_node_id: root, summary: '', sections: [], questions: [], prune_neighbors: [],
       ...(mode === 'ct' ? { column_flow: [] } : {}) })).toHaveProperty('code', 'route_validation_failed');

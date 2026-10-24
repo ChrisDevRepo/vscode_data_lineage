@@ -95,5 +95,5 @@ export function indexedRepairFields<Field extends string>(
 export function keyedResendRule(field: string, key: string, partialFields: readonly string[] = []): string {
   const rule = `${field}: resend only the entries you add or change, each under its held ${key}; a held entry left unnamed is kept as authored.`;
   if (partialFields.length === 0) return rule;
-  return `${rule} Omit a resent entry's ${partialFields.join(' or ')} to keep the held value; a ${key} not on file appends a new entry and needs its ${partialFields[0]}; {${key}: …, remove: true} drops a held entry.`;
+  return `${rule} Omit a resent entry's ${partialFields.join(' or ')} to keep the held value; a ${key} not on file appends a new entry and needs its ${partialFields[0]}; {${key}: …, remove: true} drops a held entry. A sent ${partialFields.join(' or ')} replaces that entry's held value whole; a sent list includes every item the entry keeps.`;
 }

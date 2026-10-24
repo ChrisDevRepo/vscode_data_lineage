@@ -174,6 +174,41 @@ describe('neighbor-specific function caller context', () => {
     expect(engine.columnAspect?.edges).toEqual([]);
   });
 
+  it('never asks a scalar-function hop for an outcome on its returns_to caller, and offers an open second caller no column_flow', () => {
+    // The return target is the caller whose column task opened this hop, so it is already visited; any other caller reads the function and cannot be mapped here.
+    const reader = '[d].[reader]';
+    const nodes = [
+      makeNode({ id: caller, schema: 'd', name: 'caller', type: 'view', columns: [{ ...col('Value'), expressionDependencies: [{ reference: fn, sourceElementType: 'SqlScalarFunction' }] }], bodyScript: `CREATE VIEW ${caller} AS SELECT ${fn}(s.Amount) AS Value FROM ${source} s` }),
+      makeNode({ id: reader, schema: 'd', name: 'reader', type: 'view', columns: [{ ...col('Other'), expressionDependencies: [{ reference: fn, sourceElementType: 'SqlScalarFunction' }] }], bodyScript: `CREATE VIEW ${reader} AS SELECT ${fn}(c.Value) AS Other FROM ${caller} c` }),
+      makeNode({ id: fn, schema: 'd', name: 'function', type: 'function', bodyScript: `CREATE FUNCTION ${fn}(@Amount int) RETURNS int AS BEGIN RETURN @Amount * 2 END` }),
+      makeNode({ id: source, schema: 'd', name: 'source', type: 'table', columns: [col('Amount')] }),
+    ];
+    // reader also consumes caller, so it lies inside the bidirectional scope; a sibling caller alone would sit outside it.
+    const edges: Array<[string, string]> = [[source, caller], [fn, caller], [fn, reader], [caller, reader]];
+    const engine = new NavigationEngine(makeModel(nodes, edges, ['d']), makeGraph(nodes, edges), () => {}, {});
+    expect(engine.init({ origin: caller, question: 'Trace Value', direction: 'bidirectional', analysisMode: 'ct', targetColumns: ['Value'], depthIntent: { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 'all', exactness: 'exact' } } })).toHaveProperty('ok', true);
+    engine.getHopContext();
+    expect(engine.submitFindings({ ...finding, sections: [{ angle: 'technical' as const, text: finding.sections.technical }],
+      questions: [{ nodeId: fn, question: 'Determine Value from the actual caller argument.', caller_context: { node: caller, col: 'Value' } }, { nodeId: source, question: 'Explain the source rows.' }, { nodeId: reader, question: 'Explain how reader consumes Value.' }] })).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: fn }, analysis_mode: 'ct', caller_requested_outputs: [{ node: caller, col: 'Value' }] });
+    const schema = submitFindingsSchemaForMode('ct', 'technical', true, engine.hopSubmitColumns);
+    const flow = (node: string, c: string) => ({ focus_node_id: fn, summary: 'Value is twice Amount.', sections: { technical: 'The function doubles the bound Amount.' },
+      column_flow: [{ out_col: c, returns_to: { node, col: c }, upstream_columns: [{ node: source, col: 'Amount', transforms: ['compute'] }] }] });
+    expect(schema.safeParse(flow(reader, 'Other')).success).toBe(false);
+    expect(schema.safeParse(flow(caller, 'Value')).success).toBe(true);
+    const before = engine.toJSON();
+    const missing = engine.submitFindings({ ...toHopFinding(schema.parse(flow(caller, 'Value'))), questions: [], prune_neighbors: [] });
+    expect(missing).toMatchObject({ code: 'route_validation_failed', detail: [expect.objectContaining({ kind: 'neighbor_outcome_missing', id: reader })] });
+    expect(JSON.stringify(missing)).toContain(`Neighbor \`${reader}\` has no authored outcome. Keep / question it in questions, or prune it`);
+    expect(JSON.stringify(missing)).not.toContain(`Neighbor \`${caller}\``);
+    expect(engine.heldPartsOfCurrentFocus()?.resend).toEqual(['questions']);
+    expect(engine.columnAspect?.edges ?? []).toEqual([]);
+    expect(engine.toJSON().visited).toEqual(before.visited);
+    expect(engine.submitFindings({ focus_node_id: fn, summary: '', sections: [], questions: [{ nodeId: reader, question: 'Explain how reader uses the function.' }], prune_neighbors: [] })).toHaveProperty('ok', true);
+    expect(engine.columnAspect!.edges).toContainEqual(expect.objectContaining({ from_node: source, from_col: 'Amount', to_node: caller, to_col: 'Value' }));
+    expect(engine.columnAspect!.edges.some(edge => edge.to_node === reader || edge.from_node === reader)).toBe(false);
+  });
+
 });
 
 

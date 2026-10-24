@@ -319,7 +319,7 @@ interface SmCompletionEnvelope {
   readonly done: true;
   readonly result: {
     readonly originNodeId: string;
-    readonly scope: { readonly node_ids: readonly string[] };
+    readonly scope: { readonly nodes: number; readonly edges: number; readonly node_ids: readonly string[] };
     readonly suggested_sections: ReadonlyArray<{ label: string; node_ids: string[] }>;
     readonly node_states: SmResult['node_states'];
     readonly detail_slots: SmResult['detail_slots'];
@@ -386,7 +386,7 @@ export function buildSmCompletionEnvelope(
     done: true,
     result: {
       originNodeId: result.originNodeId,
-      scope: { node_ids: presentedNodeIds },
+      scope: { nodes: presentedNodeIds.length, edges: result.edges.length, node_ids: presentedNodeIds },
       suggested_sections: buildSuggestedSections(result, presentedNodeIds),
       node_states: result.node_states.filter(state => presented.has(state.nodeId)),
       detail_slots: assignEvidenceIds(result.detail_slots).slots,
