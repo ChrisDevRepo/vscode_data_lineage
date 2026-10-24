@@ -407,16 +407,6 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         const slotChars = sess.memory.getResult().detail_slots
           .reduce((total, slot) => total + slot.sections.reduce((sum, section) => sum + section.text.length, 0), 0);
         const coverage = evidenceCoverage(evidenceBlocks, [renderInput.title, renderInput.intro, renderInput.closing, ...(renderInput.sections ?? []).map(sec => sec.text)].filter((text): text is string => text !== undefined));
-        if (evidenceViolations.length === 0 && coverage.unusedIds.length > 0) {
-          evidenceViolations.push({
-            field: 'sections',
-            missingContent: true,
-            messages: [`Captured SQL block(s) missing from the preview: ${quoteIds(coverage.unusedIds)}. Include their SQL or references in the report.`],
-            repairFields: ['sections'],
-            paths: ['sections'],
-            entryIds: coverage.unusedIds,
-          });
-        }
         s.logger.debug(
           `[Presentation] retention — slotChars=${slotChars} sectionChars=${presentInput.sections.reduce((sum, sec) => sum + sec.text.length, 0)} ` +
           `sections(nodes:chars)=[${presentInput.sections.map(sec => `${sec.node_ids?.length ?? 0}:${sec.text.length}`).join(', ')}] ` +

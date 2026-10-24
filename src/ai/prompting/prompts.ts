@@ -69,7 +69,7 @@ export function buildPhasePrompt(
 ): string {
   if (phase === 'discover') return buildDiscoveryPrompt();
   if (phase === 'visual_preview') return buildVisualPreviewPrompt();
-  if (phase === 'active') return buildActivePhasePrompt();
+  if (phase === 'active') return buildActivePhasePrompt(analysisMode);
   if (phase === 'synthesis') return buildSynthesisPrompt(analysisMode);
   return buildFollowUpPrompt();
 }
@@ -92,15 +92,17 @@ function buildDiscoveryPrompt(): string {
 
 
 /** The active hop's task and deliverable, the same with or without tracked columns; field meanings — `prune_neighbors`, `questions` and the CT carry — live in the `submit_findings` schema, their one home. */
-function buildActivePhasePrompt(): string {
+function buildActivePhasePrompt(analysisMode: 'bb' | 'ct'): string {
   return [
     '# Active hop',
-    'Work as a senior data engineer and business analyst: read the SQL of `focus_node` in `<hop_context>` against `<current_task>`, record column value flow, and explain what it does to the data. `storage_context` carries related table metadata and stored DDL, not loading SQL. Neighbors carry no SQL; logic questions for neighbors belong to their own hops. `<short_term_memory>` is prior hop context, not evidence for this one.',
+    `Work as a senior data engineer and business analyst: read the SQL of \`focus_node\` in \`<hop_context>\` against \`<current_task>\`, record ${analysisMode === 'ct' ? 'column value flow' : 'findings'}, and explain what it does to the data. \`storage_context\` carries related table metadata and stored DDL, not loading SQL. Neighbors carry no SQL; logic questions for neighbors belong to their own hops. \`<short_term_memory>\` is prior hop context, not evidence for this one.`,
     'Answer each `<sub_question>` from the focus\'s own evidence in its corresponding section, or state that this hop cannot answer it.',
     'Ground claims in supplied evidence: do not infer execution counts, uniqueness, validity policy or business obligations without evidence; verify numeric limits against declared precision and scale.',
     '',
-    'Complete this hop with one available hop-completion command: for a kept hop, use `lineage_submit_findings` (`summary`, `sections` keyed by angle, and `column_flow` when the current task names columns); for an irrelevant SQL carrier, use `lineage_prune_current`. `questions` and `prune_neighbors` are optional; mapped neighbors continue automatically.',
-    'After a rejection, saved content stays held; send only the requested fields using the repair schema.',
+    'Complete this hop with one available hop-completion command: for a kept hop, use `lineage_submit_findings` (`summary`, `sections` keyed by angle, and `column_flow` when the current task names columns); for an irrelevant SQL carrier, use `lineage_prune_current`.'
+      + (analysisMode === 'ct' ? ' `questions` and `prune_neighbors` are optional; mapped neighbors continue automatically.' : ''),
+    analysisMode === 'ct' ? 'After a rejection, saved content stays held; send only the requested fields using the repair schema.'
+      : 'After a rejection, saved content stays held; correct the reported faults using the repair schema.',
     'Flags on `neighbors[]` are committed: `already_visited` and `already_removed` neighbors take no action; neighbors with `can_prune: false` are not pruned. `can_question` never widens scope.',
   ].join('\n');
 }
@@ -413,7 +415,7 @@ export function buildMissionBriefBlock(brief: string, question: string, scopeNot
 
 /** Renders the per-hop task, or reference context without fresh-authoring instructions for a held correction. */
 export function buildCurrentTaskBlock(
-  currentTasks: ReadonlyArray<Pick<InvestigationTask, 'kind' | 'question' | 'traversalSide' | 'callerContext'> & {
+  currentTasks: ReadonlyArray<Pick<InvestigationTask, 'kind' | 'question' | 'traversalSide' | 'callerContext' | 'passthroughFromNodeId'> & {
     readonly returnTargets?: readonly ScalarReturnTarget[];
     /** The engine's qualified endpoints for this task, split by owning object. */
     readonly endpoints?: { readonly assigned: readonly ScalarReturnTarget[]; readonly external: readonly ScalarReturnTarget[] };
@@ -422,12 +424,17 @@ export function buildCurrentTaskBlock(
   columnLineageQuestions?: string[],
   nonBodied = false,
   referenceOnly = false,
+  context?: { readonly analysisMode: 'bb' | 'ct'; readonly originNodeId: string | null },
 ): string {
   if (currentTasks.length === 0) return '';
   const blockTag = referenceOnly ? 'analysis_context' : 'current_task';
   const lines = [`<${blockTag}>`];
+  const inherited = context?.analysisMode === 'bb' && !referenceOnly ? currentTasks.filter(task => task.kind !== 'root'
+    && task.passthroughFromNodeId && task.passthroughFromNodeId !== context.originNodeId && task.question.trim()) : [];
+  if (inherited.length) lines.push('  Establish this focus\'s relevance to the user\'s question from its own SQL. Inherited questions are reference context about the traversed object.');
   if (referenceOnly) lines.push('  Reference for this correction, not a new analysis job.');
   for (const task of currentTasks) {
+    if (inherited.includes(task)) continue;
     const question = task.question.trim();
     if (!question) continue;
     const tag = task.kind === 'root' ? 'root_question' : 'sub_question';
@@ -469,6 +476,8 @@ export function buildCurrentTaskBlock(
   }
   if (lines.length === 1) return '';
   lines.push(`</${blockTag}>`);
+  if (inherited.length) lines.push('<analysis_context>', ...inherited.map(task =>
+    `  Inherited through ${escapePromptText(task.passthroughFromNodeId!)}: ${escapePromptText(task.question)}`), '</analysis_context>');
   return lines.join('\n');
 }
 

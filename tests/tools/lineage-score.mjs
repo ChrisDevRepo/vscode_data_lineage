@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { findings, measureMarkup, parseTrace, runMetrics, runTraceMetrics } from './trace-metrics.mjs';
 
 const PRUNE_TOOL = 'lineage_prune_current';
@@ -542,6 +543,19 @@ function readTrace(runDir) {
   return parseTrace(readFileSync(tracePath, 'utf8'));
 }
 
+/** Deduplicate only equal immutable records; a conflicting identity supplies no derived observation. */
+function immutableObservations(rows) {
+  const byId = new Map();
+  const conflicts = new Set();
+  for (const row of rows) {
+    const key = JSON.stringify([row.traceId, row.id]);
+    if (!byId.has(key)) byId.set(key, row);
+    else if (!isDeepStrictEqual(byId.get(key), row)) conflicts.add(key);
+  }
+  return { unique: [...byId].filter(([key]) => !conflicts.has(key)).map(([, row]) => row),
+    conflicts: [...conflicts].map(key => JSON.parse(key)) };
+}
+
 // The general API budget is shared across baseline sources in this process.
 let nextLangfuseReadAt = 0;
 
@@ -588,12 +602,13 @@ export async function hydrateLangfuseRun(runDir, config, { fetchImpl = fetch, in
     } while (cursor);
   }
   if (receipt.traceIds.some(id => !observations.some(row => row.traceId === id))) throw new Error('Stored observations do not cover every referenced trace.');
-  const unique = [...new Map(observations.map(row => [JSON.stringify([row.traceId, row.id]), row])).values()];
-  const native = observations.some(row => row.metadata?.lane === 'native');
+  writeFileSync(join(directory, 'langfuse-observations.json'), JSON.stringify({ data: observations, meta: { cursor: null } }, null, 2) + '\n');
+  const { unique, conflicts } = immutableObservations(observations);
+  if (conflicts.length) throw new Error(`Conflicting immutable Langfuse observation identities: ${JSON.stringify(conflicts)}.`);
+  const native = unique.some(row => row.metadata?.lane === 'native');
   const recovered = [];
   const media = new Map();
-  // Repeated observation versions may add media; usage remains deduplicated separately.
-  for (const observation of observations) {
+  for (const observation of unique) {
     let metadata = observation.metadata;
     if (typeof metadata === 'string') { try { metadata = JSON.parse(metadata); } catch { metadata = null; } }
     let attachments = metadata?.attachments;
@@ -674,7 +689,6 @@ export async function hydrateLangfuseRun(runDir, config, { fetchImpl = fetch, in
     }
   }
   writeFileSync(join(directory, 'langfuse.json'), JSON.stringify(receipt, null, 2) + '\n');
-  writeFileSync(join(directory, 'langfuse-observations.json'), JSON.stringify({ data: observations, meta: { cursor: null } }, null, 2) + '\n');
   writeFileSync(join(directory, 'stored-evidence.json'), JSON.stringify({ source: 'Langfuse observations v2 and confirmed media', originalRunDir: runDir, traceIds: receipt.traceIds, files: saved }, null, 2) + '\n');
   return { directory, evidence: auditRunEvidence(directory), observations: observations.length, uniqueObservations: unique.length };
 }
@@ -713,7 +727,7 @@ export function auditRunEvidence(runDir, selectedTurns) {
   let remote;
   try { remote = readJson(observationsPath); } catch { remote = null; }
   const remoteRows = Array.isArray(remote?.data) && !remote.meta?.cursor ? remote.data : [];
-  const uniqueRemoteRows = [...new Map(remoteRows.map(row => [JSON.stringify([row.traceId, row.id]), row])).values()];
+  const { unique: uniqueRemoteRows, conflicts: remoteConflicts } = immutableObservations(remoteRows);
   const remoteSpans = uniqueRemoteRows.map(row => {
     const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
     const usage = row.usageDetails ?? (Number.isFinite(row.totalUsage) ? { input: row.inputUsage, output: row.outputUsage, total: row.totalUsage } : null);
@@ -727,13 +741,13 @@ export function auditRunEvidence(runDir, selectedTurns) {
   });
   const payloadSpans = Array.isArray(payload?.resourceSpans) ? payload.resourceSpans.flatMap(resource => Array.isArray(resource?.scopeSpans)
     ? resource.scopeSpans.flatMap(scope => Array.isArray(scope?.spans) ? scope.spans : []) : []) : [];
-  const spans = remoteSpans.length ? remoteSpans : payloadSpans;
+  const spans = remoteConflicts.length ? [] : remoteSpans.length ? remoteSpans : payloadSpans;
   const spanTraceIds = [...new Set(spans.map(span => span.traceId).filter(id => typeof id === 'string'))];
   const requestTracePairs = spans.flatMap(span => {
     const requestId = Array.isArray(span.attributes) ? span.attributes.find(attribute => attribute.key === 'langfuse.trace.metadata.requestId')?.value?.stringValue : null;
     return typeof requestId === 'string' ? [{ requestId, traceId: span.traceId, spanId: span.spanId }] : [];
   });
-  const exportOk = receipt?.source === 'server_read' ? remoteSpans.length > 0
+  const exportOk = remoteConflicts.length ? false : receipt?.source === 'server_read' ? remoteSpans.length > 0
     && receipt.traceIds.every(id => spanTraceIds.includes(id))
     && requestIds.length > 0 && requestIds.every(id => requestTracePairs.some(pair => pair.requestId === id))
     : Number.isFinite(receipt?.exported) && receipt.exported > 0
@@ -772,6 +786,7 @@ export function auditRunEvidence(runDir, selectedTurns) {
       && own.indexOf(starts[0]) < own.indexOf(ends[0]);
   });
   const issues = [];
+  if (remoteConflicts.length) issues.push(`Conflicting immutable Langfuse observation identities: ${JSON.stringify(remoteConflicts)}`);
   if (!tracePath || !records.length || !lifecycleValid) issues.push('NDJSON lifecycle missing or incomplete');
   if (!host?.trim()) issues.push('VS Code debug log missing or empty');
   if (!states.length || states.some(state => !['present', 'not_applicable'].includes(state.status))) issues.push('Per-turn state evidence missing or invalid');
@@ -801,19 +816,19 @@ export function auditRunEvidence(runDir, selectedTurns) {
       lifecycleLines: host ? host.split('\n').filter(line => /turn.start|turn.terminal|request.start|request.end/i.test(line)).length : null,
       lexicalErrorMentions: host ? host.split('\n').filter(line => /\berror\b/i.test(line)).length : null,
       correlation: host && requestIds.length && requestIds.every(id => host.includes(id)) ? 'all_request_ids_observed' : 'unverified' },
-    states, langfuse: { ...source(receiptPath), status: exportOk ? receipt.source === 'server_read' ? 'server_observations_received' : 'export_receipt_valid' : 'missing_or_invalid_receipt',
+    states, langfuse: { ...source(receiptPath), status: remoteConflicts.length ? 'ambiguous_observation_ids' : exportOk ? receipt.source === 'server_read' ? 'server_observations_received' : 'export_receipt_valid' : 'missing_or_invalid_receipt',
       exported: Number.isFinite(receipt?.exported) ? receipt.exported : null,
       errors: Array.isArray(receipt?.errors) ? receipt.errors.length : null,
       traceIds: Array.isArray(receipt?.traceIds) ? receipt.traceIds : [],
-      content: remoteSpans.length ? 'server_observations: retrieved persisted Langfuse observations' : spans.length ? 'outgoing_payload: local exact export body; remote persisted content unverified'
+      content: remoteConflicts.length ? 'ambiguous: conflicting immutable stored observations' : remoteSpans.length ? 'server_observations: retrieved persisted Langfuse observations' : spans.length ? 'outgoing_payload: local exact export body; remote persisted content unverified'
         : 'unavailable: local receipt contains no exported span content',
       payload: { ...source(payloadPath), status: payloadSpans.length ? 'outgoing_payload_present' : existsSync(payloadPath) ? 'invalid' : 'unavailable',
         spans: payloadSpans.length, traceIds: [...new Set(payloadSpans.map(span => span.traceId))] },
       identities: { traceIds: spanTraceIds, spanIds: spans.map(span => span.spanId), requestTracePairs },
-      storedObservations: { ...source(observationsPath), status: remoteSpans.length ? 'present' : 'unavailable',
-        observations: remoteRows.length, uniqueObservations: uniqueRemoteRows.length },
+      storedObservations: { ...source(observationsPath), status: remoteConflicts.length ? 'ambiguous' : remoteSpans.length ? 'present' : 'unavailable',
+        observations: remoteRows.length, uniqueObservations: uniqueRemoteRows.length, conflictingObservationIds: remoteConflicts },
       generationUsageCrosscheck: usageCrosscheck,
-      generationDurationsMs: generations.map(span => {
+      generationDurationsMs: remoteConflicts.length ? null : generations.map(span => {
         try { return Number(BigInt(span.endTimeUnixNano) - BigInt(span.startTimeUnixNano)) / 1e6; } catch { return null; }
       }),
       requestTracePairing: requestTracePairs.length ? 'recorded_in_outgoing_payload' : 'unverified: receipt does not map request IDs to trace IDs' } };

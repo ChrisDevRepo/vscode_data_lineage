@@ -71,6 +71,55 @@ function ctWorld(options: { deferred?: boolean; scalar?: boolean; caseSensitive?
   return { session, model, graph, registry, engine };
 }
 
+it('states whole action-list replacement and preserves explicit withdrawal without merging decisions', () => {
+  const { engine, session, model, graph } = ctWorld({ mode: 'bb', sibling: true });
+  const { services } = stubToolServices({ session, model, graph });
+  const first = { nodeId: BRANCH, question: 'Explain the source.' };
+  const second = { nodeId: OTHER, question: 'Explain the other source.' };
+  const submit = (input: object) => JSON.parse(executeSubmitFindings(input, services));
+  const initial = submit({ summary: 'Authored summary.', sections: { technical: 'Authored evidence.' }, questions: [first] });
+  expect(initial.errors).toEqual(expect.arrayContaining([expect.objectContaining({ path: OTHER,
+    issue: expect.stringContaining('Send the complete list') })]));
+  expect(initial.resend).toEqual([]); // A missing outcome offers alternative actions, not every field.
+  const schema = toModelJsonSchema(submitFindingsSchemaForMode('bb', 'technical', false, engine.hopSubmitColumns));
+  expect(schema.description).toContain('questions or prune_neighbors list replaces its held list whole');
+  expect(submit({ questions: [second] }).errors).toEqual(expect.arrayContaining([expect.objectContaining({ path: BRANCH })]));
+  expect(engine.toJSON().engineInternals.heldFinding?.finding.questions).toEqual([second]);
+  expect(submit({ questions: [] }).errors).toHaveLength(2);
+  expect(engine.toJSON().engineInternals.heldFinding?.finding.questions).toEqual([]);
+  expect(submit({ questions: [first, second] })).toHaveProperty('ok', true);
+  expect(engine.getDetailSlots().find(slot => slot.nodeId === ORIGIN)).toMatchObject({ summary: 'Authored summary.',
+    sections: [{ angle: 'technical', text: 'Authored evidence.' }] });
+});
+
+it.each((['bb', 'ct'] as const).flatMap(mode => ['object', 'markdown', 'invalid-json'].map(sectionShape => ({ mode, sectionShape }))))(
+  'reports missing $mode neighbor decisions alongside shape faults (sections: $sectionShape)', ({ mode, sectionShape }) => {
+  const malformedSections = sectionShape !== 'object';
+  const { engine, session, model, graph } = ctWorld({ mode, sibling: true });
+  const { services } = stubToolServices({ session, model, graph });
+  const questions = [{ nodeId: BRANCH, question: 'Explain the source Value.' }];
+  const before = engine.toJSON();
+  const rejected = JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN, summary: 'Value provenance.',
+    sections: sectionShape === 'markdown' ? '# Findings\nPlain authored Markdown.' : sectionShape === 'invalid-json'
+      ? '{"technical":"Authored "quoted" evidence."}' : { technical: 'Preserve this authored evidence.' }, questions, badge_label: 42,
+    ...(mode === 'ct' ? { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }] } : {}) }, services));
+  expect(rejected.errors).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'badge_label' }), expect.objectContaining({ path: OTHER })]));
+  if (malformedSections) expect(rejected.errors).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'sections' })]));
+  expect(rejected.detail).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'neighbor_outcome_missing', id: OTHER })]));
+  const after = engine.toJSON();
+  for (const key of ['agenda', 'columnAspect', 'removedSet', 'visited'] as const) expect(after[key]).toEqual(before[key]);
+  expect(engine.getDetailSlots()).toEqual([]);
+  expect(engine.toJSON().engineInternals.heldFinding?.finding.questions).toEqual(questions);
+  expect(engine.toJSON().engineInternals.heldFinding?.finding).toMatchObject({ summary: 'Value provenance.',
+    sections: malformedSections ? [] : [{ angle: 'technical', text: 'Preserve this authored evidence.' }] });
+  expect(JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN }, services))).toHaveProperty('code');
+  expect(JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN,
+    ...(malformedSections ? { sections: { technical: 'Corrected authored evidence.' } } : {}), questions: [...questions,
+    { nodeId: OTHER, question: 'Explain the other source.' }] }, services))).toHaveProperty('ok', true);
+  expect(engine.toJSON().memory.detailSlots[ORIGIN]).toMatchObject({ summary: 'Value provenance.' });
+  if (mode === 'ct') expect(engine.columnAspect?.edges).toEqual([expect.objectContaining({ from_node: BRANCH, to_node: ORIGIN })]);
+});
+
 /** An inherited investigation reaches a reader that does not use the table's Value. */
 function tableArrivalWorld(mode: 'bb' | 'ct') {
   const nodes = [

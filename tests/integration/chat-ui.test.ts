@@ -1,5 +1,6 @@
 /// <reference lib="dom" />
 import * as assert from 'node:assert/strict';
+import { isDeepStrictEqual } from 'node:util';
 import * as vscode from 'vscode';
 import { createRequire } from 'node:module';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -16,7 +17,7 @@ interface DepthProjection {
 interface SessionProjection {
   model: {nodes:Array<{id:string}>} | null; phase: {kind:string}; resultGraph: {nodeIds:string[]} | null;
   memory: {getResult(): {detail_slots: unknown[]}};
-  pendingExploration: {revision:number; init:{depthIntent:DepthProjection}; classification:'business'|'technical'|'both'; summary:{scopeCount:number}} | null;
+  pendingExploration: {revision:number; init:{depthIntent:DepthProjection;analysisMode:'bb'|'ct'}; classification:'business'|'technical'|'both'; summary:{scopeCount:number}} | null;
   lastPresentResultDescription: string | null;
   stateMachine: {
     deferredQuestions: unknown;
@@ -67,7 +68,7 @@ suite('Native chat confirmations — actual UI', () => {
   let captureFailed = false;
   let initialGraph: SessionProjection['resultGraph'];
   let extensionPath: string;
-  let fixture: { uiRequests: Array<{messages:unknown;tools:Array<{name:string}>}>;
+  let fixture: { providerProfile: { provider?: string; model?: string; reasoningEffort?: string }; uiRequests: Array<{messages:unknown;tools:Array<{name:string}>}>;
     uiErrors: Array<{requestIndex:number;message:string}> };
   let firstErrorIndex = 0;
   let assertUiProviderHealthy: (errors: Array<{requestIndex:number;message:string}>, firstErrorIndex:number) => void;
@@ -244,8 +245,8 @@ suite('Native chat confirmations — actual UI', () => {
     const fixtureHash = existsSync(fixturePath) ? createHash('sha256').update(readFileSync(fixturePath)).digest('hex') : null;
     const revision = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: extensionPath, encoding: 'utf8' });
     const sourceDiff = spawnSync('git', ['diff', 'HEAD', '--', 'src', 'assets'], { cwd: extensionPath });
-    const context = { provider: process.env.AI_TEST_PROVIDER ?? null, model: process.env.AI_TEST_MODEL ?? null,
-      reasoningEffort: process.env.AI_TEST_REASONING_EFFORT ?? null,
+    const context = { provider: fixture.providerProfile.provider ?? null, model: fixture.providerProfile.model ?? null,
+      reasoningEffort: fixture.providerProfile.reasoningEffort ?? null,
       executionMode: process.env.DLV_CHAT_UI_REPLAY_TRACE ? 'native-replay' : 'native-live',
       settings: { timeoutMs: phaseTimeoutMs, requestTimeoutMs: Number(process.env.AI_TEST_REQUEST_TIMEOUT_MS) || null, temperature: 0.1 },
       promptAssets: Object.fromEntries(['src/ai/prompting/prompts.ts', 'src/ai/prompting/smPrompts.ts', 'assets/aiOutputTemplates.yaml']
@@ -290,6 +291,11 @@ suite('Native chat confirmations — actual UI', () => {
       join(extensionPath,'tests/tools/chat-ui-replay-trace.mjs'),
     ));
     fixture = await vscode.extensions.getExtension('data-lineage-test.data-lineage-test-model-provider')!.activate();
+    if (real) {
+      const expected = JSON.parse(readFileSync(join(process.env.DLV_CHAT_UI_PROFILE!, 'provider-profile.json'), 'utf8'));
+      assert.deepEqual(fixture.providerProfile, expected, 'native provider must match the launcher profile before any inference');
+      console.log(`[chat-ui] verified host profile ${JSON.stringify(fixture.providerProfile)}`);
+    }
     assert.ok((await vscode.lm.selectChatModels({vendor:'lineage-test'})).length,'scripted provider must resolve');
     exports = await vscode.extensions.getExtension('datahelper-chwagner.data-lineage-viz')!.activate();
     await vscode.commands.executeCommand('dataLineageViz.openDemo');
@@ -367,6 +373,20 @@ suite('Native chat confirmations — actual UI', () => {
 
   test('typed approve starts analysis without clicking Approve',async()=>{
     await openPlan();
+    if (real) {
+      const expectedDepth: DepthProjection = { upstream: { levels: 3, exactness: 'approximate' }, downstream: { levels: 3, exactness: 'approximate' } };
+      const proposal = exports.getSession().pendingExploration;
+      if (proposal?.classification !== 'business' || proposal.init.analysisMode !== 'bb'
+        || !isDeepStrictEqual(proposal.init.depthIntent, expectedDepth)) {
+        await changeScopeButton().click();
+        await send('@lineage Change the pending plan to blackboard mode and business analysis. Use approximate depths of three levels upstream and three levels downstream.');
+        await idleInput();
+        await waitForControl(continueButton());
+      }
+      assert.equal(exports.getSession().pendingExploration?.classification, 'business');
+      assert.equal(exports.getSession().pendingExploration?.init.analysisMode, 'bb');
+      assert.deepEqual(exports.getSession().pendingExploration?.init.depthIntent, expectedDepth);
+    }
     const before=fixture.uiRequests.length;
     await send('@lineage approve');
     await deadlineWait(()=>exports.getSession().phase.kind==='completed','typed approve must complete analysis');

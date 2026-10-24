@@ -2215,7 +2215,7 @@ export class NavigationEngine implements IHopStateMachine {
 
     // Validated slices can prove a local prune conflict, never a complete finding or column carry.
     const pruneColumnEdges = unavailable.has('column_flow') ? diagnosticColumnEdges : stagedColumnEdges;
-    const actions = this.collectNeighborActions(focusId, unavailable.has('questions') ? null : finding.questions ?? [], unavailable.has('prune_neighbors') ? null : finding.prune_neighbors ?? [], pruneColumnEdges, flowQuestionByNode, !unavailable.has('column_flow') && invalidRoutes.length === 0 ? mappedNeighborIds : undefined);
+    const actions = this.collectNeighborActions(focusId, unavailable.has('questions') ? null : finding.questions ?? [], unavailable.has('prune_neighbors') ? null : finding.prune_neighbors ?? [], pruneColumnEdges, flowQuestionByNode, (!this.tracer || !unavailable.has('column_flow')) && invalidRoutes.length === 0 ? mappedNeighborIds : undefined);
     const { pruneTargets, routeRequests, prunedNeighborNids } = actions;
     invalidRoutes.push(...actions.invalidRoutes);
     for (const id of actions.mutablePruneConflicts) conflictPaths.push(...mappingPaths(node => node === id));
@@ -2413,7 +2413,7 @@ export class NavigationEngine implements IHopStateMachine {
         if (requested.has(id) || prunedNeighborNids.has(id)) continue;
         if (!mappedNeighborIds.has(id)) {
           invalidRoutes.push({ kind: 'neighbor_outcome_missing', id,
-            reason: `Neighbor \`${id}\` has no authored outcome. Map its value in column_flow (CT), prune it in prune_neighbors if allowed, or keep / question it in questions.` });
+            reason: `Neighbor \`${id}\` has no authored outcome. Map its value in column_flow (CT), prune it in prune_neighbors if allowed, or keep / question it in questions. Send the complete list for any action field you change, including entries you keep.` });
           continue;
         }
         // The authored mapping supplies the outcome; its qualified column question travels separately.

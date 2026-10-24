@@ -162,6 +162,7 @@ export function buildActiveHopInstruction(sess: AiSession, engine: NavigationEng
     engine.pendingLineageQuestions,
     nonBodied,
     held !== null,
+    { analysisMode: engine.currentHopAnalysisMode, originNodeId: engine.currentOrigin },
   );
   const savedFields = held ? [
     ...(held.summary ? ['summary'] : []),

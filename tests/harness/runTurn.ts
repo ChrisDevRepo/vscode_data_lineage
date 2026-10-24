@@ -86,11 +86,20 @@ export function approvalWorkload(proposal: Pick<PendingExplorationProposal, 'cla
 export type ApprovalWorkload = ReturnType<typeof approvalWorkload>;
 
 /** Reports the binding dimensions that differ, without changing either proposal. */
-export function approvalWorkloadDifferences(expected: ApprovalWorkload, actual: ApprovalWorkload): string[] {
+export function approvalWorkloadDifferences(expected: Partial<ApprovalWorkload>, actual: ApprovalWorkload): string[] {
   return (Object.keys(expected) as Array<keyof ApprovalWorkload>)
     .filter(key => key === 'depthIntent'
-      ? !isDeepStrictEqual(resolveDepthBorder(expected.depthIntent), resolveDepthBorder(actual.depthIntent))
+      ? !isDeepStrictEqual(resolveDepthBorder(expected.depthIntent!), resolveDepthBorder(actual.depthIntent))
       : !isDeepStrictEqual(expected[key], actual[key]));
+}
+
+/** Native Change fields for a declared case expectation; equivalent depth labels are not edits. */
+export function requiredApprovalRefinement(expected: Partial<ApprovalWorkload>, actual: ApprovalWorkload): AiGateRefine | undefined {
+  const differences = approvalWorkloadDifferences(expected, actual);
+  if (!differences.length) return undefined;
+  const edits: Record<string, unknown> = {};
+  for (const field of differences) edits[field === 'depthIntent' ? 'depth' : field] = expected[field as keyof ApprovalWorkload];
+  return AiGateRefineSchema.parse({ ...edits, instruction: `Apply these case-requested approval edits: ${JSON.stringify(edits)}. Preserve other scope fields.` });
 }
 
 /** Everything one headless turn needs; nothing here is VS Code specific. */
@@ -110,6 +119,8 @@ export interface HarnessTurnOptions {
   readonly gate?: readonly GateRoundPolicy[];
   /** Selected baseline's approved workload; checked before simulated approval. */
   readonly expectedApproval?: ApprovalWorkload;
+  /** Declared test-case lens/border; a reference is diagnostic only. */
+  readonly requiredApproval?: Partial<ApprovalWorkload>;
   readonly signal?: AbortSignal;
   /** Session trace sink; when present the runtime writes lifecycle and tool records to it. */
   readonly traceWriter?: AiTraceWriter;
@@ -131,6 +142,7 @@ export interface HarnessGateDecision {
   readonly instruction?: string;
   /** Case expectation evaluated on this proposal. A configured mismatch requests Change once; a remaining mismatch stays recorded when approval continues. */
   readonly expectation?: { readonly expr: string; readonly ok: boolean };
+  readonly requiredApproval?: { readonly expected: Partial<ApprovalWorkload>; readonly actual: ApprovalWorkload; readonly differences: readonly string[] };
   readonly approval?: { readonly actual: ApprovalWorkload; readonly expected?: ApprovalWorkload; readonly differences: readonly string[]; readonly equivalentDeclaredDifferences: readonly string[] };
 }
 
@@ -178,6 +190,7 @@ export async function runHarnessTurn(options: HarnessTurnOptions): Promise<Harne
   const events: TurnEvent[] = [];
   const gates: HarnessGateDecision[] = [];
   let gateRound = 0;
+  let requiredChangeRequested = false;
   let text = '';
   let engine: NavigationEngine | null = null;
 
@@ -227,11 +240,16 @@ export async function runHarnessTurn(options: HarnessTurnOptions): Promise<Harne
     const equivalentDeclaredDifferences = options.expectedApproval && actual
       && !isDeepStrictEqual(options.expectedApproval.depthIntent, actual.depthIntent)
       && !approvalWorkloadDifferences(options.expectedApproval, actual).includes('depthIntent') ? ['depthIntent'] : [];
-    const correction = round.kind === 'approve' && expectation && !expectation.ok && round.onMismatch
+    const requiredCorrection = round.kind === 'approve' && options.requiredApproval && actual
+      ? requiredApprovalRefinement(options.requiredApproval, actual) : undefined;
+    const requiredStillWrong = Boolean(requiredCorrection && requiredChangeRequested);
+    const caseChange = requiredCorrection && !requiredChangeRequested ? requiredCorrection : undefined;
+    if (caseChange) requiredChangeRequested = true;
+    const correction = caseChange ?? (round.kind === 'approve' && expectation && !expectation.ok && round.onMismatch
       && !gates.some(gate => gate.policyIndex === policyIndex && gate.decision === 'refine')
-      ? round.onMismatch : undefined;
-    const refinement = correction ?? (round.kind === 'refine' ? { instruction: round.instruction } : undefined);
-    const decision = refinement ? 'refine' : round.kind;
+      ? round.onMismatch : undefined);
+    const refinement = requiredStillWrong ? undefined : correction ?? (round.kind === 'refine' ? { instruction: round.instruction } : undefined);
+    const decision = requiredStillWrong ? 'deny' : refinement ? 'refine' : round.kind;
     if (!correction) gateRound += 1;
     gates.push({
       gateId: event.gateId,
@@ -241,6 +259,7 @@ export async function runHarnessTurn(options: HarnessTurnOptions): Promise<Harne
       decision,
       ...(refinement ? { refine: refinement, ...(refinement.instruction !== undefined ? { instruction: refinement.instruction } : {}) } : {}),
       ...(expectation ? { expectation } : {}),
+      ...(options.requiredApproval && actual ? { requiredApproval: { expected: options.requiredApproval, actual, differences: approvalWorkloadDifferences(options.requiredApproval, actual) } } : {}),
       ...(actual ? { approval: { actual, ...(options.expectedApproval ? { expected: options.expectedApproval } : {}), differences, equivalentDeclaredDifferences } } : {}),
     });
     if (equivalentDeclaredDifferences.length) options.logger.info('[harness] declared depth differs; execution border is equivalent — preserving both declarations in the approval receipt');

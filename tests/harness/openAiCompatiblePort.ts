@@ -323,6 +323,10 @@ export class OpenAiCompatiblePort implements ModelPort {
   private readonly toolExtraContentTurn = new Map<string, Record<string, unknown>>();
 
   private readonly fetchImpl: FetchLike;
+  private closeTransport?: () => Promise<void>;
+
+  /** Close only the transport this port owns; injected fetch implementations remain caller-owned. */
+  public async close(): Promise<void> { await this.closeTransport?.(); }
 
   public constructor(
     private readonly config: OpenAiCompatiblePortConfig,
@@ -354,8 +358,10 @@ export class OpenAiCompatiblePort implements ModelPort {
     } else {
       const { createProviderFetch } = require(
         `${process.cwd()}/tests/fixtures/lm-provider-extension/live-provider-adapter.js`,
-      ) as { createProviderFetch: (timeoutMs: number) => FetchLike };
-      this.fetchImpl = createProviderFetch(config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
+      ) as { createProviderFetch: (timeoutMs: number) => FetchLike & { close: () => Promise<void> } };
+      const transport = createProviderFetch(config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
+      this.fetchImpl = transport;
+      this.closeTransport = () => transport.close();
     }
     // Record the configured model before any provider request can fail.
     this.options.debugLog?.(

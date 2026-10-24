@@ -16,7 +16,7 @@ import { buildModelFromDmv, buildSchemaPreview, validateQueryResult, type DmvRes
 import { createHeadlessLogger } from './headlessLogger';
 import { exportBudgetMs, exportRunToLangfuse, freezeRunEvidence, resolveLangfuseConfig, type LangfuseAttachment, type LangfuseAttachments } from './langfuseExport';
 import { OpenAiCompatiblePort } from './openAiCompatiblePort';
-import { runHarnessTurn, nativeHarnessPrompt, approvalWorkload, approvalWorkloadDifferences, type ApprovalWorkload } from './runTurn';
+import { runHarnessTurn, nativeHarnessPrompt, approvalWorkload, approvalWorkloadDifferences, requiredApprovalRefinement, type ApprovalWorkload } from './runTurn';
 import { AiGateRefineSchema, type AiGateRefine } from '../../src/engine/shared/bridgeContract';
 import { StartExplorationInputSchema } from '../../src/ai/tools/toolSchemas';
 import { directionFromDepth } from '../../src/engine/shared/explorationDepthContract';
@@ -35,6 +35,8 @@ interface CatalogCase {
   readonly gate?: readonly import('./runTurn').GateRoundPolicy[];
   readonly expect?: {
     readonly terminal?: string;
+    /** Case-authored approval intent; omitted lens defaults to business when a gate appears. */
+    readonly approval?: Partial<ApprovalWorkload>;
     readonly tokens_max?: number;
     readonly rejections_max?: number;
     readonly preview_chars_min?: number;
@@ -362,7 +364,7 @@ export function aiRunStatus(turns: readonly { readonly outcome: string }[]): str
 /** Checks one finished turn against its catalog row. Terminal status and the rejection ceiling apply to every turn; the content checks (`preview_chars_min`, `must_contain`, `sql_blocks_min`) describe the row's question and apply to its first answer only. */
 export function turnChecks(
   run: Pick<AiRun, 'expectTerminal' | 'expectMetrics' | 'gate'>,
-  turn: { terminalStatus?: string | null; outcome: { outcome: string }; events: ReadonlyArray<{ type: string; recoverable?: boolean }>; text: string; gates?: readonly { decision: string; instruction?: string; policyIndex?: number; expectation?: { ok: boolean }; refine?: unknown }[] },
+  turn: { terminalStatus?: string | null; outcome: { outcome: string }; events: ReadonlyArray<{ type: string; recoverable?: boolean }>; text: string; gates?: readonly { requiredApproval?: { expected: Partial<ApprovalWorkload>; actual: ApprovalWorkload; differences: readonly string[] }; decision: string; instruction?: string; policyIndex?: number; expectation?: { ok: boolean }; refine?: unknown }[] },
   firstTurn: boolean,
 ): string[] {
   const failures: string[] = [];
@@ -377,13 +379,20 @@ export function turnChecks(
       const gate = receipts.at(-1);
       const round = index + 1;
       const changes = receipts.slice(0, -1);
-      if (changes.length && (changes.length !== 1 || policy.kind !== 'approve' || !policy.onMismatch
-        || changes[0].decision !== 'refine' || changes[0].expectation?.ok !== false
-        || !isDeepStrictEqual(changes[0].refine, policy.onMismatch))) failures.push(`gate round ${round} conditional Change differs from catalog`);
+      const caseChanges = changes.filter(change => change.decision === 'refine' && change.requiredApproval?.differences.length
+        && isDeepStrictEqual(change.refine, requiredApprovalRefinement(change.requiredApproval.expected, change.requiredApproval.actual)));
+      const catalogChanges = changes.filter(change => !caseChanges.includes(change));
+      if (caseChanges.length > 1 || (caseChanges.length && policy.kind !== 'approve')) failures.push(`gate round ${round} case Change exceeds its single approval correction`);
+      if (catalogChanges.length && (catalogChanges.length !== 1 || policy.kind !== 'approve' || !policy.onMismatch
+        || catalogChanges[0].decision !== 'refine' || catalogChanges[0].expectation?.ok !== false
+        || !isDeepStrictEqual(catalogChanges[0].refine, policy.onMismatch))) failures.push(`gate round ${round} conditional Change differs from catalog`);
       if (!gate) failures.push(`gate round ${round} was not exercised`);
       else if (gate.decision !== policy.kind) failures.push(`gate round ${round} decision ${gate.decision}, expected ${policy.kind}`);
       else if (policy.kind === 'refine' && gate.instruction !== policy.instruction) failures.push(`gate round ${round} refinement differs from catalog`);
     }
+  }
+  for (const gate of turn.gates ?? []) {
+    if (gate.requiredApproval?.differences.length && (gate.decision === 'approve' || gate.decision === 'deny')) failures.push(`case approval mismatch (${gate.decision}): ${gate.requiredApproval.differences.join(', ')}`);
   }
   const expect = run.expectMetrics;
   if (expect?.rejections_max !== undefined) {
@@ -658,6 +667,7 @@ export async function main(kind: 'ai' | 'db', args: readonly string[], onResult?
   let traceWriter: AiTraceWriter | undefined;
   let tracePath: string | undefined;
   const metricManifests: string[] = [];
+  const providerPorts: OpenAiCompatiblePort[] = [];
   try {
     if (db) {
       await loadHarnessParseRules();
@@ -780,6 +790,7 @@ export async function main(kind: 'ai' | 'db', args: readonly string[], onResult?
             ...(reasoningEffort ? { requestTuning: { reasoning: { effort: reasoningEffort } } } : {}),
           }, { requestId, budget, traceVerbose: options.verbose, debugLog: message => logger.debug(message),
             wireLog: record => { void traceWriter!.write(record); } });
+          providerPorts.push(port);
           const turnDir = join(runDir, `turn-${turnIndex}`);
           mkdirSync(turnDir, { recursive: true });
           const identity = { catalogId: run.id, questionHash, fixtureHash, caseIdentity: `${run.id}:${questionHash}:${fixtureHash}`, requestId };
@@ -789,7 +800,7 @@ export async function main(kind: 'ai' | 'db', args: readonly string[], onResult?
             reportPath: join(turnDir, 'present-result.json'), reportRepresentation: 'present_result_json', finalSnapshotPath: join(turnDir, 'final-snapshot.json') };
           writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
           metricManifests.push(manifestPath);
-          const turn = await runHarnessTurn({ session, model: port, requestId, prompt, priorMessages: [...priorMessages], gate: run.gate, expectedApproval, runDir: turnDir, logger, signal: controller.signal, traceWriter });
+          const turn = await runHarnessTurn({ session, model: port, requestId, prompt, priorMessages: [...priorMessages], gate: run.gate, expectedApproval, requiredApproval: { classification: 'business', ...run.expectMetrics?.approval }, runDir: turnDir, logger, signal: controller.signal, traceWriter });
           if (session.resultGraph) writeFileSync(manifest.finalSnapshotPath, JSON.stringify({
             nodes: session.resultGraph.nodeIds, columnEdges: session.stateMachine?.columnAspect?.edges ?? null,
           }, null, 2) + '\n');
@@ -869,6 +880,12 @@ export async function main(kind: 'ai' | 'db', args: readonly string[], onResult?
     logger.error(`Smoke failed: ${safeDiagnostic}`);
     result.runtime = controller.signal.aborted ? 'cancelled' : 'error';
   } finally {
+    const cleanup = await Promise.allSettled(providerPorts.map(port => port.close()));
+    if (cleanup.some(item => item.status === 'rejected')) {
+      result.transportCleanup = 'error';
+      result.runtime = 'error';
+      logger.error('AI provider transport cleanup failed.');
+    }
     clearTimeout(watchdog);
     process.removeListener('SIGINT', interrupt);
     await traceWriter?.close();

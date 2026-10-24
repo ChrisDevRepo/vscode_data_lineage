@@ -1,5 +1,5 @@
 /** Rejects malformed or unknown SQL references at their owning field; indexed repair retains valid report content and controls. */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { expandEvidenceRefs } from '../../../src/ai/tools/presentResult';
 import { PresentResultModelSchema, presentResultRepairPatchSchemaForFields } from '../../../src/ai/tools/toolSchemas';
 import { marked } from 'marked';
@@ -82,36 +82,32 @@ function description(session: AiSession): string {
 }
 
 describe('presentation SQL-reference fence boundary', () => {
-  it('never accepts a preview that drops a captured SQL block', async () => {
+  it('accepts AI-selected content without autofilling omitted SQL and measures coverage', async () => {
     const session = seedSession();
-    const submitted = await run(session, basePayload({ sections: [{ label: 'Source', node_ids: [ORIGIN], text: 'Orders is the origin.' }] }));
-    // Captured SQL must reach every accepted preview, even when synthesis omitted its ref.
-    if (submitted.success !== true) {
-      expect(session.presentationArtifact).toBeFalsy();
-      const repaired = await run(session, basePayload({
-        sections: [{ label: 'Source', node_ids: [ORIGIN], text: 'Orders is the origin.\n```sql S1\n```' }],
-      }));
-      expect(repaired.success).toBe(true);
-    }
-    expect(description(session)).toContain(CAPTURED_SQL);
+    const input = basePayload({ sections: [{ label: 'Source', node_ids: [ORIGIN], text: 'Orders is the origin.' }] });
+    const original = structuredClone(input);
+    const log = vi.spyOn(SILENT_LOGGER, 'debug');
+    try {
+      expect((await run(session, input)).success).toBe(true);
+      expect(input).toEqual(original);
+      expect(description(session)).toContain('Orders is the origin.');
+      expect(description(session)).not.toContain(CAPTURED_SQL);
+      expect(log.mock.calls.some(([message]) => message.includes('fences served=1 shown=0 unused=[S1]'))).toBe(true);
+    } finally { log.mockRestore(); }
   });
 
   it.each([
     ["SELECT 'a b' AS Label;", "SELECT 'a  b' AS Label;"],
     ['SELECT 1 -- comment\n+ 2;', 'SELECT 1 -- comment + 2;'],
-  ])('does not treat changed SQL whitespace as captured evidence: %s', async (writtenSql, capturedSql) => {
+  ])('preserves authored SQL without replacing it with the captured version: %s', async (writtenSql, capturedSql) => {
     const session = seedSession(capturedSql);
-    const epoch = session.beginTurn();
     const input = basePayload({ title: 'Held title', intro: `An authored alternative.\n\`\`\`sql\n${writtenSql}\n\`\`\``,
       sections: [{ label: 'Source', node_ids: [ORIGIN], text: 'Orders is the origin.' }] });
-    const failed = JSON.parse(await executePresentResult(input, services(session, epoch)));
-    expect(failed).toMatchObject({ code: 'validation', issuePaths: ['sections'] });
-    expect(failed.reason).toContain('S1');
-    expect(session.presentationArtifact).toBeFalsy();
-    expect(session.presentResultRepairDraft.get()).toEqual(input);
-    const repaired = JSON.parse(await executePresentResult({ sections: [{ label: 'Source', text: 'Orders is the origin.\n```sql S1\n```' }] }, services(session, epoch)));
-    expect(repaired.success).toBe(true);
-    for (const retained of ['Held title', writtenSql, capturedSql]) expect(description(session)).toContain(retained);
+    const original = structuredClone(input);
+    expect((await run(session, input)).success).toBe(true);
+    expect(input).toEqual(original);
+    for (const retained of ['Held title', writtenSql]) expect(description(session)).toContain(retained);
+    expect(description(session)).not.toContain(capturedSql);
   });
 
   it('rejects all unclosed reference openers without consuming the following business prose', async () => {

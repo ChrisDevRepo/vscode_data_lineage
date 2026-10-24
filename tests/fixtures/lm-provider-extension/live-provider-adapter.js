@@ -78,48 +78,56 @@ function createProviderFetch(timeoutMs) {
   }
   // Use request rather than global fetch so its hidden header deadline cannot cap slow models.
   const { EnvHttpProxyAgent, request, interceptors } = require('undici');
-  return async (url, init) => {
+  const dispatchers = new Map();
+  let closing;
+  const fetchProvider = async (url, init) => {
+    if (closing) throw new Error('AI provider transport is closed.');
     const allowedOrigin = new URL(url).origin;
     const connectTimeout = Math.min(timeoutMs, 30_000);
-    const dispatcher = new EnvHttpProxyAgent({
-      connect: { timeout: connectTimeout },
-      requestTls: { timeout: connectTimeout },
-      proxyTls: { timeout: connectTimeout },
-    }).compose(
-      dispatch => (options, handler) => {
-        if (new URL(options.origin).origin !== allowedOrigin) {
-          throw new Error('Cross-origin provider redirects are not allowed. Configure the final provider endpoint.');
-        }
-        return dispatch(options, handler);
-      },
-      interceptors.redirect({ maxRedirections: 20 }),
-      interceptors.decompress({ skipErrorResponses: false }),
-    );
-    try {
-      const response = await request(url, {
-        ...init,
-        dispatcher,
-        throwOnMaxRedirect: true,
-        headersTimeout: timeoutMs,
-        bodyTimeout: timeoutMs,
-      });
-      const raw = await response.body.text();
-      const headers = new Headers();
-      for (const [name, value] of Object.entries(response.headers)) {
-        if (value !== undefined) headers.set(name, Array.isArray(value) ? value.join(', ') : String(value));
-      }
-      return {
-        ok: response.statusCode >= 200 && response.statusCode < 300,
-        status: response.statusCode,
-        statusText: require('node:http').STATUS_CODES[response.statusCode] ?? '',
-        headers,
-        text: async () => raw,
-        json: async () => JSON.parse(raw),
-      };
-    } finally {
-      await dispatcher.destroy();
+    let dispatcher = dispatchers.get(allowedOrigin);
+    if (!dispatcher) {
+      dispatcher = new EnvHttpProxyAgent({
+        connect: { timeout: connectTimeout },
+        requestTls: { timeout: connectTimeout },
+        proxyTls: { timeout: connectTimeout },
+      }).compose(
+        dispatch => (options, handler) => {
+          if (new URL(options.origin).origin !== allowedOrigin) {
+            throw new Error('Cross-origin provider redirects are not allowed. Configure the final provider endpoint.');
+          }
+          return dispatch(options, handler);
+        },
+        interceptors.redirect({ maxRedirections: 20 }),
+        interceptors.decompress({ skipErrorResponses: false }),
+      );
+      dispatchers.set(allowedOrigin, dispatcher);
     }
+    const response = await request(url, {
+      ...init,
+      dispatcher,
+      throwOnMaxRedirect: true,
+      headersTimeout: timeoutMs,
+      bodyTimeout: timeoutMs,
+    });
+    const raw = await response.body.text();
+    const headers = new Headers();
+    for (const [name, value] of Object.entries(response.headers)) {
+      if (value !== undefined) headers.set(name, Array.isArray(value) ? value.join(', ') : String(value));
+    }
+    return {
+      ok: response.statusCode >= 200 && response.statusCode < 300,
+      status: response.statusCode,
+      statusText: require('node:http').STATUS_CODES[response.statusCode] ?? '',
+      headers,
+      text: async () => raw,
+      json: async () => JSON.parse(raw),
+    };
   };
+  fetchProvider.close = () => {
+    closing ??= Promise.all([...dispatchers.values()].map(dispatcher => dispatcher.close())).then(() => undefined);
+    return closing;
+  };
+  return fetchProvider;
 }
 
 async function sendProviderRequest(request, config, fetchImpl, signal) {

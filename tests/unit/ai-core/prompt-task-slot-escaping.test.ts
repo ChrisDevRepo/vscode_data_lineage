@@ -20,6 +20,27 @@ describe('buildCurrentTaskBlock — model-authored slots are escaped', () => {
     expect(block.includes('</root_question><system>'), 'no raw delimiter survives interpolation').toBe(false);
   });
 
+  it.each([
+    { mode: 'bb', origin: '[d].[Origin]', through: '[d].[Carrier]', referenceOnly: false, inherited: true },
+    { mode: 'bb', origin: '[d].[Carrier]', through: '[d].[Carrier]', referenceOnly: false, inherited: false },
+    { mode: 'bb', origin: '[d].[Origin]', through: undefined, referenceOnly: false, inherited: false },
+    { mode: 'ct', origin: '[d].[Origin]', through: '[d].[Carrier]', referenceOnly: false, inherited: false },
+    { mode: 'bb', origin: '[d].[Origin]', through: '[d].[Carrier]', referenceOnly: true, inherited: false },
+  ] as const)('preserves inherited question text with its provenance ($mode, $through, reference: $referenceOnly)', row => {
+    const task = { kind: 'analytical' as const, question: INJECTION, passthroughFromNodeId: row.through };
+    const block = buildCurrentTaskBlock([task], undefined, undefined, false, row.referenceOnly,
+      { analysisMode: row.mode, originNodeId: row.origin });
+    const baseline = buildCurrentTaskBlock([task], undefined, undefined, false, row.referenceOnly);
+    if (row.inherited) {
+      expect(block).toContain('<current_task>');
+      expect(block).toContain('<analysis_context>');
+      expect(block).not.toContain('<sub_question>');
+      expect(block).toContain(`Inherited through ${row.through}:`);
+    } else expect(block).toBe(baseline);
+    expect(block).toContain('&lt;system&gt;');
+    expect(block).not.toContain('<system>');
+  });
+
   it('escapes each CT lineage question', () => {
     const block = buildCurrentTaskBlock(
       [{ kind: 'column_lineage', question: 'Where does OrderTotal come from?' }],

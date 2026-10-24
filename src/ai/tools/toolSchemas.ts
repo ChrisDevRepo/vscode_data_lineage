@@ -293,6 +293,9 @@ const QUESTIONS_DESCRIPTION =
   'Optional. Ask a kept neighbor what its own SQL must answer for the arriving columns: its rules, calculations and thresholds, not only which columns feed this object. Column continuation to mapped neighbors is automatic. '
   + 'A question to an out-of-scope neighbor becomes a follow-up offer. No questions to visited or pruned neighbors.';
 
+const BB_PRUNE_NEIGHBORS_DESCRIPTION = 'Prune eligible neighbors that do not contribute to answering the user\'s question.';
+const BB_QUESTIONS_DESCRIPTION = 'Ask each relevant neighbor what its own SQL must establish for the question. A question to an out-of-scope neighbor becomes a follow-up offer. No questions to visited or pruned neighbors.';
+
 /** One `questions[]` entry, attached to that neighbour's queued hop. */
 const NeighborQuestionSchema = z.object({
   nodeId: z.string().min(1).describe('A neighbor id from `<hop_context>`.'),
@@ -372,8 +375,8 @@ const HopFindingBaseSchema = z.object({
     .refine(value => value.trim().length > 0, 'badge_label must contain non-whitespace text')
     .optional()
     .describe(BADGE_LABEL_DESCRIPTION),
-  prune_neighbors: z.array(PruneNeighborSchema).max(MAX_ID_LIST_LENGTH).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),
-  questions: z.array(NeighborQuestionSchema).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION),
+  prune_neighbors: z.array(PruneNeighborSchema).max(MAX_ID_LIST_LENGTH).optional().describe(BB_PRUNE_NEIGHBORS_DESCRIPTION),
+  questions: z.array(NeighborQuestionSchema).max(MAX_ID_LIST_LENGTH).optional().describe(BB_QUESTIONS_DESCRIPTION),
   /** One string per fired `*_capture` template, keyed by angle. One key (`business` / `technical` classification) or two (`both`) — required for a fresh finding. Declared last: a model emits arguments in schema order, so the long prose closes the object after every short field. */
   sections: CapturedSectionsSchema.optional().describe(SECTIONS_DESCRIPTION),
 }).strict();
@@ -387,7 +390,7 @@ const HopFindingCtBaseSchema = HopFindingBaseSchema
     column_flow: ColumnFlowSchema,
     summary,
     badge_label,
-    prune_neighbors,
+    prune_neighbors: prune_neighbors.describe(PRUNE_NEIGHBORS_DESCRIPTION),
     questions: z.array(CtNeighborQuestionSchema).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION),
     sections,
   })
@@ -553,7 +556,8 @@ function finalizeSubmitFindingsSchema(
       summary: schema.shape.summary.unwrap().regex(/\S/, 'A supplied summary must contain non-whitespace text.').optional(),
     }).strict() : schema;
   const validated = source
-    .check(superRefineAll((value, ctx) => refineSubmitFindingsShape(value as FlatSubmitFindings, ctx, fresh, classification))) as z.ZodType<FlatSubmitFindings>;
+    .check(superRefineAll((value, ctx) => refineSubmitFindingsShape(value as FlatSubmitFindings, ctx, fresh, classification)))
+    .describe('A sent questions or prune_neighbors list replaces its held list whole; repeat entries you keep. Omit the list to retain it; [] withdraws it.') as z.ZodType<FlatSubmitFindings>;
   if (!fresh) return validated;
   const required = Object.entries(schema.shape)
     .filter(([, field]) => !field.isOptional())
@@ -697,8 +701,8 @@ export function submitFindingsSchemaForMode(
     : NeighborQuestionSchema;
   if (mode === 'ct' && hop) narrowed = narrowed.extend({ column_flow: columnFlowSchemaForHop(hop) }).strict() as typeof HopFindingCtBaseSchema;
   if (hop?.neighbors) narrowed = narrowed.extend({
-    prune_neighbors: z.array(PruneNeighborSchema.extend({ id: objectIdSchema(hop.neighbors.filter(n => n.can_prune).map(n => n.id), hop.identifierCaseSensitive) })).max(MAX_ID_LIST_LENGTH).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),
-    questions: z.array(baseQuestion).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION),
+    prune_neighbors: z.array(PruneNeighborSchema.extend({ id: objectIdSchema(hop.neighbors.filter(n => n.can_prune).map(n => n.id), hop.identifierCaseSensitive) })).max(MAX_ID_LIST_LENGTH).optional().describe(mode === 'bb' ? BB_PRUNE_NEIGHBORS_DESCRIPTION : PRUNE_NEIGHBORS_DESCRIPTION),
+    questions: z.array(baseQuestion).max(MAX_ID_LIST_LENGTH).optional().describe(mode === 'bb' ? BB_QUESTIONS_DESCRIPTION : QUESTIONS_DESCRIPTION),
   }).strict() as typeof HopFindingCtBaseSchema;
   if (mode === 'ct' && hop?.callerContextNodeIds) {
     const [first, ...rest] = hop.callerContextNodeIds;

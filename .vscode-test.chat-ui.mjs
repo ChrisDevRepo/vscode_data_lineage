@@ -33,6 +33,8 @@ const profile = mkdtempSync(join(tmpdir(), 'dlv-chat-ui-'));
 // Seed accessibility mode before launch: switching it at runtime on Linux restarts the window and ends the run.
 mkdirSync(join(profile, 'User'), { recursive: true });
 writeFileSync(join(profile, 'User', 'settings.json'), JSON.stringify({ 'editor.accessibilitySupport': 'on' }));
+const providerProfile = real ? { provider: process.env.AI_TEST_PROVIDER, model: process.env.AI_TEST_MODEL, reasoningEffort: 'low' } : undefined;
+if (providerProfile) writeFileSync(join(profile, 'provider-profile.json'), JSON.stringify(providerProfile));
 const cdpPort = process.env.PLAYWRIGHT_CDP_PORT || (real ? '9376' : '9377');
 export default defineConfig({
   version: '1.141.0', label: badge ? 'badge' : column ? 'column' : real ? 'live' : 'fixture',
@@ -40,7 +42,7 @@ export default defineConfig({
   extensionDevelopmentPath: [root, `${root}/tests/fixtures/lm-provider-extension`],
   launchArgs: [root, `--user-data-dir=${profile}`, '--disable-extensions', '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust', '--log=debug',
     '--remote-debugging-address=127.0.0.1', `--remote-debugging-port=${cdpPort}`],
-  env: { DLV_CHAT_UI_PROFILE: profile, DLV_CHAT_UI_FIXTURE: real ? undefined : '1', DLV_CHAT_UI_REAL: real ? '1' : undefined,
+  env: { DLV_CHAT_UI_PROFILE: profile, DLV_CHAT_UI_PROVIDER_PROFILE: providerProfile ? JSON.stringify(providerProfile) : undefined, DLV_CHAT_UI_FIXTURE: real ? undefined : '1', DLV_CHAT_UI_REAL: real ? '1' : undefined,
     AI_TEST_PROVIDER: process.env.AI_TEST_PROVIDER,
     AI_TEST_MODEL: process.env.AI_TEST_MODEL,
     AI_TEST_REAL_PROVIDER: real ? '1' : undefined, AI_TEST_REASONING_EFFORT: real ? 'low' : undefined,
