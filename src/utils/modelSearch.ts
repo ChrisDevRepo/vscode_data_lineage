@@ -425,17 +425,23 @@ function deriveEnclosingPredicates(
   return result;
 }
 
+/** Storage objects whose columns the Detail Search sidebar groups (views are found there by body search). */
+export const STORAGE_COLUMN_OWNERS: ReadonlySet<ObjectType> = new Set<ObjectType>(['table', 'external']);
+/** Every object type that owns columns in metadata: storage objects, views and table functions. */
+export const ALL_COLUMN_OWNERS: ReadonlySet<ObjectType> = new Set<ObjectType>(['table', 'external', 'view', 'function']);
+
 /** Searches for nodes by matching column names. */
 export function searchColumns(
   nodes: SearchableNode[],
   query: string,
   limit = 100,
+  ownerTypes: ReadonlySet<ObjectType> = STORAGE_COLUMN_OWNERS,
 ): DdlMatch[] {
   if (query.length < 2) return [];
   const lower = query.toLowerCase();
   const matches: DdlMatch[] = [];
   for (const node of nodes) {
-    if (node.type !== 'table' && node.type !== 'external') continue;
+    if (!ownerTypes.has(node.type)) continue;
     if (!node.columns?.length) continue;
     const matching = node.columns.filter(c => c.name.toLowerCase().includes(lower));
     if (matching.length === 0) continue;

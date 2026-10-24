@@ -14,7 +14,7 @@ import { schemaKey } from '../../utils/sql';
 import { runAnalysis as runGraphAnalysis } from '../../engine/graphAnalysis';
 import { ColumnStore } from '../../engine/columnStore';
 import { applyIsolationFilter } from '../../engine/shared/modelFilters';
-import { searchCatalog, searchColumns, compileSearchRegex, regexRejectHint, SEARCH_LINE_MAX_CHARS, type SearchableNode } from '../../utils/modelSearch';
+import { searchCatalog, searchColumns, ALL_COLUMN_OWNERS, compileSearchRegex, regexRejectHint, SEARCH_LINE_MAX_CHARS, type SearchableNode } from '../../utils/modelSearch';
 import { executeIsolatedRegexSearch, RegexSearchExecutionError } from '../support/isolatedRegexSearch';
 import type { SerializedFilterState } from '../../engine/projectStore';
 import {
@@ -258,7 +258,7 @@ export async function searchObjects(
   if (schemaSet) columnNodes = columnNodes.filter(n => schemaSet.has(n.schema));
   if (typeSet && typeSet.size > 0) columnNodes = columnNodes.filter(n => typeSet.has(n.type));
   const allColumnHits = !isRegex && !listAllInSchemas
-    ? searchColumns(columnNodes, effectiveQuery, Number.MAX_SAFE_INTEGER)
+    ? searchColumns(columnNodes, effectiveQuery, Number.MAX_SAFE_INTEGER, ALL_COLUMN_OWNERS)
     : [];
   const columnHits = allColumnHits.slice(offset, offset + COLUMN_SEARCH_PAGE);
   const columnCursor = nextCursor(offset + COLUMN_SEARCH_PAGE, allColumnHits.length);

@@ -11,6 +11,8 @@ import {
   type SearchableNode,
 } from '../../../src/utils/modelSearch';
 import type { ColumnDef } from '../../../src/engine/types';
+import { loadAdventureWorksModel } from '../helpers/testUtils';
+import { searchObjects } from '../../../src/ai/tools/tools';
 
 /** Whether this runner's V8 implements ES2025 regexp modifier groups (`(?i:…)`, `(?-i:…)`). */
 const MODIFIER_GROUPS_SUPPORTED = (() => {
@@ -677,4 +679,21 @@ describe('regexRejectHint', () => {
     expect(hintFor('foo\\')).toContain('trailing "\\"');
   });
 
+});
+
+describe('column search covers view columns', () => {
+  it('the extracted view node carries its columns', async () => {
+    const model = await loadAdventureWorksModel();
+    const view = model.nodes.find(n => n.id === '[ai].[vwpricelist]');
+    expect(view?.type).toBe('view');
+    expect(view?.columns?.map(c => c.name)).toContain('UnitPrice');
+  });
+
+  it('returns a view as a column match in lineage_search_objects', async () => {
+    const model = await loadAdventureWorksModel();
+    const out = await searchObjects(model, 'UnitPrice', undefined, ['ai']) as { results: Array<Record<string, unknown>> };
+    expect(out.results).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: '[ai].[vwpricelist]', t: 'view', match: 'column', matched_columns: expect.stringContaining('UnitPrice') }),
+    ]));
+  });
 });
