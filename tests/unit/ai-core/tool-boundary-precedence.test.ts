@@ -121,6 +121,56 @@ it.each((['bb', 'ct'] as const).flatMap(mode => ['object', 'markdown', 'invalid-
   if (mode === 'ct') expect(engine.columnAspect?.edges).toEqual([expect.objectContaining({ from_node: BRANCH, to_node: ORIGIN })]);
 });
 
+describe('missing neighbor outcomes beside an invalid column_flow', () => {
+  const missingIds = (result: { detail?: Array<{ kind?: string; id?: string }> }) =>
+    (result.detail ?? []).filter(fault => fault.kind === 'neighbor_outcome_missing').map(fault => fault.id);
+  const setup = () => {
+    const world = ctWorld({ sibling: true });
+    const { services } = stubToolServices({ session: world.session, model: world.model, graph: world.graph });
+    const before = world.engine.toJSON();
+    const submit = (column_flow: unknown) => JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN, summary: 'Value provenance.',
+      sections: { technical: 'Authored evidence.' }, column_flow }, services));
+    const unchanged = () => {
+      const after = world.engine.toJSON();
+      for (const key of ['agenda', 'columnAspect', 'removedSet', 'visited'] as const) expect(after[key]).toEqual(before[key]);
+      expect(world.engine.getDetailSlots()).toEqual([]);
+    };
+    return { ...world, services, submit, unchanged };
+  };
+
+  it('reports a structurally unmentioned neighbor in the same first feedback as the flow fault', () => {
+    const { submit, unchanged, services } = setup();
+    const rejected = submit([{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Missing' }] }]);
+    expect(rejected.errors).toEqual(expect.arrayContaining([expect.objectContaining({ path: expect.stringMatching(/^column_flow\.0/) })]));
+    // The neighbor named only inside the invalid entry has an authored (if faulty) outcome; only the absent one is owed.
+    expect(missingIds(rejected)).toEqual([OTHER]);
+    unchanged();
+    expect(JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN, column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }],
+      questions: [{ nodeId: OTHER, question: 'Explain the other source.' }] }, services))).toHaveProperty('ok', true);
+  });
+
+  it.each([
+    ['unparseable text', '[{"out_col": "Value", "upstream_columns": ['],
+    ['shape-invalid entry', [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Missing', bogus: 1 }] }]],
+    ['unresolvable reference', [{ out_col: 'Value', upstream_columns: [{ node: '[hop].[nowhere]', col: 'Value' }] }]],
+  ])('claims no missing outcome when the flow cannot be read structurally: %s', (_label, flow) => {
+    const { submit, unchanged } = setup();
+    const rejected = submit(flow);
+    expect(rejected).toHaveProperty('code');
+    expect(missingIds(rejected)).toEqual([]);
+    unchanged();
+  });
+
+  it('claims no missing outcome when a faulty flow reaching the engine names an unresolvable object', () => {
+    const { engine, unchanged } = setup();
+    const rejected = engine.submitFindings({ focus_node_id: ORIGIN, summary: 'Value provenance.', sections: [{ angle: 'technical', text: 'Authored evidence.' }],
+      column_flow: [{ out_col: 'Value', upstream_columns: [{ node: '[hop].[nowhere]', col: 'Value' }] }] });
+    expect(rejected).toHaveProperty('code');
+    expect(missingIds(rejected as never)).toEqual([]);
+    unchanged();
+  });
+});
+
 /** An inherited investigation reaches a reader that does not use the table's Value. */
 function tableArrivalWorld(mode: 'bb' | 'ct') {
   const nodes = [

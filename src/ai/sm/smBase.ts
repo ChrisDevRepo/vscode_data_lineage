@@ -2217,7 +2217,11 @@ export class NavigationEngine implements IHopStateMachine {
 
     // Validated slices can prove a local prune conflict, never a complete finding or column carry.
     const pruneColumnEdges = unavailable.has('column_flow') ? diagnosticColumnEdges : stagedColumnEdges;
-    const actions = this.collectNeighborActions(focusId, unavailable.has('questions') ? null : finding.questions ?? [], unavailable.has('prune_neighbors') ? null : finding.prune_neighbors ?? [], pruneColumnEdges, flowQuestionByNode, (!this.tracer || !unavailable.has('column_flow')) && invalidRoutes.length === 0 ? mappedNeighborIds : undefined);
+    // A faulty flow still names its objects by structure; a reference resolving to no single object leaves outcomes unknown.
+    const flowNodeIds = (finding.column_flow ?? []).flatMap(entry => [entry.writes_to, entry.returns_to, ...entry.upstream_columns])
+      .flatMap(ref => ref ? [this.nodeMap.has(ref.node) ? ref.node : resolveModelNodeId(ref.node, this.nodeMap, this.identifierCaseSensitive)] : []);
+    const outcomeIds = invalidRoutes.length === 0 ? mappedNeighborIds : flowNodeIds.every(Boolean) ? new Set([...mappedNeighborIds, ...flowNodeIds as string[]]) : undefined;
+    const actions = this.collectNeighborActions(focusId, unavailable.has('questions') ? null : finding.questions ?? [], unavailable.has('prune_neighbors') ? null : finding.prune_neighbors ?? [], pruneColumnEdges, flowQuestionByNode, !this.tracer || !unavailable.has('column_flow') ? outcomeIds : undefined);
     const { pruneTargets, routeRequests, prunedNeighborNids } = actions;
     invalidRoutes.push(...actions.invalidRoutes);
     for (const id of actions.mutablePruneConflicts) conflictPaths.push(...mappingPaths(node => node === id));
