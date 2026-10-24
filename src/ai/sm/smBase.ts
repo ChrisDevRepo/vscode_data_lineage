@@ -1,4 +1,4 @@
-import type { InvalidRoute, DepthIntent, HeldSubmissionParts } from './smTypes';
+import type { InvalidRoute, DepthIntent, HeldSubmissionParts, ColumnFlowEntry } from './smTypes';
 import { buildRouteValidationRejection } from './smRouteValidation';
 import { extractRawSectionAngles, validateSectionsAgainstClassification } from '../interaction/rules/submitFindingsRules';
 import { validateHopSubmissionShape, type SubmitFindingsHopColumns, type validatedFindingFields } from '../tools/toolSchemas';
@@ -602,7 +602,9 @@ export class NavigationEngine implements IHopStateMachine {
         diagnosticRoutes.push({ ...fault, path: `column_flow.${slice.index}${supplier === undefined ? '' : `.upstream_columns.${supplier}`}${match[3]}` });
       }
     }
-    const facts = this.collectFindingPlan(focusId, fields, unavailable, false, diagnosticEdges);
+    const structuralFlow = unavailable.has('column_flow') && safe.columnFlowStructurallyComplete
+      ? (safe.columnFlowDiagnostics ?? []).map(slice => slice.entry) : undefined;
+    const facts = this.collectFindingPlan(focusId, fields, unavailable, false, diagnosticEdges, structuralFlow);
     facts.invalidRoutes.push(...diagnosticRoutes);
     // A mapping participating in an action conflict is still valid held content. Only intrinsic
     // schema/state faults require replacing it; the merged action correction is revalidated.
@@ -2096,7 +2098,7 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /** Stages deterministic facts only. Unavailable fields block dependent checks, never become authored empty lists. */
-  private collectFindingPlan(focusId: string, finding: Partial<HopFindingKept>, unavailable: ReadonlySet<keyof HopFindingKept> = new Set(), diagnostics = true, diagnosticColumnEdges?: readonly ColumnEdge[]) {
+  private collectFindingPlan(focusId: string, finding: Partial<HopFindingKept>, unavailable: ReadonlySet<keyof HopFindingKept> = new Set(), diagnostics = true, diagnosticColumnEdges?: readonly ColumnEdge[], structuralFlow?: readonly ColumnFlowEntry[]) {
     const invalidRoutes: InvalidRoute[] = [];
     const conflictPaths: string[] = [];
     const routeOutcomes: RouteOutcome[] = [];
@@ -2219,11 +2221,12 @@ export class NavigationEngine implements IHopStateMachine {
     const pruneColumnEdges = unavailable.has('column_flow') ? diagnosticColumnEdges : stagedColumnEdges;
     // A faulty flow still names its objects by structure; a reference resolving to no single object leaves outcomes unknown.
     // An entry without a write or return target that lands nowhere (a procedure value) maps none of its suppliers.
-    const flowNodeIds = (finding.column_flow ?? []).filter(entry => entry.writes_to || entry.returns_to || resolveColumnFlowTarget(entry, focusId, this.nodeMap, this.identifierCaseSensitive))
+    const flowNodeIds = (finding.column_flow ?? structuralFlow ?? []).filter(entry => entry.writes_to || entry.returns_to || resolveColumnFlowTarget(entry, focusId, this.nodeMap, this.identifierCaseSensitive))
       .flatMap(entry => [entry.writes_to, entry.returns_to, ...entry.upstream_columns])
       .flatMap(ref => ref ? [this.nodeMap.has(ref.node) ? ref.node : resolveModelNodeId(ref.node, this.nodeMap, this.identifierCaseSensitive)] : []);
-    const outcomeIds = invalidRoutes.length === 0 ? mappedNeighborIds : flowNodeIds.every(Boolean) ? new Set([...mappedNeighborIds, ...flowNodeIds as string[]]) : undefined;
-    const actions = this.collectNeighborActions(focusId, unavailable.has('questions') ? null : finding.questions ?? [], unavailable.has('prune_neighbors') ? null : finding.prune_neighbors ?? [], pruneColumnEdges, flowQuestionByNode, !this.tracer || !unavailable.has('column_flow') ? outcomeIds : undefined);
+    // A schema-rejected flow whose entries are all readable still names, by structure, every object the corrected flow can map.
+    const outcomeIds = invalidRoutes.length === 0 && !structuralFlow ? mappedNeighborIds : flowNodeIds.every(Boolean) ? new Set([...mappedNeighborIds, ...flowNodeIds as string[]]) : undefined;
+    const actions = this.collectNeighborActions(focusId, unavailable.has('questions') ? null : finding.questions ?? [], unavailable.has('prune_neighbors') ? null : finding.prune_neighbors ?? [], pruneColumnEdges, flowQuestionByNode, !this.tracer || !unavailable.has('column_flow') || structuralFlow ? outcomeIds : undefined);
     const { pruneTargets, routeRequests, prunedNeighborNids } = actions;
     invalidRoutes.push(...actions.invalidRoutes);
     for (const id of actions.mutablePruneConflicts) conflictPaths.push(...mappingPaths(node => node === id));

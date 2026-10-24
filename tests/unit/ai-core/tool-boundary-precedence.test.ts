@@ -159,6 +159,31 @@ describe('missing neighbor outcomes beside an invalid column_flow', () => {
     expect(missingIds(submit('Value'))).toEqual([BRANCH, OTHER]);
   });
 
+  it('names an absent neighbor in the first feedback when a readable entry carries a filter-only supplier', () => {
+    const { submit, unchanged, services } = setup();
+    const rejected = submit([{ out_col: 'Value', upstream_columns: [
+      { node: BRANCH, col: 'Value', transforms: ['compute'] },
+      { node: BRANCH, col: 'Value', transforms: ['filter'] },
+    ] }]);
+    expect(rejected.code).toBe('invalid_input');
+    expect(missingIds(rejected)).toEqual([OTHER]);
+    unchanged();
+    // The corrected flow alone owes the same neighbor, so the first feedback must already name it.
+    const second = JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN, column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value', transforms: ['compute'] }] }] }, services));
+    expect(missingIds(second)).toEqual([OTHER]);
+  });
+
+  it('owes a neighbor whose only mention is a filter-only supplier that the feedback says to remove', () => {
+    const { submit, unchanged } = setup();
+    const rejected = submit([{ out_col: 'Value', upstream_columns: [
+      { node: BRANCH, col: 'Value', transforms: ['compute'] },
+      { node: OTHER, col: 'Value', transforms: ['filter'] },
+    ] }]);
+    expect(rejected.code).toBe('invalid_input');
+    expect(missingIds(rejected)).toEqual([OTHER]);
+    unchanged();
+  });
+
   it.each([
     ['unparseable text', '[{"out_col": "Value", "upstream_columns": ['],
     ['shape-invalid entry', [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Missing', bogus: 1 }] }]],

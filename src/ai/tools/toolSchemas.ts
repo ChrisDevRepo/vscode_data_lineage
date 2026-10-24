@@ -410,6 +410,8 @@ export function validatedFindingFields(input: unknown, schema: z.ZodType): {
   columnFlowDiagnostics?: readonly { entry: ColumnFlowEntry; index: number; upstreamIndexes: readonly number[] }[];
   /** Independently valid supplier identities whose header or other tuple fields are unavailable. */
   columnSupplierDiagnostics?: readonly { ref: ColumnFlowEntry['upstream_columns'][number]; path: string }[];
+  /** Every column_flow fault is the source-role check, so the readable slices name every object the corrected flow can map. */
+  columnFlowStructurallyComplete?: boolean;
 } {
   const fields: Partial<Pick<HopFindingKept, typeof FINDING_DECISION_FIELDS[number]>> = {};
   const unavailable = new Set<keyof HopFindingKept>();
@@ -475,7 +477,9 @@ export function validatedFindingFields(input: unknown, schema: z.ZodType): {
   }
   return { fields, unavailable, ...(pruneIdentities ? { pruneIdentities } : {}),
     ...(columnFlowDiagnostics.length ? { columnFlowDiagnostics } : {}),
-    ...(columnSupplierDiagnostics.length ? { columnSupplierDiagnostics } : {}) };
+    ...(columnSupplierDiagnostics.length ? { columnSupplierDiagnostics } : {}),
+    columnFlowStructurallyComplete: flowOwner instanceof z.ZodArray
+      && flowOwner.safeParse(raw.column_flow).error?.issues.every(issue => issue.message === DIRECT_ROLE_MESSAGE) };
 }
 
 /** Enforces the fresh kept shape of one flat `submit_findings` payload. */
