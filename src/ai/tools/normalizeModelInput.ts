@@ -44,7 +44,15 @@ function decodeExact(text: string, expected: string): unknown {
   if (expected === 'boolean') return text === 'true' ? true : text === 'false' ? false : undefined;
   if (expected !== 'object' && expected !== 'array') return undefined;
   let decoded: unknown;
-  try { decoded = JSON.parse(text); } catch { return undefined; }
+  try {
+    decoded = JSON.parse(text, (_key, value: unknown, context?: { source?: string }) => {
+      if (typeof value === 'number' && (!Number.isFinite(value) || !context?.source
+        || decimalValue(context.source) !== decimalValue(Number.isInteger(value) ? BigInt(value).toString() : String(value)))) {
+        throw new Error('JSON number cannot be decoded without changing its value.');
+      }
+      return value;
+    });
+  } catch { return undefined; }
   const isArray = Array.isArray(decoded);
   if (expected === 'array') return isArray ? decoded : undefined;
   return typeof decoded === 'object' && decoded !== null && !isArray ? decoded : undefined;

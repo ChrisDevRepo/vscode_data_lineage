@@ -66,6 +66,28 @@ describe('normalizeModelInput strict union decoding', () => {
     expect(ExplorationDepthSelectionSchema.safeParse(result.input).success).toBe(false);
   });
 
+  it.each(['1.0000000000000001', '0.99999999999999999', '9007199254740993'])('rejects lossy JSON depth %s before normal schema checks', levels => {
+    const input = `{"upstream":{"levels":${levels},"exactness":"exact"},"downstream":{"levels":0,"exactness":"exact"}}`;
+    expect(normalizeModelInput(ExplorationDepthSelectionSchema, input)).toEqual({ input, fixes: [] });
+    expect(ExplorationDepthSelectionSchema.safeParse(input).success).toBe(false);
+  });
+
+  it('preserves exact JSON numeric exponents, quoted content and nested values', () => {
+    const schema = z.object({ rows: z.array(z.object({ n: z.number(), text: z.string(), flag: z.boolean(), absent: z.null() })) });
+    const input = '{"rows":[{"n":1.25e-7,"text":"9007199254740993","flag":true,"absent":null},{"n":1e21,"text":"quoted \\\"number\\\" 1.0000000000000001","flag":false,"absent":null},{"n":-0,"text":"negative zero","flag":true,"absent":null},{"n":0e999,"text":"zero","flag":false,"absent":null}]}';
+    const result = normalizeModelInput(schema, input);
+    expect(result.input).toEqual(JSON.parse(input));
+    expect(schema.safeParse(result.input).success).toBe(true);
+    expect(result.fixes).toHaveLength(1);
+  });
+
+  it.each(['0.10000000000000001', '1e-999', '1e999'])('rejects the whole JSON list when nested value %s is lossy', value => {
+    const schema = z.object({ values: z.array(z.object({ n: z.number() })) });
+    const input = { values: `[{"n":2},{"n":${value}}]` };
+    expect(normalizeModelInput(schema, input)).toEqual({ input, fixes: [] });
+    expect(schema.safeParse(input).success).toBe(false);
+  });
+
   it('uses the served start schema and preserves strictness and cross-field checks', () => {
     const input = { origin: '[dbo].[Source]', analysisMode: 'bb', classification: 'technical', depth: {
       upstream: { levels: '2', exactness: 'exact' }, downstream: { levels: '0', exactness: 'exact' },
