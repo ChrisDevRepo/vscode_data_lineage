@@ -110,10 +110,10 @@ Layout timings describe the tested dataset, hardware and runtime, not a general 
 
 | Check | Command | What it verifies |
 |---|---|---|
-| Database metadata smoke | `npm run test:db:smoke` | SQL-login or Entra ID discovery and import, read-only against a disposable or demo database |
+| Database metadata smoke | `npm run test:db:smoke` | Read-only discovery/import against local SQL Server; Azure/Entra only with an explicitly selected available manual profile |
 | Electron host lanes | `npm run test:edh` | Activation, tool invocation and participant turn through the VS Code API |
 | Playwright GUI smoke | `npm run test:gui:host`, then `npm run test:gui:smoke` | Opens the demo in an isolated VS Code host and checks the graph renders |
-| Playwright chat UI | `npx vscode-test --config .vscode-test.chat-ui.mjs` | Native chat confirmations, approval/cancellation, scope revisions and suggestion badges |
+| Playwright chat UI | `npx vscode-test --config .vscode-test.chat-ui.mjs` | Native chat confirmations, approval/cancellation and scope revisions |
 | Real-model smoke | `npm run test:ai:smoke` | One live `@lineage` turn against the demo DACPAC |
 | Headless review | `npm run test:ai:headless` | `--all` (also the default) runs every headless catalog row. `--case ID` selects one row; `--list` prints IDs/descriptions/hashes without provider calls. An explicit question uses `--prompt` (flags: `-- --help`). Full execution is baseline work. |
 | Large layout scale | `npm run test:scale` | Layout check for a 1,500-node model |
@@ -131,18 +131,15 @@ These run the extension in an isolated VS Code host (Extension Development Host)
 | `participant-turn` | `@lineage` completes a turn through the chat API (fixed response) |
 | `kill-switch` | Disabling AI leaves the non-AI features working |
 
-Native chat UI runs with `npx vscode-test --config .vscode-test.chat-ui.mjs`, adding `--label live`, `badge` or `column` as needed, after `npm run pretest:integration`. The default label takes its prompt from the `electron-fixture-trace` row of `tests/cases/lineage-cases.yaml`; the `live`, `badge` and `column` prompts are in `tests/integration/chat-ui.test.ts`.
+Native chat UI runs with `npx vscode-test --config .vscode-test.chat-ui.mjs`, optionally adding `--label live`, after `npm run pretest:integration`. Both use the `electron-fixture-trace` prompt from `tests/cases/lineage-cases.yaml` and the controls in `tests/integration/chat-ui.test.ts`.
 
 | Label | What it verifies |
 |---|---|
 | default | Chat input, plan approval and cancellation with scripted responses |
 | `live` | The same controls against `AI_TEST_PROVIDER` and `assets/demo.dacpac` |
-| `badge` | The follow-up suggestion badge, replaying a qualifying recorded `live` analysis and making one live model call for suggestions |
-| `column` | A column-trace query and the rendered report |
 
-Check `live` answers against the fixture's SQL and graph. Keep reports, screenshots and traces out of git.
+Check `live` answers against the fixture's SQL and graph. Badge/column selectors have no matching tests in this checkout; zero discovered tests establish no coverage. Keep reports, screenshots and traces out of git.
 
-To run `badge` without a recorded trace, use `DLV_CHAT_UI_BADGE_LIVE=1 npx vscode-test --config .vscode-test.chat-ui.mjs --label badge`. This executes fresh real-model analysis and the same native consent, graph and suggestion assertions. The default badge mode still requires a qualifying recorded trace.
 
 ## Live-model and database settings
 

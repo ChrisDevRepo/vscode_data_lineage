@@ -11,16 +11,14 @@
 | Backend case catalog | 31 scripted rows, expanded to 38 cases by BB/CT modes; included in runtime | `npm run test:runtime -- tests/unit/backend/lineage-cases.test.ts` |
 | Electron API | 15 tests: bare-environment 4, kill-switch 5, tools 3, participant-turn 3 | `npm run test:edh` |
 | Native scripted UI | Seven control/lifecycle tests | `npm run pretest:integration`, then `npx vscode-test --config .vscode-test.chat-ui.mjs` |
-| Native provider UI | Eight tests: six controls plus suggestions and column report | `npx vscode-test --config .vscode-test.chat-ui.mjs --label live` |
-| Badge replay variant | Suggestions test with a recorded analysis; fresh variant uses `DLV_CHAT_UI_BADGE_LIVE=1` | `npx vscode-test --config .vscode-test.chat-ui.mjs --label badge` |
-| Column UI selection | The column report test selected from the native live suite | `npx vscode-test --config .vscode-test.chat-ui.mjs --label column` |
+| Native provider UI | Six approval/cancellation/scope controls | `npx vscode-test --config .vscode-test.chat-ui.mjs --label live` |
 | Separate provider API smoke | One real turn through VS Code public model API; separate from native UI | `npm run test:ai:smoke` |
 | Graph Playwright | `playwright-open-demo`: command palette opens demo and renders graph | `npm run test:gui:host`, then `npm run test:gui:smoke`; stop host afterward |
 | Headless provider catalog | Basic demo test cases (`assets/demo.dacpac`) | `npm run test:ai:headless` |
 | Layout scale | 1,500-node layout scenario | `npm run test:scale` |
 | Connected database | Read-only metadata discovery/import against configured database | `npm run test:db:smoke` |
 
-Use `xvfb-run -a` before host commands on Linux without a display. Build integration tests before selecting host labels. Badge and column labels select existing tests: they are not additional distinct case identities. Badge replay and fresh analysis are distinct execution modes and must be reported separately. Headless and native checks exercise different transports, consent and rendering even when their questions overlap.
+Use `xvfb-run -a` before host commands on Linux without a display. Build integration tests before selecting host labels. This checkout supplies the default and `live` chat-control cases; its badge/column selectors have no matching tests and establish no coverage. Headless and native checks exercise different transports, consent and rendering even when their questions overlap.
 
 Approval, cancellation, follow-ups and retries can make multiple requests per identity. No provider-backed suite belongs to the deterministic gate.
 
@@ -54,4 +52,4 @@ The scripted suite uses the `electron-fixture-trace` catalog prompt. Its seven t
 6. Typed approval starts analysis without clicking Approve.
 7. A question at the plan is answered, scope changes, then approval resumes once without exposing internal instructions.
 
-The live suite retains cases 1–6, replaces scripted case 7 with real analysis and concise follow-up suggestions, and adds arithmetic/contextual column-lineage report rendering. The badge selector runs the suggestions case; the column selector runs the column case. The separate `ai-smoke` suite checks one configured-provider public demo question through the public participant/model API. Each surface's capture and rendered assertions remain distinct.
+The live suite runs cases 1–6. The scripted-only case 7 and absent badge/column scenarios are not live coverage. The separate `ai-smoke` suite checks one configured-provider public demo question through the public participant/model API. Each surface's capture and rendered assertions remain distinct.
