@@ -14,7 +14,7 @@ import { errorMessage } from '../../utils/errorMessage';
 const PUBLIC_SQL_RESOURCE = 'https://database.windows.net/';
 
 /** Azure SQL resource of the Microsoft cloud VS Code signs in to; the library requests its `.default` scope. */
-function sqlResource(): string {
+export function sqlResource(): string {
   const suffix = getConfiguredAzureEnv().sqlServerHostnameSuffix?.replace(/^\./, '');
   return suffix ? `https://${suffix}/` : PUBLIC_SQL_RESOURCE;
 }

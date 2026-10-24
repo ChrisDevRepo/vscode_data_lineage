@@ -192,6 +192,12 @@ describe('normalizeModelInput object ids', () => {
       expect(result.fixes).toEqual([]);
       expect(result.input).toEqual({ nodeId });
     }
+    const union = z.union([
+      z.object({ nodeId: idField(['[dbo].[FactSales]']), other: z.number() }).strict(),
+      z.object({ nodeId: idField(['[sales].[FactSales]']), other: z.number() }).strict(),
+    ]);
+    const ambiguous = { nodeId: 'FactSales', other: 'bad' };
+    expect(normalizeModelInput(union, ambiguous)).toEqual({ input: ambiguous, fixes: [] });
   });
 });
 

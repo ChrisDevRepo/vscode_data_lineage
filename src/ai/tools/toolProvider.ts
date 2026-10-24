@@ -62,7 +62,6 @@ const REJECTION_GROUPS: Readonly<Record<string, Exclude<RejectionChatGroup, 'cor
   [REJECTION_CODES.invalidInput]: 'answer_format',
   [REJECTION_CODES.ctFieldForbiddenInBb]: 'answer_format',
   [REJECTION_CODES.missingField]: 'answer_format',
-  [REJECTION_CODES.fieldLengthExceeded]: 'answer_format',
   [REJECTION_CODES.emptyStructuredOutput]: 'answer_format',
   [REJECTION_CODES.missingRequiredToolCall]: 'answer_format',
   [REJECTION_CODES.toolCallNotation]: 'answer_format',

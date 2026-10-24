@@ -215,7 +215,7 @@ export class ColumnTracer {
       }
 
       const stagedBeforeEntry = stagedEdges.length;
-      const resolvedTarget = resolveColumnFlowTarget(entry, focusId, nodeMap, this.identifierCaseSensitive);
+      const resolvedTarget = resolveColumnFlowTarget(entry, focusId, nodeMap);
       const toNodeId = resolvedTarget?.attributionTo ?? null;
       const toNodeObj = toNodeId ? nodeMap.get(toNodeId) : null;
       if (entry.writes_to && !toNodeObj) {
@@ -331,7 +331,7 @@ export class ColumnTracer {
       const upDetached = detachedIn(edges, attached);
       const downDetached = detachedIn(edges, downstreamAttached);
       if (entry.upstream_columns.length === 0) {
-        const target = resolveColumnFlowTarget(entry, focusId, nodeMap, this.identifierCaseSensitive);
+        const target = resolveColumnFlowTarget(entry, focusId, nodeMap);
         const upstream = activeNorm.includes(this.columnKey(entry.out_col)) && (anchors.has(endpointKey(focusId, entry.out_col))
           || target !== null && anchors.has(endpointKey(target.attributionTo, target.attributionCol)));
         const downstream = incomingDownstreamRefs.some(ref => this.columnKey(ref.col) === this.columnKey(entry.out_col));
@@ -452,7 +452,6 @@ export function resolveColumnFlowTarget(
   entry: ColumnFlowEntry,
   focusId: string,
   nodeMap: Map<string, LineageNode>,
-  _identifierCaseSensitive = false,
 ): ColumnFlowTargetResolution | null {
   if (entry.returns_to) {
     const toNode = nodeMap.get(entry.returns_to.node)?.id;

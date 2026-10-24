@@ -191,8 +191,6 @@ export interface IHopStateMachine {
 
   /** Every captured detail slot in insertion order. */
   getDetailSlots(): DetailSlot[];
-
-  /** Extends a completed exploration with additional nodes for analysis. */
 }
 
 /** The write path a border test serves. Every purpose tests the exclusion sets; `route` also tests approved-direction reachability, while `seed_bfs` (the walk that defines the direction) does not. */
@@ -304,7 +302,6 @@ export class NavigationEngine implements IHopStateMachine {
   protected nodeStates = new Map<string, SmNodeState>();
   /** List representing the current navigation agenda. */
   protected _agenda: AgendaManager;
-  /** Explicit user follow-up targets admitted after a completed exploration. */
   /** Structured source of truth for questions and follow-up leads. */
   private readonly taskLedger: TaskLedger;
   /** Identifier of the node currently in focus. */
@@ -794,13 +791,10 @@ export class NavigationEngine implements IHopStateMachine {
     }, 'analytical', columns, undefined, leg?.sourceRefs));
   }
 
-  /** Completes executable tasks and resolves any scheduled follow-up leads they own. */
+  /** Completes executable tasks for the committed focus hop. */
   private completeTasks(taskIds: ReadonlyArray<string>): void {
     for (const taskId of taskIds) {
       this.taskLedger.setTaskStatus(taskId, 'resolved', this.hopCount);
-      this.taskLedger.resolveTaskLeads(taskId);
-      const nodeId = this.taskLedger.getTask(taskId)?.nodeId;
-      if (nodeId) this.taskLedger.resolveNodeLeads(nodeId, this.hopCount);
     }
   }
 
@@ -2139,7 +2133,7 @@ export class NavigationEngine implements IHopStateMachine {
     const mappedNeighborIds = new Set(stagedColumnEdges.flatMap(edge => [edge.from_node, edge.to_node]));
     // A declared output remains a mapping even when it has no in-scope suppliers and stages no edge.
     for (const entry of finding.column_flow ?? []) {
-      const target = resolveColumnFlowTarget(entry, focusId, this.nodeMap, this.identifierCaseSensitive);
+      const target = resolveColumnFlowTarget(entry, focusId, this.nodeMap);
       if (target) {
         mappingDecisions.add(endpointKey(target.attributionTo, target.attributionCol));
         mappedNeighborIds.add(target.attributionTo);
@@ -2162,7 +2156,7 @@ export class NavigationEngine implements IHopStateMachine {
       if (traceDirection === 'upstream') {
         for (const [index, entry] of finding.column_flow.entries()) {
           if (entrySides && !entrySides.some(side => side.index === index && side.upstream)) continue;
-          if (!resolveColumnFlowTarget(entry, focusId, this.nodeMap, this.identifierCaseSensitive)) continue;
+          if (!resolveColumnFlowTarget(entry, focusId, this.nodeMap)) continue;
           for (const ref of entry.upstream_columns) {
             const nid = ref.node;
             if (!attachedUpstream.has(endpointKey(nid, ref.col))) continue;
@@ -2184,7 +2178,7 @@ export class NavigationEngine implements IHopStateMachine {
           if (focusId !== this.originNodeId && entry.upstream_columns.every(ref => isIndirectOnly(ref.transforms))) {
             continue;
           }
-          const resolved = resolveColumnFlowTarget(entry, focusId, this.nodeMap, this.identifierCaseSensitive);
+          const resolved = resolveColumnFlowTarget(entry, focusId, this.nodeMap);
           if (!resolved) continue;
           const output = { node: resolved.attributionTo, col: resolved.attributionCol };
           const outputKey = endpointKey(output.node, output.col);
@@ -2220,9 +2214,9 @@ export class NavigationEngine implements IHopStateMachine {
     const pruneColumnEdges = unavailable.has('column_flow') ? diagnosticColumnEdges : stagedColumnEdges;
     // A faulty flow still names its objects by structure; a reference resolving to no single object leaves outcomes unknown.
     // An entry without a write or return target that lands nowhere (a procedure value) maps none of its suppliers.
-    const flowNodeIds = (finding.column_flow ?? []).filter(entry => entry.writes_to || entry.returns_to || resolveColumnFlowTarget(entry, focusId, this.nodeMap, this.identifierCaseSensitive))
+    const flowNodeIds = (finding.column_flow ?? []).filter(entry => entry.writes_to || entry.returns_to || resolveColumnFlowTarget(entry, focusId, this.nodeMap))
       .flatMap(entry => [entry.writes_to, entry.returns_to, ...entry.upstream_columns])
-      .flatMap(ref => ref ? [this.nodeMap.has(ref.node) ? ref.node : resolveModelNodeId(ref.node, this.nodeMap, this.identifierCaseSensitive)] : []);
+      .flatMap(ref => ref ? [resolveModelNodeId(ref.node, this.nodeMap, this.identifierCaseSensitive)] : []);
     const outcomeIds = invalidRoutes.length === 0 ? mappedNeighborIds : flowNodeIds.every(Boolean) ? new Set([...mappedNeighborIds, ...flowNodeIds as string[]]) : undefined;
     const actions = this.collectNeighborActions(focusId, unavailable.has('questions') ? null : finding.questions ?? [], unavailable.has('prune_neighbors') ? null : finding.prune_neighbors ?? [], pruneColumnEdges, flowQuestionByNode, !this.tracer || !unavailable.has('column_flow') ? outcomeIds : undefined);
     const { pruneTargets, routeRequests, prunedNeighborNids } = actions;
@@ -2259,7 +2253,7 @@ export class NavigationEngine implements IHopStateMachine {
         ...entry.upstream_columns.map((ref, refIndex) => ({ node: ref.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node` })),
       ];
       for (const ref of refs) {
-        const nid = this.nodeMap.has(ref.node) ? ref.node : resolveModelNodeId(ref.node, this.nodeMap, this.identifierCaseSensitive);
+        const nid = resolveModelNodeId(ref.node, this.nodeMap, this.identifierCaseSensitive);
         const node = nid ? this.nodeMap.get(nid) : undefined;
         if (!nid || !node || this.admitsColumnReference(nid, node, focusId)) continue;
         const { border, depthBreach } = this.admitsRoute(nid, node, focusId);
@@ -2275,7 +2269,7 @@ export class NavigationEngine implements IHopStateMachine {
     if (this.tracer && !unavailable.has('column_flow')) {
       const accounted = new Set<string>();
       for (const entry of finding.column_flow ?? []) {
-        const target = resolveColumnFlowTarget(entry, focusId, this.nodeMap, this.identifierCaseSensitive);
+        const target = resolveColumnFlowTarget(entry, focusId, this.nodeMap);
         if (target) accounted.add(endpointKey(focusId, entry.out_col));
         if (target) accounted.add(endpointKey(target.attributionTo, target.attributionCol));
         for (const ref of entry.upstream_columns) if (mapped.has(endpointKey(ref.node, ref.col))) accounted.add(endpointKey(ref.node, ref.col));
@@ -2314,7 +2308,7 @@ export class NavigationEngine implements IHopStateMachine {
     const mutablePruneConflicts: string[] = [];
     const pruneTargets = (prunes ?? []).map((prune, index) => ({
       raw: prune.id,
-      resolved: this.nodeMap.has(prune.id) ? prune.id : resolveModelNodeId(prune.id, this.nodeMap, this.identifierCaseSensitive),
+      resolved: resolveModelNodeId(prune.id, this.nodeMap, this.identifierCaseSensitive),
       path: `prune_neighbors.${index}.id`,
     }));
     const pruneNeighborIds = new Set(pruneTargets.map(t => t.resolved ?? this.identifierKey(t.raw)));
@@ -2323,7 +2317,7 @@ export class NavigationEngine implements IHopStateMachine {
     const requested = new Set<string>();
     const neighbors = new Map(this.neighborChoices(focusId).map(neighbor => [neighbor.id, neighbor]));
     (questions ?? []).forEach((q, index) => {
-      const nid = this.nodeMap.has(q.nodeId) ? q.nodeId : resolveModelNodeId(q.nodeId, this.nodeMap, this.identifierCaseSensitive);
+      const nid = resolveModelNodeId(q.nodeId, this.nodeMap, this.identifierCaseSensitive);
       if (!nid) {
         invalidRoutes.push({ kind: 'question_not_neighbor', id: q.nodeId, path: `questions.${index}.nodeId`, reason: `Object \`${q.nodeId}\` is not in the loaded model.` });
         return;
@@ -2927,7 +2921,6 @@ export class NavigationEngine implements IHopStateMachine {
       readonly carry: ColumnCarry;
       readonly lineageQuestions?: string[];
       readonly freshScopeExpansion?: boolean;
-      readonly reactivated?: boolean;
       readonly callerContext?: FunctionCallerContext;
       readonly sourceRefs?: readonly ScalarReturnTarget[];
       readonly traversalSide?: 'upstream' | 'downstream';
@@ -2941,7 +2934,6 @@ export class NavigationEngine implements IHopStateMachine {
       carry,
       lineageQuestions,
       freshScopeExpansion = !this.scopeNodeIds.has(targetId),
-      reactivated = false,
       existingTaskId,
       callerContext,
       sourceRefs,
@@ -2950,7 +2942,7 @@ export class NavigationEngine implements IHopStateMachine {
       passthroughFromNodeId,
       dispositions,
     } = opts;
-    if (!this.scopeNodeIds.has(targetId) && priority !== 3) {
+    if (!this.scopeNodeIds.has(targetId)) {
       dispositions?.set(targetId, 'not_enqueued');
       this.log('debug', `[Disposition] enqueue drop ${targetId} — out-of-scope target`);
       return;
@@ -2983,7 +2975,7 @@ export class NavigationEngine implements IHopStateMachine {
     const agendaColumns = !this.tracer ? undefined : carry.kind === 'row_role_only' ? [] : activeColumns;
     const columnCarry = !this.tracer ? {} : { columnCarry: carry.kind === 'carry' ? { kind: 'carry' as const, columns: [...carry.columns] } : carry.kind === 'scalar_return' ? { kind: 'scalar_return' as const, outputs: carry.outputs.map(target => ({ ...target })) } : { ...carry } };
     this._agenda.push({ taskIds: [task.id], nodeId: targetId, priority, depth, activeColumns: agendaColumns, ...columnCarry, ...(lineageQuestions?.length ? { lineageQuestions } : {}) });
-    if (!alreadyQueued && (freshScopeExpansion || reactivated)) this._totalNodes++;
+    if (!alreadyQueued && freshScopeExpansion) this._totalNodes++;
   }
 
   /** Derives one neighbor's continuation from accepted flow, explicit qualified passthrough or a validated caller context. */

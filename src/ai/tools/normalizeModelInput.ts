@@ -104,25 +104,19 @@ function respell(schema: ZodType, value: unknown, path: PropertyKey[], fixes: Mo
   const chain = unwrap(schema);
   const core = chain[chain.length - 1]._zod.def as { type: string; shape?: Record<string, ZodType>; element?: ZodType; options?: readonly ZodType[] };
   if (core.type === 'union' && Array.isArray(core.options)) {
-    for (const option of core.options) {
+    const branches = core.options.map(option => {
       const branchFixes: ModelInputFix[] = [];
       const clone = structuredClone(value);
       respell(option, clone, path, branchFixes);
-      if (branchFixes.length > 0 && option.safeParse(clone).success) {
-        Object.assign(value as object, clone);
-        fixes.push(...branchFixes);
-        return;
-      }
-    }
-    for (const option of core.options) {
-      const branchFixes: ModelInputFix[] = [];
-      const clone = structuredClone(value);
-      respell(option, clone, path, branchFixes);
-      if (branchFixes.length > 0) {
-        Object.assign(value as object, clone);
-        fixes.push(...branchFixes);
-        return;
-      }
+      return { clone, branchFixes, valid: option.safeParse(clone).success };
+    }).filter(branch => branch.branchFixes.length > 0);
+    const preferred = branches.filter(branch => branch.valid);
+    const candidates = preferred.length > 0 ? preferred : branches;
+    const first = candidates[0];
+    if (first && typeof value === 'object' && value !== null && !Array.isArray(value)
+      && candidates.every(branch => isDeepStrictEqual(branch.clone, first.clone))) {
+      Object.assign(value, first.clone as object);
+      fixes.push(...first.branchFixes);
     }
     return;
   }

@@ -44,8 +44,6 @@ export const REJECTION_CODES = {
   columnSelfLoop: 'column_self_loop',
   /** An `upstream_columns` entry names a node already pruned earlier this run (`smRouteValidation.ts`, `columnTracer.ts`). */
   prunedContributor: 'pruned_contributor',
-  /** A `submit_findings` field (e.g. `badge_label`, a `column_flow` note) exceeds its length bound (`smBase.ts`). */
-  fieldLengthExceeded: 'field_length_exceeded',
   /** The provider emitted the synthetic structured-output/terminal tool call with empty required arguments (`structuredOutput.ts`, `vscodeModelPort.ts`, `graph.ts`). */
   emptyStructuredOutput: 'empty_structured_output',
   /** The provider generated text or nothing instead of the phase's required terminal tool call (`toolAttempt.ts`). */

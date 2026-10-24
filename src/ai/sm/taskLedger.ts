@@ -165,37 +165,11 @@ export class TaskLedger {
     );
   }
 
-  /** Marks an unresolved lead scheduled and reactivates its task. */
-  public scheduleLead(leadId: string): PendingLead | undefined {
-    const lead = this.leads.get(leadId);
-    if (!lead || lead.status === 'resolved' || lead.status === 'dismissed') return undefined;
-    lead.status = 'scheduled';
-    this.setTaskStatus(lead.taskId, 'pending');
-    return lead;
-  }
-
-  /** Resolves every scheduled lead backed by the completed task. */
-  public resolveTaskLeads(taskId: string): void {
-    for (const lead of this.leads.values()) {
-      if (lead.taskId === taskId && lead.status === 'scheduled') lead.status = 'resolved';
-    }
-  }
-
   /** Dismisses every pending lead of one reason on a node. */
   public dismissNodeLeads(nodeId: string, reason: PendingLead['reason']): void {
     const key = this.identifierKey(nodeId);
     for (const lead of this.leads.values()) {
       if (lead.status === 'pending' && lead.reason === reason && this.identifierKey(lead.nodeId) === key) lead.status = 'dismissed';
-    }
-  }
-
-  /** Resolves every scheduled lead on a node whose hop completed, with its task. */
-  public resolveNodeLeads(nodeId: string, hop: number): void {
-    const key = this.identifierKey(nodeId);
-    for (const lead of this.leads.values()) {
-      if (lead.status !== 'scheduled' || this.identifierKey(lead.nodeId) !== key) continue;
-      lead.status = 'resolved';
-      this.setTaskStatus(lead.taskId, 'resolved', hop);
     }
   }
 }
