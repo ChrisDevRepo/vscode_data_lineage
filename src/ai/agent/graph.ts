@@ -1,8 +1,9 @@
-import { RemoveMessage } from '@langchain/core/messages';
+import { AIMessage, RemoveMessage } from '@langchain/core/messages';
 import { END, REMOVE_ALL_MESSAGES, START, MemorySaver, StateGraph, interrupt } from '@langchain/langgraph';
 import {
   ModelPortError,
   modelAssistantMessage,
+  messageContentToText,
   modelUserMessage,
   type ModelMessage,
   type ModelPort,
@@ -1154,7 +1155,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       isPhaseComplete: () => sess.presentResultCalledThisTurn,
     }, ['Synthesis failed', 'Synthesis', 'without rendering a result']);
     if (attempt.terminal) {
-      if (attempt.nextAttempt.stopReason === 'no_progress') renderHeldSynthesisDraft(deps, sess);
+      if (attempt.nextAttempt.stopReason === 'no_progress') renderFailedSynthesisAnswer(deps, sess, attempt.nextAttempt.messages);
       sess.presentResultRepairDraft.clear();
       return attempt.terminal;
     } else if (!sess.presentResultCalledThisTurn) {
@@ -1528,20 +1529,20 @@ function presentedChatAnswer(sess: AiSession): string | null {
   }, delivery);
 }
 
-/** Renders the synthesis phase's held `lineage_present_result` draft into the chat stream when a breaker trip ends the turn with no committed result. */
-function renderHeldSynthesisDraft(deps: AgentGraphDeps, sess: AiSession): void {
+/** Delivers held report text or this synthesis phase's latest authored prose when its reply budget ends without a preview. */
+function renderFailedSynthesisAnswer(deps: AgentGraphDeps, sess: AiSession, messages: readonly ModelMessage[]): void {
   const draft = sess.presentResultRepairDraft.get();
-  if (!draft) return;
-  const assembled = orderAndAssemble(draft.sections ?? [], {
+  const answer = draft ? orderAndAssemble(draft.sections ?? [], {
     title: draft.title,
     intro: draft.intro,
     closing: draft.closing,
-  });
-  const closing = sess.takeClosingNotices() + (assembled.description ? '\n\n' + assembled.description : '');
+  }).description : [...messages].reverse().filter(AIMessage.isInstance)
+    .map(message => messageContentToText(message.content)).find(text => text.trim());
+  const closing = sess.takeClosingNotices() + (answer ? '\n\n' + answer : '');
   if (closing) deps.sink.stream(closing);
   deps.sink.stream(`\n\n${SYNTHESIS_RENDER_FAILED_NOTICE}`);
   logGraphDebug(deps,
-    '[AI] [Repair] synthesis breaker tripped with a held draft — held text rendered to chat.',
+    `[AI] [Repair] synthesis breaker tripped — authoredText=${Boolean(answer)} heldDraft=${Boolean(draft)}.`,
   );
   sess.markSynthesisRenderDegraded('synthesis_breaker');
 }
