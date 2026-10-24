@@ -4,6 +4,7 @@ import type { DatabaseModel, LineageNode } from '../../engine/types';
 import { edgeApiType } from '../support/aiPresenter';
 import { getNodeColumns, SCRIPT_TYPES } from '../support/graphUtils';
 import { ColumnStore } from '../../engine/columnStore';
+import { isIndirectOnly } from '../../engine/shared/bridgeContract';
 import { normalizeColName, schemaKey } from '../../utils/sql';
 import { DirectedGraph } from 'graphology';
 import { bfsFromNode } from 'graphology-traversal';
@@ -77,6 +78,7 @@ export class ColumnTracer {
   ): Array<{ node: string; col: string }> {
     const endpoints = new Map<string, { node: string; col: string }>();
     for (const e of this.aspect.edges) {
+      if (isIndirectOnly(e.transforms)) continue;
       const node = traceDirection === 'downstream' ? e.to_node : e.from_node;
       const col = traceDirection === 'downstream' ? e.to_col : e.from_col;
       if (!col || (node !== candidateNodeId && !writtenCarrierIds.has(node))) continue;
@@ -89,7 +91,7 @@ export class ColumnTracer {
   /** Generates continuation questions only for qualified endpoints the next hop receives; extra accepted graph pairs remain stored without inventing another task. */
   getColumnLineageQuestionsByNode(focusId: string, hopCount: number, continuations: ReadonlyMap<string, readonly { node: string; col: string }[]>): Map<string, string[]> {
     const hopEdges = this.aspect.edges.filter(
-      e => e.hop_node === focusId && e.hop === hopCount && e.from_node !== e.hop_node
+      e => e.hop_node === focusId && e.hop === hopCount && e.from_node !== e.hop_node && !isIndirectOnly(e.transforms)
         && continuations.get(e.from_node)?.some(ref => ref.node === e.from_node && this.columnKey(ref.col) === this.columnKey(e.from_col)),
     );
     const byNode = new Map<string, string[]>();
@@ -289,7 +291,7 @@ export class ColumnTracer {
       const writerEdge = resolvedTarget?.writerEdge ?? null;
       const writerTargetObj = writerEdge ? nodeMap.get(writerEdge.toNode) : null;
       if (writerEdge && writerTargetObj && !SCRIPT_TYPES.has(writerTargetObj.type)
-        && entry.upstream_columns.length === 0) {
+        && entry.upstream_columns.every(ref => isIndirectOnly(ref.transforms))) {
         stagedEdges.push({
           hop: 0,
           hop_node: focusId,
@@ -308,7 +310,7 @@ export class ColumnTracer {
 
     const activeNorm = this.aspect.active_columns.map(this.columnKey);
     const endpointKey = columnEndpointKeyFactory(nodeMap, model.identifierCaseSensitive);
-    const committedRefs = this.aspect.edges.flatMap(edge => [
+    const committedRefs = this.aspect.edges.filter(edge => !isIndirectOnly(edge.transforms)).flatMap(edge => [
       { node: edge.from_node, col: edge.from_col },
       { node: edge.to_node, col: edge.to_col },
     ]);

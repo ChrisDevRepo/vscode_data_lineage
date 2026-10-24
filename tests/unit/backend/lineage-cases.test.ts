@@ -483,6 +483,33 @@ describe('stored-column arrival admission and delivery', () => {
     ]);
   });
 
+  it('treats a write with only indirect lineage as procedure-born and carries it to other readers', () => {
+    const source = '[d].[Source]', target = '[d].[Target]', reader = '[d].[Reader]';
+    const nodes = [
+      makeNode({ id: source, schema: 'd', name: 'Source', type: 'table', columns: [column('Flag')] }),
+      makeNode({ id: producer, schema: 'd', name: 'Producer', type: 'procedure', columns: [],
+        bodyScript: 'INSERT d.Target(Saved) SELECT 1 FROM d.Source WHERE Flag = 1;' }),
+      makeNode({ id: target, schema: 'd', name: 'Target', type: 'table', columns: [column('Saved')] }),
+      makeNode({ id: reader, schema: 'd', name: 'Reader', type: 'view', columns: [column('Result')] }),
+    ];
+    const pairs: Array<[string, string]> = [[source, producer], [producer, target], [producer, reader]];
+    const engine = navigationFor(nodes, pairs);
+    expect(engine.init({ origin: producer, question: 'Trace the declared output.', analysisMode: 'ct', targetColumns: ['Port'], direction: 'bidirectional',
+      depthIntent: { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 'all', exactness: 'exact' } },
+    })).toHaveProperty('ok', true);
+    engine.getHopContext();
+    expect(engine.submitFindings({ focus_node_id: producer, summary: 'Writes a constant for flagged rows.',
+      sections: [{ angle: 'technical', text: 'Flag only selects the rows.' }],
+      column_flow: [{ out_col: 'Port', writes_to: { node: target, col: 'Saved' }, upstream_columns: [{ node: source, col: 'Flag', transforms: ['filter'] }] }],
+      questions: [target, reader].map(nodeId => ({ nodeId, question: 'Inspect this destination or reader.' })),
+    })).toHaveProperty('ok', true);
+    expect(engine.columnAspect!.edges).toContainEqual(expect.objectContaining({ from_node: source, from_col: 'Flag', transforms: ['filter'] }));
+    const arrivals = engine.toJSON().engineInternals.investigationTasks.filter(task => task.kind === 'column_lineage' && task.status === 'pending');
+    expect(arrivals.find(task => task.nodeId === target)).toMatchObject({ activeColumns: ['Saved'], sourceRefs: [{ node: target, col: 'Saved' }] });
+    expect(arrivals.find(task => task.nodeId === reader)).toMatchObject({ activeColumns: ['Port'], sourceRefs: [{ node: producer, col: 'Port' }] });
+    expect(arrivals.map(task => task.nodeId)).not.toContain(source);
+  });
+
   it('preserves an accepted neighbor mapping when its assigned endpoint is final', () => {
     const consumer = '[d].[Consumer]', source = '[d].[Source]';
     const nodes = [
