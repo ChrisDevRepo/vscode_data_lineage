@@ -2005,11 +2005,11 @@ export class NavigationEngine implements IHopStateMachine {
     this._status = 'exploring';
   }
 
-  /** Why removing `nodeIds` now is refused, or undefined when the removal is supported. The check counts neighbor prunes still pending resolution, except targets this submission keeps by routing them. Routed targets and staged column endpoints are protected as committed analysis. */
+  /** Why removing `nodeIds` now is refused, or undefined when the removal is supported. The check counts neighbor prunes still pending resolution, except targets this submission keeps by routing or mapping them. Routed targets and staged column endpoints are protected as committed analysis. */
   private pruneRefusal(nodeIds: readonly string[], routed: ReadonlySet<string> = new Set(), stagedColumnEdges: readonly ColumnEdge[] = []): string | undefined {
-    const pending = [...this.pruneBallots].filter(([id, ballots]) => !routed.has(id) && [...ballots.values()].every(vote => vote === 'prune')).map(([id]) => id);
-    const analysis = this.removalSupport(this.removedSet, new Set([...this.removedSet, ...pending, ...nodeIds]),
-      new Set([...this.visited, ...routed, ...stagedColumnEdges.flatMap(edge => [edge.from_node, edge.to_node])]));
+    const kept = new Set([...routed, ...stagedColumnEdges.flatMap(edge => [edge.from_node, edge.to_node])]);
+    const pending = [...this.pruneBallots].filter(([id, ballots]) => !kept.has(id) && [...ballots.values()].every(vote => vote === 'prune')).map(([id]) => id);
+    const analysis = this.removalSupport(this.removedSet, new Set([...this.removedSet, ...pending, ...nodeIds]), new Set([...this.visited, ...kept]));
     if (analysis.rejection) return REMOVAL_REFUSAL[analysis.rejection];
     if (analysis.disconnectedVisited.length > 0) return `Removing it would disconnect committed analysis of ${analysis.disconnectedVisited.join(', ')}.`;
     return undefined;
@@ -2218,7 +2218,9 @@ export class NavigationEngine implements IHopStateMachine {
     // Validated slices can prove a local prune conflict, never a complete finding or column carry.
     const pruneColumnEdges = unavailable.has('column_flow') ? diagnosticColumnEdges : stagedColumnEdges;
     // A faulty flow still names its objects by structure; a reference resolving to no single object leaves outcomes unknown.
-    const flowNodeIds = (finding.column_flow ?? []).flatMap(entry => [entry.writes_to, entry.returns_to, ...entry.upstream_columns])
+    // An entry without a write or return target that lands nowhere (a procedure value) maps none of its suppliers.
+    const flowNodeIds = (finding.column_flow ?? []).filter(entry => entry.writes_to || entry.returns_to || resolveColumnFlowTarget(entry, focusId, this.nodeMap, this.identifierCaseSensitive))
+      .flatMap(entry => [entry.writes_to, entry.returns_to, ...entry.upstream_columns])
       .flatMap(ref => ref ? [this.nodeMap.has(ref.node) ? ref.node : resolveModelNodeId(ref.node, this.nodeMap, this.identifierCaseSensitive)] : []);
     const outcomeIds = invalidRoutes.length === 0 ? mappedNeighborIds : flowNodeIds.every(Boolean) ? new Set([...mappedNeighborIds, ...flowNodeIds as string[]]) : undefined;
     const actions = this.collectNeighborActions(focusId, unavailable.has('questions') ? null : finding.questions ?? [], unavailable.has('prune_neighbors') ? null : finding.prune_neighbors ?? [], pruneColumnEdges, flowQuestionByNode, !this.tracer || !unavailable.has('column_flow') ? outcomeIds : undefined);

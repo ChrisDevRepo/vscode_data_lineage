@@ -149,6 +149,16 @@ describe('missing neighbor outcomes beside an invalid column_flow', () => {
       questions: [{ nodeId: OTHER, question: 'Explain the other source.' }] }, services))).toHaveProperty('ok', true);
   });
 
+  it('owes the same neighbors as the corrected flow when a faulty procedure entry lands nowhere', () => {
+    const world = ctWorld({ sibling: true, selfLoop: true });
+    const { services } = stubToolServices({ session: world.session, model: world.model, graph: world.graph });
+    const submit = (col: string) => JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN, summary: 'Value provenance.',
+      sections: { technical: 'Authored evidence.' }, column_flow: [{ out_col: 'Value', writes_to: null, upstream_columns: [{ node: BRANCH, col }] }] }, services));
+    // A procedure value with no write or return target maps no supplier, so naming the branch there is no outcome.
+    expect(missingIds(submit('Missing'))).toEqual([BRANCH, OTHER]);
+    expect(missingIds(submit('Value'))).toEqual([BRANCH, OTHER]);
+  });
+
   it.each([
     ['unparseable text', '[{"out_col": "Value", "upstream_columns": ['],
     ['shape-invalid entry', [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Missing', bogus: 1 }] }]],

@@ -1939,6 +1939,36 @@ describe('CT boundary rejects instead of dropping a column reference', () => {
     expect(engine.getResult().columnAspect!.edges).toContainEqual(expect.objectContaining({ from_node: root, to_node: kept, to_col: 'Value' }));
   });
 
+  it('accepts an unrelated prune when this hop maps a source with an older pending prune ballot', () => {
+    const root = '[d].[Root]', first = '[d].[First]', writer = '[d].[Writer]', kept = '[d].[Kept]', unused = '[d].[Unused]';
+    const all = [
+      makeNode({ id: root, schema: 'd', name: 'Root', type: 'view', columns: [column('Value')], bodyScript: 'SELECT 1 AS Value;' }),
+      makeNode({ id: first, schema: 'd', name: 'First', type: 'procedure', bodyScript: 'DELETE FROM d.Kept;' }),
+      makeNode({ id: writer, schema: 'd', name: 'Writer', type: 'procedure', bodyScript: 'INSERT d.Kept(Value) SELECT Value FROM d.Root; DELETE FROM d.Unused;' }),
+      makeNode({ id: kept, schema: 'd', name: 'Kept', type: 'table', columns: [column('Value')] }),
+      makeNode({ id: unused, schema: 'd', name: 'Unused', type: 'table', columns: [column('Value')] }),
+    ];
+    const engine = engineFor(all, [[root, first], [root, writer], [first, kept], [writer, kept], [writer, unused]]);
+    expect(engine.init({ origin: root, question: 'Trace Value downstream.', analysisMode: 'ct', targetColumns: ['Value'], direction: 'downstream',
+      depthIntent: { upstream: { levels: 0, exactness: 'exact' }, downstream: { levels: 'all', exactness: 'exact' } } })).toHaveProperty('ok', true);
+    engine.getHopContext();
+    expect(engine.submitFindings({ ...guardRecord(root), column_flow: [{ out_col: 'Value', upstream_columns: [] }],
+      questions: [first, writer].map(nodeId => ({ nodeId, question: 'Establish whether Value continues here.' })) })).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: first } });
+    expect(engine.submitFindings({ ...guardRecord(first), column_flow: [], prune_neighbors: [{ id: kept, reason: 'No Value is written on this branch.' }] })).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: writer } });
+    const flow = [{ out_col: 'Value', writes_to: { node: kept, col: 'Value' }, upstream_columns: [{ node: root, col: 'Value' }] }];
+    // The mapping is this hop's keep vote, so the stale ballot leaves pruning the unrelated leaf open.
+    expect(engine.submitFindings({ ...guardRecord(writer), column_flow: flow })).toMatchObject({ code: 'route_validation_failed',
+      errors: [expect.objectContaining({ path: unused, alternatives: ['questions', 'prune_neighbors', 'column_flow'] })] });
+    const accepted = engine.submitFindings({ ...guardRecord(writer), column_flow: flow, prune_neighbors: [{ id: unused, reason: 'The delete target carries no Value.' }] });
+    expect(accepted, JSON.stringify(accepted)).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toHaveProperty('done', true);
+    // The losing vote removes nothing; the mapped source stays in the result.
+    expect(engine.toJSON().removedSet).toEqual([unused]);
+    expect(engine.getResult().fullNodes.map(node => node.id)).toContain(kept);
+  });
+
   it.each(['a delete-only write', 'a metadata-declared scalar return'])('stores a mapping through %s as declared, without classifying the SQL', via => {
     const contributor = via === 'a delete-only write' ? '[d].[Purge]' : '[d].[Rate]';
     const all = via === 'a delete-only write'
