@@ -55,7 +55,10 @@ describe('held present_result fields', () => {
     expect(JSON.stringify(patch).length * 100).toBeLessThan(JSON.stringify(report).length);
   });
 
-  it('a large report rejected on one field is repaired by resending that field alone', () => {
+  it.each([
+    ['correcting the optional field', { title: 'Orders lineage' }],
+    ['withdrawing the optional field with an empty patch', {}],
+  ])('repairs a large held report by %s', (_label, patch) => {
     const report = {
       ...render,
       title: 42 as unknown as string,
@@ -72,11 +75,11 @@ describe('held present_result fields', () => {
     expect(sentence).toContain('only these corrected fields: title');
     expect(sentence).not.toContain('Resend the full tool call');
     expect(sentence).not.toContain(report.sections[0].text);
-    const patch = { title: 'Orders lineage' };
     const authorization = store.getAuthorization()!;
     expect(presentResultRepairPatchSchemaForFields(authorization.fields, 'synthesis').safeParse(patch).success).toBe(true);
     const merged = mergePresentResultRepairPatch(store.get()!, patch, authorization);
-    expect(merged).toEqual({ ...report, title: 'Orders lineage' });
+    const { title: _invalidTitle, ...validReport } = report;
+    expect(merged).toEqual({ ...validReport, ...patch });
     expect(PresentResultModelSchema.safeParse(merged).success).toBe(true);
   });
 });

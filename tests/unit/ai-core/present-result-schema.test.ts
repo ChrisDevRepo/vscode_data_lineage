@@ -24,6 +24,20 @@ const labelDraft = { name: 'Pair', summary: 'Distinct sources.', highlight_group
 ] } as PresentResultInput;
 
 describe('present-result schema and provider contract', () => {
+  it.each([
+    [['title'], true],
+    [['title', 'layout_direction'], true],
+    [['name'], false],
+    [['title', 'name'], false],
+    [['sections'], false],
+  ] as const)('serves empty repair patch acceptance for %j as %s', (fields, accepted) => {
+    const schema = presentResultRepairPatchSchemaForFields(fields);
+    const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
+    expect(schema.safeParse({}).success).toBe(accepted);
+    // Cross-field refinements run after the provider's structural schema check.
+    if (accepted) expect(wire({})).toBe(true);
+  });
+
   it('preserves authored whitespace instead of trimming valid content', () => {
     const payload = { ...resultWith([{ label: ' Sources ', color: 'source', node_ids: [nodeId] }]),
       name: ' Result ', summary: ' Summary. ', sections: [{ label: ' Detail ', text: ' Body. ', node_ids: [nodeId] }] };
