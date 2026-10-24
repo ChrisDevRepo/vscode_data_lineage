@@ -27,16 +27,7 @@ interface ToolbarDropdownProps {
   children: ReactNode;
 }
 
-/**
- * Shared structural wrapper for toolbar filter dropdowns.
- *
- * @remarks
- * Owns the {@link useDropdown} hook, the trigger `Button`, and the `FloatingPortal`
- * panel frame. Callers supply the icon and the panel content — everything else
- * (positioning, outside-click, focus into the panel and back to the trigger, `isNarrowed` dot,
- * shadow, `isOpen` style) is here. The panel is a non-modal dialog, since every panel holds form
- * controls.
- */
+/** Shared structural wrapper for toolbar filter dropdowns. */
 export function ToolbarDropdown({
   tooltipContent,
   isNarrowed = false,

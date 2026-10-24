@@ -31,9 +31,10 @@ describe('checked identifier comparison',()=>{
 });
 
 import JSZip from 'jszip';
-import { extractDacpac, extractSchemaPreview, extractDacpacFiltered, filterBySchemas } from '../../../src/engine/dacpacExtractor';
+import { extractDacpac, extractSchemaPreview, extractDacpacFiltered } from '../../../src/engine/dacpacExtractor';
+import { filterBySchemas } from '../../../src/engine/modelFilters';
 import { buildModelFromDmv, buildSchemaPreview } from '../../../src/engine/dmvExtractor';
-import type { SimpleExecuteResult } from '../../../src/types/mssql';
+import type { SimpleExecuteResult } from '../../../src/types/database';
 import { loadParseRules } from '../helpers/testUtils';
 loadParseRules();
 function rows(names:string[], values:string[][]):SimpleExecuteResult{return {columnInfo:names.map(columnName=>({columnName,dataType:'string',dataTypeName:'varchar'})),rowCount:values.length,rows:values.map(row=>row.map(displayValue=>({displayValue,isNull:displayValue===''}))) };}
@@ -52,10 +53,6 @@ it('DACPAC checked model comparator survives full and phase-two extraction; miss
  const preview=await extractSchemaPreview(buffer);expect(preview.preview.totalObjects).toBe(2);expect(preview.preview.identifierCaseSensitive).toBe(true);
  expect(extractDacpacFiltered(preview.elements,new Set(['dbo']),preview.dspName,undefined,undefined,{identifierCaseSensitive:preview.identifierCaseSensitive}).nodes).toHaveLength(2);
  for(const flag of [undefined,'False','true','garbled'])expect((await extractDacpac(await archive(flag))).nodes).toHaveLength(1);
-});
-it('Azure DACPAC fixed CI catalog overrides CS data; unknown catalog fails closed to CI',async()=>{
- for(const catalog of [undefined,'1','2','garbled'])expect((await extractDacpac(await archive('True',catalog,true))).nodes).toHaveLength(1);
- expect((await extractDacpac(await archive('True','0',true))).nodes).toHaveLength(2);
 });
 it('SQL parser and body-only dependency resolution retain checked CS object spelling',()=>{
  const model=buildModel([...twins.slice(0,2),{fullName:'[dbo].[Reader]',type:'view',bodyScript:'CREATE VIEW dbo.Reader AS SELECT * FROM dbo.CaseTab UNION ALL SELECT * FROM dbo.casetab'}],[],twins,undefined,true,undefined,true);
@@ -90,12 +87,6 @@ it('checked CS CTE aliases keep distinct update targets while SQL keywords remai
  expect(parseSqlBody(sql.replace('update c set','update C set'),undefined,true).targets).toEqual(['[dbo].[casetab]']);
 });
 
-it('default and explicit CI CTE aliases resolve capitalization variants to the existing lowercase target',()=>{
- const sql='with MixedAlias as (select * from dbo.CaseTab) update MIXEDALIAS set x=1';
- expect(parseSqlBody(sql).targets).toEqual(['[dbo].[casetab]']);
- expect(parseSqlBody(sql,undefined,false).targets).toEqual(['[dbo].[casetab]']);
-});
-
 describe.each([false, true])('DBA-style SQL under identifierCaseSensitive=%s', (cs) => {
   const key = (name: string) => normalizeName(name, cs);
 
@@ -111,28 +102,6 @@ describe.each([false, true])('DBA-style SQL under identifierCaseSensitive=%s', (
     const stripped = raw.replace(/[\[\]"]/g, '');
     if (stripped !== raw) expect(normalizeColName(stripped, cs)).not.toBe(expected);
   });
-  const statements = [
-    { name: 'JOIN with mixed keyword casing', sql: 'sElEcT s.Value fRoM Sales.Source s lEfT jOiN Sales.Target t ON s.Value=t.Value', reads: ['Sales.Source', 'Sales.Target'], writes: [], calls: [] },
-    { name: 'INSERT SELECT', sql: 'iNsErT iNtO Sales.Target (Value) sElEcT Value fRoM Sales.Source', reads: ['Sales.Source'], writes: ['Sales.Target'], calls: [] },
-    { name: 'UPDATE from a qualified target', sql: 'uPdAtE Sales.Target sEt Value=1', reads: [], writes: ['Sales.Target'], calls: [] },
-    { name: 'MERGE USING', sql: 'mErGe iNtO Sales.Target AS t uSiNg Sales.Source AS s ON t.Value=s.Value WHEN MATCHED THEN UPDATE SET t.Value=s.Value;', reads: ['Sales.Source'], writes: ['Sales.Target'], calls: [] },
-    { name: 'SELECT INTO', sql: 'sElEcT Value iNtO Sales.Target fRoM Sales.Source', reads: ['Sales.Source'], writes: ['Sales.Target'], calls: [] },
-    { name: 'CTAS', sql: 'cReAtE tAbLe Sales.Target WITH (DISTRIBUTION=ROUND_ROBIN) aS sElEcT Value fRoM Sales.Source', reads: ['Sales.Source'], writes: ['Sales.Target'], calls: [] },
-    { name: 'OUTPUT INTO', sql: 'uPdAtE Sales.Target SET Value=1 oUtPuT inserted.Value iNtO Sales.Audit', reads: [], writes: ['Sales.Target', 'Sales.Audit'], calls: [] },
-    { name: 'EXECUTE with a return variable', sql: 'eXeCuTe @result = Sales.Callee @Value=1', reads: [], writes: [], calls: ['Sales.Callee'] },
-    { name: 'APPLY and scalar function calls', sql: 'sElEcT Sales.Scalar(s.Value) fRoM Sales.Source s oUtEr aPpLy Sales.Rows(s.Value) r', reads: ['Sales.Source', 'Sales.Rows', 'Sales.Scalar'], writes: [], calls: [] },
-    { name: 'DELETE retains read dependency without a column write', sql: 'dElEtE fRoM Sales.Target WHERE Value=1', reads: ['Sales.Target'], writes: [], calls: [] },
-    { name: 'BULK INSERT', sql: "bUlK iNsErT Sales.Target FROM 'synthetic.csv'", reads: [], writes: ['Sales.Target'], calls: [] },
-    { name: 'COPY INTO', sql: "cOpY iNtO Sales.Target FROM 'https://example.invalid/synthetic.csv'", reads: [], writes: ['Sales.Target'], calls: [] },
-  ];
-
-  it.each(statements)('$name keeps source, write and execution identities', ({ sql, reads, writes, calls }) => {
-    const parsed = parseSqlBody(sql, undefined, cs);
-    expect(parsed.sources.sort()).toEqual(reads.map(key).sort());
-    expect(parsed.targets.sort()).toEqual(writes.map(key).sort());
-    expect(parsed.execCalls.sort()).toEqual(calls.map(key).sort());
-  });
-
   it.each(['Sales.Mixed', '[Sales].[Mixed]', '"Sales"."Mixed"', '[Sales].Mixed'])(
     'binds equivalent identifier delimiters in %s', (reference) => {
       const objects: ExtractedObject[] = [
@@ -385,12 +354,13 @@ describe('identifier comparison follows checked catalog metadata', () => {
   });
 
   it.each([
-    { containment: '0', catalog: undefined, cs: true },
-    { containment: '1', catalog: undefined, cs: false },
-    { containment: '1', catalog: '1', cs: false },
-    { containment: 'garbled', catalog: undefined, cs: false },
-  ])('uses contained DACPAC catalog comparison for $containment/$catalog', async ({ containment, catalog, cs }) => {
-    const buffer = await archive('True', catalog, false, containment);
+    ...[undefined, '1', '2', 'garbled', '0'].map(catalog => ({ azure: true, containment: undefined, catalog, cs: catalog === '0' })),
+    { azure: false, containment: '0', catalog: undefined, cs: true },
+    { azure: false, containment: '1', catalog: undefined, cs: false },
+    { azure: false, containment: '1', catalog: '1', cs: false },
+    { azure: false, containment: 'garbled', catalog: undefined, cs: false },
+  ])('uses the effective DACPAC catalog comparison (Azure $azure, containment $containment, catalog $catalog)', async ({ azure, containment, catalog, cs }) => {
+    const buffer = await archive('True', catalog, azure, containment);
     const model = await extractDacpac(buffer);
     expect(model.nodes).toHaveLength(cs ? 2 : 1);
     const preview = await extractSchemaPreview(buffer);

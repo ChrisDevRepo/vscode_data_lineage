@@ -2,11 +2,7 @@ import * as assert from 'node:assert';
 import * as vscode from 'vscode';
 import { announceLaneTier } from './laneTier';
 
-/**
- * Drives a real `@lineage` participant turn through public API and observes what it streams.
- *
- * The recording stream is a test double, so this asserts emitted responses, not rendered UI.
- */
+/** Drives a real `@lineage` participant turn through public API and observes what it streams. */
 suite('Participant turn — public API, no CDP', () => {
   const EXTENSION_ID = 'datahelper-chwagner.data-lineage-viz';
 
@@ -61,10 +57,19 @@ suite('Participant turn — public API, no CDP', () => {
     const deadline = Date.now() + 60_000;
     let lastProbe = '';
     while (Date.now() < deadline) {
-      const result = await vscode.lm.invokeTool('lineage_search_objects', {
+      // A rejection reaches a vscode.lm caller as a thrown error; only the no-project one means "not yet".
+      const result = await Promise.resolve(vscode.lm.invokeTool('lineage_search_objects', {
         input: { query: 'Sales' },
         toolInvocationToken: undefined,
+      })).catch((error: unknown) => {
+        if (error instanceof Error && /no project is loaded/i.test(error.message)) return null;
+        throw error;
       });
+      if (!result) {
+        lastProbe = 'no project loaded';
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        continue;
+      }
       lastProbe = result.content
         .map((part) => (part as { value?: unknown }).value ?? '')
         .join('');

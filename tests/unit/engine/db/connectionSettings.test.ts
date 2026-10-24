@@ -1,7 +1,4 @@
-/**
- * Pins the built-in connection settings: schema and tolerant read, the no-password contract,
- * and the add / remove / update-password commands with their secret-store side effects.
- */
+/** Pins the built-in connection settings: schema and tolerant read, the no-password contract, and the add / remove / update-password commands with their secret-store side effects. */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
@@ -103,6 +100,7 @@ beforeEach(() => {
 describe('BuiltInConnectionSchema', () => {
   it('accepts a full SQL login entry and a minimal Entra entry', () => {
     expect(BuiltInConnectionSchema.safeParse(valid).success).toBe(true);
+    expect(BuiltInConnectionSchema.parse({ ...valid, password: 'leaked' })).not.toHaveProperty('password');
     expect(BuiltInConnectionSchema.safeParse({
       id: 'b0f3a1c2-0000-4000-8000-000000000001', name: 'Cloud', server: 'x.database.windows.net', authenticationType: 'entraId', tenantId: 't',
     }).success).toBe(true);
@@ -114,10 +112,6 @@ describe('BuiltInConnectionSchema', () => {
     expect(BuiltInConnectionSchema.safeParse({ ...valid, server: '' }).success).toBe(false);
   });
 
-  it('never carries a password property through a parse', () => {
-    const parsed = BuiltInConnectionSchema.parse({ ...valid, password: 'leaked' });
-    expect(parsed).not.toHaveProperty('password');
-  });
 });
 
 describe('readBuiltInConnections', () => {
@@ -493,10 +487,13 @@ describe('saved password follows the server it was entered for', () => {
     return { wizard, secrets, run };
   }
 
-  it('edit wizard resets certificate trust and requires a password when the server changes', async () => {
+  it.each([
+    { change: 'server', endpoint: 'other,1433', server: 'other', port: 1433 },
+    { change: 'port', endpoint: 'localhost,1444', server: 'localhost', port: 1444 },
+  ])('edit wizard resets trust and requires a fresh password when the $change changes', async ({ endpoint, server, port }) => {
     host.stored = [trusted];
     const { wizard, secrets, run } = editWith([
-      { values: ['other,1433'] }, { pick: 'SQL Login' }, { values: ['sa'] }, { values: ['', 'fresh'] },
+      { values: [endpoint] }, { pick: 'SQL Login' }, { values: ['sa'] }, { values: ['', 'fresh'] },
       { values: ['AdventureWorks'] }, { values: ['Moved'] },
     ]);
 
@@ -505,23 +502,9 @@ describe('saved password follows the server it was entered for', () => {
     expect(wizard.rejected).toEqual(['A password is required.']);
     expect(wizard.prompts.find((p) => /Password/.test(p))).not.toMatch(/keep/i);
     const saved = (host.updates.at(-1)!.value as Array<Record<string, unknown>>)[0];
-    expect(saved).toMatchObject({ server: 'other', name: 'Moved' });
+    expect(saved).toMatchObject({ server, port, name: 'Moved' });
     expect(saved.trustServerCertificate).not.toBe(true);
-    expect(secrets.store).toHaveBeenCalledWith(passwordSecretKey(valid.id), encodeSavedPassword({ ...valid, server: 'other' } as never, 'fresh'));
-  });
-
-  it('edit wizard requires a password when only the port changes', async () => {
-    host.stored = [trusted];
-    const { wizard, run } = editWith([
-      { values: ['localhost,1444'] }, { pick: 'SQL Login' }, { values: ['sa'] }, { values: ['', 'fresh'] },
-      { values: ['AdventureWorks'] }, { values: ['Moved'] },
-    ]);
-
-    await run();
-
-    expect(wizard.rejected).toEqual(['A password is required.']);
-    const saved = (host.updates.at(-1)!.value as Array<Record<string, unknown>>)[0];
-    expect(saved.trustServerCertificate).not.toBe(true);
+    expect(secrets.store).toHaveBeenCalledWith(passwordSecretKey(valid.id), encodeSavedPassword({ ...valid, server, port } as never, 'fresh'));
   });
 
   it('edit wizard keeps the saved password and trust when the server is unchanged', async () => {

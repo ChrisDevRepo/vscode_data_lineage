@@ -5,12 +5,7 @@ type ExtensionRuntime = typeof import('./extensionRuntime').default;
 
 let runtime: ExtensionRuntime | undefined;
 
-/**
- * VS Code extension entry point.
- *
- * @param context - Extension context provided by the host.
- * @returns Whatever {@link activateRuntime} returns, per the VS Code activation contract.
- */
+/** VS Code extension entry point. */
 export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.window.registerTreeDataProvider('dataLineageViz.quickActions', new SidebarProvider()),

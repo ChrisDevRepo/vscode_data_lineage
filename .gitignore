@@ -1,113 +1,39 @@
-# Dependencies
 node_modules/
-
-# Build outputs
 dist/
 out/
 *.vsix
-
-# Testing
 test-results/
-**/test-results/**
 .vscode-test/
-
-# IDE / local
-# Keep the repository workspace settings tracked: they deliberately disable unrelated
-# MCP servers so @lineage remains the only AI tool surface while developing this solution.
-tmp/
-PLAN*.md
-TASKLIST*
-
-# Environment
+tmp*
 .env*
-!/.env.example
+!.env.example
 *.log
-
-# Ad-hoc debug dumps written by tests/tools — never tracked, never packaged
 debug*.txt
-
-# OS
 .DS_Store
 Thumbs.db
 
-# Vendor-specific instructions remain ignored. The shared root guide and allowlisted .agents
-# rules/skills are public; unselected .agents content remains ignored.
-AGENTS*
-.AGENTS*
+# Local agent entrypoints
 CLAUDE*
-.CLAUDE*
-.claude/
 GEMINI*
-.GEMINI*
-.gemini/
-GLM*
-.GLM*
-.glm-skills/
 CODEX*
-.CODEX*
-codex.md
-.codex/
-.cursor/
-.cursorrules
-.aider*
-.continue/
-.agents/*
-!.agents/
-!.agents/rules/
-!.agents/skills/
-.agents/rules/*
-!.agents/rules/*.md
-.agents/skills/*
-!.agents/skills/testing/
-!.agents/skills/trace-debug/
-!.agents/skills/prompt-playground/
-!.agents/skills/prompt-change/
-!.agents/skills/testing/SKILL.md
-!.agents/skills/trace-debug/SKILL.md
-!.agents/skills/prompt-playground/SKILL.md
-!.agents/skills/prompt-change/SKILL.md
-.agents/skills/*/*
-!.agents/skills/testing/SKILL.md
-!.agents/skills/trace-debug/SKILL.md
-!.agents/skills/prompt-playground/SKILL.md
-!.agents/skills/prompt-change/SKILL.md
-.muse/
-
-# Public vendor-neutral agent entry point.
+GROK*
+.claude*
+.gemini*
+.codex*
+.grok*
+.cursor*
 !/AGENTS.md
 
-# Internal Developer Docs
-*internal*/
-**/*internal*/**
-internal-tests/**
-
-# Verification scripts and artifacts (contents-pattern so tracked build tooling can be re-included:
-# git cannot negate below an excluded directory)
 scripts/*
-# The gate's manifest step runs this — it must be committable.
 !scripts/generate-tool-manifest.mjs
-# The postinstall hook runs this — it must be committable or fresh clones break.
 !scripts/repair-langsmith-stub.mjs
-# Regenerates THIRD_PARTY_NOTICES.md from the bundled package set.
 !scripts/generate-third-party-notices.mjs
+!scripts/verify-code-comments.mjs
+!scripts/verify-docs.mjs
 
-# Code-audit workspace (tool output, inventories, classification artifacts)
-.audit/
-
-# Package-verification scratch trees (.verify-tmp, .verify2, …). Each holds a full copy of the
-# repository, so an unignored one is picked up by `vsce ls` and would ship source in the VSIX.
-.verify*/
-
-# Python venv for the analysis scripts (stdlib-only; never bundled).
-.venv/
-
-# The ai-disabled EDH lane's seeded user-data-dir: only the settings seed is tracked; everything
-# else is runtime state the Electron host writes on every run.
 tests/fixtures/kill-switch-user-data/*
 !tests/fixtures/kill-switch-user-data/User/
 tests/fixtures/kill-switch-user-data/User/*
 !tests/fixtures/kill-switch-user-data/User/settings.json
 
-# A dacpac at the repo root is an internal model staged for a lane run, never product
-# content; the tracked fixtures live under tests/fixtures/ and assets/ and are unaffected.
 /*.dacpac

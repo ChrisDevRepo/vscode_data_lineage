@@ -13,6 +13,7 @@ import { presentRunRecall } from '../../../src/ai/tools/screenStatePresenter';
 import { validatePresentResult } from '../../../src/ai/tools/presentResult';
 import { presentResultRepairPatchSchemaForFields } from '../../../src/ai/tools/toolSchemas';
 import { DEFAULT_TURN_TOKEN_BUDGET } from '../../../src/ai/support/tokenBudget';
+import { reconcileAiView } from '../../../src/components/aiViewReconcile';
 import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
 
 function neighborWorld(cs: boolean) {
@@ -41,7 +42,7 @@ function neighborWorld(cs: boolean) {
 }
 
 describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs => {
-  it('normalizes neighbor-column IDs once at the registry boundary and keeps original input', async () => {
+  it('binds equivalent neighbor IDs while preserving supplied values', async () => {
     const { session, registry } = neighborWorld(cs);
     const input = { ids: cs
       ? ['Sales.Orders', '"Sales"."Orders"', '[Sales].[Orders]', 'Sales.orders']
@@ -55,21 +56,21 @@ describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs =>
     expect(session.hopLog.at(-1)?.input).toBe(input);
   });
 
-  it.each([['[Other].[Orders]', true], ['[Sales].[Missing]', false]] as const)('rejects unresolved or out-of-scope neighbor %s without returning columns', async (raw, found) => {
+  it.each([['[Other].[Orders]'], ['[Sales].[Missing]']] as const)('rejects unresolved or out-of-scope neighbor %s without returning columns', async (raw) => {
     const { registry } = neighborWorld(cs);
     const result = JSON.parse(String(await registry.invoke('lineage_get_neighbor_columns', { ids: [raw] })));
     expect(result).toMatchObject({ code: 'out_of_scope_or_not_neighbor' });
     expect(result).not.toHaveProperty('results');
-    expect(result.detail.invalid_ids).toEqual([found ? normalizeName(raw, cs) : raw]);
+    expect(result.issuePaths).toEqual(['ids.0']);
+    expect(result.detail).toEqual([{ path: 'ids.0', allowed_values: expect.any(Array) }]);
   });
 
-  it('preserves unresolved CS spelling in the refusal while CI accepts the case variant', async () => {
+  it('preserves unknown spelling under either catalog case policy', async () => {
     const { registry } = neighborWorld(cs);
-    const raw = 'SALES.ORDERS';
+    const raw = 'SALES.MISSING';
     const result = JSON.parse(String(await registry.invoke('lineage_get_neighbor_columns', { ids: [raw] })));
-    expect(result).toMatchObject(cs
-      ? { code: 'out_of_scope_or_not_neighbor', detail: { invalid_ids: [raw] } }
-      : { results: [{ id: '[sales].[orders]' }] });
+    expect(result).toMatchObject({ code: 'out_of_scope_or_not_neighbor', issuePaths: ['ids.0'],
+      detail: [{ path: 'ids.0', allowed_values: expect.any(Array) }] });
   });
 
   it('selects the current object type without substituting an earlier case twin', () => {
@@ -86,7 +87,7 @@ describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs =>
       const focusId = normalizeName(name, cs);
       const engine = {
         currentFocus: focusId, currentHopAnalysisMode: 'bb', currentHop: 1,
-        getCurrentTasks: () => [], pendingLineageQuestions: [], peekHopContext: () => null,
+        getCurrentTasks: () => [], pendingLineageQuestions: [], peekHopContext: () => null, heldPartsOfCurrentFocus: () => null,
       } as unknown as NavigationEngine;
       expect(buildActiveHopInstruction(session, engine, focusId).templateKeys).toContain(template);
     }
@@ -97,7 +98,7 @@ describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs =>
       { fullName: '[dbo].[Report]', type: 'table' },
       { fullName: '[dbo].[report]', type: 'table' },
     ], [], undefined, undefined, true, undefined, cs);
-    const observations = ['dbo.Report', 'dbo.report', 'dbo.Report'].map((id, i) => ({
+    const observations = ['dbo.Report', 'dbo.report', 'dbo.Report'].map(id => normalizeName(id, cs)).map((id, i) => ({
       callId: `call-${i}`, toolName: 'lineage_get_object_detail', input: { id },
       result: JSON.stringify(getObjectDetail(model, id)),
     }));
@@ -109,12 +110,16 @@ describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs =>
     const run = {
       schemaVersion: 1, runId: 'run', savedAt: '2026-10-02', origin: null, ddlHashes: {},
       snapshot: {
-        identifierCaseSensitive: cs, scopeNodeIds: ['[dbo].[Report]', '[dbo].[report]'],
-        removedSet: ['[dbo].[report]'], renderDroppedNodeIds: [], nodeStates: [],
+        identifierCaseSensitive: cs, scopeNodeIds: ['[dbo].[Report]', '[dbo].[report]', '[dbo].[Unvisited]'],
+        removedSet: ['[dbo].[report]'], nodeStates: [
+          ...(cs ? [{ nodeId: '[dbo].[Report]', action: 'analyze', source: 'ai', reason: 'submitted_analyze' }] : []),
+          { nodeId: '[dbo].[report]', action: 'prune', source: 'ai', reason: 'submitted_prune' },
+        ],
         engineInternals: { pendingLeads: [
           { nodeId: '[dbo].[Report]', status: 'pending' },
           { nodeId: '[dbo].[report]', status: 'pending' },
           { nodeId: '[DBO].[REPORT]', status: 'pending' },
+          { nodeId: '[dbo].[Unvisited]', status: 'pending' },
         ] },
       },
     } as unknown as StoredAiRun;
@@ -123,6 +128,7 @@ describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs =>
       { id: '[dbo].[Report]', on_graph: cs },
       { id: '[dbo].[report]', on_graph: false },
       { id: '[DBO].[REPORT]', on_graph: false },
+      { id: '[dbo].[Unvisited]', on_graph: false },
     ] });
   });
 
@@ -134,7 +140,7 @@ describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs =>
     }, [canonical]);
     expect(result.success).toBe(false);
     if (result.success === false) {
-      expect(result.rejection.hint).toContain('exact catalog casing');
+      expect(result.rejection.hint).toContain('canonical ids from the accepted metadata');
       expect(result.rejection.hint).not.toContain('Case and bracket differences are normalized automatically');
       expect(result.rejection.reason).toContain(canonical);
     }
@@ -173,7 +179,7 @@ it.each([undefined, false, true])('recalls historical identities using the saved
   ]);
   expect(input).toEqual(before);
   expect(session.hopLog.at(-1)?.input).toBe(input);
-  expect(logs).toEqual(expect.arrayContaining([expect.stringContaining('get_screen_state id resolved raw=Sales.Orders')]));
+  expect(logs.some(log => log.includes('id resolved'))).toBe(false);
 });
 
 it('gives one repair per id: a highlighted id an external violation already places is not listed again', () => {
@@ -198,7 +204,7 @@ it('gives one repair per id: a highlighted id an external violation already plac
 describe('present_result id rejection route', () => {
   const call = (state: 'pruned' | 'out_of_scope') => validatePresentResult({
     name: 'Reports', summary: 'Reports lineage.', highlight_groups: [],
-    sections: [{ label: 'Report', node_ids: ['[dbo].[x]'], text: 'Report output.' }],
+    sections: [{ label: 'Report', node_ids: ['[dbo].[a]', '[dbo].[x]'], text: 'Report output.' }],
   }, ['[dbo].[a]'], undefined, undefined, [], 'completed', () => state);
 
   it('does not offer add_node_ids for an id outside the approved scope, and keeps the remove/state-in-text action', () => {
@@ -221,4 +227,16 @@ describe('present_result id rejection route', () => {
       expect(presentResultRepairPatchSchemaForFields(result.repairFields).safeParse({ sections: [{ label: 'Report', node_ids: ['[dbo].[a]'] }], add_node_ids: ['[dbo].[x]'] }).success).toBe(true);
     }
   });
+});
+
+
+it.each([false, true])('retains requested-column descriptors while reconciling object spellings (CS=%s)', cs => {
+  const model = buildModel([{ fullName: '[dbo].[Target]', type: 'table', columns: [{ name: 'Value', type: 'int', nullable: 'NOT NULL', extra: '' }] }], [], undefined, undefined, true, undefined, cs);
+  const metadata = { createdAt: '2026-10-22', modelName: 'Test', highlightGroups: [], badges: [],
+    columnAspect: { edges: [], requested: { node: cs ? 'dbo.Target' : 'DBO.TARGET', columns: ['[Value]'] } } };
+  const before = structuredClone(metadata);
+  const canonical = normalizeName('dbo.Target', cs);
+  expect(reconcileAiView([canonical], metadata, model).metadata.columnAspect).toEqual({ edges: [], requested: { node: canonical, columns: ['[Value]'] } });
+  expect(reconcileAiView([], metadata, model, () => null).metadata.columnAspect).toEqual({ edges: [] });
+  expect(metadata).toEqual(before);
 });

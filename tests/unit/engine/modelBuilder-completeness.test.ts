@@ -1,6 +1,4 @@
-/**
- * SQL-body dependency extraction completes every match before binding against the loaded catalog.
- */
+/** SQL-body dependency extraction completes every match before binding against the loaded catalog. */
 import { beforeAll, describe, expect, it } from 'vitest';
 import { buildModel } from '../../../src/engine/modelBuilder';
 import { loadParseRules } from '../helpers/testUtils';

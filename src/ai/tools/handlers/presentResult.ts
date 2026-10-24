@@ -1,15 +1,6 @@
-/**
- * Executes validation, assembly, and persistence for `lineage_present_result`.
- *
- * @remarks
- * Provider-neutral validation and assembly helpers remain in the sibling
- * `presentResult.ts`; this handler owns session persistence and the validated
- * webview effect. Raw arguments are admitted once against the same live stage/repair schema the
- * provider sees, before normalization or held-content merge. Turn-lease validation and effect
- * serialization remain in the registry wrapper.
- */
+/** Executes validation, assembly, and persistence for `lineage_present_result`. */
 import { type AiSession } from '../../session/session';
-import { trunc, sanitizeForLog } from '../../../utils/log';
+import { trunc } from '../../../utils/log';
 import { schemaKey } from '../../../utils/sql';
 import {
   validatePresentResult, orderAndAssemble, findDisconnectedViewNodes,
@@ -17,7 +8,6 @@ import {
   discoveryPreviewNarrative,
   mergePresentResultRepairPatch,
   holdRejectedPresentResult,
-  requiredCtChainNodeIds,
   findTextlessNewSectionLabels,
   findStartOrderIssues,
   presentResultRepairInstruction,
@@ -32,51 +22,40 @@ import {
   type PresentNodeIdState,
   type PresentNodeIdStateLookup,
 } from '../../tools/presentResult';
-import { MergedSectionsSchema, PRESENT_RESULT_REPAIR_FIELDS, normalizePresentSectionLabel, presentResultSchemaForPhase } from '../../tools/toolSchemas';
+import { mergedSectionsSchemaForPhase, normalizePresentSectionLabel, presentResultSchemaForPhase } from '../../tools/toolSchemas';
 import { edgeApiType } from '../../support/aiPresenter';
 import { prunePreserveOnly } from '../../support/viewPrune';
-import { resolveModelNodeId, resolveModelNodeIds } from '../../support/inputNormalization';
-import { makeRejection, rejectionFromZodError, zodFieldRepairHint, type ToolRejection } from '../../support/toolErrorEnvelope';
+import { resolveModelNodeId, resolveModelNodeIds } from '../../support/modelReferences';
+import { INVALID_TOOL_INPUT_REPAIR_HINT, makeRejection, rejectionFromZodError, type ToolRejection } from '../../support/toolErrorEnvelope';
 import { quoteIds } from '../../support/text';
 import { evaluatePresentResultPreconditionsRule } from '../../interaction/rules/presentResultRules';
 import { type ToolServices, getModelNodeMap } from './toolServices';
 import type { ResultGraph, PresentationArtifact } from '../../session/types';
 import type { SmState } from '../../sm/smTypes';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
+import { isCancellationOutcome } from '../../support/cancellation';
 
-function findUncoveredCtChainNodes(
-  resultGraph: AiSession['resultGraph'],
-  input: PresentResultInput,
-  resolvedNodeIds: string[],
-  slottedNodeIds: readonly string[],
-  identifierCaseSensitive = false,
-): string[] {
-  const lc = (id: string): string => schemaKey(id, identifierCaseSensitive);
-  const pruned = (resultGraph?.node_states ?? []).filter(state => state.action === 'prune').map(state => state.nodeId);
-  const required = requiredCtChainNodeIds(resultGraph?.columnAspect?.edges ?? [], resolvedNodeIds, [...slottedNodeIds, ...pruned], lc);
-  if (required.length === 0) return [];
-
-  const linked = new Set<string>();
-  for (const sec of input.sections ?? []) {
-    for (const id of sec.node_ids ?? []) linked.add(lc(id));
-  }
-  for (const note of input.notes ?? []) linked.add(lc(note.node_id));
-  return required.filter(id => !linked.has(lc(id)));
+/** Binds only declared report-reference fields; raw arguments and authored text remain intact. */
+function bindPresentationReferences<T extends PresentResultInput | PresentResultRepairPatch>(input: T, model: NonNullable<AiSession['model']>): T {
+  const nodeMap = getModelNodeMap(model);
+  const bind = (id: string): string => typeof id === 'string'
+    ? resolveModelNodeId(id, nodeMap, model.identifierCaseSensitive) ?? id : id;
+  return {
+    ...input,
+    ...(Array.isArray(input.sections) ? { sections: input.sections.map(section => section && typeof section === 'object' ? ({ ...section,
+      ...('node_ids' in section && Array.isArray(section.node_ids) ? { node_ids: section.node_ids.map(bind) } : {}),
+    }) : section) } : {}),
+    ...(Array.isArray(input.highlight_groups) ? { highlight_groups: input.highlight_groups.map(group => group && typeof group === 'object' ? ({ ...group,
+      ...('node_ids' in group && Array.isArray(group.node_ids) ? { node_ids: group.node_ids.map(bind) } : {}),
+    }) : group) } : {}),
+    ...(Array.isArray(input.notes) ? { notes: input.notes.map(note => note && typeof note === 'object' && 'node_id' in note
+      ? { ...note, node_id: bind(note.node_id) } : note) } : {}),
+    ...(Array.isArray(input.add_node_ids) ? { add_node_ids: input.add_node_ids.map(bind) } : {}),
+    ...(Array.isArray(input.prune_node_ids) ? { prune_node_ids: input.prune_node_ids.map(bind) } : {}),
+  } as T;
 }
 
-/**
- * Fills a render that amends a committed report back out to a complete section array.
- *
- * @remarks
- * An omitted `sections` array or empty section text asks to retain the committed body under that
- * label, and omitted section `node_ids` ask to retain its committed links; inherited `node_ids` are
- * narrowed to nodes this render still shows so a retained section cannot re-link a node the same
- * call pruned. Supplied node ids are left alone. Committed text is stored with its evidence
- * references already expanded, so a retained body keeps its SQL verbatim.
- *
- * @param committed - Sections of the report this run already rendered.
- * @returns The complete sections, or the labels that asked to retain a body that does not exist.
- */
+/** Fills a render that amends a committed report back out to a complete section array. */
 function resolveRetainedSections(
   supplied: ReadonlyArray<{ label: string; node_ids?: string[]; text?: string }> | undefined,
   committed: NonNullable<ResultGraph['sections']>,
@@ -104,12 +83,7 @@ function resolveRetainedSections(
   return { sections, unknownLabels };
 }
 
-/**
- * The notes an amendment renders: the committed captions for nodes still shown, overlaid by this
- * call's notes by node id — the one merge both the rendered view and the committed
- * `resultGraph.notes` take, so a follow-up that edits one caption does not blank every other
- * caption on the graph.
- */
+/** The notes an amendment renders: the committed captions for nodes still shown, overlaid by this call's notes by node id — the one merge both the rendered view and the committed `resultGraph.notes` take, so a follow-up that edits one caption does not blank every other caption on the graph. */
 function mergeAmendedNotes(
   committed: ReadonlyArray<{ nodeId: string; summary: string }> | undefined,
   supplied: ReadonlyArray<{ node_id: string; caption: string }>,
@@ -152,6 +126,9 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       const sess = s.getSession();
       const rawInput = input;
       const turnEpoch = s.turnEpoch(sess);
+      const drafts = sess.presentResultRepairDraft;
+      const presentResultStage: PresentResultStage = sess.activeLmStage?.kind === 'visual_preview'
+        ? 'visual_preview' : sess.phase.kind === 'completed' ? 'completed' : 'synthesis';
       const attemptWrite = sess.beginPresentResultAttempt(turnEpoch);
       if (attemptWrite.kind !== 'accepted') {
         return s.logAndReturn('lineage_present_result', makeRejection({
@@ -160,51 +137,44 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         }), rawInput);
       }
       const model = s.requireModel();
-      const isVisualPreview = sess.activeLmStage?.kind === 'visual_preview';
+      const isVisualPreview = presentResultStage === 'visual_preview';
       const previewNarrative = isVisualPreview && sess.lastDiscoveryAnswer
         ? discoveryPreviewNarrative(sess.lastDiscoveryAnswer)
         : null;
 
       const reject = (rejection: ToolRejection): string => {
-        sess.recordPresentResultFailure(
-          turnEpoch,
-          sanitizeForLog(rejection.hint ? `${rejection.reason} (${rejection.hint})` : rejection.reason),
-        );
+        sess.recordPresentResultFailure(turnEpoch);
         return s.logAndReturn('lineage_present_result', rejection, rawInput);
       };
 
-      const presentResultStage: PresentResultStage = isVisualPreview
-        ? 'visual_preview'
-        : sess.phase.kind === 'completed'
-        ? 'completed'
-        : 'synthesis';
-      const retainableSections = isVisualPreview ? null : sess.retainableReportSections();
+      const retainableSections = !isVisualPreview ? sess.retainableReportSections() : null;
       const schema = presentResultSchemaForPhase(
-        presentResultStage, sess.presentResultRepairFields, retainableSections !== null,
-        previewNarrative?.blocks.length ?? 0, sess.presentResultRepairHighlightLabelIndexes ?? undefined,
-        sess.presentResultRepairSectionTextLeaves ?? undefined,
-      );
+          presentResultStage, sess.presentResultRepairFields, retainableSections !== null,
+          previewNarrative?.blocks.length ?? 0, sess.presentResultRepairHighlightLabelIndexes ?? undefined,
+          sess.presentResultRepairSectionLeaves ?? undefined,
+        );
       const parsed = schema.safeParse(input);
       if (!parsed.success) {
-        const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
-        const repair = isVisualPreview ? null : holdRejectedPresentResult(sess.presentResultRepairDraft, input, rejection.issuePaths ?? [], presentResultStage, retainableSections);
-        const authorization = sess.presentResultRepairDraft.getAuthorization();
-        const held = sess.presentResultRepairDraft.get();
-        if (held && authorization) rejection.hint = [
-          zodFieldRepairHint(parsed.error, input, schema),
-          repair ?? presentResultRepairInstruction(authorization.fields, presentResultStage,
-            (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes, authorization.sectionTextLeaves),
+        const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema, resend: 'owner' });
+        const repair = holdRejectedPresentResult(drafts, input, rejection.issuePaths ?? [], presentResultStage, retainableSections);
+        const authorization = drafts.getAuthorization();
+        const held = drafts.get();
+        rejection.hint = [
+          rejection.hint,
+          held && authorization ? repair ?? presentResultRepairInstruction(authorization.fields, presentResultStage,
+            (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes, authorization.sectionLeaves, held) : INVALID_TOOL_INPUT_REPAIR_HINT,
         ].filter(Boolean).join(' ');
         return reject(rejection);
       }
-      input = parsed.data;
+      input = bindPresentationReferences(parsed.data as PresentResultInput | PresentResultRepairPatch, model);
 
-      const held = sess.presentResultRepairDraft.get();
-      const authorization = sess.presentResultRepairDraft.getAuthorization();
+      const heldDraft = drafts.get();
+      const held = heldDraft ? bindPresentationReferences(heldDraft, model) : heldDraft;
+      const authorization = drafts.getAuthorization();
       let presentInput: PresentResultInput;
       if (held && authorization) {
         const patch = input as PresentResultRepairPatch;
-        const textlessNewLabels = authorization.sectionTextLeaves
+        const textlessNewLabels = authorization.sectionLeaves
           ? []
           : findTextlessNewSectionLabels(
             held.sections,
@@ -218,29 +188,31 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
             hint: [
               `To fix: add ${body}: under the offending label, or move its node_ids into an exact held label. Nothing from the rejected call was stored.`,
               presentResultRepairInstruction(authorization.fields, presentResultStage,
-                (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes),
+                (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes, undefined, held),
             ].join(' '),
             issuePaths: ['sections'],
           }));
         }
         presentInput = mergePresentResultRepairPatch(held, patch, authorization, model.identifierCaseSensitive);
+        const mergedSchema = mergedSectionsSchemaForPhase(presentResultStage, previewNarrative?.blocks.length ?? 0);
         const merged = presentInput.sections === undefined && retainableSections
           ? { success: true as const }
-          : MergedSectionsSchema.safeParse({ sections: presentInput.sections });
+          : mergedSchema.safeParse({ sections: presentInput.sections });
         if (!merged.success) {
-          const owed = new Set<string>(['sections', ...authorization.fields.filter(field => presentInput[field] === undefined)]);
-          const fields = PRESENT_RESULT_REPAIR_FIELDS.filter(field => owed.has(field));
-          const sectionsHeld = (presentInput.sections?.length ?? 0) > 0;
-          const sectionTextLeaves = sectionsHeld
-            ? sectionTextLeavesFromIssues(merged.error.issues)
-            : undefined;
-          sess.presentResultRepairDraft.hold(presentInput, { fields, ...(sectionTextLeaves ? { sectionTextLeaves } : {}) });
-          return reject(rejectionFromZodError(merged.error, {
-            code: REJECTION_CODES.validation,
-            hint: presentResultRepairInstruction(fields, presentResultStage, sectionsHeld, undefined, sectionTextLeaves),
-          }));
+          const paths = [...merged.error.issues.map(issue => issue.path.join('.')),
+            ...authorization.fields.filter(field => presentInput[field] === undefined)];
+          const hint = holdRejectedPresentResult(drafts, presentInput, paths, presentResultStage, retainableSections, true);
+          const rejection = rejectionFromZodError(merged.error, {
+            code: REJECTION_CODES.validation, input: { sections: presentInput.sections }, schema: mergedSchema, resend: 'owner',
+          });
+          rejection.hint = [rejection.hint, hint ?? presentResultRepairInstruction(authorization.fields, presentResultStage,
+            (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes, authorization.sectionLeaves, held)].filter(Boolean).join(' ');
+          return reject(rejection);
         }
-      } else if (isVisualPreview) {
+      } else {
+        presentInput = input as PresentResultInput;
+      }
+      if (isVisualPreview) {
         const scope = sess.discoveryScopeArtifact?.turnEpoch === turnEpoch
           ? sess.discoveryScopeArtifact
           : null;
@@ -250,31 +222,32 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
             hint: 'Run the discovery question again, then request its graph preview.',
           }));
         }
-        presentInput = { ...(input as PresentResultInput), summary: previewNarrative.summary, title: previewNarrative.title };
-      } else {
-        presentInput = input as PresentResultInput;
+        presentInput = { ...presentInput, summary: previewNarrative.summary, title: previewNarrative.title };
       }
 
       const rejectGraphEdit = (field: 'add_node_ids' | 'prune_node_ids', rejection: ToolRejection): string => {
         if (!held) return reject(rejection);
-        sess.presentResultRepairDraft.hold(presentInput, { fields: [field] });
+        drafts.hold(presentInput, { fields: [field] });
         return reject({ ...rejection, hint: `${rejection.hint} ${presentResultRepairInstruction([field], presentResultStage)}` });
       };
 
       if (previewNarrative) {
         const partition = findStartOrderIssues(presentInput.sections ?? []);
         if (partition.length > 0) {
-          sess.presentResultRepairDraft.hold(presentInput, { fields: ['sections'] });
+          const paths = partition.map(issue => `sections.${issue.index}.start`);
+          const hint = holdRejectedPresentResult(drafts, presentInput, paths, presentResultStage, null, true);
           return reject(makeRejection({
             code: REJECTION_CODES.validation,
             reason: partition.map(issue => issue.message).join('\n'),
-            hint: presentResultRepairInstruction(['sections'], 'visual_preview'),
-            issuePaths: partition.map(issue => `sections.${issue.index}.start`),
+            hint: hint ?? presentResultRepairInstruction(['sections'], 'visual_preview'),
+            issuePaths: paths,
           }));
         }
       }
 
-      const isAmendment = !isVisualPreview && sess.phase.kind === 'completed' && presentInput.is_update === true;
+      // A completed run accepts graph edits; a preview or synthesis render does not.
+      const graphEditable = presentResultStage === 'completed';
+      const isAmendment = graphEditable && presentInput.is_update === true;
 
       const previewScope = isVisualPreview && sess.discoveryScopeArtifact?.turnEpoch === turnEpoch
         ? sess.discoveryScopeArtifact
@@ -286,55 +259,22 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         originNodeId: previewScope.origin,
       } : null;
       const resultGraph = previewGraph ?? sess.resultGraph;
-      if (!resultGraph) {
-        return reject(evaluatePresentResultPreconditionsRule(false)!);
-      }
+      if (!resultGraph) return reject(evaluatePresentResultPreconditionsRule(false)!);
 
       let resolvedNodeIds: string[] = [...resultGraph.nodeIds];
       let resolvedEdges: [string, string, string][] = [...resultGraph.edges];
       const graphSource = resultGraph.source;
       const modelNodeMap = getModelNodeMap(model);
-      // A completed-phase graph edit changes the rendered view, so its ids and edges commit with it.
+      // A graph edit changes the rendered view, so its ids and edges commit with it.
       let graphEdited = false;
 
-      const canonicalNodeId = (id: string, field: string): string => {
-        const resolved = resolveModelNodeId(id, modelNodeMap, model.identifierCaseSensitive) ?? id;
-        if (resolved !== id) {
-          s.logger.debug(
-            `[Normalize] tool=present_result field=${field} from=${sanitizeForLog(id)} to=${sanitizeForLog(resolved)}`,
-          );
-        }
-        return resolved;
-      };
-      if (Array.isArray(presentInput.sections) && presentInput.sections.length > 0) {
-        presentInput.sections = presentInput.sections.map((sec, secIndex) => {
-          if (!Array.isArray(sec.node_ids) || sec.node_ids.length === 0) return sec;
-          const normalizedNodeIds = sec.node_ids.map((id, idIndex) =>
-            canonicalNodeId(id, `sections.${secIndex}.node_ids.${idIndex}`));
-          return { ...sec, node_ids: normalizedNodeIds };
-        });
-      }
-      if (Array.isArray(presentInput.notes) && presentInput.notes.length > 0) {
-        presentInput.notes = presentInput.notes.map((note, noteIndex) => ({
-          ...note,
-          node_id: canonicalNodeId(note.node_id, `notes.${noteIndex}.node_id`),
-        }));
-      }
-      if (Array.isArray(presentInput.highlight_groups) && presentInput.highlight_groups.length > 0) {
-        presentInput.highlight_groups = presentInput.highlight_groups.map((group, groupIndex) => ({
-          ...group,
-          node_ids: group.node_ids.map((id, idIndex) =>
-            canonicalNodeId(id, `highlight_groups.${groupIndex}.node_ids.${idIndex}`)),
-        }));
-      }
-
-      if (!isVisualPreview && sess.phase.kind === 'completed' && presentInput.add_node_ids?.length) {
+      if (graphEditable && presentInput.add_node_ids?.length) {
         const currentSet = new Set(resolvedNodeIds);
         const addResolution = resolveModelNodeIds(presentInput.add_node_ids, modelNodeMap, model.identifierCaseSensitive);
         if (addResolution.unresolved.length > 0) {
           return rejectGraphEdit('add_node_ids', makeRejection({
             code: REJECTION_CODES.validation,
-            reason: `Unknown add_node_ids after bracket/case normalization: ${quoteIds(addResolution.unresolved)}.`,
+            reason: `Unknown add_node_ids (use canonical metadata IDs): ${quoteIds(addResolution.unresolved)}.`,
             hint: 'Use lineage_search_objects to resolve canonical IDs.',
             issuePaths: ['add_node_ids'],
           }));
@@ -347,8 +287,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         if (outOfScope.length > 0) {
           return rejectGraphEdit('add_node_ids', makeRejection({
             code: REJECTION_CODES.validation,
-            reason: `add_node_ids names objects this exploration has not analysed: ${quoteIds(outOfScope)}.`,
-            hint: 'Rendering reveals analysed objects only. If the user asked to add these objects, call lineage_start_exploration {"supplement":{"nodeIds":[...]}} — that analyses them into this graph — then render. Otherwise do not render them: name them in your chat answer and ask which to add.',
+            reason: `add_node_ids names objects outside this exploration's approved scope: ${quoteIds(outOfScope)}.`,
+            hint: 'To read new SQL, return to discovery and propose a new exploration for approval. Keep this render within the approved scope.',
             issuePaths: ['add_node_ids'],
           }));
         }
@@ -360,12 +300,12 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         graphEdited = true;
       }
 
-      if (!isVisualPreview && sess.phase.kind === 'completed' && presentInput.prune_node_ids?.length) {
+      if (graphEditable && presentInput.prune_node_ids?.length) {
         const pruneResolution = resolveModelNodeIds(presentInput.prune_node_ids, modelNodeMap, model.identifierCaseSensitive);
         if (pruneResolution.unresolved.length > 0) {
           return rejectGraphEdit('prune_node_ids', makeRejection({
             code: REJECTION_CODES.validation,
-            reason: `Unknown prune_node_ids after bracket/case normalization: ${quoteIds(pruneResolution.unresolved)}.`,
+            reason: `Unknown prune_node_ids (use canonical metadata IDs): ${quoteIds(pruneResolution.unresolved)}.`,
             hint: 'Use lineage_search_objects to resolve canonical IDs.',
             issuePaths: ['prune_node_ids'],
           }));
@@ -412,21 +352,38 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         presentInput.sections = retained.sections;
       }
 
-      const unknownEvidenceIds: string[] = [];
-      const malformedEvidence: PresentResultViolation[] = [];
+      if (isAmendment) {
+        presentInput.notes = mergeAmendedNotes(resultGraph.notes, presentInput.notes ?? [], resolvedNodeIds)
+          .map(note => ({ node_id: note.nodeId, caption: note.text }));
+      }
+
+      const evidenceViolations: PresentResultViolation[] = [];
       let renderInput: PresentResultInput = isVisualPreview && presentInput.sections
         ? { ...presentInput, sections: assemblePreviewSections(previewNarrative?.blocks ?? [], presentInput.sections) }
         : presentInput;
       if (!isVisualPreview && presentInput.sections?.length) {
-        const { blocks: evidenceBlocks } = assignEvidenceIds(sess.memory.getResult().detail_slots);
+        // Validate SQL fences and expand references to captured evidence.
+        // Number fences over the slots the completion envelope served: the render bound stored with the result.
+        const servedIds = new Set(sess.resultGraph?.evidenceNodeIds ?? []);
+        const evidenceBlocks = assignEvidenceIds(sess.memory.getResult().detail_slots.filter(slot => servedIds.has(slot.nodeId))).blocks;
         const expand = (text: string, fieldLabel: string, fieldPath = fieldLabel): string => {
           const expanded = expandEvidenceRefs(text, evidenceBlocks);
-          unknownEvidenceIds.push(...expanded.unknownIds);
+          const field = fieldPath.startsWith('sections.') ? 'sections' : fieldPath as 'title' | 'intro' | 'closing';
+          if (expanded.unknownIds.length > 0) {
+            evidenceViolations.push({
+              field,
+              messages: [`Evidence id(s) ${quoteIds([...new Set(expanded.unknownIds)])} name no captured SQL block. `
+                + 'Use an id shown on a ```sql fence line in detail_slots, or write the SQL inside that fence yourself.'],
+              repairFields: [field],
+              paths: [fieldPath],
+              entryIds: [...new Set(expanded.unknownIds)],
+            });
+          }
           if (expanded.malformedRefs.length > 0) {
-            malformedEvidence.push({
-              field: fieldPath.startsWith('sections.') ? 'sections' : fieldPath as 'title' | 'intro' | 'closing',
-              messages: [`Unclosed SQL fence(s) ${quoteIds(expanded.malformedRefs)} in ${fieldLabel}. Close each block with a bare triple-backtick marker; another language opener is not a closing marker. Retain every surrounding business paragraph.`,],
-              repairFields: [fieldPath.startsWith('sections.') ? 'sections' : fieldPath as 'title' | 'intro' | 'closing'],
+            evidenceViolations.push({
+              field,
+              messages: [`Unclosed SQL fence(s) ${quoteIds(expanded.malformedRefs)} in ${fieldLabel}. A reused block is two lines, its opening line with the id and a bare triple-backtick line right after it; a block with written SQL closes with a bare triple-backtick line after the SQL. Another language opener is not a closing marker. Retain every surrounding business paragraph.`,],
+              repairFields: [field],
               paths: [fieldPath],
             });
           }
@@ -502,52 +459,28 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       );
       s.logger.debug(`[Presentation] Output assembled title="${trunc(presentInput.title ?? '(none)', 60)}"`);
 
-      const externalViolations: PresentResultViolation[] = [...malformedEvidence];
-      const uncoveredCtNodes = findUncoveredCtChainNodes(resultGraph, renderInput, resolvedNodeIds, sess.memory.notedNodeIds, model.identifierCaseSensitive);
-      if (uncoveredCtNodes.length > 0) {
-        externalViolations.push({
-          field: 'sections',
-          messages: [
-            `CT column-chain node(s) missing from final presentation: ${quoteIds(uncoveredCtNodes)}.`,
-            'For each one: add its id to a sections[].node_ids, or give it one grounded notes[] entry. Tables carry the traced column even when they have no detail slot.',
-          ],
-          repairFields: ['sections', 'notes'],
-          paths: ['sections', 'notes'],
-          entryIds: uncoveredCtNodes,
-        });
-      }
+      const externalViolations: PresentResultViolation[] = [...evidenceViolations];
       if (unrenderedSlotIds.length > 0) {
         externalViolations.push({
           field: 'sections',
+          missingContent: true,
           messages: [
             `Detail slot(s) reached no section: ${quoteIds(unrenderedSlotIds)}.`,
-            'Add each id to a section\'s node_ids and write that object\'s captured findings into the same section\'s text; a notes caption or a highlight color does not carry them.',
+            'Add each missing id to the node_ids of the section describing it. Include its captured findings in that section\'s text if absent; keep adequate text unchanged. A notes caption or a highlight color does not carry them.',
           ],
           repairFields: ['sections'],
           paths: ['sections'],
           entryIds: unrenderedSlotIds,
         });
       }
-      if (unknownEvidenceIds.length > 0) {
-        externalViolations.push({
-          field: 'sections',
-          messages: [
-            `Evidence id(s) ${quoteIds([...new Set(unknownEvidenceIds)])} name no captured SQL block. `
-            + 'Use an id shown on a ```sql fence line in detail_slots, or write the SQL inside that fence yourself.',
-          ],
-          repairFields: ['sections'],
-          paths: ['sections'],
-          entryIds: [...new Set(unknownEvidenceIds)],
-        });
-      }
 
       let smSnapshot: SmState | null | undefined;
       const nodeIdState: PresentNodeIdStateLookup = (nodeId): PresentNodeIdState => {
         if (!modelNodeMap.has(nodeId)) return 'not_in_model';
+
         if (smSnapshot === undefined) smSnapshot = sess.stateMachine?.toJSON() ?? null;
         if (!smSnapshot) return 'out_of_scope';
         if (smSnapshot.removedSet.includes(nodeId)) return 'pruned';
-        if ((smSnapshot.renderDroppedNodeIds ?? []).includes(nodeId)) return 'render_dropped';
         if (smSnapshot.scopeNodeIds.includes(nodeId)) return 'in_scope_undispositioned';
         return 'out_of_scope';
       };
@@ -555,31 +488,31 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
 
       if (!validation.success) {
         if (validation.repairable) {
-          const scopedHint = malformedEvidence.length > 0
-            ? holdRejectedPresentResult(sess.presentResultRepairDraft, presentInput, validation.rejection.issuePaths ?? [], presentResultStage)
-            : null;
+          const scopedHint = holdRejectedPresentResult(drafts, presentInput, validation.rejection.issuePaths ?? [], presentResultStage, retainableSections, true);
           if (scopedHint) validation.rejection.hint = scopedHint;
-          else sess.presentResultRepairDraft.hold(presentInput, { fields: validation.repairFields });
+          else drafts.hold(presentInput, { fields: validation.repairFields });
         }
         return reject(validation.rejection);
       }
 
+      // A rendered result belongs to its run.
       const runId = sess.explorationRunId ?? sess.id;
-      const renderedNotes = isAmendment
-        ? mergeAmendedNotes(resultGraph.notes, validation.notes, validation.node_ids)
-        : validation.notes.map(n => ({ nodeId: n.node_id, text: n.caption }));
+      const renderedNotes = validation.notes.map(n => ({ nodeId: n.node_id, text: n.caption }));
       const aiMetadata: PresentationArtifact['aiMetadata'] = {
         summary: validation.summary,
         description: validation.description,
         createdAt: new Date().toISOString(),
         modelName: sess.modelName ?? 'unknown',
-        runId,
+        ...(runId ? { runId } : {}),
         highlightGroups: validation.highlight_groups.map(g => ({ label: g.label, color: g.color, nodeIds: g.node_ids })),
         badges: validation.badges.map(b => ({ nodeId: b.node_id, text: b.text })),
         notes: renderedNotes,
         layoutDirection: validation.layout_direction,
         ...(resultGraph.columnAspect ? {
           columnAspect: {
+            ...(resultGraph.columnAspect.requested ? { requested: {
+              node: resultGraph.columnAspect.requested.node, columns: [...resultGraph.columnAspect.requested.columns],
+            } } : {}),
             edges: resultGraph.columnAspect.edges.map(e => ({
               hopNode:  e.hop_node,
               fromNode: e.from_node,
@@ -593,6 +526,47 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           nodeVerdicts: buildColumnAspectNodeVerdicts(validation.node_ids, resultGraph.columnAspect, resultGraph.node_states, model.identifierCaseSensitive),
         } : {}),
       };
+      let autoDispatched = false;
+      let previewFailure: 'preview_post_failed' | 'preview_dispatch' | null = null;
+      s.signal?.throwIfAborted();
+      try {
+        const delivery = await s.deliverPreview(
+          { type: 'ai-view-preview', name: validation.name, nodeIds: validation.node_ids, aiMetadata },
+        );
+        autoDispatched = delivery === 'delivered';
+        // A cancel ends the turn, but a preview the canvas already shows is committed first so the
+        // session matches the screen; an undrawn preview is dropped.
+        if (!autoDispatched) s.signal?.throwIfAborted();
+        if (delivery === 'post_failed') {
+          s.logger.warn('AI preview post failed');
+          previewFailure = 'preview_post_failed';
+        }
+      } catch (error) {
+        if (isCancellationOutcome(error, s.signal)) throw error;
+        s.logger.warn(`AI preview dispatch failed: ${error instanceof Error ? error.name : 'Error'}`);
+        previewFailure = 'preview_dispatch';
+      }
+
+      /** Writes the accepted render into the graph it was drawn from. */
+      const commitToGraph = (): void => {
+        if (isAmendment || graphEdited) {
+          resultGraph.nodeIds = resolvedNodeIds;
+          resultGraph.edges = resolvedEdges;
+        }
+        resultGraph.notes = renderedNotes.map(n => ({ nodeId: n.nodeId, summary: n.text }));
+        {
+          resultGraph.description = validation.description ?? undefined;
+          resultGraph.summary = validation.summary ?? undefined;
+          resultGraph.title = renderInput.title ?? undefined;
+          resultGraph.intro = renderInput.intro ?? undefined;
+          resultGraph.closing = renderInput.closing ?? undefined;
+          if (Array.isArray(renderInput.sections)) {
+            resultGraph.sections = renderInput.sections.map(sec => ({ label: sec.label, node_ids: sec.node_ids, text: sec.text }));
+            resultGraph.sectionsRunId = sess.explorationRunId ?? undefined;
+          }
+        }
+      };
+
       const checkpoint = captureCheckpoint(sess, s.logger);
       const artifact: PresentationArtifact = {
         name: validation.name,
@@ -600,23 +574,6 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         aiMetadata,
         ...(checkpoint ? { runId, checkpoint } : {}),
       };
-
-      let autoDispatched = false;
-      let previewFailure: 'preview_post_failed' | 'preview_dispatch' | null = null;
-      try {
-        const delivery = await s.deliverPreview(
-          { type: 'ai-view-preview', name: validation.name, nodeIds: validation.node_ids, aiMetadata },
-        );
-        autoDispatched = delivery === 'delivered';
-        if (delivery === 'post_failed') {
-          s.logger.warn('AI preview post failed');
-          previewFailure = 'preview_post_failed';
-        }
-      } catch (error) {
-        s.logger.warn(`AI preview dispatch failed: ${error instanceof Error ? error.name : 'Error'}`);
-        previewFailure = 'preview_dispatch';
-      }
-
       const repeatedSuccess = sess.presentResultCalledThisTurn;
       const successWrite = sess.commitPresentResultSuccess(turnEpoch, artifact, autoDispatched);
       if (successWrite.kind !== 'accepted') {
@@ -628,23 +585,9 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       // The delivery outcome is recorded only once the turn still owns the session, and the latest present decides it.
       if (previewFailure) sess.markSynthesisRenderDegraded(previewFailure);
       else sess.clearPreviewDeliveryDegraded();
-      if (isAmendment || graphEdited) {
-        resultGraph.nodeIds = resolvedNodeIds;
-        resultGraph.edges = resolvedEdges;
-      }
-      resultGraph.notes = renderedNotes.map(n => ({ nodeId: n.nodeId, summary: n.text }));
-      {
-        resultGraph.description = validation.description ?? undefined;
-        resultGraph.summary = validation.summary ?? undefined;
-        resultGraph.title = renderInput.title ?? undefined;
-        resultGraph.intro = renderInput.intro ?? undefined;
-        resultGraph.closing = renderInput.closing ?? undefined;
-        if (Array.isArray(renderInput.sections)) {
-          resultGraph.sections = renderInput.sections.map(sec => ({ label: sec.label, node_ids: sec.node_ids, text: sec.text }));
-          resultGraph.sectionsRunId = sess.explorationRunId ?? undefined;
-        }
-      }
+      commitToGraph();
       if (previewGraph) sess.resultGraph = resultGraph;
+      s.signal?.throwIfAborted();
       if (repeatedSuccess) {
         s.logger.debug(`[Presentation] repeated present_result in one turn (success #${sess.presentResultAttemptCountThisTurn}) — single-shot guard may have regressed`);
       }
@@ -652,31 +595,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       s.logger.debug(`AI view name="${trunc(validation.name, 60)}"`);
       s.logger.info(`AI view displayed — nodes=${validation.node_ids.length} sections=${presentInput.sections?.length ?? 0} highlights=${validation.highlight_groups.length} badges=${validation.badges.length} classification=${sess.classification ?? '(none)'} attempts=${sess.presentResultAttemptCountThisTurn} failures=${sess.presentResultFailureCountThisTurn}`);
       return s.logAndReturn('lineage_present_result', { success: true, view_name: validation.name, node_count: validation.node_ids.length, graph_source: graphSource }, rawInput);
-    } catch (err) { return s.toolError('present_result', err); }
-}
-
-/**
- * Maps merged-sections validation issues to the indexed `label`/`text` leaves a repair may replace.
- *
- * @remarks
- * Only issues under `sections[<number>]` qualify; the leaf is `text` when the issue path names it,
- * otherwise `label` (the only other leaf the merged schema validates). Leaves are deduped per index.
- *
- * @returns The leaves, or `undefined` when no issue addresses an indexed section, so the caller
- * holds a fields-only repair instead of an indexless/NaN leaf.
- */
-function sectionTextLeavesFromIssues(
-  issues: readonly { readonly path: readonly PropertyKey[] }[],
-): Array<{ index: number; fields: Array<'label' | 'text'> }> | undefined {
-  const byIndex = new Map<number, Set<'label' | 'text'>>();
-  for (const { path } of issues) {
-    const index = path[1];
-    if (path[0] !== 'sections' || typeof index !== 'number' || !Number.isInteger(index) || index < 0) continue;
-    const field = path[2] === 'text' ? 'text' : 'label';
-    const fields = byIndex.get(index) ?? new Set();
-    fields.add(field);
-    byIndex.set(index, fields);
-  }
-  if (byIndex.size === 0) return undefined;
-  return [...byIndex].sort(([a], [b]) => a - b).map(([index, fields]) => ({ index, fields: [...fields].sort() }));
+    } catch (err) {
+      if (isCancellationOutcome(err, s.signal)) throw err;
+      return s.toolError('present_result', err);
+    }
 }

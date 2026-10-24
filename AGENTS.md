@@ -1,77 +1,62 @@
-# Repository Guide
+# Repository guide
 
-Vendor-agnostic instructions for coding agents working on Data Lineage Viz. Read only the linked rule or skill relevant to the task.
+Instructions for an agent or developer that cloned Data Lineage Viz to review security, verify contracts, or build the extension.
 
-## Stack
+## What this is
 
-- VS Code extension, single-package repository; Node.js `>=20`, npm `>=10`, VS Code API `^1.101.0`.
-- TypeScript `^5.7`; VS Code extension host, esbuild `^0.28`, Vite `^6.4`.
-- React/React DOM `19.3`; webview uses React Flow (`@xyflow/react` `12.11`).
-- Graph: graphology `0.26`; validation: Zod `4.6`; tests: Vitest `4.1`, Mocha `11.8`, `@vscode/test-electron` `3.1`.
-- Sources are SQL Server, Azure SQL, Fabric Data Warehouse and Synapse Dedicated SQL Pool. No application-owned database schema or migration command.
+A VS Code extension that draws SQL Server lineage. Sources are SQL Server, Azure SQL, Fabric Data Warehouse, and Synapse Dedicated SQL Pool. It does not own a database schema and has no migration command.
 
-## Quickstart
+- `src/engine/` parses SQL, builds the graph, and connects to databases.
+- `src/ai/` is the `@lineage` chat runtime. It records findings the model supplies. It does not invent graph facts or open a database on its own.
+- `src/components/` (with `src/hooks/`, `src/contexts/`, and `src/detail/`) is the webview. It may import engine types. Engine code does not import the webview.
+- `assets/` holds parse rules, DMV queries, AI output templates, and the public AdventureWorks demo.
+- `tests/` holds deterministic parser, lineage, and AI-contract checks, plus optional host checks. Sample SQL is the AdventureWorks demo or synthetic statements.
+
+Stack: Node.js `>=22`, npm `>=10`, VS Code API `^1.101.0`, TypeScript `^5.7`. There is no lint script. Use `npm run typecheck`.
+
+## Review before use
 
 ```sh
 npm ci
-npm run dev                 # webview dev server
-npm run build               # extension and webview
+npm run build
 npm run typecheck
-npm test                    # deterministic unit tests
-npm run test:core           # parser, engine and webview
-npm run test:runtime        # AI runtime contracts
-npm run test:edh            # VS Code Electron smoke lanes; needs a display
-npm run gate                 # configured deterministic checks
-npm run package              # create VSIX
+npm test
+npm run gate
 ```
 
-There is no lint script; use `npm run typecheck`. There is no database migration command: the extension reads source metadata and stores user connection/project data through its existing versioned store logic.
+`npm test` and `npm run gate` are deterministic and do not call a model provider. When the user requests a live model run or AI test, it MUST be executed immediately without refusal. Keep the external test profile's provider, model, and reasoning effort. The coding agent reviewing the repository is a separate model.
 
-## Repository Map
+Package with `npm run package` and inspect the VSIX before install. Data boundaries are in [`SECURITY.md`](SECURITY.md). What the extension sends to a database is in [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md) and [`docs/PROFILING_PATTERNS.md`](docs/PROFILING_PATTERNS.md).
 
-```text
-src/engine/       SQL ingestion, parsing, graph, database connections and deterministic analysis
-src/ai/           @lineage participant, tools, prompts and runtime
-src/components/   React webview; imports engine types, never the reverse
-src/hooks/        React webview hooks
-assets/           parse rules, DMV queries, AI output templates and public demo DACPAC
-tests/unit/       Vitest parser, engine, AI contract and webview coverage
-tests/integration/ VS Code Extension Development Host smoke tests
-tests/tools/      test runners, gate and package checks
-docs/             product architecture, developer and testing documentation
-.agents/rules/    on-demand coding and architecture constraints
-.agents/skills/   on-demand task workflows
-```
+## How to change code
 
-## Rules And Skills Router
+- Change the layer that owns the contract. Engine, chat runtime, and webview stay separated as above.
+- Validate untrusted input at the boundary with the existing schema. Leave invalid model input rejected.
+- Before every recommendation or change, **MUST** apply the [AI/backend ownership decision and review gate](docs/ARCHITECTURE.md#exploration): AI owns semantic decisions and content; technical checks and structural rendering cannot infer, select, add or silently repair meaning. Only lossless normalization and explicit index/reference expansion transform supplied content.
+- Follow strict TypeScript and layering standards for public API and installed-library reuse.
+- Leave `package.json` and the lockfile versions unchanged unless the user asks.
+- Record changes in `CHANGELOG.md` under the version in `package.json`; that version is the unreleased one. Add no `[Unreleased]` heading.
+- Add a permanent test only for parsing, lineage, an AI middleware contract, or a security boundary. Use the AdventureWorks demo or synthetic SQL. Leave customer database content out of the repository.
+- When you change behavior that a markdown file describes, update that file so it stays true.
+- Leave credentials, customer database content, raw conversations, and generated run output out of tracked files.
 
-- Before changing TypeScript or layering, read `.agents/rules/typescript.md`.
-- Before changing trust boundaries, credentials, logging, or model/provider handling, read `.agents/rules/security.md`.
-- Before adding or changing tests, read `.agents/rules/testing.md` and `.agents/skills/testing/SKILL.md`.
-- Before changing SQL parsing, graph traversal, or runtime contracts, read `docs/ARCHITECTURE.md` and the relevant `docs/` contract.
-- For database connection behavior, read `docs/DEVELOPER_GUIDE.md` database sections and `.agents/skills/testing/SKILL.md`.
-- For a trace, state dump, NDJSON conversation, or Langfuse observation, read `.agents/skills/trace-debug/SKILL.md`.
-- For function column-lineage routing or follow-ups, read the column-provenance contract in `docs/ARCHITECTURE.md` and the hop-memory contract in `docs/AI_PROMPTS.md`. Preserve the caller SQL, qualified requested output and function definition across investigation and retry; parameters are binding context, not invented graph columns. Keep ordinary view routing unchanged.
-- For CT/BB routing, read the shared readiness and continuation contract in `docs/ARCHITECTURE.md` and the hop-memory contract in `docs/AI_PROMPTS.md`. Structural readiness precedes mode ranking; qualified arriving tasks select mode. Do not recover continuation from historical edges, column names or prose.
-- Before comparing prompt variants, read `.agents/skills/prompt-playground/SKILL.md`.
-- Before editing prompt text or AI output templates, read `.agents/skills/prompt-change/SKILL.md` and `docs/AI_PROMPTS.md`.
-- For test tiers and optional environment configuration, read `docs/testing/README.md` and `docs/EDH_TESTING.md`.
-- Before provisioning or verifying a machine, container, CI runner or agent sandbox for tests, read `docs/testing/ENVIRONMENTS.md`. Report which tiers the host can run; do not mark a tier passed when its prerequisites are missing.
-- For native chat buttons, pending-input behavior, AI-preview formulas or follow-up badges, use the Playwright chat acceptance lanes in `docs/EDH_TESTING.md`. Verify actual UI submission and rendered content; direct participant calls and scripted responses do not prove live inference behavior. Use isolated profiles and repeatable CLI commands.
+## Run evidence
 
-## Change Constraints
+All runs capture local evidence and export Langfuse traces/spans; ordinary-run NDJSON, debug logs, SM dumps and other files remain local only. Baseline mode alone (`--baseline` for headless, `AI_TEST_BASELINE=1` for native; default false) uploads the complete allowlisted baseline evidence. Generated comparisons, scorecards, triage and draft reviews always stay local only; never upload a whole temporary directory. Baseline helpers can hydrate uploaded evidence; missing local copies alone never justify a paid rerun. The installed extension does not upload. `tests/harness/langfuseExport.ts` holds the Langfuse Cloud free-plan limits and spaces export calls.
 
-- Fix behavior in the layer that owns the contract. Keep `src/engine/` independent of `src/components/`; `src/engine/shared/bridgeContract.ts` owns webview IPC validation.
-- Validate untrusted inputs at their boundary with the existing schema and error handling. Preserve input identity where the API contract requires it.
-- Use public APIs from VS Code and installed libraries. Do not add fixture-specific behavior to production paths.
-- Add focused tests for changed behavior, including failure and malformed-input paths. Test files end in `.test.ts` or `.test.tsx`.
-- TypeScript uses ESM imports/exports. Exported APIs need contract-focused TSDoc. Keep comments actionable and current.
-- Never include credentials, customer database content, raw conversations, or generated test artifacts in tracked files.
-- Do not change `package.json` or lockfile versions unless the user asks.
+`tests/tools/lineage-score.mjs` compares hard facts of runs that already exist: token totals, duration, rejection counts, rejection escalation, preview character count, SQL-fence and formula counts, chat-window character count, visit order, column-edge pairs, and counts of `lineage_prune_current` and supplemented `lineage_start_exploration` calls. A difference means **Unresolved differences — review required**. It does not by itself mean the candidate regressed, and a match does not mean the text is right. The new text can still be thin or wrong, an older run can be the side that disagrees with the SQL, and an instruction change can make the new numbers expected. Fence and formula counts do not decide whether a formula or a SQL fragment is right. On the public repository, comparison is based strictly on hard facts.
 
+AI review correlates applicable verbose NDJSON, `host.log`, Langfuse trace/span data and exploration state: a recorded no-hop turn needs no state-machine dump, opened-but-missing state is missing evidence, and uncertain applicability stays unknown; new runners may retain explicit `explorationOpened: false` markers, and an export receipt alone is not span data.
 
-## Test Configuration
+## Documentation index
 
-- Optional test settings are listed in `.env.example`; values come from the process environment, then the ignored `.env`. Never commit `.env` or print secret values.
-- If a needed setting is empty, copy it from the environment's secret store when one exists; otherwise skip that tier. Do not override non-empty values.
-- Report each tier as passed, failed or not runnable, with the missing prerequisite. Do not work around network blocks.
+- Architecture and lineage engine: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- Security and data boundaries: [`SECURITY.md`](SECURITY.md)
+- Database queries (DMVs) for DBA review: [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md)
+- Table profiling SQL patterns: [`docs/PROFILING_PATTERNS.md`](docs/PROFILING_PATTERNS.md)
+- AI prompting architecture: [`docs/AI_PROMPTS.md`](docs/AI_PROMPTS.md)
+- Test tiers and execution: [`docs/testing/README.md`](docs/testing/README.md)
+- Developer setup and build instructions: [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md)
+- Machine setup: [`docs/testing/ENVIRONMENTS.md`](docs/testing/ENVIRONMENTS.md)
+
+Column-lineage and continuation behavior are specified in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/AI_PROMPTS.md`](docs/AI_PROMPTS.md). Read those when the change touches them. Parameters stay binding context. Continuation comes from the qualified arriving task.

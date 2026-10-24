@@ -8,23 +8,19 @@ import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
 import { Logger } from '../../utils/log';
 import { openBuiltInSession, type BuiltInEnv } from './builtInProvider';
-import { CONNECTION_ERROR_LABELS, confirmTrustServerCertificate, describeConnectionError } from './connectionErrors';
+import { builtInTarget, CONNECTION_ERROR_LABELS, confirmTrustServerCertificate, describeConnectionError } from './connectionErrors';
 import { defaultTenantId, listTenants, pickAccount } from './entraSignIn';
 import {
   AddConnectionArgsSchema, BuiltInConnectionSchema, deleteBuiltInConnection, describeConnection, dropTcpPrefix,
-  MAX_NAME_LENGTH, MAX_SERVER_LENGTH, MAX_SYSNAME_LENGTH, passwordSecretKey, passwordTooLong, readBuiltInConnections,
+  MAX_NAME_LENGTH, MAX_SERVER_LENGTH, MAX_TCP_PORT, MAX_SYSNAME_LENGTH, passwordSecretKey, passwordTooLong, readBuiltInConnections,
   savePassword, tooLong, upsertBuiltInConnection, type BuiltInConnection,
 } from './connectionSettings';
+import { errorMessage } from '../../utils/errorMessage';
 
 const WIZARD_TITLE = 'Add Database Connection';
 const WIZARD_STEPS = 6;
-const MAX_TCP_PORT = 65535;
 
-/**
- * Parses the wizard's server field: `host` or `host,port`, with an optional `tcp:` prefix dropped.
- *
- * @returns The host and optional port, or `undefined` when the text is not a valid server.
- */
+/** Parses the wizard's server field: `host` or `host,port`, with an optional `tcp:` prefix dropped. */
 export function parseServerInput(text: string): { server: string; port?: number } | undefined {
   const [typed, port, ...rest] = text.split(',').map((part) => part.trim());
   const host = dropTcpPrefix(typed ?? '');
@@ -136,16 +132,7 @@ function hostChanged(previous: BuiltInConnection | undefined, next: Pick<BuiltIn
   return previous !== undefined && (previous.server !== next.server || previous.port !== next.port);
 }
 
-/**
- * Keeps the saved password consistent with the connection it belongs to.
- *
- * @remarks
- * A supplied password is stored for SQL login. An Entra ID connection holds no password, so any
- * saved one is deleted. A saved password is also deleted when an existing connection changes
- * server, port, authentication type or user without a new password, or when the previous entry is
- * unknown (for example a hand-edited one that failed validation), so it is never sent to a different
- * host or account.
- */
+/** Keeps the saved password consistent with the connection it belongs to. */
 async function reconcilePassword(
   secrets: vscode.SecretStorage,
   previous: BuiltInConnection | undefined,
@@ -165,25 +152,7 @@ function withConnectProgress<T>(title: string, task: () => Promise<T>): Thenable
   return vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title }, task);
 }
 
-/**
- * Runs the add (or, with `existing`, edit) wizard and saves the result.
- *
- * @remarks
- * Six steps — server, authentication, user, password or Microsoft sign-in, database, display name —
- * each with a Back button after the first. The database name is typed, as a login that exists only
- * inside one database cannot list the server's databases. The connection is test-connected before
- * it is written, which reports a database that cannot be opened. Microsoft sign-in opens VS Code's
- * account picker and saves the chosen account and the
- * directory: the only one the account has, otherwise the one picked from a list that starts with the
- * {@link defaultTenantId} choice.
- *
- * @param env - Host services.
- * @param existing - Connection to edit; its id, unrelated fields and saved password are kept. A
- *   changed server or port resets certificate trust and requires the password to be entered again;
- *   a changed user does the same for the password.
- * @param initial - Values the steps start with when adding, for example from a saved project.
- * @returns The saved connection, or `undefined` when the user cancelled.
- */
+/** Runs the add (or, with `existing`, edit) wizard and saves the result. */
 export async function runAddConnectionFlow(
   env: BuiltInEnv,
   existing?: BuiltInConnection,
@@ -250,7 +219,7 @@ export async function runAddConnectionFlow(
           try {
             account = await pickAccount();
           } catch (err) {
-            void vscode.window.showErrorMessage(err instanceof Error ? err.message : String(err));
+            void vscode.window.showErrorMessage(errorMessage(err));
             return 'back';
           }
           if (account.id !== state.accountId) state.tenantId = undefined;
@@ -319,11 +288,7 @@ export async function runAddConnectionFlow(
           await session.dispose();
           return undefined;
         } catch (err) {
-          return describeConnectionError(err, {
-            provider: 'builtIn', name: connection.name, server: connection.server, port: connection.port,
-            database: connection.database, user: connection.user, authenticationType: connection.authenticationType,
-            connectionId: connection.id, tenantId: connection.tenantId,
-          });
+          return describeConnectionError(err, builtInTarget(connection, connection.database));
         }
       });
       if (failure === 'cancelled') return undefined;
@@ -398,20 +363,7 @@ function connectionFromArg(arg: unknown, placeholder: string, filter?: Connectio
   return Promise.resolve(named);
 }
 
-/**
- * Registers the four connection commands.
- *
- * @remarks
- * `dataLineageViz.addDatabaseConnection` accepts `{ connection, password? }`; with an argument it
- * validates, saves to user settings and the secret store, and returns the id. Its only prompt is the
- * certificate-trust confirmation, shown when the argument turns `trustServerCertificate` on for a
- * server and port not already trusted under that id; declined, the connection is saved without trust.
- * Replacing an existing id that changes server, port, user or authentication type drops its saved
- * password unless a new one is supplied. `removeDatabaseConnection` always asks for confirmation.
- * The other commands take an optional connection id and otherwise show a picker; edit returns the
- * saved id and update-password returns whether a password was stored. Update-password lists and
- * accepts only SQL login connections; an Entra ID connection named by id is refused with a warning.
- */
+/** Registers the four connection commands. */
 export function registerConnectionCommands(
   context: vscode.ExtensionContext,
   outputChannel: vscode.LogOutputChannel,

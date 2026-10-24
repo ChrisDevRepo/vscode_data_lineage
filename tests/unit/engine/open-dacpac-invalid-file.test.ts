@@ -1,8 +1,4 @@
-/**
- * Pins that a dacpac load which cannot finish — a file that is not a readable .dacpac, or one over
- * the size cap — is reported back to the wizard as a `db-error` status naming the reason, instead of
- * escaping as a generic failure and leaving the loader spinning until its timeout.
- */
+/** Pins that a dacpac load which cannot finish — a file that is not a readable .dacpac, or one over the size cap — is reported back to the wizard as a `db-error` status naming the reason, instead of escaping as a generic failure and leaving the loader spinning until its timeout. */
 import { describe, expect, it, vi } from 'vitest';
 import { createMessageHandlers } from '../../../src/bridge/messageHandlers';
 import type { BridgeHost } from '../../../src/bridge/host';
@@ -29,7 +25,6 @@ function fakeHost(bytes: Uint8Array): BridgeHost {
     withProgress: vi.fn(),
     getExtensionUri: vi.fn(),
     getGlobalState: vi.fn(),
-    getWorkspaceState: vi.fn(),
   };
 }
 

@@ -11,7 +11,7 @@ export const STRUCTURED_OUTPUT_TOOL_DESCRIPTION =
   'Return the structured result. Call this tool exactly once with the required fields.';
 
 /** Stable structured-output rejection classifications used by graph recovery policy. */
-export type StructuredOutputErrorCode =
+type StructuredOutputErrorCode =
   | typeof REJECTION_CODES.invalidStructuredOutput
   | typeof REJECTION_CODES.emptyStructuredOutput;
 
@@ -29,19 +29,7 @@ export class StructuredOutputError extends Error {
   }
 }
 
-/**
- * Builds a concise rejection reason and repair hint for a missing or schema-invalid synthetic tool call.
- *
- * @remarks
- * Routes the schema-invalid case through {@link rejectionFromZodError} — the sole producer of
- * auto-generated Zod reasons and of the field repair chain — so the model receives the violated
- * predicate (`"<dottedPath>: <message>"`) and the schema-derived repair, as on the tool path.
- * @param callPresent - Whether the provider emitted the synthetic tool call.
- * @param error - The Zod validation failure when the emitted input failed schema validation.
- * @param input - The parsed payload that failed validation; enables measured-size and type-mismatch text.
- * @param schema - The schema the payload failed; enables the hints that name what it accepts.
- * @returns Bounded reason for graph retry state; `hint` only for a schema-invalid payload.
- */
+/** Builds a concise rejection reason and repair hint for a missing or schema-invalid synthetic tool call. */
 export function structuredRejectReason(
   callPresent: boolean,
   error: z.ZodError | undefined,

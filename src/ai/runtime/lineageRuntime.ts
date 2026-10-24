@@ -15,11 +15,12 @@ import type { TurnEventSink } from './turnEventSink';
 import type { GateDecision } from '../agent/state';
 import type { TurnOutcome } from '../core/agentCore';
 import type { ToolRejection } from '../support/toolErrorEnvelope';
-import { readToolError, isConsentGateRejection } from '../support/toolErrorEnvelope';
+import { CLARIFICATION_WINDOW_MS, readToolError, isAdmissionRefusal, isConsentGateRejection } from '../support/toolErrorEnvelope';
+import type { SyntheticRejectionTrace } from '../agent/toolAttempt';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 
 /** Immutable request identity, prompt, and optional history for one lineage turn. */
-export interface LineageRuntimeRequest {
+interface LineageRuntimeRequest {
   /** Request identifier; must be unique among this session's currently active turns. */
   readonly id: string;
   /** Verbatim user prompt for this turn. */
@@ -29,7 +30,7 @@ export interface LineageRuntimeRequest {
 }
 
 /** Request-scoped dependencies required to execute one lineage turn. */
-export interface LineageRuntimeRunInput {
+interface LineageRuntimeRunInput {
   /** The exact native request model, already wrapped as a provider-neutral port. */
   readonly model: ModelPort;
   /** Request identity, prompt, and optional history for this turn. */
@@ -41,7 +42,7 @@ export interface LineageRuntimeRunInput {
 }
 
 /** Terminal runtime outcome and provider-call accounting for one lineage turn. */
-export interface LineageRuntimeResult {
+interface LineageRuntimeResult {
   /** Terminal status of the turn. */
   readonly outcome: TurnOutcome;
   /** Provider calls attempted through the request's model port. */
@@ -51,7 +52,7 @@ export interface LineageRuntimeResult {
 }
 
 /** Long-lived dependencies used to construct request-scoped lineage turns. */
-export interface LineageRuntimeDeps {
+interface LineageRuntimeDeps {
   /** Session accessor for the {@link AiSession} singleton. */
   readonly getSession: () => AiSession;
   /** Builds the strict direct-dispatch registry for the captured turn lease and request model. */
@@ -64,13 +65,7 @@ export interface LineageRuntimeDeps {
   readonly traceWriter?: AiTraceWriter;
 }
 
-/**
- * Single production facade for native lineage turns.
- *
- * The facade owns turn setup and active-request coordination. The outer
- * LangGraph owns phase/hop routing and `AgentRuntime` owns interrupt/resume and
- * the one terminal event.
- */
+/** Single production facade for native lineage turns. */
 export class LineageRuntime {
   private readonly active = new Map<string, {
     readonly runtime: AgentRuntime;
@@ -79,13 +74,7 @@ export class LineageRuntime {
 
   public constructor(private readonly deps: LineageRuntimeDeps) {}
 
-  /**
-   * Generates suggestions from compact facts without tools, history replay or session mutation.
-   *
-   * @remarks
-   * Writes the same `turn-start`/`turn-terminal` lifecycle pair as {@link run}, so the trace joins
-   * this turn's wire records to a turn like any other request.
-   */
+  /** Generates suggestions from compact facts without tools, history replay or session mutation. */
   public async runSuggestions(input: LineageRuntimeRunInput): Promise<LineageRuntimeResult> {
     const session = this.deps.getSession();
     const runFingerprint = fingerprint(`${session.id}:${input.request.id}`);
@@ -116,11 +105,7 @@ export class LineageRuntime {
       ? { failure: { message: result.error } } : {}) };
   }
 
-  /**
-   * Executes one request against a captured session epoch and request-selected model.
-   *
-   * @throws When the same session/request identifier is already active.
-   */
+  /** Executes one request against a captured session epoch and request-selected model. */
   public async run(input: LineageRuntimeRunInput): Promise<LineageRuntimeResult> {
     const session = this.deps.getSession();
     const requestKey = `${session.id}:${input.request.id}`;
@@ -163,22 +148,26 @@ export class LineageRuntime {
         })
       : registry;
     const traceSyntheticRejection = traceWriter
-      ? (rejection: { toolName: string; code: string }): void => {
+      ? (rejection: Parameters<SyntheticRejectionTrace>[0]): void => {
           void traceWriter.write({
             type: 'tool',
             requestId: input.request.id,
             runFingerprint,
             seq: ++toolSequence,
             phase,
+            ...(rejection.callId ? { callId: rejection.callId } : {}),
             toolName: rejection.toolName,
-            status: 'rejected',
+            status: rejection.status,
             rejectionCode: rejection.code,
+            clarificationWindowMs: CLARIFICATION_WINDOW_MS,
+            ...(rejection.issuePaths?.length ? { issuePaths: rejection.issuePaths } : {}),
             durationMs: 0,
           }).catch(() => {});
         }
       : undefined;
     const runtime = new AgentRuntime({
       threadId: requestKey,
+      requestId: input.request.id,
       getSession: this.deps.getSession,
       model: input.model,
       registry: instrumentedRegistry,
@@ -287,7 +276,7 @@ function instrumentRegistry(
     getTools: () => registry.getTools(),
     get: (name) => registry.get(name),
     has: (name) => registry.has(name),
-    invoke: async (name, payload) => {
+    invoke: async (name, payload, callId) => {
       const startedAt = performance.now();
       const sequence = instrumentation.nextSequence();
       const base = {
@@ -296,19 +285,22 @@ function instrumentRegistry(
         runFingerprint: instrumentation.runFingerprint,
         seq: sequence,
         phase: instrumentation.currentPhase(),
+        ...(callId ? { callId } : {}),
         toolName: name,
       };
       try {
-        const result = await registry.invoke(name, payload);
+        const result = await registry.invoke(name, payload, callId);
         const rejection = parseRejection(result);
         const issuePaths = rejection?.issuePaths ?? [];
         void instrumentation.writer.write({
           ...base,
-          status: rejection
-            ? (isConsentGateRejection(rejection.code) ? 'gate' : 'rejected')
-            : 'accepted',
-          ...(rejection ? { rejectionCode: rejection.code } : {}),
+          status: !rejection
+            ? 'accepted'
+            : isConsentGateRejection(rejection.code) ? 'gate'
+              : isAdmissionRefusal(rejection.code) ? 'refused' : 'rejected',
+          ...(rejection && !isConsentGateRejection(rejection.code) ? { rejectionCode: rejection.code, clarificationWindowMs: CLARIFICATION_WINDOW_MS } : {}),
           ...(issuePaths.length > 0 ? { issuePaths } : {}),
+          ...(rejection?.missingParts?.length ? { missingParts: rejection.missingParts, feedbackAt: rejection.feedbackAt } : {}),
           durationMs: elapsedMs(startedAt),
         }).catch(() => {});
         return result;

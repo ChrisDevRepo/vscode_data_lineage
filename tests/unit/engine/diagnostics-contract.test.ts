@@ -1,8 +1,4 @@
-/**
- * Webview→host diagnostic and screen-state frames: the detail-panel diagnostic funnel, and the
- * `filter-changed` / `render-state` buffers the host walks — well-shaped passes with unknown extras
- * kept literally, a malformed buffer rejects at the boundary.
- */
+/** Webview→host diagnostic and screen-state frames: the detail-panel diagnostic funnel, and the `filter-changed` / `render-state` buffers the host walks — well-shaped passes with unknown extras kept literally, a malformed buffer rejects at the boundary. */
 import { describe, expect, it } from 'vitest';
 import {
   DetailPanelToExtensionMsgSchema,
@@ -69,7 +65,7 @@ function renderState(): Record<string, unknown> {
     sourceName: 'demo',
     graphMode: 'full',
     renderedNodeCount: 3,
-    connectivity: { nodeCount: 3, edgeCount: 2, componentCount: 1, components: [{ size: 3, nodes: ['a', 'b', 'c'] }], isolatedNodes: [] },
+    connectivity: { nodeCount: 3, edgeCount: 2, componentCount: 1, isolatedNodes: [] },
     highlightedNodeId: 'dbo.a',
     affordances: { nodeId: 'dbo.a', in: side, out: side },
     traceScope: {
@@ -119,7 +115,7 @@ describe('main-panel screen-state contract', () => {
     ['traced ids that are not a list', () => ({ ...renderState(), traceScope: { ...(renderState().traceScope as object), tracedNodeIds: 'dbo.a' } })],
     ['a trace scope missing its id lists', () => ({ ...renderState(), traceScope: { mode: 'applied', origin: null } })],
     ['affordances whose add list is a string', () => ({ ...renderState(), affordances: { nodeId: 'dbo.a', in: { ...side, add: 'dbo.a' }, out: side } })],
-    ['connectivity without its component list', () => ({ ...renderState(), connectivity: { nodeCount: 1 } })],
+    ['connectivity without its counts', () => ({ ...renderState(), connectivity: { nodeCount: 1 } })],
   ])('rejects render-state carrying %s', (_label, build) => {
     expect(MainPanelToExtensionMsgSchema.safeParse({ type: 'render-state', renderState: build() }).success).toBe(false);
   });

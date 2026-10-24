@@ -28,14 +28,6 @@ function formatDecimal(n: number): string {
   return n.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
 
-/** Format a raw min/max string — if numeric, add thousands separators. */
-function formatValue(raw: string | undefined): string {
-  if (!raw) return '–';
-  const n = Number(raw);
-  if (!isNaN(n)) return formatDecimal(n);
-  return raw;
-}
-
 /** Format a count with percentage of total rows. */
 function formatCount(count: number, rowCount: number): string {
   const formatted = count.toLocaleString();
@@ -56,15 +48,13 @@ function hasDetail(col: ColumnStats): boolean {
   return col.min !== undefined || col.minLength !== undefined;
 }
 
-/**
- * Labeled key-value grid for expanded column detail.
- * Every metric has a plain English label — no abbreviations.
- */
+/** Labeled key-value grid for expanded column detail. Every metric has a plain English label — no abbreviations. */
 function DetailGrid({ col, rowCount }: { col: ColumnStats; rowCount: number }) {
   const pairs: Array<{ label: string; value: string }> = [];
 
   if (col.min !== undefined && col.mean !== undefined) {
-    pairs.push({ label: 'Range', value: `${formatValue(col.min)} – ${formatValue(col.max)}` });
+    // SQL extrema may exceed JavaScript numeric precision; keep their source strings exact.
+    pairs.push({ label: 'Range', value: `${col.min} – ${col.max ?? '–'}` });
     pairs.push({ label: 'Mean', value: formatDecimal(col.mean) });
     if (col.stdDev !== undefined) pairs.push({ label: 'Std Dev', value: formatDecimal(col.stdDev) });
     if (col.zeroCount !== undefined && col.zeroCount > 0) {
@@ -116,7 +106,7 @@ function DetailGrid({ col, rowCount }: { col: ColumnStats; rowCount: number }) {
 
 type SortKey = 'ordinal' | 'name' | 'null' | 'distinct';
 
-/** Attach original index so we can restore ordinal sort. */
+/** Column statistics paired with original index to restore ordinal sort. */
 type IndexedCol = ColumnStats & { _idx: number };
 
 function sortColumns(cols: IndexedCol[], key: SortKey, dir: 'asc' | 'desc'): IndexedCol[] {
@@ -349,9 +339,7 @@ interface StatsSectionProps {
   standardModeEnabled: boolean;
 }
 
-/**
- * Requests and displays quick or standard column-level profiling metrics.
- */
+/** Requests and displays quick or standard column-level profiling metrics. */
 export function StatsSection({ statsState, onRequestStats, standardModeEnabled }: StatsSectionProps) {
   const isLoading = statsState.phase === 'loading';
 

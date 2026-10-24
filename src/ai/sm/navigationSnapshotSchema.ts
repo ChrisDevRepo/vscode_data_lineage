@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { SmState } from './smTypes';
+import type { SmNodeState, SmState } from './smTypes';
 import { ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
 import { bothSidesClosed } from '../../engine/shared/explorationDepthContract';
 import { heldHopFindingSchemaForMode } from '../tools/toolSchemas';
@@ -44,21 +44,10 @@ const CurrentDepthIntentSchema = z.object({
   message: 'Depth cannot be 0 in both directions.',
 });
 
-/**
- * Levels a pre-per-side checkpoint seeded for an unstated side: the mechanical default the retired
- * `lineage_start_exploration` depth contract declared for an omitted side (its schema text read
- * "Omitted/null defaults to 3"). Read-side only; a live call always states its own levels.
- */
+/** Levels a pre-per-side checkpoint seeded for an unstated side: the mechanical default the retired `lineage_start_exploration` depth contract declared for an omitted side (its schema text read "Omitted/null defaults to 3"). Read-side only; a live call always states its own levels. */
 const LEGACY_UNSTATED_DEPTH_LEVELS = 3;
 
-/**
- * Pre-per-side checkpoint format, read tolerantly and mapped onto the current shape: a legacy
- * finite/`'all'` side maps to `exact`, a legacy unstated (`null`) side maps to `approximate` at
- * {@link LEGACY_UNSTATED_DEPTH_LEVELS}. An older init also wrote that default into an unstated
- * `asymmetric` side, which therefore reads back as `exact`; the checkpoint's own `depthLimits`
- * (`null` for such a side) still decide enforcement and how the depth is reported. This mapping
- * exists only for reading an old checkpoint; a live call always names `exactness` itself.
- */
+/** Pre-per-side checkpoint format, read tolerantly and mapped onto the current shape: a legacy finite/`'all'` side maps to `exact`, a legacy unstated (`null`) side maps to `approximate` at {@link LEGACY_UNSTATED_DEPTH_LEVELS}. An older init also wrote that default into an unstated `asymmetric` side, which therefore reads back as `exact`; the checkpoint's own `depthLimits` (`null` for such a side) still decide enforcement and how the depth is reported. This mapping exists only for reading an old checkpoint; a live call always names `exactness` itself. */
 const LegacyDepthIntentSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('explicit'), levels: z.number().int().positive() }).strict(),
   z.object({ kind: z.literal('full_frontier') }).strict(),
@@ -105,10 +94,11 @@ const NodeStateSchema = z.object({
   reason: z.enum([
     'submitted_analyze',
     'submitted_passthrough',
+    'storage_passthrough',
     'submitted_prune',
     'bb_prune_neighbor',
     'user_pass_filter',
-    'non_bodied_passthrough',
+    'non_bodied_passthrough', // retired; read from older snapshots and dropped
   ]),
   columns: z.array(NonEmptyString).optional(),
   columnRole: z.enum(['carrier', 'row_role_only']).optional(),
@@ -124,7 +114,9 @@ const DetailSlotSchema = z.object({
   sections: z.array(z.object({ angle: z.enum(['business', 'technical']), text: NonEmptyString }).strict()),
   summary: z.string(),
   badge_label: NonEmptyString.optional(),
+  incoming_questions: z.array(z.object({ question: NonEmptyString, from_node: NonEmptyString.optional() }).strict()).optional(),
   reason_for_visit: NonEmptyString.optional(),
+  is_placeholder: z.boolean().optional(),
 }).strict();
 
 const MemorySnapshotSchema = z.object({
@@ -150,8 +142,10 @@ const BbTaskSchema = z.object({
   kind: z.enum(['root', 'analytical']),
   source: z.enum(['mission', 'model', 'engine']),
   question: z.string(),
+  reAnchor: NonEmptyString.optional(),
   nodeId: NonEmptyString.optional(),
   parentTaskId: NonEmptyString.optional(),
+  passthroughFromNodeId: NonEmptyString.optional(),
   traversalSide: z.enum(['upstream', 'downstream']).optional(),
   status: z.enum(['pending', 'active', 'resolved', 'deferred']),
   createdHop: NonNegativeInt,
@@ -167,8 +161,10 @@ const CtTaskSchema = z.object({
   kind: z.literal('column_lineage'),
   source: z.enum(['mission', 'model', 'engine']),
   question: z.string(),
+  reAnchor: NonEmptyString.optional(),
   nodeId: NonEmptyString.optional(),
   parentTaskId: NonEmptyString.optional(),
+  passthroughFromNodeId: NonEmptyString.optional(),
   traversalSide: z.enum(['upstream', 'downstream']).optional(),
   activeColumns: NonEmptyStringTuple,
   sourceRefs: z.array(ScalarReturnTargetSchema).min(1).optional(),
@@ -179,7 +175,9 @@ const CtTaskSchema = z.object({
   callerContext: z.object({ node: NonEmptyString, col: NonEmptyString, callerTaskId: NonEmptyString, ddlHash: z.string().regex(/^[a-f0-9]{64}$/) }).strict().optional(),
 }).strict();
 
-const InvestigationTaskSchema = z.discriminatedUnion('kind', [BbTaskSchema, CtTaskSchema]);
+/** A retired `reAnchor` on a saved task is accepted and dropped. */
+const InvestigationTaskSchema = z.discriminatedUnion('kind', [BbTaskSchema, CtTaskSchema])
+  .transform(({ reAnchor: _legacyReAnchor, ...task }) => task);
 
 const PendingLeadSchema = z.object({
   id: NonEmptyString,
@@ -230,6 +228,17 @@ const AgendaEntrySchema = z.object({
   lineageQuestions: NonEmptyStrings.optional(),
 }).strict();
 
+/** Retires the old model verdict only when decoding an existing saved finding. */
+function savedHeldFinding(mode: 'bb' | 'ct') {
+  return z.preprocess(input => {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
+    const legacy = input as Record<string, unknown>;
+    if (legacy.verdict !== 'analyze' && legacy.verdict !== 'passthrough') return input;
+    const { verdict: _legacyVerdict, ...finding } = legacy;
+    return finding;
+  }, heldHopFindingSchemaForMode(mode));
+}
+
 const EngineInternalsSchema = z.object({
   originNodeId: NonEmptyString.nullable(),
   direction: z.enum(['upstream', 'downstream', 'bidirectional']),
@@ -242,7 +251,7 @@ const EngineInternalsSchema = z.object({
   depthFromOrigin: z.array(z.tuple([NonEmptyString, NonNegativeInt])),
   extendedDepthCap: NonNegativeInt.optional(),
   budgetExpansions: z.array(z.object({ nodeId: NonEmptyString, depth: NonNegativeInt, atHop: NonNegativeInt }).strict()),
-  bodiedScopeSize: NonNegativeInt,
+  bodiedScopeSize: NonNegativeInt.optional(),
   totalNodes: NonNegativeInt,
   userSchemas: z.array(z.string()),
   sessionAllowedSchemas: z.array(z.string()),
@@ -274,13 +283,14 @@ const EngineInternalsSchema = z.object({
     votes: z.array(z.object({ senderId: NonEmptyString, vote: z.enum(['prune', 'keep']) }).strict()).min(1),
   }).strict()).optional(),
   heldFinding: z.discriminatedUnion('mode', [
-    z.object({ mode: z.literal('bb'), focusId: NonEmptyString, hop: NonNegativeInt, failed: z.array(NonEmptyString), finding: heldHopFindingSchemaForMode('bb') }).strict(),
-    z.object({ mode: z.literal('ct'), focusId: NonEmptyString, hop: NonNegativeInt, failed: z.array(NonEmptyString), finding: heldHopFindingSchemaForMode('ct') }).strict(),
+    z.object({ mode: z.literal('bb'), focusId: NonEmptyString, hop: NonNegativeInt, failed: z.array(NonEmptyString), alternatives: z.array(NonEmptyString).optional(), finding: savedHeldFinding('bb') }).strict(),
+    z.object({ mode: z.literal('ct'), focusId: NonEmptyString, hop: NonNegativeInt, failed: z.array(NonEmptyString), alternatives: z.array(NonEmptyString).optional(), finding: savedHeldFinding('ct') }).strict(),
   ]).nullable().optional(),
 }).strict().transform(({
   qualityGuards: _legacyQualityGuards,
   extendedDepthCap: _legacyExtendedDepthCap,
   sessionAllowedNodeIds: _legacySessionAllowedNodeIds,
+  bodiedScopeSize: _legacyBodiedScopeSize,
   ...internals
 }) => internals);
 
@@ -295,7 +305,7 @@ export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
   scopeNodeIds: z.array(NonEmptyString),
   visited: z.array(NonEmptyString),
   removedSet: z.array(NonEmptyString),
-  nodeStates: z.array(NodeStateSchema),
+  nodeStates: z.array(NodeStateSchema).transform(states => states.filter((state): state is SmNodeState => state.reason !== 'non_bodied_passthrough')),
   agendaSize: NonNegativeInt,
   agenda: z.array(AgendaEntrySchema),
   currentFocusNodeId: NonEmptyString.nullable(),
@@ -307,23 +317,10 @@ export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
   renderDroppedNodeIds: z.array(NonEmptyString).optional(),
 }).strict();
 
-/**
- * A strongly typed snapshot of an active NavigationEngine session.
- */
+/** A strongly typed snapshot of an active NavigationEngine session. */
 type NavigationSnapshot = z.infer<typeof NavigationSnapshotSchema>;
 
-/**
- * Validates the engine's serialized projection against the persistence shape without repairing or
- * migrating it.
- *
- * @remarks
- * A version-1 projection never carries an agenda entry for an already visited node, so such an
- * entry is dropped and `agendaSize` follows.
- *
- * @param input - Serialized engine projection to validate.
- * @returns The strictly parsed navigation snapshot.
- * @throws {@link InvalidEngineCheckpointError} when `input` fails schema validation.
- */
+/** Validates the engine's serialized projection against the persistence shape without repairing or migrating it. */
 export function parseNavigationSnapshot(input: unknown): NavigationSnapshot {
   const result = NavigationSnapshotSchema.safeParse(input);
   if (result.success) {

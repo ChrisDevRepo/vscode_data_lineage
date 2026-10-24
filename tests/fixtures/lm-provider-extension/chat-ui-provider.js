@@ -1,5 +1,9 @@
 // Scripted public-demo responses for UI lifecycle checks, not inference evidence.
 const vscode = require('vscode');
+const { loadCases } = require('../../cases/loadCases.cjs');
+const tracedOrigin = loadCases('electron').find(row => row.id === 'electron-fixture-trace')?.prompt
+  ?.match(/\[[^\]]+\]\.\[[^\]]+\]/u)?.[0];
+if (!tracedOrigin) throw new Error('electron-fixture-trace prompt must name [schema].[object].');
 const requests = [];
 let sequence = 0;
 async function respond(request, progress) {
@@ -29,18 +33,26 @@ async function respond(request, progress) {
           : { upstream: { levels: 0, exactness: 'exact' }, downstream: { levels: 1, exactness: 'exact' } },
       });
     }
-    else call('lineage_start_exploration', {
-      origin: '[dbo].[ufnGetProductDealerPrice]', analysisMode: 'bb', classification: 'technical',
-      // Must differ from the "zero levels downstream" refine, or that patch is a no-op and revision stays 1.
-      depth: { upstream: { levels: 2, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } },
-    });
+    else {
+      const origin = session.model?.nodes.find(node => `[${node.schema}].[${node.name}]` === tracedOrigin)?.id;
+      if (!origin) throw new Error(`Fixture origin ${tracedOrigin} was not found in loaded metadata.`);
+      call('lineage_start_exploration', {
+        origin, analysisMode: 'bb', classification: 'technical',
+        // Must differ from the "zero levels downstream" refine, or that patch is a no-op and revision stays 1.
+        depth: { upstream: { levels: 2, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } },
+      });
+    }
     return;
   }
   if (names.includes('lineage_submit_findings')) {
     call('lineage_submit_findings', {
-      focus_node_id: session.stateMachine.currentFocus, verdict: 'analyze',
+      // Authored neighbor questions exercise the approved UI lifecycle.
+      focus_node_id: session.stateMachine.currentFocus,
       summary: 'Calculates the dealer price from the effective list price.', badge_label: 'Dealer price',
-      sections: { technical: 'The function returns sixty percent of the effective list price.' }, questions: [],
+      sections: { technical: 'The function returns sixty percent of the effective list price.' },
+      questions: session.stateMachine.peekHopContext().neighbors
+        .filter(neighbor => neighbor.can_question && neighbor.in_approved_scope)
+        .map(neighbor => ({ nodeId: neighbor.id, question: 'Explain this object’s contribution to the dealer price.' })),
     });
     return;
   }

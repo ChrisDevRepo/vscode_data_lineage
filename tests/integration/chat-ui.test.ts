@@ -1,8 +1,15 @@
 /// <reference lib="dom" />
 import * as assert from 'node:assert/strict';
+import { isDeepStrictEqual } from 'node:util';
 import * as vscode from 'vscode';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
+import { resolveLangfuseConfig } from '../harness/langfuseExport';
+import { copyNativeHostLog, exportNativeEvidence } from '../harness/nativeEvidence';
+import { parseTrace } from '../harness/traceModel';
 interface DepthProjection {
   upstream:{levels:number|'all';exactness:'exact'|'approximate'};
   downstream:{levels:number|'all';exactness:'exact'|'approximate'};
@@ -10,11 +17,16 @@ interface DepthProjection {
 interface SessionProjection {
   model: {nodes:Array<{id:string}>} | null; phase: {kind:string}; resultGraph: {nodeIds:string[]} | null;
   memory: {getResult(): {detail_slots: unknown[]}};
-  pendingExploration: {revision:number; init:{depthIntent:DepthProjection}; classification:'business'|'technical'|'both'; summary:{scopeCount:number}} | null;
+  pendingExploration: {revision:number; init:{depthIntent:DepthProjection;analysisMode:'bb'|'ct'}; classification:'business'|'technical'|'both'; summary:{scopeCount:number}} | null;
   lastPresentResultDescription: string | null;
-  stateMachine: {deferredQuestions: unknown} | null;
+  stateMachine: {
+    deferredQuestions: unknown;
+    columnAspect: {edges:Array<{hop_node:string;from_node:string;from_col:string;to_node:string;to_col:string;transforms?:string[]}>} | null;
+    getResult(): unknown;
+    toJSON(): unknown;
+  } | null;
 }
-import { chromium, type Browser, type Page } from 'playwright-core';
+import { chromium, type Browser, type Page, type Locator } from 'playwright-core';
 
 /** Opt-in Playwright test of native chat controls in a real isolated Electron host. */
 suite('Native chat confirmations — actual UI', () => {
@@ -22,23 +34,79 @@ suite('Native chat confirmations — actual UI', () => {
   let page: Page;
   let exports: {getSession(): SessionProjection};
   const real = process.env.DLV_CHAT_UI_REAL === '1';
-  const originalQuestion = 'Trace all dependencies upstream from  [ai].[spImportOrders]  all level up and one level down';
+  const phaseTimeoutMs = real ? Number(process.env.AI_TEST_TIMEOUT_MS) : 180000;
+  let testDeadline = Number.POSITIVE_INFINITY;
+  const remainingWait = (timeout: number) => {
+    const remaining = Math.min(timeout, testDeadline - Date.now());
+    assert.ok(remaining > 0, 'native chat test exceeded AI_TEST_TIMEOUT_MS');
+    return remaining;
+  };
+  const catalogPath = [
+    join(__dirname, '..', 'cases', 'loadCases.cjs'),
+    join(__dirname, '..', '..', '..', '..', 'tests', 'cases', 'loadCases.cjs'),
+  ].find(path => existsSync(path));
+  if (!catalogPath) throw new Error('tests/cases/loadCases.cjs was not found from the chat-ui test.');
+  const fixtureTrace = (createRequire(catalogPath)(catalogPath) as {
+    loadCases: (runner?: string) => Array<{ id: string; prompt?: string; expect?: { phase?: string } }>;
+  }).loadCases('electron').find(row => row.id === 'electron-fixture-trace');
+  if (!fixtureTrace?.prompt || !fixtureTrace.expect?.phase) {
+    throw new Error('electron-fixture-trace needs a prompt and expect.phase in tests/cases/lineage-cases.yaml');
+  }
+  const fixturePrompt = fixtureTrace.prompt;
+  const planPhase = fixtureTrace.expect.phase;
   const artifactDir = `tmp/chat-ui/${real ? 'live' : 'fixture'}`;
-  let fixture: { uiRequests: Array<{messages:unknown;tools:Array<{name:string}>}> };
+  const copyHostLog = (destination = artifactDir) => {
+    try { copyNativeHostLog(process.env.DLV_CHAT_UI_PROFILE, destination); }
+    catch { /* Fixture evidence is best effort; real runs validate the saved log during export. */ }
+  };
+  let metricsRoot: string;
+  let tracePath: string | undefined;
+  let traceOffset = 0;
+  let testIndex = 0;
+  let casePrompts: string[] = [];
+  const capturedStates = new Map<string, string>();
+  let captureFailed = false;
+  let initialGraph: SessionProjection['resultGraph'];
+  let extensionPath: string;
+  let fixture: { providerProfile: { provider?: string; model?: string; reasoningEffort?: string }; uiRequests: Array<{messages:unknown;tools:Array<{name:string}>}>;
+    uiErrors: Array<{requestIndex:number;message:string}> };
+  let firstErrorIndex = 0;
+  let assertUiProviderHealthy: (errors: Array<{requestIndex:number;message:string}>, firstErrorIndex:number) => void;
+  const assertProviderHealthy = () => {
+    if (!real || !fixture) return;
+    assertUiProviderHealthy(fixture.uiErrors, firstErrorIndex);
+  };
   const deadlineWait = async (predicate: () => boolean, label: string) => {
-    const deadline = Date.now()+(real ? 600000 : 20000);
-    while (!predicate() && Date.now()<deadline) await new Promise(resolve=>setTimeout(resolve,100));
+    const deadline = Date.now()+remainingWait(real ? phaseTimeoutMs : 20000);
+    while (!predicate() && Date.now()<deadline) {
+      assertProviderHealthy();
+      await new Promise(resolve=>setTimeout(resolve,100));
+    }
+    assertProviderHealthy();
     assert.ok(predicate(), label);
+  };
+  const waitForControl = async (locator: Locator, timeout = phaseTimeoutMs) => {
+    if (!real) return locator.waitFor({state:'visible',timeout});
+    timeout = remainingWait(timeout);
+    const deadline = Date.now()+timeout;
+    while (!await locator.isVisible() && Date.now()<deadline) {
+      assertProviderHealthy();
+      await new Promise(resolve=>setTimeout(resolve,100));
+    }
+    assertProviderHealthy();
+    await locator.waitFor({state:'visible',timeout:Math.max(1,deadline-Date.now())});
   };
   const input = () => page.locator('.interactive-session [role="textbox"]').last();
   const idleInput = async () => {
-    await page.getByRole('button',{name:/^Send \[/}).last().waitFor({state:'visible',timeout:real ? 300000 : 20000});
+    await waitForControl(page.getByRole('button',{name:/^Send \[/}).last(),real ? phaseTimeoutMs : 20000);
+    await captureTurnStates();
   };
   const send = async (text: string) => {
     await idleInput();
     const before=fixture.uiRequests.length;
+    firstErrorIndex=fixture.uiErrors.length;
     const box = input();
-    await box.waitFor({state:'visible'});
+    await waitForControl(box,real ? phaseTimeoutMs : 20000);
     assert.notEqual(await box.getAttribute('aria-readonly'),'true','input must accept a typed turn');
     await page.keyboard.press('Escape');
     await page.locator('.interactive-session .monaco-editor').last().click();
@@ -50,62 +118,201 @@ suite('Native chat confirmations — actual UI', () => {
       const editors=document.querySelectorAll('.interactive-session [role="textbox"]');
       const editor=editors[editors.length-1];
       return (editor instanceof HTMLTextAreaElement ? editor.value : editor?.textContent)===expected;
-    },text,{timeout:5000});
+    },text,{timeout:remainingWait(5000)});
     await page.keyboard.press('Escape');
     assert.equal(await box.evaluate(el=>el instanceof HTMLTextAreaElement ? el.value : el.textContent),text,'the real input must contain exactly the user message');
     await page.keyboard.press('Enter');
+    casePrompts.push(text);
     await deadlineWait(()=>fixture.uiRequests.length>before,'Enter must dispatch a request to the selected model');
   };
-  const approveOnce = async () => { await continueButton().click(); };
-  const continueButton = () => page.getByRole('button',{name:/Approve & Proceed/}).last();
-  const changeScopeButton = () => page.getByRole('button',{name:/Change scope/}).last();
-  const cancelButton = () => page.getByRole('button',{name:/Cancel$/}).last();
+  const approveOnce = async () => { await idleInput(); await continueButton().click(); };
+  const renderedPlan = () => {
+    const revision = exports?.getSession().pendingExploration?.revision;
+    return revision && revision > 1
+      ? responses().filter({ has: page.getByRole('heading', { name: `Exploration plan · revision ${revision}`, exact: true }) })
+      : page;
+  };
+  const continueButton = () => renderedPlan().getByRole('button',{name:/Approve & Proceed/}).last();
+  const changeScopeButton = () => renderedPlan().getByRole('button',{name:/Change scope/}).last();
+  const cancelButton = () => renderedPlan().getByRole('button',{name:/Cancel$/}).last();
   const responses = () => page.locator('.interactive-session .interactive-response');
   const capture = async (name:string) => {
     mkdirSync(artifactDir,{recursive:true});
     writeFileSync(`${artifactDir}/${name}.txt`,await page.locator('.interactive-session').last().innerText());
     await page.screenshot({path:`${artifactDir}/${name}.png`});
+    copyHostLog();
+  };
+  const captureCompletedResult = (name:string) => {
+    const machine = exports.getSession().stateMachine;
+    assert.ok(machine,'a completed trace must retain its state machine');
+    mkdirSync(artifactDir,{recursive:true});
+    writeFileSync(`${artifactDir}/${name}-sm-state.json`,JSON.stringify(machine.toJSON(),null,2));
+    writeFileSync(`${artifactDir}/${name}-result.json`,JSON.stringify(machine.getResult(),null,2));
+    copyHostLog();
   };
   const newChat = async () => {
+    firstErrorIndex=fixture.uiErrors.length;
     await idleInput();
     await page.getByRole('button',{name:/^New Chat \(/}).click();
     await idleInput();
   };
   const openPlan = async () => {
     await newChat();
-    await send(real ? `@lineage /trace ${originalQuestion}` : '@lineage /trace [dbo].[ufnGetProductDealerPrice]');
-    await continueButton().waitFor({state:'visible',timeout:180000});
+    await send(fixturePrompt);
     await idleInput();
-    assert.equal(exports.getSession().phase.kind,'awaiting_gate');
+    assertProviderHealthy();
+    assert.equal(exports.getSession().phase.kind,planPhase);
+    await waitForControl(continueButton());
     assert.equal(exports.getSession().memory.getResult().detail_slots.length,0,'plan cannot run before approval');
-    await changeScopeButton().waitFor({state:'visible'});
-    await cancelButton().waitFor({state:'visible'});
+    await waitForControl(changeScopeButton(),real ? phaseTimeoutMs : 20000);
+    await waitForControl(cancelButton(),real ? phaseTimeoutMs : 20000);
   };
 
+  setup(async () => {
+    assert.ok(!captureFailed, 'native evidence capture failed; stop before another model call');
+    casePrompts = [];
+    capturedStates.clear();
+    testIndex += 1;
+    traceOffset = tracePath && existsSync(tracePath) ? readFileSync(tracePath).length : 0;
+    initialGraph = exports?.getSession().resultGraph;
+    testDeadline = real ? Date.now() + phaseTimeoutMs : Number.POSITIVE_INFINITY;
+  });
+  const readCaseTrace = () => tracePath && existsSync(tracePath)
+    ? readFileSync(tracePath).subarray(traceOffset).toString('utf8') : '';
+  const captureTurnStates = async () => {
+    if (!real || !metricsRoot) return;
+    let trace = readCaseTrace();
+    let parsed = parseTrace(trace);
+    const drainDeadline = Date.now() + 2000;
+    while (parsed.turns.some(row => row.type === 'turn-start'
+      && !parsed.turns.some(end => end.type === 'turn-terminal' && end.requestId === row.requestId))
+      && Date.now() < drainDeadline) {
+      await new Promise(resolve => setTimeout(resolve, 25));
+      trace = readCaseTrace();
+      parsed = parseTrace(trace);
+    }
+    const pending = parsed.turns.filter(row => row.type === 'turn-terminal' && !capturedStates.has(row.requestId));
+    assert.ok(pending.length <= 1, 'native turn states were not captured before the next turn; historical states cannot be reconstructed');
+    for (const turn of pending) {
+      const starts = parsed.turns.filter(row => row.type === 'turn-start');
+      const index = starts.findIndex(row => row.requestId === turn.requestId);
+      assert.equal(index, starts.length - 1, 'a newer native request started before its predecessor state was captured');
+      assert.ok(index >= 0, 'a captured native terminal must have its turn-start');
+      const dir = join(metricsRoot, `case-${testIndex}`, `turn-${index + 1}`);
+      mkdirSync(dir, { recursive: true });
+      const statePath = join(dir, 'sm-state.json');
+      const machine = exports?.getSession().stateMachine;
+      writeFileSync(statePath, JSON.stringify(machine ? machine.toJSON() : { explorationOpened: false }, null, 2) + '\n');
+      capturedStates.set(turn.requestId, statePath);
+    }
+    return trace;
+  };
+  const persistMetrics = async (catalogId: string, outcome: string) => {
+    if (!real || !metricsRoot) return;
+    const captureErrors: string[] = [];
+    let trace = readCaseTrace();
+    try { trace = await captureTurnStates() ?? trace; }
+    catch { captureErrors.push('Native turn states were not captured before the next request; saved evidence is incomplete.'); }
+    const caseDir = join(metricsRoot, `case-${testIndex}`);
+    mkdirSync(caseDir, { recursive: true });
+    const records = parseTrace(trace).turns;
+    const caseTracePath = join(caseDir, 'trace.ndjson');
+    const opening = tracePath && readFileSync(tracePath, 'utf8').split('\n')[0];
+    if (opening) trace = opening + '\n' + trace;
+    writeFileSync(caseTracePath, trace);
+    copyHostLog(caseDir);
+    const lastStatePath = records.filter(row => row.type === 'turn-start')
+      .map(turn => capturedStates.get(turn.requestId)).filter((path): path is string => path !== undefined).at(-1);
+    if (lastStatePath) copyFileSync(lastStatePath, join(caseDir, 'sm-state.json'));
+    const finalSnapshotPath = join(caseDir, 'final-snapshot.json');
+    const session = exports?.getSession();
+    if (session?.resultGraph && session.resultGraph !== initialGraph) writeFileSync(finalSnapshotPath, JSON.stringify({
+      nodes: session.resultGraph.nodeIds, columnEdges: session.stateMachine?.columnAspect?.edges ?? null,
+    }, null, 2) + '\n');
+    const reportPath = join(caseDir, 'report.md');
+    if (session?.resultGraph && session.resultGraph !== initialGraph && session.lastPresentResultDescription) {
+      writeFileSync(reportPath, session.lastPresentResultDescription);
+    }
+    const answerPath = join(caseDir, 'answer.txt');
+    const observedAnswer = page && await responses().count() ? await responses().last().innerText().catch(() => null) : null;
+    if (observedAnswer !== null && records.some(row => row.type === 'turn-start')) {
+      const rendered = await responses().last().locator('.rendered-markdown').allTextContents();
+      if (rendered.length) writeFileSync(answerPath, rendered.join('\n'));
+    }
+    const question = casePrompts.length ? JSON.stringify(casePrompts) : null;
+    const questionHash = question === null ? null : createHash('sha256').update(question).digest('hex');
+    const fixturePath = join(extensionPath, 'assets/demo.dacpac');
+    const fixtureHash = existsSync(fixturePath) ? createHash('sha256').update(readFileSync(fixturePath)).digest('hex') : null;
+    const revision = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: extensionPath, encoding: 'utf8' });
+    const sourceDiff = spawnSync('git', ['diff', 'HEAD', '--', 'src', 'assets'], { cwd: extensionPath });
+    const context = { provider: fixture.providerProfile.provider ?? null, model: fixture.providerProfile.model ?? null,
+      reasoningEffort: fixture.providerProfile.reasoningEffort ?? null,
+      executionMode: process.env.DLV_CHAT_UI_REPLAY_TRACE ? 'native-replay' : 'native-live',
+      settings: { timeoutMs: phaseTimeoutMs, requestTimeoutMs: Number(process.env.AI_TEST_REQUEST_TIMEOUT_MS) || null, temperature: 0.1 },
+      promptAssets: Object.fromEntries(['src/ai/prompting/prompts.ts', 'src/ai/prompting/smPrompts.ts', 'assets/aiOutputTemplates.yaml']
+        .map(file => [file, createHash('sha256').update(readFileSync(join(extensionPath, file))).digest('hex')])),
+      source: { revision: revision.status === 0 ? revision.stdout.trim() : null,
+        trackedSourceDiffHash: sourceDiff.status === 0 ? createHash('sha256').update(sourceDiff.stdout).digest('hex') : null } };
+    const manifestPath = join(caseDir, 'metrics-manifest.json');
+    writeFileSync(manifestPath, JSON.stringify({ catalogId, question, questionHash, fixtureHash, context,
+      caseIdentity: questionHash === null || fixtureHash === null ? null : `${catalogId}:${questionHash}:${fixtureHash}`,
+      tracePath: caseTracePath, requestIds: [...new Set(records.filter(row => row.type === 'turn-start').map(row => row.requestId).filter(id => typeof id === 'string'))],
+      outcome, answerPath, answerRepresentation: 'rendered_text', reportPath, reportRepresentation: 'markdown', finalSnapshotPath,
+    }, null, 2) + '\n');
+    const metrics = spawnSync(process.execPath, [join(extensionPath, 'tests/tools/lineage-score.mjs'), '--trace',
+      '--case-manifest', manifestPath, '--output', join(caseDir, 'metrics.json')], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, stdio: 'inherit', shell: false,
+    });
+    console.log(`[chat-ui] metrics=${join(caseDir, 'metrics.json')}`);
+    await exportNativeEvidence({ trace, directory: caseDir,
+      sessionId: metricsRoot.split(/[\\/]/).pop()!, promptId: catalogId, statePaths: capturedStates, captureErrors });
+    assert.equal(metrics.status, 0, 'deterministic native case metrics must be persisted');
+  };
+  teardown(async function () {
+    try {
+      // Cancel through the native action so the provider's cancellation token aborts its request.
+      if (real && page) await vscode.commands.executeCommand('workbench.action.chat.cancel');
+    } finally {
+      testDeadline = Number.POSITIVE_INFINITY;
+      try { await persistMetrics(`native:${this.currentTest?.title ?? 'unknown'}`, this.currentTest?.state ?? 'unknown'); }
+      catch (error) { captureFailed = true; throw error; }
+    }
+  });
+
   suiteSetup(async function () {
+    extensionPath = vscode.extensions.getExtension('datahelper-chwagner.data-lineage-viz')!.extensionPath;
+    if (real) {
+      assert.ok(resolveLangfuseConfig(process.env), 'Set all LANGFUSE_* connection variables before native AI model use.');
+      metricsRoot = join(extensionPath, 'test-results', 'chat-ui', randomUUID());
+      mkdirSync(metricsRoot, { recursive: true });
+    }
     await vscode.workspace.getConfiguration('editor').update('accessibilitySupport','on',vscode.ConfigurationTarget.Global);
+    ({ assertUiProviderHealthy } = createRequire(join(extensionPath,'package.json'))(
+      join(extensionPath,'tests/tools/chat-ui-replay-trace.mjs'),
+    ));
     fixture = await vscode.extensions.getExtension('data-lineage-test.data-lineage-test-model-provider')!.activate();
+    if (real) {
+      const expected = JSON.parse(readFileSync(join(process.env.DLV_CHAT_UI_PROFILE!, 'provider-profile.json'), 'utf8'));
+      assert.deepEqual(fixture.providerProfile, expected, 'native provider must match the launcher profile before any inference');
+      console.log(`[chat-ui] verified host profile ${JSON.stringify(fixture.providerProfile)}`);
+    }
     assert.ok((await vscode.lm.selectChatModels({vendor:'lineage-test'})).length,'scripted provider must resolve');
     exports = await vscode.extensions.getExtension('datahelper-chwagner.data-lineage-viz')!.activate();
     await vscode.commands.executeCommand('dataLineageViz.openDemo');
-    await deadlineWait(()=>!!exports.getSession().model,'public demo must finish loading before the real fixture');
-    if (real) await vscode.commands.executeCommand('dataLineageViz.openExternalProject',vscode.Uri.file(
-      join(vscode.extensions.getExtension('datahelper-chwagner.data-lineage-viz')!.extensionPath,'tests/fixtures/AdventureWorks2025_AI.dacpac'),
-    ));
-    if (real) assert.ok(exports.getSession().model?.nodes.some(node=>node.id.toLowerCase()==='[ai].[spimportorders]'),
-      'the real fixture must contain the original trace origin');
+    await deadlineWait(()=>!!exports.getSession().model,'public demo must finish loading');
     if (real) {
-      const tracePath=await vscode.commands.executeCommand<string>('dataLineageViz.enableAiTraceLogging');
+      tracePath=await vscode.commands.executeCommand<string>('dataLineageViz.enableAiTraceLogging', true);
       assert.ok(tracePath,'live acceptance must capture a fresh NDJSON trace');
       console.log(`[chat-ui] trace=${tracePath}`);
     }
-    await deadlineWait(()=>!!exports.getSession().model,'public demo must load');
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${process.env.PLAYWRIGHT_CDP_PORT}`);
     page = browser.contexts().flatMap(context=>context.pages()).find(p=>p.url().includes('workbench'))!;
     assert.ok(page,'CDP must attach to the test workbench');
-    await vscode.commands.executeCommand('workbench.action.chat.open', {query:'@lineage /trace [dbo].[ufnGetProductDealerPrice]',isPartialQuery:true});
+    await vscode.commands.executeCommand('workbench.action.chat.open', {query: fixturePrompt, isPartialQuery: true});
     // Choose the contributed fixture via the real model picker; no provider credentials.
     await vscode.commands.executeCommand('notifications.clearAll');
+    await vscode.commands.executeCommand('notifications.hideToasts');
+    await page.locator('.notifications-toasts.visible').waitFor({state:'hidden'});
     const picker = page.getByRole('button', {name:/^Models|Pick Model|Select Model|Model Picker/i}).last();
     await picker.click();
     await page.getByText('Lineage Smoke Model',{exact:true}).last().click();
@@ -116,7 +323,7 @@ suite('Native chat confirmations — actual UI', () => {
     await openPlan();
     const before=fixture.uiRequests.length;
     await cancelButton().click();
-    await page.getByText('Exploration cancelled.',{exact:true}).last().waitFor({timeout:20000});
+    await page.getByText('Exploration cancelled.',{exact:true}).last().waitFor({timeout:remainingWait(20000)});
     await idleInput();
     assert.equal(exports.getSession().pendingExploration,null);
     assert.equal(exports.getSession().phase.kind,'idle');
@@ -128,7 +335,7 @@ suite('Native chat confirmations — actual UI', () => {
       assert.equal(exports.getSession().pendingExploration,null,'stale approval must not restore a proposal');
       assert.equal(fixture.uiRequests.length,before,'stale approval must not run');
       assert.equal(exports.getSession().memory.getResult().detail_slots.length,0,'stale approval must not start analysis');
-      await new Promise(resolve=>setTimeout(resolve,100));
+      await new Promise(resolve=>setTimeout(resolve,remainingWait(100)));
     }
     await capture('cancel-button');
   });
@@ -137,7 +344,7 @@ suite('Native chat confirmations — actual UI', () => {
     await openPlan();
     const before=fixture.uiRequests.length;
     await send(`@lineage ${reply}`);
-    await page.getByText('Exploration cancelled.',{exact:true}).last().waitFor({timeout:180000});
+    await page.getByText('Exploration cancelled.',{exact:true}).last().waitFor({timeout:remainingWait(phaseTimeoutMs)});
     await idleInput();
     assert.ok(fixture.uiRequests.length>before,'typed cancellation must reach AI');
     assert.equal(exports.getSession().pendingExploration,null);
@@ -154,10 +361,11 @@ suite('Native chat confirmations — actual UI', () => {
     assert.deepEqual(exports.getSession().pendingExploration?.init.depthIntent,{
       upstream:{levels:1,exactness:'exact'},downstream:{levels:0,exactness:'exact'},
     },'typed scope change must change the actual depth bounds');
-    assert.equal(exports.getSession().phase.kind,'awaiting_gate');
+    assertProviderHealthy();
+    assert.equal(exports.getSession().phase.kind,planPhase);
     assert.equal(exports.getSession().memory.getResult().detail_slots.length,0);
-    await continueButton().waitFor({state:'visible'});
-    await changeScopeButton().waitFor({state:'visible'});
+    await waitForControl(continueButton(),real ? phaseTimeoutMs : 20000);
+    await waitForControl(changeScopeButton(),real ? phaseTimeoutMs : 20000);
     await cancelButton().click();
     await idleInput();
     await capture('typed-scope-change');
@@ -165,6 +373,20 @@ suite('Native chat confirmations — actual UI', () => {
 
   test('typed approve starts analysis without clicking Approve',async()=>{
     await openPlan();
+    if (real) {
+      const expectedDepth: DepthProjection = { upstream: { levels: 3, exactness: 'approximate' }, downstream: { levels: 3, exactness: 'approximate' } };
+      const proposal = exports.getSession().pendingExploration;
+      if (proposal?.classification !== 'business' || proposal.init.analysisMode !== 'bb'
+        || !isDeepStrictEqual(proposal.init.depthIntent, expectedDepth)) {
+        await changeScopeButton().click();
+        await send('@lineage Change the pending plan to blackboard mode and business analysis. Use approximate depths of three levels upstream and three levels downstream.');
+        await idleInput();
+        await waitForControl(continueButton());
+      }
+      assert.equal(exports.getSession().pendingExploration?.classification, 'business');
+      assert.equal(exports.getSession().pendingExploration?.init.analysisMode, 'bb');
+      assert.deepEqual(exports.getSession().pendingExploration?.init.depthIntent, expectedDepth);
+    }
     const before=fixture.uiRequests.length;
     await send('@lineage approve');
     await deadlineWait(()=>exports.getSession().phase.kind==='completed','typed approve must complete analysis');
@@ -173,9 +395,11 @@ suite('Native chat confirmations — actual UI', () => {
     assert.equal(exports.getSession().pendingExploration,null);
     assert.ok(exports.getSession().memory.getResult().detail_slots.length>0);
     assert.ok(exports.getSession().lastPresentResultDescription,'typed approval must synthesize a visible result');
+    captureCompletedResult('typed-approve');
     await capture('typed-approve');
   });
   suiteTeardown(async()=>{
+    if (real && testIndex === 0) await persistMetrics('native:suite-setup', 'failed');
     mkdirSync(artifactDir,{recursive:true});
     if (page) {
       writeFileSync(`${artifactDir}/aria.txt`,await page.locator('.interactive-session').last().ariaSnapshot());
@@ -183,6 +407,7 @@ suite('Native chat confirmations — actual UI', () => {
       await page.screenshot({path:`${artifactDir}/workbench.png`});
     }
     writeFileSync(`${artifactDir}/requests.json`,JSON.stringify(fixture?.uiRequests ?? [],null,2));
+    copyHostLog();
     await browser?.close();
   });
 
@@ -190,14 +415,14 @@ suite('Native chat confirmations — actual UI', () => {
     await openPlan();
     const before = fixture.uiRequests.length;
     await send('@lineage What does this procedure do?');
-    await page.getByText('Typed question received and answered.',{exact:false}).last().waitFor({timeout:20000});
+    await page.getByText('Typed question received and answered.',{exact:false}).last().waitFor({timeout:remainingWait(20000)});
     assert.ok(fixture.uiRequests.length>before,'Enter must actually reach the provider');
-    assert.equal(exports.getSession().phase.kind,'awaiting_gate','ordinary question preserves proposal');
+    assert.equal(exports.getSession().phase.kind,planPhase,'ordinary question preserves proposal');
     await idleInput();
     await changeScopeButton().click();
     await send('@lineage change scope to one level downstream');
     await idleInput();
-    await continueButton().waitFor({state:'visible',timeout:20000});
+    await waitForControl(continueButton(),20000);
     assert.equal(exports.getSession().pendingExploration?.revision,2,'typed scope change revises proposal');
     assert.deepEqual(exports.getSession().pendingExploration?.init.depthIntent,{
       upstream:{levels:0,exactness:'exact'},downstream:{levels:1,exactness:'exact'},
@@ -210,123 +435,4 @@ suite('Native chat confirmations — actual UI', () => {
     assert.doesNotMatch(transcript,/Exploration plan confirmed|Approve exploration plan revision|lineage_confirm_exploration|Opaque request-owned/);
     assert.equal(fixture.uiRequests.slice(before).filter(r=>r.tools.some(t=>t.name==='lineage_submit_findings')).length,1,'one approval starts one bodied hop');
   });
-
-  if (real) test('live AI question → concise follow-up badge',async function () {
-    const start = Date.now();
-    await newChat();
-    await send(`@lineage ${originalQuestion}`);
-    console.log('[chat-ui] live question dispatched');
-    const preview = page.getByRole('button',{name:/Show graph preview/}).last();
-    await preview.waitFor({state:'visible',timeout:180000});
-    await preview.click();
-    await page.getByRole('button',{name:/Run trace/}).last().waitFor({state:'visible',timeout:180000});
-    await page.getByRole('button',{name:/Run trace/}).last().click();
-    await continueButton().waitFor({state:'visible',timeout:180000});
-    const session = exports.getSession();
-    assert.equal(session.phase.kind,'awaiting_gate');
-    assert.equal(session.memory.getResult().detail_slots.length,0,'no hop runs before consent');
-    await idleInput();
-    if(exports.getSession().pendingExploration?.classification!=='both') {
-      await changeScopeButton().click();
-      await send('@lineage Change the pending plan to both business and technical analysis. Keep all levels upstream and one level downstream.');
-      await idleInput();
-      await continueButton().waitFor({state:'visible',timeout:180000});
-    }
-    assert.equal(exports.getSession().pendingExploration?.classification,'both');
-    assert.deepEqual(exports.getSession().pendingExploration?.init.depthIntent,{
-      upstream:{levels:'all',exactness:'exact'},downstream:{levels:1,exactness:'exact'},
-    },'both-angle revision must preserve the requested asymmetric depth');
-    assert.equal(exports.getSession().pendingExploration?.summary.scopeCount,8,'approval must cover the original eight-node scope');
-    await approveOnce();
-    console.log('[chat-ui] Approve clicked with only the visible action label');
-    await deadlineWait(()=>exports.getSession().phase.kind==='completed','approved real analysis must complete');
-    assert.equal(exports.getSession().resultGraph?.nodeIds.length,8,'the completed graph must retain the approved eight-node scope');
-    const suggestion = page.getByRole('button',{name:/What could I explore next/}).last();
-    await suggestion.waitFor({state:'visible',timeout:180000});
-
-
-    const stateBefore=JSON.stringify({phase:session.phase,graph:session.resultGraph,description:session.lastPresentResultDescription,leads:session.stateMachine?.deferredQuestions});
-    const callStart=fixture.uiRequests.length;
-    const followupStart=Date.now();
-    await suggestion.click();
-    await deadlineWait(()=>fixture.uiRequests.length>callStart,'follow-up badge must invoke the selected AI model');
-    await page.getByText('Would you like me to analyze one of these in detail?',{exact:false}).last().waitFor({state:'visible',timeout:90000});
-    await idleInput();
-    const reply=responses().last();
-    assert.equal(await reply.locator('.rendered-markdown').locator('h1,h2,h3,h4,h5,h6').count(),0,'no decorative title in the answer body');
-    const bullets=reply.locator('.rendered-markdown li');
-    const bulletText=await bullets.allTextContents();
-    assert.ok(bulletText.length>=1 && bulletText.length<=5,'follow-up is a short bullet list');
-    for(const bullet of bulletText) {
-      assert.match(bullet,/\?/,'each bullet must ask a question');
-      assert.ok(bullet.trim().split(/\s+/).length<=45,'each question must be concise');
-    }
-    const followupText=await reply.innerText();
-    assert.ok(followupText.trim().split(/\s+/).length<=230,'no long recap or novel');
-    assert.equal(fixture.uiRequests.length-callStart,1,'badge uses one inference call');
-    assert.equal(fixture.uiRequests[callStart].tools.length,0,'no analysis tools on suggestion path');
-    assert.equal(JSON.stringify({phase:session.phase,graph:session.resultGraph,description:session.lastPresentResultDescription,leads:session.stateMachine?.deferredQuestions}),stateBefore,'suggestions do not mutate the completed result');
-    writeFileSync(`${artifactDir}/followup.txt`,followupText);
-    assert.doesNotMatch(await page.locator('.interactive-session').innerText(),/Exploration plan confirmed|Approve exploration plan revision|lineage_confirm_exploration|Opaque request-owned/);
-    console.log(`[chat-ui] live E2E passed elapsedMs=${Date.now()-start} followupMs=${Date.now()-followupStart} bullets=${bulletText.length}`);
-  });
-
-  // DDL of tests/fixtures/AdventureWorks2025_AI.dacpac: [ai].[spRefreshPrices] is the only writer of [ai].[PriceMaster].[ListPrice]:
-  //   ListPrice = sc.CostPrice * (1 + COALESCE(m.MarkupPct, 0.15))  FROM [ai].[SupplierPrices] sp CROSS JOIN [ai].[RegionLookup] r
-  //   INNER JOIN [ai].[CurrencyConfig] cc ON sp.Currency = cc.Code WHERE cc.IsBase = 1 ... LEFT JOIN [ai].[MarkupRules] m ON RegionCode.
-  // Value input: [ai].[SupplierPrices].[CostPrice] (also MarkupPct). Key/filter-only: [ai].[CurrencyConfig].[Code] (join key) and
-  // [ai].[CurrencyConfig].[IsBase] (filter); the procedure comment itself says "CurrencyConfig: FILTER ONLY".
-  if (real) test('live column trace → value inputs only, rendered report intact',async function () {
-    const column = '[ai].[PriceMaster].[ListPrice]';
-    const normalized = (text:string|null) => (text ?? '').replace(/[\[\]`]/g,'').toLowerCase();
-    await newChat();
-    assert.ok(exports.getSession().model?.nodes.some(node=>node.id.toLowerCase()==='[ai].[pricemaster]'),'the real fixture must contain the traced table');
-    await send(`@lineage /trace ${column} — trace this column back to its original sources.`);
-    await continueButton().or(page.getByRole('button',{name:/Show graph preview/}).last()).waitFor({state:'visible',timeout:180000});
-    if (!await continueButton().isVisible()) {
-      await page.getByRole('button',{name:/Show graph preview/}).last().click();
-      await page.getByRole('button',{name:/Run trace/}).last().waitFor({state:'visible',timeout:180000});
-      await page.getByRole('button',{name:/Run trace/}).last().click();
-      await continueButton().waitFor({state:'visible',timeout:180000});
-    }
-    assert.equal(exports.getSession().phase.kind,'awaiting_gate');
-    assert.equal(exports.getSession().memory.getResult().detail_slots.length,0,'no hop runs before consent');
-    await idleInput();
-    await approveOnce();
-    await deadlineWait(()=>exports.getSession().phase.kind==='completed','approved column trace must complete');
-    const fullReport = page.getByRole('button',{name:/Show (the )?full description/}).last();
-    await fullReport.waitFor({state:'visible',timeout:180000});
-    await fullReport.click();
-    await idleInput();
-    const reply = responses().last();
-    const chainHeading = reply.locator('.rendered-markdown').locator('h1,h2,h3,h4,h5,h6').filter({hasText:/^\s*Column Chain\s*$/i});
-    await chainHeading.first().waitFor({state:'visible',timeout:60000});
-    // Source rows of the Column Chain: table rows between its heading and the next h1/h2 section, first cell = source column.
-    const chainSources = await reply.evaluate(root=>{
-      const nodes=Array.from(root.querySelectorAll('h1,h2,h3,h4,h5,h6,tr'));
-      const start=nodes.findIndex(n=>/^H\d$/.test(n.tagName) && /^\s*column chain\s*$/i.test(n.textContent ?? ''));
-      const rows:string[]=[];
-      for (const n of nodes.slice(start+1)) {
-        if (/^H[12]$/.test(n.tagName)) break;
-        if (n.tagName==='TR' && n.querySelector('td')) rows.push(n.querySelector('td')?.textContent ?? '');
-      }
-      return rows;
-    });
-    const sources = chainSources.map(normalized);
-    assert.ok(sources.some(row=>row.includes('costprice')),`Column Chain must list the value input CostPrice; rows: ${JSON.stringify(chainSources)}`);
-    assert.ok(!sources.some(row=>row.includes('currencyconfig')),`join/filter-only CurrencyConfig must not be a Column Chain source; rows: ${JSON.stringify(chainSources)}`);
-    const reportText = await reply.innerText();
-    assert.match(normalized(reportText),/currencyconfig/,'the join/filter object stays in the report');
-    assert.ok(!(await reply.locator('.rendered-markdown').allInnerTexts()).join('\n').includes('```'),'no literal code fence may render as text');
-    const listStarts = await reply.locator('.rendered-markdown ol').evaluateAll(lists=>lists.map(list=>list.getAttribute('start') ?? '1'));
-    assert.deepEqual(listStarts.filter(start=>start!=='1'),[],'an ordered list that restarts above 1 was split by an interrupting block');
-    for (const line of (exports.getSession().lastPresentResultDescription ?? '').split('\n')) {
-      assert.ok(!line.includes('```') || /^\s*```/.test(line),`an SQL fence must stand on its own line: ${line.slice(0,120)}`);
-    }
-    mkdirSync(artifactDir,{recursive:true});
-    writeFileSync(`${artifactDir}/column-report.txt`,reportText);
-    await reply.scrollIntoViewIfNeeded();
-    await capture('column-trace');
-  });
-
 });

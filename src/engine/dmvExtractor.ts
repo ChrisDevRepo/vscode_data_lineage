@@ -25,12 +25,10 @@ import {
   UNKNOWN_DB_PLATFORM,
 } from './types';
 import { buildModel, normalizeName } from './modelBuilder';
-import type { SimpleExecuteResult, DbCellValue, IServerInfo } from '../types/mssql';
+import type { SimpleExecuteResult, DbCellValue } from '../types/database';
 import { quoteIdentifier, schemaKey } from '../utils/sql';
 
-/**
- * Aggregates raw query results from various system catalog views.
- */
+/** Aggregates raw query results from various system catalog views. */
 export interface DmvResults {
   /** Core object definitions (tables, views, procedures) and their body scripts. */
   nodes: SimpleExecuteResult;
@@ -44,19 +42,12 @@ export interface DmvResults {
   constraints?: SimpleExecuteResult;
   /** Server-level platform and version metadata. */
   platformInfo?: SimpleExecuteResult;
-  /** Platform derived from MSSQL server metadata when the platform query is unavailable. */
-  serverPlatform?: string;
 }
 
 /** Shown when the catalog returns no objects: an empty database, or a login without VIEW DEFINITION. */
 const NO_USER_OBJECTS_WARNING = 'No user objects found in database. If the database has objects, the login needs VIEW DEFINITION on it.';
 
-/**
- * Processes schema-preview query results to build a lightweight summary of the database.
- *
- * @param result - Raw query result containing schema object aggregates.
- * @returns A structured summary of schemas and object counts.
- */
+/** Processes schema-preview query results to build a lightweight summary of the database. */
 export function buildSchemaPreview(result: SimpleExecuteResult, platformInfo?: SimpleExecuteResult): SchemaPreview {
   const identifierCaseSensitive = checkedIdentifierCaseSensitivity(platformInfo);
   const colIdx = buildColumnIndex(result);
@@ -89,17 +80,7 @@ export function buildSchemaPreview(result: SimpleExecuteResult, platformInfo?: S
   return { schemas, totalObjects, ...(identifierCaseSensitive && { identifierCaseSensitive }), warnings: warnings.length > 0 ? warnings : undefined };
 }
 
-/**
- * Constructs a fully resolved DatabaseModel from DMV query results.
- *
- *
- * @param results - Raw DMV query results to assemble.
- * @param currentDatabase - Current database name for local-object resolution.
- * @param externalRefsEnabled - Whether external reference nodes should be emitted.
- * @param onDebugLog - Debug logger callback.
- *
- * @returns A resolved DatabaseModel including the graph and metadata.
- */
+/** Constructs a fully resolved DatabaseModel from DMV query results. */
 export function buildModelFromDmv(
   results: DmvResults,
   currentDatabase?: string,
@@ -114,17 +95,12 @@ export function buildModelFromDmv(
     const c = { table: 0, view: 0, procedure: 0, function: 0 } as Record<string, number>;
     for (const o of objects) if (o.type in c) c[o.type]++;
     const colCount = results.columns.rowCount;
-    const fkCount = results.constraints?.rows.filter(r => {
-      const idx = results.constraints!.columnInfo.findIndex(ci => ci.columnName.toLowerCase() === 'constraint_type');
-      return idx >= 0 && r[idx]?.displayValue === 'FK';
-    }).length ?? 0;
+    const constraintCols = results.constraints ? buildColumnIndex(results.constraints) : undefined;
+    const fkCount = results.constraints?.rows.filter(r => cellValue(r, constraintCols!, 'constraint_type') === 'FK').length ?? 0;
     onDebugLog(`DMV extract — ${objects.length} objects, ${deps.length} deps (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function}, columns=${colCount}, fks=${fkCount})`);
   }
   const model = buildModel(objects, deps, allObjects, currentDatabase, externalRefsEnabled, onDebugLog, identifierCaseSensitive);
-  const queryPlatform = results.platformInfo ? mapEnginePlatform(results.platformInfo) : UNKNOWN_DB_PLATFORM;
-  const dbPlatform = queryPlatform !== UNKNOWN_DB_PLATFORM
-    ? queryPlatform
-    : results.serverPlatform?.trim() || UNKNOWN_DB_PLATFORM;
+  const dbPlatform = results.platformInfo ? mapEnginePlatform(results.platformInfo) : UNKNOWN_DB_PLATFORM;
 
   const warnings: string[] = [];
   if (objects.length === 0) {
@@ -145,9 +121,7 @@ function checkedIdentifierCaseSensitivity(result?: SimpleExecuteResult): boolean
     && comparisonStyle <= 0x7fffffff && (comparisonStyle & 1) === 0;
 }
 
-/**
- * Maps SQL Server engine metadata to human-readable platform strings.
- */
+/** Maps SQL Server engine metadata to human-readable platform strings. */
 function mapEnginePlatform(result: SimpleExecuteResult): string {
   if (!result.rows.length) return UNKNOWN_DB_PLATFORM;
   const colIdx = buildColumnIndex(result);
@@ -156,21 +130,6 @@ function mapEnginePlatform(result: SimpleExecuteResult): string {
   const majorVersion  = parseInt(cellValue(row, colIdx, 'major_version'), 10);
   const edition       = cellValue(row, colIdx, 'edition');
   return mapEngineMetadata(engineEdition, majorVersion, edition);
-}
-
-/**
- * Maps authoritative MSSQL extension server metadata to a platform label.
- *
- * @remarks
- * A second entry point exists so the `getServerInfo` fallback cannot drift from the
- * `platform-info` query path: both funnel into `mapEngineMetadata`, so a connection
- * yields the same label whichever tier resolved it. Changing one mapping without the
- * other would make the displayed platform depend on which tier happened to answer.
- */
-export function mapServerInfoPlatform(
-  info: Pick<IServerInfo, 'engineEditionId' | 'serverMajorVersion' | 'serverEdition'>,
-): string {
-  return mapEngineMetadata(info.engineEditionId, info.serverMajorVersion, info.serverEdition);
 }
 
 function mapEngineMetadata(engineEdition: number, majorVersion: number, edition: string): string {
@@ -193,9 +152,7 @@ function mapEngineMetadata(engineEdition: number, majorVersion: number, edition:
   }
 }
 
-/**
- * Column requirements for various DMV queries to ensure data integrity.
- */
+/** Column requirements for various DMV queries to ensure data integrity. */
 const REQUIRED_COLUMNS: Record<string, string[]> = {
   'schema-preview': ['schema_name', 'type_code', 'object_count'],
   nodes: ['schema_name', 'object_name', 'type_code', 'body_script'],
@@ -212,13 +169,7 @@ const REQUIRED_COLUMNS: Record<string, string[]> = {
   'platform-info': ['engine_edition', 'major_version', 'edition'],
 };
 
-/**
- * Validates a query result against its expected schema.
- *
- * @param name - Identifier of the query.
- * @param result - Raw result set to validate.
- * @returns List of missing columns.
- */
+/** Validates a query result against its expected schema. */
 export function validateQueryResult(name: string, result: SimpleExecuteResult): string[] {
   const required = REQUIRED_COLUMNS[name];
   if (!required) return [];
@@ -226,9 +177,7 @@ export function validateQueryResult(name: string, result: SimpleExecuteResult): 
   return required.filter(c => !actual.has(c));
 }
 
-/**
- * Safely extracts a cell value from a database row.
- */
+/** Safely extracts a cell value from a database row. */
 function cellValue(row: DbCellValue[], colIndex: Map<string, number>, name: string): string {
   const idx = colIndex.get(name);
   if (idx === undefined) return '';
@@ -236,9 +185,7 @@ function cellValue(row: DbCellValue[], colIndex: Map<string, number>, name: stri
   return cell && !cell.isNull ? cell.displayValue : '';
 }
 
-/**
- * Builds a fast-lookup map for column names to their array indices.
- */
+/** Builds a fast-lookup map for column names to their array indices. */
 function buildColumnIndex(result: SimpleExecuteResult): Map<string, number> {
   const map = new Map<string, number>();
   for (let i = 0; i < result.columnInfo.length; i++) {
@@ -252,9 +199,7 @@ function metadataObjectKey(schema: string, object: string, identifierCaseSensiti
   return JSON.stringify([schemaKey(schema, identifierCaseSensitive), schemaKey(object, identifierCaseSensitive)]);
 }
 
-/**
- * Reconstructs UQ, CK, and FK constraints from a flattened result set.
- */
+/** Reconstructs UQ, CK, and FK constraints from a flattened result set. */
 function buildConstraintMaps(result: SimpleExecuteResult, identifierCaseSensitive: boolean): ConstraintMaps {
   const colIdx = buildColumnIndex(result);
   const uqColMap = new Map<string, string>();
@@ -304,9 +249,7 @@ function buildConstraintMaps(result: SimpleExecuteResult, identifierCaseSensitiv
   return { uqColMap, ckColMap, fkMap, pkOrdinalMap: new Map() };
 }
 
-/**
- * Extracts normalized objects and their columns from raw result sets.
- */
+/** Extracts normalized objects and their columns from raw result sets. */
 function extractObjects(results: DmvResults, identifierCaseSensitive: boolean): ExtractedObject[] {
   const nodeColIdx = buildColumnIndex(results.nodes);
   const colColIdx = buildColumnIndex(results.columns);
@@ -415,9 +358,7 @@ function extractObjects(results: DmvResults, identifierCaseSensitive: boolean): 
   return objects;
 }
 
-/**
- * Extracts directional dependencies between objects based on sys.sql_expression_dependencies.
- */
+/** Extracts directional dependencies between objects based on sys.sql_expression_dependencies. */
 function extractDependencies(results: DmvResults): ExtractedDependency[] {
   const depColIdx = buildColumnIndex(results.dependencies);
   const deps: ExtractedDependency[] = [];
@@ -444,9 +385,7 @@ function extractDependencies(results: DmvResults): ExtractedDependency[] {
   return deps;
 }
 
-/**
- * Extracts a lightweight catalog of all objects from the full catalog query.
- */
+/** Extracts a lightweight catalog of all objects from the full catalog query. */
 function extractAllObjects(result: SimpleExecuteResult, identifierCaseSensitive: boolean): ExtractedObject[] {
   const colIdx = buildColumnIndex(result);
   const seen = new Set<string>();

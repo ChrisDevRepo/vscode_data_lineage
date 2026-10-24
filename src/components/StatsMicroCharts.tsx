@@ -1,26 +1,21 @@
 import { typeBadgeLabel } from '../engine/profilingEngine';
 import { Tooltip } from './ui/Tooltip';
 
-/**
- * Mapping of simplified data type labels to their respective theme-aware colors.
- * Used by {@link TypeBadge} for visual categorization of column types.
- */
+/** Mapping of simplified data type labels to their respective theme-aware colors. Used by {@link TypeBadge} for visual categorization of column types. */
 const BADGE_COLORS: Record<string, string> = {
-  INT: 'var(--ln-analysis-icon)',      // blue
-  DEC: 'var(--ln-analysis-icon)',      // blue
-  STR: 'var(--ln-ai-gn)',             // green (themed)
-  DATE: 'var(--vscode-charts-purple, #a78bfa)', // purple (themed)
-  TIME: 'var(--vscode-charts-purple, #a78bfa)', // purple (themed)
-  BIT: 'var(--ln-fg-muted)',           // gray
-  UUID: 'var(--vscode-charts-green, #2dd4bf)',   // teal (themed)
-  XML: 'var(--ln-fg-dim)',             // dim
-  BIN: 'var(--ln-fg-dim)',             // dim
-  TXT: 'var(--ln-fg-dim)',             // dim
+  INT: 'var(--ln-analysis-icon)',
+  DEC: 'var(--ln-analysis-icon)',
+  STR: 'var(--ln-ai-gn)',
+  DATE: 'var(--vscode-charts-purple, #a78bfa)',
+  TIME: 'var(--vscode-charts-purple, #a78bfa)',
+  BIT: 'var(--ln-fg-muted)',
+  UUID: 'var(--vscode-charts-green, #2dd4bf)',
+  XML: 'var(--ln-fg-dim)',
+  BIN: 'var(--ln-fg-dim)',
+  TXT: 'var(--ln-fg-dim)',
 };
 
-/**
- * Renders the compact {@link typeBadgeLabel} with the full SQL type in a tooltip.
- */
+/** Renders the compact {@link typeBadgeLabel} with the full SQL type in a tooltip. */
 export function TypeBadge({ typeStr }: { typeStr: string }) {
   const label = typeBadgeLabel(typeStr);
   const color = BADGE_COLORS[label] ?? 'var(--ln-fg-muted)';
@@ -41,21 +36,14 @@ export function TypeBadge({ typeStr }: { typeStr: string }) {
   );
 }
 
-/**
- * Determines a semantic color based on a quality/completeness ratio.
- *
- * @param value - A number between 0 and 1 representing the quality ratio.
- * @returns A CSS color variable string.
- */
+/** Determines a semantic color based on a quality/completeness ratio. */
 function qualityColor(value: number): string {
   if (value >= 0.95) return 'var(--ln-analysis-icon)';
   if (value >= 0.80) return 'var(--ln-warning-fg)';
   return 'var(--ln-validation-error-border)';
 }
 
-/**
- * Renders a color-coded completeness ratio as an SVG progress bar.
- */
+/** Renders a color-coded completeness ratio as an SVG progress bar. */
 export function CompletenessBar({ value }: { value: number }) {
   const pct = Math.round(value * 100);
   return (
@@ -66,9 +54,7 @@ export function CompletenessBar({ value }: { value: number }) {
   );
 }
 
-/**
- * Classifies a uniqueness ratio as constant, high, medium, or low.
- */
+/** Classifies a uniqueness ratio as constant, high, medium, or low. */
 export function UniquenessIndicator({ value, distinctCount }: { value: number; distinctCount: number }) {
   let label: string;
   let color: string;

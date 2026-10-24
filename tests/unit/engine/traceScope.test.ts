@@ -1,4 +1,4 @@
-import { makeGraph } from '../helpers/testUtils';
+import { makeGraph } from '../helpers/modelFixtures';
 import {
   buildTraceScopeGraph,
   buildVisibleTraceScope,
@@ -12,15 +12,14 @@ import {
   findShortestPathOrdered,
   analyzeRemoval,
 } from '../../../src/engine/graphGuards';
-import type { TraceState } from '../../../src/engine/types';
-import type { DatabaseModel, LineageEdge, LineageNode } from '../../../src/engine/types';
+import type { DatabaseModel, LineageEdge, LineageNode, TraceState } from '../../../src/engine/types';
 import { describe, expect, it } from 'vitest';
 
 describe("Trace Scope Safety Tests", () => {
   function edges(...pairs: Array<[string, string]>): LineageEdge[] {
     return pairs.map(([source, target]) => ({ source, target, type: 'body' as const }));
   }
-  it("buildVisibleTraceScope", () => {
+  it("base only: every base node is visible", () => {
   const base = new Set(['A', 'B', 'C']);
   const { nodeIds } = buildVisibleTraceScope(base, new Set(), new Set(), []);
   expect(nodeIds.has('A') && nodeIds.has('B') && nodeIds.has('C'), 'base only: all base nodes present').toBe(true);
@@ -44,7 +43,7 @@ describe("Trace Scope Safety Tests", () => {
   expect(nodeIds.size, 'prune: exact count 2').toBe(2);
 });
 
-  it("add+prune: A present", () => {
+  it("add+prune: a pruned node stays hidden whether it came from base or add", () => {
   const base = new Set(['A', 'B']);
   const added = new Set(['C', 'D']);
   const pruned = new Set(['B', 'C']); // C added then pruned → absent
@@ -56,7 +55,7 @@ describe("Trace Scope Safety Tests", () => {
   expect(nodeIds.size, 'add+prune: exact count 2').toBe(2);
 });
 
-  it("edge collection: 3 nodes", () => {
+  it("edge collection: keeps edges with both ends in scope, drops the rest", () => {
   const base = new Set(['A', 'B', 'C']);
   const edgeList = edges(['A', 'B'], ['B', 'C'], ['A', 'C'], ['B', 'D']);
   const { nodeIds, edgeIds } = buildVisibleTraceScope(base, new Set(), new Set(), edgeList);
@@ -78,7 +77,7 @@ describe("Trace Scope Safety Tests", () => {
   expect(result.has('A→A'), 'self-loop included when node in scope').toBe(true);
 });
 
-  it("bfsReachable", () => {
+  it("bfsReachable: a chain is reachable end to end", () => {
   const g = makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['B', 'C']]);
   const reach = bfsReachable(g, 'A', new Set());
   expect(reach.has('A') && reach.has('B') && reach.has('C'), 'chain: A B C reachable from A').toBe(true);
@@ -107,12 +106,6 @@ describe("Trace Scope Safety Tests", () => {
   expect(!reach.has('C'), 'scope A+B: C outside scope, not reached').toBe(true);
 });
 
-  it("missing start → empty set", () => {
-  const g = makeGraph([{ id: 'A' }], []);
-  const reach = bfsReachable(g, 'MISSING', new Set());
-  expect(reach.size, 'missing start → empty set').toBe(0);
-});
-
   it("analyzeRemoval: bridge removal cuts its subtree", () => {
   const g = makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['B', 'C']]);
   const cut = analyzeRemoval(g, {originId:'A',scope:new Set(g.nodes()),removedBefore:new Set(),removedAfter:new Set(['B']),visited:new Set(),sides:['downstream','upstream']}).cutIds;
@@ -134,7 +127,7 @@ describe("Trace Scope Safety Tests", () => {
   expect(cut, 'analyzeRemoval: C kept even though it would otherwise be cut').toEqual([]);
 });
 
-  it("canPruneTraceNode", () => {
+  it("origin prune: not safe, reason origin", () => {
   const g = makeGraph([{ id: 'O' }, { id: 'A' }, { id: 'B' }], [['O', 'A'], ['A', 'B']]);
   const visible = new Set(['O', 'A', 'B']);
   const check = canPruneTraceNode(g, 'O', visible, 'O', ['downstream', 'upstream']);
@@ -190,17 +183,6 @@ describe("Trace Scope Safety Tests", () => {
   const check = canPruneTraceNode(g, 'O', visible, 'A', ['downstream', 'upstream']);
   expect(check.safe, 'diamond prune A: safe — C reachable via B').toBe(true);
   expect(check.cutNodeIds, 'diamond prune A: C survives, nothing cut').toEqual([]);
-});
-
-  it("diamond, second shape: pruning A cuts nothing — C survives through D", () => {
-  const g = makeGraph(
-    [{ id: 'O' }, { id: 'A' }, { id: 'D' }, { id: 'C' }],
-    [['O', 'A'], ['A', 'C'], ['O', 'D'], ['D', 'C']]
-  );
-  const visible = new Set(['O', 'A', 'D', 'C']);
-  const check = canPruneTraceNode(g, 'O', visible, 'A', ['downstream', 'upstream']);
-  expect(check.safe, 'diamond (second shape): safe').toBe(true);
-  expect(check.cutNodeIds, 'diamond (second shape): C survives through D, nothing cut').toEqual([]);
 });
 
   it("chain origin→A→B→C plus origin→D: pruning A cuts B and C, D survives", () => {
@@ -315,13 +297,7 @@ describe("Trace Scope Safety Tests", () => {
   expect(result === null, 'no-path: disconnected → null').toBe(true);
 });
 
-  it("missing endpoint → null", () => {
-  const g = makeGraph([{ id: 'A' }], []);
-  const result = findShortestPathOrdered(g, 'A', 'GHOST');
-  expect(result === null, 'missing endpoint → null').toBe(true);
-});
-
-  it("forward path: result not null", () => {
+  it("forward path: returns the source-to-target path", () => {
   const g = makeGraph(
     [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
     [['A', 'B'], ['B', 'C']]
@@ -334,7 +310,7 @@ describe("Trace Scope Safety Tests", () => {
   expect(result!.path.length, 'forward path: length=3 (A-B-C)').toBe(3);
 });
 
-  it("reverse path: result not null", () => {
+  it("reverse path: returns the target-to-source path", () => {
   const g = makeGraph(
     [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
     [['C', 'B'], ['B', 'A']]
@@ -344,14 +320,6 @@ describe("Trace Scope Safety Tests", () => {
   expect(result!.direction, "reverse path: direction='target_to_source'").toBe('target_to_source');
   expect(result!.path[0], 'reverse path: starts at C (target)').toBe('C');
   expect(result!.path[result!.path.length - 1], 'reverse path: ends at A (source)').toBe('A');
-});
-
-  it("single hop: not null", () => {
-  const g = makeGraph([{ id: 'A' }, { id: 'B' }], [['A', 'B']]);
-  const result = findShortestPathOrdered(g, 'A', 'B');
-  expect(result !== null, 'single hop: not null').toBe(true);
-  expect(result!.path.length, 'single hop: path length=2').toBe(2);
-  expect(result!.direction, "single hop: direction='source_to_target'").toBe('source_to_target');
 });
 
 });

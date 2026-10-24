@@ -3,7 +3,7 @@
  * One place that turns a failed connect or query into the text and actions the user sees.
  *
  * The driver's own message is shown verbatim behind the connection name; only the actions are chosen
- * by error number, code or message pattern. Both providers use it.
+ * by error number, code or message pattern. The built-in provider uses it.
  */
 
 import * as vscode from 'vscode';
@@ -13,6 +13,21 @@ import { readBuiltInConnections, upsertBuiltInConnection, describeConnection, ty
 import { DbConnectionError, MicrosoftSignInError, type ConnectionErrorTarget, type DbSession } from './dbSession';
 import { pickAccount, signInForSql } from './entraSignIn';
 import { redactSecrets } from '../../utils/redact';
+import { errorMessage } from '../../utils/errorMessage';
+
+/** The error target of a saved connection opened on `database`. */
+export function builtInTarget(connection: BuiltInConnection, database: string | undefined): ConnectionErrorTarget {
+  return {
+    name: connection.name,
+    server: connection.server,
+    port: connection.port,
+    database,
+    user: connection.user,
+    authenticationType: connection.authenticationType,
+    connectionId: connection.id,
+    tenantId: connection.tenantId,
+  };
+}
 
 /** Identifier of an action a connection error can offer. */
 export type ConnectionErrorActionId =
@@ -70,10 +85,6 @@ const TOKEN_REJECTED_HINT = 'The server did not accept this Microsoft account. C
 const SIGN_IN_TEXT = /Microsoft sign-in did not complete|User did not consent to login/i;
 const CANNOT_OPEN_DATABASE_TEXT = /Cannot open database\s+["'].+["']\s+requested by the login|not able to access the database/i;
 
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
 function errorCode(err: unknown): string | undefined {
   const code = (err as { code?: unknown } | undefined)?.code;
   return typeof code === 'string' ? code : undefined;
@@ -85,13 +96,7 @@ function errorNumber(err: unknown): number | undefined {
   return typeof value === 'number' ? value : undefined;
 }
 
-/**
- * Whether an error came from the SQL driver rather than from this extension's own logic.
- *
- * @remarks
- * Driver errors carry a numeric SQL Server error number or an `E…` code (`ELOGIN`, `ETIMEOUT`,
- * `ESOCKET`, `EREQUEST`).
- */
+/** Whether an error came from the SQL driver rather than from this extension's own logic. */
 export function isDriverError(err: unknown): boolean {
   return errorNumber(err) !== undefined || /^E[A-Z]+$/.test(errorCode(err) ?? '');
 }
@@ -118,20 +123,7 @@ function grantStatement(user: string | undefined): string {
   return `GRANT VIEW DEFINITION TO ${principal};`;
 }
 
-/**
- * Describes a connection or query failure for the user.
- *
- * @remarks
- * `message` is `<connection name>: <original driver text>` with credential-shaped text removed, plus
- * one hint when the server rejects a Microsoft token. The
- * actions depend on the error class; those that manage a saved built-in connection are offered only
- * for the built-in provider, and Retry only when the caller supplies a retry hook. Each action runs
- * on the user's click and any retry it triggers is a single attempt, never a loop.
- *
- * @param err - The raw error from the driver or the mssql extension.
- * @param target - The connection the error belongs to.
- * @param hooks - Caller-supplied capabilities the actions use.
- */
+/** Describes a connection or query failure for the user. */
 export function describeConnectionError(
   err: unknown,
   target: ConnectionErrorTarget,
@@ -139,7 +131,7 @@ export function describeConnectionError(
 ): { message: string; actions: ConnectionErrorAction[] } {
   const kind = classify(err);
   const message = `${target.name}: ${redactSecrets(errorMessage(err))}${kind === 'tokenRejected' ? ` ${TOKEN_REJECTED_HINT}` : ''}`;
-  const builtIn = target.provider === 'builtIn' && !!target.connectionId;
+  const saved = !!target.connectionId;
   const connectionId = target.connectionId;
 
   const make = (id: ConnectionErrorActionId, run: () => Promise<void>): ConnectionErrorAction => ({
@@ -194,7 +186,7 @@ export function describeConnectionError(
   const entra = target.authenticationType === 'entraId' || /token-identified principal/i.test(errorMessage(err));
   const wanted: ConnectionErrorAction[] = [];
   const add = (...items: Array<ConnectionErrorAction | undefined>) => wanted.push(...items.filter((a): a is ConnectionErrorAction => !!a));
-  const managed = (factory: () => ConnectionErrorAction) => (builtIn ? factory() : undefined);
+  const managed = (factory: () => ConnectionErrorAction) => (saved ? factory() : undefined);
   const retrying = () => (hooks.retry ? actions.retry() : undefined);
 
   switch (kind) {
@@ -229,12 +221,7 @@ export function describeConnectionError(
   return { message, actions: wanted };
 }
 
-/**
- * Asks, in a modal, whether to trust a server certificate without validating it.
- *
- * @param connection - The server the certificate belongs to.
- * @returns `true` only when the user confirmed.
- */
+/** Asks, in a modal, whether to trust a server certificate without validating it. */
 export async function confirmTrustServerCertificate(connection: Pick<BuiltInConnection, 'server' | 'port' | 'database'>): Promise<boolean> {
   const confirmed = await vscode.window.showWarningMessage(
     `Trust the certificate of ${describeConnection(connection)} without validating it? Do this only for a server you know uses a self-signed certificate, such as a development or test server.`,
@@ -244,15 +231,7 @@ export async function confirmTrustServerCertificate(connection: Pick<BuiltInConn
   return confirmed === TRUST_CERTIFICATE;
 }
 
-/**
- * Logs a connection error once, shows it with its actions, and runs the action the user picks.
- *
- * @remarks
- * Redacted driver detail goes to the log at debug level; the toast carries the described message, never
- * the raw error alone. The returned `message` is for callers that also show the text inline.
- *
- * @returns The described message, and a promise that settles once the toast is answered or dismissed.
- */
+/** Logs a connection error once, shows it with its actions, and runs the action the user picks. */
 export function reportConnectionError(
   err: unknown,
   target: ConnectionErrorTarget,
@@ -277,27 +256,17 @@ export function reportConnectionError(
   return { message, actions, answered };
 }
 
-/**
- * Builds the error target for a session that is already open.
- *
- * @param session - The open session.
- */
+/** Builds the error target for a session that is already open. */
 export function targetFromSession(session: DbSession): ConnectionErrorTarget {
-  return targetFromStored(session.connectionInfo, session.provider);
+  return targetFromStored(session.connectionInfo);
 }
 
-/**
- * Builds the error target for a stored connection record.
- *
- * @param info - The stored record.
- * @param provider - The provider that is connecting.
- */
-export function targetFromStored(info: StoredConnectionInfo, provider: ConnectionErrorTarget['provider']): ConnectionErrorTarget {
-  const saved = provider === 'builtIn' && info.connectionId
+/** Builds the error target for a stored connection record. */
+export function targetFromStored(info: StoredConnectionInfo): ConnectionErrorTarget {
+  const saved = info.connectionId
     ? readBuiltInConnections().find((c) => c.id === info.connectionId)
     : undefined;
   return {
-    provider,
     name: saved?.name ?? describeConnection({ server: info.server, port: info.port, database: info.database || undefined }),
     server: info.server,
     port: info.port,

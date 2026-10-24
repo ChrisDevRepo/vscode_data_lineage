@@ -9,7 +9,6 @@ import type { DacpacLoaderState } from '../hooks/useDacpacLoader';
 import type { DacpacConnection, DatabaseConnection, StoredConnectionInfo } from '../engine/projectStore';
 import { generateProjectName } from '../engine/projectStore';
 import { exceedsObjectLimit, formatObjectLimitMessage } from '../engine/modelFilters';
-import { MSSQL_RETIRING_NOTICE, WARNING_ICON_PATH } from './mssqlRetiring';
 
 interface CreateFlowProps {
   /** The state object from the `useDacpacLoader` hook, managing the connection lifecycle. */
@@ -18,27 +17,11 @@ interface CreateFlowProps {
   maxNodes: number;
   /** Callback triggered to return to the previous screen (StartScreen). */
   onBack: () => void;
-  /**
-   * Callback triggered to finalize project creation and start the visualization.
-   * @param projectName - The user-defined or auto-generated name for the project.
-   * @param connection - The connection metadata (Dacpac or Database).
-   */
+  /** Callback triggered to finalize project creation and start the visualization. */
   onVisualize: (projectName: string, connection: DacpacConnection | DatabaseConnection | null) => void;
 }
 
-/**
- * A wizard-style component that guides the user through creating a new lineage visualization.
- *
- * @remarks
- * The flow consists of two logical phases:
- * 1. **Source Selection**: The user chooses between opening a .dacpac file or connecting to a live database.
- * 2. **Configuration**: Once a source is partially loaded (Phase 1), the user can:
- *    - Define a project name (auto-generated if left blank).
- *    - Select specific schemas to include in the visualization.
- *    - View warnings if the selected scope exceeds the recommended node limit.
- *
- * @param props - The component props.
- */
+/** A wizard-style component that guides the user through creating a new lineage visualization. */
 export const CreateFlow = memo(function CreateFlow({
   loader,
   maxNodes,
@@ -61,9 +44,7 @@ export const CreateFlow = memo(function CreateFlow({
   }, [schemaOrModel, loader.selectedSchemas]);
   const overLimit = exceedsObjectLimit(selectedCount, maxNodes);
 
-  /**
-   * Generates a default project name based on the current connection metadata.
-   */
+  /** Generates a default project name based on the current connection metadata. */
   const autoName = useCallback(() => {
     if (!loader.fileName) return '';
     if (loader.filePath) {
@@ -86,9 +67,7 @@ export const CreateFlow = memo(function CreateFlow({
 
   const displayName = projectName || autoName();
 
-  /**
-   * Handles the final 'Visualize' action.
-   */
+  /** Handles the final 'Visualize' action. */
   const handleVisualize = useCallback(() => {
     const name = displayName.trim() || autoName().trim() || loader.fileName || 'Project';
     if (loader.filePath) {
@@ -166,14 +145,12 @@ export const CreateFlow = memo(function CreateFlow({
             <div className="flex-1 ln-border-top" />
           </div>
 
-          {/* Connect to Database — full width, shown-but-disabled when MSSQL unavailable */}
-          <Tooltip content={loader.mssqlAvailable === false
-              ? 'Requires the SQL Server (mssql) extension, or switch to the built-in connection'
-              : 'Connect to database'} asChild>
+          {/* Connect to Database */}
+          <Tooltip content="Connect to database" asChild>
             <button
               className="w-full flex items-center gap-2 px-3 py-2.5 rounded-sm text-sm text-left ln-file-picker ln-list-item"
               onClick={loader.connectToDatabase}
-              disabled={loader.isLoading || loader.mssqlAvailable !== true}
+              disabled={loader.isLoading}
             >
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 shrink-0">
               <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 5.625c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
@@ -184,20 +161,6 @@ export const CreateFlow = memo(function CreateFlow({
             {isPhase1Loading && loader.loadingContext === 'database' && <InlineSpinner />}
           </button>
           </Tooltip>
-
-          {loader.connectionProvider === 'mssqlExtension' && (
-            <div role="status" className="flex items-start gap-2 px-3 py-2 rounded-sm text-xs ln-provider-notice">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true">
-                <path strokeLinecap="round" strokeLinejoin="round" d={WARNING_ICON_PATH} />
-              </svg>
-              <div className="min-w-0 space-y-2">
-                <p>{MSSQL_RETIRING_NOTICE}</p>
-                <Button variant="secondary" className="ln-btn-compact" onClick={() => loader.switchToBuiltInConnection()}>
-                  Use Built-in Connection
-                </Button>
-              </div>
-            </div>
-          )}
 
           {loader.status && (
             <StatusMessage text={loader.status.text} type={loader.status.type} />

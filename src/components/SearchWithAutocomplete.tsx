@@ -155,7 +155,6 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
             onSelect={selectSuggestion}
             onHover={setSelectedIndex}
             dropdownRef={mergedDropdownRef}
-            portal
             style={floatingStyles}
             renderAction={onStartTrace ? (node) => {
               const trigger = disabledControl(

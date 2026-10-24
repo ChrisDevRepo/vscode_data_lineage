@@ -1,0 +1,488 @@
+# One catalog. The scripted, headless, Electron, and Playwright runners each loop
+# the rows tagged for them. Prompts, commands, and expected results live only here.
+# Scripted rows test backend contracts with supplied mappings, not model inference.
+# Rows with contract: stored-arrival share the producer/table/receiver fixture.
+# Host expect fields are graph, phase, and terminal (turn outcome ok, error, or cancelled).
+# Prompt sentences are not scripted rows.
+cases:
+  # Shared topology/expectations exercise the same command in both modes.
+  - id: self-prune-unvisited-diamond
+    story: Removing current cuts both unvisited arms, their join and the tail after the diamond.
+    runners: [scripted]
+    contract: self-prune
+    mode: [bb, ct]
+    route: inherited
+    graph:
+      edges: [[Origin, Current], [Current, Left], [Current, Right], [Left, Join], [Right, Join], [Join, Tail]]
+    expect:
+      eligible: true
+      unvisited: [Left, Right, Join, Tail]
+      pruned: ["[d].[Current]", "[d].[Join]", "[d].[Left]", "[d].[Right]", "[d].[Tail]"]
+      inspected: []
+      kept: [Origin]
+      edges: []
+
+  - id: self-prune-diamond-with-live-bypass
+    story: Current and its exclusive arms leave, while the sibling bypass retains the join and its tail.
+    runners: [scripted]
+    contract: self-prune
+    mode: [bb, ct]
+    route: inherited
+    graph:
+      edges: [[Origin, Current], [Origin, Sibling], [Current, Left], [Current, Right], [Left, Join], [Right, Join], [Sibling, Join], [Join, Tail]]
+    expect:
+      eligible: true
+      unvisited: [Left, Right, Sibling, Join, Tail]
+      pruned: ["[d].[Current]", "[d].[Left]", "[d].[Right]"]
+      inspected: [Sibling, Join, Tail]
+      kept: [Origin, Sibling, Join, Tail]
+      edges: [[Origin, Sibling], [Sibling, Join], [Join, Tail]]
+
+  - id: self-prune-two-unvisited-diamonds
+    story: A cut before two consecutive diamonds removes both joins and every exclusive unvisited continuation.
+    runners: [scripted]
+    contract: self-prune
+    mode: [bb, ct]
+    route: inherited
+    graph:
+      edges: [[Origin, Current], [Current, Left], [Current, Right], [Left, Join], [Right, Join], [Join, LowerLeft], [Join, LowerRight], [LowerLeft, FinalJoin], [LowerRight, FinalJoin], [FinalJoin, Tail]]
+    expect:
+      eligible: true
+      unvisited: [Left, Right, Join, LowerLeft, LowerRight, FinalJoin, Tail]
+      pruned: ["[d].[Current]", "[d].[FinalJoin]", "[d].[Join]", "[d].[Left]", "[d].[LowerLeft]", "[d].[LowerRight]", "[d].[Right]", "[d].[Tail]"]
+      inspected: []
+      kept: [Origin]
+      edges: []
+
+  - id: upstream-self-prune-unvisited-diamond
+    story: An unrelated writer is removed along with both exclusive upstream arms, their common source and its source.
+    runners: [scripted]
+    contract: self-prune
+    mode: [bb, ct]
+    direction: upstream
+    route: inherited
+    graph:
+      edges: [[Current, Origin], [Left, Current], [Right, Current], [Join, Left], [Join, Right], [Tail, Join]]
+    expect:
+      eligible: true
+      unvisited: [Left, Right, Join, Tail]
+      pruned: ["[d].[Current]", "[d].[Join]", "[d].[Left]", "[d].[Right]", "[d].[Tail]"]
+      inspected: []
+      kept: [Origin]
+      edges: []
+
+  - id: passthrough-self-prune-exclusive-tail
+    story: An irrelevant reader removes itself and its unvisited exclusive tail.
+    runners: [scripted]
+    contract: self-prune
+    mode: [bb, ct]
+    route: inherited
+    graph:
+      edges: [[Origin, Current], [Current, Tail]]
+    expect: &exclusive_tail_expect
+      eligible: true
+      unvisited: [Tail]
+      pruned: ["[d].[Current]", "[d].[Tail]"]
+      inspected: []
+      kept: [Origin]
+      edges: []
+
+  - id: upstream-passthrough-writer-self-prune
+    story: An unrelated writer removes itself and its exclusive upstream source.
+    runners: [scripted]
+    contract: self-prune
+    mode: [bb, ct]
+    direction: upstream
+    route: inherited
+    graph:
+      edges: [[Current, Origin], [Tail, Current]]
+    expect: *exclusive_tail_expect
+
+  - id: passthrough-self-prune-shared-descendant
+    story: A sibling still supports the unvisited shared descendant after current is removed.
+    runners: [scripted]
+    contract: self-prune
+    mode: [bb, ct]
+    route: inherited
+    graph:
+      edges: [[Origin, Current], [Current, Tail], [Origin, Sibling], [Sibling, Tail]]
+    expect:
+      eligible: true
+      unvisited: [Sibling, Tail]
+      pruned: ["[d].[Current]"]
+      inspected: [Sibling, Tail]
+      kept: [Origin, Sibling, Tail]
+      edges: [[Origin, Sibling], [Sibling, Tail]]
+
+  - id: bb-authored-question-cannot-self-prune
+    story: A directly analyzed route offers no self-prune command.
+    runners: [scripted]
+    contract: self-prune
+    mode: bb
+    route: authored
+    graph:
+      edges: [[Origin, Current], [Current, Tail]]
+    expect: { eligible: false, pruned: [] }
+
+  - id: bb-origin-cannot-self-prune
+    story: The approved origin cannot remove itself.
+    runners: [scripted]
+    contract: self-prune
+    mode: bb
+    route: root
+    graph:
+      edges: [[Origin, Current], [Current, Tail]]
+    expect: { eligible: false, pruned: [] }
+
+  - id: bb-authored-question-after-passthrough-can-self-prune
+    story: An explicit question does not block whole-node pruning after passthrough routing.
+    runners: [scripted]
+    contract: self-prune
+    mode: bb
+    route: authored
+    through_storage: true
+    graph:
+      edges: [[Origin, Current], [Current, Tail]]
+    expect: *exclusive_tail_expect
+
+  - id: ct-accepted-terminal-cannot-self-prune
+    story: A mapped endpoint that is final stays in the trace.
+    runners: [scripted]
+    contract: self-prune
+    mode: ct
+    route: mapped
+    graph:
+      edges: [[Current, Origin], [Tail, Current]]
+    expect: { eligible: false, pruned: [] }
+
+  - id: ct-mapped-node-after-passthrough-cannot-self-prune
+    story: Whole-node pruning after passthrough is refused while a committed column mapping names the node.
+    runners: [scripted]
+    contract: self-prune
+    mode: ct
+    route: mapped
+    through_storage: true
+    graph:
+      edges: [[Current, Origin], [Tail, Current]]
+    expect: { eligible: false, pruned: [] }
+
+  - id: ct-function-obligation-cannot-self-prune
+    story: A direct function investigation without passthrough offers no self-prune command.
+    runners: [scripted]
+    contract: self-prune
+    mode: ct
+    route: function
+    graph:
+      edges: [[Current, Origin]]
+    expect: { eligible: false, pruned: [] }
+
+  - id: bb-merged-direct-and-storage-arrival-cannot-self-prune
+    story: A direct authored arrival protects a node even when storage also forwards a candidate.
+    runners: [scripted]
+    contract: self-prune
+    mode: bb
+    route: mixed
+    graph:
+      edges: [[Origin, Left], [Origin, Right], [Left, Current], [Right, Current], [Current, Tail]]
+    expect: { eligible: false, unvisited: [Tail], pruned: [] }
+
+  - id: ct-held-mapping-after-passthrough-can-self-prune
+    story: Whole-node pruning after passthrough clears held findings and cuts the unvisited tail.
+    runners: [scripted]
+    contract: self-prune
+    mode: ct
+    route: held-mapping
+    graph:
+      edges: [[Origin, Current], [Current, Tail]]
+    expect: *exclusive_tail_expect
+
+  - id: bb-cycle-after-passthrough-can-self-prune
+    story: Current is cut while the independent origin route keeps the unvisited sibling in the cycle.
+    runners: [scripted]
+    contract: self-prune
+    mode: bb
+    route: pending-sender
+    graph:
+      edges: [[Origin, Current], [Origin, Sibling], [Current, Sibling], [Sibling, Current], [Current, Tail]]
+    expect: { eligible: true, unvisited: [Sibling, Tail], pruned: ["[d].[Current]", "[d].[Tail]"], inspected: [Sibling], kept: [Origin, Sibling], edges: [[Origin, Sibling]] }
+
+  - id: ct-function-after-passthrough-can-self-prune
+    story: A scalar function reached through passthrough uses the same whole-node prune command.
+    runners: [scripted]
+    contract: self-prune
+    mode: ct
+    route: function
+    through_storage: true
+    graph:
+      edges: [[Current, Origin]]
+    expect: { eligible: true, unvisited: [], pruned: ["[d].[Current]"], inspected: [], kept: [Origin], edges: [] }
+
+  - id: ct-stored-procedure-all-used
+    runners: [scripted]
+    contract: stored-arrival
+    receiver_type: procedure
+    sql: INSERT d.Sink(ResultX,ResultY) SELECT X,Y FROM d.Stored;
+    receiver_columns: []
+    sink_columns: [ResultX, ResultY]
+    column_flow:
+      - { out_col: ResultX, writes_to: { node: "[d].[Sink]", col: ResultX }, upstream_columns: [{ node: "[d].[Stored]", col: X }] }
+      - { out_col: ResultY, writes_to: { node: "[d].[Sink]", col: ResultY }, upstream_columns: [{ node: "[d].[Stored]", col: Y }] }
+    expect:
+      mapped_inputs: [X, Y]
+      receiver_rows: [X, ResultX, Y, ResultY]
+      sink_mode: ct
+      sink_columns: [ResultX, ResultY]
+
+  - id: ct-stored-procedure-one-unused
+    runners: [scripted]
+    contract: stored-arrival
+    receiver_type: procedure
+    sql: INSERT d.Sink(ResultX) SELECT X FROM d.Stored;
+    receiver_columns: []
+    sink_columns: [ResultX]
+    column_flow:
+      - { out_col: ResultX, writes_to: { node: "[d].[Sink]", col: ResultX }, upstream_columns: [{ node: "[d].[Stored]", col: X }] }
+    expect:
+      mapped_inputs: [X]
+      receiver_rows: [X, ResultX]
+      sink_mode: ct
+      sink_columns: [ResultX]
+
+  - id: ct-stored-procedure-all-unused
+    runners: [scripted]
+    contract: stored-arrival
+    receiver_type: procedure
+    sql: INSERT d.Sink(Unrelated) SELECT 42 FROM d.Stored;
+    receiver_columns: []
+    sink_columns: [Unrelated]
+    column_flow: []
+    expect:
+      mapped_inputs: []
+      receiver_rows: []
+      sink_mode: bb
+      sink_columns: []
+
+  - id: ct-stored-view-all-used
+    runners: [scripted]
+    contract: stored-arrival
+    receiver_type: view
+    sql: CREATE VIEW d.Receiver AS SELECT X AS ResultX,Y AS ResultY FROM d.Stored;
+    receiver_columns: [ResultX, ResultY]
+    sink_columns: [ResultX, ResultY]
+    column_flow:
+      - { out_col: ResultX, upstream_columns: [{ node: "[d].[Stored]", col: X }] }
+      - { out_col: ResultY, upstream_columns: [{ node: "[d].[Stored]", col: Y }] }
+    expect:
+      mapped_inputs: [X, Y]
+      receiver_rows: [ResultX, ResultY]
+      sink_mode: ct
+      sink_columns: [ResultX, ResultY]
+
+  - id: ct-stored-view-one-unused
+    runners: [scripted]
+    contract: stored-arrival
+    receiver_type: view
+    sql: CREATE VIEW d.Receiver AS SELECT X AS ResultX FROM d.Stored;
+    receiver_columns: [ResultX]
+    sink_columns: [ResultX]
+    column_flow:
+      - { out_col: ResultX, upstream_columns: [{ node: "[d].[Stored]", col: X }] }
+    expect:
+      mapped_inputs: [X]
+      receiver_rows: [ResultX]
+      sink_mode: ct
+      sink_columns: [ResultX]
+
+  - id: ct-stored-view-all-unused
+    runners: [scripted]
+    contract: stored-arrival
+    receiver_type: view
+    sql: CREATE VIEW d.Receiver AS SELECT 42 AS Unrelated FROM d.Stored;
+    receiver_columns: [Unrelated]
+    sink_columns: [Unrelated]
+    column_flow: []
+    expect:
+      mapped_inputs: []
+      receiver_rows: []
+      sink_mode: bb
+      sink_columns: []
+
+  - id: ct-literal-not-a-column
+    runners: [scripted]
+    active: [Currency]
+    nodes:
+      - { id: rpt, type: view, columns: [Currency] }
+      - { id: fx, type: view, columns: [Rate] }
+      - { id: bare, type: view, columns: [] }
+    focus: rpt
+    out: Currency
+    direction: upstream
+    matrix:
+      - { node: fx, col: "'EUR'" }
+      - { node: fx, col: "N'EUR'" }
+      - { node: fx, col: "0" }
+      - { node: fx, col: "1.5" }
+      - { node: bare, col: "'EUR'" }
+      - { node: bare, col: "N'EUR'" }
+      - { node: bare, col: "0" }
+      - { node: bare, col: "1.5" }
+    expect:
+      edges: []
+      invalid_kind: bad_contributor_col
+
+  - id: ct-row-role-stored-as-declared
+    runners: [scripted]
+    active: [Total]
+    nodes:
+      - { id: rpt, type: view, columns: [Total] }
+      - { id: src, type: view, columns: [Amount, IsOpen, StoreId] }
+    focus: rpt
+    out: Total
+    direction: upstream
+    roots: [{ node: rpt, col: Total }]
+    upstream:
+      - { node: src, col: Amount, transforms: [aggregate] }
+      - { node: src, col: IsOpen, transforms: [filter], note: "WHERE IsOpen = 1" }
+      - { node: src, col: StoreId, transforms: [combine, filter] }
+    expect:
+      edges: [Amount, IsOpen, StoreId]
+
+  - id: ct-row-role-keeps-value-and-filter
+    runners: [scripted]
+    active: [Total]
+    nodes:
+      - { id: rpt, type: view, columns: [Total] }
+      - { id: src, type: view, columns: [Amount, IsOpen, StoreId] }
+    focus: rpt
+    out: Total
+    direction: upstream
+    roots: [{ node: rpt, col: Total }]
+    upstream:
+      - { node: src, col: Amount, transforms: [compute, filter] }
+    expect:
+      edges: [Amount]
+
+  - id: ct-row-role-keeps-unclassified-column
+    runners: [scripted]
+    active: [Total]
+    nodes:
+      - { id: rpt, type: view, columns: [Total] }
+      - { id: src, type: view, columns: [Amount, IsOpen, StoreId] }
+    focus: rpt
+    out: Total
+    direction: upstream
+    roots: [{ node: rpt, col: Total }]
+    upstream:
+      - { node: src, col: Amount }
+    expect:
+      edges: [Amount]
+
+  - id: ct-row-role-only-stored
+    runners: [scripted]
+    active: [Total]
+    nodes:
+      - { id: rpt, type: view, columns: [Total] }
+      - { id: src, type: view, columns: [Amount, IsOpen, StoreId] }
+    focus: rpt
+    out: Total
+    direction: upstream
+    roots: [{ node: rpt, col: Total }]
+    upstream:
+      - { node: src, col: IsOpen, transforms: [filter] }
+    expect:
+      edges: [IsOpen]
+
+  - id: ct-row-role-missing-key-column
+    runners: [scripted]
+    active: [Total]
+    nodes:
+      - { id: rpt, type: view, columns: [Total] }
+      - { id: src, type: view, columns: [Amount, IsOpen, StoreId] }
+    focus: rpt
+    out: Total
+    direction: upstream
+    roots: [{ node: rpt, col: Total }]
+    upstream:
+      - { node: src, col: Missing, transforms: [filter] }
+    expect:
+      invalid_kind: bad_contributor_col
+
+  - id: ct-detached-entry-stages-no-edge
+    runners: [scripted]
+    active: [Total]
+    nodes:
+      - { id: rpt, type: view, columns: [Total, Other] }
+      - { id: src, type: view, columns: [Amount] }
+    focus: rpt
+    out: Total
+    direction: upstream
+    roots: [{ node: rpt, col: Other }]
+    upstream:
+      - { node: src, col: Amount }
+    expect:
+      edges: [Amount]
+      invalid: []
+
+  - id: ct-extra-sibling-many-to-many
+    runners: [scripted]
+    active: [Total]
+    nodes:
+      - { id: rpt, type: view, columns: [Total, Sibling] }
+      - { id: src, type: view, columns: [Amount, Other] }
+    focus: rpt
+    out: Total
+    direction: upstream
+    roots: [{ node: rpt, col: Total }]
+    upstream:
+      - { node: src, col: Amount }
+    extra:
+      - out: Sibling
+        upstream:
+          - { node: src, col: Other, note: "Sibling stays in the narrative." }
+    expect:
+      edges: [Amount, Other]
+      invalid: []
+
+  - id: playwright-open-demo
+    runners: [playwright]
+    command: "Data Lineage: Open Demo"
+    expect:
+      graph: true
+
+  - id: electron-fixture-trace
+    runners: [electron]
+    prompt: "@lineage /trace [dbo].[ufnGetProductDealerPrice]"
+    expect:
+      phase: awaiting_gate
+
+  - id: headless-summary
+    runners: [headless]
+    dacpac: assets/demo.dacpac
+    prompt: "Summarize the loaded database and its main dependencies."
+    followup:
+      - "What are the most connected hub tables in this database?"
+    expect:
+      terminal: ok
+      preview_chars_min: 150
+      must_contain: ["Production", "Sales"]
+
+  - id: headless-procedure-dependencies
+    runners: [headless]
+    dacpac: assets/demo.dacpac
+    prompt: "@lineage /trace [dbo].[uspGetBillOfMaterials]"
+    gate:
+      - kind: approve
+    expect:
+      terminal: ok
+      preview_chars_min: 100
+
+  - id: headless-view-chain
+    runners: [headless]
+    dacpac: assets/demo.dacpac
+    prompt: "/trace Show dependencies for [Sales].[vSalesPerson]."
+    gate:
+      - kind: approve
+    expect:
+      terminal: ok
+      preview_chars_min: 100
+

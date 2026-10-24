@@ -1,7 +1,4 @@
-/**
- * Pins connection error presentation: the original driver text behind the connection name, the
- * actions chosen per error class for each provider, what each action calls, and secret redaction.
- */
+/** Pins connection error presentation: the original driver text behind the connection name, the actions chosen per error class for each provider, what each action calls, and secret redaction. */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
@@ -38,18 +35,17 @@ vi.mock('vscode', async (importOriginal) => {
 });
 
 const {
-  describeConnectionError, reportConnectionError, isDriverError, targetFromStored, CONNECTION_ERROR_LABELS,
+  describeConnectionError, reportConnectionError, isDriverError, targetFromStored,
 } = await import('../../../../src/engine/db/connectionErrors');
 const { redactSecrets } = await import('../../../../src/utils/redact');
 const { MicrosoftSignInError } = await import('../../../../src/engine/db/dbSession');
 
 const NAME = 'Local Docker AW';
 const builtIn = {
-  provider: 'builtIn' as const, name: NAME, server: 'localhost', port: 1433, database: 'Sales', user: 'dlv_reader',
+  name: NAME, server: 'localhost', port: 1433, database: 'Sales', user: 'dlv_reader',
   authenticationType: 'sqlLogin', connectionId: 'c1', tenantId: 'tenant-1',
 };
 const entra = { ...builtIn, authenticationType: 'entraId', user: undefined };
-const viaMssql = { provider: 'mssqlExtension' as const, name: NAME, server: 'localhost', database: 'Sales', user: 'dlv_reader' };
 
 const driver = (message: string, extra: Record<string, unknown> = {}) => Object.assign(new Error(message), extra);
 
@@ -101,11 +97,6 @@ describe('describeConnectionError — text', () => {
     expect(describeConnectionError(err, target ?? builtIn, hooks).message).toBe(`${NAME}: ${err.message}`);
   });
 
-  it('never shows a driver error as a bare message without the connection name', () => {
-    const { message } = describeConnectionError(driver("Login failed for user 'dlv_reader'."), builtIn, hooks);
-    expect(message.startsWith(`${NAME}: `)).toBe(true);
-  });
-
   it('removes password, connection-string and token text', () => {
     const jwt = 'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJodHRwczovL2RhdGFiYXNl.c2lnbmF0dXJlMTIzNDU2';
     const err = driver(`Login failed. Server=x;User Id=u;Password=hunter2;pwd=abc123 token ${jwt} Authorization: Bearer abcdefghijkl0123`);
@@ -121,10 +112,6 @@ describe('describeConnectionError — text', () => {
     const text = redactSecrets('Config {"server":"x","password":"hun\\"ter2","accessToken":"tok-9876"} Password: s3cr3t, token: abcd');
     for (const secret of ['hun', 'ter2', 'tok-9876', 's3cr3t', 'abcd']) expect(text).not.toContain(secret);
     expect(text).toContain('"server":"x"');
-  });
-
-  it('redactSecrets leaves ordinary text alone', () => {
-    expect(redactSecrets("Cannot open database \"Sales\" requested by the login.")).toBe("Cannot open database \"Sales\" requested by the login.");
   });
 
   it.each([
@@ -215,6 +202,7 @@ describe('describeConnectionError — text', () => {
     'Cannot set monkey=1 for this session.',
     'Cannot read key=1 or keys=2 or primary_key=3 from the table.',
     'Violation of foreign key: x on table Orders; partition_key=4 and api_key_id=5 were kept.',
+    'Cannot open database "Sales" requested by the login.',
     'Invalid object name [dbo].[ApiKeys] in SELECT * FROM [dbo].[ApiKeys] WHERE [Key] = \'x\'.',
   ])('redactSecrets leaves ordinary text unchanged: %s', (text) => {
     expect(redactSecrets(text)).toBe(text);
@@ -262,21 +250,14 @@ describe('describeConnectionError — rejected Microsoft token', () => {
     expect(message).toMatch(/Microsoft Entra admin/);
   });
 
-  it('offers another account and editing for a built-in connection, nothing for the mssql extension', () => {
+  it('offers another account and editing for an Entra connection', () => {
     expect(ids(rejected, entra as never)).toEqual(['signInAnotherAccount', 'editConnection']);
-    expect(ids(rejected, viaMssql)).toEqual([]);
   });
 });
 
 describe('describeConnectionError — actions', () => {
   it.each(cases)('$row → $expected', ({ err, target, expected }) => {
     expect(ids(err, target ?? builtIn)).toEqual(expected);
-  });
-
-  it('labels are the fixed button texts', () => {
-    const labels = describeConnectionError(driver("Login failed for user 'x'.", { number: 18456 }), builtIn, hooks).actions.map((a) => a.label);
-    expect(labels).toEqual([CONNECTION_ERROR_LABELS.updatePassword, CONNECTION_ERROR_LABELS.chooseDatabase, CONNECTION_ERROR_LABELS.editConnection]);
-    expect(CONNECTION_ERROR_LABELS.copyGrantStatement).toBe('Copy GRANT Statement');
   });
 
   it('a SQL login failure without a database offers no Choose Database', () => {
@@ -286,18 +267,6 @@ describe('describeConnectionError — actions', () => {
   it('offers Retry only when the caller can retry, and Choose Database only when it can ask', () => {
     expect(ids(driver('x', { code: 'ETIMEOUT' }), builtIn, {})).toEqual(['editConnection']);
     expect(ids(driver('x', { number: 4060 }), builtIn, { retry })).toEqual(['editConnection']);
-  });
-
-  it('the mssql provider gets no built-in connection management actions', () => {
-    expect(ids(driver("Login failed for user 'dlv_reader'."), viaMssql)).toEqual([]);
-    expect(ids(driver('Database is not currently available.'), viaMssql)).toEqual(['retry']);
-    expect(ids(driver('The SELECT permission was denied on the object x.'), viaMssql)).toEqual(['copyGrantStatement']);
-    expect(ids(driver('boom'), viaMssql)).toEqual(['showLog']);
-  });
-
-  it('classifies mssql-extension errors by message text alone', () => {
-    expect(ids(driver("Cannot open database \"Sales\" requested by the login. The login failed."), viaMssql, {})).toEqual([]);
-    expect(ids(driver('Failed to connect to localhost:1433 in 15000ms'), viaMssql)).toEqual(['retry']);
   });
 });
 
@@ -378,7 +347,9 @@ describe('action handlers', () => {
   });
 
   it('Copy GRANT Statement copies only VIEW DEFINITION for the login, bracket-quoted', async () => {
-    await run(driver('x', { number: 229 }), { ...builtIn, user: 'we]ird' }, 'copyGrantStatement');
+    const error = driver('x', { number: 229 });
+    expect(describeConnectionError(error, builtIn, hooks).actions[0].label).toBe('Copy GRANT Statement');
+    await run(error, { ...builtIn, user: 'we]ird' }, 'copyGrantStatement');
     expect(host.writeText).toHaveBeenCalledWith('GRANT VIEW DEFINITION TO [we]]ird];');
   });
 
@@ -454,12 +425,12 @@ describe('helpers', () => {
   });
 
   it('targetFromStored names a built-in project connection by its saved name', () => {
-    const target = targetFromStored({ server: 'localhost', database: 'Sales', provider: 'builtIn', connectionId: 'c1', user: 'dlv_reader' }, 'builtIn');
-    expect(target).toMatchObject({ name: NAME, connectionId: 'c1', provider: 'builtIn' });
+    const target = targetFromStored({ server: 'localhost', database: 'Sales', connectionId: 'c1', user: 'dlv_reader' });
+    expect(target).toMatchObject({ name: NAME, connectionId: 'c1' });
   });
 
   it('targetFromStored falls back to server / database when the saved connection is gone', () => {
-    const target = targetFromStored({ server: 'srv', database: 'db', provider: 'builtIn', connectionId: 'gone' }, 'builtIn');
+    const target = targetFromStored({ server: 'srv', database: 'db', connectionId: 'gone' });
     expect(target.name).toBe('srv / db');
   });
 });

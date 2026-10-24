@@ -1,14 +1,4 @@
-/**
- * Virtual external nodes built by `modelBuilder` from SQL bodies: OPENROWSET and
- * COPY INTO / BULK INSERT file references, three-part cross-database references, and
- * the CETAS external-table target.
- *
- * @remarks
- * Split out of graphBuilder.test.ts, where these lived despite exercising `buildModel`.
- * The suppression rules matter most: a T-SQL CLR method call such as
- * `EMP_cte.OrganizationNode.GetAncestor(...)` is textually identical to
- * `[db].[schema].[object]`, and admitting one invents a database that does not exist.
- */
+/** Virtual external nodes built by `modelBuilder` from SQL bodies: OPENROWSET and COPY INTO / BULK INSERT file references, three-part cross-database references, and the CETAS external-table target. */
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import { buildModel } from '../../../src/engine/modelBuilder';
@@ -153,20 +143,18 @@ describe('cross-database references', () => {
     );
   });
 
-  const sameDbObjects = () => [
-    procedure('[dbo].[spLoad]', 'CREATE PROCEDURE [dbo].[spLoad] AS SELECT * FROM MyDB.dbo.Sales'),
-    table('[dbo].[Sales]'),
-  ];
-  const sameDbDeps = [{ sourceName: '[dbo].[spLoad]', targetName: '[dbo].[Sales]' }];
-
-  it('resolves a same-database reference locally when the current database is known (DMV path)', () => {
-    const built = buildModel(sameDbObjects(), sameDbDeps, undefined, 'MyDB');
-    expect(built.nodes.find(node => node.externalType === 'db')).toBeUndefined();
-  });
-
-  it('resolves a same-database reference locally when the local object exists (dacpac path)', () => {
-    const built = buildModel(sameDbObjects(), sameDbDeps);
-    expect(built.nodes.find(node => node.externalType === 'db')).toBeUndefined();
+  it('adds no node or edge for a catalog cross-database dependency of an out-of-scope object', () => {
+    const built = buildModel(
+      [table('[dbo].[T]')],
+      [
+        { sourceName: '[etl].[Load]', targetName: '[Other].[dbo].[X]' },
+        { sourceName: '[etl].[Load]', targetName: '[Main].[dbo].[T]' },
+      ],
+      [table('[dbo].[T]'), { fullName: '[etl].[Load]', type: 'procedure' } as BuildObject],
+      'Main',
+    );
+    expect(built.nodes.map(node => node.id)).toEqual(['[dbo].[t]']);
+    expect(built.edges).toEqual([]);
   });
 });
 
@@ -253,16 +241,6 @@ describe('virtual-node suppression', () => {
     expect(built.nodes).toHaveLength(2);
   });
 
-  it('creates virtual nodes regardless of real node count — no admission budget', () => {
-    const built = buildModel(
-      [table('[dbo].[Sales]'), table('[dbo].[Products]'), externalObjects()[1]],
-      [{ sourceName: '[dbo].[spLoad]', targetName: '[dbo].[Sales]' }],
-      undefined, undefined, true,
-    );
-    const virtual = built.nodes.filter(node => node.externalType === 'file' || node.externalType === 'db');
-    expect(virtual.length).toBeGreaterThan(0);
-    expect(built.nodes).toHaveLength(3 + virtual.length);
-  });
 });
 
 
@@ -346,5 +324,23 @@ describe('three-part self-reference in the current database', () => {
       [procedure('[dbo].[pLoad]', 'CREATE PROCEDURE [dbo].[pLoad] AS SELECT * FROM MyDb.dbo.Src'), table('[dbo].[Src]')],
       [], undefined, 'MyDb');
     expect(model.edges.some(edge => edge.source === '[dbo].[src]' && edge.target === '[dbo].[pload]')).toBe(true);
+  });
+});
+
+describe('three-part references resolve locally only in the current database', () => {
+  const load = [procedure('[dbo].[spLoad]', 'CREATE PROCEDURE [dbo].[spLoad] AS SELECT * FROM MyDB.dbo.Sales'), table('[dbo].[Sales]')];
+  const sync = [procedure('[dbo].[pSync]', `CREATE PROCEDURE [dbo].[pSync] AS
+    INSERT INTO OtherDb.dbo.T (a) SELECT a FROM OtherDb.dbo.X;
+    UPDATE o SET a = l.a FROM OtherDb.dbo.T o JOIN dbo.T l ON l.a = o.a`), table('[dbo].[T]'), table('[dbo].[X]')];
+  const syncEdges = ['[dbo].[psync] -> [otherdb].[dbo].[t]', '[dbo].[t] -> [dbo].[psync]', '[otherdb].[dbo].[t] -> [dbo].[psync]', '[otherdb].[dbo].[x] -> [dbo].[psync]'];
+
+  it.each([
+    ['resolves a same-database reference locally when the current database is known', load, 'MyDB', ['[dbo].[sales] -> [dbo].[spload]']],
+    ['keeps a three-part reference external when no current database is known', load, undefined, ['[dbo].[sales] -> [dbo].[spload]', '[mydb].[dbo].[sales] -> [dbo].[spload]']],
+    ['keeps another database external despite a same-named local object (known current database)', sync, 'LocalDb', syncEdges],
+    ['keeps another database external despite a same-named local object (no current database)', sync, undefined, syncEdges],
+  ] as const)('%s', (_label, objects, currentDatabase, expected) => {
+    const deps = [{ sourceName: objects[0].fullName, targetName: objects[1].fullName }];
+    expect(buildModel([...objects], deps, undefined, currentDatabase).edges.map(edge => `${edge.source} -> ${edge.target}`).sort()).toEqual(expected);
   });
 });

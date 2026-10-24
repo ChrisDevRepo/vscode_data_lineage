@@ -1,7 +1,4 @@
-/**
- * Tests for the pure column-trace-view derivation: relation normalisation, row/shape derivation,
- * verdict-to-state resolution, deterministic ordering, and handle id uniqueness.
- */
+/** Tests for the pure column-trace-view derivation: relation normalisation, row/shape derivation, relation-to-state resolution, deterministic ordering, and handle id uniqueness. */
 
 import { describe, it, expect } from 'vitest';
 import {
@@ -11,7 +8,7 @@ import {
   columnRowKey,
   columnThread,
   resolveRowLineStates,
-  resolveVerdictLineState,
+  resolveColumnLineState,
   COLUMN_NODE_BORDER_WIDTH,
   COLUMN_NODE_HEADER_HEIGHT,
   COLUMN_ROW_HEIGHT,
@@ -116,13 +113,11 @@ describe('columnTraceView', () => {
     const endpointView = buildColumnTraceView({
       relations: endpointShape,
       objects,
-      verdicts: new Map([['dbo.t', 'analyze']]),
       config: DEFAULT_CONFIG,
     });
     const viaNodeView = buildColumnTraceView({
       relations: viaNodeShape,
       objects,
-      verdicts: new Map([['dbo.p', 'analyze']]),
       config: DEFAULT_CONFIG,
     });
 
@@ -232,22 +227,18 @@ describe('columnTraceView', () => {
     expect(row.shape).toBe('terminal');
   });
 
-  describe('resolveVerdictLineState', () => {
-    it('resolves passthrough verdict to passthrough state', () => {
-      expect(resolveVerdictLineState('dbo.p', new Map([['dbo.p', 'passthrough']]))).toBe('passthrough');
-    });
-
-    it('resolves analyze verdict to transformation state', () => {
-      expect(resolveVerdictLineState('dbo.p', new Map([['dbo.p', 'analyze']]))).toBe('transformation');
-    });
-
-    it('resolves a missing verdict to unknown state', () => {
-      expect(resolveVerdictLineState('dbo.p', new Map())).toBe('unknown');
-      expect(resolveVerdictLineState('dbo.p', undefined)).toBe('unknown');
-    });
-
-    it('resolves prune verdict to unknown state', () => {
-      expect(resolveVerdictLineState('dbo.p', new Map([['dbo.p', 'prune']]))).toBe('unknown');
+  describe('resolveColumnLineState', () => {
+    it.each([
+      { transforms: ['pass_through'], state: 'passthrough' },
+      { transforms: ['pass_through', 'filter', 'combine'], state: 'passthrough' },
+      { transforms: ['compute'], state: 'transformation' },
+      { transforms: ['aggregate', 'pass_through'], state: 'transformation' },
+      { transforms: ['pass_through', 'compute'], state: 'transformation' },
+      { transforms: undefined, state: 'unknown' },
+      { transforms: [], state: 'unknown' },
+      { transforms: ['filter', 'combine'], state: 'unknown' },
+    ] as const)('resolves $transforms to $state from value evidence', ({ transforms, state }) => {
+      expect(resolveColumnLineState(transforms)).toBe(state);
     });
   });
 
@@ -314,6 +305,21 @@ describe('columnTraceView', () => {
     expect(edge.note).toBe('A * 2');
   });
 
+  it('renders per-relation value changes within one analyzed SQL projection', () => {
+    // CREATE VIEW dbo.t AS SELECT A AS Copied, A * 2 AS Doubled FROM dbo.s;
+    const view = buildColumnTraceView({
+      objects: mkObjects(mkObj('dbo.s'), mkObj('dbo.t', 'view')), config: DEFAULT_CONFIG,
+      relations: [
+        { hopNode: 'dbo.t', fromNode: 'dbo.s', fromCol: 'A', toNode: 'dbo.t', toCol: 'Copied', transforms: ['pass_through'] },
+        { hopNode: 'dbo.t', fromNode: 'dbo.s', fromCol: 'A', toNode: 'dbo.t', toCol: 'Doubled', transforms: ['compute'] },
+      ],
+    });
+    expect(view.edges.map(edge => [edge.targetColumn, edge.state]))
+      .toEqual([['Copied', 'passthrough'], ['Doubled', 'transformation']]);
+    expect(Array.from(resolveRowLineStates(view.edges).values()))
+      .toEqual(['passthrough', 'transformation']);
+  });
+
   it('puts the same classification on both legs of a relation routed through the hop', () => {
     const objects = mkObjects(mkObj('dbo.s'), mkObj('dbo.p', 'procedure'), mkObj('dbo.t'));
     const relations: ColumnTraceRelation[] = [
@@ -327,18 +333,20 @@ describe('columnTraceView', () => {
     }
   });
 
-  it('merges the notes with the classes on a leg two relations share', () => {
+  it.each([false, true])('merges notes, classes and value state on a shared leg (reverse=%s)', reverse => {
     const objects = mkObjects(mkObj('dbo.s'), mkObj('dbo.r'), mkObj('dbo.p', 'procedure'), mkObj('dbo.t'));
     const relations: ColumnTraceRelation[] = [
       { hopNode: 'dbo.p', fromNode: 'dbo.s', fromCol: 'Qty', toNode: 'dbo.t', toCol: 'Total', transforms: ['compute'], note: 'Qty * 2' },
       { hopNode: 'dbo.p', fromNode: 'dbo.r', fromCol: 'Flag', toNode: 'dbo.t', toCol: 'Total', transforms: ['filter'], note: 'WHERE Flag = 1' },
     ];
+    if (reverse) relations.reverse();
 
     const shared = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG }).edges
       .filter(e => e.source === 'dbo.p' && e.target === 'dbo.t');
     expect(shared).toHaveLength(1);
-    expect(shared[0].transforms).toEqual(['compute', 'filter']);
-    expect(shared[0].note).toBe('Qty * 2\nWHERE Flag = 1');
+    expect(shared[0].transforms).toEqual(reverse ? ['filter', 'compute'] : ['compute', 'filter']);
+    expect(shared[0].note).toBe(reverse ? 'WHERE Flag = 1\nQty * 2' : 'Qty * 2\nWHERE Flag = 1');
+    expect(shared[0].state).toBe('transformation');
   });
 
   it('sizes a transform super node as a compact circle box, not a port card', () => {
@@ -354,14 +362,7 @@ describe('columnTraceView', () => {
   });
 });
 
-/**
- * Lane for the transform node's place in the chain.
- *
- * A relation names the hop that produced it. Drawing the source straight to the target left that
- * hop with no inbound edge, so dagre ranked the procedure as a source and parked it at the left
- * margin with a single line spanning the canvas to its own output. The procedure is on the path, so
- * the path is drawn through it.
- */
+/** Lane for the transform node's place in the chain. */
 describe('buildColumnTraceView — routing through the analysing hop', () => {
   const objects = mkObjects(mkObj('dbo.s1'), mkObj('dbo.s2'), mkObj('dbo.p', 'procedure'), mkObj('dbo.t'));
 
@@ -378,11 +379,6 @@ describe('buildColumnTraceView — routing through the analysing hop', () => {
     expect(legs).toContain('dbo.s2.Price->dbo.p.Price');
     expect(legs).toContain('dbo.p.Total->dbo.t.Total');
     expect(legs.some((leg) => leg.startsWith('dbo.s1.Qty->dbo.t'))).toBe(false);
-  });
-
-  it('gives the hop an inbound edge, which is what puts it mid-chain', () => {
-    const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
-    expect(view.edges.some((e) => e.target === 'dbo.p')).toBe(true);
   });
 
   it('draws the shared outbound leg once', () => {
@@ -589,11 +585,7 @@ describe('columnTraceView layout settings', () => {
   });
 });
 
-/**
- * The AI badge and note draw above and below the card through `NodeToolbar`, outside the box Dagre
- * measures. At the default separation of 30 their ~32px band does not fit, and one node's note lands
- * on the next node's badge — so the band is carried by the vertical separation instead.
- */
+/** The AI badge and note draw above and below the card through `NodeToolbar`, outside the box Dagre measures. At the default separation of 30 their ~32px band does not fit, and one node's note lands on the next node's badge — so the band is carried by the vertical separation instead. */
 describe('columnTraceView AI annotation band', () => {
   const objects = mkObjects(mkObj('dbo.s1'), mkObj('dbo.s2'), mkObj('dbo.t'));
   const relations: ColumnTraceRelation[] = [
@@ -634,10 +626,7 @@ describe('columnTraceView AI annotation band', () => {
   });
 });
 
-/**
- * Lane for the column thread a click pins: the clicked column's trace cone — what it is derived
- * from and what is derived from it — never a sibling input that merely shares an output with it.
- */
+/** Lane for the column thread a click pins: the clicked column's trace cone — what it is derived from and what is derived from it — never a sibling input that merely shares an output with it. */
 describe('columnThread — directed trace cone', () => {
   it.each([['->', false], ['->', true], ['::', false], ['::', true]] as const)('preserves separate relations containing literal %s separators (CS=%s)', (separator, cs) => {
     const [a, b, c, hop] = ['a', 'b', 'c', 'h'].map(name => `[dbo].[${name}]`);
@@ -715,13 +704,13 @@ describe('columnThread — directed trace cone', () => {
   });
 });
 
-it('keeps checked CS object and column twins distinct through rows, handles, verdicts and thread indexes', () => {
+it('keeps checked CS object and column twins distinct through rows, handles, value states and thread indexes', () => {
   const upper = '[dbo].[CaseTab]'; const lower = '[dbo].[casetab]'; const sink = '[dbo].[Sink]';
   const objects = new Map([upper, lower, sink].map(id => [id, mkObj(id)]));
-  const view = buildColumnTraceView({identifierCaseSensitive:true,objects,config:DEFAULT_CONFIG,verdicts:new Map([[upper,'analyze'],[lower,'passthrough']]),relations:[
-    {hopNode:upper,fromNode:upper,fromCol:'Value',toNode:sink,toCol:'Upper'},
-    {hopNode:lower,fromNode:lower,fromCol:'Value',toNode:sink,toCol:'lower'},
-    {hopNode:upper,fromNode:upper,fromCol:'value',toNode:sink,toCol:'Other'},
+  const view = buildColumnTraceView({identifierCaseSensitive:true,objects,config:DEFAULT_CONFIG,relations:[
+    {hopNode:upper,fromNode:upper,fromCol:'Value',toNode:sink,toCol:'Upper',transforms:['compute']},
+    {hopNode:lower,fromNode:lower,fromCol:'Value',toNode:sink,toCol:'lower',transforms:['pass_through']},
+    {hopNode:upper,fromNode:upper,fromCol:'value',toNode:sink,toCol:'Other',transforms:['compute']},
   ]});
   expect(view.nodes.map(n=>n.id)).toEqual([upper,sink,lower]);expect(view.edges).toHaveLength(3);
   expect(findNode(view,upper).rows.map(row=>row.name)).toEqual(['Value','value']);
@@ -786,5 +775,52 @@ describe('buildColumnTraceView — objects without a column relation', () => {
     const thread = columnThread(index, columnRowKey(src, 'Qty'));
     expect(thread).toEqual(new Set([columnRowKey(src, 'Qty'), columnRowKey(mid, 'Qty')]));
     expect([...index.down.keys(), ...index.up.keys()].every(key => !key.includes('sparchiveoldorders'))).toBe(true);
+  });
+});
+
+
+describe('buildColumnTraceView — requested columns independent of relations', () => {
+  it.each([false, true])('keeps zero-edge requested rows with metadata names and isolated threads (CS=%s)', cs => {
+    const origin = 'dbo.t';
+    const objects = mkObjects({ ...mkObj(origin), columnNames: new Map([
+      [normalizeColName('Value', cs), 'Value'], [normalizeColName('value', cs), cs ? 'value' : 'Value'],
+    ]) });
+    const input = { relations: [], objects, identifierCaseSensitive: cs, config: DEFAULT_CONFIG,
+      requested: { node: origin, columns: ['[Value]', cs ? '"value"' : '"VALUE"'] } };
+    const before = structuredClone(input.requested);
+    const view = buildColumnTraceView(input);
+    expect(findNode(view, origin).rows.map(row => row.name)).toEqual(cs ? ['Value', 'value'] : ['Value']);
+    expect(view.edges).toEqual([]);
+    expect(view.portBridges).toEqual([]);
+    const key = columnRowKey(origin, 'Value', cs);
+    expect(columnThread(buildColumnThreadIndex(view), key)).toEqual(new Set([key]));
+    expect(input.requested).toEqual(before);
+  });
+
+  it('adds an unmapped asked row without changing real relations or the source-free born hub thread', () => {
+    const [source, procedure, target] = ['dbo.s', 'dbo.p', 'dbo.t'];
+    const objects = mkObjects(mkObj(source), mkObj(procedure, 'procedure'), mkObj(target));
+    const relations: ColumnTraceRelation[] = [
+      { hopNode: procedure, fromNode: source, fromCol: 'Qty', toNode: target, toCol: 'Total', transforms: ['compute'] },
+      { hopNode: procedure, fromNode: procedure, fromCol: 'Born', toNode: target, toCol: 'Born' },
+    ];
+    const baseline = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
+    const input = { relations, objects, config: DEFAULT_CONFIG, requested: { node: target, columns: ['Total', 'Missing', 'Born'] } };
+    const view = buildColumnTraceView(input);
+    expect(findNode(view, target).rows.map(row => row.name).sort()).toEqual(['Born', 'Missing', 'Total']);
+    expect(view.edges).toEqual(baseline.edges);
+    expect(view.portBridges).toEqual(baseline.portBridges);
+    const index = buildColumnThreadIndex(view);
+    expect(columnThread(index, columnRowKey(target, 'Born'))).toEqual(new Set([
+      columnRowKey(procedure, 'Born'), columnRowKey(target, 'Born'),
+    ]));
+    expect(columnThread(index, columnRowKey(target, 'Total'))).toEqual(columnThread(buildColumnThreadIndex(baseline), columnRowKey(target, 'Total')));
+    expect(columnThread(index, columnRowKey(target, 'Missing'))).toEqual(new Set([columnRowKey(target, 'Missing')]));
+  });
+
+  it('keeps old relation-only bookmarks rowless when no requested descriptor was saved', () => {
+    const view = buildColumnTraceView({ relations: [], objects: mkObjects(mkObj('dbo.t')), config: DEFAULT_CONFIG });
+    expect(findNode(view, 'dbo.t').rows).toEqual([]);
+    expect(view.edges).toEqual([]);
   });
 });

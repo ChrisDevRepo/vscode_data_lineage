@@ -56,7 +56,9 @@ debug.log
 **/*.tmp
 
 # Code-audit workspace (tool output, inventories, classification artifacts).
-.audit/**
+**/{.audit,.reviews,review,reviews,audit,audits}/**
+**/{[Rr][Ee][Vv][Ii][Ee][Ww],[Aa][Uu][Dd][Ii][Tt]}*.[Mm][Dd]
+**/*[-_.]{[Rr][Ee][Vv][Ii][Ee][Ww],[Aa][Uu][Dd][Ii][Tt]}*.[Mm][Dd]
 
 # Package-verification scratch trees (.verify-tmp, .verify2, …). Each holds a full copy of the
 # repository, so an unignored one ships the whole source and test tree inside the VSIX.
@@ -76,13 +78,10 @@ dist/assets/KaTeX_*.ttf
 # considered by vsce, so each needs its own entry). None of these belong in a VSIX. Keep this
 # list in step with the agent-file block in .gitignore and the forbidden patterns in
 # tests/tools/assert-package-contents.mjs — .gitignore alone excludes nothing from a VSIX.
-GLM*
-.GLM*
-.glm-skills/**
-.agents/**
 CODEX*
 .CODEX*
 codex.md
+.codex
 .codex/**
 .gemini/**
 .cursor/**
@@ -105,7 +104,6 @@ CLAUDE*
 GEMINI*
 .GEMINI*
 SECURITY.md
-CODE_OF_CONDUCT.md
 *.vsix
 # Untracked ad-hoc debug dumps still get packaged by vsce — exclude them explicitly.
 debug*.txt

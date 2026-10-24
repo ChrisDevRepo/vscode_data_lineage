@@ -1,12 +1,4 @@
-/**
- * VS Code specific half of the wire capture: projecting native chat messages onto {@link WireMessage}.
- *
- * @remarks
- * Split out of [`wireLog.ts`](./wireLog.ts) so the record surface itself stays free of `vscode`
- * imports. Only this module knows `LanguageModelTextPart` and friends, which means only the
- * `vscode.lm` lane pays for them; every other model port emits the same records without loading the
- * VS Code API at all.
- */
+/** VS Code specific half of the wire capture: projecting native chat messages onto {@link WireMessage}. */
 import * as vscode from 'vscode';
 import { safeTraceStringify, type WireMessage, type WirePart } from './wireLog';
 

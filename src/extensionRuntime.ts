@@ -8,7 +8,7 @@ import { Logger } from './utils/log';
 import { notifyError, notifyWarning } from './utils/notifications';
 import { migrateProjectStore, type ProjectStore, type ProjectStoreDropReport } from './engine/projectStore';
 import { type AiOutputSections, type AiOutputTemplates, type AiOutputTemplateSet, EMPTY_AI_TEMPLATES, EMPTY_AI_SECTIONS, AI_TEMPLATE_SCHEMA_VERSION } from './ai/session/types';
-import { buildAiToolRegistry, registerAiTools } from './ai/tools/toolProvider';
+import { buildAiToolRegistry, createEffectSerializer, createExternalToolSource, registerAiTools } from './ai/tools/toolProvider';
 import { readStoredRun } from './ai/session/runStore';
 import { LineageParticipant } from './ai/participant/lineageParticipant';
 import { LineageRuntime } from './ai/runtime/lineageRuntime';
@@ -18,18 +18,14 @@ import { loadRules } from './engine/sqlBodyParser';
 import { DEFAULT_AI_ENABLED, parseAiOutputTemplatesYaml, parseParseRulesYaml, readAiOutputSections, REQUIRED_AI_TEMPLATE_KEYS } from './configCore';
 import { resolveWorkspacePath, persistAbsolutePath } from './utils/paths';
 import { buildExtensionConfig } from './bridge/messageHandlers';
+import { errorMessage } from './utils/errorMessage';
 
 declare const __BUILD_TIMESTAMP__: string;
 
 let outputChannel: vscode.LogOutputChannel;
 let activeTraceWriter: AiTraceWriter | undefined;
 
-/**
- * Activates extension services in dependency order.
- *
- * @param context - VS Code extension context.
- * @returns An API object for testing and internal integration.
- */
+/** Activates extension services in dependency order. */
 export async function activateRuntime(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel('Data Lineage Viz', { log: true });
   context.subscriptions.push(outputChannel);
@@ -44,21 +40,24 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
 
   const projectLogger = Logger.create(outputChannel, 'Project');
   let droppedProjectsReported = false;
-  const reportDroppedProjects = ({ dropped, issuePaths }: ProjectStoreDropReport): void => {
-    if (dropped <= 0) return;
+  const reportDroppedProjects = ({ dropped, droppedViews = 0, issuePaths }: ProjectStoreDropReport): void => {
+    if (dropped <= 0 && droppedViews <= 0) return;
     if (droppedProjectsReported) {
       projectLogger.debug(
-        `Project store validation — dropped=${dropped} fields=${issuePaths.join(', ') || 'unknown'} (already reported this session)`,
+        `Project store validation — dropped=${dropped} views=${droppedViews} fields=${issuePaths.join(', ') || 'unknown'} (already reported this session)`,
       );
       return;
     }
     droppedProjectsReported = true;
-    const noun = dropped === 1 ? 'project' : 'projects';
+    const skipped = [
+      dropped > 0 ? `${dropped} saved ${dropped === 1 ? 'project' : 'projects'}` : '',
+      droppedViews > 0 ? `${droppedViews} saved ${droppedViews === 1 ? 'view' : 'views'}` : '',
+    ].filter(Boolean).join(' and ');
     notifyWarning(
       projectLogger,
       'Project store validation',
-      `Data Lineage: ${dropped} saved ${noun} could not be read and ${dropped === 1 ? 'was' : 'were'} skipped. See the Data Lineage Viz output channel for details.`,
-      { droppedProjects: dropped, invalidFields: issuePaths.length > 0 ? issuePaths : 'unknown' },
+      `Data Lineage: ${skipped} could not be read. Those entries were skipped. See the Data Lineage Viz output channel for details.`,
+      { droppedProjects: dropped, droppedViews, invalidFields: issuePaths.length > 0 ? issuePaths : 'unknown' },
     );
   };
 
@@ -99,7 +98,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
   ));
 
   const templateSet = await loadAiOutputTemplates(outputChannel, context.extensionUri).catch(err => {
-    logger.warn(`Failed to load AI output templates: ${err instanceof Error ? err.message : String(err)} — using empty defaults`);
+    logger.warn(`Failed to load AI output templates: ${errorMessage(err)} — using empty defaults`);
     return { templates: { ...EMPTY_AI_TEMPLATES }, sections: EMPTY_AI_SECTIONS };
   });
   getSession().outputTemplates = templateSet.templates;
@@ -116,6 +115,13 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
 
   let lineageRuntime: LineageRuntime | undefined;
   let participant: LineageParticipant | undefined;
+  const runStoreLogger = Logger.create(outputChannel, 'AI');
+  const aiToolHost = {
+    getStoredRun: (bookmarkId: string) => readStoredRun(context.globalState, bookmarkId, runStoreLogger),
+    // One queue orders the state-changing tool calls of chat turns; `vscode.lm` callers get read-only tools only.
+    serialize: createEffectSerializer(),
+  };
+  const externalTools = createExternalToolSource(getSession, outputChannel, getActivePanel, aiToolHost);
 
   try {
     if (aiEnabled && missingAiApis.length > 0) {
@@ -124,13 +130,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
         + 'Lineage visualisation, parsing and the graph are unaffected.',
       );
     } else if (aiEnabled) {
-    const runStoreLogger = Logger.create(outputChannel, 'AI');
-    const aiToolHost = {
-      getStoredRun: (bookmarkId: string) => readStoredRun(context.globalState, bookmarkId, runStoreLogger),
-    };
-    context.subscriptions.push(
-      ...registerAiTools(getSession, outputChannel, getActivePanel, aiToolHost),
-    );
+    context.subscriptions.push(...registerAiTools(externalTools));
 
     lineageRuntime = new LineageRuntime({
       getSession,
@@ -157,7 +157,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
   } catch (err) {
     lineageRuntime = undefined;
     participant = undefined;
-    const detail = err instanceof Error ? err.message : String(err);
+    const detail = errorMessage(err);
     notifyWarning(
       logger,
       'Initialise AI surface',
@@ -193,21 +193,19 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
       if (!e.affectsConfiguration('dataLineageViz')) return;
       configLogger.debug('Settings changed — dataLineageViz.*');
 
+      // The AI bundle loads at activation, so a change applies on reload.
       if (e.affectsConfiguration('dataLineageViz.ai.enabled')) {
-        const nowEnabled = vscode.workspace
-          .getConfiguration('dataLineageViz.ai')
-          .get<boolean>('enabled', DEFAULT_AI_ENABLED);
+        const nowEnabled = vscode.workspace.getConfiguration().get<boolean>('dataLineageViz.ai.enabled', DEFAULT_AI_ENABLED);
         const msg = `AI features ${nowEnabled ? 'enabled' : 'disabled'}. Reload the window to apply.`;
         configLogger.info(`Config changed — dataLineageViz.ai.enabled=${nowEnabled}; notification="${msg}"`);
-        const pick = await vscode.window.showInformationMessage(msg, 'Reload Window');
-        if (pick === 'Reload Window') {
+        if (await vscode.window.showInformationMessage(msg, 'Reload Window') === 'Reload Window') {
           void vscode.commands.executeCommand('workbench.action.reloadWindow');
         }
       }
 
       if (e.affectsConfiguration('dataLineageViz.ai.outputTemplateFile')) {
         const t = await loadAiOutputTemplates(outputChannel, context.extensionUri).catch(err => {
-          configLogger.warn(`Failed to load AI output templates: ${err instanceof Error ? err.message : String(err)} — using empty defaults`);
+          configLogger.warn(`Failed to load AI output templates: ${errorMessage(err)} — using empty defaults`);
           return { templates: { ...EMPTY_AI_TEMPLATES }, sections: EMPTY_AI_SECTIONS };
         });
         getSession().outputTemplates = t.templates;
@@ -257,17 +255,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
   };
 }
 
-/**
- * Extension Deactivation Lifecycle.
- *
- * @remarks
- * No explicit cleanup is required — every disposable from {@link activateRuntime}
- * (output channel, command registrations, tree provider, chat participant,
- * config-change listener, AI tools) is pushed onto `context.subscriptions`
- * and torn down by VS Code automatically. Panel-specific resources such as
- * database connections are released through each panel's own `onDidDispose`
- * handler, again outside this function's responsibility.
- */
+/** Extension deactivation: closes the AI trace writer so buffered trace records are flushed. */
 export async function deactivate(): Promise<void> {
   const traceWriter = activeTraceWriter;
   activeTraceWriter = undefined;
@@ -276,17 +264,7 @@ export async function deactivate(): Promise<void> {
 
 export default { activateRuntime, deactivate };
 
-/**
- * Loads AI Output Templates from built-in assets and optional user overrides.
- *
- * These templates provide the structural instructions used by the AI to generate
- * summaries, section titles, and highlighted badges in the UI.
- *
- * @param outputChannel - The log channel for reporting load status.
- * @param extensionUri - The root URI of the extension.
- * @returns A promise resolving to the validated and merged `AiOutputTemplates` and the section labels
- *   declared by the capture recipes (a custom file's list replaces the built-in list of the same recipe).
- */
+/** Loads AI Output Templates from built-in assets and optional user overrides. */
 async function loadAiOutputTemplates(
   outputChannel: vscode.LogOutputChannel,
   extensionUri: vscode.Uri,
@@ -393,23 +371,14 @@ async function loadAiOutputTemplates(
       logger,
       'Load custom AI output templates',
       `Data Lineage: Failed to load custom AI output templates from "${customPath}" — using built-in defaults.`,
-      { reason: err instanceof Error ? err.message : String(err), path: resolved, setting: 'ai.outputTemplateFile', fallback: 'built-in defaults' },
+      { reason: errorMessage(err), path: resolved, setting: 'ai.outputTemplateFile', fallback: 'built-in defaults' },
     );
   }
 
   return result();
 }
 
-/**
- * Loads and installs SQL parsing rules for DDL analysis.
- *
- * Rules are loaded from the built-in `defaultParseRules.yaml` and can be
- * overridden by a custom file specified in settings.
- *
- * @param outputChannel - The log channel.
- * @param extensionUri - The root URI of the extension.
- * @returns A promise that resolves when the rules are loaded and applied to the engine.
- */
+/** Loads and installs SQL parsing rules for DDL analysis. */
 async function loadParseRules(
   outputChannel: vscode.LogOutputChannel,
   extensionUri: vscode.Uri,
@@ -433,6 +402,7 @@ async function loadParseRules(
     );
   }
 
+  const builtIn = config;
   const cfg = vscode.workspace.getConfiguration('dataLineageViz');
   const customPath = cfg.get<string>('parseRulesFile', '');
   if (customPath) {
@@ -459,7 +429,7 @@ async function loadParseRules(
           logger,
           'Load custom parse rules',
           `Failed to load custom parse rules from "${resolved}" — using built-in defaults. Check Output channel for details.`,
-          { reason: err instanceof Error ? err.message : String(err), path: resolved, setting: 'parseRulesFile', fallback: 'built-in defaults' },
+          { reason: errorMessage(err), path: resolved, setting: 'parseRulesFile', fallback: 'built-in defaults' },
         );
       }
     } else {
@@ -472,27 +442,32 @@ async function loadParseRules(
     return;
   }
 
-  const result = loadRules(config);
+  const result = loadRules(config, source === 'custom' ? builtIn ?? undefined : undefined);
+  const appliedFrom = result.usedFallback ? 'built-in (fallback)' : source;
   const sess = getSession();
-  if (result.usedDefaults) {
+  if (result.usedFallback) {
     sess.parseRulesLabel = 'built-in rules (fallback)';
+  } else if (result.loaded === 0) {
+    sess.parseRulesLabel = 'none (no valid rules)';
   } else {
     sess.parseRulesLabel = source === 'custom' ? `custom (${path.basename(customPath)})` : 'built-in rules';
   }
 
   for (const err of result.errors) logger.info(`Skipped parse rule: ${err}`);
-  logger.info(`Applied parse rules: ${result.loaded} loaded from ${source}, ${result.skipped.length} skipped`);
-  if (result.skipped.length > 0) {
-    const allSkipped = result.loaded === 0;
+  logger.info(`Applied parse rules: ${result.loaded} loaded from ${appliedFrom}, ${result.skipped.length} skipped`);
+  if (result.skipped.length > 0 || result.loaded === 0 || result.usedFallback) {
+    const userMessage = result.loaded === 0
+      ? 'Data Lineage: Parse rules config invalid — check Output channel.'
+      : result.usedFallback
+        ? 'Data Lineage: the custom parse rules file has no valid rule — extraction uses the built-in rules. Check Output channel.'
+        : `Data Lineage: ${result.skipped.length} parse rule(s) skipped as invalid — extraction runs with the remaining ${result.loaded}. Check Output channel.`;
     notifyWarning(
       logger,
       'Apply parse rules',
-      allSkipped
-        ? 'Data Lineage: Parse rules config invalid — check Output channel.'
-        : `Data Lineage: ${result.skipped.length} parse rule(s) skipped as invalid — extraction runs with the remaining ${result.loaded}. Check Output channel.`,
+      userMessage,
       {
-        source,
-        reason: allSkipped ? 'no valid rules in config' : 'invalid rules skipped',
+        source: appliedFrom,
+        reason: result.loaded === 0 || result.usedFallback ? 'no valid rules in config' : 'invalid rules skipped',
         skipped: result.skipped.length,
         loaded: result.loaded,
       },

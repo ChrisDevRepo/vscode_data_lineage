@@ -1,89 +1,30 @@
-# Contributing
+# Building from source
 
-This project prioritizes stability, logical accuracy, and high-performance SQL parsing.
+A free helper extension for VS Code under the [MIT license](LICENSE), shared as-is. Clone it, build it, and adapt it. To see what it does with your data, read [`SECURITY.md`](SECURITY.md), [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md), [`docs/PROFILING_PATTERNS.md`](docs/PROFILING_PATTERNS.md) and [`docs/AI_PROMPTS.md`](docs/AI_PROMPTS.md).
 
-## 1. Engineering Principles
-- **Metadata Driven**: SQL extraction regexes live in
-  `assets/defaultParseRules.yaml`; TypeScript owns preprocessing,
-  normalization, rule execution, and dependency resolution.
+Bugs go to [issues](https://github.com/ChrisDevRepo/vscode_data_lineage/issues). Leave credentials, customer SQL, `.dacpac` files and database content out of them.
 
-## 2. Development Setup
+## Setup
 
-### Prerequisites
-- [Git](https://git-scm.com/).
-- [Node.js](https://nodejs.org/) 20 or newer with npm 10 or newer (`engines.node`
-  and `engines.npm` in `package.json`).
-- [VS Code](https://code.visualstudio.com/) at a version allowed by
-  `engines.vscode` in `package.json`.
-- A VS Code Language Model Chat provider, such as GitHub Copilot or a compatible
-  BYOK provider (for `@lineage`)
+You need [Git](https://git-scm.com/), [Node.js](https://nodejs.org/) 22+ with npm 10+, and [VS Code](https://code.visualstudio.com/) 1.101+. A chat model provider such as GitHub Copilot is optional, to try `@lineage`.
 
-### Local Setup
-1. Clone the repository and run `npm ci` (not `npm install`, which can rewrite
-   `package-lock.json`).
-2. Open the repository folder in VS Code and press `F5` (**Run Extension**). It
-   builds the extension and webview, then launches the **Extension Development Host**.
-3. In the Extension Development Host, open a folder containing a `.dacpac` file
-   or use the **Try with demo data** option in the wizard.
+1. Clone the repository and run `npm ci`.
+2. Open the folder in VS Code and press `F5` to launch the Extension Development Host.
+3. Run **Data Lineage: Open Wizard** and click **Try with demo data**, or **+ Create New Project** to open a `.dacpac`.
 
-No database, model provider or credentials are needed to build, run or pass
-`npm run gate`. Optional test settings go in `.env`, copied from
-[`.env.example`](.env.example).
+| Command | Purpose |
+|---|---|
+| `npm run build` | Build the extension and webview |
+| `npm run typecheck` | Type-check (there is no lint script) |
+| `npm test` | Parser, lineage and AI contract tests |
+| `npm run gate` | Core/runtime checks, coverage floors, build and repository checks; support tests are separate |
+| `npm run package` | Create the VSIX |
 
-Requirements per test tier, network hosts, headless Linux setup and
-host-specific provisioning are in
-[`docs/testing/ENVIRONMENTS.md`](docs/testing/ENVIRONMENTS.md).
+None of these need a database, model provider or credentials. Test tiers are in [`docs/testing/README.md`](docs/testing/README.md); code layout is in [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md).
 
-## 3. Testing Protocol
-All changes must pass the applicable maintained checks locally before push.
-GitHub does not run the test suite; its workflow is limited to repository
-security checks. `npm run gate` is the complete client-side pre-push gate.
-Full command set and scope: the `package.json` scripts and
-[`docs/testing/README.md`](docs/testing/README.md). Optional Electron, Playwright,
-database, headless AI and Langfuse checks are tools you invoke when relevant;
-they do not run automatically.
+## Changing the code
 
-### Parser rule verification
-
-There is no snapshot project or snapshot update command. Run
-`npm run test:parser`, add a focused regression case, and review the resulting
-dependency edges against the affected SQL. Do not treat a green parser run as
-proof that output is unchanged when the changed syntax has no test case.
-
-## 4. Coding Standards
-- **TypeScript**: Strict typing is mandatory. Avoid `any` at architectural boundaries.
-- **Zod**: Use Zod for all IPC and tool-call validation.
-- **TSDoc**: Document exported TypeScript contracts with `/** */` where the
-  intent is not evident from types and names. Focus on architectural
-  constraints and the "why"; do not restate types, and do not use JSDoc
-  `{Type}` braces. Plain `.mjs` scripts keep type-bearing JSDoc because that
-  is the only place the type can be stated. No `//` narration, no history or
-  decision records, no provenance tags (dates, author names, register/row
-  references, issue links), no commented-out code. Test files carry a 1–3
-  line header stating what the suite pins.
-- **Logging**: Use the standard logger (`src/utils/log.ts`) with category tags (e.g., `[AI]`, `[Parse]`).
-
-## 5. Dependency Overrides
-
-Every entry in the `overrides` block of `package.json` is deliberate. Record why a
-new one exists and when it can be dropped, so a later maintainer can retire it
-rather than inherit it.
-
-| Entry | Purpose | Removable when |
-| --- | --- | --- |
-| `langsmith` | Redirects LangChain's transitive dependency to the empty shell in `stubs/langsmith/` so the real client is never resolved. | Never — the stub is permanent. |
-| `esbuild` | Lifts transitive copies to the patched release the build already uses. | Every dependent requests a patched range. |
-| `dompurify` | `monaco-editor` pins a range with known advisories. `$dompurify` points the override at our direct dependency so the version is stated once. | `monaco-editor` ships a patched DOMPurify. |
-| `serialize-javascript` | Lifts a transitive copy past a known advisory. | Dependents update. |
-| `diff` | Lifts a transitive copy past a known advisory. | Dependents update. |
-| `js-yaml@4` | Pins transitive js-yaml 4.x to a patched release. | Dependents ship a patched range. |
-| `fast-uri` | Keeps transitive copies on a patched release. | Dependents update. |
-| `browserslist` | Keeps transitive copies on a patched release. | Dependents update. |
-| `baseline-browser-mapping` | Keeps transitive copies on a patched release. | Dependents update. |
-
-Vendored third-party source is registered in `THIRD_PARTY_NOTICES.md` with its
-source, license, destination, and the modifications applied.
-
----
-
-MIT License · [Christian Wagner](https://github.com/ChrisDevRepo/vscode_data_lineage)
+- Change behavior in the layer that owns it and add a focused test when the contract changes.
+- Keep the `.md` files true for what you changed.
+- Run `npm run gate` before you treat a code change as ready. It does not call a model provider.
+- Entries in `package.json` `overrides` are deliberate security pins plus the `langsmith` stub in `stubs/langsmith/`.

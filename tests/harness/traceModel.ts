@@ -1,22 +1,4 @@
-/**
- * Pure parser and serializer for the AI diagnostic NDJSON trace `aiTraceWriter.ts` writes.
- *
- * @remarks
- * Every line the writer appends is `JSON.stringify({at, ...record})` for one
- * {@link AiTraceRecord} — the lifecycle union (`trace-open`, `turn-start`, `turn-terminal`,
- * `gate`, `phase`, `tool`) plus the wire union (`wire-request`, `wire-response`, `wire-error`,
- * `generation`, `provider-raw`). This module turns that byte stream back into typed buckets without ever
- * touching a filesystem, `vscode`, or a network socket — callers (a CLI, a test, the Langfuse
- * exporter) own I/O; this module owns only the mapping from bytes to structure and back.
- *
- * The round trip is the load-bearing property: {@link serializeRun} applied to
- * {@link parseTrace}'s output reproduces the original bytes line-for-line for every well-formed
- * record, because each entry carries its source `lineIndex` and serialization replays lines in
- * that order rather than in bucket-iteration order. A record whose shape this module does not
- * recognize is never dropped — an unknown `type` lands in {@link ParsedRun.raw} verbatim, and a
- * line that is not even valid JSON lands in {@link ParsedRun.malformed} — so one bad line never
- * aborts the parse of an otherwise-readable trace.
- */
+/** Parses diagnostic NDJSON into typed buckets for test tools and trace export. Unknown records and malformed lines retain their original positions so partial traces remain inspectable. Callers own filesystem and network I/O. */
 import type { RuntimeLifecycleRecord } from '../../src/ai/observability/aiTraceWriter';
 import type { GenerationRecord, WireRecord } from '../../src/ai/observability/wireLog';
 
@@ -46,7 +28,7 @@ export type UnknownEntry = TraceEntry<{ readonly type: string } & Record<string,
 export interface MalformedLine {
   /** 0-based source line index, matching {@link TraceEntry.lineIndex} on well-formed neighbors. */
   readonly line: number;
-  /** The original line text, unparsed — this is what {@link serializeRun} replays. */
+  /** The original malformed line text, preserved for diagnosis. */
   readonly text: string;
   /** `Error.name` from the failed `JSON.parse`, or a synthetic name for valid JSON of the wrong shape. */
   readonly errorName: string;
@@ -77,14 +59,7 @@ export interface JoinedTurn {
   readonly terminal?: TurnTerminalEntry;
 }
 
-/**
- * Parses one NDJSON trace file's content into typed buckets.
- *
- * @param ndjson - Full file content, one JSON object per line (a single trailing newline, the
- *   convention every {@link AiTraceWriter} write leaves, is tolerated and not counted as a line).
- * @returns A {@link ParsedRun} in which every input line is accounted for exactly once, either as
- *   a typed entry, a `raw` entry, or a `malformed` entry.
- */
+/** Parses one NDJSON trace file's content into typed buckets. */
 export function parseTrace(ndjson: string): ParsedRun {
   const lines = ndjson.split('\n');
   if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
@@ -153,45 +128,7 @@ function isRecordShape(value: unknown): value is { readonly at: string; readonly
   return typeof record.at === 'string' && typeof record.type === 'string';
 }
 
-/**
- * Re-emits a {@link ParsedRun} as NDJSON text, replaying every line — typed, raw, and malformed —
- * in its original source order.
- *
- * @remarks
- * Well-formed lines round-trip byte-identically: `serializeRun(parseTrace(text)) === text`
- * whenever `text` ends in a single trailing newline (or is empty), because each entry is
- * re-stringified from the exact object `JSON.parse` produced (key order included) minus only the
- * `lineIndex` this module added, and malformed lines are replayed from their stored `text`
- * unchanged. A trace with zero lines serializes back to the empty string.
- */
-export function serializeRun(run: ParsedRun): string {
-  const positioned: Array<{ readonly index: number; readonly text: string }> = [];
-  const typed: ReadonlyArray<TraceEntry<Record<string, unknown>>> = [
-    ...run.traceOpen, ...run.turns, ...run.generations, ...run.tools, ...run.gates, ...run.phases,
-    ...run.wire, ...run.raw,
-  ];
-  for (const entry of typed) {
-    const { lineIndex, ...record } = entry;
-    positioned.push({ index: lineIndex, text: JSON.stringify(record) });
-  }
-  for (const bad of run.malformed) {
-    positioned.push({ index: bad.line, text: bad.text });
-  }
-  if (positioned.length === 0) return '';
-  positioned.sort((a, b) => a.index - b.index);
-  return `${positioned.map((entry) => entry.text).join('\n')}\n`;
-}
-
-/**
- * Joins `turn-start` and `turn-terminal` lifecycle entries by `(requestId, runFingerprint)`.
- *
- * @remarks
- * The pairing key is the pair, not `requestId` alone: `runFingerprint` changes across a retried
- * run against the same native chat request, so requestId alone can silently merge two unrelated
- * turns. Preserves first-seen order across the trace; a start with no terminal (a cut-off
- * capture) and a terminal with no start (a trace beginning mid-turn) both surface with the
- * missing half left `undefined` rather than being dropped.
- */
+/** Joins `turn-start` and `turn-terminal` lifecycle entries by `(requestId, runFingerprint)`. */
 export function joinTurns(run: ParsedRun): readonly JoinedTurn[] {
   const order: string[] = [];
   const byKey = new Map<string, { requestId: string; runFingerprint: string; start?: TurnStartEntry; terminal?: TurnTerminalEntry }>();

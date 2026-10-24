@@ -1,12 +1,4 @@
-/**
- * Request-scoped bridge from the VS Code Chat model selected by the user to LangChain.
- *
- * Adapted from the MIT-licensed `jitrodriguez/vscode-chat-langchain-bridge` project.
- * Source derivation: commit 1dda72d, copyright Juan Rodriguez, MIT License.
- * The local implementation intentionally keeps a narrower boundary: it translates messages,
- * tool definitions, stream parts, cancellation, and errors only. Tool execution, lifecycle,
- * semantic repair, authorization, and UI rendering remain outside the bridge.
- */
+/** Request-scoped bridge from the VS Code Chat model selected by the user to LangChain. */
 import * as vscode from 'vscode';
 import type { CallbackManagerForLLMRun } from '@langchain/core/callbacks/manager';
 import {
@@ -26,6 +18,7 @@ import {
 import { ChatGenerationChunk, type ChatResult } from '@langchain/core/outputs';
 import type { Runnable } from '@langchain/core/runnables';
 import {
+  cancelledError,
   isHostCancellationError,
   messageProviderParts,
   ModelPortError,
@@ -38,7 +31,7 @@ import { sanitizeProviderError } from '../support/text';
 import { STRUCTURED_OUTPUT_TOOL_DESCRIPTION } from '../providers/structuredOutput';
 
 /** Canonical tool metadata accepted by the bridge. The bridge never invokes the tool. */
-export interface VscodeBridgeToolDefinition {
+interface VscodeBridgeToolDefinition {
   /** Tool name the model addresses the call by. */
   readonly name: string;
   /** Natural-language tool description shown to the model. */
@@ -48,7 +41,7 @@ export interface VscodeBridgeToolDefinition {
 }
 
 /** LangChain call options projected onto one VS Code Language Model request. */
-export interface VscodeLangChainCallOptions extends BaseChatModelCallOptions {
+interface VscodeLangChainCallOptions extends BaseChatModelCallOptions {
   /** Tool definitions bound onto this request and passed to `vscode.lm.sendRequest`. */
   readonly tools?: readonly VscodeBridgeToolDefinition[];
   /** `'auto'`, `'any'` (a tool call is required), `'none'`, or the name of the one tool the model must call. */
@@ -59,26 +52,16 @@ export interface VscodeLangChainCallOptions extends BaseChatModelCallOptions {
 export type VscodeBridgeRunnable = Runnable<BaseLanguageModelInput, AIMessageChunk, VscodeLangChainCallOptions>;
 
 /** Constructor fields for one request-selected VS Code language model. */
-export interface VscodeLangChainBridgeFields {
+interface VscodeLangChainBridgeFields {
   /** The exact `vscode.LanguageModelChat` selected for this request. */
   readonly model: vscode.LanguageModelChat;
   /** Cancellation token for the request; firing it surfaces as a port-level cancellation. */
   readonly token: vscode.CancellationToken;
-  /**
-   * Debug wire capture, present only when session trace logging is enabled.
-   *
-   * @remarks
-   * Absent by default so nothing is allocated on the normal path. The callback must never throw:
-   * a capture failure is not allowed to fail the user's turn.
-   */
+  /** Debug wire capture, present only when session trace logging is enabled. */
   readonly wire?: (event: WireEvent) => void;
 }
 
-/**
- * LangChain `BaseChatModel` backed by exactly one VS Code `request.model`.
- *
- * The instance is request-scoped and has no model-selection or provider-fallback behavior.
- */
+/** LangChain `BaseChatModel` backed by exactly one VS Code `request.model`. */
 export class VscodeLangChainBridge extends BaseChatModel<
   VscodeLangChainCallOptions
 > {
@@ -103,9 +86,7 @@ export class VscodeLangChainBridge extends BaseChatModel<
     return 'vscode-request-model';
   }
 
-  /**
-   * Binds model-facing tool metadata. Execution remains graph/dispatcher-owned.
-   */
+  /** Binds model-facing tool metadata. Execution remains graph/dispatcher-owned. */
   bindTools(
     tools: VscodeBridgeToolDefinition[],
     kwargs: Partial<VscodeLangChainCallOptions> = {},
@@ -225,12 +206,14 @@ export class VscodeLangChainBridge extends BaseChatModel<
         }
         if (part instanceof vscode.LanguageModelToolCallPart) {
           capture?.calls.push({ callId: part.callId, name: part.name, input: part.input });
+          // The input goes to LangChain as its JSON text: a value that is not a JSON object lands in
+          // `invalid_tool_calls` with its id and name, so the port can charge that one call.
           const message = new AIMessageChunk({
             content: '',
             tool_call_chunks: [{
               id: part.callId,
               name: part.name,
-              args: JSON.stringify(asRecord(part.input)),
+              args: JSON.stringify(part.input) ?? '',
               index: toolIndex++,
               type: 'tool_call_chunk',
             }],
@@ -262,19 +245,8 @@ export class VscodeLangChainBridge extends BaseChatModel<
   }
 }
 
-/**
- * Converts one LangChain message without adding history or helper prose.
- *
- * @remarks
- * An assistant message replays the provider stream parts it carries ({@link PROVIDER_PARTS_KEY})
- * as the original objects, ahead of its text and tool calls, in the order the provider streamed
- * them: the model's own turn goes back verbatim, never rebuilt from the fields this bridge reads.
- *
- * A `ToolMessage`'s `status` is not projected: `vscode.LanguageModelToolResultPart` has no error
- * flag, and the bridge adds no prose. A failed call reaches the model through its content alone,
- * which for every rejection or dispatch error is the shared error envelope naming its code.
- */
-export function toVscodeMessage(message: BaseMessage): vscode.LanguageModelChatMessage {
+/** Converts one LangChain message without adding history or helper prose. */
+function toVscodeMessage(message: BaseMessage): vscode.LanguageModelChatMessage {
   if (SystemMessage.isInstance(message) || HumanMessage.isInstance(message)) {
     return vscode.LanguageModelChatMessage.User(toTextParts(message.content), message.name);
   }
@@ -404,10 +376,6 @@ function rawErrorText(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (isRecord(error)) return typeof error.message === 'string' ? error.message : '';
   return error === null || error === undefined ? '' : String(error);
-}
-
-function cancelledError(): ModelPortError {
-  return new ModelPortError('cancelled', 'Language model request was cancelled.');
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

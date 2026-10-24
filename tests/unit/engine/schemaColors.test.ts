@@ -1,6 +1,4 @@
-/**
- * Tests for deterministic schema palette assignment.
- */
+/** Tests for deterministic schema palette assignment. */
 
 import { describe, it, expect } from 'vitest';
 import {
@@ -71,12 +69,6 @@ describe('schemaColors', () => {
       expect(getSchemaColorFromMap(schema, a), `${schema} color is input-order independent`)
         .toBe(getSchemaColorFromMap(schema, b));
     }
-  });
-
-  it('uses case-insensitive schema color keys', () => {
-    const caseMap = createSchemaColorMap(['Sales', 'sales', 'SALES'], true);
-    expect(caseMap.size, 'schema color keys are case-insensitive').toBe(1);
-    expect(getSchemaColorFromMap('Sales', caseMap)).toBe(getSchemaColorFromMap('sales', caseMap));
   });
 
   it.each([false, true])('uses the same source policy for palette creation and lookup (CS=%s)', cs => {

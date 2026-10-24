@@ -8,13 +8,7 @@ import { loadRules } from '../../src/engine/sqlBodyParser';
 import { buildBareGraph } from '../../src/ai/support/graphUtils';
 import { AiSession } from '../../src/ai/session/session';
 import { EMPTY_AI_TEMPLATES, type AiOutputTemplates, type AiOutputTemplateSet } from '../../src/ai/session/types';
-import {
-  createTurnTokenBudget,
-  DEFAULT_DISCOVERY_NODE_CAP,
-  DEFAULT_DISCOVERY_TOKEN_BUDGET,
-  DISCOVERY_WINDOW_SHARE,
-  type TurnTokenBudget,
-} from '../../src/ai/support/tokenBudget';
+import { turnTokenBudgetFromSettings, type TurnTokenBudget } from '../../src/ai/support/tokenBudget';
 
 /** Repository root: launchers run with the repository as their working directory. */
 export function repoPath(...segments: string[]): string {
@@ -28,32 +22,13 @@ export interface HarnessSessionOptions {
   /** Parse rules applied before extraction; without them the recovered edge count drops sharply. */
   readonly parseRulesPath?: string;
   readonly outputTemplatesPath?: string;
-  /**
-   * The lane model's input window, in tokens.
-   *
-   * @remarks
-   * Drives the same calibration `lineageParticipant.ts` performs from `request.model.maxInputTokens`.
-   * A lane that does not know its window passes `Number.POSITIVE_INFINITY`, which leaves both
-   * configured ceilings untouched — the participant's behaviour for a model that reports none.
-   */
+  /** The lane model's input window, in tokens. */
   readonly contextWindow: number;
-  /**
-   * Injection-probe payloads: appended to the stored DDL of the named node after
-   * {@link populateColumnStore} runs, so the hop loop's `store.getDdl` read (`src/ai/sm/smBase.ts`)
-   * returns the tampered body — the same channel `<hop_context>` carries to the model, behind the
-   * untrusted-content banner in `src/ai/agent/stagePrompts.ts`.
-   */
+  /** Injection-probe payloads: appended to the stored DDL of the named node after {@link populateColumnStore} runs, so the hop loop's `store.getDdl` read (`src/ai/sm/smBase.ts`) returns the tampered body — the same channel `<hop_context>` carries to the model, behind the untrusted-content banner in `src/ai/agent/stagePrompts.ts`. */
   readonly ddlOverrides?: ReadonlyArray<{ readonly nodeId: string; readonly appendComment: string }>;
 }
 
-/**
- * Loads the tracked output templates exactly as activation does.
- *
- * @remarks
- * Same parser, same required-key projection, same "skip a key whose `instruction` is missing"
- * behaviour — only the VS Code file API and the user-overlay setting are left out, because a headless
- * lane has neither.
- */
+/** Loads the tracked output templates exactly as activation does. */
 async function loadOutputTemplates(path: string): Promise<AiOutputTemplateSet> {
   const templates: AiOutputTemplates = { ...EMPTY_AI_TEMPLATES };
   const parsed = parseAiOutputTemplatesYaml(await readFile(path, 'utf8'));
@@ -64,46 +39,20 @@ async function loadOutputTemplates(path: string): Promise<AiOutputTemplateSet> {
   return { templates, sections: readAiOutputSections(parsed).sections };
 }
 
-/**
- * Builds the participant's per-turn budget calibration for a lane of the given context window.
- *
- * @remarks
- * Mirrors src/ai/participant/lineageParticipant.ts. The configured ceilings arrive as the shipped
- * defaults because the headless shim answers `getConfiguration().get(key, default)` with that
- * default verbatim — reading them through the shim would produce the same numbers with more
- * indirection, so the constants are used directly and stay the single source of the ceiling.
- * The harness never learns a model window from its lanes, so `modelWindowTokens` is left unset and
- * resolves to `Infinity` via `createTurnTokenBudget`.
- *
- * @param contextWindow - Model input window in tokens; `POSITIVE_INFINITY` when unknown.
- * @returns The frozen budget the turn's model port carries.
- */
-export function calibrateTokenBudgets(contextWindow: number): TurnTokenBudget {
-  const window = contextWindow > 0 ? contextWindow : Number.POSITIVE_INFINITY;
-  const settings = {
-    discoveryNodeCap: DEFAULT_DISCOVERY_NODE_CAP,
-    discoveryTokenBudget: Math.min(
-      DEFAULT_DISCOVERY_TOKEN_BUDGET,
-      Math.floor(window * DISCOVERY_WINDOW_SHARE),
-    ),
-  };
-  return createTurnTokenBudget(settings);
-}
-
 /** A fully loaded harness session plus the token budget calibrated for its lane. */
 export interface HarnessSession {
   /** A session in the state a completed model load leaves behind. */
   readonly session: AiSession;
-  /** The turn budget the caller's model port must carry ({@link calibrateTokenBudgets}). */
+  /** The turn budget the caller's model port must carry, built from the lane's context window. */
   readonly budget: TurnTokenBudget;
 }
 
-/**
- * Builds one fully loaded session: parse rules, dacpac model, column store, bare graph, templates.
- *
- * @param options - Fixture paths and the lane's context window.
- * @returns The session and the budget calibrated for it.
- */
+/** Loads production parser rules before either database or DACPAC model construction. */
+export async function loadHarnessParseRules(path = repoPath('assets', 'defaultParseRules.yaml')): Promise<void> {
+  loadRules(parseParseRulesYaml(await readFile(path, 'utf8')));
+}
+
+/** Builds one fully loaded session: parse rules, dacpac model, column store, bare graph, templates. */
 export async function createHarnessSession(options: HarnessSessionOptions): Promise<HarnessSession> {
   const parseRulesPath = options.parseRulesPath ?? repoPath('assets', 'defaultParseRules.yaml');
   const dacpacPath = options.dacpacPath ?? repoPath('assets', 'demo.dacpac');
@@ -111,7 +60,7 @@ export async function createHarnessSession(options: HarnessSessionOptions): Prom
 
   // Rules FIRST: `parseSqlBody` recovers far fewer dependencies without them, so a graph built
   // before this call is merely smaller rather than wrong — the hardest kind of defect to notice.
-  loadRules(parseParseRulesYaml(await readFile(parseRulesPath, 'utf8')));
+  await loadHarnessParseRules(parseRulesPath);
   const buffer = await readFile(dacpacPath);
   const model = await extractDacpac(buffer);
 
@@ -128,6 +77,7 @@ export async function createHarnessSession(options: HarnessSessionOptions): Prom
   }
   session.model = model;
   session.graph = buildBareGraph(model);
-  const budget = calibrateTokenBudgets(options.contextWindow);
+  // The shim answers every setting with its shipped default, so only the window varies per lane.
+  const budget = turnTokenBudgetFromSettings({ get: () => undefined }, options.contextWindow);
   return { session, budget };
 }

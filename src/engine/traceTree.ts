@@ -7,10 +7,7 @@
 import type Graph from 'graphology';
 import { bfsFromNode } from 'graphology-traversal';
 
-/**
- * Tree placement relative to the origin: `up` follows inbound edges, `down` outbound edges,
- * `connected` holds visible nodes neither directional walk reaches.
- */
+/** Tree placement relative to the origin: `up` follows inbound edges, `down` outbound edges, `connected` holds visible nodes neither directional walk reaches. */
 export type TraceTreeSide = 'up' | 'down' | 'connected';
 
 /** A group of tree nodes with their per-node grow candidates. */
@@ -19,10 +16,7 @@ export interface TraceTreeGroup {
   side: TraceTreeSide;
   /** Visible node ids in first-visit order. */
   nodeIds: string[];
-  /**
-   * Out-of-scope neighbors per node, in the group's direction (`up` inbound, `down` outbound,
-   * `connected` both), pruned nodes excluded.
-   */
+  /** Out-of-scope neighbors per node, in the group's direction (`up` inbound, `down` outbound, `connected` both), pruned nodes excluded. */
   grow: ReadonlyMap<string, string[]>;
 }
 
@@ -62,19 +56,7 @@ export interface TraceTreeInput {
   prunedNodeIds: ReadonlySet<string>;
 }
 
-/**
- * Shapes a trace scope into an L0-anchored tree.
- *
- * Levels come from a direction-restricted breadth-first walk over the visible set, so they
- * always agree with what the canvas shows. A node reachable from both directions appears on
- * both sides; a visible node reachable from neither lands in `connected`, so every visible
- * node appears at least once. The walk is cycle-safe. A null origin or an origin outside the
- * visible set yields no tree.
- *
- * @param input - Origin, visible scope, and pruned set from the trace state.
- * @param graph - Full graphology graph (a superset of the visible scope) for traversal and grow checks.
- * @returns The anchored tree, or null when no trace is active.
- */
+/** Shapes a trace scope into an L0-anchored tree. */
 export function buildTraceTree(input: TraceTreeInput, graph: Graph | null): TraceTree | null {
   const { originId, visibleNodeIds, prunedNodeIds } = input;
   if (!originId || !graph || !graph.hasNode(originId) || !visibleNodeIds.has(originId)) {
@@ -127,10 +109,7 @@ function nextLevel(scope: Scope, originId: string, side: 'up' | 'down', levels: 
   return [...next];
 }
 
-/**
- * Hop levels of one side: the trace's own breadth-first walk (`bfsFromNode`, inbound for `up`,
- * outbound for `down`), restricted to the visible scope and grouped by depth.
- */
+/** Hop levels of one side: the trace's own breadth-first walk (`bfsFromNode`, inbound for `up`, outbound for `down`), restricted to the visible scope and grouped by depth. */
 function walkSide(scope: Scope, originId: string, side: 'up' | 'down'): TraceTreeLevel[] {
   const byDepth: string[][] = [];
   bfsFromNode(scope.graph, originId, (id, _attrs, depth) => {

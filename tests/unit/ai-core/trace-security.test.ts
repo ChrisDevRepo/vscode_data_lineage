@@ -6,10 +6,7 @@ import {
   type ProviderRawRecord,
 } from '../../../src/ai/observability/wireLog';
 
-/**
- * Redaction shapes are asserted through the public refusal API rather than the patterns themselves,
- * because the contract that matters is "this value never reaches a trace or a retry payload".
- */
+/** Redaction shapes are asserted through the public refusal API rather than the patterns themselves, because the contract that matters is "this value never reaches a trace or a retry payload". */
 const REDACTED_VALUES: ReadonlyArray<readonly [string, string]> = [
   ['bearer token', 'Authorization: Bearer sk1F9mQpZ2xLbTnR4vHc0eWaYdJgKuS7'],
   ['sk- prefixed provider key', 'the key is sk-abcdef0123456789ABCDEF'],
@@ -78,15 +75,7 @@ describe('trace security redaction', () => {
     })).toBeUndefined();
   });
 
-  /**
-   * The trace records added for the headless live-provider lane, held against the same guard.
-   *
-   * @remarks
-   * These records exist to be read after a bad run — pasted into an issue, diffed across lanes — so
-   * the question is not whether the emitter happens to omit credentials today but whether the record
-   * SHAPE has anywhere to put one. The guard is the oracle for that: a header-bearing field is
-   * refused by key before its value is ever inspected.
-   */
+  /** The trace records added for the headless live-provider lane, held against the same guard. */
   describe('generation and provider-raw record surface', () => {
     const generation: GenerationRecord = {
       type: 'generation',

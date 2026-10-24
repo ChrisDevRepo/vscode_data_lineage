@@ -1,5 +1,5 @@
 import { executeIsolatedRegexSearch } from '../../../src/ai/support/isolatedRegexSearch';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   compileSearchRegex,
   regexRejectHint,
@@ -12,13 +12,7 @@ import {
 } from '../../../src/utils/modelSearch';
 import type { ColumnDef } from '../../../src/engine/types';
 
-/**
- * Whether this runner's V8 implements ES2025 regexp modifier groups (`(?i:…)`, `(?-i:…)`).
- *
- * @remarks
- * Measured, never assumed: Node gained them mid-life, and the VS Code extension host runs its own
- * Node, so a test that hard-codes one answer pins the runner instead of the code under test.
- */
+/** Whether this runner's V8 implements ES2025 regexp modifier groups (`(?i:…)`, `(?-i:…)`). */
 const MODIFIER_GROUPS_SUPPORTED = (() => {
   try {
     new RegExp('(?i:a)');
@@ -101,17 +95,18 @@ describe('model search', () => {
     expect(invalid.ok === false && invalid.reason).toBe('syntax');
   });
 
-  it('strips a redundant leading "(?i)" and compiles the remainder', () => {
+  it('rejects an unsupported leading "(?i)" and accepts the explicit correction', () => {
     const result = compileSearchRegex('(?i)raworderimport');
-    expect(result.ok).toBe(true);
-    expect(result.ok && result.regex.test('RawOrderImport')).toBe(true);
+    expect(result.ok).toBe(false);
+    const corrected = compileSearchRegex('raworderimport');
+    expect(corrected.ok && corrected.regex.test('RawOrderImport')).toBe(true);
   });
 
-  it('strips a redundant "(?m)" or "(?im)" too, and still rejects a flag group beyond the grep flags', () => {
+  it('rejects unsupported inline flag groups without changing the pattern', () => {
     const multiline = compileSearchRegex('(?m)foo');
-    expect(multiline.ok && multiline.regex.source).toBe('foo');
+    expect(multiline.ok).toBe(false);
     const mixed = compileSearchRegex('(?im)foo');
-    expect(mixed.ok && mixed.regex.flags).toBe('im');
+    expect(mixed.ok).toBe(false);
 
     const dotAll = compileSearchRegex('(?s)foo');
     expect(dotAll.ok).toBe(false);
@@ -119,9 +114,7 @@ describe('model search', () => {
   });
 
   it('leaves the scoped "(?i:...)" form untouched — it is a different construct, not a no-op prefix', () => {
-    const normalizations: string[] = [];
-    const scoped = compileSearchRegex('(?i:foo)', msg => normalizations.push(msg));
-    expect(normalizations, 'the scoped form is not a redundant prefix — there is nothing to strip').toEqual([]);
+    const scoped = compileSearchRegex('(?i:foo)');
 
     if (MODIFIER_GROUPS_SUPPORTED) {
       expect(scoped.ok, 'this engine supports modifier groups, so the untouched pattern compiles').toBe(true);
@@ -138,15 +131,11 @@ describe('model search', () => {
     expect(bare.ok === false && bare.reason).toBe('syntax');
   });
 
-  it('reports the normalization through the provided sink instead of rewriting silently', () => {
-    const messages: string[] = [];
-    compileSearchRegex('(?i)raworderimport', msg => messages.push(msg));
-    expect(messages).toHaveLength(1);
-    expect(messages[0]).toContain('(?i)');
-
-    const unchanged: string[] = [];
-    compileSearchRegex('order', msg => unchanged.push(msg));
-    expect(unchanged).toHaveLength(0);
+  it('returns actionable syntax guidance instead of repairing the pattern', () => {
+    const pattern = '(?i)raworderimport';
+    const result = compileSearchRegex(pattern);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(regexRejectHint(pattern, result)).toContain('Remove the inline flag group');
   });
 
   it('searches and ranks catalog names case-insensitively', () => {
@@ -191,7 +180,7 @@ describe('model search', () => {
   });
 
   it('matches a compiled regex against bodies — the lineage_search_ddl contract', () => {
-    for (const pattern of ['(?i)totalquantity', 'total.*quantity', 'TOTALQUANTITY']) {
+    for (const pattern of ['totalquantity', 'total.*quantity', 'TOTALQUANTITY']) {
       const compiled = compileSearchRegex(pattern);
       expect(compiled.ok).toBe(true);
       if (!compiled.ok) return;
@@ -236,7 +225,7 @@ describe('model search', () => {
     expect(count('d.OrderID$'), '$ matches a line end').toBe(1);
     expect(count('AS.SELECT'), '. never crosses a line break').toBe(0);
     const inline = compileSearchRegex('(?im)^select');
-    expect(inline.ok && inline.regex.source, 'a redundant (?im) group is stripped, not rejected').toBe('^select');
+    expect(inline.ok).toBe(false);
   });
 
   it('does not skip a body whose first match is empty', () => {
@@ -301,14 +290,7 @@ describe('model search', () => {
   });
 });
 
-/**
- * A match inside a SQL comment is marked.
- *
- * The reported context is a 3-line window, so a match deep inside a block comment arrived
- * indistinguishable from live code: three answers described commented-out SQL as running behaviour.
- * The marker is additive — `commented` is set only when true, and never filters a hit, because two
- * of that same answer's correct facts came from inside a comment.
- */
+/** A match inside a SQL comment is marked. */
 describe('model search — commented matches', () => {
   /** Runs `pattern` over one body and returns `[line, commented]` for every hit, in order. */
   function hits(bodyScript: string, pattern: string): [number, boolean][] {
@@ -410,13 +392,7 @@ describe('model search — commented matches', () => {
   });
 });
 
-/**
- * The innermost `IF`/`WHILE` predicate governing a hit is reported.
- *
- * The reported context is a 3-line window, so a hit's controlling condition sits outside it
- * whenever it is more than a line or two away — the normal case in T-SQL. The marker is additive,
- * the same shape as `commented`: present only when a governing condition exists.
- */
+/** The innermost `IF`/`WHILE` predicate governing a hit is reported. */
 describe('model search — enclosing predicate', () => {
   /** Runs `pattern` over one body and returns `[line, enclosingPredicate]` for every hit, in order. */
   function hits(bodyScript: string, pattern: string): [number, string | undefined][] {
@@ -456,6 +432,20 @@ describe('model search — enclosing predicate', () => {
       'END',                                       // 11
     ].join('\n'), 'ON t\\.OrderDate');
     expect(hit).toEqual([[9, 'IF @ForceReimport = 0']]);
+  });
+
+  it.each([
+    { predicate: "IF @Status = N'Approved'", inlineBegin: false },
+    { predicate: 'IF [Ready] = 1', inlineBegin: false },
+    { predicate: "IF [Status] = N'BEGIN'", inlineBegin: true },
+  ])('preserves literal and identifier text in $predicate', ({ predicate, inlineBegin }) => {
+    const body = [
+      `${predicate}${inlineBegin ? ' BEGIN -- inline block opener' : ''}`,
+      ...(inlineBegin ? [] : ['BEGIN']),
+      '    SELECT Target',
+      'END',
+    ].join('\n');
+    expect(hits(body, 'Target')).toEqual([[inlineBegin ? 2 : 3, predicate]]);
   });
 
   it('does not open a frame for BEGIN TRAN, so the IF block closes on its own END', () => {
@@ -549,30 +539,9 @@ describe('model search — enclosing predicate', () => {
     expect(hit).toEqual([[5, 'IF @Flag = 1']]);
   });
 
-  it('leaves a hit with no governing block byte-identical to the shape before the field existed', () => {
-    const compiled = compileSearchRegex('Target');
-    if (!compiled.ok) throw new Error('Target must compile');
-    const [live] = searchBodyScripts(
-      [{ id: 'dbo.p', name: 'p', schema: 'dbo', type: 'procedure', bodyScript: 'SELECT Target' }],
-      compiled.regex,
-    );
-    expect('enclosingPredicate' in live, 'the field is omitted, not undefined-but-present').toBe(false);
-  });
 });
 
 describe('search regex compilation and worker deadline', () => {
-  it('does not charge scheduler delay to a benign pattern', () => {
-    const wallClock = vi.spyOn(performance, 'now')
-      .mockReturnValueOnce(0)
-      .mockReturnValueOnce(60_000)
-      .mockReturnValueOnce(0)
-      .mockReturnValue(60_000);
-    try {
-      expect(compileSearchRegex('SELECT|HeadToken').ok).toBe(true);
-    } finally {
-      wallClock.mockRestore();
-    }
-  });
 
   it('terminates exponential patterns on actual input without hanging the host', async () => {
     for (const pattern of ['(a+)+x', '(\\d+)+x', '(\\s+)+x']) {

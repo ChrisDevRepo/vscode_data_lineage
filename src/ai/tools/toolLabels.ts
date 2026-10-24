@@ -39,6 +39,10 @@ export function getToolInvocationLabel(name: string, input: unknown): string {
       const focus = (inp?.focus_node_id as string | undefined)?.split('.').pop()?.replace(/[\[\]]/g, '') ?? 'node';
       return `Analyzing ${focus}…`;
     }
+    case 'lineage_prune_current': {
+      const focus = (inp?.focus_node_id as string | undefined)?.split('.').pop()?.replace(/[\[\]]/g, '') ?? 'node';
+      return `Removing irrelevant candidate ${focus}…`;
+    }
     default:
       return `Invoking ${name.replace('lineage_', '')}…`;
   }

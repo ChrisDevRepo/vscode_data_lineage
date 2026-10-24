@@ -1,14 +1,5 @@
-/**
- * Per-stage prompt + finding assembly for the agent graph's discovery and active nodes.
- *
- * @remarks
- * Pure (no `deps`, no graph state, VS Code-free): these compose the worker system prompts and the
- * worker hop message from session + engine state. Split out of `graph.ts` so that file holds only
- * the LangGraph control flow, and
- * so these renderers are unit-testable in isolation (the project's pure-core pattern). All SM
- * output formatting still flows through the shared YAML `templateRenderer` / `buildSmProtocol`
- * — these builders only sequence the blocks, never inline output-format prose.
- */
+/** Per-stage prompt + finding assembly for the agent graph's discovery and active nodes. */
+import { CLASSIFICATION_KEPT_ANGLES } from '../session/classification';
 import type { AiSession } from '../session/session';
 import type { NavigationEngine } from '../sm/smBase';
 import type { HopContext } from '../sm/smTypes';
@@ -25,19 +16,16 @@ import {
 } from '../prompting/prompts';
 import { buildSmProtocol } from '../prompting/smPrompts';
 import { resolveStagePrompt, type StagePromptResult, type StageRenderScope } from '../prompting/templateRenderer';
-import { escapeDelimitedJson } from '../support/text';
+import { escapeDelimitedJson, escapePromptText } from '../support/text';
 import { SCRIPT_TYPES } from '../support/graphUtils';
 
-/**
- * Serialises the peeked hop context (focus DDL + immediate neighbours) into the worker's single user
- * message. The hop is blinkered: the worker sees this payload plus `lineage_submit_findings` and
- * `lineage_get_neighbor_columns`, not prior hops' tool results.
- */
+/** Serialises the peeked hop context (focus DDL + immediate neighbours) into the worker's single user message. The hop is blinkered: the worker sees this payload plus `lineage_submit_findings` and `lineage_get_neighbor_columns`, not prior hops' tool results. */
 function buildWorkerHopMessage(hop: HopContext | null, focusId: string): string {
   let escapedBody: string;
   if (hop) {
     const hopForJson = { ...hop };
     delete hopForJson.current_task;
+    delete hopForJson.analysis_mode;
     escapedBody = escapeDelimitedJson(hopForJson, 2);
   } else {
     escapedBody = escapeDelimitedJson({ focus_node_id: focusId });
@@ -61,14 +49,7 @@ function focusIsNonBodied(sess: AiSession, engine: NavigationEngine): boolean {
 
 type AgentStage = 'discover' | 'active' | 'synthesis';
 
-/**
- * Resolves a stage's YAML template block for the session's classification + memory depth.
- *
- * @remarks
- * Thin wrapper over {@link resolveStagePrompt} so the phase builders don't repeat the
- * `sess.outputTemplates` / `sess.classification` / `slotCount` plumbing — the single point that
- * keeps every SM render on the YAML tuning surface.
- */
+/** Resolves a stage's YAML template block for the session's classification + memory depth. */
 function resolveStage(sess: AiSession, stage: AgentStage, isCtMode?: boolean, render?: StageRenderScope): StagePromptResult {
   return resolveStagePrompt(
     sess.outputTemplates,
@@ -81,16 +62,7 @@ function resolveStage(sess: AiSession, stage: AgentStage, isCtMode?: boolean, re
   );
 }
 
-/**
- * The template keys a render dropped because the locked classification did not request them.
- *
- * @remarks
- * The drop is deterministic and by design, and it is the one filter in the chain that leaves no
- * trace of its own: without this list a run in which `business_capture` — sole owner of the
- * decision-impacting data-quality capture instruction — was never issued reads identically to one
- * in which the model was asked and found nothing. The builder result carries it so the graph can
- * log it.
- */
+/** The template keys a render dropped because the locked classification did not request them. */
 function classificationGatedKeys(result: StagePromptResult): string[] {
   return result.gatedOut.filter(entry => entry.reason === 'classification').map(entry => entry.key);
 }
@@ -117,13 +89,7 @@ export interface StageSystemInstruction {
   readonly classificationGatedKeys: readonly string[];
 }
 
-/**
- * Builds the discovery system prompt together with its YAML-selection provenance.
- * @param sess - Session carrying the loaded OutputSpec.
- * @param ctx - Grounded database/filter context.
- * @returns The prompt and the YAML keys that produced it; discovery assembles no memory block in
- *   its system prompt (conversation history rides the call's `messages`), so `memorySections` is empty.
- */
+/** Builds the discovery system prompt together with its YAML-selection provenance. */
 export function buildDiscoveryInstruction(sess: AiSession, ctx: StagePromptContext): StageSystemInstruction {
   const stage = resolveStage(sess, 'discover');
   return {
@@ -134,25 +100,7 @@ export function buildDiscoveryInstruction(sess: AiSession, ctx: StagePromptConte
   };
 }
 
-/**
- * Composes the active stable prefix and YAML provenance.
- *
- * @remarks
- * The mode is the HOP's ({@link NavigationEngine.currentHopAnalysisMode}), not the session's. A CT
- * session reaches branches carrying none of the traced columns, and a hop with no column to map
- * assembles through the plain BB path here — the same path a BB session takes — rather than
- * through a CT contract with its column blocks suppressed. Suppression would leave the mixed-mode
- * surface that asks a column-less focus for a `column_flow` account it cannot give.
- *
- * The stable prefix is byte-identical for every hop of one mode, so the prefix cache still holds
- * across each run of same-mode hops; a mode change is a genuine contract change and earns its miss.
- *
- * @param sess - Active exploration session with a locked classification.
- * @param ctx - Grounded database/filter context.
- * @param hopMode - The contract this hop is dispatched under.
- * @returns The system prompt for `hopMode` and the YAML keys that rendered it; both are identical
- *   for every hop dispatched under the same mode.
- */
+/** Composes the active stable prefix and YAML provenance. */
 export function buildActiveInstruction(sess: AiSession, ctx: StagePromptContext, hopMode: 'bb' | 'ct'): StageSystemInstruction {
   const engine = sess.stateMachine as NavigationEngine;
   sess.requireLockedClassification();
@@ -170,15 +118,7 @@ export function buildActiveInstruction(sess: AiSession, ctx: StagePromptContext,
   };
 }
 
-/**
- * Assembles the session-constant context blocks — mission brief, original question, discovery
- * summary — shared by every stage system prompt, plus the measured provenance list of the blocks
- * that assembled non-empty.
- *
- * @remarks
- * Single home for this trio: a context block added here reaches every consuming stage at once,
- * which is exactly the drift class the shared presentation contract already guards on its axis.
- */
+/** Assembles the session-constant context blocks — mission brief, original question, discovery summary — shared by every stage system prompt, plus the measured provenance list of the blocks that assembled non-empty. */
 function buildStableContextBlocks(sess: AiSession, engine: NavigationEngine | null): {
   blocks: readonly string[];
   memorySections: string[];
@@ -189,7 +129,7 @@ function buildStableContextBlocks(sess: AiSession, engine: NavigationEngine | nu
     sess.memory.getScopeNotes(),
   );
   const originalQuestion = buildOriginalQuestionBlock(sess.memory.getUserQuestion());
-  const discoverySummary = buildDiscoverySummaryBlock(engine?.getDiscoverySummary?.() ?? null);
+  const discoverySummary = buildDiscoverySummaryBlock(engine?.getDiscoverySummary() ?? null);
   const memorySections: string[] = [];
   if (missionBrief) memorySections.push('mission_brief');
   if (originalQuestion) memorySections.push('original_question');
@@ -197,17 +137,7 @@ function buildStableContextBlocks(sess: AiSession, engine: NavigationEngine | nu
   return { blocks: [missionBrief, originalQuestion, discoverySummary], memorySections };
 }
 
-/**
- * Composes the lean per-hop worker user message: the focus task, the focus node DDL + neighbours,
- * and rolling memory. This is the only per-hop-volatile content — the stable mission/rules ride in
- * the cached system prompt ({@link buildActiveInstruction}), so the cached prefix stays byte-identical
- * across hops (prompt-cache hits on every caching lane).
- *
- * @remarks
- * Blinkered-worker scope: what to analyse, the node + its neighbours, and continuity/self-correction
- * memory (short-term summaries + `recent_rejections`, earlier hops only — the current hop's rejection
- * is already the tool result of the call it refused). No progress chrome, no user-interaction framing.
- */
+/** The per-hop worker user message plus its YAML and memory provenance. */
 interface ActiveHopInstruction {
   /** Per-focus user message shipped to the active worker. */
   readonly message: string;
@@ -219,55 +149,59 @@ interface ActiveHopInstruction {
   readonly classificationGatedKeys: readonly string[];
 }
 
-/**
- * Builds the active-hop user message together with its focus-sensitive YAML provenance.
- * @param sess - Active exploration session.
- * @param engine - Navigation engine presenting the current focus.
- * @param focusId - Exact current focus id.
- * @returns The hop message and its selected capture-template keys.
- */
+/** Builds the lean per-hop worker user message — the focus task, the focus node DDL + neighbours, and rolling memory — together with its focus-sensitive YAML provenance. */
 export function buildActiveHopInstruction(sess: AiSession, engine: NavigationEngine, focusId: string): ActiveHopInstruction {
   const isCtMode = engine.currentHopAnalysisMode === 'ct';
+  const nonBodied = focusIsNonBodied(sess, engine);
+  const held = engine.heldPartsOfCurrentFocus();
+  const angles = sess.classification ? CLASSIFICATION_KEPT_ANGLES[sess.classification] : undefined;
+  const writeSections = !held || !angles?.every(angle => held.sections.includes(angle));
   const currentTask = buildCurrentTaskBlock(
-    engine.getCurrentTasks(),
+    engine.getCurrentTasks().map(task => ({ ...task, endpoints: engine.taskEndpoints(task) })),
     isCtMode ? engine.columnAspect?.active_columns : undefined,
     engine.pendingLineageQuestions,
+    nonBodied,
+    held !== null,
+    { analysisMode: engine.currentHopAnalysisMode, originNodeId: engine.currentOrigin },
   );
+  const savedFields = held ? [
+    ...(held.summary ? ['summary'] : []),
+    ...held.fields,
+    ...held.sections.map(angle => `sections.${angle}`),
+  ] : [];
+  const correctionJob = !held ? null : [
+    '<current_task>',
+    'Status: correction needed.',
+    ...(savedFields.length ? [`Saved valid content: ${savedFields.map(escapePromptText).join(', ')}.`] : []),
+    ...(held.resend.length ? [`Fields to correct: ${held.resend.map(escapePromptText).join(', ')}.`] : []),
+    'The latest tool error defines the faults and their correction alternatives.',
+    'Next: submit only missing or corrected fields. Omit saved fields unless resolving a reported fault.',
+    '</current_task>',
+  ].join('\n');
   const captureRecipe = resolveStage(sess, 'active', isCtMode, {
     scope: 'per_focus',
-    focusKind: focusIsNonBodied(sess, engine) ? 'non_bodied' : 'bodied',
+    focusKind: nonBodied ? 'non_bodied' : 'bodied',
+    writeSections,
   });
   const focus = buildWorkerHopMessage(engine.peekHopContext(), focusId);
   const recentRejections = sess.memory.getRecentRejections().filter(rejection => rejection.atHop < engine.currentHop);
   const memory = buildMemoryBlock(sess.memory.getShortTermMemory(), recentRejections);
   const memorySections: string[] = [];
   if (currentTask) memorySections.push('current_task');
+  if (held) memorySections.push('held_finding_correction');
   if (captureRecipe.prompt) memorySections.push('capture_recipe');
   if (focus) memorySections.push('hop_context');
   memorySections.push('short_term_memory');
   if (recentRejections.length > 0) memorySections.push('recent_rejections');
   return {
-    message: [currentTask, captureRecipe.prompt, focus, memory].filter(Boolean).join('\n\n'),
+    message: [correctionJob, currentTask, captureRecipe.prompt, focus, memory].filter(Boolean).join('\n\n'),
     templateKeys: captureRecipe.shippedKeys,
     memorySections,
     classificationGatedKeys: classificationGatedKeys(captureRecipe),
   };
 }
 
-/**
- * Composes the synthesis authoring system prompt: grounded base (which routes to the TS
- * `buildSynthesisPrompt` protocol) + synthesis-stage YAML block + the stable mission blocks.
- *
- * @remarks
- * This is the surface that makes every `[synthesis]` YAML key (`summary`/`title`/`intro`/
- * `closing`/`highlights`/`notes`/`general`) live on the host path — the AI authors the full
- * `present_result` content from the completion envelope; the engine only validates and assembles.
- * The user message is the {@link buildSmCompletionEnvelope} archive, never composed here.
- *
- * @param sess - Completed exploration session with its OutputSpec and archive.
- * @param ctx - Grounded database/filter context.
- * @returns The synthesis prompt and selected YAML keys.
- */
+/** Composes the synthesis authoring system prompt: grounded base (which routes to the TS `buildSynthesisPrompt` protocol) + synthesis-stage YAML block + the stable mission blocks. */
 export function buildSynthesisInstruction(sess: AiSession, ctx: StagePromptContext): StageSystemInstruction {
   const engine = sess.stateMachine as NavigationEngine | null;
   const stage = resolveStage(sess, 'synthesis');

@@ -1,7 +1,4 @@
-/**
- * Pins that the turn's `AbortSignal` rides `graph.invoke`'s `RunnableConfig.signal`, so LangGraph
- * itself stops the run at the next step after a cancel and no further model call is made.
- */
+/** Pins that the turn's `AbortSignal` rides `graph.invoke`'s `RunnableConfig.signal`, so LangGraph itself stops the run at the next step after a cancel and no further model call is made. */
 import { describe, expect, it } from 'vitest';
 import { AgentRuntime } from '../../../src/ai/host/agentRuntime';
 import type { ModelPort } from '../../../src/ai/model/modelPort';

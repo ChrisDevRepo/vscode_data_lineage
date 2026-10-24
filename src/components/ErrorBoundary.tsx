@@ -13,9 +13,7 @@ interface ErrorBoundaryProps {
   context?: Record<string, unknown>;
 }
 
-/**
- * State for the {@link ErrorBoundary} component.
- */
+/** State for the {@link ErrorBoundary} component. */
 interface ErrorBoundaryState {
   /** Indicates if an error has occurred within the child component tree. */
   hasError: boolean;
@@ -24,28 +22,14 @@ interface ErrorBoundaryState {
   resetKey?: string;
 }
 
-/**
- * A standard React Error Boundary that captures runtime errors in the component tree.
- *
- * @remarks
- * This class component implements `getDerivedStateFromError` and `componentDidCatch`.
- * When an error occurs, it:
- * 1. Updates state to trigger a fallback UI.
- * 2. Logs the error to the VS Code Extension Host via `postMessage`.
- * 3. Executes the optional `onError` callback.
- */
+/** A standard React Error Boundary that captures runtime errors in the component tree. */
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   constructor(props: ErrorBoundaryProps) {
     super(props);
     this.state = { hasError: false, error: null, resetKey: props.resetKey };
   }
 
-  /**
-   * Updates state so the next render will show the fallback UI.
-   *
-   * @param error - The error that was thrown.
-   * @returns The updated state object.
-   */
+  /** Updates state so the next render will show the fallback UI. */
   static getDerivedStateFromError(error: Error): ErrorBoundaryState {
     return { hasError: true, error };
   }
@@ -61,12 +45,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     return null;
   }
 
-  /**
-   * Performs side effects when an error is caught, such as logging.
-   *
-   * @param error - The error that was thrown.
-   * @param errorInfo - Information about the component stack during the error.
-   */
+  /** Performs side effects when an error is caught, such as logging. */
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     const vscodeApi = window.vscode;
     if (vscodeApi && typeof vscodeApi.postMessage === 'function') {
@@ -84,11 +63,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     this.props.onError?.(error, errorInfo);
   }
 
-  /**
-   * Renders the children or the fallback UI if an error occurred.
-   *
-   * @returns The rendered React node.
-   */
+  /** Renders the children or the fallback UI if an error occurred. */
   render() {
     if (this.state.hasError) {
       if (this.props.fallback) {

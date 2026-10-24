@@ -1,14 +1,12 @@
-/**
- * DMV Extractor test — uses synthetic DMV data to verify model building.
- */
+/** DMV Extractor test — uses synthetic DMV data to verify model building. */
 
 import { readFileSync } from 'fs';
 import * as yaml from 'js-yaml';
 import { describe, expect, it } from 'vitest';
-import { buildModelFromDmv, mapServerInfoPlatform, validateQueryResult } from '../../../src/engine/dmvExtractor';
+import { buildModelFromDmv, validateQueryResult } from '../../../src/engine/dmvExtractor';
 import { formatColumnType } from '../../../src/engine/types';
 import type { DmvResults } from '../../../src/engine/dmvExtractor';
-import type { SimpleExecuteResult, DbCellValue, IDbColumn, IServerInfo } from '../../../src/types/mssql';
+import type { SimpleExecuteResult, DbCellValue, IDbColumn } from '../../../src/types/database';
 import { expandSchemaPlaceholder, validateSchemaPlaceholder } from '../../../src/utils/sql';
 import { isPhase2Query, type DmvQuery } from '../../../src/engine/connectionManager';
 import { loadParseRules, rootPath } from '../helpers/testUtils';
@@ -31,8 +29,15 @@ function makeResult(columns: IDbColumn[], rows: DbCellValue[][]): SimpleExecuteR
 }
 
 
+const nodeFields = ['schema_name', 'object_name', 'type_code', 'body_script'];
+const columnFields = ['schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed'];
+const dependencyFields = ['referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name'];
+function rawResult(fields: string[], rows: (string | null)[][]): SimpleExecuteResult {
+  return makeResult(cols(...fields), rows.map(row => row.map(value => value === null ? nullCell() : cell(value))));
+}
+
 function buildSyntheticResults(): DmvResults {
-  const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
+  const nodesCols = cols(...nodeFields);
   const nodesRows: DbCellValue[][] = [
     [cell('dbo'), cell('Customers'), cell('U '), nullCell()],
     [cell('dbo'), cell('Orders'), cell('U '), nullCell()],
@@ -42,7 +47,7 @@ function buildSyntheticResults(): DmvResults {
     [cell('sales'), cell('uspCreateOrder'), cell('P '), cell('CREATE PROCEDURE [sales].[uspCreateOrder]\nAS\nINSERT INTO [dbo].[Orders] (CustomerId, ProductId)\nSELECT c.Id, p.Id FROM [dbo].[Customers] c\nCROSS JOIN [dbo].[Products] p')],
   ];
 
-  const columnsCols = cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed');
+  const columnsCols = cols(...columnFields);
   const columnsRows: DbCellValue[][] = [
     [cell('dbo'), cell('Customers'), cell('1'), cell('Id'), cell('int'), cell('4'), cell('10'), cell('0'), cell('0'), cell('1'), cell('0')],
     [cell('dbo'), cell('Customers'), cell('2'), cell('Name'), cell('nvarchar'), cell('200'), cell('0'), cell('0'), cell('1'), cell('0'), cell('0')],
@@ -54,7 +59,7 @@ function buildSyntheticResults(): DmvResults {
     [cell('dbo'), cell('Products'), cell('2'), cell('Name'), cell('nvarchar'), cell('510'), cell('0'), cell('0'), cell('0'), cell('0'), cell('0')],
   ];
 
-  const depsCols = cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name');
+  const depsCols = cols(...dependencyFields);
   const depsRows: DbCellValue[][] = [
     [cell('dbo'), cell('vActiveCustomers'), cell('dbo'), cell('Customers')],
     [cell('sales'), cell('uspGetOrdersByCustomer'), cell('dbo'), cell('Orders')],
@@ -145,30 +150,30 @@ function testBuildModelFromDmv() {
   expect(model.warnings === undefined, 'No warnings for valid data').toBe(true);
 
   const emptyResults: DmvResults = {
-    nodes: makeResult(cols('schema_name', 'object_name', 'type_code', 'body_script'), []),
-    columns: makeResult(cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed'), []),
-    dependencies: makeResult(cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name'), []),
+    nodes: makeResult(cols(...nodeFields), []),
+    columns: makeResult(cols(...columnFields), []),
+    dependencies: makeResult(cols(...dependencyFields), []),
   };
   const emptyModel = buildModelFromDmv(emptyResults);
   expect(emptyModel.nodes.length, 'Empty DB has 0 nodes').toBe(0);
   expect(emptyModel.edges.length, 'Empty DB has 0 edges').toBe(0);
   expect(emptyModel.warnings !== undefined && emptyModel.warnings.length > 0, 'Empty DB produces warning').toBe(true);
 
-  const nodeCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
+  const nodeCols = cols(...nodeFields);
   const dupResults: DmvResults = {
     nodes: makeResult(nodeCols, [
       [cell('dbo'), cell('Customers'), cell('U '), nullCell()],
       [cell('dbo'), cell('Customers'), cell('U '), nullCell()],
     ]),
-    columns: makeResult(cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed'), []),
-    dependencies: makeResult(cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name'), []),
+    columns: makeResult(cols(...columnFields), []),
+    dependencies: makeResult(cols(...dependencyFields), []),
   };
   expect(buildModelFromDmv(dupResults).nodes.length, 'Duplicate nodes are deduplicated').toBe(1);
 
   const selfRefResults: DmvResults = {
     nodes: makeResult(nodeCols, [[cell('dbo'), cell('MyTable'), cell('U '), nullCell()]]),
-    columns: makeResult(cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed'), []),
-    dependencies: makeResult(cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name'),
+    columns: makeResult(cols(...columnFields), []),
+    dependencies: makeResult(cols(...dependencyFields),
       [[cell('dbo'), cell('MyTable'), cell('dbo'), cell('MyTable')]]),
   };
   expect(buildModelFromDmv(selfRefResults).edges.length, 'Self-references produce no edges').toBe(0);
@@ -219,58 +224,22 @@ function testFormatColumnType() {
   }
 }
 
-function testFallbackBodyDirection() {
-
-  const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
-  const nodesRows: DbCellValue[][] = [
-    [cell('dbo'), cell('WriteTarget'), cell('U '), nullCell()],
-    [cell('dbo'), cell('ReadSource'),  cell('U '), nullCell()],
-    [cell('dbo'), cell('TestFallbackSP'), cell('P '),
-      cell('CREATE PROCEDURE dbo.TestFallbackSP AS UPDATE WriteTarget SET x = 1; SELECT * FROM ReadSource')],
-  ];
-
-  const depsCols = cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name');
-  const depsRows: DbCellValue[][] = [
-    [cell('dbo'), cell('TestFallbackSP'), cell('dbo'), cell('WriteTarget')],
-    [cell('dbo'), cell('TestFallbackSP'), cell('dbo'), cell('ReadSource')],
-  ];
-
-  const results: DmvResults = {
-    nodes: makeResult(nodesCols, nodesRows),
-    columns: makeResult(cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed'), []),
-    dependencies: makeResult(depsCols, depsRows),
-  };
-
-  const model = buildModelFromDmv(results);
-
-  const writeEdge = model.edges.find(e =>
-    e.source === '[dbo].[testfallbacksp]' && e.target === '[dbo].[writetarget]'
-  );
-  expect(writeEdge !== undefined, 'Fallback: unqualified UPDATE → WRITE edge (SP → table)').toBe(true);
-
-  const readEdge = model.edges.find(e =>
-    e.source === '[dbo].[readsource]' && e.target === '[dbo].[testfallbacksp]'
-  );
-  expect(readEdge !== undefined, 'Fallback: unqualified FROM → READ edge (table → SP)').toBe(true);
-}
-
-
 function testCrossSchemaUnresolved() {
 
-  const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
+  const nodesCols = cols(...nodeFields);
   const nodesRows: DbCellValue[][] = [
     [cell('HumanResources'), cell('uspUpdateEmployeePersonalInfo'), cell('P '),
       cell('CREATE PROCEDURE [HumanResources].[uspUpdateEmployeePersonalInfo] AS BEGIN EXECUTE [dbo].[uspLogError]; END')],
   ];
 
-  const depsCols = cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name');
+  const depsCols = cols(...dependencyFields);
   const depsRows: DbCellValue[][] = [
     [cell('HumanResources'), cell('uspUpdateEmployeePersonalInfo'), cell('dbo'), cell('uspLogError')],
   ];
 
   const results: DmvResults = {
     nodes: makeResult(nodesCols, nodesRows),
-    columns: makeResult(cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed'), []),
+    columns: makeResult(cols(...columnFields), []),
     dependencies: makeResult(depsCols, depsRows),
   };
 
@@ -290,13 +259,13 @@ function testCrossSchemaUnresolved() {
 
 function testCrossSchemaKnownViaCatalog() {
 
-  const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
+  const nodesCols = cols(...nodeFields);
   const nodesRows: DbCellValue[][] = [
     [cell('HumanResources'), cell('uspUpdateEmployeePersonalInfo'), cell('P '),
       cell('CREATE PROCEDURE [HumanResources].[uspUpdateEmployeePersonalInfo] AS BEGIN EXECUTE [dbo].[uspLogError]; END')],
   ];
 
-  const depsCols = cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name');
+  const depsCols = cols(...dependencyFields);
   const depsRows: DbCellValue[][] = [
     [cell('HumanResources'), cell('uspUpdateEmployeePersonalInfo'), cell('dbo'), cell('uspLogError')],
   ];
@@ -309,7 +278,7 @@ function testCrossSchemaKnownViaCatalog() {
 
   const results: DmvResults = {
     nodes: makeResult(nodesCols, nodesRows),
-    columns: makeResult(cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed'), []),
+    columns: makeResult(cols(...columnFields), []),
     dependencies: makeResult(depsCols, depsRows),
     allObjects: makeResult(allObjectsCols, allObjectsRows),
   };
@@ -332,109 +301,38 @@ function testCrossSchemaKnownViaCatalog() {
 }
 
 
-function testExternalTableNodes() {
-
-  const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
-  const nodesRows: DbCellValue[][] = [
-    [cell('dbo'), cell('LocalOrders'), cell('U '), nullCell()],
-    [cell('ext'), cell('ExternalSales'), cell('ET'), nullCell()],
-    [cell('dbo'), cell('uspLoadSales'), cell('P '),
-      cell('CREATE PROCEDURE [dbo].[uspLoadSales] AS\nINSERT INTO [dbo].[LocalOrders]\nSELECT * FROM [ext].[ExternalSales]')],
-  ];
-
-  const depsCols = cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name');
-  const depsRows: DbCellValue[][] = [
-    [cell('dbo'), cell('uspLoadSales'), cell('dbo'), cell('LocalOrders')],
-    [cell('dbo'), cell('uspLoadSales'), cell('ext'), cell('ExternalSales')],
-  ];
-
-  const emptyCols = cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed');
-
-  const results: DmvResults = {
-    nodes: makeResult(nodesCols, nodesRows),
-    columns: makeResult(emptyCols, []),
-    dependencies: makeResult(depsCols, depsRows),
-  };
-
-  const model = buildModelFromDmv(results);
-
-  expect(model.nodes.length, 'Should have 3 nodes (1 table, 1 external, 1 SP)').toBe(3);
-  const extNodes = model.nodes.filter(n => n.type === 'external');
-  expect(extNodes.length, 'Should have 1 external node').toBe(1);
-
-  const extNode = extNodes[0];
-  expect(extNode !== undefined, 'External node exists').toBe(true);
-  expect(extNode?.schema, 'External node has correct schema').toBe('ext');
-  expect(extNode?.name, 'External node has correct name (original casing)').toBe('ExternalSales');
-  expect(extNode?.id, 'External node ID is lowercase-normalized').toBe('[ext].[externalsales]');
-  expect(extNode?.externalType, 'External node has externalType=et').toBe('et');
-  expect(extNode?.bodyScript === undefined || extNode?.bodyScript === null,
-    'External node has no bodyScript (ET has no SQL body)').toBe(true);
-
-  const extSchema = model.schemas.find(s => s.name === 'ext');
-  expect(extSchema !== undefined, 'ext schema present in schemas').toBe(true);
-  expect(extSchema?.types?.external ?? 0, 'ext schema counts 1 external node').toBe(1);
-
-  const extId = '[ext].[externalsales]';
-  const catEntry = model.catalog[extId];
-  expect(catEntry !== undefined, 'External node in catalog').toBe(true);
-  expect(catEntry?.type, 'catalog entry type=external').toBe('external');
-
-  const readEdge = model.edges.find(e =>
-    e.source === extId && e.target === '[dbo].[uspLoadsales]'.toLowerCase()
-  );
-  expect(readEdge !== undefined,
-    `Read edge external → SP exists (edges: ${model.edges.map(e => `${e.source}→${e.target}`).join(', ')})`).toBe(true);
-
-  const writeEdge = model.edges.find(e =>
-    e.source === '[dbo].[uspLoadsales]'.toLowerCase() && e.target === '[dbo].[localorders]'
-  );
-  expect(writeEdge !== undefined, 'Write edge SP → LocalOrders exists').toBe(true);
-
-  const spId = '[dbo].[uspLoadsales]'.toLowerCase();
-  const extNeighbors = model.neighborIndex[extId];
-  expect(extNeighbors !== undefined, 'neighborIndex entry for external node').toBe(true);
-  expect(extNeighbors?.out.includes(spId),
-    `External node out-neighbors include SP (got: ${JSON.stringify(extNeighbors?.out)})`).toBe(true);
-}
-
-function testExternalTableWriteDirection() {
-
-  const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
-  const nodesRows: DbCellValue[][] = [
-    [cell('dbo'), cell('SourceData'), cell('U '), nullCell()],
-    [cell('ext'), cell('ExportTarget'), cell('ET'), nullCell()],
-    [cell('dbo'), cell('uspExportData'), cell('P '),
-      cell('CREATE PROCEDURE [dbo].[uspExportData] AS\nINSERT INTO [ext].[ExportTarget]\nSELECT * FROM [dbo].[SourceData]')],
-  ];
-
-  const depsCols = cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name');
-  const depsRows: DbCellValue[][] = [
-    [cell('dbo'), cell('uspExportData'), cell('dbo'), cell('SourceData')],
-    [cell('dbo'), cell('uspExportData'), cell('ext'), cell('ExportTarget')],
-  ];
-
-  const emptyCols = cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed');
-
-  const results: DmvResults = {
-    nodes: makeResult(nodesCols, nodesRows),
-    columns: makeResult(emptyCols, []),
-    dependencies: makeResult(depsCols, depsRows),
-  };
-
-  const model = buildModelFromDmv(results);
-
-  const extId = '[ext].[exporttarget]';
-  const spId = '[dbo].[uspexportdata]';
-  const srcId = '[dbo].[sourcedata]';
-
-  const writeEdge = model.edges.find(e => e.source === spId && e.target === extId);
-  expect(writeEdge !== undefined,
-    `Write edge SP → ExportTarget exists (edges: ${model.edges.map(e => `${e.source}→${e.target}`).join(', ')})`).toBe(true);
-
-  const readEdge = model.edges.find(e => e.source === srcId && e.target === spId);
-  expect(readEdge !== undefined, 'Read edge SourceData → SP exists').toBe(true);
-}
+it.each([
+  {
+    name: 'creates external table nodes', table: 'LocalOrders', external: 'ExternalSales', procedure: 'uspLoadSales',
+    sql: 'CREATE PROCEDURE [dbo].[uspLoadSales] AS\nINSERT INTO [dbo].[LocalOrders]\nSELECT * FROM [ext].[ExternalSales]',
+    externalId: '[ext].[externalsales]', procedureId: '[dbo].[usploadsales]', direction: 'out' as const,
+    edges: [['[ext].[externalsales]', '[dbo].[usploadsales]'], ['[dbo].[usploadsales]', '[dbo].[localorders]']],
+  },
+  {
+    name: 'preserves external table write direction', table: 'SourceData', external: 'ExportTarget', procedure: 'uspExportData',
+    sql: 'CREATE PROCEDURE [dbo].[uspExportData] AS\nINSERT INTO [ext].[ExportTarget]\nSELECT * FROM [dbo].[SourceData]',
+    externalId: '[ext].[exporttarget]', procedureId: '[dbo].[uspexportdata]', direction: 'in' as const,
+    edges: [['[dbo].[uspexportdata]', '[ext].[exporttarget]'], ['[dbo].[sourcedata]', '[dbo].[uspexportdata]']],
+  },
+])('$name', ({ table, external, procedure, sql, externalId, procedureId, direction, edges }) => {
+  const model = buildModelFromDmv({
+    nodes: rawResult(nodeFields, [['dbo', table, 'U ', null], ['ext', external, 'ET', null], ['dbo', procedure, 'P ', sql]]),
+    columns: rawResult(columnFields, []),
+    dependencies: rawResult(dependencyFields, [['dbo', procedure, 'dbo', table], ['dbo', procedure, 'ext', external]]),
+  });
+  expect(model.nodes).toHaveLength(3);
+  const externalNodes = model.nodes.filter(n => n.type === 'external');
+  expect(externalNodes).toHaveLength(1);
+  const externalNode = externalNodes[0];
+  expect(externalNode).toMatchObject({ schema: 'ext', name: external, id: externalId, externalType: 'et' });
+  expect(externalNode.bodyScript == null, 'External table has no SQL body').toBe(true);
+  expect(model.schemas.find(schema => schema.name === 'ext')?.types?.external).toBe(1);
+  expect(model.catalog[externalId]?.type).toBe('external');
+  for (const [source, target] of edges) {
+    expect(model.edges, `${source} → ${target}`).toEqual(expect.arrayContaining([expect.objectContaining({ source, target })]));
+  }
+  expect(model.neighborIndex[externalId]?.[direction]).toContain(procedureId);
+});
 
 
 function buildConstraintsResult(): SimpleExecuteResult {
@@ -491,91 +389,80 @@ function testConstraintMapsEnrichColumns() {
 }
 
 
-function testCrossDbDepsFromDmv() {
+it('keeps metadata-backed directions for unqualified reads and writes in the same body', () => {
+  const model = buildModelFromDmv({
+    nodes: rawResult(nodeFields, [
+      ['dbo', 'WriteTarget', 'U ', null], ['dbo', 'ReadSource', 'U ', null],
+      ['dbo', 'TestFallbackSP', 'P ', 'CREATE PROCEDURE dbo.TestFallbackSP AS UPDATE WriteTarget SET x = 1; SELECT * FROM ReadSource'],
+    ]),
+    columns: rawResult(columnFields, []),
+    dependencies: rawResult(dependencyFields, [
+      ['dbo', 'TestFallbackSP', 'dbo', 'WriteTarget'], ['dbo', 'TestFallbackSP', 'dbo', 'ReadSource'],
+    ]),
+  });
+  expect(model.edges).toEqual(expect.arrayContaining([
+    expect.objectContaining({ source: '[dbo].[testfallbacksp]', target: '[dbo].[writetarget]' }),
+    expect.objectContaining({ source: '[dbo].[readsource]', target: '[dbo].[testfallbacksp]' }),
+  ]));
+});
 
-  const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
-  const nodesRows: DbCellValue[][] = [
-    [cell('dbo'), cell('Sales'), cell('U '), nullCell()],
-    [cell('dbo'), cell('spLoadFromArchive'), cell('P '),
-      cell('CREATE PROCEDURE [dbo].[spLoadFromArchive] AS\nINSERT INTO [dbo].[Sales]\nSELECT * FROM [ArchiveDB].[dbo].[ArchivedSales]')],
-  ];
+it('keeps the cross-database read and local write with DMV virtual-node metadata', () => {
+  const model = buildModelFromDmv({
+    nodes: rawResult(nodeFields, [
+      ['dbo', 'Sales', 'U ', null],
+      ['dbo', 'spLoadFromArchive', 'P ', 'CREATE PROCEDURE [dbo].[spLoadFromArchive] AS\nINSERT INTO [dbo].[Sales]\nSELECT * FROM [ArchiveDB].[dbo].[ArchivedSales]'],
+    ]),
+    columns: rawResult(columnFields, []),
+    dependencies: rawResult([...dependencyFields, 'referenced_database'], [
+      ['dbo', 'spLoadFromArchive', 'dbo', 'Sales', null],
+      ['dbo', 'spLoadFromArchive', 'dbo', 'ArchivedSales', 'ArchiveDB'],
+    ]),
+  });
+  const external = model.nodes.find(node => node.externalType === 'db');
+  expect(external).toBeDefined();
+  expect(external?.externalDatabase?.toLowerCase()).toBe('archivedb');
+  expect(external?.schema).toBe('');
+  expect(external!.name.toLowerCase()).toContain('archivedsales');
+  expect(model.edges).toEqual(expect.arrayContaining([
+    expect.objectContaining({ source: external!.id, target: '[dbo].[sploadfromarchive]' }),
+    expect.objectContaining({ source: '[dbo].[sploadfromarchive]', target: '[dbo].[sales]' }),
+  ]));
+  expect(model.nodes).toHaveLength(3);
+});
 
-  const depsCols = cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name', 'referenced_database');
-  const depsRows: DbCellValue[][] = [
-    [cell('dbo'), cell('spLoadFromArchive'), cell('dbo'), cell('Sales'), nullCell()],
-    [cell('dbo'), cell('spLoadFromArchive'), cell('dbo'), cell('ArchivedSales'), cell('ArchiveDB')],
-  ];
+it('suppresses a same-database DMV reference with the original local read object present', () => {
+  const model = buildModelFromDmv({
+    nodes: rawResult(nodeFields, [
+      ['dbo', 'Sales', 'U ', null], ['dbo', 'ArchivedSales', 'U ', null],
+      ['dbo', 'spLoad', 'P ', 'CREATE PROCEDURE [dbo].[spLoad] AS SELECT * FROM [dbo].[ArchivedSales]'],
+    ]),
+    columns: rawResult(columnFields, []),
+    dependencies: rawResult([...dependencyFields, 'referenced_database'], [
+      ['dbo', 'spLoad', 'dbo', 'ArchivedSales', 'MyDB'], ['dbo', 'spLoad', 'dbo', 'Sales', null],
+    ]),
+  }, 'MyDB');
+  expect(model.nodes.some(node => node.externalType === 'db')).toBe(false);
+  expect(model.nodes).toHaveLength(3);
+  expect(model.edges).toEqual(expect.arrayContaining([
+    expect.objectContaining({ source: '[dbo].[archivedsales]', target: '[dbo].[spload]' }),
+  ]));
+});
 
-  const emptyCols = cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed');
-
-  const results: DmvResults = {
-    nodes: makeResult(nodesCols, nodesRows),
-    columns: makeResult(emptyCols, []),
-    dependencies: makeResult(depsCols, depsRows),
-  };
-
-  const model = buildModelFromDmv(results);
-
-  const crossDbNode = model.nodes.find(n => n.externalType === 'db');
-  expect(crossDbNode !== undefined, 'CrossDB-DMV: virtual db node created from referenced_database').toBe(true);
-  expect(crossDbNode?.externalDatabase?.toLowerCase(), 'CrossDB-DMV: externalDatabase set correctly').toBe('archivedb');
-  expect(crossDbNode?.schema, 'CrossDB-DMV: virtual node has empty schema').toBe('');
-  expect(crossDbNode!.name.toLowerCase().includes('archivedsales'), 'CrossDB-DMV: virtual node name includes object name').toBe(true);
-
-  const crossDbEdge = model.edges.find(e =>
-    e.target === '[dbo].[sploadfromarchive]' && e.source === crossDbNode!.id
-  );
-  expect(crossDbEdge !== undefined,
-    `CrossDB-DMV: cross-DB → SP edge exists (edges: ${model.edges.map(e => `${e.source}→${e.target}`).join(', ')})`).toBe(true);
-
-  const localEdge = model.edges.find(e =>
-    e.source === '[dbo].[sploadfromarchive]' && e.target === '[dbo].[sales]'
-  );
-  expect(localEdge !== undefined, 'CrossDB-DMV: local SP → Sales write edge exists').toBe(true);
-
-  expect(model.nodes.length, 'CrossDB-DMV: 2 real + 1 virtual = 3 nodes').toBe(3);
-}
-
-function testCrossDbSameDbSuppression() {
-
-  const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
-  const nodesRows: DbCellValue[][] = [
-    [cell('dbo'), cell('Sales'), cell('U '), nullCell()],
-    [cell('dbo'), cell('ArchivedSales'), cell('U '), nullCell()],
-    [cell('dbo'), cell('spLoad'), cell('P '),
-      cell('CREATE PROCEDURE [dbo].[spLoad] AS SELECT * FROM [dbo].[ArchivedSales]')],
-  ];
-
-  const depsCols = cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name', 'referenced_database');
-  const depsRows: DbCellValue[][] = [
-    [cell('dbo'), cell('spLoad'), cell('dbo'), cell('ArchivedSales'), cell('MyDB')],
-    [cell('dbo'), cell('spLoad'), cell('dbo'), cell('Sales'), nullCell()],
-  ];
-
-  const emptyCols = cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed');
-
-  const results: DmvResults = {
-    nodes: makeResult(nodesCols, nodesRows),
-    columns: makeResult(emptyCols, []),
-    dependencies: makeResult(depsCols, depsRows),
-  };
-
-  const model = buildModelFromDmv(results, 'MyDB');
-  const crossDbNode = model.nodes.find(n => n.externalType === 'db');
-  expect(crossDbNode === undefined, 'CrossDB-SameDB: no virtual node when referenced_database = currentDatabase').toBe(true);
-  expect(model.nodes.length, 'CrossDB-SameDB: only 3 real nodes').toBe(3);
-}
+it('maps referenced_database rows to three-part dependencies resolved against the current database', () => {
+  const model = buildModelFromDmv({
+    nodes: rawResult(nodeFields, [['dbo', 'Sales', 'U ', null], ['dbo', 'spLoad', 'P ', 'CREATE PROCEDURE [dbo].[spLoad] AS SELECT 1']]),
+    columns: rawResult(columnFields, []),
+    dependencies: rawResult([...dependencyFields, 'referenced_database'], [['dbo', 'spLoad', 'dbo', 'ArchivedSales', 'ArchiveDB'], ['dbo', 'spLoad', 'dbo', 'Sales', 'MyDB']]),
+  }, 'MyDB');
+  expect(model.nodes.filter(n => n.externalType === 'db').map(n => n.id)).toEqual(['[archivedb].[dbo].[archivedsales]']);
+  expect(model.edges.map(e => `${e.source} -> ${e.target}`).sort()).toEqual(['[archivedb].[dbo].[archivedsales] -> [dbo].[spload]', '[dbo].[sales] -> [dbo].[spload]']);
+});
 
 it('builds a model from DMV results', testBuildModelFromDmv);
 it('validates query results against their required columns', testValidateQueryResult);
 it('formats column types', testFormatColumnType);
-it('falls back to body-derived edge direction', testFallbackBodyDirection);
 it('leaves an unresolved cross-schema reference unresolved', testCrossSchemaUnresolved);
 it('resolves a cross-schema reference known to the catalog', testCrossSchemaKnownViaCatalog);
-it('creates external table nodes', testExternalTableNodes);
-it('preserves external table write direction', testExternalTableWriteDirection);
-it('derives cross-database dependencies from DMV rows', testCrossDbDepsFromDmv);
-it('suppresses a cross-database reference to the current database', testCrossDbSameDbSuppression);
 it('enriches columns from constraint maps', testConstraintMapsEnrichColumns);
 
 
@@ -698,9 +585,9 @@ function makePlatformInfo(engineEdition: number, majorVersion: number, edition: 
 
 function testDbPlatformFromDmv() {
 
-  const emptyNodes = makeResult(cols('schema_name', 'object_name', 'type_code', 'body_script'), []);
-  const emptyCols = makeResult(cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed'), []);
-  const emptyDeps = makeResult(cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name'), []);
+  const emptyNodes = makeResult(cols(...nodeFields), []);
+  const emptyCols = makeResult(cols(...columnFields), []);
+  const emptyDeps = makeResult(cols(...dependencyFields), []);
 
   function modelWithPlatform(platformInfo: SimpleExecuteResult) {
     return buildModelFromDmv({ nodes: emptyNodes, columns: emptyCols, dependencies: emptyDeps, platformInfo });
@@ -740,131 +627,58 @@ function testDbPlatformFromDmv() {
   const noRows = modelWithPlatform(emptyRows);
   expect(noRows.dbPlatform, 'Empty platformInfo rows → explicit unknown').toBe('Unknown database platform');
 
-  const serverInfo: IServerInfo = {
-    serverMajorVersion: 16,
-    serverMinorVersion: 0,
-    serverVersion: '16.0.1000.6',
-    engineEditionId: 3,
-    isCloud: false,
-    serverEdition: 'Developer Edition',
-  };
-  expect(mapServerInfoPlatform(serverInfo),
-    'MSSQL server metadata uses the same platform mapping').toBe('SQL Server 2022');
-  const serverFallback = buildModelFromDmv({
-    nodes: emptyNodes,
-    columns: emptyCols,
-    dependencies: emptyDeps,
-    serverPlatform: 'Fabric Data Warehouse',
+
+}
+
+
+it.each([
+  {
+    table: 'OrderDetail', hasPkField: true,
+    rows: [
+      ['1', 'OrderId', 'int', '4', '10', '0', '0', '0', '0', '1'],
+      ['2', 'LineId', 'int', '4', '10', '0', '0', '0', '0', '2'],
+      ['3', 'Name', 'nvarchar', '200', '0', '0', '1', '0', '0', null],
+    ],
+    expected: [['OrderId', 1], ['LineId', 2], ['Name', undefined]],
+  },
+  {
+    table: 'Product', hasPkField: true,
+    rows: [
+      ['1', 'Id', 'int', '4', '10', '0', '0', '1', '0', '1'],
+      ['2', 'Name', 'nvarchar', '200', '0', '0', '1', '0', '0', null],
+    ],
+    expected: [['Id', 1], ['Name', undefined]],
+  },
+  {
+    table: 'Legacy', hasPkField: false,
+    rows: [['1', 'Id', 'int', '4', '10', '0', '0', '1', '0']],
+    expected: [['Id', undefined]],
+  },
+])('maps primary-key ordinals for $table (pk_ordinal field: $hasPkField)', ({ table, hasPkField, rows, expected }) => {
+  const model = buildModelFromDmv({
+    nodes: rawResult(nodeFields, [['dbo', table, 'U ', null]]),
+    columns: rawResult(hasPkField ? [...columnFields, 'pk_ordinal'] : columnFields, rows.map(row => ['dbo', table, ...row])),
+    dependencies: rawResult(dependencyFields, []),
   });
-  expect(serverFallback.dbPlatform,
-    'MSSQL server metadata is carried into the database model').toBe('Fabric Data Warehouse');
-}
-
-
-function testPkOrdinalFromDmv() {
-
-  const nodesCols = cols('schema_name', 'object_name', 'type_code', 'body_script');
-  const nodesRows: DbCellValue[][] = [
-    [cell('dbo'), cell('OrderDetail'), cell('U '), nullCell()],
-  ];
-
-  const columnsCols = cols(
-    'schema_name', 'table_name', 'ordinal', 'column_name',
-    'type_name', 'max_length', 'precision', 'scale',
-    'is_nullable', 'is_identity', 'is_computed', 'pk_ordinal',
-  );
-  const columnsRows: DbCellValue[][] = [
-    [cell('dbo'), cell('OrderDetail'), cell('1'), cell('OrderId'),
-      cell('int'), cell('4'), cell('10'), cell('0'), cell('0'), cell('0'), cell('0'), cell('1')],
-    [cell('dbo'), cell('OrderDetail'), cell('2'), cell('LineId'),
-      cell('int'), cell('4'), cell('10'), cell('0'), cell('0'), cell('0'), cell('0'), cell('2')],
-    [cell('dbo'), cell('OrderDetail'), cell('3'), cell('Name'),
-      cell('nvarchar'), cell('200'), cell('0'), cell('0'), cell('1'), cell('0'), cell('0'), nullCell()],
-  ];
-
-  const emptyDeps = makeResult(cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name'), []);
-
-  const results: DmvResults = {
-    nodes: makeResult(nodesCols, nodesRows),
-    columns: makeResult(columnsCols, columnsRows),
-    dependencies: emptyDeps,
-  };
-
-  const model = buildModelFromDmv(results);
-  const table = model.nodes.find(n => n.name === 'OrderDetail');
-  expect(table !== undefined, 'OrderDetail table found').toBe(true);
-
-  const orderId = table!.columns?.find(c => c.name === 'OrderId');
-  expect(orderId !== undefined, 'OrderId column found').toBe(true);
-  expect(orderId!.pkOrdinal, 'OrderId: pkOrdinal = 1').toBe(1);
-
-  const lineId = table!.columns?.find(c => c.name === 'LineId');
-  expect(lineId !== undefined, 'LineId column found').toBe(true);
-  expect(lineId!.pkOrdinal, 'LineId: pkOrdinal = 2').toBe(2);
-
-  const name = table!.columns?.find(c => c.name === 'Name');
-  expect(name !== undefined, 'Name column found').toBe(true);
-  expect(name!.pkOrdinal === undefined, 'Name: no pkOrdinal (not a PK column)').toBe(true);
-
-  const singlePkCols = cols(
-    'schema_name', 'table_name', 'ordinal', 'column_name',
-    'type_name', 'max_length', 'precision', 'scale',
-    'is_nullable', 'is_identity', 'is_computed', 'pk_ordinal',
-  );
-  const singlePkRows: DbCellValue[][] = [
-    [cell('dbo'), cell('Product'), cell('1'), cell('Id'),
-      cell('int'), cell('4'), cell('10'), cell('0'), cell('0'), cell('1'), cell('0'), cell('1')],
-    [cell('dbo'), cell('Product'), cell('2'), cell('Name'),
-      cell('nvarchar'), cell('200'), cell('0'), cell('0'), cell('1'), cell('0'), cell('0'), nullCell()],
-  ];
-  const singlePkNodeRows: DbCellValue[][] = [
-    [cell('dbo'), cell('Product'), cell('U '), nullCell()],
-  ];
-  const singleResults: DmvResults = {
-    nodes: makeResult(nodesCols, singlePkNodeRows),
-    columns: makeResult(singlePkCols, singlePkRows),
-    dependencies: emptyDeps,
-  };
-  const singleModel = buildModelFromDmv(singleResults);
-  const product = singleModel.nodes.find(n => n.name === 'Product');
-  const productId = product?.columns?.find(c => c.name === 'Id');
-  expect(productId?.pkOrdinal, 'Single PK: Id.pkOrdinal = 1').toBe(1);
-  expect(product?.columns?.find(c => c.name === 'Name')?.pkOrdinal === undefined,
-    'Single PK: Name column has no pkOrdinal').toBe(true);
-
-  const noPkCols = cols(
-    'schema_name', 'table_name', 'ordinal', 'column_name',
-    'type_name', 'max_length', 'precision', 'scale',
-    'is_nullable', 'is_identity', 'is_computed',
-  );
-  const noPkRows: DbCellValue[][] = [
-    [cell('dbo'), cell('Legacy'), cell('1'), cell('Id'),
-      cell('int'), cell('4'), cell('10'), cell('0'), cell('0'), cell('1'), cell('0')],
-  ];
-  const legacyNodeRows: DbCellValue[][] = [
-    [cell('dbo'), cell('Legacy'), cell('U '), nullCell()],
-  ];
-  const legacyResults: DmvResults = {
-    nodes: makeResult(nodesCols, legacyNodeRows),
-    columns: makeResult(noPkCols, noPkRows),
-    dependencies: emptyDeps,
-  };
-  const legacyModel = buildModelFromDmv(legacyResults);
-  const legacyId = legacyModel.nodes.find(n => n.name === 'Legacy')?.columns?.find(c => c.name === 'Id');
-  expect(legacyId !== undefined, 'Legacy: Id column found').toBe(true);
-  expect(legacyId!.pkOrdinal === undefined, 'Legacy (no pk_ordinal col): pkOrdinal absent — no crash').toBe(true);
-}
+  const tableNode = model.nodes.find(node => node.name === table);
+  expect(tableNode, `${table} table exists`).toBeDefined();
+  for (const [name, pkOrdinal] of expected) {
+    const column = tableNode!.columns?.find(column => column.name === name);
+    expect(column, `${table}.${name} exists`).toBeDefined();
+    expect(column!.pkOrdinal, `${table}.${name} primary-key ordinal`).toBe(pkOrdinal);
+  }
+});
 
   it('keeps "]" in object, schema, column and dependency names', () => {
     const results: DmvResults = {
-      nodes: makeResult(cols('schema_name', 'object_name', 'type_code', 'body_script'), [
+      nodes: makeResult(cols(...nodeFields), [
         [cell('we]ird'), cell('t]x'), cell('U '), nullCell()],
         [cell('dbo'), cell('vSrc'), cell('V '), cell('SELECT 1')],
       ]),
-      columns: makeResult(cols('schema_name', 'table_name', 'ordinal', 'column_name', 'type_name', 'max_length', 'precision', 'scale', 'is_nullable', 'is_identity', 'is_computed'), [
+      columns: makeResult(cols(...columnFields), [
         [cell('we]ird'), cell('t]x'), cell('1'), cell('c]1'), cell('int'), cell('4'), cell('10'), cell('0'), cell('1'), cell('0'), cell('0')],
       ]),
-      dependencies: makeResult(cols('referencing_schema', 'referencing_name', 'referenced_schema', 'referenced_name'), [
+      dependencies: makeResult(cols(...dependencyFields), [
         [cell('dbo'), cell('vSrc'), cell('we]ird'), cell('t]x')],
       ]),
     };
@@ -872,10 +686,10 @@ function testPkOrdinalFromDmv() {
     const table = model.nodes.find(n => n.type === 'table');
     expect(table?.schema).toBe('we]ird');
     expect(table?.name).toBe('t]x');
-    expect(table?.id).toBe('[we]ird].[t]x]');
+    expect(table?.id).toBe('[we]]ird].[t]]x]');
     expect(table?.columns?.map(c => c.name)).toEqual(['c]1']);
     expect(model.schemas.map(s => s.name)).toContain('we]ird');
-    expect(model.edges.map(e => `${e.source} -> ${e.target}`)).toContain('[we]ird].[t]x] -> [dbo].[vsrc]');
+    expect(model.edges.map(e => `${e.source} -> ${e.target}`)).toContain('[we]]ird].[t]]x] -> [dbo].[vsrc]');
   });
 
   it('the columns query names a CLR type through its user type', () => {
@@ -896,7 +710,6 @@ function testPkOrdinalFromDmv() {
   it('classifies phase-two queries', testPhase2QueryPredicate);
   it('preserves expanded SQL structure', testExpandedSqlStructure);
   it('maps database platforms from DMV results', testDbPlatformFromDmv);
-  it('maps primary-key ordinals from DMV results', testPkOrdinalFromDmv);
 });
 
 describe('empty metadata catalog', () => {

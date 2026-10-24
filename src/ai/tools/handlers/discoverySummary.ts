@@ -1,14 +1,4 @@
-/**
- * Composes the discovery-to-exploration handoff memo — the one-shot, no-tool LM round that turns
- * the user's discovery Q/A into the `<discovery_summary>` stable-prefix field every later hop and
- * synthesis prompt reads as established fact.
- *
- * @remarks
- * Called once per reviewable exploration proposal, at proposal-build time
- * (`src/ai/tools/handlers/startExploration.ts`), never at approval. The composed text is cached
- * on the revision-bound proposal; approval reuses that exact cached string via
- * `NavigationEngine.setDiscoverySummary` rather than recomposing it.
- */
+/** Composes the discovery-to-exploration handoff memo — the one-shot, no-tool LM round that turns the user's discovery Q/A into the `<discovery_summary>` stable-prefix field every later hop and synthesis prompt reads as established fact. */
 import { z } from 'zod';
 import type { ModelPort } from '../../model/modelPort';
 import { modelUserMessage } from '../../model/modelPort';
@@ -18,34 +8,13 @@ import type { NavigationEngine } from '../../sm/smBase';
 import type { ClassificationValue } from '../../session/classification';
 import { sanitizeForLog, type Logger } from '../../../utils/log';
 
-/**
- * Validated boundary for the optional one-shot discovery-to-exploration memo.
- *
- * @remarks
- * Nonblank only — model-authored content is never length-rejected. Brevity (2–4 sentences) is a
- * prompt target, not a hard cap: the memo's length legitimately scales with the analysis it
- * summarizes.
- */
+/** Validated boundary for the optional one-shot discovery-to-exploration memo. */
 const DiscoverySummarySchema = z.string().trim().min(1);
 
 /** One mechanical re-ask on a rejected compose reply, the reject-with-hint convention every Zod boundary here follows. */
 const DISCOVERY_SUMMARY_COMPOSE_ATTEMPTS = 2;
 
-/**
- * Composes the memo, or returns `undefined` on an ordinary degrade (rejected output after retry,
- * or a non-abort provider failure) — the caller shows the approval card without a memo rather than
- * blocking or failing an otherwise valid proposal.
- *
- * @param model - Text-completion capability only; never dispatches tools.
- * @param signal - Host cancellation signal; an abort re-throws so the caller's own cancellation
- * path can surface a clean cancel instead of a silently degraded memo.
- * @param logger - Optional diagnostic sink; a lost memo is DEBUG (self-correcting boundary), a
- * thrown compose call is ERROR (implementation/provider failure).
- * @param lastDiscoveryQuestion - The user's verbatim discovery question.
- * @param lastDiscoveryAnswer - The AI's discovery chat answer (Markdown).
- * @param classification - The proposal's locked-in-waiting classification.
- * @param engine - The unpublished preview engine already initialized from the proposal being reviewed.
- */
+/** Composes the memo, or returns `undefined` on an ordinary degrade (rejected output after retry, or a non-abort provider failure) — the caller shows the approval card without a memo rather than blocking or failing an otherwise valid proposal. */
 export async function composeDiscoverySummaryText(
   model: Pick<ModelPort, 'generateStructured' | 'completeText'>,
   signal: AbortSignal | undefined,

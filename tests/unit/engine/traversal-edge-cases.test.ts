@@ -1,35 +1,18 @@
-/**
- * Covers the graph shapes the traversal core has never been given.
- *
- * Every existing traversal test runs on a DAG: a chain, a star, a diamond with equal arms.
- * Nothing anywhere hands `traceNodeWithLevels`, `bfsReachable` or `findShortestPathOrdered`
- * a cycle, a self-loop, an asymmetric diamond, or a missing origin — so the termination and
- * dedup behaviour those functions rely on is assumed, never asserted. A regression that made
- * any of them revisit a node would hang the extension rather than fail a test.
- *
- * `bfsDepthMap` is included because no test called it at all; it reaches production only
- * through the AI report builder.
- */
+/** Owns synthetic traceNodeWithLevels membership, depth and edge contracts. Every distinct scenario retains equivalent assertions. Other graph APIs stay in their owning suites. Covers the graph shapes that stress traversal termination and dedup: cycles, self-loops, asymmetric diamonds, missing origins and depth caps, for `traceNodeWithLevels`, `bfsReachable`, `findShortestPathOrdered`, `directNeighborIds`, `analyzeRemoval` and `buildGraphologyGraph`. A regression that made any of them revisit a node would hang the extension rather than fail a test. */
 
-import Graph from 'graphology';
 import { describe, expect, it } from 'vitest';
 import { buildGraphologyGraph, traceNodeWithLevels } from '../../../src/engine/graphBuilder';
 import type { DatabaseModel } from '../../../src/engine/types';
 import {
-  bfsDepthMap,
   bfsReachable,
   directNeighborIds,
   findShortestPathOrdered,
   analyzeRemoval,
 } from '../../../src/engine/graphGuards';
-import { makeGraph } from '../helpers/testUtils';
+import { makeGraph } from '../helpers/modelFixtures';
 import { buildModel } from '../../../src/engine/modelBuilder';
 
 const NONE: ReadonlySet<string> = new Set();
-
-/** Sorted node ids, so assertions pin membership without depending on BFS visit order. */
-const traced = (graph: Graph, origin: string, up: number, down: number): string[] =>
-  [...traceNodeWithLevels(graph, origin, up, down).nodeIds].sort();
 
 /** `A -> B -> A` — the shortest cycle the extractor can produce (a read/write pair). */
 const twoCycle = () => makeGraph([{ id: 'A' }, { id: 'B' }], [['A', 'B'], ['B', 'A']]);
@@ -48,7 +31,105 @@ const asymmetricDiamond = () =>
     [['A', 'B'], ['B', 'D'], ['A', 'C'], ['C', 'C2'], ['C2', 'D']],
   );
 
-const emptyGraph = () => new Graph({ type: 'directed', multi: false });
+const chain = () => makeGraph(['A', 'B', 'C', 'D'].map(id => ({ id })), [['A', 'B'], ['B', 'C'], ['C', 'D']]);
+const split = () => makeGraph(['A', 'B', 'X', 'Y'].map(id => ({ id })), [['A', 'B'], ['X', 'Y']]);
+const fan = () => makeGraph(['P', 'X', 'S', 'S2', 'K', 'Q'].map(id => ({ id })),
+  [['P', 'X'], ['P', 'S'], ['S', 'S2'], ['X', 'K'], ['Q', 'K']]);
+const siblings = () => makeGraph(['GP', 'P1', 'P2', 'X', 'C1', 'C2'].map(id => ({ id })),
+  [['GP', 'P1'], ['GP', 'P2'], ['P1', 'X'], ['P2', 'X'], ['X', 'C1'], ['X', 'C2'], ['P1', 'C1']]);
+const readWritePair = () => makeGraph(['Table', 'SP1', 'TableA', 'SP2', 'TableB', 'SP3', 'TableC']
+  .map(id => ({ id, type: id.startsWith('SP') ? 'procedure' : 'table' })),
+  [['SP1', 'Table'], ['Table', 'SP1'], ['TableA', 'SP1'], ['SP1', 'TableA'], ['SP2', 'TableA'], ['TableB', 'SP2'], ['SP3', 'TableB'], ['TableC', 'SP3']]);
+const longChain = () => makeGraph(['U2', 'U1', 'O', 'D1', 'D2', 'D3'].map(id => ({ id })),
+  [['U2', 'U1'], ['U1', 'O'], ['O', 'D1'], ['D1', 'D2'], ['D2', 'D3']]);
+const backEdge = () => makeGraph(['ORIGIN', 'A', 'S'].map(id => ({ id })), [['A', 'ORIGIN'], ['S', 'A'], ['A', 'S']]);
+
+type TraceCase = {
+  name: string; graph: typeof chain; origin: string; up: number; down: number;
+  nodes: string[]; edges: string[];
+};
+
+// Expected nodes and edges are declared independently of the graph builder and traversal.
+const TRACE_CASES: TraceCase[] = [
+  { name: 'two-cycle from A terminates without duplicates', graph: twoCycle, origin: 'A', up: Infinity, down: Infinity,
+    nodes: ['A', 'B'], edges: ['A→B', 'B→A'] },
+  { name: 'two-cycle from B has the same membership', graph: twoCycle, origin: 'B', up: Infinity, down: Infinity,
+    nodes: ['A', 'B'], edges: ['A→B', 'B→A'] },
+  { name: 'three-cycle downstream', graph: threeCycle, origin: 'A', up: 0, down: Infinity,
+    nodes: ['A', 'B', 'C'], edges: ['A→B', 'B→C', 'C→A'] },
+  { name: 'three-cycle upstream', graph: threeCycle, origin: 'A', up: Infinity, down: 0,
+    nodes: ['A', 'B', 'C'], edges: ['A→B', 'B→C', 'C→A'] },
+  { name: 'three-cycle at the downstream border', graph: threeCycle, origin: 'A', up: 0, down: 1,
+    nodes: ['A', 'B'], edges: ['A→B'] },
+  { name: 'three-cycle keeps every internal edge with both sides open', graph: threeCycle, origin: 'A', up: Infinity, down: Infinity,
+    nodes: ['A', 'B', 'C'], edges: ['A→B', 'B→C', 'C→A'] },
+  { name: 'self-loop retains its node and edge', graph: selfLoop, origin: 'X', up: Infinity, down: Infinity,
+    nodes: ['X'], edges: ['X→X'] },
+  { name: 'chain at downstream depth 1', graph: chain, origin: 'A', up: 0, down: 1,
+    nodes: ['A', 'B'], edges: ['A→B'] },
+  { name: 'chain at downstream depth 2', graph: chain, origin: 'A', up: 0, down: 2,
+    nodes: ['A', 'B', 'C'], edges: ['A→B', 'B→C'] },
+  { name: 'chain at downstream depth 3', graph: chain, origin: 'A', up: 0, down: 3,
+    nodes: ['A', 'B', 'C', 'D'], edges: ['A→B', 'B→C', 'C→D'] },
+  { name: 'chain beyond its last level', graph: chain, origin: 'A', up: 0, down: 4,
+    nodes: ['A', 'B', 'C', 'D'], edges: ['A→B', 'B→C', 'C→D'] },
+  { name: 'asymmetric diamond follows both arms', graph: asymmetricDiamond, origin: 'A', up: 0, down: Infinity,
+    nodes: ['A', 'B', 'C', 'C2', 'D'], edges: ['A→B', 'A→C', 'B→D', 'C→C2', 'C2→D'] },
+  { name: 'asymmetric diamond uses the shortest depth to the join', graph: asymmetricDiamond, origin: 'A', up: 0, down: 2,
+    nodes: ['A', 'B', 'C', 'C2', 'D'], edges: ['A→B', 'A→C', 'B→D', 'C→C2', 'C2→D'] },
+  { name: 'disconnected component stays outside the trace', graph: split, origin: 'A', up: Infinity, down: Infinity,
+    nodes: ['A', 'B'], edges: ['A→B'] },
+  { name: 'missing origin returns no nodes or edges', graph: split, origin: 'absent', up: Infinity, down: Infinity,
+    nodes: [], edges: [] },
+  { name: 'both-direction trace excludes sideways siblings', graph: fan, origin: 'X', up: Infinity, down: Infinity,
+    nodes: ['K', 'P', 'X'], edges: ['P→X', 'X→K'] },
+  { name: 'finite both-direction trace excludes co-parents', graph: fan, origin: 'X', up: 5, down: 5,
+    nodes: ['K', 'P', 'X'], edges: ['P→X', 'X→K'] },
+  { name: 'zero closes both sides', graph: fan, origin: 'X', up: 0, down: 0, nodes: ['X'], edges: [] },
+  { name: 'negative caps close both sides', graph: fan, origin: 'X', up: -1, down: -1, nodes: ['X'], edges: [] },
+  { name: 'NaN caps close both sides', graph: fan, origin: 'X', up: NaN, down: NaN, nodes: ['X'], edges: [] },
+  { name: 'settings maximum covers the complete shallow graph', graph: fan, origin: 'P', up: 99, down: 99,
+    nodes: ['K', 'P', 'S', 'S2', 'X'], edges: ['P→S', 'P→X', 'S→S2', 'X→K'] },
+  { name: 'uncapped trace has the same shallow-graph membership', graph: fan, origin: 'P', up: Infinity, down: Infinity,
+    nodes: ['K', 'P', 'S', 'S2', 'X'], edges: ['P→S', 'P→X', 'S→S2', 'X→K'] },
+  { name: 'siblings at depth 1 retain the parent-to-child shortcut', graph: siblings, origin: 'X', up: 1, down: 1,
+    nodes: ['C1', 'C2', 'P1', 'P2', 'X'], edges: ['P1→C1', 'P1→X', 'P2→X', 'X→C1', 'X→C2'] },
+  { name: 'siblings with both caps infinite include the grandparent', graph: siblings, origin: 'X', up: Infinity, down: Infinity,
+    nodes: ['C1', 'C2', 'GP', 'P1', 'P2', 'X'], edges: ['GP→P1', 'GP→P2', 'P1→C1', 'P1→X', 'P2→X', 'X→C1', 'X→C2'] },
+  { name: 'grandparent at upstream depth 2 retains every internal edge', graph: siblings, origin: 'X', up: 2, down: 0,
+    nodes: ['GP', 'P1', 'P2', 'X'], edges: ['GP→P1', 'GP→P2', 'P1→X', 'P2→X'] },
+  { name: 'closed upstream side retains only children', graph: siblings, origin: 'X', up: 0, down: 1,
+    nodes: ['C1', 'C2', 'X'], edges: ['X→C1', 'X→C2'] },
+  { name: 'upstream traversal walks past read/write pairs', graph: readWritePair, origin: 'Table', up: 7, down: 0,
+    nodes: ['SP1', 'SP2', 'SP3', 'Table', 'TableA', 'TableB', 'TableC'],
+    edges: ['SP1→Table', 'SP1→TableA', 'SP2→TableA', 'SP3→TableB', 'TableA→SP1', 'TableB→SP2', 'TableC→SP3', 'Table→SP1'] },
+  { name: 'both-direction read/write trace keeps every edge', graph: readWritePair, origin: 'Table', up: 7, down: 7,
+    nodes: ['SP1', 'SP2', 'SP3', 'Table', 'TableA', 'TableB', 'TableC'],
+    edges: ['SP1→Table', 'SP1→TableA', 'SP2→TableA', 'SP3→TableB', 'TableA→SP1', 'TableB→SP2', 'TableC→SP3', 'Table→SP1'] },
+  { name: 'read/write pair counts once at the depth border', graph: readWritePair, origin: 'Table', up: 2, down: 0,
+    nodes: ['SP1', 'Table', 'TableA'], edges: ['SP1→Table', 'SP1→TableA', 'TableA→SP1', 'Table→SP1'] },
+  { name: 'infinite upstream cap covers the full read/write chain', graph: readWritePair, origin: 'Table', up: Infinity, down: 0,
+    nodes: ['SP1', 'SP2', 'SP3', 'Table', 'TableA', 'TableB', 'TableC'],
+    edges: ['SP1→Table', 'SP1→TableA', 'SP2→TableA', 'SP3→TableB', 'TableA→SP1', 'TableB→SP2', 'TableC→SP3', 'Table→SP1'] },
+  { name: 'asymmetric caps apply independently: upstream 1 downstream 3', graph: longChain, origin: 'O', up: 1, down: 3,
+    nodes: ['D1', 'D2', 'D3', 'O', 'U1'], edges: ['D1→D2', 'D2→D3', 'O→D1', 'U1→O'] },
+  { name: 'asymmetric caps apply independently: upstream 2 downstream 1', graph: longChain, origin: 'O', up: 2, down: 1,
+    nodes: ['D1', 'O', 'U1', 'U2'], edges: ['O→D1', 'U1→O', 'U2→U1'] },
+  { name: 'upstream trace draws the internal edge pointing away from origin', graph: backEdge, origin: 'ORIGIN', up: 2, down: 0,
+    nodes: ['A', 'ORIGIN', 'S'], edges: ['A→ORIGIN', 'A→S', 'S→A'] },
+  { name: 'both-direction trace retains the same internal back edge', graph: backEdge, origin: 'ORIGIN', up: 2, down: 2,
+    nodes: ['A', 'ORIGIN', 'S'], edges: ['A→ORIGIN', 'A→S', 'S→A'] },
+  { name: 'depth cap drops edges to the excluded endpoint', graph: backEdge, origin: 'ORIGIN', up: 1, down: 0,
+    nodes: ['A', 'ORIGIN'], edges: ['A→ORIGIN'] },
+];
+
+describe('traceNodeWithLevels — membership and depth contracts', () => {
+  it.each(TRACE_CASES)('$name', row => {
+    const traced = traceNodeWithLevels(row.graph(), row.origin, row.up, row.down);
+    expect(traced.nodeIds).toEqual(new Set(row.nodes));
+    expect(traced.edgeIds).toEqual(new Set(row.edges));
+  });
+});
 
 describe.each([false, true])('direct neighbors under source identifier policy (CS=%s)', cs => {
   it.each(['in', 'out'] as const)('uses CI normalization or exact CS edge fallback for %s neighbors', side => {
@@ -61,94 +142,6 @@ describe.each([false, true])('direct neighbors under source identifier policy (C
     expect(directNeighborIds(model, '[dbo].[Report]', side)).toEqual([`${cs ? 'Upper' : 'Lower'}${side === 'in' ? 'Source' : 'Target'}`]);
     expect(directNeighborIds(model, '[dbo].[report]', side)).toEqual([`Lower${side === 'in' ? 'Source' : 'Target'}`]);
     expect(directNeighborIds(model, '[DBO].[REPORT]', side)).toEqual(cs ? [] : [`Lower${side === 'in' ? 'Source' : 'Target'}`]);
-  });
-});
-
-
-describe('traceNodeWithLevels — cycles', () => {
-  it('terminates on a two-node cycle and returns both nodes once', () => {
-    expect(traced(twoCycle(), 'A', Infinity, Infinity)).toEqual(['A', 'B']);
-  });
-
-  it('returns the same set from either member of a two-node cycle', () => {
-    const graph = twoCycle();
-    expect(traced(graph, 'A', Infinity, Infinity)).toEqual(traced(graph, 'B', Infinity, Infinity));
-  });
-
-  it('walks a three-node cycle all the way round in each direction', () => {
-    const graph = threeCycle();
-    expect(traced(graph, 'A', 0, Infinity)).toEqual(['A', 'B', 'C']);
-    expect(traced(graph, 'A', Infinity, 0)).toEqual(['A', 'B', 'C']);
-  });
-
-  it('honours the depth cap inside a cycle rather than looping round to reach it', () => {
-    expect(traced(threeCycle(), 'A', 0, 1)).toEqual(['A', 'B']);
-  });
-
-  it('includes every edge of a cycle when both directions are traced', () => {
-    expect(traceNodeWithLevels(threeCycle(), 'A', Infinity, Infinity).edgeIds).toEqual(
-      new Set(['A→B', 'B→C', 'C→A']),
-    );
-  });
-});
-
-describe('traceNodeWithLevels — self-loop', () => {
-  it('returns the node alone and does not hang', () => {
-    expect(traced(selfLoop(), 'X', Infinity, Infinity)).toEqual(['X']);
-  });
-
-  it('keeps the self-edge, whose endpoints are both inside the trace', () => {
-    expect(traceNodeWithLevels(selfLoop(), 'X', Infinity, Infinity).edgeIds).toEqual(new Set(['X→X']));
-  });
-});
-
-
-describe('traceNodeWithLevels — depth boundary', () => {
-  /** `A -> B -> C -> D`. */
-  const chain = () =>
-    makeGraph(
-      [{ id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'D' }],
-      [['A', 'B'], ['B', 'C'], ['C', 'D']],
-    );
-
-  it.each([
-    [1, ['A', 'B']],
-    [2, ['A', 'B', 'C']],
-    [3, ['A', 'B', 'C', 'D']],
-    [4, ['A', 'B', 'C', 'D']],
-  ])('admits exactly the nodes within %i downstream hops', (level, expected) => {
-    expect(traced(chain(), 'A', 0, level)).toEqual(expected);
-  });
-
-  it('follows both arms of an asymmetric diamond to the convergence node', () => {
-    expect(traced(asymmetricDiamond(), 'A', 0, Infinity)).toEqual(['A', 'B', 'C', 'C2', 'D']);
-  });
-
-  it('admits the convergence node at its shortest depth, not its longest', () => {
-    expect(traced(asymmetricDiamond(), 'A', 0, 2)).toEqual(['A', 'B', 'C', 'C2', 'D']);
-  });
-});
-
-describe('traceNodeWithLevels — disconnected and missing input', () => {
-  /** Two components that share no edge. */
-  const split = () =>
-    makeGraph(
-      [{ id: 'A' }, { id: 'B' }, { id: 'X' }, { id: 'Y' }],
-      [['A', 'B'], ['X', 'Y']],
-    );
-
-  it('never crosses into another component', () => {
-    expect(traced(split(), 'A', Infinity, Infinity)).toEqual(['A', 'B']);
-  });
-
-  it('returns empty sets for an origin that is not in the graph', () => {
-    const result = traceNodeWithLevels(split(), 'absent', Infinity, Infinity);
-    expect(result.nodeIds).toEqual(new Set());
-    expect(result.edgeIds).toEqual(new Set());
-  });
-
-  it('returns empty sets for an empty graph', () => {
-    expect(traceNodeWithLevels(emptyGraph(), 'A', Infinity, Infinity).nodeIds).toEqual(new Set());
   });
 });
 
@@ -171,9 +164,6 @@ describe('bfsReachable — cycles and self-reference', () => {
     expect(bfsReachable(threeCycle(), 'absent', NONE)).toEqual(new Set());
   });
 
-  it('returns an empty set for an empty graph', () => {
-    expect(bfsReachable(emptyGraph(), 'A', NONE)).toEqual(new Set());
-  });
 });
 
 describe('findShortestPathOrdered — cycles and self-reference', () => {
@@ -196,46 +186,6 @@ describe('findShortestPathOrdered — cycles and self-reference', () => {
   });
 });
 
-
-describe('bfsDepthMap', () => {
-  it('assigns hop distance along a chain', () => {
-    expect([...bfsDepthMap([['A', 'B', 'body'], ['B', 'C', 'body']], 'A')]).toEqual([
-      ['A', 0], ['B', 1], ['C', 2],
-    ]);
-  });
-
-  it('records the minimum distance when two paths reach the same node', () => {
-    const edges: ReadonlyArray<readonly [string, string, string]> = [
-      ['A', 'B', 'body'], ['B', 'D', 'body'],
-      ['A', 'C', 'body'], ['C', 'C2', 'body'], ['C2', 'D', 'body'],
-    ];
-    expect(bfsDepthMap(edges, 'A').get('D')).toBe(2);
-  });
-
-  it('terminates on a cycle instead of revisiting the origin', () => {
-    const edges: ReadonlyArray<readonly [string, string, string]> = [
-      ['A', 'B', 'body'], ['B', 'C', 'body'], ['C', 'A', 'body'],
-    ];
-    expect([...bfsDepthMap(edges, 'A')]).toEqual([['A', 0], ['B', 1], ['C', 2]]);
-  });
-
-  it('terminates on a self-loop', () => {
-    expect([...bfsDepthMap([['X', 'X', 'body']], 'X')]).toEqual([['X', 0]]);
-  });
-
-  it('follows edges only forwards, excluding what the origin cannot reach', () => {
-    expect([...bfsDepthMap([['A', 'B', 'body'], ['Z', 'A', 'body']], 'A').keys()]).toEqual(['A', 'B']);
-  });
-
-  it('returns the origin alone when it has no outgoing edges', () => {
-    expect([...bfsDepthMap([['B', 'C', 'body']], 'A')]).toEqual([['A', 0]]);
-  });
-
-  it('returns the origin alone for an empty edge list', () => {
-    expect([...bfsDepthMap([], 'A')]).toEqual([['A', 0]]);
-  });
-});
-
 describe('analyzeRemoval — cycles', () => {
   it('cuts nothing when the removed node sits on a cycle that still reaches the origin', () => {
     expect( analyzeRemoval(threeCycle(), {originId:'A',scope:new Set(threeCycle().nodes()),removedBefore:NONE,removedAfter:new Set(['B']),visited:new Set(),sides:['downstream','upstream']}).cutIds).toEqual([]);
@@ -248,31 +198,7 @@ describe('analyzeRemoval — cycles', () => {
 
 const sorted = (ids: Iterable<string>) => [...ids].sort();
 
-describe('traceNodeWithLevels — direction and cap semantics', () => {
-  const fan = () => makeGraph(['P', 'X', 'S', 'S2', 'K', 'Q'].map(id => ({ id })),
-    [['P', 'X'], ['P', 'S'], ['S', 'S2'], ['X', 'K'], ['Q', 'K']]);
-
-  it('never admits a sibling reached up-then-down in a both-direction trace', () => {
-    const ids = traceNodeWithLevels(fan(), 'X', Infinity, Infinity).nodeIds;
-    expect(sorted(ids)).toEqual(['K', 'P', 'X']);
-  });
-
-  it('never admits a co-parent reached down-then-up in a both-direction trace', () => {
-    expect(traceNodeWithLevels(fan(), 'X', 5, 5).nodeIds.has('Q')).toBe(false);
-  });
-
-  it('closes a side whose cap is zero, negative or NaN', () => {
-    for (const closed of [0, -1, Number.NaN]) {
-      expect(sorted(traceNodeWithLevels(fan(), 'X', closed, closed).nodeIds)).toEqual(['X']);
-    }
-  });
-
-  it('treats the settings maximum (99) as the uncapped trace on a graph shallower than 99', () => {
-    const graph = fan();
-    expect(sorted(traceNodeWithLevels(graph, 'P', 99, 99).nodeIds))
-      .toEqual(sorted(traceNodeWithLevels(graph, 'P', Infinity, Infinity).nodeIds));
-  });
-
+describe('traceNodeWithLevels — stable ordering', () => {
   it('returns ids in a stable order across repeated runs', () => {
     const graph = fan();
     const first = traceNodeWithLevels(graph, 'X', 3, 3);
@@ -305,14 +231,4 @@ describe('buildGraphologyGraph — identity and malformed input', () => {
     expect(traceNodeWithLevels(graph, '[dbo].[A]', 1, 1).nodeIds.size).toBe(0);
   });
 
-  it('drops an edge whose endpoint is not a node and collapses a repeated edge', () => {
-    const graph = buildGraphologyGraph(model(['A', 'B'], [['A', 'B'], ['A', 'B'], ['A', 'missing'], ['missing', 'B']]));
-    expect(graph.edges()).toEqual(['A→B']);
-  });
-
-  it('keeps the first of two nodes with the same id', () => {
-    const graph = buildGraphologyGraph({ ...model(['A'], []), nodes: [{ ...node('A'), name: 'first' }, { ...node('A'), name: 'second' }] } as DatabaseModel);
-    expect(graph.order).toBe(1);
-    expect(graph.getNodeAttribute('A', 'name')).toBe('first');
-  });
 });

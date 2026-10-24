@@ -90,11 +90,7 @@ export class CancellationTokenSource {
   public dispose(): void {}
 }
 
-/**
- * Minimal `vscode.extensions` surface: a registry unit tests write before exercising code that
- * reaches for another extension's exported API. Empty by default, so the absent-extension path is
- * what a test gets unless it registers one.
- */
+/** Minimal `vscode.extensions` surface: a registry unit tests write before exercising code that reaches for another extension's exported API. Empty by default, so the absent-extension path is what a test gets unless it registers one. */
 export const extensions = {
   registry: new Map<string, { isActive: boolean; exports: unknown; packageJSON: { version: string } }>(),
   changeListeners: new Set<() => void>(),

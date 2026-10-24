@@ -1,14 +1,4 @@
-/**
- * CT-only additive fields on `AIViewMetadata`: per-node `nodeVerdicts` (host-wire package P2) and
- * the per-edge `columnAspect.edges[].transforms` classification.
- *
- * @remarks
- * Proves each field round-trips through the strict write schema used to send `ai-view-preview`
- * frames to the webview, and that the tolerant read schema used for persisted project records
- * keeps a record whose entries carry a field this build never declared — the same
- * forward-compatibility guarantee already covered for `badges`/`columnAspect` in
- * `projectStore.test.ts`.
- */
+/** CT-only additive fields on `AIViewMetadata`: per-node `nodeVerdicts` (host-wire package P2) and the per-edge `columnAspect.edges[].transforms` classification. */
 import { describe, it, expect } from 'vitest';
 import {
   COLUMN_TRANSFORM_CLASSES,
@@ -208,5 +198,27 @@ describe('AIViewMetadata.columnAspect edge transforms', () => {
       .toEqual(['pass_through', 'compute', 'aggregate']);
     expect(COLUMN_TRANSFORM_CLASSES.filter(c => COLUMN_TRANSFORM_DIRECTION[c] === 'INDIRECT'))
       .toEqual(['combine', 'filter']);
+  });
+});
+
+
+describe('AIViewMetadata requested columns', () => {
+  const requested = { node: '[dbo].[Target]', columns: ['Value', 'Unmapped'] };
+  const metadata = { ...baseAiMetadata, columnAspect: { edges: [], requested } };
+  it('round-trips the descriptor through the strict preview boundary', () => {
+    const preview = ExtensionToWebviewMsgSchema.safeParse({ type: 'ai-view-preview', name: 'Trace', nodeIds: [requested.node], aiMetadata: metadata });
+    expect(preview.success).toBe(true);
+    expect(preview.success && preview.data.type === 'ai-view-preview' && preview.data.aiMetadata.columnAspect).toEqual(metadata.columnAspect);
+  });
+  it('round-trips the descriptor through persisted project reading', () => {
+    const saved = ProjectReadSchema.safeParse({ id: 'project', name: 'AW', createdAt: baseAiMetadata.createdAt, updatedAt: baseAiMetadata.createdAt,
+      connection: dacpacConn, filterProfiles: [{ id: 'view', name: 'Trace', createdAt: baseAiMetadata.createdAt,
+        filter: { schemas: [], types: [], hideIsolated: false, focusSchemas: [], showExternalRefs: true, externalRefTypes: [] }, aiMetadata: metadata }] });
+    expect(saved.success).toBe(true);
+    expect(saved.success && saved.data.filterProfiles![0]?.aiMetadata?.columnAspect).toEqual(metadata.columnAspect);
+  });
+  it.each([{ node: requested.node, columns: 'Value' }, { node: requested.node, columns: ['Value'], extra: true }, { columns: ['Value'] }])('rejects a malformed descriptor: %j', invalid => {
+    expect(ExtensionToWebviewMsgSchema.safeParse({ type: 'ai-view-preview', name: 'Trace', nodeIds: [requested.node],
+      aiMetadata: { ...baseAiMetadata, columnAspect: { edges: [], requested: invalid } } }).success).toBe(false);
   });
 });

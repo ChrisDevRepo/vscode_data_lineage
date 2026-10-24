@@ -1,11 +1,4 @@
-/**
- * Unit tests for graph analysis functions.
- *
- * @remarks
- * One `it` per behaviour rather than one per analysis function. These are independent
- * rules — a maxSize filter and an empty-graph guard fail for unrelated reasons — and
- * grouping them meant the first failure suppressed the rest of its analysis.
- */
+/** Unit tests for graph analysis functions. */
 
 import Graph from 'graphology';
 import { describe, expect, it } from 'vitest';
@@ -16,8 +9,10 @@ import {
   analyzeIslands,
   analyzeLongestPath,
   analyzeOrphans,
+  runAnalysis,
 } from '../../../src/engine/graphAnalysis';
-import { makeGraph } from '../helpers/testUtils';
+import type { AnalysisConfig, AnalysisType } from '../../../src/engine/types';
+import { makeGraph } from '../helpers/modelFixtures';
 
 const emptyGraph = () => new Graph({ type: 'directed', multi: false });
 
@@ -37,10 +32,6 @@ describe('analyzeIslands', () => {
   );
   const chain = () => makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['B', 'C']]);
 
-  it('labels the result islands', () => {
-    expect(analyzeIslands(twoPairs(), 2).type).toBe('islands');
-  });
-
   it('finds each disconnected component', () => {
     expect(analyzeIslands(twoPairs(), 2).groups).toHaveLength(2);
   });
@@ -51,14 +42,6 @@ describe('analyzeIslands', () => {
 
   it('filters out a component larger than maxSize', () => {
     expect(analyzeIslands(chain(), 2).groups).toEqual([]);
-  });
-
-  it('keeps a component exactly at maxSize', () => {
-    expect(analyzeIslands(twoPairs(), 2).groups).toHaveLength(2);
-  });
-
-  it('returns nothing for an empty graph', () => {
-    expect(analyzeIslands(emptyGraph(), 2).groups).toEqual([]);
   });
 
   it('does not count isolated nodes as islands — those are orphans', () => {
@@ -85,10 +68,6 @@ describe('analyzeHubs', () => {
     [['hub', 'sp1'], ['hub', 'sp2'], ['hub', 'sp3'], ['hub', 'sp4']],
   );
 
-  it('labels the result hubs', () => {
-    expect(analyzeHubs(star(), 3).type).toBe('hubs');
-  });
-
   it('reports the node meeting minDegree, with its in and out degree split out', () => {
     const groups = analyzeHubs(star(), 3).groups;
     expect(groups).toHaveLength(1);
@@ -108,10 +87,6 @@ describe('analyzeHubs', () => {
     const groups = analyzeHubs(pair, 2).groups;
     expect(groups).toHaveLength(2);
     expect(groups.map(group => group.meta?.degree)).toEqual([2, 2]);
-  });
-
-  it('returns nothing for an empty graph', () => {
-    expect(analyzeHubs(emptyGraph(), 1).groups).toEqual([]);
   });
 
   it('sorts by degree descending', () => {
@@ -148,10 +123,6 @@ describe('analyzeOrphans', () => {
     [['A', 'B']],
   );
 
-  it('labels the result orphans', () => {
-    expect(analyzeOrphans(mixed()).type).toBe('orphans');
-  });
-
   it('reports every zero-degree node and no connected one', () => {
     const orphans = analyzeOrphans(mixed()).groups.flatMap(group => group.nodeIds);
     expect(orphans.sort()).toEqual(['C', 'D']);
@@ -163,10 +134,6 @@ describe('analyzeOrphans', () => {
 
   it('reports nothing when every node is connected', () => {
     expect(analyzeOrphans(makeGraph([{ id: 'A' }, { id: 'B' }], [['A', 'B']])).groups).toEqual([]);
-  });
-
-  it('returns nothing for an empty graph', () => {
-    expect(analyzeOrphans(emptyGraph()).groups).toEqual([]);
   });
 
   it('keeps a schema name that contains a slash intact in the group label and meta', () => {
@@ -183,10 +150,6 @@ describe('analyzeLongestPath', () => {
     [{ id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'D' }],
     [['A', 'B'], ['B', 'C'], ['C', 'D']],
   );
-
-  it('labels the result longest-path', () => {
-    expect(analyzeLongestPath(chain(), 2).type).toBe('longest-path');
-  });
 
   it('reports the chain end to end, with its depth in steps', () => {
     const group = analyzeLongestPath(chain(), 2).groups[0];
@@ -224,6 +187,16 @@ describe('analyzeLongestPath', () => {
     }
   });
 
+  it('deduplicates chains reaching the same endpoint', () => {
+    const graph = makeGraph(
+      [{ id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'D' }, { id: 'T' }],
+      [['A', 'B'], ['B', 'T'], ['C', 'D'], ['D', 'T']],
+    );
+    const result = analyzeLongestPath(graph, 2, 5);
+    expect(result.groups).toHaveLength(1);
+    expect(result.groups[0].nodeIds[result.groups[0].nodeIds.length - 1]).toBe('T');
+  });
+
   const throughCycle = (ids: string[]) => makeGraph(
     ids.map(id => ({ id })),
     [['X1', 'X2'], ['X2', 'X3'], ['X3', 'X4'], ['X4', 'B'], ['B', 'C'], ['C', 'B'], ['C', 'D']],
@@ -240,10 +213,6 @@ describe('analyzeLongestPath', () => {
     const forward = analyzeLongestPath(throughCycle(CHAIN_ORDER), 2).groups[0];
     const reversed = analyzeLongestPath(throughCycle([...CHAIN_ORDER].reverse()), 2).groups[0];
     expect(reversed.nodeIds).toEqual(forward.nodeIds);
-  });
-
-  it('returns nothing for an empty graph', () => {
-    expect(analyzeLongestPath(emptyGraph(), 2).groups).toEqual([]);
   });
 
   const competingRoots = () => makeGraph(
@@ -337,10 +306,6 @@ describe('analyzeCycles', () => {
     [['A', 'B'], ['B', 'C'], ['C', 'A']],
   );
 
-  it('labels the result cycles', () => {
-    expect(analyzeCycles(triangle()).type).toBe('cycles');
-  });
-
   it('captures every node of a 3-node cycle in one group', () => {
     const groups = analyzeCycles(triangle()).groups;
     expect(groups).toHaveLength(1);
@@ -388,9 +353,6 @@ describe('analyzeCycles', () => {
     expect(result.groups).toEqual([]);
   });
 
-  it('returns nothing for an empty graph', () => {
-    expect(analyzeCycles(emptyGraph()).groups).toEqual([]);
-  });
 });
 
 
@@ -493,4 +455,87 @@ describe('analyzeExternalRefs', () => {
     expect(groups).toHaveLength(1);
     expect([...groups[0].nodeIds].sort()).toEqual(['file1', 'sp1', 'sp2']);
   });
+
+  it('summarises both file and cross-db external references when present', () => {
+    const graph = externalGraph([
+      ['file1', { schema: '', name: 'data.csv', type: 'external', externalType: 'file', externalUrl: 'https://host/data.csv', externalDatabase: '' }],
+      ['db1', { schema: 'dbo', name: 'dbo.Orders', type: 'external', externalType: 'db', externalUrl: '', externalDatabase: 'SalesDB' }],
+    ]);
+    const res = analyzeExternalRefs(graph);
+    expect(res.summary).toBe('1 file source, 1 cross-DB ref');
+  });
 });
+
+const CONFIG: AnalysisConfig = { hubMinDegree: 2, islandMaxSize: 4, longestPathMinNodes: 2 };
+
+/** One hub (`H`, degree 4), one 2-node island (`I1`→`I2`), one orphan (`O`), one cycle (`C1`→`C2`→`C1`) and a chain long enough for the longest-path analysis. */
+function mixedGraph(): Graph {
+  return makeGraph(
+    [
+      { id: 'H' }, { id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' },
+      { id: 'I1' }, { id: 'I2' },
+      { id: 'O' },
+      { id: 'C1' }, { id: 'C2' },
+    ],
+    [
+      ['a', 'H'], ['b', 'H'], ['H', 'c'], ['H', 'd'],
+      ['I1', 'I2'],
+      ['C1', 'C2'], ['C2', 'C1'],
+    ],
+  );
+}
+
+describe('runAnalysis — dispatch', () => {
+  const TYPES: AnalysisType[] = ['islands', 'hubs', 'orphans', 'longest-path', 'cycles', 'external-refs'];
+
+  it.each(TYPES)('returns an empty %s report for an empty graph instead of throwing', (type) => {
+    const result = runAnalysis(new Graph({ type: 'directed', multi: false }), type, CONFIG);
+    expect(result.type).toBe(type);
+    expect(result.groups).toEqual([]);
+  });
+
+  it('finds the island, the hub, the orphan and the cycle each under its own type', () => {
+    const graph = mixedGraph();
+    const nodesOf = (type: AnalysisType): string[] =>
+      runAnalysis(graph, type, CONFIG).groups.flatMap(group => group.nodeIds).sort();
+    expect(nodesOf('islands')).toEqual(['C1', 'C2', 'I1', 'I2']);
+    expect(runAnalysis(graph, 'hubs', CONFIG).groups.map(group => group.id)).toContain('hub-H');
+    expect(nodesOf('orphans')).toEqual(['O']);
+    expect(nodesOf('cycles')).toEqual(['C1', 'C2']);
+  });
+
+  it('caps islandMaxSize at maxNodes — the tighter of the two bounds wins', () => {
+    const graph = makeGraph(
+      [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
+      [['A', 'B'], ['B', 'C']],
+    );
+    expect(runAnalysis(graph, 'islands', { ...CONFIG, islandMaxSize: 3 }, 2).groups).toEqual([]);
+    expect(runAnalysis(graph, 'islands', { ...CONFIG, islandMaxSize: 3 }, 3).groups).toHaveLength(1);
+  });
+
+  it('caps how many chains longest-path reports, without displacing the deepest one', () => {
+    const nodes: Array<{ id: string }> = [];
+    const edges: Array<[string, string]> = [];
+    for (let chain = 0; chain < 40; chain++) {
+      for (let step = 0; step < 6; step++) {
+        nodes.push({ id: `n${chain}_${step}` });
+        if (step > 0) edges.push([`n${chain}_${step - 1}`, `n${chain}_${step}`]);
+      }
+    }
+    for (let step = 0; step < 9; step++) {
+      nodes.push({ id: `deep_${step}` });
+      if (step > 0) edges.push([`deep_${step - 1}`, `deep_${step}`]);
+    }
+
+    const groups = runAnalysis(makeGraph(nodes, edges), 'longest-path', CONFIG).groups;
+    expect(groups.length).toBeLessThan(40);
+    expect(groups[0].nodeIds).toHaveLength(9);
+  });
+
+  it('threads hubMinDegree through rather than applying a built-in default', () => {
+    const graph = mixedGraph();
+    expect(runAnalysis(graph, 'hubs', { ...CONFIG, hubMinDegree: 4 }).groups.map(group => group.id)).toContain('hub-H');
+    expect(runAnalysis(graph, 'hubs', { ...CONFIG, hubMinDegree: 99 }).groups).toEqual([]);
+  });
+});
+
