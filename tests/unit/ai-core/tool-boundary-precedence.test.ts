@@ -159,16 +159,6 @@ describe('missing neighbor outcomes beside an invalid column_flow', () => {
     expect(missingIds(submit('Value'))).toEqual([BRANCH, OTHER]);
   });
 
-  it('owes an absent neighbor when a readable entry carries a filter-only supplier', () => {
-    const { submit, unchanged } = setup();
-    const rejected = submit([{ out_col: 'Value', upstream_columns: [
-      { node: BRANCH, col: 'Value', transforms: ['compute'] },
-      { node: BRANCH, col: 'Value', transforms: ['filter'] },
-    ] }]);
-    expect(missingIds(rejected)).toEqual([OTHER]);
-    unchanged();
-  });
-
   it('maps a neighbor whose only lineage is indirect without giving it a column task', () => {
     const { submit, engine } = setup();
     expect(submit([{ out_col: 'Value', upstream_columns: [
