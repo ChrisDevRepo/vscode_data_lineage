@@ -5,7 +5,7 @@ type TurnStatusPhase = 'thinking' | 'scoping' | 'tool' | 'synthesizing';
 type TurnResultStatus = 'ok' | 'error' | 'cancelled';
 
 /** Provider-neutral payload for a native consent gate. */
-export interface NativeGateEvent {
+interface NativeGateEvent {
   /** Identifier the user's decision reply carries so the paused turn can be resumed. */
   readonly gateId: string;
   /** Engine consent gate that fired, as named by the engine's gate envelope. */

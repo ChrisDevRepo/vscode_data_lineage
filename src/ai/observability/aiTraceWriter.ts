@@ -83,7 +83,7 @@ export type RuntimeLifecycleRecord =
     };
 
 /** Record accepted by the session-scoped AI diagnostic trace. */
-export type AiTraceRecord = RuntimeLifecycleRecord | WireRecord;
+type AiTraceRecord = RuntimeLifecycleRecord | WireRecord;
 
 /** What produced a trace file. */
 type TraceOrigin = 'extension-host' | 'headless-harness';

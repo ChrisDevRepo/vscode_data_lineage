@@ -3,9 +3,6 @@ import { z } from 'zod';
 /** Structural reject code: a `{upstream,downstream}` depth with both sides `levels: 0`, which would seed an empty starting scope. Single source of truth — interpolated by every surface that emits or maps this code (the Zod issue tag here, and the reject-hint mapper in `startExplorationRules.ts`) so a rename cannot drift silently between them. */
 export const ASYMMETRIC_DEPTH_BOTH_ZERO = 'asymmetric_depth_both_zero';
 
-/** One AI-selected depth limit for a post-synthesis supplement chain — the only surviving scalar depth field; `lineage_start_exploration` depth is always the per-side shape below. */
-export const ExplorationDepthLimitSchema = z.union([z.number().int().min(1), z.literal('all')]);
-
 /** One side's depth verdict: how far to start, and whether that count is a border. */
 export interface DepthSideValue {
   /** Starting level count for this side, or `'all'` for the full chain. */

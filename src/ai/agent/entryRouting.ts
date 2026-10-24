@@ -2,7 +2,7 @@
 import type { AgentExecutionTrigger } from './state';
 
 /** The initial agent execution stage derived from semantic intent and physical UI/command triggers. */
-export type InitialAgentStage = 'discover' | 'visual_preview' | 'sm_entry';
+type InitialAgentStage = 'discover' | 'visual_preview' | 'sm_entry';
 
 /** Derives the first tool stage from the turn's mechanical execution trigger. */
 export function selectInitialAgentStage(trigger: AgentExecutionTrigger): InitialAgentStage {

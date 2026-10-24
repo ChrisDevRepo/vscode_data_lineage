@@ -140,7 +140,7 @@ function renderNumber(n: number, typeName: string, meta: CellMetadata): string {
 }
 
 /** Renders one `tedious` cell value as a database result `displayValue`. */
-export function mapCell(value: unknown, meta: CellMetadata): DbCellValue {
+function mapCell(value: unknown, meta: CellMetadata): DbCellValue {
   if (value === null || value === undefined) return NULL_CELL;
   const typeName = meta.type.name;
   if (value instanceof Date) return { displayValue: renderTemporal(value, typeName, meta), isNull: false };

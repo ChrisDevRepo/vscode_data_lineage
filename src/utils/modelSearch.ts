@@ -426,7 +426,7 @@ function deriveEnclosingPredicates(
 }
 
 /** Storage objects whose columns the Detail Search sidebar groups (views are found there by body search). */
-export const STORAGE_COLUMN_OWNERS: ReadonlySet<ObjectType> = new Set<ObjectType>(['table', 'external']);
+const STORAGE_COLUMN_OWNERS: ReadonlySet<ObjectType> = new Set<ObjectType>(['table', 'external']);
 /** Every object type that owns columns in metadata: storage objects, views and table functions. */
 export const ALL_COLUMN_OWNERS: ReadonlySet<ObjectType> = new Set<ObjectType>(['table', 'external', 'view', 'function']);
 

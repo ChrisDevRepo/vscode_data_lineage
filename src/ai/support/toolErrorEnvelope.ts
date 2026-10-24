@@ -6,7 +6,7 @@ import { REJECTION_CODES } from './rejectionCodes';
 export const CLARIFICATION_WINDOW_MS = 5000;
 
 /** One fault of a form-style rejection: where it is, what is wrong and, from the owning schema or engine metadata, what the field accepts. */
-export interface RejectionError {
+interface RejectionError {
   path: string;
   issue: string;
   expected?: string;
