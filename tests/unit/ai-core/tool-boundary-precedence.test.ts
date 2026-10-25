@@ -159,16 +159,29 @@ describe('missing neighbor outcomes beside an invalid column_flow', () => {
     expect(missingIds(submit('Value'))).toEqual([BRANCH, OTHER]);
   });
 
-  it('maps a neighbor whose only lineage is indirect without giving it a column task', () => {
-    const { submit, engine } = setup();
-    expect(submit([{ out_col: 'Value', upstream_columns: [
+  it('names an absent neighbor in the first feedback when a readable entry carries a filter-only supplier', () => {
+    const { submit, unchanged, services } = setup();
+    const rejected = submit([{ out_col: 'Value', upstream_columns: [
+      { node: BRANCH, col: 'Value', transforms: ['compute'] },
+      { node: BRANCH, col: 'Value', transforms: ['filter'] },
+    ] }]);
+    expect(rejected.code).toBe('invalid_input');
+    expect(missingIds(rejected)).toEqual([OTHER]);
+    unchanged();
+    // The corrected flow alone owes the same neighbor, so the first feedback must already name it.
+    const second = JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN, column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value', transforms: ['compute'] }] }] }, services));
+    expect(missingIds(second)).toEqual([OTHER]);
+  });
+
+  it('owes a neighbor whose only mention is a filter-only supplier that the feedback says to remove', () => {
+    const { submit, unchanged } = setup();
+    const rejected = submit([{ out_col: 'Value', upstream_columns: [
       { node: BRANCH, col: 'Value', transforms: ['compute'] },
       { node: OTHER, col: 'Value', transforms: ['filter'] },
-    ] }])).toHaveProperty('ok', true);
-    expect(engine.columnAspect!.edges).toContainEqual(expect.objectContaining({ from_node: OTHER, to_node: ORIGIN, transforms: ['filter'] }));
-    // The indirect neighbor stays mapped (not pruned); only the direct source continues the column walk.
-    expect(engine.toJSON().removedSet).not.toContain(OTHER);
-    expect(engine.toJSON().engineInternals.investigationTasks.filter(task => task.status !== 'resolved').map(task => task.nodeId)).toEqual([BRANCH]);
+    ] }]);
+    expect(rejected.code).toBe('invalid_input');
+    expect(missingIds(rejected)).toEqual([OTHER]);
+    unchanged();
   });
 
   it.each([
@@ -714,6 +727,39 @@ describe('lineage_start_exploration boundary', () => {
   it.each(['excludeTypes', 'excludeSchemas', 'excludeNodeIds', 'passNodeIds', 'scopeNotes'])('rejects a non-string-array %s at the schema', field => {
     expect(StartExplorationInputSchema.safeParse({ origin: ORIGIN, [field]: [1] }).success).toBe(false);
     expect(StartExplorationInputSchema.safeParse({ origin: ORIGIN, [field]: 'one' }).success).toBe(false);
+  });
+
+  it('requires fresh discovery and a new approval card after completion while keeping the completed run intact', async () => {
+    const { engine, session, model, graph } = ctWorld({ deferred: true });
+    const { services } = stubToolServices({ session, model, graph, turnEpoch: () => session.turnEpoch });
+    expect(JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN, summary: 'Value comes from branch.',
+      sections: { technical: 'Branch supplies Value.' },
+      column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }],
+      questions: [{ nodeId: BRANCH, question: 'Establish Value.' }] }, services))).toHaveProperty('ok', true);
+    expect(JSON.parse(executeSubmitFindings({ focus_node_id: BRANCH, summary: 'Source is beyond depth 1.',
+      sections: { technical: 'Other is beyond the border.' }, column_flow: [],
+      questions: [{ nodeId: OTHER, question: 'Establish how Other produces Value.' }] }, services))).toHaveProperty('done', true);
+    const result = engine.getResult();
+    session.resultGraph = { nodeIds: result.fullNodes.map(n => n.id), edges: result.edges, source: 'column_trace',
+      originNodeId: ORIGIN, columnAspect: result.columnAspect };
+    session.enterCompleted(session.turnEpoch);
+    const beforeEngine = engine.toJSON();
+    const beforeGraph = structuredClone(session.resultGraph);
+    const legacy = JSON.parse(await executeStartExploration({ supplement: { nodeIds: [OTHER] } } as never, services));
+    expect(legacy).not.toHaveProperty('focus_node');
+    expect(session.phase.kind).toBe('completed');
+    expect(engine.toJSON()).toEqual(beforeEngine);
+    expect(session.resultGraph).toEqual(beforeGraph);
+    const proposal = JSON.parse(await executeStartExploration({
+      origin: OTHER, analysisMode: 'bb', classification: 'technical',
+      depth: { upstream: { levels: 0, exactness: 'exact' }, downstream: { levels: 1, exactness: 'exact' } },
+    }, services));
+    expect(proposal).toMatchObject({ code: 'action_required', detail: { gate: 'confirm_sm_start', proposalRevision: 1 } });
+    expect(proposal).not.toHaveProperty('focus_node');
+    expect(session.pendingExploration?.init).toMatchObject({ origin: OTHER, analysisMode: 'bb', direction: 'downstream' });
+    expect(session.stateMachine).toBe(engine);
+    expect(engine.toJSON()).toEqual(beforeEngine);
+    expect(session.resultGraph).toEqual(beforeGraph);
   });
 });
 

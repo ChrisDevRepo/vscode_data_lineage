@@ -247,7 +247,8 @@ export class AiMemoryManager {
 
   /** Capture angles already archived for `nodeId` from an earlier visit, read before this submission's own sections are merged in by {@link storeDetail}. */
   public getArchivedAngles(nodeId: string): Set<CaptureAngle> {
-    return new Set(this.detailSlots.get(nodeId)?.sections.map(s => s.angle) ?? []);
+    const slot = this.detailSlots.get(nodeId);
+    return new Set(slot && !isPlaceholderDetailSlot(slot) ? slot.sections.map(s => s.angle) : []);
   }
 
   /** Produces the working-memory snapshot delivered to the model this hop. */
@@ -260,7 +261,7 @@ export class AiMemoryManager {
       active_schemas: string[];
     } = { rounds_used: hopCount, scope_growth: 0, active_schemas: [] },
   ): WorkingMemory {
-    const noted = this.detailSlots.size;
+    const noted = this.notedNodeIds.length;
     const coveragePct = scopeSize > 0 ? Math.round((noted / scopeSize) * 100) : 0;
 
     const memory: WorkingMemory = {
@@ -280,9 +281,9 @@ export class AiMemoryManager {
     return memory;
   }
 
-  /** Returns the full detail archive for the synthesis phase. */
+  /** Returns the authored detail archive for the synthesis phase, excluding automatic storage placeholders. */
   public getResult(): { detail_slots: DetailSlot[] } {
-    return { detail_slots: Array.from(this.detailSlots.values()) };
+    return { detail_slots: Array.from(this.detailSlots.values()).filter(s => !isPlaceholderDetailSlot(s)) };
   }
 
   /** JSON snapshot embedded in the engine checkpoint (state dump and saved run). */
@@ -328,9 +329,9 @@ export class AiMemoryManager {
     return this.detailSlots.size;
   }
 
-  /** Node IDs of every stored detail slot. */
+  /** Node IDs of every authored detail slot, excluding automatic storage placeholders. */
   public get notedNodeIds(): string[] {
-    return Array.from(this.detailSlots.keys());
+    return Array.from(this.detailSlots.values()).filter(s => !isPlaceholderDetailSlot(s)).map(s => s.nodeId);
   }
 
   /** Cloned A/P/prune verdict tally for diagnostics / logging. */

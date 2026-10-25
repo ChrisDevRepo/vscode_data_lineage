@@ -254,3 +254,44 @@ it('retains frozen asked columns from the completed engine through result storag
   expect(session.resultGraph?.columnAspect?.requested?.columns).not.toBe(fullResult.columnAspect?.target_columns);
   expect(session.presentationArtifact?.aiMetadata.columnAspect?.requested?.columns).not.toBe(session.resultGraph?.columnAspect?.requested?.columns);
 });
+
+it('requires sections[].node_ids only for analyzed SQL hops and accepts notes[] for an unvisited passthrough table', async () => {
+  const writer = normalizeName('dbo.Writer', false);
+  const carrier = normalizeName('dbo.Carrier', false);
+  const reader = normalizeName('dbo.Reader', false);
+  const model = buildModel([
+    { fullName: '[dbo].[Writer]', type: 'procedure', bodyScript: 'INSERT dbo.Carrier(Value) SELECT 1;' },
+    { fullName: '[dbo].[Carrier]', type: 'table', columns: [{ name: 'Value', type: 'int', nullable: 'NULL', extra: '' }] },
+    { fullName: '[dbo].[Reader]', type: 'view', bodyScript: 'SELECT Value FROM dbo.Carrier;', columns: [{ name: 'Value', type: 'int', nullable: 'NULL', extra: '' }] },
+  ], []);
+  model.edges = [{ source: writer, target: carrier, type: 'write' }, { source: carrier, target: reader, type: 'read' }];
+  const engine = new NavigationEngine(model, buildGraphologyGraph(model), () => {}, {});
+  engine.classification = 'technical';
+  expect(engine.init({ origin: reader, question: 'How is Value loaded into Reader?', direction: 'upstream', analysisMode: 'bb',
+    depthIntent: { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } })).toEqual({ ok: true });
+  expect(engine.getHopContext()).toMatchObject({ focus_node: { id: reader } });
+  expect(engine.submitFindings({ focus_node_id: reader, summary: 'Reads Value from Carrier.',
+    sections: [{ angle: 'technical', text: 'Reader selects Value from Carrier.' }],
+    questions: [{ nodeId: carrier, question: 'What loads Carrier?' }] })).toHaveProperty('ok', true);
+  expect(engine.getHopContext()).toMatchObject({ focus_node: { id: writer } });
+  expect(engine.submitFindings({ focus_node_id: writer, summary: 'Inserts Value into Carrier.',
+    sections: [{ angle: 'technical', text: 'Writer inserts Value into Carrier.' }], questions: [] })).toHaveProperty('ok', true);
+  expect(engine.getHopContext()).toMatchObject({ done: true });
+  const fullResult = engine.getResult();
+  expect(fullResult.detail_slots.map(s => s.nodeId)).toEqual([reader, writer]);
+  const { session, services, deliverPreview } = completedWorld(model, { nodeIds: [], edges: [], source: 'blackboard' });
+  session.memory = (engine as unknown as { memory: AiSession['memory'] }).memory;
+  session.stateMachine = engine;
+  session.storeSmResult(fullResult, session.turnEpoch);
+  const answer = JSON.parse(await executePresentResult({
+    name: 'Reader lineage', summary: 'Writer loads Carrier which feeds Reader.',
+    sections: [
+      { label: 'Reader', node_ids: [reader], text: 'Reader selects Value from Carrier.' },
+      { label: 'Writer', node_ids: [writer], text: 'Writer inserts Value into Carrier.' },
+    ],
+    notes: [{ node_id: carrier, caption: 'Passthrough table between Writer and Reader.' }],
+    highlight_groups: [{ label: 'Origin', color: 'target', node_ids: [reader] }],
+  }, services));
+  expect(answer).toMatchObject({ success: true });
+  expect(deliverPreview).toHaveBeenCalledOnce();
+});
