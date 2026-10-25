@@ -213,7 +213,8 @@ export class VscodeLangChainBridge extends BaseChatModel<
             tool_call_chunks: [{
               id: part.callId,
               name: part.name,
-              args: JSON.stringify(part.input) ?? '',
+              // JSON.stringify(undefined) is undefined. An empty args string is read as {} and would accept a call the model did not make.
+              args: JSON.stringify(part.input) ?? 'undefined',
               index: toolIndex++,
               type: 'tool_call_chunk',
             }],

@@ -24,7 +24,7 @@ import { CLARIFICATION_WINDOW_MS, makeRejection, rejectionFromZodError } from '.
 import { REJECTION_CODES } from '../../../src/ai/support/rejectionCodes';
 import { buildRouteValidationRejection } from '../../../src/ai/sm/smRouteValidation';
 import { createTurnTokenBudget } from '../../../src/ai/support/tokenBudget';
-import { PruneCurrentInputSchema, submitFindingsSchemaForMode } from '../../../src/ai/tools/toolSchemas';
+import { GetContextInputSchema, PruneCurrentInputSchema, submitFindingsSchemaForMode } from '../../../src/ai/tools/toolSchemas';
 import { AiSession } from '../../../src/ai/session/session';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { executeSubmitFindings } from '../../../src/ai/tools/handlers/submitFindings';
@@ -283,6 +283,50 @@ describe('a tool call whose arguments are not a JSON object', () => {
     expect(invoke).not.toHaveBeenCalled();
     expect(content).toContain('The call arrived with no arguments at all');
     expect(content).toContain('"query"');
+  });
+
+  it('rejects a missing tool input instead of accepting the empty object an empty schema allows', async () => {
+    const model = nativePort(() => [call('missing', undefined, 'lineage_get_context'), call('sent', {}, 'lineage_get_context')]);
+    const result = await model.port.generateToolTurn({
+      messages: [new HumanMessage('q')],
+      tools: [{ name: 'lineage_get_context', description: 'Read the context.', inputSchema: GetContextInputSchema }],
+      phase: 'test',
+    });
+    expect(result.status).toBe('completed');
+    if (result.status !== 'completed') return;
+    expect(result.toolCalls).toEqual([
+      expect.objectContaining({
+        valid: false, callId: 'missing', toolName: 'lineage_get_context',
+        code: REJECTION_CODES.invalidToolInput, reason: TOOL_ARGUMENTS_NOT_OBJECT_REASON,
+      }),
+      { valid: true, callId: 'sent', toolName: 'lineage_get_context', input: {} },
+    ]);
+  });
+
+  it('rejects structured output when the generation also calls another tool', async () => {
+    const schema = z.object({ action: z.literal('approve') }).strict();
+    const model = nativePort(() => [
+      call('s', { action: 'approve' }, 'structured_output'),
+      call('q', { query: 'Orders' }, 'lineage_search_objects'),
+    ]);
+    await expect(model.port.generateStructured({
+      messages: [new HumanMessage('q')],
+      schema,
+      phase: 'test',
+    })).rejects.toMatchObject({ code: REJECTION_CODES.invalidStructuredOutput });
+  });
+
+  it('rejects structured output when another call has non-object arguments', async () => {
+    const schema = z.object({ action: z.literal('approve') }).strict();
+    const model = nativePort(() => [
+      call('s', { action: 'approve' }, 'structured_output'),
+      call('q', 'Orders', 'lineage_search_objects'),
+    ]);
+    await expect(model.port.generateStructured({
+      messages: [new HumanMessage('q')],
+      schema,
+      phase: 'test',
+    })).rejects.toMatchObject({ code: REJECTION_CODES.invalidStructuredOutput });
   });
 });
 

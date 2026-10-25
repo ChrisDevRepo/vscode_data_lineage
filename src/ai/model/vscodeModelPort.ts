@@ -222,7 +222,13 @@ export class VscodeModelPort implements ModelPort {
       input.phase,
       (bridge) => bridge.bindStructuredOutputTool(outputSchema, STRUCTURED_OUTPUT_TOOL),
     );
-    const calls = (message.tool_calls ?? []).filter((call) => call.name === STRUCTURED_OUTPUT_TOOL);
+    const calls = message.tool_calls ?? [];
+    const invalid = message.invalid_tool_calls ?? [];
+    if (calls.some((call) => call.name !== STRUCTURED_OUTPUT_TOOL)
+      || invalid.some((call) => call.name !== STRUCTURED_OUTPUT_TOOL)
+      || (calls.length > 0 && invalid.length > 0)) {
+      throw new StructuredOutputError(`unexpected tool call alongside ${STRUCTURED_OUTPUT_TOOL}`);
+    }
     if (calls.length === 0 && (message.invalid_tool_calls ?? []).some((call) => call.name === STRUCTURED_OUTPUT_TOOL)) {
       throw new StructuredOutputError(`${STRUCTURED_OUTPUT_TOOL} arguments were not a JSON object`);
     }

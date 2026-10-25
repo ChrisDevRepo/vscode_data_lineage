@@ -41,7 +41,7 @@ describe('Zod issue matrix', () => {
 
   it('rejects valid JSON encoded as a string with type guidance, not a syntax accusation', () => {
     const r = reject(PresentResultModelSchema, { ...render, sections: JSON.stringify(render.sections) });
-    expect(r.reason).toContain('expected array, received string');
+    expect(r.reason).toContain('received stringified JSON instead of a native JSON array');
     expect(r.reason).not.toContain('not valid JSON');
     expect(r.hint).toContain('Send "sections" as an array.');
     expect(r.issuePaths).toEqual(['sections']);
