@@ -51,7 +51,7 @@ export function extractRawSectionAngles(rawSections: unknown): CapturedSection[]
   for (const angle of ['business', 'technical'] as const) {
     if (!(angle in record)) continue;
     const text = record[angle];
-    if (typeof text === 'string' && text.trim() !== '') out.push({ angle, text });
+    if (typeof text === 'string') out.push({ angle, text });
   }
   return out;
 }

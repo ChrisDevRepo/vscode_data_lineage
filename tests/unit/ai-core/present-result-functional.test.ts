@@ -185,6 +185,29 @@ describe.each([false, true])('result origin closure (CS=%s)', cs => {
   });
 });
 
+it('rejects a whitespace-only amendment section instead of restoring the committed body', async () => {
+  const { session, services, origin, source, sibling } = world(false);
+  session.explorationRunId = 'run-amend';
+  const committedText = 'Source supplies the report.';
+  const first = JSON.parse(await executePresentResult({
+    name: 'Report lineage', summary: 'Report sources.',
+    sections: [{ label: 'Sources', node_ids: [origin, source, sibling], text: committedText }],
+    highlight_groups: [{ label: 'Origin', color: 'target', node_ids: [origin] }],
+  }, services));
+  expect(first, JSON.stringify(first)).toMatchObject({ success: true });
+  const before = structuredClone(session.resultGraph);
+  const amended = JSON.parse(await executePresentResult({
+    name: 'Report lineage', summary: 'Rewritten summary.', is_update: true,
+    sections: [{ label: 'Sources', node_ids: [origin, source, sibling], text: '   ' }],
+    highlight_groups: [{ label: 'Origin', color: 'target', node_ids: [origin] }],
+  }, services));
+  expect({
+    success: amended.success, code: amended.code, summary: session.resultGraph?.summary,
+    text: session.resultGraph?.sections?.map(section => section.text),
+  }).toEqual({ success: undefined, code: expect.any(String), summary: 'Report sources.', text: [committedText] });
+  expect(session.resultGraph).toEqual(before);
+});
+
 describe('CT chain-coverage rejection', () => {
   it('names sections and notes as the repair fields, never highlight_groups', async () => {
     const { services, origin, source } = ctWorld();

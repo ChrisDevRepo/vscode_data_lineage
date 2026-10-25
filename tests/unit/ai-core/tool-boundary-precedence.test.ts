@@ -93,6 +93,44 @@ it('states whole action-list replacement and preserves explicit withdrawal witho
     sections: [{ angle: 'technical', text: 'Authored evidence.' }] });
 });
 
+it('rejects a whitespace-only findings section instead of dropping it and saving the rest', () => {
+  const { engine, session, model, graph } = ctWorld({ mode: 'bb', sibling: true });
+  const { services } = stubToolServices({ session, model, graph });
+  const submit = (input: object) => JSON.parse(executeSubmitFindings(input, services));
+  const held = submit({ focus_node_id: ORIGIN, summary: 'Authored summary.', sections: { technical: 'Authored evidence.' },
+    questions: [{ nodeId: BRANCH, question: 'Explain the source.' }] });
+  expect(held).not.toHaveProperty('ok');
+  const before = engine.toJSON();
+  const blank = submit({ focus_node_id: ORIGIN, sections: { technical: '   ' }, questions: [
+    { nodeId: BRANCH, question: 'Explain the source.' },
+    { nodeId: OTHER, question: 'Explain the other source.' },
+  ] });
+  const saved = engine.getDetailSlots().find(slot => slot.nodeId === ORIGIN);
+  expect({ ok: blank.ok, code: blank.code, section: saved?.sections }).toEqual({
+    ok: undefined, code: expect.any(String), section: undefined,
+  });
+  for (const key of ['agenda', 'visited', 'removedSet'] as const) expect(engine.toJSON()[key]).toEqual(before[key]);
+  expect(engine.toJSON().memory.detailSlots).toEqual(before.memory.detailSlots);
+});
+
+it('rejects a whitespace-only neighbor prune reason instead of committing the prune', () => {
+  const { engine, session, model, graph } = ctWorld({ mode: 'bb', sibling: true });
+  const { services } = stubToolServices({ session, model, graph });
+  const before = engine.toJSON();
+  const result = JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN, summary: 'Other supplies Value.',
+    sections: { technical: 'Branch is not on the answer.' },
+    questions: [{ nodeId: OTHER, question: 'Explain the other source.' }],
+    prune_neighbors: [{ id: BRANCH, reason: ' ' }],
+  }, services));
+  expect({ ok: result.ok, code: result.code, pruned: result.pruned }).toEqual({
+    ok: undefined, code: expect.any(String), pruned: undefined,
+  });
+  expect(engine.toJSON().removedSet).not.toContain(BRANCH);
+  expect(engine.getDetailSlots()).toEqual([]);
+  for (const key of ['agenda', 'visited', 'removedSet'] as const) expect(engine.toJSON()[key]).toEqual(before[key]);
+  expect(engine.toJSON().memory.detailSlots).toEqual(before.memory.detailSlots);
+});
+
 it.each((['bb', 'ct'] as const).flatMap(mode => ['object', 'markdown', 'invalid-json'].map(sectionShape => ({ mode, sectionShape }))))(
   'reports missing $mode neighbor decisions alongside shape faults (sections: $sectionShape)', ({ mode, sectionShape }) => {
   const malformedSections = sectionShape !== 'object';

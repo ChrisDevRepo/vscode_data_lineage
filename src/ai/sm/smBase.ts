@@ -2528,10 +2528,8 @@ export class NavigationEngine implements IHopStateMachine {
       this.log('debug', `[Depth] auto-add beyond initial scope id=${nid} depth=${focusDepth + 1} hop=${this.hopCount}`);
     }
 
-    const pruneReasons = new Map((finding.prune_neighbors ?? []).flatMap(prune => {
-      const id = prune.id;
-      return id && prune.reason.trim() ? [[id, prune.reason] as const] : [];
-    }));
+    const pruneReasons = new Map((finding.prune_neighbors ?? []).flatMap(prune =>
+      prune.id ? [[prune.id, prune.reason] as const] : []));
     for (const nid of prunedNeighborNids) {
       const reason = pruneReasons.get(nid);
       if (this.recordBallot(nid, focusId, 'prune') && reason) this.recordPruneLead(nid, focusId, reason);

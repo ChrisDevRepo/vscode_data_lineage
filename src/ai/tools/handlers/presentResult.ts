@@ -70,7 +70,7 @@ function resolveRetainedSections(
   for (const sec of source) {
     const kept = byLabel.get(normalizePresentSectionLabel(sec.label));
     const nodeIds = sec.node_ids ?? kept?.node_ids?.filter(id => renderedNodeIds.has(id)) ?? [];
-    if (typeof sec.text === 'string' && sec.text.trim().length > 0) {
+    if (typeof sec.text === 'string') {
       sections.push({ label: sec.label, node_ids: nodeIds, text: sec.text });
       continue;
     }
@@ -345,7 +345,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
             issuePaths: ['sections'],
           }));
         }
-        const keptCount = retained.sections.length - (presentInput.sections ?? []).filter(sec => typeof sec.text === 'string' && sec.text.trim().length > 0).length;
+        const keptCount = retained.sections.length - (presentInput.sections ?? []).filter(sec => typeof sec.text === 'string').length;
         if (keptCount > 0) {
           s.logger.debug(`[Presentation] ${keptCount} of ${retained.sections.length} section(s) kept from the committed report — run=${sess.explorationRunId ?? '(none)'}`);
         }

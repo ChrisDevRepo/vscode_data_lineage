@@ -267,12 +267,14 @@ export const GetScopeBundleModelSchema = z.object({
   include_ddl: ScopeIncludeDdlSchema,
 }).strict();
 
+const nonWhitespaceText = z.string().regex(/\S/, 'Must contain non-whitespace text.');
+
 /** Zod schema for `submit_findings.sections`, keyed by angle so the same angle cannot be sent twice. */
 const CapturedSectionsSchema = z.object({
   /** Pre-formatted section body written per `business_capture`. */
-  business: z.string().optional(),
+  business: nonWhitespaceText.optional(),
   /** Pre-formatted section body written per `technical_capture`. */
-  technical: z.string().optional(),
+  technical: nonWhitespaceText.optional(),
 }).strict();
 
 /** Model-facing output of {@link CapturedSectionsSchema}: at most one string per angle. */
@@ -286,7 +288,7 @@ const PRUNE_NEIGHBORS_DESCRIPTION =
 /** One `prune_neighbors[]` entry: the neighbour and why this node's SQL shows it is off the answer. */
 const PruneNeighborSchema = z.object({
   id: z.string().min(1).describe('A neighbor id from `<hop_context>`.'),
-  reason: z.string().min(1).describe('What in this node\'s SQL shows the neighbor is off the answer.'),
+  reason: nonWhitespaceText.min(1).describe('What in this node\'s SQL shows the neighbor is off the answer.'),
 }).strict();
 
 /** Single source for the `questions` field describe text, shared by the strict per-mode schemas and the permissive participant union. */
@@ -495,7 +497,7 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
     if (unknown.length > 0) ctx.addIssue({ code: 'unrecognized_keys', path: ['sections'], keys: unknown, message: 'Unrecognized keys' });
   }
   const filled = new Set(Object.entries(value.sections ?? {})
-    .filter(([, body]) => typeof body === 'string' && body.trim() !== '').map(([angle]) => angle));
+    .filter(([, body]) => typeof body === 'string').map(([angle]) => angle));
   if (fresh && filled.size === 0) {
     ctx.addIssue({
       code: 'custom',
@@ -576,12 +578,12 @@ function capturedSectionSchemaForClassification(
 ): z.ZodType<CapturedSectionsWire> {
   const kept = CLASSIFICATION_KEPT_ANGLES[classification];
   if (kept.length === CLASSIFICATION_KEPT_ANGLES.both.length) {
-    const plainBody = z.string().optional();
+    const plainBody = nonWhitespaceText.optional();
     return z.strictObject({ business: plainBody, technical: plainBody });
   }
   const [onlyAngle] = kept;
   const offAngle = onlyAngle === 'business' ? 'technical' : 'business';
-  const body = z.string().optional().describe(
+  const body = nonWhitespaceText.optional().describe(
     `The only angle classification=${classification} keeps; fold any ${offAngle} content into this key — a separate "${offAngle}" key is rejected.`,
   );
   return z.strictObject({ [onlyAngle]: body }) as unknown as z.ZodType<CapturedSectionsWire>;
@@ -745,7 +747,7 @@ function internalKeptFindingSchema(
 ) {
   const base = mode === 'ct' ? HopFindingCtBaseSchema : HopFindingBaseSchema;
   const angles = classification ? CLASSIFICATION_KEPT_ANGLES[classification] : CLASSIFICATION_KEPT_ANGLES.both;
-  const section = z.object({ angle: z.enum(angles), text: z.string() }).strict();
+  const section = z.object({ angle: z.enum(angles), text: nonWhitespaceText }).strict();
   const flow = hop ? columnFlowSchemaForHop(hop) : ColumnFlowSchema;
   return base.extend({
     summary: HopFindingBaseSchema.shape.summary.unwrap(),
@@ -1018,7 +1020,7 @@ export const PresentResultModelSchema = z.object({
 /** One section of a report that is already committed: `text` and `node_ids` may each be omitted to keep the committed body or links under that label. */
 const PresentResultRetainedSectionSchema = PresentResultSectionSchema.extend({
   node_ids: z.array(NodeIdSchema).optional().describe('Nodes this section documents; put each node in one section. Omit to keep the committed links for this label; an empty array unlinks them.'),
-  text: z.string().optional().describe('Detail body. Omit to keep the committed text for this label; supply it only to rewrite that section.'),
+  text: nonWhitespaceText.optional().describe('Detail body. Omit to keep the committed text for this label; supply it only to rewrite that section.'),
 });
 
 /** Projects a `present_result` schema onto a render that amends a committed report. */
