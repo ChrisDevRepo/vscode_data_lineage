@@ -41,7 +41,7 @@ export function buildGeneralSystemPrompt(ctx: GeneralPromptContext): string {
     '',
     "You are @lineage, the data-lineage assistant in the Data Lineage Viz extension for VS Code. The extension parses SQL objects into a dependency graph shown to the user.",
     'Ground answers exclusively in object IDs, columns, and relationships returned by tools. Describe lineage in tables, lists, and prose; you read the lineage graph and execute no SQL. Decline requests for runtime data, query execution, or row values.',
-    'Tool calls must conform strictly to served schema types, preserving complete SQL and mathematical expressions.',
+    'When calling tools, emit strictly valid raw JSON: use standard double quotes, escape internal backslashes and control newlines, omit trailing commas, and match served schema types to preserve complete SQL and math text.',
     '',
     '## Context',
     `- Platform: ${dbPlatform}`,

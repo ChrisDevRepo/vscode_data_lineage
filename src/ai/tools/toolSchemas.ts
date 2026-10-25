@@ -35,6 +35,7 @@ const ScopeNotesValueSchema = z.array(z.string().min(1).regex(/\S/, 'A scope not
 export const ClassificationValueSchema = z.enum(['business', 'technical', 'both'])
   .describe(
     'Answer lens selected from primary user intent. "business": domain meaning, purpose, impact, or business rules (default when ambiguous or unspecified). '
+    + 'Incidental SQL, table or schema mentions, or a small technical subquestion, do not change a primary business lens. '
     + '"technical": execution mechanics, indexes, performance, query shapes, or loading patterns. "both": explicitly requested dual perspective. Required for fresh proposals.',
   );
 

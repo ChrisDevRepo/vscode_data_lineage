@@ -237,7 +237,11 @@ function enrichedIssueMessage(issue: z.core.$ZodIssue, received: unknown): strin
   }
   if (issue.code === 'invalid_type' && (issue.expected === 'array' || issue.expected === 'object')
     && typeof received === 'string' && /^\s*[[{]/.test(received)) {
-    try { JSON.parse(received); return baseIssueMessage(issue); } catch { /* Malformed JSON text still needs syntax guidance. */ }
+    try {
+      JSON.parse(received);
+      const kind = received.trimStart().startsWith('[') ? 'array' : 'object';
+      return `received stringified JSON instead of a native JSON ${kind}. Send ${issue.path.join('.') || 'it'} as a direct JSON ${kind}.`;
+    } catch { /* Malformed JSON text still needs syntax guidance. */ }
     const kind = received.trimStart().startsWith('[') ? 'array' : 'object';
     return `received ${received.length} characters of text that is not valid JSON. Send it again as one complete JSON ${kind}, with line breaks inside strings written as \\n.`;
   }
