@@ -1,4 +1,4 @@
-import type { InvalidRoute, DepthIntent, HeldSubmissionParts, ColumnFlowEntry } from './smTypes';
+import type { InvalidRoute, DepthIntent, HeldSubmissionParts } from './smTypes';
 import { buildRouteValidationRejection } from './smRouteValidation';
 import { extractRawSectionAngles, validateSectionsAgainstClassification } from '../interaction/rules/submitFindingsRules';
 import { validateHopSubmissionShape, type SubmitFindingsHopColumns, type validatedFindingFields } from '../tools/toolSchemas';
@@ -8,6 +8,7 @@ import { bidirectional } from 'graphology-shortest-path/unweighted';
 import { bfsFromNode } from 'graphology-traversal';
 import type { DatabaseModel, LineageNode } from '../../engine/types';
 import type { ColumnStore } from '../../engine/columnStore';
+import { isIndirectOnly } from '../../engine/shared/bridgeContract';
 import { ASYMMETRIC_DEPTH_BOTH_ZERO, bothSidesClosed, directionFromDepth, resolveDepthBorder, type DepthSideValue } from '../../engine/shared/explorationDepthContract';
 import type { SerializedFilterState } from '../../engine/projectStore';
 import { buildEdgeTypeMap, buildHopFocusNode, buildUnrelatedMap } from '../tools/tools';
@@ -599,9 +600,7 @@ export class NavigationEngine implements IHopStateMachine {
         diagnosticRoutes.push({ ...fault, path: `column_flow.${slice.index}${supplier === undefined ? '' : `.upstream_columns.${supplier}`}${match[3]}` });
       }
     }
-    const structuralFlow = unavailable.has('column_flow') && safe.columnFlowStructurallyComplete
-      ? (safe.columnFlowDiagnostics ?? []).map(slice => slice.entry) : undefined;
-    const facts = this.collectFindingPlan(focusId, fields, unavailable, false, diagnosticEdges, structuralFlow);
+    const facts = this.collectFindingPlan(focusId, fields, unavailable, false, diagnosticEdges);
     facts.invalidRoutes.push(...diagnosticRoutes);
     // A mapping participating in an action conflict is still valid held content. Only intrinsic
     // schema/state faults require replacing it; the merged action correction is revalidated.
@@ -2097,7 +2096,7 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /** Stages deterministic facts only. Unavailable fields block dependent checks, never become authored empty lists. */
-  private collectFindingPlan(focusId: string, finding: Partial<HopFindingKept>, unavailable: ReadonlySet<keyof HopFindingKept> = new Set(), diagnostics = true, diagnosticColumnEdges?: readonly ColumnEdge[], structuralFlow?: readonly ColumnFlowEntry[]) {
+  private collectFindingPlan(focusId: string, finding: Partial<HopFindingKept>, unavailable: ReadonlySet<keyof HopFindingKept> = new Set(), diagnostics = true, diagnosticColumnEdges?: readonly ColumnEdge[]) {
     const invalidRoutes: InvalidRoute[] = [];
     const conflictPaths: string[] = [];
     const routeOutcomes: RouteOutcome[] = [];
@@ -2156,7 +2155,7 @@ export class NavigationEngine implements IHopStateMachine {
     });
     if (this.tracer && finding.column_flow) {
       // A column is carried only when the one closure of the requested outputs holds it.
-      const closureEdges = [...this.tracer.edges, ...stagedColumnEdges];
+      const closureEdges = [...this.tracer.edges, ...stagedColumnEdges].filter(edge => !isIndirectOnly(edge.transforms));
       const attachedUpstream = columnClosure(this.columnRoots(), closureEdges, 'upstream', endpointKey);
       const flowingDownstream = columnAttachment(this.columnRoots(), closureEdges, 'downstream', endpointKey).flowing;
       if (traceDirection === 'upstream') {
@@ -2181,7 +2180,7 @@ export class NavigationEngine implements IHopStateMachine {
         const outputs = new Map<string, { node: string; col: string }>();
         for (const [index, entry] of finding.column_flow.entries()) {
           if (entrySides && !entrySides.some(side => side.index === index && side.downstream)) continue;
-          if (focusId !== this.originNodeId && entry.upstream_columns.length === 0) {
+          if (focusId !== this.originNodeId && entry.upstream_columns.every(ref => isIndirectOnly(ref.transforms))) {
             continue;
           }
           const resolved = resolveColumnFlowTarget(entry, focusId, this.nodeMap);
@@ -2191,8 +2190,8 @@ export class NavigationEngine implements IHopStateMachine {
           if (flowingDownstream.has(outputKey)) {
             outputs.set(outputKey, output);
             const writer = resolved.writerEdge;
-            // Only source-free writes carry a procedure-born output to its other consumers.
-            if (writer && entry.upstream_columns.length === 0 && stagedColumnEdges.some(edge => edge.from_node === focusId
+            // Only writes with no direct source carry a procedure-born output to its other consumers.
+            if (writer && entry.upstream_columns.every(ref => isIndirectOnly(ref.transforms)) && stagedColumnEdges.some(edge => edge.from_node === focusId
               && this.columnKey(edge.from_col) === this.columnKey(entry.out_col)
               && edge.to_node === writer.toNode && this.columnKey(edge.to_col) === this.columnKey(writer.toCol))) {
               const localOutput = { node: focusId, col: entry.out_col };
@@ -2220,12 +2219,11 @@ export class NavigationEngine implements IHopStateMachine {
     const pruneColumnEdges = unavailable.has('column_flow') ? diagnosticColumnEdges : stagedColumnEdges;
     // A faulty flow still names its objects by structure; a reference resolving to no single object leaves outcomes unknown.
     // An entry without a write or return target that lands nowhere (a procedure value) maps none of its suppliers.
-    const flowNodeIds = (finding.column_flow ?? structuralFlow ?? []).filter(entry => entry.writes_to || entry.returns_to || resolveColumnFlowTarget(entry, focusId, this.nodeMap))
+    const flowNodeIds = (finding.column_flow ?? []).filter(entry => entry.writes_to || entry.returns_to || resolveColumnFlowTarget(entry, focusId, this.nodeMap))
       .flatMap(entry => [entry.writes_to, entry.returns_to, ...entry.upstream_columns])
       .flatMap(ref => ref ? [resolveModelNodeId(ref.node, this.nodeMap, this.identifierCaseSensitive)] : []);
-    // A schema-rejected flow whose entries are all readable still names, by structure, every object the corrected flow can map.
-    const outcomeIds = invalidRoutes.length === 0 && !structuralFlow ? mappedNeighborIds : flowNodeIds.every(Boolean) ? new Set([...mappedNeighborIds, ...flowNodeIds as string[]]) : undefined;
-    const actions = this.collectNeighborActions(focusId, unavailable.has('questions') ? null : finding.questions ?? [], unavailable.has('prune_neighbors') ? null : finding.prune_neighbors ?? [], pruneColumnEdges, flowQuestionByNode, !this.tracer || !unavailable.has('column_flow') || structuralFlow ? outcomeIds : undefined);
+    const outcomeIds = invalidRoutes.length === 0 ? mappedNeighborIds : flowNodeIds.every(Boolean) ? new Set([...mappedNeighborIds, ...flowNodeIds as string[]]) : undefined;
+    const actions = this.collectNeighborActions(focusId, unavailable.has('questions') ? null : finding.questions ?? [], unavailable.has('prune_neighbors') ? null : finding.prune_neighbors ?? [], pruneColumnEdges, flowQuestionByNode, !this.tracer || !unavailable.has('column_flow') ? outcomeIds : undefined);
     const { pruneTargets, routeRequests, prunedNeighborNids } = actions;
     invalidRoutes.push(...actions.invalidRoutes);
     for (const id of actions.mutablePruneConflicts) conflictPaths.push(...mappingPaths(node => node === id));

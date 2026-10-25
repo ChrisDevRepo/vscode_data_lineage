@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { resolveModelNodeId } from '../support/modelReferences';
 import { markIdFormSearch, markObjectIdField } from './normalizeModelInput';
 import { normalizeColName } from '../../utils/sql';
-import { MAX_ID_LIST_LENGTH, SCREEN_STATE_MAX_IDS, ColumnTransformClassSchema, DIRECT_TRANSFORM_CLASSES } from '../../engine/shared/bridgeContract';
+import { MAX_ID_LIST_LENGTH, SCREEN_STATE_MAX_IDS, ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
 import {
   ExplorationDepthSelectionSchema,
 } from '../../engine/shared/explorationDepthContract';
@@ -280,7 +280,7 @@ type CapturedSectionsWire = z.infer<typeof CapturedSectionsSchema>;
 /** Single source for the `prune_neighbors` field describe text, shared by the strict per-mode schemas and the permissive participant union so the two cannot drift. */
 const PRUNE_NEIGHBORS_DESCRIPTION =
   'Optional. A neighbor is either mapped or questioned (kept) or pruned, never both. '
-  + 'Name each `can_prune: true` neighbor that is off the value path (it gives only indirect lineage: filter, join, group by, sort, window or conditional). A neighbor whose value lands in an output column (identity, transformation or aggregation) is mapped.';
+  + 'Name each `can_prune: true` neighbor that supplies neither a value nor a join, filter, group or order column to an output column. A neighbor that does is mapped.';
 
 /** One `prune_neighbors[]` entry: the neighbour and why this node's SQL shows it is off the answer. */
 const PruneNeighborSchema = z.object({
@@ -311,17 +311,12 @@ const SUBMIT_FINDINGS_BADGE_LABEL_MAX = 50;
 /** Single source for the `badge_label` describe text, shared by the strict per-mode `submit_findings` schemas and the permissive participant union so the two never restate the same fact with different wording. The soft target (a 2-4 word label) lives here and nowhere else: `badge_label` is a per-hop tool field, not template-governed content. */
 const BADGE_LABEL_DESCRIPTION = '2-4 word label for this node.';
 
-/** Fixed fault text for a classified ref without a DIRECT role: such a ref is not a source. */
-const DIRECT_ROLE_MESSAGE = 'transforms needs pass_through, compute or aggregate; a column that only filters or joins is not a source: remove it and describe it in sections.';
-
 const ColumnRefSchema = z.object({
   node: z.string().describe('Node id of the source column.'),
   col: z.string().describe('Source column name on that node.'),
-  transforms: z.array(ColumnTransformClassSchema).min(1, { message: DIRECT_ROLE_MESSAGE, abort: true })
-    .refine(roles => roles.some(role => DIRECT_TRANSFORM_CLASSES.includes(role)), DIRECT_ROLE_MESSAGE)
-    .meta({ contains: { enum: [...DIRECT_TRANSFORM_CLASSES] } }).optional().describe(
-    'Role of this source column: pass_through (unchanged), compute (expression or CASE operand), aggregate (aggregate argument). ' +
-    'combine or filter only as an extra role beside one of these, never alone. Omit when the SQL does not show the role.',
+  transforms: z.array(ColumnTransformClassSchema).optional().describe(
+    'Role of this source column: pass_through (unchanged), compute (expression or CASE operand), aggregate (aggregate argument) — its value lands in out_col; ' +
+    'combine (join, group, partition or order key) or filter (row predicate) — it only shapes which rows reach out_col. Omit when the SQL does not show the role.',
   ),
   note: z.string().optional().describe('At most 12 words: the deciding expression, e.g. "Qty * Price".'),
 }).strict().describe('One source column entry inside upstream_columns: fields node, col, transforms, note.');
@@ -339,7 +334,7 @@ const ColumnFlowEntrySchema = z.object({
   writes_to: ColumnFlowWritesToObject.nullish().describe('Table column {node, col} this output is written to, when that table is a neighbor in <hop_context>; otherwise null and name the write in sections.'),
   returns_to: ColumnFlowWritesToObject.optional().describe('Real caller output supplied in caller_output_targets for this scalar-return task; never a table write.'),
   upstream_columns: z.array(ColumnRefSchema).describe(
-    'Neighbor columns whose value flows into out_col: expression operands, aggregate arguments, each UNION branch column, caller-bound inputs. ' +
+    'Neighbor columns that feed out_col: value sources (expression operands, aggregate arguments, each UNION branch column, caller-bound inputs) and columns that only join, filter, group or order its rows. ' +
     'Resolve parameters and aliases to source columns; exclude the entry\'s own writes_to column. [] means the value originates here.',
   ),
 }).strict().describe('One output column: out_col, upstream_columns, optional writes_to or returns_to. note belongs inside an upstream_columns entry.');
@@ -410,8 +405,6 @@ export function validatedFindingFields(input: unknown, schema: z.ZodType): {
   columnFlowDiagnostics?: readonly { entry: ColumnFlowEntry; index: number; upstreamIndexes: readonly number[] }[];
   /** Independently valid supplier identities whose header or other tuple fields are unavailable. */
   columnSupplierDiagnostics?: readonly { ref: ColumnFlowEntry['upstream_columns'][number]; path: string }[];
-  /** Every column_flow fault is the source-role check, so the readable slices name every object the corrected flow can map. */
-  columnFlowStructurallyComplete?: boolean;
 } {
   const fields: Partial<Pick<HopFindingKept, typeof FINDING_DECISION_FIELDS[number]>> = {};
   const unavailable = new Set<keyof HopFindingKept>();
@@ -477,9 +470,7 @@ export function validatedFindingFields(input: unknown, schema: z.ZodType): {
   }
   return { fields, unavailable, ...(pruneIdentities ? { pruneIdentities } : {}),
     ...(columnFlowDiagnostics.length ? { columnFlowDiagnostics } : {}),
-    ...(columnSupplierDiagnostics.length ? { columnSupplierDiagnostics } : {}),
-    columnFlowStructurallyComplete: flowOwner instanceof z.ZodArray
-      && flowOwner.safeParse(raw.column_flow).error?.issues.every(issue => issue.message === DIRECT_ROLE_MESSAGE) };
+    ...(columnSupplierDiagnostics.length ? { columnSupplierDiagnostics } : {}) };
 }
 
 /** Enforces the fresh kept shape of one flat `submit_findings` payload. */

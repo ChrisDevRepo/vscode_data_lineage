@@ -264,7 +264,7 @@ it('requires sections[].node_ids only for analyzed SQL hops and accepts notes[] 
     { fullName: '[dbo].[Carrier]', type: 'table', columns: [{ name: 'Value', type: 'int', nullable: 'NULL', extra: '' }] },
     { fullName: '[dbo].[Reader]', type: 'view', bodyScript: 'SELECT Value FROM dbo.Carrier;', columns: [{ name: 'Value', type: 'int', nullable: 'NULL', extra: '' }] },
   ], []);
-  model.edges = [{ source: writer, target: carrier, type: 'write' }, { source: carrier, target: reader, type: 'read' }];
+  model.edges = [{ source: writer, target: carrier, type: 'body' }, { source: carrier, target: reader, type: 'body' }];
   const engine = new NavigationEngine(model, buildGraphologyGraph(model), () => {}, {});
   engine.classification = 'technical';
   expect(engine.init({ origin: reader, question: 'How is Value loaded into Reader?', direction: 'upstream', analysisMode: 'bb',
@@ -280,7 +280,7 @@ it('requires sections[].node_ids only for analyzed SQL hops and accepts notes[] 
   const fullResult = engine.getResult();
   expect(fullResult.detail_slots.map(s => s.nodeId)).toEqual([reader, writer]);
   const { session, services, deliverPreview } = completedWorld(model, { nodeIds: [], edges: [], source: 'blackboard' });
-  session.memory = (engine as unknown as { memory: AiSession['memory'] }).memory;
+  (session as { memory: AiSession['memory'] }).memory = (engine as unknown as { memory: AiSession['memory'] }).memory;
   session.stateMachine = engine;
   session.storeSmResult(fullResult, session.turnEpoch);
   const answer = JSON.parse(await executePresentResult({

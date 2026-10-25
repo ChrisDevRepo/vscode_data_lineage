@@ -159,29 +159,14 @@ describe('missing neighbor outcomes beside an invalid column_flow', () => {
     expect(missingIds(submit('Value'))).toEqual([BRANCH, OTHER]);
   });
 
-  it('names an absent neighbor in the first feedback when a readable entry carries a filter-only supplier', () => {
-    const { submit, unchanged, services } = setup();
-    const rejected = submit([{ out_col: 'Value', upstream_columns: [
-      { node: BRANCH, col: 'Value', transforms: ['compute'] },
-      { node: BRANCH, col: 'Value', transforms: ['filter'] },
-    ] }]);
-    expect(rejected.code).toBe('invalid_input');
-    expect(missingIds(rejected)).toEqual([OTHER]);
-    unchanged();
-    // The corrected flow alone owes the same neighbor, so the first feedback must already name it.
-    const second = JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN, column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value', transforms: ['compute'] }] }] }, services));
-    expect(missingIds(second)).toEqual([OTHER]);
-  });
-
-  it('owes a neighbor whose only mention is a filter-only supplier that the feedback says to remove', () => {
-    const { submit, unchanged } = setup();
-    const rejected = submit([{ out_col: 'Value', upstream_columns: [
+  it('accepts a filter-only supplier as an indirect edge and maps its neighbor', () => {
+    const { submit } = setup();
+    const accepted = submit([{ out_col: 'Value', upstream_columns: [
       { node: BRANCH, col: 'Value', transforms: ['compute'] },
       { node: OTHER, col: 'Value', transforms: ['filter'] },
     ] }]);
-    expect(rejected.code).toBe('invalid_input');
-    expect(missingIds(rejected)).toEqual([OTHER]);
-    unchanged();
+    expect(accepted.code).not.toBe('invalid_input');
+    expect(missingIds(accepted)).toEqual([]);
   });
 
   it.each([
@@ -741,7 +726,7 @@ describe('lineage_start_exploration boundary', () => {
       questions: [{ nodeId: OTHER, question: 'Establish how Other produces Value.' }] }, services))).toHaveProperty('done', true);
     const result = engine.getResult();
     session.resultGraph = { nodeIds: result.fullNodes.map(n => n.id), edges: result.edges, source: 'column_trace',
-      originNodeId: ORIGIN, columnAspect: result.columnAspect };
+      originNodeId: ORIGIN, ...(result.columnAspect ? { columnAspect: { edges: result.columnAspect.edges } } : {}) };
     session.enterCompleted(session.turnEpoch);
     const beforeEngine = engine.toJSON();
     const beforeGraph = structuredClone(session.resultGraph);
