@@ -16,17 +16,27 @@ describe('fresh kept required-field projection', () => {
     }
   });
 
-  it('projects only complete verified prune identities when another prune field is malformed', () => {
+  it.each([
+    { field: 'prune_neighbors', idKey: 'id', textKey: 'reason' },
+    { field: 'questions', idKey: 'nodeId', textKey: 'question' },
+  ] as const)('projects readable $field references without admitting invalid actions', ({ field, idKey, textKey }) => {
     const schema = submitFindingsSchemaForMode('ct', undefined, false, {
       outCols: ['Value'], writesTo: false, neighbors: [{ id: 'source', can_question: true, can_prune: true }],
     });
-    const raw = { prune_neighbors: [{ id: 'source', reason: 'Off path.', reasons: '' }] };
+    const raw = { [field]: [{ [idKey]: 'source', [textKey]: 'Explain its role.', surplus: '' }] };
+    const before = structuredClone(raw);
     const safe = validatedFindingFields(raw, schema);
-    expect(safe.pruneIdentities).toEqual(['source']);
-    expect(safe.unavailable.has('prune_neighbors')).toBe(true);
-    expect(safe.fields).not.toHaveProperty('prune_neighbors');
-    expect(validatedFindingFields({ prune_neighbors: [{ id: 'unknown', reason: 'Off path.' }] }, schema).pruneIdentities).toBeUndefined();
-    expect(validatedFindingFields({ prune_neighbors: 'source' }, schema).pruneIdentities).toBeUndefined();
+    expect(safe.actionIdentities?.[field]).toEqual(['source']);
+    expect(safe.unavailable.has(field)).toBe(true);
+    expect(safe.fields).not.toHaveProperty(field);
+    expect(raw).toEqual(before);
+    // Base-schema references are diagnostic only: the engine must still resolve unknown ids.
+    const unknown = validatedFindingFields({ [field]: [{ [idKey]: 'unknown', [textKey]: 'Explain its role.' }] }, schema);
+    expect(unknown.actionIdentities?.[field]).toEqual(['unknown']);
+    expect(unknown.unavailable.has(field)).toBe(true);
+    expect(unknown.fields).not.toHaveProperty(field);
+    expect(validatedFindingFields({ [field]: 'source' }, schema).actionIdentities?.[field]).toBeUndefined();
+    expect(validatedFindingFields({ [field]: [{ [idKey]: 42, [textKey]: 'Explain its role.' }] }, schema).actionIdentities?.[field]).toBeUndefined();
   });
 
   it('accepts a valid full resend without decoding malformed sections', () => {

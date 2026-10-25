@@ -403,7 +403,8 @@ const FINDING_DECISION_FIELDS = ['questions', 'prune_neighbors', 'column_flow'] 
 export function validatedFindingFields(input: unknown, schema: z.ZodType): {
   fields: Partial<Pick<HopFindingKept, typeof FINDING_DECISION_FIELDS[number]>>;
   unavailable: ReadonlySet<keyof HopFindingKept>;
-  pruneIdentities?: readonly string[];
+  /** Explicit action references for diagnostics only, independent of whether the action is admissible. */
+  actionIdentities?: Partial<Record<'questions' | 'prune_neighbors', readonly string[]>>;
   /** Shape-valid slices for local diagnostics only; never substitute these for the unavailable full flow. */
   columnFlowDiagnostics?: readonly { entry: ColumnFlowEntry; index: number; upstreamIndexes: readonly number[] }[];
   /** Independently valid supplier identities whose header or other tuple fields are unavailable. */
@@ -422,16 +423,17 @@ export function validatedFindingFields(input: unknown, schema: z.ZodType): {
     if (parsed.success) Object.assign(fields, { [field]: parsed.data });
     else unavailable.add(field);
   }
-  // A malformed reason or surplus key does not hide independently verified target identities.
-  // This is evidence for dependency checks, never a usable prune decision.
-  const pruneField = schema.shape.prune_neighbors;
-  const pruneOwner = pruneField instanceof z.ZodOptional ? pruneField.unwrap() : pruneField;
-  const idOwner = pruneOwner instanceof z.ZodArray && pruneOwner.element instanceof z.ZodObject
-    ? pruneOwner.element.shape.id as z.ZodType | undefined : undefined;
-  const identities = idOwner && Array.isArray(raw.prune_neighbors)
-    ? raw.prune_neighbors.map(entry => idOwner.safeParse(entry && typeof entry === 'object' ? entry.id : undefined)) : undefined;
-  const pruneIdentities = identities?.every(result => result.success)
-    ? identities.map(result => result.data as string) : undefined;
+  // Read identities with the owning base fields; narrowed admission enums still reject the action.
+  const actionIdentities: Partial<Record<'questions' | 'prune_neighbors', readonly string[]>> = {};
+  for (const [field, key, owner] of [
+    ['questions', 'nodeId', NeighborQuestionSchema.shape.nodeId],
+    ['prune_neighbors', 'id', PruneNeighborSchema.shape.id],
+  ] as const) {
+    const entries = raw[field];
+    const identities = Array.isArray(entries)
+      ? entries.map(entry => owner.safeParse(entry && typeof entry === 'object' ? entry[key] : undefined)) : undefined;
+    if (identities?.every(result => result.success)) actionIdentities[field] = identities.map(result => result.data);
+  }
   const flowField = schema.shape.column_flow;
   const flowOwner = flowField instanceof z.ZodOptional ? flowField.unwrap() : flowField;
   const columnFlowDiagnostics: Array<{ entry: ColumnFlowEntry; index: number; upstreamIndexes: number[] }> = [];
@@ -471,7 +473,7 @@ export function validatedFindingFields(input: unknown, schema: z.ZodType): {
       if (header.success) columnFlowDiagnostics.push({ entry: { ...header.data, upstream_columns }, index, upstreamIndexes });
     }
   }
-  return { fields, unavailable, ...(pruneIdentities ? { pruneIdentities } : {}),
+  return { fields, unavailable, actionIdentities,
     ...(columnFlowDiagnostics.length ? { columnFlowDiagnostics } : {}),
     ...(columnSupplierDiagnostics.length ? { columnSupplierDiagnostics } : {}) };
 }

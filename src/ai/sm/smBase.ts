@@ -32,6 +32,9 @@ import { parseNavigationSnapshot, InvalidEngineCheckpointError } from './navigat
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { combineToolRejections, makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 
+/** Resolved mentions from invalid action lists; never accepted decisions. */
+type ActionMentions = Partial<Record<'questions' | 'prune_neighbors', ReadonlySet<string>>>;
+
 /** A hop neighbour plus the engine decisions already taken about it. */
 export interface HopNeighborDisclosure extends HopNeighbor {
   /** A neighbor already passed through on the route into this focus, protected by the visit-once rule. */
@@ -600,7 +603,13 @@ export class NavigationEngine implements IHopStateMachine {
         diagnosticRoutes.push({ ...fault, path: `column_flow.${slice.index}${supplier === undefined ? '' : `.upstream_columns.${supplier}`}${match[3]}` });
       }
     }
-    const facts = this.collectFindingPlan(focusId, fields, unavailable, false, diagnosticEdges);
+    const actionMentions: ActionMentions = {};
+    for (const field of ['questions', 'prune_neighbors'] as const) {
+      if (!unavailable.has(field)) continue;
+      const ids = safe.actionIdentities?.[field]?.map(raw => resolveModelNodeId(raw, this.nodeMap, this.identifierCaseSensitive));
+      if (ids?.every((id): id is string => !!id && this.graph.areNeighbors(focusId, id))) actionMentions[field] = new Set(ids);
+    }
+    const facts = this.collectFindingPlan(focusId, fields, unavailable, false, diagnosticEdges, actionMentions);
     facts.invalidRoutes.push(...diagnosticRoutes);
     // A mapping participating in an action conflict is still valid held content. Only intrinsic
     // schema/state faults require replacing it; the merged action correction is revalidated.
@@ -2096,7 +2105,7 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /** Stages deterministic facts only. Unavailable fields block dependent checks, never become authored empty lists. */
-  private collectFindingPlan(focusId: string, finding: Partial<HopFindingKept>, unavailable: ReadonlySet<keyof HopFindingKept> = new Set(), diagnostics = true, diagnosticColumnEdges?: readonly ColumnEdge[]) {
+  private collectFindingPlan(focusId: string, finding: Partial<HopFindingKept>, unavailable: ReadonlySet<keyof HopFindingKept> = new Set(), diagnostics = true, diagnosticColumnEdges?: readonly ColumnEdge[], actionMentions: ActionMentions = {}) {
     const invalidRoutes: InvalidRoute[] = [];
     const conflictPaths: string[] = [];
     const routeOutcomes: RouteOutcome[] = [];
@@ -2223,7 +2232,7 @@ export class NavigationEngine implements IHopStateMachine {
       .flatMap(entry => [entry.writes_to, entry.returns_to, ...entry.upstream_columns])
       .flatMap(ref => ref ? [resolveModelNodeId(ref.node, this.nodeMap, this.identifierCaseSensitive)] : []);
     const outcomeIds = invalidRoutes.length === 0 ? mappedNeighborIds : flowNodeIds.every(Boolean) ? new Set([...mappedNeighborIds, ...flowNodeIds as string[]]) : undefined;
-    const actions = this.collectNeighborActions(focusId, unavailable.has('questions') ? null : finding.questions ?? [], unavailable.has('prune_neighbors') ? null : finding.prune_neighbors ?? [], pruneColumnEdges, flowQuestionByNode, !this.tracer || !unavailable.has('column_flow') ? outcomeIds : undefined);
+    const actions = this.collectNeighborActions(focusId, unavailable.has('questions') ? null : finding.questions ?? [], unavailable.has('prune_neighbors') ? null : finding.prune_neighbors ?? [], pruneColumnEdges, flowQuestionByNode, !this.tracer || !unavailable.has('column_flow') ? outcomeIds : undefined, actionMentions);
     const { pruneTargets, routeRequests, prunedNeighborNids } = actions;
     invalidRoutes.push(...actions.invalidRoutes);
     for (const id of actions.mutablePruneConflicts) conflictPaths.push(...mappingPaths(node => node === id));
@@ -2307,6 +2316,7 @@ export class NavigationEngine implements IHopStateMachine {
     stagedColumnEdges: readonly ColumnEdge[] | undefined,
     continuationQuestions: ReadonlyMap<string, string>,
     mappedNeighborIds: ReadonlySet<string> | undefined,
+    actionMentions: ActionMentions = {},
   ) {
     const invalidRoutes: InvalidRoute[] = [];
     const prunedNeighborNids = new Set<string>();
@@ -2416,9 +2426,9 @@ export class NavigationEngine implements IHopStateMachine {
     for (const nid of pruneIds) if (!aloneRefusals.get(nid) && !jointRefusal) prunedNeighborNids.add(nid);
     // Routing follows authored decisions; generated carry alone is not a decision about a neighbor.
     // A missing outcome fails no supplied field, so valid findings remain held for an action-only retry.
-    if (mappedNeighborIds && questions !== null && prunes !== null) {
+    if (mappedNeighborIds && (questions !== null || actionMentions.questions) && (prunes !== null || actionMentions.prune_neighbors)) {
       for (const id of this.requiredNeighborIds(focusId)) {
-        if (requested.has(id) || prunedNeighborNids.has(id)) continue;
+        if (requested.has(id) || prunedNeighborNids.has(id) || actionMentions.questions?.has(id) || actionMentions.prune_neighbors?.has(id)) continue;
         if (!mappedNeighborIds.has(id)) {
           // In CT, column_flow is offered only for a neighbor that can be a value source (incoming edge) or write target here; a downstream reader is never mapped as a source.
           const ct = this.currentHopAnalysisMode === 'ct';
