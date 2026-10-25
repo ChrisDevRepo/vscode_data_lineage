@@ -483,6 +483,55 @@ describe('stored-column arrival admission and delivery', () => {
     ]);
   });
 
+  it.each(['filter', 'combine'] as const)('stages a solid writer edge beside an indirect-only %s ref', role => {
+    const source = '[d].[Source]', writer = '[d].[Producer]', stored = '[d].[Stored]';
+    const nodes = [
+      makeNode({ id: source, schema: 'd', name: 'Source', type: 'table', columns: [column('Flag')] }),
+      makeNode({ id: writer, schema: 'd', name: 'Producer', type: 'procedure', columns: [],
+        bodyScript: 'INSERT d.Stored(Discount) SELECT 1 FROM d.Source WHERE Flag = 1;' }),
+      makeNode({ id: stored, schema: 'd', name: 'Stored', type: 'table', columns: [column('Discount')] }),
+    ];
+    const engine = navigationFor(nodes, [[source, writer], [writer, stored]]);
+    expect(engine.init({ origin: writer, question: 'Trace Discount.', analysisMode: 'ct', targetColumns: ['Discount'], direction: 'downstream',
+      depthIntent: { upstream: { levels: 0, exactness: 'exact' }, downstream: { levels: 'all', exactness: 'exact' } },
+    })).toHaveProperty('ok', true);
+    engine.getHopContext();
+    expect(engine.submitFindings({ focus_node_id: writer, summary: 'Discount is written after a row test.',
+      sections: [{ angle: 'technical', text: 'Source.Flag only selects the row.' }],
+      column_flow: [{ out_col: 'Discount', writes_to: { node: stored, col: 'Discount' },
+        upstream_columns: [{ node: source, col: 'Flag', transforms: [role] }] }],
+    })).toHaveProperty('ok', true);
+    expect(engine.columnAspect!.edges.map(edge => ({
+      from: `${edge.from_node}.${edge.from_col}`, to: `${edge.to_node}.${edge.to_col}`, transforms: edge.transforms ?? null,
+    }))).toEqual([
+      { from: `${source}.Flag`, to: `${stored}.Discount`, transforms: [role] },
+      { from: `${writer}.Discount`, to: `${stored}.Discount`, transforms: null },
+    ]);
+  });
+
+  it('keeps a value-carrying ref on its own edge and does not add a writer edge', () => {
+    const source = '[d].[Source]', writer = '[d].[Producer]', stored = '[d].[Stored]';
+    const nodes = [
+      makeNode({ id: source, schema: 'd', name: 'Source', type: 'table', columns: [column('Amount')] }),
+      makeNode({ id: writer, schema: 'd', name: 'Producer', type: 'procedure', columns: [],
+        bodyScript: 'INSERT d.Stored(Discount) SELECT Amount FROM d.Source;' }),
+      makeNode({ id: stored, schema: 'd', name: 'Stored', type: 'table', columns: [column('Discount')] }),
+    ];
+    const engine = navigationFor(nodes, [[source, writer], [writer, stored]]);
+    expect(engine.init({ origin: writer, question: 'Trace Discount.', analysisMode: 'ct', targetColumns: ['Discount'], direction: 'downstream',
+      depthIntent: { upstream: { levels: 0, exactness: 'exact' }, downstream: { levels: 'all', exactness: 'exact' } },
+    })).toHaveProperty('ok', true);
+    engine.getHopContext();
+    expect(engine.submitFindings({ focus_node_id: writer, summary: 'Discount carries Amount.',
+      sections: [{ angle: 'technical', text: 'Source.Amount is the written value.' }],
+      column_flow: [{ out_col: 'Discount', writes_to: { node: stored, col: 'Discount' },
+        upstream_columns: [{ node: source, col: 'Amount', transforms: ['compute'] }] }],
+    })).toHaveProperty('ok', true);
+    expect(engine.columnAspect!.edges).toEqual([
+      expect.objectContaining({ from_node: source, from_col: 'Amount', to_node: stored, to_col: 'Discount', transforms: ['compute'] }),
+    ]);
+  });
+
   it('preserves an accepted neighbor mapping when its assigned endpoint is final', () => {
     const consumer = '[d].[Consumer]', source = '[d].[Source]';
     const nodes = [
