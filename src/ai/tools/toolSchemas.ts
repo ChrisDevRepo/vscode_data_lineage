@@ -214,8 +214,6 @@ export const StartExplorationFreshProviderInputSchema = z.object({
 /** Gate-refinement model contract selected only while revising a pending proposal. */
 export const StartExplorationRefineProviderInputSchema = StartRefineProviderSchema;
 
-/** Follow-ups needing new SQL use the same explicit scope and approval contract as a fresh exploration. */
-export const StartExplorationCompletedProviderInputSchema = StartExplorationFreshProviderInputSchema;
 
 /** Canonical all-phase contract used by persistent VS Code/Copilot registration and manifest parity. API InstructionPlans replace it with exactly one phase-specific schema before each model call. */
 export const StartExplorationProviderInputSchema = z.union([
@@ -711,9 +709,15 @@ export function submitFindingsSchemaForMode(
   }).strict() as typeof HopFindingCtBaseSchema;
   if (mode === 'ct' && hop?.callerContextNodeIds) {
     const [first, ...rest] = hop.callerContextNodeIds;
+    // The caller is the focus: its equivalent spellings bind to the focus id without serving another choice.
+    const callerNode = z.string().min(1);
+    if (hop.focusNodeId) markObjectIdField(callerNode, new Map([[hop.focusNodeId, true]]), hop.identifierCaseSensitive ?? false);
     const question = first === undefined ? baseQuestion : z.union([
       baseQuestion,
-      CtNeighborQuestionSchema.extend({ nodeId: objectIdSchema([first, ...rest], hop.identifierCaseSensitive).describe(NeighborQuestionSchema.shape.nodeId.description ?? '') }),
+      CtNeighborQuestionSchema.extend({
+        nodeId: objectIdSchema([first, ...rest], hop.identifierCaseSensitive).describe(NeighborQuestionSchema.shape.nodeId.description ?? ''),
+        caller_context: z.object({ node: callerNode, col: z.string().min(1) }).strict().optional().describe(CtNeighborQuestionSchema.shape.caller_context.description ?? ''),
+      }),
     ]);
     narrowed = narrowed.extend({ questions: z.array(question).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION) }).strict() as typeof HopFindingCtBaseSchema;
   }

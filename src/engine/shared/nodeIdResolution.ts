@@ -1,7 +1,6 @@
 /** Canonical node-id resolution shared by the extension host, the AI subsystem and the webview. */
 import { normalizeName } from './sqlIdentifier';
 import { quoteIdentifier, schemaKey, splitSqlName, stripBrackets } from '../../utils/sql';
-import { externalFileId } from './externalFileId';
 import type { DatabaseModel } from '../types';
 
 /** Resolves a user/model-supplied node id against a canonical node map. */
@@ -26,6 +25,16 @@ export function resolveModelNodeId(raw: string, nodeMap: Map<string, unknown>, i
   }
 
   return null;
+}
+
+/** Legacy short key used only to resolve saved external-file references. */
+function externalFileId(url: string): string {
+  let hash = 0;
+  for (let i = 0; i < url.length; i++) {
+    hash = ((hash << 5) - hash) + url.charCodeAt(i);
+    hash |= 0;
+  }
+  return `[__ext__].[${Math.abs(hash).toString(16).padStart(8, '0').slice(0, 8)}]`;
 }
 
 /** Resolves persisted references by unique ownership, including legacy delimiter/URL aliases. Current tool/SQL inputs must use {@link resolveModelNodeId}, never this legacy recovery path. */

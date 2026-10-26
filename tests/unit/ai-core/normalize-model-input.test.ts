@@ -290,7 +290,7 @@ describe('normalizeModelInput object ids', () => {
 
   it('rewrites an id spelling to the one admitted id, at any depth, and logs it', () => {
     const schema = idsSchema(['[dbo].[FactSales]', '[dbo].[DimDate]']);
-    const result = normalizeModelInput(schema, { prune: [{ id: 'dbo.factsales' }], nodeId: '[DBO].[DimDate]' });
+    const result = normalizeModelInput(schema, { prune: [{ id: 'dbo.factsales' }], nodeId: '\u200b[DBO].[DimDate]' });
     expect(result.input).toEqual({ prune: [{ id: '[dbo].[FactSales]' }], nodeId: '[dbo].[DimDate]' });
     expect(result.fixes.map(fix => fix.path)).toEqual(['prune.0.id', 'nodeId']);
     expect(schema.safeParse(result.input).success).toBe(true);

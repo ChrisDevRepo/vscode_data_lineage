@@ -10,7 +10,7 @@ import type { ToolServices } from './toolServices';
 import { acknowledgeCommittedHop, prepareHopCommit } from './hopCommit';
 
 /** Hop-log counters over the submitted column refs: `refs_no_note` counts refs without a `note`, `role_mixed` counts refs that pair an INDIRECT class with a DIRECT one. */
-export function columnRefSuffix(columnFlow: readonly ColumnFlowEntry[] | undefined): string {
+function columnRefSuffix(columnFlow: readonly ColumnFlowEntry[] | undefined): string {
   const refs = (columnFlow ?? []).flatMap(entry => entry.upstream_columns);
   const noNote = refs.filter(ref => !ref.note).length;
   const mixed = refs.filter(ref => {

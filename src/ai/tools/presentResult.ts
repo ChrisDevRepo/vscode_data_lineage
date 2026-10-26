@@ -34,7 +34,7 @@ export type PresentNodeIdState =
   | 'in_scope_undispositioned'
   | 'out_of_scope';
 
-/** Wording per {@link PresentNodeIdState}, in the vocabulary the engine already rejects with (`ROUTE_REJECTION_DIRECTIVE`) — no second dialect for the same facts. */
+/** Wording per {@link PresentNodeIdState}, in the vocabulary the engine already rejects with (`ROUTE_REJECTION_DIRECTIVE` in `sm/smRouteValidation.ts`) — no second dialect for the same facts. */
 const PRESENT_NODE_ID_STATE_TEXT: Readonly<Record<PresentNodeIdState, string>> = {
   not_in_model: 'not in the loaded model',
   pruned: 'already pruned on an earlier hop',

@@ -88,7 +88,7 @@ export function classifyRejectionCode(code: string): RejectionChatGroup {
 }
 
 /** Reveals the result panel and posts one preview, naming the outcome. */
-export async function deliverToPanel(
+async function deliverToPanel(
   panel: vscode.WebviewPanel | undefined,
   message: AiViewPreviewMessage,
   logger: Logger,
@@ -507,7 +507,7 @@ export function buildAiToolRegistry(
       owner = schema;
       if (!repairable) return schema;
       const auth = draft().getAuthorization();
-      return repairable && auth && !auth.ambiguous && auth.round <= generation()
+      return auth && !auth.ambiguous && auth.round <= generation()
         ? RepairDraftStore.inputPatchSchema(schema, auth.paths) : schema;
     };
     registry.register({

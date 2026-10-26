@@ -11,6 +11,7 @@
 import { DatabaseModel } from './types';
 import { compileExclusionMatcher, schemaKey } from '../utils/sql';
 import { computeSchemas } from './shared/modelSchemas';
+import { errorMessage } from '../utils/errorMessage';
 
 export { applyIsolationFilter } from './shared/modelFilters';
 
@@ -97,7 +98,7 @@ export function filterBySchemas(
 /** Removes nodes from a DatabaseModel that match specified exclusion patterns, and records the removed objects on the parse statistics of the surviving objects that referenced them. */
 export function applyExclusionPatterns(model: DatabaseModel, patterns: string[], onWarning?: (msg: string) => void): DatabaseModel {
   const filtered = applyExclusionFilter(model, patterns, (pattern, err) => {
-    onWarning?.(`Invalid exclude pattern "${pattern}": ${err instanceof Error ? err.message : err}`);
+    onWarning?.(`Invalid exclude pattern "${pattern}": ${errorMessage(err)}`);
   });
   if (filtered === model) return model;
 

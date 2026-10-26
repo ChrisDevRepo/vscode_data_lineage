@@ -19,7 +19,7 @@ import { resolveStagePrompt, type StagePromptResult, type StageRenderScope } fro
 import { escapeDelimitedJson, escapePromptText } from '../support/text';
 import { SCRIPT_TYPES } from '../support/graphUtils';
 
-/** Serialises the peeked hop context (focus DDL + immediate neighbours) into the worker's single user message. The hop is blinkered: the worker sees this payload plus `lineage_submit_findings` and `lineage_get_neighbor_columns`, not prior hops' tool results. */
+/** Serialises the peeked hop context (focus DDL + immediate neighbours) into the worker's single user message. The hop is blinkered: the worker sees this payload plus its hop tools (`lineage_submit_findings`, `lineage_prune_current`, and in CT `lineage_get_neighbor_columns`), not prior hops' tool results. */
 function buildWorkerHopMessage(hop: HopContext | null, focusId: string): string {
   let escapedBody: string;
   if (hop) {

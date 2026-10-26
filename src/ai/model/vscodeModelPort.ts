@@ -376,7 +376,7 @@ type EmittedToolCall = { readonly id: string; readonly name: string } & (
 );
 
 /** The generation's tool calls in emission order, pairing LangChain's parsed `tool_calls` and its `invalid_tool_calls` (arguments that were no JSON object) back onto the bridge's one chunk per call. */
-export function emittedToolCalls(message: AIMessageChunk): EmittedToolCall[] {
+function emittedToolCalls(message: AIMessageChunk): EmittedToolCall[] {
   const valid: ToolCall[] = [...(message.tool_calls ?? [])];
   const invalid = [...(message.invalid_tool_calls ?? [])];
   const incomplete = (): ModelPortError => new ModelPortError('unsupported_response', 'Language model returned an incomplete tool call.');

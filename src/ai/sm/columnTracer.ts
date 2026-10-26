@@ -248,7 +248,6 @@ export class ColumnTracer {
           continue;
         }
       }
-      const toNodeForEdge = toNodeId;
 
       for (let refIndex = 0; refIndex < entry.upstream_columns.length; refIndex++) {
         const cont = entry.upstream_columns[refIndex];
@@ -257,7 +256,7 @@ export class ColumnTracer {
 
         if (callerTargets.length && !model.edges.some(edge => edge.source === neighbor.id
           && (edge.target === focusId || (entry.returns_to
-            ? edge.target === toNodeForEdge
+            ? edge.target === toNodeId
             : callerTargets.some(target => edge.target === target.node)))
           && edgeApiType(edge.type, neighbor.type) === 'read')) {
           invalidRoutes.push({ kind: 'absent_contributor', id: neighbor.id, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`, reason: 'A caller-context investigation accepts real read contributors of the function or its declared callers, not unrelated loaded objects.' });
@@ -265,23 +264,23 @@ export class ColumnTracer {
         }
 
         const fromNode = neighbor.id;
-        if (fromNode === toNodeForEdge && this.columnKey(cont.col) === this.columnKey(toCol)) {
+        if (fromNode === toNodeId && this.columnKey(cont.col) === this.columnKey(toCol)) {
           const neighborCols = (getNodeColumns(neighbor.id, nodeMap, store ?? undefined) ?? []).map(column => column.name);
           invalidRoutes.push({
             kind: 'self_loop_column',
             id: fromNode,
             path: `column_flow.${entryIndex}.upstream_columns.${refIndex}`,
-            reason: `upstream_columns entry "${fromNode}.${cont.col}" is identical to its own writes_to target "${toNodeForEdge}.${toCol}" - a column cannot be its own upstream source.`,
+            reason: `upstream_columns entry "${fromNode}.${cont.col}" is identical to its own writes_to target "${toNodeId}.${toCol}" - a column cannot be its own upstream source.`,
             ...(neighborCols.length > 0 ? { allowed_values: neighborCols, when: { node: neighbor.id } } : {}),
           });
           continue;
         }
 
-        if (!toNodeForEdge) continue;
+        if (!toNodeId) continue;
         stagedEdges.push({
           hop: 0,
           hop_node: focusId,
-          to_node: toNodeForEdge,
+          to_node: toNodeId,
           to_col: toCol,
           from_node: fromNode,
           from_col: cont.col,
@@ -337,15 +336,14 @@ export class ColumnTracer {
         const upstream = activeNorm.includes(this.columnKey(entry.out_col)) && (anchors.has(endpointKey(focusId, entry.out_col))
           || target !== null && anchors.has(endpointKey(target.attributionTo, target.attributionCol)));
         const downstream = incomingDownstreamRefs.some(ref => this.columnKey(ref.col) === this.columnKey(entry.out_col));
-        if ((upstream || downstream) && (upstream && upDetached.length === 0 || downstream && downDetached.length === 0)) {
+        if ((upstream && upDetached.length === 0) || (downstream && downDetached.length === 0)) {
           entrySides.push({ index: entryIndex, upstream, downstream });
         }
         continue;
       }
-      if (edges.length === 0 && entry.upstream_columns.length > 0) continue;
-      const attachedUpstream = edges.length === 0 ? anchors.has(endpointKey(focusId, entry.out_col)) : upDetached.length === 0;
-      const attachedDownstream = edges.length > 0 && downDetached.length === 0;
-      const upstream = attachedUpstream && activeNorm.includes(this.columnKey(entry.out_col));
+      if (edges.length === 0) continue;
+      const attachedDownstream = downDetached.length === 0;
+      const upstream = upDetached.length === 0 && activeNorm.includes(this.columnKey(entry.out_col));
       if (upstream || attachedDownstream) {
         entrySides.push({ index: entryIndex, upstream, downstream: attachedDownstream });
       }
@@ -367,7 +365,7 @@ export function columnEndpointKeyFactory(nodeMap: Map<string, LineageNode>, iden
 function reachableColumnEndpoints(
   seeds: ReadonlySet<string>,
   links: ReadonlyArray<ColumnEndpointLink>,
-  direction: 'upstream' | 'downstream' = 'upstream',
+  direction: 'upstream' | 'downstream',
 ): Set<string> {
   const graph = new DirectedGraph();
   for (const link of links) {
@@ -399,7 +397,7 @@ interface ColumnAttachment {
 export function columnAttachment(
   roots: readonly { node: string; col: string }[],
   edges: ReadonlyArray<ColumnClosureEdge>,
-  direction: 'upstream' | 'downstream' | 'both',
+  direction: 'upstream' | 'downstream',
   endpointKey: (node: string, col: string) => string,
 ): ColumnAttachment {
   const rootKeys = new Set(roots.map(root => endpointKey(root.node, root.col)));
@@ -431,16 +429,6 @@ export function columnAttachment(
       return endpoints.has(to) && (!ownWrites.has(to) || ownWrites.get(to) === edge.hop_node);
     },
   };
-}
-
-/** Returns the attached endpoint keys of {@link columnAttachment} for CT carry selection. */
-export function columnClosure(
-  roots: readonly { node: string; col: string }[],
-  edges: ReadonlyArray<ColumnClosureEdge>,
-  direction: 'upstream' | 'downstream' | 'both',
-  endpointKey: (node: string, col: string) => string,
-): Set<string> {
-  return columnAttachment(roots, edges, direction, endpointKey).endpoints;
 }
 
 interface ColumnFlowTargetResolution {

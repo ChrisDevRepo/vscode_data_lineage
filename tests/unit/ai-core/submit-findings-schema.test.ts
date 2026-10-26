@@ -370,6 +370,22 @@ describe('fresh kept required-field projection', () => {
     expect(held.safeParse(patch).success).toBe(true);
     expect(fresh.safeParse(patch).success).toBe(false);
   });
+
+  it('normalizes an equivalent caller_context spelling to the focus id at the boundary without changing the served schema', () => {
+    const hop = { focusNodeId: '[dbo].[Caller]', outCols: ['Value'], writesTo: false, callerContextNodeIds: ['[dbo].[Fn]'],
+      neighbors: [{ id: '[dbo].[Fn]', can_question: true, can_prune: true }] };
+    const schema = submitFindingsSchemaForMode('ct', undefined, false, hop);
+    const question = { nodeId: '[dbo].[Fn]', question: 'Establish Value from the caller argument.' };
+    const input = { column_flow: [], questions: [{ ...question, caller_context: { node: 'dbo.Caller', col: 'Value' } }] };
+    const normalized = normalizeModelInput(schema, input);
+    expect(normalized.input).toEqual({ column_flow: [], questions: [{ ...question, caller_context: { node: '[dbo].[Caller]', col: 'Value' } }] });
+    expect(normalized.fixes).toEqual([{ path: 'questions.0.caller_context.node', before: 'dbo.Caller', after: '[dbo].[Caller]' }]);
+    for (const node of ['dbo.Other', '[dbo].[Fn]']) {
+      const other = { column_flow: [], questions: [{ ...question, caller_context: { node, col: 'Value' } }] };
+      expect(normalizeModelInput(schema, other)).toEqual({ input: other, fixes: [] });
+    }
+    expect(JSON.stringify(toModelJsonSchema(schema))).not.toContain('[dbo].[Caller]');
+  });
 });
 
 

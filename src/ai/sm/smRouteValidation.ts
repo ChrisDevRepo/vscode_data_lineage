@@ -5,7 +5,7 @@ import { REJECTION_CODES } from '../support/rejectionCodes';
 import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 
 /** Principle: where a removal would lose a fact, the fixed text also says where the fact goes (sections or a question); chosen by fault code only. Last-chance corrective guidance after the first issue-only response. Conflict alternatives are composed per neighbor by {@link routeErrorDirectives}; a refusal for that same neighbor can rule out pruning. */
-export const ROUTE_REJECTION_DIRECTIVE: Record<Exclude<InvalidRouteKind, 'prune_question_conflict'>, string> = {
+const ROUTE_REJECTION_DIRECTIVE: Record<Exclude<InvalidRouteKind, 'prune_question_conflict'>, string> = {
   absent_contributor: 'Use a loaded eligible neighbor, or drop this reference and keep the fact in sections.',
   bad_out_col: 'Use a declared output column.',
   bad_contributor_col: 'Use a declared column, or drop this supplier and keep the fact in sections.',
@@ -29,7 +29,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<Exclude<InvalidRouteKind, 'prune_
 };
 
 /** Machine error code per validation kind; unlisted kinds fall back to routeValidationFailed. */
-export const ROUTE_REJECTION_CODE: Partial<Record<InvalidRouteKind, string>> = {
+const ROUTE_REJECTION_CODE: Partial<Record<InvalidRouteKind, string>> = {
   bad_out_col: REJECTION_CODES.outColNotOnNode,
   bad_contributor_col: REJECTION_CODES.contributorColNotOnSource,
   self_loop_column: REJECTION_CODES.columnSelfLoop,

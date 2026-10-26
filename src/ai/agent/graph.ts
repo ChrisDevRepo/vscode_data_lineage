@@ -18,7 +18,6 @@ import { PendingGateSchema } from '../session/sessionPhase';
 import { NavigationEngine } from '../sm/smBase';
 import { activeModeOf, type ChatLmStage } from '../tools/toolPolicy';
 import {
-  StartExplorationCompletedProviderInputSchema,
   StartExplorationFreshProviderInputSchema,
   StartExplorationRefineProviderInputSchema,
 } from '../tools/toolSchemas';
@@ -1191,7 +1190,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const messages = state.messages;
     const attempt = await executeStandardPhaseAttempt(priorAttempt, 'completed', {
       stage: { kind: 'completed' },
-      toolSchemaOverrides: new Map([['lineage_start_exploration', StartExplorationCompletedProviderInputSchema]]),
+      toolSchemaOverrides: new Map([['lineage_start_exploration', StartExplorationFreshProviderInputSchema]]),
       presentResultRepairFields: () => sess.presentResultRepairFields,
       presentResultRepairHighlightLabelIndexes: () => sess.presentResultRepairHighlightLabelIndexes,
       presentResultRepairSectionLeaves: () => sess.presentResultRepairSectionLeaves,
@@ -1200,7 +1199,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       messages,
       system: buildHostStageSystemPrompt('completed', getCtx(state)),
       detectGate: detectGateFromToolResult,
-      detectReroute: (toolName, resultText) => sess.phase.kind === 'exploring' || detectOverBudgetFromResult(toolName, resultText),
+      detectReroute: detectOverBudgetFromResult,
       detectRefusal: detectRefusalFromToolResult,
       isPhaseComplete: () => sess.presentResultCalledThisTurn,
       proseGate: 'buffer-until-tool',
@@ -1220,16 +1219,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     sess.bufferFollowUpProse(res.text);
     if (res.stop === 'gate') return { gate: PendingGateSchema.parse(res.gate), toolAttempt: null, phase: 'gate' };
     if (res.stop === 'refused') return refusedTerminal(res.refusal);
-    if (res.stop === 'reroute') {
-      if (sess.phase.kind !== 'exploring') return { executionTrigger: 'discovery_budget', toolAttempt: null, phase: 'sm_entry' };
-      const live = sess.stateMachine as NavigationEngine | null;
-      return {
-        activeHopCount: live ? live.submittedHopCount : state.activeHopCount,
-        messages: [new RemoveMessage({ id: REMOVE_ALL_MESSAGES }), modelUserMessage(buildActiveContinuationAnchor())],
-        toolAttempt: null,
-        phase: 'active_coordinator',
-      };
-    }
+    if (res.stop === 'reroute') return { executionTrigger: 'discovery_budget', toolAttempt: null, phase: 'sm_entry' };
     if (res.stop === 'continue') return { toolAttempt: nextAttempt, phase: 'follow_up' };
     if (res.stop !== 'final' && res.stop !== 'phase_complete') {
       return { ...fail('Follow-up ended without an accepted answer or action.'), toolAttempt: nextAttempt };
@@ -1320,7 +1310,6 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     .addConditionalEdges(AGENT_NODES.followUp, routeAfterFollowUp, [
       AGENT_NODES.followUp,
       AGENT_NODES.gate,
-      AGENT_NODES.activeCoordinator,
       AGENT_NODES.smEntry,
       END,
     ])
@@ -1382,7 +1371,6 @@ function routeAfterFollowUp(state: AgentStateType): string {
   if (state.outcome) return END;
   if (state.phase === 'follow_up' && state.toolAttempt?.phase === 'completed') return AGENT_NODES.followUp;
   if (state.gate) return AGENT_NODES.gate;                              // Route B (divergent): gated fresh trace
-  if (state.phase === 'active_coordinator') return AGENT_NODES.activeCoordinator; // Route B (retrace/supplement)
   if (state.phase === 'sm_entry') return AGENT_NODES.smEntry;
   return END;                                                            // Route A (adjust) or chat answer
 }

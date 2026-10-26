@@ -17,6 +17,7 @@ import { edgeApiType, presentColumnCompact } from '../support/aiPresenter';
 import { analyzeRemoval, type LogFn, type RemovalAnalysis } from '../../engine/graphGuards';
 import { trunc, LOG_TRUNC_CONTENT, LOG_TRUNC_LIST } from '../../utils/log';
 import { compileExclusionMatcher, normalizeColName, quoteIdentifier, schemaKey } from '../../utils/sql';
+import { errorMessage } from '../../utils/errorMessage';
 import { AiMemoryManager, STORAGE_TRAVERSED_PLACEHOLDER_SUMMARY, type DetailSlot, type IncomingQuestion, type WorkingMemory } from '../session/memoryManager';
 import { CLASSIFICATION_KEPT_ANGLES, type ClassificationValue } from '../session/classification';
 import { RepairDraftStore } from '../support/repairDraftStore';
@@ -25,7 +26,7 @@ import { resolveModelColumnNames, resolveModelNodeId } from '../support/modelRef
 import { evaluateCurrentHopActionPolicy, type CurrentHopActionTarget } from './currentHopActionPolicy';
 import type { ApprovedBorder, ColumnAspect, ColumnCarry, ColumnEdge, ScalarReturnTarget, FunctionCallerContext, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingKept, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, PrunedBranch, RouteOutcome, RouteSkipDisposition, ScopeExclusionGroup, ScopeExclusions, ScopeSummary, ScopeSummaryLeaf, SmNodeAction, SmNodeColumnRole, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult } from '../sm/smTypes';
 import { estimateTokens, type ProposedScope } from '../support/tokenBudget';
-import { ColumnTracer, allowsMissingColumnMetadata, columnAttachment, columnClosure, columnEndpointKeyFactory, resolveColumnFlowTarget } from "./columnTracer";
+import { ColumnTracer, allowsMissingColumnMetadata, columnAttachment, columnEndpointKeyFactory, resolveColumnFlowTarget } from "./columnTracer";
 import { AgendaManager, type AgendaEntry, type WorklistView } from './agendaManager';
 import { TaskLedger, type InvestigationTaskInput } from './taskLedger';
 import { resolveScalarReturnTarget, resolveFunctionCallerTarget, functionCallerDdlHash, uniqueScalarReturnTargets } from './scalarReturnBinding';
@@ -436,7 +437,7 @@ export class NavigationEngine implements IHopStateMachine {
     }
 
     const isGuiExcluded = compileExclusionMatcher(config.activeFilter?.exclusionPatterns ?? [], (pattern, err) => {
-      this.log('debug', `[Filter] Skipping invalid GUI exclusion pattern "${pattern}": ${err instanceof Error ? err.message : String(err)}`);
+      this.log('debug', `[Filter] Skipping invalid GUI exclusion pattern "${pattern}": ${errorMessage(err)}`);
     });
     if (isGuiExcluded) {
       for (const n of this.nodeMap.values()) {
@@ -2070,7 +2071,7 @@ export class NavigationEngine implements IHopStateMachine {
     } catch (err: unknown) {
       this.log('error', '[Engine] Exception in submitFindings', err);
       this._status = 'error';
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       return makeRejection({
         code: REJECTION_CODES.engineCrash,
         reason: message || 'The engine failed while applying findings.',
@@ -2196,7 +2197,7 @@ export class NavigationEngine implements IHopStateMachine {
     if (this.tracer && finding.column_flow) {
       // A column is carried only when the one closure of the requested outputs holds it.
       const closureEdges = [...this.tracer.edges, ...stagedColumnEdges].filter(edge => !isIndirectOnly(edge.transforms));
-      const attachedUpstream = columnClosure(this.columnRoots(), closureEdges, 'upstream', endpointKey);
+      const attachedUpstream = columnAttachment(this.columnRoots(), closureEdges, 'upstream', endpointKey).endpoints;
       const flowingDownstream = columnAttachment(this.columnRoots(), closureEdges, 'downstream', endpointKey).flowing;
       if (traceDirection === 'upstream') {
         for (const [index, entry] of finding.column_flow.entries()) {

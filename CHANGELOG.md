@@ -24,7 +24,7 @@ The newest version heading collects changes until that version ships.
 - The SQL Server (mssql) extension integration and the `dataLineageViz.database.connectionProvider` setting; databases connect through built-in connections only. Projects saved with an mssql connection keep it without the password; set the password with **Update Database Password**.
 
 ### Fixed
-- Updating a legacy bookmark preserves current selections when older spellings are ambiguous. Note repairs preserve distinct quoted object identities, and identifier binding preserves Unicode format characters.
+- Updating a legacy bookmark preserves current selections when older spellings are ambiguous. Note repairs preserve distinct quoted object identities, and identifier binding preserves Unicode format characters inside identifiers while ignoring them around an id. An equivalent spelling of a function's caller in a CT follow-up question binds to the caller instead of costing a retry.
 - A branch may prune an unvisited shared neighbor already kept elsewhere without removing the node or its saved column mappings; conflicting actions in one reply remain rejected.
 - Longer report section labels are accepted unchanged in reports and repairs; blank and duplicate labels remain rejected.
 - Tool and structured responses share logged, lossless normalization of JSON-text objects and lists, exact numbers and booleans. Within JSON-text string values, unknown backslash escapes and raw C0 characters retain their values; keys, standard escapes, incomplete syntax and numeric precision remain strict.

@@ -18,7 +18,7 @@ import { buildActiveHopInstruction } from '../../../src/ai/agent/stagePrompts';
 import { executeSubmitFindings } from '../../../src/ai/tools/handlers/submitFindings';
 import { executePruneCurrent } from '../../../src/ai/tools/handlers/pruneCurrent';
 import { executeStartExploration } from '../../../src/ai/tools/handlers/startExploration';
-import { StartExplorationInputSchema, StartExplorationFreshProviderInputSchema, StartExplorationCompletedProviderInputSchema, StartExplorationProviderInputSchema, StartExplorationRefineProviderInputSchema, PruneCurrentInputSchema, presentResultSchemaForPhase, submitFindingsSchemaForMode } from '../../../src/ai/tools/toolSchemas';
+import { StartExplorationInputSchema, StartExplorationFreshProviderInputSchema, StartExplorationProviderInputSchema, StartExplorationRefineProviderInputSchema, PruneCurrentInputSchema, presentResultSchemaForPhase, submitFindingsSchemaForMode } from '../../../src/ai/tools/toolSchemas';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import Ajv from 'ajv';
 import { readToolErrorText, rejectionModelContent } from '../../../src/ai/support/toolErrorEnvelope';
@@ -873,10 +873,10 @@ describe('lineage_start_exploration boundary', () => {
     const proposal = { origin: OTHER, analysisMode: 'bb', classification: 'technical',
       depth: { upstream: { levels: 1, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } };
     const legacy = { supplement: { nodeIds: [OTHER] } };
-    expect(StartExplorationCompletedProviderInputSchema.safeParse(proposal).success).toBe(true);
-    expect(StartExplorationCompletedProviderInputSchema.safeParse(legacy).success).toBe(false);
+    expect(StartExplorationFreshProviderInputSchema.safeParse(proposal).success).toBe(true);
+    expect(StartExplorationFreshProviderInputSchema.safeParse(legacy).success).toBe(false);
     expect(StartExplorationProviderInputSchema.safeParse(legacy).success).toBe(false);
-    const validate = new Ajv({ strict: false }).compile(toModelJsonSchema(StartExplorationCompletedProviderInputSchema));
+    const validate = new Ajv({ strict: false }).compile(toModelJsonSchema(StartExplorationFreshProviderInputSchema));
     expect(validate(proposal)).toBe(true);
     expect(validate(legacy)).toBe(false);
   });
