@@ -195,7 +195,7 @@ function objectIdEntry(schema: ZodType): ObjectIdField | undefined {
 /** The one admitted id an equivalent spelling names, or `undefined` when it is already exact, unknown or ambiguous. */
 function respellId(raw: string, field: ObjectIdField): string | undefined {
   if (field.ids.has(raw)) return undefined;
-  return resolveModelNodeId(raw.replace(/\p{Cf}/gu, ''), field.ids, field.identifierCaseSensitive) ?? undefined;
+  return resolveModelNodeId(raw, field.ids, field.identifierCaseSensitive) ?? undefined;
 }
 
 /** `[dbo].[FactSales]` as a substring query matches nothing: split into name plus schema filter, when that is the only reading. */

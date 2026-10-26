@@ -200,6 +200,18 @@ it('merges notes by case only when the model folds identifier case', () => {
     .toEqual([{ node_id: '[mart].[Orders]', caption: 'Upper.' }, { node_id: '[mart].[orders]', caption: 'Lower.' }]);
 });
 
+it.each([
+  ['[a.b].[c]', '[a].[b.c]'],
+  ['[dbo].[ab]', '[dbo].[a[b]'],
+])('keeps distinct quoted note identities %s and %s during repair', (heldId, repairedId) => {
+  const held = { node_id: heldId, caption: 'Keep this caption.' };
+  const repaired = { node_id: repairedId, caption: 'Corrected caption.' };
+  const draft = { name: 'n', summary: 's', notes: [held] } as PresentResultInput;
+  const patch = { notes: [repaired] } as PresentResultRepairPatch;
+  expect(mergePresentResultRepairPatch(draft, patch, { fields: ['notes'] }).notes)
+    .toEqual([held, repaired]);
+});
+
 it('names the list a flattened entry key belongs to', () => {
   const garbled = {
     name: 'Orders lineage', summary: 'Orders from stage to mart.',

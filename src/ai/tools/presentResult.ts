@@ -9,6 +9,7 @@ import {
   type PresentResultSectionRepairField,
 } from './toolSchemas';
 import { quoteIds } from '../support/text';
+import { sqlIdentifierComparisonKey } from '../../engine/shared/sqlIdentifier';
 import { normalizeColName, schemaKey } from '../../utils/sql';
 import { RepairDraftStore, keyedResendRule, indexedRepairFields, type IndexedRepairFields } from '../support/repairDraftStore';
 import { INVALID_TOOL_INPUT_REPAIR_HINT, makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
@@ -316,10 +317,10 @@ export function holdRejectedPresentResult(
 type PresentNote = NonNullable<PresentResultInput['notes']>[number];
 type PresentNotePatch = Partial<PresentNote> & { remove?: boolean };
 
-/** A note's merge key: its node id without brackets, case-folded unless the model's identifiers are case-sensitive, so a bare and a bracketed id name one note. */
+/** Compares note identities using SQL quoting and the model's identifier case policy. */
 function noteKey(note: Partial<PresentNote>, identifierCaseSensitive: boolean): string {
-  const bare = (note.node_id ?? '').replace(/[[\]]/g, '').trim();
-  return identifierCaseSensitive ? bare : bare.toLowerCase();
+  const id = note.node_id ?? '';
+  return sqlIdentifierComparisonKey(id, identifierCaseSensitive) ?? id;
 }
 
 /** Merges a strict repair patch into a held full `present_result` draft. */

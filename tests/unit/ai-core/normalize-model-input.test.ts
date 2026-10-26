@@ -290,10 +290,18 @@ describe('normalizeModelInput object ids', () => {
 
   it('rewrites an id spelling to the one admitted id, at any depth, and logs it', () => {
     const schema = idsSchema(['[dbo].[FactSales]', '[dbo].[DimDate]']);
-    const result = normalizeModelInput(schema, { prune: [{ id: 'dbo.factsales' }], nodeId: '\u200b[DBO].[DimDate]' });
+    const result = normalizeModelInput(schema, { prune: [{ id: 'dbo.factsales' }], nodeId: '[DBO].[DimDate]' });
     expect(result.input).toEqual({ prune: [{ id: '[dbo].[FactSales]' }], nodeId: '[dbo].[DimDate]' });
     expect(result.fixes.map(fix => fix.path)).toEqual(['prune.0.id', 'nodeId']);
     expect(schema.safeParse(result.input).success).toBe(true);
+  });
+
+  it('preserves format characters inside SQL identifiers instead of binding another object', () => {
+    const schema = idsSchema(['[dbo].[AB]']);
+    const nodeId = '[dbo].[A\u200dB]';
+    const result = normalizeModelInput(schema, { nodeId });
+    expect(result).toEqual({ input: { nodeId }, fixes: [] });
+    expect(schema.safeParse(result.input).success).toBe(false);
   });
 
   it('leaves an unknown, fuzzy or ambiguous id as sent', () => {

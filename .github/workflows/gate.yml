@@ -2,9 +2,9 @@ name: Gate
 
 on:
   pull_request:
-    branches: [main, testing01]
+    branches: [main, testing01, testing02]
   push:
-    branches: [testing01]
+    branches: [testing01, testing02]
 
 permissions:
   contents: read

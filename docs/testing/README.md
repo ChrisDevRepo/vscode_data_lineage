@@ -104,7 +104,7 @@ Layout timings describe the tested dataset, hardware and runtime, not a general 
 
 ## Complete inventory
 
-[The test inventory](INVENTORY.md) enumerates every deterministic, host, Playwright, database and provider-backed surface, including the extended frozen questions and unavailable historical fixture cohort. “All” means that inventory; the five original headless smoke rows alone are not complete coverage.
+[The test inventory](INVENTORY.md) enumerates every deterministic, host, Playwright, database and provider-backed surface. “All” means that inventory; the three public headless demo rows alone are not complete coverage.
 
 ## Optional checks
 

@@ -212,6 +212,51 @@ describe('neighbor-specific function caller context', () => {
 });
 
 
+describe('case-sensitive scalar caller identities', () => {
+  it.each([false, true])('preserves two caller columns through native schemas and snapshots (distinct functions=%s)', distinctFunctions => {
+    const result = '[dbo].[Result]', upper = '[dbo].[Calc]', lower = distinctFunctions ? '[dbo].[calc]' : upper;
+    const outputs = [{ node: upper, column: 'Value' }, { node: lower, column: 'value' }];
+    const functions = [...new Set(outputs.map(output => output.node))];
+    const nodes = [makeNode({ id: result, schema: 'dbo', name: 'Result', type: 'view',
+      columns: outputs.map(output => ({ ...col(output.column), expressionDependencies: [{ reference: output.node, sourceElementType: 'SqlScalarFunction' }] })),
+      bodyScript: `SELECT ${upper}(1) AS Value, ${lower}(2) AS value;` }),
+      ...functions.map(id => makeNode({ id, schema: 'dbo', name: id, type: 'function',
+        bodyScript: `CREATE FUNCTION ${id}(@x int) RETURNS int AS BEGIN RETURN @x; END;` }))];
+    const pairs: Array<[string, string]> = functions.map(id => [id, result]);
+    const engine = new NavigationEngine({ ...makeModel(nodes, pairs, ['dbo']), identifierCaseSensitive: true }, makeGraph(nodes, pairs), () => {}, {});
+    expect(engine.init({ origin: result, question: 'Trace Value and value', direction: 'upstream', analysisMode: 'ct', targetColumns: ['Value', 'value'],
+      depthIntent: { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } })).toHaveProperty('ok', true);
+    engine.getHopContext();
+    const callerReply = { focus_node_id: result, summary: 'Each output calls its declared function.', sections: { technical: 'Case-distinct outputs retain their own caller bindings.' },
+      column_flow: [], questions: outputs.map(output => ({ nodeId: output.node, question: `Establish ${output.column}.`, caller_context: { node: result, col: output.column } })) };
+    const callerSchema = submitFindingsSchemaForMode('ct', 'technical', true, engine.hopSubmitColumns);
+    expect(new Ajv({ strict: false }).compile(toModelJsonSchema(callerSchema))(callerReply)).toBe(true);
+    expect(engine.submitFindings(toHopFinding(callerSchema.parse(callerReply)))).toHaveProperty('ok', true);
+    const snapshot = engine.toJSON();
+    expect(snapshot.snapshotVersion).toBe(2);
+    expect(snapshot.engineInternals.investigationTasks.filter(task => task.kind === 'column_lineage' && task.callerContext)
+      .map(task => task.callerContext!.col).sort()).toEqual(['Value', 'value']);
+    const visited: string[] = [];
+    for (let index = 0; index < functions.length; index++) {
+      const hop = engine.getHopContext(), focus = engine.currentFocus!;
+      visited.push(focus);
+      const targets = outputs.filter(output => output.node === focus).map(output => ({ node: result, col: output.column }));
+      expect(hop.caller_output_targets).toEqual(targets);
+      expect(hop.caller_requested_outputs).toEqual(targets);
+      const schema = submitFindingsSchemaForMode('ct', 'technical', true, engine.hopSubmitColumns);
+      const reply = { focus_node_id: focus, summary: 'The scalar returns the supplied argument.', sections: { technical: 'Each return stays bound to its declared caller column.' },
+        column_flow: targets.map(target => ({ out_col: target.col, returns_to: target, upstream_columns: [] })) };
+      const native = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
+      expect(native(reply)).toBe(true);
+      expect(native({ ...reply, column_flow: [{ out_col: 'VALUE', returns_to: { node: result, col: 'VALUE' }, upstream_columns: [] }] })).toBe(false);
+      expect(engine.submitFindings(toHopFinding(schema.parse(reply)))).toHaveProperty('ok', true);
+    }
+    expect(visited.sort()).toEqual(functions.sort());
+    expect(engine.getHopContext()).toMatchObject({ done: true });
+    expect(engine.columnAspect!.edges).toEqual([]);
+  });
+});
+
 describe('qualified downstream input termination', () => {
   const sections = [{ angle: 'technical' as const, text: 'Value maps to Mapped; Other has no downstream output.' }];
   function downstream(targets = ['Value', 'Other']) {
