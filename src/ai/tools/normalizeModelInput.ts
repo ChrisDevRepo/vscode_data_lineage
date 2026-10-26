@@ -34,6 +34,34 @@ export function markIdFormSearch(schema: ZodType): void {
 /** Upper bound on decode rounds; each round can only open values nested inside the previous round's fixes. */
 const MAX_ROUNDS = 8;
 
+/** Structured-text values: a backslash before a code unit >= U+0020 outside JSON's escape alphabet
+ * denotes a literal backslash and that character; raw C0 code units are JSON-escaped unchanged.
+ * Keys and standard escapes stay strict, including malformed Unicode and incomplete syntax. */
+function normalizeJsonStringValues(text: string): string {
+  let quoted = false;
+  let valueSyntaxChanged = false;
+  let result = '';
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === '"') {
+      if (quoted && valueSyntaxChanged && text.slice(index + 1).trimStart().startsWith(':')) return text;
+      quoted = !quoted;
+      valueSyntaxChanged = false;
+    }
+    if (quoted && char.charCodeAt(0) < 0x20) {
+      result += JSON.stringify(char).slice(1, -1);
+      valueSyntaxChanged = true;
+      continue;
+    }
+    result += char;
+    if (!quoted || char !== '\\' || index + 1 === text.length) continue;
+    const next = text[++index];
+    if (next.charCodeAt(0) >= 0x20 && !'"\\/bfnrtu'.includes(next)) { result += '\\'; valueSyntaxChanged = true; }
+    result += next;
+  }
+  return result;
+}
+
 /** The single decoded value of `text` when it is exactly the expected type, otherwise `undefined`. */
 function decodeExact(text: string, expected: string): unknown {
   if (expected === 'number') {
@@ -45,7 +73,7 @@ function decodeExact(text: string, expected: string): unknown {
   if (expected !== 'object' && expected !== 'array') return undefined;
   let decoded: unknown;
   try {
-    decoded = JSON.parse(text, (_key, value: unknown, context?: { source?: string }) => {
+    decoded = JSON.parse(normalizeJsonStringValues(text), (_key, value: unknown, context?: { source?: string }) => {
       if (typeof value === 'number' && (!Number.isFinite(value) || !context?.source
         || decimalValue(context.source) !== decimalValue(Number.isInteger(value) ? BigInt(value).toString() : String(value)))) {
         throw new Error('JSON number cannot be decoded without changing its value.');

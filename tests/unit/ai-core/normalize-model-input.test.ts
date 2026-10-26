@@ -15,6 +15,79 @@ const schema = z.object({
 }).strict();
 
 describe('normalizeModelInput', () => {
+  it('preserves every raw C0 character in structured string values and logs the conversion', () => {
+    for (let code = 0; code < 0x20; code += 1) {
+      const char = String.fromCharCode(code);
+      const meta = `{"label":"before${char}after"}`;
+      const input = { rows: [], meta, name: 'n' };
+      const result = normalizeModelInput(schema, input);
+      expect(result.input).toEqual({ ...input, meta: { label: `before${char}after` } });
+      expect(result.fixes).toEqual([{ path: 'meta', before: meta, after: { label: `before${char}after` } }]);
+      expect(input.meta).toBe(meta);
+      const key = `{"before${char}after":"value"}`;
+      expect(normalizeModelInput(z.record(z.string(), z.string()), key)).toEqual({ input: key, fixes: [] });
+    }
+  });
+
+  it('normalizes literal newlines in nested array values without changing standard escapes or accepted strings', () => {
+    const input = '[{"text":"line one\nline two\\nlast"}]';
+    const array = z.array(z.object({ text: z.string() }));
+    expect(normalizeModelInput(array, input).input).toEqual([{ text: 'line one\nline two\nlast' }]);
+    expect(normalizeModelInput(z.string(), input)).toEqual({ input, fixes: [] });
+    const ambiguous = z.union([z.object({ x: z.number(), text: z.string() }), z.object({ x: z.string(), text: z.string() })]);
+    const raw = '{"x":"2","text":"line one\nline two"}';
+    expect(normalizeModelInput(ambiguous, raw)).toEqual({ input: raw, fixes: [] });
+  });
+
+  it.each([' ', 'q', 'x', '(', 'α'])('preserves a non-JSON escape as literal backslash plus %s in structured text', suffix => {
+    const meta = `{"label":"before\\${suffix}after"}`;
+    const input = { rows: [], meta, name: 'n' };
+    const result = normalizeModelInput(schema, input);
+    expect(result.input).toEqual({ ...input, meta: { label: `before\\${suffix}after` } });
+    expect(result.fixes).toEqual([{ path: 'meta', before: meta, after: { label: `before\\${suffix}after` } }]);
+    expect(input.meta).toBe(meta);
+  });
+
+  it('retains every standard JSON escape with its defined meaning beside a literal non-JSON escape', () => {
+    const meta = String.raw`{"label":"\"\\\/\b\f\n\r\t\u0041\ value"}`;
+    const result = normalizeModelInput(schema, { rows: [], meta, name: 'n' });
+    expect(result.input).toEqual({ rows: [], meta: { label: '"\\/\b\f\n\r\tA\\ value' }, name: 'n' });
+  });
+
+  it.each([1, 2, 3, 4, 5, 6])('preserves paired backslashes before an unknown escape with run length %i', count => {
+    const text = `{"label":"${'\\'.repeat(count)}q"}`;
+    const result = normalizeModelInput(z.object({ label: z.string() }), text);
+    expect(result.input).toEqual({ label: `${'\\'.repeat(Math.ceil(count / 2))}q` });
+  });
+
+  it('normalizes array values while retaining ordinary string fields and ambiguous union branches', () => {
+    const raw = String.raw`[{"key":"value\ alpha"}]`;
+    expect(normalizeModelInput(z.array(z.record(z.string(), z.string())), raw).input)
+      .toEqual([{ key: 'value\\ alpha' }]);
+    expect(normalizeModelInput(z.string(), raw)).toEqual({ input: raw, fixes: [] });
+    const union = z.union([z.object({ x: z.number(), text: z.string() }), z.object({ x: z.string(), text: z.string() })]);
+    const ambiguous = String.raw`{"x":"2","text":"value\ q"}`;
+    expect(normalizeModelInput(union, ambiguous)).toEqual({ input: ambiguous, fixes: [] });
+  });
+
+  it.each([String.raw`{"key\ q":"value"}`, String.raw`{"key\ q":"first","key\\ q":"second"}`])(
+    'rejects unknown escapes in keys rather than collapsing supplied entries: %s', input => {
+      expect(normalizeModelInput(z.record(z.string(), z.string()), input)).toEqual({ input, fixes: [] });
+    },
+  );
+
+  it.each([
+    String.raw`{"label":"cut off\ q`, String.raw`{"label":"complete\ q"`,
+    String.raw`{"label":"bad\u12G4\ q"}`, String.raw`{"label":"bad\u123\ q"}`,
+    String.raw`{"label":"unescaped "quote"\ q"}`, String.raw`{"label":"a\ q",}`,
+    '{"label":"raw\nnewline', '{"label":"backslash\\\nnewline"}',
+    '{"label":"raw\nnewline","n":9007199254740993}', '{"label":"raw\nnewline","other":"bad\\u12"}',
+    String.raw`{"label":"a\ q","n":9007199254740993}`,
+  ])('does not complete or guess other malformed structured text: %s', meta => {
+    const input = { rows: [], meta, name: 'n' };
+    expect(normalizeModelInput(schema, input)).toEqual({ input, fixes: [] });
+  });
+
   it('decodes JSON text where the schema expects a list or object, and logs each path', () => {
     const input = { rows: '[{"id":"a","n":"3","on":"true"}]', meta: '{"label":"x"}', name: '[1]' };
     const result = normalizeModelInput(schema, input);

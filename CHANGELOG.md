@@ -27,7 +27,7 @@ The newest version heading collects changes until that version ships.
 - Updating a legacy bookmark preserves the current object selection when older identifier spellings are ambiguous.
 - A branch may prune an unvisited shared neighbor already kept elsewhere without removing the node or its saved column mappings; conflicting actions in one reply remain rejected.
 - Longer report section labels are accepted unchanged in reports and repairs; blank and duplicate labels remain rejected.
-- Exact numeric text, including numbers nested in JSON-text objects or lists, is decoded once and logged; ambiguous or numerically lossy values are rejected.
+- Tool and structured responses share logged, lossless normalization of JSON-text objects and lists, exact numbers and booleans. Within JSON-text string values, unknown backslash escapes and raw C0 characters retain their values; keys, standard escapes, incomplete syntax and numeric precision remain strict.
 - A retry after a rejected findings call no longer offers a neighbor for pruning when the kept column mapping still uses it; the offered prune choices match the ones the check accepts.
 - A procedure mapping whose `writes_to` names an unknown object or a table the procedure does not write to is rejected with its own fix text: name a table the procedure writes to, or send `writes_to: null` and describe the write in sections. It was rejected as an unknown source with advice to drop the reference.
 - A table reached by several paths forwards the same question and carried columns to each next object once, so chains of shared tables no longer double the queued work at every fork and merge.

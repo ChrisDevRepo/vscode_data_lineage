@@ -232,9 +232,11 @@ export class VscodeModelPort implements ModelPort {
     if (calls.length === 0 && (message.invalid_tool_calls ?? []).some((call) => call.name === STRUCTURED_OUTPUT_TOOL)) {
       throw new StructuredOutputError(`${STRUCTURED_OUTPUT_TOOL} arguments were not a JSON object`);
     }
-    const payload = calls.length === 1
-      ? calls[0].args
-      : undefined;
+    const normalized = calls.length === 1 ? normalizeModelInput(input.schema, calls[0].args) : undefined;
+    for (const fix of normalized?.fixes ?? []) {
+      this.options.debugLog?.(`[Normalize] tool=${STRUCTURED_OUTPUT_TOOL} path=${fix.path} before=${JSON.stringify(fix.before)}`);
+    }
+    const payload = normalized?.input;
     const notation = toolCallNotationFault(payload);
     if (notation) throw new StructuredOutputError(notation.reason, REJECTION_CODES.invalidStructuredOutput, notation.hint);
     const parsed = calls.length === 1 ? input.schema.safeParse(payload) : undefined;
