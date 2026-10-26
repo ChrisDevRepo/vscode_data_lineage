@@ -406,7 +406,7 @@ export function validatedFindingFields(input: unknown, schema: z.ZodType): {
   /** Explicit action references for diagnostics only, independent of whether the action is admissible. */
   actionIdentities?: Partial<Record<'questions' | 'prune_neighbors', readonly string[]>>;
   /** Shape-valid slices for local diagnostics only; never substitute these for the unavailable full flow. */
-  columnFlowDiagnostics?: readonly { entry: ColumnFlowEntry; index: number; upstreamIndexes: readonly number[] }[];
+  columnFlowDiagnostics?: readonly { entry: ColumnFlowEntry; index: number; upstreamIndexes: readonly number[]; emptySourceAuthored: boolean }[];
   /** Independently valid supplier identities whose header or other tuple fields are unavailable. */
   columnSupplierDiagnostics?: readonly { ref: ColumnFlowEntry['upstream_columns'][number]; path: string }[];
 } {
@@ -436,7 +436,7 @@ export function validatedFindingFields(input: unknown, schema: z.ZodType): {
   }
   const flowField = schema.shape.column_flow;
   const flowOwner = flowField instanceof z.ZodOptional ? flowField.unwrap() : flowField;
-  const columnFlowDiagnostics: Array<{ entry: ColumnFlowEntry; index: number; upstreamIndexes: number[] }> = [];
+  const columnFlowDiagnostics: Array<{ entry: ColumnFlowEntry; index: number; upstreamIndexes: number[]; emptySourceAuthored: boolean }> = [];
   const columnSupplierDiagnostics: Array<{ ref: ColumnFlowEntry['upstream_columns'][number]; path: string }> = [];
   if (unavailable.has('column_flow') && flowOwner instanceof z.ZodArray && Array.isArray(raw.column_flow)) {
     const entryOwner = flowOwner.element as z.ZodType<ColumnFlowEntry>;
@@ -448,7 +448,7 @@ export function validatedFindingFields(input: unknown, schema: z.ZodType): {
       return upstream instanceof z.ZodArray && upstream.element instanceof z.ZodObject
         ? [upstream.element as unknown as typeof ColumnRefSchema] : [];
     });
-    const identityOwners = supplierOwners.map(owner => owner.pick({ node: true, col: true }));
+    const identityOwner = ColumnRefSchema.pick({ node: true, col: true });
     for (const [index, entry] of raw.column_flow.entries()) {
       if (!entry || typeof entry !== 'object' || !Array.isArray(entry.upstream_columns)) continue;
       const header = entryOwner.safeParse({ ...entry, upstream_columns: [] });
@@ -458,7 +458,7 @@ export function validatedFindingFields(input: unknown, schema: z.ZodType): {
         const parsed = supplierOwners.map(owner => owner.safeParse(ref)).find(result => result.success);
         if (!parsed?.success) {
           if (ref && typeof ref === 'object') {
-            const identity = identityOwners.map(owner => owner.safeParse({ node: ref.node, col: ref.col })).find(result => result.success);
+            const identity = identityOwner.safeParse({ node: ref.node, col: ref.col });
             if (identity?.success) columnSupplierDiagnostics.push({ ref: identity.data, path: `column_flow.${index}.upstream_columns.${refIndex}` });
           }
           continue;
@@ -470,7 +470,7 @@ export function validatedFindingFields(input: unknown, schema: z.ZodType): {
         upstreamIndexes.push(refIndex);
         upstream_columns.push(parsed.data);
       }
-      if (header.success) columnFlowDiagnostics.push({ entry: { ...header.data, upstream_columns }, index, upstreamIndexes });
+      if (header.success) columnFlowDiagnostics.push({ entry: { ...header.data, upstream_columns }, index, upstreamIndexes, emptySourceAuthored: entry.upstream_columns.length === 0 });
     }
   }
   return { fields, unavailable, actionIdentities,

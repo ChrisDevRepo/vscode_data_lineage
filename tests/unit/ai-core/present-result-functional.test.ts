@@ -315,6 +315,9 @@ it('retains frozen asked columns from the completed engine through result storag
   }, services));
   expect(answer).toMatchObject({ success: true });
   expect(session.presentationArtifact?.aiMetadata.columnAspect).toEqual({ edges: [], requested: expected });
+  expect(session.presentationArtifact?.aiMetadata.description).toContain('## Column Chain');
+  expect(session.presentationArtifact?.aiMetadata.description).toContain('`' + origin + '.Value`');
+  expect(session.presentationArtifact?.aiMetadata.description).toContain('`' + origin + '.Unmapped`');
   expect(fullResult.columnAspect?.target_columns).toEqual(['Value', 'Unmapped']);
   expect(session.resultGraph?.columnAspect?.requested?.columns).not.toBe(fullResult.columnAspect?.target_columns);
   expect(session.presentationArtifact?.aiMetadata.columnAspect?.requested?.columns).not.toBe(session.resultGraph?.columnAspect?.requested?.columns);

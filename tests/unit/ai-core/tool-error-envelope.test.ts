@@ -49,11 +49,26 @@ describe("tool-error-envelope", () => {
     expect(rejection.hint).toBeUndefined();
     expect(rejection.errors).toEqual(expect.arrayContaining([
       { path: 'mode', issue: 'Invalid value', got: 'z', allowed: ['a', 'b'] },
-      { path: 'items.0.extra', issue: 'Unrecognized key', allowed: ['name'] },
+      { path: 'items.0.extra', issue: 'Unrecognized key; remove or correct it.', allowed: ['name'] },
       { path: 'count', issue: 'Wrong type', expected: 'number' },
     ]));
     expect(exampleForFields(schema, ['items.0.extra'])).toEqual({ items: [{ name: '...' }] });
     expect(exampleForFields(schema, ['mode', 'count'])).toBeUndefined();
+  });
+  it.each([false, true])('gives first-feedback correction guidance for an unknown key (nested=%s)', nested => {
+    const schema = z.object({ entry: z.object({ value: z.string() }).strict() }).strict();
+    const input = nested ? { entry: { value: 'Keep this text.', extra: 'Move or remove me.' } }
+      : { entry: { value: 'Keep this text.' }, extra: 'Move or remove me.' };
+    const before = structuredClone(input);
+    const parsed = schema.safeParse(input);
+    if (parsed.success) throw new Error('Expected unknown key rejection');
+    const rejection = rejectionFromZodError(parsed.error, { code: 'invalid_input', input, schema, form: true });
+    const first = JSON.parse(rejectionModelContent(rejection, false));
+    expect(first.errors).toEqual([{ path: nested ? 'entry.extra' : 'extra',
+      issue: 'Unrecognized key; remove or correct it.' }]);
+    expect(JSON.parse(rejectionModelContent(rejection, true)).errors[0].allowed).toEqual([nested ? 'value' : 'entry']);
+    expect(input).toEqual(before);
+    expect(schema.safeParse({ entry: { value: input.entry.value } }).success).toBe(true);
   });
   it.each([
     { owner: z.array(z.object({ id: z.never(), reason: z.string() }).strict()).optional(), expected: { items: [] } },

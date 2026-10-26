@@ -114,12 +114,6 @@ function splitFailedParts(paths: readonly string[]): { readonly fields: Set<stri
   return { fields, angles };
 }
 
-/** The parts a set of dotted fault paths leaves to resend: `sections.<angle>` entries first, then whole fields. */
-function failedParts(paths: readonly string[]): string[] {
-  const { fields, angles } = splitFailedParts(paths);
-  return [...[...angles].map(angle => `sections.${angle}`), ...fields];
-}
-
 /** The parts a typed finding carries: its non-empty fields and `sections.<angle>` entries. */
 function presentParts(finding: HopFindingKept): Set<string> {
   return new Set([
@@ -564,11 +558,11 @@ export class NavigationEngine implements IHopStateMachine {
 
   /** Adds independently validated action faults before holding an invalid draft; never decodes malformed intent. */
   public rejectInvalidSubmission(input: unknown, rejection: ToolRejection, safe: ReturnType<typeof validatedFindingFields>, internalSections?: HopFindingKept['sections']): ToolRejection {
-    if (typeof input !== 'object' || input === null || Array.isArray(input)) return this.asForm(rejection, failedParts(rejection.issuePaths ?? []));
+    if (typeof input !== 'object' || input === null || Array.isArray(input)) return this.asForm(rejection, this.failedParts(rejection.issuePaths ?? []));
     const raw = input as Record<string, unknown>;
     const focusId = this._status !== 'awaiting_findings' ? null : raw.focus_node_id === undefined ? this.currentFocusNodeId
       : typeof raw.focus_node_id === 'string' ? raw.focus_node_id : null;
-    if (!focusId || focusId !== this.currentFocusNodeId) return this.asForm(rejection, failedParts(rejection.issuePaths ?? []));
+    if (!focusId || focusId !== this.currentFocusNodeId) return this.asForm(rejection, this.failedParts(rejection.issuePaths ?? []));
     const callerFault = this.validateCallerContext();
     if (callerFault) return callerFault;
     const held = this.heldDraftOfCurrentFocus();
@@ -585,13 +579,18 @@ export class NavigationEngine implements IHopStateMachine {
     if (unavailable.has('column_flow') && this.tracer && safe.columnSupplierDiagnostics?.length) {
       const contributorIds = this.columnContributorIds(focusId);
       for (const { ref, path } of safe.columnSupplierDiagnostics) {
-        const checked = this.tracer.validateColumnSupplier(focusId, ref, path, this.nodeMap, this.store ?? null, this.removedSet, contributorIds);
+        const scopeFaults = this.validateColumnReferenceScope(focusId, [{ node: ref.node, path: `${path}.node`, isWrite: false }]);
+        diagnosticRoutes.push(...scopeFaults);
+        const node = resolveModelNodeId(ref.node, this.nodeMap, this.identifierCaseSensitive);
+        if (node === null) continue;
+        const checked = this.tracer.validateColumnSupplier(focusId, { ...ref, node }, path, this.nodeMap, this.store ?? null, this.removedSet, contributorIds);
         if ('invalidRoute' in checked) diagnosticRoutes.push(checked.invalidRoute);
       }
     }
     if (unavailable.has('column_flow') && safe.columnFlowDiagnostics?.length) {
       const slices = safe.columnFlowDiagnostics;
-      const diagnostic = this.validateCurrentColumnFlow(focusId, { column_flow: slices.map(slice => slice.entry) }, false);
+      const authoredEmptySources = new Set(slices.flatMap((slice, index) => slice.emptySourceAuthored ? [index] : []));
+      const diagnostic = this.validateCurrentColumnFlow(focusId, { column_flow: slices.map(slice => slice.entry) }, false, authoredEmptySources);
       diagnosticEdges = diagnostic.stagedEdges;
       for (const fault of diagnostic.invalidRoutes) {
         // Whole-list completeness is unknowable from a partial slice. Keep only local verified faults.
@@ -611,6 +610,9 @@ export class NavigationEngine implements IHopStateMachine {
     }
     const facts = this.collectFindingPlan(focusId, fields, unavailable, false, diagnosticEdges, actionMentions);
     facts.invalidRoutes.push(...diagnosticRoutes);
+    // A verified reference fault explains the same identity refusal more precisely; keep independent schema faults.
+    const referencePaths = new Set(diagnosticRoutes.filter(fault => fault.path?.endsWith('.node')).map(fault => fault.path));
+    if (referencePaths.size) rejection = { ...rejection, errors: rejection.errors?.filter(error => !referencePaths.has(error.path) || error.allowed === undefined) };
     // A mapping participating in an action conflict is still valid held content. Only intrinsic
     // schema/state faults require replacing it; the merged action correction is revalidated.
     const holdPaths = [...(rejection.issuePaths ?? []), ...facts.invalidRoutes.flatMap(fault => fault.path ? [fault.path] : []),
@@ -619,7 +621,17 @@ export class NavigationEngine implements IHopStateMachine {
       ? combineToolRejections([rejection, { ...buildRouteValidationRejection(facts.invalidRoutes),
         issuePaths: [...facts.invalidRoutes.flatMap(fault => fault.path ? [fault.path] : []), ...facts.conflictPaths] }]) : rejection;
     const parts = this.holdRejectedSubmission({ ...raw, focus_node_id: focusId }, holdPaths, internalSections, facts.invalidRoutes.flatMap(fault => fault.alternatives ?? []));
-    return this.asForm(rejection, parts?.resend ?? failedParts(holdPaths));
+    return this.asForm(rejection, parts?.resend ?? this.failedParts(holdPaths));
+  }
+
+  /** Only parts declared for the active finding can be owed; unsupported input remains rejected, never held. */
+  private failedParts(paths: readonly string[]): string[] {
+    const { fields, angles } = splitFailedParts(paths);
+    return [
+      ...[...angles].filter(angle => !this.classification || CLASSIFICATION_KEPT_ANGLES[this.classification].some(kept => kept === angle)).map(angle => `sections.${angle}`),
+      ...[...fields].filter(field => (field === 'sections' || field === 'focus_node_id' || HELD_FIELDS.some(held => held === field))
+        && (field !== 'column_flow' || this.currentHopAnalysisMode === 'ct')),
+    ];
   }
 
   /** Holds the parts of a rejected finding that are valid, merged into the draft already held for this focus. A part the retry sent (`present`) and that validates replaces the held copy; a part that fails keeps the held copy, or none when the failing copy was the held one; an omitted part stays held. The parts owed are the failing ones and the required ones still missing. */
@@ -642,10 +654,9 @@ export class NavigationEngine implements IHopStateMachine {
       const value = field === 'summary' ? undefined : pick(fields.has(field), present.has(field), sent[field], prior?.[field]);
       if (value !== undefined) Object.assign(draft, { [field]: structuredClone(value) });
     }
-    const owed = this.heldFindingFocus === null ? [] : (this.heldFindingDraft.getAuthorization()?.failed ?? []).filter(part => !hasPart(draft, part));
-    const failed = [...new Set([...failedParts(issuePaths), ...this.missingRequiredParts(draft), ...owed])];
-    const resend = [...new Set([...failed, ...alternatives])];
-    const parts = this.heldParts(draft, resend);
+    const owed = this.heldFindingFocus === null ? [] : this.failedParts((this.heldFindingDraft.getAuthorization()?.failed ?? []).filter(part => !hasPart(draft, part)));
+    const failed = [...new Set([...this.failedParts(issuePaths), ...this.missingRequiredParts(draft), ...owed])];
+    const parts = this.heldParts(draft, failed, alternatives);
     if (!this.currentFocusNodeId || (parts.sections.length === 0 && !parts.summary && parts.fields.length === 0)) {
       this.heldFindingDraft.clear();
       return null;
@@ -676,12 +687,13 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /** The parts of a held draft, as a rejection names them to the model. */
-  private heldParts(held: HopFindingKept, resend: readonly string[]): HeldSubmissionParts {
+  private heldParts(held: HopFindingKept, failed: readonly string[], alternatives: readonly string[] = []): HeldSubmissionParts {
     return {
       sections: held.sections.map(angleKey),
       summary: held.summary.trim().length > 0,
       fields: HELD_FIELDS.filter((field): field is Exclude<HeldField, 'summary'> => field !== 'summary' && held[field] !== undefined),
-      resend: [...resend],
+      failed: [...failed],
+      resend: [...new Set([...failed, ...alternatives])],
     };
   }
 
@@ -689,7 +701,7 @@ export class NavigationEngine implements IHopStateMachine {
   public heldPartsOfCurrentFocus(): HeldSubmissionParts | null {
     const held = this.heldDraftOfCurrentFocus();
     const authorization = this.heldFindingDraft.getAuthorization();
-    return held && authorization ? this.heldParts(held, [...new Set([...authorization.failed, ...authorization.alternatives])]) : null;
+    return held && authorization ? this.heldParts(held, authorization.failed, authorization.alternatives) : null;
   }
 
   /** Projection of unresolved scope-boundary leads; feeds the follow-up suggestions after synthesis. */
@@ -2092,7 +2104,7 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /** Shared current-task context for full validation and diagnostic-only shape-valid slices. */
-  private validateCurrentColumnFlow(focusId: string, finding: Pick<HopFindingKept, 'column_flow'>, diagnostics: boolean): ReturnType<ColumnTracer['validateColumnFlow']> {
+  private validateCurrentColumnFlow(focusId: string, finding: Pick<HopFindingKept, 'column_flow'>, diagnostics: boolean, authoredEmptySources?: ReadonlySet<number>): ReturnType<ColumnTracer['validateColumnFlow']> {
     if (!this.tracer) return { invalidRoutes: [], stagedEdges: [] };
     const taskSides = new Set(this.getCurrentTasks().flatMap(task => task.kind === 'column_lineage' && task.traversalSide ? [task.traversalSide] : []));
     const mixedSides = taskSides.size > 1;
@@ -2101,7 +2113,23 @@ export class NavigationEngine implements IHopStateMachine {
       this.incomingColumnRefs(mixedSides ? 'upstream' : undefined), this.currentReturnTargets(),
       this.getCurrentTasks().flatMap(task => task.callerContext && task.nodeId && this.validFunctionCallerContext(task.nodeId, task.callerContext)
         ? [{ node: task.callerContext.node, col: task.callerContext.col }] : []),
-      mixedSides ? this.incomingColumnRefs('downstream') : [], this.columnRoots(), this.columnContributorIds(focusId));
+      mixedSides ? this.incomingColumnRefs('downstream') : [], this.columnRoots(), this.columnContributorIds(focusId), authoredEmptySources);
+  }
+
+  /** Checks the approved border for readable references, including diagnostics from a rejected field. */
+  private validateColumnReferenceScope(focusId: string, refs: readonly { node: string; path: string; isWrite: boolean }[]): InvalidRoute[] {
+    const faults: InvalidRoute[] = [];
+    for (const ref of refs) {
+      const nid = resolveModelNodeId(ref.node, this.nodeMap, this.identifierCaseSensitive);
+      const node = nid ? this.nodeMap.get(nid) : undefined;
+      if (!nid || !node || (ref.isWrite ? this.admitsRoute(nid, node, focusId).admitted || this.scopeNodeIds.has(nid) || this.visited.has(nid) : this.admitsColumnReference(nid, node, focusId))) continue;
+      const { border, depthBreach } = this.admitsRoute(nid, node, focusId);
+      const outside = border.kind === 'excluded' ? 'excluded' : border.kind === 'out_of_direction' ? 'out of direction' : depthBreach !== null ? `beyond depth ${depthBreach}` : null;
+      if (!outside) continue;
+      faults.push({ kind: 'column_out_of_scope', id: nid, path: ref.path,
+        reason: `\`${nid}\` is out of scope (${outside}).` });
+    }
+    return faults;
   }
 
   /** Stages deterministic facts only. Unavailable fields block dependent checks, never become authored empty lists. */
@@ -2261,22 +2289,11 @@ export class NavigationEngine implements IHopStateMachine {
       if (diagnostics) this.log('debug', `[Agenda] route accept hop=${this.hopCount} id=${nNode.id} ← ${focusId} subq=${trunc(req.question, 80)}`);
     }
     // CT check 1: a column reference names an object the approved scope reaches; anything else is rejected, never dropped.
-    for (const [entryIndex, entry] of (this.tracer ? finding.column_flow ?? [] : []).entries()) {
-      const refs = [
-        ...(entry.writes_to ? [{ node: entry.writes_to.node, path: `column_flow.${entryIndex}.writes_to.node`, isWrite: true }] : []),
-        ...entry.upstream_columns.map((ref, refIndex) => ({ node: ref.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`, isWrite: false })),
-      ];
-      for (const ref of refs) {
-        const nid = resolveModelNodeId(ref.node, this.nodeMap, this.identifierCaseSensitive);
-        const node = nid ? this.nodeMap.get(nid) : undefined;
-        if (!nid || !node || (ref.isWrite ? this.admitsRoute(nid, node, focusId).admitted || this.scopeNodeIds.has(nid) || this.visited.has(nid) : this.admitsColumnReference(nid, node, focusId))) continue;
-        const { border, depthBreach } = this.admitsRoute(nid, node, focusId);
-        const outside = border.kind === 'excluded' ? 'excluded' : border.kind === 'out_of_direction' ? 'out of direction' : depthBreach !== null ? `beyond depth ${depthBreach}` : null;
-        if (!outside) continue;
-        invalidRoutes.push({ kind: 'column_out_of_scope', id: nid, path: ref.path,
-          reason: `\`${nid}\` is out of scope (${outside}).` });
-      }
-    }
+    const scopeRefs = (this.tracer ? finding.column_flow ?? [] : []).flatMap((entry, entryIndex) => [
+      ...(entry.writes_to ? [{ node: entry.writes_to.node, path: `column_flow.${entryIndex}.writes_to.node`, isWrite: true }] : []),
+      ...entry.upstream_columns.map((ref, refIndex) => ({ node: ref.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`, isWrite: false })),
+    ]);
+    invalidRoutes.push(...this.validateColumnReferenceScope(focusId, scopeRefs));
 
     // An arriving column without a mapping ends at this hop; the acknowledgement names it.
     const endedColumns: string[] = [];
@@ -2477,7 +2494,7 @@ export class NavigationEngine implements IHopStateMachine {
     }));
     if (fatalRoutes.length) rejections.push(buildRouteValidationRejection(fatalRoutes));
     const rejection = combineToolRejections(rejections, classViolation && fatalRoutes.length ? 'Nothing was committed.' : undefined);
-    return { ...this.asForm(rejection, held?.resend ?? failedParts(failed)), ...missingContent,
+    return { ...this.asForm(rejection, held?.resend ?? this.failedParts(failed)), ...missingContent,
       issuePaths: [...new Set([...(rejection.issuePaths ?? []), ...conflictPaths])] };
   }
 

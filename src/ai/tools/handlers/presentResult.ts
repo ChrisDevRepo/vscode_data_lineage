@@ -435,7 +435,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       if (renderInput.sections?.length) {
         const nodeMap = getModelNodeMap(model);
         const columnChainPreface = resultGraph.columnAspect
-          ? buildColumnChainPreface(resultGraph.columnAspect.edges)
+          ? buildColumnChainPreface(resultGraph.columnAspect.edges, resultGraph.columnAspect.requested, model.identifierCaseSensitive)
           : undefined;
         const assembled = orderAndAssemble(
           renderInput.sections,

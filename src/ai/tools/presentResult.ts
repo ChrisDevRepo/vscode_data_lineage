@@ -9,6 +9,7 @@ import {
   type PresentResultSectionRepairField,
 } from './toolSchemas';
 import { quoteIds } from '../support/text';
+import { normalizeColName, schemaKey } from '../../utils/sql';
 import { RepairDraftStore, keyedResendRule, indexedRepairFields, type IndexedRepairFields } from '../support/repairDraftStore';
 import { INVALID_TOOL_INPUT_REPAIR_HINT, makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
@@ -692,9 +693,13 @@ type ColumnChainEdge = {
   transforms?: readonly ColumnTransformClass[];
 };
 
-/** Builds the engine-owned "Column Chain" preface for a CT result from validated column-flow edges. */
-export function buildColumnChainPreface(edges: readonly ColumnChainEdge[]): string | undefined {
-  if (edges.length === 0) return undefined;
+/** Formats recorded column relations and retains asked identities without inventing a mapping. */
+export function buildColumnChainPreface(
+  edges: readonly ColumnChainEdge[],
+  requested?: { readonly node: string; readonly columns: readonly string[] },
+  identifierCaseSensitive = false,
+): string | undefined {
+  if (edges.length === 0 && !requested?.columns.length) return undefined;
   const outputs = new Map<string, ColumnChainEdge[]>();
   for (const edge of [...edges].sort((a, b) => a.hop - b.hop)) {
     const key = JSON.stringify([edge.to_node, edge.to_col]);
@@ -713,6 +718,17 @@ export function buildColumnChainPreface(edges: readonly ColumnChainEdge[]): stri
         ...group.map(edge => `| ${columnChainCode(`${edge.from_node}.${edge.from_col}`)} | ${edge.hop} | ${edge.transforms?.map(role => columnChainCode(role)).join(', ') ?? ''} |`),
       ].join('\n'),
     );
+  }
+  if (requested) {
+    const key = (node: string, col: string): string => JSON.stringify([schemaKey(node, identifierCaseSensitive), normalizeColName(col, identifierCaseSensitive)]);
+    const represented = new Set(edges.flatMap(edge => [key(edge.from_node, edge.from_col), key(edge.to_node, edge.to_col)]));
+    const missing = requested.columns.filter(col => {
+      const identity = key(requested.node, col);
+      if (represented.has(identity)) return false;
+      represented.add(identity);
+      return true;
+    });
+    if (missing.length) parts.push(['| Asked column |', '| --- |', ...missing.map(col => `| ${columnChainCode(`${requested.node}.${col}`)} |`)].join('\n'));
   }
   return parts.join('\n\n');
 }

@@ -689,7 +689,7 @@ function zodRejectionErrors(error: z.ZodError, input: unknown, schema?: z.ZodTyp
       } else if (issue.code === 'unrecognized_keys') {
         const node = jsonSchemaNodeAt(schema, path);
         const allowed = Object.keys((node ? unwrapNullable(node) : undefined)?.properties ?? {});
-        for (const key of issue.keys) add(key.length > KEY_ECHO_MAX_CHARS ? path : [...path, key], { issue: 'Unrecognized key', ...(allowed.length ? { allowed } : {}) }, undefined);
+        for (const key of issue.keys) add(key.length > KEY_ECHO_MAX_CHARS ? path : [...path, key], { issue: 'Unrecognized key; remove or correct it.', ...(allowed.length ? { allowed } : {}) }, undefined);
       } else if (issue.code === 'invalid_type') {
         const text = enrichedIssueMessage(issue, received);
         add(path, { issue: missing ?? (text === baseIssueMessage(issue) ? 'Wrong type' : text), expected: issue.expected, ...(issue.expected === 'never' ? { allowed: [] } : {}) }, received, true);

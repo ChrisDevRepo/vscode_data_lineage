@@ -770,6 +770,8 @@ export interface HeldSubmissionParts {
   readonly summary: boolean;
   /** Names of the other held fields (`badge_label`, `prune_neighbors`, `questions`, `column_flow`). */
   readonly fields: readonly string[];
-  /** Parts the rejection failed: `sections.<angle>` or a top-level field name. */
+  /** Faulty or missing required parts, excluding alternative outcome fields. */
+  readonly failed?: readonly string[];
+  /** Required corrections and alternative outcome fields the rejection permits resending. */
   readonly resend: readonly string[];
 }

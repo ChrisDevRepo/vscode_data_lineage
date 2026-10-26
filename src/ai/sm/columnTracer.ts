@@ -162,6 +162,8 @@ export class ColumnTracer {
     incomingDownstreamRefs: readonly { node: string; col: string }[] = [],
     roots: readonly { node: string; col: string }[] = [],
     contributorIds?: ReadonlySet<string>,
+    /** Diagnostic slices may have lost invalid suppliers; only original explicit [] lists declare birth. */
+    authoredEmptySources?: ReadonlySet<number>,
   ): { invalidRoutes: InvalidRoute[]; stagedEdges: ColumnEdge[]; entrySides?: Array<{ index: number; upstream: boolean; downstream: boolean }> } {
     const identifierKey = (id: string): string => schemaKey(id, model.identifierCaseSensitive);
     const invalidRoutes: InvalidRoute[] = [];
@@ -291,7 +293,7 @@ export class ColumnTracer {
       const writerEdge = resolvedTarget?.writerEdge ?? null;
       const writerTargetObj = writerEdge ? nodeMap.get(writerEdge.toNode) : null;
       if (writerEdge && writerTargetObj && !SCRIPT_TYPES.has(writerTargetObj.type)
-        && entry.upstream_columns.length === 0) {
+        && entry.upstream_columns.length === 0 && (authoredEmptySources === undefined || authoredEmptySources.has(entryIndex))) {
         stagedEdges.push({
           hop: 0,
           hop_node: focusId,

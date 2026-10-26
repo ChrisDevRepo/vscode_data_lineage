@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { AiSession } from '../../../src/ai/session/session';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
+import { buildActiveHopInstruction } from '../../../src/ai/agent/stagePrompts';
 import { executeSubmitFindings } from '../../../src/ai/tools/handlers/submitFindings';
 import { executePruneCurrent } from '../../../src/ai/tools/handlers/pruneCurrent';
 import { executeStartExploration } from '../../../src/ai/tools/handlers/startExploration';
@@ -477,6 +478,53 @@ describe('large findings repairs', () => {
     expect(JSON.parse(executeSubmitFindings(correction, services))).toHaveProperty('ok', true);
     expect(engine.columnAspect!.edges).toHaveLength(1);
   });
+  it.each([
+    { name: 'rejected suppliers', explicitEmpty: false, validSupplier: false, sibling: false, badTarget: false, rejectedSibling: false, protectedTarget: false },
+    { name: 'authored empty suppliers', explicitEmpty: true, validSupplier: false, sibling: false, badTarget: false, rejectedSibling: false, protectedTarget: true },
+    { name: 'valid partial supplier', explicitEmpty: false, validSupplier: true, sibling: false, badTarget: false, rejectedSibling: false, protectedTarget: true },
+    { name: 'valid sibling mapping', explicitEmpty: false, validSupplier: false, sibling: true, badTarget: false, rejectedSibling: false, protectedTarget: true },
+    { name: 'independent target fault', explicitEmpty: false, validSupplier: false, sibling: false, badTarget: true, rejectedSibling: false, protectedTarget: false },
+    { name: 'authored empty suppliers beside a rejected sibling', explicitEmpty: true, validSupplier: false, sibling: false, badTarget: false, rejectedSibling: true, protectedTarget: true },
+  ])('preserves original source-list presence in $name diagnostics', ({ explicitEmpty, validSupplier, sibling, badTarget, rejectedSibling, protectedTarget }) => {
+    const { engine, session, model, graph } = ctWorld({ selfLoop: true, sibling: true });
+    const { services } = stubToolServices({ session, model, graph });
+    const before = engine.toJSON();
+    const result = JSON.parse(executeSubmitFindings({ summary: 'Authored evidence.', sections: { technical: 'Keep the supplied source facts.' },
+      column_flow: [
+        { out_col: 'Value', upstream_columns: explicitEmpty ? [] : [
+          { node: '[hop].[unknown]', col: 'Value' }, ...(validSupplier ? [{ node: OTHER, col: 'Value' }] : []),
+        ], writes_to: { node: BRANCH, col: badTarget ? 'Missing' : 'Value' } },
+        ...(rejectedSibling ? [{ out_col: 'Value', upstream_columns: [{ node: '[hop].[unknown]', col: 'Value' }], writes_to: { node: BRANCH, col: 'Value' } }] : []),
+        ...(sibling ? [{ out_col: 'Value', upstream_columns: [{ node: OTHER, col: 'Value' }], writes_to: { node: BRANCH, col: 'Value' } }] : []),
+      ], prune_neighbors: [{ id: BRANCH, reason: 'Outside this investigation.' }],
+      questions: validSupplier || sibling ? [] : [{ nodeId: OTHER, question: 'Explain Value.' }],
+    }, services));
+    expect(result.detail.filter((fault: { kind: string }) => fault.kind === 'prune_unsupported')).toHaveLength(protectedTarget ? 1 : 0);
+    if (badTarget) expect(result.detail).toContainEqual(expect.objectContaining({ kind: 'bad_out_col', path: 'column_flow.0.writes_to.col' }));
+    expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
+    expect(engine.toJSON().agenda).toEqual(before.agenda);
+    expect(engine.toJSON().removedSet).toEqual(before.removedSet);
+  });
+  it.each(['alternatives', 'mixed', 'flowfault'] as const)('projects only required fields in the %s correction job', kind => {
+    const { engine, session, model, graph } = ctWorld({ sibling: true });
+    const { services } = stubToolServices({ session, model, graph });
+    executeSubmitFindings({ summary: 'Authored evidence.', sections: { technical: 'Keep these source facts.' },
+      column_flow: kind === 'flowfault' ? 42 : [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }],
+      ...(kind === 'mixed' ? { badge_label: 'x'.repeat(51) } : {}),
+    }, services);
+    const required = kind === 'flowfault' ? ['column_flow'] : kind === 'mixed' ? ['badge_label'] : [];
+    const alternatives = kind === 'flowfault' ? [] : ['questions', 'prune_neighbors', 'column_flow'];
+    expect(engine.heldPartsOfCurrentFocus()).toMatchObject({ failed: required, resend: [...new Set([...required, ...alternatives])] });
+    const message = buildActiveHopInstruction(session, engine, ORIGIN).message;
+    if (required.length) expect(message).toContain(`Fields to correct: ${required.join(', ')}.`);
+    else expect(message).not.toContain('Fields to correct:');
+    expect(message).toContain('The latest tool error defines the faults and their correction alternatives.');
+    if (kind === 'alternatives') {
+      expect(message).toContain('Saved valid content: summary, column_flow, sections.technical.');
+      expect(JSON.parse(executeSubmitFindings({ prune_neighbors: [{ id: OTHER, reason: 'No requested contribution.' }] }, services))).toHaveProperty('ok', true);
+      expect(engine.getDetailSlots()).toEqual(expect.arrayContaining([expect.objectContaining({ summary: 'Authored evidence.' })]));
+    }
+  });
   it('rejects an unsupported prune key without committing when prune identities are valid', () => {
     const { engine, session, model, graph } = ctWorld({ sibling: true });
     const { services } = stubToolServices({ session, model, graph });
@@ -559,7 +607,7 @@ describe('large findings repairs', () => {
     const { services } = stubToolServices({ session, model, graph });
     const rejected = JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN, column_flow_repairs: [{ entry_index: 0, upstream_index: 0, replacement: { col: 'Value' } }] }, services));
     expect(rejected).toMatchObject({ code: 'invalid_input', issuePaths: expect.arrayContaining(['column_flow_repairs']),
-      errors: expect.arrayContaining([expect.objectContaining({ path: 'column_flow_repairs', issue: 'Unrecognized key' })]) });
+      errors: expect.arrayContaining([expect.objectContaining({ path: 'column_flow_repairs', issue: 'Unrecognized key; remove or correct it.' })]) });
     expect(engine.heldPartsOfCurrentFocus()).toBeNull();
   });
   it('names separate defective suppliers at their original indexes and accepts the corrected whole list', () => {
@@ -1036,4 +1084,54 @@ describe('lineage_submit_findings boundary', () => {
     expect(engine.toJSON().visited).toContain(T);
     expect(session.resultGraph?.nodeIds).toEqual(expect.arrayContaining([V, W, T]));
   });
+});
+
+
+it.each([{ missingSummary: false, badPrune: false }, { missingSummary: true, badPrune: false }, { missingSummary: false, badPrune: true }])('never owes an unknown root key after its removal ($missingSummary/$badPrune)', ({ missingSummary, badPrune }) => {
+  const { engine, session, model, graph } = ctWorld({ mode: 'bb' });
+  const { services } = stubToolServices({ session, model, graph });
+  const questions = [{ nodeId: BRANCH, question: 'Explain this source.' }];
+  const rejected = JSON.parse(executeSubmitFindings({
+    ...(missingSummary ? {} : { summary: 'Keep this authored summary.' }),
+    sections: { technical: 'Keep these authored findings.' }, questions,
+    neighbors: [{ id: OTHER, reason: 'Unsupported field, never an action.' }],
+    ...(badPrune ? { prune_neighbors: [{ id: OTHER, reason: 'Not an admitted neighbor.' }] } : {}),
+  }, services));
+  expect(rejected).toMatchObject({ code: 'invalid_input',
+    errors: expect.arrayContaining([expect.objectContaining({ path: 'neighbors', issue: expect.stringContaining('Unrecognized key') })]),
+    resend: missingSummary ? ['summary'] : badPrune ? ['prune_neighbors'] : [],
+  });
+  expect(engine.currentFocus).toBe(ORIGIN);
+  expect(engine.getDetailSlots()).toEqual([]);
+  expect(engine.heldPartsOfCurrentFocus()?.resend).not.toContain('neighbors');
+  if (missingSummary) expect(JSON.parse(executeSubmitFindings({}, services))).toMatchObject({ code: 'missing_field', resend: ['summary'] });
+  expect(JSON.parse(executeSubmitFindings(missingSummary ? { summary: 'Corrected authored summary.' } : badPrune ? { prune_neighbors: [] } : {}, services))).toHaveProperty('ok', true);
+  expect(engine.getDetailSlots()).toContainEqual(expect.objectContaining({ nodeId: ORIGIN,
+    summary: missingSummary ? 'Corrected authored summary.' : 'Keep this authored summary.',
+    sections: [{ angle: 'technical', text: 'Keep these authored findings.' }],
+  }));
+});
+
+
+it.each([{ unsupported: 'column_flow', missingTechnical: false }, { unsupported: 'sections.business', missingTechnical: false },
+  { unsupported: 'questions.0.extra', missingTechnical: false }, { unsupported: 'sections.business', missingTechnical: true }])('owes only active declared parts after $unsupported (missing technical=$missingTechnical)', ({ unsupported, missingTechnical }) => {
+  const { engine, session, model, graph } = ctWorld({ mode: 'bb' });
+  const { services } = stubToolServices({ session, model, graph });
+  const rejected = JSON.parse(executeSubmitFindings({ summary: 'Keep this authored summary.',
+    sections: { ...(missingTechnical ? {} : { technical: 'Keep these authored findings.' }), ...(unsupported === 'sections.business' ? { business: 'Unsupported angle.' } : {}) },
+    questions: [{ nodeId: BRANCH, question: 'Explain this source.', ...(unsupported === 'questions.0.extra' ? { extra: 'Unsupported nested field.' } : {}) }],
+    ...(unsupported === 'column_flow' ? { column_flow: [] } : {}),
+  }, services));
+  expect(rejected).toMatchObject({ code: 'invalid_input', resend: missingTechnical ? ['sections', 'sections.technical'] : unsupported === 'questions.0.extra' ? ['questions'] : [],
+    errors: expect.arrayContaining([expect.objectContaining({ path: unsupported, issue: expect.stringContaining('Unrecognized key') })]) });
+  const held = engine.toJSON().engineInternals.heldFinding?.finding;
+  expect(held?.column_flow).toBeUndefined();
+  expect(held?.sections).toEqual(missingTechnical ? [] : [{ angle: 'technical', text: 'Keep these authored findings.' }]);
+  if (unsupported === 'questions.0.extra') expect(held?.questions).toBeUndefined();
+  expect(engine.getDetailSlots()).toEqual([]);
+  const corrected = missingTechnical ? { sections: { technical: 'Keep these authored findings.' } }
+    : unsupported === 'questions.0.extra' ? { questions: [{ nodeId: BRANCH, question: 'Explain this source.' }] } : {};
+  expect(JSON.parse(executeSubmitFindings(corrected, services))).toHaveProperty('ok', true);
+  expect(engine.getDetailSlots()).toContainEqual(expect.objectContaining({ nodeId: ORIGIN,
+    summary: 'Keep this authored summary.', sections: [{ angle: 'technical', text: 'Keep these authored findings.' }] }));
 });

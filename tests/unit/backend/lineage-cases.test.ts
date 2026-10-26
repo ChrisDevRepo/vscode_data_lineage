@@ -1366,7 +1366,7 @@ describe('current task completeness before advancement', () => {
     engine.classification = 'both';
     expect(engine.holdRejectedSubmission({ ...finding, sections: { technical: finding.sections[0].text, business: 42 },
       column_flow: [terminal('Value'), terminal('Other')], questions: [{ nodeId: neighbor, question: 'Explain Source rows.' }],
-    }, ['sections.business'])).toEqual({ sections: ['technical'], summary: true, fields: ['questions', 'column_flow'], resend: ['sections.business'] });
+    }, ['sections.business'])).toEqual({ sections: ['technical'], summary: true, fields: ['questions', 'column_flow'], failed: ['sections.business'], resend: ['sections.business'] });
     const schema = submitFindingsSchemaForMode('ct', 'both', false, engine.hopSubmitColumns, engine.heldColumnFlow);
     const retry = (sections: Record<string, string>) => toHopFinding(schema.parse({ focus_node_id: root, sections }));
     expect(engine.submitFindings(retry({}))).toMatchObject({ code: 'invalid_input',

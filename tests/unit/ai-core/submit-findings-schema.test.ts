@@ -39,6 +39,20 @@ describe('fresh kept required-field projection', () => {
     expect(validatedFindingFields({ [field]: [{ [idKey]: 42, [textKey]: 'Explain its role.' }] }, schema).actionIdentities?.[field]).toBeUndefined();
   });
 
+  it.each(['outside', 'OUTSIDE', 'unknown'])('keeps rejected supplier identity %s readable for engine diagnostics without admitting the field', node => {
+    const schema = submitFindingsSchemaForMode('ct', 'technical', false, {
+      outCols: ['Amount'], writesTo: false, columnSourceNodeIds: ['stored'],
+    });
+    const input = { column_flow: [{ out_col: 'Amount', upstream_columns: [{ node, col: 'Amount' }] }] };
+    const before = structuredClone(input);
+    const safe = validatedFindingFields(input, schema);
+    expect(schema.safeParse(input).success).toBe(false);
+    expect(safe.unavailable.has('column_flow')).toBe(true);
+    expect(safe.fields).not.toHaveProperty('column_flow');
+    expect(safe.columnSupplierDiagnostics).toEqual([{ ref: { node, col: 'Amount' }, path: 'column_flow.0.upstream_columns.0' }]);
+    expect(input).toEqual(before);
+  });
+
   it('accepts a valid full resend without decoding malformed sections', () => {
     const schema = submitFindingsSchemaForMode('ct', 'business', false, {
       outCols: ['Value'], writesTo: false,
