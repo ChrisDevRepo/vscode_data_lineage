@@ -200,14 +200,14 @@ export async function searchObjects(
     && WILDCARD_ALL_TOKENS.has(query);
 
   if (!isWildcardAllQuery && query.length > REGEX_MAX_LENGTH) {
-    return makeRejection({ code: REJECTION_CODES.invalidRegex, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` });
+    return makeRejection({ code: REJECTION_CODES.invalidRegex, issuePaths: ['query'], hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` });
   }
 
   const effectiveQuery = isWildcardAllQuery ? '' : query;
   if (isRegex && !isWildcardAllQuery) {
     const compiled = compileSearchRegex(effectiveQuery);
     if (!compiled.ok) {
-      return makeRejection({ code: REJECTION_CODES.invalidRegex, hint: regexRejectHint(effectiveQuery, compiled) });
+      return makeRejection({ code: REJECTION_CODES.invalidRegex, issuePaths: ['query'], resend: ['mode'], hint: regexRejectHint(effectiveQuery, compiled) });
     }
   }
   const listAllInSchemas = isWildcardAllQuery || (!isRegex && effectiveQuery.length === 0 && (appliedSchemaFilter?.length ?? 0) > 0);
@@ -669,12 +669,12 @@ export async function searchDdl(
   signal?: AbortSignal,
 ): Promise<object> {
   if (query.length > REGEX_MAX_LENGTH) {
-    return makeRejection({ code: REJECTION_CODES.invalidRegex, hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` });
+    return makeRejection({ code: REJECTION_CODES.invalidRegex, issuePaths: ['query'], hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` });
   }
 
   const compiled = compileSearchRegex(query);
   if (!compiled.ok) {
-    return makeRejection({ code: REJECTION_CODES.invalidRegex, hint: regexRejectHint(query, compiled) });
+    return makeRejection({ code: REJECTION_CODES.invalidRegex, issuePaths: ['query'], hint: regexRejectHint(query, compiled) });
   }
 
   const ddlTypes: ObjectType[] = types

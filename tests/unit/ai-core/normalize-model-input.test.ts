@@ -6,7 +6,7 @@ import { HumanMessage } from '@langchain/core/messages';
 import { VscodeModelPort } from '../../../src/ai/model/vscodeModelPort';
 import { markObjectIdField, normalizeModelInput } from '../../../src/ai/tools/normalizeModelInput';
 import { ExplorationDepthSelectionSchema } from '../../../src/engine/shared/explorationDepthContract';
-import { GetScopeBundleInputSchema, SearchObjectsInputSchema, StartExplorationFreshProviderInputSchema } from '../../../src/ai/tools/toolSchemas';
+import { GetScopeBundleInputSchema, SearchObjectsInputSchema, StartExplorationFreshProviderInputSchema, presentResultRepairPatchSchemaForFields } from '../../../src/ai/tools/toolSchemas';
 
 const schema = z.object({
   rows: z.array(z.object({ id: z.string(), n: z.number(), on: z.boolean() })),
@@ -15,6 +15,44 @@ const schema = z.object({
 }).strict();
 
 describe('normalizeModelInput', () => {
+  it.each([z.literal(1), z.literal([1, 2, 3]), z.enum({ one: 1, two: 2, three: 3 })])(
+    'normalizes an exact numeric member of a literal or enum without guessing another member', owner => {
+      expect(normalizeModelInput(owner, '1')).toEqual({ input: 1, fixes: [{ path: '', before: '1', after: 1 }] });
+      for (const input of [null, 'three', 'one', '4']) expect(normalizeModelInput(owner, input)).toEqual({ input, fixes: [] });
+    },
+  );
+  it('preserves valid string members while normalizing only uniquely admitted numeric or boolean literals', () => {
+    for (const owner of [z.enum(['1', '2']), z.literal([1, '1'])]) {
+      expect(normalizeModelInput(owner, '1')).toEqual({ input: '1', fixes: [] });
+    }
+    expect(normalizeModelInput(z.literal([1, true]), 'true')).toEqual({ input: true, fixes: [{ path: '', before: 'true', after: true }] });
+  });
+  it('normalizes the numeric literal in an actual served indexed repair schema', () => {
+    const owner = presentResultRepairPatchSchemaForFields(['sections'], 'synthesis', 0, undefined, [{ index: 1, fields: ['label'] }]);
+    const input = { sections: [{ index: '1', label: 'Corrected label' }] };
+    const normalized = normalizeModelInput(owner, input);
+    expect(normalized).toEqual({ input: { sections: [{ index: 1, label: 'Corrected label' }] },
+      fixes: [{ path: 'sections.0.index', before: '1', after: 1 }] });
+    expect(owner.safeParse(normalized.input).success).toBe(true);
+    expect(input.sections[0]!.index).toBe('1');
+  });
+  it.each([
+    '{"business":"First authored body","business":"Different authored body"}',
+    '{"nested":{"business":"First","business":"Second"}}',
+    String.raw`{"business":"First","\u0062usiness":"Second"}`,
+    '{"business":"Same","business":"Same"}',
+  ])('leaves duplicate object entries untouched rather than selecting a value: %s', input => {
+    const shape = z.object({ business: z.string().optional(), nested: z.object({ business: z.string() }).optional() });
+    expect(normalizeModelInput(shape, input)).toEqual({ input, fixes: [] });
+    expect(shape.safeParse(normalizeModelInput(shape, input).input).success).toBe(false);
+  });
+
+  it('preserves duplicate-like prose and independent object keys while decoding structured text', () => {
+    const value = { text: '"business":"First","business":"Second"', rows: [{ name: 'A' }, { name: 'B' }], nested: { name: 'C' } };
+    const input = JSON.stringify(value);
+    expect(normalizeModelInput(z.object({ text: z.string(), rows: z.array(z.object({ name: z.string() })), nested: z.object({ name: z.string() }) }), input).input).toEqual(value);
+  });
+
   it('preserves every raw C0 character in structured string values and logs the conversion', () => {
     for (let code = 0; code < 0x20; code += 1) {
       const char = String.fromCharCode(code);

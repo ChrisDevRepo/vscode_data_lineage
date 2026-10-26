@@ -19,7 +19,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<Exclude<InvalidRouteKind, 'prune_
   prune_noop_visited: 'Remove this protected id from prune_neighbors. Resend prune_neighbors with only the entries that stay, or [] when none stay.',
   prune_noop_analyzed: 'Remove this analyzed id from prune_neighbors.',
   prune_noop_queued: 'Remove this queued id from prune_neighbors.',
-  column_out_of_scope: 'Outside the approved scope: drop this reference and keep the fact in sections or as a question.',
+  column_out_of_scope: 'Remove outside upstream_columns sources; for outside writes_to, send writes_to: null. Keep the fact in sections or as a question.',
   prune_noop_out_of_scope: 'Remove this outside id from prune_neighbors.',
   prune_unsupported: 'Remove this protected id from prune_neighbors. Resend prune_neighbors with only the entries that stay, or [] when none stay.',
   question_not_neighbor: 'Use an eligible neighbor, or drop this question and keep the fact in sections.',

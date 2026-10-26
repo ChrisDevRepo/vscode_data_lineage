@@ -41,7 +41,9 @@ export interface ToolRejection {
   errors?: RejectionError[];
   /** Top-level fields the model resends; every other field stays held. */
   resend?: string[];
-  /** One call fragment of the first faulty structured field, shown with the last repair opportunity. */
+  /** An unambiguous input draft retains the valid fields for correction-only repair. */
+  repair?: true;
+  /** One schema-valid declared-field fragment, shown with the last repair opportunity. */
   example?: unknown;
   /** The explicit way out, shown with the last repair opportunity. */
   wayOut?: string;
@@ -77,6 +79,7 @@ const RejectionShape = z.object({
     allowed: z.array(z.string()).optional(), when: z.object({ node: z.string() }).strict().optional(),
   }).strict()).optional(),
   resend: z.array(z.string()).optional(),
+  repair: z.literal(true).optional(),
   example: z.unknown().optional(),
   wayOut: z.string().optional(),
 }).strict();
@@ -138,6 +141,7 @@ export function rejectionModelContent(rejection: ToolRejection, final = true): s
       errors: rejection.errors.map(({ allowed, ...error }) => ({ ...error, ...(final && allowed ? { allowed } : {}),
         ...(allowed?.length === 0 ? { allowed_meaning: EMPTY_ALLOWED_MEANING } : {}) })),
       resend: rejection.resend ?? [],
+      ...(rejection.repair ? { repair: rejection.repair } : {}),
       ...(final && rejection.example !== undefined ? { example: rejection.example } : {}),
       ...(final && rejection.wayOut ? { way_out: rejection.wayOut } : {}) });
   }
@@ -146,6 +150,7 @@ export function rejectionModelContent(rejection: ToolRejection, final = true): s
   if (!final) {
     const paths = rejection.issuePaths?.filter(path => !reason.includes(path));
     return JSON.stringify({ code: rejection.code, reason,
+      ...(rejection.repair ? { repair: rejection.repair } : {}),
       ...(hint ? { hint } : {}),
       ...(paths?.length ? { issuePaths: paths } : {}) });
   }
@@ -164,11 +169,14 @@ export function rejectionModelContent(rejection: ToolRejection, final = true): s
   const paths = rejection.issuePaths?.filter(path => !reason.includes(path)
     && !detail.some(fact => typeof fact.path === 'string' && fact.path.replace(/\[(\d+)\]/g, '.$1') === path));
   return JSON.stringify({ code: rejection.code, reason,
+    ...(rejection.repair ? { repair: rejection.repair } : {}),
     ...(hint ? { hint } : {}),
     ...(detail.length ? { detail } : {}),
     ...(paths?.length ? { issuePaths: paths } : {}),
     ...(rejection.entryIds?.length ? { entryIds: rejection.entryIds } : {}),
     ...(rejection.missingParts?.length ? { missingParts: rejection.missingParts } : {}),
+    ...(rejection.example !== undefined ? { example: rejection.example } : {}),
+    ...(rejection.wayOut ? { way_out: rejection.wayOut } : {}),
   });
 }
 
@@ -221,7 +229,8 @@ export function makeRejection(input: {
     ...(issuePaths.length > 0 ? { issuePaths } : {}),
     ...(input.entryIds?.length ? { entryIds: [...input.entryIds] } : {}),
     ...(input.missingParts?.length ? { missingParts: [...input.missingParts], feedbackAt: new Date().toISOString() } : {}),
-    ...(input.errors?.length ? { errors: [...input.errors], resend: [...(input.resend ?? [])] } : {}),
+    ...(input.errors?.length ? { errors: [...input.errors] } : {}),
+    ...(input.resend !== undefined || input.errors?.length ? { resend: [...(input.resend ?? [])] } : {}),
     ...(input.example !== undefined ? { example: input.example } : {}),
     ...(input.wayOut ? { wayOut: input.wayOut } : {}),
   };
@@ -317,9 +326,9 @@ function describeInvalidUnion(issue: InvalidUnionIssue, input?: unknown): { line
   };
 }
 
-/** The generic resend rule of a schema-invalid tool call whose tool holds no draft: the complete call is resent with a minimal edit. It is the only resend directive a rejection carries; a tool that holds a draft states its own held rule in its place. */
+/** The shared schema-repair rule: active input drafts retain valid fields; calls without one resend the complete payload. Lists always replace whole. */
 export const INVALID_TOOL_INPUT_REPAIR_HINT
-  = 'Resend the full tool call with only the offending field(s) corrected; keep every other field unchanged, and resend every element of a corrected list, repeating the unflagged elements exactly as first sent.';
+  = 'When repair is true, resend only corrected fields; otherwise resend the full tool call with only the offending field(s) corrected; keep every other field unchanged, and resend every element of a corrected list, repeating the unflagged elements exactly as first sent.';
 
 /** The distinct offending key(s) of every `unrecognized_keys` issue on `error`. */
 function zodUnrecognizedKeys(error: z.ZodError): string[] {
@@ -497,7 +506,7 @@ function isPresentInvalidValue(issue: z.core.$ZodIssue, input: unknown): boolean
 }
 
 /** Value faults disclose choices through structured detail, never in the first reason or hint. */
-const INVALID_VALUE_REASON = 'Invalid value';
+export const INVALID_VALUE_REASON = 'Invalid value';
 
 /** Repair hint for a present value outside the values its field accepts (an enum or literal). */
 function invalidValueRepairHint(error: z.ZodError, input: unknown, schema?: z.ZodType): string | undefined {
@@ -692,7 +701,9 @@ function zodRejectionErrors(error: z.ZodError, input: unknown, schema?: z.ZodTyp
         for (const key of issue.keys) add(key.length > KEY_ECHO_MAX_CHARS ? path : [...path, key], { issue: 'Unrecognized key; remove or correct it.', ...(allowed.length ? { allowed } : {}) }, undefined);
       } else if (issue.code === 'invalid_type') {
         const text = enrichedIssueMessage(issue, received);
-        add(path, { issue: missing ?? (text === baseIssueMessage(issue) ? 'Wrong type' : text), expected: issue.expected, ...(issue.expected === 'never' ? { allowed: [] } : {}) }, received, true);
+        const owner = issue.expected === 'number' ? jsonSchemaNodeAt(schema, path) : undefined;
+        const expected = issue.expected === 'number' && owner && unwrapNullable(owner).type === 'integer' ? 'integer' : issue.expected;
+        add(path, { issue: missing ?? (text === baseIssueMessage(issue) ? 'Wrong type' : text), expected, ...(issue.expected === 'never' ? { allowed: [] } : {}) }, received, true);
       } else if (issue.code === 'invalid_value') {
         add(path, { issue: missing ?? INVALID_VALUE_REASON, allowed: issue.values.map(String) }, received);
       } else {
@@ -707,16 +718,16 @@ function zodRejectionErrors(error: z.ZodError, input: unknown, schema?: z.ZodTyp
 }
 
 /**
- * One call fragment for the first of `fields` that `schema` defines as a structure, built from the schema alone.
+ * One call fragment for the first declared field, built from and checked against its schema alone.
  *
- * @returns `{ field: shape }`, or `undefined` when none of the fields is a structured one.
+ * @returns `{ field: shape }`, or `undefined` when no safe shape satisfies the owning field.
  */
 export function exampleForFields(schema: z.ZodType, fields: readonly string[]): unknown {
   for (const field of fields) {
     const [name] = field.split('.');
     const node = jsonSchemaNodeAt(schema, [name!]);
     const target = node && unwrapNullable(node);
-    if (target?.properties || target?.items) {
+    if (target) {
       const owner = schema instanceof z.ZodObject ? schema.shape[name!] : undefined;
       if (!owner) return undefined;
       const example = exampleOf(target);
@@ -795,5 +806,7 @@ export function rejectionFromZodError(
     issuePaths,
     ...(choices.size ? { detail: [...choices.values()] } : {}),
     ...(opts.form ? { errors: zodRejectionErrors(error, opts.input, opts.schema) } : {}),
+    ...(!opts.form && opts.schema ? { example: exampleForFields(opts.schema, issuePaths),
+      wayOut: 'Resubmit the corrected fields; retain valid values.' } : {}),
   });
 }

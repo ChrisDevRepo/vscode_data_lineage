@@ -61,7 +61,7 @@ function firstCall(origin: string) {
   };
 }
 
-it('stages accepted node choices after first feedback and keeps the held report', async () => {
+it.each([false, true])('stages accepted node choices and keeps the held report (repeat fault=%s)', async repeatFault => {
   const { session, services, origin, source, sibling, deliverPreview } = world(false);
   const input = { ...firstCall(origin), sections: [
     { label: 'Known', node_ids: [origin, source, sibling], text: 'All known objects.' },
@@ -75,12 +75,41 @@ it('stages accepted node choices after first feedback and keeps the held report'
   expect(first).not.toContain('Accepted ids');
   expect(first).not.toContain(source);
   expect(first).not.toContain(sibling);
-  expect(JSON.parse(rejectionModelContent(rejected, true)).detail).toContainEqual({ path: 'node_ids', allowed_values: [origin, source, sibling] });
+  const repeated = repeatFault ? JSON.parse(await executePresentResult({ sections: [{ label: 'Unknown', node_ids: ['dbo.missing'] }] }, services)) : rejected;
+  expect(repeated.code).toBe('validation');
+  expect(JSON.parse(rejectionModelContent(repeated, true)).detail).toContainEqual({ path: 'node_ids', allowed_values: [origin, source, sibling] });
   expect(deliverPreview).not.toHaveBeenCalled();
   expect(session.presentResultRepairDraft.get()?.sections?.map(section => section.text)).toEqual(input.sections.map(section => section.text));
   expect(JSON.parse(await executePresentResult({ sections: [{ label: 'Unknown', node_ids: [] }] }, services)).success).toBe(true);
   expect(session.presentationArtifact?.aiMetadata.description).toContain('All known objects.');
   expect(session.presentationArtifact?.aiMetadata.description).toContain('A rejected link.');
+});
+
+it.each([false, true])('rejects held presentation fields without widening sections repair (repeat full=%s)', async repeatFull => {
+  const { session, services, origin, source, sibling, deliverPreview } = world(false);
+  const original = { ...firstCall(origin), title: 'Held title', sections: [
+    { label: 'Known', node_ids: [origin, source, sibling], text: 'Held known body.' },
+    { label: 'Unknown', node_ids: ['dbo.missing'], text: 'Held rejected-link body.' },
+  ] };
+  expect(JSON.parse(await executePresentResult(original, services)).code).toBe('validation');
+  const held = structuredClone(session.presentResultRepairDraft.get());
+  const auth = structuredClone(session.presentResultRepairDraft.getAuthorization());
+  expect(auth?.fields).toEqual(['sections']);
+  const correction = { sections: [{ label: 'Unknown', node_ids: [] }] };
+  if (repeatFull) {
+    const repeated = JSON.parse(await executePresentResult({ ...correction, summary: original.summary, title: original.title, name: original.name, is_update: true }, services));
+    expect(repeated.code).toBe('invalid_input');
+    expect(session.presentResultRepairDraft.get()).toEqual(held);
+    expect(session.presentResultRepairDraft.getAuthorization()).toEqual(auth);
+    expect(deliverPreview).not.toHaveBeenCalled();
+  }
+  expect(JSON.parse(await executePresentResult(correction, services)).success).toBe(true);
+  expect(deliverPreview).toHaveBeenCalledOnce();
+  expect(session.presentationArtifact?.name).toBe(original.name);
+  expect(session.presentationArtifact?.aiMetadata.summary).toBe(original.summary);
+  expect(session.presentationArtifact?.aiMetadata.description).toContain(original.title);
+  expect(session.presentationArtifact?.aiMetadata.description).toContain('Held known body.');
+  expect(session.presentationArtifact?.aiMetadata.description).toContain('Held rejected-link body.');
 });
 
 it('stages committed section choices after first feedback and retains the omission exit', async () => {
@@ -151,7 +180,7 @@ it.each([null, []])('requests one complete resend when no report draft can be he
   const { session, services, deliverPreview } = world(false);
   const rejected = JSON.parse(await executePresentResult(input, services));
   expect(rejected.code).toBe('invalid_input');
-  expect(rejected.hint.match(/Resend the full tool call/g)).toHaveLength(1);
+  expect(rejected.hint.match(/otherwise resend the full tool call/g)).toHaveLength(1);
   expect(rejected.hint).not.toContain('only these corrected fields');
   expect(session.presentResultRepairDraft.get()).toBeNull();
   expect(deliverPreview).not.toHaveBeenCalled();

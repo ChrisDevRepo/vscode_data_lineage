@@ -86,7 +86,7 @@ export interface ColumnTraceViewEdge {
   note?: string;
 }
 
-/** An object-level edge between two presented objects, drawn where a column edge cannot be. */
+/** A declared object dependency not already represented by a directed rendered column leg. */
 export interface ColumnTraceViewObjectEdge {
   /** Stable edge id, unique across the view and distinct from every {@link ColumnTraceViewEdge} id. */
   id: string;
@@ -117,7 +117,7 @@ interface ColumnTraceView {
   nodes: ColumnTraceViewNode[];
   /** Per-column edges between row handles. */
   edges: ColumnTraceViewEdge[];
-  /** Object-level edges that join an object without traced columns to its neighbours. */
+  /** Declared object dependencies not already represented by a directed rendered column leg. */
   objectEdges: ColumnTraceViewObjectEdge[];
   /** Inside-the-hop port links, drawn as nothing and traversed like an edge. */
   portBridges: ColumnTracePortBridge[];
@@ -529,12 +529,13 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
   }
 
   const objectEdges: ColumnTraceViewObjectEdge[] = [];
-  const seenObjectEdges = new Set<string>();
+  // A rendered column leg covers only its directed object pair, including each leg through a procedure.
+  const seenObjectEdges = new Set(edges.map(({ source, target }) =>
+    JSON.stringify([schemaKey(source, input.identifierCaseSensitive), schemaKey(target, input.identifierCaseSensitive)])));
   for (const { source, target } of input.objectEdges ?? []) {
     const sourceAcc = nodeAccs.get(schemaKey(source, input.identifierCaseSensitive));
     const targetAcc = nodeAccs.get(schemaKey(target, input.identifierCaseSensitive));
     if (!sourceAcc || !targetAcc || sourceAcc === targetAcc) continue;
-    if (sourceAcc.rowKeys.length > 0 && targetAcc.rowKeys.length > 0) continue;
     const pair = JSON.stringify([schemaKey(source, input.identifierCaseSensitive), schemaKey(target, input.identifierCaseSensitive)]);
     if (seenObjectEdges.has(pair)) continue;
     seenObjectEdges.add(pair);

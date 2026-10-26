@@ -72,7 +72,7 @@ function buildProviderRequest(request, config) {
 }
 
 /** Non-streaming test transport with explicit header/body deadlines and caller cancellation. */
-function createProviderFetch(timeoutMs) {
+function createProviderFetch(timeoutMs, { captureTiming = false } = {}) {
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2_147_423_647) {
     throw new Error('AI provider request timeout must be a positive supported millisecond budget.');
   }
@@ -102,14 +102,17 @@ function createProviderFetch(timeoutMs) {
       );
       dispatchers.set(allowedOrigin, dispatcher);
     }
-    const response = await request(url, {
+    const timing = captureTiming ? { requestStartedAt: new Date().toISOString(), responseEndedAt: null } : null;
+    const invoke = () => request(url, {
       ...init,
       dispatcher,
       throwOnMaxRedirect: true,
       headersTimeout: timeoutMs,
       bodyTimeout: timeoutMs,
     });
+    const response = await invoke();
     const raw = await response.body.text();
+    if (timing) timing.responseEndedAt = new Date().toISOString();
     const headers = new Headers();
     for (const [name, value] of Object.entries(response.headers)) {
       if (value !== undefined) headers.set(name, Array.isArray(value) ? value.join(', ') : String(value));
@@ -119,6 +122,7 @@ function createProviderFetch(timeoutMs) {
       status: response.statusCode,
       statusText: require('node:http').STATUS_CODES[response.statusCode] ?? '',
       headers,
+      ...(timing ? { timing } : {}),
       text: async () => raw,
       json: async () => JSON.parse(raw),
     };
@@ -150,7 +154,7 @@ async function sendProviderRequest(request, config, fetchImpl, signal) {
   } catch {
     throw new Error('AI provider response was not valid JSON.');
   }
-  return parseProviderResponse(payload);
+  return { ...parseProviderResponse(payload), ...(response.timing ? { timing: response.timing } : {}) };
 }
 
 function parseProviderResponse(payload) {
@@ -180,7 +184,7 @@ function parseProviderResponse(payload) {
   if (toolCalls.length === 0 && text.length === 0) {
     throw new Error('AI provider response contained neither text nor tool calls.');
   }
-  return { toolCalls, text };
+  return { toolCalls, text, ...(payload.usage && typeof payload.usage === 'object' ? { usage: payload.usage } : {}) };
 }
 
 function providerEndpoint(value, provider, model) {

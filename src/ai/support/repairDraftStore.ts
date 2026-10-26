@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 /** Tiny lifecycle holder for "hold-and-amend" AI repair drafts. */
 export class RepairDraftStore<TFull, TAuthorization = undefined> {
   private draft: TFull | null = null;
@@ -23,6 +25,48 @@ export class RepairDraftStore<TFull, TAuthorization = undefined> {
   public clear(): void {
     this.draft = null;
     this.authorization = null;
+  }
+
+  /** Retains valid leaves; declared alternatives may retain schema-valid required candidates for final handler validation. */
+  public static inputParts(schema: z.ZodType, input: unknown, faults: readonly string[] = [], hasAlternative = false): Record<string, unknown> {
+    if (schema instanceof z.ZodOptional || schema instanceof z.ZodNullable) return this.inputParts(schema.unwrap() as z.ZodType, input, faults, hasAlternative);
+    if (!(schema instanceof z.ZodObject) || !input || typeof input !== 'object' || Array.isArray(input)) return {};
+    const kept = Object.fromEntries(Object.entries(input).flatMap(([key, value]) => {
+      const owner = Object.prototype.hasOwnProperty.call(schema.shape, key) ? schema.shape[key] as z.ZodType : undefined;
+      if (!owner) return [];
+      if (faults.includes(key)) return hasAlternative && !owner.safeParse(undefined).success && owner.safeParse(value).success
+        ? [[key, structuredClone(value)]] : [];
+      const nested = faults.filter(path => path.startsWith(`${key}.`)).map(path => path.slice(key.length + 1));
+      if (nested.length && Array.isArray(value)) return [];
+      if (!nested.length && owner.safeParse(value).success) return [[key, structuredClone(value)]];
+      const parts = this.inputParts(owner, value, nested, hasAlternative);
+      return Object.keys(parts).length ? [[key, parts]] : [];
+    }));
+    return kept;
+  }
+
+  /** Explicit object leaves amend held values; a sent array or scalar replaces its value whole. */
+  public static mergeInput(held: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> {
+    return Object.fromEntries([...new Set([...Object.keys(held), ...Object.keys(patch)])].map(key => {
+      const value = patch[key];
+      return [key, !Object.prototype.hasOwnProperty.call(patch, key) ? held[key]
+        : value && typeof value === 'object' && !Array.isArray(value)
+          ? this.mergeInput(held[key] && typeof held[key] === 'object' && !Array.isArray(held[key]) ? held[key] as Record<string, unknown> : {}, value as Record<string, unknown>) : value];
+    }));
+  }
+
+  /** Exposes only diagnosed leaves or declared alternatives; arrays replace atomically. Final handlers own cross-field checks. */
+  public static inputPatchSchema(schema: z.ZodType, paths: readonly string[]): z.ZodType {
+    let patch: z.ZodType;
+    if (schema instanceof z.ZodOptional) patch = this.inputPatchSchema(schema.unwrap() as z.ZodType, paths).optional();
+    else if (schema instanceof z.ZodNullable) patch = this.inputPatchSchema(schema.unwrap() as z.ZodType, paths).nullable();
+    else if (schema instanceof z.ZodObject) patch = z.object(Object.fromEntries(Object.entries(schema.shape).flatMap(([key, owner]) => {
+      const nested = paths.filter(path => path.startsWith(`${key}.`)).map(path => path.slice(key.length + 1));
+      if (!paths.includes(key) && !nested.length) return [];
+      return [[key, (paths.includes(key) ? owner as z.ZodType : this.inputPatchSchema(owner as z.ZodType, nested)).optional()]];
+    }))).strict();
+    else return schema;
+    return schema.description === undefined ? patch : patch.describe(schema.description);
   }
 
   /** Merges keyed patch entries into held entries: a patch entry overlays the held entry with the same key in place, a new key appends, and `{ remove: true }` drops the held entry (a key not held is a no-op). Every held entry the patch does not name is kept as authored. */
@@ -96,4 +140,12 @@ export function keyedResendRule(field: string, key: string, partialFields: reado
   const rule = `${field}: resend only the entries you add or change, each under its held ${key}; a held entry left unnamed is kept as authored.`;
   if (partialFields.length === 0) return rule;
   return `${rule} Omit a resent entry's ${partialFields.join(' or ')} to keep the held value; a ${key} not on file appends a new entry and needs its ${partialFields[0]}; {${key}: …, remove: true} drops a held entry. A sent ${partialFields.join(' or ')} replaces that entry's held value whole; a sent list includes every item the entry keeps.`;
+}
+
+/** Scope of one unambiguous rejected input, before any handler commit. */
+export interface InputRepairAuthorization {
+  readonly context: string;
+  readonly round: number;
+  readonly paths: readonly string[];
+  readonly ambiguous?: boolean;
 }

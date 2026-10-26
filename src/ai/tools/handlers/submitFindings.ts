@@ -30,22 +30,31 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       const focus = engine.currentFocus;
       const fresh = engine.heldFindingFocus === null && (!focus || sess.memory.getArchivedAngles(focus).size === 0);
       const schema = submitFindingsSchemaForMode(engine.currentHopAnalysisMode, sess.classification ?? undefined, fresh, engine.hopSubmitColumns, engine.heldColumnFlow);
-      const normalized = normalizeModelInput(schema, prepared.input);
+      const repair = engine.heldPartsOfCurrentFocus();
+      const inputSchema = repair ? submitFindingsSchemaForMode(engine.currentHopAnalysisMode, sess.classification ?? undefined,
+        fresh, engine.hopSubmitColumns, engine.heldColumnFlow, repair.resend) : schema;
+      const normalized = normalizeModelInput(inputSchema, prepared.input);
       for (const fix of normalized.fixes) {
         s.logger.debug(`[Normalize] tool=lineage_submit_findings path=${fix.path} before=${JSON.stringify(fix.before)}`);
       }
-      /** A rejection that owes fields carries one example of the first structured field and the way out, for the last repair opportunity. */
+      /** A rejection that owes fields carries one schema-valid field example and the way out, for the last repair opportunity. */
       const reject = (rejection: ToolRejection): string => {
         const owesFields = (rejection.resend?.length ?? 0) > 0;
         const example = rejection.resend?.length === 1 && rejection.resend[0] === 'prune_neighbors'
-          && schema instanceof z.ZodObject && schema.shape.prune_neighbors.safeParse([]).success ? { prune_neighbors: [] }
-          : owesFields ? exampleForFields(schema, rejection.resend!) : undefined;
+          && inputSchema instanceof z.ZodObject && inputSchema.shape.prune_neighbors?.safeParse([]).success ? { prune_neighbors: [] }
+          : owesFields ? exampleForFields(inputSchema, rejection.resend!) : undefined;
         const emptyExit = example !== undefined && Object.entries(example as Record<string, unknown>).some(([field, value]) =>
           field !== 'column_flow' && Array.isArray(value) && value.length === 0 && (rejection.issuePaths?.length ?? 0) > 0
           && rejection.issuePaths!.every(path => path.split('.')[0] === field));
         return s.logAndReturn('lineage_submit_findings', owesFields
           ? { ...rejection, wayOut: emptyExit ? SUBMIT_FINDINGS_REFERENCE_WAY_OUT : SUBMIT_FINDINGS_WAY_OUT, ...(example !== undefined ? { example } : {}) } : rejection, normalized.input);
       };
+      if (repair) {
+        const patch = inputSchema.safeParse(normalized.input);
+        if (!patch.success && patch.error.issues.some(issue => issue.code === 'unrecognized_keys'))
+          return reject({ ...rejectionFromZodError(patch.error, { code: REJECTION_CODES.invalidInput,
+            input: normalized.input, schema: inputSchema, form: true }), resend: [...repair.resend] });
+      }
       const parsed = schema.safeParse(normalized.input);
       if (!parsed.success) {
         const rejection = engine.rejectInvalidSubmission(normalized.input,

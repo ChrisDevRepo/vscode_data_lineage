@@ -397,7 +397,9 @@ describe('merged report section repair diagnosis', () => {
       path: 'sections', allowed_values: ['Alpha', 'Beta'], expected: 'Committed labels when omitting section text.',
     });
     expect(session.presentResultRepairDraft.get()?.sections).toBeUndefined();
-    const second = await run(session, { is_update: true, name: 'Renamed', summary: 'Same report.', highlight_groups: [{ label: 'Feed', color: 'source', node_ids: [ORIGIN] }] });
+    expect(session.presentResultRepairDraft.get()).toMatchObject({ is_update: true });
+    expect(session.presentResultRepairDraft.getAuthorization()?.fields).toEqual(expect.arrayContaining(['name', 'summary', 'highlight_groups', 'sections']));
+    const second = await run(session, { name: 'Renamed', summary: 'Same report.', highlight_groups: [{ label: 'Feed', color: 'source', node_ids: [ORIGIN] }] });
     expect(second.success).toBe(true);
     expect(session.resultGraph?.sections?.map(sec => sec.label)).toEqual(['Alpha', 'Beta']);
   });
@@ -412,7 +414,9 @@ describe('merged report section repair diagnosis', () => {
     const first = await run(session, { is_update: true, sections: [{ label: 'Alpha', text: 'New Alpha body.' }, { label: 'Invented' }] });
     expect(first.hint).toContain('sections');
     expect(first.hint).not.toContain('every field except name, summary, highlight_groups.');
-    const second = await run(session, { is_update: true, name: 'Renamed', summary: 'Same report.', highlight_groups: [{ label: 'Feed', color: 'source', node_ids: [ORIGIN] }], sections: [{ label: 'Alpha', node_ids: [ORIGIN], text: 'New Alpha body.\n```sql S1\n```' }] });
+    expect(session.presentResultRepairDraft.get()).toMatchObject({ is_update: true });
+    expect(session.presentResultRepairDraft.getAuthorization()?.fields).toEqual(expect.arrayContaining(['name', 'summary', 'highlight_groups', 'sections']));
+    const second = await run(session, { name: 'Renamed', summary: 'Same report.', highlight_groups: [{ label: 'Feed', color: 'source', node_ids: [ORIGIN] }], sections: [{ label: 'Alpha', node_ids: [ORIGIN], text: 'New Alpha body.\n```sql S1\n```' }] });
     expect(second.success).toBe(true);
     expect(session.resultGraph?.sections?.map(sec => sec.text)).toEqual([`New Alpha body.\n\`\`\`sql\n${CAPTURED_SQL}\n\`\`\``]);
   });

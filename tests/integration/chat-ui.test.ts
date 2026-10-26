@@ -7,7 +7,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { createHash, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
-import { resolveLangfuseConfig } from '../harness/langfuseExport';
+import { LANGFUSE_FREE_PLAN, resolveLangfuseConfig } from '../harness/langfuseExport';
 import { copyNativeHostLog, exportNativeEvidence } from '../harness/nativeEvidence';
 import { parseTrace } from '../harness/traceModel';
 interface DepthProjection {
@@ -34,6 +34,12 @@ suite('Native chat confirmations — actual UI', () => {
   let page: Page;
   let exports: {getSession(): SessionProjection};
   const real = process.env.DLV_CHAT_UI_REAL === '1';
+  const nativeCase = process.env.DLV_CHAT_UI_CASE_FILE ? JSON.parse(readFileSync(process.env.DLV_CHAT_UI_CASE_FILE, 'utf8')) as {
+    id: string; prompt: string; dacpac: string; startingPoint: { node: string; column: string };
+    expect: { approval: { analysisMode: 'ct'; classification: 'business' | 'technical' | 'both'; depthIntent: DepthProjection } };
+  } : null;
+
+  if (nativeCase) assert.ok(Reflect.set(LANGFUSE_FREE_PLAN, 'generalApiRequestsPerMinute', 8));
   const phaseTimeoutMs = real ? Number(process.env.AI_TEST_TIMEOUT_MS) : 180000;
   let testDeadline = Number.POSITIVE_INFINITY;
   const remainingWait = (timeout: number) => {
@@ -52,7 +58,7 @@ suite('Native chat confirmations — actual UI', () => {
   if (!fixtureTrace?.prompt || !fixtureTrace.expect?.phase) {
     throw new Error('electron-fixture-trace needs a prompt and expect.phase in tests/cases/lineage-cases.yaml');
   }
-  const fixturePrompt = fixtureTrace.prompt;
+  const fixturePrompt = nativeCase ? `@lineage ${nativeCase.prompt}` : fixtureTrace.prompt;
   const planPhase = fixtureTrace.expect.phase;
   const artifactDir = `tmp/chat-ui/${real ? 'live' : 'fixture'}`;
   const copyHostLog = (destination = artifactDir) => {
@@ -68,7 +74,7 @@ suite('Native chat confirmations — actual UI', () => {
   let captureFailed = false;
   let initialGraph: SessionProjection['resultGraph'];
   let extensionPath: string;
-  let fixture: { providerProfile: { provider?: string; model?: string; reasoningEffort?: string }; uiRequests: Array<{messages:unknown;tools:Array<{name:string}>}>;
+  let fixture: { uiResponses: Array<{requestIndex:number;usage:unknown;timing:unknown}>; providerProfile: { provider?: string; model?: string; reasoningEffort?: string }; uiRequests: Array<{messages:unknown;tools:Array<{name:string}>}>;
     uiErrors: Array<{requestIndex:number;message:string}> };
   let firstErrorIndex = 0;
   let assertUiProviderHealthy: (errors: Array<{requestIndex:number;message:string}>, firstErrorIndex:number) => void;
@@ -158,6 +164,22 @@ suite('Native chat confirmations — actual UI', () => {
   };
   const openPlan = async () => {
     await newChat();
+    if (nativeCase && page) await page.evaluate(() => {
+      const host = globalThis as typeof globalThis & { dlvUiText?: {at:number;text:string;length:number}[]; dlvUiObserver?: MutationObserver };
+      host.dlvUiObserver?.disconnect(); host.dlvUiText = [];
+      const old = document.querySelectorAll('.interactive-session .interactive-response');
+      let previous = old.item(old.length - 1)?.textContent?.trim() ?? '';
+      host.dlvUiObserver = new MutationObserver(() => {
+        const responses = document.querySelectorAll('.interactive-session .interactive-response');
+        const current = responses.item(responses.length - 1);
+        const text = current ? Array.from(current.querySelectorAll('.rendered-markdown')).map(el => el.textContent ?? '').join('\n').trim() : '';
+        if (text && text !== previous && host.dlvUiText!.length < 256) host.dlvUiText!.push({ at: Date.now(), text: text.slice(0, 512), length: text.length });
+        previous = text;
+      });
+      const targets = document.querySelectorAll('.interactive-session');
+      const target = targets.item(targets.length - 1);
+      if (target) host.dlvUiObserver.observe(target, { childList: true, subtree: true, characterData: true });
+    });
     await send(fixturePrompt);
     await idleInput();
     assertProviderHealthy();
@@ -221,6 +243,8 @@ suite('Native chat confirmations — actual UI', () => {
     if (opening) trace = opening + '\n' + trace;
     writeFileSync(caseTracePath, trace);
     copyHostLog(caseDir);
+    if (nativeCase && page) writeFileSync(join(caseDir, 'native-ui-text-observations.json'), JSON.stringify({ qualification: 'Actual rendered Markdown observations; reviewer must distinguish meaningful analytical text from control/progress. Not provider streaming TTFT.', events: await page.evaluate(() => (globalThis as typeof globalThis & { dlvUiText?: unknown[] }).dlvUiText ?? []) }, null, 2));
+    writeFileSync(join(caseDir, 'native-provider-usage.json'), JSON.stringify({ qualification: 'Actual nonstream test-provider API usage, cached input already included; timing covers nonstream request start/completed body, not provider TTFT or meaningful UI text.', responses: fixture.uiResponses ?? [] }, null, 2));
     const lastStatePath = records.filter(row => row.type === 'turn-start')
       .map(turn => capturedStates.get(turn.requestId)).filter((path): path is string => path !== undefined).at(-1);
     if (lastStatePath) copyFileSync(lastStatePath, join(caseDir, 'sm-state.json'));
@@ -241,7 +265,7 @@ suite('Native chat confirmations — actual UI', () => {
     }
     const question = casePrompts.length ? JSON.stringify(casePrompts) : null;
     const questionHash = question === null ? null : createHash('sha256').update(question).digest('hex');
-    const fixturePath = join(extensionPath, 'assets/demo.dacpac');
+    const fixturePath = nativeCase?.dacpac ?? join(extensionPath, 'assets/demo.dacpac');
     const fixtureHash = existsSync(fixturePath) ? createHash('sha256').update(readFileSync(fixturePath)).digest('hex') : null;
     const revision = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: extensionPath, encoding: 'utf8' });
     const sourceDiff = spawnSync('git', ['diff', 'HEAD', '--', 'src', 'assets'], { cwd: extensionPath });
@@ -255,6 +279,7 @@ suite('Native chat confirmations — actual UI', () => {
         trackedSourceDiffHash: sourceDiff.status === 0 ? createHash('sha256').update(sourceDiff.stdout).digest('hex') : null } };
     const manifestPath = join(caseDir, 'metrics-manifest.json');
     writeFileSync(manifestPath, JSON.stringify({ catalogId, question, questionHash, fixtureHash, context,
+      declaredCatalogCase: nativeCase?.id ?? null, participantRoutingPrefix: nativeCase ? '@lineage ' : null, originalQuestionHash: nativeCase ? createHash('sha256').update(nativeCase.prompt).digest('hex') : null,
       caseIdentity: questionHash === null || fixtureHash === null ? null : `${catalogId}:${questionHash}:${fixtureHash}`,
       tracePath: caseTracePath, requestIds: [...new Set(records.filter(row => row.type === 'turn-start').map(row => row.requestId).filter(id => typeof id === 'string'))],
       outcome, answerPath, answerRepresentation: 'rendered_text', reportPath, reportRepresentation: 'markdown', finalSnapshotPath,
@@ -298,16 +323,20 @@ suite('Native chat confirmations — actual UI', () => {
     }
     assert.ok((await vscode.lm.selectChatModels({vendor:'lineage-test'})).length,'scripted provider must resolve');
     exports = await vscode.extensions.getExtension('datahelper-chwagner.data-lineage-viz')!.activate();
-    await vscode.commands.executeCommand('dataLineageViz.openDemo');
+    browser = await chromium.connectOverCDP(`http://127.0.0.1:${process.env.PLAYWRIGHT_CDP_PORT}`);
+    page = browser.contexts().flatMap(context=>context.pages()).find(p=>p.url().includes('workbench'))!;
+    assert.ok(page,'CDP must attach to the test workbench');
+    if (nativeCase) {
+      assert.ok(real && existsSync(nativeCase.dacpac), 'declared native CT case needs real inference and its DACPAC');
+      await vscode.commands.executeCommand('dataLineageViz.open');
+      await vscode.commands.executeCommand('dataLineageViz.openExternalProject', vscode.Uri.file(nativeCase.dacpac));
+    } else await vscode.commands.executeCommand('dataLineageViz.openDemo');
     await deadlineWait(()=>!!exports.getSession().model,'public demo must finish loading');
     if (real) {
       tracePath=await vscode.commands.executeCommand<string>('dataLineageViz.enableAiTraceLogging', true);
       assert.ok(tracePath,'live acceptance must capture a fresh NDJSON trace');
       console.log(`[chat-ui] trace=${tracePath}`);
     }
-    browser = await chromium.connectOverCDP(`http://127.0.0.1:${process.env.PLAYWRIGHT_CDP_PORT}`);
-    page = browser.contexts().flatMap(context=>context.pages()).find(p=>p.url().includes('workbench'))!;
-    assert.ok(page,'CDP must attach to the test workbench');
     await vscode.commands.executeCommand('workbench.action.chat.open', {query: fixturePrompt, isPartialQuery: true});
     // Choose the contributed fixture via the real model picker; no provider credentials.
     await vscode.commands.executeCommand('notifications.clearAll');
@@ -371,9 +400,14 @@ suite('Native chat confirmations — actual UI', () => {
     await capture('typed-scope-change');
   });
 
-  test('typed approve starts analysis without clicking Approve',async()=>{
+  test(nativeCase ? 'live column trace from declared catalog case' : 'typed approve starts analysis without clicking Approve',async()=>{
     await openPlan();
-    if (real) {
+    if (nativeCase) {
+      const proposal = exports.getSession().pendingExploration;
+      assert.equal(proposal?.init.analysisMode, nativeCase.expect.approval.analysisMode);
+      assert.equal(proposal?.classification, nativeCase.expect.approval.classification);
+      assert.deepEqual(proposal?.init.depthIntent, nativeCase.expect.approval.depthIntent, 'native scope must match the declared case before approval');
+    } else if (real) {
       const expectedDepth: DepthProjection = { upstream: { levels: 3, exactness: 'approximate' }, downstream: { levels: 3, exactness: 'approximate' } };
       const proposal = exports.getSession().pendingExploration;
       if (proposal?.classification !== 'business' || proposal.init.analysisMode !== 'bb'
@@ -396,6 +430,55 @@ suite('Native chat confirmations — actual UI', () => {
     assert.ok(exports.getSession().memory.getResult().detail_slots.length>0);
     assert.ok(exports.getSession().lastPresentResultDescription,'typed approval must synthesize a visible result');
     captureCompletedResult('typed-approve');
+    if (nativeCase) {
+      await vscode.commands.executeCommand('dataLineageViz.aiCreateView');
+      let graphFrame;
+      const deadline = Date.now() + remainingWait(30000);
+      while (!graphFrame && Date.now() < deadline) {
+        for (const frame of page.frames()) {
+          const ids = await frame.locator('.react-flow__node').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-id')).sort());
+          if (ids.length && JSON.stringify(ids) === JSON.stringify([...(exports.getSession().resultGraph?.nodeIds ?? [])].sort())) { graphFrame = frame; break; }
+        }
+        if (!graphFrame) await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      assert.ok(graphFrame, 'actual accepted CT must render a production graph');
+      await graphFrame.getByRole('button', { name: 'Detail', exact: true }).click();
+      await graphFrame.getByRole('listitem').first().waitFor({ state: 'visible', timeout: remainingWait(10000) });
+      await graphFrame.getByRole('button', { name: 'Fit View', exact: true }).click();
+      const dom = await graphFrame.locator('.react-flow').evaluate(el => ({
+        nodes: Array.from(el.querySelectorAll('.react-flow__node')).map(node => ({ id: node.getAttribute('data-id')!, handles: Array.from(node.querySelectorAll('.react-flow__handle')).map(h => h.getAttribute('data-handleid')) })),
+        edges: Array.from(el.querySelectorAll('.react-flow__edge')).map(edge => ({ id: edge.getAttribute('data-id')!, path: Boolean(edge.querySelector('path[d]')) })),
+      }));
+      assert.ok(dom.nodes.length && dom.edges.length, 'CT graph needs real nodes and drawn edges');
+      const pairs = dom.edges.map(edge => {
+        const candidates = dom.nodes.flatMap(source => dom.nodes.filter(target => edge.id === `object::${source.id}->${target.id}` || (edge.id.startsWith(`${source.id}::`) && edge.id.includes(`->${target.id}::`))).map(target => ({ source, target })));
+        assert.equal(candidates.length, 1, `rendered edge identity must identify exactly one actual node pair: ${edge.id}`);
+        assert.ok(edge.path, `rendered edge needs a path: ${edge.id}`);
+        const pair = candidates[0]!;
+        if (!edge.id.startsWith('object::')) {
+          const split = edge.id.indexOf(`->${pair.target.id}::`);
+          const sourceColumn = edge.id.slice(pair.source.id.length + 2, split);
+          const targetColumn = edge.id.slice(split + pair.target.id.length + 4).split('#')[0];
+          assert.ok(pair.source.handles.includes(`source:${sourceColumn}`) && pair.target.handles.includes(`target:${targetColumn}`), `drawn column edge needs both actual ports: ${edge.id}`);
+        }
+        return pair;
+      });
+      const root = dom.nodes.find(node => node.id === nativeCase.startingPoint.node);
+      assert.ok(root, 'requested starting object must be rendered');
+      assert.ok(root.handles.some(handle => handle?.endsWith(`:${nativeCase.startingPoint.column.toLowerCase()}`)), 'requested starting column needs a rendered port');
+      const connected = new Set([root.id]);
+      for (let size = -1; size !== connected.size;) { size = connected.size; for (const {source,target} of pairs) if (connected.has(source.id) || connected.has(target.id)) { connected.add(source.id); connected.add(target.id); } }
+      assert.equal(connected.size, dom.nodes.length, 'every rendered object must connect to the requested starting point');
+      const rootRows = graphFrame.locator(`.react-flow__node[data-id=${JSON.stringify(root.id)}]`).getByRole('listitem');
+      const labels = await rootRows.evaluateAll(rows => rows.map(row => row.getAttribute('aria-label')?.toLowerCase() ?? ''));
+      const requestedLabel = `${nativeCase.startingPoint.node.replace(/[\[\]]/g, '')} column ${nativeCase.startingPoint.column}`.toLowerCase();
+      const requestedIndex = labels.findIndex(label => label === requestedLabel);
+      assert.ok(requestedIndex >= 0, 'the requested starting column needs its actual accessible row');
+      await rootRows.nth(requestedIndex).click();
+      const selectedStart = await rootRows.nth(requestedIndex).evaluate(row => ({ label: row.getAttribute('aria-label'), opacity: getComputedStyle(row).opacity, attributes: Array.from(row.attributes).map(a => [a.name, a.value]) }));
+      assert.equal(selectedStart.opacity, '1', 'selected starting column must remain highlighted');
+      writeFileSync(`${artifactDir}/native-ct-dom.json`, JSON.stringify({ selectedStart, dom, connected: [...connected], startingPoint: nativeCase.startingPoint, rows: await graphFrame.getByRole('listitem').evaluateAll(rows => rows.map(row => ({ label: row.getAttribute('aria-label'), opacity: getComputedStyle(row).opacity }))) }, null, 2));
+    }
     await capture('typed-approve');
   });
   suiteTeardown(async()=>{

@@ -1,11 +1,64 @@
 // Owner: src/ai/tools/toolSchemas.ts (submitFindingsSchemaForMode); Zod/provider schema contracts.
 /** Provider JSON Schema and runtime agree on fresh kept findings, cuts and held patches. */
 import Ajv from 'ajv';
+import { schemaFaults, withSchemaFaults } from './helpers/toolServices';
 import { describe, expect, it } from 'vitest';
 import { SubmitFindingsCtInputSchema, submitFindingsSchemaForMode, validatedFindingFields } from '../../../src/ai/tools/toolSchemas';
+import { exampleForFields } from '../../../src/ai/support/toolErrorEnvelope';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
+import { normalizeModelInput } from '../../../src/ai/tools/normalizeModelInput';
 
 describe('fresh kept required-field projection', () => {
+  it.each([
+    { caseSensitive: true, reference: 'dbo.Source', ambiguous: false, accepted: true },
+    { caseSensitive: true, reference: 'dbo.source', ambiguous: false, accepted: false },
+    { caseSensitive: false, reference: 'dbo.SOURCE', ambiguous: true, accepted: false },
+    { caseSensitive: false, reference: 'dbo.Missing', ambiguous: false, accepted: false },
+  ])('preserves source-policy refusal at the normalized provider boundary: %j', row => {
+    const ids = ['[dbo].[Source]', ...(row.ambiguous ? ['[DBO].[source]'] : [])];
+    const schema = submitFindingsSchemaForMode('ct', 'technical', false, {
+      outCols: ['Value'], writesTo: false, columnSourceNodeIds: ids,
+      identifierCaseSensitive: row.caseSensitive,
+    });
+    const input = { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: row.reference, col: 'Value' }] }] };
+    const normalized = normalizeModelInput(schema, input);
+    const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
+    expect(schema.safeParse(normalized.input).success).toBe(row.accepted);
+    expect(wire(normalized.input)).toBe(row.accepted);
+    if (!row.accepted) expect(normalized).toEqual({ input, fixes: [] });
+  });
+  it.each(['bb', 'view', 'procedure', 'scalar', 'held'] as const)(
+    'keeps normalized metadata identities coherent with the served %s schema', kind => {
+      const source = '[dbo].[Source]', caller = '[dbo].[Caller]';
+      const mode = kind === 'bb' ? 'bb' : 'ct';
+      const held = kind === 'held';
+      const schema = submitFindingsSchemaForMode(mode, 'technical', !held, {
+        outCols: ['Value'], writesTo: kind === 'procedure', columnSourceNodeIds: [source],
+        ...(kind === 'scalar' ? { returnTargets: [{ node: caller, col: 'Value' }] } : {}),
+        neighbors: [{ id: source, can_question: true, can_prune: true }],
+      }, held);
+      const input = { ...(!held ? { summary: 'Recorded findings.', sections: { technical: 'Authored findings.' } } : {}),
+        ...(kind === 'bb' || held ? { questions: [{ nodeId: 'dbo.source', question: 'Establish Value.' }] }
+          : { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: 'dbo.source', col: 'Value' }],
+            ...(kind === 'procedure' ? { writes_to: null } : {}),
+            ...(kind === 'scalar' ? { returns_to: { node: 'dbo.caller', col: 'Value' } } : {}),
+          }] }),
+      };
+      const before = structuredClone(input);
+      const normalized = normalizeModelInput(schema, input);
+      const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
+      expect(normalized.fixes.map(fix => [fix.before, fix.after])).toEqual(kind === 'scalar'
+        ? [['dbo.caller', caller], ['dbo.source', source]] : [['dbo.source', source]]);
+      expect(schema.safeParse(normalized.input).success).toBe(true);
+      expect(wire(normalized.input)).toBe(true);
+      for (const fault of schemaFaults(toModelJsonSchema(schema), normalized.input)) {
+        const invalid = withSchemaFaults(normalized.input, [fault]);
+        expect(schema.safeParse(invalid).success, JSON.stringify(fault)).toBe(false);
+        expect(wire(invalid), JSON.stringify(fault)).toBe(false);
+      }
+      expect(input).toEqual(before);
+    },
+  );
   it('describes held sections as omittable in the actual provider schema', () => {
     const fresh = toModelJsonSchema(submitFindingsSchemaForMode('ct', 'business', true)) as any;
     expect(fresh.properties.sections.description).toMatch(/^Required\./);
@@ -317,4 +370,35 @@ describe('fresh kept required-field projection', () => {
     expect(held.safeParse(patch).success).toBe(true);
     expect(fresh.safeParse(patch).success).toBe(false);
   });
+});
+
+
+it.each(['view', 'procedure', 'caller'] as const)('keeps a served %s flow example coherent with its owning schema', kind => {
+  const source = '[dbo].[Orders]', target = '[dbo].[Target]', caller = '[dbo].[Caller]';
+  const schema = submitFindingsSchemaForMode('ct', 'technical', false, {
+    outCols: ['Total'], writesTo: kind === 'procedure', columnSourceNodeIds: [source],
+    ...(kind === 'procedure' ? { writeTargetNodeIds: [target] } : {}),
+    ...(kind === 'caller' ? { returnTargets: [{ node: caller, col: 'Total' }] } : {}),
+  });
+  const wire = toModelJsonSchema(schema) as any;
+  const description = wire.properties.column_flow.description as string;
+  for (const match of description.matchAll(/Example:\s*(\[[\s\S]*?\])\.\s+Reference /g)) {
+    const shown = { column_flow: JSON.parse(match[1]!) };
+    const parsed = schema.safeParse(shown);
+    expect(parsed.success, JSON.stringify(parsed.success ? [] : parsed.error.issues)).toBe(true);
+    expect(new Ajv({ strict: false }).compile(wire)(shown)).toBe(true);
+  }
+  const fragment = exampleForFields(schema, ['column_flow']);
+  expect(fragment).toBeDefined();
+  expect(schema.safeParse(fragment).success).toBe(true);
+  expect(new Ajv({ strict: false }).compile(wire)(fragment)).toBe(true);
+});
+
+it.each((['bb', 'ct'] as const).flatMap(mode => (['business', 'technical', 'both'] as const)
+  .map(classification => ({ mode, classification }))))('preserves declared summary guidance on the $mode/$classification repair schema', ({ mode, classification }) => {
+  const fresh = toModelJsonSchema(submitFindingsSchemaForMode(mode, classification, true)) as any;
+  const repair = toModelJsonSchema(submitFindingsSchemaForMode(mode, classification, false)) as any;
+  expect(repair.properties.summary.description).toBe(fresh.properties.summary.description);
+  expect(repair.properties.summary.pattern).toBe('\\S');
+  expect(repair.required ?? []).not.toContain('summary');
 });

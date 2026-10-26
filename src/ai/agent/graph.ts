@@ -1005,6 +1005,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       freshSubmission: () => engine.heldFindingFocus === null && sess.memory.getArchivedAngles(focusId).size === 0,
       hopColumns: () => engine.hopSubmitColumns,
       heldColumnFlow: () => engine.heldColumnFlow,
+      submitFindingsRepairFields: () => engine.heldPartsOfCurrentFocus()?.resend ?? null,
       canPruneCurrent: () => engine.canPruneCurrent,
       isPhaseComplete: () => submitted,
       onToolResult: (toolName, _input, isError) => {

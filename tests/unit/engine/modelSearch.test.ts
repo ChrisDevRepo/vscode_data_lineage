@@ -13,6 +13,7 @@ import {
 import type { ColumnDef } from '../../../src/engine/types';
 import { loadAdventureWorksModel } from '../helpers/testUtils';
 import { searchObjects } from '../../../src/ai/tools/tools';
+import { REGEX_MAX_LENGTH } from '../../../src/ai/support/tokenBudget';
 
 /** Whether this runner's V8 implements ES2025 regexp modifier groups (`(?i:…)`, `(?-i:…)`). */
 const MODIFIER_GROUPS_SUPPORTED = (() => {
@@ -695,5 +696,19 @@ describe('column search covers view columns', () => {
     expect(out.results).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: '[ai].[vwpricelist]', t: 'view', match: 'column', matched_columns: expect.stringContaining('UnitPrice') }),
     ]));
+  });
+});
+
+
+describe('object search typed correction alternatives', () => {
+  it('permits literal mode as a syntax correction but not as a length correction', async () => {
+    const model = await loadAdventureWorksModel();
+    const rejection = await searchObjects(model, 'Order[', undefined, ['ai'], 'regex') as { issuePaths: string[]; resend?: string[] };
+    expect(rejection.issuePaths).toEqual(['query']);
+    expect(rejection.resend).toEqual(['mode']);
+    expect(await searchObjects(model, 'Order[', undefined, ['ai'], 'substring')).not.toHaveProperty('code');
+    const tooLong = await searchObjects(model, 'a'.repeat(REGEX_MAX_LENGTH + 1), undefined, ['ai'], 'regex');
+    expect(tooLong).toHaveProperty('code', 'invalid_regex');
+    expect(tooLong).not.toHaveProperty('resend');
   });
 });

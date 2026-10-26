@@ -6,6 +6,7 @@ import { rejectionFromZodError } from '../../../src/ai/support/toolErrorEnvelope
 import { REJECTION_CODES } from '../../../src/ai/support/rejectionCodes';
 import { holdRejectedPresentResult, mergePresentResultRepairPatch, validatePresentResult,
   type PresentResultInput, type PresentResultRepairAuthorization, type PresentResultRepairPatch } from '../../../src/ai/tools/presentResult';
+import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import { PresentResultModelSchema, presentResultRepairPatchSchemaForFields, presentResultSchemaForPhase } from '../../../src/ai/tools/toolSchemas';
 
 const nodeId = '[dbo].[Result]';
@@ -31,6 +32,16 @@ const render = {
 };
 
 describe('held present_result fields', () => {
+  it.each(['synthesis', 'completed', 'visual_preview'])('offers only authorized sections in %s repair', stage => {
+    const schema = presentResultRepairPatchSchemaForFields(['sections'], stage, 1);
+    expect(Object.keys((toModelJsonSchema(schema) as any).properties)).toEqual(['sections']);
+    const correction = { sections: [{ label: 'Sources', node_ids: [nodeId], ...(stage === 'visual_preview' ? { start: 'B1' } : { text: 'Corrected body.' }) }] };
+    expect(schema.safeParse(correction).success).toBe(true);
+    for (const field of ['name', 'summary', 'title', 'intro', 'closing', 'layout_direction', 'highlight_groups', 'notes', 'is_update']) {
+      expect(schema.safeParse({ ...correction, [field]: field === 'is_update' ? true : 'Unrequested' }).success, field).toBe(false);
+    }
+  });
+
   it('repairs malformed section links without resending large held bodies', () => {
     const body = 'SQL-supported explanation. '.repeat(5000);
     const report = { ...render, sections: [
@@ -111,11 +122,11 @@ it('holds the valid fields of a call that also carries keys the tool does not de
   expect([...store.getAuthorization()!.fields].sort()).toEqual(['highlight_groups', 'sections']);
 });
 
-it('merges a repair that carries report fields the rejection did not name', () => {
+it('rejects unrequested report fields and merges only the authorized repair', () => {
   const { store } = holdGarbledCall();
   const authorization = store.getAuthorization()!;
   const repair = {
-    highlight_groups: [{ label: 'Source', color: 'source', node_ids: [source] }],
+    highlight_groups: [{ label: 'Source', color: 'source' as const, node_ids: [source] }],
     sections: [
       { label: 'Stage', node_ids: [source], text: 'Raw orders.' },
       { label: 'Mart', node_ids: [target], text: 'Reporting orders.' },
@@ -124,13 +135,17 @@ it('merges a repair that carries report fields the rejection did not name', () =
     closing: 'Orders flow from stage to mart.',
   };
 
-  const parsed = presentResultSchemaForPhase('synthesis', authorization.fields, false).safeParse(repair);
-  expect(parsed.success, JSON.stringify(parsed.success ? null : parsed.error.issues)).toBe(true);
-
-  const merged = mergePresentResultRepairPatch(store.get()!, parsed.data as PresentResultRepairPatch, authorization);
+  const held = structuredClone(store.get());
+  const schema = presentResultSchemaForPhase('synthesis', authorization.fields, false);
+  expect(schema.safeParse(repair).success).toBe(false);
+  expect(() => mergePresentResultRepairPatch(store.get()!, repair, authorization)).toThrow('Unauthorized present_result repair field: notes');
+  expect(() => mergePresentResultRepairPatch(store.get()!, { is_update: true }, authorization)).toThrow('Unauthorized present_result repair field: is_update');
+  expect(store.get()).toEqual(held);
+  const { notes: _notes, closing: _closing, ...correction } = repair;
+  const merged = mergePresentResultRepairPatch(store.get()!, schema.parse(correction) as PresentResultRepairPatch, authorization);
   expect(merged.name).toBe('Orders lineage');
-  expect(merged.closing).toBe('Orders flow from stage to mart.');
-  expect(merged.notes).toHaveLength(1);
+  expect(merged.closing).toBeUndefined();
+  expect(merged.notes).toBeUndefined();
   expect(merged.sections?.map(section => section.label)).toEqual(['Stage', 'Mart']);
   expect(merged.highlight_groups).toHaveLength(1);
 });

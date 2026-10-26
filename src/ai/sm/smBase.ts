@@ -1,7 +1,7 @@
 import type { InvalidRoute, DepthIntent, HeldSubmissionParts } from './smTypes';
 import { buildRouteValidationRejection } from './smRouteValidation';
 import { extractRawSectionAngles, validateSectionsAgainstClassification } from '../interaction/rules/submitFindingsRules';
-import { validateHopSubmissionShape, type SubmitFindingsHopColumns, type validatedFindingFields } from '../tools/toolSchemas';
+import { ColumnFlowSchema, validateHopSubmissionShape, type SubmitFindingsHopColumns, type validatedFindingFields } from '../tools/toolSchemas';
 
 import type Graph from 'graphology';
 import { bidirectional } from 'graphology-shortest-path/unweighted';
@@ -20,7 +20,8 @@ import { compileExclusionMatcher, normalizeColName, quoteIdentifier, schemaKey }
 import { AiMemoryManager, STORAGE_TRAVERSED_PLACEHOLDER_SUMMARY, type DetailSlot, type IncomingQuestion, type WorkingMemory } from '../session/memoryManager';
 import { CLASSIFICATION_KEPT_ANGLES, type ClassificationValue } from '../session/classification';
 import { RepairDraftStore } from '../support/repairDraftStore';
-import { resolveModelNodeId } from '../support/modelReferences';
+import { inspectTargetColumns } from '../interaction/rules/startExplorationRules';
+import { resolveModelColumnNames, resolveModelNodeId } from '../support/modelReferences';
 import { evaluateCurrentHopActionPolicy, type CurrentHopActionTarget } from './currentHopActionPolicy';
 import type { ApprovedBorder, ColumnAspect, ColumnCarry, ColumnEdge, ScalarReturnTarget, FunctionCallerContext, DeferredQuestion, DiagnosticsSnapshot, EngineInitSnapshot, EngineInternalsSnapshot, HopContext, HopNeighbor, HopProgress, HopFindingKept, HopSubmission, InvestigationTask, NavigationInitParams, PendingLead, PrunedBranch, RouteOutcome, RouteSkipDisposition, ScopeExclusionGroup, ScopeExclusions, ScopeSummary, ScopeSummaryLeaf, SmNodeAction, SmNodeColumnRole, SmNodeState, SmNodeStateReason, SmNodeStateSource, SmResult, SmState, SmStatus, SubmitResult } from '../sm/smTypes';
 import { estimateTokens, type ProposedScope } from '../support/tokenBudget';
@@ -32,8 +33,8 @@ import { parseNavigationSnapshot, InvalidEngineCheckpointError } from './navigat
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { combineToolRejections, makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 
-/** Resolved mentions from invalid action lists; never accepted decisions. */
-type ActionMentions = Partial<Record<'questions' | 'prune_neighbors', ReadonlySet<string>>>;
+/** Resolved mentions from rejected decision fields; never accepted decisions. */
+type ActionMentions = Partial<Record<'questions' | 'prune_neighbors' | 'column_flow', ReadonlySet<string>>>;
 
 /** A hop neighbour plus the engine decisions already taken about it. */
 export interface HopNeighborDisclosure extends HopNeighbor {
@@ -100,15 +101,16 @@ type HeldField = typeof HELD_FIELDS[number];
 /** Held fields a submission may omit; every other held part is required. */
 const OPTIONAL_HELD_FIELDS = ['badge_label', 'prune_neighbors', 'questions'] as const;
 
-/** Splits dotted issue paths into the parts a rejection fails: `sections.<angle>` fails that angle, and any other path fails its whole top-level field (`questions.1.nodeId` fails `questions`). */
+/** Section child faults invalidate known angles only: unknown names are never extracted into held content. Whole-container faults still invalidate sections. */
 function splitFailedParts(paths: readonly string[]): { readonly fields: Set<string>; readonly angles: Set<string> } {
   const fields = new Set<string>();
   const angles = new Set<string>();
   for (const path of paths) {
     const [top, second] = path.split('.');
     if (!top) continue;
-    if (top === 'sections' && (second === 'business' || second === 'technical')) angles.add(second);
-    else fields.add(top);
+    if (top === 'sections' && second) {
+      if (second === 'business' || second === 'technical') angles.add(second);
+    } else fields.add(top);
   }
   if (fields.has('sections')) angles.clear();
   return { fields, angles };
@@ -574,13 +576,13 @@ export class NavigationEngine implements IHopStateMachine {
         unavailable.delete(field);
       }
     }
-    const diagnosticRoutes: InvalidRoute[] = [];
+    const columnReferences = this.tracer && unavailable.has('column_flow')
+      ? this.collectColumnReferenceFacts(focusId, raw.column_flow) : undefined;
+    const diagnosticRoutes = columnReferences?.invalidRoutes ?? [];
     let diagnosticEdges: readonly ColumnEdge[] = [];
     if (unavailable.has('column_flow') && this.tracer && safe.columnSupplierDiagnostics?.length) {
       const contributorIds = this.columnContributorIds(focusId);
       for (const { ref, path } of safe.columnSupplierDiagnostics) {
-        const scopeFaults = this.validateColumnReferenceScope(focusId, [{ node: ref.node, path: `${path}.node`, isWrite: false }]);
-        diagnosticRoutes.push(...scopeFaults);
         const node = resolveModelNodeId(ref.node, this.nodeMap, this.identifierCaseSensitive);
         if (node === null) continue;
         const checked = this.tracer.validateColumnSupplier(focusId, { ...ref, node }, path, this.nodeMap, this.store ?? null, this.removedSet, contributorIds);
@@ -602,7 +604,7 @@ export class NavigationEngine implements IHopStateMachine {
         diagnosticRoutes.push({ ...fault, path: `column_flow.${slice.index}${supplier === undefined ? '' : `.upstream_columns.${supplier}`}${match[3]}` });
       }
     }
-    const actionMentions: ActionMentions = {};
+    const actionMentions: ActionMentions = columnReferences?.mentionedNodeIds ? { column_flow: columnReferences.mentionedNodeIds } : {};
     for (const field of ['questions', 'prune_neighbors'] as const) {
       if (!unavailable.has(field)) continue;
       const ids = safe.actionIdentities?.[field]?.map(raw => resolveModelNodeId(raw, this.nodeMap, this.identifierCaseSensitive));
@@ -942,15 +944,7 @@ export class NavigationEngine implements IHopStateMachine {
 
   /** Matches declared columns under the source comparison policy, preserving exact matches and rejecting ambiguous aliases. */
   private matchColumnsToNode(nodeId: string, columns: string[]): { resolved: string[]; unmatched: string[] } {
-    const declared = new Set((getNodeColumns(nodeId, this.nodeMap, this.store ?? undefined) ?? []).map(column => column.name));
-    const resolved: string[] = [], unmatched: string[] = [];
-    for (const column of columns) {
-      if (declared.size === 0 || declared.has(column)) { resolved.push(column); continue; }
-      const matches = [...declared].filter(name => this.columnKey(name) === this.columnKey(column));
-      if (matches.length === 1) resolved.push(matches[0]!);
-      else unmatched.push(column);
-    }
-    return { resolved, unmatched };
+    return resolveModelColumnNames((getNodeColumns(nodeId, this.nodeMap, this.store ?? undefined) ?? []).map(column => column.name), columns, this.identifierCaseSensitive);
   }
 
   /** The requested output columns on the origin, resolved to its declared names: the roots CT carry attaches to. */
@@ -1541,22 +1535,12 @@ export class NavigationEngine implements IHopStateMachine {
     const effectiveTargetColumns = analysisMode === 'ct' ? params.targetColumns : undefined;
     let resolvedActiveColumns: string[] = [];
     if (analysisMode === 'ct' && effectiveTargetColumns && effectiveTargetColumns.length > 0) {
-      const declared = getNodeColumns(originNode.id, this.nodeMap, this.store ?? undefined) ?? [];
-      const { resolved, unmatched } = this.matchColumnsToNode(originNode.id, effectiveTargetColumns);
-      if (resolved.length === 0 || unmatched.length > 0) {
-        const declaredNames = declared.map((c) => c.name);
+      const { resolved, unmatched, rejection } = inspectTargetColumns(originNode.id,
+        (getNodeColumns(originNode.id, this.nodeMap, this.store ?? undefined) ?? []).map(column => column.name), effectiveTargetColumns, this.identifierCaseSensitive);
+      if (rejection) {
         const offending = unmatched.length > 0 ? unmatched : effectiveTargetColumns;
         this.log('debug', `[AI] [CT] requested columns [${effectiveTargetColumns.join(',')}] offending=[${offending.join(',')}] not on origin ${originNode.id} — rejecting (no partial-trace fallback)`);
-        return makeRejection({
-          code: 'unknown_columns',
-          reason: 'targetColumns must match declared columns of the origin under its identifier comparison policy.',
-          issuePaths: effectiveTargetColumns.flatMap((column, index) => offending.includes(column) ? [`targetColumns.${index}`] : []),
-          detail: effectiveTargetColumns.flatMap((column, index) => offending.includes(column)
-            ? [{ path: `targetColumns.${index}`, allowed_values: declaredNames, when: { node: originNode.id } }] : []),
-          hint: declaredNames.length > 0
-            ? `targetColumns [${offending.join(', ')}] are not columns on ${originNode.id}. Provide valid columns, ask the user to clarify, or switch analysisMode to "bb".`
-            : `targetColumns [${offending.join(', ')}] are not columns on ${originNode.id}, which exposes no column metadata of its own. Provide valid columns, ask the user to clarify, or switch analysisMode to "bb".`,
-        });
+        return rejection;
       }
       effectiveTargetColumns.forEach((column, index) => {
         if (column !== resolved[index]) this.log('debug', `[CT] target column matched from=${JSON.stringify(column)} to=${JSON.stringify(resolved[index])}`);
@@ -2116,20 +2100,39 @@ export class NavigationEngine implements IHopStateMachine {
       mixedSides ? this.incomingColumnRefs('downstream') : [], this.columnRoots(), this.columnContributorIds(focusId), authoredEmptySources);
   }
 
-  /** Checks the approved border for readable references, including diagnostics from a rejected field. */
-  private validateColumnReferenceScope(focusId: string, refs: readonly { node: string; path: string; isWrite: boolean }[]): InvalidRoute[] {
+  /** Reads reference certainty and border facts without admitting, completing or routing the flow. */
+  private collectColumnReferenceFacts(focusId: string, flow: unknown): { invalidRoutes: InvalidRoute[]; mentionedNodeIds?: ReadonlySet<string> } {
     const faults: InvalidRoute[] = [];
-    for (const ref of refs) {
-      const nid = resolveModelNodeId(ref.node, this.nodeMap, this.identifierCaseSensitive);
-      const node = nid ? this.nodeMap.get(nid) : undefined;
-      if (!nid || !node || (ref.isWrite ? this.admitsRoute(nid, node, focusId).admitted || this.scopeNodeIds.has(nid) || this.visited.has(nid) : this.admitsColumnReference(nid, node, focusId))) continue;
-      const { border, depthBreach } = this.admitsRoute(nid, node, focusId);
-      const outside = border.kind === 'excluded' ? 'excluded' : border.kind === 'out_of_direction' ? 'out of direction' : depthBreach !== null ? `beyond depth ${depthBreach}` : null;
-      if (!outside) continue;
-      faults.push({ kind: 'column_out_of_scope', id: nid, path: ref.path,
-        reason: `\`${nid}\` is out of scope (${outside}).` });
+    if (!Array.isArray(flow)) return { invalidRoutes: faults };
+    const mentionedNodeIds = new Set<string>();
+    let complete = ColumnFlowSchema.safeParse(flow).success;
+    const nodeOf = (ref: unknown): unknown => ref && typeof ref === 'object' ? (ref as Record<string, unknown>).node : undefined;
+    for (const [entryIndex, raw] of flow.entries()) {
+      if (!raw || typeof raw !== 'object') continue;
+      const entry = raw as Record<string, unknown>;
+      const namesOutcome = !!(entry.writes_to || entry.returns_to) || this.nodeMap.get(focusId)?.type !== 'procedure';
+      const refs = [
+        ...(entry.writes_to == null ? [] : [{ node: nodeOf(entry.writes_to), path: `column_flow.${entryIndex}.writes_to.node`, isWrite: true }]),
+        ...(entry.returns_to == null ? [] : [{ node: nodeOf(entry.returns_to), path: `column_flow.${entryIndex}.returns_to.node`, isWrite: undefined }]),
+        ...(Array.isArray(entry.upstream_columns) ? entry.upstream_columns.map((ref, refIndex) => ({
+          node: nodeOf(ref), path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`, isWrite: false,
+        })) : []),
+      ];
+      for (const ref of refs) {
+        const nid = typeof ref.node === 'string' ? resolveModelNodeId(ref.node, this.nodeMap, this.identifierCaseSensitive) : null;
+        const node = nid ? this.nodeMap.get(nid) : undefined;
+        if (!nid || !node) { complete = false; continue; }
+        if (namesOutcome) mentionedNodeIds.add(nid);
+        // Scalar return targets have their own caller-context checks, not neighbor scope checks.
+        if (ref.isWrite === undefined || (ref.isWrite ? this.admitsRoute(nid, node, focusId).admitted || this.scopeNodeIds.has(nid) || this.visited.has(nid) : this.admitsColumnReference(nid, node, focusId))) continue;
+        const { border, depthBreach } = this.admitsRoute(nid, node, focusId);
+        const outside = border.kind === 'excluded' ? 'excluded' : border.kind === 'out_of_direction' ? 'out of direction' : depthBreach !== null ? `beyond depth ${depthBreach}` : null;
+        if (!outside) continue;
+        faults.push({ kind: 'column_out_of_scope', id: nid, path: ref.path,
+          reason: `\`${nid}\` is out of scope (${outside}).` });
+      }
     }
-    return faults;
+    return { invalidRoutes: faults, ...(complete ? { mentionedNodeIds } : {}) };
   }
 
   /** Stages deterministic facts only. Unavailable fields block dependent checks, never become authored empty lists. */
@@ -2255,12 +2258,10 @@ export class NavigationEngine implements IHopStateMachine {
     // Validated slices can prove a local prune conflict, never a complete finding or column carry.
     const pruneColumnEdges = unavailable.has('column_flow') ? diagnosticColumnEdges : stagedColumnEdges;
     // A faulty flow still names its objects by structure; a reference resolving to no single object leaves outcomes unknown.
-    // An entry without a write or return target that lands nowhere (a procedure value) maps none of its suppliers.
-    const flowNodeIds = (finding.column_flow ?? []).filter(entry => entry.writes_to || entry.returns_to || resolveColumnFlowTarget(entry, focusId, this.nodeMap))
-      .flatMap(entry => [entry.writes_to, entry.returns_to, ...entry.upstream_columns])
-      .flatMap(ref => ref ? [resolveModelNodeId(ref.node, this.nodeMap, this.identifierCaseSensitive)] : []);
-    const outcomeIds = invalidRoutes.length === 0 ? mappedNeighborIds : flowNodeIds.every(Boolean) ? new Set([...mappedNeighborIds, ...flowNodeIds as string[]]) : undefined;
-    const actions = this.collectNeighborActions(focusId, unavailable.has('questions') ? null : finding.questions ?? [], unavailable.has('prune_neighbors') ? null : finding.prune_neighbors ?? [], pruneColumnEdges, flowQuestionByNode, !this.tracer || !unavailable.has('column_flow') ? outcomeIds : undefined, actionMentions);
+    const columnReferences = this.collectColumnReferenceFacts(focusId, this.tracer ? finding.column_flow : []);
+    const outcomeIds = invalidRoutes.length === 0 ? mappedNeighborIds : columnReferences.mentionedNodeIds
+      ? new Set([...mappedNeighborIds, ...columnReferences.mentionedNodeIds]) : undefined;
+    const actions = this.collectNeighborActions(focusId, unavailable.has('questions') ? null : finding.questions ?? [], unavailable.has('prune_neighbors') ? null : finding.prune_neighbors ?? [], pruneColumnEdges, flowQuestionByNode, !this.tracer || !unavailable.has('column_flow') ? outcomeIds : actionMentions.column_flow, actionMentions);
     const { pruneTargets, routeRequests, prunedNeighborNids } = actions;
     invalidRoutes.push(...actions.invalidRoutes);
     for (const id of actions.mutablePruneConflicts) conflictPaths.push(...mappingPaths(node => node === id));
@@ -2289,11 +2290,7 @@ export class NavigationEngine implements IHopStateMachine {
       if (diagnostics) this.log('debug', `[Agenda] route accept hop=${this.hopCount} id=${nNode.id} ← ${focusId} subq=${trunc(req.question, 80)}`);
     }
     // CT check 1: a column reference names an object the approved scope reaches; anything else is rejected, never dropped.
-    const scopeRefs = (this.tracer ? finding.column_flow ?? [] : []).flatMap((entry, entryIndex) => [
-      ...(entry.writes_to ? [{ node: entry.writes_to.node, path: `column_flow.${entryIndex}.writes_to.node`, isWrite: true }] : []),
-      ...entry.upstream_columns.map((ref, refIndex) => ({ node: ref.node, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`, isWrite: false })),
-    ]);
-    invalidRoutes.push(...this.validateColumnReferenceScope(focusId, scopeRefs));
+    invalidRoutes.push(...columnReferences.invalidRoutes);
 
     // An arriving column without a mapping ends at this hop; the acknowledgement names it.
     const endedColumns: string[] = [];
@@ -2435,9 +2432,11 @@ export class NavigationEngine implements IHopStateMachine {
       if (!target.resolved || !aloneRefusals.has(target.resolved)) continue;
       const refusal = aloneRefusals.get(target.resolved) ?? (jointRefusal && `${jointRefusal} (together with the other prune_neighbors entries)`);
       if (refusal) {
-        invalidRoutes.push({ kind: 'prune_unsupported', id: target.resolved, path: target.path, reason: `\`${target.resolved}\`: ${refusal}` });
         // Only this draft's mapping can be reconsidered; committed or independently routed protection remains binding.
-        if (stagedColumnEdges && !this.neighborPruneRefusal(focusId, [target.resolved], acceptedNids)) mutablePruneConflicts.push(target.resolved);
+        const mutableMapping = !!stagedColumnEdges && !this.neighborPruneRefusal(focusId, [target.resolved], acceptedNids);
+        invalidRoutes.push({ kind: 'prune_unsupported', id: target.resolved, path: target.path, reason: `\`${target.resolved}\`: ${refusal}`,
+          ...(mutableMapping ? { alternatives: ['column_flow'] } : {}) });
+        if (mutableMapping) mutablePruneConflicts.push(target.resolved);
       }
     }
     for (const nid of pruneIds) if (!aloneRefusals.get(nid) && !jointRefusal) prunedNeighborNids.add(nid);

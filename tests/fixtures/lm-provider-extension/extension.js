@@ -44,7 +44,8 @@ function liveProviderProfile() {
   };
 }
 
-async function callLiveProvider(request, progress, token, transports) {
+async function callLiveProvider(request, progress, token, transports, uiResponses) {
+  const requestIndex = require('./chat-ui-provider').requests.length;
   const endpoint = process.env.AI_TEST_ENDPOINT;
   const apiKey = process.env.AI_TEST_API_KEY;
   const { model, provider, reasoningEffort } = liveProviderProfile();
@@ -57,7 +58,7 @@ async function callLiveProvider(request, progress, token, transports) {
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2_147_423_647) throw new Error('Configure AI_TEST_REQUEST_TIMEOUT_MS through the test launcher.');
   let transport = transports.get(timeoutMs);
   if (!transport) {
-    transport = createProviderFetch(timeoutMs);
+    transport = createProviderFetch(timeoutMs, { captureTiming: process.env.DLV_CHAT_UI_REAL === '1' });
     transports.set(timeoutMs, transport);
   }
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -71,6 +72,7 @@ async function callLiveProvider(request, progress, token, transports) {
       reasoningEffort,
       ...(process.env.DLV_CHAT_UI_REAL === '1' ? {temperature:0.1} : {}),
     }, transport, controller.signal);
+    if (process.env.DLV_CHAT_UI_REAL === '1') uiResponses.push({ requestIndex, usage: response.usage ?? null, timing: response.timing ?? null });
     if (token.isCancellationRequested) return;
     for (const call of response.toolCalls) {
       progress.report(new vscode.LanguageModelToolCallPart(call.id, call.name, call.input));
@@ -94,6 +96,7 @@ function hasToolResult(request, callId) {
 
 function activate(context) {
   const transports = new Map();
+  const uiResponses = [];
   context.subscriptions.push({ dispose: () => {
     for (const transport of transports.values()) void transport.close().catch(() => console.error('AI provider transport cleanup failed.'));
     transports.clear();
@@ -134,7 +137,7 @@ function activate(context) {
         if(replayAnalysis(request,progress)) return;
         const requestIndex = require('./chat-ui-provider').requests.length;
         try {
-          await callLiveProvider(request, progress, token, transports);
+          await callLiveProvider(request, progress, token, transports, uiResponses);
         } catch (error) {
           if (process.env.DLV_CHAT_UI_REAL === '1') uiErrors.push({
             requestIndex,
@@ -170,7 +173,7 @@ function activate(context) {
     },
   };
   context.subscriptions.push(vscode.lm.registerLanguageModelChatProvider(VENDOR, provider));
-  return { uiRequests: require('./chat-ui-provider').requests, uiErrors, providerProfile: liveProviderProfile() };
+  return { uiRequests: require('./chat-ui-provider').requests, uiResponses, uiErrors, providerProfile: liveProviderProfile() };
 }
 
 module.exports = { activate };

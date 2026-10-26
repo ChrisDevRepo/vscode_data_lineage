@@ -16,7 +16,7 @@ import type { HopLogEntry, NavigationInitParams, ScopeSummary, SmResult } from '
 import type { SessionPhase, PendingGate } from '../session/sessionPhase';
 import { ClassificationSchema, type ClassificationValue } from '../session/classification';
 import { contextBlockBytes, storedEvidenceKindBytes, type TurnTokenBudget } from '../support/tokenBudget';
-import { RepairDraftStore } from '../support/repairDraftStore';
+import { RepairDraftStore, type InputRepairAuthorization } from '../support/repairDraftStore';
 import { readToolError, type ToolRejection } from '../support/toolErrorEnvelope';
 import { sanitizeForLog, trunc } from '../../utils/log';
 import type { PresentResultInput, PresentResultRepairAuthorization } from '../tools/presentResult';
@@ -191,6 +191,8 @@ export class AiSession {
   private _presentResultFailureCountThisTurn = 0;
   /** Count of failed `present_result` invocations in the current turn. */
   public get presentResultFailureCountThisTurn(): number { return this._presentResultFailureCountThisTurn; }
+  /** Nonform input drafts are uncommitted and scoped to one turn/phase/focus/proposal. */
+  public readonly toolInputRepairDrafts = new Map<string, RepairDraftStore<Record<string, unknown>, InputRepairAuthorization>>();
   /** Held full `present_result` draft for narrow patch-only synthesis repair. */
   public readonly presentResultRepairDraft = new RepairDraftStore<
     PresentResultInput,
@@ -308,6 +310,7 @@ export class AiSession {
 
   /** Opens a new turn: bumps and returns the turn-ownership epoch the caller threads into this turn's guarded session writes. */
   public beginTurn(): number {
+    this.toolInputRepairDrafts.clear();
     this._turnEpoch += 1;
     return this._turnEpoch;
   }
@@ -351,6 +354,7 @@ export class AiSession {
 
   /** Clears all exploration-specific state while preserving environment metadata. */
   public resetExploration(): void {
+    this.toolInputRepairDrafts.clear();
     this.memory.reset();
     this.stateMachine = null;
     this.explorationRunId = null;
@@ -585,6 +589,7 @@ export class AiSession {
   public cancelPendingExploration(token: number): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'cancelPendingExploration');
     if (guard.kind !== 'accepted') return guard;
+    this.toolInputRepairDrafts.clear();
     this.pendingExploration = null;
     if (this.stateMachine?.status === 'complete' && this.resultGraph) this.enterCompleted(token);
     else this.enterIdle(token);

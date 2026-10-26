@@ -329,10 +329,9 @@ export function mergePresentResultRepairPatch(
   authorization: PresentResultRepairAuthorization,
   identifierCaseSensitive = false,
 ): PresentResultInput {
-  const allowed = new Set<string>([...PRESENT_RESULT_REPAIR_FIELDS, ...authorization.fields]);
+  const allowed = new Set<string>(authorization.fields);
   const updates: Partial<PresentResultInput> = {};
   for (const [key, value] of Object.entries(patch)) {
-    if (key === 'is_update') continue;
     if (!allowed.has(key)) throw new Error(`Unauthorized present_result repair field: ${key}`);
     if (key === 'highlight_groups' && authorization.highlightLabelIndexes && Array.isArray(value)) {
       updates.highlight_groups = RepairDraftStore.mergeIndexed(draft.highlight_groups ?? [],

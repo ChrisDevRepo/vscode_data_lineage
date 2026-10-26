@@ -1,5 +1,10 @@
 /** Canonical AI tool registry, handlers, and the surfaces for callers without a chat turn. */
 import * as vscode from 'vscode';
+import { redactMissionBriefForLog } from '../support/missionBriefDiagnostics';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { z } from 'zod';
+import { RepairDraftStore } from '../support/repairDraftStore';
+import { normalizeModelInput } from './normalizeModelInput';
 import type Graph from 'graphology';
 import { NavigationEngine } from '../sm/smBase';
 import { type AiSession } from '../session/session';
@@ -27,7 +32,7 @@ import { getAllowedLmToolNames, activeModeOf, EXTERNAL_TOOL_NAMES, type LmStage 
 import { ToolRegistry } from '../tools/registry';
 import { TOOL_DEFS, EXTERNAL_TOOL_DEFS, type ToolContract, type ToolName } from '../tools/toolDefs';
 import { getToolInvocationLabel } from '../tools/toolLabels';
-import { readToolError, readToolErrorText, isConsentGateRejection, makeRejection, rejectionModelContent, NoProjectLoadedError, buildNoProjectLoadedError } from '../support/toolErrorEnvelope';
+import { readToolError, readToolErrorText, isConsentGateRejection, makeRejection, rejectionFromZodError, rejectionModelContent, NoProjectLoadedError, buildNoProjectLoadedError } from '../support/toolErrorEnvelope';
 import { evaluateToolPhaseRule } from '../interaction/rules/toolPhaseRules';
 import { assertActiveTurnLease, type TurnLease } from '../session/turnLease';
 import { DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
@@ -48,7 +53,10 @@ import { RegexSearchExecutionError } from '../support/isolatedRegexSearch';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { errorMessage } from '../../utils/errorMessage';
 
-/** Diagnostic group for a rejection code, shared by tool-result logging and the graph's repair summary and backend-fault policy. Routine correction details stay out of chat progress. */
+/** Original arguments stay isolated across parallel read dispatches. */
+const invocationInput = new AsyncLocalStorage<{ input: unknown }>();
+
+/** Diagnostic group shared by rejection logging and backend-fault policy. */
 type RejectionChatGroup = 'column_mapping' | 'source_selection' | 'answer_format' | 'backend_fault' | 'correction';
 
 /** Explicit membership for the non-fallback groups. Every rejection code NOT listed here — including any future or renamed code — resolves through {@link classifyRejectionCode} to the `correction` fallback, so diagnostic grouping remains defined for future codes. */
@@ -129,6 +137,7 @@ class ToolHandler implements ToolServices {
   }
 
   public logAndReturn(toolName: ToolName, data: object, input?: unknown): string {
+    input = invocationInput.getStore()?.input ?? input;
     const sess = this.getSession();
     if (this.turnLease) assertActiveTurnLease(this.turnLease, sess.turnEpoch);
     const json = JSON.stringify(data);
@@ -434,8 +443,8 @@ export function createEffectSerializer(): EffectSerializer {
 interface AiToolHost {
   /** Resolves the AI run behind an applied bookmark. */
   readonly getStoredRun?: StoredRunReader;
-  /** Text-completion capability `start_exploration` uses for the discovery-handoff memo. */
-  readonly model?: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'>;
+  /** Request-selected model for completion and physical generation ownership. */
+  readonly model?: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'> & Partial<Pick<ModelPort, 'modelCalls'>>;
   /** Cooperative cancellation of the dispatch. */
   readonly signal?: AbortSignal;
   /** Caps of the owning turn, so a superseded turn's dispatch keeps measuring against its own model. */
@@ -473,22 +482,83 @@ export function buildAiToolRegistry(
 
   const registry = new ToolRegistry<LineageToolOutput>();
   const serialize = host?.serialize ?? createEffectSerializer();
+  const generation = () => host?.model?.modelCalls ?? 0;
+  const ownsInputRepair = host?.caller !== 'external' && typeof host?.model?.modelCalls === 'number';
+  const repairEpoch = getSession().turnEpoch;
+  if (ownsInputRepair) handler.signal?.addEventListener('abort', () => {
+    if (getSession().turnEpoch === repairEpoch) getSession().toolInputRepairDrafts.clear();
+  }, { once: true });
   for (const def of TOOL_DEFS) {
     const execute = dispatch[def.name];
+    const inputBoundary = host?.caller !== 'external' && !['hop_commit', 'presentation_commit'].includes(def.effect);
+    const repairable = ownsInputRepair && inputBoundary;
+    let owner: z.ZodType = def.inputSchema;
+    let startedRound = -1, starts = 0, startedContext = '';
+    const context = () => { const s = getSession(); return JSON.stringify([s.turnEpoch, s.phase.kind, s.activeLmStage,
+      s.stateMachine?.currentFocus, s.pendingExploration?.revision]); };
+    const draft = () => {
+      const drafts = getSession().toolInputRepairDrafts;
+      let store = drafts.get(def.name);
+      if (store?.getAuthorization()?.context !== context()) { drafts.delete(def.name); store = undefined; }
+      if (!store) { store = new RepairDraftStore(); drafts.set(def.name, store); }
+      return store;
+    };
+    const project = (schema: z.ZodType) => {
+      owner = schema;
+      if (!repairable) return schema;
+      const auth = draft().getAuthorization();
+      return repairable && auth && !auth.ambiguous && auth.round <= generation()
+        ? RepairDraftStore.inputPatchSchema(schema, auth.paths) : schema;
+    };
     registry.register({
       ...def,
+      get inputSchema() { return project(owner); },
+      inputRepairSchema: project,
       execute: async (input: unknown) => {
         handler.signal?.throwIfAborted();
+        const round = generation(), capturedContext = context();
+        if (startedRound !== round || startedContext !== capturedContext) { startedRound = round; startedContext = capturedContext; starts = 0; }
+        starts++;
         const invoke = async (): Promise<LineageToolOutput> => {
           handler.signal?.throwIfAborted();
           if (turnLease) assertActiveTurnLease(turnLease, getSession().turnEpoch);
           const offPolicy = handler.authorizeTool(def.name, input);
           if (offPolicy) return offPolicy;
-          const result = await execute(input);
+          if (!inputBoundary) {
+            const result = await execute(input);
+            if (turnLease) assertActiveTurnLease(turnLease, getSession().turnEpoch);
+            return result;
+          }
+          const store = repairable ? draft() : undefined, auth = store?.getAuthorization();
+          const decoded = normalizeModelInput(owner, input);
+          for (const fix of decoded.fixes) handler.logger.debug(`[Normalize] tool=${def.name} path=${fix.path} before=${JSON.stringify(redactMissionBriefForLog(fix.before, fix.after))}`);
+          const normalized = decoded.input;
+          const isObject = normalized !== null && typeof normalized === 'object' && !Array.isArray(normalized);
+          const repairing = repairable && starts === 1 && isObject && auth && !auth.ambiguous && auth.round < round;
+          if (repairing) {
+            const patchSchema = RepairDraftStore.inputPatchSchema(owner, auth.paths);
+            const parsed = patchSchema.safeParse(normalized);
+            if (!parsed.success && parsed.error.issues.some(issue => issue.code === 'unrecognized_keys')) return handler.logAndReturn(def.name, { ...rejectionFromZodError(parsed.error, {
+              code: REJECTION_CODES.invalidInput, input: normalized, schema: patchSchema,
+            }), repair: true }, redactMissionBriefForLog(input, decoded.fixes.find(fix => fix.path === '')?.after));
+          }
+          const merged = repairing
+            ? RepairDraftStore.mergeInput(store?.get() ?? {}, normalized as Record<string, unknown>) : normalized;
+          const result = await invocationInput.run({ input: redactMissionBriefForLog(input, decoded.fixes.find(fix => fix.path === '')?.after) }, () => execute(merged));
           if (turnLease) assertActiveTurnLease(turnLease, getSession().turnEpoch);
-          return result;
+          const rejection = readToolErrorText(result);
+          if (!repairable || !store || capturedContext !== context() || handler.signal?.aborted || !rejection || isConsentGateRejection(rejection.code)) {
+            store?.clear(); return result;
+          }
+          if (!(owner instanceof z.ZodObject) || !rejection.issuePaths?.length || !isObject) { store.clear(); return result; }
+          const ambiguous = starts > 1 || auth?.round === round || auth?.ambiguous === true;
+          const parts = RepairDraftStore.inputParts(owner, merged, rejection.issuePaths, !!rejection.resend?.length);
+          store.hold(ambiguous ? {} : parts, { context: capturedContext, round, paths: [...rejection.issuePaths, ...(rejection.resend ?? [])], ambiguous });
+          if (ambiguous) return JSON.stringify({ ...JSON.parse(result), hint: 'Several calls need correction. Resend a fully identified complete tool call; no values are held.' });
+          return JSON.stringify({ ...JSON.parse(result), repair: true });
         };
-        return def.effect === 'read' ? invoke() : serialize(invoke);
+        try { return await (def.effect === 'read' ? invoke() : serialize(invoke)); }
+        catch (error) { if (repairable && capturedContext === context()) draft().clear(); throw error; }
       },
     });
   }

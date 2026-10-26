@@ -40,11 +40,22 @@ const MAX_ROUNDS = 8;
 function normalizeJsonStringValues(text: string): string {
   let quoted = false;
   let valueSyntaxChanged = false;
+  let stringStart = 0;
+  const objectKeys: Set<string>[] = [];
   let result = '';
   for (let index = 0; index < text.length; index += 1) {
     const char = text[index];
+    if (!quoted && char === '{') objectKeys.push(new Set());
+    if (!quoted && char === '}') objectKeys.pop();
     if (char === '"') {
-      if (quoted && valueSyntaxChanged && text.slice(index + 1).trimStart().startsWith(':')) return text;
+      if (!quoted) stringStart = index;
+      else if (text.slice(index + 1).trimStart().startsWith(':')) {
+        if (valueSyntaxChanged) return text;
+        const key = JSON.parse(text.slice(stringStart, index + 1)) as string;
+        const keys = objectKeys.at(-1);
+        if (keys?.has(key)) throw new SyntaxError('Duplicate JSON object key cannot be decoded losslessly.');
+        keys?.add(key);
+      }
       quoted = !quoted;
       valueSyntaxChanged = false;
     }
@@ -218,6 +229,17 @@ function decodeText(schema: ZodType, input: unknown, path: PropertyKey[] = [], r
     const first = candidates[0]?.decoded;
     return first && candidates.every(({ decoded }) => isDeepStrictEqual(decoded.input, first.input))
       ? first : { input, fixes: [] };
+  }
+  if (typeof input === 'string' && (schema instanceof z.ZodLiteral || schema instanceof z.ZodEnum)) {
+    const values = schema instanceof z.ZodLiteral ? [...schema.values] : schema.options;
+    for (const expected of ['number', 'boolean']) {
+      if (!values.some(value => typeof value === expected)) continue;
+      const after = decodeExact(input, expected);
+      if (after !== undefined && schema.safeParse(after).success) {
+        return { input: after, fixes: [{ path: path.join('.'), before: input, after }] };
+      }
+    }
+    return { input, fixes: [] };
   }
   const expected = schema instanceof z.ZodObject ? 'object' : schema instanceof z.ZodArray ? 'array'
     : schema instanceof z.ZodNumber ? 'number' : schema instanceof z.ZodBoolean ? 'boolean' : undefined;

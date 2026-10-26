@@ -62,7 +62,7 @@ describe('start_exploration schema diagnostics', () => {
     if (parsed.success) throw new Error('Malformed start unexpectedly passed the boundary.');
     const rejection = buildStartExplorationReject(parsed.error, input);
     expect(rejection.issuePaths).toEqual(expect.arrayContaining(Object.keys(input)));
-    expect(rejection.detail).toMatchObject({ issues: expect.arrayContaining(Object.keys(input).map(path => expect.objectContaining({ path }))) });
+    expect(rejection.detail).toEqual(expect.arrayContaining([expect.objectContaining({ issues: expect.arrayContaining(Object.keys(input).map(path => expect.objectContaining({ path }))) })]));
     for (const path of Object.keys(input)) expect(rejection.reason).toContain(path);
   });
 });

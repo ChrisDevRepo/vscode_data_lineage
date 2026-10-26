@@ -13,6 +13,7 @@ import { toEngineLog } from '../../support/engineLog';
 import { isCancellationOutcome } from '../../support/cancellation';
 import {
   buildStartExplorationReject,
+  inspectTargetColumns,
   evaluateBbTargetColumnsRule,
   evaluateAlreadyStartedRule,
   evaluateParallelStartRule,
@@ -22,7 +23,9 @@ import type { ToolServices } from './toolServices';
 import { composeDiscoverySummaryText } from './discoverySummary';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
 import { checkScopeAdmission } from '../../support/tokenBudget';
-import { makeRejection } from '../../support/toolErrorEnvelope';
+import { buildNodeMap, getNodeColumns } from '../../support/graphUtils';
+import { resolveModelNodeId } from '../../support/modelReferences';
+import { combineToolRejections, makeRejection } from '../../support/toolErrorEnvelope';
 
 /** Validates a fresh or refined exploration proposal and opens its approval gate. */
 export async function executeStartExploration(input: unknown, s: ToolServices): Promise<string> {
@@ -61,7 +64,19 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       const parsed = StartExplorationInputSchema.safeParse(input);
       if (!parsed.success) {
         const rawObject = input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {};
-        return s.logAndReturn('lineage_start_exploration', buildStartExplorationReject(parsed.error, rawObject), loggedInput);
+        const rejections = [buildStartExplorationReject(parsed.error, rawObject)];
+        const origin = StartExplorationInputSchema.shape.origin.safeParse(rawObject.origin);
+        const mode = StartExplorationInputSchema.shape.analysisMode.safeParse(rawObject.analysisMode);
+        const targets = StartExplorationInputSchema.shape.targetColumns.safeParse(rawObject.targetColumns);
+        if (origin.success && origin.data !== undefined && mode.success && mode.data === 'ct' && targets.success && targets.data !== undefined) {
+          const nodes = buildNodeMap(m);
+          const id = resolveModelNodeId(origin.data, nodes, m.identifierCaseSensitive);
+          if (id) {
+            const { rejection } = inspectTargetColumns(id, (getNodeColumns(id, nodes, sess.columnStore) ?? []).map(column => column.name), targets.data, m.identifierCaseSensitive);
+            if (rejection) rejections.push(rejection);
+          }
+        }
+        return s.logAndReturn('lineage_start_exploration', rejections.length > 1 ? combineToolRejections(rejections) : rejections[0], loggedInput);
       }
       const data = parsed.data;
       if (data.mission_brief !== undefined) {

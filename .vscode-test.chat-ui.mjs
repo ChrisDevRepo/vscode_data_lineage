@@ -1,13 +1,21 @@
 import { loadTestEnv } from './tests/tools/load-test-env.mjs';
 import { badgeReplayTrace } from './tests/tools/chat-ui-replay-trace.mjs';
 import { defineConfig } from '@vscode/test-cli';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('.', import.meta.url));
 const badge = process.argv.includes('badge');
-const column = process.argv.includes('column');
+const column = process.argv.includes('column') || Boolean(process.env.DLV_CHAT_UI_CASE_FILE);
+if (column) {
+  if (!process.env.DLV_CHAT_UI_CASE_FILE) throw new Error('column requires DLV_CHAT_UI_CASE_FILE with one declared catalog CT case.');
+  const row = JSON.parse(readFileSync(process.env.DLV_CHAT_UI_CASE_FILE, 'utf8'));
+  if (typeof row.id !== 'string' || typeof row.prompt !== 'string' || typeof row.dacpac !== 'string' || !existsSync(row.dacpac)
+    || typeof row.startingPoint?.node !== 'string' || typeof row.startingPoint?.column !== 'string'
+    || row.expect?.approval?.analysisMode !== 'ct' || !['business', 'technical', 'both'].includes(row.expect.approval.classification) || !row.expect.approval.depthIntent) throw new Error('Invalid declared native CT case.');
+  if (process.env.DLV_CHAT_UI_REPLAY_TRACE) throw new Error('Native CT acceptance uses fresh actual inference, never replay.');
+}
 const real = process.env.DLV_CHAT_UI_REAL === '1' || process.argv.includes('live') || badge || column;
 if (process.env.AI_TEST_BASELINE !== undefined && !['0', '1'].includes(process.env.AI_TEST_BASELINE)) {
   throw new Error('AI_TEST_BASELINE must be 0 or 1.');
@@ -42,7 +50,7 @@ export default defineConfig({
   extensionDevelopmentPath: [root, `${root}/tests/fixtures/lm-provider-extension`],
   launchArgs: [root, `--user-data-dir=${profile}`, '--disable-extensions', '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust', '--log=debug',
     '--remote-debugging-address=127.0.0.1', `--remote-debugging-port=${cdpPort}`],
-  env: { DLV_CHAT_UI_PROFILE: profile, DLV_CHAT_UI_PROVIDER_PROFILE: providerProfile ? JSON.stringify(providerProfile) : undefined, DLV_CHAT_UI_FIXTURE: real ? undefined : '1', DLV_CHAT_UI_REAL: real ? '1' : undefined,
+  env: { DLV_CHAT_UI_CASE_FILE: process.env.DLV_CHAT_UI_CASE_FILE, DLV_CHAT_UI_PROFILE: profile, DLV_CHAT_UI_PROVIDER_PROFILE: providerProfile ? JSON.stringify(providerProfile) : undefined, DLV_CHAT_UI_FIXTURE: real ? undefined : '1', DLV_CHAT_UI_REAL: real ? '1' : undefined,
     AI_TEST_PROVIDER: process.env.AI_TEST_PROVIDER,
     AI_TEST_MODEL: process.env.AI_TEST_MODEL,
     AI_TEST_REAL_PROVIDER: real ? '1' : undefined, AI_TEST_REASONING_EFFORT: real ? 'low' : undefined,

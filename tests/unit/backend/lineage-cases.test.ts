@@ -1583,7 +1583,7 @@ describe('result dispositions', () => {
     const rejected = engine.submitFindings({ ...record(producer),
       column_flow: [{ out_col: 'X', upstream_columns: [], writes_to: { node: equivalent ? ' "D" . "stored" ' : stored, col: 'X' } }] });
     expect(rejected).toMatchObject({ code: 'route_validation_failed', issuePaths: ['column_flow.0.writes_to.node'],
-      reason: expect.stringContaining(`\`${stored}\` is out of scope (excluded)`), hint: expect.stringContaining('Outside the approved scope: drop this reference and keep the fact in sections or as a question.') });
+      reason: expect.stringContaining(`\`${stored}\` is out of scope (excluded)`), hint: expect.stringContaining('Remove outside upstream_columns sources; for outside writes_to, send writes_to: null. Keep the fact in sections or as a question.') });
     expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
     expect(engine.submitFindings({ ...record(producer), column_flow: [{ out_col: 'X', upstream_columns: [] }],
       questions: [{ nodeId: equivalent ? 'D.Stored' : stored, question: 'Where is the stored X read?' }] })).toHaveProperty('ok', true);

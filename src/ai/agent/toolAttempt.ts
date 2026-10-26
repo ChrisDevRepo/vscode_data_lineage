@@ -115,24 +115,12 @@ function boundStructuredValue(value: unknown, maxBytes: number): unknown | Omitt
   return JSON.parse(serialized) as unknown;
 }
 
-/** The form-style part of a rejection: the faults, the fields to resend, and the last-opportunity guidance. */
-type RejectionForm = Pick<ToolRejection, 'errors' | 'resend' | 'example' | 'wayOut'>;
-
-/** One compact rejected call retained as phase policy bookkeeping. Raw invalid input is never included, and none of these fields are rendered to the model — the model sees the rejection through its own `ToolMessage` in the phase transcript, appended once, at dispatch. */
-interface ToolAttemptRejection extends RejectionForm {
+/** One compact rejected call retained as phase bookkeeping; the owner projection alone renders model feedback. */
+interface ToolAttemptRejection extends Readonly<ToolRejection> {
   readonly callId: string;
   readonly toolName: string;
-  readonly code: string;
-  readonly reason: string;
-  readonly hint?: string;
-  readonly detail?: unknown;
-  readonly issuePaths?: string[];
-  /** Offending entry ids the rejection names (`detail.entry_ids`). */
-  readonly entryIds?: readonly string[];
-  /** Identity of the rejected call (tool and canonical input); a later call with the same key is an unchanged resend. */
+  /** Identity of the rejected call; a later identical key is an unchanged resend. */
   readonly inputKey?: string;
-  readonly missingParts?: readonly string[];
-  readonly feedbackAt?: string;
 }
 
 /** Hint added to a rejection of a call identical to one this step already rejected: an unchanged resend is named as such, so the model acts on the named fields instead of repeating the call. */
@@ -145,16 +133,9 @@ type ToolOutcomeData =
     readonly status: 'rejected';
     readonly code: string;
     readonly message: string;
-    readonly correction: {
-      readonly hint?: string;
-      readonly issuePaths?: string[];
-      readonly entryIds?: readonly string[];
-    };
+    readonly correction: Omit<ToolRejection, 'code' | 'reason' | 'detail'>;
     readonly detail?: unknown;
     readonly inputKey?: string;
-    readonly missingParts?: readonly string[];
-    readonly feedbackAt?: string;
-    readonly form?: RejectionForm;
   }
   | {
     readonly status: 'phase_closed';
@@ -536,21 +517,9 @@ function rejectionFromInvalid(
 function rejectionFromResult(resultText: string): ToolOutcomeData | null {
   const rejection = readToolErrorText(resultText);
   if (!rejection) return null;
-  return {
-    status: 'rejected',
-    code: rejection.code,
-    message: rejection.reason,
-    ...(rejection.missingParts ? { missingParts: rejection.missingParts, feedbackAt: rejection.feedbackAt } : {}),
-    ...(rejection.errors ? { form: { errors: rejection.errors, resend: rejection.resend, example: rejection.example, wayOut: rejection.wayOut } } : {}),
-    ...(rejection.detail !== undefined
-      ? { detail: rejection.detail }
-      : {}),
-    correction: {
-      ...(rejection.hint ? { hint: rejection.hint } : {}),
-      ...(rejection.issuePaths ? { issuePaths: rejection.issuePaths } : {}),
-      ...(rejection.entryIds ? { entryIds: rejection.entryIds } : {}),
-    },
-  };
+  const { code, reason, detail, ...correction } = rejection;
+  return { status: 'rejected', code, message: reason,
+    ...(detail !== undefined ? { detail } : {}), correction };
 }
 
 /** Result recorded for one dispatched or synthesized call, ready to become its paired {@link ModelMessage}. */
@@ -618,12 +587,8 @@ function recordToolOutcome(
       toolName: outcome.toolName,
       code: outcome.code,
       reason: outcome.message,
-      ...(outcome.missingParts ? { missingParts: outcome.missingParts, feedbackAt: outcome.feedbackAt } : {}),
-      ...outcome.form,
-      ...(outcome.correction.hint ? { hint: outcome.correction.hint } : {}),
+      ...outcome.correction,
       ...(outcome.detail !== undefined ? { detail: outcome.detail } : {}),
-      ...(outcome.correction.issuePaths ? { issuePaths: outcome.correction.issuePaths } : {}),
-      ...(outcome.correction.entryIds ? { entryIds: outcome.correction.entryIds } : {}),
       ...(outcome.inputKey ? { inputKey: outcome.inputKey } : {}),
     };
     calls.push({ callId: outcome.callId, toolName: outcome.toolName, status: outcome.status });

@@ -749,6 +749,44 @@ describe('buildColumnTraceView — objects without a column relation', () => {
     expect(view.objectEdges.map(e => [e.source, e.target]), 'one line per pair, none for a self edge').toEqual([[mid, rowless]]);
   });
 
+  it.each([false, true])('keeps the object bridge between separate column components (reversed=%s)', reversed => {
+    const [a, b, c, d] = ['dbo.a', 'dbo.b', 'dbo.c', 'dbo.d'];
+    const relations: ColumnTraceRelation[] = [
+      { hopNode: b, fromNode: a, fromCol: 'Qty', toNode: b, toCol: 'Qty' },
+      { hopNode: d, fromNode: c, fromCol: 'Amount', toNode: d, toCol: 'Amount' },
+    ];
+    const before = structuredClone(relations);
+    const bridge = reversed ? { source: c, target: b } : { source: b, target: c };
+    const view = buildColumnTraceView({ relations, objects: mkObjects(...[a, b, c, d].map(id => mkObj(id))),
+      config: DEFAULT_CONFIG, objectEdges: [{ source: a, target: b }, bridge, { source: c, target: d }] });
+    expect(view.objectEdges.map(({ source, target }) => ({ source, target }))).toEqual([bridge]);
+    expect(view.edges.map(edge => [edge.source, edge.target])).toEqual([[a, b], [c, d]]);
+    const reachable = new Set([a]);
+    for (let pass = 0; pass < view.nodes.length; pass++) for (const edge of [...view.edges, ...view.objectEdges]) {
+      if (reachable.has(edge.source) || reachable.has(edge.target)) { reachable.add(edge.source); reachable.add(edge.target); }
+    }
+    expect([...reachable].sort()).toEqual([a, b, c, d]);
+    // A declared object dependency connects the view, without inventing column-value lineage.
+    expect(columnThread(buildColumnThreadIndex(view), columnRowKey(a, 'Qty')))
+      .toEqual(new Set([columnRowKey(a, 'Qty'), columnRowKey(b, 'Qty')]));
+    expect(relations).toEqual(before);
+  });
+
+  it('suppresses only represented directed object pairs through a procedure', () => {
+    const [a, procedure, b] = ['dbo.a', 'dbo.proc', 'dbo.b'];
+    const view = buildColumnTraceView({
+      relations: [{ hopNode: procedure, fromNode: a, fromCol: 'Qty', toNode: b, toCol: 'Total', transforms: ['compute'] }],
+      objects: mkObjects(mkObj(a), mkObj(procedure, 'procedure'), mkObj(b)), config: DEFAULT_CONFIG,
+      objectEdges: [{ source: a, target: procedure }, { source: procedure, target: b },
+        { source: procedure, target: a }, { source: b, target: procedure }],
+    });
+    expect(view.edges.map(edge => [edge.source, edge.target])).toEqual([[a, procedure], [procedure, b]]);
+    expect(view.objectEdges.map(edge => [edge.source, edge.target])).toEqual([[procedure, a], [b, procedure]]);
+    expect(columnThread(buildColumnThreadIndex(view), columnRowKey(a, 'Qty'))).toEqual(new Set([
+      columnRowKey(a, 'Qty'), columnRowKey(procedure, 'Qty'), columnRowKey(procedure, 'Total'), columnRowKey(b, 'Total'),
+    ]));
+  });
+
   it('ignores an object edge whose endpoint is not a presented object', () => {
     const view = buildColumnTraceView({
       relations, objects: mkObjects(mkObj(src), mkObj(mid), mkObj(rowless)), config: DEFAULT_CONFIG,
@@ -757,7 +795,7 @@ describe('buildColumnTraceView — objects without a column relation', () => {
     expect(view.objectEdges).toEqual([]);
   });
 
-  it('leaves the output unchanged when every object has a column relation', () => {
+  it('leaves the output unchanged when the object edge already has a rendered column leg', () => {
     const objects = mkObjects(mkObj(src), mkObj(mid));
     const plain = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
     const withEdges = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG, objectEdges: [{ source: src, target: mid }] });

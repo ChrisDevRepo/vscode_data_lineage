@@ -11,7 +11,7 @@ import { REJECTION_CODES } from '../support/rejectionCodes';
 import { rejectionFromZodError, type ToolRejection } from '../support/toolErrorEnvelope';
 import { CLASSIFICATION_KEPT_ANGLES, type ClassificationValue } from '../session/classification';
 import { extractRawSectionAngles } from '../interaction/rules/submitFindingsRules';
-import type { IndexedRepairFields } from '../support/repairDraftStore';
+import { RepairDraftStore, type IndexedRepairFields } from '../support/repairDraftStore';
 import type { ColumnFlowEntry, HopFinding, HopFindingKept, HopSubmission } from '../sm/smTypes';
 
 /** A column identifier named by the user. Wildcards are rejected at the boundary: a wildcard target column locks an unwinnable CT session because no real column can match it. */
@@ -353,10 +353,10 @@ export const PruneCurrentInputSchema = z.object({
 }).strict();
 
 const COLUMN_FLOW_DESCRIPTION = 'One entry per SQL-proved output related to the arriving columns in <current_task>, with its contributing neighbor columns. '
-  + 'Example: [{"out_col":"Total","upstream_columns":[{"node":"[dbo].[Orders]","col":"Qty","transforms":["compute"],"note":"Qty * Price"}]}]. '
   + 'Reference only neighbors in <hop_context>. Not sources: row operations (TRUNCATE, DELETE); describe them in sections. [] when nothing feeds the arriving columns.';
 
-const ColumnFlowSchema = z.array(ColumnFlowEntrySchema).describe(COLUMN_FLOW_DESCRIPTION);
+/** Base flow grammar before hop-specific metadata admission; diagnostics reuse its structural certainty. */
+export const ColumnFlowSchema = z.array(ColumnFlowEntrySchema).describe(COLUMN_FLOW_DESCRIPTION);
 
 /** Single source for the `sections` describe text, shared by the per-mode schemas and the participant union. */
 const SECTIONS_DESCRIPTION = 'Required. An object keyed by angle, never a string: {"business": "…"} or {"technical": "…"}; only the classification\'s angle key(s). Each value is the section body per its capture recipe.';
@@ -553,7 +553,7 @@ function finalizeSubmitFindingsSchema(
         .optional().describe(schema.shape.sections.description ?? ''),
     }).strict()
     : schema.shape.summary ? schema.extend({
-      summary: schema.shape.summary.unwrap().regex(/\S/, 'A supplied summary must contain non-whitespace text.').optional(),
+      summary: schema.shape.summary.unwrap().regex(/\S/, 'A supplied summary must contain non-whitespace text.').optional().describe(schema.shape.summary.description ?? ''),
     }).strict() : schema;
   const validated = source
     .check(superRefineAll((value, ctx) => refineSubmitFindingsShape(value as FlatSubmitFindings, ctx, fresh, classification)))
@@ -682,7 +682,12 @@ export function submitFindingsSchemaForMode(
   hop?: SubmitFindingsHopColumns,
   /** Whether a held draft of this focus carries a valid `column_flow`; the served schema then lets a retry omit it to keep the held list. */
   heldColumnFlow = false,
+  repairFields?: readonly string[] | null,
 ): z.ZodType<FlatSubmitFindings> {
+  if (repairFields) return RepairDraftStore.inputPatchSchema(
+    submitFindingsSchemaForMode(mode, classification, freshSubmission, hop, heldColumnFlow),
+    ['focus_node_id', ...repairFields],
+  ) as z.ZodType<FlatSubmitFindings>;
   const hopKey = hop ? JSON.stringify(hop) : '';
   if (!classification && !hopKey && freshSubmission) {
     return mode === 'ct' ? SubmitFindingsCtInputSchema : SubmitFindingsBbInputSchema;
@@ -1149,8 +1154,7 @@ export function presentResultRepairPatchSchemaForFields(
   const cacheKey = `${preview ? `preview${previewBlockCount}:` : ''}${retainable ? 'retain:' : ''}${keys.join(',')}${labelIndexes ? `:labels=${labelIndexes.join(',')}` : ''}${sectionRepairs ? `:sections=${sectionRepairs.map(leaf => `${leaf.index}.${leaf.fields.join('+')}`).join(',')}` : ''}`;
   const cached = repairPatchSchemaCache.get(cacheKey);
   if (cached) return cached as z.ZodType<z.infer<typeof PresentResultAuthorizableRepairSchema>>;
-  const sendable = preview ? keys : [...PRESENT_RESULT_REPAIR_FIELDS, ...keys];
-  const mask = Object.fromEntries([...sendable, 'is_update'].map(key => [key, true]));
+  const mask = Object.fromEntries(keys.map(key => [key, true]));
   const picked = PresentResultAuthorizableRepairSchema.pick(
     mask as Partial<Record<keyof typeof PresentResultAuthorizableRepairSchema.shape, true>>,
   );

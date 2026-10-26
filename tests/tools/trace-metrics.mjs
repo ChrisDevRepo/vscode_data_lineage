@@ -125,9 +125,6 @@ export function runMetrics(records) {
   };
 }
 
-/** Top-level keys a resend always carries; they identify the call and are not part of the defect. */
-const IDENTITY_KEYS = new Set(['focus_node_id', 'verdict', 'is_update']);
-
 /** Size of a rejected call, in characters of its input, from which a resend is judged on its size. A small call is cheaper to resend whole than to patch, so only a large exchange is expected to resend the defect only. */
 export const LARGE_CALL_CHARS = 4000;
 /** Share of the rejected call's characters above which the resend of a large call is not defect-only. */
@@ -155,9 +152,11 @@ export function repairChains(calls, toolRecords, measured = null) {
   const steps = measured.episodes.flatMap(episode => episode.rejected.flatMap(event => {
     if (!event.repair) return [];
     const retry = measured.events.find(item => item.line === event.repair.outcomeLine);
-    const defectKeys = new Set((event.paths ?? []).map(path => String(path).split('.')[0]));
+    const resend = event.repair.resend;
+    const extraFields = resend.requiredResendFields === null ? null
+      : [...new Set([...resend.additionalHeldFieldsSent, ...resend.additionalNonHeldFieldsSent])].sort();
     return [{ tool: episode.tool, code: event.code, paths: event.paths ?? [],
-      extraFields: Object.keys(retry?.input ?? {}).filter(key => !defectKeys.has(key) && !IDENTITY_KEYS.has(key)).sort(),
+      extraFields,
       rejectedChars: event.input === null ? 0 : JSON.stringify(event.input).length,
       resentChars: retry?.input == null ? 0 : JSON.stringify(retry.input).length }];
   }));
@@ -165,7 +164,7 @@ export function repairChains(calls, toolRecords, measured = null) {
   for (const chain of chains) retriesToResolve[!chain.resolved ? 'unresolved' : chain.rejections >= 4 ? '4+' : String(chain.rejections)] += 1;
   // Per-call token estimates are unavailable: generation usage may include several tools.
   return { aligned: measured.ambiguities.length === 0, rejectedCalls: measured.events.filter(event => event.status === 'rejected').length,
-    chains, retriesToResolve, steps, resendTokens: { rejected: null, resent: null }, defectOnlySteps: steps.filter(step => step.extraFields.length === 0).length };
+    chains, retriesToResolve, steps, resendTokens: { rejected: null, resent: null }, defectOnlySteps: steps.filter(step => step.extraFields?.length === 0).length };
 }
 
 // Pure diagnostic logic for recorded traces. No inference, SQL interpretation, or source mutation.
@@ -577,8 +576,8 @@ export function findings(run) {
   }
   for (const step of run.repair.steps) {
     if (step.rejectedChars < LARGE_CALL_CHARS) continue;
-    if (step.extraFields.length > 0 || step.resentChars / step.rejectedChars > MAX_RESEND_SHARE) {
-      out.push(finding('resend_not_defect_only', { detail: `${step.tool}: resent ${step.resentChars} of ${step.rejectedChars} characters${step.extraFields.length > 0 ? `; fields beyond the defect: ${step.extraFields.join(', ')}` : ''}` }));
+    if (step.extraFields?.length > 0 || step.resentChars / step.rejectedChars > MAX_RESEND_SHARE) {
+      out.push(finding('resend_not_defect_only', { detail: `${step.tool}: resent ${step.resentChars} of ${step.rejectedChars} characters${step.extraFields?.length > 0 ? `; fields beyond the defect: ${step.extraFields.join(', ')}` : ''}` }));
     }
   }
   const rowRoleHops = run.hops.filter(hop => hop.status === 'accepted' && hop.rowRole.length > 0);

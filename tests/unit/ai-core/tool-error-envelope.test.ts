@@ -4,6 +4,11 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 describe("tool-error-envelope", () => {
+  it('retains typed correction alternatives on nonform rejections', () => {
+    const rejection = makeRejection({ code: 'invalid_regex', issuePaths: ['query'], resend: ['mode'] });
+    expect(rejection.resend).toEqual(['mode']);
+    expect(readToolError(JSON.parse(JSON.stringify(rejection)))?.resend).toEqual(['mode']);
+  });
   it('includes owner guidance from the first rejection and adds choices on the last repair opportunity', () => {
     const rejection = makeRejection({ code: 'contributor_col_not_on_source',
       reason: 'column_flow.0.upstream_columns.1.col: Column Missing does not exist on [d].[Source].',
@@ -53,7 +58,29 @@ describe("tool-error-envelope", () => {
       { path: 'count', issue: 'Wrong type', expected: 'number' },
     ]));
     expect(exampleForFields(schema, ['items.0.extra'])).toEqual({ items: [{ name: '...' }] });
-    expect(exampleForFields(schema, ['mode', 'count'])).toBeUndefined();
+    expect(exampleForFields(schema, ['mode', 'count'])).toEqual({ mode: 'a' });
+  });
+  it.each([z.number(), z.number().int()])('reports the declared numeric type without choosing a value: %s', owner => {
+    const schema = z.object({ value: owner });
+    const expected = z.toJSONSchema(owner).type;
+    for (const value of [null, 'three']) {
+      const parsed = schema.safeParse({ value });
+      if (parsed.success) throw new Error('Expected a numeric type fault.');
+      const rejection = rejectionFromZodError(parsed.error, { code: 'invalid_input', input: { value }, schema, form: true });
+      expect(rejection.issuePaths).toEqual(['value']);
+      expect(rejection.errors).toEqual([{ path: 'value', issue: 'Wrong type', expected, got: value === null ? 'null' : value }]);
+    }
+  });
+  it.each([
+    { owner: z.string().min(1).max(5).regex(/\S/), expected: '...' },
+    { owner: z.enum(['first', 'second']), expected: 'first' },
+    { owner: z.number().min(1), expected: undefined },
+    { owner: z.string().regex(/^identifier$/), expected: undefined },
+  ])('publishes a scalar shape only when its owning constraints accept it', ({ owner, expected }) => {
+    const schema = z.object({ value: owner });
+    const example = exampleForFields(schema, ['value']);
+    expect(example).toEqual(expected === undefined ? undefined : { value: expected });
+    if (example !== undefined) expect(schema.safeParse(example).success).toBe(true);
   });
   it.each([false, true])('gives first-feedback correction guidance for an unknown key (nested=%s)', nested => {
     const schema = z.object({ entry: z.object({ value: z.string() }).strict() }).strict();
@@ -100,10 +127,10 @@ describe("tool-error-envelope", () => {
     if (parsed.success) throw new Error('Expected a field type failure');
     const full = rejectionFromZodError(parsed.error, { code: 'invalid_input', input, schema });
     const owned = rejectionFromZodError(parsed.error, { code: 'invalid_input', input, schema, resend: 'owner' });
-    expect(full.hint).toContain('Resend the full tool call');
+    expect(full.hint).toContain('otherwise resend the full tool call');
     expect(owned.hint).toBe('Send "name" as a string.');
     expect(owned).toMatchObject({ code: full.code, reason: full.reason, detail: full.detail, issuePaths: ['name'] });
-    expect(rejectionModelContent(owned)).not.toContain('Resend the full tool call');
+    expect(rejectionModelContent(owned)).not.toContain('otherwise resend the full tool call');
   });
   it('selects actionable facts without leaking diagnostic fields or held report bodies', () => {
     const rejection = makeRejection({ code: 'invalid_input', reason: 'sections.0.label: Label is required.',
@@ -228,7 +255,7 @@ describe("tool-error-envelope", () => {
       const rejection = rejectionFor({ verdict: 'pass', flow: [{ out: 'Qty', src: 'x' }, { out: 'Other', src: 'y' }, { out: 'More', src: 'z' }] });
       expect(rejection.hint).toContain('Set "flow[].out" to an allowed value, or remove the entry from "flow".');
       expect(rejection.detail).toEqual([{ kind: 'invalid_value', path: 'flow.1.out', allowed_values: ['Qty'] }, { kind: 'invalid_value', path: 'flow.2.out', allowed_values: ['Qty'] }]);
-      expect(rejection.hint, 'the generic resend rule still closes the hint').toContain('Resend the full tool call');
+      expect(rejection.hint, 'the generic resend rule still closes the hint').toContain('otherwise resend the full tool call');
     });
 
     it('a top-level required enum field holds allowed values and names only the set repair', () => {
@@ -370,4 +397,18 @@ describe("tool-error-envelope", () => {
     });
   });
 
+});
+
+
+it('stages the exact nonform owner example and legal exit until the second rejection', () => {
+  const example = { analysisMode: 'bb' };
+  const rejection = makeRejection({ code: 'invalid_input', reason: 'analysisMode: Invalid value',
+    issuePaths: ['analysisMode'], example, wayOut: 'Submit the corrected proposal for approval.' });
+  const before = structuredClone(rejection);
+  const first = JSON.parse(rejectionModelContent(rejection, false));
+  expect(first).not.toHaveProperty('example'); expect(first).not.toHaveProperty('way_out');
+  const second = JSON.parse(rejectionModelContent(rejection, true));
+  expect(second.example).toEqual(example);
+  expect(second.way_out).toBe(rejection.wayOut);
+  expect(rejection).toEqual(before);
 });

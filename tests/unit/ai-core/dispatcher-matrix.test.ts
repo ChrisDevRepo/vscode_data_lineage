@@ -1,5 +1,6 @@
 /** Per-call, per-reply and recovery outcomes of the tool dispatcher. */
 import { describe, expect, it, vi } from 'vitest';
+import { appendFileSync } from 'node:fs';
 import * as vscode from 'vscode';
 import { z } from 'zod';
 import { AIMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
@@ -30,7 +31,8 @@ import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { executeSubmitFindings } from '../../../src/ai/tools/handlers/submitFindings';
 import type { ToolServices } from '../../../src/ai/tools/handlers/toolServices';
 import { makeGraph, makeIndexedModel, makeNode } from '../helpers/modelFixtures';
-import { stubToolServices } from './helpers/toolServices';
+import { stubToolServices, schemaFaults, withSchemaFaults, type SchemaFault } from './helpers/toolServices';
+import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 
 const SearchSchema = z.object({ query: z.string().min(1) }).strict();
 
@@ -368,7 +370,7 @@ describe('model-facing rejection text', () => {
     expect(first.rejections).toHaveLength(1);
     expect(state).toMatchObject({ providerCalls: 1, rejectedTerminalCalls: 1, stopReason: null });
     expect(engine.heldFindingFocus).toBe(root);
-    const retry = { focus_node_id: root, column_flow: input.column_flow, questions: input.questions, prune_neighbors: input.prune_neighbors };
+    const retry = { focus_node_id: root, questions: input.questions, prune_neighbors: input.prune_neighbors };
     const model = nativePort(() => [call('facts-retry', retry, 'lineage_submit_findings')]);
     const next = await executeToolAttempt(model.port, plan, { priorState: state });
     expect(model.sendRequest).toHaveBeenCalledOnce();
@@ -378,7 +380,7 @@ describe('model-facing rejection text', () => {
     // Inspect the actual consumed content, never the local artifact.
     const { content, feedback } = consumedRejection(model, 'facts');
     expect(feedback).toMatchObject({ code: REJECTION_CODES.routeValidationFailed });
-    expect([...feedback.resend].sort()).toEqual(['prune_neighbors', 'questions']);
+    expect([...feedback.resend].sort()).toEqual(['column_flow', 'prune_neighbors', 'questions']);
     for (const absent of ['replies_remaining', 'reason', 'hint', 'detail']) expect(feedback).not.toHaveProperty(absent);
     expect(feedback.errors.map((error: { path: string }) => error.path)).toEqual(expect.arrayContaining(['questions.0.nodeId', 'questions.1.nodeId', 'prune_neighbors.0.id']));
     const lastModel = nativePort(() => []);
@@ -751,7 +753,7 @@ describe('missing-content exchange progress', () => {
     expect(feedback.missingParts).toEqual(['sections']);
     expect(engine.heldFindingFocus).toBe(node.id);
     const registry = new ToolRegistry<string>();
-    const schema = submitFindingsSchemaForMode('bb', 'technical', false);
+    const schema = submitFindingsSchemaForMode('bb', 'technical', false, undefined, false, engine.heldPartsOfCurrentFocus()?.resend);
     const invoke = vi.fn(async (input: unknown) => {
       await beforeReply();
       return executeSubmitFindings(input, services);
@@ -761,6 +763,9 @@ describe('missing-content exchange progress', () => {
     const plan = compileInstructionPlan({ kind: 'converse', stage: { kind: 'active', mode: 'sm_bb' }, registry,
       messages: [new HumanMessage('Explain Report.')], sink: new TurnEventSink(() => {}),
       facts: explorationFacts('bb', [], { classification: 'technical', memorySections: [] }),
+      freshSubmission: () => engine.heldFindingFocus === null && session.memory.getArchivedAngles(node.id).size === 0,
+      hopColumns: () => engine.hopSubmitColumns, heldColumnFlow: () => engine.heldColumnFlow,
+      submitFindingsRepairFields: () => engine.heldPartsOfCurrentFocus()?.resend ?? null,
       requiredTerminalTool: 'lineage_submit_findings', toolChoice: 'required',
       onToolResult: (_name, _input, isError) => { if (!isError) completed = true; }, isPhaseComplete: () => completed,
     });
@@ -793,7 +798,7 @@ describe('missing-content exchange progress', () => {
       expect(attemptState).toMatchObject({ providerCalls: 2, stopReason: null });
       assertToolPairingWellFormed(attemptState.messages);
     }
-    const args = { ...reply, ...(broad ? { summary: 'An updated but unrequested summary.' } : {}) };
+    const args = reply;
     expect(schema.safeParse(args).success).toBe(true);
     const model = nativePort(() => [call('reply', args, 'lineage_submit_findings')]);
     const result = await executeToolAttempt(model.port, observedPlan, { priorState: attemptState, debugLog: line => log.push(line) });
@@ -802,7 +807,7 @@ describe('missing-content exchange progress', () => {
     expect(result.rejections).toEqual([]);
     expect(toolMessage(result.messages)).toMatchObject({ status: 'success', tool_call_id: 'reply' });
     expect(session.memory.getShortTermMemory()).toEqual([expect.objectContaining({
-      summary: broad ? 'An updated but unrequested summary.' : 'Report returns a constant Value.',
+      summary: 'Report returns a constant Value.',
     })]);
     expect(events.some(event => (event as { type: string }).type === 'status')).toBe(broad);
     expect(log).toEqual(expect.arrayContaining([expect.stringContaining(`classification=${broad ? 'retry' : 'clarification'}`)]));
@@ -857,8 +862,8 @@ describe('submit_findings rejection form', () => {
   const missingColumn = [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'Missing' }] }, terminals[1]];
   const paths = (rejection: { errors: Array<{ path: string }> }) => rejection.errors.map(error => error.path);
 
-  /** A CT hop with two neighbors, driven through the real dispatcher so each step reads what the model reads. */
-  function hop() {
+  /** A BB/CT hop with two neighbors, driven through the real dispatcher so each step reads what the model reads. */
+  function hop(mode: 'bb' | 'ct' = 'ct', classification: 'business' | 'technical' | 'both' = 'technical') {
     const nodes = [root, source, other].map(id => makeNode({ id, schema: 'd', name: id, type: 'view', bodyScript: 'SELECT 1 AS Value, 2 AS Other;',
       columns: (id === source ? sourceColumns : ['Value', 'Other']).map(col) }));
     const pairs: [string, string][] = [[source, root], [other, root]];
@@ -866,22 +871,25 @@ describe('submit_findings rejection form', () => {
     const session = new AiSession();
     session.model = indexed;
     session.graph = graph;
-    session.setClassification('technical');
+    session.setClassification(classification);
     session.beginTurn();
     const engine = new NavigationEngine(indexed, graph, () => {}, { memory: session.memory });
-    engine.classification = 'technical';
-    expect(engine.init({ origin: root, question: 'Trace Value and Other.', analysisMode: 'ct', targetColumns: ['Value', 'Other'],
+    engine.classification = classification;
+    expect(engine.init({ origin: root, question: 'Trace Value and Other.', analysisMode: mode, ...(mode === 'ct' ? { targetColumns: ['Value', 'Other'] } : {}),
       direction: 'upstream', depthIntent: { upstream: { levels: 1, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } })).toHaveProperty('ok', true);
     engine.getHopContext();
     session.stateMachine = engine;
     session.enterExploring(session.turnEpoch);
     const { services } = stubToolServices({ session, model: indexed, graph, turnEpoch: () => session.turnEpoch });
     const registry = new ToolRegistry<string>();
-    registry.register({ name: 'lineage_submit_findings', inputSchema: submitFindingsSchemaForMode('ct', 'technical', true, engine.hopSubmitColumns, false),
+    registry.register({ name: 'lineage_submit_findings', inputSchema: submitFindingsSchemaForMode(mode, classification, true, engine.hopSubmitColumns, false),
       effect: 'hop_commit', execute: (sent: unknown) => executeSubmitFindings(sent, services) });
-    const plan = compileInstructionPlan({ kind: 'converse', stage: { kind: 'active', mode: 'sm_ct' }, registry,
+    const plan = compileInstructionPlan({ kind: 'converse', stage: { kind: 'active', mode: mode === 'ct' ? 'sm_ct' : 'sm_bb' }, registry,
       messages: [new HumanMessage('Inspect Root.')], sink: new TurnEventSink(() => {}),
-      facts: explorationFacts('ct', ['Value', 'Other'], { classification: 'technical', memorySections: [] }),
+      facts: explorationFacts(mode, mode === 'ct' ? ['Value', 'Other'] : [], { classification, memorySections: [] }),
+      freshSubmission: () => engine.heldFindingFocus === null && session.memory.getArchivedAngles(root).size === 0,
+      hopColumns: () => engine.hopSubmitColumns, heldColumnFlow: () => engine.heldColumnFlow,
+      submitFindingsRepairFields: () => engine.heldPartsOfCurrentFocus()?.resend ?? null,
       requiredTerminalTool: 'lineage_submit_findings', toolChoice: 'required' });
     let state = initialToolPhaseAttemptState(plan.frame.phase);
     const send = async (input: unknown) => {
@@ -890,8 +898,193 @@ describe('submit_findings rejection form', () => {
       const content = String(toolMessage(attempt.messages).content);
       return { attempt, content, rejection: attempt.rejections.length ? JSON.parse(content) : undefined };
     };
-    return { engine, send };
+    return { engine, send, state: () => state };
   }
+
+
+  it.each((['bb', 'ct'] as const).flatMap(mode => (['business', 'technical', 'both'] as const).map(classification => ({ mode, classification }))))(
+    'generates $mode/$classification native repairs from served metadata', async ({ mode, classification }) => {
+      const angles = classification === 'both' ? ['business', 'technical'] : [classification];
+      const complete = { summary: base.summary, badge_label: 'Source role',
+        sections: Object.fromEntries(angles.map(angle => [angle, `${angle}: exact authored findings.`])),
+        ...(mode === 'ct' ? { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0', transforms: ['pass_through'], note: 'Declared source.' }] }, terminals[1]] } : {}),
+        questions: [{ nodeId: source, question: 'Explain this supplied neighbor.' }],
+        prune_neighbors: [{ id: other, reason: 'No requested contribution.' }] };
+      const fixture = hop(mode, classification);
+      const schema = submitFindingsSchemaForMode(mode, classification, true, fixture.engine.hopSubmitColumns);
+      const wire = toModelJsonSchema(schema);
+      const columns = new Map([[root, ['Value', 'Other']], [source, sourceColumns], [other, ['Value', 'Other']]]);
+      const faults = schemaFaults(wire, complete, [], columns);
+      // Body/header binding has separate owner tests; only provided fixture fields are mutated.
+      const unique = (rows: readonly SchemaFault[]) => [...new Map(rows.map(row => [JSON.stringify(row), row])).values()];
+      const rank = ['required', 'type', 'minLength', 'pattern', 'maxLength', 'enum', 'unknown', 'metadata-column'];
+      const selected = [...new Map([...faults].sort((a, b) => rank.indexOf(a.kind) - rank.indexOf(b.kind))
+        .map(row => [row.path.join('.'), row])).values()].filter(row => !faults.some(other => other.path.length > row.path.length
+          && row.path.every((part, index) => other.path[index] === part)));
+      const bundledSeed = structuredClone(complete) as Record<string, unknown>;
+      const bundled = selected.map(row => {
+        // Keep known-column truth readable beside an independently invalid supplier identity.
+        if (row.kind === 'enum' && row.path.at(-1) === 'node' && selected.some(other => other.kind === 'metadata-column'
+          && other.path.slice(0, -1).join('.') === row.path.slice(0, -1).join('.'))) {
+          const flow = bundledSeed.column_flow as unknown[];
+          const index = flow.length;
+          flow.push(structuredClone(flow[0]));
+          return { ...row, path: [row.path[0]!, index, ...row.path.slice(2)] };
+        }
+        return row;
+      });
+      const groups = [...new Set(bundled.map(row => String(row.path[0])))].map(field => bundled.filter(row => row.path[0] === field));
+      const scenarios = [
+        ...unique(faults).map((fault, index) => ({ id: `single-${index}`, seed: complete, faults: [fault], escalate: false })),
+        ...Array.from({ length: (1 << groups.length) - 1 }, (_, index) => ({ id: `fields-${index + 1}`, seed: groups.some((group, bit) => ((index + 1) & (1 << bit)) && group[0]!.path[0] === 'column_flow') ? bundledSeed : complete,
+          faults: groups.filter((_group, bit) => (index + 1) & (1 << bit)).flat(), escalate: index + 1 === (1 << groups.length) - 1 })),
+      ];
+      for (const scenario of scenarios) {
+        const initial = withSchemaFaults(scenario.seed, scenario.faults);
+        const fields = [...new Set(scenario.faults.map(fault => String(fault.path[0])))];
+        const bodies = initial.sections as Record<string, unknown> | null;
+        const missingAngles = angles.filter(angle => !bodies || typeof bodies[angle] !== 'string' || !(bodies[angle] as string).trim());
+        const emptyBodies = fields.includes('sections') && (!bodies || !angles.some(angle => Object.hasOwn(bodies, angle)));
+        const expected = [...new Set([...scenario.faults.filter(fault => !(emptyBodies && fault.path[0] === 'sections')).map(fault => fault.path.join('.')),
+          ...(emptyBodies || (missingAngles.length === angles.length && angles.some(angle => bodies && Object.hasOwn(bodies, angle) && typeof bodies[angle] !== 'string')) ? ['sections'] : [])])];
+        const correction = Object.fromEntries(fields.filter(field => Object.hasOwn(complete, field) && (field !== 'sections' || missingAngles.length))
+          .map(field => [field, field === 'sections' ? Object.fromEntries(missingAngles.map(angle => [angle, complete.sections[angle]]))
+            : complete[field as keyof typeof complete]]));
+        for (const arm of scenario.escalate ? ['first_resend_success', 'legal_final_exit', 'continued_wrong'] : ['first_resend_success']) {
+          const { engine, send, state } = hop(mode, classification);
+          const sendCaptured = async (payload: unknown, ordinal: number) => {
+            const result = await send(payload);
+            const target = process.env.DLV_REJECTION_MATRIX_OUTPUT;
+            if (target) appendFileSync(target, JSON.stringify({ caseId: `${mode}-${classification}-${scenario.id}`, mode, classification, phase: 'active', arm,
+              generatedFaults: scenario.faults, metadataSource: 'toModelJsonSchema(actual served schema) + declared fixture columns',
+              attemptOrdinal: ordinal, submittedPayload: payload, expectedResendFields: Object.keys(correction), modelVisibleFeedback: result.content,
+              resendFields: result.rejection?.resend ?? [], faults: result.rejection?.errors ?? [],
+              heldSentinels: engine.toJSON().engineInternals.heldFinding?.finding ?? null,
+              outcome: state().stopReason ?? result.attempt.stop, providerCalls: state().providerCalls }) + '\n');
+            return result;
+          };
+          const first = await sendCaptured(initial, 1);
+          expect([...new Set(paths(first.rejection))].sort(), scenario.id).toEqual(expected.sort());
+          for (const error of first.rejection.errors) expect(error).not.toHaveProperty('allowed');
+          expect(first.rejection).not.toHaveProperty('example');
+          expect(engine.getDetailSlots()).toEqual([]);
+          const projected = toModelJsonSchema(submitFindingsSchemaForMode(mode, classification, false,
+            engine.hopSubmitColumns, engine.heldColumnFlow, engine.heldPartsOfCurrentFocus()?.resend)) as any;
+          for (const field of Object.keys(complete).filter(field => !fields.includes(field)))
+            expect(projected.properties[field], `${scenario.id}: held ${field} stays unavailable`).toBeUndefined();
+          if (fields.includes('sections') && missingAngles.length)
+            for (const angle of angles.filter(angle => !missingAngles.includes(angle)))
+              expect(projected.properties.sections?.properties?.[angle], `${scenario.id}: held ${angle} stays unavailable`).toBeUndefined();
+          if (arm !== 'first_resend_success') {
+            const second = await sendCaptured(initial, 2);
+            expect(second.attempt.rejections).toHaveLength(1);
+            if (Object.keys(correction).length) expect(second.rejection.example).toBeDefined();
+          }
+          const final = await sendCaptured(arm === 'continued_wrong' ? initial : correction, arm === 'first_resend_success' ? 2 : 3);
+          if (arm === 'continued_wrong') {
+            expect(state()).toMatchObject({ stopReason: 'no_progress', providerCalls: 3, noProgressCalls: 3 });
+            expect(engine.getDetailSlots()).toEqual([]);
+          } else {
+            expect(final.attempt.rejections).toEqual([]);
+            expect(final.attempt.stop).toBe('phase_complete');
+            expect(state().providerCalls).toBe(arm === 'first_resend_success' ? 2 : 3);
+            expect(engine.getDetailSlots()).toContainEqual(expect.objectContaining({ summary: complete.summary,
+              sections: expect.arrayContaining(angles.map(angle => ({ angle, text: complete.sections[angle] }))) }));
+            expect(engine.getDetailSlots()[0]!.sections).toHaveLength(angles.length);
+            expect(engine.getDetailSlots()[0]!.badge_label).toBe(complete.badge_label);
+            if (mode === 'ct') {
+              const edges = engine.columnAspect!.edges.map(edge => [edge.from_node, edge.from_col, edge.to_node, edge.to_col]);
+              expect(edges).toHaveLength(1);
+              expect(engine.columnAspect!.edges[0]).toMatchObject({ transforms: ['pass_through'], note: 'Declared source.' });
+              expect([...new Set(edges.map(edge => JSON.stringify(edge)))]).toEqual([JSON.stringify([source, 'C0', root, 'Value'])]);
+            }
+          }
+        }
+      }
+    },
+  );
+
+  it.each(['repair', 'continued_wrong'] as const)('keeps the three-reply budget when a retry introduces a new fault: %s', async arm => {
+    const { engine, send, state } = hop();
+    const initial = { ...base, badge_label: 'x'.repeat(51), column_flow: terminals,
+      questions: [source, other].map(nodeId => ({ nodeId, question: 'Explain this supplied neighbor.' })) };
+    const steps = [initial, { badge_label: 'Source role', summary: 42 },
+      arm === 'repair' ? { badge_label: 'Source role' }
+        : { sections: { technical: 42 } }];
+    const expectedPaths = [['badge_label'], ['summary'], arm === 'repair' ? [] : ['sections']];
+    for (const [index, input] of steps.entries()) {
+      const result = await send(input);
+      expect(result.rejection ? paths(result.rejection) : []).toEqual(expectedPaths[index]);
+      expect(state().providerCalls).toBe(index + 1);
+      if (index < 2) expect(state().noProgressCalls).toBe(index + 1);
+      const target = process.env.DLV_REJECTION_CONTROL_OUTPUT;
+      if (target) appendFileSync(target, JSON.stringify({ caseId: `ct-new-faults-${arm}`, arm,
+        mode: 'ct', classification: 'technical', phase: 'active', attemptOrdinal: index + 1,
+        declaredFaults: ['badge bound', 'new summary type', ...(arm === 'continued_wrong' ? ['new section type'] : [])],
+        modelVisibleFeedback: result.content, resendFields: result.rejection?.resend ?? [],
+        faults: result.rejection?.errors ?? [], submittedFields: Object.keys(input),
+        heldSentinels: engine.toJSON().engineInternals.heldFinding?.finding ?? null,
+        outcome: state().stopReason ?? result.attempt.stop, providerCalls: state().providerCalls,
+      }) + '\n');
+    }
+    if (arm === 'repair') expect(engine.getDetailSlots()).toContainEqual(expect.objectContaining({
+      summary: base.summary, sections: [{ angle: 'technical', text: base.sections.technical }],
+    }));
+    else {
+      expect(state()).toMatchObject({ stopReason: 'no_progress', providerCalls: 3, noProgressCalls: 3 });
+      expect(engine.getDetailSlots()).toEqual([]);
+    }
+  });
+
+  it('accepts a lossless structured-text representation without spending a rejection', async () => {
+    const { engine, send, state } = hop();
+    const flow = [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0' }] }, terminals[1]];
+    const input = { ...base, column_flow: JSON.stringify(flow),
+      questions: [source, other].map(nodeId => ({ nodeId, question: 'Explain this supplied neighbor.' })) };
+    const before = structuredClone(input);
+    const result = await send(input);
+    expect(result.attempt.rejections).toEqual([]);
+    expect(result.attempt.stop).toBe('phase_complete');
+    expect(state()).toMatchObject({ providerCalls: 1, rejections: [] });
+    expect(engine.getDetailSlots()).toContainEqual(expect.objectContaining({ summary: base.summary,
+      sections: [{ angle: 'technical', text: base.sections.technical }] }));
+    expect(input).toEqual(before);
+    const target = process.env.DLV_REJECTION_CONTROL_OUTPUT;
+    if (target) appendFileSync(target, JSON.stringify({ caseId: 'ct-normalized-no-rejection', mode: 'ct',
+      classification: 'technical', phase: 'active', attemptOrdinal: 1, normalizedRepresentation: true,
+      modelVisibleFeedback: result.content, faults: [], resendFields: [], submittedFields: Object.keys(input),
+      outcome: result.attempt.stop, providerCalls: state().providerCalls, rejections: 0,
+    }) + '\n');
+  });
+
+
+  it('holds a normalized real form field while one resend corrects all other mistyped fields', async () => {
+    const { engine, send, state } = hop();
+    const flow = [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0' }] }, terminals[1]];
+    const input = { ...base, summary: null, badge_label: 42, column_flow: JSON.stringify(flow),
+      questions: [source, other].map(nodeId => ({ nodeId, question: 'Explain this supplied neighbor.' })) };
+    const before = structuredClone(input);
+    const first = await send(input);
+    expect(paths(first.rejection).sort()).toEqual(['badge_label', 'summary']);
+    expect(first.rejection.resend.sort()).toEqual(['badge_label', 'summary']);
+    expect(first.rejection.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: 'summary', expected: 'string', got: 'null' }),
+      expect.objectContaining({ path: 'badge_label', expected: 'string', got: 42 }),
+    ]));
+    const held = engine.toJSON().engineInternals.heldFinding?.finding;
+    expect(held?.column_flow).toEqual(flow);
+    expect(held?.sections).toEqual([{ angle: 'technical', text: base.sections.technical }]);
+    expect(engine.getDetailSlots()).toEqual([]);
+    const correction = { summary: 'Corrected authored summary.', badge_label: 'Source role' };
+    const second = await send(correction);
+    expect(second.attempt.rejections).toEqual([]);
+    expect(second.attempt.stop).toBe('phase_complete');
+    expect(state().providerCalls).toBe(2);
+    expect(engine.columnAspect?.edges).toContainEqual(expect.objectContaining({ from_node: source, from_col: 'C0', to_node: root, to_col: 'Value' }));
+    expect(engine.getDetailSlots()).toContainEqual(expect.objectContaining({ summary: correction.summary,
+      sections: [{ angle: 'technical', text: base.sections.technical }] }));
+    expect(input).toEqual(before);
+  });
 
   it.each(['keep-mapping', 'replace-mapping'] as const)('accepts the first atomic conflict repair by %s', async correction => {
     const { engine, send } = hop();
@@ -1012,18 +1205,17 @@ describe('submit_findings rejection form', () => {
     expect(engine.toJSON().removedSet).toEqual([]);
   });
 
-  it('never lets a field resent faulty overwrite its held valid copy', async () => {
+  it('rejects an unrequested effect before it can replace its held valid copy', async () => {
     const { engine, send } = hop();
     const held = [{ id: other, reason: 'Supplies no tracked value.' }];
     await send({ ...base, prune_neighbors: held, column_flow: missingColumn });
     // Pruning Source conflicts with the mapping that keeps it; the held prune of Other must survive.
     const second = await send({ focus_node_id: root, prune_neighbors: [{ id: source, reason: 'Outside.' }],
       column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0' }] }, terminals[1]] });
-    expect(paths(second.rejection)).toContain('prune_neighbors.0.id');
-    expect(second.rejection.resend).toEqual(['prune_neighbors', 'questions', 'column_flow']);
-    expect(second.rejection.errors).toEqual(expect.arrayContaining([expect.objectContaining({ path: other, alternatives: ['questions', 'prune_neighbors', 'column_flow'] })]));
+    expect(paths(second.rejection)).toEqual(['prune_neighbors']);
+    expect(second.rejection.resend).toEqual(['column_flow']);
     expect(engine.toJSON().engineInternals.heldFinding?.finding.prune_neighbors).toEqual(held);
-    const third = await send({ focus_node_id: root });
+    const third = await send({ focus_node_id: root, column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0' }] }, terminals[1]] });
     expect(third.attempt.stop).toBe('phase_complete');
     expect(engine.toJSON().removedSet).toEqual([other]);
   });
