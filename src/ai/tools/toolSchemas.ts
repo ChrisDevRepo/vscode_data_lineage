@@ -41,7 +41,7 @@ export const ClassificationValueSchema = z.enum(['business', 'technical', 'both'
 
 /** Single source for the `depth` describe text on both {@link StartExplorationInputSchema} and every provider branch spread through `StartPatchFields` — one canonical home instead of a second literal duplicating it. Required for a fresh proposal, like {@link ClassificationValueSchema}; a refine may omit it to keep the reviewed proposal's depth. The per-side `0` clause matches {@link ExplorationDepthSelectionSchema}'s own contract (`explorationDepthContract.ts`) and `isReachableInApprovedDirection` (`smBase.ts`): 0 is a permanent border for the rest of the session, not merely a one-time skip of the initial seed. */
 const DEPTH_DESCRIPTION =
-  'Starting scope: {upstream, downstream}, each {levels, exactness}; upstream levels reach the sources, downstream levels reach the consumers that read the origin. levels is a non-negative integer or "all"; 0 permanently closes that side for the session. exactness is "exact" when the user literally stated that level count, "approximate" when it is your own estimate — an approximate count above 0 does not bound the scope, which runs until the filters or the border stop it. Required for a fresh proposal; omit on a refine to keep the reviewed depth.';
+  'Starting scope: {upstream, downstream}, each {levels, exactness}. Upstream reaches sources; downstream reaches consumers. Per side: complete chain → "all", "exact"; user-stated count ("direct" = 1) → that count, "exact"; otherwise → 3, "approximate". Set 0 only when the user closes that side; it stays closed for the session. Positive approximate counts are estimates, not scope limits; filters and borders still apply. Required for a fresh proposal; omit on refine to keep reviewed depth.';
 
 const StartDepthSchema = ExplorationDepthSelectionSchema.nullish().describe(DEPTH_DESCRIPTION);
 
@@ -352,9 +352,9 @@ export const PruneCurrentInputSchema = z.object({
   reason: z.string().min(1).regex(/\S/).describe('Why the whole current node is irrelevant to this investigation.'),
 }).strict();
 
-const COLUMN_FLOW_DESCRIPTION = 'One entry per arriving column named in <current_task> (the out_col values offered): for each, the neighbor columns its value comes from or is written to. '
+const COLUMN_FLOW_DESCRIPTION = 'One entry per SQL-proved output related to the arriving columns in <current_task>, with its contributing neighbor columns. '
   + 'Example: [{"out_col":"Total","upstream_columns":[{"node":"[dbo].[Orders]","col":"Qty","transforms":["compute"],"note":"Qty * Price"}]}]. '
-  + 'Reference only neighbors in <hop_context>. Not sources: a column only in ON, WHERE, GROUP BY, PARTITION BY or ORDER BY, a lookup key, and row operations (TRUNCATE, DELETE); describe them in sections. [] when nothing feeds the arriving columns.';
+  + 'Reference only neighbors in <hop_context>. Not sources: row operations (TRUNCATE, DELETE); describe them in sections. [] when nothing feeds the arriving columns.';
 
 const ColumnFlowSchema = z.array(ColumnFlowEntrySchema).describe(COLUMN_FLOW_DESCRIPTION);
 

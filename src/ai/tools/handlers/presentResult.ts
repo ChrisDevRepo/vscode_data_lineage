@@ -156,7 +156,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       const parsed = schema.safeParse(input);
       if (!parsed.success) {
         const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema, resend: 'owner' });
-        const repair = holdRejectedPresentResult(drafts, input, rejection.issuePaths ?? [], presentResultStage, retainableSections);
+        const repair = holdRejectedPresentResult(drafts, input, rejection.issuePaths ?? [], presentResultStage, retainableSections, false, rejection);
         const authorization = drafts.getAuthorization();
         const held = drafts.get();
         rejection.hint = [
@@ -201,10 +201,10 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         if (!merged.success) {
           const paths = [...merged.error.issues.map(issue => issue.path.join('.')),
             ...authorization.fields.filter(field => presentInput[field] === undefined)];
-          const hint = holdRejectedPresentResult(drafts, presentInput, paths, presentResultStage, retainableSections, true);
           const rejection = rejectionFromZodError(merged.error, {
             code: REJECTION_CODES.validation, input: { sections: presentInput.sections }, schema: mergedSchema, resend: 'owner',
           });
+          const hint = holdRejectedPresentResult(drafts, presentInput, paths, presentResultStage, retainableSections, true, rejection);
           rejection.hint = [rejection.hint, hint ?? presentResultRepairInstruction(authorization.fields, presentResultStage,
             (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes, authorization.sectionLeaves, held)].filter(Boolean).join(' ');
           return reject(rejection);
@@ -488,7 +488,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
 
       if (!validation.success) {
         if (validation.repairable) {
-          const scopedHint = holdRejectedPresentResult(drafts, presentInput, validation.rejection.issuePaths ?? [], presentResultStage, retainableSections, true);
+          const scopedHint = holdRejectedPresentResult(drafts, presentInput, validation.rejection.issuePaths ?? [], presentResultStage, retainableSections, true, validation.rejection);
           if (scopedHint) validation.rejection.hint = scopedHint;
           else drafts.hold(presentInput, { fields: validation.repairFields });
         }

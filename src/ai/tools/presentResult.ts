@@ -264,6 +264,7 @@ export function holdRejectedPresentResult(
   stage: PresentResultStage,
   committed: ReadonlyArray<{ label: string; text?: string }> | null = null,
   replaceHeld = false,
+  rejection?: ToolRejection,
 ): string | null {
   if ((!replaceHeld && store.get()) || typeof input !== 'object' || input === null || Array.isArray(input) || failedPaths.length === 0) return null;
   const repairable = new Set<string>(PRESENT_RESULT_REPAIR_FIELDS);
@@ -301,8 +302,12 @@ export function holdRejectedPresentResult(
     ? 'Held: all report content; replace only the named defective fields.'
     : `Held from this call: every field except ${fields.join(', ')}.`;
   const unheld = unkept.length > 0 && !hasLeafRepair
-    ? ` sections for ${quoteIds(unkept)} were not held: the committed report has no body for them. Its sections are ${quoteIds((committed ?? []).map(sec => sec.label))}; omit sections to keep the committed report.`
+    ? ` sections for ${quoteIds(unkept)} were not held: the committed report has no body for them; omit sections to keep the committed report.`
     : '';
+  if (unheld && rejection) {
+    const choices = { path: 'sections', allowed_values: (committed ?? []).map(sec => sec.label), expected: 'Committed labels when omitting section text.' };
+    rejection.detail = [...(Array.isArray(rejection.detail) ? rejection.detail : rejection.detail === undefined ? [] : [rejection.detail]), choices];
+  }
   return `${heldDescription}${unheld} ${presentResultRepairInstruction(fields, stage,
     Array.isArray(kept.sections) && kept.sections.length > 0, highlightLabelIndexes, sectionLeaves, kept)}`;
 }
@@ -849,7 +854,7 @@ export function validatePresentResult(
     for (const id of ids) byState.set(stateOf(id), [...(byState.get(stateOf(id)) ?? []), id]);
     return [...byState].map(([state, group]) => `${quoteIds(group)} — ${PRESENT_NODE_ID_STATE_TEXT[state]}`).join('; ');
   };
-  /** The valid set and the route back, stated once — on the first offending site — after every offender in the call and its state. */
+  /** The route back, stated once after every offender in the call and its state. */
   let nodeIdHintNeeded = false;
   const nodeIdRejectionTail = (idsAtThisPath: readonly string[]): string => {
     if (nodeIdHintNeeded) return '';
@@ -857,7 +862,6 @@ export function validatePresentResult(
     if (stage === 'completed' && routeServed) repairFields.add('add_node_ids');
     const elsewhere = unlinkableNodeIds.filter(id => !idsAtThisPath.includes(id));
     return (elsewhere.length > 0 ? ` Also unlinkable here: ${renderNodeIdStates(elsewhere)}.` : '')
-      + ` Accepted ids (current result graph): ${quoteIds(resolvedNodeIds)}.`
       + (routeServed ? ` ${PRESENT_REAL_ID_ROUTE[stage]}` : '');
   };
 
@@ -931,7 +935,7 @@ export function validatePresentResult(
         hint,
         issuePaths: [...issuePaths],
         entryIds: [...new Set([...pathEntryIds.values()].flat())],
-        ...(unlinkable.length > 0 ? { detail: { paths: unlinkable } } : {}),
+        ...(unlinkable.length > 0 ? { detail: [{ paths: unlinkable }, { path: 'node_ids', allowed_values: [...resolvedNodeIds] }] } : {}),
       }),
       repairable: allRepairable,
       repairFields: resendList,

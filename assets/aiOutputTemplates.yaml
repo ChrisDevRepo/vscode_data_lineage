@@ -184,7 +184,7 @@ structural_summary:
 column_trace_capture:
   stages: [active]
   instruction: |
-    Resolve this hop's column tasks from the SQL and record the confirmed object/column relations in `column_flow`. Value lineage only; interpret the complete statement. Keep unresolved source evidence explicit in eligible questions. When writing `sections`, explain the full transformation sequence (intermediate CTE renames, calculations, predicates, grain), dataset effects, and unresolved source evidence.
+    Resolve this hop's column tasks from the SQL and record the confirmed object/column relations in `column_flow`. interpret the complete statement. Keep unresolved source evidence explicit in eligible questions. When writing `sections`, explain the full transformation sequence (intermediate CTE renames, calculations, predicates, grain), dataset effects, and unresolved source evidence.
 
 # ── Cross-section rendering at synthesis ─────────────────────────────────────
 # Always-on at synthesis. Describes HOW captured content renders consistently

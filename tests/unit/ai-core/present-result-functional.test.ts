@@ -10,6 +10,7 @@ import { buildModel, normalizeName } from '../../../src/engine/modelBuilder';
 import type { DatabaseModel } from '../../../src/engine/types';
 import type { ResultGraph } from '../../../src/ai/session/types';
 import type { ColumnEdge } from '../../../src/ai/sm/smTypes';
+import { rejectionModelContent } from '../../../src/ai/support/toolErrorEnvelope';
 
 function completedWorld(model: DatabaseModel, resultGraph: ResultGraph) {
   const session = new AiSession();
@@ -59,6 +60,47 @@ function firstCall(origin: string) {
     highlight_groups: [{ label: 'Origin', color: 'target', node_ids: [origin] }],
   };
 }
+
+it('stages accepted node choices after first feedback and keeps the held report', async () => {
+  const { session, services, origin, source, sibling, deliverPreview } = world(false);
+  const input = { ...firstCall(origin), sections: [
+    { label: 'Known', node_ids: [origin, source, sibling], text: 'All known objects.' },
+    { label: 'Unknown', node_ids: ['dbo.missing'], text: 'A rejected link.' },
+  ] };
+  const rejected = JSON.parse(await executePresentResult(input, services));
+  expect(rejected.code).toBe('validation');
+  const first = rejectionModelContent(rejected, false);
+  expect(first).toContain('dbo.missing');
+  expect(first).toContain('only these corrected fields');
+  expect(first).not.toContain('Accepted ids');
+  expect(first).not.toContain(source);
+  expect(first).not.toContain(sibling);
+  expect(JSON.parse(rejectionModelContent(rejected, true)).detail).toContainEqual({ path: 'node_ids', allowed_values: [origin, source, sibling] });
+  expect(deliverPreview).not.toHaveBeenCalled();
+  expect(session.presentResultRepairDraft.get()?.sections?.map(section => section.text)).toEqual(input.sections.map(section => section.text));
+  expect(JSON.parse(await executePresentResult({ sections: [{ label: 'Unknown', node_ids: [] }] }, services)).success).toBe(true);
+  expect(session.presentationArtifact?.aiMetadata.description).toContain('All known objects.');
+  expect(session.presentationArtifact?.aiMetadata.description).toContain('A rejected link.');
+});
+
+it('stages committed section choices after first feedback and retains the omission exit', async () => {
+  const { session, services, origin, source, sibling } = world(false);
+  session.explorationRunId = 'staging-amend';
+  const original = { ...firstCall(origin), sections: [
+    { label: 'Committed sources sentinel', node_ids: [origin, source, sibling], text: 'The committed body.' },
+  ] };
+  expect(JSON.parse(await executePresentResult(original, services)).success).toBe(true);
+  const rejected = JSON.parse(await executePresentResult({ ...firstCall(origin), sections: [{ label: 'New label', node_ids: [' '] }] }, services));
+  const first = rejectionModelContent(rejected, false);
+  expect(first).toContain('New label');
+  expect(first).toContain('omit sections to keep the committed report');
+  expect(first).not.toContain('Committed sources sentinel');
+  expect(JSON.parse(rejectionModelContent(rejected, true)).detail).toContainEqual({
+    path: 'sections', allowed_values: ['Committed sources sentinel'], expected: 'Committed labels when omitting section text.',
+  });
+  expect(JSON.parse(await executePresentResult({}, services)).success).toBe(true);
+  expect(session.presentationArtifact?.aiMetadata.description).toContain('The committed body.');
+});
 
 it.each(['Missing', 42])('holds a preview with start %j and repairs only that field through the handler', async start => {
   const { session, services, origin, source, deliverPreview } = world(false);

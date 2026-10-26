@@ -185,7 +185,7 @@ export const ColumnTraceEdge = memo(function ColumnTraceEdge({
   const classes = markedTransformClasses(transforms);
   const identityOnly = (transforms?.length ?? 0) > 0 && classes.length === 0;
   const indirect = !!objectLevel || isIndirectOnly(classes);
-  const showChip = !objectLevel && !identityOnly && (state === 'transformation' || classes.length > 0);
+  const showChip = !objectLevel && !identityOnly && (state === 'transformation' || classes.length > 0 || !!note);
   const shown = classes.slice(0, CHIP_MAX_GLYPHS);
   const overflow = classes.length - shown.length;
   const stroke = lit ? 'var(--ln-focus-border)' : 'var(--ln-edge-color)';

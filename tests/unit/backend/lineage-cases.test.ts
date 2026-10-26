@@ -483,7 +483,8 @@ describe('stored-column arrival admission and delivery', () => {
     ]);
   });
 
-  it.each(['filter', 'combine'] as const)('stages a solid writer edge beside an indirect-only %s ref', role => {
+  it.each((['filter', 'combine'] as const).flatMap(role => [false, true].map(declareBirth => ({ role, declareBirth }))))(
+    'retains $role influence and adds a procedure origin only when explicitly declared: $declareBirth', ({ role, declareBirth }) => {
     const source = '[d].[Source]', writer = '[d].[Producer]', stored = '[d].[Stored]';
     const nodes = [
       makeNode({ id: source, schema: 'd', name: 'Source', type: 'table', columns: [column('Flag')] }),
@@ -499,15 +500,17 @@ describe('stored-column arrival admission and delivery', () => {
     expect(engine.submitFindings({ focus_node_id: writer, summary: 'Discount is written after a row test.',
       sections: [{ angle: 'technical', text: 'Source.Flag only selects the row.' }],
       column_flow: [{ out_col: 'Discount', writes_to: { node: stored, col: 'Discount' },
-        upstream_columns: [{ node: source, col: 'Flag', transforms: [role] }] }],
+        upstream_columns: [{ node: source, col: 'Flag', transforms: [role] }] },
+      ...(declareBirth ? [{ out_col: 'Discount', writes_to: { node: stored, col: 'Discount' }, upstream_columns: [] }] : [])],
     })).toHaveProperty('ok', true);
     expect(engine.columnAspect!.edges.map(edge => ({
       from: `${edge.from_node}.${edge.from_col}`, to: `${edge.to_node}.${edge.to_col}`, transforms: edge.transforms ?? null,
     }))).toEqual([
       { from: `${source}.Flag`, to: `${stored}.Discount`, transforms: [role] },
-      { from: `${writer}.Discount`, to: `${stored}.Discount`, transforms: null },
+      ...(declareBirth ? [{ from: `${writer}.Discount`, to: `${stored}.Discount`, transforms: null }] : []),
     ]);
-  });
+    },
+  );
 
   it('keeps a value-carrying ref on its own edge and does not add a writer edge', () => {
     const source = '[d].[Source]', writer = '[d].[Producer]', stored = '[d].[Stored]';

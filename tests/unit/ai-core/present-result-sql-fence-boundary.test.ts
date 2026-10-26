@@ -9,6 +9,7 @@ import type { ToolServices } from '../../../src/ai/tools/handlers/toolServices';
 import type { ResultGraph } from '../../../src/ai/session/types';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
 import type { Logger } from '../../../src/utils/log';
+import { readToolError, rejectionModelContent } from '../../../src/ai/support/toolErrorEnvelope';
 
 const ORIGIN = '[dbo].[Orders]';
 const CAPTURED_SQL = 'SELECT * FROM Staging.Orders';
@@ -388,7 +389,13 @@ describe('merged report section repair diagnosis', () => {
       { label: 'Beta', node_ids: [ORIGIN], text: 'Beta body.' },
     ] } as ResultGraph;
     const first = await run(session, { is_update: true, sections: [{ label: 'Invented One' }, { label: 'Invented Two' }] });
-    expect(first.hint).toContain('`Alpha`, `Beta`');
+    const rejection = readToolError(first);
+    if (!rejection) throw new Error('Expected a rejected section amendment.');
+    expect(first.hint).toContain('omit sections to keep the committed report');
+    expect(rejectionModelContent(rejection, false)).not.toContain('Alpha');
+    expect(JSON.parse(rejectionModelContent(rejection, true)).detail).toContainEqual({
+      path: 'sections', allowed_values: ['Alpha', 'Beta'], expected: 'Committed labels when omitting section text.',
+    });
     expect(session.presentResultRepairDraft.get()?.sections).toBeUndefined();
     const second = await run(session, { is_update: true, name: 'Renamed', summary: 'Same report.', highlight_groups: [{ label: 'Feed', color: 'source', node_ids: [ORIGIN] }] });
     expect(second.success).toBe(true);
