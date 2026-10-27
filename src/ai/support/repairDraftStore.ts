@@ -55,20 +55,6 @@ export class RepairDraftStore<TFull, TAuthorization = undefined> {
     }));
   }
 
-  /** Exposes only diagnosed leaves or declared alternatives; arrays replace atomically. Final handlers own cross-field checks. */
-  public static inputPatchSchema(schema: z.ZodType, paths: readonly string[]): z.ZodType {
-    let patch: z.ZodType;
-    if (schema instanceof z.ZodOptional) patch = this.inputPatchSchema(schema.unwrap() as z.ZodType, paths).optional();
-    else if (schema instanceof z.ZodNullable) patch = this.inputPatchSchema(schema.unwrap() as z.ZodType, paths).nullable();
-    else if (schema instanceof z.ZodObject) patch = z.object(Object.fromEntries(Object.entries(schema.shape).flatMap(([key, owner]) => {
-      const nested = paths.filter(path => path.startsWith(`${key}.`)).map(path => path.slice(key.length + 1));
-      if (!paths.includes(key) && !nested.length) return [];
-      return [[key, (paths.includes(key) ? owner as z.ZodType : this.inputPatchSchema(owner as z.ZodType, nested)).optional()]];
-    }))).strict();
-    else return schema;
-    return schema.description === undefined ? patch : patch.describe(schema.description);
-  }
-
   /** Merges keyed patch entries into held entries: a patch entry overlays the held entry with the same key in place, a new key appends, and `{ remove: true }` drops the held entry (a key not held is a no-op). Every held entry the patch does not name is kept as authored. */
   public static mergeByKey<T extends object>(
     held: readonly T[],

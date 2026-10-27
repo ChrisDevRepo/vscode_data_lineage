@@ -753,7 +753,7 @@ describe('missing-content exchange progress', () => {
     expect(feedback.missingParts).toEqual(['sections']);
     expect(engine.heldFindingFocus).toBe(node.id);
     const registry = new ToolRegistry<string>();
-    const schema = submitFindingsSchemaForMode('bb', 'technical', false, undefined, false, engine.heldPartsOfCurrentFocus()?.resend);
+    const schema = submitFindingsSchemaForMode('bb', 'technical', false, undefined, false);
     const invoke = vi.fn(async (input: unknown) => {
       await beforeReply();
       return executeSubmitFindings(input, services);
@@ -765,7 +765,6 @@ describe('missing-content exchange progress', () => {
       facts: explorationFacts('bb', [], { classification: 'technical', memorySections: [] }),
       freshSubmission: () => engine.heldFindingFocus === null && session.memory.getArchivedAngles(node.id).size === 0,
       hopColumns: () => engine.hopSubmitColumns, heldColumnFlow: () => engine.heldColumnFlow,
-      submitFindingsRepairFields: () => engine.heldPartsOfCurrentFocus()?.resend ?? null,
       requiredTerminalTool: 'lineage_submit_findings', toolChoice: 'required',
       onToolResult: (_name, _input, isError) => { if (!isError) completed = true; }, isPhaseComplete: () => completed,
     });
@@ -889,7 +888,6 @@ describe('submit_findings rejection form', () => {
       facts: explorationFacts(mode, mode === 'ct' ? ['Value', 'Other'] : [], { classification, memorySections: [] }),
       freshSubmission: () => engine.heldFindingFocus === null && session.memory.getArchivedAngles(root).size === 0,
       hopColumns: () => engine.hopSubmitColumns, heldColumnFlow: () => engine.heldColumnFlow,
-      submitFindingsRepairFields: () => engine.heldPartsOfCurrentFocus()?.resend ?? null,
       requiredTerminalTool: 'lineage_submit_findings', toolChoice: 'required' });
     let state = initialToolPhaseAttemptState(plan.frame.phase);
     const send = async (input: unknown) => {
@@ -969,12 +967,9 @@ describe('submit_findings rejection form', () => {
           expect(first.rejection).not.toHaveProperty('example');
           expect(engine.getDetailSlots()).toEqual([]);
           const projected = toModelJsonSchema(submitFindingsSchemaForMode(mode, classification, false,
-            engine.hopSubmitColumns, engine.heldColumnFlow, engine.heldPartsOfCurrentFocus()?.resend)) as any;
-          for (const field of Object.keys(complete).filter(field => !fields.includes(field)))
-            expect(projected.properties[field], `${scenario.id}: held ${field} stays unavailable`).toBeUndefined();
-          if (fields.includes('sections') && missingAngles.length)
-            for (const angle of angles.filter(angle => !missingAngles.includes(angle)))
-              expect(projected.properties.sections?.properties?.[angle], `${scenario.id}: held ${angle} stays unavailable`).toBeUndefined();
+            engine.hopSubmitColumns, engine.heldColumnFlow)) as any;
+          for (const field of Object.keys(complete))
+            expect(projected.properties[field], `${scenario.id}: D-098 keeps held ${field} in the full schema`).toBeDefined();
           if (arm !== 'first_resend_success') {
             const second = await sendCaptured(initial, 2);
             expect(second.attempt.rejections).toHaveLength(1);
@@ -1011,7 +1006,7 @@ describe('submit_findings rejection form', () => {
     const steps = [initial, { badge_label: 'Source role', summary: 42 },
       arm === 'repair' ? { badge_label: 'Source role' }
         : { sections: { technical: 42 } }];
-    const expectedPaths = [['badge_label'], ['summary'], arm === 'repair' ? [] : ['sections']];
+    const expectedPaths = [['badge_label'], ['summary'], arm === 'repair' ? [] : ['sections.technical']];
     for (const [index, input] of steps.entries()) {
       const result = await send(input);
       expect(result.rejection ? paths(result.rejection) : []).toEqual(expectedPaths[index]);
@@ -1205,15 +1200,16 @@ describe('submit_findings rejection form', () => {
     expect(engine.toJSON().removedSet).toEqual([]);
   });
 
-  it('rejects an unrequested effect before it can replace its held valid copy', async () => {
+  it('validates a changed resent effect whole and keeps its held valid copy when it fails (D-098)', async () => {
     const { engine, send } = hop();
     const held = [{ id: other, reason: 'Supplies no tracked value.' }];
     await send({ ...base, prune_neighbors: held, column_flow: missingColumn });
     // Pruning Source conflicts with the mapping that keeps it; the held prune of Other must survive.
     const second = await send({ focus_node_id: root, prune_neighbors: [{ id: source, reason: 'Outside.' }],
       column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0' }] }, terminals[1]] });
-    expect(paths(second.rejection)).toEqual(['prune_neighbors']);
-    expect(second.rejection.resend).toEqual(['column_flow']);
+    // The resent list replaces the held one whole, so Other loses its outcome and both faults are reported together.
+    expect(paths(second.rejection)).toEqual(['prune_neighbors.0.id', other]);
+    expect(second.rejection.resend).toEqual(['prune_neighbors', 'column_flow', 'questions']);
     expect(engine.toJSON().engineInternals.heldFinding?.finding.prune_neighbors).toEqual(held);
     const third = await send({ focus_node_id: root, column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0' }] }, terminals[1]] });
     expect(third.attempt.stop).toBe('phase_complete');

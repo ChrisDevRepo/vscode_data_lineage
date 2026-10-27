@@ -132,8 +132,6 @@ export type ConversePlanDraft = Omit<ConversePlanInput, 'phase' | 'instructionCo
   readonly hopColumns?: () => SubmitFindingsHopColumns;
   /** Whether a held draft of the focus carries a valid `column_flow` a retry may omit; read live, `false` when absent. */
   readonly heldColumnFlow?: () => boolean;
-  /** Existing engine-held authorization; only these parts are exposed on a correction. */
-  readonly submitFindingsRepairFields?: () => readonly string[] | null;
   /** Live engine eligibility for the optional current-candidate removal command; absent denies it. */
   readonly canPruneCurrent?: () => boolean;
 };
@@ -302,7 +300,6 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
     freshSubmission,
     hopColumns,
     heldColumnFlow,
-    submitFindingsRepairFields,
     canPruneCurrent,
     presentResultRetainableSections,
     presentResultPreviewBlockCount,
@@ -329,7 +326,7 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
     const submitMode = stage.mode === 'sm_ct' ? 'ct' : 'bb';
     liveResolvers.set(
       'lineage_submit_findings',
-      () => submitFindingsSchemaForMode(submitMode, frozenFacts?.classification, freshSubmission?.() ?? true, hopColumns?.(), heldColumnFlow?.() ?? false, submitFindingsRepairFields?.()),
+      () => submitFindingsSchemaForMode(submitMode, frozenFacts?.classification, freshSubmission?.() ?? true, hopColumns?.(), heldColumnFlow?.() ?? false),
     );
   }
   const liveRepairResolver = stageSupportsPresentResultRepair(stage) && presentResultRepairFields;

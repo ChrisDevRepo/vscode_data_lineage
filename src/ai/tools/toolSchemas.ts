@@ -11,7 +11,7 @@ import { REJECTION_CODES } from '../support/rejectionCodes';
 import { rejectionFromZodError, type ToolRejection } from '../support/toolErrorEnvelope';
 import { CLASSIFICATION_KEPT_ANGLES, type ClassificationValue } from '../session/classification';
 import { extractRawSectionAngles } from '../interaction/rules/submitFindingsRules';
-import { RepairDraftStore, type IndexedRepairFields } from '../support/repairDraftStore';
+import type { IndexedRepairFields } from '../support/repairDraftStore';
 import type { ColumnFlowEntry, HopFinding, HopFindingKept, HopSubmission } from '../sm/smTypes';
 
 /** A column identifier named by the user. Wildcards are rejected at the boundary: a wildcard target column locks an unwinnable CT session because no real column can match it. */
@@ -680,12 +680,7 @@ export function submitFindingsSchemaForMode(
   hop?: SubmitFindingsHopColumns,
   /** Whether a held draft of this focus carries a valid `column_flow`; the served schema then lets a retry omit it to keep the held list. */
   heldColumnFlow = false,
-  repairFields?: readonly string[] | null,
 ): z.ZodType<FlatSubmitFindings> {
-  if (repairFields) return RepairDraftStore.inputPatchSchema(
-    submitFindingsSchemaForMode(mode, classification, freshSubmission, hop, heldColumnFlow),
-    ['focus_node_id', ...repairFields],
-  ) as z.ZodType<FlatSubmitFindings>;
   const hopKey = hop ? JSON.stringify(hop) : '';
   if (!classification && !hopKey && freshSubmission) {
     return mode === 'ct' ? SubmitFindingsCtInputSchema : SubmitFindingsBbInputSchema;

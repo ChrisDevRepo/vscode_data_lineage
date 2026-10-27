@@ -32,7 +32,7 @@ import { getAllowedLmToolNames, activeModeOf, EXTERNAL_TOOL_NAMES, type LmStage 
 import { ToolRegistry } from '../tools/registry';
 import { TOOL_DEFS, EXTERNAL_TOOL_DEFS, type ToolContract, type ToolName } from '../tools/toolDefs';
 import { getToolInvocationLabel } from '../tools/toolLabels';
-import { readToolError, readToolErrorText, isConsentGateRejection, makeRejection, rejectionFromZodError, rejectionModelContent, NoProjectLoadedError, buildNoProjectLoadedError } from '../support/toolErrorEnvelope';
+import { readToolError, readToolErrorText, isConsentGateRejection, makeRejection, rejectionModelContent, NoProjectLoadedError, buildNoProjectLoadedError } from '../support/toolErrorEnvelope';
 import { evaluateToolPhaseRule } from '../interaction/rules/toolPhaseRules';
 import { assertActiveTurnLease, type TurnLease } from '../session/turnLease';
 import { DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
@@ -503,13 +503,8 @@ export function buildAiToolRegistry(
       if (!store) { store = new RepairDraftStore(); drafts.set(def.name, store); }
       return store;
     };
-    const project = (schema: z.ZodType) => {
-      owner = schema;
-      if (!repairable) return schema;
-      const auth = draft().getAuthorization();
-      return auth && !auth.ambiguous && auth.round <= generation()
-        ? RepairDraftStore.inputPatchSchema(schema, auth.paths) : schema;
-    };
+    // A repair keeps the full schema; a resent held field replaces its copy (D-098).
+    const project = (schema: z.ZodType) => { owner = schema; return schema; };
     registry.register({
       ...def,
       get inputSchema() { return project(owner); },
@@ -535,13 +530,6 @@ export function buildAiToolRegistry(
           const normalized = decoded.input;
           const isObject = normalized !== null && typeof normalized === 'object' && !Array.isArray(normalized);
           const repairing = repairable && starts === 1 && isObject && auth && !auth.ambiguous && auth.round < round;
-          if (repairing) {
-            const patchSchema = RepairDraftStore.inputPatchSchema(owner, auth.paths);
-            const parsed = patchSchema.safeParse(normalized);
-            if (!parsed.success && parsed.error.issues.some(issue => issue.code === 'unrecognized_keys')) return handler.logAndReturn(def.name, { ...rejectionFromZodError(parsed.error, {
-              code: REJECTION_CODES.invalidInput, input: normalized, schema: patchSchema,
-            }), repair: true }, redactMissionBriefForLog(input, decoded.fixes.find(fix => fix.path === '')?.after));
-          }
           const merged = repairing
             ? RepairDraftStore.mergeInput(store?.get() ?? {}, normalized as Record<string, unknown>) : normalized;
           const result = await invocationInput.run({ input: redactMissionBriefForLog(input, decoded.fixes.find(fix => fix.path === '')?.after) }, () => execute(merged));

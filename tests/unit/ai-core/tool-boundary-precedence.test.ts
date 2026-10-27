@@ -1,14 +1,12 @@
 // Owner: src/ai/tools/toolProvider.ts and tools/handlers; raw tool admission and handler functional contracts.
 /** The strict boundary that runs first owns these rejections, so the handler and engine never see the shapes below: a start with no origin/supplement/revision, a non-string scope list, an empty highlight-group list in any served present_result stage, and a neighbour id the engine has not validated as an in-scope direct neighbour. */
 import { describe, expect, it, vi } from 'vitest';
-import { z } from 'zod';
 import * as vscode from 'vscode';
 import { VscodeModelPort } from '../../../src/ai/model/vscodeModelPort';
 import { modelUserMessage } from '../../../src/ai/model/modelPort';
 import { REGEX_MAX_LENGTH, createTurnTokenBudget } from '../../../src/ai/support/tokenBudget';
 import { AiSession } from '../../../src/ai/session/session';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
-import { RepairDraftStore } from '../../../src/ai/support/repairDraftStore';
 import { compileInstructionPlan } from '../../../src/ai/agent/instructionPlan';
 import { executeToolAttempt, initialToolPhaseAttemptState, recordToolAttempt } from '../../../src/ai/agent/toolAttempt';
 import { TurnEventSink } from '../../../src/ai/runtime/turnEventSink';
@@ -85,19 +83,20 @@ function ctWorld(options: { deferred?: boolean; scalar?: boolean; caseSensitive?
   return { session, model, graph, registry, engine };
 }
 
-/** Drives corrected fixtures from the served schema; independent assertions still own expected faults and saved bytes. */
+/** Drives a correction that follows the feedback: the focus plus the owed parts only (D-097); the full schema still validates it (D-098). */
 function findingRepair(engine: NavigationEngine, input: object): object {
   const fields = engine.heldPartsOfCurrentFocus()?.resend;
   if (!fields) return input;
+  const owed = ['focus_node_id', ...fields];
+  const select = (value: unknown, prefix: string): unknown => value && typeof value === 'object' && !Array.isArray(value)
+    ? Object.fromEntries(Object.entries(value).flatMap(([key, child]) => {
+      const path = prefix ? `${prefix}.${key}` : key;
+      if (owed.includes(path)) return [[key, child]];
+      return owed.some(part => part.startsWith(`${path}.`)) ? [[key, select(child, path)]] : [];
+    })) : value;
+  const selected = select(input, '') as object;
   const schema = submitFindingsSchemaForMode(engine.currentHopAnalysisMode, engine.classification ?? undefined,
-    false, engine.hopSubmitColumns, engine.heldColumnFlow, fields);
-  const select = (value: unknown, owner: z.ZodType): unknown => {
-    if (owner instanceof z.ZodOptional || owner instanceof z.ZodNullable) return select(value, owner.unwrap() as z.ZodType);
-    return owner instanceof z.ZodObject && value && typeof value === 'object' && !Array.isArray(value)
-      ? Object.fromEntries(Object.entries(value).filter(([key]) => Object.hasOwn(owner.shape, key))
-        .map(([key, child]) => [key, select(child, owner.shape[key])])) : value;
-  };
-  const selected = select(input, schema) as object;
+    false, engine.hopSubmitColumns, engine.heldColumnFlow);
   expect(schema.safeParse(selected).success).toBe(true);
   return selected;
 }
@@ -468,7 +467,7 @@ describe('large findings repairs', () => {
     expect(engine.columnAspect!.edges).toHaveLength(3);
     expect(engine.columnAspect!.edges[2].note).toBe('This valid sibling is resent with the list.');
   });
-  it('rejects unsolicited held-field amendments without changing the draft', () => {
+  it('keeps a valid resent held field, reports the faulty one and keeps its held copy (D-098)', () => {
     const { engine, session, model, graph } = ctWorld();
     const { services } = stubToolServices({ session, model, graph });
     const original = { focus_node_id: ORIGIN, summary: 'Branch supplies Value.',
@@ -480,11 +479,11 @@ describe('large findings repairs', () => {
       column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }] };
     const before = engine.toJSON();
     const malformed = JSON.parse(executeSubmitFindings({ ...correction, sections: 42 }, services));
-    expect(malformed).toMatchObject({ code: 'invalid_input', issuePaths: expect.arrayContaining(['summary', 'sections']), resend: ['column_flow'] });
-    expect(engine.toJSON(), 'an out-of-scope patch cannot amend even otherwise valid fields').toEqual(before);
-    expect(JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN, column_flow: correction.column_flow }, services))).toHaveProperty('ok', true);
+    expect(malformed).toMatchObject({ code: 'invalid_input', issuePaths: ['sections'], resend: ['sections'] });
+    for (const key of ['agenda', 'visited', 'removedSet', 'columnAspect', 'scopeNodeIds'] as const) expect(engine.toJSON()[key]).toEqual(before[key]);
+    expect(JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN }, services))).toHaveProperty('ok', true);
     expect(engine.columnAspect!.edges).toHaveLength(1);
-    expect(engine.toJSON().memory.detailSlots[ORIGIN]).toMatchObject({ summary: original.summary,
+    expect(engine.toJSON().memory.detailSlots[ORIGIN]).toMatchObject({ summary: correction.summary,
       sections: [{ angle: 'technical', text: original.sections.technical }] });
   });
   it.each([false, true])('holds intrinsically valid mappings for an action-only prune correction (schema fault: %s)', schemaFault => {
@@ -760,7 +759,7 @@ describe('large findings repairs', () => {
     { malformed: { sections: { technical: 42 } }, path: 'sections.technical' },
     { malformed: { column_flow: 42 }, path: 'column_flow' },
     { malformed: { summary: 42 }, path: 'summary' },
-  ])('keeps the draft unchanged when a summary repair includes $path', ({ malformed, path }) => {
+  ])('reports a faulty $path resent with a summary repair and keeps its held copy (D-098)', ({ malformed, path }) => {
     const { engine, session, model, graph } = ctWorld();
     const { services } = stubToolServices({ session, model, graph });
     const sections = { technical: 'Branch supplies Value unchanged.' };
@@ -773,11 +772,13 @@ describe('large findings repairs', () => {
     const before = engine.toJSON();
     const rejected = submit({ summary: 'A valid replacement summary.', ...malformed });
     expect(rejected).toHaveProperty('code', 'invalid_input');
-    expect(rejected.issuePaths).toContain(path.split('.')[0]);
-    expect(rejected.resend).toEqual(['summary']);
+    expect(rejected.issuePaths).toEqual([path]);
+    expect(rejected.resend).toEqual([path]);
     const after = engine.toJSON();
-    expect(engine.heldPartsOfCurrentFocus()).toMatchObject({ sections: ['technical'], summary: false, resend: ['summary'] });
-    expect(after.engineInternals.heldFinding?.finding).toEqual(before.engineInternals.heldFinding?.finding);
+    const summaryHeld = path !== 'summary';
+    expect(engine.heldPartsOfCurrentFocus()).toMatchObject({ sections: ['technical'], summary: summaryHeld, resend: [path] });
+    expect(after.engineInternals.heldFinding?.finding).toEqual({ ...before.engineInternals.heldFinding?.finding,
+      ...(summaryHeld ? { summary: 'A valid replacement summary.' } : {}) });
     for (const key of ['agenda', 'visited', 'removedSet', 'columnAspect', 'scopeNodeIds'] as const) expect(after[key]).toEqual(before[key]);
     expect(submit({ summary: 'Branch supplies Value.' })).toMatchObject({ ok: true, next_focus: BRANCH });
     expect(engine.heldPartsOfCurrentFocus()).toBeNull();
@@ -1029,10 +1030,9 @@ describe('lineage_submit_findings boundary', () => {
         : { ...valid, column_flow: 42 };
       const result = JSON.parse(executeSubmitFindings(input, services));
       expect(result).toMatchObject({ code: 'invalid_input', issuePaths: expect.arrayContaining(['column_flow']),
-        errors: expect.arrayContaining([expect.objectContaining({ path: 'column_flow',
-          ...(existing ? { issue: 'Unrecognized key; remove or correct it.' } : { expected: 'array', got: 42 }) })]) });
+        errors: expect.arrayContaining([expect.objectContaining({ path: 'column_flow', expected: 'array', got: 42 })]) });
       expect(result).not.toHaveProperty('hint');
-      expect(result.resend).toEqual(expect.arrayContaining(existing ? ['summary'] : ['column_flow']));
+      expect(result.resend).toEqual(expect.arrayContaining(existing && !wrongFocus ? ['summary', 'column_flow'] : ['column_flow']));
       if (heldCase === 'none' || wrongFocus) {
         if (!existing) expect(engine.heldFindingFocus).toBeNull();
         if (!existing) expect(engine.heldPartsOfCurrentFocus()).toBeNull();
@@ -1040,7 +1040,7 @@ describe('lineage_submit_findings boundary', () => {
       } else if (existing) {
         const after = engine.toJSON();
         expect(after.engineInternals.heldFinding?.finding, 'the malformed field keeps the existing draft').toEqual(before.engineInternals.heldFinding?.finding);
-        expect(result.resend, 'an unsolicited field does not widen the summary repair').toEqual(['summary']);
+        expect(result.resend, 'D-098: the faulty resent field is reported with the owed summary').toEqual(['column_flow', 'summary']);
       } else expect(result.resend).toEqual(['column_flow']);
       const correction = heldCase === 'none' ? valid : existing
         ? { focus_node_id: ORIGIN, summary: valid.summary }
@@ -1453,7 +1453,7 @@ it.each(['repair', 'epoch', 'stage', 'same-round', 'parallel'] as const)('scopes
     expect(first.repair).toBe(true);
     expect(session.toolInputRepairDrafts.get('lineage_search_objects')?.get()).toEqual({ schemas: ['hop'], types: ['table'] });
     expect(JSON.parse(rejectionModelContent(first, false))).toHaveProperty('repair', true);
-    expect(registry.get('lineage_search_objects')!.inputSchema.safeParse({}).success).toBe(true);
+    expect(registry.get('lineage_search_objects')!.inputSchema.safeParse({}).success, 'D-098: a repair serves the full schema').toBe(false);
     if (mode === 'same-round' || mode === 'parallel') {
       const second = mode === 'parallel'
         ? (await batch([{ tool: 'lineage_search_objects', input: bad }, { tool: 'lineage_search_objects', input: { query: false, schemas: ['elsewhere'] } }]))[1]!
@@ -1463,7 +1463,8 @@ it.each(['repair', 'epoch', 'stage', 'same-round', 'parallel'] as const)('scopes
     if (mode === 'epoch') session.beginTurn();
     if (mode === 'stage') session.enterLmStage({ kind: 'sm_entry' }, session.turnEpoch);
     const schema = registry.get('lineage_search_objects')!.inputSchema;
-    expect(schema.safeParse({}).success).toBe(mode === 'repair');
+    expect(schema.safeParse({ query: 'origin' }).success).toBe(true);
+    expect(schema.safeParse({}).success).toBe(false);
     const actual = await invoke('lineage_search_objects', { query: 'origin' });
     const fresh = ctWorld(); fresh.session.stateMachine = null;
     fresh.session.enterLmStage({ kind: 'discover' }, fresh.session.turnEpoch);
@@ -1633,7 +1634,7 @@ it.each([
 });
 
 
-it.each(['feedback marker', 'next provider schema and narrow ACK', 'second feedback example and exit', 'held-field resend rejected'] as const)('uses actual generation identity through the compiled native start repair: %s', async check => {
+it.each(['feedback marker', 'next provider schema and narrow ACK', 'second feedback example and exit', 'held-field resend accepted'] as const)('uses actual generation identity through the compiled native start repair: %s', async check => {
   const { session } = ctWorld(); session.stateMachine = null;
   session.currentRoundId = 1; // One user request contains both provider generations.
   session.enterLmStage({ kind: 'sm_entry' }, session.turnEpoch);
@@ -1644,7 +1645,7 @@ it.each(['feedback marker', 'next provider schema and narrow ACK', 'second feedb
     : [{ origin: ORIGIN, analysisMode: 'bb', classification: 'technical', depth: {
       upstream: { levels: 1, exactness: 'all' }, downstream: { levels: 0, exactness: 'all' },
     } }, { depth: { upstream: { exactness: 'exact' }, downstream: { exactness: 'exact' } } }];
-  if (check === 'held-field resend rejected') inputs.splice(1, 0, { ...inputs[0], depth: {
+  if (check === 'held-field resend accepted') inputs.splice(1, 0, { ...inputs[0], depth: {
     upstream: { levels: 1, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' },
   } });
   let sends = 0;
@@ -1685,27 +1686,16 @@ it.each(['feedback marker', 'next provider schema and narrow ACK', 'second feedb
     expect(session.pendingExploration?.revision).toBe(1);
     return;
   }
-  if (check === 'held-field resend rejected') {
-    expect(JSON.parse(String(second.messages.find(message => message.getType() === 'tool')!.content))).toMatchObject({ repair: true });
-    expect(JSON.parse(String(second.messages.find(message => message.getType() === 'tool')!.content))).toHaveProperty('example', inputs[2]);
-    expect(session.pendingExploration).toBeNull();
-    expect(session.hopLog.at(-1)?.input).toEqual(inputs[1]);
-    const paths = session.toolInputRepairDrafts.get('lineage_start_exploration')!.getAuthorization()!.paths;
-    expect(paths).toEqual(['depth.upstream.exactness', 'depth.downstream.exactness']);
-    await executeToolAttempt(model, plan([modelUserMessage('Start this exploration.'), ...second.messages]), {
-      priorState: recordToolAttempt(state, second),
-    });
-    expect(offered[2]).toEqual(offered[1]);
+  if (check === 'held-field resend accepted') {
+    expect(JSON.parse(String(second.messages.find(message => message.getType() === 'tool')!.content))).not.toHaveProperty('repair');
+    expect(offered[1], 'D-098: a repair serves the full schema').toEqual(offered[0]);
     expect(session.pendingExploration?.revision).toBe(1);
+    expect(session.pendingExploration?.init.depthIntent).toMatchObject({ upstream: { levels: 1, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } });
+    expect(session.hopLog.at(-1)?.input).toEqual(inputs[1]);
     return;
   }
   expect(model.modelCalls).toBe(2); expect(session.currentRoundId).toBe(1);
-  expect(Object.keys(offered[1]!.properties)).toEqual(['depth']);
-  expect(Object.keys(offered[1]!.properties.depth.properties)).toEqual(['upstream', 'downstream']);
-  expect(Object.keys(offered[1]!.properties.depth.properties.upstream.properties)).toEqual(['exactness']);
-  expect(new Ajv({ strict: false }).compile(offered[1]!)(inputs[0])).toBe(false);
-  expect(offered[1]!.required ?? []).not.toContain('origin');
-  expect(new Ajv({ strict: false }).compile(offered[1]!)(inputs[1])).toBe(true);
+  expect(offered[1], 'D-098: a repair serves the full schema').toEqual(offered[0]);
   expect(session.pendingExploration?.revision).toBe(1);
   expect(session.pendingExploration?.init.depthIntent).toMatchObject({ upstream: { levels: 1, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } });
   expect(session.hopLog.at(-1)?.input).toEqual(inputs[1]);
@@ -1724,16 +1714,6 @@ it('fails closed to a complete call when no model generation owner is available'
   const stillIncomplete = JSON.parse(await registry.invoke('lineage_search_objects', { schemas: ['hop'] }));
   expect(stillIncomplete.code).toBe('invalid_input'); expect(stillIncomplete).not.toHaveProperty('repair');
   expect(readToolErrorText(await registry.invoke('lineage_search_objects', { query: 'origin', schemas: ['hop'] }))).toBeNull();
-});
-
-
-it('preserves declared optional-field guidance in the real gate-refinement patch schema', () => {
-  const owner = toModelJsonSchema(StartExplorationRefineProviderInputSchema) as any;
-  const patch = toModelJsonSchema(RepairDraftStore.inputPatchSchema(StartExplorationRefineProviderInputSchema, Object.keys(owner.properties))) as any;
-  const described = Object.entries(owner.properties).filter(([, value]: any) => value.description !== undefined);
-  expect(described.map(([field]) => field)).toContain('proposalRevision');
-  for (const [field, value] of described as Array<[string, { description: string }]>)
-    expect(patch.properties[field].description, field).toBe(value.description);
 });
 
 
@@ -1761,7 +1741,8 @@ it.each([
   queue([{ tool: row.tool, input: patch }]);
   await executeToolAttempt(port, plan(), { priorState: recordToolAttempt(initialToolPhaseAttemptState('discover'), first) });
   expect(port.modelCalls).toBe(2); expect(session.currentRoundId).toBe(1);
-  expect(offered[1]!.find(tool => tool.name === row.tool).inputSchema.required ?? []).toEqual(row.siblings ? ['query'] : []);
+  expect(offered[1]!.find(tool => tool.name === row.tool).inputSchema, 'D-098: a repair serves the full schema')
+    .toEqual(offered[0]!.find(tool => tool.name === row.tool).inputSchema);
   const fresh = ctWorld(); fresh.session.stateMachine = null; fresh.session.enterLmStage({ kind: 'discover' }, fresh.session.turnEpoch);
   const expected = await fresh.registry.invoke(row.tool, row.siblings ? patch : row.valid);
   expect(results.at(-1)).toBe(expected); expect(readToolErrorText(results.at(-1)!)).toBeNull();
@@ -1775,7 +1756,7 @@ it.each([false, true])('accepts a declared regex mode repair, preserving final v
   const original = { query: '[', mode: 'regex', schemas: ['hop'], types: ['table'] };
   const first = JSON.parse(await invoke('lineage_search_objects', original));
   expect(first).toMatchObject({ code: 'invalid_regex', repair: true, resend: ['mode'] });
-  expect(registry.get('lineage_search_objects')!.inputSchema.safeParse({ mode: 'substring' }).success).toBe(true);
+  expect(registry.get('lineage_search_objects')!.inputSchema.safeParse({ mode: 'substring' }).success, 'D-098: a repair serves the full schema').toBe(false);
   expect(session.toolInputRepairDrafts.get('lineage_search_objects')!.get()).toEqual(original);
   if (repeat) expect(readToolErrorText(await invoke('lineage_search_objects', { mode: 'regex' }))?.code).toBe('invalid_regex');
   const corrected = await invoke('lineage_search_objects', { mode: 'substring' });
@@ -1785,7 +1766,7 @@ it.each([false, true])('accepts a declared regex mode repair, preserving final v
   expect(session.hopLog.at(-1)?.input).toEqual({ mode: 'substring' });
 });
 
-it.each([false, true])('offers only engine-authorized section repairs through the compiled active hop (full resend=%s)', async full => {
+it.each([false, true])('repairs an owed section through the compiled active hop under the full schema (full resend=%s)', async full => {
   const { session, engine, registry, port, queue, offered } = ownedInputWorld();
   session.setClassification('both'); engine.classification = 'both';
   session.enterLmStage({ kind: 'active', mode: 'sm_ct' }, session.turnEpoch);
@@ -1798,7 +1779,6 @@ it.each([false, true])('offers only engine-authorized section repairs through th
     facts: { analysisMode: 'ct', targetColumns: ['Value'], classification: 'both', memorySections: [] }, messages: [modelUserMessage('Trace Value.')],
     sink: new TurnEventSink(() => {}), freshSubmission: () => engine.heldFindingFocus === null,
     hopColumns: () => engine.hopSubmitColumns, heldColumnFlow: () => engine.heldColumnFlow,
-    submitFindingsRepairFields: () => engine.heldPartsOfCurrentFocus()?.resend ?? null,
     toolChoice: 'required', requiredTerminalTool: 'lineage_submit_findings' });
   queue([{ tool: 'lineage_submit_findings', input }]);
   const first = await executeToolAttempt(port, plan(), { priorState: initialToolPhaseAttemptState('active') });
@@ -1807,16 +1787,9 @@ it.each([false, true])('offers only engine-authorized section repairs through th
   queue([{ tool: 'lineage_submit_findings', input: full ? { ...input, ...patch } : patch }]);
   const second = await executeToolAttempt(port, plan(), { priorState: recordToolAttempt(initialToolPhaseAttemptState('active'), first) });
   const schema = offered[1]!.find(tool => tool.name === 'lineage_submit_findings').inputSchema;
-  expect(Object.keys(schema.properties)).toEqual(['focus_node_id', 'sections']);
-  expect(Object.keys(schema.properties.sections.properties)).toEqual(['technical']);
-  expect(new Ajv({ strict: false }).compile(schema)({ ...input, ...patch })).toBe(false);
-  if (full) {
-    expect(second.rejections).toHaveLength(1);
-    expect(engine.currentFocus).toBe(ORIGIN); expect(engine.getDetailSlots()).toEqual([]);
-    expect(engine.heldPartsOfCurrentFocus()?.resend).toEqual(['sections.technical']);
-    queue([{ tool: 'lineage_submit_findings', input: patch }]);
-    await executeToolAttempt(port, plan(), { priorState: recordToolAttempt(recordToolAttempt(initialToolPhaseAttemptState('active'), first), second) });
-  } else expect(second.rejections).toHaveLength(0);
+  expect(Object.keys(schema.properties)).toEqual(Object.keys(offered[0]!.find(tool => tool.name === 'lineage_submit_findings').inputSchema.properties));
+  expect(new Ajv({ strict: false }).compile(schema)({ ...input, ...patch }), 'D-098: the full resend is schema-valid').toBe(true);
+  expect(second.rejections, 'D-098: resent saved fields are never rejected').toHaveLength(0);
   const detail = engine.getDetailSlots().find(slot => slot.nodeId === ORIGIN)!;
   expect(detail.summary).toBe(input.summary);
   expect(detail.sections).toContainEqual(expect.objectContaining({ angle: 'business', text: input.sections.business }));
@@ -1836,7 +1809,6 @@ it.each(['column_flow', 'unknown-root'] as const)('uses the existing active auth
     facts: { analysisMode: 'ct', targetColumns: ['Value'], classification: 'technical', memorySections: [] }, messages: [modelUserMessage('Trace Value.')],
     sink: new TurnEventSink(() => {}), freshSubmission: () => engine.heldFindingFocus === null,
     hopColumns: () => engine.hopSubmitColumns, heldColumnFlow: () => engine.heldColumnFlow,
-    submitFindingsRepairFields: () => engine.heldPartsOfCurrentFocus()?.resend ?? null,
     toolChoice: 'required', requiredTerminalTool: 'lineage_submit_findings' });
   queue([{ tool: 'lineage_submit_findings', input: invalid }]);
   const first = await executeToolAttempt(port, plan(), { priorState: initialToolPhaseAttemptState('active') });
@@ -1846,11 +1818,9 @@ it.each(['column_flow', 'unknown-root'] as const)('uses the existing active auth
   queue([{ tool: 'lineage_submit_findings', input: patch }]);
   const second = await executeToolAttempt(port, plan(), { priorState: recordToolAttempt(initialToolPhaseAttemptState('active'), first) });
   const schema = offered[1]!.find(tool => tool.name === 'lineage_submit_findings').inputSchema;
-  expect(Object.keys(schema.properties)).toEqual(fault === 'column_flow' ? ['focus_node_id', 'column_flow'] : ['focus_node_id']);
-  if (fault === 'column_flow') {
-    expect(schema.properties.column_flow).toEqual(offered[0]!.find(tool => tool.name === 'lineage_submit_findings').inputSchema.properties.column_flow);
-    expect(new Ajv({ strict: false }).compile(schema)({ column_flow: [{ out_col: 'Value' }] })).toBe(false);
-  }
+  expect(Object.keys(schema.properties), 'D-098: a repair serves the full schema')
+    .toEqual(Object.keys(offered[0]!.find(tool => tool.name === 'lineage_submit_findings').inputSchema.properties));
+  if (fault === 'column_flow') expect(new Ajv({ strict: false }).compile(schema)({ ...valid, column_flow: [{ out_col: 'Value' }] })).toBe(false);
   expect(second.rejections).toHaveLength(0);
   expect(engine.getDetailSlots().find(slot => slot.nodeId === ORIGIN)).toMatchObject({ summary: valid.summary,
     sections: [{ angle: 'technical', text: valid.sections.technical }] });
