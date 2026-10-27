@@ -1451,46 +1451,42 @@ it('holds normalized valid start integers and accepts only the two invalid depth
   expect(session.stateMachine).toBeNull();
 });
 
-it.each(['repair', 'epoch', 'stage', 'same-round', 'parallel'] as const)('scopes read corrections without guessing call identity: %s', mode => {
-  return (async () => {
-    const { session, registry, invoke, batch } = ownedInputWorld();
-    session.stateMachine = null;
-    session.enterLmStage({ kind: 'discover' }, session.turnEpoch);
-    const bad = { query: 42, schemas: ['hop'], types: ['table'] };
-    const first = JSON.parse(await invoke('lineage_search_objects', bad));
-    expect(first.repair).toBe(true);
-    expect(session.toolInputRepairDrafts.get('lineage_search_objects')?.get()).toEqual({ schemas: ['hop'], types: ['table'] });
-    expect(JSON.parse(rejectionModelContent(first, false))).toHaveProperty('repair', true);
-    expect(registry.get('lineage_search_objects')!.inputSchema.safeParse({}).success, 'D-098: a repair serves the full schema').toBe(false);
-    if (mode === 'same-round' || mode === 'parallel') {
-      const second = mode === 'parallel'
-        ? (await batch([{ tool: 'lineage_search_objects', input: bad }, { tool: 'lineage_search_objects', input: { query: false, schemas: ['elsewhere'] } }]))[1]!
-        : (await batch([{ tool: 'lineage_search_objects', input: bad }, { tool: 'lineage_search_objects', input: { query: false, schemas: ['elsewhere'] } }], false))[1]!;
-      expect(JSON.parse(second).hint).toContain('no values are held');
-    }
-    if (mode === 'epoch') session.beginTurn();
-    if (mode === 'stage') session.enterLmStage({ kind: 'sm_entry' }, session.turnEpoch);
-    const schema = registry.get('lineage_search_objects')!.inputSchema;
-    expect(schema.safeParse({ query: 'origin' }).success).toBe(true);
-    expect(schema.safeParse({}).success).toBe(false);
-    const actual = await invoke('lineage_search_objects', { query: 'origin' });
-    const fresh = ctWorld(); fresh.session.stateMachine = null;
-    fresh.session.enterLmStage({ kind: 'discover' }, fresh.session.turnEpoch);
-    const expected = await fresh.registry.invoke('lineage_search_objects', mode === 'repair'
-      ? { query: 'origin', schemas: ['hop'], types: ['table'] } : { query: 'origin' });
-    expect(actual).toBe(expected);
-    expect(session.toolInputRepairDrafts.get('lineage_search_objects')?.get()).toBeNull();
-    expect(session.hopLog.at(-1)?.input).toEqual({ query: 'origin' });
-  })();
+// D-103 step 2: read tools are stateless. A resend after a rejection is evaluated on its own args only; a valid
+// value of the earlier rejected call is never held. Each row faults one field next to a valid required one and
+// resends only the faulted field, so a held value would turn the resend into a different (accepted) call.
+// lineage_get_context is absent: its schema has no field that could be held.
+const STATELESS_READS = [
+  { tool: 'lineage_search_objects', stage: 'discover', bad: { query: 'origin', mode: 'bogus' }, resend: { mode: 'substring' } },
+  { tool: 'lineage_search_ddl', stage: 'discover', bad: { query: 'Value', types: ['table'] }, resend: { types: ['view'] } },
+  { tool: 'lineage_get_object_detail', stage: 'discover', bad: { id: ORIGIN, cursor: 'x' }, resend: { cursor: '0' } },
+  { tool: 'lineage_detect_graph_patterns', stage: 'discover', bad: { type: 'hubs', min_degree: 'x' }, resend: { min_degree: 1 } },
+  { tool: 'lineage_get_screen_state', stage: 'discover', bad: { ids: [ORIGIN], cursor: 'x' }, resend: { cursor: '0' } },
+  { tool: 'lineage_get_scope_bundle', stage: 'discover', bad: { origin: ORIGIN, upstream_depth: 1, downstream_depth: 'x', include_ddl: false }, resend: { downstream_depth: 0 } },
+  { tool: 'lineage_get_neighbor_columns', stage: 'active', bad: { ids: [BRANCH], unknown: true }, resend: {} },
+] as const;
+
+it('D-103: the stateless read table covers every non-commit read tool with a field', () => {
+  const reads = TOOL_DEFS.filter(def => ['read', 'scope_store'].includes(def.effect) && def.name !== 'lineage_get_context').map(def => def.name);
+  expect(STATELESS_READS.map(row => row.tool).sort()).toEqual([...reads].sort());
 });
 
-it('keeps arrays atomic, drops unknown input keys, and preserves raw concurrent read arguments', async () => {
+it.each(STATELESS_READS)('D-103: a $tool resend after a rejection is evaluated on its own args only', async row => {
+  const { session, invoke } = ownedInputWorld();
+  if (row.stage === 'discover') { session.stateMachine = null; session.enterLmStage({ kind: 'discover' }, session.turnEpoch); }
+  else session.enterLmStage({ kind: 'active', mode: 'sm_ct' }, session.turnEpoch);
+  expect(readToolErrorText(await invoke(row.tool, row.bad)), 'the first call is rejected').not.toBeNull();
+  const actual = await invoke(row.tool, row.resend);
+  const fresh = ctWorld();
+  if (row.stage === 'discover') { fresh.session.stateMachine = null; fresh.session.enterLmStage({ kind: 'discover' }, fresh.session.turnEpoch); }
+  else fresh.session.enterLmStage({ kind: 'active', mode: 'sm_ct' }, fresh.session.turnEpoch);
+  expect(actual).toBe(await fresh.registry.invoke(row.tool, row.resend));
+  expect(session.hopLog.at(-1)?.input).toEqual(row.resend);
+});
+
+it('preserves raw read arguments, also of concurrent reads, in hop evidence', async () => {
   const { session, invoke, batch } = ownedInputWorld(); session.stateMachine = null;
   session.enterLmStage({ kind: 'discover' }, session.turnEpoch);
-  const bad = { query: 42, schemas: ['hop', 7], types: ['table'], unknown: 'never hold' };
-  const rejection = JSON.parse(await invoke('lineage_search_objects', bad));
-  expect(rejection.repair).toBe(true);
-  expect(session.toolInputRepairDrafts.get('lineage_search_objects')?.get()).toEqual({ types: ['table'] });
+  expect(readToolErrorText(await invoke('lineage_search_objects', { query: 42, schemas: ['hop', 7], types: ['table'], unknown: 'x' }))).not.toBeNull();
   await invoke('lineage_search_objects', { query: 'origin', schemas: ['hop'] });
   expect(session.hopLog.at(-1)?.input).toEqual({ query: 'origin', schemas: ['hop'] });
   const inputs = [{ query: 'origin' }, { query: 'branch', types: ['view'] }];
@@ -1498,17 +1494,25 @@ it('keeps arrays atomic, drops unknown input keys, and preserves raw concurrent 
   expect(session.hopLog.slice(-2).map(entry => entry.input)).toEqual(inputs);
 });
 
-it('clears held read values on cancellation and never revives them in a new turn', async () => {
+it('clears a held start draft on cancellation and never revives it in a new turn', async () => {
   const cancellation = new AbortController();
-  const { session, registry, invoke } = ownedInputWorld({ signal: cancellation.signal }); session.stateMachine = null;
-  session.enterLmStage({ kind: 'discover' }, session.turnEpoch);
-  await invoke('lineage_search_objects', { query: null, schemas: ['hop'] });
-  expect(session.toolInputRepairDrafts.get('lineage_search_objects')?.get()).toEqual({ schemas: ['hop'] });
+  const { session, port, registry, invoke, batch } = ownedInputWorld({ signal: cancellation.signal }); session.stateMachine = null;
+  session.enterLmStage({ kind: 'sm_entry' }, session.turnEpoch);
+  await invoke('lineage_start_exploration', { origin: ORIGIN, analysisMode: 'bb', classification: 'technical',
+    depth: { upstream: { levels: null, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } });
   cancellation.abort();
-  expect(session.toolInputRepairDrafts.size).toBe(0);
-  await expect(registry.invoke('lineage_search_objects', { query: 'origin' })).rejects.toBeDefined();
-  session.beginTurn();
-  expect(session.toolInputRepairDrafts.size).toBe(0);
+  const partial = { depth: { upstream: { levels: 1, exactness: 'exact' } } };
+  await expect(registry.invoke('lineage_start_exploration', partial)).rejects.toBeDefined();
+  const fresh = ctWorld(); fresh.session.stateMachine = null; fresh.session.enterLmStage({ kind: 'sm_entry' }, fresh.session.turnEpoch);
+  const expected = await fresh.registry.invoke('lineage_start_exploration', partial);
+  expect(readToolErrorText(expected)).not.toBeNull();
+  // A later generation of the same model, through a registry that was not cancelled.
+  const resume = buildAiToolRegistry(() => session, { info() {}, debug() {}, warn() {}, error() {} } as never, () => undefined, undefined, { model: port });
+  await batch([]);
+  expect(await resume.invoke('lineage_start_exploration', partial), 'nothing revived after cancellation').toBe(expected);
+  session.beginTurn(); session.enterLmStage({ kind: 'sm_entry' }, session.turnEpoch);
+  await batch([]);
+  expect(await resume.invoke('lineage_start_exploration', partial), 'nothing revived in a new turn').toBe(expected);
 });
 
 it('clears proposal repair on cancel and keeps mission text redacted in original-call evidence', async () => {
@@ -1608,21 +1612,17 @@ it('does not resurrect an authoritative metadata-invalid optional list when repa
 
 
 it.each(['lineage_search_objects', 'lineage_search_ddl'].flatMap(tool => ['syntax', 'length'].map(fault => ({ tool, fault }))))(
-  'retains valid search filters when only $tool query has a $fault fault', async ({ tool, fault }) => {
+  'D-103: names only the $tool query $fault fault and evaluates the query resend on its own args', async ({ tool, fault }) => {
     const { session, invoke } = ownedInputWorld(); session.stateMachine = null;
     session.enterLmStage({ kind: 'discover' }, session.turnEpoch);
-    const held = tool === 'lineage_search_objects' ? { mode: 'regex', schemas: ['hop'], types: ['view'] } : { types: ['view'] };
+    const filters = tool === 'lineage_search_objects' ? { mode: 'regex', schemas: ['elsewhere'], types: ['view'] } : { types: ['procedure'] };
     const query = fault === 'syntax' ? '[' : 'x'.repeat(REGEX_MAX_LENGTH + 1);
-    const rejection = JSON.parse(await invoke(tool, { query, ...held }));
-    expect(rejection).toMatchObject({ code: 'invalid_regex', issuePaths: ['query'], repair: true });
-    expect(JSON.parse(rejectionModelContent(rejection, false))).toMatchObject({ issuePaths: ['query'], repair: true });
-    expect(session.toolInputRepairDrafts.get(tool)?.get()).toEqual(tool === 'lineage_search_objects' && fault === 'syntax' ? { ...held, query } : held);
+    expect(JSON.parse(await invoke(tool, { query, ...filters }))).toMatchObject({ code: 'invalid_regex', issuePaths: ['query'] });
     const actual = await invoke(tool, { query: 'origin' });
     const fresh = ctWorld(); fresh.session.stateMachine = null;
     fresh.session.enterLmStage({ kind: 'discover' }, fresh.session.turnEpoch);
-    const expected = await fresh.registry.invoke(tool, { query: 'origin', ...held });
     expect(readToolErrorText(String(actual))).toBeNull();
-    expect(actual).toBe(expected);
+    expect(actual).toBe(await fresh.registry.invoke(tool, { query: 'origin' }));
     expect(session.hopLog.at(-1)?.input).toEqual({ query: 'origin' });
   },
 );
@@ -1718,17 +1718,22 @@ it.each(['feedback marker', 'next provider schema and acknowledgement', 'second 
 });
 
 
-it('fails closed to a complete call when no model generation owner is available', async () => {
-  const { session, registry } = ctWorld(); session.stateMachine = null;
-  session.enterLmStage({ kind: 'discover' }, session.turnEpoch);
-  const rejection = JSON.parse(await registry.invoke('lineage_search_objects', { query: null, schemas: ['hop'] }));
+it('fails closed to a complete start call when no model generation owner is available', async () => {
+  const world = () => { const w = ctWorld(); w.session.stateMachine = null; w.session.enterLmStage({ kind: 'sm_entry' }, w.session.turnEpoch);
+    // Serve the fresh start schema, as a turn does, so a generation owner could hold its parts.
+    void overrideRegistrySchemas(w.registry, new Map([['lineage_start_exploration', StartExplorationFreshProviderInputSchema]])).get('lineage_start_exploration')!.inputSchema;
+    return w; };
+  const { session, registry } = world();
+  const complete = { origin: ORIGIN, analysisMode: 'bb', classification: 'technical',
+    depth: { upstream: { levels: 1, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } };
+  const rejection = JSON.parse(await registry.invoke('lineage_start_exploration', { ...complete, depth: { ...complete.depth, upstream: { levels: null, exactness: 'exact' } } }));
+  expect(readToolErrorText(JSON.stringify(rejection))).not.toBeNull();
   expect(rejection).not.toHaveProperty('repair');
-  expect(session.toolInputRepairDrafts.size).toBe(0);
-  expect(registry.get('lineage_search_objects')!.inputSchema.safeParse({}).success).toBe(false);
   session.currentRoundId += 1;
-  const stillIncomplete = JSON.parse(await registry.invoke('lineage_search_objects', { schemas: ['hop'] }));
-  expect(stillIncomplete.code).toBe('invalid_input'); expect(stillIncomplete).not.toHaveProperty('repair');
-  expect(readToolErrorText(await registry.invoke('lineage_search_objects', { query: 'origin', schemas: ['hop'] }))).toBeNull();
+  const partial = { depth: { upstream: { levels: 1, exactness: 'exact' } } };
+  expect(await registry.invoke('lineage_start_exploration', partial)).toBe(await world().registry.invoke('lineage_start_exploration', partial));
+  expect(JSON.parse(await registry.invoke('lineage_start_exploration', complete))).toMatchObject({ code: 'action_required', detail: { proposalRevision: 1 } });
+  expect(session.pendingExploration?.init).toMatchObject({ origin: ORIGIN, analysisMode: 'bb' });
 });
 
 
@@ -1736,7 +1741,7 @@ it.each([
   { tool: 'lineage_search_objects', valid: { query: 'origin', schemas: ['hop'], types: ['table'] }, siblings: false },
   { tool: 'lineage_search_ddl', valid: { query: 'Value', types: ['view'] }, siblings: false },
   { tool: 'lineage_search_objects', valid: { query: 'origin', schemas: ['hop'], types: ['table'] }, siblings: true },
-])('uses actual compiled read generations for $tool (ambiguous siblings=$siblings)', async row => {
+])('D-103: evaluates a compiled $tool correction generation on its own args (siblings=$siblings)', async row => {
   const { session, registry, port, queue, offered } = ownedInputWorld(); session.stateMachine = null;
   session.currentRoundId = 1; session.enterLmStage({ kind: 'discover' }, session.turnEpoch);
   const owner = TOOL_DEFS.find(tool => tool.name === row.tool)!.inputSchema;
@@ -1750,8 +1755,7 @@ it.each([
   queue([{ tool: row.tool, input: invalid }, ...(row.siblings ? [{ tool: row.tool, input: { ...invalid, schemas: [] } }] : [])]);
   const first = await executeToolAttempt(port, plan(), { priorState: initialToolPhaseAttemptState('discover') });
   expect(port.modelCalls).toBe(1); expect(session.currentRoundId).toBe(1);
-  if (row.siblings) { expect(JSON.parse(results.at(-1)!)).not.toHaveProperty('repair'); expect(results.at(-1)).toContain('no values are held'); }
-  else expect(JSON.parse(String(first.messages.find(message => message.getType() === 'tool')!.content))).toHaveProperty('repair', true);
+  expect(results.map(result => readToolErrorText(result)?.issuePaths)).toEqual(results.map(() => ['query']));
   const patch = { query: row.valid.query };
   queue([{ tool: row.tool, input: patch }]);
   await executeToolAttempt(port, plan(), { priorState: recordToolAttempt(initialToolPhaseAttemptState('discover'), first) });
@@ -1759,26 +1763,23 @@ it.each([
   expect(offered[1]!.find(tool => tool.name === row.tool).inputSchema, 'D-098: a repair serves the full schema')
     .toEqual(offered[0]!.find(tool => tool.name === row.tool).inputSchema);
   const fresh = ctWorld(); fresh.session.stateMachine = null; fresh.session.enterLmStage({ kind: 'discover' }, fresh.session.turnEpoch);
-  const expected = await fresh.registry.invoke(row.tool, row.siblings ? patch : row.valid);
-  expect(results.at(-1)).toBe(expected); expect(readToolErrorText(results.at(-1)!)).toBeNull();
+  expect(results.at(-1)).toBe(await fresh.registry.invoke(row.tool, patch)); expect(readToolErrorText(results.at(-1)!)).toBeNull();
   expect(session.hopLog.at(-1)?.input).toEqual(patch);
-  expect(session.toolInputRepairDrafts.get(row.tool)?.get()).toBeNull();
 });
 
-it.each([false, true])('accepts a declared regex mode repair, preserving final validation (repeat bad mode=%s)', async repeat => {
+it.each([false, true])('accepts a declared regex mode correction as a full resend (repeat bad mode=%s)', async repeat => {
   const { session, registry, invoke } = ownedInputWorld(); session.stateMachine = null;
   session.enterLmStage({ kind: 'discover' }, session.turnEpoch);
   const original = { query: '[', mode: 'regex', schemas: ['hop'], types: ['table'] };
-  const first = JSON.parse(await invoke('lineage_search_objects', original));
-  expect(first).toMatchObject({ code: 'invalid_regex', repair: true, resend: ['mode'] });
-  expect(registry.get('lineage_search_objects')!.inputSchema.safeParse({ mode: 'substring' }).success, 'D-098: a repair serves the full schema').toBe(false);
-  expect(session.toolInputRepairDrafts.get('lineage_search_objects')!.get()).toEqual(original);
-  if (repeat) expect(readToolErrorText(await invoke('lineage_search_objects', { mode: 'regex' }))?.code).toBe('invalid_regex');
-  const corrected = await invoke('lineage_search_objects', { mode: 'substring' });
+  expect(JSON.parse(await invoke('lineage_search_objects', original))).toMatchObject({ code: 'invalid_regex', resend: ['mode'] });
+  expect(registry.get('lineage_search_objects')!.inputSchema.safeParse({ mode: 'substring' }).success, 'D-098: a correction is served the full schema').toBe(false);
+  if (repeat) expect(readToolErrorText(await invoke('lineage_search_objects', original))?.code).toBe('invalid_regex');
+  const resend = { ...original, mode: 'substring' };
+  const corrected = await invoke('lineage_search_objects', resend);
   expect(readToolErrorText(corrected)).toBeNull();
   const fresh = ctWorld(); fresh.session.stateMachine = null; fresh.session.enterLmStage({ kind: 'discover' }, fresh.session.turnEpoch);
-  expect(corrected).toBe(await fresh.registry.invoke('lineage_search_objects', { ...original, mode: 'substring' }));
-  expect(session.hopLog.at(-1)?.input).toEqual({ mode: 'substring' });
+  expect(corrected).toBe(await fresh.registry.invoke('lineage_search_objects', resend));
+  expect(session.hopLog.at(-1)?.input).toEqual(resend);
 });
 
 it.each([false, true])('repairs an owed section through the compiled active hop under the full schema (full resend=%s)', async full => {

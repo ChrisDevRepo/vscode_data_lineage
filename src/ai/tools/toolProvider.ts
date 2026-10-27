@@ -490,7 +490,7 @@ export function buildAiToolRegistry(
   for (const def of TOOL_DEFS) {
     const execute = dispatch[def.name];
     const inputBoundary = host?.caller !== 'external' && !['hop_commit', 'presentation_commit'].includes(def.effect);
-    const repairable = ownsInputRepair && inputBoundary;
+    const repairable = ownsInputRepair && def.effect === 'session_start'; // only start: reads are stateless (D-103)
     let owner: z.ZodType = def.inputSchema;
     let startedRound = -1, starts = 0, startedContext = '';
     const context = () => { const s = getSession(); return JSON.stringify([s.turnEpoch, s.phase.kind, s.activeLmStage,
