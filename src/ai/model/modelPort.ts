@@ -7,6 +7,9 @@ import {
 } from '@langchain/core/messages';
 import type { ZodType } from 'zod';
 import { REJECTION_CODES } from '../support/rejectionCodes';
+import { normalizeModelInput } from '../tools/normalizeModelInput';
+import { toolCallNotationFault } from '../support/toolCallNotation';
+import { STRUCTURED_OUTPUT_TOOL, StructuredOutputError, structuredRejectReason } from '../providers/structuredOutput';
 import {
   describeProviderErrorForUser,
   type ProviderErrorDiagnostic,
@@ -234,6 +237,65 @@ export interface InvalidGeneratedToolCall {
   readonly hint?: string;
   /** Paths of the input values that rejected the call, when the producer names them. */
   readonly issuePaths?: readonly string[];
+}
+
+/** One provider tool call as a port's transport decoded it: its object arguments, or the argument text that was no JSON object. */
+export type EmittedToolCall = { readonly callId: string; readonly toolName: string } & (
+  | { readonly args: Record<string, unknown> }
+  | { readonly malformedArgs: string }
+);
+
+/** Classifies one emitted call against the offered tools, normalizing valid arguments once (D-086); `replayInput` is what the transcript replays (`{}` for arguments that were no object). */
+export function classifyToolCall(
+  emitted: EmittedToolCall,
+  definitions: ReadonlyMap<string, ModelToolDefinition>,
+  debugLog?: (message: string) => void,
+): { readonly call: GeneratedToolCall; readonly replayInput: Record<string, unknown> } {
+  const { callId, toolName } = emitted;
+  const replayInput = 'args' in emitted ? emitted.args : {};
+  const reject = (code: InvalidGeneratedToolCall['code'], reason: string) => ({ replayInput,
+    call: { valid: false as const, callId, toolName, input: 'args' in emitted ? emitted.args : emitted.malformedArgs, code, reason } });
+  const definition = definitions.get(toolName);
+  if (!definition) return reject(REJECTION_CODES.unknownTool, 'Tool is not available in this phase.');
+  if ('malformedArgs' in emitted) {
+    return reject(REJECTION_CODES.invalidToolInput, emitted.malformedArgs.trim() ? TOOL_ARGUMENTS_NOT_OBJECT_REASON : TOOL_ARGUMENTS_EMPTY_REASON);
+  }
+  const normalized = normalizeModelInput(definition.inputSchema, emitted.args);
+  logFixes(toolName, normalized.fixes, debugLog);
+  return { call: { valid: true, callId, toolName, input: normalized.input }, replayInput };
+}
+
+/** Finishes a forced structured-output generation: one call to the structured tool, normalized once (D-086), then parsed by the schema. */
+export function finishStructured<T>(
+  emitted: readonly EmittedToolCall[],
+  schema: ZodType<T>,
+  debugLog?: (message: string) => void,
+): T {
+  const calls = emitted.flatMap((call) => ('args' in call ? [call.args] : []));
+  if (emitted.some((call) => call.toolName !== STRUCTURED_OUTPUT_TOOL) || (calls.length > 0 && calls.length < emitted.length)) {
+    throw new StructuredOutputError(`unexpected tool call alongside ${STRUCTURED_OUTPUT_TOOL}`);
+  }
+  const empty = (): StructuredOutputError => new StructuredOutputError(`${STRUCTURED_OUTPUT_TOOL} arguments were empty`, REJECTION_CODES.emptyStructuredOutput);
+  const [first] = emitted;
+  if (calls.length === 0 && first && 'malformedArgs' in first) {
+    if (emitted.length === 1 && !first.malformedArgs.trim()) throw empty();
+    throw new StructuredOutputError(`${STRUCTURED_OUTPUT_TOOL} arguments were not a JSON object`);
+  }
+  const normalized = calls.length === 1 ? normalizeModelInput(schema, calls[0]) : undefined;
+  logFixes(STRUCTURED_OUTPUT_TOOL, normalized?.fixes ?? [], debugLog);
+  const payload = normalized?.input;
+  const notation = toolCallNotationFault(payload);
+  if (notation) throw new StructuredOutputError(notation.reason, REJECTION_CODES.invalidStructuredOutput, notation.hint);
+  const parsed = calls.length === 1 ? schema.safeParse(payload) : undefined;
+  if (parsed?.success) return parsed.data;
+  if (calls.length === 1 && Object.keys(calls[0]).length === 0) throw empty();
+  if (calls.length > 1) throw new StructuredOutputError(`multiple ${STRUCTURED_OUTPUT_TOOL} tool calls`);
+  const { reason, hint } = structuredRejectReason(calls.length === 1, parsed?.error, payload, schema);
+  throw new StructuredOutputError(reason, REJECTION_CODES.invalidStructuredOutput, hint);
+}
+
+function logFixes(toolName: string, fixes: readonly { path: string; before: unknown }[], debugLog?: (message: string) => void): void {
+  for (const fix of fixes) debugLog?.(`[Normalize] tool=${toolName} path=${fix.path} before=${JSON.stringify(fix.before)}`);
 }
 
 /** Validation result for a provider-emitted tool call. */

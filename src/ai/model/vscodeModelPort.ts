@@ -2,7 +2,10 @@ import * as vscode from 'vscode';
 import { AIMessageChunk, SystemMessage, type BaseMessage, type MessageContent, type ToolCall } from '@langchain/core/messages';
 import {
   assertToolCallIds,
+  classifyToolCall,
   type CompleteTextInput,
+  type EmittedToolCall,
+  finishStructured,
   type GeneratedToolCall,
   type GenerateStructuredInput,
   type ModelPort,
@@ -13,7 +16,6 @@ import {
   type ToolGenerationContent,
   type ToolGenerationInput,
   type ToolGenerationResult,
-  TOOL_ARGUMENTS_NOT_OBJECT_REASON,
   cancelledError,
   cancelledToolTurnResult,
   modelToolCallMessage,
@@ -30,15 +32,8 @@ import {
   formatProviderErrorDiagnostic,
   sanitizeProviderErrorDiagnostic,
 } from '../support/text';
-import { REJECTION_CODES } from '../support/rejectionCodes';
 import { DEFAULT_TURN_TOKEN_BUDGET, estimateTokens, type TurnTokenBudget } from '../support/tokenBudget';
-import { toolCallNotationFault } from '../support/toolCallNotation';
-import { normalizeModelInput } from '../tools/normalizeModelInput';
-import {
-  STRUCTURED_OUTPUT_TOOL,
-  StructuredOutputError,
-  structuredRejectReason,
-} from '../providers/structuredOutput';
+import { STRUCTURED_OUTPUT_TOOL } from '../providers/structuredOutput';
 import { errorMessage } from '../../utils/errorMessage';
 
 /** Request-scoped model port over the exact native model selected in Chat UI. */
@@ -134,39 +129,10 @@ export class VscodeModelPort implements ModelPort {
       let rebuilt = false;
 
       for (const emittedCall of emittedCalls) {
-        const { id: callId, name: toolName } = emittedCall;
         // Malformed calls need a replay anchor regardless of which rejection takes precedence.
         if ('malformedArgs' in emittedCall) rebuilt = true;
-        const args = 'args' in emittedCall ? emittedCall.args : emittedCall.malformedArgs;
-        const definition = definitionsByName.get(toolName);
-        let call: GeneratedToolCall;
-        if (!definition) {
-          call = {
-            valid: false,
-            callId,
-            toolName,
-            input: args,
-            code: REJECTION_CODES.unknownTool,
-            reason: 'Tool is not available in this phase.',
-          };
-        } else if ('malformedArgs' in emittedCall) {
-          // Charged to the call and answered by its own tool result, so the next reply can correct it.
-          call = {
-            valid: false,
-            callId,
-            toolName,
-            input: emittedCall.malformedArgs,
-            code: REJECTION_CODES.invalidToolInput,
-            reason: TOOL_ARGUMENTS_NOT_OBJECT_REASON,
-          };
-        } else {
-          const normalized = normalizeModelInput(definition.inputSchema, args);
-          for (const fix of normalized.fixes) {
-            this.options.debugLog?.(`[Normalize] tool=${toolName} path=${fix.path} before=${JSON.stringify(fix.before)}`);
-          }
-          call = { valid: true, callId, toolName, input: normalized.input };
-        }
-        replayed.push({ callId, toolName, input: 'malformedArgs' in emittedCall ? {} : args });
+        const { call, replayInput } = classifyToolCall(emittedCall, definitionsByName, this.options.debugLog);
+        replayed.push({ callId: call.callId, toolName: call.toolName, input: replayInput });
         toolCalls.push(call);
         content.push({ type: 'tool-call', call });
       }
@@ -212,7 +178,7 @@ export class VscodeModelPort implements ModelPort {
     if (input.signal?.aborted) throw cancelledError();
     this.modelCalls += 1;
     const outputSchema = toModelJsonSchema(input.schema);
-    const { message } = await this.collectGeneration(
+    const { emitted } = await this.collectGeneration(
       input.messages,
       input.system,
       [],
@@ -222,38 +188,7 @@ export class VscodeModelPort implements ModelPort {
       input.phase,
       (bridge) => bridge.bindStructuredOutputTool(outputSchema, STRUCTURED_OUTPUT_TOOL),
     );
-    const calls = message.tool_calls ?? [];
-    const invalid = message.invalid_tool_calls ?? [];
-    if (calls.some((call) => call.name !== STRUCTURED_OUTPUT_TOOL)
-      || invalid.some((call) => call.name !== STRUCTURED_OUTPUT_TOOL)
-      || (calls.length > 0 && invalid.length > 0)) {
-      throw new StructuredOutputError(`unexpected tool call alongside ${STRUCTURED_OUTPUT_TOOL}`);
-    }
-    if (calls.length === 0 && (message.invalid_tool_calls ?? []).some((call) => call.name === STRUCTURED_OUTPUT_TOOL)) {
-      throw new StructuredOutputError(`${STRUCTURED_OUTPUT_TOOL} arguments were not a JSON object`);
-    }
-    const normalized = calls.length === 1 ? normalizeModelInput(input.schema, calls[0].args) : undefined;
-    for (const fix of normalized?.fixes ?? []) {
-      this.options.debugLog?.(`[Normalize] tool=${STRUCTURED_OUTPUT_TOOL} path=${fix.path} before=${JSON.stringify(fix.before)}`);
-    }
-    const payload = normalized?.input;
-    const notation = toolCallNotationFault(payload);
-    if (notation) throw new StructuredOutputError(notation.reason, REJECTION_CODES.invalidStructuredOutput, notation.hint);
-    const parsed = calls.length === 1 ? input.schema.safeParse(payload) : undefined;
-    if (parsed?.success) return parsed.data;
-    const emptyRequiredPayload = calls.length === 1
-      && isEmptyRecord(calls[0].args);
-    if (emptyRequiredPayload) {
-      throw new StructuredOutputError(
-        `${STRUCTURED_OUTPUT_TOOL} arguments were empty`,
-        REJECTION_CODES.emptyStructuredOutput,
-      );
-    }
-    if (calls.length > 1) {
-      throw new StructuredOutputError(`multiple ${STRUCTURED_OUTPUT_TOOL} tool calls`);
-    }
-    const { reason, hint } = structuredRejectReason(calls.length === 1, parsed?.error, payload, input.schema);
-    throw new StructuredOutputError(reason, REJECTION_CODES.invalidStructuredOutput, hint);
+    return finishStructured(emitted, input.schema, this.options.debugLog);
   }
 
   /** Completes text without exposing tools. */
@@ -369,12 +304,6 @@ export class VscodeModelPort implements ModelPort {
   }
 }
 
-/** One provider tool call: its parsed object arguments, or the JSON text LangChain could not read as an object. */
-type EmittedToolCall = { readonly id: string; readonly name: string } & (
-  | { readonly args: Record<string, unknown> }
-  | { readonly malformedArgs: string }
-);
-
 /** The generation's tool calls in emission order, pairing LangChain's parsed `tool_calls` and its `invalid_tool_calls` (arguments that were no JSON object) back onto the bridge's one chunk per call. */
 function emittedToolCalls(message: AIMessageChunk): EmittedToolCall[] {
   const valid: ToolCall[] = [...(message.tool_calls ?? [])];
@@ -389,21 +318,14 @@ function emittedToolCalls(message: AIMessageChunk): EmittedToolCall[] {
   const toEmitted = (id: string | undefined): EmittedToolCall => {
     if (!id) throw incomplete();
     const parsed = take(valid, id);
-    if (parsed) return { id, name: parsed.name, args: parsed.args };
+    if (parsed) return { callId: id, toolName: parsed.name, args: parsed.args };
     const malformed = take(invalid, id);
-    if (malformed) return { id, name: malformed.name ?? '', malformedArgs: malformed.args ?? '' };
+    if (malformed) return { callId: id, toolName: malformed.name ?? '', malformedArgs: malformed.args ?? '' };
     throw incomplete();
   };
   const chunks = [...(message.tool_call_chunks ?? [])].sort((left, right) => Number(left.index ?? 0) - Number(right.index ?? 0));
   if (chunks.length === valid.length + invalid.length) return chunks.map((chunk) => toEmitted(chunk.id));
   return ids.map(toEmitted);
-}
-
-function isEmptyRecord(value: unknown): value is Record<string, never> {
-  return value !== null
-    && typeof value === 'object'
-    && !Array.isArray(value)
-    && Object.keys(value).length === 0;
 }
 
 function toLangChainToolChoice(

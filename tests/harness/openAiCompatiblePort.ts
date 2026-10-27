@@ -2,7 +2,10 @@
 import { retryAfterDelayMs } from './httpRetry';
 import type { BaseMessage, MessageContent } from '@langchain/core/messages';
 import {
+  classifyToolCall,
   type CompleteTextInput,
+  type EmittedToolCall,
+  finishStructured,
   type GeneratedToolCall,
   type GenerateStructuredInput,
   type ModelIdentity,
@@ -20,8 +23,6 @@ import {
   isPortCancellation,
   messageContentToText,
   modelToolCallMessage,
-  TOOL_ARGUMENTS_EMPTY_REASON,
-  TOOL_ARGUMENTS_NOT_OBJECT_REASON,
 } from '../../src/ai/model/modelPort';
 import {
   systemPromptHash,
@@ -30,21 +31,16 @@ import {
   type WireRecord,
 } from '../../src/ai/observability/wireLog';
 import { toModelJsonSchema } from '../../src/ai/tools/jsonSchema';
-import { normalizeModelInput } from '../../src/ai/tools/normalizeModelInput';
 import {
   formatProviderErrorDiagnostic,
   redactProviderSecrets,
   sanitizeProviderError,
   sanitizeProviderErrorDiagnostic,
 } from '../../src/ai/support/text';
-import { REJECTION_CODES } from '../../src/ai/support/rejectionCodes';
 import { DEFAULT_TURN_TOKEN_BUDGET, estimateTokens, type TurnTokenBudget } from '../../src/ai/support/tokenBudget';
-import { toolCallNotationFault } from '../../src/ai/support/toolCallNotation';
 import {
   STRUCTURED_OUTPUT_TOOL,
   STRUCTURED_OUTPUT_TOOL_DESCRIPTION,
-  StructuredOutputError,
-  structuredRejectReason,
 } from '../../src/ai/providers/structuredOutput';
 import {
   type OpenAiChatMessage,
@@ -159,8 +155,6 @@ export interface OpenAiCompatiblePortOptions {
   readonly wireLog?: (record: WireRecord) => void;
   /** Whether the active trace captures the system instruction and verbatim provider bodies. */
   readonly traceVerbose?: boolean;
-  /** Forces every `lineage_start_exploration` call to `analysisMode:'bb'` with `targetColumns` dropped, regardless of what the model requested. */
-  readonly forceBb?: boolean;
   /** Transport seam. Defaults to the runtime's global `fetch`. */
   readonly fetchImpl?: FetchLike;
   /** Token budget this port's turn runs under. */
@@ -284,10 +278,8 @@ type PortGenerationPart =
       readonly type: 'tool-call';
       readonly callId: string;
       readonly toolName: string;
-      /** Parsed object arguments; absent when {@link argumentsIssue} is set. */
+      /** Parsed object arguments; absent when the arguments were empty or no JSON object. */
       readonly input?: Record<string, unknown>;
-      /** Why the arguments could not be used, when they could not. */
-      readonly argumentsIssue?: 'empty' | 'malformed';
       /** Content-free JSON syntax category and zero-based character offset. */
       readonly argumentsDiagnostic?: string;
       readonly rawArguments: string;
@@ -420,67 +412,8 @@ export class OpenAiCompatiblePort implements ModelPort {
           content.push({ type: 'text', text: part.text });
           continue;
         }
-        const definition = definitionsByName.get(part.toolName);
-        let call: GeneratedToolCall;
-        let replayInput: unknown = part.input;
-        if (!definition) {
-          call = {
-            valid: false,
-            callId: part.callId,
-            toolName: part.toolName,
-            input: part.input,
-            code: 'unknown_tool',
-            reason: 'Tool is not available in this phase.',
-          };
-        } else if (part.argumentsIssue) {
-          // DIVERGENCE (DD-5): a routine provider failure class on this lane, so it is charged to
-          // the call and repaired next round, not raised as a whole-generation provider error.
-          // `input` carries the raw `arguments` text here — never a parsed object, since none
-          // exists — the same "payload exactly as the provider sent it" contract every other arm
-          // below observes; the replayed assistant call carries `{}`, the only object this
-          // genuinely unparseable case has to offer.
-          replayInput = {};
-          if (part.argumentsDiagnostic) {
-            this.options.debugLog?.(`[AI] tool-arguments ${part.argumentsDiagnostic}`);
-          }
-          call = {
-            valid: false,
-            callId: part.callId,
-            toolName: part.toolName,
-            input: part.rawArguments,
-            code: 'invalid_tool_input',
-            reason: part.argumentsIssue === 'empty' ? TOOL_ARGUMENTS_EMPTY_REASON : TOOL_ARGUMENTS_NOT_OBJECT_REASON,
-          };
-        } else {
-          let effectiveInput: unknown = part.input;
-          if (
-            this.options.forceBb
-            && part.toolName === 'lineage_start_exploration'
-            && typeof effectiveInput === 'object'
-            && effectiveInput !== null
-            && !Array.isArray(effectiveInput)
-          ) {
-            const original = effectiveInput as Record<string, unknown>;
-            const was = typeof original.analysisMode === 'string' ? original.analysisMode : 'unset';
-            const droppedTargetColumns = Array.isArray(original.targetColumns)
-              ? original.targetColumns
-              : [];
-            const rewritten: Record<string, unknown> = { ...original, analysisMode: 'bb' };
-            delete rewritten.targetColumns;
-            effectiveInput = rewritten;
-            this.options.debugLog?.(
-              `[AI] [ForceBB] phase=${input.phase} call=${this.modelCalls} lineage_start_exploration `
-              + `analysisMode=${was}->bb droppedTargetColumns=[${droppedTargetColumns.join(',')}]`,
-            );
-          }
-          replayInput = effectiveInput;
-          // Mirrors the product port: the one D-086 normalization with the served schema (D-103).
-          const normalized = normalizeModelInput(definition.inputSchema, effectiveInput);
-          for (const fix of normalized.fixes) {
-            this.options.debugLog?.(`[Normalize] tool=${part.toolName} path=${fix.path} before=${JSON.stringify(fix.before)}`);
-          }
-          call = { valid: true, callId: part.callId, toolName: part.toolName, input: normalized.input };
-        }
+        if (part.argumentsDiagnostic && definitionsByName.has(part.toolName)) this.options.debugLog?.(`[AI] tool-arguments ${part.argumentsDiagnostic}`);
+        const { call, replayInput } = classifyToolCall(emittedCall(part), definitionsByName, this.options.debugLog);
         toolCalls.push(call);
         replayed.push({ callId: part.callId, toolName: part.toolName, input: replayInput });
         content.push({ type: 'tool-call', call });
@@ -538,31 +471,8 @@ export class OpenAiCompatiblePort implements ModelPort {
       undefined,
       input.phase,
     );
-    const calls = response.parts.filter(
-      (part): part is Extract<PortGenerationPart, { type: 'tool-call' }> =>
-        part.type === 'tool-call' && part.toolName === STRUCTURED_OUTPUT_TOOL,
-    );
-    const single = calls.length === 1 ? calls[0] : undefined;
-    const structuredInput: unknown = single?.input;
-    const notation = toolCallNotationFault(structuredInput);
-    if (notation) throw new StructuredOutputError(notation.reason, REJECTION_CODES.invalidStructuredOutput, notation.hint);
-    const parsed = single && !single.argumentsIssue
-      ? input.schema.safeParse(structuredInput)
-      : undefined;
-    if (parsed?.success) return parsed.data;
-    // Empty `arguments` and an empty object mean the same thing here — the model returned no
-    // fields — so both classify as `empty_structured_output`, the code graph recovery keys off.
-    const emptyRequiredPayload = single !== undefined
-      && (single.argumentsIssue === 'empty' || isEmptyRecord(single.input));
-    if (emptyRequiredPayload) {
-      throw new StructuredOutputError(`${STRUCTURED_OUTPUT_TOOL} arguments were empty`, 'empty_structured_output');
-    }
-    if (calls.length > 1) throw new StructuredOutputError(`multiple ${STRUCTURED_OUTPUT_TOOL} tool calls`);
-    if (single?.argumentsIssue === 'malformed') {
-      throw new StructuredOutputError(`${STRUCTURED_OUTPUT_TOOL} arguments were not a JSON object`);
-    }
-    const { reason, hint } = structuredRejectReason(calls.length === 1, parsed?.error, structuredInput, input.schema);
-    throw new StructuredOutputError(reason, 'invalid_structured_output', hint);
+    const emitted = response.parts.flatMap((part) => (part.type === 'tool-call' ? [emittedCall(part)] : []));
+    return finishStructured(emitted, input.schema, this.options.debugLog);
   }
 
   /** Completes text without exposing tools. */
@@ -1107,8 +1017,8 @@ function responsesToolChoice(choice: unknown): unknown {
 
 function parseArguments(serialized: string):
   | { readonly input: Record<string, unknown> }
-  | { readonly argumentsIssue: 'empty' | 'malformed'; readonly argumentsDiagnostic?: string } {
-  if (!serialized.trim()) return { argumentsIssue: 'empty' };
+  | { readonly argumentsDiagnostic?: string } {
+  if (!serialized.trim()) return {};
   let parsed: unknown;
   try {
     parsed = JSON.parse(serialized);
@@ -1128,13 +1038,10 @@ function parseArguments(serialized: string):
         ? 'trailing comma'
         : 'invalid encoding';
     return {
-      argumentsIssue: 'malformed',
       argumentsDiagnostic: `Invalid JSON syntax: ${category}${offset === undefined ? '' : ` at character ${offset}`}.`,
     };
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return { argumentsIssue: 'malformed' };
-  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
   return { input: parsed as Record<string, unknown> };
 }
 
@@ -1184,11 +1091,10 @@ function describeUsage(usage: TokenUsage | undefined): string {
     + ` total=${usage.totalTokens ?? '-'} reasoning=${usage.reasoningTokens ?? '-'}`;
 }
 
-function isEmptyRecord(value: unknown): value is Record<string, never> {
-  return value !== null
-    && typeof value === 'object'
-    && !Array.isArray(value)
-    && Object.keys(value).length === 0;
+/** The shared model-port view of one decoded call: its object arguments, or the raw text that was none. */
+function emittedCall(part: Extract<PortGenerationPart, { type: 'tool-call' }>): EmittedToolCall {
+  const { callId, toolName } = part;
+  return part.input ? { callId, toolName, args: part.input } : { callId, toolName, malformedArgs: part.rawArguments };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
