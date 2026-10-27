@@ -48,6 +48,7 @@ import {
 } from '../../src/ai/providers/structuredOutput';
 import {
   type OpenAiChatMessage,
+  type ResponsesReasoning,
   projectMessages,
   readResponsesUsage,
   readUsage,
@@ -647,7 +648,7 @@ export class OpenAiCompatiblePort implements ModelPort {
           store: false,
           ...responsesReasoningPayload(this.config.requestTuning),
           ...(tools.length > 0
-            ? { tools: tools.map(({ function: fn }) => ({ type: 'function' as const, ...fn })), tool_choice: responsesToolChoice(toolChoice) }
+            ? { tools: tools.map(({ function: fn }) => ({ type: 'function' as const, ...fn, strict: false })), tool_choice: responsesToolChoice(toolChoice) }
             : {}),
         }
       : {
@@ -963,14 +964,7 @@ function readCompletion(body: unknown): ReadCompletion {
   const root = asRecord(body);
   const choices = Array.isArray(root?.choices) ? root.choices : undefined;
   const error = asRecord(root?.error) ?? asRecord(asRecord(choices?.[0])?.error);
-  if (error) {
-    const detail = sanitizeProviderError(JSON.stringify({ code: error.code, type: error.type, message: error.message }));
-    throw new ModelPortError(
-      'provider_error',
-      `Provider returned an error envelope${detail ? `: ${detail}` : ''}.`,
-      Object.assign(new Error('Provider error envelope.'), { code: error.code }),
-    );
-  }
+  throwIfErrorEnvelope(error);
   if (!choices || choices.length === 0) {
     throw new ModelPortError(
       'unsupported_response',
@@ -1015,6 +1009,17 @@ function readCompletion(body: unknown): ReadCompletion {
   };
 }
 
+/** A provider error delivered inside an HTTP 200 body is a provider failure, never an answer. */
+function throwIfErrorEnvelope(error: Record<string, unknown> | undefined): void {
+  if (!error) return;
+  const detail = sanitizeProviderError(JSON.stringify({ code: error.code, type: error.type, message: error.message }));
+  throw new ModelPortError(
+    'provider_error',
+    `Provider returned an error envelope${detail ? `: ${detail}` : ''}.`,
+    Object.assign(new Error('Provider error envelope.'), { code: error.code }),
+  );
+}
+
 function toolCallPart(callId: string, toolName: string, args: unknown, extraContent?: Record<string, unknown>): PortGenerationPart {
   const rawArguments = typeof args === 'string' ? args : '';
   return {
@@ -1030,20 +1035,17 @@ function toolCallPart(callId: string, toolName: string, args: unknown, extraCont
 /** Decodes one `/responses` body into the same ordered parts as {@link readCompletion}. */
 function readResponse(body: unknown): ReadCompletion {
   const root = asRecord(body);
-  const error = asRecord(root?.error);
-  if (error) {
-    const detail = sanitizeProviderError(JSON.stringify({ code: error.code, type: error.type, message: error.message }));
-    throw new ModelPortError(
-      'provider_error',
-      `Provider returned an error envelope${detail ? `: ${detail}` : ''}.`,
-      Object.assign(new Error('Provider error envelope.'), { code: error.code }),
-    );
-  }
+  throwIfErrorEnvelope(asRecord(root?.error));
   if (!Array.isArray(root?.output)) {
     throw new ModelPortError('unsupported_response', 'Provider response carried no output.');
   }
   const parts: PortGenerationPart[] = [];
-  const reasoningItems: unknown[] = [];
+  const reasoningItems: ResponsesReasoning[] = [];
+  let pending: ResponsesReasoning['item'][] = [];
+  const flush = (before?: string): void => {
+    reasoningItems.push(...pending.map((item) => ({ ...(before ? { before } : {}), item })));
+    pending = [];
+  };
   for (const entry of root.output) {
     const item = asRecord(entry);
     if (item?.type === 'message') {
@@ -1053,18 +1055,21 @@ function readResponse(body: unknown): ReadCompletion {
         .map(content => content!.text as string)
         .join('');
       if (text) parts.push({ type: 'text', text });
+      flush();
     } else if (item?.type === 'reasoning') {
       // Stateless (`store: false`) turns must hand the encrypted reasoning back verbatim, in order.
-      reasoningItems.push(item);
+      pending.push(item as ResponsesReasoning['item']);
     } else if (item?.type === 'function_call') {
       const callId = typeof item.call_id === 'string' ? item.call_id : '';
       const toolName = typeof item.name === 'string' ? item.name : '';
       if (!callId || !toolName) {
         throw new ModelPortError('unsupported_response', 'Provider returned a tool call without an identifier or name.');
       }
+      flush(callId);
       parts.push(toolCallPart(callId, toolName, item.arguments));
     }
   }
+  flush();
   assertToolCallIds(parts.flatMap(part => part.type === 'tool-call' ? [part.callId] : []));
   const usage = readResponsesUsage(root.usage);
   const incomplete = asRecord(root.incomplete_details)?.reason;

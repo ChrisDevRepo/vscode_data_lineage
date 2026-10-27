@@ -187,6 +187,11 @@ function parseProviderResponse(payload) {
   return { toolCalls, text, ...(payload.usage && typeof payload.usage === 'object' ? { usage: payload.usage } : {}) };
 }
 
+/** Whether a complete request URL names the OpenAI Responses wire (path ends in `/responses`). */
+function isResponsesEndpoint(value) {
+  return new URL(value).pathname.replace(/\/+$/u, '').endsWith('/responses');
+}
+
 function providerEndpoint(value, provider, model) {
   let endpoint;
   try {
@@ -198,7 +203,7 @@ function providerEndpoint(value, provider, model) {
     throw new Error('AI provider endpoint must use HTTP or HTTPS.');
   }
   endpoint.pathname = endpoint.pathname.replace(/\/+$/u, '');
-  if (endpoint.pathname.endsWith('/chat/completions') || endpoint.pathname.endsWith('/responses')) return endpoint.toString();
+  if (endpoint.pathname.endsWith('/chat/completions') || isResponsesEndpoint(endpoint.toString())) return endpoint.toString();
   if (provider === 'azure') {
     if (endpoint.pathname.endsWith('/openai/v1')) {
       endpoint.pathname = `${endpoint.pathname}/chat/completions`;
@@ -249,4 +254,4 @@ function requiredObject(value, label) {
   return value;
 }
 
-module.exports = { createProviderFetch, buildProviderRequest, parseProviderResponse, providerEndpoint, sendProviderRequest, toProviderMessages };
+module.exports = { createProviderFetch, buildProviderRequest, parseProviderResponse, providerEndpoint, isResponsesEndpoint, sendProviderRequest, toProviderMessages };

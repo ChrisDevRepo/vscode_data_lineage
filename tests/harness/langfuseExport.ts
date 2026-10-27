@@ -396,6 +396,7 @@ function buildSpans(
                 output: generation.usage.outputTokens,
                 total: generation.usage.totalTokens,
                 ...(generation.usage.reasoningTokens !== undefined ? { reasoning: generation.usage.reasoningTokens } : {}),
+                ...(generation.usage.cachedTokens !== undefined ? { cached: generation.usage.cachedTokens } : {}),
               }))]
             : []),
           ...(generation.finishReason ? [stringAttr('langfuse.observation.metadata.finishReason', generation.finishReason)] : []),

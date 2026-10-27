@@ -37,6 +37,8 @@ export interface TokenUsage {
   readonly totalTokens?: number;
   /** Reasoning tokens billed separately by reasoning models, when the provider itemizes them. */
   readonly reasoningTokens?: number;
+  /** Prompt tokens served from the provider's cache (a subset of `inputTokens`), when reported. */
+  readonly cachedTokens?: number;
 }
 
 /** One captured moment of a generation, before the port stamps it with its context. */

@@ -413,8 +413,8 @@ const stringLeaves = (value, path = '') => typeof value === 'string' ? [{ path, 
 
 /** Counts usage once per recorded response, with explicit field coverage; absent totals remain unknown. */
 function measureUsage(responses) {
-  const fields = { input: ['inputTokens', 'promptTokens'], output: ['outputTokens', 'completionTokens'], total: ['totalTokens'], reasoning: ['reasoningTokens'] };
-  return { generations: responses.length, cache: { supported: false, total: null, coveredGenerations: 0, missingGenerations: responses.length, reason: 'Captured TokenUsage contract does not expose cache token fields.' }, ...Object.fromEntries(Object.entries(fields).map(([name, keys]) => {
+  const fields = { input: ['inputTokens', 'promptTokens'], output: ['outputTokens', 'completionTokens'], total: ['totalTokens'], reasoning: ['reasoningTokens'], cache: ['cachedTokens'] };
+  return { generations: responses.length, ...Object.fromEntries(Object.entries(fields).map(([name, keys]) => {
     const values = responses.map(record => keys.map(key => record.usage?.[key]).find(value => typeof value === 'number' && Number.isFinite(value)));
     const known = values.filter(value => value !== undefined);
     return [name, { total: known.length === responses.length && responses.length ? known.reduce((sum, value) => sum + value, 0) : null,

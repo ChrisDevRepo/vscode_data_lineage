@@ -142,6 +142,12 @@ function messageText(content: MessageContent): string {
   return text;
 }
 
+/** One opaque Responses reasoning item with the call it preceded in `output` (`before` is that `call_id`; absent when text or nothing followed). */
+export interface ResponsesReasoning {
+  readonly before?: string;
+  readonly item: { readonly type: 'reasoning'; readonly [key: string]: unknown };
+}
+
 /** One item of the Responses API `input` array. */
 export type ResponsesInputItem =
   | { readonly role: 'system' | 'user' | 'assistant'; readonly content: string }
@@ -155,13 +161,15 @@ export function toResponsesInput(messages: readonly OpenAiChatMessage[]): Respon
     if (message.role === 'tool') {
       return [{ type: 'function_call_output', call_id: message.tool_call_id ?? '', output: message.content ?? '' }];
     }
+    const reasoning = (message.reasoning_details ?? []) as readonly ResponsesReasoning[];
+    // Each reasoning item stays directly ahead of the call it preceded: [r1, call1, r2, call2].
     return [
-      // Reasoning items precede the turn's text and calls, in the order the model produced them.
-      ...(message.reasoning_details ?? []).map((item) => item as ResponsesInputItem),
+      ...reasoning.filter(({ before }) => before === undefined).map(({ item }) => item),
       ...(message.content ? [{ role: message.role, content: message.content }] : []),
-      ...(message.tool_calls ?? []).map((call): ResponsesInputItem => ({
-        type: 'function_call', call_id: call.id, name: call.function.name, arguments: call.function.arguments,
-      })),
+      ...(message.tool_calls ?? []).flatMap((call): ResponsesInputItem[] => [
+        ...reasoning.filter(({ before }) => before === call.id).map(({ item }) => item),
+        { type: 'function_call', call_id: call.id, name: call.function.name, arguments: call.function.arguments },
+      ]),
     ];
   });
 }
@@ -269,16 +277,20 @@ export function readUsage(raw: unknown): TokenUsage | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const usage = raw as Record<string, unknown>;
   const details = usage.completion_tokens_details as Record<string, unknown> | undefined;
+  const promptDetails = usage.prompt_tokens_details as Record<string, unknown> | undefined;
   const mapped: {
     inputTokens?: number;
     outputTokens?: number;
     totalTokens?: number;
     reasoningTokens?: number;
+    cachedTokens?: number;
   } = {};
   const input = finite(usage.prompt_tokens);
   const output = finite(usage.completion_tokens);
   const total = finite(usage.total_tokens);
   const reasoning = finite(details?.reasoning_tokens);
+  const cached = finite(promptDetails?.cached_tokens);
+  if (cached !== undefined) mapped.cachedTokens = cached;
   if (input !== undefined) mapped.inputTokens = input;
   if (output !== undefined) mapped.outputTokens = output;
   if (total !== undefined) mapped.totalTokens = total;
@@ -286,7 +298,7 @@ export function readUsage(raw: unknown): TokenUsage | undefined {
   return Object.keys(mapped).length > 0 ? mapped : undefined;
 }
 
-/** Reads Responses API token accounting into the same usage fields; `cached_tokens` has no field there. */
+/** Reads Responses API token accounting into the same usage fields. */
 export function readResponsesUsage(raw: unknown): TokenUsage | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const usage = raw as Record<string, unknown>;
@@ -295,6 +307,7 @@ export function readResponsesUsage(raw: unknown): TokenUsage | undefined {
     completion_tokens: usage.output_tokens,
     total_tokens: usage.total_tokens,
     completion_tokens_details: usage.output_tokens_details,
+    prompt_tokens_details: usage.input_tokens_details,
   });
 }
 
