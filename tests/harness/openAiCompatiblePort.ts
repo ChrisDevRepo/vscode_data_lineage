@@ -47,8 +47,11 @@ import {
   structuredRejectReason,
 } from '../../src/ai/providers/structuredOutput';
 import {
+  type OpenAiChatMessage,
   projectMessages,
+  readResponsesUsage,
   readUsage,
+  toResponsesInput,
   suspectsToolCallAsText,
   toWireMessages,
 } from './openAiWire';
@@ -126,6 +129,8 @@ export interface OpenRouterProviderRouting {
 export interface OpenAiCompatiblePortConfig {
   /** API root including the version prefix, e.g. `https://api.fireworks.ai/inference/v1`. */
   readonly baseUrl: string;
+  /** Request wire: `chat_completions` (default) or the OpenAI Responses API (`/v1/responses`), which reasoning models need to combine function tools with reasoning effort. Same port, same decode, normalize and trace path for both. */
+  readonly wire?: 'chat_completions' | 'responses';
   /** Complete request URL, replacing `${baseUrl}/chat/completions` when set. Needed for an endpoint that `baseUrl` cannot express, such as an Azure deployment URL with an `api-version` query. The traced `provider-raw` URL is this value, so a trace names the endpoint actually called. */
   readonly chatCompletionsUrl?: string;
   readonly model: string;
@@ -623,7 +628,7 @@ export class OpenAiCompatiblePort implements ModelPort {
       history,
       this.config.capabilities?.echoReasoning ? (ids, text) => this.recalledReasoning(ids, text) : undefined,
       (callId, callIds) => this.toolExtraContent.get(callId) ?? this.recalledTurnExtraContent(callIds),
-      this.config.capabilities?.echoReasoningDetails ? (ids, text) => this.recalledReasoningDetails(ids, text) : undefined,
+      this.config.capabilities?.echoReasoningDetails || this.config.wire === 'responses' ? (ids, text) => this.recalledReasoningDetails(ids, text) : undefined,
     );
     const tools = definitions.map((definition) => ({
       type: 'function' as const,
@@ -633,22 +638,32 @@ export class OpenAiCompatiblePort implements ModelPort {
         parameters: toModelJsonSchema(definition.inputSchema),
       },
     }));
-    const payload = {
-      model: this.config.model,
-      messages,
-      stream: false,
-      ...reasoningPayload(this.config.requestTuning),
-      ...providerRoutingPayload(this.config.providerRouting),
-      ...(tools.length > 0
-        ? { tools, tool_choice: this.config.capabilities?.autoToolChoiceOnly ? 'auto' : toOpenAiToolChoice(choice, this.config.capabilities?.namedToolChoice !== false) }
-        : {}),
-    };
+    const responses = this.config.wire === 'responses';
+    const toolChoice = this.config.capabilities?.autoToolChoiceOnly ? 'auto' : toOpenAiToolChoice(choice, this.config.capabilities?.namedToolChoice !== false);
+    const payload = responses
+      ? {
+          model: this.config.model,
+          input: toResponsesInput(messages),
+          store: false,
+          ...responsesReasoningPayload(this.config.requestTuning),
+          ...(tools.length > 0
+            ? { tools: tools.map(({ function: fn }) => ({ type: 'function' as const, ...fn })), tool_choice: responsesToolChoice(toolChoice) }
+            : {}),
+        }
+      : {
+          model: this.config.model,
+          messages,
+          stream: false,
+          ...reasoningPayload(this.config.requestTuning),
+          ...providerRoutingPayload(this.config.providerRouting),
+          ...(tools.length > 0 ? { tools, tool_choice: toolChoice } : {}),
+        };
 
     const startedAt = Date.now();
     try {
       emitWire?.({
         type: 'wire-request',
-        messages: toWireMessages(messages),
+        messages: toWireMessages(responses ? messages.map(withoutReasoningPayload) : messages),
         tools: definitions.map((definition) => ({
           name: definition.name,
           descriptionHash: systemPromptHash(definition.description),
@@ -656,7 +671,7 @@ export class OpenAiCompatiblePort implements ModelPort {
         })),
       });
       if (this.options.traceVerbose) {
-        emitWire?.({ type: 'provider-raw', direction: 'request', url, method: 'POST', body: payload });
+        emitWire?.({ type: 'provider-raw', direction: 'request', url, method: 'POST', body: responses ? omitEncrypted(payload) : payload });
       }
       const received = await this.send(url, payload, signal);
       if (signal?.aborted) throw cancelledError();
@@ -672,7 +687,7 @@ export class OpenAiCompatiblePort implements ModelPort {
           // credentials, opaque tokens and URLs redacted. Parsed success bodies stay verbatim.
           body: received.ok
             ? (received.body !== undefined
-                ? received.body
+                ? (responses ? omitEncrypted(received.body) : received.body)
                 : received.raw.replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [redacted]'))
             : redactProviderSecrets(received.raw),
         });
@@ -685,7 +700,7 @@ export class OpenAiCompatiblePort implements ModelPort {
         );
       }
 
-      const collected = readCompletion(received.body);
+      const collected = responses ? readResponse(received.body) : readCompletion(received.body);
       if (collected.reasoning || collected.reasoningDetails) this.rememberReasoning(collected);
       this.rememberToolExtraContent(collected);
       const latencyMs = Date.now() - startedAt;
@@ -981,16 +996,8 @@ function readCompletion(body: unknown): ReadCompletion {
         'Provider returned a tool call without an identifier or name.',
       );
     }
-    const rawArguments = typeof fn?.arguments === 'string' ? fn.arguments : '';
     const extraContent = asRecord(call?.extra_content);
-    parts.push({
-      type: 'tool-call',
-      callId,
-      toolName,
-      rawArguments,
-      ...(extraContent ? { extraContent } : {}),
-      ...parseArguments(rawArguments),
-    });
+    parts.push(toolCallPart(callId, toolName, fn?.arguments, extraContent));
   }
   assertToolCallIds(parts.flatMap(part => part.type === 'tool-call' ? [part.callId] : []));
   const reasoning = typeof message.reasoning_content === 'string' && message.reasoning_content
@@ -1006,6 +1013,91 @@ function readCompletion(body: unknown): ReadCompletion {
     ...(reasoning ? { reasoning } : {}),
     ...(reasoningDetails ? { reasoningDetails } : {}),
   };
+}
+
+function toolCallPart(callId: string, toolName: string, args: unknown, extraContent?: Record<string, unknown>): PortGenerationPart {
+  const rawArguments = typeof args === 'string' ? args : '';
+  return {
+    type: 'tool-call',
+    callId,
+    toolName,
+    rawArguments,
+    ...(extraContent ? { extraContent } : {}),
+    ...parseArguments(rawArguments),
+  };
+}
+
+/** Decodes one `/responses` body into the same ordered parts as {@link readCompletion}. */
+function readResponse(body: unknown): ReadCompletion {
+  const root = asRecord(body);
+  const error = asRecord(root?.error);
+  if (error) {
+    const detail = sanitizeProviderError(JSON.stringify({ code: error.code, type: error.type, message: error.message }));
+    throw new ModelPortError(
+      'provider_error',
+      `Provider returned an error envelope${detail ? `: ${detail}` : ''}.`,
+      Object.assign(new Error('Provider error envelope.'), { code: error.code }),
+    );
+  }
+  if (!Array.isArray(root?.output)) {
+    throw new ModelPortError('unsupported_response', 'Provider response carried no output.');
+  }
+  const parts: PortGenerationPart[] = [];
+  const reasoningItems: unknown[] = [];
+  for (const entry of root.output) {
+    const item = asRecord(entry);
+    if (item?.type === 'message') {
+      const text = (Array.isArray(item.content) ? item.content : [])
+        .map(content => asRecord(content))
+        .filter(content => content?.type === 'output_text' && typeof content.text === 'string')
+        .map(content => content!.text as string)
+        .join('');
+      if (text) parts.push({ type: 'text', text });
+    } else if (item?.type === 'reasoning') {
+      // Stateless (`store: false`) turns must hand the encrypted reasoning back verbatim, in order.
+      reasoningItems.push(item);
+    } else if (item?.type === 'function_call') {
+      const callId = typeof item.call_id === 'string' ? item.call_id : '';
+      const toolName = typeof item.name === 'string' ? item.name : '';
+      if (!callId || !toolName) {
+        throw new ModelPortError('unsupported_response', 'Provider returned a tool call without an identifier or name.');
+      }
+      parts.push(toolCallPart(callId, toolName, item.arguments));
+    }
+  }
+  assertToolCallIds(parts.flatMap(part => part.type === 'tool-call' ? [part.callId] : []));
+  const usage = readResponsesUsage(root.usage);
+  const incomplete = asRecord(root.incomplete_details)?.reason;
+  return {
+    parts,
+    rawFinishReason: typeof incomplete === 'string' ? incomplete : typeof root.status === 'string' ? root.status : 'unknown',
+    ...(usage ? { usage } : {}),
+    ...(reasoningItems.length > 0 ? { reasoningDetails: reasoningItems } : {}),
+  };
+}
+
+/** Trace copy of a request or response: `encrypted_content` keeps its length, not its payload. */
+function omitEncrypted(value: unknown): unknown {
+  return JSON.parse(JSON.stringify(value, (key, v: unknown) =>
+    key === 'encrypted_content' && typeof v === 'string' ? `[omitted ${v.length} chars]` : v)) as unknown;
+}
+
+/** Trace view of a projected message: opaque reasoning blocks stay counted, never printed. */
+function withoutReasoningPayload(message: OpenAiChatMessage): OpenAiChatMessage {
+  return message.reasoning_details
+    ? { ...message, reasoning_details: message.reasoning_details.map(() => ({ type: 'reasoning', encrypted_content: '[omitted]' })) }
+    : message;
+}
+
+function responsesReasoningPayload(tuning: OpenAiRequestTuning | undefined): Record<string, unknown> {
+  const reasoning = tuning?.reasoning;
+  return reasoning && 'effort' in reasoning ? { reasoning: { effort: reasoning.effort } } : {};
+}
+
+/** The Responses API names a forced function as `{ type: 'function', name }`. */
+function responsesToolChoice(choice: unknown): unknown {
+  const named = asRecord(asRecord(choice)?.function)?.name;
+  return typeof named === 'string' ? { type: 'function', name: named } : choice;
 }
 
 function parseArguments(serialized: string):

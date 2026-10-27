@@ -784,7 +784,7 @@ export async function main(kind: 'ai' | 'db', args: readonly string[], onResult?
           const questionHash = createHash('sha256').update(prompt).digest('hex');
           const expectedApproval = baselineReviews[promptIndex].find(review => review.expected)?.expected;
           const port = new OpenAiCompatiblePort({
-            baseUrl: process.env.AI_TEST_ENDPOINT!, chatCompletionsUrl: endpoint, apiKey: process.env.AI_TEST_API_KEY!,
+            baseUrl: process.env.AI_TEST_ENDPOINT!, chatCompletionsUrl: endpoint, wire: new URL(endpoint).pathname.replace(/\/+$/, '').endsWith('/responses') ? 'responses' as const : 'chat_completions' as const, apiKey: process.env.AI_TEST_API_KEY!,
             model: provider!.model, laneId: provider!.provider, requestTimeoutMs: options.requestTimeoutMs,
             ...(provider!.provider === 'azure' ? { apiKeyHeader: 'api-key' as const } : {}),
             ...(reasoningEffort ? { requestTuning: { reasoning: { effort: reasoningEffort } } } : {}),

@@ -198,7 +198,7 @@ function providerEndpoint(value, provider, model) {
     throw new Error('AI provider endpoint must use HTTP or HTTPS.');
   }
   endpoint.pathname = endpoint.pathname.replace(/\/+$/u, '');
-  if (endpoint.pathname.endsWith('/chat/completions')) return endpoint.toString();
+  if (endpoint.pathname.endsWith('/chat/completions') || endpoint.pathname.endsWith('/responses')) return endpoint.toString();
   if (provider === 'azure') {
     if (endpoint.pathname.endsWith('/openai/v1')) {
       endpoint.pathname = `${endpoint.pathname}/chat/completions`;

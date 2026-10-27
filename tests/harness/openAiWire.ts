@@ -142,6 +142,30 @@ function messageText(content: MessageContent): string {
   return text;
 }
 
+/** One item of the Responses API `input` array. */
+export type ResponsesInputItem =
+  | { readonly role: 'system' | 'user' | 'assistant'; readonly content: string }
+  | { readonly type: 'reasoning'; readonly [key: string]: unknown }
+  | { readonly type: 'function_call'; readonly call_id: string; readonly name: string; readonly arguments: string }
+  | { readonly type: 'function_call_output'; readonly call_id: string; readonly output: string };
+
+/** Re-renders projected chat messages as Responses `input` items; call ids pair calls with outputs. */
+export function toResponsesInput(messages: readonly OpenAiChatMessage[]): ResponsesInputItem[] {
+  return messages.flatMap((message): ResponsesInputItem[] => {
+    if (message.role === 'tool') {
+      return [{ type: 'function_call_output', call_id: message.tool_call_id ?? '', output: message.content ?? '' }];
+    }
+    return [
+      // Reasoning items precede the turn's text and calls, in the order the model produced them.
+      ...(message.reasoning_details ?? []).map((item) => item as ResponsesInputItem),
+      ...(message.content ? [{ role: message.role, content: message.content }] : []),
+      ...(message.tool_calls ?? []).map((call): ResponsesInputItem => ({
+        type: 'function_call', call_id: call.id, name: call.function.name, arguments: call.function.arguments,
+      })),
+    ];
+  });
+}
+
 /** Captures the projected request messages for the wire trace, keeping the wire role verbatim. */
 export function toWireMessages(messages: readonly OpenAiChatMessage[]): WireMessage[] {
   return messages.map((message) => {
@@ -260,6 +284,18 @@ export function readUsage(raw: unknown): TokenUsage | undefined {
   if (total !== undefined) mapped.totalTokens = total;
   if (reasoning !== undefined) mapped.reasoningTokens = reasoning;
   return Object.keys(mapped).length > 0 ? mapped : undefined;
+}
+
+/** Reads Responses API token accounting into the same usage fields; `cached_tokens` has no field there. */
+export function readResponsesUsage(raw: unknown): TokenUsage | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const usage = raw as Record<string, unknown>;
+  return readUsage({
+    prompt_tokens: usage.input_tokens,
+    completion_tokens: usage.output_tokens,
+    total_tokens: usage.total_tokens,
+    completion_tokens_details: usage.output_tokens_details,
+  });
 }
 
 function finite(value: unknown): number | undefined {
