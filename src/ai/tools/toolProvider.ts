@@ -4,7 +4,6 @@ import { redactMissionBriefForLog } from '../support/missionBriefDiagnostics';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
 import { RepairDraftStore } from '../support/repairDraftStore';
-import { normalizeModelInput } from './normalizeModelInput';
 import type Graph from 'graphology';
 import { NavigationEngine } from '../sm/smBase';
 import { type AiSession } from '../session/session';
@@ -525,14 +524,11 @@ export function buildAiToolRegistry(
             return result;
           }
           const store = repairable ? draft() : undefined, auth = store?.getAuthorization();
-          const decoded = normalizeModelInput(owner, input);
-          for (const fix of decoded.fixes) handler.logger.debug(`[Normalize] tool=${def.name} path=${fix.path} before=${JSON.stringify(redactMissionBriefForLog(fix.before, fix.after))}`);
-          const normalized = decoded.input;
-          const isObject = normalized !== null && typeof normalized === 'object' && !Array.isArray(normalized);
+          const isObject = input !== null && typeof input === 'object' && !Array.isArray(input);
           const repairing = repairable && starts === 1 && isObject && auth && !auth.ambiguous && auth.round < round;
           const merged = repairing
-            ? RepairDraftStore.mergeInput(store?.get() ?? {}, normalized as Record<string, unknown>) : normalized;
-          const result = await invocationInput.run({ input: redactMissionBriefForLog(input, decoded.fixes.find(fix => fix.path === '')?.after) }, () => execute(merged));
+            ? RepairDraftStore.mergeInput(store?.get() ?? {}, input as Record<string, unknown>) : input;
+          const result = await invocationInput.run({ input: redactMissionBriefForLog(input) }, () => execute(merged));
           if (turnLease) assertActiveTurnLease(turnLease, getSession().turnEpoch);
           const rejection = readToolErrorText(result);
           if (!repairable || !store || capturedContext !== context() || handler.signal?.aborted || !rejection || isConsentGateRejection(rejection.code)) {

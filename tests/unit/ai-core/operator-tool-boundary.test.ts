@@ -404,6 +404,25 @@ describe('operator secret boundary', () => {
     }
   });
 
+  it('D-103: normalizes a lossless spelling once with the served schema, like the product port', async () => {
+    const diagnostics: string[] = [];
+    const port = new OpenAiCompatiblePort(
+      { baseUrl: 'https://provider.example/v1', apiKey: 'unrelated-key', model: 'synthetic-model' },
+      { debugLog: line => diagnostics.push(line), fetchImpl: async () => new Response(JSON.stringify({
+        choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{
+          id: 'encoded', type: 'function', function: { name: 'synthetic_tool', arguments: JSON.stringify({ values: '["a","b"]', n: '2' }) },
+        }] } }],
+      })) },
+    );
+    const outcome = await port.generateToolTurn({ messages: [modelUserMessage('synthetic input')], toolChoice: 'auto', phase: 'discovery',
+      tools: [{ name: 'synthetic_tool', description: 'Synthetic boundary', inputSchema: z.object({ values: z.array(z.string()), n: z.number() }) }] });
+    if (outcome.status !== 'completed') throw new Error('Unexpected transport failure');
+    expect(outcome.toolCalls).toEqual([{ valid: true, callId: 'encoded', toolName: 'synthetic_tool', input: { values: ['a', 'b'], n: 2 } }]);
+    expect(diagnostics.filter(line => line.startsWith('[Normalize]'))).toEqual([
+      '[Normalize] tool=synthetic_tool path=values before="[\\"a\\",\\"b\\"]"', '[Normalize] tool=synthetic_tool path=n before="2"',
+    ]);
+  });
+
   it('does not return the API key from an HTTP rejection', async () => {
     const port = new OpenAiCompatiblePort(
       { baseUrl: 'https://provider.example/v1', apiKey: secret, model: 'synthetic-model' },

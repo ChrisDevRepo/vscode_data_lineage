@@ -1,17 +1,15 @@
 /** Privacy-safe mission-brief diagnostics. */
 /** Replaces mission text with non-content metadata before tool-call diagnostics persist it. */
-export function redactMissionBriefForLog(input: unknown, decoded: unknown = input): unknown {
-  const value = typeof input === 'string' ? decoded : input;
-  if (!value || typeof value !== 'object' || Array.isArray(value) || !Object.prototype.hasOwnProperty.call(value, 'mission_brief')) {
+export function redactMissionBriefForLog(input: unknown): unknown {
+  if (!input || typeof input !== 'object' || Array.isArray(input) || !Object.prototype.hasOwnProperty.call(input, 'mission_brief')) {
     return input;
   }
-  const brief = (value as Record<string, unknown>).mission_brief;
-  const redacted = {
-    ...(value as Record<string, unknown>),
+  const brief = (input as Record<string, unknown>).mission_brief;
+  return {
+    ...(input as Record<string, unknown>),
     mission_brief: {
       provenance: 'tool_payload',
       length: typeof brief === 'string' ? brief.length : null,
     },
   };
-  return typeof input === 'string' ? JSON.stringify(redacted) : redacted;
 }

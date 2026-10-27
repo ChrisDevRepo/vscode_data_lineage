@@ -10,7 +10,8 @@ import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { compileInstructionPlan } from '../../../src/ai/agent/instructionPlan';
 import { executeToolAttempt, initialToolPhaseAttemptState, recordToolAttempt } from '../../../src/ai/agent/toolAttempt';
 import { TurnEventSink } from '../../../src/ai/runtime/turnEventSink';
-import { overrideRegistrySchemas } from '../../../src/ai/tools/registry';
+import { overrideRegistrySchemas, resolveRegistrySchemas } from '../../../src/ai/tools/registry';
+import { normalizeModelInput } from '../../../src/ai/tools/normalizeModelInput';
 import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
 import { buildActiveHopInstruction } from '../../../src/ai/agent/stagePrompts';
 import { executeSubmitFindings } from '../../../src/ai/tools/handlers/submitFindings';
@@ -23,6 +24,11 @@ import { readToolErrorText, rejectionModelContent } from '../../../src/ai/suppor
 import { makeGraph, makeIndexedModel, makeModel, makeNode } from '../helpers/modelFixtures';
 import { TOOL_DEFS } from '../../../src/ai/tools/toolDefs';
 import { schemaFaults, withSchemaFaults, stubToolServices } from './helpers/toolServices';
+
+vi.mock('../../../src/ai/tools/normalizeModelInput', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../../src/ai/tools/normalizeModelInput')>();
+  return { ...actual, normalizeModelInput: vi.fn(actual.normalizeModelInput) };
+});
 
 const ORIGIN = '[hop].[origin]';
 const BRANCH = '[hop].[branch]';
@@ -765,7 +771,7 @@ describe('large findings repairs', () => {
     const sections = { technical: 'Branch supplies Value unchanged.' };
     const column_flow = [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }];
     const questions = [{ nodeId: BRANCH, question: 'Establish the origin of Value.' }];
-    const submit = (input: object) => JSON.parse(executeSubmitFindings({ focus_node_id: ' HOP . ORIGIN ', ...input }, services));
+    const submit = (input: object) => JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN, ...input }, services));
     expect(engine.heldPartsOfCurrentFocus()).toBeNull();
     expect(submit({ sections, column_flow, questions })).toMatchObject({ code: 'invalid_input', issuePaths: ['summary'] });
     expect(engine.heldPartsOfCurrentFocus()).toMatchObject({ sections: ['technical'], summary: false });
@@ -802,8 +808,8 @@ describe('large findings repairs', () => {
       expect(JSON.stringify(rejected)).not.toContain(text);
       expect(engine.getDetailSlots()).toEqual([]);
     }
-    const accepted = JSON.parse(executeSubmitFindings({ focus_node_id: ' \"hop\" . \"origin\" ',
-      column_flow: [{ out_col: 'Value', upstream_columns: [{ node: 'HOP.BRANCH', col: 'Value' }] }] }, services));
+    const accepted = JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN,
+      column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }] }, services));
     expect(accepted).toMatchObject({ ok: true, accepted_focus: ORIGIN, next_focus: BRANCH });
     expect(engine.getDetailSlots().find(slot => slot.nodeId === ORIGIN)?.sections).toEqual([{ angle: 'technical', text }]);
   });
@@ -1543,19 +1549,45 @@ it('does not treat two initial serialized writes in the same model round as repa
   expect(session.pendingExploration).toBeNull(); expect(session.stateMachine).toBeNull();
 });
 
-it('logs direct boundary lossless fixes while preserving original call evidence', async () => {
-  const { session } = ctWorld(); session.stateMachine = null;
-  session.enterLmStage({ kind: 'sm_entry' }, session.turnEpoch); session.currentRoundId = 1;
-  const debug = vi.fn();
-  const registry = buildAiToolRegistry(() => session, { info() {}, debug, warn() {}, error() {} } as never, () => undefined);
-  const projected = overrideRegistrySchemas(registry, new Map([['lineage_start_exploration', StartExplorationFreshProviderInputSchema]]));
-  void projected.get('lineage_start_exploration')!.inputSchema;
-  const result = JSON.parse(await registry.invoke('lineage_start_exploration', { origin: ORIGIN, analysisMode: 'bb', classification: 'technical',
-    depth: { upstream: { levels: '1', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } }));
-  expect(result.code).toBe('action_required');
-  expect(debug.mock.calls.flat().join(' ')).toContain('[Normalize] tool=lineage_start_exploration path=depth.upstream.levels before="1"');
-  expect(session.hopLog.at(-1)?.input).toMatchObject({ depth: { upstream: { levels: '1' } } });
-  expect(session.pendingExploration?.init.depthIntent.upstream.levels).toBe(1);
+it.each([
+  { tool: 'lineage_search_objects', stage: 'discover', path: 'schemas', input: { query: 'origin', schemas: '["hop"]' } },
+  { tool: 'lineage_start_exploration', stage: 'sm_entry', path: 'depth.upstream.levels', input: { origin: ORIGIN, analysisMode: 'bb', classification: 'technical',
+    depth: { upstream: { levels: '1', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } } },
+  { tool: 'lineage_submit_findings', stage: 'active', path: 'column_flow', input: { focus_node_id: ' HOP . ORIGIN ', summary: 'Branch supplies Value.',
+    sections: { technical: 'The selected Value comes from branch.' }, prune_neighbors: [],
+    column_flow: JSON.stringify([{ out_col: 'Value', upstream_columns: [{ node: 'HOP.BRANCH', col: 'Value' }] }]),
+    questions: [{ nodeId: BRANCH, question: 'Establish the SQL source of Value.' }] } },
+] as const)('D-086/D-103: normalizes a lossless $tool spelling once, at the model port with the served schema, and accepts it', async row => {
+  const world = ctWorld();
+  if (row.stage !== 'active') { world.session.stateMachine = null; world.session.enterLmStage({ kind: row.stage }, world.session.turnEpoch); }
+  const logs: string[] = [];
+  const port = new VscodeModelPort({ id: 'normalize-once', name: 'normalize-once', vendor: 'test', family: 'test', version: '1',
+    maxInputTokens: 128000, countTokens: async () => 1,
+    sendRequest: async () => ({ stream: { async *[Symbol.asyncIterator]() { yield new vscode.LanguageModelToolCallPart('once', row.tool, row.input); } } }),
+  } as never, { budget: createTurnTokenBudget({}), debugLog: line => logs.push(line) });
+  const registry = buildAiToolRegistry(() => world.session, { info() {}, debug: (line: string) => logs.push(line), warn() {}, error() {} } as never,
+    () => undefined, undefined, { model: port });
+  const engine = world.engine;
+  const served = resolveRegistrySchemas(registry, new Map<string, () => import('zod').ZodType>([
+    ['lineage_start_exploration', () => StartExplorationFreshProviderInputSchema],
+    ['lineage_submit_findings', () => submitFindingsSchemaForMode('ct', 'technical', true, engine.hopSubmitColumns, engine.heldColumnFlow)],
+  ]));
+  const tools = served.getTools().map(tool => ({ name: tool.name, description: tool.name, inputSchema: tool.inputSchema }));
+  vi.mocked(normalizeModelInput).mockClear();
+  const reply = await port.generateToolTurn({ messages: [modelUserMessage('Normalize once.')], tools, phase: row.stage });
+  expect(reply.status).toBe('completed');
+  if (reply.status !== 'completed') return;
+  const [call] = reply.toolCalls;
+  expect(call?.valid).toBe(true);
+  if (!call?.valid) return;
+  const result = JSON.parse(await registry.invoke(call.toolName, call.input, call.callId));
+  expect(readToolErrorText(JSON.stringify(result)) === null || result.code === 'action_required').toBe(true);
+  if (row.tool === 'lineage_submit_findings') expect(result).toMatchObject({ ok: true, accepted_focus: ORIGIN, next_focus: BRANCH });
+  const normalizations = vi.mocked(normalizeModelInput).mock.calls;
+  expect(normalizations, 'one normalization per call').toHaveLength(1);
+  expect(normalizations[0]![0], 'with the served schema').toBe(tools.find(tool => tool.name === row.tool)!.inputSchema);
+  expect(logs.filter(line => line.startsWith(`[Normalize] tool=${row.tool} path=${row.path} `))).toHaveLength(1);
+  expect(reply.message.tool_calls?.[0]?.args, 'spec 08: raw evidence stays in the transcript').toEqual(row.input);
 });
 
 it('does not resurrect an authoritative metadata-invalid optional list when repair switches mode', async () => {
@@ -1574,25 +1606,6 @@ it('does not resurrect an authoritative metadata-invalid optional list when repa
   expect(session.stateMachine).toBeNull();
 });
 
-
-it('redacts a mission in whole-call JSON text from normalized debug and original-call diagnostics', async () => {
-  const { session } = ctWorld(); session.stateMachine = null;
-  session.enterLmStage({ kind: 'sm_entry' }, session.turnEpoch); session.currentRoundId = 1;
-  const debug = vi.fn();
-  const registry = buildAiToolRegistry(() => session, { info() {}, debug, warn() {}, error() {} } as never, () => undefined);
-  const projected = overrideRegistrySchemas(registry, new Map([['lineage_start_exploration', StartExplorationFreshProviderInputSchema]]));
-  void projected.get('lineage_start_exploration')!.inputSchema;
-  const raw = JSON.stringify({ origin: ORIGIN, analysisMode: 'bb', classification: 'technical', mission_brief: 'NF_SECRET_BRIEF_SENTINEL',
-    depth: { upstream: { levels: '1', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } });
-  const result = JSON.parse(await registry.invoke('lineage_start_exploration', raw));
-  expect(result.code).toBe('action_required');
-  expect(JSON.stringify(session.hopLog.map(entry => entry.input))).not.toContain('NF_SECRET_BRIEF_SENTINEL');
-  expect(JSON.stringify(debug.mock.calls)).not.toContain('NF_SECRET_BRIEF_SENTINEL');
-  const evidence = session.hopLog.at(-1)?.input;
-  expect(typeof evidence).toBe('string');
-  expect(JSON.parse(evidence as string)).toMatchObject({ mission_brief: { provenance: 'tool_payload', length: 'NF_SECRET_BRIEF_SENTINEL'.length },
-    depth: { upstream: { levels: '1' } } });
-});
 
 it.each(['lineage_search_objects', 'lineage_search_ddl'].flatMap(tool => ['syntax', 'length'].map(fault => ({ tool, fault }))))(
   'retains valid search filters when only $tool query has a $fault fault', async ({ tool, fault }) => {

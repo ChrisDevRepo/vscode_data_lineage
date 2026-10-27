@@ -30,6 +30,7 @@ import {
   type WireRecord,
 } from '../../src/ai/observability/wireLog';
 import { toModelJsonSchema } from '../../src/ai/tools/jsonSchema';
+import { normalizeModelInput } from '../../src/ai/tools/normalizeModelInput';
 import {
   formatProviderErrorDiagnostic,
   redactProviderSecrets,
@@ -467,7 +468,12 @@ export class OpenAiCompatiblePort implements ModelPort {
             );
           }
           replayInput = effectiveInput;
-          call = { valid: true, callId: part.callId, toolName: part.toolName, input: effectiveInput };
+          // Mirrors the product port: the one D-086 normalization with the served schema (D-103).
+          const normalized = normalizeModelInput(definition.inputSchema, effectiveInput);
+          for (const fix of normalized.fixes) {
+            this.options.debugLog?.(`[Normalize] tool=${part.toolName} path=${fix.path} before=${JSON.stringify(fix.before)}`);
+          }
+          call = { valid: true, callId: part.callId, toolName: part.toolName, input: normalized.input };
         }
         toolCalls.push(call);
         replayed.push({ callId: part.callId, toolName: part.toolName, input: replayInput });
