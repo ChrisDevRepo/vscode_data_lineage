@@ -1,8 +1,9 @@
 /** Evidence shared by the opt-in VS Code provider and native chat checks. */
 import * as assert from 'node:assert/strict';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
-import { exportBudgetMs, exportRunToLangfuse, freezeRunEvidence, readFrozenRunEvidence, resolveLangfuseConfig } from './langfuseExport';
+import { BASELINE_BRANCH, baselineSession, exportBudgetMs, exportRunToLangfuse, freezeRunEvidence, readFrozenRunEvidence, resolveLangfuseConfig } from './langfuseExport';
 import { redactSecret } from './exportShared';
 import { parseTrace } from './traceModel';
 
@@ -39,6 +40,16 @@ export async function exportNativeEvidence(input: {
   assert.ok(env.AI_TEST_BASELINE === undefined || env.AI_TEST_BASELINE === '0' || env.AI_TEST_BASELINE === '1',
     'AI_TEST_BASELINE must be 0 or 1.');
   const baseline = env.AI_TEST_BASELINE === '1';
+  const branch = env.AI_TEST_BRANCH;
+  assert.ok(!baseline || (branch !== undefined && BASELINE_BRANCH.test(branch)),
+    'AI_TEST_BASELINE=1 requires AI_TEST_BRANCH (a plain branch name such as main or testing01).');
+  assert.ok(baseline || branch === undefined, 'AI_TEST_BRANCH is only for AI_TEST_BASELINE=1.');
+  let sessionId = input.sessionId;
+  if (baseline) {
+    const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: process.cwd(), encoding: 'utf8' });
+    assert.equal(head.status, 0, 'A native baseline needs a readable git commit.');
+    sessionId = baselineSession(branch!, head.stdout);
+  }
   const config = resolveLangfuseConfig(env);
   assert.ok(config, 'Set all LANGFUSE_* connection variables before native AI model use.');
   const saved = existsSync(join(input.directory, 'evidence-snapshot.json')) ? readFrozenRunEvidence(input.directory) : undefined;
@@ -92,9 +103,9 @@ export async function exportNativeEvidence(input: {
   try {
     exported = await exportRunToLangfuse(parseTrace(frozenTrace), { ...config, attachments: frozenAttachments,
       onPayload: body => writeFileSync(join(input.directory, 'langfuse-otlp.json'), body + '\n'),
-      runMetadata: { lane: 'native', promptId: input.promptId, sessionId: input.sessionId,
+      runMetadata: { lane: 'native', promptId: input.promptId, sessionId,
         isBaseline: baseline,
-        tags: [baseline ? 'baseline' : 'verification'] },
+        tags: [baseline ? `baseline:${branch}` : 'verification'] },
       fetchImpl: (url, init) => fetch(url, { ...init, signal: controller.signal }),
     });
   } catch {

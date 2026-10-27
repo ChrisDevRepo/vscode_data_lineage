@@ -20,6 +20,9 @@ const real = process.env.DLV_CHAT_UI_REAL === '1' || process.argv.includes('live
 if (process.env.AI_TEST_BASELINE !== undefined && !['0', '1'].includes(process.env.AI_TEST_BASELINE)) {
   throw new Error('AI_TEST_BASELINE must be 0 or 1.');
 }
+if (process.env.AI_TEST_BASELINE === '1' && !process.env.AI_TEST_BRANCH?.trim()) {
+  throw new Error('AI_TEST_BASELINE=1 requires AI_TEST_BRANCH.');
+}
 let replayTrace;
 if(badge) {
   replayTrace=badgeReplayTrace(root, process.env.DLV_CHAT_UI_BADGE_LIVE);

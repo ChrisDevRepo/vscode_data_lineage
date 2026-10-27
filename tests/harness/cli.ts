@@ -14,7 +14,7 @@ import { openBuiltInSession } from '../../src/engine/db/builtInProvider';
 import { loadDmvQueries, executeDmvQueries, executeDmvQueriesFiltered } from '../../src/engine/connectionManager';
 import { buildModelFromDmv, buildSchemaPreview, validateQueryResult, type DmvResults } from '../../src/engine/dmvExtractor';
 import { createHeadlessLogger } from './headlessLogger';
-import { exportBudgetMs, exportRunToLangfuse, freezeRunEvidence, resolveLangfuseConfig, type LangfuseAttachment, type LangfuseAttachments } from './langfuseExport';
+import { exportBudgetMs, exportRunToLangfuse, baselineSession, BASELINE_BRANCH, freezeRunEvidence, resolveLangfuseConfig, type LangfuseAttachment, type LangfuseAttachments } from './langfuseExport';
 import { OpenAiCompatiblePort } from './openAiCompatiblePort';
 import { runHarnessTurn, nativeHarnessPrompt, approvalWorkload, approvalWorkloadDifferences, requiredApprovalRefinement, type ApprovalWorkload } from './runTurn';
 import { AiGateRefineSchema, type AiGateRefine } from '../../src/engine/shared/bridgeContract';
@@ -73,7 +73,7 @@ const AI_PROVIDERS = ['azure', 'fireworks', 'openrouter', 'openai-compatible'] a
 
 const HELP = `Optional testing toolset; it records checks and does not grade answers:
   npm run test:ai:headless -- [--all | --case ID] [--list] [--baselines FILE] [--dacpac FILE] [--prompt TEXT] [--followup TEXT ...]
-                            [--effort LEVEL] [--baseline]
+                            [--effort LEVEL] [--attach] [--baseline --branch NAME]
                             [--timeout-ms N] [--request-timeout-ms N]
                             [--label ID] [--session ID] [--tag TEXT ...]
   npm run test:db:smoke -- [--timeout-ms N]
@@ -97,8 +97,10 @@ AI requires a hosted provider: AI_TEST_PROVIDER (azure, fireworks, openrouter or
 openai-compatible) with its AI_TEST_ENDPOINT, AI_TEST_API_KEY and AI_TEST_MODEL. There is no
 default provider.
 An AI run always writes a verbose NDJSON trace, host.log, and sm-state.json for every
-turn and exports trace spans to Langfuse. Only --baseline uploads the captured source files;
---attach is its compatibility alias. A turn that did not open an exploration still
+turn and exports trace spans to Langfuse. --attach uploads the captured source files to the
+trace of an ordinary run (tag verification). --baseline is a separate owner-requested step per
+branch: it requires --branch NAME, uploads the files, uses session baseline-NAME-COMMIT and tag
+baseline:NAME, and rejects --session. Daily and verification runs never use --baseline. A turn that did not open an exploration still
 writes sm-state.json with explorationOpened false. Set LANGFUSE_BASE_URL,
 LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY before the first model call. --langfuse,
 --trace-verbose remain accepted and do not turn that capture off.
@@ -259,6 +261,8 @@ export function parseOptions(kind: string, args: readonly string[]) {
   let langfuse = kind === 'ai';
   let verbose = kind === 'ai';
   let attach = false;
+  let baseline = false;
+  let branch: string | undefined;
   let effort: ThinkingLevel | undefined;
   let caseId: string | undefined;
   let baselines: string | undefined;
@@ -277,11 +281,12 @@ export function parseOptions(kind: string, args: readonly string[]) {
     }
     if (kind === 'ai' && ['--langfuse', '--trace-verbose', '--attach', '--baseline'].includes(flag)) {
       if (flag === '--langfuse') langfuse = true;
-      else if (flag === '--attach' || flag === '--baseline') attach = true;
+      else if (flag === '--attach') attach = true;
+      else if (flag === '--baseline') baseline = true;
       else verbose = true;
       continue;
     }
-    if (!(flag === '--timeout-ms' || kind === 'ai' && ['--baselines', '--case', '--request-timeout-ms', '--dacpac', '--prompt', '--followup', '--label', '--session', '--tag', '--effort', '--thinking'].includes(flag))) {
+    if (!(flag === '--timeout-ms' || kind === 'ai' && ['--baselines', '--case', '--request-timeout-ms', '--dacpac', '--prompt', '--followup', '--label', '--session', '--tag', '--branch', '--effort', '--thinking'].includes(flag))) {
       throw new Error(`Unknown option ${flag}. Use --help.`);
     }
     const value = args[++i];
@@ -301,11 +306,16 @@ export function parseOptions(kind: string, args: readonly string[]) {
     if (flag === '--followup') followups.push(value);
     if (flag === '--label') label = z.string().trim().min(1).max(100).parse(value);
     if (flag === '--session') session = z.string().trim().min(1).max(190).parse(value);
+    if (flag === '--branch') branch = z.string().regex(BASELINE_BRANCH, '--branch must be a plain branch name such as main or testing01.').parse(value);
     if (flag === '--tag') tags.push(z.string().trim().min(1).max(100).parse(value));
   }
   if (caseId && all || promptFromCli && (caseId || all || list)) throw new Error('Choose --all, --case, or --prompt without mixing selectors.');
+  if (baseline && !branch) throw new Error('--baseline requires --branch NAME.');
+  if (branch && !baseline) throw new Error('--branch is only for --baseline.');
+  if (baseline && session) throw new Error('--baseline sets its own session; do not pass --session.');
+  if (baseline) attach = true;
   if (attach && !langfuse) throw new Error('--attach requires --langfuse.');
-  return { dacpac, prompt, promptFromCli, dacpacFromCli, caseId, baselines, all, list, followups, timeoutMs: testTimeoutSchema.parse(timeoutMs), requestTimeoutMs: testTimeoutSchema.parse(requestTimeoutMs ?? timeoutMs), langfuse, verbose, label, session, tags, attach, baseline: attach, effort };
+  return { dacpac, prompt, promptFromCli, dacpacFromCli, caseId, baselines, all, list, followups, timeoutMs: testTimeoutSchema.parse(timeoutMs), requestTimeoutMs: testTimeoutSchema.parse(requestTimeoutMs ?? timeoutMs), langfuse, verbose, label, session, tags, attach, baseline, branch, effort };
 }
 
 
@@ -743,6 +753,7 @@ export async function main(kind: 'ai' | 'db', args: readonly string[], onResult?
         plannedCases: runs.length, plannedTurns: runs.reduce((sum, run) => sum + run.prompts.length, 0) };
       result.contentVerdict = 'unreviewed';
       const revision = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repoPath(), encoding: 'utf8' });
+      if (options.baseline && revision.status !== 0) throw new Error('--baseline needs a readable git commit.');
       const sourceDiff = spawnSync('git', ['diff', 'HEAD', '--', 'src', 'assets'], { cwd: repoPath() });
       const context = { provider: provider!.provider, model: provider!.model, reasoningEffort: reasoningEffort ?? null,
         executionMode: result.executionMode, settings: { timeoutMs: options.timeoutMs, requestTimeoutMs: options.requestTimeoutMs, temperature: null },
@@ -841,7 +852,7 @@ export async function main(kind: 'ai' | 'db', args: readonly string[], onResult?
       if (langfuse && tracePath) {
         const redact = process.env.AI_TEST_API_KEY ? [process.env.AI_TEST_API_KEY] : [];
         const frozen = freezeRunEvidence(runDir, collectAttachments(runDir, tracePath, turns.length, redact),
-          options.baseline, [langfuse.secretKey]);
+          options.attach, [langfuse.secretKey]);
         logger.redirect(join(runDir, 'runner-diagnostics.log'));
         const frozenTrace = frozen.attachments.run!.find(file => file.name === 'event-trace')!.content;
         const attachments = frozen.isBaseline ? frozen.attachments : undefined;
@@ -852,8 +863,8 @@ export async function main(kind: 'ai' | 'db', args: readonly string[], onResult?
           try {
             const exported = await exportRunToLangfuse(parseTrace(frozenTrace), {
               ...langfuse,
-              runMetadata: { lane: provider!.provider, promptId: options.label, sessionId: options.session,
-                isBaseline: options.baseline, tags: [...options.tags, options.baseline ? 'baseline' : 'verification'] },
+              runMetadata: { lane: provider!.provider, promptId: options.label, sessionId: options.baseline ? baselineSession(options.branch!, revision.stdout) : options.session,
+                isBaseline: options.baseline, tags: [...options.tags, options.baseline ? `baseline:${options.branch}` : 'verification'] },
               attachments,
               onPayload: body => writeFileSync(join(runDir, 'langfuse-otlp.json'), body + '\n'),
               fetchImpl: (url, init) => fetch(url, { ...init, signal: exportController.signal }),

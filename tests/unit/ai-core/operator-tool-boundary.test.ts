@@ -16,7 +16,7 @@ import { loadParseRules, rootPath } from '../helpers/testUtils';
 const { loadCases } = createRequire(import.meta.url)('../../cases/loadCases.cjs') as {
   loadCases: (runner?: string) => Array<{ id: string; prompt?: string; dacpac?: string; expect?: { terminal?: string; must_contain?: string[]; missing_columns?: string[] } }>;
 };
-import { createLimitPacer, exportBudgetMs, exportRunToLangfuse, freezeRunEvidence, readFrozenRunEvidence, limitIntervalMs, LANGFUSE_FREE_PLAN } from '../../harness/langfuseExport';
+import { baselineSession, createLimitPacer, exportBudgetMs, exportRunToLangfuse, freezeRunEvidence, readFrozenRunEvidence, limitIntervalMs, LANGFUSE_FREE_PLAN } from '../../harness/langfuseExport';
 import { createHeadlessLogger } from '../../harness/headlessLogger';
 import { exportNativeEvidence } from '../../harness/nativeEvidence';
 import { parseTrace } from '../../harness/traceModel';
@@ -76,6 +76,15 @@ describe('operator runner configuration', () => {
     expect(parseOptions('db', [])).toMatchObject({ langfuse: false, verbose: false, attach: false, timeoutMs: 300_000 });
   });
 
+  it('baseline mode needs a branch, attaches files and owns its session; attach alone is not a baseline', () => {
+    expect(parseOptions('ai', ['--baseline', '--branch', 'testing01'])).toMatchObject({ baseline: true, attach: true, branch: 'testing01' });
+    expect(() => parseOptions('ai', ['--baseline'])).toThrow('--baseline requires --branch');
+    expect(() => parseOptions('ai', ['--branch', 'main'])).toThrow('--branch is only for --baseline');
+    expect(() => parseOptions('ai', ['--baseline', '--branch', 'main', '--session', 'x'])).toThrow('do not pass --session');
+    expect(() => parseOptions('ai', ['--baseline', '--branch', 'feat/x'])).toThrow('plain branch name');
+    expect(baselineSession('main', '3ad819b4aa11bb22\n')).toBe('baseline-main-3ad819b4');
+  });
+
   it('defaults request deadlines to the run deadline and accepts an independent AI request bound', () => {
     expect(parseOptions('ai', []).requestTimeoutMs).toBe(7_200_000);
     expect(parseOptions('ai', ['--timeout-ms', '1000']).requestTimeoutMs).toBe(1000);
@@ -105,8 +114,7 @@ describe('operator runner configuration', () => {
     expect(rows.length).toBeGreaterThan(0);
     const runs = aiRuns(parseOptions('ai', []));
     expect(parseOptions('ai', []).baseline).toBe(false);
-    expect(parseOptions('ai', ['--baseline']).baseline).toBe(true);
-    expect(parseOptions('ai', ['--attach']).baseline).toBe(true);
+    expect(parseOptions('ai', ['--attach'])).toMatchObject({ attach: true, baseline: false });
     expect(runs.map(run => run.id)).toEqual(rows.map(row => row.id));
     expect(aiRuns(parseOptions('ai', ['--all'])).map(run => run.id)).toEqual(rows.map(row => row.id));
     expect(aiRuns(parseOptions('ai', ['--case', rows[0].id])).map(run => run.id)).toEqual([rows[0].id]);
@@ -477,6 +485,32 @@ describe('explicit attachment export boundary', () => {
     { type: 'turn-start', at: '2026-01-01T00:00:00.000Z', requestId: 'synthetic', runFingerprint: 'run' },
     { type: 'turn-terminal', at: '2026-01-01T00:00:00.001Z', requestId: 'synthetic', runFingerprint: 'run', status: 'ok' },
   ].map(row => JSON.stringify(row)).join('\n'));
+  it('native baseline mode needs a branch and exports session baseline-<branch>-<commit> with tag baseline:<branch>', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'dlv-native-baseline-'));
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({})));
+    try {
+      const trace = [
+        { type: 'trace-open', at: '2026-01-01T00:00:00.000Z', origin: 'native', verbose: true },
+        { type: 'turn-start', at: '2026-01-01T00:00:00.000Z', requestId: 'synthetic', runFingerprint: 'run' },
+        { type: 'turn-terminal', at: '2026-01-01T00:00:00.001Z', requestId: 'synthetic', runFingerprint: 'run', status: 'ok' },
+      ].map(row => JSON.stringify(row)).join('\n');
+      const state = join(directory, 'sm-state.json');
+      writeFileSync(state, '{"explorationOpened":false}\n');
+      writeFileSync(join(directory, 'host.log'), 'request-start synthetic\n');
+      const env = { LANGFUSE_BASE_URL: 'https://export.example', LANGFUSE_PUBLIC_KEY: 'public', LANGFUSE_SECRET_KEY: 'credential' };
+      const input = { trace, directory, sessionId: 'ignored', promptId: 'synthetic', statePaths: new Map([['synthetic', state]]) };
+      await expect(exportNativeEvidence({ ...input, env: { ...env, AI_TEST_BASELINE: '1' } })).rejects.toThrow('requires AI_TEST_BRANCH');
+      await expect(exportNativeEvidence({ ...input, env: { ...env, AI_TEST_BASELINE: '1', AI_TEST_BRANCH: 'feat/x' } })).rejects.toThrow('requires AI_TEST_BRANCH');
+      await expect(exportNativeEvidence({ ...input, env: { ...env, AI_TEST_BASELINE: '0', AI_TEST_BRANCH: 'main' } })).rejects.toThrow('only for AI_TEST_BASELINE=1');
+      // The stub has no media endpoint, so the attachment upload is reported as incomplete; the payload is still written.
+      await expect(exportNativeEvidence({ ...input, env: { ...env, AI_TEST_BASELINE: '1', AI_TEST_BRANCH: 'testing01' } })).rejects.toThrow('export incomplete');
+      const payload = readFileSync(join(directory, 'langfuse-otlp.json'), 'utf8');
+      expect(payload).toMatch(/baseline-testing01-[0-9a-f]{8}/);
+      expect(payload).toContain('baseline:testing01');
+      expect(payload).not.toContain('ignored');
+    } finally { vi.unstubAllGlobals(); rmSync(directory, { recursive: true, force: true }); }
+  });
+
   it('keeps native ordinary-run snapshots local and rejects a reexport with changed trace or baseline mode', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'dlv-native-frozen-'));
     const fetchImpl = vi.fn(async (_url: unknown, _init?: RequestInit) => Response.json({}));
@@ -503,7 +537,7 @@ describe('explicit attachment export boundary', () => {
       expect(fetchImpl).toHaveBeenCalledTimes(2);
       expect(fetchImpl.mock.calls.every(([url]) => String(url).endsWith('/otel/v1/traces'))).toBe(true);
       await expect(exportNativeEvidence({ ...input, trace: trace + '\n' })).rejects.toThrow('Native trace differs from frozen evidence');
-      await expect(exportNativeEvidence({ ...input, env: { ...input.env, AI_TEST_BASELINE: '1' } })).rejects.toThrow('cannot change baseline mode');
+      await expect(exportNativeEvidence({ ...input, env: { ...input.env, AI_TEST_BASELINE: '1', AI_TEST_BRANCH: 'main' } })).rejects.toThrow('cannot change baseline mode');
       expect(fetchImpl).toHaveBeenCalledTimes(2);
     } finally {
       vi.unstubAllGlobals();

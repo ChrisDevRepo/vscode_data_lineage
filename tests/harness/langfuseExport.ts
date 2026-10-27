@@ -66,7 +66,15 @@ const evidenceSchema = z.object({
   turns: z.array(z.array(evidenceFileSchema)),
 }).strict();
 
-/** Write-once local evidence; only its baseline flag authorizes file attachments on export. */
+/** Branch name accepted for a baseline (D-107): a plain name such as main or testing01. */
+export const BASELINE_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+/** Baseline session id for one branch and commit (D-107). */
+export function baselineSession(branch: string, revision: string): string {
+  return `baseline-${branch}-${revision.trim().slice(0, 8)}`;
+}
+
+/** Write-once local evidence; only its `isBaseline` flag (true for --attach or --baseline) authorizes file attachments on export. */
 export interface FrozenRunEvidence {
   readonly isBaseline: boolean;
   readonly attachments: LangfuseAttachments;
