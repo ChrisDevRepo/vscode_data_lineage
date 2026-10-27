@@ -124,6 +124,7 @@ export const runtimeContractTests = [
   'tests/unit/backend/function-column-contracts.test.ts',
   'tests/unit/ai-core/tool-boundary-precedence.test.ts',
   'tests/unit/ai-core/tool-error-envelope.test.ts',
+  'tests/unit/ai-core/problem-escalation.test.ts',
   'tests/unit/ai-core/zod-issue-matrix.test.ts',
 ];
 

@@ -18,6 +18,8 @@ import type {
 import type { ProviderErrorDiagnostic } from '../../src/ai/support/text';
 import { StructuredOutputError } from '../../src/ai/providers/structuredOutput';
 import { TOOL_DEFS } from '../../src/ai/tools/toolDefs';
+import type { PendingGate } from '../../src/ai/session/sessionPhase';
+import type { AiSession } from '../../src/ai/session/session';
 import {
   DEFAULT_TURN_TOKEN_BUDGET,
   estimateTokens,
@@ -237,4 +239,23 @@ export function scriptedRegistry(tools: readonly ScriptedTool[]): {
     registry.register(registered);
   }
   return { registry, invocations };
+}
+
+/** The revision-1 consent gate a scripted `lineage_start_exploration` opens. */
+export const SCRIPTED_GATE: PendingGate = { gate: 'confirm_sm_start', classes: [], nodeIds: [], detail: 'review revision 1', proposalRevision: 1 };
+
+/** Scripted start result that opens a gate as the real handler does: the typed signal on the session plus the envelope text. */
+export function scriptedGate(getSession: () => Pick<AiSession, 'signalControl'>, gate: PendingGate = SCRIPTED_GATE): () => string {
+  return () => {
+    getSession().signalControl({ kind: 'gate', gate });
+    return JSON.stringify({ code: 'action_required', reason: gate.detail, detail: gate });
+  };
+}
+
+/** Scripted start result that refuses the request as the real handler does: the typed signal on the session plus the envelope text. */
+export function scriptedRefusal(getSession: () => Pick<AiSession, 'signalControl'>, reason: string): () => string {
+  return () => {
+    getSession().signalControl({ kind: 'refused', reason });
+    return JSON.stringify({ code: 'over_active_scope_budget', reason });
+  };
 }

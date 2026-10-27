@@ -786,14 +786,9 @@ export function validateHopSubmissionShape(
   const parsed = schema.safeParse(input);
   if (parsed.success) return { ok: true, data: parsed.data as HopSubmission };
   const sections = schema.shape.sections.safeParse(typeof input === 'object' && input !== null ? (input as Record<string, unknown>).sections : undefined);
-  return { ok: false, error: rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema, form: true }),
+  return { ok: false, error: rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema }),
     actions: validatedFindingFields(input, schema), ...(sections.success ? { sections: sections.data } : {}) };
 }
-
-/** The way out of a rejected finding, offered with the last repair opportunity. */
-export const SUBMIT_FINDINGS_REFERENCE_WAY_OUT = 'If a reference cannot be mapped, remove it and record it in sections or as a question.';
-/** The reference-removal cue plus column-flow termination guidance for the last repair opportunity. */
-export const SUBMIT_FINDINGS_WAY_OUT = `${SUBMIT_FINDINGS_REFERENCE_WAY_OUT} An empty column_flow ends the arriving columns.`;
 
 /** Zod schema for `get_neighbor_columns` tool input. */
 export const GetNeighborColumnsInputSchema = z.object({

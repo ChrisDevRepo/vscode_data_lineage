@@ -34,7 +34,7 @@ describe('malformed present_result section entries', () => {
       if (parsed.success) throw new Error('Malformed section unexpectedly passed the boundary.');
       const rejection = rejectionFromZodError(parsed.error, { code: 'invalid_input', input, schema });
       expect(rejection.issuePaths).toContain('sections.0');
-      expect(rejection.reason).toContain('sections[0]');
+      expect(rejection.errors).toContainEqual(expect.objectContaining({ path: 'sections.0', code: entry === null ? 'type' : 'missing' }));
     }
   });
 

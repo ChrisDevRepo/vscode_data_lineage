@@ -14,7 +14,7 @@ import type { IToolRegistry } from '../tools/registry';
 import type { TurnEventSink } from '../runtime/turnEventSink';
 import type { AiSession, SessionWriteOutcome } from '../session/session';
 import type { ClassificationValue } from '../session/classification';
-import { PendingGateSchema } from '../session/sessionPhase';
+import type { ToolControlSignal } from '../session/sessionPhase';
 import { NavigationEngine } from '../sm/smBase';
 import { activeModeOf, type ChatLmStage } from '../tools/toolPolicy';
 import {
@@ -42,7 +42,7 @@ import { classifyRejectionCode } from '../tools/toolProvider';
 import { detectSlashRoute } from './slashCommands';
 import { selectInitialAgentStage } from './entryRouting';
 import { captureDiscoveryWalkFromObservations, detectOverBudgetFromResult, queueDiscoveryBudgetNotice } from './discoveryCapture';
-import { discoveryPreviewNarrative, orderAndAssemble, heldSectionsForRepair } from '../tools/presentResult';
+import { discoveryPreviewNarrative, orderAndAssemble } from '../tools/presentResult';
 import { sanitizeForLog, trunc, LOG_TRUNC_REJECTION, type Logger } from '../../utils/log';
 import { describeProviderErrorForUser, escapeDelimitedJson, escapeMarkdownText, escapePromptText, truncAtWordBoundary, formatProviderErrorDiagnostic, isTransportProviderError, sanitizeDescriptionForChat, sanitizeProviderErrorDiagnostic, type ProviderErrorDiagnostic } from '../support/text';
 import { InternalInvariantError } from '../support/internalInvariant';
@@ -312,13 +312,6 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       priorState,
       debugLog: message => logGraphDebug(deps, message),
       traceSyntheticRejection: deps.traceSyntheticRejection,
-      presentResultRepairDraftContext: () => {
-        const drafts = deps.getSession().presentResultRepairDraft;
-        const authorization = drafts.getAuthorization();
-        if (!authorization?.fields.includes('sections') || authorization.sectionLeaves) return null;
-        const held = drafts.get();
-        return held ? { sections: heldSectionsForRepair(held.sections) } : null;
-      },
     });
     const first = await attempt();
     if (first.stop !== 'error' || !first.providerError || !isTransportProviderError(first.providerError) || deps.signal?.aborted) return first;
@@ -626,7 +619,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       facts: { templateKeys: discoveryInstruction.templateKeys, memorySections: [...discoveryInstruction.memorySections, 'conversation_history'] },
       messages,
       system: discoveryInstruction.system,
-      detectGate: detectGateFromToolResult,
+      takeControlSignal: takeControlSignal(deps, ['gate']),
       detectReroute: detectOverBudgetFromResult,
       proseGate: 'buffer-until-tool',
     };
@@ -644,7 +637,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       ({ result: res, nextAttempt } = attempt);
     }
     if (res.stop === 'gate') {
-      return { gate: PendingGateSchema.parse(res.gate), toolAttempt: null, phase: 'gate' };
+      return { gate: res.gate!, toolAttempt: null, phase: 'gate' };
     }
     if (res.stop === 'reroute') return { executionTrigger: 'discovery_budget', toolAttempt: null, phase: 'sm_entry' };
     if (res.stop === 'continue') return { toolAttempt: nextAttempt, phase: 'discover' };
@@ -739,8 +732,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
         system: buildSmEntrySystemPrompt(getCtx(state), targetColumns),
         sink: deps.sink,
         signal: deps.signal,
-        detectGate: detectGateFromToolResult,
-        detectRefusal: detectRefusalFromToolResult,
+        takeControlSignal: takeControlSignal(deps, ['gate', 'refused']),
         proseGate: 'buffer-until-tool',
     }), priorAttempt));
 
@@ -750,7 +742,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       return { ...failProvider(res, 'Failed to start exploration'), toolAttempt: nextAttempt };
     }
     if (res.stop === 'gate') {
-      return { gate: PendingGateSchema.parse(res.gate), toolAttempt: null, phase: 'gate' };
+      return { gate: res.gate!, toolAttempt: null, phase: 'gate' };
     }
     if (res.stop === 'refused') return refusedTerminal(res.refusal);
     const stopped = attemptStop(nextAttempt, 'Exploration entry', 'without reaching the consent gate');
@@ -824,8 +816,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       system: buildGateRefineSystemPrompt(getCtx(state)),
       sink: deps.sink,
       signal: deps.signal,
-      detectGate: detectGateFromToolResult,
-      detectRefusal: detectRefusalFromToolResult,
+      takeControlSignal: takeControlSignal(deps, ['gate', 'refused']),
       proseGate: 'buffer-until-tool',
     }), priorAttempt));
 
@@ -837,7 +828,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }
     if (res.stop === 'gate') {
       return {
-        gate: PendingGateSchema.parse(res.gate),
+        gate: res.gate!,
         gateDecision: null,
         toolAttempt: null,
         phase: 'gate',
@@ -1197,9 +1188,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       facts: { memorySections: ['conversation_history'] },
       messages,
       system: buildHostStageSystemPrompt('completed', getCtx(state)),
-      detectGate: detectGateFromToolResult,
+      takeControlSignal: takeControlSignal(deps, ['gate', 'refused']),
       detectReroute: detectOverBudgetFromResult,
-      detectRefusal: detectRefusalFromToolResult,
       isPhaseComplete: () => sess.presentResultCalledThisTurn,
       proseGate: 'buffer-until-tool',
     }, ['Follow-up failed', 'Follow-up', 'without completing', () => sess.presentResultRepairDraft.clear()]);
@@ -1216,7 +1206,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }
     const { result: res, nextAttempt } = attempt;
     sess.bufferFollowUpProse(res.text);
-    if (res.stop === 'gate') return { gate: PendingGateSchema.parse(res.gate), toolAttempt: null, phase: 'gate' };
+    if (res.stop === 'gate') return { gate: res.gate!, toolAttempt: null, phase: 'gate' };
     if (res.stop === 'refused') return refusedTerminal(res.refusal);
     if (res.stop === 'reroute') return { executionTrigger: 'discovery_budget', toolAttempt: null, phase: 'sm_entry' };
     if (res.stop === 'continue') return { toolAttempt: nextAttempt, phase: 'follow_up' };
@@ -1426,28 +1416,13 @@ function routeAfterSynthesis(state: AgentStateType): string {
     : END;
 }
 
-function detectGateFromToolResult(toolName: string, resultText: string): unknown | null {
-  if (toolName !== 'lineage_start_exploration') return null;
-  try {
-    const envelopeSchema = z.object({ code: z.literal(REJECTION_CODES.actionRequired), detail: PendingGateSchema });
-    const envelopeCheck = envelopeSchema.safeParse(JSON.parse(resultText));
-    return envelopeCheck.success ? envelopeCheck.data.detail : null;
-  } catch {
-    return null;
-  }
+/** Takes the dispatched handler's typed control outcome from the session, limited to the kinds this phase routes. */
+function takeControlSignal(deps: Pick<AgentGraphDeps, 'getSession'>, kinds: readonly ToolControlSignal['kind'][]): () => ToolControlSignal | null {
+  return () => {
+    const signal = deps.getSession().takeControlSignal();
+    return signal && kinds.includes(signal.kind) ? signal : null;
+  };
 }
-
-function detectRefusalFromToolResult(toolName: string, resultText: string): string | null {
-  if (toolName !== 'lineage_start_exploration') return null;
-  try {
-    const refusal = z.object({ code: z.literal(REJECTION_CODES.overActiveScopeBudget), reason: z.string().min(1) })
-      .safeParse(JSON.parse(resultText));
-    return refusal.success ? refusal.data.reason : null;
-  } catch {
-    return null;
-  }
-}
-
 
 /** Wraps the synthesis completion envelope for the model-facing message, the same untrusted-JSON treatment `visualPreviewNode` gives its `<discovery_preview_source>` block. */
 export function buildSynthesisEnvelopeMessage(envelope: ReturnType<typeof buildSmCompletionEnvelope>): string {

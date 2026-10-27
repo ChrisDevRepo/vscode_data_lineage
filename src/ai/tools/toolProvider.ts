@@ -31,7 +31,7 @@ import { getAllowedLmToolNames, activeModeOf, EXTERNAL_TOOL_NAMES, type LmStage 
 import { ToolRegistry } from '../tools/registry';
 import { TOOL_DEFS, EXTERNAL_TOOL_DEFS, type ToolContract, type ToolName } from '../tools/toolDefs';
 import { getToolInvocationLabel } from '../tools/toolLabels';
-import { readToolError, readToolErrorText, isConsentGateRejection, makeRejection, rejectionModelContent, NoProjectLoadedError, buildNoProjectLoadedError } from '../support/toolErrorEnvelope';
+import { readToolError, readToolErrorText, isConsentGateRejection, makeRejection, renderProblem, NoProjectLoadedError, buildNoProjectLoadedError } from '../support/toolErrorEnvelope';
 import { evaluateToolPhaseRule } from '../interaction/rules/toolPhaseRules';
 import { assertActiveTurnLease, type TurnLease } from '../session/turnLease';
 import { DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
@@ -539,7 +539,7 @@ export function buildAiToolRegistry(
           const parts = RepairDraftStore.inputParts(owner, merged, rejection.issuePaths, !!rejection.resend?.length);
           store.hold(ambiguous ? {} : parts, { context: capturedContext, round, paths: [...rejection.issuePaths, ...(rejection.resend ?? [])], ambiguous });
           if (ambiguous) return JSON.stringify({ ...JSON.parse(result), hint: 'Several calls need correction. Resend a fully identified complete tool call; no values are held.' });
-          return JSON.stringify({ ...JSON.parse(result), repair: true });
+          return result;
         };
         try { return await (def.effect === 'read' ? invoke() : serialize(invoke)); }
         catch (error) { if (repairable && capturedContext === context()) draft().clear(); throw error; }
@@ -586,7 +586,7 @@ export function registerAiTools(source: ExternalToolSource): vscode.Disposable[]
         try {
           const text = await source.invoke(tool.name, options.input, abort.signal);
           const rejection = readToolErrorText(text);
-          if (rejection) throw new Error(rejectionModelContent(rejection));
+          if (rejection) throw new Error(renderProblem(rejection, 2));
           return new vscode.LanguageModelToolResult([new vscode.LanguageModelTextPart(text)]);
         } finally {
           abort.dispose();

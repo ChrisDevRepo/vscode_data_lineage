@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { VscodeModelPort } from '../../../src/ai/model/vscodeModelPort';
 import { modelUserMessage } from '../../../src/ai/model/modelPort';
-import { REGEX_MAX_LENGTH, createTurnTokenBudget } from '../../../src/ai/support/tokenBudget';
+import { REGEX_MAX_LENGTH, checkScopeBudget, createTurnTokenBudget } from '../../../src/ai/support/tokenBudget';
 import { AiSession } from '../../../src/ai/session/session';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { compileInstructionPlan } from '../../../src/ai/agent/instructionPlan';
@@ -20,7 +20,9 @@ import { executeStartExploration } from '../../../src/ai/tools/handlers/startExp
 import { StartExplorationInputSchema, StartExplorationFreshProviderInputSchema, StartExplorationProviderInputSchema, StartExplorationRefineProviderInputSchema, PruneCurrentInputSchema, presentResultSchemaForPhase, submitFindingsSchemaForMode } from '../../../src/ai/tools/toolSchemas';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import Ajv from 'ajv';
-import { readToolErrorText, rejectionModelContent } from '../../../src/ai/support/toolErrorEnvelope';
+import { PROBLEM_MESSAGES, isAdmissionRefusal, isConsentGateRejection, readToolErrorText, renderProblem } from '../../../src/ai/support/toolErrorEnvelope';
+import { detectOverBudgetFromResult, queueDiscoveryBudgetNotice } from '../../../src/ai/agent/discoveryCapture';
+import { scriptedRegistry } from '../../harness/scriptedModelPort';
 import { makeGraph, makeIndexedModel, makeModel, makeNode } from '../helpers/modelFixtures';
 import { TOOL_DEFS } from '../../../src/ai/tools/toolDefs';
 import { schemaFaults, withSchemaFaults, stubToolServices } from './helpers/toolServices';
@@ -147,8 +149,7 @@ it('states whole action-list replacement and preserves explicit withdrawal witho
   const second = { nodeId: OTHER, question: 'Explain the other source.' };
   const submit = (input: object) => JSON.parse(executeSubmitFindings(input, services));
   const initial = submit({ summary: 'Authored summary.', sections: { technical: 'Authored evidence.' }, questions: [first] });
-  expect(initial.errors).toEqual(expect.arrayContaining([expect.objectContaining({ path: OTHER,
-    issue: expect.stringContaining('Send the complete list') })]));
+  expect(initial.errors).toEqual(expect.arrayContaining([expect.objectContaining({ path: OTHER, code: 'neighbor_outcome_missing' })]));
   expect(initial.resend).toEqual(['questions', 'prune_neighbors']);
   expect(initial.errors).toEqual(expect.arrayContaining([expect.objectContaining({ alternatives: ['questions', 'prune_neighbors'] })]));
   const schema = toModelJsonSchema(submitFindingsSchemaForMode('bb', 'technical', false, engine.hopSubmitColumns));
@@ -569,7 +570,7 @@ describe('large findings repairs', () => {
       ], prune_neighbors: [{ id: BRANCH, reason: 'Outside this investigation.' }],
       questions: validSupplier || sibling ? [] : [{ nodeId: OTHER, question: 'Explain Value.' }],
     }, services));
-    expect(result.detail.filter((fault: { kind: string }) => fault.kind === 'prune_unsupported')).toHaveLength(protectedTarget ? 1 : 0);
+    expect([result.detail ?? []].flat().filter((fault: { kind: string }) => fault.kind === 'prune_unsupported')).toHaveLength(protectedTarget ? 1 : 0);
     if (badTarget) expect(result.detail).toContainEqual(expect.objectContaining({ kind: 'bad_out_col', path: 'column_flow.0.writes_to.col' }));
     expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
     expect(engine.toJSON().agenda).toEqual(before.agenda);
@@ -611,14 +612,13 @@ describe('large findings repairs', () => {
       column_flow: [{ out_col: 'Value', upstream_columns: shape === 'source-type' ? 42 : [{ node: BRANCH, col: 'Value' }],
         writes_to: shape === 'target-type' ? 42 : shape === 'target-col' ? { node: target } : { node: target, col: 'Value' } }],
     }, services));
-    const errors = result.errors as Array<{ path: string; issue: string }>;
-    expect(errors.some(error => error.path === 'column_flow.0.writes_to.node' && error.issue.includes('out of scope'))).toBe(scope);
+    const errors = result.errors as Array<{ path: string; code: string }>;
+    expect(errors.some(error => error.path === 'column_flow.0.writes_to.node' && error.code === 'column_out_of_scope')).toBe(scope);
     if (scope) {
       expect(errors.filter(error => error.path === 'column_flow.0.writes_to.node')).toHaveLength(1);
-      const firstFeedback = JSON.parse(rejectionModelContent(readToolErrorText(JSON.stringify(result))!, false));
-      const scopeIssue = firstFeedback.errors.find((error: { issue: string }) => error.issue.includes('out of scope'));
-      expect(scopeIssue.issue).toContain('writes_to: null');
-      expect(scopeIssue.issue).toContain('sections');
+      const firstFeedback = JSON.parse(renderProblem(readToolErrorText(JSON.stringify(result))!, 1));
+      const scopeIssue = firstFeedback.errors.find((error: { code: string }) => error.code === 'column_out_of_scope');
+      expect(scopeIssue).toMatchObject({ path: 'column_flow.0.writes_to.node' });
       expect(scopeIssue).not.toHaveProperty('allowed');
     }
     const shapePath = shape === 'target-type' ? 'column_flow.0.writes_to' : shape === 'target-col' ? 'column_flow.0.writes_to.col'
@@ -736,7 +736,7 @@ describe('large findings repairs', () => {
     const { services } = stubToolServices({ session, model, graph });
     const rejected = JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN, column_flow_repairs: [{ entry_index: 0, upstream_index: 0, replacement: { col: 'Value' } }] }, services));
     expect(rejected).toMatchObject({ code: 'invalid_input', issuePaths: expect.arrayContaining(['column_flow_repairs']),
-      errors: expect.arrayContaining([expect.objectContaining({ path: 'column_flow_repairs', issue: 'Unrecognized key; remove or correct it.' })]) });
+      errors: expect.arrayContaining([expect.objectContaining({ path: 'column_flow_repairs', code: 'unknown_key' })]) });
     expect(engine.heldPartsOfCurrentFocus()).toBeNull();
   });
   it('names separate defective suppliers at their original indexes and accepts the corrected whole list', () => {
@@ -865,7 +865,8 @@ describe('lineage_prune_current boundary', () => {
     for (const final of repeatFault ? [false, true] : [false]) {
       const rejected = readToolErrorText(executePruneCurrent({ focus_node_id: BRANCH, reason: 'No continuation.' }, services));
       expect(rejected).not.toBeNull();
-      expect(JSON.parse(rejectionModelContent(rejected!, final)).hint).toContain('lineage_submit_findings');
+      // The legal alternative (the tool to call instead) is named in the call-level error of every feedback.
+      expect(JSON.parse(renderProblem(rejected!, final ? 2 : 1)).errors.find((error: { path: string }) => error.path === '')?.message).toContain('lineage_submit_findings');
       expect(engine.toJSON()).toEqual(before);
     }
     expect(JSON.parse(executeSubmitFindings({ summary: 'This assigned column terminates here.',
@@ -1036,7 +1037,8 @@ describe('lineage_submit_findings boundary', () => {
         : { ...valid, column_flow: 42 };
       const result = JSON.parse(executeSubmitFindings(input, services));
       expect(result).toMatchObject({ code: 'invalid_input', issuePaths: expect.arrayContaining(['column_flow']),
-        errors: expect.arrayContaining([expect.objectContaining({ path: 'column_flow', expected: 'array', got: 42 })]) });
+        errors: expect.arrayContaining([expect.objectContaining({ path: 'column_flow', code: 'type' })]) });
+      expect(result.errors.find((error: { path: string }) => error.path === 'column_flow')).not.toHaveProperty('got');
       expect(result).not.toHaveProperty('hint');
       expect(result.resend).toEqual(expect.arrayContaining(existing && !wrongFocus ? ['summary', 'column_flow'] : ['column_flow']));
       if (heldCase === 'none' || wrongFocus) {
@@ -1244,7 +1246,7 @@ it.each([{ missingSummary: false, badPrune: false }, { missingSummary: true, bad
     ...(badPrune ? { prune_neighbors: [{ id: OTHER, reason: 'Not an admitted neighbor.' }] } : {}),
   }, services));
   expect(rejected).toMatchObject({ code: 'invalid_input',
-    errors: expect.arrayContaining([expect.objectContaining({ path: 'neighbors', issue: expect.stringContaining('Unrecognized key') })]),
+    errors: expect.arrayContaining([expect.objectContaining({ path: 'neighbors', code: 'unknown_key' })]),
     resend: missingSummary ? ['summary'] : badPrune ? ['prune_neighbors'] : [],
   });
   expect(engine.currentFocus).toBe(ORIGIN);
@@ -1269,7 +1271,7 @@ it.each([{ unsupported: 'column_flow', missingTechnical: false }, { unsupported:
     ...(unsupported === 'column_flow' ? { column_flow: [] } : {}),
   }, services));
   expect(rejected).toMatchObject({ code: 'invalid_input', resend: missingTechnical ? ['sections', 'sections.technical'] : unsupported === 'questions.0.extra' ? ['questions'] : [],
-    errors: expect.arrayContaining([expect.objectContaining({ path: unsupported, issue: expect.stringContaining('Unrecognized key') })]) });
+    errors: expect.arrayContaining([expect.objectContaining({ path: unsupported, code: 'unknown_key' })]) });
   const held = engine.toJSON().engineInternals.heldFinding?.finding;
   expect(held?.column_flow).toBeUndefined();
   expect(held?.sections).toEqual(missingTechnical ? [] : [{ angle: 'technical', text: 'Keep these authored findings.' }]);
@@ -1299,7 +1301,7 @@ it.each([
   expect(rejected.code).toBe('invalid_input');
   expect(engine.getDetailSlots()).toEqual([]);
   if (typeof row.sections !== 'string') expect(rejected.errors).toEqual(expect.arrayContaining([
-    expect.objectContaining({ path: 'sections.business_extra', issue: expect.stringContaining('Unrecognized key') }),
+    expect.objectContaining({ path: 'sections.business_extra', code: 'unknown_key' }),
   ]));
   const text = row.retained === 'technical' ? 'Keep this exact technical body.' : 'Keep this exact business body.';
   const held = engine.toJSON().engineInternals.heldFinding?.finding;
@@ -1344,10 +1346,9 @@ it('keeps outside-supplier withdrawal alongside the nullable write exit in first
     column_flow: [{ out_col: 'Value', upstream_columns: [{ node: OTHER, col: 'Value' }] }],
     questions: [{ nodeId: BRANCH, question: 'Trace the reachable Value.' }],
   }, services));
-  const first = JSON.parse(rejectionModelContent(readToolErrorText(JSON.stringify(rejected))!, false));
-  const scopeIssue = first.errors.find((error: { issue: string }) => error.issue.includes('out of scope'));
-  expect(scopeIssue.issue).toContain('Remove outside upstream_columns sources');
-  expect(scopeIssue.issue).toContain('sections');
+  const first = JSON.parse(renderProblem(readToolErrorText(JSON.stringify(rejected))!, 1));
+  const scopeIssue = first.errors.find((error: { code: string }) => error.code === 'column_out_of_scope');
+  expect(scopeIssue).toMatchObject({ path: 'column_flow.0.upstream_columns.0.node' });
   expect(scopeIssue).not.toHaveProperty('allowed');
   expect(engine.getDetailSlots()).toEqual([]);
   expect(JSON.parse(executeSubmitFindings({column_flow: [{out_col:'Value', upstream_columns:[{node:BRANCH,col:'Value'}]}]},services))).toHaveProperty('ok',true);
@@ -1382,18 +1383,17 @@ it.each(startEnumCombinations.flatMap(row => [false, true].map(refining => ({ ..
   const rejected = JSON.parse(await executeStartExploration(faulty, services));
   expect(rejected.code).toBe(row.code);
   expect(rejected.issuePaths.sort()).toEqual(row.selected.map(fault => fault.path).sort());
-  const first = JSON.parse(rejectionModelContent(rejected, false));
-  for (const fault of row.selected) for (const value of fault.allowed)
-    expect(`${first.reason} ${first.hint ?? ''}`).not.toContain(JSON.stringify(value));
-  expect(first).not.toHaveProperty('detail');
-  expect(first).not.toHaveProperty('example'); expect(first).not.toHaveProperty('way_out');
-  const last = JSON.parse(rejectionModelContent(rejected, true));
-  expect(last.way_out).toBe('Submit the corrected proposal for approval.');
-  if (row.selected[0]!.path === 'analysisMode') {
-    expect(last.example).toEqual({ analysisMode: 'bb' });
-    expect(StartExplorationInputSchema.shape.analysisMode.safeParse(last.example.analysisMode).success).toBe(true);
+  // D-105: feedback 1 names every fault without allowed values; feedback 2 adds them; start arguments get no fallback at 3.
+  const first = JSON.parse(renderProblem(rejected, 1));
+  expect(Object.keys(first).sort()).toEqual(['code', 'errors', 'resend']);
+  for (const fault of row.selected) expect(first.errors).toContainEqual(expect.objectContaining({ path: fault.path }));
+  for (const error of first.errors) expect(error).not.toHaveProperty('allowed');
+  for (const fault of row.selected) for (const value of fault.allowed) expect(JSON.stringify(first)).not.toContain(JSON.stringify(value));
+  for (const stage of [2, 3] as const) {
+    const later = JSON.parse(renderProblem(rejected, stage, 'lineage_start_exploration'));
+    for (const fault of row.selected) expect(later.errors).toContainEqual(expect.objectContaining({ path: fault.path, allowed: fault.allowed }));
+    expect(JSON.stringify(later)).not.toContain(PROBLEM_MESSAGES.fallback);
   }
-  for (const fault of row.selected) expect(JSON.parse(rejectionModelContent(rejected, true)).detail).toContainEqual(expect.objectContaining({ path: fault.path, allowed_values: fault.allowed }));
   expect(session.stateMachine).toBeNull();
   expect(session.pendingExploration?.revision ?? null).toBe(row.refining ? 1 : null);
   const corrected = JSON.parse(await executeStartExploration({ ...desired, ...(row.refining ? { proposalRevision: 1 } : {}) }, services));
@@ -1416,9 +1416,10 @@ it.each([
     const rejection = readToolErrorText(raw);
     expect(rejection).not.toBeNull();
     expect(rejection!.code).toBe(row.code);
-    const served = JSON.parse(rejectionModelContent(rejection!, final));
-    expect(`${served.reason} ${served.hint ?? ''}`).not.toBe('');
-    if (!final) expect(served).not.toHaveProperty('detail');
+    const served = JSON.parse(renderProblem(rejection!, final ? 2 : 1));
+    expect(served.errors.length).toBeGreaterThan(0);
+    for (const error of served.errors) expect(error.message).not.toBe('');
+    if (!final) for (const error of served.errors) expect(error).not.toHaveProperty('allowed');
     expect(session.pendingExploration).toBeNull();
     expect(session.stateMachine).toBeNull();
   }
@@ -1628,20 +1629,17 @@ it.each(['lineage_search_objects', 'lineage_search_ddl'].flatMap(tool => ['synta
 );
 
 it.each([
-  { tool: 'lineage_search_objects', bad: { query: 42, schemas: ['hop'] }, example: { query: '...' }, corrected: { query: 'origin' } },
-  { tool: 'lineage_get_object_detail', bad: { id: 42 }, example: { id: '...' }, corrected: { id: ORIGIN } },
-])('derives a second-tier $tool example from its actual schema and accepts its first corrected resend', async row => {
+  { tool: 'lineage_search_objects', bad: { query: 42, schemas: ['hop'] }, field: 'query', corrected: { query: 'origin' } },
+  { tool: 'lineage_get_object_detail', bad: { id: 42 }, field: 'id', corrected: { id: ORIGIN } },
+])('stages the $tool type fault with no fallback at any feedback (a read tool) and accepts its first corrected resend', async row => {
+  // D-103/D-105 retire the generated example; the required field never gets the stage-3 fallback.
   const { session, registry } = ctWorld(); session.stateMachine = null;
   session.enterLmStage({ kind: 'discover' }, session.turnEpoch); session.currentRoundId = 1;
   const rejection = JSON.parse(await registry.invoke(row.tool, row.bad));
-  const first = JSON.parse(rejectionModelContent(rejection, false));
-  expect(first).not.toHaveProperty('example'); expect(first).not.toHaveProperty('way_out');
-  const second = JSON.parse(rejectionModelContent(rejection, true));
-  expect(second.example).toEqual(row.example);
-  expect(second.way_out).toBe('Resubmit the corrected fields; retain valid values.');
-  for (const [field, value] of Object.entries(row.example)) {
-    const schema = registry.get(row.tool)!.inputSchema as import('zod').z.ZodObject;
-    expect(schema.shape[field]!.safeParse(value).success).toBe(true);
+  for (const stage of [1, 2, 3] as const) {
+    const problem = JSON.parse(renderProblem(rejection, stage, row.tool));
+    expect(problem.errors).toContainEqual(expect.objectContaining({ path: row.field, code: 'type' }));
+    expect(JSON.stringify(problem)).not.toContain(PROBLEM_MESSAGES.fallback);
   }
   session.currentRoundId = 2;
   expect(readToolErrorText(await registry.invoke(row.tool, row.corrected))).toBeNull();
@@ -1649,12 +1647,12 @@ it.each([
 });
 
 
-it.each(['feedback marker', 'next provider schema and acknowledgement', 'second feedback example and exit', 'held-field resend accepted'] as const)('uses actual generation identity through the compiled native start repair: %s', async check => {
+it.each(['feedback marker', 'next provider schema and acknowledgement', 'second feedback allowed values', 'held-field resend accepted'] as const)('uses actual generation identity through the compiled native start repair: %s', async check => {
   const { session } = ctWorld(); session.stateMachine = null;
   session.currentRoundId = 1; // One user request contains both provider generations.
   session.enterLmStage({ kind: 'sm_entry' }, session.turnEpoch);
   const offered: Array<Record<string, any>> = [];
-  const inputs: Array<Record<string, unknown>> = check === 'second feedback example and exit'
+  const inputs: Array<Record<string, unknown>> = check === 'second feedback allowed values'
     ? [{ origin: ORIGIN, analysisMode: 'bad-mode', classification: 'technical', depth: { upstream: { levels: 1, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } },
       { analysisMode: 'still-bad' }, { analysisMode: 'bb' }]
     : [{ origin: ORIGIN, analysisMode: 'bb', classification: 'technical', depth: {
@@ -1685,16 +1683,18 @@ it.each(['feedback marker', 'next provider schema and acknowledgement', 'second 
   expect(model.modelCalls).toBe(1); expect(session.currentRoundId).toBe(1);
   if (check === 'feedback marker') {
     const toolResult = first.messages.find(message => message.getType() === 'tool')!;
-    expect(JSON.parse(String(toolResult.content))).toHaveProperty('repair', true);
+    const problem = JSON.parse(String(toolResult.content));
+    expect(Object.keys(problem).sort()).toEqual(['code', 'errors', 'resend']);
+    expect(problem.errors.map((error: { path: string }) => error.path)).toEqual(expect.arrayContaining(['depth.upstream.exactness', 'depth.downstream.exactness']));
     return;
   }
   const second = await executeToolAttempt(model, plan([modelUserMessage('Start this exploration.'), ...first.messages]), { priorState: state });
-  if (check === 'second feedback example and exit') {
+  if (check === 'second feedback allowed values') {
     const firstContent = JSON.parse(String(first.messages.find(message => message.getType() === 'tool')!.content));
-    expect(firstContent).not.toHaveProperty('example'); expect(firstContent).not.toHaveProperty('way_out');
+    expect(firstContent.errors).toContainEqual(expect.objectContaining({ path: 'analysisMode' }));
+    for (const error of firstContent.errors) expect(error).not.toHaveProperty('allowed');
     const content = JSON.parse(String(second.messages.find(message => message.getType() === 'tool')!.content));
-    expect(content.example).toEqual({ analysisMode: 'bb' });
-    expect(content.way_out).toBe('Submit the corrected proposal for approval.');
+    expect(content.errors).toContainEqual(expect.objectContaining({ path: 'analysisMode', allowed: expect.arrayContaining(['bb']) }));
     state = recordToolAttempt(state, second);
     await executeToolAttempt(model, plan([modelUserMessage('Start this exploration.'), ...second.messages]), { priorState: state });
     expect(model.modelCalls).toBe(3); expect(session.currentRoundId).toBe(1);
@@ -1841,4 +1841,59 @@ it.each(['column_flow', 'unknown-root'] as const)('uses the existing active auth
   expect(engine.getDetailSlots().find(slot => slot.nodeId === ORIGIN)).toMatchObject({ summary: valid.summary,
     sections: [{ angle: 'technical', text: valid.sections.technical }] });
   expect(engine.columnAspect!.edges).toContainEqual(expect.objectContaining({ note: 'Keep source note.' }));
+});
+
+describe('control routing takes the typed handler signal, never the result text (MW-2 audit)', () => {
+  // graph.ts no longer parses start_exploration text: the handler records a typed gate/refusal on the session and the dispatcher takes it.
+  // Over-budget reroute (discoveryCapture.ts) and the runtime trace status (lineageRuntime.ts) still read the raw registry record, never the rendered problem.
+  const startInput = (levels: 1 | 'all') => ({ origin: ORIGIN, analysisMode: 'bb' as const, classification: 'technical' as const, question: 'What feeds it?',
+    depth: { upstream: { levels, exactness: 'exact' as const }, downstream: { levels: 0 as const, exactness: 'exact' as const } } });
+  const routedPlan = (session: AiSession, registry: ReturnType<typeof buildAiToolRegistry> | ReturnType<typeof scriptedRegistry>['registry'], stage: 'sm_entry' | 'discover') =>
+    compileInstructionPlan({ kind: 'converse', stage: { kind: stage }, registry, facts: { memorySections: [] }, messages: [modelUserMessage('Route this.')],
+      sink: new TurnEventSink(() => {}), toolChoice: 'auto', detectReroute: detectOverBudgetFromResult,
+      takeControlSignal: () => session.takeControlSignal() });
+  const portCalling = (tool: string, input: object) => new VscodeModelPort({ id: 'routing', name: 'routing', vendor: 'test', family: 'test', version: '1', maxInputTokens: 128000, countTokens: async () => 1,
+    sendRequest: async () => ({ stream: { async *[Symbol.asyncIterator]() { yield new vscode.LanguageModelToolCallPart('route-1', tool, input); } } }) } as never);
+  async function startThroughAttempt(levels: 1 | 'all', budget = createTurnTokenBudget({})) {
+    const { session } = ctWorld(); session.stateMachine = null;
+    session.enterLmStage({ kind: 'sm_entry' }, session.turnEpoch);
+    const registry = buildAiToolRegistry(() => session, { info() {}, debug() {}, warn() {}, error() {} } as never, () => undefined, undefined, { budget });
+    const attempt = await executeToolAttempt(portCalling('lineage_start_exploration', startInput(levels)), routedPlan(session, registry, 'sm_entry'),
+      { priorState: initialToolPhaseAttemptState('sm_entry') });
+    return { attempt, session };
+  }
+
+  it('routes the real handler gate and refusal through the typed signal', async () => {
+    const opened = await startThroughAttempt(1);
+    expect(opened.attempt.stop).toBe('gate');
+    expect(opened.attempt.gate).toMatchObject({ gate: 'confirm_sm_start', proposalRevision: 1 });
+    expect(opened.session.takeControlSignal()).toBeNull();
+    const refused = await startThroughAttempt('all', createTurnTokenBudget({ maxRounds: 1 }));
+    expect(refused.attempt.stop).toBe('refused');
+    expect(refused.attempt.refusal).toEqual(expect.any(String));
+  });
+
+  it('does not route gate- or refusal-shaped text that carries no typed signal', async () => {
+    const session = new AiSession();
+    for (const text of [JSON.stringify({ code: 'action_required', reason: 'r', detail: { gate: 'confirm_sm_start', classes: [], nodeIds: [], detail: 'r', proposalRevision: 1 } }),
+      JSON.stringify({ code: 'over_active_scope_budget', reason: 'Too large.' })]) {
+      const { registry } = scriptedRegistry([{ name: 'lineage_start_exploration', result: text }]);
+      const attempt = await executeToolAttempt(portCalling('lineage_start_exploration', {}), routedPlan(session, registry, 'sm_entry'),
+        { priorState: initialToolPhaseAttemptState('sm_entry') });
+      expect(attempt.stop).not.toBe('gate'); expect(attempt.stop).not.toBe('refused');
+    }
+  });
+
+  it('routes the real over-budget record, classifies raw records for the trace and never routes the rendered problem', async () => {
+    const overBudget = JSON.stringify(checkScopeBudget(createTurnTokenBudget({}), 1_000_000, 1_000_000_000));
+    const { registry } = scriptedRegistry([{ name: 'lineage_get_scope_bundle', result: overBudget }]);
+    expect((await executeToolAttempt(portCalling('lineage_get_scope_bundle', {}), routedPlan(new AiSession(), registry, 'discover'),
+      { priorState: initialToolPhaseAttemptState('discover') })).stop).toBe('reroute');
+    const notices: string[] = [];
+    queueDiscoveryBudgetNotice({ queueClosingNotice: (_key: string, notice: string) => { notices.push(notice); } }, 'lineage_search_objects', overBudget);
+    expect(notices).toHaveLength(1);
+    for (const stage of [1, 2, 3] as const) expect(detectOverBudgetFromResult('lineage_get_scope_bundle', renderProblem(readToolErrorText(overBudget)!, stage))).toBe(false);
+    expect(isConsentGateRejection('action_required')).toBe(true);
+    expect(isAdmissionRefusal(readToolErrorText(JSON.stringify({ code: 'over_active_scope_budget', reason: 'Too large.' }))!.code)).toBe(true);
+  });
 });

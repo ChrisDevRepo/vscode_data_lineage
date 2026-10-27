@@ -9,7 +9,7 @@ import type { ToolServices } from '../../../src/ai/tools/handlers/toolServices';
 import type { ResultGraph } from '../../../src/ai/session/types';
 import type { DatabaseModel, LineageNode } from '../../../src/engine/types';
 import type { Logger } from '../../../src/utils/log';
-import { readToolError, rejectionModelContent } from '../../../src/ai/support/toolErrorEnvelope';
+import { readToolError, renderProblem } from '../../../src/ai/support/toolErrorEnvelope';
 
 const ORIGIN = '[dbo].[Orders]';
 const CAPTURED_SQL = 'SELECT * FROM Staging.Orders';
@@ -346,8 +346,7 @@ describe('merged report section repair diagnosis', () => {
     session.presentResultRepairDraft.hold(held, { fields: ['sections'] });
     const rejected = JSON.parse(await executePresentResult({ sections: [{ label: 'Source', remove: true }, { label: 'Source', text: 'Corrected source detail.' }] }, services(session, epoch)));
     expect(rejected.code).toBe('invalid_input');
-    expect(rejected.hint).toContain('one entry per section label');
-    expect(rejected.hint).toContain('omit remove');
+    expect(rejected.errors).toEqual([expect.objectContaining({ path: 'sections.1.label', code: 'invalid' })]);
     expect(rejected.hint).not.toContain('repeating the unflagged elements exactly as first sent');
     expect(session.presentResultRepairDraft.get()).toEqual(held);
   });
@@ -392,10 +391,8 @@ describe('merged report section repair diagnosis', () => {
     const rejection = readToolError(first);
     if (!rejection) throw new Error('Expected a rejected section amendment.');
     expect(first.hint).toContain('omit sections to keep the committed report');
-    expect(rejectionModelContent(rejection, false)).not.toContain('Alpha');
-    expect(JSON.parse(rejectionModelContent(rejection, true)).detail).toContainEqual({
-      path: 'sections', allowed_values: ['Alpha', 'Beta'], expected: 'Committed labels when omitting section text.',
-    });
+    expect(renderProblem(rejection, 1)).not.toContain('Alpha');
+    expect(JSON.parse(renderProblem(rejection, 2)).errors).toContainEqual(expect.objectContaining({ path: 'sections', allowed: ['Alpha', 'Beta'] }));
     expect(session.presentResultRepairDraft.get()?.sections).toBeUndefined();
     expect(session.presentResultRepairDraft.get()).toMatchObject({ is_update: true });
     expect(session.presentResultRepairDraft.getAuthorization()?.fields).toEqual(expect.arrayContaining(['name', 'summary', 'highlight_groups', 'sections']));

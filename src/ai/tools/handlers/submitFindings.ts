@@ -1,7 +1,6 @@
 /** Executes active-hop submissions for the `lineage_submit_findings` tool. */
-import { z } from 'zod';
-import { toHopFinding, submitFindingsSchemaForMode, validatedFindingFields, SUBMIT_FINDINGS_REFERENCE_WAY_OUT, SUBMIT_FINDINGS_WAY_OUT } from '../../tools/toolSchemas';
-import { exampleForFields, rejectionFromZodError, type ToolRejection } from '../../support/toolErrorEnvelope';
+import { toHopFinding, submitFindingsSchemaForMode, validatedFindingFields } from '../../tools/toolSchemas';
+import { rejectionFromZodError, type ToolRejection } from '../../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
 import type { ColumnFlowEntry } from '../../sm/smTypes';
 import { COLUMN_TRANSFORM_DIRECTION } from '../../../engine/shared/bridgeContract';
@@ -29,22 +28,11 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       const focus = engine.currentFocus;
       const fresh = engine.heldFindingFocus === null && (!focus || sess.memory.getArchivedAngles(focus).size === 0);
       const schema = submitFindingsSchemaForMode(engine.currentHopAnalysisMode, sess.classification ?? undefined, fresh, engine.hopSubmitColumns, engine.heldColumnFlow);
-      /** A rejection that owes fields carries one schema-valid field example and the way out, for the last repair opportunity. */
-      const reject = (rejection: ToolRejection): string => {
-        const owesFields = (rejection.resend?.length ?? 0) > 0;
-        const example = rejection.resend?.length === 1 && rejection.resend[0] === 'prune_neighbors'
-          && schema instanceof z.ZodObject && schema.shape.prune_neighbors?.safeParse([]).success ? { prune_neighbors: [] }
-          : owesFields ? exampleForFields(schema, rejection.resend!) : undefined;
-        const emptyExit = example !== undefined && Object.entries(example as Record<string, unknown>).some(([field, value]) =>
-          field !== 'column_flow' && Array.isArray(value) && value.length === 0 && (rejection.issuePaths?.length ?? 0) > 0
-          && rejection.issuePaths!.every(path => path.split('.')[0] === field));
-        return s.logAndReturn('lineage_submit_findings', owesFields
-          ? { ...rejection, wayOut: emptyExit ? SUBMIT_FINDINGS_REFERENCE_WAY_OUT : SUBMIT_FINDINGS_WAY_OUT, ...(example !== undefined ? { example } : {}) } : rejection, prepared.input);
-      };
+      const reject = (rejection: ToolRejection): string => s.logAndReturn('lineage_submit_findings', rejection, prepared.input);
       const parsed = schema.safeParse(prepared.input);
       if (!parsed.success) {
         const rejection = engine.rejectInvalidSubmission(prepared.input,
-          rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input: prepared.input, schema, form: true }),
+          rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input: prepared.input, schema }),
           validatedFindingFields(prepared.input, schema));
         if (engine.heldFindingFocus !== null && rejection.issuePaths?.every(path => ['sections', 'summary'].includes(path.split('.')[0]))
           && parsed.error.issues.every(issue => ['sections', 'summary'].includes(String(issue.path[0]))

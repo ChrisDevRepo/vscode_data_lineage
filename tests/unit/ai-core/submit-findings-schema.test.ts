@@ -4,7 +4,6 @@ import Ajv from 'ajv';
 import { schemaFaults, withSchemaFaults } from './helpers/toolServices';
 import { describe, expect, it } from 'vitest';
 import { SubmitFindingsCtInputSchema, submitFindingsSchemaForMode, validatedFindingFields } from '../../../src/ai/tools/toolSchemas';
-import { exampleForFields } from '../../../src/ai/support/toolErrorEnvelope';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import { normalizeModelInput } from '../../../src/ai/tools/normalizeModelInput';
 
@@ -395,10 +394,6 @@ it.each(['view', 'procedure', 'caller'] as const)('keeps a served %s flow exampl
     expect(parsed.success, JSON.stringify(parsed.success ? [] : parsed.error.issues)).toBe(true);
     expect(new Ajv({ strict: false }).compile(wire)(shown)).toBe(true);
   }
-  const fragment = exampleForFields(schema, ['column_flow']);
-  expect(fragment).toBeDefined();
-  expect(schema.safeParse(fragment).success).toBe(true);
-  expect(new Ajv({ strict: false }).compile(wire)(fragment)).toBe(true);
 });
 
 it.each((['bb', 'ct'] as const).flatMap(mode => (['business', 'technical', 'both'] as const)

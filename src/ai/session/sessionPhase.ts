@@ -15,6 +15,9 @@ export const PendingGateSchema = z.object({
 /** A validated consent gate waiting on a user reply. Produced by the engine, resolved by the next user chat turn. Envelope plumbing fields (`error`, `hint`) are deliberately absent — they are transport concerns, not session state. */
 export type PendingGate = z.infer<typeof PendingGateSchema>;
 
+/** Typed control outcome a tool handler records beside its result text, so routing never parses that text (MW-2). */
+export type ToolControlSignal = { readonly kind: 'gate'; readonly gate: PendingGate } | { readonly kind: 'refused'; readonly reason: string };
+
 /** Persistent session phase — the source of truth for what the next chat turn should do. Survives across VS Code chat turns via the `AiSession` singleton. */
 export type SessionPhase =
   /** No exploration active. Next turn goes through discovery. */

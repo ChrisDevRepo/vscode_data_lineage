@@ -10,7 +10,7 @@ import { buildModel, normalizeName } from '../../../src/engine/modelBuilder';
 import type { DatabaseModel } from '../../../src/engine/types';
 import type { ResultGraph } from '../../../src/ai/session/types';
 import type { ColumnEdge } from '../../../src/ai/sm/smTypes';
-import { rejectionModelContent } from '../../../src/ai/support/toolErrorEnvelope';
+import { renderProblem } from '../../../src/ai/support/toolErrorEnvelope';
 
 function completedWorld(model: DatabaseModel, resultGraph: ResultGraph) {
   const session = new AiSession();
@@ -69,7 +69,7 @@ it.each([false, true])('stages accepted node choices and keeps the held report (
   ] };
   const rejected = JSON.parse(await executePresentResult(input, services));
   expect(rejected.code).toBe('validation');
-  const first = rejectionModelContent(rejected, false);
+  const first = renderProblem(rejected, 1);
   expect(first).toContain('dbo.missing');
   expect(first).toContain('only these corrected fields');
   expect(first).not.toContain('Accepted ids');
@@ -77,7 +77,7 @@ it.each([false, true])('stages accepted node choices and keeps the held report (
   expect(first).not.toContain(sibling);
   const repeated = repeatFault ? JSON.parse(await executePresentResult({ sections: [{ label: 'Unknown', node_ids: ['dbo.missing'] }] }, services)) : rejected;
   expect(repeated.code).toBe('validation');
-  expect(JSON.parse(rejectionModelContent(repeated, true)).detail).toContainEqual({ path: 'node_ids', allowed_values: [origin, source, sibling] });
+  expect(JSON.parse(renderProblem(repeated, 2)).errors).toContainEqual(expect.objectContaining({ path: 'node_ids', allowed: [origin, source, sibling] }));
   expect(deliverPreview).not.toHaveBeenCalled();
   expect(session.presentResultRepairDraft.get()?.sections?.map(section => section.text)).toEqual(input.sections.map(section => section.text));
   expect(JSON.parse(await executePresentResult({ sections: [{ label: 'Unknown', node_ids: [] }] }, services)).success).toBe(true);
@@ -120,13 +120,11 @@ it('stages committed section choices after first feedback and retains the omissi
   ] };
   expect(JSON.parse(await executePresentResult(original, services)).success).toBe(true);
   const rejected = JSON.parse(await executePresentResult({ ...firstCall(origin), sections: [{ label: 'New label', node_ids: [' '] }] }, services));
-  const first = rejectionModelContent(rejected, false);
+  const first = renderProblem(rejected, 1);
   expect(first).toContain('New label');
   expect(first).toContain('omit sections to keep the committed report');
   expect(first).not.toContain('Committed sources sentinel');
-  expect(JSON.parse(rejectionModelContent(rejected, true)).detail).toContainEqual({
-    path: 'sections', allowed_values: ['Committed sources sentinel'], expected: 'Committed labels when omitting section text.',
-  });
+  expect(JSON.parse(renderProblem(rejected, 2)).errors).toContainEqual(expect.objectContaining({ path: 'sections', allowed: ['Committed sources sentinel'] }));
   expect(JSON.parse(await executePresentResult({}, services)).success).toBe(true);
   expect(session.presentationArtifact?.aiMetadata.description).toContain('The committed body.');
 });
@@ -167,7 +165,7 @@ it('keeps a merged report label fault and one held repair scope together', async
   expect(first.issuePaths).toContain('sections.0.label');
   const rejected = JSON.parse(await executePresentResult({ sections: [{ index: 0, label: 'Other' }] }, services));
   expect(rejected).toMatchObject({ code: 'validation', issuePaths: ['sections.1.label'] });
-  expect(rejected.hint).toContain('Send one entry per section label.');
+  expect(rejected.errors).toEqual([expect.objectContaining({ path: 'sections.1.label', code: 'invalid' })]);
   expect(rejected.hint.match(/only these corrected fields/g)).toHaveLength(1);
   expect(rejected.hint).not.toContain('Resend the full tool call');
   expect(session.presentResultRepairDraft.get()?.sections?.map(section => section.text)).toEqual([
@@ -180,8 +178,9 @@ it.each([null, []])('requests one complete resend when no report draft can be he
   const { session, services, deliverPreview } = world(false);
   const rejected = JSON.parse(await executePresentResult(input, services));
   expect(rejected.code).toBe('invalid_input');
-  expect(rejected.hint.match(/otherwise resend the full tool call/g)).toHaveLength(1);
-  expect(rejected.hint).not.toContain('only these corrected fields');
+  // Nothing is held, so nothing is narrowed: no resend list and no held-draft instruction.
+  expect(rejected.resend ?? []).toEqual([]);
+  expect(rejected.hint ?? '').not.toContain('only these corrected fields');
   expect(session.presentResultRepairDraft.get()).toBeNull();
   expect(deliverPreview).not.toHaveBeenCalled();
 });

@@ -13,7 +13,7 @@ import { AiMemoryManager } from '../session/memoryManager';
 import { type ResultGraph, type AiOutputTemplates, type AiOutputSections, type PresentationArtifact, type DiscoveryScopeArtifact, EMPTY_AI_TEMPLATES, EMPTY_AI_SECTIONS } from '../session/types';
 import type { IHopStateMachine } from '../sm/smBase';
 import type { HopLogEntry, NavigationInitParams, ScopeSummary, SmResult } from '../sm/smTypes';
-import type { SessionPhase, PendingGate } from '../session/sessionPhase';
+import type { SessionPhase, PendingGate, ToolControlSignal } from '../session/sessionPhase';
 import { ClassificationSchema, type ClassificationValue } from '../session/classification';
 import { contextBlockBytes, storedEvidenceKindBytes, type TurnTokenBudget } from '../support/tokenBudget';
 import { RepairDraftStore, type InputRepairAuthorization } from '../support/repairDraftStore';
@@ -164,6 +164,20 @@ export class AiSession {
   public stateMachine: IHopStateMachine | null = null;
   /** Latest AI/user-refined proposal awaiting approval; never an active RuntimeFrame. */
   public pendingExploration: PendingExplorationProposal | null = null;
+  /** Control outcome of the tool call now being dispatched; the dispatcher takes it once per call. */
+  private controlSignal: ToolControlSignal | null = null;
+
+  /** Records the typed gate or refusal of the current tool call. */
+  public signalControl(signal: ToolControlSignal): void {
+    this.controlSignal = signal;
+  }
+
+  /** Returns and clears the current call's control outcome. */
+  public takeControlSignal(): ToolControlSignal | null {
+    const signal = this.controlSignal;
+    this.controlSignal = null;
+    return signal;
+  }
   /** The synthesized findings of the session, ready for visualization. */
   public resultGraph: ResultGraph | null = null;
   /** Latest bounded discovery scope walked with `lineage_get_scope_bundle`; backs the preview offer ({@link settleDiscoveryTurn}). */

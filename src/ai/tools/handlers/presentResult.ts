@@ -26,7 +26,7 @@ import { mergedSectionsSchemaForPhase, normalizePresentSectionLabel, presentResu
 import { edgeApiType } from '../../support/aiPresenter';
 import { prunePreserveOnly } from '../../support/viewPrune';
 import { resolveModelNodeId, resolveModelNodeIds } from '../../support/modelReferences';
-import { INVALID_TOOL_INPUT_REPAIR_HINT, makeRejection, rejectionFromZodError, type ToolRejection } from '../../support/toolErrorEnvelope';
+import { makeRejection, rejectionFromZodError, type ToolRejection } from '../../support/toolErrorEnvelope';
 import { quoteIds } from '../../support/text';
 import { evaluatePresentResultPreconditionsRule } from '../../interaction/rules/presentResultRules';
 import { type ToolServices, getModelNodeMap } from './toolServices';
@@ -155,15 +155,15 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         );
       const parsed = schema.safeParse(input);
       if (!parsed.success) {
-        const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema, resend: 'owner' });
+        const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
         const repair = holdRejectedPresentResult(drafts, input, rejection.issuePaths ?? [], presentResultStage, retainableSections, false, rejection);
         const authorization = drafts.getAuthorization();
         const held = drafts.get();
         rejection.hint = [
           rejection.hint,
           held && authorization ? repair ?? presentResultRepairInstruction(authorization.fields, presentResultStage,
-            (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes, authorization.sectionLeaves, held) : INVALID_TOOL_INPUT_REPAIR_HINT,
-        ].filter(Boolean).join(' ');
+            (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes, authorization.sectionLeaves) : undefined,
+        ].filter(Boolean).join(' ') || undefined;
         return reject(rejection);
       }
       input = bindPresentationReferences(parsed.data as PresentResultInput | PresentResultRepairPatch, model);
@@ -188,7 +188,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
             hint: [
               `To fix: add ${body}: under the offending label, or move its node_ids into an exact held label. Nothing from the rejected call was stored.`,
               presentResultRepairInstruction(authorization.fields, presentResultStage,
-                (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes, undefined, held),
+                (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes),
             ].join(' '),
             issuePaths: ['sections'],
           }));
@@ -202,11 +202,11 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           const paths = [...merged.error.issues.map(issue => issue.path.join('.')),
             ...authorization.fields.filter(field => presentInput[field] === undefined)];
           const rejection = rejectionFromZodError(merged.error, {
-            code: REJECTION_CODES.validation, input: { sections: presentInput.sections }, schema: mergedSchema, resend: 'owner',
+            code: REJECTION_CODES.validation, input: { sections: presentInput.sections }, schema: mergedSchema,
           });
           const hint = holdRejectedPresentResult(drafts, presentInput, paths, presentResultStage, retainableSections, true, rejection);
           rejection.hint = [rejection.hint, hint ?? presentResultRepairInstruction(authorization.fields, presentResultStage,
-            (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes, authorization.sectionLeaves, held)].filter(Boolean).join(' ');
+            (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes, authorization.sectionLeaves)].filter(Boolean).join(' ');
           return reject(rejection);
         }
       } else {

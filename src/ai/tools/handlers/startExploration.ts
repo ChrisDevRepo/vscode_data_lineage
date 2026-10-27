@@ -204,9 +204,11 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       const refusal = checkScopeAdmission(s.budget, scopeMeasure);
       if (refusal) {
         s.logger.debug(`[ScopeBudget] refused limit=${refusal.limit} origin=${engine.currentOrigin ?? data.origin} nodes=${scopeMeasure.nodes} rounds=${scopeMeasure.rounds} columns=${scopeMeasure.columns}`);
+        const reason = isRefining ? refusal.refineText : refusal.text;
+        sess.signalControl({ kind: 'refused', reason });
         return s.logAndReturn('lineage_start_exploration', makeRejection({
           code: REJECTION_CODES.overActiveScopeBudget,
-          reason: isRefining ? refusal.refineText : refusal.text,
+          reason,
           detail: { limit: refusal.limit, nodes: scopeMeasure.nodes, rounds: scopeMeasure.rounds, columns: scopeMeasure.columns },
         }), loggedInput);
       }
@@ -272,6 +274,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         ? 'Refine round — gate re-emitted. Wait for the user to Approve, Cancel, or Refine again.'
         : 'Tool paused — awaiting user confirmation before the first hop.')
         + missionBriefClearedNote;
+      sess.signalControl({ kind: 'gate', gate });
       return s.logAndReturn('lineage_start_exploration', makeRejection({
         code: REJECTION_CODES.actionRequired,
         reason: gate.detail || undefined,

@@ -123,9 +123,9 @@ describe('AI tool registration', () => {
       if (!first) throw new Error('registration precondition: expected an external tool');
       const binding = lmBindings.get(first.name)!;
       const tokenSource = new vscode.CancellationTokenSource();
-      // VS Code receives the same rejection facts, with guidance selected as the reason instead of duplicated as a hint.
+      // VS Code receives the same one problem shape (D-103): the call-level fault under the stable code.
       await expect(binding.invoke({ input: {}, toolInvocationToken: undefined }, tokenSource.token))
-        .rejects.toThrow(/"code":"no_project_loaded","reason":"No project is loaded in the Data Lineage panel/);
+        .rejects.toThrow(/^\{"code":"no_project_loaded","errors":\[\{"path":"","code":"no_project_loaded","message":"[^"]+"\}\],"resend":\[\]\}$/);
       session.model = makeModel([], [], []);
       const result = await binding.invoke({ input: {}, toolInvocationToken: undefined }, tokenSource.token);
       tokenSource.dispose();

@@ -3,16 +3,13 @@ import type { ZodError, ZodIssue } from 'zod';
 import { DEFAULT_EXPLORATION_QUESTION } from '../../sm/smTypes';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
 import { resolveModelColumnNames } from '../../support/modelReferences';
-import { INVALID_TOOL_INPUT_REPAIR_HINT, INVALID_VALUE_REASON, makeRejection, rejectionFromZodError, type ToolRejection } from '../../support/toolErrorEnvelope';
+import { makeRejection, rejectionFromZodError, type ToolRejection } from '../../support/toolErrorEnvelope';
 import {
   ASYMMETRIC_DEPTH_BOTH_ZERO,
 } from '../../../engine/shared/explorationDepthContract';
 import { CT_TARGET_COLUMNS_RECOVERY, StartExplorationInputSchema } from '../../tools/toolSchemas';
 
-type StartRejectIssue = { code: string; path: string; message: string; action: string };
-
-/** The repair of an issue whose message already states the fact: the one generic resend rule. */
-const RESEND = INVALID_TOOL_INPUT_REPAIR_HINT;
+type StartRejectIssue = { code: string; path: string; message: string; action?: string };
 
 /** Resolves the canonical user question for an exploration. */
 export function resolveCanonicalQuestion(sources: {
@@ -36,17 +33,17 @@ const BB_ACTION = 'Omit targetColumns and resubmit the BB specification.';
 function mapStartIssue(issue: ZodIssue, input?: Record<string, unknown>): StartRejectIssue {
   const path = issue.path.join('.') || '(root)';
   const tag = issue.code === 'custom' ? issue.params?.startIssue : undefined;
-  const message = issue.code === 'invalid_value' ? INVALID_VALUE_REASON : issue.message;
+  const message = issue.message;
   if (tag === 'bb_target_columns_forbidden') return { code: REJECTION_CODES.ctFieldForbiddenInBb, path, message, action: BB_ACTION };
   if (tag === 'ct_target_columns_required') return { code: REJECTION_CODES.missingField, path, message, action: CT_TARGET_COLUMNS_RECOVERY };
   if (tag === ASYMMETRIC_DEPTH_BOTH_ZERO) return { code: ASYMMETRIC_DEPTH_BOTH_ZERO, path, message, action: 'At least one side must be ≥ 1 or "all"; both 0 would create an empty scope.' };
   if (issue.code === 'unrecognized_keys') return { code: 'unknown_field', path: issue.keys.join(',') || path, message, action: 'Remove the unknown field and resubmit.' };
-  if (issue.code === 'invalid_type') return { code: issue.expected === 'undefined' ? REJECTION_CODES.missingField : 'invalid_type', path, message, action: RESEND };
+  if (issue.code === 'invalid_type') return { code: issue.expected === 'undefined' ? REJECTION_CODES.missingField : 'invalid_type', path, message };
   if (issue.code === 'invalid_value' && ['analysisMode', 'classification'].includes(path)) {
-    if (input && !Object.prototype.hasOwnProperty.call(input, path)) return { code: REJECTION_CODES.missingField, path, message, action: RESEND };
-    return { code: 'invalid_enum', path, message, action: RESEND };
+    if (input && !Object.prototype.hasOwnProperty.call(input, path)) return { code: REJECTION_CODES.missingField, path, message };
+    return { code: 'invalid_enum', path, message };
   }
-  return { code: tag === 'analysis_mode_required' || tag === 'classification_required' || tag === 'start_shape_required' || tag === 'depth_required' ? REJECTION_CODES.missingField : 'invalid_value', path, message, action: RESEND };
+  return { code: tag === 'analysis_mode_required' || tag === 'classification_required' || tag === 'start_shape_required' || tag === 'depth_required' ? REJECTION_CODES.missingField : 'invalid_value', path, message };
 }
 
 /** Builds a stable rejection envelope from every start-exploration Zod issue. */
@@ -58,15 +55,14 @@ export function buildStartExplorationReject(error: ZodError, input?: Record<stri
   }
   const issues = [...unique.values()];
   const schemaFaults = rejectionFromZodError(error, { code: REJECTION_CODES.invalidInput, input, schema: StartExplorationInputSchema });
-  const actions = [...new Set(issues.map(issue => issue.action))].sort((a, b) => Number(a === RESEND) - Number(b === RESEND));
+  const actions = [...new Set(issues.flatMap(issue => issue.action ? [issue.action] : []))];
   return makeRejection({
     code: issues[0]?.code ?? 'invalid_value',
-    reason: issues.map(issue => (actions.includes(issue.message) ? issue.path : `${issue.path}: ${issue.message}`)).join('\n'),
-    hint: actions.join(' ') || RESEND,
-    detail: [{ issues: issues.map(({ action: _action, ...issue }) => issue) }, ...(Array.isArray(schemaFaults.detail) ? schemaFaults.detail : [])],
+    reason: schemaFaults.reason,
+    hint: actions.join(' ') || undefined,
+    detail: [{ issues: issues.map(({ action: _action, ...issue }) => issue) }],
     issuePaths: issues.map(issue => issue.path),
-    example: schemaFaults.example,
-    wayOut: 'Submit the corrected proposal for approval.',
+    errors: schemaFaults.errors,
   });
 }
 

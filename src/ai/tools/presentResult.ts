@@ -12,7 +12,7 @@ import { quoteIds } from '../support/text';
 import { sqlIdentifierComparisonKey } from '../../engine/shared/sqlIdentifier';
 import { normalizeColName, schemaKey } from '../../utils/sql';
 import { RepairDraftStore, keyedResendRule, indexedRepairFields, type IndexedRepairFields } from '../support/repairDraftStore';
-import { INVALID_TOOL_INPUT_REPAIR_HINT, makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
+import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { FOCUS_NODE_HREF_PREFIX, type ColumnTransformClass } from '../../engine/shared/bridgeContract';
 import type { DetailSlot } from '../session/memoryManager';
@@ -55,12 +55,8 @@ const PRESENT_REAL_ID_ROUTE: Readonly<Record<PresentResultStage, string>> = {
   visual_preview: 'The result graph is locked this stage; the answer text is served as blocks.',
 };
 
-/** The unknown-node-id repair hint for the calling stage: the one action the stage accepts for an id the result graph does not carry. */
-function presentNodeIdHint(stage: PresentResultStage): string {
-  return stage === 'visual_preview'
-    ? 'Use canonical ids from the accepted metadata. Remove the named ids from node_ids.'
-    : 'Use canonical ids from the accepted metadata. Remove the named ids from node_ids, or state the fact in sections[].text.';
-}
+/** The unknown-node-id repair hint: node_ids take canonical ids of the result graph (the accepted ids ride on the rejection); the detail-memory callout comes only from the stage-3 fallback (D-105). */
+const PRESENT_NODE_ID_HINT = 'Use canonical ids from the accepted metadata in node_ids.';
 
 /** The AI's submission to `lineage_present_result`. */
 export type PresentResultInput = z.infer<typeof PresentResultModelSchema>;
@@ -225,11 +221,6 @@ function withEffectiveStarts(sections: readonly PresentSection[]): PresentSectio
   return sections.map((section, index) => (section.start ? { ...section, start: `B${startBlock(sections, index)}` } : section));
 }
 
-/** The held sections a repair may key on, as the model-facing view: label and, for a preview section, the block it effectively starts at (the first always B1). The model's own rejected call already carries every body. */
-export function heldSectionsForRepair(sections: PresentResultInput['sections']): Array<{ label: string; start?: string }> {
-  return withEffectiveStarts((sections ?? []) as PresentSection[]).map(({ label, start }) => ({ label, ...(start ? { start } : {}) }));
-}
-
 /** The repair-call sentence a repairable rejection carries, stated once here for every failure: the fields to resend and, when `sections` is among them, how the resend merges under the stage's own section body field — or, when the held draft has no section, that every section is resent. */
 export function presentResultRepairInstruction(
   resendList: readonly PresentResultRepairField[],
@@ -237,13 +228,10 @@ export function presentResultRepairInstruction(
   sectionsHeld = true,
   highlightLabelIndexes?: readonly number[],
   sectionLeaves?: PresentResultRepairAuthorization['sectionLeaves'],
-  held?: Partial<PresentResultInput>,
 ): string {
   const wholeFields = resendList.filter(field => field === 'highlight_groups' && !highlightLabelIndexes);
-  const optionalFields = resendList.filter(field => held && !(field in held) && PresentResultModelSchema.shape[field].isOptional());
   return [
     `Call lineage_present_result with only these corrected fields: ${resendList.join(', ')}.`,
-    optionalFields.length ? `Omit faulty optional fields (${optionalFields.join(', ')}) to withdraw them.` : '',
     resendList.includes('sections') && !sectionLeaves
       ? (sectionsHeld ? keyedResendRule('sections', 'label', [stage === 'visual_preview' ? 'start' : 'text', 'node_ids']) : 'No section is held: resend every section.')
       : '',
@@ -311,7 +299,7 @@ export function holdRejectedPresentResult(
     rejection.detail = [...(Array.isArray(rejection.detail) ? rejection.detail : rejection.detail === undefined ? [] : [rejection.detail]), choices];
   }
   return `${heldDescription}${unheld} ${presentResultRepairInstruction(fields, stage,
-    Array.isArray(kept.sections) && kept.sections.length > 0, highlightLabelIndexes, sectionLeaves, kept)}`;
+    Array.isArray(kept.sections) && kept.sections.length > 0, highlightLabelIndexes, sectionLeaves)}`;
 }
 
 type PresentNote = NonNullable<PresentResultInput['notes']>[number];
@@ -932,8 +920,8 @@ export function validatePresentResult(
     const repairInstructed = allRepairable && resendList.length > 0;
     const hint = [
       repairInstructed ? undefined : `Fix ${[...failedFields].join(', ')}.`,
-      nodeIdHintNeeded ? presentNodeIdHint(stage) : undefined,
-      repairInstructed ? presentResultRepairInstruction(resendList, stage) : INVALID_TOOL_INPUT_REPAIR_HINT,
+      nodeIdHintNeeded ? PRESENT_NODE_ID_HINT : undefined,
+      repairInstructed ? presentResultRepairInstruction(resendList, stage) : undefined,
     ].filter(Boolean).join(' ');
     const unlinkable = [...pathUnlinkableIds].map(([path, ids], index) => ({
       path,

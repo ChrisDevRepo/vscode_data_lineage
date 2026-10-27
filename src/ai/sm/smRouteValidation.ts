@@ -4,26 +4,26 @@ import type { InvalidRouteKind, InvalidRoute } from './smTypes';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 
-/** Principle: where a removal would lose a fact, the fixed text also says where the fact goes (sections or a question); chosen by fault code only. Last-chance corrective guidance after the first issue-only response. Conflict alternatives are composed per neighbor by {@link routeErrorDirectives}; a refusal for that same neighbor can rule out pruning. */
+/** The fixed correction per fault code: the fault and the valid correction only (the allowed values ride on the error from feedback 2), never a leave-out remedy; the detail-memory callout comes only from the stage-3 fallback (D-105). Conflict alternatives are composed per neighbor by {@link routeErrorDirectives}; a refusal for that same neighbor can rule out pruning. */
 const ROUTE_REJECTION_DIRECTIVE: Record<Exclude<InvalidRouteKind, 'prune_question_conflict'>, string> = {
-  absent_contributor: 'Use a loaded eligible neighbor, or drop this reference and keep the fact in sections.',
+  absent_contributor: 'Name a loaded eligible neighbor.',
   bad_out_col: 'Use a declared output column.',
-  bad_contributor_col: 'Use a declared column, or drop this supplier and keep the fact in sections.',
-  self_loop_column: 'Remove the supplier identical to its output destination.',
-  bad_return_target: 'Use one supplied caller output and omit writes_to.',
-  bad_write_target: 'Use a table this object writes to, or send writes_to: null and keep the write in sections.',
-  bad_caller_context: 'Use an active declared caller output, or omit caller_context.',
-  pruned_contributor: 'This supplier was pruned: drop it and keep the fact in sections.',
-  prune_absent: 'Remove this unknown id from prune_neighbors.',
-  prune_noop_removed: 'Remove this already pruned id from prune_neighbors.',
-  prune_noop_visited: 'Remove this protected id from prune_neighbors. Resend prune_neighbors with only the entries that stay, or [] when none stay.',
-  prune_noop_analyzed: 'Remove this analyzed id from prune_neighbors.',
-  prune_noop_queued: 'Remove this queued id from prune_neighbors.',
-  column_out_of_scope: 'Remove outside upstream_columns sources; for outside writes_to, send writes_to: null. Keep the fact in sections or as a question.',
-  prune_noop_out_of_scope: 'Remove this outside id from prune_neighbors.',
-  prune_unsupported: 'Remove this protected id from prune_neighbors. Resend prune_neighbors with only the entries that stay, or [] when none stay.',
-  question_not_neighbor: 'Use an eligible neighbor, or drop this question and keep the fact in sections.',
-  question_closed: 'Remove this visited or pruned neighbor from questions.',
+  bad_contributor_col: 'Name a declared column of that supplier.',
+  self_loop_column: 'A supplier cannot be its own output destination; name the column that feeds it.',
+  bad_return_target: 'Name one supplied caller output.',
+  bad_write_target: 'Name a table this object writes to.',
+  bad_caller_context: 'Name an active declared caller output.',
+  pruned_contributor: 'This supplier was pruned earlier; name a neighbor that is still open.',
+  prune_absent: 'prune_neighbors takes only an id of a prunable neighbor.',
+  prune_noop_removed: 'This id is already pruned; prune_neighbors takes only an id of a prunable neighbor.',
+  prune_noop_visited: 'This neighbor is protected and cannot be pruned; prune_neighbors takes only an id of a prunable neighbor.',
+  prune_noop_analyzed: 'This neighbor is already analyzed and cannot be pruned; prune_neighbors takes only an id of a prunable neighbor.',
+  prune_noop_queued: 'This neighbor is already queued and cannot be pruned; prune_neighbors takes only an id of a prunable neighbor.',
+  column_out_of_scope: 'Name a supplier and write target inside the approved scope.',
+  prune_noop_out_of_scope: 'This id is outside the approved scope; prune_neighbors takes only an id of a prunable neighbor.',
+  prune_unsupported: 'This neighbor is protected and cannot be pruned; prune_neighbors takes only an id of a prunable neighbor.',
+  question_not_neighbor: 'Name an eligible neighbor.',
+  question_closed: 'This neighbor is already visited or pruned; questions take only an open neighbor.',
   // The missing outcome names alternatives without invalidating a supplied field.
   neighbor_outcome_missing: '',
 };
@@ -44,13 +44,13 @@ export function buildRouteValidationRejection(errors: InvalidRoute[]): ToolRejec
   return makeRejection({
     code,
     reason: routeRejectionReason(errors),
-    hint: directives.filter(Boolean).join(' '),
     detail: routeRejectionDetail(errors),
     issuePaths: errors.flatMap(e => (e.path ? [e.path] : [])),
     resend: [...new Set(errors.flatMap(error => error.alternatives ?? []))],
-    errors: errors.map((error, index) => ({ path: error.path ?? error.id, issue: directives[index] ? `${/[.!?]$/.test(error.reason) ? error.reason : `${error.reason}.`} ${directives[index]}` : error.reason,
+    errors: errors.map((error, index) => ({ path: error.path ?? error.id, code: ROUTE_REJECTION_CODE[error.kind] ?? error.kind,
+      message: directives[index] ? `${/[.!?]$/.test(error.reason) ? error.reason : `${error.reason}.`} ${directives[index]}` : error.reason,
       ...(error.alternatives ? { alternatives: error.alternatives } : {}),
-      ...(error.allowed_values ? { allowed: error.allowed_values } : {}), ...(error.when ? { when: error.when } : {}) })),
+      ...(error.allowed_values ? { allowed: error.allowed_values } : {}) })),
   });
 }
 
@@ -66,8 +66,8 @@ function routeErrorDirectives(errors: readonly InvalidRoute[]): Array<string | u
     shown.add(key);
     if (error.kind === 'prune_question_conflict') {
       return refusedPrunes.has(error.id)
-        ? `For neighbor \`${error.id}\`, keep its question and remove its prune_neighbors entry.`
-        : `For neighbor \`${error.id}\`, keep its questions entry or its prune_neighbors entry, not both.`;
+        ? `Neighbor \`${error.id}\` cannot be pruned; keep its question.`
+        : `Neighbor \`${error.id}\` takes one decision: a questions entry or a prune_neighbors entry.`;
     }
     return ROUTE_REJECTION_DIRECTIVE[error.kind];
   });

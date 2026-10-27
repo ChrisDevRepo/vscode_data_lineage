@@ -207,13 +207,15 @@ describe('present_result id rejection route', () => {
     sections: [{ label: 'Report', node_ids: ['[dbo].[a]', '[dbo].[x]'], text: 'Report output.' }],
   }, ['[dbo].[a]'], undefined, undefined, [], 'completed', () => state);
 
-  it('does not offer add_node_ids for an id outside the approved scope, and keeps the remove/state-in-text action', () => {
+  it('does not offer add_node_ids for an id outside the approved scope, and names the canonical-id correction without a leave-out remedy (D-105)', () => {
     const result = call('out_of_scope');
     expect(result.success).toBe(false);
     if (result.success === false) {
       const text = `${result.rejection.reason} ${result.rejection.hint}`;
       expect(text).not.toContain('add_node_ids');
-      expect(text).toContain('Remove the named ids from node_ids, or state the fact in sections[].text.');
+      expect(text).toContain('Use canonical ids from the accepted metadata in node_ids.');
+      // The keyed-resend patch syntax after "Call lineage_present_result" is MW-4/MW-5 scope; the fault text itself offers no leave-out.
+      expect(text.split('Call lineage_present_result')[0]).not.toMatch(/\b(drop|omit|remove|withdraw)\b/i);
       expect(result.repairFields).toEqual(['sections']);
     }
   });

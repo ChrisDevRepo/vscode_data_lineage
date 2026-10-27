@@ -1037,15 +1037,15 @@ describe('current task completeness before advancement', () => {
       column_flow: '[]' as unknown as ColumnFlowEntry[], questions: [{ nodeId: '[d].[Absent]', question: 'Explain Absent.' }], prune_neighbors: [],
     });
     expect(rejected).toMatchObject({ code: 'invalid_input', issuePaths: expect.arrayContaining(['column_flow', 'questions.0.nodeId']),
-      detail: expect.arrayContaining([
-        expect.objectContaining({ kind: 'invalid_type', path: 'column_flow', expected: 'array' }),
-        expect.objectContaining({ kind: 'question_not_neighbor', path: 'questions.0.nodeId' }),
+      errors: expect.arrayContaining([
+        expect.objectContaining({ path: 'column_flow', code: 'type' }),
+        expect.objectContaining({ path: 'questions.0.nodeId', code: 'question_not_neighbor' }),
       ]) });
     if (!('code' in rejected)) throw new Error('Expected both independent boundary faults');
     expect(rejected.issuePaths).toHaveLength(2);
-    expect(rejected.hint).not.toContain('Held:');
+    expect(rejected.hint ?? '').not.toContain('Held:');
     expect(engine.toJSON().engineInternals.heldFinding?.finding.sections).toEqual(finding.sections);
-    expect(rejected.hint).not.toContain('Resend the full tool call');
+    expect(rejected.hint ?? '').not.toContain('Resend the full tool call');
     expect(rejected.issuePaths).not.toContain('column_flow.0');
     const after = engine.toJSON();
     for (const key of ['agenda', 'visited', 'removedSet', 'columnAspect', 'scopeNodeIds', 'nodeStates'] as const) expect(after[key]).toEqual(before[key]);
@@ -1068,18 +1068,17 @@ describe('current task completeness before advancement', () => {
     const rejected = engine.submitFindings({ ...finding, column_flow, questions,
       prune_neighbors: ids.map(id => ({ id, reason: 'Outside the investigation.' })),
     });
+    // A refused prune leaves one legal repair for its neighbor: the refusal and the conflict are both stated at their paths.
     expect(rejected).toMatchObject({ code: 'route_validation_failed',
-      hint: expect.stringContaining(`For neighbor \`${neighbor}\`, keep its question and remove its prune_neighbors entry`),
+      errors: expect.arrayContaining([expect.objectContaining({ path: 'prune_neighbors.0.id', code: 'prune_unsupported' }),
+        expect.objectContaining({ code: 'prune_question_conflict' })]),
       issuePaths: expect.arrayContaining(['questions.0.nodeId', 'prune_neighbors.0.id']),
       detail: expect.arrayContaining([
         expect.objectContaining({ id: neighbor, path: 'prune_neighbors.0.id' }),
         expect.objectContaining({ id: neighbor, path: 'questions.0.nodeId' }),
       ]),
     });
-    expect(rejected).toHaveProperty('hint', expect.not.stringContaining(`For neighbor \`${neighbor}\`, keep its questions entry or its prune_neighbors entry, not both`));
     if (independentConflict) {
-      expect(rejected).toHaveProperty('hint', expect.stringContaining(`For neighbor \`${other}\`, keep its questions entry or its prune_neighbors entry, not both`));
-      expect(rejected).toHaveProperty('hint', expect.stringContaining('questions entry or its prune_neighbors entry, not both'));
       expect(rejected).toMatchObject({
         reason: expect.stringContaining('questions.1.nodeId'),
         issuePaths: expect.arrayContaining(['questions.1.nodeId', 'prune_neighbors.1.id']),
@@ -1100,8 +1099,9 @@ describe('current task completeness before advancement', () => {
       prune_neighbors: [{ id: neighbor, reason: 'No contribution to the traced constants.' }],
     });
     expect(rejected).toMatchObject({ code: 'route_validation_failed',
-      hint: expect.stringContaining(`For neighbor \`${neighbor}\`, keep its questions entry or its prune_neighbors entry, not both`),
+      errors: expect.arrayContaining([expect.objectContaining({ code: 'prune_question_conflict' })]),
     });
+    expect(rejected).not.toMatchObject({ errors: expect.arrayContaining([expect.objectContaining({ code: 'prune_unsupported' })]) });
     expect(engine.submitFindings({ ...finding, column_flow, questions: [],
       prune_neighbors: [{ id: neighbor, reason: 'No contribution to the traced constants.' }],
     })).toHaveProperty('ok', true);
@@ -1136,7 +1136,7 @@ describe('current task completeness before advancement', () => {
       prune_neighbors: [{ id, reason: 'Not relevant to this investigation.' }],
     });
     expect(result).toMatchObject({ code: 'route_validation_failed', reason: expect.stringContaining('prune_neighbors.0'),
-      hint: expect.stringContaining('from prune_neighbors') });
+      errors: expect.arrayContaining([expect.objectContaining({ path: 'prune_neighbors.0.id', code: expect.stringMatching(/^prune_/) })]) });
     const after = engine.toJSON();
     expect(after.engineInternals.investigationTasks).toEqual(before.engineInternals.investigationTasks);
     expect(after.agenda).toEqual(before.agenda);
@@ -1583,7 +1583,8 @@ describe('result dispositions', () => {
     const rejected = engine.submitFindings({ ...record(producer),
       column_flow: [{ out_col: 'X', upstream_columns: [], writes_to: { node: equivalent ? ' "D" . "stored" ' : stored, col: 'X' } }] });
     expect(rejected).toMatchObject({ code: 'route_validation_failed', issuePaths: ['column_flow.0.writes_to.node'],
-      reason: expect.stringContaining(`\`${stored}\` is out of scope (excluded)`), hint: expect.stringContaining('Remove outside upstream_columns sources; for outside writes_to, send writes_to: null. Keep the fact in sections or as a question.') });
+      reason: expect.stringContaining(`\`${stored}\` is out of scope (excluded)`),
+      errors: expect.arrayContaining([expect.objectContaining({ path: 'column_flow.0.writes_to.node', code: 'column_out_of_scope' })]) });
     expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
     expect(engine.submitFindings({ ...record(producer), column_flow: [{ out_col: 'X', upstream_columns: [] }],
       questions: [{ nodeId: equivalent ? 'D.Stored' : stored, question: 'Where is the stored X read?' }] })).toHaveProperty('ok', true);

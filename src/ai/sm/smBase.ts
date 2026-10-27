@@ -99,8 +99,6 @@ const REMOVAL_REFUSAL: Record<NonNullable<RemovalAnalysis['rejection']>, string>
 /** Fields of a held finding draft besides its section angles. Each is one part: a retry that sends it replaces the held value whole (`[]` clears a held list), and a retry that omits it keeps the held value. An empty `summary` counts as omitted. */
 const HELD_FIELDS = ['summary', 'badge_label', 'prune_neighbors', 'questions', 'column_flow'] as const;
 type HeldField = typeof HELD_FIELDS[number];
-/** Held fields a submission may omit; every other held part is required. */
-const OPTIONAL_HELD_FIELDS = ['badge_label', 'prune_neighbors', 'questions'] as const;
 
 /** Section child faults invalidate known angles only: unknown names are never extracted into held content. Whole-container faults still invalidate sections. */
 function splitFailedParts(paths: readonly string[]): { readonly fields: Set<string>; readonly angles: Set<string> } {
@@ -504,7 +502,7 @@ export class NavigationEngine implements IHopStateMachine {
         return makeRejection({
           code: REJECTION_CODES.missingField,
           reason: 'sections and summary are empty and no draft is held for this node.',
-          errors: [{ path: 'sections', issue: 'Empty and no draft is held for this node; send authored sections and a non-empty summary.' }],
+          errors: [{ path: 'sections', code: 'missing', message: 'Empty and no draft is held for this node; send authored sections and a non-empty summary.' }],
           resend: ['sections', 'summary'],
         });
       }
@@ -531,7 +529,7 @@ export class NavigationEngine implements IHopStateMachine {
       code: REJECTION_CODES.missingField,
       reason: 'summary is empty and no summary is held for this node.',
       issuePaths: ['summary'],
-      errors: [{ path: 'summary', issue: 'Empty and none is held for this node; send one sentence on what this node does to the data and hands on.' }],
+      errors: [{ path: 'summary', code: 'missing', message: 'Empty and none is held for this node; send one sentence on what this node does to the data and hands on.' }],
       resend: ['summary'],
       ...(this.heldPartsOfCurrentFocus() ? { missingParts: ['summary'] } : {}),
     });
@@ -684,9 +682,7 @@ export class NavigationEngine implements IHopStateMachine {
     const stated = (rejection.errors ?? []).map(error => error.path);
     const missing = resend.filter(part => !rejection.errors?.some(error => error.alternatives?.includes(part)) && !stated.some(path => path === part || path.startsWith(`${part}.`) || part.startsWith(`${path}.`)));
     return { ...rejection, resend: [...resend],
-      errors: [...(rejection.errors ?? []), ...missing.map(path => ({ path, issue: OPTIONAL_HELD_FIELDS.some(field => path === field || path.startsWith(`${field}.`))
-        ? 'Missing or still faulty, with no valid copy held: send it corrected, or omit it to withdraw it; a list may be sent as [].'
-        : 'Missing or still faulty, with no valid copy held: send it corrected.' }))] };
+      errors: [...(rejection.errors ?? []), ...missing.map(path => ({ path, code: 'missing', message: 'Missing or still faulty, with no valid copy held: send it corrected.' }))] };
   }
 
   /** The parts of a held draft, as a rejection names them to the model. */
@@ -2490,7 +2486,7 @@ export class NavigationEngine implements IHopStateMachine {
     const rejections: ToolRejection[] = [];
     if (classViolation) rejections.push(makeRejection({
       code: REJECTION_CODES.invalidInput, reason: `sections: ${classViolation}`, issuePaths: ['sections'],
-      errors: [{ path: 'sections', issue: classViolation }],
+      errors: [{ path: 'sections', code: 'invalid', message: classViolation }],
     }));
     if (fatalRoutes.length) rejections.push(buildRouteValidationRejection(fatalRoutes));
     const rejection = combineToolRejections(rejections, classViolation && fatalRoutes.length ? 'Nothing was committed.' : undefined);

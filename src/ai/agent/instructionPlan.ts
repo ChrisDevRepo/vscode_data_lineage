@@ -24,6 +24,7 @@ import {
   type PresentResultRepairField,
 } from '../tools/toolSchemas';
 import type { PresentResultRepairAuthorization } from '../tools/presentResult';
+import type { ToolControlSignal } from '../session/sessionPhase';
 
 /** Model-call phase labels emitted by the production LangGraph runtime. */
 export type InstructionPhase =
@@ -96,10 +97,9 @@ interface ConversePlanInput {
   readonly registry: IToolRegistry<string>;
   readonly sink: TurnEventSink;
   readonly signal?: AbortSignal;
-  readonly detectGate?: (toolName: string, resultText: string) => unknown | null;
+  readonly takeControlSignal?: () => ToolControlSignal | null;
   readonly isPhaseComplete?: () => boolean;
   readonly detectReroute?: (toolName: string, resultText: string) => boolean;
-  readonly detectRefusal?: (toolName: string, resultText: string) => string | null;
   readonly toolChoice?: ModelToolChoice;
   readonly requiredTerminalTool?: string;
   readonly onToolResult?: (toolName: string, input: unknown, isError: boolean, resultText: string) => void;
