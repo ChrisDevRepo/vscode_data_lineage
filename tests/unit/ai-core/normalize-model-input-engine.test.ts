@@ -6,29 +6,6 @@ import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { makeGraph, makeModel, makeNode } from '../helpers/modelFixtures';
 
 describe('N2 focus_node_id boundary normalization proof', () => {
-  it('normalizes unbracketed or case-variant focus_node_id at the model boundary', () => {
-    const hop = {
-      focusNodeId: '[dbo].[FactSales]',
-      neighbors: [],
-      outCols: null,
-      writesTo: false,
-      identifierCaseSensitive: false,
-    };
-
-    const schema = submitFindingsSchemaForMode('bb', undefined, true, hop);
-    const input = {
-      focus_node_id: 'dbo.factsales',
-      summary: 'Aggregates sales by date and region.',
-      sections: { technical: 'Aggregates sales.' },
-    };
-
-    const normalized = normalizeModelInput(schema, input);
-
-    // Proof: focus_node_id must be rewritten to canonical [dbo].[FactSales] and logged
-    expect(normalized.input).toMatchObject({ focus_node_id: '[dbo].[FactSales]' });
-    expect(normalized.fixes.some(f => f.path === 'focus_node_id' && f.after === '[dbo].[FactSales]')).toBe(true);
-  });
-
   it('submits boundary-normalized findings to NavigationEngine with direct canonical matching', () => {
     const origin = '[dbo].[OrdersView]';
     const nodes = [makeNode({ id: origin, schema: 'dbo', name: 'OrdersView', type: 'view' })];
@@ -56,6 +33,7 @@ describe('N2 focus_node_id boundary normalization proof', () => {
     });
 
     expect(normalized.input).toMatchObject({ focus_node_id: origin });
+    expect(normalized.fixes.some(f => f.path === 'focus_node_id' && f.after === origin)).toBe(true);
     const result = engine.submitFindings(toHopFinding(normalized.input as any));
     expect(result).toMatchObject({ ok: true });
   });

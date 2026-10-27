@@ -91,6 +91,8 @@ describe('Zod issue matrix', () => {
     const r = reject(PresentResultModelSchema, { ...render, caption: 'x', sections: [{ label: 'S', node_ids: [], text: 't', caption: 'c' }] });
     expect(r.hint).toContain('"caption" is not a field of the call');
     expect(r.hint).toContain('is a field of a notes[] entry: send it there');
+    expect(reject(PresentResultModelSchema, { ...render, text: 'Reads dbo.a.' }).hint)
+      .toContain('"text" is a field of a sections[] entry: send it there.');
   });
 
   it('invalid_value: holds accepted values for the shared escalation', () => {

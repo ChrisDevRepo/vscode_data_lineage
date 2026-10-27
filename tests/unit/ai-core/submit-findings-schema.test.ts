@@ -118,15 +118,6 @@ describe('fresh kept required-field projection', () => {
       expect(wire(input)).toBe(accepted);
     }
   });
-  it.each([49, 50, 51])('uses the same rendered node badge bound in Zod and JSON Schema at %s characters', length => {
-    const schema = submitFindingsSchemaForMode('bb', 'technical', true);
-    const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
-    const input = { focus_node_id: 'focus', badge_label: 'x'.repeat(length), summary: 'Recorded findings.', sections: { technical: 'The recorded SQL behavior.' } };
-    const before = structuredClone(input);
-    expect(schema.safeParse(input).success).toBe(length <= 50);
-    expect(wire(input)).toBe(length <= 50);
-    expect(input).toEqual(before);
-  });
   it('requires a nullable procedure destination at both submission boundaries', () => {
     const schema = submitFindingsSchemaForMode('ct', 'technical', true, {
       outCols: ['Value'], writesTo: true, columnSourceNodeIds: ['input'],

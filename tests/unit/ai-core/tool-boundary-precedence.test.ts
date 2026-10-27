@@ -1148,6 +1148,7 @@ describe('lineage_submit_findings boundary', () => {
     const { session, model, graph, engine } = ctWorld();
     const { services } = stubToolServices({ session, model, graph });
     const input = { ...finding(), badge_label: 'x'.repeat(length) };
+    const before = structuredClone(input);
     const schema = submitFindingsSchemaForMode('ct', 'technical', true, engine.hopSubmitColumns, engine.heldColumnFlow);
     const wireValid = new Ajv({ strict: false }).compile(toModelJsonSchema(schema))(input);
     const result = JSON.parse(executeSubmitFindings(input, services));
@@ -1155,6 +1156,7 @@ describe('lineage_submit_findings boundary', () => {
     expect(wireValid).toBe(length <= 50);
     expect(result.ok === true).toBe(length <= 50);
     if (length === 51) expect(result).toMatchObject({ code: 'invalid_input', issuePaths: ['badge_label'] });
+    expect(input).toEqual(before);
   });
 
   it.each([false, true])('preserves explicit route dispositions when done=%s', done => {
@@ -1634,7 +1636,7 @@ it.each([
 });
 
 
-it.each(['feedback marker', 'next provider schema and narrow ACK', 'second feedback example and exit', 'held-field resend accepted'] as const)('uses actual generation identity through the compiled native start repair: %s', async check => {
+it.each(['feedback marker', 'next provider schema and acknowledgement', 'second feedback example and exit', 'held-field resend accepted'] as const)('uses actual generation identity through the compiled native start repair: %s', async check => {
   const { session } = ctWorld(); session.stateMachine = null;
   session.currentRoundId = 1; // One user request contains both provider generations.
   session.enterLmStage({ kind: 'sm_entry' }, session.turnEpoch);

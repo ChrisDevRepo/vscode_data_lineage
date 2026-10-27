@@ -212,20 +212,6 @@ it.each([
     .toEqual([held, repaired]);
 });
 
-it('names the list a flattened entry key belongs to', () => {
-  const garbled = {
-    name: 'Orders lineage', summary: 'Orders from stage to mart.',
-    highlight_groups: [{ label: 'Source', color: 'source', node_ids: [source] }],
-    sections: [{ label: 'Stage', node_ids: [source], text: 'Raw orders.' }],
-    text: 'Raw orders.',
-  };
-  const schema = presentResultSchemaForPhase('synthesis', null, false);
-  const rejection = rejectionFromZodError(schema.safeParse(garbled).error!, { code: REJECTION_CODES.invalidInput, input: garbled, schema });
-
-  expect(rejection.hint).toContain('"text" is a field of a sections[] entry: send it there.');
-});
-
-
 describe('unknown repair keys', () => {
   it.each([
     ['a key with a space', 'node ids'],
