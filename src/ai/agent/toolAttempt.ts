@@ -1,6 +1,6 @@
 /** Graph-owned execution of one provider generation and its ordered tool-call batch. */
 import { createHash } from 'node:crypto';
-import { AIMessage, ToolMessage, isHumanMessage, trimMessages } from '@langchain/core/messages';
+import { AIMessage, ToolMessage } from '@langchain/core/messages';
 import {
   messageContentToText,
   messageProviderParts,
@@ -22,6 +22,7 @@ import type {
   SingleGenerationModelPort,
   ModelToolChoice,
   ModelToolDefinition,
+  ToolGenerationInput,
 } from '../model/modelPort';
 import {
   buildToolExecutionError,
@@ -36,8 +37,6 @@ import {
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { toolCallNotationFault } from '../support/toolCallNotation';
 import {
-  contextBlockBytes,
-  estimateTokens,
   storedEvidenceKindBytes,
 } from '../support/tokenBudget';
 import { sensitiveTraceReason } from '../providers/traceSecurity';
@@ -65,20 +64,8 @@ export const MAX_TOOL_PROVIDER_CALLS = 4;
 /** Byte bound for structured dispatcher rejection detail retained across graph attempts. */
 const MAX_REJECTION_DETAIL_BYTES = 2_048;
 
-/**
- * The retry-context byte budget (`contextBlockBytes()`) and the per-kind stored-evidence share
- * (`storedEvidenceKindBytes()`) are governed by `support/tokenBudget.ts`: a ceiling sized for a
- * 128k window, scaled down with the selected model's input window.
- *
- * The re-projection IS the delivery: every attempt is a fresh request, so a body the store shrinks
- * is a body the model never receives. An accepted body is therefore stored whole or not at all —
- * `executeToolGenerationAttempt` measures the held observations plus the candidate against the
- * evidence share and, when the candidate does not fit, stores a `result_too_large` reply that hands
- * the read to the hop-by-hop path. Held bodies are never shrunk and never dropped. Every attempt's
- * own generation and dispatch batch appends to the phase transcript exactly once; `renderToolAttemptContext`
- * bounds the transcript's total size by dropping whole leading attempt groups, oldest first, once the
- * transcript outgrows the budget — never by shrinking or reordering a kept message.
- */
+/** Accepted observations are stored whole or refused by the evidence-share owner.
+ * Phase/hop messages remain an append-only native transcript until that context ends. */
 
 interface OmittedStructuredValue {
   readonly omitted: true;
@@ -155,8 +142,12 @@ interface ToolAttemptCall extends ToolOutcomeIdentity {
   readonly closedByCallId?: string;
 }
 
+/** Original model-facing request, held for one phase/hop; dispatch still uses the live registry. */
+type ToolAttemptPrefix = Pick<ToolGenerationInput, 'messages' | 'system' | 'tools' | 'toolChoice' | 'instructionContext'>;
+
 /** Graph-visible outcome of exactly one generation and one ordered dispatch batch. */
 export interface ToolAttemptResult {
+  readonly prefix?: ToolAttemptPrefix;
   /** Graph routing outcome for this single generation and dispatch batch. */
   readonly stop: 'final' | 'continue' | 'gate' | 'reroute' | 'refused' | 'phase_complete' | 'cancelled' | 'error';
   /** Physical requests observed during this model-port invocation. */
@@ -184,7 +175,8 @@ export interface ToolAttemptResult {
 
 /** Provider-neutral ingredients for one graph-owned generation and dispatch batch. */
 interface ToolGenerationAttemptInput {
-  /** Fresh graph-compiled message projection for this attempt. */
+  /** Original prefix followed by the native phase/hop transcript. */
+  readonly tools: ToolGenerationInput['tools'];
   readonly messages: readonly ModelMessage[];
   /** Phase system instruction, kept separate where the provider supports it. */
   readonly system?: string;
@@ -240,8 +232,10 @@ interface ToolAttemptExecutionOptions {
   readonly traceSyntheticRejection?: SyntheticRejectionTrace;
 }
 
-/** Serializable cumulative attempt state for one graph-owned logical phase or active hop. */
+/** Cumulative attempt state for one graph-owned logical phase or active hop. */
 export interface ToolPhaseAttemptState {
+  /** Original request framing; reset together with this phase/hop state. */
+  readonly prefix?: ToolAttemptPrefix;
   /** Logical graph phase whose counters this state owns. */
   readonly phase: InstructionPhase;
   /** Monotonic physical-call count for the logical phase or hop. */
@@ -252,7 +246,7 @@ export interface ToolPhaseAttemptState {
   readonly observations: readonly ToolAttemptObservation[];
   /** Compact typed policy ledger retained for recovery attempts; never rendered to the model. */
   readonly rejections: readonly ToolAttemptRejection[];
-  /** The phase's append-only provider-native transcript: every attempt's own `AIMessage` and its paired `ToolMessage`s (or `AIMessage` + `HumanMessage` correction), oldest first. Replayed unchanged; the rebuilt active-hop user job follows it rather than reconstructing historical user jobs. */
+  /** The phase's append-only provider-native transcript: every attempt's own `AIMessage` and its paired `ToolMessage`s (or `AIMessage` + `HumanMessage` correction), oldest first. Appended after the unchanged original request. */
   readonly messages: readonly ModelMessage[];
   /** Replies that rejected the step's terminal tool, including a synthesized rejection for a reply with no call, counted even when the same reply stored an accepted read. A read-only reply does not count here. Zero when no terminal tool is tracked. */
   readonly rejectedTerminalCalls: number;
@@ -288,7 +282,7 @@ function acceptedCallKey(toolName: string, input: unknown): string {
 /** Appends one attempt's counters and its own transcript delta, never retiring an earlier rejection — the transcript is append-only, so a repaired tool's earlier failed attempt stays exactly where it happened, the same standard behaviour every tool-calling client keeps. */
 export function recordToolAttempt(
   state: ToolPhaseAttemptState,
-  attempt: Pick<ToolAttemptResult, 'stop' | 'providerCalls' | 'observations' | 'rejections' | 'messages'>,
+  attempt: Pick<ToolAttemptResult, 'stop' | 'providerCalls' | 'observations' | 'rejections' | 'messages' | 'prefix'>,
   terminalTool?: string,
 ): ToolPhaseAttemptState {
   const providerCalls = state.providerCalls + attempt.providerCalls;
@@ -311,6 +305,7 @@ export function recordToolAttempt(
       : null;
   return {
     phase: state.phase,
+    prefix: state.prefix ?? attempt.prefix,
     providerCalls,
     noProgressCalls,
     rejectedTerminalCalls,
@@ -329,66 +324,10 @@ function renderObservationResultContent(result: string): string {
   return `${OBSERVATION_RESULT_FRAMING}\n${escapePromptText(result)}`;
 }
 
-/** One message's countable text: its own content plus every tool call it carries (name and serialized arguments), since an `AIMessage` can hold a large tool-call payload — a `present_result` draft, a search query — in `tool_calls` while `content` stays short or empty. Counting `content` alone would leave that payload out of the trim budget entirely. */
-function messageCountableText(message: ModelMessage): string {
-  const text = messageContentToText(message.content);
-  if (!AIMessage.isInstance(message) || !message.tool_calls || message.tool_calls.length === 0) {
-    return text;
-  }
-  const callsText = message.tool_calls
-    .map((call) => `${call.name}(${JSON.stringify(call.args ?? {})})`)
-    .join('\n');
-  return `${text}\n${callsText}`;
-}
-
-/** The newest attempt's own delta — from its leading `AIMessage` to the end of the transcript — the span {@link renderToolAttemptContext} falls back to when that span alone already exceeds the attempt-context budget. Every attempt appends exactly one leading `AIMessage`, so the last one in the array opens the newest attempt. */
-function newestAttemptGroup(messages: readonly ModelMessage[]): ModelMessage[] {
-  let start = messages.length - 1;
-  while (start > 0 && !AIMessage.isInstance(messages[start])) start -= 1;
-  return [...messages.slice(start)];
-}
-
-/** One phase's retry context as the model's own provider-native history — the accumulated transcript, bounded to the turn's attempt-context budget. Every attempt already appended its own `AIMessage`/`ToolMessage` (or `AIMessage`/`HumanMessage`) pair when it happened, so rendering is concatenation, never reconstruction; the only work left is dropping whole leading attempts once the transcript outgrows the budget, which `trimMessages` does on the model's own token count, keeping every assistant call and its tool results together (`startOn: ['human', 'ai']` never lets a kept span begin mid-group, and `strategy: 'last'` always keeps the newest attempt first). */
-export async function renderToolAttemptContext(
-  state: ToolPhaseAttemptState,
-  model: Pick<SingleGenerationModelPort, 'budget' | 'getNumTokens'>,
-  debugLog?: (message: string) => void,
-): Promise<readonly ModelMessage[]> {
-  if (state.messages.length === 0) return state.messages;
-  const tokenCountCache = new WeakMap<ModelMessage, number>();
-  const countMessageTokens = async (message: ModelMessage): Promise<number> => {
-    const cached = tokenCountCache.get(message);
-    if (cached !== undefined) return cached;
-    const count = await model.getNumTokens(messageCountableText(message));
-    tokenCountCache.set(message, count);
-    return count;
-  };
-  const trimmed = await trimMessages([...state.messages], {
-    strategy: 'last',
-    tokenCounter: async (msgs) => {
-      const counts = await Promise.all(msgs.map(countMessageTokens));
-      return counts.reduce((sum, count) => sum + count, 0);
-    },
-    maxTokens: estimateTokens(contextBlockBytes(model.budget)),
-    startOn: ['human', 'ai'],
-    includeSystem: true,
-  });
-  if (trimmed.length > 0) {
-    assertToolPairingWellFormed(trimmed);
-    const dropped = state.messages.length - trimmed.length;
-    if (dropped > 0) {
-      debugLog?.(
-        `[AI] tool-attempt-context-groups-dropped phase=${safeLogIdentifier(state.phase, 'unknown')} droppedMessages=${dropped} keptMessages=${trimmed.length}`,
-      );
-    }
-    return trimmed;
-  }
-  const fallback = newestAttemptGroup(state.messages);
-  debugLog?.(
-    `[AI] tool-attempt-context-oversize-newest-kept phase=${safeLogIdentifier(state.phase, 'unknown')} messages=${fallback.length}`,
-  );
-  assertToolPairingWellFormed(fallback);
-  return fallback;
+/** The native phase/hop transcript is appended whole, preserving the earlier request as a cacheable prefix (D-097). */
+export function renderToolAttemptContext(state: ToolPhaseAttemptState): readonly ModelMessage[] {
+  assertToolPairingWellFormed(state.messages);
+  return state.messages;
 }
 
 /** The one tool whose rejected draft the session holds for repair (`presentResultRepairDraft`). */
@@ -629,23 +568,23 @@ export async function executeToolAttempt(
   options: ToolAttemptExecutionOptions = {},
 ): Promise<ToolAttemptResult> {
   const priorState = options.priorState;
-  let messages = plan.input.messages;
-  if (priorState && priorState.providerCalls > 0) {
-    const context = await renderToolAttemptContext(priorState, model, options.debugLog);
-    const current = messages.at(-1);
-    messages = plan.frame.phase === 'active' && current && isHumanMessage(current)
-      ? [...messages.slice(0, -1), ...context, current]
-      : [...messages, ...context];
-  }
-  return executeToolGenerationAttempt(model, {
-    ...plan.input,
-    messages,
-    phase: plan.frame.phase,
+  const prefix = priorState?.prefix ?? {
+    messages: plan.input.messages,
+    system: plan.input.system,
+    tools: modelToolDefinitions(plan.input.registry),
+    toolChoice: plan.input.toolChoice,
     instructionContext: plan.context,
+  };
+  const result = await executeToolGenerationAttempt(model, {
+    ...plan.input,
+    ...prefix,
+    messages: [...prefix.messages, ...(priorState ? renderToolAttemptContext(priorState) : [])],
+    phase: plan.frame.phase,
     debugLog: options.debugLog,
     traceSyntheticRejection: options.traceSyntheticRejection,
     priorState,
   });
+  return { ...result, prefix };
 }
 
 /** The varying half of one synthesized rejection; everything else follows the shared contract. */
@@ -943,7 +882,7 @@ async function executeToolGenerationAttempt(
     const generated = await model.generateToolTurn({
       messages: input.messages,
       system: input.system,
-      tools: modelToolDefinitions(input.registry),
+      tools: input.tools,
       toolChoice: input.toolChoice,
       signal: input.signal,
       phase: input.phase,

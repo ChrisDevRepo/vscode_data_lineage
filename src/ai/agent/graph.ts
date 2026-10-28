@@ -170,19 +170,19 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     return discoveryInstructionCache;
   };
 
-  let activeInstructionCache: { readonly key: string; readonly instruction: StageSystemInstruction } | null = null;
+  let activeInstructionCache: { readonly key: string; readonly instruction: StageSystemInstruction; readonly hop: ReturnType<typeof buildActiveHopInstruction> } | null = null;
   const getActiveInstructionCached = (
     state: AgentStateType,
     sess: AiSession,
     ctx: StagePromptContext,
     hopMode: 'bb' | 'ct',
     focusId: string,
-  ): StageSystemInstruction => {
+  ): NonNullable<typeof activeInstructionCache> => {
     const key = `${state.activeHopCount}:${focusId}:${hopMode}`;
     if (activeInstructionCache?.key !== key) {
-      activeInstructionCache = { key, instruction: buildActiveInstruction(sess, ctx, hopMode) };
+      activeInstructionCache = { key, instruction: buildActiveInstruction(sess, ctx, hopMode), hop: buildActiveHopInstruction(sess, sess.stateMachine as NavigationEngine, focusId) };
     }
-    return activeInstructionCache.instruction;
+    return activeInstructionCache;
   };
 
   const fail = (message: string, errorCode?: AgentErrorCode): AgentStateUpdate => ({
@@ -409,7 +409,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       + ' — asking once more with tool calls disabled instead of discarding them.',
     );
     const terminalTask = buildDiscoveryFinalAnswerTask();
-    const transcript = await renderToolAttemptContext(nextAttempt, deps.model, message => logGraphDebug(deps, message));
+    const transcript = renderToolAttemptContext(nextAttempt);
     const plan = compileInstructionPlan({
       kind: 'converse',
       registry: deps.registry,
@@ -420,7 +420,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       messages: [...draft.messages, ...transcript, modelUserMessage(terminalTask)],
       toolChoice: 'none',
     });
-    const result = await withLmStage(draft.stage, () => runToolAttempt(plan, { ...nextAttempt, messages: [] }));
+    const result = await withLmStage(draft.stage, () => runToolAttempt(plan, { ...nextAttempt, prefix: undefined, messages: [] }));
     if (result.stop !== 'final' || result.text.trim().length === 0) {
       logGraphDebug(deps, `[AI] [Salvage] phase=discover unusable — stop=${result.stop}`);
       return null;
@@ -523,7 +523,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       ? state.messages
       : [modelUserMessage(state.prompt)];
     const detectorMessages = priorAttempt.providerCalls > 0
-      ? [...base, ...await renderToolAttemptContext(priorAttempt, deps.model, message => logGraphDebug(deps, message))]
+      ? [...base, ...renderToolAttemptContext(priorAttempt)]
       : base;
     let callsBefore = deps.model.modelCalls;
     let entry: z.infer<typeof EntryDetectionSchema>;
@@ -903,7 +903,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }
 
     const hopMode = engine.currentHopAnalysisMode;
-    const systemInstruction = getActiveInstructionCached(state, sess, getCtx(state), hopMode, focusId);
+    const { instruction: systemInstruction, hop: hopInstruction } = getActiveInstructionCached(state, sess, getCtx(state), hopMode, focusId);
 
     const progress = engine.hopProgress;
     const focusLabel = focusId.split('.').pop()?.replace(/[[\]]/g, '') ?? focusId;
@@ -919,7 +919,6 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       deps.sink.status('scoping', `${hopHeader}${deltaNote}`);
     }
 
-    const hopInstruction = buildActiveHopInstruction(sess, engine, focusId);
     const hopMessage = modelUserMessage(hopInstruction.message);
 
     let submitted = false;

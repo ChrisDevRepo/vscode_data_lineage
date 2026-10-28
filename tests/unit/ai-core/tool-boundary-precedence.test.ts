@@ -649,9 +649,10 @@ describe('large findings repairs', () => {
     expect(engine.toJSON().agenda).toEqual(before.agenda);
     expect(engine.toJSON().removedSet).toEqual(before.removedSet);
   });
-  it.each(['alternatives', 'mixed', 'flowfault'] as const)('projects only required fields in the %s correction job', kind => {
+  it.each(['alternatives', 'mixed', 'flowfault'] as const)('keeps the original hop task after %s faults without a saved-field inventory', kind => {
     const { engine, session, model, graph } = ctWorld({ sibling: true });
     const { services } = stubToolServices({ session, model, graph });
+    const originalMessage = buildActiveHopInstruction(session, engine, ORIGIN).message;
     executeSubmitFindings({ summary: 'Authored evidence.', sections: { technical: 'Keep these source facts.' },
       column_flow: kind === 'flowfault' ? 42 : [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }],
       ...(kind === 'mixed' ? { badge_label: 'x'.repeat(51) } : {}),
@@ -661,9 +662,9 @@ describe('large findings repairs', () => {
     expect(engine.heldPartsOfCurrentFocus()).toMatchObject({ failed: required, resend: [...new Set([...required, ...alternatives])] });
     const message = buildActiveHopInstruction(session, engine, ORIGIN).message;
     expect(message).not.toContain('Fields to correct:');
-    expect(message).toContain('The latest tool result lists the faults, how to correct them and the fields to resend; saved content stays as saved.');
+    expect(message).toBe(originalMessage);
+    expect(message).not.toContain('Saved valid content:');
     if (kind === 'alternatives') {
-      expect(message).toContain('Saved valid content: summary, column_flow, sections.technical.');
       expect(JSON.parse(executeSubmitFindings({ prune_neighbors: [{ id: OTHER, reason: 'No requested contribution.' }] }, services))).toHaveProperty('ok', true);
       expect(engine.getDetailSlots()).toEqual(expect.arrayContaining([expect.objectContaining({ summary: 'Authored evidence.' })]));
     }
@@ -1880,12 +1881,44 @@ it.each([false, true])('repairs an owed section through the compiled active hop 
   const second = await executeToolAttempt(port, plan(), { priorState: recordToolAttempt(initialToolPhaseAttemptState('active'), first) });
   const schema = offered[1]!.find(tool => tool.name === 'lineage_submit_findings').inputSchema;
   expect(Object.keys(schema.properties)).toEqual(Object.keys(offered[0]!.find(tool => tool.name === 'lineage_submit_findings').inputSchema.properties));
-  expect(new Ajv({ strict: false }).compile(schema)({ ...input, ...patch }), 'D-098: the full resend is schema-valid').toBe(true);
+  expect(schema, 'D-097: the original full schema stays unchanged').toEqual(offered[0]!.find(tool => tool.name === 'lineage_submit_findings').inputSchema);
+  expect(new Ajv({ strict: false }).compile(schema)({ ...input, sections: { ...input.sections, ...patch.sections } }),
+    'D-098/D-101: the composed candidate, with the held business leaf, satisfies the original full schema').toBe(true);
   expect(second.rejections, 'D-098: resent saved fields are never rejected').toHaveLength(0);
   const detail = engine.getDetailSlots().find(slot => slot.nodeId === ORIGIN)!;
   expect(detail.summary).toBe(input.summary);
   expect(detail.sections).toContainEqual(expect.objectContaining({ angle: 'business', text: input.sections.business }));
   expect(detail.sections).toContainEqual(expect.objectContaining({ angle: 'technical', text: patch.sections.technical }));
+});
+
+it('keeps the original provider schema while rechecking held fields against current metadata', async () => {
+  const { session, engine, registry, port, queue, offered } = ownedInputWorld();
+  session.enterLmStage({ kind: 'active', mode: 'sm_ct' }, session.turnEpoch);
+  const original = { summary: 'Held finding.', sections: { technical: 'Supplied source facts.' }, badge_label: 42,
+    column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }] };
+  const plan = () => compileInstructionPlan({ kind: 'converse', stage: { kind: 'active', mode: 'sm_ct' }, registry,
+    facts: { analysisMode: 'ct', targetColumns: ['Value'], classification: 'technical' }, messages: [modelUserMessage('Trace Value.')],
+    sink: new TurnEventSink(() => {}), freshSubmission: () => engine.heldFindingFocus === null,
+    hopColumns: () => engine.hopSubmitColumns, heldColumnFlow: () => engine.heldColumnFlow,
+    toolChoice: 'required', requiredTerminalTool: 'lineage_submit_findings' });
+  queue([{ tool: 'lineage_submit_findings', input: original }]);
+  const state = initialToolPhaseAttemptState('active');
+  const first = await executeToolAttempt(port, plan(), { priorState: state });
+  expect(first.rejections).toHaveLength(1);
+  expect(engine.getDetailSlots()).toEqual([]);
+  const branch = session.model!.nodes.find(node => node.id === BRANCH)!;
+  branch.columns = [{ name: 'Other', type: 'int', nullable: 'NULL', extra: '' }];
+  queue([{ tool: 'lineage_submit_findings', input: { badge_label: 'Source' } }]);
+  const next = recordToolAttempt(state, first);
+  const second = await executeToolAttempt(port, plan(), { priorState: next });
+  expect(second.rejections.flatMap(rejection => rejection.issuePaths ?? [])).toContain('column_flow.0.upstream_columns.0.col');
+  expect(offered[1]!.find(tool => tool.name === 'lineage_submit_findings').inputSchema)
+    .toEqual(offered[0]!.find(tool => tool.name === 'lineage_submit_findings').inputSchema);
+  expect(engine.getDetailSlots()).toEqual([]);
+  queue([{ tool: 'lineage_submit_findings', input: { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Other' }] }] } }]);
+  const third = await executeToolAttempt(port, plan(), { priorState: recordToolAttempt(next, second) });
+  expect(third.rejections).toHaveLength(0);
+  expect(engine.getDetailSlots()).toContainEqual(expect.objectContaining({ summary: original.summary }));
 });
 
 it.each(['column_flow', 'unknown-root'] as const)('uses the existing active authorization for an atomic %s repair', async fault => {

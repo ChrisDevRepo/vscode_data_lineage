@@ -1,5 +1,4 @@
 /** Per-stage prompt + finding assembly for the agent graph's discovery and active nodes. */
-import { CLASSIFICATION_KEPT_ANGLES } from '../session/classification';
 import type { AiSession } from '../session/session';
 import type { NavigationEngine } from '../sm/smBase';
 import type { HopContext } from '../sm/smTypes';
@@ -16,7 +15,7 @@ import {
 } from '../prompting/prompts';
 import { buildSmProtocol } from '../prompting/smPrompts';
 import { resolveStagePrompt, type StagePromptResult, type StageRenderScope } from '../prompting/templateRenderer';
-import { escapeDelimitedJson, escapePromptText } from '../support/text';
+import { escapeDelimitedJson } from '../support/text';
 import { SCRIPT_TYPES } from '../support/graphUtils';
 
 /** Serialises the peeked hop context (focus DDL + immediate neighbours) into the worker's single user message. The hop is blinkered: the worker sees this payload plus its hop tools (`lineage_submit_findings`, `lineage_prune_current`, and in CT `lineage_get_neighbor_columns`), not prior hops' tool results. */
@@ -153,46 +152,29 @@ interface ActiveHopInstruction {
 export function buildActiveHopInstruction(sess: AiSession, engine: NavigationEngine, focusId: string): ActiveHopInstruction {
   const isCtMode = engine.currentHopAnalysisMode === 'ct';
   const nonBodied = focusIsNonBodied(sess, engine);
-  const held = engine.heldPartsOfCurrentFocus();
-  const angles = sess.classification ? CLASSIFICATION_KEPT_ANGLES[sess.classification] : undefined;
-  const writeSections = !held || !angles?.every(angle => held.sections.includes(angle));
   const currentTask = buildCurrentTaskBlock(
     engine.getCurrentTasks().map(task => ({ ...task, endpoints: engine.taskEndpoints(task) })),
     isCtMode ? engine.columnAspect?.active_columns : undefined,
     engine.pendingLineageQuestions,
     nonBodied,
-    held !== null,
     { analysisMode: engine.currentHopAnalysisMode, originNodeId: engine.currentOrigin },
   );
-  const savedFields = held ? [
-    ...(held.summary ? ['summary'] : []),
-    ...held.fields,
-    ...held.sections.map(angle => `sections.${angle}`),
-  ] : [];
-  const correctionJob = !held ? null : [
-    '<current_task>',
-    'Status: correction needed.',
-    ...(savedFields.length ? [`Saved valid content: ${savedFields.map(escapePromptText).join(', ')}.`] : []),
-    'The latest tool result lists the faults, how to correct them and the fields to resend; saved content stays as saved.',
-    '</current_task>',
-  ].join('\n');
   const captureRecipe = resolveStage(sess, 'active', isCtMode, {
     scope: 'per_focus',
     focusKind: nonBodied ? 'non_bodied' : 'bodied',
-    writeSections,
+    writeSections: true,
   });
   const focus = buildWorkerHopMessage(engine.peekHopContext(), focusId);
   const recentRejections = sess.memory.getRecentRejections().filter(rejection => rejection.atHop < engine.currentHop);
   const memory = buildMemoryBlock(sess.memory.getShortTermMemory(), recentRejections);
   const memorySections: string[] = [];
   if (currentTask) memorySections.push('current_task');
-  if (held) memorySections.push('held_finding_correction');
   if (captureRecipe.prompt) memorySections.push('capture_recipe');
   if (focus) memorySections.push('hop_context');
   memorySections.push('short_term_memory');
   if (recentRejections.length > 0) memorySections.push('recent_rejections');
   return {
-    message: [correctionJob, currentTask, captureRecipe.prompt, focus, memory].filter(Boolean).join('\n\n'),
+    message: [currentTask, captureRecipe.prompt, focus, memory].filter(Boolean).join('\n\n'),
     templateKeys: captureRecipe.shippedKeys,
     memorySections,
     classificationGatedKeys: classificationGatedKeys(captureRecipe),

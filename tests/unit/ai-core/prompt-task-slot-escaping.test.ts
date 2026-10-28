@@ -21,16 +21,15 @@ describe('buildCurrentTaskBlock — model-authored slots are escaped', () => {
   });
 
   it.each([
-    { mode: 'bb', origin: '[d].[Origin]', through: '[d].[Carrier]', referenceOnly: false, inherited: true },
-    { mode: 'bb', origin: '[d].[Carrier]', through: '[d].[Carrier]', referenceOnly: false, inherited: false },
-    { mode: 'bb', origin: '[d].[Origin]', through: undefined, referenceOnly: false, inherited: false },
-    { mode: 'ct', origin: '[d].[Origin]', through: '[d].[Carrier]', referenceOnly: false, inherited: false },
-    { mode: 'bb', origin: '[d].[Origin]', through: '[d].[Carrier]', referenceOnly: true, inherited: false },
-  ] as const)('preserves inherited question text with its provenance ($mode, $through, reference: $referenceOnly)', row => {
+    { mode: 'bb', origin: '[d].[Origin]', through: '[d].[Carrier]', inherited: true },
+    { mode: 'bb', origin: '[d].[Carrier]', through: '[d].[Carrier]', inherited: false },
+    { mode: 'bb', origin: '[d].[Origin]', through: undefined, inherited: false },
+    { mode: 'ct', origin: '[d].[Origin]', through: '[d].[Carrier]', inherited: false },
+  ] as const)('preserves inherited question text with its provenance ($mode, $through)', row => {
     const task = { kind: 'analytical' as const, question: INJECTION, passthroughFromNodeId: row.through };
-    const block = buildCurrentTaskBlock([task], undefined, undefined, false, row.referenceOnly,
+    const block = buildCurrentTaskBlock([task], undefined, undefined, false,
       { analysisMode: row.mode, originNodeId: row.origin });
-    const baseline = buildCurrentTaskBlock([task], undefined, undefined, false, row.referenceOnly);
+    const baseline = buildCurrentTaskBlock([task], undefined, undefined, false);
     if (row.inherited) {
       expect(block).toContain('<current_task>');
       expect(block).toContain('<analysis_context>');

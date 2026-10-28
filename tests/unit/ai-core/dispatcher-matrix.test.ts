@@ -32,6 +32,10 @@ import type { ToolServices } from '../../../src/ai/tools/handlers/toolServices';
 import { makeGraph, makeIndexedModel, makeNode } from '../helpers/modelFixtures';
 import { stubToolServices, schemaFaults, withSchemaFaults, type SchemaFault } from './helpers/toolServices';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
+import { LineageRuntime } from '../../../src/ai/runtime/lineageRuntime';
+import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
+import { EMPTY_AI_TEMPLATES } from '../../../src/ai/session/types';
+import { modelToolCallMessage, type ModelPort, type ToolGenerationInput } from '../../../src/ai/model/modelPort';
 
 const SearchSchema = z.object({ query: z.string().min(1) }).strict();
 
@@ -79,13 +83,101 @@ const shown = (value: unknown): ShownError[] => problemOf(value).guidance.flatMa
 /** One shown error of an issue code, without values. */
 const fault = (code: IssueCode, path = '') => ({ path, fault: ISSUES[code].label, correction: ISSUES[code].correction });
 
+/** Approved08 D-097: exercise the production graph, canonical handlers and actual model-port requests. */
+it.each(['bb', 'ct'] as const)('keeps the original request prefix and tools through %s corrections, resetting at the next hop', async mode => {
+  const columns = [{ name: 'Value', type: 'int', nullable: 'NULL', extra: '' }];
+  const source = makeNode({ id: '[dbo].[Source]', schema: 'dbo', name: 'Source', type: 'view', bodyScript: 'SELECT 1 AS Value;', columns });
+  const focus = makeNode({ id: '[dbo].[Report]', schema: 'dbo', name: 'Report', type: 'view', bodyScript: 'SELECT Value FROM dbo.Source;', columns });
+  const model = makeIndexedModel([source, focus], [[source.id, focus.id]]);
+  const session = new AiSession({ ...EMPTY_AI_TEMPLATES, technical_capture: 'Capture the supplied SQL.' });
+  session.model = model;
+  session.graph = makeGraph([source, focus], [[source.id, focus.id]]);
+  const requests: Array<{ phase: string | undefined; focus: string | null; messages: string[]; system: string | undefined; tools: string; input: ToolGenerationInput }> = [];
+  const sent: Array<{ callId: string; toolName: string; input: Record<string, unknown> }> = [];
+  const counters = new Map<string, number>();
+  let calls = 0;
+  const scripted: ModelPort = {
+    id: 'prefix-contract', identity: { id: 'prefix-contract', name: 'Prefix', vendor: 'test', family: 'test', version: '1' },
+    budget: createTurnTokenBudget({}), get modelCalls() { return calls; },
+    async getNumTokens(text) { return String(text).length; },
+    async generateStructured() { throw new Error('Slash routing needs no classifier.'); },
+    async completeText() { calls++; return 'Trace the supplied objects.'; },
+    async generateToolTurn(input) {
+      calls++;
+      const engine = session.stateMachine instanceof NavigationEngine ? session.stateMachine : null;
+      const current = engine?.currentFocus ?? null;
+      requests.push({ phase: input.phase, focus: current, messages: input.messages.map(message => JSON.stringify(message.toJSON())),
+        system: input.system, tools: JSON.stringify(input.tools.map(tool => ({ name: tool.name, description: tool.description, schema: toModelJsonSchema(tool.inputSchema) }))), input });
+      let toolName: string, payload: Record<string, unknown>;
+      if (input.phase === 'sm_entry') {
+        toolName = 'lineage_start_exploration';
+        payload = { origin: focus.id, analysisMode: mode, classification: 'technical', ...(mode === 'ct' ? { targetColumns: ['Value'] } : {}),
+          depth: { upstream: { levels: 1, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } };
+      } else if (input.phase === 'active') {
+        assert(engine && current);
+        expect(engine.getDetailSlots().some(slot => slot.nodeId === current), 'a rejected draft must not commit before correction').toBe(false);
+        const attempt = counters.get(current) ?? 0;
+        counters.set(current, attempt + 1);
+        toolName = 'lineage_submit_findings';
+        if (current === focus.id) payload = attempt === 0
+          ? { summary: 'Held summary unique-prefix.', sections: { technical: 'Held detail unique-prefix.' }, badge_label: 42,
+            ...(mode === 'ct' ? { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source.id, col: 'Value', transforms: ['pass_through'] }] }] }
+              : { questions: [{ nodeId: source.id, question: 'Describe the source.' }] }) }
+          : { badge_label: 'Report' };
+        else payload = attempt === 0 ? {} : { summary: 'Source summary.', sections: { technical: 'Source detail.' }, ...(mode === 'ct' ? { column_flow: [] } : {}) };
+      } else {
+        toolName = 'lineage_present_result';
+        payload = { name: 'Lineage', summary: 'Report reads Source.', sections: [{ label: 'Trace', text: 'Supplied facts.', node_ids: session.resultGraph!.nodeIds }],
+          highlight_groups: [{ label: 'Origin', color: 'target', node_ids: [focus.id] }] };
+      }
+      const call = { callId: `prefix-${calls}`, toolName, input: payload };
+      sent.push(call);
+      return { status: 'completed', content: [], message: modelToolCallMessage([call]), text: '', toolCalls: [{ valid: true, ...call }], finishReason: 'tool-calls' };
+    },
+  };
+  const logger = { debug() {}, info() {}, warn() {}, error() {} };
+  const runtime = new LineageRuntime({ getSession: () => session,
+    createRegistry: (lease, port) => buildAiToolRegistry(() => session, logger as never, () => undefined, lease, { model: port }) });
+  let proposalId: string | undefined;
+  const sink = () => new TurnEventSink(event => { if (event.type === 'gate') proposalId = event.proposalId; });
+  expect(await runtime.run({ model: scripted, sink: sink(), request: { id: 'prefix-start', prompt: `/trace ${focus.id}` } })).toMatchObject({ outcome: 'ok' });
+  assert(proposalId);
+  expect(await runtime.run({ model: scripted, sink: sink(), request: { id: 'prefix-approve', prompt: 'Approve & Proceed', gateDecision: { kind: 'approve', proposalId } } })).toMatchObject({ outcome: 'ok' });
+  const target = process.env.DLV_RETRY_PREFIX_OUTPUT;
+  if (target) appendFileSync(target, JSON.stringify({ mode, requests: requests.map(({ input: _input, ...request }) => request) }) + '\n');
+  const active = requests.filter(request => request.phase === 'active');
+  for (const id of [focus.id, source.id]) {
+    const [first, correction] = active.filter(request => request.focus === id);
+    assert(first && correction);
+    expect(correction.system).toBe(first.system);
+    expect(correction.tools).toBe(first.tools);
+    expect(correction.messages.slice(0, first.messages.length)).toEqual(first.messages);
+    expect(correction.input.messages.slice(first.messages.length).map(message => message.type)).toEqual(['ai', 'tool']);
+    expect(correction.messages.join('')).not.toContain('Saved valid content:');
+    const feedback = correction.input.messages.at(-1);
+    assert(feedback instanceof ToolMessage);
+    expect(shown(feedback.content).map(issue => issue.path)).toEqual(id === focus.id ? ['badge_label']
+      : expect.arrayContaining(['summary', 'sections', ...(mode === 'ct' ? ['column_flow'] : [])]));
+    const submit = first.input.tools.find(tool => tool.name === 'lineage_submit_findings');
+    assert(submit);
+    expect(toModelJsonSchema(submit.inputSchema).required).toEqual(expect.arrayContaining(['summary', 'sections', ...(mode === 'ct' ? ['column_flow'] : [])]));
+    expect(JSON.stringify(feedback.content)).not.toContain('Held summary unique-prefix.');
+  }
+  const [firstHop] = active.filter(request => request.focus === focus.id);
+  const [nextHop] = active.filter(request => request.focus === source.id);
+  expect(nextHop.messages).not.toEqual(firstHop.messages);
+  expect(nextHop.input.messages.some(message => message instanceof ToolMessage)).toBe(false);
+  expect(sent.filter(call => call.toolName === 'lineage_submit_findings').map(call => call.input)).toContainEqual({ badge_label: 'Report' });
+  expect(session.memory.getResult().detail_slots.find(slot => slot.nodeId === focus.id)).toMatchObject({ summary: 'Held summary unique-prefix.' });
+});
+
 it.each([
-  { phase: 'active', prior: true, human: true, order: ['anchor', 'call', 'result', 'current'] },
+  { phase: 'active', prior: true, human: true, order: ['anchor', 'current', 'call', 'result'] },
   { phase: 'discover', prior: true, human: true, order: ['anchor', 'current', 'call', 'result'] },
   { phase: 'synthesis', prior: true, human: true, order: ['anchor', 'current', 'call', 'result'] },
   { phase: 'active', prior: false, human: true, order: ['anchor', 'current'] },
   { phase: 'active', prior: true, human: false, order: ['anchor', 'current', 'call', 'result'] },
-] as const)('places only a rebuilt active user job after paired history: $phase prior=$prior human=$human', async scenario => {
+] as const)('appends native paired history after the original request: $phase prior=$prior human=$human', async scenario => {
   const { registry } = registryWith(() => '{}');
   const currentText = 'CURRENT JOB: held correction. SQL: SELECT Value FROM dbo.Source; TASK: trace Value.';
   const base = [new HumanMessage('ANCHOR'), scenario.human ? new HumanMessage(currentText) : new AIMessage(currentText)];
@@ -516,21 +608,19 @@ describe('model-facing rejection text', () => {
     assertToolPairingWellFormed(second.messages);
   });
 
-  it('keeps the latest large rejected call paired with its complete repair message over the retry-context budget', async () => {
+  it('keeps every large rejected call paired with its complete repair message (D-097)', async () => {
     const newest = [new AIMessage({ content: '', tool_calls: [{ id: 'large', name: 'lineage_present_result', args: {
       sections: [{ label: 'Sources', text: 'SQL-supported finding. '.repeat(12000) }],
     } }] }), new ToolMessage({ tool_call_id: 'large', name: 'lineage_present_result', status: 'error',
-      content: 'sections.0.label is invalid. All report text is held. Resend only sections: [{index: 0, label: "Source"}]. Last reply for this step.' })];
+      content: 'sections.0.label is invalid. All report text is held. Correct the named section label and resend sections. Last reply for this step.' })];
     const state = { ...initialToolPhaseAttemptState('synthesis'), messages: [
       new AIMessage({ content: '', tool_calls: [{ id: 'old', name: 'lineage_present_result', args: {} }] }),
       new ToolMessage({ tool_call_id: 'old', content: 'The earlier call was incomplete.' }), ...newest,
     ] };
-    const logs: string[] = [];
-    const context = await renderToolAttemptContext(state, { budget: createTurnTokenBudget({ modelWindowTokens: 1024 }),
-      getNumTokens: async text => Math.ceil(text.length / 4) }, line => logs.push(line));
-    expect(context).toEqual(newest);
+    const context = renderToolAttemptContext(state);
+    expect(context).toEqual(state.messages);
+    expect(context.slice(-newest.length)).toEqual(newest);
     assertToolPairingWellFormed(context);
-    expect(logs).toEqual([expect.stringContaining('tool-attempt-context-oversize-newest-kept')]);
   });
 
   it('delivers schema-level column choices for each failed field without diagnostic clipping', async () => {

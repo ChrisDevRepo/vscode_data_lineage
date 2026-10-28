@@ -400,7 +400,7 @@ export function buildMissionBriefBlock(brief: string, question: string, scopeNot
   return lines.join('\n');
 }
 
-/** Renders the per-hop task, or reference context without fresh-authoring instructions for a held correction. */
+/** Renders the original per-hop task and its supplied reference context. */
 export function buildCurrentTaskBlock(
   currentTasks: ReadonlyArray<Pick<InvestigationTask, 'kind' | 'question' | 'traversalSide' | 'callerContext' | 'passthroughFromNodeId'> & {
     readonly returnTargets?: readonly ScalarReturnTarget[];
@@ -410,16 +410,13 @@ export function buildCurrentTaskBlock(
   columnTraceColumns?: string[],
   columnLineageQuestions?: string[],
   nonBodied = false,
-  referenceOnly = false,
   context?: { readonly analysisMode: 'bb' | 'ct'; readonly originNodeId: string | null },
 ): string {
   if (currentTasks.length === 0) return '';
-  const blockTag = referenceOnly ? 'analysis_context' : 'current_task';
-  const lines = [`<${blockTag}>`];
-  const inherited = context?.analysisMode === 'bb' && !referenceOnly ? currentTasks.filter(task => task.kind !== 'root'
+  const lines = ['<current_task>'];
+  const inherited = context?.analysisMode === 'bb' ? currentTasks.filter(task => task.kind !== 'root'
     && task.passthroughFromNodeId && task.passthroughFromNodeId !== context.originNodeId && task.question.trim()) : [];
   if (inherited.length) lines.push('  Establish this focus\'s relevance to the user\'s question from its own SQL. Inherited questions are reference context about the traversed object.');
-  if (referenceOnly) lines.push('  Reference for this correction, not a new analysis job.');
   for (const task of currentTasks) {
     if (inherited.includes(task)) continue;
     const question = task.question.trim();
@@ -431,38 +428,32 @@ export function buildCurrentTaskBlock(
     const { assigned = [], external = [] } = task.endpoints ?? {};
     const endpoints = (values: readonly ScalarReturnTarget[]) => values.map(ref => escapePromptText(`${ref.node}.${ref.col}`)).join(', ');
     if (assigned.length) lines.push(
-      referenceOnly
-        ? `  <assigned_endpoints>${endpoints(assigned)}${nonBodied ? ': stored endpoints' : ''}.</assigned_endpoints>`
-        : nonBodied
+      nonBodied
         ? `  <assigned_endpoints>${endpoints(assigned)}: these are stored endpoints. The engine carries them to connected SQL objects in the approved direction without inventing value edges; those SQL objects resolve whether and how the values continue.</assigned_endpoints>`
         : `  <assigned_endpoints>${endpoints(assigned)}: Record the SQL-established relations for these columns, retaining known facts beyond the requested trace limit and unresolved evidence in sections.</assigned_endpoints>`,
     );
     if (external.length) lines.push(
-      referenceOnly
-        ? `  <neighbor_columns>${endpoints(external)}: Candidate neighbor columns, not assigned endpoints.</neighbor_columns>`
-        : `  <neighbor_columns>${endpoints(external)}: Candidate neighbor columns, not assigned endpoints. Map one only when this object's SQL establishes the relation (a written table column goes in writes_to as {node, col}); otherwise leave it out of column_flow.</neighbor_columns>`,
+      `  <neighbor_columns>${endpoints(external)}: Candidate neighbor columns, not assigned endpoints. Map one only when this object's SQL establishes the relation (a written table column goes in writes_to as {node, col}); otherwise leave it out of column_flow.</neighbor_columns>`,
     );
   }
   if (columnTraceColumns && columnTraceColumns.length > 0) {
     lines.push(
       `  <column_trace>`,
       `    Active columns: [${columnTraceColumns.map(escapePromptText).join(', ')}]`,
-      ...(referenceOnly ? [] : [`    These are the incoming column tasks. Record their real contributors and resolved outputs in \`column_flow\`, including downstream renames proved by the SQL; keep unrelated column analysis in \`sections\`.`]),
+      `    These are the incoming column tasks. Record their real contributors and resolved outputs in \`column_flow\`, including downstream renames proved by the SQL; keep unrelated column analysis in \`sections\`.`,
       `  </column_trace>`,
     );
   }
   if (columnTraceColumns?.length && columnLineageQuestions?.length) {
     lines.push(
       `  <lineage_questions>`,
-      referenceOnly
-        ? `    Existing endpoint continuations and consumption checks for this focus:`
-        : `    Endpoint continuations and consumption checks opened on an earlier hop for this focus. Address them:`,
+      `    Endpoint continuations and consumption checks opened on an earlier hop for this focus. Address them:`,
       ...columnLineageQuestions.map(q => `    - ${escapePromptText(q)}`),
       `  </lineage_questions>`,
     );
   }
   if (lines.length === 1) return '';
-  lines.push(`</${blockTag}>`);
+  lines.push('</current_task>');
   if (inherited.length) lines.push('<analysis_context>', ...inherited.map(task =>
     `  Inherited through ${escapePromptText(task.passthroughFromNodeId!)}: ${escapePromptText(task.question)}`), '</analysis_context>');
   return lines.join('\n');
