@@ -8,7 +8,7 @@ import { join, dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { findings, measureMarkup, parseTrace, runMetrics, runTraceMetrics } from './trace-metrics.mjs';
+import { findings, measureMarkup, parseTrace, requestLifecycles, runMetrics, runTraceMetrics } from './trace-metrics.mjs';
 
 const PRUNE_TOOL = 'lineage_prune_current';
 const START_TOOL = 'lineage_start_exploration';
@@ -778,13 +778,8 @@ export function auditRunEvidence(runDir, selectedTurns) {
         : notApplicable ? 'not_applicable' : manifestMatches ? 'matched_by_capture_manifest' : 'unverified' };
   });
   const metrics = records.length ? runMetrics(records) : null;
-  const lifecycleValid = requestIds.length > 0 && requestIds.every(id => {
-    const own = records.filter(record => record.requestId === id);
-    const starts = own.filter(record => record.type === 'turn-start');
-    const ends = own.filter(record => record.type === 'turn-terminal');
-    return starts.length === 1 && ends.length === 1 && ['ok', 'error', 'cancelled'].includes(ends[0].status)
-      && own.indexOf(starts[0]) < own.indexOf(ends[0]);
-  });
+  const lifecycles = requestLifecycles(records);
+  const lifecycleValid = lifecycles.length > 0 && lifecycles.every(lifecycle => lifecycle.valid);
   const issues = [];
   if (remoteConflicts.length) issues.push(`Conflicting immutable Langfuse observation identities: ${JSON.stringify(remoteConflicts)}`);
   if (!tracePath || !records.length || !lifecycleValid) issues.push('NDJSON lifecycle missing or incomplete');

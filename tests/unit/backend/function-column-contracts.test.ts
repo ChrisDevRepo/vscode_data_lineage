@@ -1,6 +1,8 @@
+import { z } from 'zod';
+import { validateToolCandidate } from '../../../src/ai/support/toolValidation';
 // Owner: src/ai/sm/columnTracer.ts and tools/toolSchemas.ts; qualified function task contracts.
 /** Caller provenance is offered only on eligible neighboring functions; ordinary questions remain unchanged. */
-import Ajv from 'ajv';
+import Ajv from 'ajv/dist/2020';
 import { describe, expect, it } from 'vitest';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { ISSUES, renderProblem, type ToolRejection } from '../../../src/ai/support/toolErrorEnvelope';
@@ -33,7 +35,7 @@ describe('neighbor-specific function caller context', () => {
     const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
     for (const [nodeId, context, accepted] of [[fn, true, true], [source, true, false], [source, false, true], [fn, false, true]] as const) {
       const payload = { ...finding, questions: [{ nodeId, question: 'Establish the contribution.', ...(context ? { caller_context: { node: caller, col: 'Value' } } : {}) }] };
-      expect(schema.safeParse(payload).success, nodeId).toBe(accepted);
+      expect(validateToolCandidate(schema, payload).success, nodeId).toBe(accepted);
       expect(wire(payload), nodeId).toBe(accepted);
     }
   });
@@ -87,7 +89,7 @@ describe('neighbor-specific function caller context', () => {
     expect(engine.peekHopContext()).toEqual(contextBeforeRetry);
     expect(engine.getCurrentTasks()).toEqual(tasksBeforeRetry);
     expect(engine.columnAspect!.edges).toEqual([]);
-    const repair = submitFindingsSchemaForMode('ct', 'technical', false, engine.hopSubmitColumns, engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false).parse({
+    const repair = admit(submitFindingsSchemaForMode('ct', 'technical', false, engine.hopSubmitColumns, engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false), {
       focus_node_id: fn,
       column_flow: [{ out_col: 'Value', returns_to: { node: caller, col: 'Value' }, upstream_columns: [{ node: source, col: 'Amount', transforms: ['compute'] }] }],
     });
@@ -116,7 +118,7 @@ describe('neighbor-specific function caller context', () => {
       sections: { technical: `${source}.Amount supplies the return value; its lookup lies beyond the upstream-one limit.` },
       column_flow: [{ out_col: 'Value', returns_to: { node: caller, col: 'Value' }, upstream_columns: [] }] };
     expect(new Ajv({ strict: false }).compile(toModelJsonSchema(schema))(payload)).toBe(true);
-    expect(engine.submitFindings(toHopFinding(schema.parse(payload)))).toHaveProperty('ok', true);
+    expect(engine.submitFindings(toHopFinding(admit(schema, payload)))).toHaveProperty('ok', true);
     expect(engine.columnAspect!.edges).toEqual([]);
   });
 
@@ -195,10 +197,10 @@ describe('neighbor-specific function caller context', () => {
     const schema = submitFindingsSchemaForMode('ct', 'technical', true, engine.hopSubmitColumns);
     const flow = (node: string, c: string) => ({ focus_node_id: fn, summary: 'Value is twice Amount.', sections: { technical: 'The function doubles the bound Amount.' },
       column_flow: [{ out_col: c, returns_to: { node, col: c }, upstream_columns: [{ node: source, col: 'Amount', transforms: ['compute'] }] }] });
-    expect(schema.safeParse(flow(reader, 'Other')).success).toBe(false);
-    expect(schema.safeParse(flow(caller, 'Value')).success).toBe(true);
+    expect(validateToolCandidate(schema, flow(reader, 'Other')).success).toBe(false);
+    expect(validateToolCandidate(schema, flow(caller, 'Value')).success).toBe(true);
     const before = engine.toJSON();
-    const missing = engine.submitFindings({ ...toHopFinding(schema.parse(flow(caller, 'Value'))), questions: [], prune_neighbors: [] });
+    const missing = engine.submitFindings({ ...toHopFinding(admit(schema, flow(caller, 'Value'))), questions: [], prune_neighbors: [] });
     expect(missing).toMatchObject({ code: 'route_validation_failed', detail: [expect.objectContaining({ kind: 'neighbor_outcome_missing', id: reader })] });
     const shown = JSON.parse(renderProblem(missing as ToolRejection, 1)) as { guidance: Array<{ errors: Array<{ path: string; fault: string; missing?: string[] }> }> };
     expect(shown.guidance.flatMap(group => group.errors)).toEqual([expect.objectContaining({ path: '', fault: ISSUES.neighbor_undecided.label, missing: [reader] })]);
@@ -232,7 +234,7 @@ describe('case-sensitive scalar caller identities', () => {
       column_flow: [], questions: outputs.map(output => ({ nodeId: output.node, question: `Establish ${output.column}.`, caller_context: { node: result, col: output.column } })) };
     const callerSchema = submitFindingsSchemaForMode('ct', 'technical', true, engine.hopSubmitColumns);
     expect(new Ajv({ strict: false }).compile(toModelJsonSchema(callerSchema))(callerReply)).toBe(true);
-    expect(engine.submitFindings(toHopFinding(callerSchema.parse(callerReply)))).toHaveProperty('ok', true);
+    expect(engine.submitFindings(toHopFinding(admit(callerSchema, callerReply)))).toHaveProperty('ok', true);
     const snapshot = engine.toJSON();
     expect(snapshot.snapshotVersion).toBe(2);
     expect(snapshot.engineInternals.investigationTasks.filter(task => task.kind === 'column_lineage' && task.callerContext)
@@ -250,7 +252,7 @@ describe('case-sensitive scalar caller identities', () => {
       const native = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
       expect(native(reply)).toBe(true);
       expect(native({ ...reply, column_flow: [{ out_col: 'VALUE', returns_to: { node: result, col: 'VALUE' }, upstream_columns: [] }] })).toBe(false);
-      expect(engine.submitFindings(toHopFinding(schema.parse(reply)))).toHaveProperty('ok', true);
+      expect(engine.submitFindings(toHopFinding(admit(schema, reply)))).toHaveProperty('ok', true);
     }
     expect(visited.sort()).toEqual(functions.sort());
     expect(engine.getHopContext()).toMatchObject({ done: true });
@@ -287,10 +289,16 @@ describe('qualified downstream input termination', () => {
   it('ends an unmapped arriving input at this hop and names it, with no terminated_inputs field to author', () => {
     const engine = downstream();
     const schema = submitFindingsSchemaForMode('ct', 'technical', true, engine.hopSubmitColumns);
-    expect(schema.safeParse({ ...mapped, sections: { technical: sections[0].text }, terminated_inputs: [{ node: caller, col: 'Other' }] }).success).toBe(false);
+    expect(validateToolCandidate(schema, { ...mapped, sections: { technical: sections[0].text }, terminated_inputs: [{ node: caller, col: 'Other' }] }).success).toBe(false);
     expect(engine.submitFindings(mapped)).toMatchObject({ ok: true, ended_columns: [`${caller}.Other`] });
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: fn }, analysis_mode: 'ct' });
     expect(engine.getCurrentTasks()).toContainEqual(expect.objectContaining({ kind: 'column_lineage', activeColumns: ['Mapped'], sourceRefs: [{ node: source, col: 'Mapped' }] }));
     expect(engine.columnAspect?.edges.some(edge => edge.from_col === 'Other' || edge.to_col === 'Other')).toBe(false);
   });
 });
+
+function admit<S extends z.ZodType>(schema: S, input: unknown): z.output<S> {
+  const result = validateToolCandidate(schema, input);
+  if (!result.success) throw new Error(JSON.stringify(result.rejection));
+  return result.data;
+}

@@ -1,3 +1,4 @@
+import { validateToolCandidate } from '../../../src/ai/support/toolValidation';
 // Owner: src/ai/sm/smBase.ts, columnTracer.ts and agendaManager.ts; supplied-message functional contracts.
 /** Runs column-flow rows from `tests/cases/lineage-cases.yaml`. A row locks ids, columns, edges, and rejection kinds. Prompt sentences stay out of the catalog. */
 import { createRequire } from 'node:module';
@@ -173,6 +174,12 @@ function check(row: LineageCase, upstream: readonly FlowColumn[]) {
   if (wanted.invalid) expect(result.invalidRoutes).toEqual(wanted.invalid);
   if (wanted.invalid_kind) expect(result.invalidRoutes[0]?.kind).toBe(wanted.invalid_kind);
   if (wanted.reason_contains) expect(result.invalidRoutes[0]?.reason).toContain(wanted.reason_contains);
+}
+
+/** Seed held state through real admission; fixtures cannot prescribe arbitrary failure paths. */
+function rejectAndReadHeld(engine: NavigationEngine, input: unknown) {
+  expect(engine.submitModelFindings(input)).toHaveProperty('code');
+  return engine.heldPartsOfCurrentFocus();
 }
 
 describe('declared contributor identities', () => {
@@ -1032,9 +1039,9 @@ describe('current task completeness before advancement', () => {
 
   it.each(['fresh', 'held'] as const)('collects independent faults at the internal shape boundary with %s content', draft => {
     const engine = world();
-    if (draft === 'held') engine.holdRejectedSubmission({ focus_node_id: root, summary: finding.summary,
+    if (draft === 'held') rejectAndReadHeld(engine, { focus_node_id: root, summary: finding.summary,
       sections: { technical: finding.sections[0].text }, column_flow: '[]', questions: [], prune_neighbors: [],
-    }, ['column_flow']);
+    });
     const before = engine.toJSON();
     const rejected = engine.submitFindings({ ...finding,
       ...(draft === 'held' ? { summary: 'A valid replacement summary.' } : {}),
@@ -1111,10 +1118,10 @@ describe('current task completeness before advancement', () => {
   it.each([false, true])('requests only actual defects and reports refused pruning with its mapping conflict (held questions: %s)', hasQuestions => {
     const engine = world(true);
     const before = engine.toJSON();
-    const held = engine.holdRejectedSubmission({ ...finding, sections: { technical: finding.sections[0].text }, column_flow: 'malformed',
+    const held = rejectAndReadHeld(engine, { ...finding, sections: { technical: finding.sections[0].text }, column_flow: 'malformed',
       prune_neighbors: [{ id: neighbor, reason: 'Outside the value path.' }],
       questions: hasQuestions ? [{ nodeId: other, question: 'Explain OtherSource.' }] : [],
-    }, ['column_flow']);
+    });
     expect(held?.resend).toEqual(['column_flow']);
     const schema = submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns, engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false);
     const column_flow = [{ out_col: 'Value', upstream_columns: [{ node: neighbor, col: 'Value', transforms: ['compute' as const, 'filter' as const] }] }, terminal('Other')];
@@ -1263,9 +1270,9 @@ describe('current task completeness before advancement', () => {
   });
   it('requests only a missing summary when valid sections and flow are held', () => {
     const engine = world();
-    engine.holdRejectedSubmission({ ...finding, sections: { technical: finding.sections[0].text }, summary: '', column_flow: [terminal('Value'), terminal('Other')],
+    rejectAndReadHeld(engine, { ...finding, sections: { technical: finding.sections[0].text }, summary: '', column_flow: [terminal('Value'), terminal('Other')],
       questions: [{ nodeId: neighbor, question: 'Explain Source rows.' }],
-    }, ['summary']);
+    });
     const schema = submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns, engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false);
     const patch = (summary?: string) => toHopFinding(schema.parse({ focus_node_id: root, ...(summary ? { summary } : {}) }));
     expect(engine.submitFindings(patch())).toMatchObject({ code: 'missing_field', issuePaths: ['summary'], missingParts: ['summary'] });
@@ -1285,9 +1292,8 @@ describe('current task completeness before advancement', () => {
     const parsed = schema.safeParse(malformed);
     expect(parsed.success).toBe(false);
     if (parsed.success) throw new Error('Expected the malformed prune to be rejected');
-    const schemaRejection = rejectionFromZodError(parsed.error, { code: 'invalid_input', input: malformed, schema });
     const beforeMalformed = engine.toJSON();
-    const held = engine.holdRejectedSubmission(malformed, schemaRejection.issuePaths ?? []);
+    const held = rejectAndReadHeld(engine, malformed);
     expect([...held!.resend].sort(), 'the malformed prune and the flow the draft still lacks are owed').toEqual(['column_flow', 'prune_neighbors']);
     const afterMalformed = engine.toJSON();
     expect(afterMalformed.engineInternals.heldFinding?.finding).toEqual(beforeMalformed.engineInternals.heldFinding?.finding);
@@ -1342,7 +1348,7 @@ describe('current task completeness before advancement', () => {
     if (parsed.success) throw new Error('The node badge exceeds its rendered-label bound');
     const rejected = rejectionFromZodError(parsed.error, { code: 'invalid_input', input, schema: fresh });
     expect(rejected).toMatchObject({ code: 'invalid_input', issuePaths: ['badge_label'] });
-    expect(engine.holdRejectedSubmission(input, rejected.issuePaths ?? [])?.resend).toEqual(['badge_label']);
+    expect(rejectAndReadHeld(engine, input)?.resend).toEqual(['badge_label']);
     expect(engine.columnAspect?.edges).toEqual([]);
     const schema = submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns, engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false);
     expect(engine.submitFindings(toHopFinding(schema.parse({ focus_node_id: root, badge_label: 'Source contribution' })))).toHaveProperty('ok', true);
@@ -1354,9 +1360,9 @@ describe('current task completeness before advancement', () => {
       ...(misplaced ? { note: 'Misplaced explanation.' } : {}) });
     const outs = ['Value', 'Other', 'Value', 'Other'];
     const first = { ...finding, sections: { technical: finding.sections[0].text }, column_flow: outs.map(out => entry(out, true)) };
-    expect(engine.holdRejectedSubmission(first, outs.map((_, index) => `column_flow.${index}.note`))).toMatchObject({ sections: ['technical'], summary: true, resend: ['column_flow'] });
+    expect(rejectAndReadHeld(engine, first)).toMatchObject({ sections: ['technical'], summary: true, resend: ['column_flow'] });
     const retryFlow = outs.map((out, index) => entry(out, index === 3));
-    const held = engine.holdRejectedSubmission({ focus_node_id: root, summary: 'Amended summary.', badge_label: 'Source role', column_flow: retryFlow }, ['column_flow.3.note']);
+    const held = rejectAndReadHeld(engine, { focus_node_id: root, summary: 'Amended summary.', badge_label: 'Source role', column_flow: retryFlow });
     expect(held).toMatchObject({ sections: ['technical'], summary: true, fields: ['badge_label'], resend: ['column_flow'] });
     const saved = engine.toJSON().engineInternals.heldFinding;
     expect(saved?.finding, 'the valid fields replaced their held copies').toMatchObject({ summary: 'Amended summary.', sections: finding.sections, badge_label: 'Source role' });
@@ -1365,9 +1371,9 @@ describe('current task completeness before advancement', () => {
   it('holds the valid angle of a failed section and names the failed and missing locked angle as owed', () => {
     const engine = world();
     engine.classification = 'both';
-    expect(engine.holdRejectedSubmission({ ...finding, sections: { technical: finding.sections[0].text, business: 42 },
+    expect(rejectAndReadHeld(engine, { ...finding, sections: { technical: finding.sections[0].text, business: 42 },
       column_flow: [terminal('Value'), terminal('Other')], questions: [{ nodeId: neighbor, question: 'Explain Source rows.' }],
-    }, ['sections.business'])).toEqual({ sections: ['technical'], summary: true, fields: ['questions', 'column_flow'], failed: ['sections.business'], resend: ['sections.business'] });
+    })).toEqual({ sections: ['technical'], summary: true, fields: ['questions', 'column_flow'], failed: ['sections.business'], resend: ['sections.business'] });
     const schema = submitFindingsSchemaForMode('ct', 'both', false, engine.hopSubmitColumns, engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false);
     const retry = (sections: Record<string, string>) => toHopFinding(schema.parse({ focus_node_id: root, sections }));
     expect(engine.submitFindings(retry({}))).toMatchObject({ code: 'invalid_input',
@@ -1435,9 +1441,8 @@ describe('shared object dispatch', () => {
     const parsed = schema.safeParse(malformed);
     expect(parsed.success).toBe(false);
     if (parsed.success) throw new Error('Expected a numeric prune reason to be rejected');
-    const rejection = rejectionFromZodError(parsed.error, { code: 'invalid_input', input: malformed, schema });
-    expect(rejection.issuePaths).toEqual(['prune_neighbors.0.id', 'prune_neighbors.0.reason']);
-    engine.holdRejectedSubmission(malformed, rejection.issuePaths ?? []);
+    expect(rejectionFromZodError(parsed.error, { code: 'invalid_input', input: malformed, schema }).issuePaths).toEqual(['prune_neighbors.0.id', 'prune_neighbors.0.reason']);
+    rejectAndReadHeld(engine, malformed);
     expect(engine.heldPartsOfCurrentFocus()?.fields).toContain('column_flow');
     expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
     expect(engine.submitFindings(toHopFinding(schema.parse({ focus_node_id: focus, prune_neighbors: [] })))).toHaveProperty('ok', true);
@@ -1777,10 +1782,10 @@ describe('out_col enum is the arriving columns', () => {
     expect(engine.hopSubmitColumns.outCols).toEqual(['X']);
     const schema = submitFindingsSchemaForMode('ct', 'technical', false, engine.hopSubmitColumns, engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false);
     const flow = (out_col: string) => ({ focus_node_id: v, column_flow: [{ out_col, upstream_columns: [{ node: s, col: 'X' }, { node: s, col: 'Y' }] }] });
-    expect(schema.safeParse(flow('X')).success).toBe(true);
-    const bad = schema.safeParse(flow('Y'));
+    expect(validateToolCandidate(schema, flow('X')).success).toBe(true);
+    const bad = validateToolCandidate(schema, flow('Y'));
     expect(bad.success).toBe(false);
-    expect(JSON.stringify(bad.error?.issues)).toContain('"X"');
+    expect(JSON.stringify(bad.success ? [] : bad.rejection.errors)).toContain('"X"');
   });
 });
 
@@ -1959,8 +1964,7 @@ describe('CT boundary rejects instead of dropping a column reference', () => {
       const parsed = schema.safeParse(raw);
       expect(parsed.success).toBe(false);
       if (parsed.success) throw new Error('Expected the malformed prune reason to fail');
-      const rejection = rejectionFromZodError(parsed.error, { code: 'invalid_input', input: raw, schema });
-      engine.holdRejectedSubmission(raw, rejection.issuePaths ?? []);
+      rejectAndReadHeld(engine, raw);
       expect(engine.heldPartsOfCurrentFocus()?.fields).toContain('column_flow');
       // The schema permits atomic replacement; omitting that replacement still retains the conflicting mapping.
       const served = submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns, true).safeParse({ focus_node_id: origin, prune_neighbors: prunes });

@@ -74,7 +74,7 @@ export interface ColumnFlowEntry {
 }
 
 /** A single upstream real column in the column trace chain. */
-interface ColumnRef {
+export interface ColumnRef {
   /** ID of the neighbor node providing the data. */
   node: string;
   /** Name of the column in that neighbor (or `@param` for procedures). */

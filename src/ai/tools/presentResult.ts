@@ -31,8 +31,6 @@ export const ADD_NODE_IDS_REVEALS = 'reveals any object in the approved explorat
 
 /** The AI's submission to `lineage_present_result`. */
 export type PresentResultInput = z.infer<typeof PresentResultModelSchema>;
-/** A preview section names its source block instead of an authored body. */
-type PresentSection = NonNullable<PresentResultInput['sections']>[number] & { start?: string };
 
 /** The validated, engine-assembled result ready for the UI. */
 type PresentResultRequest = {
@@ -95,27 +93,25 @@ export function discoveryPreviewNarrative(answer: string): {
 export const START_ORDER_FAULT = 'Starts ascend strictly; this section starts at or before the one above.';
 
 /** Indexes of preview `sections` that do not start strictly after the section before them. The first section always begins at B1; the served schema constrains the ids, and order depends on the whole (merged) list, so it is checked here. */
-export function findStartOrderIssues(sections: ReadonlyArray<{ label: string; start?: string }>, known: (path: string) => boolean = () => true): number[] {
-  return sections.flatMap((section, index) =>
-    index > 0 && section && sections[index - 1] && known(`sections.${index}.start`) && known(`sections.${index - 1}.start`)
-      && section.start && startBlock(sections, index) <= startBlock(sections, index - 1) ? [index] : []);
+export function findStartOrderIssues(starts: ReadonlyMap<number, string>): number[] {
+  const block = (index: number, start: string) => index === 0 ? 1 : Number(start.slice(1));
+  return [...starts].flatMap(([index, start]) => index > 0 && (index === 1 || starts.has(index - 1))
+    && block(index, start) <= (index === 1 ? 1 : block(index - 1, starts.get(index - 1)!)) ? [index] : []);
 }
 
 /** The 1-based block a preview section starts at; the first section always begins at B1. */
-function startBlock(sections: ReadonlyArray<{ start?: string }>, index: number): number {
-  return index === 0 ? 1 : Number((sections[index].start ?? 'B1').slice(1));
+function startBlock(sections: ReadonlyArray<{ start: string }>, index: number): number {
+  return index === 0 ? 1 : Number(sections[index].start.slice(1));
 }
 
 /** Builds each preview section's `text` from the blocks between its start and the next section's start (the first from B1, the last to the end), so the joined text is the cached answer in its own words. */
 export function assemblePreviewSections(
   blocks: readonly AnswerBlock[],
-  sections: readonly PresentSection[],
-): PresentSection[] {
-  return sections.map(({ start, ...section }, index) => ({
+  sections: ReadonlyArray<{ label: string; node_ids: string[]; start: string }>,
+): PresentResultInput['sections'] {
+  return sections.map(({ start: _start, ...section }, index) => ({
     ...section,
-    text: start
-      ? blocks.slice(startBlock(sections, index) - 1, index + 1 < sections.length ? startBlock(sections, index + 1) - 1 : blocks.length).map(block => block.text).join('\n\n')
-      : section.text,
+    text: blocks.slice(startBlock(sections, index) - 1, index + 1 < sections.length ? startBlock(sections, index + 1) - 1 : blocks.length).map(block => block.text).join('\n\n'),
   }));
 }
 
@@ -554,37 +550,38 @@ export function requiredCtChainNodeIds(
 }
 
 /** Reports which delivered `detail_slots[]` reached no rendered section. */
-export function findUnrenderedDetailSlotIds(
-  slotNodeIds: readonly string[],
-  input: PresentResultInput,
-  known: (path: string) => boolean = () => true,
-): string[] | undefined {
-  if (slotNodeIds.length === 0 || (known('sections') && (!input.sections || input.sections.length === 0))) return [];
-  if (!known('sections') || !Array.isArray(input.sections)) return undefined;
-  const sectionNodeIds = new Set<string>();
-  for (const [index, sec] of input.sections.entries()) {
-    const path = `sections.${index}.node_ids`;
-    if (!sec || !known(`sections.${index}`) || !known(path) || !Array.isArray(sec.node_ids)) return undefined;
-    for (const [idIndex, id] of sec.node_ids.entries()) {
-      if (!known(`${path}.${idIndex}`) || typeof id !== 'string') return undefined;
-      sectionNodeIds.add(id);
-    }
-  }
-  return slotNodeIds.filter(id => !sectionNodeIds.has(id));
+export function findUnrenderedDetailSlotIds(slotNodeIds: readonly string[], input: PresentResultInput): string[] {
+  if (!input.sections?.length) return [];
+  return unplacedDetailSlotIds(slotNodeIds, new Set(input.sections.flatMap(section => section.node_ids)));
 }
 
-/** Validates the full `present_result` input against the contracts a schema cannot express. */
-export function validatePresentResult(
-  input: PresentResultInput,
+/** Shared coverage owner; admission supplies only complete, original-position link facts. */
+export function unplacedDetailSlotIds(slotNodeIds: readonly string[], linked: ReadonlySet<string>): string[] {
+  return slotNodeIds.filter(id => !linked.has(id));
+}
+
+/** Schema-proven references retain their original positions even when another field is invalid. */
+export interface PresentReference {
+  field: 'sections' | 'notes' | 'highlight_groups';
+  heldPath: string;
+  path: string;
+  nodeId: string;
+}
+/** Admitted original-position links and whether all coverage dependencies are known. */
+export interface PresentReferenceFacts {
+  references: readonly PresentReference[];
+  coverageKnown: boolean;
+}
+
+/** One pure domain inspection; native admission and typed direct callers share these rules. */
+export function inspectPresentResult(
+  facts: PresentReferenceFacts,
   resolvedNodeIds: string[],
-  assembledBadges?: Array<{ node_id: string; text: string }>,
-  assembledDescription?: string,
   externalViolations: readonly PresentResultViolation[] = [],
   stage: PresentResultStage = 'completed',
   nodeIdState?: PresentNodeIdStateLookup,
-  known: (path: string) => boolean = () => true,
   viewKnown = true,
-): PresentResultRequest | PresentResultFailure {
+): PresentResultFailure | undefined {
   const faults: ToolError[] = [];
   let allRepairable = true;
   const repairFields = new Set<PresentResultRepairField>();
@@ -631,45 +628,17 @@ export function validatePresentResult(
     addError({ path, code, values: [...resolvedNodeIds] }, [field], [heldPath]);
   };
 
-  let coverageKnown = viewKnown && known('sections') && known('notes');
-  if (Array.isArray(input.sections) && known('sections')) for (const [sectionIndex, sec] of input.sections.entries()) {
-    const path = `sections.${sectionIndex}.node_ids`;
-    if (!sec || !known(`sections.${sectionIndex}`) || !known(path) || !Array.isArray(sec.node_ids)) { coverageKnown = false; continue; }
-    for (const [idIndex, nodeId] of sec.node_ids.entries()) {
-      const idPath = `${path}.${idIndex}`;
-      if (!known(idPath) || typeof nodeId !== 'string') { coverageKnown = false; continue; }
-      if (!resolvedSet.has(nodeId)) addNodeIdError('sections', `sections.${sectionIndex}`, idPath, nodeId);
-      else sectionLinkedNodeIds.add(nodeId);
-    }
-  } else if (input.sections !== undefined) coverageKnown = false;
-
   const noteNodeIds = new Set<string>();
-  if (Array.isArray(input.notes) && known('notes')) {
-    for (const [noteIndex, note] of input.notes.entries()) {
-      const path = `notes.${noteIndex}.node_id`;
-      if (!note || !known(`notes.${noteIndex}`) || !known(path) || typeof note.node_id !== 'string') { coverageKnown = false; continue; }
-      if (resolvedSet.has(note.node_id)) {
-        noteNodeIds.add(note.node_id);
-      } else {
-        addNodeIdError('notes', `notes.${noteIndex}.node_id`, `notes.${noteIndex}.node_id`, note.node_id);
-      }
-    }
-  } else if (input.notes !== undefined) coverageKnown = false;
-
-  // A repair patch can leave a held draft without the field: the schema that requires it never saw the merged draft.
-  if (known('highlight_groups') && !input.highlight_groups) {
-    addError({ path: 'highlight_groups', code: 'missing' }, ['highlight_groups'], ['highlight_groups']);
-  }
-  if (Array.isArray(input.highlight_groups) && known('highlight_groups')) for (const [groupIndex, g] of input.highlight_groups.entries()) {
-    const path = `highlight_groups.${groupIndex}.node_ids`;
-    if (!g || !known(`highlight_groups.${groupIndex}`) || !known(path) || !Array.isArray(g.node_ids)) continue;
-    for (const [idIndex, nodeId] of g.node_ids.entries()) if (known(`${path}.${idIndex}`) && typeof nodeId === 'string' && !resolvedSet.has(nodeId)) addNodeIdError('highlight_groups', `highlight_groups.${groupIndex}`, `${path}.${idIndex}`, nodeId);
+  for (const reference of facts.references) {
+    if (!resolvedSet.has(reference.nodeId)) addNodeIdError(reference.field, reference.heldPath, reference.path, reference.nodeId);
+    else if (reference.field === 'sections') sectionLinkedNodeIds.add(reference.nodeId);
+    else if (reference.field === 'notes') noteNodeIds.add(reference.nodeId);
   }
 
   // An id an external violation already asks to place in a section (or note) is not repeated with a second repair.
   const alreadyRepairedIds = new Set(externalViolations.flatMap(v => v.entryIds ?? []));
   const unexplainedNodeIds = resolvedNodeIds.filter(id => !sectionLinkedNodeIds.has(id) && !noteNodeIds.has(id) && !alreadyRepairedIds.has(id));
-  if (coverageKnown && unexplainedNodeIds.length > 0) {
+  if (viewKnown && facts.coverageKnown && unexplainedNodeIds.length > 0) {
     addError({ path: 'sections.*.node_ids', code: 'node_unexplained', values: unexplainedNodeIds }, ['sections', 'notes'], ['sections', 'notes']);
   }
 
@@ -690,17 +659,34 @@ export function validatePresentResult(
     };
   }
 
+  return undefined;
+}
+
+/** Builds the UI request only from a fully admitted report and its prepared assembly. */
+export function completePresentResult(
+  input: PresentResultInput, resolvedNodeIds: string[],
+  assembledBadges: Array<{ node_id: string; text: string }> = [], assembledDescription?: string,
+): PresentResultRequest {
   return {
-    success: true,
-    name: input.name,
-    node_ids: resolvedNodeIds,
-    summary: input.summary,
-    description: assembledDescription!,
-    layout_direction: input.layout_direction,
-    highlight_groups: input.highlight_groups,
-    badges: assembledBadges ?? [],
-    notes: input.notes ?? [],
+    success: true, name: input.name, node_ids: resolvedNodeIds, summary: input.summary,
+    description: assembledDescription!, layout_direction: input.layout_direction,
+    highlight_groups: input.highlight_groups, badges: assembledBadges, notes: input.notes ?? [],
   };
+}
+
+/** Typed direct callers use the same reference inspection as native tool admission. */
+export function validatePresentResult(
+  input: PresentResultInput, resolvedNodeIds: string[],
+  assembledBadges?: Array<{ node_id: string; text: string }>, assembledDescription?: string,
+  externalViolations: readonly PresentResultViolation[] = [], stage: PresentResultStage = 'completed',
+  nodeIdState?: PresentNodeIdStateLookup,
+): PresentResultRequest | PresentResultFailure {
+  const references: PresentReference[] = [];
+  for (const field of ['sections', 'highlight_groups'] as const) input[field]?.forEach((entry, index) => entry.node_ids?.forEach((nodeId, idIndex) =>
+    references.push({ field, heldPath: `${field}.${index}`, path: `${field}.${index}.node_ids.${idIndex}`, nodeId })));
+  input.notes?.forEach((note, index) => references.push({ field: 'notes', heldPath: `notes.${index}.node_id`, path: `notes.${index}.node_id`, nodeId: note.node_id }));
+  return inspectPresentResult({ references, coverageKnown: true }, resolvedNodeIds, externalViolations, stage, nodeIdState)
+    ?? completePresentResult(input, resolvedNodeIds, assembledBadges, assembledDescription);
 }
 
 /** Finds nodes that are disconnected from the given origin inside a result view. */

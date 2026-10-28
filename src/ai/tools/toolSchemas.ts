@@ -1,14 +1,15 @@
 /** Zod input schemas and lightweight runtime validation for the AI tools. Zero VS Code imports — pure schema definitions. */
 import { z } from 'zod';
-import { resolveModelNodeId } from '../support/modelReferences';
+import { ingestToolInput } from '../support/toolIngestion';
+export { normalizePresentSectionLabel } from '../support/toolValidation';
+import { findingShapeIssues } from '../support/findingShape';
+import { captureToolFact, type ToolFactContext } from '../support/toolValidation';
 import { markIdFormSearch, markObjectIdField } from './normalizeModelInput';
-import { normalizeColName } from '../../utils/sql';
 import { MAX_ID_LIST_LENGTH, SCREEN_STATE_MAX_IDS, ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
 import {
   ExplorationDepthSelectionSchema,
 } from '../../engine/shared/explorationDepthContract';
-import { REJECTION_CODES } from '../support/rejectionCodes';
-import { ISSUES, rejectionFromZodError, type ToolRejection } from '../support/toolErrorEnvelope';
+import { type ToolRejection } from '../support/toolErrorEnvelope';
 import { CLASSIFICATION_KEPT_ANGLES, type ClassificationValue } from '../session/classification';
 import { extractRawSectionAngles } from '../interaction/rules/submitFindingsRules';
 import type { ColumnFlowEntry, HopFinding, HopFindingKept } from '../sm/smTypes';
@@ -48,7 +49,6 @@ const ANALYSIS_MODE_DESCRIPTION =
   'Required for fresh exploration: "bb" traces whole objects; "ct" traces named columns. Default to "bb" when unclear.';
 
 /** Issue text when a start_exploration call carries neither an origin nor a proposal revision. */
-const START_SHAPE_REQUIRED_MESSAGE = "Provide origin for a fresh approval proposal, or proposalRevision to refine the pending one.";
 
 /** The fault of named columns under blackboard analysis: the schema issue and the refine and engine refusals are this one string. */
 export const BB_TARGET_COLUMNS_FAULT = 'analysisMode "bb" is whole-object lineage and does not accept targetColumns.';
@@ -59,18 +59,28 @@ const TARGET_COLUMNS_PHASE_DESCRIPTION =
 
 const StartExcludeTypesSchema = z.array(z.string()).optional().describe('Object types excluded from the approved scope. Omit to keep the current list (on a fresh proposal, the types the GUI filter hides); a sent list replaces it.');
 const StartExcludeSchemasSchema = z.array(z.string()).optional().describe('Schema names excluded from the approved scope. Omit to keep the current list (on a fresh proposal, the schemas the GUI filter hides); a sent list replaces it, so repeat those you keep.');
-const StartExcludeNodeIdsSchema = z.array(z.string()).optional().describe('Resolved object IDs to remove, including dependent branches reachable only through them. Omit to keep the current list (on a fresh proposal, the objects the GUI filter excludes); a sent list replaces it.');
-const StartPassNodeIdsSchema = z.array(z.string()).optional().describe('Resolved object IDs to keep as topology-only passthrough nodes without analyzing them; the mapping for objects the user said to ignore or skip. Omit to keep the current list; a sent list replaces it.');
+const StartExcludeNodeIdsSchema = z.array(z.string().meta({ toolValidated: 'start.reference' })).optional().describe('Resolved object IDs to remove, including dependent branches reachable only through them. Omit to keep the current list (on a fresh proposal, the objects the GUI filter excludes); a sent list replaces it.');
+const StartPassNodeIdsSchema = z.array(z.string().meta({ toolValidated: 'start.reference' })).optional().describe('Resolved object IDs to keep as topology-only passthrough nodes without analyzing them; the mapping for objects the user said to ignore or skip. Omit to keep the current list; a sent list replaces it.');
+
+const START_SCOPE_FIELDS = { origin: true, analysisMode: true, targetColumns: true, depth: true, excludeTypes: true, excludeSchemas: true, excludeNodeIds: true, passNodeIds: true } as const;
+
+const FreshScopeAdmission = { required: ['origin', 'analysisMode', 'depth'], properties: { depth: { not: { type: 'null' }, toolIssue: 'missing' } } };
+const TargetScopeAdmission = [
+  { if: { required: ['analysisMode'], properties: { analysisMode: { const: 'ct' } }, anyOf: [{ required: ['origin'] }, { required: ['targetColumns'] }] }, then: { required: ['targetColumns'], properties: { targetColumns: { minItems: 1 } } } },
+  { if: { required: ['analysisMode'], properties: { analysisMode: { const: 'bb' } } }, then: { properties: { targetColumns: { maxItems: 0, toolIssue: 'never' } } } },
+];
+const FreshRequest = { not: { required: ['proposalRevision'] } };
+const startScopeAdmission = (fresh: object) => [{ name: 'start.scope', fields: Object.keys(START_SCOPE_FIELDS), assertions: { allOf: [fresh, ...TargetScopeAdmission] } }];
 
 /** Strict domain boundary for fresh, refine, and completed-session exploration requests. */
 export const StartExplorationInputSchema = z.object({
-  origin: z.string().min(1).optional().describe('Canonical object ID that anchors a fresh exploration.'),
-  question: z.string().optional().describe('The user question this exploration must answer.'),
-  proposalRevision: z.number().int().positive().optional().describe('Required when refining a pending approval proposal; copy the revision shown by the gate.'),
-  analysisMode: z.enum(['bb', 'ct']).optional().describe(
+  origin: z.string().min(1).optional().meta({ toolValidated: 'start.origin' }).describe('Canonical object ID that anchors a fresh exploration.'),
+  question: z.string().optional().meta({ toolValidated: 'start.question' }).describe('The user question this exploration must answer.'),
+  proposalRevision: z.number().int().positive().optional().meta({ toolValidated: 'start.proposalRevision' }).describe('Required when refining a pending approval proposal; copy the revision shown by the gate.'),
+  analysisMode: z.enum(['bb', 'ct']).optional().meta({ toolValidated: 'start.analysisMode' }).describe(
     ANALYSIS_MODE_DESCRIPTION,
   ),
-  targetColumns: z.array(ColumnIdentifierSchema).optional().describe(
+  targetColumns: z.array(ColumnIdentifierSchema.meta({ toolValidated: 'start.target' })).optional().meta({ toolArrayFact: 'start.targets' }).describe(
     TARGET_COLUMNS_PHASE_DESCRIPTION,
   ),
   depth: StartDepthSchema,
@@ -81,56 +91,37 @@ export const StartExplorationInputSchema = z.object({
   excludeNodeIds: StartExcludeNodeIdsSchema,
   /** Specific node ids the engine keeps in scope but auto-passes (no analysis written, topology preserved so descendants stay reachable). Default interpretation when the user says ignore / skip / don't analyze. REPLACE semantics — see {@link excludeSchemas}. Every id must already be resolved via `lineage_search_objects` — unknown ids cause the call to reject with `unknown_node_ids`. */
   passNodeIds: StartPassNodeIdsSchema,
-  scopeNotes: ScopeNotesValueSchema.optional(),
-  mission_brief: MissionBriefValueSchema.optional(),
-  classification: ClassificationValueSchema.optional(),
-}).strict().superRefine((data, ctx) => {
-  const isProposalRefine = data.proposalRevision !== undefined;
-  if (!data.origin && !isProposalRefine) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: START_SHAPE_REQUIRED_MESSAGE,
-      params: { issue: 'missing' },
-    });
-  }
-  if (data.origin && !isProposalRefine && !data.analysisMode) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['analysisMode'],
-      message: 'analysisMode is required for fresh exploration. Use "bb" when unclear; use "ct" only for explicit column tracing.',
-    });
-  }
-  if (data.origin && !isProposalRefine && !data.classification) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['classification'],
-      message: 'classification is required for a fresh exploration proposal.',
-    });
-  }
-  if (data.analysisMode === 'ct' && (data.origin || data.targetColumns !== undefined) && (!data.targetColumns || data.targetColumns.length === 0)) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['targetColumns'],
-      message: 'Name the columns to trace; for all columns, read them with lineage_get_object_detail and send each one. Then resubmit CT.',
-      params: { issue: 'missing' },
-    });
-  }
-  if (data.analysisMode === 'bb' && data.targetColumns && data.targetColumns.length > 0) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['targetColumns'],
-      message: BB_TARGET_COLUMNS_FAULT,
-      params: { issue: 'never' },
-    });
-  }
-  if (data.origin && !isProposalRefine && !data.depth) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['depth'],
-      message: 'depth is required for a fresh exploration proposal: send levels and exactness for both upstream and downstream.',
-    });
-  }
+  scopeNotes: ScopeNotesValueSchema.optional().meta({ toolValidated: 'start.scopeNotes' }),
+  mission_brief: MissionBriefValueSchema.optional().meta({ toolValidated: 'start.mission_brief' }),
+  classification: ClassificationValueSchema.optional().meta({ toolValidated: 'start.classification' }),
+ }).strict().meta({ toolObjectFact: 'start.input',
+  toolGroups: startScopeAdmission({ if: FreshRequest, then: FreshScopeAdmission }),
+  toolAdmission: { if: FreshRequest, then: { required: ['classification'] } },
 });
+
+const startPhaseSchemas = [false, true].map(refining => StartExplorationInputSchema.meta({ toolObjectFact: 'start.input',
+  toolGroups: startScopeAdmission(refining ? {} : FreshScopeAdmission),
+  toolAdmission: refining ? {} : { required: ['classification'] },
+}));
+/** Resolves required scope facts from the real session stage, never a model's claimed revision. */
+export const startExplorationSchemaForState = (refining: boolean): typeof StartExplorationInputSchema => startPhaseSchemas[Number(refining)];
+
+const StartScopeFactSchema = StartExplorationInputSchema.pick(START_SCOPE_FIELDS);
+/** Collects native-valid start scope and annotations without selecting missing scope values. */
+export function startAdmissionFacts() {
+  let scope: z.output<typeof StartScopeFactSchema> | undefined, input: Record<string, unknown> | undefined;
+  const annotations: Partial<Pick<z.output<typeof StartExplorationInputSchema>, 'question' | 'scopeNotes' | 'mission_brief' | 'classification' | 'proposalRevision' | 'analysisMode' | 'origin'>> = {};
+  const references = new Map<string, string>(), targets = new Map<number, string>();
+  const fields = StartExplorationInputSchema.shape;
+  const facts: ToolFactContext = { objects: new Map([['start.input', value => { input = value; }]]), validated: new Map([
+    ['start.scope', captureToolFact(StartScopeFactSchema, value => { scope = value; })],
+    ['start.reference', captureToolFact(z.string(), (value, path) => { references.set(path, value); })],
+    ['start.target', captureToolFact(ColumnIdentifierSchema, (value, path) => { targets.set(Number(path.split('/')[2]), value); })],
+    ...(['question', 'scopeNotes', 'mission_brief', 'classification', 'proposalRevision', 'analysisMode', 'origin'] as const).map(field =>
+      [`start.${field}`, captureToolFact(fields[field], value => { Object.assign(annotations, { [field]: value }); })] as const),
+  ]) };
+  return { facts, references, targets, annotations, scope: () => scope, input: () => input };
+}
 
 const StartOriginSchema = z.string().min(1).describe('Canonical object ID that anchors a fresh exploration.');
 const StartQuestionSchema = z.string().optional().describe('The user question this exploration must answer.');
@@ -223,34 +214,28 @@ const ScopeIncludeDdlSchema = z.boolean().optional().describe('Whether to includ
 
 /** Zod schema validating the parameters for the `get_scope_bundle` discovery tool. */
 export const GetScopeBundleInputSchema = z.object({
-  origin: ScopeOriginSchema,
+  origin: ScopeOriginSchema.meta({ toolStringFact: 'modelObject' }),
   direction: z.enum(['upstream', 'downstream', 'bidirectional']).optional().describe('Direction of dependencies to include; defaults to bidirectional.'),
   depth: ScopeDepthSchema.optional().describe('Optional symmetric hop depth, or "all" for the whole reachable chain. Omit to use the backend default of 3.'),
   upstream_depth: ScopeDepthSchema.optional().describe('Optional upstream hop depth for an asymmetric bidirectional scope.'),
   downstream_depth: ScopeDepthSchema.optional().describe('Optional downstream hop depth for an asymmetric bidirectional scope.'),
   include_ddl: ScopeIncludeDdlSchema,
-}).strict().superRefine((input, ctx) => {
-  const direction = input.direction ?? 'bidirectional';
-  if (direction === 'bidirectional') {
-    const symmetric = input.depth !== undefined;
-    const asymmetric = input.upstream_depth !== undefined && input.downstream_depth !== undefined;
-    if (symmetric && (input.upstream_depth !== undefined || input.downstream_depth !== undefined)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['depth'], message: 'Use either depth or the asymmetric depth fields, not both.', params: { issue: 'never' } });
-    }
-    if (!symmetric && !asymmetric && (input.upstream_depth !== undefined || input.downstream_depth !== undefined)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [input.upstream_depth === undefined ? 'upstream_depth' : 'downstream_depth'], message: 'Provide both upstream_depth and downstream_depth.', params: { issue: 'missing' } });
-    }
-  } else if (input.upstream_depth !== undefined || input.downstream_depth !== undefined) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['direction'], message: 'Asymmetric depths are valid only for bidirectional scope retrieval.', params: { issue: 'never' } });
-  }
-});
+ }).strict().meta({ toolAdmission: { allOf: [
+  { if: { anyOf: [{ not: { required: ['direction'] } }, { properties: { direction: { const: 'bidirectional' } }, required: ['direction'] }] },
+    then: { allOf: [
+      { if: { required: ['depth'], anyOf: [{ required: ['upstream_depth'] }, { required: ['downstream_depth'] }] }, then: { properties: { depth: false } } },
+      { if: { not: { required: ['depth'] }, anyOf: [{ required: ['upstream_depth'] }, { required: ['downstream_depth'] }] }, then: { required: ['upstream_depth', 'downstream_depth'] } },
+    ] },
+    else: { if: { anyOf: [{ required: ['upstream_depth'] }, { required: ['downstream_depth'] }] }, then: { properties: { direction: false } } },
+  },
+] } });
 
 /** Inferred type of {@link GetScopeBundleInputSchema}. */
 export type GetScopeBundleInput = z.infer<typeof GetScopeBundleInputSchema>;
 
 /** Model-facing projection of `lineage_get_scope_bundle` sent on every model call. */
 export const GetScopeBundleModelSchema = z.object({
-  origin: ScopeOriginSchema,
+  origin: ScopeOriginSchema.meta({ toolStringFact: 'modelObject' }),
   upstream_depth: ScopeDepthSchema.describe(
     'Upstream levels: a positive integer, "all" for the whole chain, or 0 to exclude upstream. Use the smallest depth that answers the question: 1 for direct neighbours; "all" only for a whole-chain or path question.',
   ),
@@ -280,7 +265,7 @@ const PRUNE_NEIGHBORS_DESCRIPTION =
 
 /** One `prune_neighbors[]` entry: the neighbour and why this node's SQL shows it is off the answer. */
 const PruneNeighborSchema = z.object({
-  id: z.string().min(1).describe('A neighbor id from `<hop_context>`.'),
+  id: stringFact(z.string().min(1), 'pruneIdentity').describe('A neighbor id from `<hop_context>`.'),
   reason: nonWhitespaceText.min(1).describe('What in this node\'s SQL shows the neighbor is off the answer.'),
 }).strict();
 
@@ -294,7 +279,7 @@ const BB_QUESTIONS_DESCRIPTION = 'Ask each relevant neighbor what its own SQL mu
 
 /** One `questions[]` entry, attached to that neighbour's queued hop. */
 const NeighborQuestionSchema = z.object({
-  nodeId: z.string().min(1).describe('A neighbor id from `<hop_context>`.'),
+  nodeId: stringFact(z.string().min(1), 'questionIdentity').describe('A neighbor id from `<hop_context>`.'),
   question: z.string().min(1).describe('The check, self-contained: name the neighbor and what to establish there.'),
 }).strict();
 
@@ -307,18 +292,22 @@ const SUBMIT_FINDINGS_BADGE_LABEL_MAX = 50;
 /** Single source for the `badge_label` describe text, shared by the strict per-mode `submit_findings` schemas and the permissive participant union so the two never restate the same fact with different wording. The soft target (a 2-4 word label) lives here and nowhere else: `badge_label` is a per-hop tool field, not template-governed content. */
 const BADGE_LABEL_DESCRIPTION = '2-4 word label for this node.';
 
+function stringFact<S extends z.ZodType>(schema: S, name: string): S { return schema.meta({ ...schema.meta(), toolStringFact: name }); }
+
+const SUPPLIER_FACT = { toolValidated: 'supplier' };
+
 const ColumnRefSchema = z.object({
-  node: z.string().describe('Node id of the source column.'),
-  col: z.string().describe('Source column name on that node.'),
+  node: stringFact(z.string(), 'flowReference').describe('Node id of the source column.'),
+  col: stringFact(z.string(), 'supplierColumn').describe('Source column name on that node.'),
   transforms: z.array(ColumnTransformClassSchema).optional().describe(
     'Role of this source column: pass_through (unchanged), compute (expression or CASE operand), aggregate (aggregate argument) — its value lands in out_col; ' +
     'combine (join, group, partition or order key) or filter (row predicate) — it only shapes which rows reach out_col. Omit when the SQL does not show the role.',
   ),
   note: z.string().optional().describe('At most 12 words: the deciding expression, e.g. "Qty * Price".'),
-}).strict().describe('One source column entry inside upstream_columns: fields node, col, transforms, note.');
+}).strict().meta(SUPPLIER_FACT).describe('One source column entry inside upstream_columns: fields node, col, transforms, note.');
 
 const ColumnFlowWritesToObject = z.object({
-  node: z.string().describe('Object id from <hop_context>.'),
+  node: stringFact(z.string(), 'flowReference').describe('Object id from <hop_context>.'),
   col: z.string().describe('Column name on that object.'),
 }).strict();
 
@@ -327,13 +316,13 @@ const OUT_COL_DESCRIPTION = "Output column of this hop from its column task; for
 
 const ColumnFlowEntrySchema = z.object({
   out_col: z.string().describe(OUT_COL_DESCRIPTION),
-  writes_to: ColumnFlowWritesToObject.nullish().describe('Table column {node, col} this output is written to, when that table is a neighbor in <hop_context>; otherwise null and name the write in sections.'),
-  returns_to: ColumnFlowWritesToObject.optional().describe('Real caller output supplied in caller_output_targets for this scalar-return task; never a table write.'),
-  upstream_columns: z.array(ColumnRefSchema).describe(
+  writes_to: ColumnFlowWritesToObject.nullish().meta({ toolValidated: 'writeTarget' }).describe('Table column {node, col} this output is written to, when that table is a neighbor in <hop_context>; otherwise null and name the write in sections.'),
+  returns_to: ColumnFlowWritesToObject.optional().meta({ toolValidated: 'returnTarget' }).describe('Real caller output supplied in caller_output_targets for this scalar-return task; never a table write.'),
+  upstream_columns: z.array(ColumnRefSchema).meta({ toolArrayFact: 'suppliers' }).describe(
     'Neighbor columns that feed out_col: value sources (expression operands, aggregate arguments, each UNION branch column, caller-bound inputs) and columns that only join, filter, group or order its rows. ' +
     'Resolve parameters and aliases to source columns; exclude the entry\'s own writes_to column. [] means the value originates here.',
   ),
-}).strict().describe('One output column: out_col, upstream_columns, optional writes_to or returns_to. note belongs inside an upstream_columns entry.');
+}).strict().meta({ toolGroups: [{ name: 'flowHeader', fields: ['out_col', 'writes_to', 'returns_to'] }], toolObjectFact: 'flowPresence' }).describe('One output column: out_col, upstream_columns, optional writes_to or returns_to. note belongs inside an upstream_columns entry.');
 
 
 /** The engine owns the dispatched hop; a sent id only guards against a stale or misdirected call. */
@@ -341,7 +330,7 @@ const FOCUS_NODE_ID_DESCRIPTION = 'Optional. Omit for the current hop; if sent, 
 
 /** Reason-only removal of an irrelevant SQL node reached through a storage carrier. */
 export const PruneCurrentInputSchema = z.object({
-  focus_node_id: z.string().min(1).regex(/\S/).optional().describe(FOCUS_NODE_ID_DESCRIPTION),
+  focus_node_id: z.string().min(1).regex(/\S/).optional().meta({ toolValidated: 'prune.focus' }).describe(FOCUS_NODE_ID_DESCRIPTION),
   reason: z.string().min(1).regex(/\S/).describe('Why the whole current node is irrelevant to this investigation.'),
 }).strict();
 
@@ -363,7 +352,7 @@ const HopFindingBaseSchema = z.object({
   focus_node_id: z.string().optional().describe(FOCUS_NODE_ID_DESCRIPTION),
   summary: z.string().optional().describe(SUMMARY_DESCRIPTION),
   badge_label: z.string().max(SUBMIT_FINDINGS_BADGE_LABEL_MAX).min(1)
-    .refine(value => value.trim().length > 0, 'badge_label must contain non-whitespace text')
+    .regex(/\S/, 'badge_label must contain non-whitespace text')
     .optional()
     .describe(BADGE_LABEL_DESCRIPTION),
   prune_neighbors: z.array(PruneNeighborSchema).max(MAX_ID_LIST_LENGTH).optional().describe(BB_PRUNE_NEIGHBORS_DESCRIPTION),
@@ -392,128 +381,39 @@ type FlatSubmitFindings = z.output<typeof HopFindingBaseSchema> & { column_flow?
 
 const FINDING_DECISION_FIELDS = ['questions', 'prune_neighbors', 'column_flow'] as const;
 
-/** Independently usable decisions projected from the original full-schema error; no field is reparsed. */
-export function validatedFindingFields(input: unknown, schema: z.ZodType, error: z.ZodError): {
-  fields: Partial<Pick<HopFindingKept, typeof FINDING_DECISION_FIELDS[number]>>;
-  unavailable: ReadonlySet<keyof HopFindingKept>;
-  columnFlowShapeComplete: boolean;
-  /** Explicit action references for diagnostics only, independent of whether the action is admissible. */
-  actionIdentities?: Partial<Record<'questions' | 'prune_neighbors', readonly string[]>>;
-  /** Shape-valid slices for local diagnostics only; never substitute these for the unavailable full flow. */
-  columnFlowDiagnostics?: readonly { entry: ColumnFlowEntry; index: number; upstreamIndexes: readonly number[]; emptySourceAuthored: boolean }[];
-  /** Independently valid supplier identities whose header or other tuple fields are unavailable. */
-  columnSupplierDiagnostics?: readonly { ref: ColumnFlowEntry['upstream_columns'][number]; path: string }[];
-} {
+/** Native facts distinguish an undeclared field from a missing or invalid applicable field. */
+export function findingAdmissionFacts(schema: z.ZodType) {
+  if (!(schema instanceof z.ZodObject)) throw new Error('Finding admission requires its object schema.');
   const fields: Partial<Pick<HopFindingKept, typeof FINDING_DECISION_FIELDS[number]>> = {};
-  const unavailable = new Set<keyof HopFindingKept>();
-  if (!(schema instanceof z.ZodObject) || typeof input !== 'object' || input === null || Array.isArray(input)) {
-    return { fields, unavailable: new Set(FINDING_DECISION_FIELDS), columnFlowShapeComplete: false };
-  }
-  const raw = input as Record<string, unknown>;
-  const starts = (path: readonly PropertyKey[], prefix: readonly PropertyKey[]) => prefix.every((part, index) => path[index] === part);
-  const valueAt = (path: readonly PropertyKey[]): unknown => path.reduce<unknown>((value, key) => value && typeof value === 'object' && Object.prototype.hasOwnProperty.call(value, key) ? (value as Record<PropertyKey, unknown>)[key] : undefined, input);
-  // Project certainty from the original parse. A union slice is uncertain only when every branch faults that slice.
-  const failed = (path: readonly PropertyKey[], omitted: readonly PropertyKey[] = [], references = false): boolean => {
-    const visit = (issues: readonly z.core.$ZodIssue[], prefix: readonly PropertyKey[]): boolean => issues.some(issue => {
-      const at = [...prefix, ...issue.path];
-      const relevant = (at: readonly PropertyKey[]) => (starts(at, path) || starts(path, at)) && !(omitted.length && starts(at, omitted));
-      if (issue.code === 'invalid_union') return relevant(at) && issue.errors.every(branch => visit(branch, at));
-      if (issue.code === 'unrecognized_keys') return issue.keys.some(key => relevant([...at, key]));
-      if (!relevant(at)) return false;
-      // A dynamic required destination can be absent without making the supplied reference list unreadable.
-      const baseHeader = at[0] === 'column_flow' && typeof at[1] === 'number' && at.length === 3
-        ? ColumnFlowEntrySchema.shape[at[2] as keyof typeof ColumnFlowEntrySchema.shape] : undefined;
-      if (references && issue.code === 'invalid_type' && valueAt(at) === undefined && baseHeader instanceof z.ZodOptional) return false;
-      const choice = issue.code === 'custom' ? issue.params?.issue : undefined;
-      if (references && ((choice && ISSUES[choice as keyof typeof ISSUES]?.category === 'reference')
-        || (issue.code === 'invalid_type' && issue.expected === 'never' && typeof valueAt(at) === 'string'))) return false;
-      return true;
-    });
-    return visit(error.issues, []);
+  const valid = new Set<string>();
+  const headers = new Map<string, Pick<ColumnFlowEntry, 'out_col' | 'writes_to' | 'returns_to'>>();
+  const columns = new Map<string, string>();
+  const suppliers = new Map<string, ColumnFlowEntry['upstream_columns'][number]>();
+  const destinations = new Map<string, { node: string; col: string } | null | undefined>();
+  const references = new Map<string, string>(), identities = new Map<string, string>(), arrays = new Map<string, number>(), rows = new Map<string, ReadonlySet<string>>();
+  let supplied: Record<string, unknown> | undefined;
+  const facts: ToolFactContext = {
+    objects: new Map([['findingPresence', value => { supplied = value; }], ['flowPresence', (value, context) => { rows.set(context.instancePath, new Set(Object.keys(value))); }]]),
+    arrays: new Map(['column_flow', 'suppliers', 'questions', 'prune_neighbors'].map(name => [name, (value, context) => { arrays.set(context.instancePath, value.length); }])),
+    strings: new Map([['flowReference', (value, context) => { references.set(context.instancePath, value); }], ['supplierColumn', (value, context) => { columns.set(context.instancePath, value); }],
+      ...['questionIdentity', 'pruneIdentity'].map(name => [name, (value: string, context: { instancePath: string }) => { identities.set(context.instancePath, value); }] as const)]),
+    validated: new Map([
+      ['flowHeader', captureToolFact(ColumnFlowEntrySchema.omit({ upstream_columns: true }), (value, path) => { headers.set(path, value); })],
+      ['supplier', captureToolFact(ColumnRefSchema, (value, path) => { suppliers.set(path, value); })],
+      ...['writeTarget', 'returnTarget'].map(name => [name, captureToolFact(ColumnFlowWritesToObject.nullish(), (value, path) => { destinations.set(path, value); })] as const),
+      ['questions', captureToolFact(HopFindingCtBaseSchema.shape.questions, value => { fields.questions = value; valid.add('questions'); })],
+      ['prune_neighbors', captureToolFact(HopFindingBaseSchema.shape.prune_neighbors, value => { fields.prune_neighbors = value; valid.add('prune_neighbors'); })],
+      ['column_flow', captureToolFact(ColumnFlowSchema, value => { fields.column_flow = value; valid.add('column_flow'); })],
+    ]),
   };
-  for (const field of FINDING_DECISION_FIELDS) {
-    if (!Object.prototype.hasOwnProperty.call(schema.shape, field) || failed([field])) unavailable.add(field);
-    else Object.assign(fields, { [field]: raw[field] });
-  }
-  const actionIdentities: Partial<Record<'questions' | 'prune_neighbors', readonly string[]>> = {};
-  for (const [field, key] of [['questions', 'nodeId'], ['prune_neighbors', 'id']] as const) {
-    const entries = raw[field];
-    if (Array.isArray(entries) && entries.every((entry, index) => entry && typeof entry === 'object'
-      && typeof entry[key] === 'string' && !failed([field, index, key], [], true))) {
-      actionIdentities[field] = entries.map(entry => entry[key] as string);
-    }
-  }
-  const columnFlowDiagnostics: Array<{ entry: ColumnFlowEntry; index: number; upstreamIndexes: number[]; emptySourceAuthored: boolean }> = [];
-  const columnSupplierDiagnostics: Array<{ ref: ColumnFlowEntry['upstream_columns'][number]; path: string }> = [];
-  if (unavailable.has('column_flow') && Array.isArray(raw.column_flow) && Object.prototype.hasOwnProperty.call(schema.shape, 'column_flow')) {
-    for (const [index, entry] of raw.column_flow.entries()) {
-      if (!entry || typeof entry !== 'object' || !Array.isArray(entry.upstream_columns)) continue;
-      const path = ['column_flow', index];
-      const headerValid = !failed(path, [...path, 'upstream_columns']);
-      const upstreamIndexes: number[] = [];
-      const upstream_columns: ColumnFlowEntry['upstream_columns'] = [];
-      for (const [refIndex, ref] of entry.upstream_columns.entries()) {
-        const refPath = [...path, 'upstream_columns', refIndex];
-        const valid = !failed(refPath);
-        if (!valid || !headerValid) {
-          if (ref && typeof ref === 'object' && typeof ref.node === 'string' && typeof ref.col === 'string'
-            && !failed([...refPath, 'node'], [], true) && !failed([...refPath, 'col'], [], true)) {
-            columnSupplierDiagnostics.push({ ref: valid ? ref : { node: ref.node, col: ref.col }, path: refPath.join('.') });
-          }
-          continue;
-        }
-        upstreamIndexes.push(refIndex);
-        upstream_columns.push(ref);
-      }
-      if (headerValid) columnFlowDiagnostics.push({ entry: { ...entry, upstream_columns }, index, upstreamIndexes, emptySourceAuthored: entry.upstream_columns.length === 0 });
-    }
-  }
-  return { fields, unavailable, actionIdentities, columnFlowShapeComplete: Array.isArray(raw.column_flow) && !failed(['column_flow'], [], true),
-    ...(columnFlowDiagnostics.length ? { columnFlowDiagnostics } : {}),
-    ...(columnSupplierDiagnostics.length ? { columnSupplierDiagnostics } : {}) };
-
+  return { facts, fields, headers, columns, suppliers, destinations, references, identities, arrays, rows, unavailable: () => new Set<keyof HopFindingKept>(FINDING_DECISION_FIELDS.filter(field =>
+    Object.prototype.hasOwnProperty.call(schema.shape, field) && (!supplied || (!valid.has(field)
+      && (Object.prototype.hasOwnProperty.call(supplied, field) || !schema.shape[field].isOptional()))))) };
 }
 
 /** Enforces the fresh kept shape of one flat `submit_findings` payload. */
 function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementCtx, fresh: boolean, classification?: ClassificationValue): void {
-  if (typeof value !== 'object' || value === null) return;
-  const keptAngles = classification ? CLASSIFICATION_KEPT_ANGLES[classification] : undefined;
-  const bothAnglesRequired = fresh && keptAngles?.length === CLASSIFICATION_KEPT_ANGLES.both.length;
-  if (keptAngles?.length === 1 && typeof value.sections === 'object' && value.sections !== null) {
-    const [onlyAngle] = keptAngles;
-    const offAngle = onlyAngle === 'business' ? 'technical' : 'business';
-    const surplus = Object.keys(value.sections).filter((key) => key !== onlyAngle);
-    if (surplus.includes(offAngle)) {
-      ctx.addIssue({ code: 'custom', path: ['sections', offAngle], message: `Not kept under classification ${classification}; this content belongs in sections.${onlyAngle}.`, params: { issue: 'never' } });
-    }
-    const unknown = surplus.filter((key) => key !== offAngle);
-    if (unknown.length > 0) ctx.addIssue({ code: 'unrecognized_keys', path: ['sections'], keys: unknown, message: 'Unrecognized keys' });
-  }
-  const bodies = value.sections && typeof value.sections === 'object' && !Array.isArray(value.sections) ? value.sections : undefined;
-  const filled = new Set(Object.entries(bodies ?? {})
-    .filter(([, body]) => typeof body === 'string').map(([angle]) => angle));
-  if (fresh && (value.sections === undefined || (bodies && filled.size === 0))) {
-    ctx.addIssue({
-      code: 'custom',
-      path: ['sections'],
-      message: 'Required for a fresh finding.',
-      params: { issue: 'missing' },
-    });
-  }
-  if (bothAnglesRequired && bodies && filled.size > 0) {
-    for (const angle of CLASSIFICATION_KEPT_ANGLES.both) {
-      if (filled.has(angle)) continue;
-      ctx.addIssue({ code: 'custom', path: ['sections', angle], message: 'Required with a both classification when sections is not empty.', params: { issue: 'missing' } });
-    }
-  }
-  if (fresh && (value.summary === undefined || (typeof value.summary === 'string' && value.summary.trim() === ''))) {
-    ctx.addIssue({
-      code: 'custom',
-      path: ['summary'],
-      message: 'Required for a fresh finding.',
-      params: { issue: 'missing' },
-    });
-  }
+  for (const error of findingShapeIssues(value, fresh, classification)) ctx.addIssue({ code: 'custom', path: error.path.split('.'), params: { issue: error.code } });
 }
 
 /** Converts a validated flat `submit_findings` payload to the {@link HopFinding} union the engine consumes. */
@@ -540,9 +440,9 @@ function finalizeSubmitFindingsSchema(
   const keptAngles = classification ? CLASSIFICATION_KEPT_ANGLES[classification] : undefined;
   const source = fresh
     ? schema.extend({
-      sections: schema.shape.sections.unwrap().meta(keptAngles
+      sections: schema.shape.sections.unwrap().meta({ toolDisplay: keptAngles
         ? { required: [...keptAngles] }
-        : { anyOf: CLASSIFICATION_KEPT_ANGLES.both.map(angle => ({ required: [angle] })) })
+        : { anyOf: CLASSIFICATION_KEPT_ANGLES.both.map(angle => ({ required: [angle] })) } })
         .optional().describe(schema.shape.sections.description ?? ''),
     }).strict()
     : schema.shape.summary ? schema.extend({
@@ -551,14 +451,17 @@ function finalizeSubmitFindingsSchema(
   // Composition already supplied held values; archived sections may stay omitted, but every committed finding needs its summary.
   const complete = composedCandidate && !fresh
     ? source.safeExtend({ summary: schema.shape.summary.unwrap().regex(/\S/, 'A finding summary must contain non-whitespace text.') }) : source;
-  const validated = complete
-    .check(superRefineAll((value, ctx) => refineSubmitFindingsShape(value as FlatSubmitFindings, ctx, fresh, classification)))
+  const declared = complete.safeExtend(Object.fromEntries(Object.entries(complete.shape).map(([name, field]) => [name,
+    FINDING_DECISION_FIELDS.some(decision => decision === name) ? field.meta({ ...field.meta(), toolValidated: name, toolArrayFact: name }) : field,
+  ])));
+  const validated = declared
+    .meta({ toolFindingShape: { fresh, classification }, toolObjectFact: 'findingPresence' })
     .describe('A sent questions or prune_neighbors list replaces its held list whole; repeat entries you keep. Omit the list to retain it; [] withdraws it.') as z.ZodType<FlatSubmitFindings>;
   if (!fresh) return validated;
   const required = Object.entries(schema.shape)
     .filter(([, field]) => !field.isOptional())
     .map(([key]) => key);
-  return validated.meta({ required: [...required, 'summary', 'sections'] });
+  return validated.meta({ toolFindingShape: { fresh, classification }, toolObjectFact: 'findingPresence', required: [...required, 'summary', 'sections'] });
 }
 
 /** BB-mode submit_findings input. */
@@ -606,33 +509,39 @@ export interface SubmitFindingsHopColumns {
 }
 
 /** One choice schema for supplied identifiers, with an optional comparison key for column names. The provider enum and rejection choices share the same values; parsing preserves input. */
-function suppliedValueSchema(values: readonly string[], key: (value: string) => string = value => value, node?: string) {
+function suppliedValueSchema(values: readonly string[], identifierCaseSensitive = false) {
   if (values.length === 0) return z.never();
-  const keys = new Set(values.map(key));
-  return z.string().refine(value => keys.has(key(value)),
-    { message: 'Name a supplied value.',
-      params: { issue: 'unknown_column', allowed_values: [...values], ...(node ? { when: { node } } : {}) } }).meta({ enum: [...values] });
+  return z.string().meta({ enum: [...values], toolIdentifier: { kind: 'column', values: [...values], caseSensitive: identifierCaseSensitive, issue: 'unknown_column' } });
 }
 
 /** Offers canonical IDs while admitting only equivalent, unambiguous metadata spellings. */
 function objectIdSchema(ids: readonly string[], identifierCaseSensitive = false, issue: 'not_neighbor' | 'bad_write_target' = 'not_neighbor') {
   if (ids.length === 0) return z.never();
   const known = new Map(ids.map(id => [id, true]));
-  const field = z.string().refine(value => resolveModelNodeId(value, known, identifierCaseSensitive) !== null,
-    { message: 'Name a supplied object identity.', params: { issue, allowed_values: [...ids] } }).meta({ enum: [...ids] });
+  const field = z.string().meta({ enum: [...ids], toolIdentifier: { kind: 'object', values: [...ids], caseSensitive: identifierCaseSensitive, issue } });
   markObjectIdField(field, known, identifierCaseSensitive);
   return field;
 }
 
 /** Advertises canonical column names while accepting their shared SQL comparison form without rewriting input. */
-function columnNameSchema(names: readonly string[], identifierCaseSensitive = false, node?: string) {
-  return suppliedValueSchema(names, name => normalizeColName(name, identifierCaseSensitive), node);
+function columnNameSchema(names: readonly string[], identifierCaseSensitive = false, _node?: string) {
+  return suppliedValueSchema(names, identifierCaseSensitive);
 }
+
+/** One relational choice descriptor serves native admission and the model's enum projection. */
+const sqlChoice = (values: readonly string[], kind: 'object' | 'column', caseSensitive = false, issue = kind === 'object' ? 'not_neighbor' : 'unknown_column') =>
+  ({ enum: [...values], toolIdentifier: { kind, values: [...values], caseSensitive, issue } });
+function spellingField(ids: readonly string[], identifierCaseSensitive = false) {
+  const field = z.string().meta({ toolDisplay: { enum: [...ids] } });
+  markObjectIdField(field, new Map(ids.map(id => [id, true])), identifierCaseSensitive);
+  return field;
+}
+const FLOW_HEADER_FACT = { toolObjectFact: 'flowPresence', toolGroups: [{ name: 'flowHeader', fields: ['out_col', 'writes_to', 'returns_to'] }] };
 
 /** The same supplier owner is used by full submissions and held tuple corrections. */
 function columnRefSchemaForHop(hop: SubmitFindingsHopColumns) {
   return hop.columnSourceNodeIds
-    ? ColumnRefSchema.extend({ node: objectIdSchema(hop.columnSourceNodeIds, hop.identifierCaseSensitive) }).strict()
+    ? ColumnRefSchema.extend({ node: stringFact(objectIdSchema(hop.columnSourceNodeIds, hop.identifierCaseSensitive), 'flowReference') }).strict().meta(SUPPLIER_FACT)
     : ColumnRefSchema;
 }
 
@@ -642,30 +551,34 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
     ? ColumnFlowEntrySchema.shape.out_col
     : columnNameSchema(hop.outCols, hop.identifierCaseSensitive).describe(OUT_COL_DESCRIPTION);
   const upstreamColumns = hop.columnSourceNodeIds
-    ? z.array(columnRefSchemaForHop(hop)).describe(ColumnFlowEntrySchema.shape.upstream_columns.description ?? '')
+    ? z.array(columnRefSchemaForHop(hop)).meta({ toolArrayFact: 'suppliers' }).describe(ColumnFlowEntrySchema.shape.upstream_columns.description ?? '')
     : ColumnFlowEntrySchema.shape.upstream_columns;
   const shape = {
     out_col: outCol,
     upstream_columns: upstreamColumns,
     // Required at a procedure focus (null when no neighbor table is written); omission would silently attribute the edge to the procedure node.
     writes_to: (hop.writeTargetNodeIds
-      ? ColumnFlowWritesToObject.extend({ node: objectIdSchema(hop.writeTargetNodeIds, hop.identifierCaseSensitive, 'bad_write_target') })
+      ? ColumnFlowWritesToObject.extend({ node: stringFact(objectIdSchema(hop.writeTargetNodeIds, hop.identifierCaseSensitive, 'bad_write_target'), 'flowReference') })
       : ColumnFlowWritesToObject
-    ).nullable().describe(ColumnFlowEntrySchema.shape.writes_to.description ?? ''),
+    ).nullable().meta({ toolValidated: 'writeTarget' }).describe(ColumnFlowEntrySchema.shape.writes_to.description ?? ''),
   };
   if (hop.returnTargets?.length) {
-    const destinations = hop.returnTargets.map(target => z.object({
-      out_col: columnNameSchema([target.col], hop.identifierCaseSensitive, target.node),
-      returns_to: z.object({ node: objectIdSchema([target.node], hop.identifierCaseSensitive), col: columnNameSchema([target.col], hop.identifierCaseSensitive, target.node) }).strict(),
+    const ids = [...new Set(hop.returnTargets.map(target => target.node))], cols = [...new Set(hop.returnTargets.map(target => target.col))];
+    const assertions = { anyOf: hop.returnTargets.map(target => ({ properties: {
+      out_col: sqlChoice([target.col], 'column', hop.identifierCaseSensitive),
+      returns_to: { properties: { node: sqlChoice([target.node], 'object', hop.identifierCaseSensitive), col: sqlChoice([target.col], 'column', hop.identifierCaseSensitive) } },
+    } })) };
+    const entry = z.object({
+      out_col: z.string().meta({ toolDisplay: { enum: cols } }),
+      returns_to: z.object({ node: stringFact(spellingField(ids, hop.identifierCaseSensitive), 'flowReference'), col: z.string().meta({ toolDisplay: { enum: cols } }) }).strict().meta({ toolValidated: 'returnTarget' }),
       upstream_columns: shape.upstream_columns,
-    }).strict());
-    const entry = destinations.length === 1 ? destinations[0]! : z.union(destinations as [typeof destinations[number], typeof destinations[number], ...Array<typeof destinations[number]>]);
+    }).strict().meta({ toolObjectFact: 'flowPresence', toolGroups: [{ name: 'flowHeader', fields: ['out_col', 'returns_to'], assertions }], toolDisplay: { allOf: [assertions] } });
     return z.array(entry).describe('One mapping per entry in caller_output_targets, with matching returns_to. Identify dependencies from the supplied caller SQL and function body. List supported in-scope suppliers, or upstream_columns: [] when none can be recorded; retain known outside dependencies and unresolved evidence in sections.');
   }
   const entry = (hop.writesTo
     ? z.object(shape)
     : z.object({ out_col: shape.out_col, upstream_columns: shape.upstream_columns })
-  ).strict();
+  ).strict().meta(FLOW_HEADER_FACT);
   const flow = z.array(entry).describe(COLUMN_FLOW_DESCRIPTION);
   return hop.outCols?.length === 0 ? flow.max(0) : flow;
 }
@@ -695,11 +608,11 @@ export function submitFindingsSchemaForMode(
     narrowed = narrowed.extend({ focus_node_id: focusField }).strict() as typeof HopFindingCtBaseSchema;
   }
   const baseQuestion = hop?.neighbors
-    ? NeighborQuestionSchema.extend({ nodeId: objectIdSchema(hop.neighbors.filter(n => n.can_question).map(n => n.id), hop.identifierCaseSensitive) })
+    ? NeighborQuestionSchema.extend({ nodeId: stringFact(objectIdSchema(hop.neighbors.filter(n => n.can_question).map(n => n.id), hop.identifierCaseSensitive), 'questionIdentity') })
     : NeighborQuestionSchema;
   if (mode === 'ct' && hop) narrowed = narrowed.extend({ column_flow: columnFlowSchemaForHop(hop) }).strict() as typeof HopFindingCtBaseSchema;
   if (hop?.neighbors) narrowed = narrowed.extend({
-    prune_neighbors: z.array(PruneNeighborSchema.extend({ id: objectIdSchema(hop.neighbors.filter(n => n.can_prune).map(n => n.id), hop.identifierCaseSensitive) })).max(MAX_ID_LIST_LENGTH).optional().describe(mode === 'bb' ? BB_PRUNE_NEIGHBORS_DESCRIPTION : PRUNE_NEIGHBORS_DESCRIPTION),
+    prune_neighbors: z.array(PruneNeighborSchema.extend({ id: stringFact(objectIdSchema(hop.neighbors.filter(n => n.can_prune).map(n => n.id), hop.identifierCaseSensitive), 'pruneIdentity') })).max(MAX_ID_LIST_LENGTH).optional().describe(mode === 'bb' ? BB_PRUNE_NEIGHBORS_DESCRIPTION : PRUNE_NEIGHBORS_DESCRIPTION),
     questions: z.array(baseQuestion).max(MAX_ID_LIST_LENGTH).optional().describe(mode === 'bb' ? BB_QUESTIONS_DESCRIPTION : QUESTIONS_DESCRIPTION),
   }).strict() as typeof HopFindingCtBaseSchema;
   if (mode === 'ct' && hop?.callerContextNodeIds) {
@@ -707,13 +620,17 @@ export function submitFindingsSchemaForMode(
     // The caller is the focus: its equivalent spellings bind to the focus id without serving another choice.
     const callerNode = z.string().min(1);
     if (hop.focusNodeId) markObjectIdField(callerNode, new Map([[hop.focusNodeId, true]]), hop.identifierCaseSensitive ?? false);
-    const question = first === undefined ? baseQuestion : z.union([
-      baseQuestion,
-      CtNeighborQuestionSchema.extend({
-        nodeId: objectIdSchema([first, ...rest], hop.identifierCaseSensitive).describe(NeighborQuestionSchema.shape.nodeId.description ?? ''),
-        caller_context: z.object({ node: callerNode, col: z.string().min(1) }).strict().optional().describe(CtNeighborQuestionSchema.shape.caller_context.description ?? ''),
-      }),
-    ]);
+    const callerIds = first === undefined ? [] : [first, ...rest];
+    const neighborIds = hop.neighbors?.filter(neighbor => neighbor.can_question).map(neighbor => neighbor.id) ?? [];
+    const nodeIds = [...new Set([...neighborIds, ...callerIds])];
+    const assertions = { anyOf: [
+      { properties: { nodeId: sqlChoice(neighborIds, 'object', hop.identifierCaseSensitive), question: {} }, additionalProperties: false },
+      { properties: { nodeId: sqlChoice(callerIds, 'object', hop.identifierCaseSensitive) } },
+    ] };
+    const question = first === undefined ? baseQuestion : CtNeighborQuestionSchema.extend({
+      nodeId: stringFact(spellingField(nodeIds, hop.identifierCaseSensitive), 'questionIdentity').describe(NeighborQuestionSchema.shape.nodeId.description ?? ''),
+      caller_context: z.object({ node: callerNode, col: z.string().min(1) }).strict().optional().describe(CtNeighborQuestionSchema.shape.caller_context.description ?? ''),
+    }).strict().meta({ toolGroups: [{ name: 'questionCore', fields: ['nodeId', 'question', 'caller_context'], assertions }], toolDisplay: { allOf: [assertions] } });
     narrowed = narrowed.extend({ questions: z.array(question).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION) }).strict() as typeof HopFindingCtBaseSchema;
   }
   if (mode === 'ct' && heldColumnFlow) {
@@ -792,11 +709,9 @@ export const GetScreenStateInputSchema = z.object({
   filter: z.enum(['pruned', 'open_leads', 'stale']).optional()
     .describe('One class of the stored run to list: pruned, open_leads, or stale. Use without ids.'),
   cursor: CursorSchema.optional(),
-}).strict().superRefine((value, ctx) => {
-  if (value.ids && value.filter) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['filter'], message: 'ids and filter exclude each other; one call takes one of them.', params: { issue: 'never' } });
-  }
-});
+ }).strict().meta({ toolAdmission: {
+  if: { required: ['ids', 'filter'] }, then: { properties: { filter: false } },
+} });
 
 /** `lineage_search_objects` input. */
 export const SearchObjectsInputSchema = z.object({
@@ -810,7 +725,7 @@ markIdFormSearch(SearchObjectsInputSchema);
 
 /** `lineage_get_object_detail` input. */
 export const GetObjectDetailInputSchema = z.object({
-  id: z.string().describe('Canonical object ID returned by a lineage search or scope tool.'),
+  id: z.string().meta({ toolStringFact: 'modelObject' }).describe('Canonical object ID returned by a lineage search or scope tool.'),
   cursor: CursorSchema.optional(),
 }).strict();
 
@@ -827,42 +742,14 @@ export const SearchDdlInputSchema = z.object({
   types: z.array(z.enum(['view', 'procedure', 'function'])).optional().describe('Optional body-type filter; omit to search all three.'),
 }).strict();
 
-/** Identity of a section label: whitespace collapsed, trimmed, case-folded. Two labels with the same key name the same section, in a submission, a repair patch and a committed report alike. */
-export function normalizePresentSectionLabel(label: string): string {
-  return label.replace(/\s+/g, ' ').trim().toLowerCase();
-}
-
-/** A refinement that also runs when the value already carries shape issues, so one parse reports every defect of a call instead of hiding the cross-field ones behind the first shape failure. Its `fn` reads the raw value and must tolerate a wrong type. */
-function superRefineAll<T>(fn: (value: T, ctx: z.core.$RefinementCtx<T>) => void) {
-  return z.superRefine<T>(fn, { when: () => true });
-}
-
-/** Refinement for a `sections` list: each final label maps to exactly one section text. */
-function rejectDuplicateSectionLabels(sections: ReadonlyArray<{ label: string }>, ctx: z.core.$RefinementCtx): void {
-  if (!Array.isArray(sections)) return;
-  const seen = new Set<string>();
-  for (const [index, section] of sections.entries()) {
-    if (typeof section !== 'object' || section === null) continue;
-    const { label } = section;
-    if (typeof label !== 'string') continue;
-    const key = normalizePresentSectionLabel(label);
-    if (seen.has(key)) {
-      ctx.addIssue({ code: 'custom', path: [index, 'label'], message: 'Duplicate section label; each final label maps to exactly one section text.', params: { issue: 'duplicate' } });
-    } else {
-      seen.add(key);
-    }
-  }
-}
 /** A non-empty `sections` list with unique labels: the one bound every stage's section array shares. */
 function sectionList<T extends z.ZodType<{ label: string }>>(item: T) {
-  return nonemptyList(item).check(superRefineAll(rejectDuplicateSectionLabels));
+  return nonemptyList(item).meta({ toolUniqueLabels: true });
 }
 
 /** Keep array bounds on arrays: malformed JSON may have a nonnumeric `length` member. */
 function nonemptyList<T extends z.ZodType>(item: T) {
-  return z.array(item).superRefine((value, ctx) => {
-    if (!value.length) ctx.addIssue({ code: 'too_small', origin: 'array', minimum: 1, inclusive: true });
-  }, { when: payload => Array.isArray(payload.value) }).meta({ minItems: 1 });
+  return z.array(item).min(1);
 }
 
 /** The Lineage color-scheme enum shared by every colored surface. Declared once so render paths cannot drift: flow-role schemes (`source` / `transform` / `target`) plus status schemes (`good` / `warn` / `fail`). */
@@ -871,31 +758,17 @@ const HighlightSchemeSchema = z.enum(['source', 'transform', 'target', 'good', '
 /** One model-supplied node id, preserved verbatim and required non-empty. */
 const NodeIdSchema = z.string()
   .regex(/\S/, 'Node ID must not be blank.')
-  .min(1, 'Node ID must not be blank.');
+  .min(1, 'Node ID must not be blank.').meta({ toolValidated: 'report.node' });
 
 /** One below-node caption. Its keys share nothing with a `sections[]` item's `{label, node_ids, text}`, so `.strict()` names the offending keys when the two are conflated. */
 const NoteSchema = z.object({
-  node_id: NodeIdSchema.describe('Node ID the caption sits below.'),
+  node_id: NodeIdSchema.meta({ toolValidated: 'report.node' }).describe('Node ID the caption sits below.'),
   caption: z.string().regex(/\S/, 'Must contain non-whitespace text.').min(1, 'Note is missing its caption').describe('One-sentence caption, grounded in the evidence supplied for this stage.'),
 }).strict();
 
 /** `present_result.notes`: an array of declared-key objects, the one object shape every function-calling schema dialect expresses — a map keyed by data (`additionalProperties` with a value schema) is not portable across providers. The parsed value is the shape every consumer reads, so a held draft re-validates unchanged. A node ID given two different captions rejects, since one of them would otherwise be lost; an identical repeat is harmless. */
 const notesListSchema = (note: z.ZodType<z.infer<typeof NoteSchema>>) => z.array(note)
-  .superRefine((notes, ctx) => {
-    const captionByNode = new Map<string, string>();
-    for (const [index, note] of notes.entries()) {
-      const first = captionByNode.get(note.node_id);
-      if (first === undefined) captionByNode.set(note.node_id, note.caption);
-      else if (first !== note.caption) {
-        ctx.addIssue({
-          code: 'custom',
-          path: [index, 'caption'],
-          message: 'One caption per node id; an earlier note gives this node id another caption.',
-        });
-      }
-    }
-  })
-  .describe('Below-node captions, one per node.');
+  .meta({ toolNoteCaptions: true }).describe('Below-node captions, one per node.');
 const NotesModelSchema = notesListSchema(NoteSchema);
 
 /** Schema for a visual highlight group, grouping nodes by a shared role or status. */
@@ -907,14 +780,14 @@ const HighlightGroupSchema = z.object({
 
 /** One final report section: a label that becomes both the section heading and the graph badge, the nodes it explains, and its detail body. */
 const PresentResultSectionSchema = z.object({
-  label: z.string().regex(/\S/, 'Section label must not be blank.').min(1, 'Section label is required — provide a short final label for this detail section').describe('What the section\'s nodes share, as heading and badge (30 chars). No object names. Unique after trimming, whitespace collapse and lowercasing.'),
-  node_ids: z.array(NodeIdSchema).describe('Nodes this section documents; put each node in one section. Empty array when it documents none.'),
-  text: z.string().regex(/\S/, 'Must contain non-whitespace text.').min(1, 'Section is missing text — every final section label requires one detail body').describe('Required detail body for this section label.'),
+  label: z.string().meta({ toolValidated: 'report.label' }).regex(/\S/, 'Section label must not be blank.').min(1, 'Section label is required — provide a short final label for this detail section').describe('What the section\'s nodes share, as heading and badge (30 chars). No object names. Unique after trimming, whitespace collapse and lowercasing.'),
+  node_ids: z.array(NodeIdSchema).meta({ toolValidated: 'report.sectionNodes' }).describe('Nodes this section documents; put each node in one section. Empty array when it documents none.'),
+  text: z.string().regex(/\S/, 'Must contain non-whitespace text.').min(1, 'Section is missing text — every final section label requires one detail body').meta({ toolValidated: 'report.text' }).describe('Required detail body for this section label.'),
 }, {
   error: (issue) => issue.code === 'unrecognized_keys'
     ? 'A section holds only label, node_ids and text. Below-node captions go in the top-level notes array as {node_id, caption} objects, never inside a section.'
     : undefined,
-}).strict();
+}).strict().meta({ toolValidated: 'report.section', toolObjectFact: 'report.sectionInput' });
 
 /** Memoized per block count: a fresh schema per request is a new identity, which defeats `toModelJsonSchema`'s cache. */
 const previewSchemaCache = new Map<number, ReturnType<typeof buildPreviewSchemas>>();
@@ -922,7 +795,7 @@ const previewSchemaCache = new Map<number, ReturnType<typeof buildPreviewSchemas
 /** The preview stage schemas for an answer of `blockCount` served blocks. A section is the {@link PresentResultSectionSchema} keys with the body given as the served id `B1`..`B<blockCount>` it starts at, so an id outside the answer cannot be sent; the engine ends each section before the next one's start. The patch form permits omission of `node_ids` and `start` to keep the held value under the label. Preview reuses the discovery prose for `summary`/`title`; the model authors `name` itself. */
 function buildPreviewSchemas(blockCount: number) {
   const [first, ...rest] = Array.from({ length: Math.max(blockCount, 1) }, (_, index) => `B${index + 1}`);
-  const start = z.enum([first, ...rest]).describe('First block of `answer_blocks` this section presents, e.g. "B3"; it runs to the block before the next section\'s start, the last section to the end. The first section starts at B1; starts ascend strictly.');
+  const start = z.enum([first, ...rest]).meta({ toolValidated: 'report.start' }).describe('First block of `answer_blocks` this section presents, e.g. "B3"; it runs to the block before the next section\'s start, the last section to the end. The first section starts at B1; starts ascend strictly.');
   const section = z.object({
     label: PresentResultSectionSchema.shape.label,
     node_ids: PresentResultSectionSchema.shape.node_ids,
@@ -931,7 +804,7 @@ function buildPreviewSchemas(blockCount: number) {
     error: (issue) => issue.code === 'unrecognized_keys'
       ? 'A section holds only label, node_ids and start. Below-node captions go in the top-level notes array as {node_id, caption} objects, never inside a section.'
       : undefined,
-  }).strict();
+  }).strict().meta({ toolValidated: 'report.section', toolObjectFact: 'report.sectionInput' });
   const model = PresentResultModelSchema.omit({
     summary: true,
     title: true,
@@ -981,17 +854,38 @@ export const PresentResultModelSchema = z.object({
 
 /** One section of a report that is already committed: `text` and `node_ids` may each be omitted to keep the committed body or links under that label. */
 const PresentResultRetainedSectionSchema = PresentResultSectionSchema.extend({
-  node_ids: z.array(NodeIdSchema).optional().describe('Nodes this section documents; put each node in one section. Omit to keep the committed links for this label; an empty array unlinks them.'),
-  text: nonWhitespaceText.optional().describe('Detail body. Omit to keep the committed text for this label; supply it only to rewrite that section.'),
-});
+  node_ids: z.array(NodeIdSchema).optional().meta({ toolValidated: 'report.sectionNodes' }).describe('Nodes this section documents; put each node in one section. Omit to keep the committed links for this label; an empty array unlinks them.'),
+  text: nonWhitespaceText.optional().meta({ toolValidated: 'report.text' }).describe('Detail body. Omit to keep the committed text for this label; supply it only to rewrite that section.'),
+}).meta({ toolValidated: 'report.section', toolObjectFact: 'report.sectionInput' });
 
 /** Projects a `present_result` schema onto a render that amends a committed report. */
-function withRetainableSections<T extends z.ZodObject<z.ZodRawShape>>(schema: T) {
+function withRetainableSections<T extends z.ZodObject<Record<string, z.ZodType>>>(schema: T) {
   return schema.extend({
     sections: sectionList(PresentResultRetainedSectionSchema).optional()
       .describe('Final report sections. Omit entirely to keep the committed report; list a label with no text to keep that section unchanged.'),
   });
 }
+
+const reportAdmissionSchemas = new WeakMap<z.ZodType, z.ZodType>();
+function reportAdmissionSchema(schema: z.ZodObject<Record<string, z.ZodType>>): z.ZodType {
+  const cached = reportAdmissionSchemas.get(schema);
+  if (cached) return cached;
+  const shape = Object.fromEntries(Object.entries(schema.shape).map(([name, field]) => [name, field.meta({ ...field.meta(),
+    toolValidated: ['title', 'intro', 'closing'].includes(name) ? [`report.${name}`, 'report.text'] : `report.${name}`,
+    ...(['sections', 'notes'].includes(name) ? { toolArrayFact: `report.${name}` } : {}),
+  })]));
+  const annotated = schema.extend(shape).meta({ toolObjectFact: 'report.input' });
+  reportAdmissionSchemas.set(schema, annotated);
+  return annotated;
+}
+
+/** Type witnesses share the declared row/field owners; only native-valid facts reach callbacks. */
+const ReportSectionFactSchema = PresentResultSectionSchema.partial({ node_ids: true, text: true }).extend({ start: z.string().optional() });
+/** Schema witnesses for the typed facts emitted by every report phase. */
+export const ReportFactSchemas = {
+  fields: { ...PresentResultModelSchema.shape, sections: z.array(ReportSectionFactSchema) }, section: ReportSectionFactSchema,
+  node: NodeIdSchema, nodes: z.array(NodeIdSchema), text: z.string(), start: z.string(),
+};
 
 /** The full phase schema is unchanged during repair; held fields are applied before its single validation. */
 export function presentResultSchemaForPhase(
@@ -999,12 +893,12 @@ export function presentResultSchemaForPhase(
   retainable = false,
   previewBlockCount = 0,
 ): z.ZodType {
-  if (phase === 'visual_preview') return previewSchemas(previewBlockCount).model;
+  if (phase === 'visual_preview') return reportAdmissionSchema(previewSchemas(previewBlockCount).model);
   const synthesis = phase === 'synthesis';
   const schema = retainable
     ? (synthesis ? PresentResultRetainingSynthesisModelSchema : PresentResultRetainingModelSchema)
     : (synthesis ? PresentResultSynthesisModelSchema : PresentResultModelSchema);
-  return schema;
+  return reportAdmissionSchema(schema);
 }
 
 /** Presentation fields named by deterministic validation errors. */
@@ -1029,7 +923,7 @@ export const SubmitFindingsModelSchema = z.object({
   questions: z.array(CtNeighborQuestionSchema).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION),
   column_flow: ColumnFlowSchema.optional(),
   badge_label: z.string().max(SUBMIT_FINDINGS_BADGE_LABEL_MAX).min(1)
-    .refine(value => value.trim().length > 0, 'badge_label must contain non-whitespace text')
+    .regex(/\S/, 'badge_label must contain non-whitespace text')
     .optional()
     .describe(BADGE_LABEL_DESCRIPTION),
   sections: CapturedSectionsSchema.optional().describe(SECTIONS_DESCRIPTION),
@@ -1042,7 +936,9 @@ export function parseToolInput<T extends z.ZodType>(
 ):
   | { readonly ok: true; readonly data: z.output<T> }
   | { readonly ok: false; readonly error: ToolRejection } {
-  const parsed = schema.safeParse(input);
-  if (parsed.success) return { ok: true, data: parsed.data };
-  return { ok: false, error: rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema }) };
+  const result = ingestToolInput({ input, schema, context: '', inspect: view => {
+    const parsed = view.parsed;
+    return parsed.success ? () => ({ ok: true as const, data: parsed.data }) : undefined;
+  } });
+  return 'ok' in result ? result : { ok: false, error: result };
 }

@@ -15,6 +15,24 @@ export class ToolDraft<T extends object> {
   private sent: string[] = [];
   private previous: unknown;
   private _unchanged = false;
+  private generation = -1;
+  private ownerContext = '';
+  private calls = 0;
+  private releaseAbort?: () => void;
+
+  /** Generation identity belongs to transport; two state-changing calls cannot own one draft. */
+  public own(context: string, generation: number): boolean {
+    if (this.ownerContext !== context || this.generation !== generation) { this.ownerContext = context; this.generation = generation; this.calls = 0; }
+    return ++this.calls === 1;
+  }
+
+  /** One current-context subscription belongs to the draft, and clear releases it. */
+  public bindCancellation(signal: AbortSignal, context: string): void {
+    this.releaseAbort?.();
+    const cancel = () => { if (this.matches(context)) this.clear(); };
+    signal.addEventListener('abort', cancel, { once: true });
+    this.releaseAbort = () => signal.removeEventListener('abort', cancel);
+  }
 
   public get(): Partial<T> | null { return this.value && Object.keys(this.value).length ? this.value as Partial<T> : null; }
   public matches(context: string): boolean { return this.context === context; }
@@ -73,5 +91,5 @@ export class ToolDraft<T extends object> {
     return [...overwritten];
   }
 
-  public clear(): void { this.value = null; this.context = null; this.faults = []; this.sent = []; this.previous = undefined; this._unchanged = false; }
+  public clear(): void { this.releaseAbort?.(); this.releaseAbort = undefined; this.value = null; this.context = null; this.faults = []; this.sent = []; this.previous = undefined; this._unchanged = false; }
 }

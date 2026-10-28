@@ -1,15 +1,17 @@
+import type { ToolFactContext } from '../support/toolValidation';
 /** Canonical AI tool registry, handlers, and the surfaces for callers without a chat turn. */
 import * as vscode from 'vscode';
 import { redactMissionBriefForLog } from '../support/missionBriefDiagnostics';
-import { AsyncLocalStorage } from 'node:async_hooks';
+import { ingestToolInput, toolInputReceipt } from '../support/toolIngestion';
 import { z } from 'zod';
+import { modelUpdateSchema } from './jsonSchema';
 import type Graph from 'graphology';
 import { NavigationEngine } from '../sm/smBase';
 import { type AiSession } from '../session/session';
 import { Logger, trunc, LOG_TRUNC_JSON } from '../../utils/log';
 import {
-  getContext, searchObjects, getObjectDetail,
-  runAnalysis, searchDdl, getScopeBundle,
+  getContext, searchObjects, executeObjectDetail, prepareModelObject, type ModelObjectPlan,
+  runAnalysis, searchDdl, executeScopeBundle,
   getNeighborColumns,
 } from '../tools/tools';
 import {
@@ -51,8 +53,15 @@ import { RegexSearchExecutionError } from '../support/isolatedRegexSearch';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { errorMessage } from '../../utils/errorMessage';
 
-/** Original arguments stay isolated across parallel read dispatches. */
-const invocationInput = new AsyncLocalStorage<{ input: unknown }>();
+/** Metadata lookup is receipt-scoped; cached native validators retain no session facts. */
+function modelObjectAdmission(model: DatabaseModel): ToolFactContext & { plan?: ModelObjectPlan } {
+  const receipt: ToolFactContext & { plan?: ModelObjectPlan } = { strings: new Map([['modelObject', (value, context) => {
+    const plan = prepareModelObject(model, value, context.instancePath.slice(1));
+    if ('code' in plan) return plan;
+    receipt.plan = plan;
+  }]]) };
+  return receipt;
+}
 
 /** Diagnostic group shared by rejection logging and backend-fault policy. */
 type RejectionChatGroup = 'column_mapping' | 'source_selection' | 'answer_format' | 'backend_fault' | 'correction';
@@ -135,7 +144,7 @@ class ToolHandler implements ToolServices {
   }
 
   public logAndReturn(toolName: ToolName, data: object, input?: unknown): string {
-    input = invocationInput.getStore()?.input ?? input;
+    input = toolInputReceipt.getStore()?.input ?? input;
     const sess = this.getSession();
     if (this.turnLease) assertActiveTurnLease(this.turnLease, sess.turnEpoch);
     const json = JSON.stringify(data);
@@ -286,10 +295,12 @@ class ToolHandler implements ToolServices {
 
   public getScopeBundle(input: unknown) {
     try {
-      const parsed = parseToolInput(GetScopeBundleInputSchema, input);
-      if (!parsed.ok) return this.logAndReturn('lineage_get_scope_bundle', parsed.error, input);
+      const model = this.requireModel(), facts = modelObjectAdmission(model);
+      const outcome = ingestToolInput({ input, schema: GetScopeBundleInputSchema, context: '', facts, inspect: view => {
+        const parsed = view.parsed, plan = facts.plan;
+        return parsed.success && plan ? () => {
       const sess = this.getSession();
-      const bundle = getScopeBundle(this.requireModel(), this.requireGraph(), parsed.data, this.budget, sess.columnStore) as Record<string, unknown>;
+      const bundle = executeScopeBundle(model, this.requireGraph(), parsed.data, this.budget, plan, sess.columnStore) as Record<string, unknown>;
       if (parsed.data.include_ddl === undefined && bundle.include_ddl === true) {
         this.logger.debug(`get_scope_bundle include_ddl omitted — auto-attached (origin=${trunc(String(bundle.origin), LOG_TRUNC_JSON)})`);
       }
@@ -319,6 +330,9 @@ class ToolHandler implements ToolServices {
         return this.logAndReturn('lineage_get_scope_bundle', makeRejection({ code: REJECTION_CODES.staleTurn, reason: 'The turn no longer owns this session; the scope was not stored.', errors: at('backend_fault') }), input);
       }
       return this.logAndReturn('lineage_get_scope_bundle', bundle, input);
+        } : undefined;
+      } });
+      return typeof outcome === 'string' ? outcome : this.logAndReturn('lineage_get_scope_bundle', outcome, input);
     } catch (err) { return this.toolError('get_scope_bundle', err); }
   }
 
@@ -343,12 +357,13 @@ class ToolHandler implements ToolServices {
   public getObjectDetail(input: unknown) {
     try {
       const sess = this.getSession();
-      const parsed = parseToolInput(GetObjectDetailInputSchema, input);
-      if (!parsed.ok) return this.logAndReturn('lineage_get_object_detail', parsed.error, input);
-      const { id, cursor } = parsed.data;
-      const detail = getObjectDetail(this.requireModel(), id, sess.columnStore, cursor) as Record<string, unknown>;
-
-      return this.logAndReturn('lineage_get_object_detail', detail, input);
+      const model = this.requireModel(), facts = modelObjectAdmission(model);
+      const outcome = ingestToolInput({ input, schema: GetObjectDetailInputSchema, context: '', facts, inspect: view => {
+        const parsed = view.parsed, plan = facts.plan;
+        return parsed.success && plan ? () => this.logAndReturn('lineage_get_object_detail',
+          executeObjectDetail(model, plan, sess.columnStore, parsed.data.cursor), input) : undefined;
+      } });
+      return typeof outcome === 'string' ? outcome : this.logAndReturn('lineage_get_object_detail', outcome, input);
     } catch (err) { return this.toolError('get_object_detail', err); }
   }
 
@@ -479,63 +494,32 @@ export function buildAiToolRegistry(
 
   const registry = new ToolRegistry<LineageToolOutput>();
   const serialize = host?.serialize ?? createEffectSerializer();
-  const generation = () => host?.model?.modelCalls ?? 0;
-  const ownsInputRepair = host?.caller !== 'external' && typeof host?.model?.modelCalls === 'number';
-  const repairEpoch = getSession().turnEpoch;
-  if (ownsInputRepair) handler.signal?.addEventListener('abort', () => {
-    if (getSession().turnEpoch === repairEpoch) getSession().startExplorationDraft.clear();
-  }, { once: true });
   for (const def of TOOL_DEFS) {
     const execute = dispatch[def.name];
-    const inputBoundary = host?.caller !== 'external' && !['hop_commit', 'presentation_commit'].includes(def.effect);
-    const repairable = ownsInputRepair && def.effect === 'session_start'; // only start: reads are stateless (D-103)
     let owner: z.ZodType = def.inputSchema;
-    let startedRound = -1, starts = 0, startedContext = '';
-    const context = () => { const s = getSession(); return JSON.stringify([s.turnEpoch, s.phase.kind, s.activeLmStage,
-      s.stateMachine?.currentFocus, s.pendingExploration?.revision]); };
-    const draft = () => getSession().startExplorationDraft;
-    let heldRound = -1;
-    // A repair keeps the full schema; a resent held field replaces its copy (D-098).
-    const project = (schema: z.ZodType) => { owner = schema; return schema; };
+    let group = { context: '', generation: -1, calls: 0 };
+    const project = (schema: z.ZodType) => { owner = schema; return ['session_start', 'presentation_commit'].includes(def.effect) ? modelUpdateSchema(schema) : schema; };
     registry.register({
       ...def,
       get inputSchema() { return project(owner); },
       inputRepairSchema: project,
       execute: async (input: unknown) => {
         handler.signal?.throwIfAborted();
-        const round = generation(), capturedContext = context();
-        if (startedRound !== round || startedContext !== capturedContext) { startedRound = round; startedContext = capturedContext; starts = 0; }
-        starts++;
+        const sess = getSession();
+        const receipt = { input: redactMissionBriefForLog(input), generation: handler.caller === 'external' ? undefined : host?.model?.modelCalls, signal: handler.signal,
+          context: JSON.stringify([sess.turnEpoch, sess.phase.kind, sess.activeLmStage, sess.stateMachine?.currentFocus, sess.pendingExploration?.revision]), group };
+        if (group.context !== receipt.context || group.generation !== receipt.generation) group = { context: receipt.context, generation: receipt.generation ?? -1, calls: 0 };
+        receipt.group = group; group.calls++;
         const invoke = async (): Promise<LineageToolOutput> => {
           handler.signal?.throwIfAborted();
           if (turnLease) assertActiveTurnLease(turnLease, getSession().turnEpoch);
           const offPolicy = handler.authorizeTool(def.name, input);
           if (offPolicy) return offPolicy;
-          if (!inputBoundary) {
-            const result = await execute(input);
-            if (turnLease) assertActiveTurnLease(turnLease, getSession().turnEpoch);
-            return result;
-          }
-          const store = repairable ? draft() : undefined;
-          const ambiguous = !!store && (starts > 1 || heldRound === round);
-          if (ambiguous) store!.clear();
-          const candidate = store && !ambiguous ? store.apply(capturedContext, input, owner) : input;
-          if (store?.unchanged) handler.logger.debug(`[Hold] identical resend no-op tool=${def.name}`);
-          const result = await invocationInput.run({ input: redactMissionBriefForLog(input) }, () => execute(candidate));
+          const result = await toolInputReceipt.run(receipt, () => execute(input));
           if (turnLease) assertActiveTurnLease(turnLease, getSession().turnEpoch);
-          const rejection = readToolErrorText(result);
-          if (!store || capturedContext !== context() || handler.signal?.aborted || !rejection || isConsentGateRejection(rejection.code)) {
-            store?.clear(); return result;
-          }
-          if (ambiguous) return JSON.stringify({ ...rejection, errors: [...rejection.errors, ...at('ambiguous_repair')], resend: undefined, resendRules: undefined });
-          const paths = rejection.errors.map(error => error.path).filter(Boolean);
-          const overwritten = store.retain(candidate, paths, owner);
-          heldRound = round;
-          return JSON.stringify({ ...rejection, errors: [...rejection.errors, ...at('not_overwritten', overwritten)],
-            resend: [...new Set([...(rejection.resend ?? []), ...paths.map(path => path.split('.')[0])])] });
+          return result;
         };
-        try { return await (def.effect === 'read' ? invoke() : serialize(invoke)); }
-        catch (error) { if (repairable && capturedContext === context()) draft().clear(); throw error; }
+        return def.effect === 'read' ? invoke() : serialize(invoke);
       },
     });
   }

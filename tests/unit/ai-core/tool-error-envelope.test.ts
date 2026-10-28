@@ -11,6 +11,7 @@ import { buildModel } from '../../../src/engine/modelBuilder';
 import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { validateToolCandidate } from '../../../src/ai/support/toolValidation';
 
 interface Shown { path: string; fault: string; correction: string; allowed?: string[]; missing?: string[]; more?: number }
 interface Problem { code: string; attempt: string; notice?: string; guidance: Array<{ category: string; instruction: string; errors: Shown[]; more?: number; fallback?: string }>; resend: string[]; resend_rule?: string }
@@ -141,9 +142,11 @@ describe("tool-error-envelope", () => {
   });
 
   it('a node id given two captions is one duplicate fault at the later caption', () => {
-    const rejection = zodRejection(presentResultSchemaForPhase('completed'), { name: 'Reports', summary: 'Reports lineage.', highlight_groups: [{ label: 'Out', color: 'target', node_ids: ['[dbo].[b]'] }],
+    const admitted = validateToolCandidate(presentResultSchemaForPhase('completed'), { name: 'Reports', summary: 'Reports lineage.', highlight_groups: [{ label: 'Out', color: 'target', node_ids: ['[dbo].[b]'] }],
       sections: [{ label: 'Report', node_ids: ['[dbo].[b]'], text: 'Report output.' }],
       notes: [{ node_id: '[dbo].[S]', caption: 'First.' }, { node_id: '[dbo].[b]', caption: 'Other.' }, { node_id: '[dbo].[S]', caption: 'Second.' }] });
+    if (admitted.success) throw new Error('Conflicting note captions admitted');
+    const rejection = admitted.rejection;
     expect(rejection.errors.map(error => error.path)).toEqual(['notes.2.caption']);
     expect(renderProblem(rejection, 3)).not.toContain('[dbo].[S]');
   });

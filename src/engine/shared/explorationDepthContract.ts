@@ -22,7 +22,7 @@ export function depthSidesDiffer(upstream: DepthSideValue, downstream: DepthSide
 }
 
 /** True when both sides are permanently closed — an empty starting scope. */
-export function bothSidesClosed(upstream: DepthSideValue, downstream: DepthSideValue): boolean {
+export function bothSidesClosed(upstream: { readonly levels: unknown }, downstream: { readonly levels: unknown }): boolean {
   return upstream.levels === 0 && downstream.levels === 0;
 }
 
@@ -63,4 +63,4 @@ export const ExplorationDepthSelectionSchema = z.object({
       message: 'Depth cannot be 0 in both directions; set at least one side to ≥ 1 or "all".',
     });
   }
-});
+}).meta({ toolDepthOpen: true });

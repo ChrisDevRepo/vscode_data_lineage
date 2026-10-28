@@ -60,6 +60,38 @@ export function snippetIds(text) {
   return new Set([...text.matchAll(/```sql S(\d+)/g)].map(match => `S${match[1]}`));
 }
 
+/** Pairs ordered start/terminal segments per request, including approval continuations with the same id. Never select endpoints from an ambiguous lifecycle. */
+export function requestLifecycles(records) {
+  const requestTypes = new Set(['turn-start', 'turn-terminal', 'phase', 'tool', 'gate', 'gate-resolution',
+    'wire-request', 'wire-response', 'wire-error', 'provider-raw', 'generation']);
+  const grouped = new Map();
+  for (const record of records) if (requestTypes.has(record.type)) {
+    const id = record.requestId ?? null;
+    if (!grouped.has(id)) grouped.set(id, []);
+    grouped.get(id).push(record);
+  }
+  return [...grouped].map(([requestId, own]) => {
+    let start = null, lastTerminalAt = null, valid = typeof requestId === 'string' && requestId.length > 0;
+    const segments = [];
+    for (const record of own) {
+      if (record.type === 'turn-start') {
+        if (start || (lastTerminalAt !== null && Number.isFinite(Date.parse(record.at)) && Date.parse(record.at) < lastTerminalAt)) valid = false;
+        start = record;
+      } else if (record.type === 'turn-terminal') {
+        if (!start || !['ok', 'error', 'cancelled'].includes(record.status)) valid = false;
+        const terminalAt = Date.parse(record.at), startAt = Date.parse(start?.at);
+        if (Number.isFinite(startAt) && Number.isFinite(terminalAt) && terminalAt < startAt) valid = false;
+        if (start) segments.push({ start, terminal: record });
+        lastTerminalAt = Number.isFinite(terminalAt) ? terminalAt : null;
+        start = null;
+      }
+    }
+    valid = valid && !start && segments.length > 0;
+    const status = valid ? ['error', 'cancelled'].find(status => segments.some(segment => segment.terminal.status === status)) ?? 'ok' : 'unknown';
+    return { requestId, valid, status, segments: valid ? segments : [] };
+  });
+}
+
 /** Computes payload metrics with tool outcomes and repairs isolated by request id. Every terminal is retained; a failed or cancelled turn makes the whole capture unsuccessful. */
 export function runMetrics(records) {
   const calls = [];
@@ -88,16 +120,7 @@ export function runMetrics(records) {
       rejected.push({ tool: record.toolName, code: record.rejectionCode, paths: Array.isArray(record.issuePaths) ? record.issuePaths : [] });
     }
   }
-  const requestTypes = new Set(['turn-start', 'turn-terminal', 'phase', 'tool', 'gate', 'gate-resolution',
-    'wire-request', 'wire-response', 'wire-error', 'provider-raw', 'generation']);
-  const requestRecords = records.filter(record => requestTypes.has(record.type));
-  const turns = [...new Set(requestRecords.map(record => record.requestId))].map(requestId => {
-    const own = requestRecords.filter(record => record.requestId === requestId);
-    const starts = own.filter(record => record.type === 'turn-start');
-    const terminals = own.filter(record => record.type === 'turn-terminal');
-    const complete = typeof requestId === 'string' && requestId.length > 0 && starts.length === 1 && terminals.length === 1 && own.indexOf(starts[0]) < own.indexOf(terminals[0]);
-    return { requestId, status: complete && ['ok', 'error', 'cancelled'].includes(terminals[0].status) ? terminals[0].status : 'unknown' };
-  });
+  const turns = requestLifecycles(records).map(({ requestId, status }) => ({ requestId, status }));
   const outcome = ['error', 'cancelled', 'unknown'].find(status => turns.some(turn => turn.status === status))
     ?? (turns.length ? 'ok' : 'unknown');
   const presents = calls.filter(call => call.name === PRESENT);
@@ -475,19 +498,14 @@ export function detailedMetrics(records, { finalSnapshot = null, causalAnnotatio
     if (event.nextServedFeedback?.reply) summary.exchangeCounts[`${prefix}Replies`] += 1;
   }
   const lifecycle = records.filter(record => record.type === 'turn-start' || record.type === 'turn-terminal');
-  const turns = [...new Set(lifecycle.map(record => record.requestId ?? null))].map(requestId => {
-    const own = lifecycle.filter(record => (record.requestId ?? null) === requestId);
-    const starts = own.filter(record => record.type === 'turn-start');
-    const terminals = own.filter(record => record.type === 'turn-terminal');
-    const start = starts.length === 1 ? starts[0] : null;
-    const terminal = terminals.length === 1 ? terminals[0] : null;
-    return { requestId, startAt: start?.at ?? null, terminalAt: terminal?.at ?? null, status: terminal?.status ?? null,
+  const lifecycles = requestLifecycles(records);
+  const turns = lifecycles.flatMap(({ requestId, segments }) => (segments.length ? segments : [{ start: null, terminal: null }])
+    .map(({ start, terminal }) => ({ requestId, startAt: start?.at ?? null, terminalAt: terminal?.at ?? null, status: terminal?.status ?? null,
       durationMs: typeof terminal?.durationMs === 'number' && Number.isFinite(terminal.durationMs) && terminal.durationMs >= 0 ? terminal.durationMs : null,
-      traceElapsedMs: elapsed(start?.at, terminal?.at) };
-  });
+      traceElapsedMs: elapsed(start?.at, terminal?.at) })));
   const recordedDurations = turns.map(turn => turn.durationMs).filter(value => value !== null);
   const observedDurationMs = recordedDurations.length ? recordedDurations.reduce((sum, value) => sum + value, 0) : null;
-  const turnTiming = { traceElapsedMs: elapsed(lifecycle.find(record => record.type === 'turn-start')?.at, lifecycle.findLast(record => record.type === 'turn-terminal')?.at),
+  const turnTiming = { traceElapsedMs: lifecycles.length && lifecycles.every(item => item.valid) ? elapsed(lifecycle.find(record => record.type === 'turn-start')?.at, lifecycle.findLast(record => record.type === 'turn-terminal')?.at) : null,
     recordedDurationMs: recordedDurations.length === turns.length && turns.length ? observedDurationMs : null,
     observedRecordedDurationMs: observedDurationMs, coveredTurns: recordedDurations.length, missingTurns: turns.length - recordedDurations.length };
 

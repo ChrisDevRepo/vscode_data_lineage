@@ -1,3 +1,4 @@
+import { validateToolCandidate } from '../../../src/ai/support/toolValidation';
 /** Per-call, per-reply and recovery outcomes of the tool dispatcher. */
 import { assert, describe, expect, it, vi } from 'vitest';
 import { appendFileSync } from 'node:fs';
@@ -25,7 +26,7 @@ import { CLARIFICATION_WINDOW_MS, ISSUE_CATEGORIES, ISSUES, LAST_CORRECTION, at,
 import { REJECTION_CODES } from '../../../src/ai/support/rejectionCodes';
 import { buildRouteValidationRejection } from '../../../src/ai/sm/smRouteValidation';
 import { createTurnTokenBudget } from '../../../src/ai/support/tokenBudget';
-import { GetContextInputSchema, PruneCurrentInputSchema, submitFindingsSchemaForMode } from '../../../src/ai/tools/toolSchemas';
+import { GetContextInputSchema, PruneCurrentInputSchema, StartExplorationFreshProviderInputSchema, StartExplorationRefineProviderInputSchema, submitFindingsSchemaForMode } from '../../../src/ai/tools/toolSchemas';
 import { AiSession } from '../../../src/ai/session/session';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { executeSubmitFindings } from '../../../src/ai/tools/handlers/submitFindings';
@@ -185,6 +186,276 @@ it.each((['bb', 'ct'] as const).flatMap(mode => (['business', 'technical', 'both
   expect(sent.filter(call => call.toolName === 'lineage_submit_findings').map(call => call.input)).toContainEqual({ badge_label: 'Report' });
   expect(session.memory.getResult().detail_slots.find(slot => slot.nodeId === focus.id)).toMatchObject({ summary: 'Held summary unique-prefix.',
     sections: angles.map(angle => ({ angle, text: heldSections[angle] })) });
+});
+
+/** Approved08 D-099: the production start controller owns schema and proposal faults in one reply. */
+describe('start contract matrix through the native port and production registry', () => {
+  const id = '[dbo].[Report]';
+  const depth = { upstream: { levels: 1, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } };
+  const proposal = { origin: id, analysisMode: 'bb', classification: 'technical', depth, mission_brief: 'Keep this exact authored mission.' };
+  function startWorld() {
+    const node = makeNode({ id, schema: 'dbo', name: 'Report', type: 'view', bodyScript: 'SELECT 1 AS Value;',
+      columns: [{ name: 'Value', type: 'int', nullable: 'NULL', extra: '' }] });
+    const session = new AiSession();
+    session.model = makeIndexedModel([node], []);
+    session.graph = makeGraph([node], []);
+    session.beginTurn(); session.enterLmStage({ kind: 'sm_entry' }, session.turnEpoch);
+    let input: unknown;
+    const model = nativePort(() => [call(`start-${model.port.modelCalls}`, input, 'lineage_start_exploration')]);
+    const registry = buildAiToolRegistry(() => session, { debug() {}, info() {}, warn() {}, error() {} } as never,
+      () => undefined, undefined, { model: model.port });
+    const plan = (refine: boolean) => compileInstructionPlan({ kind: 'converse', stage: { kind: 'sm_entry' }, registry,
+      // These are the exact phase owners selected by the production graph's sm_entry/gate_refine nodes.
+      toolSchemaOverrides: new Map([['lineage_start_exploration', refine ? StartExplorationRefineProviderInputSchema : StartExplorationFreshProviderInputSchema]]),
+      messages: [new HumanMessage('Review this exploration proposal.')], sink: new TurnEventSink(() => {}),
+      facts: explorationFacts('bb', [], { classification: 'technical' }), takeControlSignal: () => session.takeControlSignal(),
+      requiredTerminalTool: 'lineage_start_exploration', toolChoice: 'required' });
+    let current = plan(false), state = initialToolPhaseAttemptState('sm_entry');
+    return { session, model, async send(value: unknown) {
+      input = value;
+      const attempt = await executeToolAttempt(model.port, current, { priorState: state });
+      state = recordToolAttempt(state, attempt, 'lineage_start_exploration');
+      const [messages, options] = model.sendRequest.mock.calls.at(-1) as unknown as [unknown[], { tools: Array<{ name: string; inputSchema: object }> }];
+      const offered = options.tools.find(tool => tool.name === 'lineage_start_exploration');
+      assert(offered);
+      return { attempt, raw: toolMessage(attempt.messages).artifact as { code?: string; errors?: Array<{ path: string; code: string }> },
+        wire: { schema: offered.inputSchema, messages: structuredClone(messages), tools: structuredClone(options.tools) } };
+    }, refine() { session.enterGate(session.turnEpoch); current = plan(true); state = initialToolPhaseAttemptState('sm_entry'); } };
+  }
+
+  it.each([false, true])('D-098/D-097: the actual served start card admits the minimal named correction (refine=%s)', async refining => {
+    const w = startWorld();
+    if (refining) { expect((await w.send(proposal)).attempt.rejections).toEqual([]); w.refine(); }
+    const before = structuredClone(w.session.pendingExploration);
+    const first = await w.send(refining ? { proposalRevision: 1, mission_brief: proposal.mission_brief,
+      depth: { ...depth, upstream: { levels: 2, exactness: 'wrong' } } } : { ...proposal, classification: 'wrong', depth: JSON.stringify(depth) });
+    expect(first.raw.errors).toEqual(expect.arrayContaining([expect.objectContaining(refining
+      ? { path: 'depth.upstream.exactness', code: 'enum' } : { path: 'classification', code: 'enum' })]));
+    expect(w.session.pendingExploration).toEqual(before);
+    expect(w.session.stateMachine).toBeNull();
+    expect(String(toolMessage(first.attempt.messages).content)).not.toContain(proposal.mission_brief);
+    const correction = refining ? { depth: { upstream: { exactness: 'exact' } } } : { classification: 'technical' };
+    const validate = new Ajv({ strict: false, allErrors: true }).compile(first.wire.schema);
+    expect(validate(correction), `D-098: the exact model-facing card must admit the authored correction: ${JSON.stringify(validate.errors)}`).toBe(true);
+    const accepted = await w.send(correction);
+    expect(accepted.attempt.rejections).toEqual([]);
+    expect(accepted.wire.tools).toEqual(first.wire.tools);
+    expect(accepted.wire.messages.slice(0, first.wire.messages.length)).toEqual(first.wire.messages);
+    expect(w.session.pendingExploration).toMatchObject({ revision: refining ? 2 : 1,
+      init: { origin: id, mission_brief: proposal.mission_brief,
+        depthIntent: refining ? { ...depth, upstream: { levels: 2, exactness: 'exact' } } : depth } });
+    expect(w.session.stateMachine).toBeNull();
+  });
+
+  it.each([{}, { classification: 'wrong' }])('D-098: wire updates never supply missing fresh proposal content (%j)', async payload => {
+    const w = startWorld();
+    const result = await w.send(payload);
+    expect(result.attempt.rejections).toHaveLength(1);
+    expect(result.raw.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: 'origin', code: 'missing' }),
+      expect.objectContaining({ path: 'analysisMode', code: 'missing' }),
+      expect.objectContaining({ path: 'classification', code: 'classification' in payload ? 'enum' : 'missing' }),
+      expect.objectContaining({ path: 'depth', code: 'missing' }),
+    ]));
+    expect(w.session.pendingExploration).toBeNull();
+    expect(w.session.stateMachine).toBeNull();
+  });
+
+  it('D-099: reports stale revision beside bad depth before accepting just both corrections', async () => {
+    const w = startWorld();
+    expect((await w.send(proposal)).attempt.rejections).toEqual([]);
+    w.refine();
+    const before = structuredClone(w.session.pendingExploration);
+    const rejected = await w.send({ proposalRevision: 2, classification: 'business',
+      depth: { ...depth, upstream: { levels: 1, exactness: 'wrong' } } });
+    expect(rejected.raw.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: 'proposalRevision', code: 'stale_revision' }),
+      expect.objectContaining({ path: 'depth.upstream.exactness', code: 'enum' }),
+    ]));
+    expect(w.session.pendingExploration).toEqual(before);
+    expect(w.session.stateMachine).toBeNull();
+    const accepted = await w.send({ proposalRevision: 1, depth: { upstream: { exactness: 'exact' } } });
+    expect(accepted.attempt.rejections).toEqual([]);
+    expect(w.session.pendingExploration).toMatchObject({ revision: 2, classification: 'business',
+      init: { origin: id, depthIntent: depth, mission_brief: proposal.mission_brief } });
+    expect(w.session.stateMachine).toBeNull();
+  });
+
+  it.each((['excludeNodeIds', 'passNodeIds', 'targetColumns'] as const).flatMap(field => [true, false].map(readable => ({ field, readable }))))('Approved08 mixed array items keep independent metadata faults at original indices: $field/readable=$readable', async ({ field, readable }) => {
+    const w = startWorld();
+    const target = field === 'targetColumns';
+    const rejected = await w.send({ ...proposal, ...(target ? { analysisMode: 'ct' } : {}),
+      [field]: [42, ...(readable ? [target ? 'MissingColumn' : '[dbo].[Missing]'] : [])] });
+    expect(rejected.raw.errors?.map(({ path, code }) => ({ path, code }))).toEqual([
+      { path: `${field}.0`, code: 'type' },
+      ...(readable ? [{ path: `${field}.1`, code: target ? 'unknown_target_column' : 'not_found' }] : []),
+    ]);
+    expect(w.session.pendingExploration).toBeNull();
+    expect(w.session.stateMachine).toBeNull();
+    const correction = { [field]: target ? ['Value'] : [] };
+    const validate = new Ajv({ strict: false, allErrors: true }).compile(rejected.wire.schema);
+    expect(validate(correction), JSON.stringify(validate.errors)).toBe(true);
+    const accepted = await w.send(correction);
+    expect(accepted.attempt.rejections).toEqual([]);
+    expect(w.session.pendingExploration).toMatchObject({ init: { origin: id, depthIntent: depth, mission_brief: proposal.mission_brief,
+      ...(target ? { analysisMode: 'ct', targetColumns: ['Value'] } : { [field]: [] }) } });
+  });
+
+  it('Approved08 CT refine inspects target metadata against the held origin beside independent enum faults', async () => {
+    const w = startWorld();
+    expect((await w.send({ ...proposal, analysisMode: 'ct', targetColumns: ['Value'] })).attempt.rejections).toEqual([]);
+    w.refine();
+    const before = structuredClone(w.session.pendingExploration);
+    const rejected = await w.send({ proposalRevision: 1, classification: 'wrong', targetColumns: ['Missing'] });
+    expect(rejected.raw.errors?.map(({ path, code }) => ({ path, code }))).toEqual([
+      { path: 'classification', code: 'enum' }, { path: 'targetColumns.0', code: 'unknown_target_column' },
+    ]);
+    expect(w.session.pendingExploration).toEqual(before);
+    const accepted = await w.send({ classification: 'business', targetColumns: ['Value'] });
+    expect(accepted.attempt.rejections).toEqual([]);
+    expect(w.session.pendingExploration).toMatchObject({ revision: 2, classification: 'business', init: { origin: id, analysisMode: 'ct', targetColumns: ['Value'] } });
+  });
+
+  // Finite Approved08 classes: one mutation per independent field, all nonempty subsets.
+  // A malformed depth parent makes child exactness/levels faults inapplicable, never guessed.
+  const startFaults = [
+    { field: 'classification', bad: 'wrong', good: 'technical', errors: [{ path: 'classification', code: 'enum' }] },
+    { field: 'origin', bad: '[dbo].[Missing]', good: id, errors: [{ path: 'origin', code: 'not_found' }] },
+    { field: 'depth', bad: [], good: depth, errors: [{ path: 'depth', code: 'type' }] },
+    { field: 'unknown', bad: true, good: undefined, errors: [{ path: 'unknown', code: 'unknown_key' }] },
+    { field: 'excludeNodeIds', bad: ['[dbo].[Missing]'], good: [], errors: [{ path: 'excludeNodeIds.0', code: 'not_found' }] },
+  ];
+  const startCombinations = Array.from({ length: (1 << startFaults.length) - 1 }, (_, index) =>
+    startFaults.filter((_, bit) => (index + 1) & (1 << bit))).map(faults => ({ name: faults.map(fault => fault.field).join('+'), faults }));
+  it.each(startCombinations)('Approved08 START exhaustive declared independent-field subset: $name', async ({ faults }) => {
+    const w = startWorld();
+    const bad = { ...proposal, ...Object.fromEntries(faults.map(fault => [fault.field, fault.bad])) };
+    const correction = Object.fromEntries(faults.filter(fault => fault.good !== undefined).map(fault => [fault.field, fault.good]));
+    const expected = faults.flatMap(fault => fault.errors).sort((a, b) => a.path.localeCompare(b.path));
+    let first: Awaited<ReturnType<typeof w.send>> | undefined;
+    for (const stage of [1, 2, 3]) {
+      const rejected = await w.send(bad);
+      first ??= rejected;
+      expect(rejected.raw.errors?.map(({ path, code }) => ({ path, code })).sort((a, b) => a.path.localeCompare(b.path)),
+        `feedback ${stage}: every independently decidable fault exactly once`).toEqual([...(stage > 1 ? [{ path: '', code: 'identical_resend' }] : []), ...expected]);
+      expect(rejected.raw.errors?.some(error => error.path.startsWith('depth.'))).toBe(false);
+      expect(w.session.pendingExploration).toBeNull();
+      expect(w.session.stateMachine).toBeNull();
+      expect(String(toolMessage(rejected.attempt.messages).content)).not.toContain(proposal.mission_brief);
+    }
+    assert(first);
+    const validate = new Ajv({ strict: false, allErrors: true }).compile(first.wire.schema);
+    expect(validate(correction), JSON.stringify(validate.errors)).toBe(true);
+    const repaired = await w.send(correction);
+    expect(repaired.attempt.rejections).toEqual([]);
+    expect(repaired.wire.tools).toEqual(first.wire.tools);
+    expect(w.session.pendingExploration).toMatchObject({ init: { origin: id, depthIntent: depth, mission_brief: proposal.mission_brief } });
+    expect(w.session.stateMachine).toBeNull();
+  });
+
+  it('D-099: reports unknown origin with independent classification and depth faults without inventing columns', async () => {
+    const w = startWorld();
+    const rejected = await w.send({ ...proposal, origin: '[dbo].[Missing]', classification: 'wrong',
+      depth: { ...depth, upstream: { levels: 1, exactness: 'wrong' } } });
+    expect(rejected.raw.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: 'origin', code: 'not_found' }),
+      expect.objectContaining({ path: 'classification', code: 'enum' }),
+      expect.objectContaining({ path: 'depth.upstream.exactness', code: 'enum' }),
+    ]));
+    expect(rejected.raw.errors?.some(error => error.path.startsWith('targetColumns'))).toBe(false);
+    expect(w.session.pendingExploration).toBeNull();
+    expect(w.session.stateMachine).toBeNull();
+    const accepted = await w.send({ origin: id, classification: 'technical', depth: { upstream: { exactness: 'exact' } } });
+    expect(accepted.attempt.rejections).toEqual([]);
+    expect(w.session.pendingExploration).toMatchObject({ revision: 1, classification: 'technical',
+      init: { origin: id, depthIntent: depth, mission_brief: proposal.mission_brief } });
+  });
+});
+
+/** Approved08 D-098/D-099/D-102: report corrections use the same production controller in every report phase. */
+it.each([
+  { phase: 'completed' as const, retainable: false }, { phase: 'synthesis' as const, retainable: false },
+  { phase: 'completed' as const, retainable: true }, { phase: 'visual_preview' as const, retainable: false },
+].flatMap(scenario => Array.from({ length: 31 }, (_, index) => ({ ...scenario, mask: index + 1 }))))('report contract matrix: every declared compatible field subset ($phase, retainable=$retainable, mask=$mask)', async ({ phase, retainable, mask }) => {
+  const origin = '[dbo].[Report]', source = '[dbo].[Source]', outside = '[dbo].[Outside]';
+  const nodes = [origin, source, outside].map(id => makeNode({ id, schema: 'dbo', name: id, type: 'table' }));
+  const session = new AiSession();
+  session.model = makeIndexedModel(nodes, [[source, origin]]); session.graph = makeGraph(nodes, [[source, origin]]);
+  const epoch = session.beginTurn();
+  session.setClassification('technical');
+  const sections = [{ label: 'Flow', node_ids: [origin, source], text: 'Keep this exact authored report body.' }];
+  const report = { name: 'Held report', summary: 'Source supplies Report.', title: 'Held title sentinel', sections,
+    highlight_groups: [{ label: 'Origin', color: 'target', node_ids: [origin] }] };
+  session.explorationRunId = 'report-contract';
+  session.resultGraph = { nodeIds: [origin, source], edges: [[source, origin, 'read']], source: 'blackboard', originNodeId: origin,
+    ...(retainable ? { sections, sectionsRunId: session.explorationRunId } : {}) };
+  session.enterCompleted(epoch); session.enterLmStage({ kind: phase }, epoch);
+  const preview = phase === 'visual_preview';
+  if (preview) {
+    session.lastDiscoveryAnswer = 'Source report.\n\nSource supplies Report exactly.';
+    session.storeDiscoveryScope({ turnEpoch: epoch, origin, direction: 'upstream', nodeIds: [origin, source], edges: [[source, origin, 'read']] }, epoch);
+  }
+  const before = structuredClone(session.resultGraph);
+  const complete = preview ? { name: report.name, sections: [{ label: 'Flow', node_ids: [origin, source], start: 'B1' }],
+    highlight_groups: report.highlight_groups } : { ...report, ...(retainable ? { sections: [{ label: 'Flow' }] } : {}) };
+  // Literal oracle: Approved08 field/type/reference contracts, never production validation output.
+  const catalog = [
+    { field: 'name', bad: 42, good: report.name, errors: [{ path: 'name', code: 'type' }] },
+    { field: 'notes', bad: [{ node_id: outside, caption: 'Unresolved outside source.' }], good: [], errors: [{ path: 'notes.0.node_id', code: 'result_out_of_scope' }] },
+    { field: 'sections', bad: 42, good: complete.sections, errors: [{ path: 'sections', code: 'type' }] },
+    { field: 'highlight_groups', bad: [{ label: 'Origin', color: 'wrong', node_ids: [origin] }], good: report.highlight_groups,
+      errors: [{ path: 'highlight_groups.0.color', code: 'enum' }] },
+    { field: 'unknown', bad: true, good: undefined, errors: [{ path: 'unknown', code: 'unknown_key' }] },
+  ];
+  const faults = catalog.filter((_, bit) => mask & (1 << bit));
+  let payload: unknown = { ...complete, ...Object.fromEntries(faults.map(fault => [fault.field, fault.bad])) };
+  const model = nativePort(() => [call(`report-${model.port.modelCalls}`, payload, 'lineage_present_result')]);
+  const registry = buildAiToolRegistry(() => session, { debug() {}, info() {}, warn() {}, error() {} } as never,
+    () => undefined, undefined, { model: model.port });
+  const plan = compileInstructionPlan({ kind: 'converse', stage: { kind: phase }, registry,
+    messages: [new HumanMessage('Present the recorded report.')], sink: new TurnEventSink(() => {}),
+    facts: explorationFacts('bb', [], { classification: 'technical', memorySections: [] }), presentResultRetainableSections: () => session.retainableReportSections() !== null,
+    requiredTerminalTool: 'lineage_present_result', toolChoice: 'required' });
+  let state = initialToolPhaseAttemptState(phase);
+  const first = await executeToolAttempt(model.port, plan, { priorState: state });
+  state = recordToolAttempt(state, first);
+  const expected = faults.flatMap(fault => fault.errors).sort((a, b) => a.path.localeCompare(b.path));
+  const check = (attempt: typeof first, stage: number) => {
+    const raw = toolMessage(attempt.messages).artifact as { errors: Array<{ path: string; code: string }> };
+    expect(raw.errors.map(({ path, code }) => ({ path, code })).sort((a, b) => a.path.localeCompare(b.path)),
+      `stage${stage}: independently decidable exact faults`).toEqual([...(stage > 1 ? [{ path: '', code: 'identical_resend' }] : []), ...expected]);
+    if (mask & 4) expect(raw.errors.some(error => error.path.startsWith('sections.'))).toBe(false);
+    expect(session.resultGraph).toEqual(before);
+    expect(session.presentationArtifact).toBeNull();
+    expect(String(toolMessage(attempt.messages).content)).not.toContain(report.title);
+    expect(String(toolMessage(attempt.messages).content)).not.toContain(sections[0].text);
+  };
+  check(first, 1);
+  for (const stage of [2, 3]) {
+    const rejected = await executeToolAttempt(model.port, plan, { priorState: state });
+    state = recordToolAttempt(state, rejected);
+    check(rejected, stage);
+  }
+  const [firstMessages, firstOptions] = model.sendRequest.mock.calls.at(-1) as unknown as [unknown[], { tools: Array<{ name: string; inputSchema: object }> }];
+  const firstWire = { messages: structuredClone(firstMessages), tools: structuredClone(firstOptions.tools) };
+  const offered = firstOptions.tools.find(tool => tool.name === 'lineage_present_result'); assert(offered);
+  payload = Object.fromEntries(faults.filter(fault => fault.good !== undefined).map(fault => [fault.field, fault.good]));
+  const validate = new Ajv({ strict: false, allErrors: true }).compile(offered.inputSchema);
+  expect(validate({ notes: [{ caption: 'Missing required node' }] })).toBe(false);
+  expect(validate(payload), `D-098: report wire must admit only corrected fields: ${JSON.stringify(validate.errors)}`).toBe(true);
+  const accepted = await executeToolAttempt(model.port, plan, { priorState: state });
+  expect(accepted.rejections).toEqual([]);
+  expect(session.presentationArtifact?.name).toBe(report.name);
+  if (preview) {
+    expect(session.presentationArtifact?.aiMetadata.description).toContain('Source supplies Report exactly.');
+    expect(session.resultGraph?.sections).toEqual([{ label: 'Flow', node_ids: [origin, source], text: expect.stringContaining('Source supplies Report exactly.') }]);
+  } else {
+    expect(session.resultGraph?.sections).toEqual(sections);
+    expect(session.resultGraph?.title).toBe(report.title);
+  }
+  const [nextMessages, nextOptions] = model.sendRequest.mock.calls.at(-1) as unknown as [unknown[], { tools: unknown[] }];
+  expect(nextOptions.tools).toEqual(firstWire.tools);
+  expect(nextMessages.slice(0, firstWire.messages.length)).toEqual(firstWire.messages);
 });
 
 it.each([
@@ -527,10 +798,10 @@ describe('model-facing rejection text', () => {
       issuePaths: Array.from({ length: 7 }, (_, index) => `column_flow.${index}.note`),
       errors: Array.from({ length: 7 }, (_, index) => ({ path: `column_flow.${index}.note`, code: 'unknown_key' as IssueCode, allowed: ['out_col'] })) },
   ])('delivers every schema correction fact in the next consumed request: $id', async ({ id, schema, input, issueCount, issuePaths, errors }) => {
-    const parsed = schema.safeParse(input);
+    const parsed = validateToolCandidate(schema, input);
     if (parsed.success) throw new Error('Expected schema faults');
-    expect(parsed.error.issues).toHaveLength(issueCount);
-    const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
+    expect(parsed.rejection.errors).toHaveLength(issueCount);
+    const rejection = parsed.rejection;
     const { registry, invoke } = registryWith(() => JSON.stringify(rejection));
     const plan = discoveryPlan(registry);
     const first = await executeToolAttempt(nativePort(() => [call(id, { query: 'Orders' })]).port, plan,
@@ -646,10 +917,10 @@ describe('model-facing rejection text', () => {
     });
     const input = { focus_node_id: 'focus', summary: 'A valid summary.', sections: { technical: 'A long valid finding. '.repeat(5000) },
       column_flow: [{ out_col: 'Missing', upstream_columns: [] }, { out_col: 'AlsoMissing', upstream_columns: [] }] };
-    const parsed = schema.safeParse(input);
+    const parsed = validateToolCandidate(schema, input);
     expect(parsed.success).toBe(false);
     if (parsed.success) throw new Error('Expected invalid columns');
-    const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
+    const rejection = parsed.rejection;
     const { registry } = registryWith(() => JSON.stringify(rejection));
     const plan = discoveryPlan(registry);
     let state = initialToolPhaseAttemptState('discover');
@@ -1002,8 +1273,13 @@ describe('submit_findings rejection form', () => {
     session.enterExploring(session.turnEpoch);
     const { services } = stubToolServices({ session, model: indexed, graph, turnEpoch: () => session.turnEpoch });
     const registry = new ToolRegistry<string>();
+    let rawErrors: Array<{ path: string; code: string }> | undefined;
     registry.register({ name: 'lineage_submit_findings', inputSchema: submitFindingsSchemaForMode(mode, classification, true, engine.hopSubmitColumns, false),
-      effect: 'hop_commit', execute: (sent: unknown) => executeSubmitFindings(sent, services) });
+      effect: 'hop_commit', execute: async (sent: unknown) => {
+        const result = await executeSubmitFindings(sent, services);
+        rawErrors = (JSON.parse(result) as { errors?: typeof rawErrors }).errors;
+        return result;
+      } });
     const plan = compileInstructionPlan({ kind: 'converse', stage: { kind: 'active', mode: mode === 'ct' ? 'sm_ct' : 'sm_bb' }, registry,
       messages: [new HumanMessage('Inspect Root.')], sink: new TurnEventSink(() => {}),
       facts: explorationFacts(mode, mode === 'ct' ? ['Value', 'Other'] : [], { classification, memorySections: [] }),
@@ -1012,11 +1288,14 @@ describe('submit_findings rejection form', () => {
     let state = initialToolPhaseAttemptState(plan.frame.phase);
     const send = async (input: unknown) => {
       const lines: string[] = [];
-      const attempt = await executeToolAttempt(nativePort(() => [call(`c${state.providerCalls}`, input, 'lineage_submit_findings')]).port, plan, { priorState: state, debugLog: line => lines.push(line) });
+      const native = nativePort(() => [call(`c${state.providerCalls}`, input, 'lineage_submit_findings')]);
+      const attempt = await executeToolAttempt(native.port, plan, { priorState: state, debugLog: line => lines.push(line) });
       state = recordToolAttempt(state, attempt, 'lineage_submit_findings');
       const content = String(toolMessage(attempt.messages).content);
       const problem = attempt.rejections.length ? problemOf(content) : undefined;
-      return { attempt, content, lines, rejection: problem ? { ...problem, errors: shown(problem) } : undefined };
+      const [, options] = native.sendRequest.mock.calls.at(-1) as unknown as [unknown[], { tools: Array<{ name: string; inputSchema: object }> }];
+      const wire = options.tools.find(tool => tool.name === 'lineage_submit_findings')!.inputSchema;
+      return { attempt, content, lines, wire, rawErrors, rejection: problem ? { ...problem, errors: shown(problem) } : undefined };
     };
     return { engine, send, state: () => state };
   }
@@ -1030,6 +1309,36 @@ describe('submit_findings rejection form', () => {
         ...(mode === 'ct' ? { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0', transforms: ['pass_through'], note: 'Declared source.' }] }, terminals[1]] } : {}),
         questions: [{ nodeId: source, question: 'Explain this supplied neighbor.' }],
         prune_neighbors: [{ id: other, reason: 'No requested contribution.' }] };
+      // Independent literal fault catalog complements full schema single-mutation coverage below.
+      // Every nonempty subset has different fields; alternative mutations of one field remain singles.
+      const mechanical = [
+        { field: 'summary', bad: 42, errors: [{ path: 'summary', code: 'type' }] },
+        { field: 'badge_label', bad: 'x'.repeat(51), errors: [{ path: 'badge_label', code: 'size' }] },
+        { field: 'sections', bad: 42, errors: [{ path: 'sections', code: 'type' }] },
+        { field: 'questions', bad: 42, errors: [{ path: 'questions', code: 'type' }] },
+        { field: 'prune_neighbors', bad: 42, errors: [{ path: 'prune_neighbors', code: 'type' }] },
+        { field: 'unknown', bad: true, errors: [{ path: 'unknown', code: 'unknown_key' }] },
+        ...(mode === 'ct' ? [{ field: 'column_flow', bad: missingColumn,
+          errors: [{ path: 'column_flow.0.upstream_columns.0.col', code: 'unknown_column' }] }] : []),
+      ];
+      for (let mask = 1; mask < (1 << mechanical.length); mask++) {
+        const selected = mechanical.filter((_, bit) => mask & (1 << bit));
+        const { engine, send } = hop(mode, classification);
+        const first = await send({ ...complete, ...Object.fromEntries(selected.map(fault => [fault.field, fault.bad])) });
+        assert(first.rejection);
+        const expected = selected.flatMap(fault => fault.errors).sort((a, b) => a.path.localeCompare(b.path));
+        expect(first.rawErrors!.map(({ path, code }) => ({ path, code })).sort((a, b) => a.path.localeCompare(b.path)),
+          `literal ${mode}/${classification}/${mask}: one exact independent fault per supplied bad field`).toEqual(expected);
+        const correction = Object.fromEntries(selected.filter(fault => Object.hasOwn(complete, fault.field))
+          .map(fault => [fault.field, complete[fault.field as keyof typeof complete]]));
+        const validate = new Ajv({ strict: false, allErrors: true }).compile(first.wire);
+        expect(validate(correction), JSON.stringify(validate.errors)).toBe(true);
+        const repaired = await send(correction);
+        expect(repaired.attempt.rejections).toEqual([]);
+        expect(engine.getDetailSlots()).toContainEqual(expect.objectContaining({ summary: complete.summary, badge_label: complete.badge_label,
+          sections: expect.arrayContaining(angles.map(angle => ({ angle, text: complete.sections[angle] }))) }));
+        expect(engine.getDetailSlots()[0]!.sections).toHaveLength(angles.length);
+      }
       const fixture = hop(mode, classification);
       const schema = submitFindingsSchemaForMode(mode, classification, true, fixture.engine.hopSubmitColumns);
       const wire = toModelJsonSchema(schema);

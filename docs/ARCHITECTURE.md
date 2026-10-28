@@ -56,7 +56,7 @@ A small question is answered in chat; a larger one becomes a plan you approve, c
 
 Each SQL step is a **hop**: the AI reads the current object's definition, records findings and states a mapping, question or prune for every open neighbor. A missing outcome is rejected; valid fields stay held for an action-only correction. The engine continues mapped neighbors and answers ACK or REJECT before committing. The AI does not classify the current object as analyze or passthrough. These checks establish mechanical validity, not correct SQL interpretation.
 
-**Mandatory AI/backend ownership gate:** before every recommendation or change, verify that semantic decisions and report content remain AI-owned. The backend persists supplied findings and reports; it must not infer, select, add or silently repair their meaning. Only lossless normalization and explicit index/reference expansion to supplied words or snippets transform content. Schema, reference, metadata, approved-scope and topology validation, persistence, routing and structural rendering (including lossless projection of stored AI graph values) remain technical; they do not authorize content invention. Review must reject a violation even when it is deterministic or convenient; a new guard needs an owner requirement and must remain nonsemantic. The backend owns routing and visit-once scheduling. One neighbor projection supplies action capabilities to context, schemas, routing and rejection choices. A hop can change only its current findings and propose actions for its eligible unvisited neighbors; a distant object is not a valid neighbor prune target. Visited neighbors remain available as evidence but receive no new work or changes to their committed findings.
+**Mandatory AI/backend ownership gate:** before every recommendation or change, verify that semantic decisions and report content remain AI-owned. The backend persists supplied findings and reports; it must not infer, select, add or silently repair their meaning. Only lossless normalization and explicit index/reference expansion to supplied words or snippets transform content. Schema, reference, metadata, approved-scope and topology validation, persistence, routing and structural rendering (including lossless projection of stored AI graph values) remain technical; they do not authorize content invention. Review must reject a violation even when it is deterministic or convenient; do not add new guards; correct the shared schema, ingestion or existing domain-rule owner. The backend owns routing and visit-once scheduling. One neighbor projection supplies action capabilities to context, schemas, routing and rejection choices. A hop can change only its current findings and propose actions for its eligible unvisited neighbors; a distant object is not a valid neighbor prune target. Visited neighbors remain available as evidence but receive no new work or changes to their committed findings.
 
 The backend manages pruning and connectivity while preserving committed mappings and the origin path. Identifier normalization preserves authored spelling. The AI selects report content; captured-SQL coverage is logged without rejecting omissions or adding excerpts. Explicit SQL references expand from captured blocks; invalid references and missing object sections request a focused repair while valid content stays held.
 
@@ -85,12 +85,14 @@ Each hop uses sliding memory: the question and approved scope, the current objec
 flowchart TD
     PLAN[LangGraph phase and instruction plan] --> MODEL[LangChain bridge to selected VS Code model]
     MODEL --> CORRELATE[Model port: complete, unique call IDs]
-    CORRELATE --> DISPATCH[Ordered phase-filtered dispatcher]
-    DISPATCH --> SCHEMA[Receiving handler: strict Zod shape]
-    SCHEMA --> ENGINE[NavigationEngine: topology, scope and qualified endpoints]
-    ENGINE -->|ACK| COMMIT[Commit findings and fan out tasks]
-    ENGINE -->|REJECT| REPAIR[Hold valid parts and return field repairs]
-    SCHEMA -->|REJECT| REPAIR
+    CORRELATE --> NORMALIZE[Model port: lossless normalization once]
+    NORMALIZE --> DISPATCH[Ordered phase-filtered dispatcher]
+    DISPATCH --> INGEST[Shared ingestion: context-scoped candidate]
+    INGEST --> SCHEMA[Canonical Ajv admission and native field facts]
+    SCHEMA --> ENGINE[Existing domain owners: topology, scope and references]
+    ENGINE --> DECIDE{Any issues?}
+    DECIDE -->|No| COMMIT[Publish prepared result and fan out tasks]
+    DECIDE -->|Yes| REPAIR[Retain valid fields; render one correction]
     REPAIR --> BUDGET[LangGraph bounded repair budget]
     BUDGET --> PLAN
     COMMIT --> AGENDA[Merge by object; dispatch when structurally ready]
@@ -99,9 +101,11 @@ flowchart TD
 
 Tool batches execute in provider order with unique call IDs. Missing or repeated call IDs fail the model response before tool execution. A successful gate, route change or phase completion closes the active batch.
 
-Schema validation and engine checks remain deterministic. Findings and report checks collect independent faults after one full candidate parse; shared drafts retain valid fields, replace resent values without keyed/index merging, and preserve a prior valid value when its replacement fails. One typed renderer builds staged correction feedback from issue tables and metadata. Start validation and retry-context work remain separate paths.
+The shared ingestion controller stages the context-scoped candidate, invokes canonical validation once, collects independently decidable domain faults and makes one retain-or-publish decision. Native field facts preserve original array positions and distinguish valid, absent, invalid and inapplicable fields. An invalid parent stays unknown. Domain rules reuse the engine metadata and graph owners; validation never changes committed findings.
 
-The engine bounds retries per hop. If a hop cannot be validated within the attempt budget, it terminates without committing partial or unverified findings. The LangChain bridge translates model and tool messages without executing them; Zod validates message shapes; the engine enforces state and graph integrity; and LangGraph manages phase transitions.
+Zod owns structural schema authoring, types and normalization metadata. Ajv compiles canonical constraints with all errors enabled and coercion, defaults and property removal disabled. Canonical admission metadata stays private; the model receives the stable field-update card, with complete array-item requirements. Shared drafts retain omitted valid fields and preserve prior values after faulty replacements. One issue table and renderer produce correction feedback without echoing submitted values.
+
+The engine bounds retries per hop. If a hop cannot be validated within the attempt budget, it terminates without committing partial or unverified findings. The LangChain bridge translates model and tool messages without executing them; Zod validates non-tool message contracts; the engine enforces state and graph integrity; and LangGraph manages phase transitions.
 
 ## Design boundaries
 

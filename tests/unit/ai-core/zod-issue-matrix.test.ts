@@ -1,8 +1,8 @@
 // Owner: src/ai/support/toolErrorEnvelope.ts with real tools/toolSchemas.ts; rejection diagnostic contracts.
-/** One case per Zod issue kind the model-facing tool schemas can emit, against the real schemas, asserting each fault's path, issue code and metadata values (D-103). Messages come from the issue-code table and are never pinned here. A Zod upgrade that renames an issue code fails here first. */
+/** Real canonical tool schemas preserve each fault path, issue code and metadata values (D-103). Messages belong to the issue-code table. */
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { rejectionFromZodError } from '../../../src/ai/support/toolErrorEnvelope';
+import { validateToolCandidate } from '../../../src/ai/support/toolValidation';
 import {
   GetObjectDetailInputSchema,
   GetScopeBundleInputSchema,
@@ -15,9 +15,10 @@ import {
 } from '../../../src/ai/tools/toolSchemas';
 
 const reject = (schema: z.ZodType, input: unknown) => {
-  const parsed = schema.safeParse(input);
+  const parsed = validateToolCandidate(schema, input);
   expect(parsed.success).toBe(false);
-  return rejectionFromZodError(parsed.error!, { code: 'invalid_input', input, schema });
+  if (parsed.success) throw new Error('Expected canonical admission faults');
+  return parsed.rejection;
 };
 
 const render = {
@@ -35,7 +36,7 @@ const closedNeighbor = (field: 'prune_neighbors' | 'questions') => ({
 
 type Fault = { path: string; code: string; values?: unknown };
 
-describe('Zod issue matrix', () => {
+describe('Canonical tool issue matrix', () => {
   it.each<{ name: string; schema: z.ZodType; input: unknown; faults: Fault[]; values?: string[] }>([
     ...(['upstream_depth', 'downstream_depth'] as const).map(missing => ({
       name: `Approved08 asymmetric scope: missing ${missing}`, schema: GetScopeBundleInputSchema,
@@ -85,7 +86,7 @@ describe('Zod issue matrix', () => {
     const r = reject(schema, input);
     for (const fault of faults) expect(r.errors).toContainEqual(expect.objectContaining(fault));
     expect(r.issuePaths).toEqual(expect.arrayContaining(faults.map(fault => fault.path)));
-    expect(r.resend).toBeUndefined();
+    expect(r.resend ?? []).toEqual([]);
     // D-102: a submitted value is never carried as a value.
     for (const value of values) expect(JSON.stringify(r.errors)).not.toContain(value);
   });

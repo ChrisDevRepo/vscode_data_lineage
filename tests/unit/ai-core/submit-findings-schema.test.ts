@@ -1,16 +1,17 @@
 // Owner: src/ai/tools/toolSchemas.ts (submitFindingsSchemaForMode); Zod/provider schema contracts.
 /** Provider JSON Schema and runtime agree on fresh kept findings, cuts and held patches. */
-import Ajv from 'ajv';
+import Ajv from 'ajv/dist/2020';
+import { validateToolCandidate } from '../../../src/ai/support/toolValidation';
 import { schemaFaults, withSchemaFaults } from './helpers/toolServices';
 import { describe, expect, it } from 'vitest';
-import { SubmitFindingsCtInputSchema, submitFindingsSchemaForMode, validatedFindingFields } from '../../../src/ai/tools/toolSchemas';
+import { SubmitFindingsCtInputSchema, submitFindingsSchemaForMode, findingAdmissionFacts } from '../../../src/ai/tools/toolSchemas';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import { normalizeModelInput } from '../../../src/ai/tools/normalizeModelInput';
 
-const findingFields = (input: unknown, schema: Parameters<typeof validatedFindingFields>[1]) => {
-  const parsed = schema.safeParse(input);
-  if (parsed.success) throw new Error('Expected the diagnostic fixture to fail its full schema.');
-  return validatedFindingFields(input, schema, parsed.error);
+const findingFields = (input: unknown, schema: Parameters<typeof findingAdmissionFacts>[0]) => {
+  const facts = findingAdmissionFacts(schema);
+  expect(validateToolCandidate(schema, input, facts.facts).success).toBe(false);
+  return facts;
 };
 
 describe('fresh kept required-field projection', () => {
@@ -28,7 +29,7 @@ describe('fresh kept required-field projection', () => {
     const input = { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: row.reference, col: 'Value' }] }] };
     const normalized = normalizeModelInput(schema, input);
     const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
-    expect(schema.safeParse(normalized.input).success).toBe(row.accepted);
+    expect(validateToolCandidate(schema, normalized.input).success).toBe(row.accepted);
     expect(wire(normalized.input)).toBe(row.accepted);
     if (!row.accepted) expect(normalized).toEqual({ input, fixes: [] });
   });
@@ -54,11 +55,11 @@ describe('fresh kept required-field projection', () => {
       const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
       expect(normalized.fixes.map(fix => [fix.before, fix.after])).toEqual(kind === 'scalar'
         ? [['dbo.caller', caller], ['dbo.source', source]] : [['dbo.source', source]]);
-      expect(schema.safeParse(normalized.input).success).toBe(true);
+      expect(validateToolCandidate(schema, normalized.input).success).toBe(true);
       expect(wire(normalized.input)).toBe(true);
       for (const fault of schemaFaults(toModelJsonSchema(schema), normalized.input)) {
         const invalid = withSchemaFaults(normalized.input, [fault]);
-        expect(schema.safeParse(invalid).success, JSON.stringify(fault)).toBe(false);
+        expect(validateToolCandidate(schema, invalid).success, JSON.stringify(fault)).toBe(false);
         expect(wire(invalid), JSON.stringify(fault)).toBe(false);
       }
       expect(input).toEqual(before);
@@ -84,17 +85,17 @@ describe('fresh kept required-field projection', () => {
     const raw = { [field]: [{ [idKey]: 'source', [textKey]: 'Explain its role.', surplus: '' }] };
     const before = structuredClone(raw);
     const safe = findingFields(raw, schema);
-    expect(safe.actionIdentities?.[field]).toEqual(['source']);
-    expect(safe.unavailable.has(field)).toBe(true);
+    expect([...safe.identities.values()]).toEqual(['source']);
+    expect(safe.unavailable().has(field)).toBe(true);
     expect(safe.fields).not.toHaveProperty(field);
     expect(raw).toEqual(before);
     // Base-schema references are diagnostic only: the engine must still resolve unknown ids.
     const unknown = findingFields({ [field]: [{ [idKey]: 'unknown', [textKey]: 'Explain its role.' }] }, schema);
-    expect(unknown.actionIdentities?.[field]).toEqual(['unknown']);
-    expect(unknown.unavailable.has(field)).toBe(true);
+    expect([...unknown.identities.values()]).toEqual(['unknown']);
+    expect(unknown.unavailable().has(field)).toBe(true);
     expect(unknown.fields).not.toHaveProperty(field);
-    expect(findingFields({ [field]: 'source' }, schema).actionIdentities?.[field]).toBeUndefined();
-    expect(findingFields({ [field]: [{ [idKey]: 42, [textKey]: 'Explain its role.' }] }, schema).actionIdentities?.[field]).toBeUndefined();
+    expect(findingFields({ [field]: 'source' }, schema).identities.size).toBe(0);
+    expect(findingFields({ [field]: [{ [idKey]: 42, [textKey]: 'Explain its role.' }] }, schema).identities.size).toBe(0);
   });
 
   it.each(['outside', 'OUTSIDE', 'unknown'])('keeps rejected supplier identity %s readable for engine diagnostics without admitting the field', node => {
@@ -104,10 +105,11 @@ describe('fresh kept required-field projection', () => {
     const input = { column_flow: [{ out_col: 'Amount', upstream_columns: [{ node, col: 'Amount' }] }] };
     const before = structuredClone(input);
     const safe = findingFields(input, schema);
-    expect(schema.safeParse(input).success).toBe(false);
-    expect(safe.unavailable.has('column_flow')).toBe(true);
+    expect(validateToolCandidate(schema, input).success).toBe(false);
+    expect(safe.unavailable().has('column_flow')).toBe(true);
     expect(safe.fields).not.toHaveProperty('column_flow');
-    expect(safe.columnSupplierDiagnostics).toEqual([{ ref: { node, col: 'Amount' }, path: 'column_flow.0.upstream_columns.0' }]);
+    expect([...safe.references]).toEqual([['/column_flow/0/upstream_columns/0/node', node]]);
+    expect([...safe.columns]).toEqual([['/column_flow/0/upstream_columns/0/col', 'Amount']]);
     expect(input).toEqual(before);
   });
 
@@ -119,7 +121,7 @@ describe('fresh kept required-field projection', () => {
     const full = { focus_node_id: 'focus', column_flow: [], summary: 'Amended summary.', sections: { business: 'Valid decoded prose.' } };
     for (const [input, accepted] of [[full, true], [{ ...full, sections: JSON.stringify(full.sections) }, false],
       [{ ...full, guessed: true }, false]] as const) {
-      expect(schema.safeParse(input).success).toBe(accepted);
+      expect(validateToolCandidate(schema, input).success).toBe(accepted);
       expect(wire(input)).toBe(accepted);
     }
   });
@@ -135,7 +137,7 @@ describe('fresh kept required-field projection', () => {
       const input = { focus_node_id: 'procedure', summary: 'SQL produces Value.',
         sections: { technical: 'Recorded SQL findings; destination relationships are retained separately.' },
         column_flow: [{ out_col: 'Value', upstream_columns: [{ node: 'input', col: 'Value' }], ...destination }] };
-      const parsed = schema.safeParse(input);
+      const parsed = validateToolCandidate(schema, input);
       expect(parsed.success, JSON.stringify(destination)).toBe(!omitted);
       if (parsed.success) expect(parsed.data).toEqual(input);
       expect(wire(input), JSON.stringify(destination)).toBe(!omitted);
@@ -161,12 +163,12 @@ describe('fresh kept required-field projection', () => {
       { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: raw, col: 'Value' }] }] },
     ]) {
       const input = { focus_node_id: 'focus', column_flow: [], ...part };
-      const parsed = submitFindingsSchemaForMode('ct', undefined, false, hop).safeParse(input);
+      const parsed = validateToolCandidate(submitFindingsSchemaForMode('ct', undefined, false, hop), input);
       expect(parsed.success).toBe(accepted);
       if (parsed.success) expect(parsed.data).toEqual(input);
     }
     const input = { focus_node_id: 'focus', column_flow: [{ out_col: 'Value', upstream_columns: [], returns_to: { node: raw, col: 'Value' } }] };
-    const scalar = submitFindingsSchemaForMode('ct', undefined, false, { ...hop, returnTargets: [{ node: canonical, col: 'Value' }] }).safeParse(input);
+    const scalar = validateToolCandidate(submitFindingsSchemaForMode('ct', undefined, false, { ...hop, returnTargets: [{ node: canonical, col: 'Value' }] }), input);
     expect(scalar.success).toBe(accepted);
     if (scalar.success) expect(scalar.data).toEqual(input);
   });
@@ -175,7 +177,7 @@ describe('fresh kept required-field projection', () => {
     const schema = submitFindingsSchemaForMode(mode, undefined, false, { outCols: null, writesTo: false, neighbors: [] });
     const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
     const input = { focus_node_id: 'focus', ...(mode === 'ct' ? { column_flow: [] } : {}), questions: [], prune_neighbors: [] };
-    expect(schema.safeParse(input).success).toBe(true);
+    expect(validateToolCandidate(schema, input).success).toBe(true);
     expect(wire(input)).toBe(true);
     expect(wire({ ...input, questions: [{ nodeId: 'unknown', question: 'Check it.' }] })).toBe(false);
   });
@@ -193,7 +195,7 @@ describe('fresh kept required-field projection', () => {
         const input = { focus_node_id: 'focus', ...(mode === 'ct' ? { column_flow: [] } : {}),
           ...(prune ? { prune_neighbors: [{ id, reason: 'Off path.' }] } : { questions: [{ nodeId: id, question: 'Check it.' }] }) };
         const accepted = id === 'open' || (!prune && id === 'queued');
-        expect(schema.safeParse(input).success, `${id} prune=${prune}`).toBe(accepted);
+        expect(validateToolCandidate(schema, input).success, `${id} prune=${prune}`).toBe(accepted);
         expect(wire(input), `${id} prune=${prune}`).toBe(accepted);
       }
     }
@@ -215,7 +217,7 @@ describe('fresh kept required-field projection', () => {
       const input = { focus_node_id: 'focus', column_flow: [{ out_col: name, upstream_columns: [],
         ...(scalar ? { returns_to: { node: 'caller', col: name } } : {}) }] };
       const before = structuredClone(input);
-      const parsed = schema.safeParse(input);
+      const parsed = validateToolCandidate(schema, input);
       expect(parsed.success).toBe(accepted);
       if (parsed.success) expect(parsed.data).toEqual(before);
       expect(input).toEqual(before);
@@ -244,16 +246,16 @@ describe('fresh kept required-field projection', () => {
     const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
     const accepted = { focus_node_id: 'source', summary: 'Supplies the amount.',
       sections: { technical: 'Amount is supplied unchanged.' }, ...(mode === 'ct' ? { column_flow: [] } : {}) };
-    expect(schema.safeParse(accepted).success).toBe(true);
+    expect(validateToolCandidate(schema, accepted).success).toBe(true);
     expect(wire(accepted)).toBe(true);
     for (const missing of ['summary', 'sections'] as const) {
       const invalid: Record<string, unknown> = { ...accepted };
       delete invalid[missing];
-      expect(schema.safeParse(invalid).success).toBe(false);
+      expect(validateToolCandidate(schema, invalid).success).toBe(false);
       expect(wire(invalid), `${missing} must be advertised as required for a fresh finding`).toBe(false);
     }
     const missingAngle = { ...accepted, sections: {} };
-    expect(schema.safeParse(missingAngle).success).toBe(false);
+    expect(validateToolCandidate(schema, missingAngle).success).toBe(false);
     expect(wire(missingAngle)).toBe(false);
   });
 
@@ -266,7 +268,7 @@ describe('fresh kept required-field projection', () => {
       const input = { focus_node_id: 'source', summary: 'Supplies the amount.', column_flow: [], sections };
       const before = structuredClone(input);
       expect(wire(input)).toBe(Object.keys(sections).length > 0);
-      expect(schema.safeParse(input).success).toBe(Object.keys(sections).length > 0);
+      expect(validateToolCandidate(schema, input).success).toBe(Object.keys(sections).length > 0);
       expect(input).toEqual(before);
     }
   });
@@ -281,28 +283,28 @@ describe('fresh kept required-field projection', () => {
           ? { technical: 'Nothing continues.' }
           : { business: 'Nothing continues.', technical: 'Nothing continues.' },
       prune_neighbors: [{ id: 'next', reason: 'Off the path.' }] };
-    expect(schema.safeParse(deadEnd).success).toBe(true);
+    expect(validateToolCandidate(schema, deadEnd).success).toBe(true);
     expect(wire(deadEnd)).toBe(true);
     for (const obsolete of [{ verdict: 'analyze' }, { verdict: 'passthrough' }, { verdict: 'end_branch' }, { reason: 'Unused legacy field.' }]) {
-      expect(schema.safeParse({ ...deadEnd, ...obsolete }).success).toBe(false);
+      expect(validateToolCandidate(schema, { ...deadEnd, ...obsolete }).success).toBe(false);
       expect(wire({ ...deadEnd, ...obsolete })).toBe(false);
     }
   });
 
   it.each(['', '   '])('rejects an explicitly blank repair summary %j instead of retaining an older summary silently', summary => {
     const schema = submitFindingsSchemaForMode('ct', 'technical', false);
-    expect(schema.safeParse({ focus_node_id: 'source', summary, column_flow: [] }).success).toBe(false);
-    expect(schema.safeParse({ focus_node_id: 'source', column_flow: [] }).success).toBe(true);
+    expect(validateToolCandidate(schema, { focus_node_id: 'source', summary, column_flow: [] }).success).toBe(false);
+    expect(validateToolCandidate(schema, { focus_node_id: 'source', column_flow: [] }).success).toBe(true);
   });
 
   it('accepts held patches without resending held content', () => {
     const schema = submitFindingsSchemaForMode('ct', 'both', false);
     const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
     const patch = { focus_node_id: 'source', column_flow: [] };
-    expect(schema.safeParse(patch).success).toBe(true);
+    expect(validateToolCandidate(schema, patch).success).toBe(true);
     expect(wire(patch)).toBe(true);
     const oneAngle = { ...patch, sections: { technical: 'Corrected mechanics.' } };
-    expect(schema.safeParse(oneAngle).success).toBe(true);
+    expect(validateToolCandidate(schema, oneAngle).success).toBe(true);
     expect(wire(oneAngle)).toBe(true);
   });
 
@@ -321,17 +323,17 @@ describe('fresh kept required-field projection', () => {
     ];
     for (const correction of corrections) {
       const patch = { ...envelope, ...correction };
-      expect(held.safeParse(patch).success).toBe(true);
+      expect(validateToolCandidate(held, patch).success).toBe(true);
       expect(wire(patch)).toBe(true);
-      expect(unheld.safeParse(patch).success).toBe(false);
+      expect(validateToolCandidate(unheld, patch).success).toBe(false);
       expect(unheldWire(patch)).toBe(false);
     }
     for (const patch of [{ ...envelope, column_flow: [] }]) {
-      expect(held.safeParse(patch).success).toBe(true);
+      expect(validateToolCandidate(held, patch).success).toBe(true);
       expect(wire(patch)).toBe(true);
     }
     for (const patch of [{ ...envelope, extra: true }, { ...envelope, questions: [{ nodeId: 'neighbor' }] }]) {
-      expect(held.safeParse(patch).success).toBe(false);
+      expect(validateToolCandidate(held, patch).success).toBe(false);
       expect(wire(patch)).toBe(false);
     }
   });
@@ -345,15 +347,15 @@ describe('fresh kept required-field projection', () => {
     for (const sections of [{ business: 'Business rule.' }, { technical: 'Execution rule.' }]) {
       const partial = { focus_node_id: 'source', summary: 'Supplies the amount.', ...(mode === 'ct' ? { column_flow: [] } : {}), sections };
       const before = structuredClone(partial);
-      expect(fresh.safeParse(partial).success).toBe(false);
+      expect(validateToolCandidate(fresh, partial).success).toBe(false);
       expect(wire(partial)).toBe(false);
-      expect(held.safeParse(partial).success).toBe(true);
+      expect(validateToolCandidate(held, partial).success).toBe(true);
       expect(new Ajv({ strict: false }).compile(toModelJsonSchema(held))(partial)).toBe(true);
       expect(partial).toEqual(before);
     }
     const complete = { focus_node_id: 'source', summary: 'Supplies the amount.',
       ...(mode === 'ct' ? { column_flow: [] } : {}), sections: { business: 'Business rule.', technical: 'Execution rule.' } };
-    expect(fresh.safeParse(complete).success).toBe(true);
+    expect(validateToolCandidate(fresh, complete).success).toBe(true);
     expect(wire(complete)).toBe(true);
   });
 
@@ -363,8 +365,8 @@ describe('fresh kept required-field projection', () => {
     expect(held).not.toBe(fresh);
     expect(submitFindingsSchemaForMode(mode, undefined, false)).toBe(held);
     const patch = { focus_node_id: 'source', ...(mode === 'ct' ? { column_flow: [] } : {}) };
-    expect(held.safeParse(patch).success).toBe(true);
-    expect(fresh.safeParse(patch).success).toBe(false);
+    expect(validateToolCandidate(held, patch).success).toBe(true);
+    expect(validateToolCandidate(fresh, patch).success).toBe(false);
   });
 
   it('normalizes an equivalent caller_context spelling to the focus id at the boundary without changing the served schema', () => {
@@ -396,8 +398,8 @@ it.each(['view', 'procedure', 'caller'] as const)('keeps a served %s flow exampl
   const description = wire.properties.column_flow.description as string;
   for (const match of description.matchAll(/Example:\s*(\[[\s\S]*?\])\.\s+Reference /g)) {
     const shown = { column_flow: JSON.parse(match[1]!) };
-    const parsed = schema.safeParse(shown);
-    expect(parsed.success, JSON.stringify(parsed.success ? [] : parsed.error.issues)).toBe(true);
+    const parsed = validateToolCandidate(schema, shown);
+    expect(parsed.success, JSON.stringify(parsed.success ? [] : parsed.rejection.errors)).toBe(true);
     expect(new Ajv({ strict: false }).compile(wire)(shown)).toBe(true);
   }
 });

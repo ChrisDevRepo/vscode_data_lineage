@@ -20,7 +20,9 @@ import { executePruneCurrent } from '../../../src/ai/tools/handlers/pruneCurrent
 import { executeStartExploration } from '../../../src/ai/tools/handlers/startExploration';
 import { ColumnFlowSchema, StartExplorationInputSchema, StartExplorationFreshProviderInputSchema, StartExplorationProviderInputSchema, StartExplorationRefineProviderInputSchema, PruneCurrentInputSchema, presentResultSchemaForPhase, submitFindingsSchemaForMode } from '../../../src/ai/tools/toolSchemas';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
-import Ajv from 'ajv';
+import Ajv from 'ajv/dist/2020';
+import * as toolValidation from '../../../src/ai/support/toolValidation';
+const { validateToolCandidate } = toolValidation;
 import { ISSUES, isAdmissionRefusal, isConsentGateRejection, readToolErrorText, renderProblem } from '../../../src/ai/support/toolErrorEnvelope';
 
 /** The errors a rendered problem shows, across its category groups. */
@@ -285,13 +287,23 @@ describe('missing neighbor outcomes beside an invalid column_flow', () => {
 
   it.each([
     ['unparseable text', '[{"out_col": "Value", "upstream_columns": ['],
-    ['shape-invalid entry', [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Missing', bogus: 1 }] }]],
     ['unresolvable reference', [{ out_col: 'Value', upstream_columns: [{ node: '[hop].[nowhere]', col: 'Value' }] }]],
   ])('claims no missing outcome when the flow cannot be read structurally: %s', (_label, flow) => {
     const { submit, unchanged } = setup();
     const rejected = submit(flow);
     expect(rejected).toHaveProperty('code');
     expect(missingIds(rejected)).toEqual([]);
+    unchanged();
+  });
+
+  it('keeps readable neighbor identity beside malformed supplier annotations', () => {
+    const { submit, unchanged } = setup();
+    const rejected = submit([{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Missing', bogus: 1 }] }]);
+    expect(rejected.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: 'column_flow.0.upstream_columns.0.bogus', code: 'unknown_key' }),
+      expect.objectContaining({ path: 'column_flow.0.upstream_columns.0.col', code: 'unknown_column' }),
+    ]));
+    expect(missingIds(rejected)).toEqual([OTHER]);
     unchanged();
   });
 
@@ -476,7 +488,7 @@ describe('large findings repairs', () => {
       else if (owner instanceof z.ZodUnion) owner.options.forEach(child => visit(child as z.ZodType));
     };
     visit(schema);
-    const full = vi.spyOn(schema, 'safeParse');
+    const full = vi.spyOn(toolValidation, 'validateToolCandidate');
     const children = [...owners].filter(owner => owner !== schema).map(owner => vi.spyOn(owner, 'safeParse'));
     const baseFlow = vi.spyOn(ColumnFlowSchema, 'safeParse');
     try {
@@ -490,7 +502,8 @@ describe('large findings repairs', () => {
         expect.objectContaining({ path: 'column_flow.0.upstream_columns.0.col', code: 'unknown_column' }),
       ]));
       expect(full).toHaveBeenCalledTimes(1);
-      expect(children.reduce((sum, spy) => sum + spy.mock.calls.length, 0)).toBe(0);
+      // Zod's optional metadata probe may parse undefined; candidate fields are never reparsed.
+      expect(children.flatMap(spy => spy.mock.calls).every(args => args[0] === undefined)).toBe(true);
       expect(baseFlow).not.toHaveBeenCalled();
       expect(engine.getDetailSlots()).toEqual([]);
     } finally { full.mockRestore(); children.forEach(spy => spy.mockRestore()); baseFlow.mockRestore(); }
@@ -962,6 +975,13 @@ describe('lineage_start_exploration boundary', () => {
     expect(validate(proposal)).toBe(true);
     expect(validate(legacy)).toBe(false);
   });
+  it.each([0, 1])('validates the imported depth rule natively with upstream level %s', upstream => {
+    const result = validateToolCandidate(StartExplorationInputSchema, { origin: ORIGIN, analysisMode: 'bb', classification: 'technical',
+      depth: { upstream: { levels: upstream, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } });
+    expect(result.success).toBe(upstream === 1);
+    if (!result.success) expect(result.rejection.errors).toEqual([expect.objectContaining({ path: 'depth', code: 'invalid' })]);
+  });
+
   it('rejects string depth without decoding it into a number', () => {
     const payload = { origin: ORIGIN, analysisMode: 'bb', classification: 'technical',
       depth: { upstream: { levels: '2', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } };
@@ -969,9 +989,11 @@ describe('lineage_start_exploration boundary', () => {
   });
 
   it.each([{}, { question: 'What feeds it?' }, { excludeTypes: ['table'] }])('rejects a start with no origin, supplement or revision at the schema: %j', input => {
-    const parsed = StartExplorationInputSchema.safeParse(input);
+    const parsed = validateToolCandidate(StartExplorationInputSchema, input);
     expect(parsed.success).toBe(false);
-    expect(parsed.error?.issues.some(issue => issue.code === 'custom' && issue.path.length === 0)).toBe(true);
+    if (parsed.success) throw new Error('Fresh omissions admitted');
+    expect(parsed.rejection.errors.map(({ code, path }) => ({ code, path })).sort((a, b) => a.path.localeCompare(b.path))).toEqual(
+      ['origin', 'analysisMode', 'classification', 'depth'].sort().map(path => ({ code: 'missing', path })));
   });
 
   it('answers that start with the schema rejection before the handler reads origin', async () => {
@@ -979,7 +1001,8 @@ describe('lineage_start_exploration boundary', () => {
     session.stateMachine = null;
     const { services } = stubToolServices({ session, model, graph });
     const result = JSON.parse(await executeStartExploration({ question: 'What feeds it?' }, services));
-    expect(result).toMatchObject({ code: 'invalid_input', errors: [expect.objectContaining({ path: '', code: 'missing' })] });
+    expect(result).toMatchObject({ code: 'invalid_input', errors: expect.arrayContaining(['origin', 'analysisMode', 'classification', 'depth']
+      .map(path => expect.objectContaining({ path, code: 'missing' }))) });
   });
 
   it('directs an origin plus legacy supplement to a fresh approval proposal', async () => {
@@ -1121,7 +1144,7 @@ describe('lineage_submit_findings boundary', () => {
       } else if (existing) {
         const after = engine.toJSON();
         expect(after.engineInternals.heldFinding?.finding, 'the malformed field keeps the existing draft').toEqual(before.engineInternals.heldFinding?.finding);
-        expect(result.resend, 'D-098: the faulty resent field is reported with the owed summary').toEqual(['column_flow', 'summary']);
+        expect([...result.resend].sort(), 'D-098: the faulty resent field is reported with the owed summary').toEqual(['column_flow', 'summary']);
       } else expect(result.resend).toEqual(['column_flow']);
       const correction = heldCase === 'none' ? valid : existing
         ? { focus_node_id: ORIGIN, summary: valid.summary }
@@ -1344,7 +1367,7 @@ it.each([{ unsupported: 'column_flow', missingTechnical: false }, { unsupported:
     questions: [{ nodeId: BRANCH, question: 'Explain this source.', ...(unsupported === 'questions.0.extra' ? { extra: 'Unsupported nested field.' } : {}) }],
     ...(unsupported === 'column_flow' ? { column_flow: [] } : {}),
   }, services));
-  expect(rejected).toMatchObject({ code: 'invalid_input', resend: missingTechnical ? ['sections', 'sections.technical'] : unsupported === 'questions.0.extra' ? ['questions'] : [],
+  expect(rejected).toMatchObject({ code: 'invalid_input', resend: missingTechnical ? ['sections.technical'] : unsupported === 'questions.0.extra' ? ['questions'] : [],
     errors: expect.arrayContaining([expect.objectContaining({ path: unsupported, code: 'unknown_key' })]) });
   const held = engine.toJSON().engineInternals.heldFinding?.finding;
   expect(held?.column_flow).toBeUndefined();
@@ -1584,14 +1607,18 @@ it('clears a held start draft on cancellation and never revives it in a new turn
   const resume = buildAiToolRegistry(() => session, { info() {}, debug() {}, warn() {}, error() {} } as never, () => undefined, undefined, { model: port });
   await batch([]);
   const afterCancel = JSON.parse(await resume.invoke('lineage_start_exploration', partial));
-  expect(afterCancel, 'nothing revived after cancellation').toMatchObject(JSON.parse(expected));
-  expect(afterCancel.resend).toEqual(['depth']);
+  expect(afterCancel, 'nothing revived after cancellation').toMatchObject({ ...JSON.parse(expected),
+    resend: expect.arrayContaining(['depth', 'origin', 'analysisMode', 'classification']) });
+  expect(afterCancel.resend).toHaveLength(4);
+  expect(afterCancel.errors.map((error: { path: string }) => error.path).sort()).toEqual(['depth.downstream', 'origin', 'analysisMode', 'classification'].sort());
   expect(session.pendingExploration).toBeNull();
   session.beginTurn(); session.enterLmStage({ kind: 'sm_entry' }, session.turnEpoch);
   await batch([]);
   const afterTurn = JSON.parse(await resume.invoke('lineage_start_exploration', partial));
-  expect(afterTurn, 'nothing revived in a new turn').toMatchObject(JSON.parse(expected));
-  expect(afterTurn.resend).toEqual(['depth']);
+  expect(afterTurn, 'nothing revived in a new turn').toMatchObject({ ...JSON.parse(expected),
+    resend: expect.arrayContaining(['depth', 'origin', 'analysisMode', 'classification']) });
+  expect(afterTurn.resend).toHaveLength(4);
+  expect(afterTurn.errors.map((error: { path: string }) => error.path).sort()).toEqual(['depth.downstream', 'origin', 'analysisMode', 'classification'].sort());
   expect(session.pendingExploration).toBeNull();
 });
 

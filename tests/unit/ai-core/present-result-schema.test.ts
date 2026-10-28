@@ -1,5 +1,6 @@
 /** Owns toolSchemas.ts presentation shape, JSON Schema projection and report-label constraints. */
-import Ajv from 'ajv';
+import Ajv from 'ajv/dist/2020';
+import { validateToolCandidate } from '../../../src/ai/support/toolValidation';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { PresentResultModelSchema, normalizePresentSectionLabel, presentResultSchemaForPhase } from '../../../src/ai/tools/toolSchemas';
@@ -80,9 +81,9 @@ describe('present-result schema and provider contract', () => {
 
   it('rejects the normalized duplicate at the exact second label path', () => {
     expect(normalizePresentSectionLabel(labelDraft.sections![0]!.label)).toBe('source alpha');
-    const parsed = PresentResultModelSchema.safeParse(labelDraft);
+    const parsed = validateToolCandidate(PresentResultModelSchema, labelDraft);
     expect(parsed.success).toBe(false);
-    if (!parsed.success) expect(parsed.error.issues).toEqual(expect.arrayContaining([expect.objectContaining({ path: ['sections', 1, 'label'], message: expect.stringContaining('Duplicate section label') })]));
+    if (!parsed.success) expect(parsed.rejection.errors).toEqual([expect.objectContaining({ path: 'sections.1.label', code: 'duplicate' })]);
   });
   it.each(['synthesis', 'visual_preview', 'completed'])('keeps full stage shape and excludes retired repair grammar in %s (D-098/D-101)', stage => {
     const schema = presentResultSchemaForPhase(stage, false, 2);
