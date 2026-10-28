@@ -227,9 +227,6 @@ export function readToolErrorText(text: string): ToolRejection | null {
 /** Feedback stage of one hop (D-105): 1 states every fault, 2 adds the allowed values, 3 adds the per-code fallbacks and the last-correction notice. */
 export type FeedbackStage = 1 | 2 | 3;
 
-/** Most allowed alternatives shown per error; every fault and owed subject is retained. */
-const MAX_ALLOWED = 15;
-
 /** Normalized edit distance in [0, 1], case-insensitive: ranks allowed values against a submitted value that is never shown. */
 function distance(a: string, b: string): number {
   const x = a.toLowerCase(), y = b.toLowerCase();
@@ -247,7 +244,7 @@ function valueAt(input: unknown, path: string): unknown {
   return resolveAtPath(input, path ? path.split('.').map(key => (/^\d+$/.test(key) ? Number(key) : key)) : []);
 }
 
-/** Renders one rejection as the problem the model reads: `{code, attempt, notice?, guidance[{category, instruction, errors[{path, fault, correction, allowed? | missing?, more?}], more?, fallback?}], resend, resend_rule?}`. Every sentence is a template of {@link ISSUE_CATEGORIES}, {@link RESEND_RULES} or {@link LAST_CORRECTION}, every fault, correction and fallback a static string of {@link ISSUES}; `input` only ranks allowed values and is never shown. Feedback 1 states each fault tersely under the short category instruction; feedback 2 uses the detailed instruction and adds `allowed` (an empty list when no valid value exists). Values of a required fault render as `missing` from feedback 1, since they name what is owed. At feedback 3 alone, a group states the fallbacks of its codes and the fallback field joins `resend`. */
+/** Renders one rejection as the problem the model reads: `{code, attempt, notice?, guidance[{category, instruction, errors[{path, fault, correction, allowed? | missing?}], fallback?}], resend, resend_rule?}`. Every sentence is a template of {@link ISSUE_CATEGORIES}, {@link RESEND_RULES} or {@link LAST_CORRECTION}, every fault, correction and fallback a static string of {@link ISSUES}; `input` only ranks allowed values and is never shown. Feedback 1 states each fault tersely under the short category instruction; feedback 2 uses the detailed instruction and adds `allowed` (an empty list when no valid value exists). Values of a required fault render as `missing` from feedback 1, since they name what is owed. At feedback 3 alone, a group states the fallbacks of its codes and the fallback field joins `resend`. */
 export function renderProblem(rejection: ToolRejection, stage: FeedbackStage, input?: unknown): string {
   const merged = new Map<string, ToolError>();
   for (const error of rejection.errors) {
@@ -268,8 +265,7 @@ export function renderProblem(rejection: ToolRejection, stage: FeedbackStage, in
       if (!error.values || (stage < 2 && category !== 'required')) return { path: error.path, fault, correction };
       const sent = valueAt(input, error.path);
       const ranked = [...error.values].sort((a, b) => (typeof sent === 'string' ? distance(sent, a) - distance(sent, b) : 0) || a.localeCompare(b));
-      const limit = category === 'required' ? ranked.length : MAX_ALLOWED;
-      return { path: error.path, fault, correction, [key]: ranked.slice(0, limit), ...(ranked.length > limit ? { more: ranked.length - limit } : {}) };
+      return { path: error.path, fault, correction, [key]: ranked };
     });
     const fallback = stage === 3 ? [...new Set(group.flatMap(error => {
       const issue = ISSUES[error.code];

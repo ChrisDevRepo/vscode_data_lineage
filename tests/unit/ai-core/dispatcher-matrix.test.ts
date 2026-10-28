@@ -211,14 +211,14 @@ describe('start contract matrix through the native port and production registry'
       facts: explorationFacts('bb', [], { classification: 'technical' }), takeControlSignal: () => session.takeControlSignal(),
       requiredTerminalTool: 'lineage_start_exploration', toolChoice: 'required' });
     let current = plan(false), state = initialToolPhaseAttemptState('sm_entry');
-    return { session, model, async send(value: unknown) {
+    return { session, model, state: () => state, async send(value: unknown) {
       input = value;
       const attempt = await executeToolAttempt(model.port, current, { priorState: state });
       state = recordToolAttempt(state, attempt, 'lineage_start_exploration');
       const [messages, options] = model.sendRequest.mock.calls.at(-1) as unknown as [unknown[], { tools: Array<{ name: string; inputSchema: object }> }];
       const offered = options.tools.find(tool => tool.name === 'lineage_start_exploration');
       assert(offered);
-      return { attempt, raw: toolMessage(attempt.messages).artifact as { code?: string; errors?: Array<{ path: string; code: string }> },
+      return { attempt, raw: toolMessage(attempt.messages).artifact as { code?: string; errors?: Array<{ path: string; code: string; values?: string[] }> },
         wire: { schema: offered.inputSchema, messages: structuredClone(messages), tools: structuredClone(options.tools) } };
     }, refine() { session.enterGate(session.turnEpoch); current = plan(true); state = initialToolPhaseAttemptState('sm_entry'); } };
   }
@@ -327,27 +327,47 @@ describe('start contract matrix through the native port and production registry'
   ];
   const startCombinations = Array.from({ length: (1 << startFaults.length) - 1 }, (_, index) =>
     startFaults.filter((_, bit) => (index + 1) & (1 << bit))).map(faults => ({ name: faults.map(fault => fault.field).join('+'), faults }));
-  it.each(startCombinations)('Approved08 START exhaustive declared independent-field subset: $name', async ({ faults }) => {
+  it.each(startCombinations.flatMap(row => [2, 3, 4, null].map(correctAt => ({ ...row, correctAt }))))('Approved08 START exhaustive declared independent-field subset: $name / correction=$correctAt', async ({ faults, correctAt }) => {
     const w = startWorld();
     const bad = { ...proposal, ...Object.fromEntries(faults.map(fault => [fault.field, fault.bad])) };
     const correction = Object.fromEntries(faults.filter(fault => fault.good !== undefined).map(fault => [fault.field, fault.good]));
     const expected = faults.flatMap(fault => fault.errors).sort((a, b) => a.path.localeCompare(b.path));
     let first: Awaited<ReturnType<typeof w.send>> | undefined;
-    for (const stage of [1, 2, 3]) {
+    for (let stage = 1; stage < (correctAt ?? 4); stage++) {
       const rejected = await w.send(bad);
       first ??= rejected;
       expect(rejected.raw.errors?.map(({ path, code }) => ({ path, code })).sort((a, b) => a.path.localeCompare(b.path)),
         `feedback ${stage}: every independently decidable fault exactly once`).toEqual([...(stage > 1 ? [{ path: '', code: 'identical_resend' }] : []), ...expected]);
       expect(rejected.raw.errors?.some(error => error.path.startsWith('depth.'))).toBe(false);
+      const feedback = problemOf(String(toolMessage(rejected.attempt.messages).content));
+      expect(feedback.attempt).toBe(`${stage}/3`);
+      expect(feedback.notice !== undefined).toBe(stage === 3);
+      for (const group of feedback.guidance) expect(group).not.toHaveProperty('fallback');
+      for (const error of rejected.raw.errors ?? []) {
+        const visible = shown(feedback).find(item => item.path === error.path);
+        expect(visible).toBeDefined();
+        if (stage === 1) expect(visible).not.toHaveProperty('allowed');
+        else if (error.values) expect([...(visible!.allowed ?? [])].sort()).toEqual([...error.values].sort());
+      }
+      expect(w.state().stopReason).toBeNull();
       expect(w.session.pendingExploration).toBeNull();
       expect(w.session.stateMachine).toBeNull();
       expect(String(toolMessage(rejected.attempt.messages).content)).not.toContain(proposal.mission_brief);
     }
     assert(first);
+    if (correctAt === null) {
+      const terminal = await w.send(bad);
+      expect(terminal.attempt.rejections).toHaveLength(1);
+      expect(w.state()).toMatchObject({ stopReason: 'no_progress', providerCalls: MAX_TOOL_PROVIDER_CALLS });
+      expect(w.session.pendingExploration).toBeNull();
+      expect(w.session.stateMachine).toBeNull();
+      return;
+    }
     const validate = new Ajv({ strict: false, allErrors: true }).compile(first.wire.schema);
     expect(validate(correction), JSON.stringify(validate.errors)).toBe(true);
     const repaired = await w.send(correction);
     expect(repaired.attempt.rejections).toEqual([]);
+    expect(w.state().providerCalls).toBe(correctAt);
     expect(repaired.wire.tools).toEqual(first.wire.tools);
     expect(w.session.pendingExploration).toMatchObject({ init: { origin: id, depthIntent: depth, mission_brief: proposal.mission_brief } });
     expect(w.session.stateMachine).toBeNull();
@@ -376,7 +396,7 @@ describe('start contract matrix through the native port and production registry'
 it.each([
   { phase: 'completed' as const, retainable: false }, { phase: 'synthesis' as const, retainable: false },
   { phase: 'completed' as const, retainable: true }, { phase: 'visual_preview' as const, retainable: false },
-].flatMap(scenario => Array.from({ length: 31 }, (_, index) => ({ ...scenario, mask: index + 1 }))))('report contract matrix: every declared compatible field subset ($phase, retainable=$retainable, mask=$mask)', async ({ phase, retainable, mask }) => {
+].flatMap(scenario => Array.from({ length: 31 }, (_, index) => [2, 3, 4, null].map(correctAt => ({ ...scenario, mask: index + 1, correctAt }))).flat()))('report contract matrix: every declared compatible field subset ($phase, retainable=$retainable, mask=$mask, correction=$correctAt)', async ({ phase, retainable, mask, correctAt }) => {
   const origin = '[dbo].[Report]', source = '[dbo].[Source]', outside = '[dbo].[Outside]';
   const nodes = [origin, source, outside].map(id => makeNode({ id, schema: 'dbo', name: id, type: 'table' }));
   const session = new AiSession();
@@ -421,20 +441,41 @@ it.each([
   state = recordToolAttempt(state, first);
   const expected = faults.flatMap(fault => fault.errors).sort((a, b) => a.path.localeCompare(b.path));
   const check = (attempt: typeof first, stage: number) => {
-    const raw = toolMessage(attempt.messages).artifact as { errors: Array<{ path: string; code: string }> };
+    const raw = toolMessage(attempt.messages).artifact as { errors: Array<{ path: string; code: string; values?: string[] }> };
     expect(raw.errors.map(({ path, code }) => ({ path, code })).sort((a, b) => a.path.localeCompare(b.path)),
       `stage${stage}: independently decidable exact faults`).toEqual([...(stage > 1 ? [{ path: '', code: 'identical_resend' }] : []), ...expected]);
     if (mask & 4) expect(raw.errors.some(error => error.path.startsWith('sections.'))).toBe(false);
+    const feedback = problemOf(String(toolMessage(attempt.messages).content));
+    expect(feedback.attempt).toBe(`${stage}/3`);
+    expect(feedback.notice !== undefined).toBe(stage === 3);
+    // Only the report's outside-node reference has a fallback among this declared catalog.
+    expect(feedback.guidance.some(group => group.fallback !== undefined)).toBe(stage === 3 && Boolean(mask & 2));
+    for (const error of raw.errors) {
+      const visible = shown(feedback).find(item => item.path === error.path);
+      expect(visible).toBeDefined();
+      if (stage === 1) expect(visible).not.toHaveProperty('allowed');
+      else if (error.values) expect([...(visible!.allowed ?? [])].sort()).toEqual([...error.values].sort());
+    }
+    expect(state.stopReason).toBeNull();
     expect(session.resultGraph).toEqual(before);
     expect(session.presentationArtifact).toBeNull();
     expect(String(toolMessage(attempt.messages).content)).not.toContain(report.title);
     expect(String(toolMessage(attempt.messages).content)).not.toContain(sections[0].text);
   };
   check(first, 1);
-  for (const stage of [2, 3]) {
+  for (let stage = 2; stage < (correctAt ?? 4); stage++) {
     const rejected = await executeToolAttempt(model.port, plan, { priorState: state });
     state = recordToolAttempt(state, rejected);
     check(rejected, stage);
+  }
+  if (correctAt === null) {
+    const terminal = await executeToolAttempt(model.port, plan, { priorState: state });
+    const finalState = recordToolAttempt(state, terminal);
+    expect(terminal.rejections).toHaveLength(1);
+    expect(finalState).toMatchObject({ stopReason: 'no_progress', providerCalls: MAX_TOOL_PROVIDER_CALLS });
+    expect(session.resultGraph).toEqual(before);
+    expect(session.presentationArtifact).toBeNull();
+    return;
   }
   const [firstMessages, firstOptions] = model.sendRequest.mock.calls.at(-1) as unknown as [unknown[], { tools: Array<{ name: string; inputSchema: object }> }];
   const firstWire = { messages: structuredClone(firstMessages), tools: structuredClone(firstOptions.tools) };
@@ -445,6 +486,7 @@ it.each([
   expect(validate(payload), `D-098: report wire must admit only corrected fields: ${JSON.stringify(validate.errors)}`).toBe(true);
   const accepted = await executeToolAttempt(model.port, plan, { priorState: state });
   expect(accepted.rejections).toEqual([]);
+  expect(recordToolAttempt(state, accepted).providerCalls).toBe(correctAt);
   expect(session.presentationArtifact?.name).toBe(report.name);
   if (preview) {
     expect(session.presentationArtifact?.aiMetadata.description).toContain('Source supplies Report exactly.');
@@ -934,11 +976,11 @@ describe('model-facing rejection text', () => {
     for (const path of ['column_flow.0.out_col', 'column_flow.1.out_col']) {
       const error = shown(content).find(item => item.path === path);
       expect(error).toMatchObject(fault('unknown_column', path));
-      expect(error!.allowed).toHaveLength(Math.min(15, columns.length));
+      expect(error!.allowed).toHaveLength(columns.length);
       expect(new Set(error!.allowed).size).toBe(error!.allowed!.length);
       expect(error!.allowed!.every(value => columns.includes(value))).toBe(true);
-      expect(error!.more ?? 0).toBe(columns.length - error!.allowed!.length);
-      if (columns.length <= 15) expect([...error!.allowed!].sort()).toEqual([...columns].sort());
+      expect(error).not.toHaveProperty('more');
+      expect([...error!.allowed!].sort()).toEqual([...columns].sort());
     }
     expect(content).not.toContain(input.sections.technical);
   });
@@ -977,11 +1019,11 @@ describe('model-facing rejection text', () => {
       expect(content).not.toContain('replies_remaining');
       const error = shown(content).find(item => item.path === path);
       expect(error).toMatchObject(fault(code, path));
-      expect(error!.allowed).toHaveLength(Math.min(15, columns.length));
+      expect(error!.allowed).toHaveLength(columns.length);
       expect(new Set(error!.allowed).size).toBe(error!.allowed!.length);
       expect(error!.allowed!.every(value => columns.includes(value))).toBe(true);
-      expect(error!.more ?? 0).toBe(columns.length - error!.allowed!.length);
-      if (columns.length <= 15) expect([...error!.allowed!].sort()).toEqual([...columns].sort());
+      expect(error).not.toHaveProperty('more');
+      expect([...error!.allowed!].sort()).toEqual([...columns].sort());
       expect(content).not.toMatch(/Recheck the named column|Rebuild the defective fields|Re-evaluate the proposed action/);
       if (count === 400 && kind !== 'enum') expect(next.rejections[0].detail).toMatchObject({ omitted: true });
       state = recordToolAttempt(state, next);
@@ -1254,9 +1296,9 @@ describe('submit_findings rejection form', () => {
   const paths = (rejection: { errors: Array<{ path: string }> }) => rejection.errors.map(error => error.path);
 
   /** A BB/CT hop with two neighbors, driven through the real dispatcher so each step reads what the model reads. */
-  function hop(mode: 'bb' | 'ct' = 'ct', classification: 'business' | 'technical' | 'both' = 'technical') {
+  function hop(mode: 'bb' | 'ct' = 'ct', classification: 'business' | 'technical' | 'both' = 'technical', declaredColumns = sourceColumns) {
     const nodes = [root, source, other].map(id => makeNode({ id, schema: 'd', name: id, type: 'view', bodyScript: 'SELECT 1 AS Value, 2 AS Other;',
-      columns: (id === source ? sourceColumns : ['Value', 'Other']).map(col) }));
+      columns: (id === source ? declaredColumns : ['Value', 'Other']).map(col) }));
     const pairs: [string, string][] = [[source, root], [other, root]];
     const indexed = makeIndexedModel(nodes, pairs), graph = makeGraph(nodes, pairs);
     const session = new AiSession();
@@ -1323,21 +1365,50 @@ describe('submit_findings rejection form', () => {
       ];
       for (let mask = 1; mask < (1 << mechanical.length); mask++) {
         const selected = mechanical.filter((_, bit) => mask & (1 << bit));
-        const { engine, send } = hop(mode, classification);
-        const first = await send({ ...complete, ...Object.fromEntries(selected.map(fault => [fault.field, fault.bad])) });
-        assert(first.rejection);
-        const expected = selected.flatMap(fault => fault.errors).sort((a, b) => a.path.localeCompare(b.path));
-        expect(first.rawErrors!.map(({ path, code }) => ({ path, code })).sort((a, b) => a.path.localeCompare(b.path)),
-          `literal ${mode}/${classification}/${mask}: one exact independent fault per supplied bad field`).toEqual(expected);
-        const correction = Object.fromEntries(selected.filter(fault => Object.hasOwn(complete, fault.field))
-          .map(fault => [fault.field, complete[fault.field as keyof typeof complete]]));
-        const validate = new Ajv({ strict: false, allErrors: true }).compile(first.wire);
-        expect(validate(correction), JSON.stringify(validate.errors)).toBe(true);
-        const repaired = await send(correction);
-        expect(repaired.attempt.rejections).toEqual([]);
-        expect(engine.getDetailSlots()).toContainEqual(expect.objectContaining({ summary: complete.summary, badge_label: complete.badge_label,
-          sections: expect.arrayContaining(angles.map(angle => ({ angle, text: complete.sections[angle] }))) }));
-        expect(engine.getDetailSlots()[0]!.sections).toHaveLength(angles.length);
+        for (const arm of ['first_resend_success', 'third_reply_success', 'fourth_reply_success', 'continued_wrong']) {
+          const { engine, send, state } = hop(mode, classification);
+          const input = { ...complete, ...Object.fromEntries(selected.map(fault => [fault.field, fault.bad])) };
+          const expected = selected.flatMap(fault => fault.errors).sort((a, b) => a.path.localeCompare(b.path));
+          const correction = Object.fromEntries(selected.filter(fault => Object.hasOwn(complete, fault.field))
+            .map(fault => [fault.field, complete[fault.field as keyof typeof complete]]));
+          for (const ordinal of arm === 'first_resend_success' ? [1] : arm === 'third_reply_success' ? [1, 2] : [1, 2, 3]) {
+            const rejected = await send(input);
+            assert(rejected.rejection);
+            expect(rejected.rawErrors!.map(({ path, code }) => ({ path, code })).sort((a, b) => a.path.localeCompare(b.path)),
+              `literal ${mode}/${classification}/${mask}/${arm}/${ordinal}: every independent field fault`).toEqual(expected);
+            expect(rejected.rejection.attempt).toBe(`${ordinal}/3`);
+            expect(rejected.rejection.notice !== undefined).toBe(ordinal === 3);
+            for (const group of rejected.rejection.guidance) {
+              const raw = rejected.rawErrors as Array<{ path: string; code: IssueCode; values?: string[] }>;
+              for (const error of group.errors) {
+                if (ordinal === 1 && group.category !== 'required') expect(error).not.toHaveProperty('allowed');
+                if (ordinal >= 2) {
+                  const values = raw.filter(item => item.path === error.path && ISSUES[item.code].label === error.fault).flatMap(item => item.values ?? []);
+                  if (values.length) expect([...(error.allowed ?? error.missing ?? [])].sort()).toEqual([...new Set(values)].sort());
+                }
+              }
+              expect(group.fallback !== undefined).toBe(ordinal === 3 && raw.some(error => ISSUES[error.code].category === group.category && 'fallback' in ISSUES[error.code]));
+            }
+            expect(engine.getDetailSlots()).toEqual([]);
+            expect(engine.columnAspect?.edges ?? []).toEqual([]);
+            expect(state().stopReason).not.toBe('no_progress');
+            const validate = new Ajv({ strict: false, allErrors: true }).compile(rejected.wire);
+            expect(validate(correction), JSON.stringify(validate.errors)).toBe(true);
+          }
+          const repaired = await send(arm === 'continued_wrong' ? input : correction);
+          if (arm === 'continued_wrong') {
+            expect(state()).toMatchObject({ stopReason: 'no_progress', providerCalls: 4, noProgressCalls: 4 });
+            expect(engine.getDetailSlots()).toEqual([]);
+            expect(engine.columnAspect?.edges ?? []).toEqual([]);
+          } else {
+            expect(repaired.attempt.rejections).toEqual([]);
+            expect(repaired.attempt.stop).toBe('phase_complete');
+            expect(state().providerCalls).toBe(arm === 'first_resend_success' ? 2 : arm === 'third_reply_success' ? 3 : 4);
+            expect(engine.getDetailSlots()).toContainEqual(expect.objectContaining({ summary: complete.summary, badge_label: complete.badge_label,
+              sections: expect.arrayContaining(angles.map(angle => ({ angle, text: complete.sections[angle] }))) }));
+            expect(engine.getDetailSlots()[0]!.sections).toHaveLength(angles.length);
+          }
+        }
       }
       const fixture = hop(mode, classification);
       const schema = submitFindingsSchemaForMode(mode, classification, true, fixture.engine.hopSubmitColumns);
@@ -1364,9 +1435,9 @@ describe('submit_findings rejection form', () => {
       });
       const groups = [...new Set(bundled.map(row => String(row.path[0])))].map(field => bundled.filter(row => row.path[0] === field));
       const scenarios = [
-        ...unique(faults).map((fault, index) => ({ id: `single-${index}`, seed: complete, faults: [fault], escalate: false })),
+        ...unique(faults).map((fault, index) => ({ id: `single-${index}`, seed: complete, faults: [fault] })),
         ...Array.from({ length: (1 << groups.length) - 1 }, (_, index) => ({ id: `fields-${index + 1}`, seed: groups.some((group, bit) => ((index + 1) & (1 << bit)) && group[0]!.path[0] === 'column_flow') ? bundledSeed : complete,
-          faults: groups.filter((_group, bit) => (index + 1) & (1 << bit)).flat(), escalate: index + 1 === (1 << groups.length) - 1 })),
+          faults: groups.filter((_group, bit) => (index + 1) & (1 << bit)).flat() })),
       ];
       for (const scenario of scenarios) {
         const initial = withSchemaFaults(scenario.seed, scenario.faults);
@@ -1379,7 +1450,7 @@ describe('submit_findings rejection form', () => {
         const correction = Object.fromEntries(fields.filter(field => Object.hasOwn(complete, field) && (field !== 'sections' || missingAngles.length))
           .map(field => [field, field === 'sections' ? Object.fromEntries(missingAngles.map(angle => [angle, complete.sections[angle]]))
             : complete[field as keyof typeof complete]]));
-        for (const arm of scenario.escalate ? ['first_resend_success', 'legal_final_exit', 'continued_wrong'] : ['first_resend_success']) {
+        for (const arm of ['first_resend_success', 'third_reply_success', 'fourth_reply_success', 'continued_wrong']) {
           const { engine, send, state } = hop(mode, classification);
           const sendCaptured = async (payload: unknown, ordinal: number) => {
             const result = await send(payload);
@@ -1403,21 +1474,43 @@ describe('submit_findings rejection form', () => {
           for (const field of Object.keys(complete))
             expect(projected.properties[field], `${scenario.id}: D-098 keeps held ${field} in the full schema`).toBeDefined();
           if (arm !== 'first_resend_success') {
-            const second = await sendCaptured(initial, 2);
-            assert(second.rejection, 'Expected a rejected submission');
-            expect(second.attempt.rejections).toHaveLength(1);
-            // D-099: feedback 2 names the same faults (the root '' error is the identical-resend note).
-            expect([...new Set(paths(second.rejection).filter(Boolean))].sort(), scenario.id).toEqual(expected.sort());
+            for (const ordinal of arm === 'third_reply_success' ? [2] : [2, 3]) {
+              const heldBefore = engine.heldPartsOfCurrentFocus();
+              const heldFields = new Set([...(heldBefore?.fields ?? []), ...(heldBefore?.summary ? ['summary'] : []),
+                ...(heldBefore?.sections.length ? ['sections'] : [])]);
+              const overwritten = [...new Set(expected.map(path => path.split('.')[0]!))].filter(field => heldFields.has(field));
+              const repeated = await sendCaptured(initial, ordinal);
+              assert(repeated.rejection, 'Expected a rejected submission');
+              expect(repeated.attempt.rejections).toHaveLength(1);
+              // Repeating an invalid replacement can additionally name the held value it could not overwrite (D-102).
+              expect([...new Set(repeated.rejection.errors.filter(error => error.fault !== ISSUES.not_overwritten.label
+                && error.fault !== ISSUES.identical_resend.label).map(error => error.path).filter(Boolean))].sort(), scenario.id).toEqual(expected.sort());
+              expect(repeated.rejection.errors.filter(error => error.fault === ISSUES.not_overwritten.label).map(error => error.path).sort()).toEqual(overwritten.sort());
+              expect(repeated.rejection.errors.filter(error => error.fault === ISSUES.identical_resend.label).map(error => error.path)).toEqual(['']);
+              for (const group of repeated.rejection.guidance) {
+                const raw = (repeated.rawErrors ?? []) as Array<{ path: string; code: IssueCode; values?: string[] }>;
+                for (const error of group.errors) {
+                  const values = raw.filter(item => item.path === error.path && ISSUES[item.code].label === error.fault).flatMap(item => item.values ?? []);
+                  if (values.length) expect([...(error.allowed ?? error.missing ?? [])].sort()).toEqual([...new Set(values)].sort());
+                }
+                const needsFallback = ordinal === 3 && raw.some(error => ISSUES[error.code].category === group.category && 'fallback' in ISSUES[error.code]);
+                expect(group.fallback !== undefined).toBe(needsFallback);
+              }
+              expect(repeated.rejection.attempt).toBe(`${ordinal}/3`);
+              expect(repeated.rejection.notice !== undefined).toBe(ordinal === 3);
+              expect(engine.getDetailSlots()).toEqual([]);
+              expect(engine.columnAspect?.edges ?? []).toEqual([]);
+              expect(state().stopReason).not.toBe('no_progress');
+            }
           }
-          if (arm === 'continued_wrong') await sendCaptured(initial, 3);
-          const final = await sendCaptured(arm === 'continued_wrong' ? initial : correction, arm === 'first_resend_success' ? 2 : arm === 'legal_final_exit' ? 3 : 4);
+          const final = await sendCaptured(arm === 'continued_wrong' ? initial : correction, arm === 'first_resend_success' ? 2 : arm === 'third_reply_success' ? 3 : 4);
           if (arm === 'continued_wrong') {
             expect(state()).toMatchObject({ stopReason: 'no_progress', providerCalls: MAX_TOOL_PROVIDER_CALLS, noProgressCalls: MAX_TOOL_PROVIDER_CALLS });
             expect(engine.getDetailSlots()).toEqual([]);
           } else {
             expect(final.attempt.rejections).toEqual([]);
             expect(final.attempt.stop).toBe('phase_complete');
-            expect(state().providerCalls).toBe(arm === 'first_resend_success' ? 2 : 3);
+            expect(state().providerCalls).toBe(arm === 'first_resend_success' ? 2 : arm === 'third_reply_success' ? 3 : 4);
             expect(engine.getDetailSlots()).toContainEqual(expect.objectContaining({ summary: complete.summary,
               sections: expect.arrayContaining(angles.map(angle => ({ angle, text: complete.sections[angle] }))) }));
             expect(engine.getDetailSlots()[0]!.sections).toHaveLength(angles.length);
@@ -1602,6 +1695,24 @@ describe('submit_findings rejection form', () => {
     expect(third.attempt.stop).toBe('phase_complete');
     expect(third.content).toContain('ended_columns');
     expect(third.content).not.toContain('Missing');
+  });
+
+  it('accepts a formerly clipped metadata choice while preserving held findings (Approved08 D-105)', async () => {
+    const columns = Array.from({ length: 24 }, (_, index) => `C${index}`);
+    const { engine, send } = hop('ct', 'technical', columns);
+    const questions = [{ nodeId: other, question: 'Explain the other source.' }];
+    await send({ ...base, column_flow: missingColumn, questions });
+    const second = await send({ column_flow: missingColumn });
+    const allowed = second.rejection!.errors.find(error => error.path === 'column_flow.0.upstream_columns.0.col')!.allowed!;
+    expect([...allowed].sort()).toEqual([...columns].sort());
+    expect(allowed.indexOf('C9')).toBeGreaterThanOrEqual(15);
+    expect(engine.getDetailSlots()).toEqual([]);
+    const accepted = await send({ column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C9' }] }, terminals[1]] });
+    expect(accepted.attempt.rejections).toEqual([]);
+    expect(accepted.attempt.stop).toBe('phase_complete');
+    expect(engine.getDetailSlots()).toContainEqual(expect.objectContaining({ summary: base.summary,
+      sections: [{ angle: 'technical', text: base.sections.technical }] }));
+    expect(engine.columnAspect!.edges).toContainEqual(expect.objectContaining({ from_node: source, from_col: 'C9', to_node: root, to_col: 'Value' }));
   });
 
   it('a report column reference gets its historical fallback only at reply 3 with the last-correction notice (D-105)', async () => {

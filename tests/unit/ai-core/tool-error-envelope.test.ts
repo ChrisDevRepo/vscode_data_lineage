@@ -41,13 +41,13 @@ describe("tool-error-envelope", () => {
     expect(rejection).toEqual(original);
   });
 
-  it('ranks allowed values by distance to the sent value, alphabetical on ties, and caps them at 15', () => {
+  it('ranks allowed values by distance to the sent value, alphabetical on ties, and retains the complete metadata set', () => {
     const values = Array.from({ length: 20 }, (_, index) => `Col${String(index).padStart(2, '0')}`);
     const rejection = makeRejection({ code: 'invalid_input', errors: [{ path: 'column_flow.0.out_col', code: 'unknown_column', values }] });
     const error = at(render(rejection, 2, { column_flow: [{ out_col: 'Col17x' }] }), 'column_flow.0.out_col')!;
     expect(error.allowed?.[0]).toBe('Col17');
-    expect(error.allowed).toHaveLength(15);
-    expect(error.more).toBe(5);
+    expect([...error.allowed!].sort()).toEqual([...values].sort());
+    expect(error).not.toHaveProperty('more');
     expect(JSON.stringify(error)).not.toContain('Col17x');
   });
 
@@ -109,9 +109,17 @@ describe("tool-error-envelope", () => {
         expect(third.resend).toContain('sections');
       }
     });
-    it.each([['out_of_scope', 'column_flow.0.writes_to.node'], ['bad_write_target', 'column_flow.0.writes_to.node'], ['unknown_target_column', 'targetColumns.0'],
-      ['not_in_result', 'sections.0.node_ids.0'], ['missing', 'summary']] as const)('%s at %s: no fallback at any feedback', (code, path) => {
-      for (const stage of [1, 2, 3] as const) expect(fallbackOf(render(makeRejection({ code: 'invalid_input', errors: [{ path, code, values: [] }] }), stage))).toBeUndefined();
+    // Approved08 D-105 permits only these three report-reference families, never structural/control/text faults.
+    const fallbackCodes = new Set(['supplier_out_of_scope', 'result_out_of_scope', 'unknown_column']);
+    const negativePaths: Record<string, string> = { out_of_scope: 'column_flow.0.writes_to.node', bad_write_target: 'column_flow.0.writes_to.node',
+      unknown_target_column: 'targetColumns.0', not_in_result: 'sections.0.node_ids.0', missing: 'summary' };
+    it.each((Object.keys(ISSUES) as Array<keyof typeof ISSUES>).filter(code => !fallbackCodes.has(code)))('%s: no fallback at any feedback (Approved08 D-105)', code => {
+      const path = negativePaths[code] ?? 'field';
+      for (const values of [[], ['AllowedValue']]) for (const stage of [1, 2, 3] as const) {
+        const problem = render(makeRejection({ code: 'invalid_input', errors: [{ path, code, values }], resend: ['field'] }), stage);
+        expect(fallbackOf(problem)).toBeUndefined();
+        expect(problem.resend).not.toContain('sections');
+      }
     });
   });
 

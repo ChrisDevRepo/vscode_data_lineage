@@ -36,7 +36,7 @@ import { REJECTION_CODES } from '../support/rejectionCodes';
 import { ISSUES, at, makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 
 /** Resolved mentions from rejected decision fields; never accepted decisions. */
-type ActionMentions = Partial<Record<'questions' | 'prune_neighbors' | 'column_flow', ReadonlySet<string>>>;
+type ActionMentions = Partial<Record<'questions' | 'prune_neighbors' | 'column_flow', ReadonlySet<string>>> & { identities?: ReadonlyMap<string, string> };
 
 /** A hop neighbour plus the engine decisions already taken about it. */
 export interface HopNeighborDisclosure extends HopNeighbor {
@@ -1864,6 +1864,7 @@ export class NavigationEngine implements IHopStateMachine {
         const fields = admission.fields, unavailable = admission.unavailable();
         const diagnostics: Parameters<LogFn>[] = [];
         const { columnPlan, mentions } = this.prepareFindingColumns(focus, admission, (...args) => diagnostics.push(args));
+        mentions.identities = admission.identities;
         for (const field of ['questions', 'prune_neighbors'] as const) {
           if (!unavailable.has(field)) continue;
           const prefix = `/${field}/`;
@@ -2168,6 +2169,16 @@ export class NavigationEngine implements IHopStateMachine {
     const routeRequests: ValidatedHop['routeRequests'] = [];
     const requested = new Set<string>();
     const neighbors = new Map(this.neighborChoices(focusId).map(neighbor => [neighbor.id, neighbor]));
+    const identities = [...actionMentions.identities ?? []].map(([path, raw]) => ({ path: path.slice(1).split('/').join('.'), id: resolveModelNodeId(raw, this.nodeMap, this.identifierCaseSensitive) }));
+    const pruneIdentities = new Set([...pruneNeighborIds, ...identities.filter(ref => ref.path.startsWith('prune_neighbors.') && ref.id && neighbors.get(ref.id)?.can_prune).map(ref => ref.id)]);
+    const conflictingQuestions = new Set<string>();
+    for (const { path, id } of identities) {
+      if (!path.startsWith('questions.') || !id || !neighbors.get(id)?.can_question || !pruneIdentities.has(id)) continue;
+      conflictingQuestions.add(id);
+      invalidRoutes.push({ kind: 'prune_question_conflict', id, path,
+        reason: 'The object is also named in prune_neighbors; the same submission cannot prune and investigate it.',
+        alternatives: ['prune_neighbors'] });
+    }
     (questions ?? []).forEach((q, index) => {
       const nid = resolveModelNodeId(q.nodeId, this.nodeMap, this.identifierCaseSensitive);
       if (!nid) {
@@ -2191,17 +2202,7 @@ export class NavigationEngine implements IHopStateMachine {
       }
       // The purpose is authored even if another field makes its proposed action inconsistent.
       requested.add(nid);
-      if (pruneNeighborIds.has(nid)) {
-        invalidRoutes.push({
-          kind: 'prune_question_conflict',
-          id: nid,
-          path: `questions.${index}.nodeId`,
-          reason: 'The object is also named in prune_neighbors; the same submission cannot prune and investigate it.',
-          // The resent prune_neighbors list resolves the conflict, so it is owed as an alternative, never as a missing field.
-          alternatives: ['prune_neighbors'],
-        });
-        return;
-      }
+      if (conflictingQuestions.has(nid)) return;
       let callerContext: FunctionCallerContext | undefined;
       if (q.caller_context) {
         const target = resolveFunctionCallerTarget(nid, q.caller_context, this.nodeMap, this.model, this.store);
