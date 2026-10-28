@@ -244,7 +244,7 @@ describe('declared contributor identities', () => {
       expect(engine.columnAspect?.target_columns).toEqual([target]);
       expect(engine.columnAspect?.active_columns).toEqual(['Value']);
     } else {
-      expect(result).toMatchObject({ detail: { node: 'root' }, errors: [{ path: 'targetColumns.0', code: 'unknown_column', values: ['Value'] }] });
+      expect(result).toMatchObject({ detail: { node: 'root' }, errors: [{ path: 'targetColumns.0', code: 'unknown_target_column', values: ['Value'] }] });
       expect(result).not.toHaveProperty('hint');
       expect(result).toHaveProperty('reason', expect.not.stringContaining(target));
     }

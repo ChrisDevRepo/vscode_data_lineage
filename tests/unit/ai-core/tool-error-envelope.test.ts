@@ -99,7 +99,7 @@ describe("tool-error-envelope", () => {
 
   describe('D-105 fallback: per issue code, only with the third rejection, never early', () => {
     const fallbackOf = (problem: Problem) => problem.guidance.find(group => group.fallback !== undefined)?.fallback;
-    it.each([['supplier_out_of_scope', 'column_flow.0.upstream_columns.0.node'], ['result_out_of_scope', 'sections.0.node_ids.3']] as const)('%s at %s', (code, path) => {
+    it.each([['supplier_out_of_scope', 'column_flow.0.upstream_columns.0.node'], ['result_out_of_scope', 'sections.0.node_ids.3'], ['unknown_column', 'column_flow.0.upstream_columns.0.col']] as const)('%s at %s', (code, path) => {
       for (const values of [[], ['x']]) {
         const rejection = makeRejection({ code: 'invalid_input', errors: [{ path, code, values }] });
         for (const stage of [1, 2] as const) expect(fallbackOf(render(rejection, stage))).toBeUndefined();
@@ -108,7 +108,7 @@ describe("tool-error-envelope", () => {
         expect(third.resend).toContain('sections');
       }
     });
-    it.each([['out_of_scope', 'column_flow.0.writes_to.node'], ['bad_write_target', 'column_flow.0.writes_to.node'], ['unknown_column', 'column_flow.0.upstream_columns.0.col'],
+    it.each([['out_of_scope', 'column_flow.0.writes_to.node'], ['bad_write_target', 'column_flow.0.writes_to.node'], ['unknown_target_column', 'targetColumns.0'],
       ['not_in_result', 'sections.0.node_ids.0'], ['missing', 'summary']] as const)('%s at %s: no fallback at any feedback', (code, path) => {
       for (const stage of [1, 2, 3] as const) expect(fallbackOf(render(makeRejection({ code: 'invalid_input', errors: [{ path, code, values: [] }] }), stage))).toBeUndefined();
     });

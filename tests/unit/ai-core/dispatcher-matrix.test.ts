@@ -1191,7 +1191,7 @@ describe('submit_findings rejection form', () => {
     expect(third.content).not.toContain('Missing');
   });
 
-  it('a fault a valid value can correct carries no fallback at any reply, and reply 3 carries the last-correction notice (D-105)', async () => {
+  it('a report column reference gets its historical fallback only at reply 3 with the last-correction notice (D-105)', async () => {
     const { send } = hop();
     const replies = [];
     for (let n = 1; n <= 3; n++) replies.push(await send({ ...base, column_flow: missingColumn }));
@@ -1200,9 +1200,11 @@ describe('submit_findings rejection form', () => {
       const error = reply.rejection!.errors.find(item => item.path === leaf);
       expect(error).toBeDefined();
       expect(error).toMatchObject(fault('unknown_column', leaf));
-      expect(reply.rejection!.guidance.some(group => group.fallback !== undefined)).toBe(false);
+      expect(reply.rejection!.guidance.some(group => group.fallback !== undefined)).toBe(index === 2);
+      expect(reply.rejection!.resend).toContain('column_flow');
+      expect(reply.rejection!.resend.includes('sections')).toBe(index === 2);
       expect(reply.rejection!.notice).toBe(index === 2 ? LAST_CORRECTION : undefined);
-      expect(reply.lines.filter(line => line.startsWith('[ToolOutcome]') && line.includes(' fallback=true'))).toHaveLength(0);
+      expect(reply.lines.filter(line => line.startsWith('[ToolOutcome]') && line.includes(' fallback=true'))).toHaveLength(index === 2 ? 1 : 0);
     }
   });
 

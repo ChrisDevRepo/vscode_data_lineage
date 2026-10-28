@@ -2,6 +2,7 @@
 import { ISSUE_CATEGORIES, ISSUES, LAST_CORRECTION, RESEND_RULES, makeRejection, renderProblem, type FeedbackStage, type ToolRejection } from '../../../src/ai/support/toolErrorEnvelope';
 import { buildRouteValidationRejection } from '../../../src/ai/sm/smRouteValidation';
 import { describe, expect, it } from 'vitest';
+import { inspectTargetColumns } from '../../../src/ai/interaction/rules/startExplorationRules';
 
 interface Guidance { category: keyof typeof ISSUE_CATEGORIES; instruction: string; errors: Array<{ path: string; fault: string; correction: string; allowed?: string[]; missing?: string[]; more?: number }>; more?: number; fallback?: string }
 interface Rendered { code: string; attempt: string; notice?: string; guidance: Guidance[]; resend: string[]; resend_rule?: string }
@@ -42,6 +43,24 @@ const r1 = (): ToolRejection => buildRouteValidationRejection([{ kind: 'supplier
   reason: `${SENTINEL} is outside the approved scope.`, allowed_values: [] }]);
 
 describe('rejection renderer structure', () => {
+  it('keeps the established final fallback for report columns and excludes start target controls (Approved08)', () => {
+    const report = makeRejection({ code: 'invalid_input', resend: ['column_flow'], errors: [
+      { path: 'column_flow.0.out_col', code: 'unknown_column', values: ['Known'] },
+    ] });
+    const start = inspectTargetColumns('[dbo].[Source]', ['Known'], ['Missing']).rejection!;
+    for (const stage of [1, 2, 3] as const) {
+      const shownReport = render(report, stage);
+      const shownStart = render(start, stage);
+      expect(shownReport.guidance[0].fallback).toBe(stage === 3
+        ? 'If you cannot correct it, write that information in the detail memory instead, highlighted with a callout naming the unresolved issue.' : undefined);
+      expect(shownReport.resend).toEqual(stage === 3 ? ['column_flow', 'sections'] : ['column_flow']);
+      expect(shownStart.guidance[0].fallback).toBeUndefined();
+      expect(shownStart.resend).toEqual(['analysisMode']);
+      expect(shownStart.guidance[0].errors[0].fault).toBe(shownReport.guidance[0].errors[0].fault);
+      expect(shownStart.guidance[0].errors[0].correction).toBe(shownReport.guidance[0].errors[0].correction);
+    }
+  });
+
   it('reports every independent path and every owed subject together (Approved08 D-099)', () => {
     const paths = Array.from({ length: 12 }, (_, index) => `sections.${index}.text`);
     const missing = Array.from({ length: 20 }, (_, index) => `[dbo].[Node${index}]`);
@@ -85,7 +104,7 @@ describe('rejection renderer structure', () => {
   });
 
   it('attaches a fallback per issue code: only codes whose fact no structured field can hold carry one', () => {
-    expect(Object.entries(ISSUES).filter(([, issue]) => 'fallback' in issue).map(([code]) => code).sort()).toEqual(['result_out_of_scope', 'supplier_out_of_scope']);
+    expect(Object.entries(ISSUES).filter(([, issue]) => 'fallback' in issue).map(([code]) => code).sort()).toEqual(['result_out_of_scope', 'supplier_out_of_scope', 'unknown_column']);
     // A write target outside the scope has a schema-defined form, so its third rejection ends without a fallback.
     const write = render(makeRejection({ code: 'invalid_input', errors: [{ path: 'column_flow.0.writes_to.node', code: 'out_of_scope', values: [] }] }), 3);
     expect(write.guidance[0].fallback).toBeUndefined();

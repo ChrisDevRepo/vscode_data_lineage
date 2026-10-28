@@ -54,6 +54,9 @@ export type ResendRule = keyof typeof RESEND_RULES;
 /** The text field a fallback writes its fact into; a rendered fallback adds it to `resend`. */
 const FALLBACK_FIELD = 'sections';
 
+/** Column identity text is shared; report references alone offer the final fallback. */
+const COLUMN_IDENTITY_ISSUE = { category: 'reference', label: 'not a declared column of that object', correction: 'Name a column declared on that object.' } as const;
+
 /** Every issue code: its category, a fixed fault label without values, the one positive correction for that fault and, only where a required fact has no structured field that can hold it, the prose `fallback` sent with the third, last rejection (D-105). */
 export const ISSUES = {
   type: { category: 'shape', label: 'wrong JSON type', correction: 'Send the value as the JSON type the schema defines for this field.' },
@@ -73,7 +76,9 @@ export const ISSUES = {
   result_out_of_scope: { category: 'reference', label: 'outside the approved scope, so not an id of the result', correction: 'Name only node ids of the result.',
     fallback: 'Where the fact concerns an object outside the result, it is still required: state it in the text of the section that describes it as a callout starting with ⚠️ that names the object. Keep every other section unchanged; its node_ids name only ids of the result.' },
   not_neighbor: { category: 'reference', label: 'not a neighbor of the current object', correction: 'Name a direct neighbor of the current object.' },
-  unknown_column: { category: 'reference', label: 'not a declared column of that object', correction: 'Name a column declared on that object.' },
+  unknown_target_column: COLUMN_IDENTITY_ISSUE,
+  unknown_column: { ...COLUMN_IDENTITY_ISSUE,
+    fallback: 'If you cannot correct it, write that information in the detail memory instead, highlighted with a callout naming the unresolved issue.' },
   closed_neighbor: { category: 'reference', label: 'neighbor already pruned or visited', correction: 'Name a neighbor that is still open; a pruned or visited neighbor takes no further decision.' },
   self_loop: { category: 'reference', label: 'supplier is this entry\'s own write target', correction: 'Name a supplier other than this entry\'s write target; the write target receives the column.' },
   bad_write_target: { category: 'reference', label: 'not a table this object writes to', correction: 'Name a table this object writes to; for any other write, set writes_to to null and state the write in sections.' },

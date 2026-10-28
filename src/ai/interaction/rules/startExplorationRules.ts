@@ -62,7 +62,7 @@ export function inspectTargetColumns(nodeId: string, declaredNames: readonly str
     code: REJECTION_CODES.unknownColumns,
     resend: ['analysisMode'],
     reason: `targetColumns must match declared columns of the origin under its identifier comparison policy${declaredNames.length > 0 ? '' : '; the origin declares no columns of its own'}.`,
-    errors: at('unknown_column', columns.flatMap((column, index) => offending.includes(column) ? [`targetColumns.${index}`] : []), declaredNames),
+    errors: at('unknown_target_column', columns.flatMap((column, index) => offending.includes(column) ? [`targetColumns.${index}`] : []), declaredNames),
     detail: { node: nodeId },
   }) };
 }
