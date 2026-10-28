@@ -1,5 +1,5 @@
 import { AIMessage, RemoveMessage } from '@langchain/core/messages';
-import { END, REMOVE_ALL_MESSAGES, START, MemorySaver, StateGraph, interrupt } from '@langchain/langgraph';
+import { END, REMOVE_ALL_MESSAGES, START, StateGraph } from '@langchain/langgraph';
 import {
   ModelPortError,
   modelAssistantMessage,
@@ -32,8 +32,8 @@ import {
   deriveStagePromptContext,
   type StagePromptContext,
 } from '../prompting/hostPrompts';
-import { PREVIEW_REQUEST_MARKER, STALE_GATE_TRIGGER_REPLY, TRACE_REQUEST_MARKER, buildDiscoveryFinalAnswerTask, buildGateReplySystemPrompt, buildGateReplyUserPrompt, parseGateTrigger } from '../prompting/prompts';
-import { renderScopeSummaryMd, UNREAD_GATE_REPLY } from '../prompting/scopeSummaryRenderer';
+import { PREVIEW_REQUEST_MARKER, STALE_GATE_TRIGGER_REPLY, TRACE_REQUEST_MARKER, buildDiscoveryFinalAnswerTask, buildGateReplySystemPrompt, buildGateReplyUserPrompt } from '../prompting/prompts';
+import { renderProposalDetailMd, renderScopeSummaryMd, UNREAD_GATE_REPLY } from '../prompting/scopeSummaryRenderer';
 import { buildChatAnswer } from '../support/chatAnswer';
 import { extractShortTermMemory } from '../support/smMemoryCore';
 import { toEngineLog } from '../support/engineLog';
@@ -78,7 +78,6 @@ import {
 import {
   AgentState,
   EntryDetectionSchema,
-  GateDecisionSchema,
   GateReplySchema,
   type AgentErrorCode,
   type AgentStateType,
@@ -119,7 +118,6 @@ const AGENT_NODES = {
   gate: 'consent_gate',
   gateRefine: 'gate_refine',
   approveGate: 'approve_gate',
-  holdGate: 'hold_gate',
   cancelGate: 'cancel_gate',
   activeCoordinator: 'active_coordinator',
   activeWorker: 'active_worker',
@@ -439,9 +437,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       : [modelUserMessage(state.prompt)];
 
     const slash = detectSlashRoute(state.prompt);
-    const held = sess.phase.kind === 'awaiting_gate' && sess.pendingExploration
-      ? { gate: sess.phase.gate, revision: sess.pendingExploration.revision }
-      : null;
+    const held = sess.phase.kind === 'awaiting_gate' ? sess.pendingExploration : null;
     const marker: 'trace' | 'preview' | null = state.prompt.startsWith(TRACE_REQUEST_MARKER)
       ? 'trace'
       : state.prompt.startsWith(PREVIEW_REQUEST_MARKER) ? 'preview' : null;
@@ -456,17 +452,15 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       return { ctx, messages, entry: 'visual_render', executionTrigger: 'preview_button', targetColumns: null, phase: 'detect_entry' };
     }
 
-    const trigger = parseGateTrigger(state.prompt);
-    if (trigger) {
-      if (!held || held.revision !== trigger.revision) {
-        logGraphDebug(deps, `[AI] [Gate] ${trigger.action} for revision=${trigger.revision} ignored — pending=${held?.revision ?? 'none'}`);
+    const decision = state.gateDecision;
+    if (decision) {
+      if (!sess.holdsProposal(decision.proposalId)) {
+        logGraphDebug(deps, `[AI] [Gate] ${decision.kind} for card=${decision.proposalId} ignored — held=${held?.proposalId ?? 'none'}`);
         deps.sink.stream(STALE_GATE_TRIGGER_REPLY);
         return { ctx, messages, outcome: 'ok', toolAttempt: null, phase: 'done' };
       }
-      logGraphDebug(deps, `[AI] [Gate] ${trigger.action} turn claims held proposal — revision=${held.revision}`);
-      return trigger.action === 'approve'
-        ? { ctx, messages, gate: held.gate, gateDecision: { kind: 'approve', classes: held.gate.classes }, phase: 'gate_approve' }
-        : { ctx, messages, gate: held.gate, gateDecision: { kind: 'cancel' }, phase: 'gate_cancel' };
+      logGraphDebug(deps, `[AI] [Gate] ${decision.kind} turn claims held card=${decision.proposalId}`);
+      return { ctx, messages, phase: `gate_${decision.kind}` };
     }
 
     if (held && state.toolAttempt?.phase !== 'detect_entry') {
@@ -477,7 +471,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
           phase: 'detect_entry',
           contract: { id: 'gate_reply', schema: GateReplySchema },
           facts: { memorySections: [] },
-          messages: [modelUserMessage(buildGateReplyUserPrompt(escapePromptText(held.gate.detail), escapePromptText(state.prompt)))],
+          messages: [modelUserMessage(buildGateReplyUserPrompt(escapePromptText(renderProposalDetailMd(held)), escapePromptText(state.prompt)))],
           system: buildGateReplySystemPrompt(),
           signal: deps.signal,
         }));
@@ -486,36 +480,29 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       } catch (error) {
         if (!(error instanceof StructuredOutputError)) throw error;
         logGraphDebug(deps,
-          `[AI] [Gate] typed-reply classification failed, proposal stays pending — revision=${held.revision} code=${error.code} reason=${sanitizeForLog(error.reason)}`,
+          `[AI] [Gate] typed-reply classification failed, proposal stays pending — card=${held.proposalId} code=${error.code} reason=${sanitizeForLog(error.reason)}`,
         );
         deps.sink.stream(UNREAD_GATE_REPLY);
         return { ctx, messages, outcome: 'ok', toolAttempt: null, phase: 'done' };
       }
       if (action === 'approve') {
-        logGraphDebug(deps, `[AI] [Gate] typed reply approves held proposal — revision=${held.revision}`);
-        return {
-          ctx,
-          messages,
-          gate: held.gate,
-          gateDecision: { kind: 'approve', classes: held.gate.classes },
-          phase: 'gate_approve',
-        };
+        logGraphDebug(deps, `[AI] [Gate] typed reply approves held proposal — card=${held.proposalId}`);
+        return { ctx, messages, gateDecision: { kind: 'approve', proposalId: held.proposalId! }, phase: 'gate_approve' };
       }
       if (action === 'cancel') {
-        logGraphDebug(deps, `[AI] [Gate] typed reply cancels held proposal — revision=${held.revision}`);
-        return { ctx, messages, gate: held.gate, gateDecision: { kind: 'cancel' }, phase: 'gate_cancel' };
+        logGraphDebug(deps, `[AI] [Gate] typed reply cancels held proposal — card=${held.proposalId}`);
+        return { ctx, messages, gateDecision: { kind: 'cancel', proposalId: held.proposalId! }, phase: 'gate_cancel' };
       }
       if (action === 'change') {
-        logGraphDebug(deps, `[AI] [Gate] held proposal claims prompt as refinement — revision=${held.revision}`);
+        logGraphDebug(deps, `[AI] [Gate] held proposal claims prompt as refinement — card=${held.proposalId}`);
         return {
           ctx,
           messages,
-          gate: held.gate,
-          gateDecision: { kind: 'refine', refine: { instruction: state.prompt } },
+          gateDecision: { kind: 'refine', proposalId: held.proposalId!, refine: { instruction: state.prompt } },
           phase: 'gate_refine',
         };
       }
-      logGraphDebug(deps, `[AI] [Gate] typed reply is not about the held proposal — answered normally, revision=${held.revision} stays pending`);
+      logGraphDebug(deps, `[AI] [Gate] typed reply is not about the held proposal — answered normally, card=${held.proposalId} stays pending`);
     }
 
     if (sess.phase.kind === 'completed' && sess.resultGraph) {
@@ -637,7 +624,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       ({ result: res, nextAttempt } = attempt);
     }
     if (res.stop === 'gate') {
-      return { gate: res.gate!, toolAttempt: null, phase: 'gate' };
+      return { toolAttempt: null, phase: 'gate' };
     }
     if (res.stop === 'reroute') return { executionTrigger: 'discovery_budget', toolAttempt: null, phase: 'sm_entry' };
     if (res.stop === 'continue') return { toolAttempt: nextAttempt, phase: 'discover' };
@@ -742,7 +729,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       return { ...failProvider(res, 'Failed to start exploration'), toolAttempt: nextAttempt };
     }
     if (res.stop === 'gate') {
-      return { gate: res.gate!, toolAttempt: null, phase: 'gate' };
+      return { toolAttempt: null, phase: 'gate' };
     }
     if (res.stop === 'refused') return refusedTerminal(res.refusal);
     const stopped = attemptStop(nextAttempt, 'Exploration entry', 'without reaching the consent gate');
@@ -761,37 +748,24 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     return { outcome: 'ok', messages: [modelAssistantMessage(refusal)], toolAttempt: null, phase: 'done' };
   };
 
-  const gateNode = (state: AgentStateType): AgentStateUpdate => {
-    if (!state.gate) return fail('Consent gate missing from graph state.');
-    observeWrite(deps.getSession().enterGate(state.gate, deps.turnEpoch));
-    const raw = interrupt(state.gate);
-    const parsed = GateDecisionSchema.safeParse(raw);
-    if (!parsed.success) {
-      deps.sink.error('The approval action was invalid. The existing proposal is still pending.', true);
-      return { gateDecision: null, phase: 'gate' };
-    }
-    return { gateDecision: parsed.data, phase: 'gate' };
+  /** Shows the session's pending proposal on a new card and ends the turn; the user's answer arrives as a later turn. */
+  const gateNode = (_state: AgentStateType): AgentStateUpdate => {
+    const sess = deps.getSession();
+    if (!sess.pendingExploration) return fail('Consent gate opened without a pending exploration proposal.');
+    observeWrite(sess.enterGate(deps.turnEpoch));
+    deps.sink.gate({ proposalId: sess.pendingExploration.proposalId!, gate: 'confirm_sm_start' });
+    return { outcome: 'ok', phase: 'done' };
   };
 
   const gateRefineNode = async (state: AgentStateType): Promise<AgentStateUpdate> => {
-    if (!state.gate || !state.gateDecision || state.gateDecision.kind !== 'refine') {
-      return fail('Gate refinement requested without a pending gate and refine payload.');
-    }
+    if (state.gateDecision?.kind !== 'refine') return fail('Gate refinement requested without a refine payload.');
     const sess = deps.getSession();
     const proposal = sess.pendingExploration;
     const keepPendingGate = (reason: string): AgentStateUpdate => {
       deps.sink.error(`Scope change was not applied: ${reason} The existing proposal is still pending.`, true);
-      return {
-        gate: state.gate,
-        gateDecision: null,
-        toolAttempt: null,
-        phase: 'gate',
-      };
+      return { gateDecision: null, toolAttempt: null, phase: 'gate' };
     };
     if (!proposal) return keepPendingGate('the pending proposal is no longer available.');
-    if (state.gate.proposalRevision !== proposal.revision) {
-      return keepPendingGate('the displayed proposal revision is stale.');
-    }
 
     const refine = state.gateDecision.refine;
     deps.sink.status('scoping', 'Refining scope...');
@@ -826,17 +800,10 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       failProvider(res, 'Scope refinement failed');
       return keepPendingGate('the model/provider could not complete the change.');
     }
-    if (res.stop === 'gate') {
-      return {
-        gate: res.gate!,
-        gateDecision: null,
-        toolAttempt: null,
-        phase: 'gate',
-      };
-    }
+    if (res.stop === 'gate') return { gateDecision: null, toolAttempt: null, phase: 'gate' };
     if (res.stop === 'refused') {
       deps.sink.error(res.refusal ?? '', true);
-      return { gate: state.gate, gateDecision: null, toolAttempt: null, phase: 'gate' };
+      return { gateDecision: null, toolAttempt: null, phase: 'gate' };
     }
     const stopped = attemptStop(nextAttempt, 'Scope refinement', 'without reaching the consent gate');
     if (stopped?.reason === 'backend_fault') return { ...failStopped(stopped, nextAttempt), toolAttempt: nextAttempt };
@@ -849,14 +816,13 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
   };
 
   const approveGateNode = async (state: AgentStateType): Promise<AgentStateUpdate> => {
-    if (!state.gate) return fail('Approved gate missing from graph state.');
+    if (state.gateDecision?.kind !== 'approve') return fail('Approval requested without an approve decision.');
     const sess = deps.getSession();
-    const expectedRevision = state.gate.proposalRevision;
-    if (!expectedRevision) return fail('Approved gate is missing its exploration proposal revision.');
+    const { proposalId } = state.gateDecision;
     if (!sess.model || !sess.graph) return fail('Approved exploration cannot start without a loaded model and graph.');
     const cachedDiscoverySummary = sess.pendingExploration?.discoverySummary;
     const engineLog = toEngineLog(deps.logger);
-    const activation = sess.activatePendingExploration(expectedRevision, deps.turnEpoch, (proposal) => {
+    const activation = sess.activatePendingExploration(proposalId, deps.turnEpoch, (proposal) => {
       const candidate = new NavigationEngine(
         sess.model!,
         sess.graph!,
@@ -872,11 +838,11 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       return candidate;
     });
     if (activation.kind === 'dropped_stale_turn') {
-      logGraphDebug(deps, `[AI] stale-turn proposal activation dropped — expectedRevision=${expectedRevision}`);
+      logGraphDebug(deps, `[AI] stale-turn proposal activation dropped — card=${proposalId}`);
       return fail('Approved exploration belongs to a superseded turn.');
     }
     if (activation.kind === 'rejected') {
-      logGraphDebug(deps, `[AI] approved proposal activation rejected — revision=${expectedRevision} reason=${sanitizeForLog(activation.reason)}`);
+      logGraphDebug(deps, `[AI] approved proposal activation rejected — card=${proposalId} reason=${sanitizeForLog(activation.reason)}`);
       return fail(`Approved exploration could not start: ${activation.reason}`);
     }
     const engine = activation.engine as NavigationEngine;
@@ -886,9 +852,6 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       phase: 'active_coordinator',
     };
   };
-
-  /** Ends the turn with the reviewed proposal still pending so the chat input frees up. */
-  const holdGateNode = (_state: AgentStateType): AgentStateUpdate => ({ outcome: 'ok', phase: 'done' });
 
   const cancelGateNode = (_state: AgentStateType): AgentStateUpdate => {
     observeWrite(deps.getSession().cancelPendingExploration(deps.turnEpoch));
@@ -1206,7 +1169,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     }
     const { result: res, nextAttempt } = attempt;
     sess.bufferFollowUpProse(res.text);
-    if (res.stop === 'gate') return { gate: res.gate!, toolAttempt: null, phase: 'gate' };
+    if (res.stop === 'gate') return { toolAttempt: null, phase: 'gate' };
     if (res.stop === 'refused') return refusedTerminal(res.refusal);
     if (res.stop === 'reroute') return { executionTrigger: 'discovery_budget', toolAttempt: null, phase: 'sm_entry' };
     if (res.stop === 'continue') return { toolAttempt: nextAttempt, phase: 'follow_up' };
@@ -1238,7 +1201,6 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     .addNode(AGENT_NODES.gateRefine, gateRefineNode)
     .addNode(AGENT_NODES.approveGate, approveGateNode)
     .addNode(AGENT_NODES.cancelGate, cancelGateNode)
-    .addNode(AGENT_NODES.holdGate, holdGateNode)
     .addNode(AGENT_NODES.activeCoordinator, activeCoordinatorNode)
     .addNode(AGENT_NODES.activeWorker, activeWorkerNode)
     .addNode(AGENT_NODES.synthesis, synthesisNode)
@@ -1271,14 +1233,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       AGENT_NODES.gate,
       END,
     ])
-    .addConditionalEdges(AGENT_NODES.gate, routeAfterGate, [
-      AGENT_NODES.gate,
-      AGENT_NODES.approveGate,
-      AGENT_NODES.gateRefine,
-      AGENT_NODES.holdGate,
-      AGENT_NODES.cancelGate,
-      END,
-    ])
+    .addEdge(AGENT_NODES.gate, END)
     .addConditionalEdges(AGENT_NODES.gateRefine, routeAfterGateRefine, [
       AGENT_NODES.gateRefine,
       AGENT_NODES.gate,
@@ -1302,14 +1257,13 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       AGENT_NODES.smEntry,
       END,
     ])
-    .addEdge(AGENT_NODES.holdGate, END)
     .addEdge(AGENT_NODES.cancelGate, END)
     .addConditionalEdges(AGENT_NODES.synthesis, routeAfterSynthesis, [
       AGENT_NODES.synthesis,
       END,
     ]);
 
-  return graph.compile({ checkpointer: new MemorySaver() });
+  return graph.compile();
 }
 
 /** Records the capture keys the locked classification excluded from one stage's prompt. */
@@ -1343,7 +1297,7 @@ function routeAfterDetectEntry(state: AgentStateType): string {
 function routeAfterDiscovery(state: AgentStateType): string {
   if (state.outcome) return END;
   if (state.phase === 'discover' && state.toolAttempt?.phase === 'discover') return AGENT_NODES.discovery;
-  if (state.gate) return AGENT_NODES.gate;
+  if (state.phase === 'gate') return AGENT_NODES.gate;
   if (state.phase === 'sm_entry') return AGENT_NODES.smEntry;
   return END;
 }
@@ -1359,7 +1313,7 @@ function routeAfterVisualPreview(state: AgentStateType): string {
 function routeAfterFollowUp(state: AgentStateType): string {
   if (state.outcome) return END;
   if (state.phase === 'follow_up' && state.toolAttempt?.phase === 'completed') return AGENT_NODES.followUp;
-  if (state.gate) return AGENT_NODES.gate;                              // Route B (divergent): gated fresh trace
+  if (state.phase === 'gate') return AGENT_NODES.gate;                  // Route B (divergent): gated fresh trace
   if (state.phase === 'sm_entry') return AGENT_NODES.smEntry;
   return END;                                                            // Route A (adjust) or chat answer
 }
@@ -1367,23 +1321,7 @@ function routeAfterFollowUp(state: AgentStateType): string {
 function routeAfterSmEntry(state: AgentStateType): string {
   if (state.outcome) return END;
   if (state.phase === 'sm_entry' && state.toolAttempt?.phase === 'sm_entry') return AGENT_NODES.smEntry;
-  return state.gate ? AGENT_NODES.gate : END;
-}
-
-function routeAfterGate(state: AgentStateType): string {
-  if (state.outcome) return END;
-  switch (state.gateDecision?.kind) {
-    case 'approve':
-      return AGENT_NODES.approveGate;
-    case 'refine':
-      return AGENT_NODES.gateRefine;
-    case 'hold':
-      return AGENT_NODES.holdGate;
-    case 'cancel':
-      return AGENT_NODES.cancelGate;
-    default:
-      return state.gate ? AGENT_NODES.gate : END;
-  }
+  return state.phase === 'gate' ? AGENT_NODES.gate : END;
 }
 
 function routeAfterGateRefine(state: AgentStateType): string {
@@ -1391,7 +1329,7 @@ function routeAfterGateRefine(state: AgentStateType): string {
   if (state.phase === 'gate_refine' && state.toolAttempt?.phase === 'sm_entry') {
     return AGENT_NODES.gateRefine;
   }
-  return state.gate ? AGENT_NODES.gate : END;
+  return state.phase === 'gate' ? AGENT_NODES.gate : END;
 }
 
 function routeAfterActiveCoordinator(state: AgentStateType): string {

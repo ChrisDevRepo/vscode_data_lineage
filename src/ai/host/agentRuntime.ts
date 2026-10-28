@@ -1,7 +1,6 @@
 /** Host wrapper for the production native LangGraph runtime. */
 
-import { randomUUID } from 'node:crypto';
-import { Command, GraphRecursionError, INTERRUPT, isInterrupted } from '@langchain/langgraph';
+import { GraphRecursionError } from '@langchain/langgraph';
 import {
   modelUserMessage,
   isPortCancellation,
@@ -15,7 +14,6 @@ import type { Logger } from '../../utils/log';
 import type { TurnEventSink } from '../runtime/turnEventSink';
 import type { TurnOutcome } from '../core/agentCore';
 import type { AiSession } from '../session/session';
-import { PendingGateSchema, type PendingGate } from '../session/sessionPhase';
 import { buildAgentGraph, turnRecursionLimit } from '../agent/graph';
 import type { SyntheticRejectionTrace } from '../agent/toolAttempt';
 import { PREVIEW_REQUEST_MARKER, TRACE_REQUEST_MARKER } from '../prompting/prompts';
@@ -34,7 +32,7 @@ export interface AgentFailureDetail {
 
 /** Construction dependencies for {@link AgentRuntime}. */
 interface AgentRuntimeDeps {
-  /** LangGraph thread id for this request; a fresh value per turn, never reused across turns. */
+  /** Identity of this turn's graph run; the fallback request id of its debug logs. */
   readonly threadId: string;
   /** Host request id for correlated debug logs; falls back to this turn's thread id. */
   readonly requestId?: string;
@@ -85,7 +83,6 @@ function assertExternalTracingDisabled(): void {
 
 /** Production LangGraph runtime facade used by the native host path. */
 export class AgentRuntime {
-  private readonly threadId: string;
   private readonly getSession: () => AiSession;
   private readonly sink: TurnEventSink;
   private readonly signal: AbortSignal | undefined;
@@ -98,12 +95,10 @@ export class AgentRuntime {
   private readonly turnEpoch: number;
   private readonly logger: Logger | undefined;
   private readonly graph: ReturnType<typeof buildAgentGraph>;
-  private readonly pendingGates = new Map<string, (d: GateDecision) => void>();
   /** Settle-await for every tool dispatch in flight through this turn's registry. */
   private readonly dispatchSettled: () => Promise<void>;
 
   constructor(deps: AgentRuntimeDeps) {
-    this.threadId = deps.threadId;
     this.getSession = deps.getSession;
     this.sink = deps.sink;
     this.signal = deps.signal;
@@ -127,48 +122,35 @@ export class AgentRuntime {
     });
   }
 
-  /** Runs one user prompt through the graph, handling each LangGraph consent interrupt. */
-  public async run(prompt: string): Promise<TurnOutcome> {
+  /** Runs one user prompt through the graph; `gateDecision` is the card click this turn answers. */
+  public async run(prompt: string, gateDecision?: GateDecision): Promise<TurnOutcome> {
     const session = this.getSession();
     session.currentRoundId += 1;
     session.currentTurnPrompt = prompt.startsWith(PREVIEW_REQUEST_MARKER) || prompt.startsWith(TRACE_REQUEST_MARKER)
       ? null
       : prompt;
     try {
-      let input: AgentStateUpdate | Command = this.priorMessages.length > 0
-        ? { prompt, messages: [...this.priorMessages, modelUserMessage(prompt)] }
-        : { prompt };
-      const config = {
-        configurable: { thread_id: this.threadId },
-        callbacks: [],
-        signal: this.signal,
+      const input: AgentStateUpdate = {
+        prompt,
+        ...(this.priorMessages.length > 0 ? { messages: [...this.priorMessages, modelUserMessage(prompt)] } : {}),
+        ...(gateDecision ? { gateDecision } : {}),
       };
-
-      for (;;) {
-        assertExternalTracingDisabled();
-        const recursionLimit = turnRecursionLimit(this.maxRounds, session.stateMachine?.scopeSize ?? 0);
-        const result = await this.graph.invoke(input as never, { ...config, recursionLimit });
-        const interruptPayload = extractInterruptPayload(result);
-        if (interruptPayload !== null) {
-          const gate = PendingGateSchema.parse(interruptPayload);
-          const decision = await this.waitForGateDecision(gate);
-          input = new Command({ resume: decision });
-          continue;
-        }
-        if (this.signal?.aborted) {
-          await this.dispatchSettled();
-          return this.close('cancelled');
-        }
-
-        const state = result as {
-          outcome?: TurnOutcome | null;
-          error?: string | null;
-          errorCode?: AgentErrorCode | null;
-          activeStop?: string | null;
-        };
-        const outcome: TurnOutcome = state.outcome ?? (state.error ? 'error' : 'ok');
-        return this.close(outcome, state.error ?? undefined, { code: state.errorCode ?? undefined, stop: state.activeStop ?? undefined });
+      assertExternalTracingDisabled();
+      const recursionLimit = turnRecursionLimit(this.maxRounds, session.stateMachine?.scopeSize ?? 0);
+      const result = await this.graph.invoke(input as never, { callbacks: [], signal: this.signal, recursionLimit });
+      if (this.signal?.aborted) {
+        await this.dispatchSettled();
+        return this.close('cancelled');
       }
+
+      const state = result as {
+        outcome?: TurnOutcome | null;
+        error?: string | null;
+        errorCode?: AgentErrorCode | null;
+        activeStop?: string | null;
+      };
+      const outcome: TurnOutcome = state.outcome ?? (state.error ? 'error' : 'ok');
+      return this.close(outcome, state.error ?? undefined, { code: state.errorCode ?? undefined, stop: state.activeStop ?? undefined });
     } catch (err) {
       if (isCancellationOutcome(err, this.signal) || isPortCancellation(err)) {
         this.logger?.debug('[AI] turn aborted — closed as cancelled');
@@ -184,38 +166,6 @@ export class AgentRuntime {
       const msg = errorMessage(err);
       return this.close('error', msg);
     }
-  }
-
-  /** Resolves a pending consent gate with the user's decision. */
-  public resumeGate(gateId: string, decision: GateDecision): boolean {
-    const resume = this.pendingGates.get(gateId);
-    if (!resume) return false;
-    resume(decision);
-    return true;
-  }
-
-  private async waitForGateDecision(gate: PendingGate): Promise<GateDecision> {
-    const gateId = randomUUID();
-    return await new Promise<GateDecision>((resolve) => {
-      const finish = (decision: GateDecision) => {
-        this.pendingGates.delete(gateId);
-        this.signal?.removeEventListener('abort', abort);
-        resolve(decision);
-      };
-      const abort = () => finish({ kind: 'cancel' });
-      this.pendingGates.set(gateId, finish);
-      if (this.signal?.aborted) {
-        abort();
-        return;
-      }
-      this.signal?.addEventListener('abort', abort, { once: true });
-      this.sink.gate({
-        gateId,
-        gate: gate.gate,
-        summary: gate.detail,
-        classes: gate.classes,
-      });
-    });
   }
 
   private close(status: TurnOutcome, error?: string, detail?: { readonly code?: AgentErrorCode; readonly stop?: string }): TurnOutcome {
@@ -234,7 +184,9 @@ export class AgentRuntime {
     this.lastFailureDetail = status !== 'ok' && error ? { message: error, code: detail?.code, stop: detail?.stop } : undefined;
     if (status === 'cancelled' || status === 'error') {
       const sess = this.getSession();
-      if (sess.phase.kind === 'exploring') {
+      // A proposal no card shows (a stopped scope change already replaced the plan) is not left for anyone to approve.
+      const unshownProposal = sess.phase.kind === 'awaiting_gate' && sess.pendingExploration?.proposalId === undefined;
+      if (sess.phase.kind === 'exploring' || unshownProposal) {
         const outcome = sess.cancelPendingExploration(this.turnEpoch);
         if (outcome.kind === 'dropped_stale_turn') {
           this.logger?.debug(`[AI] stale-turn write dropped — op=${outcome.op} captured=${outcome.captured} current=${outcome.current}`);
@@ -244,11 +196,4 @@ export class AgentRuntime {
     if (sinkFailure) throw sinkFailure.cause;
     return status;
   }
-}
-
-/** Reads the gate payload from a compiled-graph interrupt using the official LangGraph helpers. */
-function extractInterruptPayload(output: unknown): unknown | null {
-  if (!isInterrupted(output)) return null;
-  const interrupts = output[INTERRUPT];
-  return interrupts.length > 0 ? (interrupts[0].value ?? null) : null;
 }

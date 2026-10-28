@@ -47,12 +47,11 @@ export type RuntimeLifecycleRecord =
       readonly requestId: string;
       readonly gateId: string;
       readonly gate: string;
-      readonly action: 'approve' | 'change' | 'cancel' | 'hold';
-      readonly outcome: 'accepted' | 'refused' | 'no_owning_turn' | 'failed';
+      readonly action: 'approve' | 'change' | 'cancel';
+      /** `no_owning_turn`: the card is held and the click goes on as a new chat turn. */
+      readonly outcome: 'refused' | 'no_owning_turn';
       /** Enumerated cause when `outcome` is `refused`; never free text. */
       readonly refusedBy?: 'gate_id_mismatch' | 'no_pending_gate';
-      /** When the action was received. The record's own `at` stamps an accepted approval only after the released turn finishes, so the pair separates decision wait from released work. */
-      readonly decidedAt?: string;
     }
   | {
       readonly type: 'phase';
@@ -185,7 +184,7 @@ export class AiTraceWriter {
         runFingerprint,
         seq,
         phase: event.gate,
-        gateId: event.gateId,
+        gateId: event.proposalId,
         elapsedMs,
       });
     }

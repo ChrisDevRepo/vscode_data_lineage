@@ -1,11 +1,10 @@
 import { Annotation, messagesStateReducer } from '@langchain/langgraph';
 import type { ModelMessage } from '../model/modelPort';
 import { z } from 'zod';
-import { AiGateRefineSchema, type AiGateRefine } from '../../engine/shared/bridgeContract';
+import type { AiGateRefine } from '../../engine/shared/bridgeContract';
 import { ColumnIdentifierSchema } from '../tools/toolSchemas';
 import type { TurnOutcome } from '../core/agentCore';
 import type { StagePromptContext } from '../prompting/hostPrompts';
-import type { PendingGate } from '../session/sessionPhase';
 import type { ToolPhaseAttemptState } from './toolAttempt';
 
 /** Explicit entry route chosen before phase execution starts. */
@@ -28,20 +27,11 @@ export const EntryDetectionSchema = z.object({
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targetColumns'], message: `${value.entry === 'discovery' ? 'Discovery' : 'Visual render'} does not take \`targetColumns\`. Call detect_entry again with \`targetColumns\` null.` });
   }
 });
-/** User's response to a LangGraph consent interrupt. */
+/** The user's resolution of the card with `proposalId`: a click or a classified typed reply. */
 export type GateDecision =
-  | { kind: 'approve'; classes: string[] }
-  | { kind: 'refine'; refine: AiGateRefine }
-  | { kind: 'hold' }
-  | { kind: 'cancel' };
-
-/** Runtime validation for values supplied through `Command({ resume })`. */
-export const GateDecisionSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('approve'), classes: z.array(z.string()) }).strict(),
-  z.object({ kind: z.literal('refine'), refine: AiGateRefineSchema }).strict(),
-  z.object({ kind: z.literal('hold') }).strict(),
-  z.object({ kind: z.literal('cancel') }).strict(),
-]);
+  | { kind: 'approve'; proposalId: string }
+  | { kind: 'cancel'; proposalId: string }
+  | { kind: 'refine'; proposalId: string; refine: AiGateRefine };
 
 /** Structured reading of one typed chat reply while an approval gate is pending. */
 export const GateReplySchema = z.object({
@@ -80,7 +70,6 @@ export const AgentState = Annotation.Root({
   entry: Annotation<AgentEntryRoute | null>({ reducer: lastValue, default: () => null }),
   executionTrigger: Annotation<AgentExecutionTrigger>({ reducer: lastValue, default: () => 'free_text' }),
   targetColumns: Annotation<string[] | null>({ reducer: lastValue, default: () => null }),
-  gate: Annotation<PendingGate | null>({ reducer: lastValue, default: () => null }),
   gateDecision: Annotation<GateDecision | null>({ reducer: lastValue, default: () => null }),
   activeHopCount: Annotation<number>({ reducer: lastValue, default: () => 0 }),
   /** Cumulative prune count at the previous hop start, used to show per-hop prune deltas. */

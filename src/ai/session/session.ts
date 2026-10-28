@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { AIMessage, HumanMessage } from '@langchain/core/messages';
 import type Graph from 'graphology';
 import {
@@ -13,7 +14,8 @@ import { AiMemoryManager } from '../session/memoryManager';
 import { type ResultGraph, type AiOutputTemplates, type AiOutputSections, type PresentationArtifact, type DiscoveryScopeArtifact, EMPTY_AI_TEMPLATES, EMPTY_AI_SECTIONS } from '../session/types';
 import type { IHopStateMachine } from '../sm/smBase';
 import type { HopLogEntry, NavigationInitParams, ScopeSummary, SmResult } from '../sm/smTypes';
-import type { SessionPhase, PendingGate, ToolControlSignal } from '../session/sessionPhase';
+import type { SessionPhase, ToolControlSignal } from '../session/sessionPhase';
+import { InternalInvariantError } from '../support/internalInvariant';
 import { ClassificationSchema, type ClassificationValue } from '../session/classification';
 import { contextBlockBytes, storedEvidenceKindBytes, type TurnTokenBudget } from '../support/tokenBudget';
 import { RepairDraftStore, type InputRepairAuthorization } from '../support/repairDraftStore';
@@ -37,6 +39,8 @@ export interface PendingExplorationProposal {
   readonly summary: ScopeSummary;
   /** The discovery-to-hop handoff memo composed for this exact revision; absent until attached. */
   readonly discoverySummary?: string;
+  /** Identity of the card that shows this proposal, minted by {@link AiSession.enterGate} and never reused; absent while no card shows it. */
+  readonly proposalId?: string;
 }
 
 /** Serializes a JSON value with object keys sorted at every level, so key insertion order cannot affect equality. */
@@ -49,10 +53,10 @@ function canonicalJson(value: unknown): string {
 
 /** Structural equality for two fully merged, validated exploration proposals. */
 export function sameExplorationProposal(
-  left: Omit<PendingExplorationProposal, 'revision' | 'discoverySummary'>,
+  left: Omit<PendingExplorationProposal, 'revision' | 'discoverySummary' | 'proposalId'>,
   right: PendingExplorationProposal | Omit<PendingExplorationProposal, 'revision'>,
 ): boolean {
-  const { revision: _revision, discoverySummary: _discoverySummary, ...rightRest } = right as PendingExplorationProposal;
+  const { revision: _revision, discoverySummary: _discoverySummary, proposalId: _proposalId, ...rightRest } = right as PendingExplorationProposal;
   return canonicalJson(left) === canonicalJson(rightRest);
 }
 
@@ -567,17 +571,24 @@ export class AiSession {
     return ClassificationSchema.parse(this.classification);
   }
 
-  /** Transitions the session into `awaiting_gate` — the engine paused on a consent gate and the next user turn must resolve it (yes / no / redirect). */
-  public enterGate(gate: PendingGate, token: number): SessionWriteOutcome {
+  /** Shows the pending proposal on a new card: mints a random identity that no earlier card carries, even one VS Code restores after a host reload, so every earlier card retires; enters `awaiting_gate`. */
+  public enterGate(token: number): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'enterGate');
     if (guard.kind !== 'accepted') return guard;
-    this.phase = { kind: 'awaiting_gate', gate };
+    if (!this.pendingExploration) throw new InternalInvariantError('enterGate without a pending exploration proposal');
+    this.pendingExploration = { ...this.pendingExploration, proposalId: randomUUID() };
+    this.phase = { kind: 'awaiting_gate' };
     return guard;
+  }
+
+  /** Whether the card with `proposalId` is the one the user can still resolve. */
+  public holdsProposal(proposalId: string): boolean {
+    return this.phase.kind === 'awaiting_gate' && this.pendingExploration?.proposalId === proposalId;
   }
 
   /** Replaces the reviewable proposal without creating or publishing an exploration engine. */
   public storePendingExploration(
-    proposal: Omit<PendingExplorationProposal, 'revision'>,
+    proposal: Omit<PendingExplorationProposal, 'revision' | 'proposalId'>,
     token: number,
   ): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'storePendingExploration');
@@ -610,9 +621,9 @@ export class AiSession {
     return guard;
   }
 
-  /** Atomically validates, constructs, and publishes the exact proposal reviewed at the gate. The factory runs synchronously only after epoch and revision checks pass. */
+  /** Atomically validates, constructs, and publishes the exact proposal reviewed at the gate. The factory runs synchronously only after the epoch and card-identity checks pass. */
   public activatePendingExploration(
-    expectedRevision: number,
+    proposalId: string,
     token: number,
     factory: (proposal: PendingExplorationProposal) => IHopStateMachine | ToolRejection,
   ): ExplorationActivationOutcome {
@@ -620,8 +631,8 @@ export class AiSession {
     if (guard.kind !== 'accepted') return guard;
     const proposal = this.pendingExploration;
     if (!proposal) return { kind: 'rejected', reason: 'missing_pending_proposal' };
-    if (proposal.revision !== expectedRevision) {
-      return { kind: 'rejected', reason: `stale_proposal_revision:${expectedRevision}->${proposal.revision}` };
+    if (!this.holdsProposal(proposalId)) {
+      return { kind: 'rejected', reason: `stale_proposal:${proposalId}->${proposal.proposalId ?? 'unshown'}` };
     }
     const built = factory(proposal);
     if ('code' in built) return { kind: 'rejected', reason: built.code };

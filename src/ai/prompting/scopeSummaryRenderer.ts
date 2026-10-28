@@ -257,6 +257,12 @@ function renderPlanMd(
   return lines.join('\n');
 }
 
+/** The proposal text the model reads at the gate: the scope summary, then the discovery handoff memo when one is attached. */
+export function renderProposalDetailMd(proposal: PendingExplorationProposal): string {
+  const base = renderScopeSummaryMd(proposal.summary, proposal.revision, proposal.classification);
+  return proposal.discoverySummary ? `${base}\n\n${proposal.discoverySummary}` : base;
+}
+
 /** Renders the compact approval card: fact lines only, with a **Show full plan** follow-up carrying the model-authored prose (goal, discovery summary, noted constraints) and every in-scope object. */
 export function renderScopeCardMd(
   proposal: Pick<PendingExplorationProposal, 'revision' | 'init' | 'classification' | 'summary'>,

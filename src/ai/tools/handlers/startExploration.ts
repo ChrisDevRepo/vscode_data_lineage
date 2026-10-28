@@ -7,7 +7,7 @@ import { sanitizeForLog, trunc } from '../../../utils/log';
 import { schemaKey } from '../../../utils/sql';
 import { StartExplorationInputSchema } from '../../tools/toolSchemas';
 import { PendingGateSchema } from '../../session/sessionPhase';
-import { renderScopeSummaryMd } from '../../prompting/scopeSummaryRenderer';
+import { renderProposalDetailMd } from '../../prompting/scopeSummaryRenderer';
 import { redactMissionBriefForLog } from '../../support/missionBriefDiagnostics';
 import { toEngineLog } from '../../support/engineLog';
 import { isCancellationOutcome } from '../../support/cancellation';
@@ -231,14 +231,13 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         return s.logAndReturn('lineage_start_exploration', makeRejection({ code: REJECTION_CODES.staleTurn, reason: 'The turn no longer owns this session; the proposal was not stored.' }), loggedInput);
       }
       sess.startExplorationRoundId = sess.currentRoundId;
-      const proposalRevision = sess.pendingExploration!.revision;
+      let proposal = sess.pendingExploration!;
+      const proposalRevision = proposal.revision;
       s.logger.debug(`[AI] [Proposal] revision=${proposalRevision} origin=${sanitizeForLog(refineOrigin)} direction=${refineDirection} depth=${sanitizeForLog(JSON.stringify(depthIntent))}`);
 
       const classes = ['sliding_memory'];
-      const baseDetail = renderScopeSummaryMd(summary, proposalRevision, classification);
-      let discoverySummary: string | undefined;
       if (sess.lastDiscoveryQuestion && sess.lastDiscoveryAnswer && s.textModel) {
-        discoverySummary = await composeDiscoverySummaryText(
+        const discoverySummary = await composeDiscoverySummaryText(
           s.textModel,
           s.signal,
           s.logger,
@@ -247,12 +246,11 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
           classification,
           engine,
         );
-        if (discoverySummary) {
-          const attached = sess.attachDiscoverySummary(proposalRevision, discoverySummary, s.turnEpoch(sess));
-          if (attached.kind !== 'accepted') discoverySummary = undefined;
+        if (discoverySummary && sess.attachDiscoverySummary(proposalRevision, discoverySummary, s.turnEpoch(sess)).kind === 'accepted') {
+          proposal = { ...proposal, discoverySummary };
         }
       }
-      const detail = discoverySummary ? `${baseDetail}\n\n${discoverySummary}` : baseDetail;
+      const detail = renderProposalDetailMd(proposal);
       s.logger.debug(
         `[ScopeEstimate] origin=${engine.currentOrigin ?? data.origin} ` +
         `scope_nodes=${summary.scopeCount} ` +

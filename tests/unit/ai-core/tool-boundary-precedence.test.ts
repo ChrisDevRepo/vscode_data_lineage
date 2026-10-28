@@ -1376,7 +1376,7 @@ it.each(startEnumCombinations.flatMap(row => [false, true].map(refining => ({ ..
   if (row.refining) {
     const opened = JSON.parse(await executeStartExploration(proposal, services));
     expect(opened).toMatchObject({ code: 'action_required', detail: { proposalRevision: 1 } });
-    session.enterGate(opened.detail, session.turnEpoch);
+    session.enterGate(session.turnEpoch);
   }
   const desired = { ...proposal, depth: { ...proposal.depth, upstream: { levels: 2, exactness: 'exact' } } };
   const faulty = { ...desired, ...(row.refining ? { proposalRevision: 1 } : {}), ...row.patch };
@@ -1435,7 +1435,7 @@ it('holds normalized valid start integers and accepts only the two invalid depth
   const opened = JSON.parse(await invoke('lineage_start_exploration', { origin: ORIGIN,
     analysisMode: 'bb', classification: 'technical', depth: { upstream: { levels: 1, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } }));
   expect(opened).toMatchObject({ code: 'action_required', detail: { proposalRevision: 1 } });
-  session.enterGate(opened.detail, session.turnEpoch);
+  session.enterGate(session.turnEpoch);
   const rejected = JSON.parse(await invoke('lineage_start_exploration', { proposalRevision: '1', depth: {
     upstream: { levels: null, exactness: 'exact' }, downstream: { levels: 'three', exactness: 'exact' },
   } }));
@@ -1520,9 +1520,9 @@ it('clears proposal repair on cancel and keeps mission text redacted in original
   const { session, registry, invoke } = ownedInputWorld(); session.stateMachine = null;
   session.enterLmStage({ kind: 'sm_entry' }, session.turnEpoch);
   const projected = overrideRegistrySchemas(registry, new Map([['lineage_start_exploration', StartExplorationRefineProviderInputSchema]]));
-  const opened = JSON.parse(await invoke('lineage_start_exploration', { origin: ORIGIN,
-    analysisMode: 'bb', classification: 'technical', depth: { upstream: { levels: 1, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } }));
-  session.enterGate(opened.detail, session.turnEpoch);
+  await invoke('lineage_start_exploration', { origin: ORIGIN,
+    analysisMode: 'bb', classification: 'technical', depth: { upstream: { levels: 1, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } });
+  session.enterGate(session.turnEpoch);
   void projected.get('lineage_start_exploration')!.inputSchema;
   await invoke('lineage_start_exploration', { proposalRevision: 1, mission_brief: 'private mission text',
     depth: { upstream: { levels: null, exactness: 'exact' } } });

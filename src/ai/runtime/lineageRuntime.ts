@@ -27,6 +27,8 @@ interface LineageRuntimeRequest {
   readonly prompt: string;
   /** Optional prior-turn conversation, oldest first; when present the session transcript is cleared after the turn. */
   readonly priorMessages?: readonly ModelMessage[];
+  /** The approval-card click this turn answers, when it was started by one. */
+  readonly gateDecision?: GateDecision;
 }
 
 /** Request-scoped dependencies required to execute one lineage turn. */
@@ -67,10 +69,7 @@ interface LineageRuntimeDeps {
 
 /** Single production facade for native lineage turns. */
 export class LineageRuntime {
-  private readonly active = new Map<string, {
-    readonly runtime: AgentRuntime;
-    readonly completed: Promise<void>;
-  }>();
+  private readonly active = new Set<string>();
 
   public constructor(private readonly deps: LineageRuntimeDeps) {}
 
@@ -179,10 +178,7 @@ export class LineageRuntime {
       logger: this.deps.logger,
       traceSyntheticRejection,
     });
-    let completeRun!: () => void;
-    const completed = new Promise<void>((resolve) => { completeRun = resolve; });
-    const activeRun = { runtime, completed };
-    this.active.set(requestKey, activeRun);
+    this.active.add(requestKey);
     this.writeLifecycle({
       type: 'turn-start',
       requestId: input.request.id,
@@ -192,7 +188,7 @@ export class LineageRuntime {
     });
 
     try {
-      const outcome = await runtime.run(input.request.prompt);
+      const outcome = await runtime.run(input.request.prompt, input.request.gateDecision);
       const failure = runtime.lastFailureDetail;
       this.writeLifecycle({
         type: 'turn-terminal',
@@ -214,20 +210,8 @@ export class LineageRuntime {
     } finally {
       if (input.request.priorMessages !== undefined) session.clearDiscoveryTranscript();
       eventObserver.dispose();
-      completeRun();
-      if (this.active.get(requestKey) === activeRun) this.active.delete(requestKey);
+      this.active.delete(requestKey);
     }
-  }
-
-  /** Routes a consent decision and resolves after its owning turn reaches terminal state. */
-  public async resumeGate(gateId: string, decision: GateDecision): Promise<boolean> {
-    const matchingRuns: Promise<void>[] = [];
-    for (const activeRun of this.active.values()) {
-      if (activeRun.runtime.resumeGate(gateId, decision)) matchingRuns.push(activeRun.completed);
-    }
-    if (matchingRuns.length === 0) return false;
-    await Promise.all(matchingRuns);
-    return true;
   }
 
   private writeLifecycle(

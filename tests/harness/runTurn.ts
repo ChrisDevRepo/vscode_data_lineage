@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { ModelPort, ModelMessage } from '../../src/ai/model/modelPort';
 import type { AiTraceWriter } from '../../src/ai/observability/aiTraceWriter';
 import { LineageRuntime } from '../../src/ai/runtime/lineageRuntime';
+import type { GateDecision } from '../../src/ai/agent/state';
 import { TurnEventSink, type TurnEvent } from '../../src/ai/runtime/turnEventSink';
 import type { AiSession, PendingExplorationProposal } from '../../src/ai/session/session';
 import { isDeepStrictEqual } from 'node:util';
@@ -220,7 +221,10 @@ export async function runHarnessTurn(options: HarnessTurnOptions): Promise<Harne
     ...(options.traceWriter ? { traceWriter: options.traceWriter } : {}),
   });
 
-  const sink = new TurnEventSink((event) => {
+  // The card ends its turn; the policy's answer is the user's next turn, as in native chat.
+  let answer: { readonly prompt: string; readonly gateDecision: GateDecision } | undefined;
+  let terminalStatus: string | null = null;
+  const onEvent = (event: TurnEvent): void => {
     events.push(event);
     if (event.type === 'text') text += event.delta;
     if (!engine && options.session.stateMachine) {
@@ -252,7 +256,7 @@ export async function runHarnessTurn(options: HarnessTurnOptions): Promise<Harne
     const decision = requiredStillWrong ? 'deny' : refinement ? 'refine' : round.kind;
     if (!correction) gateRound += 1;
     gates.push({
-      gateId: event.gateId,
+      gateId: event.proposalId,
       gate: event.gate,
       policyIndex,
       proposalRevision: options.session.pendingExploration?.revision,
@@ -271,25 +275,36 @@ export async function runHarnessTurn(options: HarnessTurnOptions): Promise<Harne
       `[harness] gate ${event.gate} → ${decision}${refinement?.instruction ? `: ${refinement.instruction}` : ''}`
       + (expectation ? ` [expect ${expectation.expr} ${expectation.ok ? 'ok' : 'FAILED'}]` : ''),
     );
-    // FIRE-AND-FORGET, never awaited. `resumeGate` resolves only after the owning turn reaches its
-    // terminal state, and this callback runs inside that turn — awaiting it here deadlocks the turn
-    // that is waiting for the decision being made.
-    void runtime.resumeGate(
-      event.gateId,
-      refinement ? { kind: 'refine', refine: refinement }
-        : decision === 'approve' ? { kind: 'approve', classes: [] } : { kind: 'cancel' },
-    ).catch((error: unknown) => {
-      options.logger.error(`[harness] gate resume failed: ${String(error)}`);
-    });
-  });
+    answer = refinement
+      ? { prompt: refinement.instruction ?? 'Change scope', gateDecision: { kind: 'refine', proposalId: event.proposalId, refine: refinement } }
+      : decision === 'approve'
+        ? { prompt: 'Approve & Proceed', gateDecision: { kind: 'approve', proposalId: event.proposalId } }
+        : { prompt: 'Cancel', gateDecision: { kind: 'cancel', proposalId: event.proposalId } };
+  };
 
   options.logger.info(`[harness] turn start request=${requestId} model=${options.model.identity.id}`);
-  const outcome = await runtime.run({
-    model: options.model,
-    request: { id: requestId, prompt: nativeHarnessPrompt(options.prompt), ...(options.priorMessages !== undefined ? { priorMessages: options.priorMessages } : {}) },
-    sink,
-    ...(options.signal ? { signal: options.signal } : {}),
-  });
+  const runOne = async (prompt: string, gateDecision?: GateDecision) => {
+    const sink = new TurnEventSink(onEvent);
+    const result = await runtime.run({
+      model: options.model,
+      request: {
+        id: requestId,
+        prompt,
+        ...(options.priorMessages !== undefined ? { priorMessages: options.priorMessages } : {}),
+        ...(gateDecision ? { gateDecision } : {}),
+      },
+      sink,
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
+    terminalStatus = sink.terminalStatus ?? null;
+    return result;
+  };
+  let outcome = await runOne(nativeHarnessPrompt(options.prompt));
+  while (answer && outcome.outcome === 'ok') {
+    const next: { readonly prompt: string; readonly gateDecision: GateDecision } = answer;
+    answer = undefined;
+    outcome = await runOne(next.prompt, next.gateDecision);
+  }
   // A post-run read catches an engine published by a node that emitted no further event.
   if (!engine && options.session.stateMachine) {
     engine = options.session.stateMachine as NavigationEngine;
@@ -318,12 +333,11 @@ export async function runHarnessTurn(options: HarnessTurnOptions): Promise<Harne
     );
   }
 
-  const terminal = events.filter((event) => event.type === 'terminal');
   return {
     outcome,
     events,
     text,
-    terminalStatus: terminal.length === 1 && terminal[0].type === 'terminal' ? terminal[0].status : null,
+    terminalStatus,
     gates,
     artifacts,
   };

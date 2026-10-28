@@ -21,6 +21,7 @@ The newest version heading collects changes until that version ships.
 - At a procedure hop, each column-trace mapping must name the neighbor table column it writes (`writes_to`), or `null` when the procedure writes no neighbor table. A null destination retains the findings without creating procedure-column edges or continuation.
 - Column-trace mappings retain solid value edges and dashed row-influence edges. Indirect-only neighbors stay mapped, while continuation follows direct lineage. Source role tags remain optional. Declared object dependencies remain dashed links when column edges do not represent them, keeping connected objects linked without adding column lineage.
 
+- The exploration plan card accepts Approve, Cancel and Change scope only while it is the card on display; an outdated card, including one restored after a window reload, never approves. Stopping a scope change before its revised plan is shown discards that revised plan.
 ### Removed
 - The SQL Server (mssql) extension integration and the `dataLineageViz.database.connectionProvider` setting; databases connect through built-in connections only. Projects saved with an mssql connection keep it without the password; set the password with **Update Database Password**.
 

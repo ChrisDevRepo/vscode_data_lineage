@@ -22,19 +22,12 @@ interface NativeChatBoundarySession {
   beginNativeChatSession(): void;
 }
 
-interface NativePendingGate {
-  readonly gateId: string;
-}
-
 /** Applies the existing new-chat reset when VS Code supplies an empty history. */
 export function applyNativeChatBoundary(
   history: vscode.ChatContext['history'],
   session: NativeChatBoundarySession,
-  pendingGate: NativePendingGate | null,
-  cancelPendingGate: (gateId: string) => void,
 ): boolean {
   if (history.length > 0) return false;
-  if (pendingGate) cancelPendingGate(pendingGate.gateId);
   session.beginNativeChatSession();
   return true;
 }

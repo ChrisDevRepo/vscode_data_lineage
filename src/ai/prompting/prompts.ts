@@ -216,20 +216,7 @@ export const RUN_TRACE_TRIGGER = 'Run trace';
 /** Post-discovery action that asks the semantic router for a bounded graph preview. */
 export const SHOW_GRAPH_PREVIEW_TRIGGER = 'Show graph preview';
 
-/** Internal routing prompt for a validated **Approve & Proceed** or **Cancel** button action. */
-export function gateTriggerPrompt(action: 'approve' | 'cancel', revision: number): string {
-  return `${action === 'approve' ? 'Approve' : 'Cancel'} exploration plan revision ${revision}`;
-}
-
-const GATE_TRIGGER_PATTERN = /^(Approve|Cancel) exploration plan revision (\d+)$/;
-
-/** Reads a {@link gateTriggerPrompt} back; `null` for any other prompt. */
-export function parseGateTrigger(prompt: string): { action: 'approve' | 'cancel'; revision: number } | null {
-  const match = GATE_TRIGGER_PATTERN.exec(prompt.trim());
-  return match ? { action: match[1] === 'Approve' ? 'approve' : 'cancel', revision: Number(match[2]) } : null;
-}
-
-/** Reply to a card button whose plan revision is no longer the one pending. */
+/** Reply to a card button whose card the session no longer holds. */
 export const STALE_GATE_TRIGGER_REPLY = 'That plan is no longer pending — use the buttons on the latest plan, or ask again.';
 
 /** System prompt for the structured reading of one typed reply at a pending approval gate. */

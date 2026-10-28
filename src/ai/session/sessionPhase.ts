@@ -23,7 +23,7 @@ export type SessionPhase =
   /** No exploration active. Next turn goes through discovery. */
   | { kind: 'idle' }
   /** Engine is paused on a consent gate; awaiting user's yes / no / redirect reply. */
-  | { kind: 'awaiting_gate'; gate: PendingGate }
+  | { kind: 'awaiting_gate' }
   /** Engine is in the hop loop; next turn resumes or finishes. */
   | { kind: 'exploring' }
   /** Synthesis turn finished; archive is frozen but addressable. Follow-up turns route through the follow-up protocol. */

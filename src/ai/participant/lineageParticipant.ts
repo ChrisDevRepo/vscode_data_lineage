@@ -9,7 +9,6 @@ import type { AiTraceWriter } from '../observability/aiTraceWriter';
 import { tokenToAbortSignal } from '../providers/cancellation';
 import type { LineageRuntime } from '../runtime/lineageRuntime';
 import {
-  gateTriggerPrompt,
   RUN_TRACE_TRIGGER,
   SHOW_FULL_DESCRIPTION_TRIGGER,
   SHOW_FULL_PLAN_TRIGGER,
@@ -30,17 +29,6 @@ import {
   GATE_SHOWN_METADATA,
 } from './chatHistoryAdapter';
 
-interface PendingNativeGate {
-  readonly gateId: string;
-  readonly gate: string;
-  /** Chat request that raised this gate. */
-  readonly requestId: string;
-  /** Proposal revision the card shows; its Approve and Cancel act on this revision only. */
-  readonly revision: number;
-  /** Exposure classes the gate carried; an approve decision echoes them back. */
-  readonly classes: readonly string[];
-}
-
 /** Result metadata of the reply that printed the full plan, so it does not offer the plan again. */
 const FULL_PLAN_SHOWN = 'fullPlanShown';
 
@@ -48,7 +36,8 @@ const FULL_PLAN_SHOWN = 'fullPlanShown';
 type NativeGateAction = 'approve' | 'change' | 'cancel';
 
 interface GateButtonRequest {
-  readonly pending: PendingNativeGate;
+  /** Card the click came from; the session decides whether it is still held. */
+  readonly proposalId: string;
   readonly action: 'approve' | 'cancel';
   readonly label: string;
 }
@@ -62,7 +51,8 @@ const NEXT_QUESTIONS_TRIGGER = 'What could I explore next?';
 /** Projects the shared lineage runtime onto VS Code's native chat participant API. */
 export class LineageParticipant {
   private readonly logger: Logger;
-  private pendingGate: PendingNativeGate | null = null;
+  /** Chat request whose answer shows the current card; later answers re-attach its buttons. */
+  private cardRequestId: string | null = null;
   private buttonRequest: GateButtonRequest | null = null;
   private gateCommandBusy = false;
 
@@ -98,19 +88,17 @@ export class LineageParticipant {
       vscode.commands.registerCommand(
         'dataLineageViz.aiResumeNativeGate',
         async (
-          gateId: string,
+          proposalId: string,
           action: NativeGateAction,
         ) => {
           if (!['approve', 'change', 'cancel'].includes(action) || this.gateCommandBusy) return;
-          const pending = this.requirePendingGate(gateId, action);
-          if (!pending) return;
+          if (!this.requireHeldCard(proposalId, action)) return;
           const submitted: GateButtonRequest | null = action === 'change' ? null
-            : { pending, action, label: action === 'approve' ? 'Approve & Proceed' : 'Cancel' };
+            : { proposalId, action, label: action === 'approve' ? 'Approve & Proceed' : 'Cancel' };
           this.buttonRequest = submitted;
           this.gateCommandBusy = true;
           try {
-            const outcome = await this.submitGateDecision(pending, gateId, action, [...pending.classes]);
-            if (outcome === 'failed' || (outcome === 'resolved' && action !== 'change')) return;
+            this.traceGateResolution(proposalId, action, 'no_owning_turn');
             await vscode.commands.executeCommand('workbench.action.chat.open', action === 'change'
               ? { query: PARTICIPANT_MENTION, isPartialQuery: true }
               : { query: `${PARTICIPANT_MENTION}${submitted!.label}`, blockOnResponse: true });
@@ -123,22 +111,14 @@ export class LineageParticipant {
     );
   }
 
-  /** Returns the current gate while the session still holds its proposal, or logs why a stale/replaced native button was ignored. */
-  private requirePendingGate(
-    gateId: string,
-    action: NativeGateAction,
-  ): PendingNativeGate | null {
-    const pending = this.pendingGate;
-    if (pending?.gateId === gateId && this.sessionHoldsGateProposal()
-      && this.getSession().pendingExploration?.revision === pending.revision) return pending;
-
-    this.traceGateResolution(pending, gateId, action, 'refused',
-      pending !== null && pending.gateId !== gateId ? 'gate_id_mismatch' : 'no_pending_gate');
-    this.logger.debug(
-      `[Gate] superseded button ignored — action=${action} requestedGateId=${gateId} `
-      + `pendingGateId=${pending?.gateId ?? 'none'} pendingGate=${pending?.gate ?? 'none'}`,
-    );
-    return null;
+  /** Whether the session still holds the clicked card; logs why a stale or replaced card's button was ignored. */
+  private requireHeldCard(proposalId: string, action: NativeGateAction): boolean {
+    const session = this.getSession();
+    if (session.holdsProposal(proposalId)) return true;
+    const heldId = session.phase.kind === 'awaiting_gate' ? session.pendingExploration?.proposalId : undefined;
+    this.traceGateResolution(proposalId, action, 'refused', heldId !== undefined ? 'gate_id_mismatch' : 'no_pending_gate');
+    this.logger.debug(`[Gate] superseded button ignored — action=${action} requestedCard=${proposalId} heldCard=${heldId ?? 'none'}`);
+    return false;
   }
 
   /** Whether the session still holds a proposal awaiting the user's decision. */
@@ -147,53 +127,21 @@ export class LineageParticipant {
     return session.phase.kind === 'awaiting_gate' && session.pendingExploration != null;
   }
 
-  /** Resolves the raising turn's gate with one validated action. */
-  private async submitGateDecision(
-    pending: PendingNativeGate,
-    gateId: string,
-    action: NativeGateAction,
-    classes: string[],
-  ): Promise<'resolved' | 'no_turn' | 'failed'> {
-    const decision: Parameters<LineageRuntime['resumeGate']>[1] = action === 'approve'
-      ? { kind: 'approve', classes }
-      : action === 'change'
-        ? { kind: 'hold' }
-        : { kind: 'cancel' };
-    const decidedAt = new Date().toISOString();
-    try {
-      const resolved = await this.runtime.resumeGate(gateId, decision);
-      this.traceGateResolution(pending, gateId, action, resolved ? 'accepted' : 'no_owning_turn', undefined, decidedAt);
-      return resolved ? 'resolved' : 'no_turn';
-    } catch (error) {
-      this.traceGateResolution(pending, gateId, action, 'failed', undefined, decidedAt);
-      notifyWarning(
-        this.logger,
-        'Native gate action failed',
-        'Data Lineage: The approval action could not be completed. The existing proposal is still pending.',
-        { action, requestedGateId: gateId, error },
-      );
-      return 'failed';
-    }
-  }
-
   /** Records the outcome of one native gate action in the diagnostic trace. */
   private traceGateResolution(
-    pending: PendingNativeGate | null,
-    gateId: string,
-    action: NativeGateAction | 'hold',
-    outcome: 'accepted' | 'refused' | 'no_owning_turn' | 'failed',
+    proposalId: string,
+    action: NativeGateAction,
+    outcome: 'refused' | 'no_owning_turn',
     refusedBy?: 'gate_id_mismatch' | 'no_pending_gate',
-    decidedAt?: string,
   ): void {
     void this.traceWriter?.write({
       type: 'gate-resolution',
-      requestId: pending?.requestId ?? 'unknown',
-      gateId,
-      gate: pending?.gate ?? 'none',
+      requestId: this.cardRequestId ?? 'unknown',
+      gateId: proposalId,
+      gate: this.cardRequestId ? 'confirm_sm_start' : 'none',
       action,
       outcome,
       ...(refusedBy ? { refusedBy } : {}),
-      ...(decidedAt ? { decidedAt } : {}),
     }).catch(() => {});
   }
 
@@ -218,13 +166,8 @@ export class LineageParticipant {
       && session.phase.kind === 'completed'
       && normalizeFollowupTrigger(request.prompt) === normalizeFollowupTrigger(NEXT_QUESTIONS_TRIGGER);
 
-    if (!suggestionFollowup && applyNativeChatBoundary(
-      chatContext.history,
-      session,
-      this.pendingGate,
-      (gateId) => { void this.runtime.resumeGate(gateId, { kind: 'cancel' }); },
-    )) {
-      this.pendingGate = null;
+    if (!suggestionFollowup && applyNativeChatBoundary(chatContext.history, session)) {
+      this.cardRequestId = null;
       this.logger.info(
         `[${session.id}] New chat session detected — prior exploration state cleared`,
       );
@@ -233,15 +176,14 @@ export class LineageParticipant {
     // The visible label carries no routing data. Only its request-owned button action can
     // bypass AI classification; a user typing the same words takes the normal typed-reply path.
     const submitted = this.buttonRequest;
-    let buttonPrompt: string | null = null;
+    let gateDecision: { kind: 'approve' | 'cancel'; proposalId: string } | undefined;
     if (submitted && request.prompt.trim() === submitted.label) {
       this.buttonRequest = null;
-      if (submitted.pending !== this.pendingGate || !this.sessionHoldsGateProposal()
-        || session.pendingExploration?.revision !== submitted.pending.revision) {
+      if (!session.holdsProposal(submitted.proposalId)) {
         this.write(stream, token, out => out.markdown(STALE_GATE_TRIGGER_REPLY));
         return {};
       }
-      buttonPrompt = gateTriggerPrompt(submitted.action, submitted.pending.revision);
+      gateDecision = { kind: submitted.action, proposalId: submitted.proposalId };
     }
 
     if (request.prompt.trim().length === 0 && this.sessionHoldsGateProposal()) {
@@ -255,7 +197,6 @@ export class LineageParticipant {
       normalizeFollowupTrigger(request.prompt)
       === normalizeFollowupTrigger(SHOW_FULL_PLAN_TRIGGER)
     ) {
-      const pending = this.pendingGate;
       const proposal = this.sessionHoldsGateProposal() ? session.pendingExploration : null;
       this.write(stream, token, (out) => {
         if (!proposal) {
@@ -263,7 +204,7 @@ export class LineageParticipant {
           return;
         }
         out.markdown(`${renderFullPlanMd(proposal)}\n\n`);
-        if (pending) this.writeGateButtons(out, pending.gateId);
+        if (proposal.proposalId !== undefined) this.writeGateButtons(out, proposal.proposalId);
       });
       return { metadata: { [FULL_PLAN_SHOWN]: true } };
     }
@@ -302,7 +243,7 @@ export class LineageParticipant {
       ?? (session.phase.kind === 'idle' ? continuedSlashCommand(chatContext.history) : undefined);
     const prompt = command
       ? `/${command} ${request.prompt}`.trimEnd()
-      : buttonPrompt ?? (suggestionFollowup
+      : gateDecision ? request.prompt : (suggestionFollowup
         ? expandNextQuestionSuggestions(session)
         : expandRunTracePrompt(expandShowGraphPreviewPrompt(request.prompt, session), session));
     const sink = new TurnEventSink(
@@ -321,7 +262,7 @@ export class LineageParticipant {
       const run = suggestionFollowup ? this.runtime.runSuggestions.bind(this.runtime) : this.runtime.run.bind(this.runtime);
       const result = await run({
         model,
-        request: { id: requestId, prompt, priorMessages },
+        request: { id: requestId, prompt, priorMessages, ...(gateDecision ? { gateDecision } : {}) },
         sink,
         signal: cancellation.signal,
       });
@@ -329,7 +270,7 @@ export class LineageParticipant {
         requestId,
         status: result.outcome,
         modelCalls: result.modelCalls,
-        ...(this.pendingGate?.requestId === requestId ? { [GATE_SHOWN_METADATA]: true } : {}),
+        ...(this.cardRequestId === requestId ? { [GATE_SHOWN_METADATA]: true } : {}),
       };
       if (result.outcome !== 'error') {
         this.logger.info(
@@ -413,33 +354,18 @@ export class LineageParticipant {
         return;
       case 'gate': {
         const proposal = this.getSession().pendingExploration;
-        const pending: PendingNativeGate = {
-          gateId: event.gateId,
-          gate: event.gate,
-          requestId,
-          revision: proposal?.revision ?? 1,
-          classes: event.classes ?? [],
-        };
-        this.pendingGate = pending;
-        const card = proposal ? renderScopeCardMd(proposal) : event.summary;
-        stream.markdown(`${GATE_CARD_HEADER}${card}${HOLD_GATE_NOTICE}\n\n`);
-        this.writeGateButtons(stream, event.gateId);
-        void this.runtime.resumeGate(event.gateId, { kind: 'hold' })
-          .then((resumed) => {
-            this.traceGateResolution(pending, event.gateId, 'hold', resumed ? 'accepted' : 'no_owning_turn', undefined, new Date().toISOString());
-            this.logger.debug(
-              `[Gate] auto-held at render — input freed for typed scope change (gateId=${event.gateId} gate=${event.gate} resumed=${resumed})`,
-            );
-          })
-          .catch((err) => this.logger.error(`[Gate] auto-hold at render (gateId=${event.gateId})`, err));
+        if (!proposal) return;
+        this.cardRequestId = requestId;
+        stream.markdown(`${GATE_CARD_HEADER}${renderScopeCardMd(proposal)}${HOLD_GATE_NOTICE}\n\n`);
+        this.writeGateButtons(stream, event.proposalId);
         return;
       }
       case 'terminal': {
         const session = this.getSession();
         // Native chat may collapse older responses. Keep a held plan actionable on this answer.
-        if (event.status === 'ok' && this.sessionHoldsGateProposal() && this.pendingGate
-          && this.pendingGate.requestId !== requestId) {
-          this.writeGateButtons(stream, this.pendingGate.gateId);
+        const heldId = this.sessionHoldsGateProposal() ? session.pendingExploration?.proposalId : undefined;
+        if (event.status === 'ok' && heldId !== undefined && this.cardRequestId !== requestId) {
+          this.writeGateButtons(stream, heldId);
         }
         if (
           event.status === 'ok'
@@ -467,22 +393,22 @@ export class LineageParticipant {
     }
   }
 
-  /** The approval card's three buttons, bound to the gate they resolve. */
-  private writeGateButtons(stream: vscode.ChatResponseStream, gateId: string): void {
+  /** The approval card's three buttons, bound to the card they resolve. */
+  private writeGateButtons(stream: vscode.ChatResponseStream, proposalId: string): void {
     stream.button({
       command: 'dataLineageViz.aiResumeNativeGate',
       title: '$(check) Approve & Proceed',
-      arguments: [gateId, 'approve'],
+      arguments: [proposalId, 'approve'],
     });
     stream.button({
       command: 'dataLineageViz.aiResumeNativeGate',
       title: '$(edit) Change scope',
-      arguments: [gateId, 'change'],
+      arguments: [proposalId, 'change'],
     });
     stream.button({
       command: 'dataLineageViz.aiResumeNativeGate',
       title: '$(close) Cancel',
-      arguments: [gateId, 'cancel'],
+      arguments: [proposalId, 'cancel'],
     });
   }
 
