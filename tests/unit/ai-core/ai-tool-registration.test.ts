@@ -33,6 +33,7 @@ import { buildAiToolRegistry, createExternalToolSource, registerAiTools } from '
 import { EXTERNAL_TOOL_NAMES } from '../../../src/ai/tools/toolPolicy';
 import { AiSession } from '../../../src/ai/session/session';
 import { makeModel } from '../helpers/modelFixtures';
+import { ISSUES } from '../../../src/ai/support/toolErrorEnvelope';
 
 type ManifestTool = {
   name: string;
@@ -124,8 +125,9 @@ describe('AI tool registration', () => {
       const binding = lmBindings.get(first.name)!;
       const tokenSource = new vscode.CancellationTokenSource();
       // VS Code receives the same one problem shape (D-103): the call-level fault under the stable code.
-      await expect(binding.invoke({ input: {}, toolInvocationToken: undefined }, tokenSource.token))
-        .rejects.toThrow(/^\{"code":"no_project_loaded","errors":\[\{"path":"","code":"no_project_loaded","message":"[^"]+"\}\],"resend":\[\]\}$/);
+      const thrown = await binding.invoke({ input: {}, toolInvocationToken: undefined }, tokenSource.token).then(() => null, (error: Error) => error);
+      expect(JSON.parse(thrown!.message)).toEqual({ code: 'no_project_loaded', attempt: '2/3', resend: [],
+        guidance: [expect.objectContaining({ errors: [{ path: '', fault: ISSUES.no_project.label, correction: ISSUES.no_project.correction }] })] });
       session.model = makeModel([], [], []);
       const result = await binding.invoke({ input: {}, toolInvocationToken: undefined }, tokenSource.token);
       tokenSource.dispose();

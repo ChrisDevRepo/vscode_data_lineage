@@ -1,7 +1,7 @@
 /** Token budget — single source of truth for AI delivery-mode decisions. */
 import { DEFAULT_MAX_ROUNDS } from '../core/agentCore';
 import { REJECTION_CODES } from './rejectionCodes';
-import { makeRejection, type ToolRejection } from './toolErrorEnvelope';
+import { at, makeRejection, type ToolRejection } from './toolErrorEnvelope';
 import { readDeclaredNumericSetting, type NumericSettingReader } from '../../configCore';
 
 /** Provides a heuristic estimation of token count from a character count. */
@@ -12,8 +12,6 @@ export function estimateTokens(chars: number): number {
 /** The heuristic ratio behind {@link estimateTokens} and the byte ceilings derived from token counts. */
 const CHARS_PER_TOKEN = 4;
 
-/** Repair hint every `over_discovery_budget` rejection carries; also the fallback when a refusal arrives without one. */
-export const OVER_DISCOVERY_BUDGET_HINT = 'Scope exceeds the discovery budget. A scope this large is analysed hop by hop through an approved exploration.';
 
 /** Default node cap for discovery-phase catalog requests — overridden via VS Code `ai.discoveryNodeCap`. */
 export const DEFAULT_DISCOVERY_NODE_CAP = 10;
@@ -99,10 +97,7 @@ export function checkScopeBudget(
   const tokens = estimateTokens(requestedDdlBytes);
   if (!exceedsPhaseBudget(budget.discovery, requestedNodes, tokens)) return null;
   return {
-    ...makeRejection({
-      code: REJECTION_CODES.overDiscoveryBudget,
-      hint: OVER_DISCOVERY_BUDGET_HINT,
-    }),
+    ...makeRejection({ code: REJECTION_CODES.overDiscoveryBudget, errors: at('over_budget') }),
     detail: {
       counts: { nodes: requestedNodes, ddl_bytes: requestedDdlBytes },
       limits: { node_cap: budget.discovery.nodeCap, token_budget: budget.discovery.tokenBudget },

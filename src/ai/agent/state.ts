@@ -24,7 +24,7 @@ export const EntryDetectionSchema = z.object({
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targetColumns'], message: 'column_trace requires at least one explicitly named column.' });
   }
   if (value.entry !== 'column_trace' && value.targetColumns != null) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targetColumns'], message: `${value.entry === 'discovery' ? 'Discovery' : 'Visual render'} does not take \`targetColumns\`. Call detect_entry again with \`targetColumns\` null.` });
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targetColumns'], message: `${value.entry === 'discovery' ? 'Discovery' : 'Visual render'} takes no \`targetColumns\`.` });
   }
 });
 /** The user's resolution of the card with `proposalId`: a click or a classified typed reply. */

@@ -8,7 +8,7 @@ import {
 import { hashDdl, UNKNOWN_DDL_HASH, type StoredAiRun, type StoredRunReader } from '../session/runStore';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { checkScopeBudget, estimateTokens, type TurnTokenBudget } from '../support/tokenBudget';
-import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
+import { at, makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 import { schemaKey } from '../../utils/sql';
 import { resolveModelNodeId } from '../support/modelReferences';
 
@@ -381,23 +381,14 @@ function recallStale(run: StoredAiRun, getDdl: ((id: string) => string | undefin
   return staleIds(run, getDdl).map(id => ({ id, stored_hash_known: hashes[id] !== UNKNOWN_DDL_HASH }));
 }
 
-function overBudgetHint(input: RunRecallInput, chars: number, tokenBudget: number): string {
-  if (!input.ids?.length) {
-    return 'That class is too large to return in one response. Ask about specific objects with ids instead.';
-  }
-  const fits = Math.max(1, Math.floor((input.ids.length * tokenBudget) / estimateTokens(chars)));
-  return `Narrow ids to at most ${fits} or use a filter instead.`;
-}
-
 /** Answers one recall query against the run stored with the applied bookmark. */
 export function presentRunRecall(input: RunRecallInput): Record<string, unknown> | ToolRejection {
   const run = resolveAppliedRun(input);
   if (!run) {
     return rejectionWithEstimate(makeRejection({
       code: REJECTION_CODES.noRunMemory,
-      hint: input.hasPendingProposal
-        ? 'No AI run is stored yet — the held proposal is still awaiting approval or refinement. Reference the proposal already in this turn, or wait for it to be approved before recalling a run.'
-        : 'No AI run is stored for the applied view. Apply an AI bookmark saved after a run, or start a new exploration.',
+      reason: input.hasPendingProposal ? 'No AI run stored; the proposal awaits approval.' : 'No AI run stored for the applied view.',
+      errors: at(input.hasPendingProposal ? 'awaiting_approval' : 'no_run_memory'),
     }));
   }
   const head = { run_id: run.runId, saved_at: run.savedAt, ...presentAnalyzedSet(run) };
@@ -409,7 +400,7 @@ export function presentRunRecall(input: RunRecallInput): Record<string, unknown>
   const chars = JSON.stringify(payload).length;
   const admission = checkScopeBudget(input.budget, 0, chars);
   if (admission) {
-    return rejectionWithEstimate({ ...admission, hint: overBudgetHint(input, chars, admission.detail.limits.token_budget) });
+    return rejectionWithEstimate({ ...admission, errors: at('result_too_large', [input.ids?.length ? 'ids' : 'filter']), resend: [] });
   }
   return withEstimate(payload);
 }

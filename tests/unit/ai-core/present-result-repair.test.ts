@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { RepairDraftStore } from '../../../src/ai/support/repairDraftStore';
-import { rejectionFromZodError } from '../../../src/ai/support/toolErrorEnvelope';
+import { makeRejection, rejectionFromZodError, type ToolRejection } from '../../../src/ai/support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../../../src/ai/support/rejectionCodes';
 import { holdRejectedPresentResult, mergePresentResultRepairPatch, validatePresentResult,
   type PresentResultInput, type PresentResultRepairAuthorization, type PresentResultRepairPatch } from '../../../src/ai/tools/presentResult';
@@ -25,6 +25,9 @@ const labelDraft = { name: 'Pair', summary: 'Distinct sources.', highlight_group
   { label: 'Source   Alpha', text: 'Upper source.', node_ids: [upper] },
   { label: ' source alpha ', text: 'Lower source.', node_ids: [lower] },
 ] } as PresentResultInput;
+/** A schema rejection that the hold call completes with its resend list, merge rules and label errors. */
+const emptyRejection = (): ToolRejection => makeRejection({ code: 'invalid_input', errors: [{ path: 'sections', code: 'type' }] });
+
 const render = {
   name: 'Orders lineage', summary: 'How Orders is produced.',
   highlight_groups: [{ label: 'Sources', color: 'source', node_ids: ['dbo.a'] }],
@@ -52,7 +55,9 @@ describe('held present_result fields', () => {
     expect(parsed.success).toBe(false);
     const rejection = rejectionFromZodError(parsed.error!, { code: 'invalid_input', input: report, schema: PresentResultModelSchema });
     const store = new RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>();
-    const hint = holdRejectedPresentResult(store, report, rejection.issuePaths!, 'synthesis');
+    expect(holdRejectedPresentResult(store, report, rejection.issuePaths!, 'synthesis', null, false, rejection)).toBe(true);
+    expect(rejection.resend).toEqual(['sections']);
+    expect(rejection.resendRules).toEqual(['indexed']);
     expect(store.get()?.sections).toEqual(report.sections);
     const auth = store.getAuthorization()!;
     const schema = presentResultRepairPatchSchemaForFields(auth.fields, 'synthesis', 0, auth.highlightLabelIndexes, auth.sectionLeaves);
@@ -62,7 +67,7 @@ describe('held present_result fields', () => {
     const merged = mergePresentResultRepairPatch(store.get()!, schema.parse(patch), auth);
     expect(merged.sections).toEqual([{ ...report.sections[0], node_ids: ['dbo.a'] }, report.sections[1]]);
     expect(PresentResultModelSchema.safeParse(merged).success).toBe(true);
-    expect(hint).not.toContain(body);
+    expect(JSON.stringify(rejection)).not.toContain(body);
     expect(JSON.stringify(patch).length * 100).toBeLessThan(JSON.stringify(report).length);
   });
 
@@ -82,10 +87,10 @@ describe('held present_result fields', () => {
     const rejection = rejectionFromZodError(parsed.error!, { code: 'invalid_input', input: report, schema: PresentResultModelSchema });
     expect(rejection.issuePaths).toEqual(['title']);
     const store = new RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>();
-    const sentence = holdRejectedPresentResult(store, report, rejection.issuePaths ?? [], 'synthesis');
-    expect(sentence).toContain('only these corrected fields: title');
-    expect(sentence).not.toContain('Resend the full tool call');
-    expect(sentence).not.toContain(report.sections[0].text);
+    expect(holdRejectedPresentResult(store, report, rejection.issuePaths ?? [], 'synthesis', null, false, rejection)).toBe(true);
+    expect(rejection.resend).toEqual(['title']);
+    expect(rejection.resendRules).toEqual([]);
+    expect(JSON.stringify(rejection)).not.toContain(report.sections[0].text);
     const authorization = store.getAuthorization()!;
     expect(presentResultRepairPatchSchemaForFields(authorization.fields, 'synthesis').safeParse(patch).success).toBe(true);
     const merged = mergePresentResultRepairPatch(store.get()!, patch, authorization);
@@ -117,7 +122,7 @@ it('holds the valid fields of a call that also carries keys the tool does not de
   const { store, hint, issuePaths } = holdGarbledCall();
 
   expect(issuePaths).toEqual(expect.arrayContaining(['label', 'node_ids', 'sections', 'highlight_groups']));
-  expect(hint).not.toBeNull();
+  expect(hint).toBe(true);
   expect(store.get()).toEqual({ name: 'Orders lineage', summary: 'Orders from stage to mart.', title: 'Orders', intro: 'How orders load.' });
   expect([...store.getAuthorization()!.fields].sort()).toEqual(['highlight_groups', 'sections']);
 });
@@ -166,7 +171,7 @@ it('still refuses a graph edit the rejection did not authorize', () => {
 it('holds nothing when only undefined keys failed', () => {
   const store = new RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>();
 
-  expect(holdRejectedPresentResult(store, { name: 'Orders lineage', label: 'Stage' }, ['label'], 'synthesis')).toBeNull();
+  expect(holdRejectedPresentResult(store, { name: 'Orders lineage', label: 'Stage' }, ['label'], 'synthesis')).toBe(false);
   expect(store.get()).toBeFalsy();
 });
 
@@ -225,10 +230,9 @@ describe('unknown repair keys', () => {
       expect(rejection.issuePaths ?? []).not.toContain(key);
       if (complete) expect(rejection.issuePaths).toEqual(['title']);
       const store = new RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>();
-      const sentence = holdRejectedPresentResult(store, input, rejection.issuePaths ?? [], 'synthesis');
-      expect(sentence).not.toBeNull();
+      expect(holdRejectedPresentResult(store, input, rejection.issuePaths ?? [], 'synthesis', null, false, rejection)).toBe(true);
       if (complete) {
-        expect(sentence).toContain('every field except title');
+        expect(rejection.resend).toEqual(['title']);
         expect(Object.keys(store.get()!).sort()).toEqual(['highlight_groups', 'name', 'sections', 'summary']);
       } else expect(store.get()).toEqual({ name: 'Orders lineage', summary: 'Orders from stage to mart.' });
     }
@@ -238,7 +242,8 @@ describe('unknown repair keys', () => {
 /** Builds only the supplied held transaction; expected authorization and results stay on each case. */
 function indexedRepair(draft: PresentResultInput, paths: string[]) {
   const store = new RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>();
-  const instruction = holdRejectedPresentResult(store, draft, paths, 'synthesis');
+  const instruction = emptyRejection();
+  expect(holdRejectedPresentResult(store, draft, paths, 'synthesis', null, false, instruction)).toBe(true);
   const authorization = store.getAuthorization()!;
   const schema = presentResultRepairPatchSchemaForFields(authorization.fields, 'synthesis', 0,
     authorization.highlightLabelIndexes, authorization.sectionLeaves);
@@ -263,7 +268,8 @@ describe('indexed repair transactions', () => {
       };
     }).items;
 
-    expect(instruction).toContain('replace only the named defective fields');
+    expect(instruction.resend).toEqual(['highlight_groups']);
+    expect(instruction.resendRules).toEqual(['indexed']);
     expect(servedItems?.anyOf?.map(item => item.properties?.index?.const)).toEqual([0, 2]);
     expect(servedItems?.anyOf?.map(item => item.required)).toEqual([
       ['index', 'label'],
@@ -320,8 +326,8 @@ describe('indexed repair transactions', () => {
     } as PresentResultInput;
     const { store, instruction, authorization, schema } = indexedRepair(draft, ['sections.0.text']);
 
-    expect(instruction).toContain('sections: send {index, corrected fields} for 0 (text)');
-    expect(instruction).not.toContain('resend every section');
+    expect(instruction.resend).toEqual(['sections']);
+    expect(instruction.resendRules).toEqual(['indexed']);
     expect(store.get()?.sections).toEqual(draft.sections);
     expect(schema.safeParse({ sections: draft.sections }).success).toBe(false);
     expect(schema.safeParse({ sections: [{ index: 1, text: 'Wrong index.' }] }).success).toBe(false);
@@ -380,10 +386,15 @@ describe('indexed repair transactions', () => {
     const malformed = new RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>();
     const outOfRange = new RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>();
 
-    expect(holdRejectedPresentResult(malformed, draft, ['sections.bad.text'], 'synthesis')).toContain('resend every section');
+    const whole = emptyRejection(), outside = emptyRejection();
+    expect(holdRejectedPresentResult(malformed, draft, ['sections.bad.text'], 'synthesis', null, false, whole)).toBe(true);
+    expect(whole.resend).toEqual(['sections']);
+    expect(whole.resendRules).toEqual(['whole']);
     expect(malformed.getAuthorization()?.sectionLeaves).toBeUndefined();
     expect(malformed.get()?.sections).toBeUndefined();
-    expect(holdRejectedPresentResult(outOfRange, draft, ['highlight_groups.9.label'], 'synthesis')).toContain('every field except highlight_groups');
+    expect(holdRejectedPresentResult(outOfRange, draft, ['highlight_groups.9.label'], 'synthesis', null, false, outside)).toBe(true);
+    expect(outside.resend).toEqual(['highlight_groups']);
+    expect(outside.resendRules).toEqual(['whole']);
     expect(outOfRange.getAuthorization()?.highlightLabelIndexes).toBeUndefined();
     expect(outOfRange.get()?.highlight_groups).toBeUndefined();
   });
@@ -410,7 +421,9 @@ it('names highlight_groups as the field to resend when a two-field repair return
     name: 'Report', summary: '', highlight_groups: [],
     sections: [{ label: 'Report', node_ids: [id], text: 'Report output.' }],
   };
-  expect(holdRejectedPresentResult(store, rejected, ['summary', 'highlight_groups'], 'synthesis')).toContain('highlight_groups');
+  const held = emptyRejection();
+  expect(holdRejectedPresentResult(store, rejected, ['summary', 'highlight_groups'], 'synthesis', null, false, held)).toBe(true);
+  expect(held.resend).toEqual(['summary', 'highlight_groups']);
   const authorization = store.getAuthorization()!;
   expect(authorization.fields).toEqual(['summary', 'highlight_groups']);
 
@@ -421,12 +434,11 @@ it('names highlight_groups as the field to resend when a two-field repair return
   expect(result.success).toBe(false);
   if (result.success === false) {
     expect(result.rejection.issuePaths).toEqual(['highlight_groups']);
-    expect(result.rejection.reason).toContain('highlight_groups[] is required');
-    expect(result.rejection.hint).toContain('highlight_groups');
+    expect(result.rejection.errors).toEqual([{ path: 'highlight_groups', code: 'missing' }]);
   }
 });
 
-it('accepts the call without sections that the unheld-section hint tells the model to send', () => {
+it('accepts a call without sections after an unheld-section rejection, whose hint states the committed-label correction', () => {
   const store = new RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>();
   const committed = [{ label: 'Report', text: 'Committed body.' }];
   const rejected = {
@@ -440,8 +452,10 @@ it('accepts the call without sections that the unheld-section hint tells the mod
   expect(first.success).toBe(false);
   const failedPaths = first.success ? [] : first.error.issues.map(issue => issue.path.join('.'));
 
-  const hint = holdRejectedPresentResult(store, rejected, failedPaths, 'synthesis', committed);
-  expect(hint).toContain('omit sections to keep the committed report');
+  const hint = emptyRejection();
+  expect(holdRejectedPresentResult(store, rejected, failedPaths, 'synthesis', committed, false, hint)).toBe(true);
+  expect(hint.errors).toContainEqual({ path: 'sections', code: 'uncommitted_label', values: ['Report'] });
+  expect(JSON.stringify(hint)).not.toContain('Brand new');
   const authorization = store.getAuthorization()!;
   expect(authorization.fields).toContain('sections');
 

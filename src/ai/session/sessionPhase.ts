@@ -1,22 +1,7 @@
 /** Session-phase finite state machine — types and runtime schema. */
 
-import { z } from 'zod';
-
-/** Runtime schema for an engine-emitted `action_required` envelope. */
-export const PendingGateSchema = z.object({
-  gate: z.literal('confirm_sm_start'),
-  classes: z.array(z.string()),
-  nodeIds: z.array(z.string()),
-  detail: z.string(),
-  /** Revision of the exact exploration proposal shown to the user. */
-  proposalRevision: z.number().int().positive().optional(),
-});
-
-/** A validated consent gate waiting on a user reply. Produced by the engine, resolved by the next user chat turn. Envelope plumbing fields (`error`, `hint`) are deliberately absent — they are transport concerns, not session state. */
-export type PendingGate = z.infer<typeof PendingGateSchema>;
-
-/** Typed control outcome a tool handler records beside its result text, so routing never parses that text (MW-2). */
-export type ToolControlSignal = { readonly kind: 'gate'; readonly gate: PendingGate } | { readonly kind: 'refused'; readonly reason: string };
+/** Typed control outcome a tool handler records beside its result text, so routing never parses that text (MW-2). The proposal behind a gate is the session's pending exploration. */
+export type ToolControlSignal = { readonly kind: 'gate' } | { readonly kind: 'refused'; readonly reason: string };
 
 /** Persistent session phase — the source of truth for what the next chat turn should do. Survives across VS Code chat turns via the `AiSession` singleton. */
 export type SessionPhase =

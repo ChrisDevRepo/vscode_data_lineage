@@ -20,7 +20,12 @@ import { executeStartExploration } from '../../../src/ai/tools/handlers/startExp
 import { StartExplorationInputSchema, StartExplorationFreshProviderInputSchema, StartExplorationProviderInputSchema, StartExplorationRefineProviderInputSchema, PruneCurrentInputSchema, presentResultSchemaForPhase, submitFindingsSchemaForMode } from '../../../src/ai/tools/toolSchemas';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import Ajv from 'ajv';
-import { PROBLEM_MESSAGES, isAdmissionRefusal, isConsentGateRejection, readToolErrorText, renderProblem } from '../../../src/ai/support/toolErrorEnvelope';
+import { ISSUES, isAdmissionRefusal, isConsentGateRejection, readToolErrorText, renderProblem } from '../../../src/ai/support/toolErrorEnvelope';
+
+/** The errors a rendered problem shows, across its category groups. */
+const shownErrors = (problem: { guidance: Array<{ errors: Array<Record<string, unknown>> }> }) => problem.guidance.flatMap(group => group.errors);
+/** Whether a rendered problem carries a fallback in any group. */
+const hasFallback = (problem: { guidance: Array<{ fallback?: string }> }) => problem.guidance.some(group => group.fallback !== undefined);
 import { detectOverBudgetFromResult, queueDiscoveryBudgetNotice } from '../../../src/ai/agent/discoveryCapture';
 import { scriptedRegistry } from '../../harness/scriptedModelPort';
 import { makeGraph, makeIndexedModel, makeModel, makeNode } from '../helpers/modelFixtures';
@@ -149,14 +154,13 @@ it('states whole action-list replacement and preserves explicit withdrawal witho
   const second = { nodeId: OTHER, question: 'Explain the other source.' };
   const submit = (input: object) => JSON.parse(executeSubmitFindings(input, services));
   const initial = submit({ summary: 'Authored summary.', sections: { technical: 'Authored evidence.' }, questions: [first] });
-  expect(initial.errors).toEqual(expect.arrayContaining([expect.objectContaining({ path: OTHER, code: 'neighbor_outcome_missing' })]));
+  expect(initial.errors).toEqual(expect.arrayContaining([{ path: '', code: 'neighbor_undecided', values: [OTHER] }]));
   expect(initial.resend).toEqual(['questions', 'prune_neighbors']);
-  expect(initial.errors).toEqual(expect.arrayContaining([expect.objectContaining({ alternatives: ['questions', 'prune_neighbors'] })]));
   const schema = toModelJsonSchema(submitFindingsSchemaForMode('bb', 'technical', false, engine.hopSubmitColumns));
   expect(schema.description).toContain('questions or prune_neighbors list replaces its held list whole');
-  expect(submit({ questions: [second] }).errors).toEqual(expect.arrayContaining([expect.objectContaining({ path: BRANCH })]));
+  expect(submit({ questions: [second] }).errors).toEqual(expect.arrayContaining([{ path: '', code: 'neighbor_undecided', values: [BRANCH] }]));
   expect(engine.toJSON().engineInternals.heldFinding?.finding.questions).toEqual([second]);
-  expect(submit({ questions: [] }).errors).toHaveLength(2);
+  expect(submit({ questions: [] }).errors).toEqual([{ path: '', code: 'neighbor_undecided', values: [BRANCH] }, { path: '', code: 'neighbor_undecided', values: [OTHER] }]);
   expect(engine.toJSON().engineInternals.heldFinding?.finding.questions).toEqual([]);
   expect(submit({ questions: [first, second] })).toHaveProperty('ok', true);
   expect(engine.getDetailSlots().find(slot => slot.nodeId === ORIGIN)).toMatchObject({ summary: 'Authored summary.',
@@ -212,7 +216,7 @@ it.each((['bb', 'ct'] as const).flatMap(mode => ['object', 'markdown', 'invalid-
     sections: sectionShape === 'markdown' ? '# Findings\nPlain authored Markdown.' : sectionShape === 'invalid-json'
       ? '{"technical":"Authored "quoted" evidence."}' : { technical: 'Preserve this authored evidence.' }, questions, badge_label: 42,
     ...(mode === 'ct' ? { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }] } : {}) }, services));
-  expect(rejected.errors).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'badge_label' }), expect.objectContaining({ path: OTHER })]));
+  expect(rejected.errors).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'badge_label' }), { path: '', code: 'neighbor_undecided', values: [OTHER] }]));
   if (malformedSections) expect(rejected.errors).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'sections' })]));
   expect(rejected.detail).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'neighbor_outcome_missing', id: OTHER })]));
   const after = engine.toJSON();
@@ -587,9 +591,8 @@ describe('large findings repairs', () => {
     const alternatives = kind === 'flowfault' ? [] : ['questions', 'prune_neighbors', 'column_flow'];
     expect(engine.heldPartsOfCurrentFocus()).toMatchObject({ failed: required, resend: [...new Set([...required, ...alternatives])] });
     const message = buildActiveHopInstruction(session, engine, ORIGIN).message;
-    if (required.length) expect(message).toContain(`Fields to correct: ${required.join(', ')}.`);
-    else expect(message).not.toContain('Fields to correct:');
-    expect(message).toContain('The latest tool error defines the faults and their correction alternatives.');
+    expect(message).not.toContain('Fields to correct:');
+    expect(message).toContain('The latest tool result lists the faults, how to correct them and the fields to resend; saved content stays as saved.');
     if (kind === 'alternatives') {
       expect(message).toContain('Saved valid content: summary, column_flow, sections.technical.');
       expect(JSON.parse(executeSubmitFindings({ prune_neighbors: [{ id: OTHER, reason: 'No requested contribution.' }] }, services))).toHaveProperty('ok', true);
@@ -613,12 +616,12 @@ describe('large findings repairs', () => {
         writes_to: shape === 'target-type' ? 42 : shape === 'target-col' ? { node: target } : { node: target, col: 'Value' } }],
     }, services));
     const errors = result.errors as Array<{ path: string; code: string }>;
-    expect(errors.some(error => error.path === 'column_flow.0.writes_to.node' && error.code === 'column_out_of_scope')).toBe(scope);
+    expect(errors.some(error => error.path === 'column_flow.0.writes_to.node' && error.code === 'out_of_scope')).toBe(scope);
     if (scope) {
       expect(errors.filter(error => error.path === 'column_flow.0.writes_to.node')).toHaveLength(1);
       const firstFeedback = JSON.parse(renderProblem(readToolErrorText(JSON.stringify(result))!, 1));
-      const scopeIssue = firstFeedback.errors.find((error: { code: string }) => error.code === 'column_out_of_scope');
-      expect(scopeIssue).toMatchObject({ path: 'column_flow.0.writes_to.node' });
+      const scopeIssue = firstFeedback.guidance.flatMap((group: { errors: unknown[] }) => group.errors).find((error: { fault: string }) => error.fault === ISSUES.out_of_scope.label);
+      expect(scopeIssue).toMatchObject({ path: 'column_flow.0.writes_to.node', correction: ISSUES.out_of_scope.correction });
       expect(scopeIssue).not.toHaveProperty('allowed');
     }
     const shapePath = shape === 'target-type' ? 'column_flow.0.writes_to' : shape === 'target-col' ? 'column_flow.0.writes_to.col'
@@ -865,8 +868,9 @@ describe('lineage_prune_current boundary', () => {
     for (const final of repeatFault ? [false, true] : [false]) {
       const rejected = readToolErrorText(executePruneCurrent({ focus_node_id: BRANCH, reason: 'No continuation.' }, services));
       expect(rejected).not.toBeNull();
-      // The legal alternative (the tool to call instead) is named in the call-level error of every feedback.
-      expect(JSON.parse(renderProblem(rejected!, final ? 2 : 1)).errors.find((error: { path: string }) => error.path === '')?.message).toContain('lineage_submit_findings');
+      // The legal alternative (the tool to call instead) is named in the correction of the call-level error at every feedback.
+      expect(rejected!.errors).toEqual([{ path: '', code: 'prune_current_refused' }]);
+      expect(renderProblem(rejected!, final ? 2 : 1)).toContain(ISSUES.prune_current_refused.correction);
       expect(engine.toJSON()).toEqual(before);
     }
     expect(JSON.parse(executeSubmitFindings({ summary: 'This assigned column terminates here.',
@@ -897,7 +901,7 @@ describe('lineage_start_exploration boundary', () => {
   it.each([{}, { question: 'What feeds it?' }, { excludeTypes: ['table'] }])('rejects a start with no origin, supplement or revision at the schema: %j', input => {
     const parsed = StartExplorationInputSchema.safeParse(input);
     expect(parsed.success).toBe(false);
-    expect(parsed.error?.issues.some(issue => issue.code === 'custom' && (issue as { params?: { startIssue?: string } }).params?.startIssue === 'start_shape_required')).toBe(true);
+    expect(parsed.error?.issues.some(issue => issue.code === 'custom' && issue.path.length === 0)).toBe(true);
   });
 
   it('answers that start with the schema rejection before the handler reads origin', async () => {
@@ -905,7 +909,7 @@ describe('lineage_start_exploration boundary', () => {
     session.stateMachine = null;
     const { services } = stubToolServices({ session, model, graph });
     const result = JSON.parse(await executeStartExploration({ question: 'What feeds it?' }, services));
-    expect(result).toMatchObject({ code: 'missing_field', detail: expect.arrayContaining([expect.objectContaining({ issues: [expect.objectContaining({ path: '(root)', code: 'missing_field' })] })]) });
+    expect(result).toMatchObject({ code: 'invalid_input', errors: [expect.objectContaining({ path: '', code: 'missing' })] });
   });
 
   it('directs an origin plus legacy supplement to a fresh approval proposal', async () => {
@@ -914,7 +918,8 @@ describe('lineage_start_exploration boundary', () => {
     const { services } = stubToolServices({ session, model, graph });
     const text = await executeStartExploration({ origin: ORIGIN, analysisMode: 'bb', classification: 'technical', depth: { upstream: { levels: 1, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } }, supplement: { nodeIds: [OTHER] } } as never, services);
     expect(text).toMatch(/new exploration/);
-    expect(text).toMatch(/origin and scope, without supplement/);
+    expect(text).toMatch(/fresh proposal with origin and scope/);
+    expect(text).not.toMatch(/without supplement/);
     expect(text).not.toContain('keep every other field unchanged');
   });
 
@@ -929,7 +934,7 @@ describe('lineage_start_exploration boundary', () => {
     }, services));
     expect(result).toMatchObject({ code: 'action_required', detail: { gate: 'confirm_sm_start', proposalRevision: 1 } });
     expect(result).not.toHaveProperty('focus_node');
-    expect(result.hint).toBe('Tool paused — awaiting user confirmation before the first hop.');
+    expect(result.errors).toEqual([{ path: '', code: 'awaiting_approval' }]);
     expect(session.stateMachine).toBeNull();
   });
 
@@ -995,7 +1000,7 @@ describe('lineage_get_neighbor_columns boundary', () => {
     const { registry } = ctWorld();
     const result = JSON.parse(await registry.invoke('lineage_get_neighbor_columns', { ids: [id] }));
     expect(result).toMatchObject({ code: 'out_of_scope_or_not_neighbor' });
-    expect(result).toMatchObject({ issuePaths: ['ids.0'], detail: [{ path: 'ids.0', allowed_values: [BRANCH] }] });
+    expect(result).toMatchObject({ issuePaths: ['ids.0'], errors: [{ path: 'ids.0', code: 'not_neighbor', values: [BRANCH] }] });
     expect(result).not.toHaveProperty('results');
   });
 
@@ -1145,7 +1150,8 @@ describe('lineage_submit_findings boundary', () => {
     };
     const accepted = JSON.parse(executeSubmitFindings(findingRepair(engine, correction), services));
     if (mode === 'bb' && schemaPath === 'prune_neighbors') {
-      expect(accepted.errors).toContainEqual(expect.objectContaining({ alternatives: expect.arrayContaining(['questions']) }));
+      expect(accepted.errors).toContainEqual(expect.objectContaining({ code: 'neighbor_undecided' }));
+      expect(accepted.resend).toEqual(expect.arrayContaining(['questions']));
       expect(engine.getDetailSlots()).toEqual([]);
       expect(JSON.parse(executeSubmitFindings(findingRepair(engine, correction), services))).toMatchObject({ ok: true, next_focus: BRANCH });
     } else expect(accepted).toMatchObject({ ok: true, next_focus: BRANCH });
@@ -1347,8 +1353,8 @@ it('keeps outside-supplier withdrawal alongside the nullable write exit in first
     questions: [{ nodeId: BRANCH, question: 'Trace the reachable Value.' }],
   }, services));
   const first = JSON.parse(renderProblem(readToolErrorText(JSON.stringify(rejected))!, 1));
-  const scopeIssue = first.errors.find((error: { code: string }) => error.code === 'column_out_of_scope');
-  expect(scopeIssue).toMatchObject({ path: 'column_flow.0.upstream_columns.0.node' });
+  const scopeIssue = shownErrors(first).find(error => error.fault === ISSUES.supplier_out_of_scope.label);
+  expect(scopeIssue).toMatchObject({ path: 'column_flow.0.upstream_columns.0.node', correction: ISSUES.supplier_out_of_scope.correction });
   expect(scopeIssue).not.toHaveProperty('allowed');
   expect(engine.getDetailSlots()).toEqual([]);
   expect(JSON.parse(executeSubmitFindings({column_flow: [{out_col:'Value', upstream_columns:[{node:BRANCH,col:'Value'}]}]},services))).toHaveProperty('ok',true);
@@ -1356,16 +1362,14 @@ it('keeps outside-supplier withdrawal alongside the nullable write exit in first
 });
 
 const startEnumFaults = [
-  { field: 'analysisMode', patch: { analysisMode: 'wrong' }, path: 'analysisMode', allowed: ['bb', 'ct'], code: 'invalid_enum' },
-  { field: 'classification', patch: { classification: 'wrong' }, path: 'classification', allowed: ['business', 'technical', 'both'], code: 'invalid_enum' },
-  { field: 'depth exactness', patch: { depth: { upstream: { levels: 2, exactness: 'wrong' }, downstream: { levels: 0, exactness: 'exact' } } }, path: 'depth.upstream.exactness', allowed: ['exact', 'approximate'], code: 'invalid_value' },
+  { field: 'analysisMode', patch: { analysisMode: 'wrong' }, path: 'analysisMode', allowed: ['bb', 'ct'] },
+  { field: 'classification', patch: { classification: 'wrong' }, path: 'classification', allowed: ['business', 'technical', 'both'] },
+  { field: 'depth exactness', patch: { depth: { upstream: { levels: 2, exactness: 'wrong' }, downstream: { levels: 0, exactness: 'exact' } } }, path: 'depth.upstream.exactness', allowed: ['exact', 'approximate'] },
 ];
 const startEnumCombinations = Array.from({ length: (1 << startEnumFaults.length) - 1 }, (_, index) => {
   const selected = startEnumFaults.filter((_row, bit) => (index + 1) & (1 << bit));
   return { field: selected.map(row => row.field).join(' + '), selected,
-    patch: Object.assign({}, ...selected.map(row => row.patch)),
-    code: selected.some(row => row.field === 'analysisMode') ? 'invalid_enum'
-      : selected.some(row => row.field === 'depth exactness') ? 'invalid_value' : 'invalid_enum' };
+    patch: Object.assign({}, ...selected.map(row => row.patch)) };
 });
 it.each(startEnumCombinations.flatMap(row => [false, true].map(refining => ({ ...row, refining }))))('stages native start $field values and accepts the corrected proposal (refining=$refining)', async row => {
   const { session, model, graph } = ctWorld();
@@ -1381,18 +1385,19 @@ it.each(startEnumCombinations.flatMap(row => [false, true].map(refining => ({ ..
   const desired = { ...proposal, depth: { ...proposal.depth, upstream: { levels: 2, exactness: 'exact' } } };
   const faulty = { ...desired, ...(row.refining ? { proposalRevision: 1 } : {}), ...row.patch };
   const rejected = JSON.parse(await executeStartExploration(faulty, services));
-  expect(rejected.code).toBe(row.code);
+  expect(rejected.code).toBe('invalid_input');
   expect(rejected.issuePaths.sort()).toEqual(row.selected.map(fault => fault.path).sort());
+  for (const fault of row.selected) expect(rejected.errors).toContainEqual(expect.objectContaining({ path: fault.path, code: 'enum' }));
   // D-105: feedback 1 names every fault without allowed values; feedback 2 adds them; start arguments get no fallback at 3.
   const first = JSON.parse(renderProblem(rejected, 1));
-  expect(Object.keys(first).sort()).toEqual(['code', 'errors', 'resend']);
-  for (const fault of row.selected) expect(first.errors).toContainEqual(expect.objectContaining({ path: fault.path }));
-  for (const error of first.errors) expect(error).not.toHaveProperty('allowed');
+  expect(Object.keys(first).sort()).toEqual(['attempt', 'code', 'guidance', 'resend']);
+  for (const fault of row.selected) expect(shownErrors(first)).toContainEqual(expect.objectContaining({ path: fault.path }));
+  for (const error of shownErrors(first)) expect(error).not.toHaveProperty('allowed');
   for (const fault of row.selected) for (const value of fault.allowed) expect(JSON.stringify(first)).not.toContain(JSON.stringify(value));
   for (const stage of [2, 3] as const) {
-    const later = JSON.parse(renderProblem(rejected, stage, 'lineage_start_exploration'));
-    for (const fault of row.selected) expect(later.errors).toContainEqual(expect.objectContaining({ path: fault.path, allowed: fault.allowed }));
-    expect(JSON.stringify(later)).not.toContain(PROBLEM_MESSAGES.fallback);
+    const later = JSON.parse(renderProblem(rejected, stage));
+    for (const fault of row.selected) expect(shownErrors(later)).toContainEqual(expect.objectContaining({ path: fault.path, allowed: expect.arrayContaining(fault.allowed) }));
+    expect(hasFallback(later)).toBe(false);
   }
   expect(session.stateMachine).toBeNull();
   expect(session.pendingExploration?.revision ?? null).toBe(row.refining ? 1 : null);
@@ -1417,9 +1422,9 @@ it.each([
     expect(rejection).not.toBeNull();
     expect(rejection!.code).toBe(row.code);
     const served = JSON.parse(renderProblem(rejection!, final ? 2 : 1));
-    expect(served.errors.length).toBeGreaterThan(0);
-    for (const error of served.errors) expect(error.message).not.toBe('');
-    if (!final) for (const error of served.errors) expect(error).not.toHaveProperty('allowed');
+    expect(shownErrors(served).length).toBeGreaterThan(0);
+    for (const error of shownErrors(served)) expect(error.correction).toEqual(expect.any(String));
+    if (!final) for (const error of shownErrors(served)) expect(error).not.toHaveProperty('allowed');
     expect(session.pendingExploration).toBeNull();
     expect(session.stateMachine).toBeNull();
   }
@@ -1545,9 +1550,7 @@ it('does not treat two initial serialized writes in the same model round as repa
   } };
   const results = await batch([{ tool: 'lineage_start_exploration', input: bad },
     { tool: 'lineage_start_exploration', input: { ...bad, scopeNotes: 'Another independent proposal.' } }]);
-  expect(results.map(result => JSON.parse(result).hint)).toEqual([
-    expect.stringContaining('no values are held'), expect.stringContaining('no values are held'),
-  ]);
+  expect(results.map(result => JSON.parse(result).errors.some((error: { code: string }) => error.code === 'ambiguous_repair'))).toEqual([true, true]);
   expect(projected.get('lineage_start_exploration')!.inputSchema.safeParse({ depth: { upstream: { levels: 2 } } }).success).toBe(false);
   const rejected = JSON.parse(await invoke('lineage_start_exploration', { depth: { upstream: { levels: 2 } } }));
   expect(rejected.code).not.toBe('action_required');
@@ -1637,9 +1640,9 @@ it.each([
   session.enterLmStage({ kind: 'discover' }, session.turnEpoch); session.currentRoundId = 1;
   const rejection = JSON.parse(await registry.invoke(row.tool, row.bad));
   for (const stage of [1, 2, 3] as const) {
-    const problem = JSON.parse(renderProblem(rejection, stage, row.tool));
-    expect(problem.errors).toContainEqual(expect.objectContaining({ path: row.field, code: 'type' }));
-    expect(JSON.stringify(problem)).not.toContain(PROBLEM_MESSAGES.fallback);
+    const problem = JSON.parse(renderProblem(rejection, stage));
+    expect(shownErrors(problem)).toContainEqual(expect.objectContaining({ path: row.field, fault: ISSUES.type.label }));
+    expect(hasFallback(problem)).toBe(false);
   }
   session.currentRoundId = 2;
   expect(readToolErrorText(await registry.invoke(row.tool, row.corrected))).toBeNull();
@@ -1684,17 +1687,17 @@ it.each(['feedback marker', 'next provider schema and acknowledgement', 'second 
   if (check === 'feedback marker') {
     const toolResult = first.messages.find(message => message.getType() === 'tool')!;
     const problem = JSON.parse(String(toolResult.content));
-    expect(Object.keys(problem).sort()).toEqual(['code', 'errors', 'resend']);
-    expect(problem.errors.map((error: { path: string }) => error.path)).toEqual(expect.arrayContaining(['depth.upstream.exactness', 'depth.downstream.exactness']));
+    expect(Object.keys(problem).sort()).toEqual(['attempt', 'code', 'guidance', 'resend']);
+    expect(shownErrors(problem).map(error => error.path)).toEqual(expect.arrayContaining(['depth.upstream.exactness', 'depth.downstream.exactness']));
     return;
   }
   const second = await executeToolAttempt(model, plan([modelUserMessage('Start this exploration.'), ...first.messages]), { priorState: state });
   if (check === 'second feedback allowed values') {
     const firstContent = JSON.parse(String(first.messages.find(message => message.getType() === 'tool')!.content));
-    expect(firstContent.errors).toContainEqual(expect.objectContaining({ path: 'analysisMode' }));
-    for (const error of firstContent.errors) expect(error).not.toHaveProperty('allowed');
+    expect(shownErrors(firstContent)).toContainEqual(expect.objectContaining({ path: 'analysisMode' }));
+    for (const error of shownErrors(firstContent)) expect(error).not.toHaveProperty('allowed');
     const content = JSON.parse(String(second.messages.find(message => message.getType() === 'tool')!.content));
-    expect(content.errors).toContainEqual(expect.objectContaining({ path: 'analysisMode', allowed: expect.arrayContaining(['bb']) }));
+    expect(shownErrors(content)).toContainEqual(expect.objectContaining({ path: 'analysisMode', allowed: expect.arrayContaining(['bb']) }));
     state = recordToolAttempt(state, second);
     await executeToolAttempt(model, plan([modelUserMessage('Start this exploration.'), ...second.messages]), { priorState: state });
     expect(model.modelCalls).toBe(3); expect(session.currentRoundId).toBe(1);
@@ -1866,7 +1869,7 @@ describe('control routing takes the typed handler signal, never the result text 
   it('routes the real handler gate and refusal through the typed signal', async () => {
     const opened = await startThroughAttempt(1);
     expect(opened.attempt.stop).toBe('gate');
-    expect(opened.attempt.gate).toMatchObject({ gate: 'confirm_sm_start', proposalRevision: 1 });
+    expect(opened.session.pendingExploration?.revision).toBe(1);
     expect(opened.session.takeControlSignal()).toBeNull();
     const refused = await startThroughAttempt('all', createTurnTokenBudget({ maxRounds: 1 }));
     expect(refused.attempt.stop).toBe('refused');
@@ -1894,6 +1897,6 @@ describe('control routing takes the typed handler signal, never the result text 
     expect(notices).toHaveLength(1);
     for (const stage of [1, 2, 3] as const) expect(detectOverBudgetFromResult('lineage_get_scope_bundle', renderProblem(readToolErrorText(overBudget)!, stage))).toBe(false);
     expect(isConsentGateRejection('action_required')).toBe(true);
-    expect(isAdmissionRefusal(readToolErrorText(JSON.stringify({ code: 'over_active_scope_budget', reason: 'Too large.' }))!.code)).toBe(true);
+    expect(isAdmissionRefusal(readToolErrorText(JSON.stringify({ code: 'over_active_scope_budget', reason: 'Too large.', errors: [{ path: '', code: 'over_budget' }] }))!.code)).toBe(true);
   });
 });

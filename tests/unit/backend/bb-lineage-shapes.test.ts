@@ -77,11 +77,10 @@ describe('BB lineage: a prune inside a cycle through the origin', () => {
     const before = w.engine.toJSON();
     expect(submit(w.engine, 'j', { prune: ['d'], ask: ['x'] })).toMatchObject({
       code: 'route_validation_failed', issuePaths: ['prune_neighbors.0.id'],
-      reason: 'prune_neighbors.0.id: `d`: Removing it would disconnect committed analysis of x.\nNeighbor `d` has no authored outcome. Map its value in column_flow (CT), prune it in prune_neighbors if allowed, or keep / question it in questions. Send the complete list for any action field you change, including entries you keep.',
       detail: [expect.objectContaining({ kind: 'prune_unsupported', id: 'd', path: 'prune_neighbors.0.id' }),
         expect.objectContaining({ kind: 'neighbor_outcome_missing', id: 'd' })],
-      errors: [expect.objectContaining({ path: 'prune_neighbors.0.id' }),
-        expect.objectContaining({ path: 'd', alternatives: ['questions'] })],
+      errors: [expect.objectContaining({ path: 'prune_neighbors.0.id', code: 'prune_unsupported' }),
+        expect.objectContaining({ path: 'd', code: 'neighbor_outcome_missing', alternatives: ['questions'] })],
       resend: ['prune_neighbors', 'questions'],
     });
     expect(w.engine.toJSON().removedSet).toEqual(before.removedSet);
@@ -115,7 +114,7 @@ describe('BB lineage: a prune without support is rejected at submission', () => 
   it('rejects the prune entry with the analysis it would disconnect', () => {
     const w = world(types, edges, 'o', ALL, ALL);
     expect(() => drain(w.engine, w.graph, { o: { prune: ['s'] }, d: { prune: ['s', 't'] } }))
-      .toThrow('prune_neighbors.0.id: `s`: Removing it would disconnect committed analysis of u.');
+      .toThrow(/hop d rejected: .*"path":"prune_neighbors\.0\.id","code":"prune_unsupported"/);
     expect(w.engine.toJSON().agenda.map(entry => entry.nodeId)).not.toContain('s');
   });
 
@@ -131,7 +130,7 @@ describe('BB lineage: a prune without support is rejected at submission', () => 
     // Each prune target is adjacent to its sender, so this exercises protection of d rather than adjacency rejection.
     const w = world(v('o', 'a', 'b', 'c', 'd', 'e'), [['o', 'a'], ['o', 'e'], ['a', 'b'], ['b', 'o'], ['b', 'c'], ['c', 'd'], ['d', 'a'], ['e', 'o'], ['e', 'b'], ['e', 'c'], ['o', 'c'], ['e', 'a']], 'o', ALL, ALL);
     expect(() => drain(w.engine, w.graph, { o: { prune: ['b', 'c', 'e'] }, a: { prune: ['o', 'b', 'e'] } }))
-      .toThrow(/hop a rejected: .*`b`: Removing it would disconnect committed analysis of d\..*`e`: Removing it would disconnect committed analysis of d\./);
+      .toThrow(/hop a rejected: .*"kind":"prune_unsupported","id":"b".*"kind":"prune_unsupported","id":"e"/);
   });
 });
 

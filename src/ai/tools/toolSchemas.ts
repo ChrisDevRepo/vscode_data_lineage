@@ -51,9 +51,8 @@ const ANALYSIS_MODE_DESCRIPTION =
 /** Issue text when a start_exploration call carries neither an origin nor a proposal revision. */
 const START_SHAPE_REQUIRED_MESSAGE = "Provide origin for a fresh approval proposal, or proposalRevision to refine the pending one.";
 
-/** Recovery when column trace is requested without named columns. The schema issue and the rejection hint are this one string. */
-export const CT_TARGET_COLUMNS_RECOVERY =
-  'Name the columns to trace; for all columns, read them with lineage_get_object_detail and send each one. Then resubmit CT.';
+/** The fault of named columns under blackboard analysis: the schema issue and the refine and engine refusals are this one string. */
+export const BB_TARGET_COLUMNS_FAULT = 'analysisMode "bb" is whole-object lineage and does not accept targetColumns.';
 
 /** `targetColumns` on every exploration phase: column trace names the columns; blackboard forbids the property. */
 const TARGET_COLUMNS_PHASE_DESCRIPTION =
@@ -92,7 +91,7 @@ export const StartExplorationInputSchema = z.object({
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: START_SHAPE_REQUIRED_MESSAGE,
-      params: { startIssue: 'start_shape_required' },
+      params: { issue: 'missing' },
     });
   }
   if (data.origin && !isProposalRefine && !data.analysisMode) {
@@ -100,7 +99,6 @@ export const StartExplorationInputSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ['analysisMode'],
       message: 'analysisMode is required for fresh exploration. Use "bb" when unclear; use "ct" only for explicit column tracing.',
-      params: { startIssue: 'analysis_mode_required' },
     });
   }
   if (data.origin && !isProposalRefine && !data.classification) {
@@ -108,23 +106,22 @@ export const StartExplorationInputSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ['classification'],
       message: 'classification is required for a fresh exploration proposal.',
-      params: { startIssue: 'classification_required' },
     });
   }
   if (data.analysisMode === 'ct' && (data.origin || data.targetColumns !== undefined) && (!data.targetColumns || data.targetColumns.length === 0)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['targetColumns'],
-      message: CT_TARGET_COLUMNS_RECOVERY,
-      params: { startIssue: 'ct_target_columns_required' },
+      message: 'Name the columns to trace; for all columns, read them with lineage_get_object_detail and send each one. Then resubmit CT.',
+      params: { issue: 'missing' },
     });
   }
   if (data.analysisMode === 'bb' && data.targetColumns && data.targetColumns.length > 0) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['targetColumns'],
-      message: 'analysisMode "bb" is whole-object lineage and does not accept targetColumns.',
-      params: { startIssue: 'bb_target_columns_forbidden' },
+      message: BB_TARGET_COLUMNS_FAULT,
+      params: { issue: 'never' },
     });
   }
   if (data.origin && !isProposalRefine && !data.depth) {
@@ -132,7 +129,6 @@ export const StartExplorationInputSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ['depth'],
       message: 'depth is required for a fresh exploration proposal: send levels and exactness for both upstream and downstream.',
-      params: { startIssue: 'depth_required' },
     });
   }
 });
@@ -190,10 +186,10 @@ const StartRefineProviderSchema = z.object({
   ),
 }).strict().superRefine((data, ctx) => {
   if (data.analysisMode === 'bb' && data.targetColumns && data.targetColumns.length > 0) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targetColumns'], message: 'BB refinement cannot name target columns.' });
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targetColumns'], message: 'BB refinement cannot name target columns.', params: { issue: 'never' } });
   }
   if (data.analysisMode === 'ct' && (!data.targetColumns || data.targetColumns.length === 0)) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targetColumns'], message: 'A BB-to-CT refinement requires named target columns.' });
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targetColumns'], message: 'A BB-to-CT refinement requires named target columns.', params: { issue: 'missing' } });
   }
 });
 
@@ -240,13 +236,13 @@ export const GetScopeBundleInputSchema = z.object({
     const symmetric = input.depth !== undefined;
     const asymmetric = input.upstream_depth !== undefined && input.downstream_depth !== undefined;
     if (symmetric && (input.upstream_depth !== undefined || input.downstream_depth !== undefined)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['depth'], message: 'Use either depth or the asymmetric depth fields, not both.' });
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['depth'], message: 'Use either depth or the asymmetric depth fields, not both.', params: { issue: 'never' } });
     }
     if (!symmetric && !asymmetric && (input.upstream_depth !== undefined || input.downstream_depth !== undefined)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['upstream_depth'], message: 'Provide both upstream_depth and downstream_depth.' });
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['upstream_depth'], message: 'Provide both upstream_depth and downstream_depth.', params: { issue: 'missing' } });
     }
   } else if (input.upstream_depth !== undefined || input.downstream_depth !== undefined) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['direction'], message: 'Asymmetric depths are valid only for bidirectional scope retrieval.' });
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['direction'], message: 'Asymmetric depths are valid only for bidirectional scope retrieval.', params: { issue: 'never' } });
   }
 });
 
@@ -486,12 +482,7 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
     const offAngle = onlyAngle === 'business' ? 'technical' : 'business';
     const surplus = Object.keys(value.sections).filter((key) => key !== onlyAngle);
     if (surplus.includes(offAngle)) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['sections'],
-        message: `"${offAngle}" is not kept under classification=${classification}`,
-        params: { hint: `Fold the ${offAngle} content into "${onlyAngle}" and drop the "${offAngle}" key.` },
-      });
+      ctx.addIssue({ code: 'custom', path: ['sections', offAngle], message: `Not kept under classification ${classification}; this content belongs in sections.${onlyAngle}.`, params: { issue: 'never' } });
     }
     const unknown = surplus.filter((key) => key !== offAngle);
     if (unknown.length > 0) ctx.addIssue({ code: 'unrecognized_keys', path: ['sections'], keys: unknown, message: 'Unrecognized keys' });
@@ -503,13 +494,13 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
       code: 'custom',
       path: ['sections'],
       message: 'Required for a fresh finding.',
-      params: { hint: 'Send sections: the section body keyed by angle.' },
+      params: { issue: 'missing' },
     });
   }
   if (bothAnglesRequired && filled.size > 0) {
     for (const angle of CLASSIFICATION_KEPT_ANGLES.both) {
       if (filled.has(angle)) continue;
-      ctx.addIssue({ code: 'custom', path: ['sections', angle], message: 'required with a both classification when sections is not empty.', params: { hint: `Send sections.${angle}.` } });
+      ctx.addIssue({ code: 'custom', path: ['sections', angle], message: 'Required with a both classification when sections is not empty.', params: { issue: 'missing' } });
     }
   }
   if (fresh && (value.summary === undefined || (typeof value.summary === 'string' && value.summary.trim() === ''))) {
@@ -517,7 +508,7 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
       code: 'custom',
       path: ['summary'],
       message: 'Required for a fresh finding.',
-      params: { hint: 'Send summary: one sentence on what this node does to the data and hands on.' },
+      params: { issue: 'missing' },
     });
   }
 }
@@ -613,15 +604,15 @@ function suppliedValueSchema(values: readonly string[], key: (value: string) => 
   const keys = new Set(values.map(key));
   return z.string().refine(value => keys.has(key(value)),
     { message: 'Name a supplied value.',
-      params: { allowed_values: [...values], ...(node ? { when: { node } } : {}) } }).meta({ enum: [...values] });
+      params: { issue: 'unknown_column', allowed_values: [...values], ...(node ? { when: { node } } : {}) } }).meta({ enum: [...values] });
 }
 
 /** Offers canonical IDs while admitting only equivalent, unambiguous metadata spellings. */
-function objectIdSchema(ids: readonly string[], identifierCaseSensitive = false) {
+function objectIdSchema(ids: readonly string[], identifierCaseSensitive = false, issue: 'not_neighbor' | 'bad_write_target' = 'not_neighbor') {
   if (ids.length === 0) return z.never();
   const known = new Map(ids.map(id => [id, true]));
   const field = z.string().refine(value => resolveModelNodeId(value, known, identifierCaseSensitive) !== null,
-    { message: 'Name a supplied object identity.', params: { allowed_values: [...ids] } }).meta({ enum: [...ids] });
+    { message: 'Name a supplied object identity.', params: { issue, allowed_values: [...ids] } }).meta({ enum: [...ids] });
   markObjectIdField(field, known, identifierCaseSensitive);
   return field;
 }
@@ -651,7 +642,7 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
     upstream_columns: upstreamColumns,
     // Required at a procedure focus (null when no neighbor table is written); omission would silently attribute the edge to the procedure node.
     writes_to: (hop.writeTargetNodeIds
-      ? ColumnFlowWritesToObject.extend({ node: objectIdSchema(hop.writeTargetNodeIds, hop.identifierCaseSensitive) })
+      ? ColumnFlowWritesToObject.extend({ node: objectIdSchema(hop.writeTargetNodeIds, hop.identifierCaseSensitive, 'bad_write_target') })
       : ColumnFlowWritesToObject
     ).nullable().describe(ColumnFlowEntrySchema.shape.writes_to.description ?? ''),
   };
@@ -762,7 +753,7 @@ function internalKeptFindingSchema(
   }).strict().superRefine((value, ctx) => {
     const seen = new Set<string>();
     value.sections.forEach((entry, index) => {
-      if (seen.has(entry.angle)) ctx.addIssue({ code: 'custom', path: ['sections', index, 'angle'], message: 'Each capture angle occurs once.' });
+      if (seen.has(entry.angle)) ctx.addIssue({ code: 'custom', path: ['sections', index, 'angle'], message: 'Each capture angle occurs once.', params: { issue: 'duplicate' } });
       seen.add(entry.angle);
     });
     refineSubmitFindingsShape({ ...value, sections: Object.fromEntries(value.sections.map(entry => [entry.angle, entry.text])) } as FlatSubmitFindings, ctx, freshSubmission, classification);
@@ -811,7 +802,7 @@ export const GetScreenStateInputSchema = z.object({
   cursor: CursorSchema.optional(),
 }).strict().superRefine((value, ctx) => {
   if (value.ids && value.filter) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['filter'], message: 'Send either ids or filter, never both. Drop one of the two and call lineage_get_screen_state again.' });
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['filter'], message: 'ids and filter exclude each other; one call takes one of them.', params: { issue: 'never' } });
   }
 });
 
@@ -864,12 +855,7 @@ function rejectDuplicateSectionLabels(sections: ReadonlyArray<{ label: string }>
     if (typeof label !== 'string') continue;
     const key = normalizePresentSectionLabel(label);
     if (seen.has(key)) {
-      ctx.addIssue({
-        code: 'custom',
-        path: [index, 'label'],
-        message: `Duplicate section label "${label}" — each final label must map to exactly one section text`,
-        params: { hint: 'Send one entry per section label. To correct a held section, resend its label with corrected content and omit remove; use remove: true only to delete that section.' },
-      });
+      ctx.addIssue({ code: 'custom', path: [index, 'label'], message: 'Duplicate section label; each final label maps to exactly one section text.', params: { issue: 'duplicate' } });
     } else {
       seen.add(key);
     }
@@ -908,7 +894,7 @@ const notesListSchema = (note: z.ZodType<z.infer<typeof NoteSchema>>) => z.array
         ctx.addIssue({
           code: 'custom',
           path: [index, 'caption'],
-          message: `notes gives "${note.node_id}" more than one caption — send one caption per node id.`,
+          message: 'One caption per node id; an earlier note gives this node id another caption.',
         });
       }
     }
@@ -1050,7 +1036,7 @@ export function presentResultSchemaForPhase(
   return schema;
 }
 
-/** How a resent `sections` list merges into the held draft is stated once, by the rejection (`keyedResendRule`). */
+/** How a resent `sections` list merges into the held draft is stated once, by the rejection's `resend_rule`. */
 const REPAIR_SECTIONS_DESCRIPTION = 'Sections to add or change, keyed by label.';
 
 /** One note of a held repair draft: a caption to add or replace under its node id, or the removal of the held one. */

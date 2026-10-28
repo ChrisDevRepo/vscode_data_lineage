@@ -118,8 +118,8 @@ describe('presentation SQL-reference fence boundary', () => {
     const input = basePayload({ sections: [{ label: 'Source', node_ids: [ORIGIN], text: malformed }] });
     const result = JSON.parse(await executePresentResult(input, services(session, epoch)));
     expect(result.code).toBe('validation');
-    expect(String(result.reason)).toContain('Unclosed SQL fence');
-    expect(String(result.reason)).toContain('a bare triple-backtick line right after it');
+    expect(result.errors).toEqual([{ path: 'sections.0.text', code: 'unclosed_fence' }]);
+    expect(result).toMatchObject({ resend: ['sections'], resendRules: ['indexed'] });
     expect(session.presentationArtifact).toBeFalsy();
     expect(session.presentResultRepairDraft.get()?.sections?.[0]?.text).toBe(malformed);
   });
@@ -333,8 +333,7 @@ describe('merged report section repair diagnosis', () => {
     const rejected = JSON.parse(await executePresentResult(contradictory, services(session, epoch)));
     expect(rejected.code).toBe('invalid_input');
     expect(session.presentResultRepairDraft.get()).toEqual(held);
-    expect(rejected.hint).toContain('sections: resend only the entries you add or change');
-    expect(rejected.hint).not.toContain('repeating the unflagged elements exactly as first sent');
+    expect(rejected).toMatchObject({ resend: ['sections'], resendRules: ['sections'] });
     const corrected = JSON.parse(await executePresentResult({ sections: [{ label: 'Source', node_ids: [ORIGIN], text: 'Corrected source detail.\n```sql S1\n```' }] }, services(session, epoch)));
     expect(corrected.success).toBe(true);
     expect(description(session)).toContain('Corrected source detail.');
@@ -346,8 +345,8 @@ describe('merged report section repair diagnosis', () => {
     session.presentResultRepairDraft.hold(held, { fields: ['sections'] });
     const rejected = JSON.parse(await executePresentResult({ sections: [{ label: 'Source', remove: true }, { label: 'Source', text: 'Corrected source detail.' }] }, services(session, epoch)));
     expect(rejected.code).toBe('invalid_input');
-    expect(rejected.errors).toEqual([expect.objectContaining({ path: 'sections.1.label', code: 'invalid' })]);
-    expect(rejected.hint).not.toContain('repeating the unflagged elements exactly as first sent');
+    expect(rejected.errors).toEqual([{ path: 'sections.1.label', code: 'duplicate' }]);
+    expect(rejected).toMatchObject({ resend: ['sections'], resendRules: ['sections'] });
     expect(session.presentResultRepairDraft.get()).toEqual(held);
   });
 
@@ -358,10 +357,8 @@ describe('merged report section repair diagnosis', () => {
     const held = PresentResultModelSchema.parse(basePayload({ sections: labels.map(label => ({ label, node_ids: [ORIGIN], text: `Evidence for ${label}.` })) }));
     session.presentResultRepairDraft.hold(held, { fields: ['sections'], sectionLeaves: [{ index: 3, fields: ['label'] }, { index: 5, fields: ['label'] }] });
     const result = JSON.parse(await executePresentResult({ sections: [{ index: 3, label: 'Staging' }, { index: 5, label: labels[4] }] }, services(session, epoch)));
-    expect(result.reason).toContain('Duplicate section label');
-    expect(result.issuePaths).toEqual(['sections.5.label']);
-    expect(result.hint).not.toContain('no section');
-    expect(result.hint).toContain('5 (label)');
+    expect(result.errors).toEqual([{ path: 'sections.5.label', code: 'duplicate' }]);
+    expect(result).toMatchObject({ resend: ['sections'], resendRules: ['indexed'] });
     expect(session.presentResultRepairDraft.get()?.sections).toHaveLength(6);
     expect(session.presentResultRepairDraft.getAuthorization()).toEqual({ fields: ['sections'], sectionLeaves: [{ index: 5, fields: ['label'] }] });
     const auth = session.presentResultRepairDraft.getAuthorization()!;
@@ -375,7 +372,7 @@ describe('merged report section repair diagnosis', () => {
     session.presentResultRepairDraft.hold(PresentResultModelSchema.parse(basePayload({})), { fields: ['sections'] });
     const result = JSON.parse(await executePresentResult({ sections: [{ label: 'Source', remove: true }] }, services(session, epoch)));
     expect(result.issuePaths).toEqual(['sections']);
-    expect(result.hint).toContain('No section is held: resend every section.');
+    expect(result).toMatchObject({ errors: [{ path: 'sections', code: 'size' }], resend: ['sections'], resendRules: ['whole'] });
     expect(session.presentResultRepairDraft.get()?.sections).toEqual([]);
     expect(session.presentResultRepairDraft.getAuthorization()).toEqual({ fields: ['sections'] });
   });
@@ -390,9 +387,11 @@ describe('merged report section repair diagnosis', () => {
     const first = await run(session, { is_update: true, sections: [{ label: 'Invented One' }, { label: 'Invented Two' }] });
     const rejection = readToolError(first);
     if (!rejection) throw new Error('Expected a rejected section amendment.');
-    expect(first.hint).toContain('omit sections to keep the committed report');
+    expect(first.errors).toContainEqual({ path: 'sections', code: 'uncommitted_label', values: ['Alpha', 'Beta'] });
+    expect(JSON.stringify(first)).not.toMatch(/Invented One|Invented Two/);
     expect(renderProblem(rejection, 1)).not.toContain('Alpha');
-    expect(JSON.parse(renderProblem(rejection, 2)).errors).toContainEqual(expect.objectContaining({ path: 'sections', allowed: ['Alpha', 'Beta'] }));
+    const shown = (JSON.parse(renderProblem(rejection, 2)).guidance as Array<{ errors: Array<{ path: string; allowed?: string[] }> }>).flatMap(group => group.errors);
+    expect(shown).toContainEqual(expect.objectContaining({ path: 'sections', allowed: ['Alpha', 'Beta'] }));
     expect(session.presentResultRepairDraft.get()?.sections).toBeUndefined();
     expect(session.presentResultRepairDraft.get()).toMatchObject({ is_update: true });
     expect(session.presentResultRepairDraft.getAuthorization()?.fields).toEqual(expect.arrayContaining(['name', 'summary', 'highlight_groups', 'sections']));
@@ -409,8 +408,7 @@ describe('merged report section repair diagnosis', () => {
       { label: 'Alpha', node_ids: [ORIGIN], text: `Alpha body.\n\`\`\`sql\n${CAPTURED_SQL}\n\`\`\`` },
     ] } as ResultGraph;
     const first = await run(session, { is_update: true, sections: [{ label: 'Alpha', text: 'New Alpha body.' }, { label: 'Invented' }] });
-    expect(first.hint).toContain('sections');
-    expect(first.hint).not.toContain('every field except name, summary, highlight_groups.');
+    expect(first.resend).toEqual(['name', 'summary', 'highlight_groups', 'sections']);
     expect(session.presentResultRepairDraft.get()).toMatchObject({ is_update: true });
     expect(session.presentResultRepairDraft.getAuthorization()?.fields).toEqual(expect.arrayContaining(['name', 'summary', 'highlight_groups', 'sections']));
     const second = await run(session, { name: 'Renamed', summary: 'Same report.', highlight_groups: [{ label: 'Feed', color: 'source', node_ids: [ORIGIN] }], sections: [{ label: 'Alpha', node_ids: [ORIGIN], text: 'New Alpha body.\n```sql S1\n```' }] });

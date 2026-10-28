@@ -3,6 +3,7 @@
 import Ajv from 'ajv';
 import { describe, expect, it } from 'vitest';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
+import { renderProblem, type ToolRejection } from '../../../src/ai/support/toolErrorEnvelope';
 import { submitFindingsSchemaForMode, toHopFinding } from '../../../src/ai/tools/toolSchemas';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import { makeGraph, makeModel, makeNode } from '../helpers/modelFixtures';
@@ -199,8 +200,9 @@ describe('neighbor-specific function caller context', () => {
     const before = engine.toJSON();
     const missing = engine.submitFindings({ ...toHopFinding(schema.parse(flow(caller, 'Value'))), questions: [], prune_neighbors: [] });
     expect(missing).toMatchObject({ code: 'route_validation_failed', detail: [expect.objectContaining({ kind: 'neighbor_outcome_missing', id: reader })] });
-    expect(JSON.stringify(missing)).toContain(`Neighbor \`${reader}\` has no authored outcome. Keep / question it in questions, or prune it`);
-    expect(JSON.stringify(missing)).not.toContain(`Neighbor \`${caller}\``);
+    const shown = JSON.parse(renderProblem(missing as ToolRejection, 3, 'lineage_submit_findings')) as { errors: Array<{ path: string; code: string; message: string }> };
+    expect(shown.errors).toEqual([expect.objectContaining({ path: reader, code: 'neighbor_outcome_missing' })]);
+    expect(shown.errors[0].message, 'D-102: no echoed id').not.toContain(reader);
     expect(engine.heldPartsOfCurrentFocus()?.resend).toEqual(['questions']);
     expect(engine.columnAspect?.edges ?? []).toEqual([]);
     expect(engine.toJSON().visited).toEqual(before.visited);

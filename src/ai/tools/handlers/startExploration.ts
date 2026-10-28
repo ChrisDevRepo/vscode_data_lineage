@@ -6,7 +6,6 @@ import { depthSidesDiffer, directionFromDepth } from '../../../engine/shared/exp
 import { sanitizeForLog, trunc } from '../../../utils/log';
 import { schemaKey } from '../../../utils/sql';
 import { StartExplorationInputSchema } from '../../tools/toolSchemas';
-import { PendingGateSchema } from '../../session/sessionPhase';
 import { renderProposalDetailMd } from '../../prompting/scopeSummaryRenderer';
 import { redactMissionBriefForLog } from '../../support/missionBriefDiagnostics';
 import { toEngineLog } from '../../support/engineLog';
@@ -25,7 +24,7 @@ import { REJECTION_CODES } from '../../support/rejectionCodes';
 import { checkScopeAdmission } from '../../support/tokenBudget';
 import { buildNodeMap, getNodeColumns } from '../../support/graphUtils';
 import { resolveModelNodeId } from '../../support/modelReferences';
-import { combineToolRejections, makeRejection } from '../../support/toolErrorEnvelope';
+import { at, combineToolRejections, makeRejection } from '../../support/toolErrorEnvelope';
 
 /** Validates a fresh or refined exploration proposal and opens its approval gate. */
 export async function executeStartExploration(input: unknown, s: ToolServices): Promise<string> {
@@ -55,9 +54,9 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       // fresh-proposal route the model is offered; the prior result and memory stay untouched.
       if (input && typeof input === 'object' && Object.prototype.hasOwnProperty.call(input, 'supplement')) {
         return s.logAndReturn('lineage_start_exploration', makeRejection({
-          code: 'fresh_proposal_required',
-          reason: 'Additional SQL requires a new exploration with its own approval card.',
-          hint: 'Return to discovery and submit a fresh proposal with origin and scope, without supplement.',
+          code: REJECTION_CODES.freshProposalRequired,
+          reason: 'Additional SQL requires a new exploration with its own approval card: a fresh proposal with origin and scope.',
+          errors: at('fresh_proposal', ['supplement']),
         }), loggedInput);
       }
 
@@ -85,14 +84,12 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
 
       if (data.proposalRevision !== undefined && !isRefining) {
         return s.logAndReturn('lineage_start_exploration', makeRejection({
-          code: REJECTION_CODES.staleProposalRevision,
-          hint: 'proposalRevision is valid only while refining the matching pending approval gate.',
+          code: REJECTION_CODES.staleProposalRevision, reason: 'No approval gate is pending to refine.', errors: at('stale_revision', ['proposalRevision']),
         }), loggedInput);
       }
       if (isRefining && data.proposalRevision !== sess.pendingExploration!.revision) {
         return s.logAndReturn('lineage_start_exploration', makeRejection({
-          code: REJECTION_CODES.staleProposalRevision,
-          hint: `Refine proposal revision ${sess.pendingExploration!.revision}; do not reuse an older gate revision.`,
+          code: REJECTION_CODES.staleProposalRevision, reason: 'Not the pending gate revision.', errors: at('stale_revision', ['proposalRevision'], [String(sess.pendingExploration!.revision)]),
         }), loggedInput);
       }
 
@@ -148,10 +145,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       };
       const depthIntent = data.depth ?? pendingInit?.depthIntent;
       if (!depthIntent) {
-        return s.logAndReturn('lineage_start_exploration', makeRejection({
-          code: REJECTION_CODES.missingField,
-          hint: 'depth is required for the exploration proposal: send levels and exactness for both upstream and downstream.',
-        }), loggedInput);
+        return s.logAndReturn('lineage_start_exploration', makeRejection({ code: REJECTION_CODES.missingField, errors: at('missing', ['depth']) }), loggedInput);
       }
       const refineDirection = directionFromDepth(depthIntent);
       const sameDepthIntent = (a?: DepthIntent, b?: DepthIntent): boolean =>
@@ -195,7 +189,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       if ('code' in initResult) return s.logAndReturn('lineage_start_exploration', initResult, loggedInput);
       const classification = data.classification ?? sess.pendingExploration?.classification;
       if (!classification) {
-        return s.logAndReturn('lineage_start_exploration', makeRejection({ code: REJECTION_CODES.missingField, hint: 'classification is required for the exploration proposal.' }), loggedInput);
+        return s.logAndReturn('lineage_start_exploration', makeRejection({ code: REJECTION_CODES.missingField, errors: at('missing', ['classification']) }), loggedInput);
       }
       engine.classification = classification;
       const summary = engine.getScopeSummary();
@@ -209,6 +203,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         return s.logAndReturn('lineage_start_exploration', makeRejection({
           code: REJECTION_CODES.overActiveScopeBudget,
           reason,
+          errors: at('over_budget'),
           detail: { limit: refusal.limit, nodes: scopeMeasure.nodes, rounds: scopeMeasure.rounds, columns: scopeMeasure.columns },
         }), loggedInput);
       }
@@ -221,21 +216,17 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       };
       if (isRefining && sess.pendingExploration && sameExplorationProposal(nextProposal, sess.pendingExploration)) {
         s.logger.debug(`[AI] [Proposal] no-op refine rejected revision=${sess.pendingExploration.revision}`);
-        return s.logAndReturn('lineage_start_exploration', makeRejection({
-          code: 'no_op_refine',
-          hint: 'The refinement did not change the reviewed proposal. Apply at least one requested scope, mode, classification, column, or filter change; if the request needs no change to the plan, reply to the user in text instead.',
-        }), loggedInput);
+        return s.logAndReturn('lineage_start_exploration', makeRejection({ code: REJECTION_CODES.noOpRefine, errors: at('no_op_refine') }), loggedInput);
       }
       const stored = sess.storePendingExploration(nextProposal, s.turnEpoch(sess));
       if (stored.kind !== 'accepted') {
-        return s.logAndReturn('lineage_start_exploration', makeRejection({ code: REJECTION_CODES.staleTurn, reason: 'The turn no longer owns this session; the proposal was not stored.' }), loggedInput);
+        return s.logAndReturn('lineage_start_exploration', makeRejection({ code: REJECTION_CODES.staleTurn, reason: 'The turn no longer owns this session; the proposal was not stored.', errors: at('backend_fault') }), loggedInput);
       }
       sess.startExplorationRoundId = sess.currentRoundId;
       let proposal = sess.pendingExploration!;
       const proposalRevision = proposal.revision;
       s.logger.debug(`[AI] [Proposal] revision=${proposalRevision} origin=${sanitizeForLog(refineOrigin)} direction=${refineDirection} depth=${sanitizeForLog(JSON.stringify(depthIntent))}`);
 
-      const classes = ['sliding_memory'];
       if (sess.lastDiscoveryQuestion && sess.lastDiscoveryAnswer && s.textModel) {
         const discoverySummary = await composeDiscoverySummaryText(
           s.textModel,
@@ -258,26 +249,12 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         `estimated_ddl_chars=${summary.estimatedDdlChars}`
       );
 
-      const gate = PendingGateSchema.parse({
-        gate: 'confirm_sm_start',
-        classes,
-        nodeIds: [],
-        detail,
-        proposalRevision,
-      });
-      const missionBriefClearedNote = missionBriefClearedOnScopeChange
-        ? ' mission_brief from the previous revision was not kept because the scope changed; send mission_brief to restate it.'
-        : '';
-      const hint = (isRefining
-        ? 'Refine round — gate re-emitted. Wait for the user to Approve, Cancel, or Refine again.'
-        : 'Tool paused — awaiting user confirmation before the first hop.')
-        + missionBriefClearedNote;
-      sess.signalControl({ kind: 'gate', gate });
+      sess.signalControl({ kind: 'gate' });
       return s.logAndReturn('lineage_start_exploration', makeRejection({
         code: REJECTION_CODES.actionRequired,
-        reason: gate.detail || undefined,
-        hint,
-        detail: gate,
+        reason: detail || undefined,
+        errors: [...at('awaiting_approval'), ...(missionBriefClearedOnScopeChange ? at('missing', ['mission_brief']) : [])],
+        detail: { gate: 'confirm_sm_start', proposalRevision },
       }), loggedInput);
     } catch (err) {
       if (isCancellationOutcome(err, s.signal)) throw err;

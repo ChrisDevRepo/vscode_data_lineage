@@ -12,6 +12,9 @@ import type { ResultGraph } from '../../../src/ai/session/types';
 import type { ColumnEdge } from '../../../src/ai/sm/smTypes';
 import { renderProblem } from '../../../src/ai/support/toolErrorEnvelope';
 
+/** The errors a rendered problem shows, across its category groups. */
+const shownErrors = (text: string): Array<Record<string, unknown>> => JSON.parse(text).guidance.flatMap((group: { errors: unknown[] }) => group.errors);
+
 function completedWorld(model: DatabaseModel, resultGraph: ResultGraph) {
   const session = new AiSession();
   const epoch = session.beginTurn();
@@ -70,14 +73,15 @@ it.each([false, true])('stages accepted node choices and keeps the held report (
   const rejected = JSON.parse(await executePresentResult(input, services));
   expect(rejected.code).toBe('validation');
   const first = renderProblem(rejected, 1);
-  expect(first).toContain('dbo.missing');
-  expect(first).toContain('only these corrected fields');
+  expect(first, 'D-102: the sent id is not echoed').not.toContain('dbo.missing');
+  expect(shownErrors(first)).toContainEqual(expect.objectContaining({ path: 'sections.1.node_ids.0' }));
+  expect(JSON.parse(first)).toMatchObject({ resend: ['sections'], resend_rule: expect.any(String) });
   expect(first).not.toContain('Accepted ids');
   expect(first).not.toContain(source);
   expect(first).not.toContain(sibling);
   const repeated = repeatFault ? JSON.parse(await executePresentResult({ sections: [{ label: 'Unknown', node_ids: ['dbo.missing'] }] }, services)) : rejected;
   expect(repeated.code).toBe('validation');
-  expect(JSON.parse(renderProblem(repeated, 2)).errors).toContainEqual(expect.objectContaining({ path: 'node_ids', allowed: [origin, source, sibling] }));
+  expect(shownErrors(renderProblem(repeated, 2))).toContainEqual(expect.objectContaining({ path: 'sections.1.node_ids.0', allowed: [origin, sibling, source].sort() }));
   expect(deliverPreview).not.toHaveBeenCalled();
   expect(session.presentResultRepairDraft.get()?.sections?.map(section => section.text)).toEqual(input.sections.map(section => section.text));
   expect(JSON.parse(await executePresentResult({ sections: [{ label: 'Unknown', node_ids: [] }] }, services)).success).toBe(true);
@@ -112,7 +116,7 @@ it.each([false, true])('rejects held presentation fields without widening sectio
   expect(session.presentationArtifact?.aiMetadata.description).toContain('Held rejected-link body.');
 });
 
-it('stages committed section choices after first feedback and retains the omission exit', async () => {
+it('stages committed section choices after first feedback and keeps a call without sections acceptable', async () => {
   const { session, services, origin, source, sibling } = world(false);
   session.explorationRunId = 'staging-amend';
   const original = { ...firstCall(origin), sections: [
@@ -121,10 +125,10 @@ it('stages committed section choices after first feedback and retains the omissi
   expect(JSON.parse(await executePresentResult(original, services)).success).toBe(true);
   const rejected = JSON.parse(await executePresentResult({ ...firstCall(origin), sections: [{ label: 'New label', node_ids: [' '] }] }, services));
   const first = renderProblem(rejected, 1);
-  expect(first).toContain('New label');
-  expect(first).toContain('omit sections to keep the committed report');
+  expect(first, 'D-102: the sent label is not echoed').not.toContain('New label');
+  expect(rejected.errors).toContainEqual(expect.objectContaining({ path: 'sections', code: 'uncommitted_label' }));
   expect(first).not.toContain('Committed sources sentinel');
-  expect(JSON.parse(renderProblem(rejected, 2)).errors).toContainEqual(expect.objectContaining({ path: 'sections', allowed: ['Committed sources sentinel'] }));
+  expect(shownErrors(renderProblem(rejected, 2))).toContainEqual(expect.objectContaining({ path: 'sections', allowed: ['Committed sources sentinel'] }));
   expect(JSON.parse(await executePresentResult({}, services)).success).toBe(true);
   expect(session.presentationArtifact?.aiMetadata.description).toContain('The committed body.');
 });
@@ -146,13 +150,30 @@ it.each(['Missing', 42])('holds a preview with start %j and repairs only that fi
   expect(JSON.parse(await executePresentResult({ sections: [{ index: 0, start: 'B99' }] }, services))).toHaveProperty('code', 'invalid_input');
   expect(session.presentResultRepairDraft.get()).toEqual(held);
   const empty = JSON.parse(await executePresentResult({}, services));
-  expect(empty.hint).not.toContain('send the complete call again');
-  expect(empty.hint).toContain('only these corrected fields: sections');
+  expect(empty.resend).toEqual(['sections']);
   expect(session.presentResultRepairDraft.get()).toEqual(held);
   const repaired = JSON.parse(await executePresentResult({ sections: [{ index: 0, start: 'B1' }] }, services));
   expect(repaired).toMatchObject({ success: true });
   expect(deliverPreview).toHaveBeenCalledOnce();
   expect(session.presentationArtifact?.aiMetadata.description).toContain('Source prices feed the report.');
+});
+
+it('states each out-of-order preview start at its own start path without echoing a label or start (D-102)', async () => {
+  const { session, services, origin, source, deliverPreview } = world(false);
+  session.activeLmStage = { kind: 'visual_preview' };
+  session.lastDiscoveryAnswer = 'Price report.\n\nSource prices feed the report.\n\nThe report sums them.\n\nTotals close it.';
+  session.storeDiscoveryScope({ turnEpoch: session.turnEpoch, origin, direction: 'upstream',
+    nodeIds: [origin, source], edges: [[source, origin, 'read']] }, session.turnEpoch);
+  const rejected = JSON.parse(await executePresentResult({ name: 'Price lineage', highlight_groups: [{ label: 'Output', color: 'target', node_ids: [origin] }],
+    sections: [{ label: 'AlphaSentinel', node_ids: [origin], start: 'B1' }, { label: 'BetaSentinel', node_ids: [source], start: 'B3' },
+      { label: 'GammaSentinel', node_ids: [origin], start: 'B2' }, { label: 'DeltaSentinel', node_ids: [source], start: 'B2' }] }, services));
+  expect(deliverPreview).not.toHaveBeenCalled();
+  for (const stage of [1, 2, 3] as const) {
+    const shown = renderProblem(rejected, stage);
+    expect(shownErrors(shown).filter((error: { path: string }) => error.path !== '').map((error: { path: string }) => error.path)).toEqual(['sections.2.start', 'sections.3.start']);
+    expect(shown, 'D-102: no echoed label').not.toContain('Sentinel');
+    expect(shown, 'D-102: no echoed start').not.toMatch(/\bB[23]\b/);
+  }
 });
 
 it('keeps a merged report label fault and one held repair scope together', async () => {
@@ -165,9 +186,8 @@ it('keeps a merged report label fault and one held repair scope together', async
   expect(first.issuePaths).toContain('sections.0.label');
   const rejected = JSON.parse(await executePresentResult({ sections: [{ index: 0, label: 'Other' }] }, services));
   expect(rejected).toMatchObject({ code: 'validation', issuePaths: ['sections.1.label'] });
-  expect(rejected.errors).toEqual([expect.objectContaining({ path: 'sections.1.label', code: 'invalid' })]);
-  expect(rejected.hint.match(/only these corrected fields/g)).toHaveLength(1);
-  expect(rejected.hint).not.toContain('Resend the full tool call');
+  expect(rejected.errors).toEqual([expect.objectContaining({ path: 'sections.1.label', code: 'duplicate' })]);
+  expect(rejected.resend).toEqual(['sections']);
   expect(session.presentResultRepairDraft.get()?.sections?.map(section => section.text)).toEqual([
     'The report body stays held.', 'The other body stays held.',
   ]);
@@ -195,7 +215,7 @@ describe.each([false, true])('result origin closure (CS=%s)', cs => {
       }, services));
     expect(result).toMatchObject({ code: 'validation' });
     expect(result.reason).toContain('disconnected');
-    expect(result.reason).toContain(sibling);
+    expect(result.reason, 'D-102: no echoed id').not.toContain(sibling);
     expect(session.resultGraph).toEqual(before);
     expect(deliverPreview).not.toHaveBeenCalled();
   });
@@ -208,7 +228,8 @@ describe.each([false, true])('result origin closure (CS=%s)', cs => {
       sections: [{ label: 'Sources', node_ids: selection === 'all' ? [] : [source, sibling], text: 'Recorded report sources.' }], highlight_groups: [{ label: 'Origin', color: 'target', node_ids: [origin] }],
     }, services));
     expect(result).toMatchObject({ code: 'validation' });
-    expect(result.reason).toContain(origin);
+    expect(result.reason).toContain('must keep the origin node');
+    expect(result.reason, 'D-102: no echoed id').not.toContain(origin);
     expect(session.resultGraph).toEqual(before);
     expect(session.presentationArtifact).toBeNull();
     expect(deliverPreview).not.toHaveBeenCalled();
@@ -283,10 +304,8 @@ describe('CT chain-coverage rejection', () => {
     const { services, origin, source } = ctWorld();
     const result = JSON.parse(await executePresentResult(firstCall(origin), services));
     expect(result).toMatchObject({ code: 'validation', missingParts: ['sections', 'notes'], feedbackAt: expect.any(String) });
-    expect(result.reason).toContain(source);
-    expect(result.hint).toContain('only these corrected fields: sections, notes.');
-    expect(result.hint).not.toContain('highlight_groups');
-    expect(result.reason).not.toContain('highlight_groups');
+    expect(result.errors).toContainEqual({ path: 'sections.*.node_ids', code: 'node_unexplained', values: [source] });
+    expect(result.resend).toEqual(['sections', 'notes']);
   });
 
   it('a new section without text keeps the held draft and repeats the first repair mode, not a full resend', async () => {
@@ -301,14 +320,12 @@ describe('CT chain-coverage rejection', () => {
 
     for (const rejected of [second, third]) {
       expect(rejected).toMatchObject({ code: 'validation', issuePaths: ['sections'] });
-      expect(rejected.reason).toContain('`Upstream: Staging`');
-      expect(rejected.hint).toContain('only these corrected fields: sections, notes.');
-      expect(rejected.hint).toContain('resend only the entries you add or change');
-      expect(rejected.hint).toContain('a label not on file appends a new entry and needs its text');
-      expect(rejected.hint).not.toContain('resend every field');
+      expect(rejected.errors).toEqual([expect.objectContaining({ path: 'sections.0.text', code: 'missing' })]);
+      expect(JSON.stringify(rejected), 'D-102: the sent label is not echoed').not.toContain('Upstream: Staging');
+      expect(rejected).toMatchObject({ resend: ['sections', 'notes'], resendRules: ['sections', 'notes'] });
     }
-    expect(second.hint).toBe(third.hint);
-    expect(first.hint).toContain('only these corrected fields: sections, notes.');
+    expect(renderProblem(second, 2)).toBe(renderProblem(third, 2));
+    expect(first.resend).toEqual(['sections', 'notes']);
     expect(session.presentResultRepairDraft.get()?.sections).toHaveLength(1);
   });
 

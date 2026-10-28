@@ -1,45 +1,159 @@
-/** Single typed channel for tool-result rejections, and the one renderer of the problem the model reads (D-103). */
+/** Single typed channel for tool-result rejections, and the one renderer of the problem the model reads (D-103, D-105). */
 import { z } from 'zod';
 import { REJECTION_CODES } from './rejectionCodes';
 
 /** Product limit for a quick missing-content exchange; it does not change validation or reply budgets. */
 export const CLARIFICATION_WINDOW_MS = 5000;
 
-/** One fault of a rejection: where it is, its issue code, a short message and, from schema or engine metadata, what the field accepts. */
-interface RejectionError {
+/** Issue categories in render order; each holds the one instruction the model reads for its faults. */
+const CATEGORY_ORDER = ['shape', 'required', 'reference', 'value', 'protocol', 'stage'] as const;
+type IssueCategory = typeof CATEGORY_ORDER[number];
+
+/** The instruction texts of each category: `short` at feedback 1, `detailed` from feedback 2. Static: no value is ever interpolated. */
+export const ISSUE_CATEGORIES = {
+  shape: {
+    short: 'Each listed field must have the type its schema defines; send it in that form with its full content.',
+    detailed: 'Each listed field must have the type its schema defines; send it in that form with its full content, and write line breaks inside strings as \\n.',
+  },
+  required: {
+    short: 'Required content is missing; add each listed value where its path points and keep the other content unchanged.',
+    detailed: 'Required content is missing; add each listed value where its path points and keep the other content unchanged.',
+  },
+  reference: {
+    short: 'Each reference must name an existing object or column inside the approved scope; correct each listed reference to an in-scope one.',
+    detailed: 'A reference takes a value from the allowed list of its path, which holds the in-scope objects that can fill it. Replace each listed reference with an allowed value and keep the rest of its entry unchanged.',
+  },
+  value: {
+    short: 'Each listed value must be one the field accepts in this scope; where the field\'s schema description names a form for a value outside the scope, send that form, otherwise send an accepted value.',
+    detailed: 'Each listed value must be one the field accepts in this scope; where the field\'s schema description names a form for a value outside the scope, send that form, otherwise send a value from allowed.',
+  },
+  protocol: {
+    short: 'Each listed fault states a rule of the exchange; resend the listed fields in full, keeping every entry that the rule allows.',
+    detailed: 'Each listed fault states a rule of the exchange; resend the listed fields in full, keeping every entry that the rule allows.',
+  },
+  stage: {
+    short: 'This action is not available in the current step; continue with an action the step offers.',
+    detailed: 'This action is not available in the current step; call a tool from allowed where it is listed, or answer in text from what the step already holds.',
+  },
+} as const satisfies Record<IssueCategory, { short: string; detailed: string }>;
+
+/** The top-level `notice` at feedback 3. */
+export const LAST_CORRECTION = 'This is the last correction before this hop ends.';
+
+/** How a resent list merges into the held draft, keyed by the resent list or by its merge form; a rejection names the rules its `resend` needs, rendered as `resend_rule`. */
+export const RESEND_RULES = {
+  sections: 'Sections merge by label: send each section you add or change with its label and only the fields you change; a sent node_ids list replaces the held list, so it includes every id that section keeps. Sections you do not send stay as held.',
+  notes: 'Notes merge by node_id: send each note you add or change with its node_id and only the fields you change. Notes you do not send stay as held.',
+  indexed: 'Entries merge by index: send each entry named in the errors with its index and only the fields you correct. Fields and entries you do not send stay as held.',
+  whole: 'A sent list replaces the held list whole, so it includes every entry, corrected.',
+} as const satisfies Readonly<Record<string, string>>;
+
+/** A key of {@link RESEND_RULES}. */
+export type ResendRule = keyof typeof RESEND_RULES;
+
+/** The text field a fallback writes its fact into; a rendered fallback adds it to `resend`. */
+const FALLBACK_FIELD = 'sections';
+
+/** Every issue code: its category, a fixed fault label without values, the one positive correction for that fault and, only where a required fact has no structured field that can hold it, the prose `fallback` sent with the third, last rejection (D-105). */
+export const ISSUES = {
+  type: { category: 'shape', label: 'wrong JSON type', correction: 'Send the value as the JSON type the schema defines for this field.' },
+  json_text: { category: 'shape', label: 'text instead of a JSON object', correction: 'Send the value as a JSON object or array, not as a string that holds JSON.' },
+  unknown_key: { category: 'shape', label: 'not a field of this object', correction: 'Use only field names the schema defines for this object.' },
+  never: { category: 'shape', label: 'field not accepted here', correction: 'Put this content where the field\'s schema description places it; this field stays out of the call.' },
+  tool_call_notation: { category: 'shape', label: 'tool-call notation inside a text value', correction: 'Give each argument its own field; a text value holds only its own content.' },
+  unclosed_fence: { category: 'shape', label: 'SQL fence not closed', correction: 'Close each SQL fence with a bare line of three backticks after its opening line or its SQL, and keep the paragraphs around it.' },
+  missing: { category: 'required', label: 'required field', correction: 'Add a value for this field as its schema describes.' },
+  neighbor_undecided: { category: 'required', label: 'neighbor without a decision', correction: 'Give each listed neighbor one decision as the schema describes.' },
+  slot_unplaced: { category: 'required', label: 'detail slot ids placed in no section', correction: 'Add each listed id to the node_ids of the section that describes it, with its findings in that section\'s text.' },
+  node_unexplained: { category: 'required', label: 'result node ids placed in no section', correction: 'Add each listed id to the node_ids of the section that describes it.' },
+  not_found: { category: 'reference', label: 'not an object in the loaded model', correction: 'Name an object of the loaded model by its id.' },
+  out_of_scope: { category: 'reference', label: 'outside the approved scope', correction: 'Name an object inside the approved scope; where the field\'s schema description names a form for an object outside it, use that form.' },
+  supplier_out_of_scope: { category: 'reference', label: 'supplier outside the approved scope', correction: 'Name an in-scope object that supplies this column; the entry\'s write target is never its own supplier.',
+    fallback: 'Where no in-scope object supplies these columns, the supplier fact is still required: state it in sections as a callout starting with ⚠️ that names the supplier object and the columns it feeds. Keep every column_flow entry with its writes_to; its upstream_columns name only in-scope suppliers.' },
+  result_out_of_scope: { category: 'reference', label: 'outside the approved scope, so not an id of the result', correction: 'Name only node ids of the result.',
+    fallback: 'Where the fact concerns an object outside the result, it is still required: state it in the text of the section that describes it as a callout starting with ⚠️ that names the object. Keep every other section unchanged; its node_ids name only ids of the result.' },
+  not_neighbor: { category: 'reference', label: 'not a neighbor of the current object', correction: 'Name a direct neighbor of the current object.' },
+  unknown_column: { category: 'reference', label: 'not a declared column of that object', correction: 'Name a column declared on that object.' },
+  closed_neighbor: { category: 'reference', label: 'neighbor already pruned or visited', correction: 'Name a neighbor that is still open; a pruned or visited neighbor takes no further decision.' },
+  self_loop: { category: 'reference', label: 'supplier is this entry\'s own write target', correction: 'Name a supplier other than this entry\'s write target; the write target receives the column.' },
+  bad_write_target: { category: 'reference', label: 'not a table this object writes to', correction: 'Name a table this object writes to; for any other write, set writes_to to null and state the write in sections.' },
+  bad_caller_output: { category: 'reference', label: 'not an active output of the caller', correction: 'Name an active output of the caller that reads this function.' },
+  not_current_object: { category: 'reference', label: 'not the current object', correction: 'Use the id of the current object.' },
+  not_in_result: { category: 'reference', label: 'not in the result graph, which is fixed at this stage', correction: 'Name a node id of the result graph.' },
+  addable_to_result: { category: 'reference', label: 'not in the result graph', correction: 'Name a node id of the result graph, or bring the real id into view with add_node_ids.' },
+  unknown_evidence_id: { category: 'reference', label: 'not an evidence id of this step', correction: 'Use an evidence id shown on a sql fence line of this step, or write the SQL inside the fence.' },
+  uncommitted_label: { category: 'reference', label: 'not a committed section label', correction: 'Use a committed section label, or give the new label its own text.' },
+  enum: { category: 'value', label: 'not an allowed value', correction: 'Send one of the values the schema lists for this field.' },
+  size: { category: 'value', label: 'outside its size bound', correction: 'Keep the value within the length or count the schema states.' },
+  invalid: { category: 'value', label: 'breaks the rule of this field', correction: 'Send a value that meets the rule in the field\'s schema description.' },
+  duplicate: { category: 'value', label: 'repeats an earlier entry', correction: 'Keep one entry per key, with the repeated content merged into it.' },
+  conflict: { category: 'value', label: 'neighbor has both a question and a prune entry', correction: 'Keep its question; prune_neighbors lists only neighbors without a question.' },
+  depth_zero: { category: 'value', label: 'both depth sides are 0', correction: 'Set at least one depth side above 0.' },
+  query_too_short: { category: 'value', label: 'query too short to match a name', correction: 'Send a fragment of an object or column name.' },
+  query_not_a_name: { category: 'value', label: 'punctuation only, which matches no name', correction: 'Send part of a name, or set mode to regex for a pattern.' },
+  invalid_regex: { category: 'value', label: 'pattern does not compile within the length and time limits', correction: 'Send a simpler pattern that compiles, or a plain name fragment.' },
+  start_order: { category: 'value', label: 'starts at or before the section above it', correction: 'Give each section a start after the start of the section above it.' },
+  prune_target: { category: 'value', label: 'this neighbor cannot be pruned here', correction: 'Prune only a neighbor the schema lists as prunable.' },
+  prunes_origin: { category: 'value', label: 'would remove the origin from the view', correction: 'Keep the origin in the view; prune_node_ids names other nodes.' },
+  disconnects_view: { category: 'value', label: 'would leave the view disconnected', correction: 'Keep every remaining node connected to the origin through the view.' },
+  empty_view: { category: 'value', label: 'leaves no node in the view', correction: 'Keep at least one node in the view.' },
+  identical_resend: { category: 'protocol', label: 'same call as the one already rejected', correction: 'Change the listed fields before sending the call again.' },
+  duplicate_read: { category: 'protocol', label: 'read already answered in this step', correction: 'Answer from the result already in the conversation, or call a different read.' },
+  one_call: { category: 'protocol', label: 'not evaluated: one commit call per reply', correction: 'Send one commit call per reply that carries all its content.' },
+  already_started: { category: 'protocol', label: 'an exploration is already running', correction: 'Continue the running exploration with lineage_submit_findings.' },
+  no_op_refine: { category: 'protocol', label: 'refinement changes nothing in the proposal', correction: 'Apply the requested change to scope, mode, classification, columns or filter, or answer the user in text when the plan needs no change.' },
+  stale_revision: { category: 'protocol', label: 'not the revision the approval card shows', correction: 'Copy the revision the approval card shows.' },
+  ambiguous_repair: { category: 'protocol', label: 'several calls need correction and no values are held', correction: 'Send one complete call with every field.' },
+  off_policy: { category: 'stage', label: 'tool not offered in this step', correction: 'Call a tool this step offers.' },
+  exploration_complete: { category: 'stage', label: 'exploration complete', correction: 'Call lineage_present_result to assemble the report.' },
+  no_session: { category: 'stage', label: 'no exploration is running', correction: 'Start an exploration with lineage_start_exploration, or answer from what the conversation holds.' },
+  no_run_memory: { category: 'stage', label: 'no stored run for the applied view', correction: 'Answer from what the applied view shows.' },
+  no_result_source: { category: 'stage', label: 'no preview scope or completed exploration to present', correction: 'Answer in text from what the conversation holds.' },
+  over_budget: { category: 'stage', label: 'scope exceeds the discovery budget', correction: 'Propose an exploration with lineage_start_exploration; it reads the scope hop by hop.' },
+  result_too_large: { category: 'stage', label: 'result larger than this step holds', correction: 'Send a narrower request: fewer ids, a filter or fewer types.' },
+  fresh_proposal: { category: 'stage', label: 'additional SQL needs its own approval', correction: 'Send a new proposal with origin and scope.' },
+  prune_current_refused: { category: 'stage', label: 'the current object cannot be pruned here', correction: 'Record the current object with lineage_submit_findings.' },
+  no_tool_call: { category: 'stage', label: 'reply carried no call of the required tool', correction: 'Call the required tool now, with its content as arguments.' },
+  empty_reply: { category: 'stage', label: 'reply carried no text and no call', correction: 'Answer the user in text, or call a tool for more evidence.' },
+  awaiting_approval: { category: 'stage', label: 'waiting for the user decision on the card', correction: 'Wait for the user decision; the card holds the proposal.' },
+  backend_fault: { category: 'stage', label: 'extension fault', correction: 'The run ends; the extension reports the fault to the user.' },
+  no_project: { category: 'stage', label: 'no project is loaded in the Data Lineage panel', correction: 'Ask the user to load a project in the Data Lineage panel.' },
+} as const satisfies Record<string, { category: IssueCategory; label: string; correction: string; fallback?: string }>;
+
+/** Closed set of issue codes. */
+export type IssueCode = keyof typeof ISSUES;
+const ISSUE_CODES = Object.keys(ISSUES) as [IssueCode, ...IssueCode[]];
+
+/** One fault of a rejection: where it is, its issue code and, from schema or engine facts, the backend values it concerns: what the field accepts, or for a required fault the subjects still missing. Never text, never a submitted value. */
+export interface ToolError {
   path: string;
-  code: string;
-  message: string;
-  /** Any one of these fields can supply the missing decision; valid copies stay held. */
-  alternatives?: readonly string[];
-  allowed?: readonly string[];
+  code: IssueCode;
+  values?: readonly string[];
 }
 
-/** The one rejection record: stable code, a reason line for logs, and typed machine facts; {@link renderProblem} alone turns it into model feedback. */
+/** The one rejection record: stable code, typed faults, and facts for logs and the held-draft protocol; {@link renderProblem} alone turns it into model feedback. */
 export interface ToolRejection {
   /** Stable machine code. */
   code: string;
-  /** Human-readable reason line; equals `code` when the emit site states nothing more. */
+  /** Log line; never shown to the model. */
   reason: string;
-  /** Owner guidance rendered as the call-level error. */
-  hint?: string;
-  /** Structured facts; a fact `{path?, allowed_values | allowed | allowedTools}` supplies the allowed values of that path. */
+  /** Structured facts for logs and traces; never shown to the model. */
   detail?: unknown;
-  /** Dotted paths of the offending fields; downstream correction-echo and observability read these. */
+  /** Every independently decidable fault, by path and issue code. */
+  errors: ToolError[];
+  /** Dotted paths of the offending fields for held-draft bookkeeping and observability; defaults to the error paths. */
   issuePaths?: string[];
-  /** Exact offending entry ids, for a violation whose offender is an id rather than a field path. */
-  entryIds?: readonly string[];
   /** Owner-verified missing authored content held safely for a narrow completion; absent on invalid values or identities. */
   missingParts?: readonly string[];
   /** When the backend owner created this missing-content request; separate from its later delivery to the model. */
   feedbackAt?: string;
-  /** Every independently decidable fault, by path and issue code. */
-  errors?: RejectionError[];
   /** Top-level fields the model resends; every other field stays held. */
   resend?: string[];
+  /** How the resent lists merge into the held draft. */
+  resendRules?: ResendRule[];
 }
 
-/** Engine code carried by the consent gate, which shares the rejection envelope without being one. Reuses {@link REJECTION_CODES.actionRequired} — the one constant every emission site (`start_exploration`'s gate return, the graph's gate detector) interpolates, so a rename cannot drift between them. */
+/** Engine code carried by the consent gate, which shares the rejection envelope without being one. */
 const CONSENT_GATE_CODE = REJECTION_CODES.actionRequired;
 
 /** Reports whether a rejection code is the consent gate rather than a failure. */
@@ -52,36 +166,29 @@ export function isAdmissionRefusal(code: string): boolean {
   return code === REJECTION_CODES.overActiveScopeBudget;
 }
 
-/** Zod view of the {@link makeRejection} shape, parsed once at the read boundary. Strict: the emitter writes exactly these keys, so a success payload carrying any other key is never read as a rejection. */
+/** Zod view of the {@link makeRejection} shape, parsed once at the read boundary. Strict: a success payload carrying any other key is never read as a rejection. */
 const RejectionShape = z.object({
   code: z.string(),
   reason: z.string().trim().min(1),
-  hint: z.string().optional(),
   detail: z.unknown().optional(),
+  errors: z.array(z.object({ path: z.string(), code: z.enum(ISSUE_CODES), values: z.array(z.string()).optional() }).strict()).min(1),
   issuePaths: z.array(z.string()).optional(),
-  entryIds: z.array(z.string()).optional(),
   missingParts: z.array(z.string().min(1)).min(1).optional(),
   feedbackAt: z.string().datetime().optional(),
-  errors: z.array(z.object({
-    path: z.string(), code: z.string(), message: z.string(),
-    alternatives: z.array(z.string()).optional(), allowed: z.array(z.string()).optional(),
-  }).strict()).optional(),
   resend: z.array(z.string()).optional(),
+  resendRules: z.array(z.enum(Object.keys(RESEND_RULES) as [ResendRule, ...ResendRule[]])).optional(),
 }).strict();
 
-/** Write-side builder for the one tool-execution failure envelope both LM lanes record when a handler throws; the run ends on it. Owning it here keeps the graph-owned dispatch result provider-neutral. */
+/** Write-side builder for the one tool-execution failure envelope both LM lanes record when a handler throws; the run ends on it. */
 export function buildToolExecutionError(toolName: string): string {
-  return JSON.stringify(makeRejection({
-    code: REJECTION_CODES.toolExecutionError,
-    reason: `${toolName} failed inside the extension.`,
-  }));
+  return JSON.stringify(makeRejection({ code: REJECTION_CODES.toolExecutionError, reason: `${toolName} failed inside the extension.`, errors: at('backend_fault') }));
 }
 
-/** Stable message shared by {@link NoProjectLoadedError} and {@link buildNoProjectLoadedError}. */
+/** Stable message shared by {@link NoProjectLoadedError} and a caller without a chat turn. */
 const NO_PROJECT_LOADED_MESSAGE =
   'No project is loaded in the Data Lineage panel (closed or not opened yet); open the project and ask again.';
 
-/** Thrown by a tool host's `requireModel`/`requireGraph` when no model/graph is loaded — the panel closed mid-turn and cleared them (`panelProvider.ts`'s `onDidDispose`, the one site that nulls them), or an externally registered read tool ran with no project ever opened. Both causes are one true statement, so this is one class and one code rather than a guess at which applied. Distinguished from a generic tool-execution failure so the dispatcher returns a stable, non-retryable rejection instead of a hint that invites correcting input that was never the problem. */
+/** Thrown by a tool host's `requireModel`/`requireGraph` when no model/graph is loaded, so the dispatcher returns a stable, non-retryable rejection. */
 export class NoProjectLoadedError extends Error {
   constructor() {
     super(NO_PROJECT_LOADED_MESSAGE);
@@ -91,10 +198,10 @@ export class NoProjectLoadedError extends Error {
 
 /** Rejection for a tool call dispatched with no project loaded. */
 export function buildNoProjectLoadedError(): string {
-  return JSON.stringify(makeRejection({ code: REJECTION_CODES.noProjectLoaded, hint: NO_PROJECT_LOADED_MESSAGE }));
+  return JSON.stringify(makeRejection({ code: REJECTION_CODES.noProjectLoaded, reason: NO_PROJECT_LOADED_MESSAGE, errors: at('no_project') }));
 }
 
-/** Reader: the typed {@link ToolRejection} a tool result carries, or `null` when the payload is not a refusal. Recognizes exactly one shape — the {@link makeRejection} shape every emit site uses. */
+/** Reader: the typed {@link ToolRejection} a tool result carries, or `null` when the payload is not a refusal. */
 export function readToolError(data: unknown): ToolRejection | null {
   const parsed = RejectionShape.safeParse(data);
   if (!parsed.success) return null;
@@ -110,37 +217,139 @@ export function readToolErrorText(text: string): ToolRejection | null {
     return null;
   }
 }
-/** Issue-code message table: the one source of model-facing problem prose (D-103). `fallback` is the stage-3 guidance added to a fault at a reference leaf, the same for each (D-105). */
-export const PROBLEM_MESSAGES = {
-  missing: 'Required; send it.',
-  type: 'Wrong type.',
-  enum: 'Not an allowed value.',
-  unknown_key: 'Not a field here; remove it, or send it under the field it belongs to.',
-  size: 'Outside its size bound.',
-  never: 'No value is allowed here; remove it.',
-  invalid: 'Invalid value.',
-  fallback: 'If you cannot correct it, write that information in the detail memory instead, highlighted with a callout naming the unresolved issue.',
-} as const;
 
-/** Joins message parts as sentences. */
-const sentences = (...parts: Array<string | undefined>): string =>
-  parts.filter((part): part is string => !!part).map(part => (/[.!?]$/.test(part) ? part : `${part}.`)).join(' ');
-
-/** The reference leaves of each commit-report tool, numeric segments as `*`: a node or column the backend may not find, which the AI can write in the detail memory instead (D-105). Text fields (they are the detail memory), enums, decisions, ids, structure, read tools and start arguments are absent, so their stage-3 feedback has no fallback. */
-const REFERENCE_LEAVES: Readonly<Record<string, ReadonlySet<string>>> = {
-  lineage_submit_findings: new Set(['column_flow.*.out_col', 'column_flow.*.writes_to.node', 'column_flow.*.writes_to.col',
-    'column_flow.*.upstream_columns.*', 'column_flow.*.upstream_columns.*.node', 'column_flow.*.upstream_columns.*.col']),
-  lineage_present_result: new Set(['sections.*.node_ids', 'sections.*.node_ids.*', 'notes.*.node_id',
-    'highlight_groups.*.node_ids', 'highlight_groups.*.node_ids.*']),
-};
-
-/** Issue codes that never get the fallback: an absent value, or a key or value the schema does not allow at all. */
-const NO_FALLBACK_CODES: ReadonlySet<string> = new Set(['missing', 'unknown_key', 'never']);
-
-/** Feedback stage of one hop (D-105): 1 states every fault, 2 adds the allowed values, 3 adds the fallback guidance to faults at reference leaves. */
+/** Feedback stage of one hop (D-105): 1 states every fault, 2 adds the allowed values, 3 adds the per-code fallbacks and the last-correction notice. */
 export type FeedbackStage = 1 | 2 | 3;
 
-/** The slice of a JSON Schema node the renderer reads. */
+/** Most errors shown per category, and most allowed values shown per error; the rest is counted in `more`. */
+const MAX_ERRORS = 8;
+const MAX_ALLOWED = 15;
+
+/** Normalized edit distance in [0, 1], case-insensitive: ranks allowed values against a submitted value that is never shown. */
+function distance(a: string, b: string): number {
+  const x = a.toLowerCase(), y = b.toLowerCase();
+  let row = Array.from({ length: y.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= x.length; i++) {
+    const next = [i];
+    for (let j = 1; j <= y.length; j++) next[j] = Math.min(row[j] + 1, next[j - 1] + 1, row[j - 1] + (x[i - 1] === y[j - 1] ? 0 : 1));
+    row = next;
+  }
+  return row[y.length] / Math.max(x.length, y.length, 1);
+}
+
+/** The value at a dotted path of `input`. */
+function valueAt(input: unknown, path: string): unknown {
+  return resolveAtPath(input, path ? path.split('.').map(key => (/^\d+$/.test(key) ? Number(key) : key)) : []);
+}
+
+/** Renders one rejection as the problem the model reads: `{code, attempt, notice?, guidance[{category, instruction, errors[{path, fault, correction, allowed? | missing?, more?}], more?, fallback?}], resend, resend_rule?}`. Every sentence is a template of {@link ISSUE_CATEGORIES}, {@link RESEND_RULES} or {@link LAST_CORRECTION}, every fault, correction and fallback a static string of {@link ISSUES}; `input` only ranks allowed values and is never shown. Feedback 1 states each fault tersely under the short category instruction; feedback 2 uses the detailed instruction and adds `allowed` (an empty list when no valid value exists). Values of a required fault render as `missing` from feedback 1, since they name what is owed. At feedback 3 alone, a group states the fallbacks of its codes and the fallback field joins `resend`. */
+export function renderProblem(rejection: ToolRejection, stage: FeedbackStage, input?: unknown): string {
+  const merged = new Map<string, ToolError>();
+  for (const error of rejection.errors) {
+    const key = `${error.path}|${error.code}`, known = merged.get(key);
+    const values = known?.values || error.values ? [...new Set([...(known?.values ?? []), ...(error.values ?? [])])] : undefined;
+    merged.set(key, { path: error.path, code: error.code, ...(values ? { values } : {}) });
+  }
+  // A missing parent covers its descendants; children under a mistyped object stay, since they state the expected structure.
+  const missingParents = [...merged.values()].filter(error => error.path && error.code === 'missing').map(error => `${error.path}.`);
+  const errors = [...merged.values()].filter(error => !missingParents.some(prefix => error.path.startsWith(prefix)));
+  let fallbackShown = false;
+  const guidance = CATEGORY_ORDER.flatMap(category => {
+    const group = errors.filter(error => ISSUES[error.code].category === category).sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    if (!group.length) return [];
+    const key = category === 'required' ? 'missing' : 'allowed';
+    const shown = group.slice(0, MAX_ERRORS).map(error => {
+      const { label: fault, correction } = ISSUES[error.code];
+      if (!error.values || (stage < 2 && category !== 'required')) return { path: error.path, fault, correction };
+      const sent = valueAt(input, error.path);
+      const ranked = [...error.values].sort((a, b) => (typeof sent === 'string' ? distance(sent, a) - distance(sent, b) : 0) || a.localeCompare(b));
+      return { path: error.path, fault, correction, [key]: ranked.slice(0, MAX_ALLOWED), ...(ranked.length > MAX_ALLOWED ? { more: ranked.length - MAX_ALLOWED } : {}) };
+    });
+    const fallback = stage === 3 ? [...new Set(group.flatMap(error => {
+      const issue = ISSUES[error.code];
+      return 'fallback' in issue ? [issue.fallback] : [];
+    }))].join(' ') : '';
+    if (fallback) fallbackShown = true;
+    const texts: { short: string; detailed: string } = ISSUE_CATEGORIES[category];
+    return [{ category, instruction: stage === 1 ? texts.short : texts.detailed, errors: shown,
+      ...(group.length > MAX_ERRORS ? { more: group.length - MAX_ERRORS } : {}), ...(fallback ? { fallback } : {}) }];
+  });
+  const resend = [...new Set([...(rejection.resend ?? []), ...(fallbackShown ? [FALLBACK_FIELD] : [])])];
+  const resendRule = [...new Set(rejection.resendRules ?? [])].map(rule => RESEND_RULES[rule]).join(' ');
+  return JSON.stringify({ code: rejection.code, attempt: `${stage}/3`, ...(stage === 3 ? { notice: LAST_CORRECTION } : {}),
+    guidance, resend, ...(resendRule ? { resend_rule: resendRule } : {}) });
+}
+
+/** Faults with one issue code at each path; the call itself when no path is given. */
+export function at(code: IssueCode, paths: readonly string[] = [''], values?: readonly string[]): ToolError[] {
+  return paths.map(path => ({ path, code, ...(values ? { values } : {}) }));
+}
+
+/** Union independently assessed refusals without interpreting rejected arguments. */
+export function combineToolRejections(rejections: readonly ToolRejection[]): ToolRejection {
+  if (rejections.length === 0) throw new Error('Cannot combine an empty rejection set.');
+  const details = rejections.flatMap(rejection => rejection.detail === undefined ? []
+    : Array.isArray(rejection.detail) ? rejection.detail : [rejection.detail]);
+  return makeRejection({
+    code: rejections.some(rejection => rejection.code === REJECTION_CODES.invalidInput) ? REJECTION_CODES.invalidInput : rejections[0].code,
+    reason: [...new Set(rejections.map(rejection => rejection.reason))].join('\n'),
+    issuePaths: rejections.flatMap(rejection => rejection.issuePaths ?? rejection.errors.map(error => error.path)),
+    ...(details.length ? { detail: [...new Map(details.map(detail => [JSON.stringify(detail), detail])).values()] } : {}),
+    errors: rejections.flatMap(rejection => rejection.errors),
+    resend: [...new Set(rejections.flatMap(rejection => rejection.resend ?? []))],
+    resendRules: [...new Set(rejections.flatMap(rejection => rejection.resendRules ?? []))],
+  });
+}
+
+/** Longest one dotted-path segment: an identifier, or an index. */
+const MAX_PATH_SEGMENT_CHARS = 100;
+/** One dotted-path segment: an identifier of at most {@link MAX_PATH_SEGMENT_CHARS} chars, an index, or `*` for every index. */
+const PATH_SEGMENT = `(?:[A-Za-z_][A-Za-z0-9_-]{0,${MAX_PATH_SEGMENT_CHARS - 1}}|\\d+|\\*)`;
+/** Dotted identifier grammar every recorded path must match: safe to log and to show where prose is not allowed. */
+const ISSUE_PATH_GRAMMAR = new RegExp(`^${PATH_SEGMENT}(?:\\.${PATH_SEGMENT})*$`);
+
+/** The one producer of a {@link ToolRejection}. At least one error is required; an error path outside the dotted grammar is stated at its call. `reason` (default: the code) is for logs. Missing parts the errors do not already state are added as `missing`. */
+export function makeRejection(input: {
+  code: string;
+  errors: readonly ToolError[];
+  reason?: string;
+  detail?: unknown;
+  issuePaths?: readonly string[];
+  missingParts?: readonly string[];
+  resend?: readonly string[];
+  resendRules?: readonly ResendRule[];
+}): ToolRejection {
+  const reason = (input.reason ?? input.code).trim() || input.code;
+  const errors = input.errors.map(error => (error.path === '' || ISSUE_PATH_GRAMMAR.test(error.path) ? error : { ...error, path: '' }));
+  for (const part of input.missingParts ?? []) if (!errors.some(error => error.path === part)) errors.push({ path: part, code: 'missing' });
+  if (!errors.length) throw new Error('makeRejection: a rejection states at least one error');
+  const issuePaths = [...new Set(input.issuePaths ?? errors.map(error => error.path))].filter(path => ISSUE_PATH_GRAMMAR.test(path));
+  return {
+    code: input.code,
+    reason,
+    ...(input.detail !== undefined ? { detail: input.detail } : {}),
+    errors,
+    ...(issuePaths.length > 0 ? { issuePaths } : {}),
+    ...(input.missingParts?.length ? { missingParts: [...input.missingParts], feedbackAt: new Date().toISOString() } : {}),
+    ...(input.resend !== undefined ? { resend: [...input.resend] } : {}),
+    ...(input.resendRules?.length ? { resendRules: [...input.resendRules] } : {}),
+  };
+}
+
+/** Longest object key named in a path; a longer key is reported at its container. */
+const KEY_ECHO_MAX_CHARS = 120;
+
+/** Walks `input` down one issue path; `undefined` when the path leaves the object graph. */
+function resolveAtPath(input: unknown, path: readonly PropertyKey[]): unknown {
+  let value: unknown = input;
+  for (const key of path) {
+    if (value === null || typeof value !== 'object') return undefined;
+    value = (value as Record<PropertyKey, unknown>)[key as keyof object];
+  }
+  return value;
+}
+
+/** The slice of a JSON Schema node the Zod mapping reads. */
 interface JsonSchemaShape {
   type?: string | string[];
   anyOf?: JsonSchemaShape[];
@@ -151,10 +360,6 @@ interface JsonSchemaShape {
 
 /** The node and its union branches. */
 const variantsOf = (node: JsonSchemaShape): JsonSchemaShape[] => [node, ...(node.anyOf ?? []), ...(node.oneOf ?? [])];
-
-/** Whether a node accepts `null`. */
-const isNullable = (node: JsonSchemaShape): boolean =>
-  variantsOf(node).some(variant => variant.type === 'null' || (Array.isArray(variant.type) && variant.type.includes('null')));
 
 /** The input JSON Schema of `schema`, or `undefined` when it has none. */
 function inputJsonSchema(schema: z.ZodType | undefined): JsonSchemaShape | undefined {
@@ -177,154 +382,21 @@ function jsonSchemaNodeAt(root: JsonSchemaShape | undefined, path: readonly Prop
   return node;
 }
 
-/** The allowed-value facts of `detail`: `{path?, allowed_values | allowed | allowedTools}`. */
-function allowedFacts(detail: unknown): Array<{ path: string; allowed: string[] }> {
-  return (Array.isArray(detail) ? detail : [detail]).flatMap(fact => {
-    if (!fact || typeof fact !== 'object') return [];
-    const { path, allowed_values, allowed, allowedTools } = fact as Record<string, unknown>;
-    const values = [allowed_values, allowed, allowedTools].find(Array.isArray);
-    return values ? [{ path: typeof path === 'string' ? path.replace(/\[(\d+)\]/g, '.$1') : '', allowed: values.map(String) }] : [];
-  });
-}
+/** The JSON types a schema node declares, as its allowed values. */
+const declaredTypes = (node: JsonSchemaShape | undefined): string[] | undefined => {
+  const types = node && [...new Set(variantsOf(node).flatMap(variant => (Array.isArray(variant.type) ? variant.type : variant.type ? [variant.type] : [])))];
+  return types?.length ? types : undefined;
+};
 
-/** Renders one rejection as the problem the model reads: `{code, errors[{path, code, message, allowed?}], resend}`, staged by D-105. Bridge: it adapts the legacy `ToolRejection` record in one step; MW-9 deletes this adapter when handlers emit `ToolProblem` directly. A rejection without errors states its reason at each issue path (or the call), its hint at the call, and its missing parts as missing. */
-export function renderProblem(rejection: ToolRejection, stage: FeedbackStage, toolName?: string): string {
-  const reason = rejection.reason === rejection.code && rejection.hint ? rejection.hint : rejection.reason;
-  const errors = new Map<string, RejectionError>();
-  const put = (error: RejectionError): void => {
-    const key = `${error.path}|${error.code}`;
-    const known = errors.get(key);
-    const allowed = known?.allowed || error.allowed ? [...new Set([...(known?.allowed ?? []), ...(error.allowed ?? [])])] : undefined;
-    errors.set(key, { path: error.path, code: error.code, message: known?.message ?? error.message, ...(allowed ? { allowed } : {}) });
-  };
-  if (rejection.errors?.length) rejection.errors.forEach(put);
-  const paths = rejection.errors?.length ? [] : [...rejection.issuePaths ?? [], ...rejection.entryIds ?? []];
-  for (const path of paths) put({ path, code: rejection.code, message: reason });
-  const call = [...(rejection.errors?.length || paths.length ? [] : [reason]), ...(rejection.hint && rejection.hint !== reason ? [rejection.hint] : [])];
-  if (call.length) put({ path: '', code: rejection.code, message: call.join(' ') });
-  for (const part of rejection.missingParts ?? []) if (![...errors.values()].some(error => error.path === part)) put({ path: part, code: 'missing', message: PROBLEM_MESSAGES.missing });
-  for (const fact of allowedFacts(rejection.detail)) {
-    const owners = [...errors.values()].filter(error => error.path === fact.path);
-    for (const owner of owners.length ? owners : [{ path: fact.path, code: 'enum', message: PROBLEM_MESSAGES.enum }]) put({ ...owner, allowed: fact.allowed });
-  }
-  const instructed = new Set<string>(), leaves = toolName ? REFERENCE_LEAVES[toolName] : undefined;
-  const withFallback = (path: string, code: string, message: string): string => {
-    if (stage < 3 || !leaves?.has(path.replace(/(^|\.)\d+(?=\.|$)/g, '$1*')) || NO_FALLBACK_CODES.has(code) || instructed.has(path)) return message;
-    instructed.add(path);
-    return sentences(message, PROBLEM_MESSAGES.fallback);
-  };
-  return JSON.stringify({ code: rejection.code,
-    errors: [...errors.values()].map(({ path, code, message, allowed }) => ({ path, code, message: withFallback(path, code, message),
-      ...(stage >= 2 && allowed ? { allowed } : {}) })),
-    resend: rejection.resend ?? [] });
-}
-
-/** Union independently assessed refusals without interpreting rejected arguments or reason prose. */
-export function combineToolRejections(rejections: readonly ToolRejection[], hint?: string): ToolRejection {
-  if (rejections.length === 0) throw new Error('Cannot combine an empty rejection set.');
-  const details = rejections.flatMap(rejection => rejection.detail === undefined ? []
-    : Array.isArray(rejection.detail) ? rejection.detail : [rejection.detail]);
-  return makeRejection({
-    code: rejections.some(rejection => rejection.code === REJECTION_CODES.invalidInput) ? REJECTION_CODES.invalidInput : rejections[0].code,
-    reason: [...new Set(rejections.map(rejection => rejection.reason))].join('\n'),
-    hint: [...new Set([...rejections.flatMap(rejection => rejection.hint ? [rejection.hint] : []), ...(hint ? [hint] : [])])].join(' ') || undefined,
-    issuePaths: rejections.flatMap(rejection => rejection.issuePaths ?? []),
-    entryIds: [...new Set(rejections.flatMap(rejection => rejection.entryIds ?? []))],
-    ...(details.length ? { detail: [...new Map(details.map(detail => [JSON.stringify(detail), detail])).values()] } : {}),
-    errors: [...new Map(rejections.flatMap(rejection => rejection.errors ?? []).map(error => [`${error.path}|${error.code}|${error.message}`, error])).values()],
-    resend: [...new Set(rejections.flatMap(rejection => rejection.resend ?? []))],
-  });
-}
-
-/** Longest one dotted-path segment: an identifier, or an index. */
-const MAX_PATH_SEGMENT_CHARS = 100;
-/** One dotted-path segment: an identifier of at most {@link MAX_PATH_SEGMENT_CHARS} chars, or an index. */
-const PATH_SEGMENT = `(?:[A-Za-z_][A-Za-z0-9_-]{0,${MAX_PATH_SEGMENT_CHARS - 1}}|\\d+)`;
-/** Dotted identifier grammar every recorded issue path must match: safe to log where prose is not allowed. */
-const ISSUE_PATH_GRAMMAR = new RegExp(`^${PATH_SEGMENT}(?:\\.${PATH_SEGMENT})*$`);
-
-/** The one producer of a {@link ToolRejection}. Trims `reason` (default: the `code`) and throws when the trimmed value is empty — an empty-reason reject is unrepresentable (make-illegal-states-unrepresentable), since a rejection the model cannot read is indistinguishable from a silent hang. `issuePaths` keep only dotted-identifier paths, deduped and bounded, so a model-controlled key can never reach a record that forbids prose. */
-export function makeRejection(input: {
-  code: string;
-  reason?: string;
-  hint?: string;
-  detail?: unknown;
-  issuePaths?: readonly string[];
-  entryIds?: readonly string[];
-  missingParts?: readonly string[];
-  errors?: readonly RejectionError[];
-  resend?: readonly string[];
-}): ToolRejection {
-  const reason = (input.reason ?? input.code).trim();
-  if (!reason) throw new Error('makeRejection: reason must not be empty');
-  const issuePaths = [...new Set(input.issuePaths ?? [])].filter((path) => ISSUE_PATH_GRAMMAR.test(path));
-  return {
-    code: input.code,
-    reason,
-    ...(input.hint !== undefined ? { hint: input.hint } : {}),
-    ...(input.detail !== undefined ? { detail: input.detail } : {}),
-    ...(issuePaths.length > 0 ? { issuePaths } : {}),
-    ...(input.entryIds?.length ? { entryIds: [...input.entryIds] } : {}),
-    ...(input.missingParts?.length ? { missingParts: [...input.missingParts], feedbackAt: new Date().toISOString() } : {}),
-    ...(input.errors?.length ? { errors: [...input.errors] } : {}),
-    ...(input.resend !== undefined || input.errors?.length ? { resend: [...(input.resend ?? [])] } : {}),
-  };
-}
-
-/** Longest object key named in a path; a longer key is reported at its container, never as a prefix. */
-const KEY_ECHO_MAX_CHARS = 120;
-
-/** Walks `input` down one Zod issue path; `undefined` when the path leaves the object graph. */
-function resolveAtPath(input: unknown, path: readonly PropertyKey[]): unknown {
-  let value: unknown = input;
-  for (const key of path) {
-    if (value === null || typeof value !== 'object') return undefined;
-    value = (value as Record<PropertyKey, unknown>)[key as keyof object];
-  }
-  return value;
-}
-
-/** The measured size against the bound of a size issue (models cannot count characters); `undefined` when unmeasurable or when the raw value met the bound before a schema transform. The value itself is never echoed. */
-function describeSizeIssue(issue: Extract<z.core.$ZodIssue, { code: 'too_big' | 'too_small' }>, received: unknown): string | undefined {
-  const size = typeof received === 'string' ? { amount: received.length, text: `${received.length} chars` }
-    : Array.isArray(received) ? { amount: received.length, text: `${received.length} items` }
-      : typeof received === 'number' ? { amount: received, text: `${received}` } : undefined;
-  if (size === undefined) return undefined;
-  const inclusive = issue.inclusive ?? true;
-  const limit = Number(issue.code === 'too_big' ? issue.maximum : issue.minimum);
-  const fails = issue.code === 'too_big'
-    ? (inclusive ? size.amount > limit : size.amount >= limit)
-    : (inclusive ? size.amount < limit : size.amount <= limit);
-  if (!fails) return undefined;
-  const bound = issue.code === 'too_big'
-    ? (inclusive ? `limit ${issue.maximum}` : `less than ${issue.maximum}`)
-    : (inclusive ? `minimum ${issue.minimum}` : `more than ${issue.minimum}`);
-  return `${size.text}, ${bound}`;
-}
-
-/** The message of a wrong-type issue: a structured field sent as JSON text is named as such; otherwise the expected type from the schema. */
-function typeMessage(issue: Extract<z.core.$ZodIssue, { code: 'invalid_type' }>, received: unknown, node: JsonSchemaShape | undefined): string {
-  if ((issue.expected === 'array' || issue.expected === 'object') && typeof received === 'string' && /^\s*[[{]/.test(received)) {
-    const kind = received.trimStart().startsWith('[') ? 'array' : 'object';
-    try {
-      JSON.parse(received);
-      return `Received stringified JSON; send a native JSON ${kind}.`;
-    } catch {
-      return `Received ${received.length} characters of text that is not valid JSON; send one complete JSON ${kind}, with line breaks inside strings written as \\n.`;
-    }
-  }
-  const expected = issue.expected === 'number' && node && variantsOf(node).some(variant => variant.type === 'integer') ? 'integer' : issue.expected;
-  return `${PROBLEM_MESSAGES.type} Expected ${expected}${node && isNullable(node) ? ' or null' : ''}.`;
-}
-
-/** The faults of a Zod failure, one per path and issue code, with their messages from {@link PROBLEM_MESSAGES} and schema metadata; union alternatives contribute their leaf issues and merge the values they accept. An absent value is `missing`, whatever the issue. */
-function zodProblemErrors(error: z.ZodError, input: unknown, root: JsonSchemaShape | undefined): RejectionError[] {
-  const errors = new Map<string, RejectionError>();
-  const add = (path: readonly PropertyKey[], code: string, message: string, allowed?: readonly string[]): void => {
-    const joined = path.join('.');
-    const known = errors.get(`${joined}|${code}`);
-    const merged = known?.allowed || allowed ? [...new Set([...(known?.allowed ?? []), ...(allowed ?? [])])] : undefined;
-    errors.set(`${joined}|${code}`, { path: joined, code, message: known?.message ?? message, ...(merged ? { allowed: merged } : {}) });
+/** The faults of a Zod failure, one per path and issue code; union alternatives contribute their leaf issues. An absent value is `missing`, whatever the issue. A custom refinement names its issue in `params.issue` and may carry `params.allowed_values`. */
+function zodProblemErrors(error: z.ZodError, input: unknown, root: JsonSchemaShape | undefined): ToolError[] {
+  const errors: ToolError[] = [];
+  const add = (path: readonly PropertyKey[], code: IssueCode, values?: readonly string[]): void => {
+    // Union alternatives repeat a fault at one path; it is one fault, with the values of every alternative.
+    const known = errors.find(error => error.path === path.join('.') && error.code === code);
+    const merged = known?.values || values ? [...new Set([...(known?.values ?? []), ...(values ?? []).map(String)])] : undefined;
+    if (known) { if (merged) known.values = merged; return; }
+    errors.push({ path: path.join('.'), code, ...(merged ? { values: merged } : {}) });
   };
   const visit = (issues: readonly z.core.$ZodIssue[], prefix: readonly PropertyKey[]): void => {
     for (const issue of issues) {
@@ -334,39 +406,37 @@ function zodProblemErrors(error: z.ZodError, input: unknown, root: JsonSchemaSha
         for (const alternative of issue.errors) visit(alternative, path);
       } else if (issue.code === 'unrecognized_keys') {
         const allowed = Object.keys(jsonSchemaNodeAt(root, path)?.properties ?? {});
-        for (const key of issue.keys) add(key.length > KEY_ECHO_MAX_CHARS ? path : [...path, key], 'unknown_key', PROBLEM_MESSAGES.unknown_key, allowed.length ? allowed : undefined);
+        for (const key of issue.keys) add(key.length > KEY_ECHO_MAX_CHARS ? path : [...path, key], 'unknown_key', allowed.length ? allowed : undefined);
       } else if (input !== undefined && received === undefined && path.length > 0) {
-        add(path, 'missing', issue.code === 'custom' ? sentences(issue.message, (issue.params as { hint?: string } | undefined)?.hint) : PROBLEM_MESSAGES.missing);
+        add(path, 'missing');
       } else if ((issue.code === 'too_big' || issue.code === 'too_small') && issues.some(other => other.code === 'invalid_type' && other.path.join('.') === issue.path.join('.'))) {
         continue;
       } else if (issue.code === 'invalid_type') {
-        if (issue.expected === 'never') add(path, 'never', PROBLEM_MESSAGES.never, []);
-        else add(path, 'type', typeMessage(issue, received, jsonSchemaNodeAt(root, path)));
+        if (issue.expected === 'never') add(path, 'never');
+        else if ((issue.expected === 'array' || issue.expected === 'object') && typeof received === 'string' && /^\s*[[{]/.test(received)) add(path, 'json_text');
+        else add(path, 'type', declaredTypes(jsonSchemaNodeAt(root, path)) ?? [issue.expected]);
       } else if (issue.code === 'invalid_value') {
-        add(path, 'enum', PROBLEM_MESSAGES.enum, issue.values.map(String));
+        add(path, 'enum', issue.values.map(String));
       } else if (issue.code === 'too_big' || issue.code === 'too_small') {
-        const measured = describeSizeIssue(issue, received);
-        add(path, 'size', measured ? `${PROBLEM_MESSAGES.size} ${measured}.` : issue.message);
+        add(path, 'size');
       } else if (issue.code === 'custom') {
-        const params = issue.params as { allowed_values?: string[]; hint?: string } | undefined;
-        add(path, params?.allowed_values ? 'enum' : 'invalid', sentences(issue.message, params?.hint), params?.allowed_values);
+        const params = issue.params as { issue?: IssueCode; allowed_values?: readonly string[] } | undefined;
+        add(path, params?.issue && params.issue in ISSUES ? params.issue : params?.allowed_values ? 'enum' : 'invalid', params?.allowed_values);
       } else {
-        add(path, 'invalid', issue.message || PROBLEM_MESSAGES.invalid);
+        add(path, 'invalid');
       }
     }
   };
   visit(error.issues, []);
-  return [...errors.values()];
+  return errors;
 }
 
-/** The one Zod-failure rejection: every fault as an error by path and issue code; the reason lists them for logs. */
-export function rejectionFromZodError(error: z.ZodError, opts: { code: string; hint?: string; input?: unknown; schema?: z.ZodType }): ToolRejection {
+/** The one Zod-failure rejection: every fault as an error by path and issue code. */
+export function rejectionFromZodError(error: z.ZodError, opts: { code: string; input?: unknown; schema?: z.ZodType }): ToolRejection {
   const errors = zodProblemErrors(error, opts.input, inputJsonSchema(opts.schema));
   return makeRejection({
     code: opts.code,
-    reason: errors.map(fault => (fault.path ? `${fault.path}: ${fault.message}` : fault.message)).join('\n'),
-    hint: opts.hint,
-    issuePaths: errors.map(fault => fault.path),
-    errors,
+    reason: error.issues.map(issue => `${issue.path.join('.')}: ${issue.code}`).join('\n'),
+    errors: errors.length ? errors : at('invalid'),
   });
 }

@@ -44,23 +44,23 @@ export function evaluateCurrentHopActionPolicy(input: CurrentHopActionPolicyInpu
   for (const target of input.pruneTargets) {
     const id = target.resolved;
     if (!id) {
-      invalidRoutes.push({ kind: 'prune_absent', id: target.raw, path: target.path, reason: `\`${target.raw}\` is not in the loaded model.` });
+      invalidRoutes.push({ kind: 'prune_absent', id: target.raw, path: target.path, reason: 'The object is not in the loaded model.' });
       continue;
     }
     if (id === input.originId) {
-      invalidRoutes.push({ kind: 'prune_noop_visited', id, path: target.path, reason: `\`${id}\` is the origin node and anchors the lineage; a prune cannot remove it.` });
+      invalidRoutes.push({ kind: 'prune_noop_visited', id, path: target.path, reason: 'The origin node anchors the lineage; a prune cannot remove it.' });
       continue;
     }
     if (input.removedIds.has(id)) {
-      invalidRoutes.push({ kind: 'prune_noop_removed', id, path: target.path, reason: `\`${id}\` was already pruned on an earlier hop.` });
+      invalidRoutes.push({ kind: 'prune_noop_removed', id, path: target.path, reason: 'The object was already pruned on an earlier hop.' });
       continue;
     }
     if (input.visitedIds.has(id)) {
-      invalidRoutes.push({ kind: 'prune_noop_visited', id, path: target.path, reason: `\`${id}\` was already visited on an earlier hop and stays on the answer path.` });
+      invalidRoutes.push({ kind: 'prune_noop_visited', id, path: target.path, reason: 'The object was already visited on an earlier hop and stays on the answer path.' });
       continue;
     }
     if (input.notedIds.has(id)) {
-      invalidRoutes.push({ kind: 'prune_noop_analyzed', id, path: target.path, reason: `\`${id}\` is already recorded as an analyzed node.` });
+      invalidRoutes.push({ kind: 'prune_noop_analyzed', id, path: target.path, reason: 'The object is already recorded as an analyzed node.' });
       continue;
     }
     if (input.agendaIds.has(id) && !input.keptIds.has(id)) {
@@ -68,7 +68,7 @@ export function evaluateCurrentHopActionPolicy(input: CurrentHopActionPolicyInpu
         kind: 'prune_noop_queued',
         id,
         path: target.path,
-        reason: `\`${id}\` is already queued for a hop of its own; prune_neighbors does not pull queued work.`,
+        reason: 'The object is already queued for a hop of its own; prune_neighbors does not pull queued work.',
       });
       continue;
     }

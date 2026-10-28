@@ -169,14 +169,11 @@ export function buildActiveHopInstruction(sess: AiSession, engine: NavigationEng
     ...held.fields,
     ...held.sections.map(angle => `sections.${angle}`),
   ] : [];
-  const correctionFields = held?.failed ?? held?.resend ?? [];
   const correctionJob = !held ? null : [
     '<current_task>',
     'Status: correction needed.',
     ...(savedFields.length ? [`Saved valid content: ${savedFields.map(escapePromptText).join(', ')}.`] : []),
-    ...(correctionFields.length ? [`Fields to correct: ${correctionFields.map(escapePromptText).join(', ')}.`] : []),
-    'The latest tool error defines the faults and their correction alternatives.',
-    'Next: submit only missing or corrected fields. Omit saved fields unless resolving a reported fault.',
+    'The latest tool result lists the faults, how to correct them and the fields to resend; saved content stays as saved.',
     '</current_task>',
   ].join('\n');
   const captureRecipe = resolveStage(sess, 'active', isCtMode, {

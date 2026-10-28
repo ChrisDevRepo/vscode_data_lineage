@@ -23,7 +23,6 @@ import {
   presentSchema, presentNeighbor, presentFilter, presentForeignKeys,
 } from '../support/aiPresenter';
 import { type GetScopeBundleInput } from './toolSchemas';
-import { ASYMMETRIC_DEPTH_BOTH_ZERO } from '../../engine/shared/explorationDepthContract';
 
 
 import {
@@ -33,11 +32,14 @@ import {
   type DiscoveryBudgetRejection,
   type TurnTokenBudget,
 } from '../support/tokenBudget';
-import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
+import { at, makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 import { getNodeColumns, getNodeDdl, SCRIPT_TYPES } from '../support/graphUtils';
 import { getModelNodeMap } from './handlers/toolServices';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { cursorOffset, nextCursor } from '../support/text';
+
+/** A regex search stopped at its execution deadline: no results, and the pattern or filters to narrow. */
+const REGEX_DEADLINE_REASON = 'The regex search did not finish before its execution deadline; no results were returned. Simplify the pattern or narrow the search filters.';
 
 /** Column-match rows one `lineage_search_objects` page carries; the rest is read with `cursor`. */
 const COLUMN_SEARCH_PAGE = 50;
@@ -164,9 +166,6 @@ export function getContext(
 }
 
 
-/** The one wording for "list a whole schema", shared by both rejections that offer that repair. */
-const LIST_SCHEMA_REPAIR = 'To list a whole schema, send arguments {"query": "", "schemas": ["<schema>"]}.';
-
 /** Bare tokens that mean "match everything" in whichever wildcard idiom a caller reaches for — SQL `%`, shell/glob `*`, regex `.*` — independent of the `mode` sent alongside them. */
 const WILDCARD_ALL_TOKENS = new Set(['*', '.*', '%']);
 
@@ -174,10 +173,10 @@ const WILDCARD_ALL_TOKENS = new Set(['*', '.*', '%']);
 function validateQuery(query: string): ToolRejection | null {
   const trimmed = query.trim();
   if (trimmed.length < 1) {
-    return makeRejection({ code: 'query_too_short', hint: `Send a name fragment — any part of an object or column name. ${LIST_SCHEMA_REPAIR}` });
+    return makeRejection({ code: REJECTION_CODES.queryTooShort, errors: at('query_too_short', ['query']) });
   }
   if (/^["'`.*?+^$]+$/.test(trimmed)) {
-    return makeRejection({ code: 'query_not_a_name', hint: `Substring mode matches the query literally, and this is punctuation only — no object name contains it. Send a real name fragment, or set mode:"regex" to use it as a pattern. ${LIST_SCHEMA_REPAIR}` });
+    return makeRejection({ code: REJECTION_CODES.queryNotAName, errors: at('query_not_a_name', ['query']) });
   }
   return null;
 }
@@ -200,14 +199,14 @@ export async function searchObjects(
     && WILDCARD_ALL_TOKENS.has(query);
 
   if (!isWildcardAllQuery && query.length > REGEX_MAX_LENGTH) {
-    return makeRejection({ code: REJECTION_CODES.invalidRegex, issuePaths: ['query'], hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` });
+    return makeRejection({ code: REJECTION_CODES.invalidRegex, errors: at('invalid_regex', ['query']), reason: `Longer than ${REGEX_MAX_LENGTH} characters.` });
   }
 
   const effectiveQuery = isWildcardAllQuery ? '' : query;
   if (isRegex && !isWildcardAllQuery) {
     const compiled = compileSearchRegex(effectiveQuery);
     if (!compiled.ok) {
-      return makeRejection({ code: REJECTION_CODES.invalidRegex, issuePaths: ['query'], resend: ['mode'], hint: regexRejectHint(effectiveQuery, compiled) });
+      return makeRejection({ code: REJECTION_CODES.invalidRegex, errors: at('invalid_regex', ['query']), resend: ['mode'], reason: regexRejectHint(effectiveQuery, compiled) });
     }
   }
   const listAllInSchemas = isWildcardAllQuery || (!isRegex && effectiveQuery.length === 0 && (appliedSchemaFilter?.length ?? 0) > 0);
@@ -235,7 +234,7 @@ export async function searchObjects(
       return model.nodes.filter(node => hits.has(node.id));
     } catch (error: unknown) {
       if (error instanceof RegexSearchExecutionError && error.reason === 'deadline') {
-        return makeRejection({ code: REJECTION_CODES.invalidRegex, hint: 'The isolated regex search did not finish before its execution deadline; no results were returned. Simplify the pattern or narrow the search filters.' });
+        return makeRejection({ code: REJECTION_CODES.invalidRegex, reason: REGEX_DEADLINE_REASON, errors: at('invalid_regex', ['query']) });
       }
       throw error;
     }
@@ -353,9 +352,6 @@ export async function searchObjects(
 /** Neighbours per direction one `lineage_get_object_detail` page carries; the rest is read with `cursor`. */
 const NEIGHBOR_PAGE = 25;
 
-/** Corrective hint on every per-id `not_found` rejection that names an object id — points the model at the search tool instead of leaving it to guess a corrected id. */
-const SEARCH_OBJECTS_HINT = 'Call lineage_search_objects to find the exact object ID.';
-
 /** Retrieves full metadata for a specific database object, including DDL, columns, and neighbors. */
 export function getObjectDetail(
   model: DatabaseModel,
@@ -367,7 +363,7 @@ export function getObjectDetail(
   const resolvedId = resolveModelNodeId(id, nodeMap, model.identifierCaseSensitive) ?? '';
   const node      = nodeMap.get(resolvedId);
   if (!node) {
-    return makeRejection({ code: REJECTION_CODES.notFound, hint: SEARCH_OBJECTS_HINT, detail: { id } });
+    return makeRejection({ code: REJECTION_CODES.notFound, errors: at('not_found', ['id']), detail: { id } });
   }
 
   const neighbors = model.neighborIndex[resolvedId] ?? { in: [], out: [] };
@@ -434,7 +430,7 @@ export function getScopeBundle(
   const origin = resolveModelNodeId(input.origin, nodeMap, model.identifierCaseSensitive) ?? '';
   const originNode = nodeMap.get(origin);
   if (!originNode) {
-    return makeRejection({ code: REJECTION_CODES.notFound, hint: 'Call lineage_search_objects to resolve the canonical origin ID.', detail: { origin: input.origin } });
+    return makeRejection({ code: REJECTION_CODES.notFound, errors: at('not_found', ['origin']), detail: { origin: input.origin } });
   }
 
   const direction = input.direction ?? 'bidirectional';
@@ -445,10 +441,7 @@ export function getScopeBundle(
   const singleDepth = input.depth ?? 3;
 
   if (direction === 'bidirectional' && upstreamDepth === 0 && downstreamDepth === 0) {
-    return makeRejection({
-      code: ASYMMETRIC_DEPTH_BOTH_ZERO,
-      hint: 'upstream_depth and downstream_depth are both 0, which would return only the origin node with no neighbors. Set at least one side above 0, or call lineage_get_object_detail for a single object.',
-    });
+    return makeRejection({ code: REJECTION_CODES.asymmetricDepthBothZero, errors: at('depth_zero', ['upstream_depth', 'downstream_depth']) });
   }
 
   const scopeIds = new Set<string>([origin]);
@@ -669,12 +662,12 @@ export async function searchDdl(
   signal?: AbortSignal,
 ): Promise<object> {
   if (query.length > REGEX_MAX_LENGTH) {
-    return makeRejection({ code: REJECTION_CODES.invalidRegex, issuePaths: ['query'], hint: `Query exceeds maximum length of ${REGEX_MAX_LENGTH} characters.` });
+    return makeRejection({ code: REJECTION_CODES.invalidRegex, errors: at('invalid_regex', ['query']), reason: `Longer than ${REGEX_MAX_LENGTH} characters.` });
   }
 
   const compiled = compileSearchRegex(query);
   if (!compiled.ok) {
-    return makeRejection({ code: REJECTION_CODES.invalidRegex, issuePaths: ['query'], hint: regexRejectHint(query, compiled) });
+    return makeRejection({ code: REJECTION_CODES.invalidRegex, errors: at('invalid_regex', ['query']), reason: regexRejectHint(query, compiled) });
   }
 
   const ddlTypes: ObjectType[] = types
@@ -702,7 +695,7 @@ export async function searchDdl(
     };
   } catch (error: unknown) {
     if (error instanceof RegexSearchExecutionError && error.reason === 'deadline') {
-      return makeRejection({ code: REJECTION_CODES.invalidRegex, hint: 'The isolated regex search did not finish before its execution deadline; no results were returned. Simplify the pattern or narrow the search filters.' });
+      return makeRejection({ code: REJECTION_CODES.invalidRegex, reason: REGEX_DEADLINE_REASON, errors: at('invalid_regex', ['query']) });
     }
     throw error;
   }

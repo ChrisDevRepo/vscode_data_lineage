@@ -13,6 +13,7 @@ import { presentRunRecall } from '../../../src/ai/tools/screenStatePresenter';
 import { validatePresentResult } from '../../../src/ai/tools/presentResult';
 import { presentResultRepairPatchSchemaForFields } from '../../../src/ai/tools/toolSchemas';
 import { DEFAULT_TURN_TOKEN_BUDGET } from '../../../src/ai/support/tokenBudget';
+import { ISSUES, at, renderProblem } from '../../../src/ai/support/toolErrorEnvelope';
 import { reconcileAiView } from '../../../src/components/aiViewReconcile';
 import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
 
@@ -62,7 +63,7 @@ describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs =>
     expect(result).toMatchObject({ code: 'out_of_scope_or_not_neighbor' });
     expect(result).not.toHaveProperty('results');
     expect(result.issuePaths).toEqual(['ids.0']);
-    expect(result.detail).toEqual([{ path: 'ids.0', allowed_values: expect.any(Array) }]);
+    expect(result.errors).toEqual([{ path: 'ids.0', code: 'not_neighbor', values: expect.any(Array) }]);
   });
 
   it('preserves unknown spelling under either catalog case policy', async () => {
@@ -70,7 +71,7 @@ describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs =>
     const raw = 'SALES.MISSING';
     const result = JSON.parse(String(await registry.invoke('lineage_get_neighbor_columns', { ids: [raw] })));
     expect(result).toMatchObject({ code: 'out_of_scope_or_not_neighbor', issuePaths: ['ids.0'],
-      detail: [{ path: 'ids.0', allowed_values: expect.any(Array) }] });
+      errors: [{ path: 'ids.0', code: 'not_neighbor', values: expect.any(Array) }] });
   });
 
   it('selects the current object type without substituting an earlier case twin', () => {
@@ -140,9 +141,9 @@ describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs =>
     }, [canonical]);
     expect(result.success).toBe(false);
     if (result.success === false) {
-      expect(result.rejection.hint).toContain('canonical ids from the accepted metadata');
-      expect(result.rejection.hint).not.toContain('Case and bracket differences are normalized automatically');
-      expect(result.rejection.reason).toContain(canonical);
+      // The accepted canonical ids are the allowed values of the unresolved reference; the sent spelling is never echoed (D-102).
+      expect(result.rejection.errors).toContainEqual({ path: 'sections.0.node_ids.0', code: 'not_found', values: [canonical] });
+      for (const stage of [1, 2, 3] as const) expect(renderProblem(result.rejection, stage), 'D-102: no echoed id').not.toContain('[dbo].[REPORT]');
     }
   });
 });
@@ -189,16 +190,10 @@ it('gives one repair per id: a highlighted id an external violation already plac
     highlight_groups: [{ label: 'Prices', color: 'source', node_ids: [id] }],
     sections: [{ label: 'Other', node_ids: [], text: 'Other.' }],
   }, [id], undefined, undefined, [{
-    field: 'sections',
-    messages: [`Detail slot(s) reached no section: \`${id}\`.`, 'Add each id to a section\'s node_ids.'],
-    repairFields: ['sections'], paths: ['sections'], entryIds: [id],
+    errors: at('slot_unplaced', ['sections.*.node_ids'], [id]), repairFields: ['sections'], paths: ['sections'], entryIds: [id],
   }]);
   expect(result.success).toBe(false);
-  if (result.success === false) {
-    expect(result.rejection.reason).toContain('Detail slot(s) reached no section');
-    expect(result.rejection.reason).not.toContain('must be explained by');
-    expect(result.rejection.reason).not.toContain('notes entry');
-  }
+  if (result.success === false) expect(result.rejection.errors).toEqual([{ path: 'sections.*.node_ids', code: 'slot_unplaced', values: [id] }]);
 });
 
 describe('present_result id rejection route', () => {
@@ -207,15 +202,17 @@ describe('present_result id rejection route', () => {
     sections: [{ label: 'Report', node_ids: ['[dbo].[a]', '[dbo].[x]'], text: 'Report output.' }],
   }, ['[dbo].[a]'], undefined, undefined, [], 'completed', () => state);
 
-  it('does not offer add_node_ids for an id outside the approved scope, and names the canonical-id correction without a leave-out remedy (D-105)', () => {
+  it('does not offer add_node_ids for an id outside the approved scope, and states the fault without a leave-out remedy or an echo (D-105, D-102)', () => {
     const result = call('out_of_scope');
     expect(result.success).toBe(false);
     if (result.success === false) {
-      const text = `${result.rejection.reason} ${result.rejection.hint}`;
-      expect(text).not.toContain('add_node_ids');
-      expect(text).toContain('Use canonical ids from the accepted metadata in node_ids.');
-      // The keyed-resend patch syntax after "Call lineage_present_result" is MW-4/MW-5 scope; the fault text itself offers no leave-out.
-      expect(text.split('Call lineage_present_result')[0]).not.toMatch(/\b(drop|omit|remove|withdraw)\b/i);
+      expect(result.rejection.errors).toEqual([{ path: 'sections.0.node_ids.1', code: 'result_out_of_scope', values: ['[dbo].[a]'] }]);
+      for (const stage of [1, 2, 3] as const) {
+        const text = renderProblem(result.rejection, stage);
+        expect(text).not.toContain('add_node_ids');
+        expect(text, 'D-102: no echoed id').not.toContain('[dbo].[x]');
+        expect(text).not.toMatch(/\b(drop|omit|remove|withdraw)\b/i);
+      }
       expect(result.repairFields).toEqual(['sections']);
     }
   });
@@ -224,7 +221,8 @@ describe('present_result id rejection route', () => {
     const result = call('pruned');
     expect(result.success).toBe(false);
     if (result.success === false) {
-      expect(result.rejection.reason).toContain('brought into the view with add_node_ids');
+      expect(result.rejection.errors).toEqual([{ path: 'sections.0.node_ids.1', code: 'addable_to_result', values: ['[dbo].[a]'] }]);
+      expect(ISSUES.addable_to_result.correction).toContain('add_node_ids');
       expect([...result.repairFields].sort()).toEqual(['add_node_ids', 'sections']);
       expect(presentResultRepairPatchSchemaForFields(result.repairFields).safeParse({ sections: [{ label: 'Report', node_ids: ['[dbo].[a]'] }], add_node_ids: ['[dbo].[x]'] }).success).toBe(true);
     }

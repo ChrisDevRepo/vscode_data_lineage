@@ -1,39 +1,9 @@
-import type { LmStage } from '../../tools/toolPolicy';
 import type { InteractionRuleResult } from '../types';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
-import { makeRejection } from '../../support/toolErrorEnvelope';
+import { at, makeRejection } from '../../support/toolErrorEnvelope';
 
-/** Tool-specific routing hint for off-policy responses. */
-function offPolicyHint(toolName: string, stage: LmStage): string {
-  if (stage.kind !== 'active') return 'Wait for the appropriate phase or call a different tool.';
-  switch (toolName) {
-    case 'lineage_search_objects':
-    case 'lineage_search_ddl':
-    case 'lineage_get_object_detail':
-    case 'lineage_get_scope_bundle':
-    case 'lineage_get_context':
-    case 'lineage_get_screen_state':
-    case 'lineage_detect_graph_patterns':
-      return 'Submit findings for the current focus using the supplied SQL and neighbor context; searching mid-hop is unnecessary.';
-    case 'lineage_start_exploration':
-      return 'Exploration is already in progress. Continue the agenda via submit_findings.';
-    case 'lineage_present_result':
-      return 'present_result is the synthesis-phase tool. Drain the agenda first; the engine emits the synthesis trigger when ready.';
-    default:
-      return 'Continue with submit_findings on the current focus node.';
-  }
-}
-
-/** Evaluates phase policy for a requested tool call. */
-export function evaluateToolPhaseRule(
-  toolName: string,
-  stage: LmStage,
-  allowed: ReadonlySet<string>,
-): InteractionRuleResult {
+/** Evaluates phase policy for a requested tool call: the fault, and the stage's tools as its allowed values (shown from feedback 2, D-105). */
+export function evaluateToolPhaseRule(toolName: string, allowed: ReadonlySet<string>): InteractionRuleResult {
   if (allowed.has(toolName)) return null;
-  const stageLabel = stage.kind === 'active' ? `active(${stage.mode})` : stage.kind;
-  return makeRejection({
-    code: REJECTION_CODES.offPolicy,
-    hint: `Tool ${toolName.replace('lineage_', '')} is not available in stage ${stageLabel}. Allowed tools this stage: ${[...allowed].map(n => n.replace('lineage_', '')).join(', ')}. ${offPolicyHint(toolName, stage)}`,
-  });
+  return makeRejection({ code: REJECTION_CODES.offPolicy, reason: `${toolName} is not available in this stage.`, errors: at('off_policy', [''], [...allowed]) });
 }

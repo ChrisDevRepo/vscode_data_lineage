@@ -8,7 +8,9 @@ import { ColumnTracer } from '../../../src/ai/sm/columnTracer';
 import type { ColumnEdge, ColumnFlowEntry } from '../../../src/ai/sm/smTypes';
 import { NavigationEngine, type HopNeighborDisclosure } from '../../../src/ai/sm/smBase';
 import { submitFindingsSchemaForMode, toHopFinding } from '../../../src/ai/tools/toolSchemas';
-import { rejectionFromZodError } from '../../../src/ai/support/toolErrorEnvelope';
+import { rejectionFromZodError, renderProblem, type ToolRejection } from '../../../src/ai/support/toolErrorEnvelope';
+/** The model-visible messages of an engine rejection at feedback 3. */
+const shownMessages = (rejection: unknown): string => (JSON.parse(renderProblem(rejection as ToolRejection, 3, 'lineage_submit_findings')).errors as Array<{ message: string }>).map(error => error.message).join('\n');
 
 import type { LineageNode, ObjectType } from '../../../src/engine/types';
 import { makeGraph, makeIndexedModel, makeModel, makeNode } from '../helpers/modelFixtures';
@@ -242,7 +244,8 @@ describe('declared contributor identities', () => {
       expect(engine.columnAspect?.active_columns).toEqual(['Value']);
     } else {
       expect(result).toMatchObject({ detail: [{ path: 'targetColumns.0', allowed_values: ['Value'], when: { node: 'root' } }] });
-      expect(result).toHaveProperty('hint', expect.not.stringContaining('Its columns are:'));
+      expect(result).not.toHaveProperty('hint');
+      expect(result).toHaveProperty('reason', expect.not.stringContaining(target));
     }
   });
   it.each(['source.Value'])('rejects target column alias %s without rewriting it', target => {
@@ -1118,7 +1121,7 @@ describe('current task completeness before advancement', () => {
     const schema = submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns, engine.heldColumnFlow);
     const column_flow = [{ out_col: 'Value', upstream_columns: [{ node: neighbor, col: 'Value', transforms: ['compute' as const, 'filter' as const] }] }, terminal('Other')];
     const rejected = engine.submitFindings(toHopFinding(schema.parse({ focus_node_id: root, column_flow })));
-    expect(rejected).toMatchObject({ code: 'route_validation_failed', reason: expect.stringContaining(neighbor),
+    expect(rejected).toMatchObject({ code: 'route_validation_failed', detail: expect.arrayContaining([expect.objectContaining({ kind: 'prune_unsupported', id: neighbor })]),
       issuePaths: expect.arrayContaining(['prune_neighbors.0.id', 'column_flow.0.upstream_columns.0']) });
     expectUnchangedRouting(engine.toJSON(), before);
     const repair = submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns, engine.heldColumnFlow);
@@ -1210,7 +1213,7 @@ describe('current task completeness before advancement', () => {
     expect(schema.safeParse({ focus_node_id: root, column_flow, prune_neighbors: [] }).success).toBe(true);
     const retry = (extra: Record<string, unknown>) => toHopFinding(schema.parse({ focus_node_id: root, column_flow, ...extra }));
     expect(engine.submitFindings(retry({ prune_neighbors: [{ id: other, reason: 'OtherSource supplies no tracked value.' }] })),
-      'the held question for the pruned neighbor is kept, so the two lists conflict').toMatchObject({ code: 'route_validation_failed', reason: expect.stringContaining(other) });
+      'the held question for the pruned neighbor is kept, so the two lists conflict').toMatchObject({ code: 'route_validation_failed', detail: expect.arrayContaining([expect.objectContaining({ kind: 'prune_question_conflict', id: other })]) });
     expect(engine.submitFindings(retry({ questions: [questions[0]], prune_neighbors: [{ id: other, reason: 'OtherSource supplies no tracked value.' }] }))).toHaveProperty('ok', true);
     expect(engine.toJSON().agenda.map(entry => entry.nodeId)).toEqual([neighbor]);
   });
@@ -1583,8 +1586,8 @@ describe('result dispositions', () => {
     const rejected = engine.submitFindings({ ...record(producer),
       column_flow: [{ out_col: 'X', upstream_columns: [], writes_to: { node: equivalent ? ' "D" . "stored" ' : stored, col: 'X' } }] });
     expect(rejected).toMatchObject({ code: 'route_validation_failed', issuePaths: ['column_flow.0.writes_to.node'],
-      reason: expect.stringContaining(`\`${stored}\` is out of scope (excluded)`),
       errors: expect.arrayContaining([expect.objectContaining({ path: 'column_flow.0.writes_to.node', code: 'column_out_of_scope' })]) });
+    expect(shownMessages(rejected), 'D-102: no echoed id').not.toContain(stored);
     expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
     expect(engine.submitFindings({ ...record(producer), column_flow: [{ out_col: 'X', upstream_columns: [] }],
       questions: [{ nodeId: equivalent ? 'D.Stored' : stored, question: 'Where is the stored X read?' }] })).toHaveProperty('ok', true);
@@ -1931,14 +1934,16 @@ describe('CT boundary rejects instead of dropping a column reference', () => {
   };
 
   it.each([
-    ['an object outside the loaded model', '[d].[Missing]', 'is absent from the loaded model'],
-    ['a loaded object that is not a neighbor', stranger, 'has no dependency edge'],
-  ])('rejects a contributor naming %s with its path and commits nothing', (_label, node, reason) => {
+    ['an object outside the loaded model', '[d].[Missing]'],
+    ['a loaded object that is not a neighbor', stranger],
+  ])('rejects a contributor naming %s with its path and commits nothing', (_label, node) => {
     const engine = start();
     const before = engine.toJSON();
     const rejected = engine.submitFindings({ ...guardRecord(origin), column_flow: [{ out_col: 'Total', upstream_columns: [{ node: source, col: 'Amount' }, { node, col: 'Amount' }] }],
       questions: [{ nodeId: source, question: 'Resolve Amount.' }] });
-    expect(rejected).toMatchObject({ issuePaths: ['column_flow.0.upstream_columns.1.node'], reason: expect.stringContaining(reason) });
+    expect(rejected).toMatchObject({ issuePaths: ['column_flow.0.upstream_columns.1.node'],
+      errors: expect.arrayContaining([expect.objectContaining({ path: 'column_flow.0.upstream_columns.1.node', code: 'absent_contributor' })]) });
+    expect(shownMessages(rejected), 'D-102: no echoed id').not.toContain(node);
     expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
     expect(engine.toJSON().agenda).toEqual(before.agenda);
   });
@@ -2101,7 +2106,8 @@ describe('authored outcomes for every open neighbor', () => {
     // column_flow is offered only for a neighbor that can supply the focus's value; a downstream reader is never mapped as a source, and in CT its keep / question option comes first.
     const mapsSupplier = mode === 'bb' || direction !== 'downstream';
     expect(JSON.stringify(result)).toMatch(mapsSupplier ? /map.*prune.*question/i : mode === 'ct' ? /question.*prune/i : /prune.*question/i);
-    if (mode === 'ct' && direction !== 'upstream') expect(JSON.stringify(result)).toContain(`Neighbor \`${down}\` has no authored outcome. Keep / question it in questions, or prune it`);
+    expect(result).toMatchObject({ errors: expect.arrayContaining(required.map(id => expect.objectContaining({ path: id, code: 'neighbor_outcome_missing' }))) });
+    for (const id of required) expect(shownMessages(result), 'D-102: no echoed id').not.toContain(id);
     const after = engine.toJSON();
     expectUnchangedRouting(after, before);
     expect(after.visited).toEqual(before.visited);

@@ -4,7 +4,6 @@ import type { ToolAttemptObservation } from './toolAttempt';
 import type { AiSession } from '../session/session';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { readToolError } from '../support/toolErrorEnvelope';
-import { OVER_DISCOVERY_BUDGET_HINT } from '../support/tokenBudget';
 
 /** The captured walk used to seed the SM-offer pill / `lineage_start_exploration`. */
 interface DiscoveryWalk {
@@ -27,7 +26,6 @@ const NodeCountsView = z.object({ nodes: z.number() }).loose();
 const OverBudgetResultView = z.object({
   reason: z.literal(REJECTION_CODES.overDiscoveryBudget),
   counts: NodeCountsView.optional(),
-  hint: z.string().optional(),
   detail: z.object({
     counts: NodeCountsView.optional(),
     scope_proposal: z.object({ origin: z.string().trim().min(1) }).loose().optional(),
@@ -81,8 +79,6 @@ interface OverBudgetNotice {
   readonly toolName: string;
   /** Projected node count from the envelope, when the emitting guard provided one. */
   readonly nodes: number | null;
-  /** The envelope's AI-facing hint, or the shipped default when omitted. */
-  readonly hint: string;
 }
 
 /** Reads an `over_discovery_budget` rejection from any tool result. */
@@ -95,7 +91,7 @@ function readOverBudgetNotice(toolName: string, resultText: string): OverBudgetN
   }
   const view = OverBudgetResultView.safeParse(raw);
   if (!view.success) return null;
-  return { toolName, nodes: (view.data.detail?.counts ?? view.data.counts)?.nodes ?? null, hint: view.data.hint?.trim() || OVER_DISCOVERY_BUDGET_HINT };
+  return { toolName, nodes: (view.data.detail?.counts ?? view.data.counts)?.nodes ?? null };
 }
 
 /** Queues the user-visible discovery-budget notice for the turn's closing markdown, once per turn. */

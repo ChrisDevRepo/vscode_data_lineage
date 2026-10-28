@@ -46,7 +46,8 @@ async function structured(port: ModelPort) {
     return { value: await port.generateStructured({ messages: [modelUserMessage('q')], schema: levels, phase: 'eq' }) };
   } catch (error) {
     if (!(error instanceof StructuredOutputError)) throw error;
-    return { code: error.code, reason: error.reason, hint: error.hint };
+    const notation = error.errors.filter(fault => fault.code === 'tool_call_notation');
+    return { code: error.code, reason: error.reason, ...(notation.length ? { notation } : {}) };
   }
 }
 
@@ -98,7 +99,7 @@ const structuredCases: ReadonlyArray<readonly [string, readonly Recorded[], unkn
     { code: 'invalid_structured_output', reason: `${STRUCTURED_OUTPUT_TOOL} arguments were not a JSON object` }],
   ['a payload carrying tool-call notation', [structuredCall('{"query":"x</parameter>","levels":2}')], { code: 'invalid_structured_output',
     reason: 'query: contains tool-call notation (`<parameter name=…>`, `</parameter>`, `<invoke name=…>`, `</invoke>`); a field holds its own value only.',
-    hint: 'Send `query` as its own value only, without the notation.' }],
+    notation: [{ path: 'query', code: 'tool_call_notation' }] }],
 ];
 
 describe('the finished structured payload is the same on both ports', () => {

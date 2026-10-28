@@ -8,9 +8,10 @@ import {
   discoveryPreviewNarrative,
   mergePresentResultRepairPatch,
   holdRejectedPresentResult,
-  findTextlessNewSectionLabels,
+  findTextlessNewSections,
   findStartOrderIssues,
-  presentResultRepairInstruction,
+  START_ORDER_FAULT,
+  presentResultResendRules,
   assemblePreviewSections,
   assignEvidenceIds,
   expandEvidenceRefs,
@@ -26,9 +27,7 @@ import { mergedSectionsSchemaForPhase, normalizePresentSectionLabel, presentResu
 import { edgeApiType } from '../../support/aiPresenter';
 import { prunePreserveOnly } from '../../support/viewPrune';
 import { resolveModelNodeId, resolveModelNodeIds } from '../../support/modelReferences';
-import { makeRejection, rejectionFromZodError, type ToolRejection } from '../../support/toolErrorEnvelope';
-import { quoteIds } from '../../support/text';
-import { evaluatePresentResultPreconditionsRule } from '../../interaction/rules/presentResultRules';
+import { at, makeRejection, rejectionFromZodError, type IssueCode, type ToolRejection } from '../../support/toolErrorEnvelope';
 import { type ToolServices, getModelNodeMap } from './toolServices';
 import type { ResultGraph, PresentationArtifact } from '../../session/types';
 import type { SmState } from '../../sm/smTypes';
@@ -55,19 +54,25 @@ function bindPresentationReferences<T extends PresentResultInput | PresentResult
   } as T;
 }
 
+/** One fault per offending entry of a graph-edit id list, at its element path, never echoing the id (D-102). */
+function idFaults(field: 'add_node_ids' | 'prune_node_ids', sent: readonly string[], offenders: readonly string[], code: IssueCode): ToolRejection {
+  return makeRejection({ code: REJECTION_CODES.validation, issuePaths: [field], resend: [field],
+    errors: at(code, sent.flatMap((id, index) => offenders.includes(id) ? [`${field}.${index}`] : [])) });
+}
+
 /** Fills a render that amends a committed report back out to a complete section array. */
 function resolveRetainedSections(
   supplied: ReadonlyArray<{ label: string; node_ids?: string[]; text?: string }> | undefined,
   committed: NonNullable<ResultGraph['sections']>,
   renderedNodeIds: ReadonlySet<string>,
-): { sections: Array<{ label: string; node_ids: string[]; text: string }>; unknownLabels: string[] } {
+): { sections: Array<{ label: string; node_ids: string[]; text: string }>; unknownIndexes: number[] } {
   const byLabel = new Map(committed.map(sec => [normalizePresentSectionLabel(sec.label), sec]));
   const source: ReadonlyArray<{ label: string; node_ids?: string[]; text?: string }> = supplied?.length
     ? supplied
     : committed.map(sec => ({ label: sec.label }));
   const sections: Array<{ label: string; node_ids: string[]; text: string }> = [];
-  const unknownLabels: string[] = [];
-  for (const sec of source) {
+  const unknownIndexes: number[] = [];
+  for (const [index, sec] of source.entries()) {
     const kept = byLabel.get(normalizePresentSectionLabel(sec.label));
     const nodeIds = sec.node_ids ?? kept?.node_ids?.filter(id => renderedNodeIds.has(id)) ?? [];
     if (typeof sec.text === 'string') {
@@ -75,12 +80,12 @@ function resolveRetainedSections(
       continue;
     }
     if (!kept?.text) {
-      unknownLabels.push(sec.label);
+      unknownIndexes.push(index);
       continue;
     }
     sections.push({ label: sec.label, node_ids: nodeIds, text: kept.text });
   }
-  return { sections, unknownLabels };
+  return { sections, unknownIndexes };
 }
 
 /** The notes an amendment renders: the committed captions for nodes still shown, overlaid by this call's notes by node id — the one merge both the rendered view and the committed `resultGraph.notes` take, so a follow-up that edits one caption does not blank every other caption on the graph. */
@@ -134,6 +139,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         return s.logAndReturn('lineage_present_result', makeRejection({
           code: REJECTION_CODES.staleTurn,
           reason: 'The turn no longer owns this session; the result was not rendered.',
+          errors: at('backend_fault'),
         }), rawInput);
       }
       const model = s.requireModel();
@@ -156,14 +162,13 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       const parsed = schema.safeParse(input);
       if (!parsed.success) {
         const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
-        const repair = holdRejectedPresentResult(drafts, input, rejection.issuePaths ?? [], presentResultStage, retainableSections, false, rejection);
+        const repaired = holdRejectedPresentResult(drafts, input, rejection.issuePaths ?? [], presentResultStage, retainableSections, false, rejection);
         const authorization = drafts.getAuthorization();
         const held = drafts.get();
-        rejection.hint = [
-          rejection.hint,
-          held && authorization ? repair ?? presentResultRepairInstruction(authorization.fields, presentResultStage,
-            (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes, authorization.sectionLeaves) : undefined,
-        ].filter(Boolean).join(' ') || undefined;
+        if (!repaired && held && authorization) {
+          rejection.resend = [...authorization.fields];
+          rejection.resendRules = presentResultResendRules(authorization.fields, (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes, authorization.sectionLeaves);
+        }
         return reject(rejection);
       }
       input = bindPresentationReferences(parsed.data as PresentResultInput | PresentResultRepairPatch, model);
@@ -174,23 +179,20 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       let presentInput: PresentResultInput;
       if (held && authorization) {
         const patch = input as PresentResultRepairPatch;
-        const textlessNewLabels = authorization.sectionLeaves
+        const textless = authorization.sectionLeaves
           ? []
-          : findTextlessNewSectionLabels(
+          : findTextlessNewSections(
             held.sections,
-            (patch.sections ?? []) as Parameters<typeof findTextlessNewSectionLabels>[1],
+            (patch.sections ?? []) as Parameters<typeof findTextlessNewSections>[1],
           );
-        if (textlessNewLabels.length > 0) {
+        if (textless.length > 0) {
           const body = isVisualPreview ? 'start' : 'text';
           return reject(makeRejection({
             code: REJECTION_CODES.validation,
-            reason: `sections[] names label(s) not on file with no ${body}: ${quoteIds(textlessNewLabels)}.`,
-            hint: [
-              `To fix: add ${body}: under the offending label, or move its node_ids into an exact held label. Nothing from the rejected call was stored.`,
-              presentResultRepairInstruction(authorization.fields, presentResultStage,
-                (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes),
-            ].join(' '),
+            errors: at('missing', textless.map(index => `sections.${index}.${body}`)),
             issuePaths: ['sections'],
+            resend: [...authorization.fields],
+            resendRules: presentResultResendRules(authorization.fields, (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes),
           }));
         }
         presentInput = mergePresentResultRepairPatch(held, patch, authorization, model.identifierCaseSensitive);
@@ -204,9 +206,10 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           const rejection = rejectionFromZodError(merged.error, {
             code: REJECTION_CODES.validation, input: { sections: presentInput.sections }, schema: mergedSchema,
           });
-          const hint = holdRejectedPresentResult(drafts, presentInput, paths, presentResultStage, retainableSections, true, rejection);
-          rejection.hint = [rejection.hint, hint ?? presentResultRepairInstruction(authorization.fields, presentResultStage,
-            (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes, authorization.sectionLeaves)].filter(Boolean).join(' ');
+          if (!holdRejectedPresentResult(drafts, presentInput, paths, presentResultStage, retainableSections, true, rejection)) {
+            rejection.resend = [...authorization.fields];
+            rejection.resendRules = presentResultResendRules(authorization.fields, (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes, authorization.sectionLeaves);
+          }
           return reject(rejection);
         }
       } else {
@@ -217,10 +220,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           ? sess.discoveryScopeArtifact
           : null;
         if (!previewNarrative?.summary || !scope) {
-          return reject(makeRejection({
-            code: 'preview_source_unavailable',
-            hint: 'Run the discovery question again, then request its graph preview.',
-          }));
+          return reject(makeRejection({ code: REJECTION_CODES.previewSourceUnavailable, errors: at('no_result_source') }));
         }
         presentInput = { ...presentInput, summary: previewNarrative.summary, title: previewNarrative.title };
       }
@@ -228,20 +228,16 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       const rejectGraphEdit = (field: 'add_node_ids' | 'prune_node_ids', rejection: ToolRejection): string => {
         if (!held) return reject(rejection);
         drafts.hold(presentInput, { fields: [field] });
-        return reject({ ...rejection, hint: `${rejection.hint} ${presentResultRepairInstruction([field], presentResultStage)}` });
+        return reject({ ...rejection, resend: [field] });
       };
 
       if (previewNarrative) {
         const partition = findStartOrderIssues(presentInput.sections ?? []);
         if (partition.length > 0) {
-          const paths = partition.map(issue => `sections.${issue.index}.start`);
-          const hint = holdRejectedPresentResult(drafts, presentInput, paths, presentResultStage, null, true);
-          return reject(makeRejection({
-            code: REJECTION_CODES.validation,
-            reason: partition.map(issue => issue.message).join('\n'),
-            hint: hint ?? presentResultRepairInstruction(['sections'], 'visual_preview'),
-            issuePaths: paths,
-          }));
+          const paths = partition.map(index => `sections.${index}.start`);
+          const rejection = makeRejection({ code: REJECTION_CODES.validation, reason: START_ORDER_FAULT, errors: at('start_order', paths), resend: ['sections'], resendRules: ['sections'] });
+          holdRejectedPresentResult(drafts, presentInput, paths, presentResultStage, null, true, rejection);
+          return reject(rejection);
         }
       }
 
@@ -259,7 +255,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         originNodeId: previewScope.origin,
       } : null;
       const resultGraph = previewGraph ?? sess.resultGraph;
-      if (!resultGraph) return reject(evaluatePresentResultPreconditionsRule(false)!);
+      if (!resultGraph) return reject(makeRejection({ code: REJECTION_CODES.missingResultGraph, errors: at('no_result_source') }));
 
       let resolvedNodeIds: string[] = [...resultGraph.nodeIds];
       let resolvedEdges: [string, string, string][] = [...resultGraph.edges];
@@ -272,12 +268,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         const currentSet = new Set(resolvedNodeIds);
         const addResolution = resolveModelNodeIds(presentInput.add_node_ids, modelNodeMap, model.identifierCaseSensitive);
         if (addResolution.unresolved.length > 0) {
-          return rejectGraphEdit('add_node_ids', makeRejection({
-            code: REJECTION_CODES.validation,
-            reason: `Unknown add_node_ids (use canonical metadata IDs): ${quoteIds(addResolution.unresolved)}.`,
-            hint: 'Use lineage_search_objects to resolve canonical IDs.',
-            issuePaths: ['add_node_ids'],
-          }));
+          return rejectGraphEdit('add_node_ids', idFaults('add_node_ids', presentInput.add_node_ids, addResolution.unresolved, 'not_found'));
         }
         const toAdd = addResolution.resolved.filter(id => !currentSet.has(id));
         const scopeSnapshot = sess.stateMachine?.toJSON() ?? null;
@@ -285,12 +276,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           ? toAdd.filter(id => !scopeSnapshot.scopeNodeIds.includes(id))
           : [];
         if (outOfScope.length > 0) {
-          return rejectGraphEdit('add_node_ids', makeRejection({
-            code: REJECTION_CODES.validation,
-            reason: `add_node_ids names objects outside this exploration's approved scope: ${quoteIds(outOfScope)}.`,
-            hint: 'To read new SQL, return to discovery and propose a new exploration for approval. Keep this render within the approved scope.',
-            issuePaths: ['add_node_ids'],
-          }));
+          return rejectGraphEdit('add_node_ids', idFaults('add_node_ids', presentInput.add_node_ids,
+            presentInput.add_node_ids.filter(raw => outOfScope.includes(resolveModelNodeId(raw, modelNodeMap, model.identifierCaseSensitive) ?? raw)), 'out_of_scope'));
         }
         resolvedNodeIds.push(...toAdd);
         const newSet = new Set(resolvedNodeIds);
@@ -303,12 +290,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       if (graphEditable && presentInput.prune_node_ids?.length) {
         const pruneResolution = resolveModelNodeIds(presentInput.prune_node_ids, modelNodeMap, model.identifierCaseSensitive);
         if (pruneResolution.unresolved.length > 0) {
-          return rejectGraphEdit('prune_node_ids', makeRejection({
-            code: REJECTION_CODES.validation,
-            reason: `Unknown prune_node_ids (use canonical metadata IDs): ${quoteIds(pruneResolution.unresolved)}.`,
-            hint: 'Use lineage_search_objects to resolve canonical IDs.',
-            issuePaths: ['prune_node_ids'],
-          }));
+          return rejectGraphEdit('prune_node_ids', idFaults('prune_node_ids', presentInput.prune_node_ids, pruneResolution.unresolved, 'not_found'));
         }
         const pruned = prunePreserveOnly(resolvedNodeIds, resolvedEdges, pruneResolution.resolved);
         resolvedNodeIds = pruned.nodeIds;
@@ -320,29 +302,29 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         if (!resolvedNodeIds.includes(resultGraph.originNodeId)) {
           return reject(makeRejection({
             code: REJECTION_CODES.validation,
-            reason: `Closed-graph invariant failed: origin \`${resultGraph.originNodeId}\` is missing from the result view.`,
-            hint: 'Keep the starting node in the view; remove it from prune_node_ids.',
-            issuePaths: ['prune_node_ids'],
+            reason: 'The view must keep the origin node, and prune_node_ids prunes it.',
+            errors: at('prunes_origin', ['prune_node_ids']),
           }));
         }
         const disconnected = findDisconnectedViewNodes(resolvedNodeIds, resolvedEdges, resultGraph.originNodeId);
         if (disconnected.length > 0) {
           return reject(makeRejection({
             code: REJECTION_CODES.validation,
-            reason: `Closed-graph invariant failed: ${quoteIds(disconnected)} ${disconnected.length === 1 ? 'is' : 'are'} disconnected from origin \`${resultGraph.originNodeId}\`.`,
-            hint: 'Adjust add_node_ids / prune_node_ids so the view remains connected from the starting node.',
+            reason: `${disconnected.length} view node(s) would be disconnected from the origin node.`,
+            errors: at('disconnects_view'),
           }));
         }
       }
 
       if (retainableSections) {
         const retained = resolveRetainedSections(presentInput.sections, retainableSections, new Set(resolvedNodeIds));
-        if (retained.unknownLabels.length > 0) {
+        if (retained.unknownIndexes.length > 0) {
+          const labels = retainableSections.map(sec => sec.label);
           return reject(makeRejection({
             code: REJECTION_CODES.validation,
-            reason: `sections[] asks to keep text for ${quoteIds(retained.unknownLabels)}, which the committed report has no body for.`,
-            hint: `Send that section with its own text, or use a label from the committed report: ${quoteIds(retainableSections.map(sec => sec.label))}.`,
+            errors: presentInput.sections?.length ? at('uncommitted_label', retained.unknownIndexes.map(index => `sections.${index}.label`), labels) : at('missing', ['sections']),
             issuePaths: ['sections'],
+            resend: ['sections'],
           }));
         }
         const keptCount = retained.sections.length - (presentInput.sections ?? []).filter(sec => typeof sec.text === 'string').length;
@@ -371,18 +353,14 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           const field = fieldPath.startsWith('sections.') ? 'sections' : fieldPath as 'title' | 'intro' | 'closing';
           if (expanded.unknownIds.length > 0) {
             evidenceViolations.push({
-              field,
-              messages: [`Evidence id(s) ${quoteIds([...new Set(expanded.unknownIds)])} name no captured SQL block. `
-                + 'Use an id shown on a ```sql fence line in detail_slots, or write the SQL inside that fence yourself.'],
+              errors: at('unknown_evidence_id', [fieldPath]),
               repairFields: [field],
               paths: [fieldPath],
-              entryIds: [...new Set(expanded.unknownIds)],
             });
           }
           if (expanded.malformedRefs.length > 0) {
             evidenceViolations.push({
-              field,
-              messages: [`Unclosed SQL fence(s) ${quoteIds(expanded.malformedRefs)} in ${fieldLabel}. A reused block is two lines, its opening line with the id and a bare triple-backtick line right after it; a block with written SQL closes with a bare triple-backtick line after the SQL. Another language opener is not a closing marker. Retain every surrounding business paragraph.`,],
+              errors: at('unclosed_fence', [fieldPath]),
               repairFields: [field],
               paths: [fieldPath],
             });
@@ -462,12 +440,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       const externalViolations: PresentResultViolation[] = [...evidenceViolations];
       if (unrenderedSlotIds.length > 0) {
         externalViolations.push({
-          field: 'sections',
           missingContent: true,
-          messages: [
-            `Detail slot(s) reached no section: ${quoteIds(unrenderedSlotIds)}.`,
-            'Add each missing id to the node_ids of the section describing it. Include its captured findings in that section\'s text if absent; keep adequate text unchanged. A notes caption or a highlight color does not carry them.',
-          ],
+          errors: at('slot_unplaced', ['sections.*.node_ids'], unrenderedSlotIds),
           repairFields: ['sections'],
           paths: ['sections'],
           entryIds: unrenderedSlotIds,
@@ -488,9 +462,9 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
 
       if (!validation.success) {
         if (validation.repairable) {
-          const scopedHint = holdRejectedPresentResult(drafts, presentInput, validation.rejection.issuePaths ?? [], presentResultStage, retainableSections, true, validation.rejection);
-          if (scopedHint) validation.rejection.hint = scopedHint;
-          else drafts.hold(presentInput, { fields: validation.repairFields });
+          if (!holdRejectedPresentResult(drafts, presentInput, validation.rejection.issuePaths ?? [], presentResultStage, retainableSections, true, validation.rejection)) {
+            drafts.hold(presentInput, { fields: validation.repairFields });
+          }
         }
         return reject(validation.rejection);
       }
@@ -580,6 +554,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         return s.logAndReturn('lineage_present_result', makeRejection({
           code: REJECTION_CODES.staleTurn,
           reason: 'The turn no longer owns this session; the result was not committed.',
+          errors: at('backend_fault'),
         }), rawInput);
       }
       // The delivery outcome is recorded only once the turn still owns the session, and the latest present decides it.

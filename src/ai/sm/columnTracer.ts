@@ -125,23 +125,23 @@ export class ColumnTracer {
       reason: 'An upstream column reference must name a non-empty column; procedure metadata fallback does not supply a column identity.' } };
     const neighbor = nodeMap.get(cont.node);
     if (!neighbor) return { invalidRoute: { kind: 'absent_contributor', id: cont.node, path: `${path}.node`,
-      reason: `Upstream node "${cont.node}" is absent from the loaded model.` } };
+      reason: 'The upstream node is absent from the loaded model.' } };
     if (removedSet?.has(neighbor.id)) return { invalidRoute: { kind: 'pruned_contributor', id: cont.node, path: `${path}.node`,
-      reason: `Upstream node "${cont.node}" was already pruned earlier this run and cannot supply column "${cont.col}" — a removed node stays removed.` } };
+      reason: 'The upstream node was pruned earlier this run and cannot supply a column; a removed node stays removed.' } };
     const columns = (getNodeColumns(neighbor.id, nodeMap, store ?? undefined) ?? []).map(column => column.name);
     if (columns.length && !columns.some(column => this.columnKey(column) === this.columnKey(cont.col))) {
       return { invalidRoute: { kind: 'bad_contributor_col', id: cont.node, path: `${path}.col`,
-        reason: `upstream column "${cont.col}" does not exist on "${cont.node}"`, allowed_values: columns, when: { node: neighbor.id } } };
+        reason: 'The upstream column does not exist on that node.', allowed_values: columns, when: { node: neighbor.id } } };
     }
     if (!columns.length && !allowsMissingColumnMetadata(neighbor)) return { invalidRoute: {
       kind: 'bad_contributor_col', id: cont.node, path: `${path}.col`,
-      reason: `Column metadata is unavailable for ${neighbor.type} "${neighbor.id}"; upstream column "${cont.col}" cannot be verified.`,
+      reason: `Column metadata is unavailable for this ${neighbor.type}; the upstream column cannot be verified.`,
     } };
     if (!columns.length) log?.('debug', `[CT] unverifiable contributor column "${cont.col}" on "${cont.node}" — ${neighbor.type} metadata fallback`);
     // A missing declared column is refused regardless of the supplier's adjacency.
     if (contributorIds && neighbor.id !== focusId && !contributorIds.has(neighbor.id)) return { invalidRoute: {
       kind: 'absent_contributor', id: neighbor.id, path: `${path}.node`,
-      reason: `Upstream node "${cont.node}" has no dependency edge to ${focusId}; a column contributor is a neighbor of the focus or a read supplier of its declared scalar caller.`,
+      reason: `The upstream node has no dependency edge to the focus; a column contributor is a neighbor of the focus or a read supplier of its declared scalar caller.`,
     } };
     return { neighbor };
   }
@@ -208,11 +208,11 @@ export class ColumnTracer {
       }
 
       if (!entry.returns_to && validFocusCols.size === 0 && !allowsMissingColumnMetadata(focusNode)) {
-        invalidRoutes.push({ kind: 'bad_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `Column metadata is unavailable for ${focusNode.type} "${focusId}"; output "${entry.out_col}" cannot be verified.` });
+        invalidRoutes.push({ kind: 'bad_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `Column metadata is unavailable for this ${focusNode.type}; the output column cannot be verified.` });
         continue;
       }
       if (!entry.returns_to && validFocusCols.size > 0 && !validFocusCols.has(outNorm)) {
-          invalidRoutes.push({ kind: 'bad_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: `out_col "${entry.out_col}" does not exist on ${focusId}`, allowed_values: (getNodeColumns(focusId, nodeMap, store ?? undefined) ?? []).map(column => column.name), when: { node: focusId } });
+          invalidRoutes.push({ kind: 'bad_out_col', id: focusId, path: `column_flow.${entryIndex}.out_col`, reason: 'out_col does not exist on the focus object.', allowed_values: (getNodeColumns(focusId, nodeMap, store ?? undefined) ?? []).map(column => column.name), when: { node: focusId } });
         continue;
       }
 
@@ -221,14 +221,14 @@ export class ColumnTracer {
       const toNodeId = resolvedTarget?.attributionTo ?? null;
       const toNodeObj = toNodeId ? nodeMap.get(toNodeId) : null;
       if (entry.writes_to && !toNodeObj) {
-        invalidRoutes.push({ kind: 'bad_write_target', id: entry.writes_to.node, path: `column_flow.${entryIndex}.writes_to.node`, reason: `writes_to target "${entry.writes_to.node}" is absent from the loaded model.` });
+        invalidRoutes.push({ kind: 'bad_write_target', id: entry.writes_to.node, path: `column_flow.${entryIndex}.writes_to.node`, reason: 'The writes_to target is absent from the loaded model.' });
         continue;
       }
       if (entry.writes_to && toNodeObj && toNodeId && identifierKey(toNodeId) !== identifierKey(focusId)) {
         const focusLower = identifierKey(focusId);
         const toLower = identifierKey(toNodeId);
         if (!model.edges.some(e => identifierKey(e.source) === focusLower && identifierKey(e.target) === toLower)) {
-          invalidRoutes.push({ kind: 'bad_write_target', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.node`, reason: `writes_to names "${toNodeObj.id}" but ${focusId} has no recorded dependency into it.` });
+          invalidRoutes.push({ kind: 'bad_write_target', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.node`, reason: 'The focus object has no recorded dependency into the writes_to target.' });
           continue;
         }
       }
@@ -240,11 +240,11 @@ export class ColumnTracer {
       if (toNodeObj && !entry.returns_to) {
         const toCols = new Set<string>((getNodeColumns(toNodeObj.id, nodeMap, store ?? undefined) || []).map((c) => this.columnKey(c.name)));
         if (toCols.size === 0 && !allowsMissingColumnMetadata(toNodeObj)) {
-          invalidRoutes.push({ kind: 'bad_out_col', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.col`, reason: `Column metadata is unavailable for ${toNodeObj.type} "${toNodeObj.id}"; destination "${toCol}" cannot be verified.` });
+          invalidRoutes.push({ kind: 'bad_out_col', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.col`, reason: `Column metadata is unavailable for this ${toNodeObj.type}; the destination column cannot be verified.` });
           continue;
         }
         if (toCols.size > 0 && !toCols.has(this.columnKey(toCol))) {
-          invalidRoutes.push({ kind: 'bad_out_col', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.col`, reason: `to_col "${toCol}" does not exist on ${toNodeObj.id}`, allowed_values: (getNodeColumns(toNodeObj.id, nodeMap, store ?? undefined) ?? []).map(column => column.name), when: { node: toNodeObj.id } });
+          invalidRoutes.push({ kind: 'bad_out_col', id: toNodeObj.id, path: `column_flow.${entryIndex}.writes_to.col`, reason: 'writes_to.col does not exist on the writes_to target.', allowed_values: (getNodeColumns(toNodeObj.id, nodeMap, store ?? undefined) ?? []).map(column => column.name), when: { node: toNodeObj.id } });
           continue;
         }
       }
@@ -270,7 +270,7 @@ export class ColumnTracer {
             kind: 'self_loop_column',
             id: fromNode,
             path: `column_flow.${entryIndex}.upstream_columns.${refIndex}`,
-            reason: `upstream_columns entry "${fromNode}.${cont.col}" is identical to its own writes_to target "${toNodeId}.${toCol}" - a column cannot be its own upstream source.`,
+            reason: 'This upstream_columns entry is its own writes_to target; a column cannot be its own upstream source.',
             ...(neighborCols.length > 0 ? { allowed_values: neighborCols, when: { node: neighbor.id } } : {}),
           });
           continue;

@@ -57,7 +57,7 @@ function isSuccessfulPublicAnalysis(path) {
       const refining = heldRefinement && Number.isInteger(input?.proposalRevision);
       // These failures precede storePendingExploration; unexpected/backend failures give no such proof.
       if (heldRefinement && ((outcome?.status === 'rejected' && [
-        'invalid_type', 'invalid_enum', 'invalid_value', 'unknown_field', 'missing_field',
+        'invalid_input', 'invalid_type', 'invalid_enum', 'invalid_value', 'unknown_field', 'missing_field',
         'ct_field_forbidden_in_bb', 'asymmetric_depth_both_zero', 'unknown_node_ids', 'origin_not_found',
         'unknown_columns', 'target_columns_name_objects', 'stale_proposal_revision', 'no_op_refine',
       ].includes(outcome.rejectionCode)) || (outcome?.status === 'refused' && outcome.rejectionCode === 'over_active_scope_budget'))) {

@@ -10,19 +10,8 @@ const NOTATION_RULE = 'contains tool-call notation (`<parameter name=…>`, `</p
 interface ToolCallNotationFault {
   /** Dotted paths of the values that carry notation, in input order. */
   readonly issuePaths: readonly string[];
-  /** One line per path stating the rule broken. */
+  /** One log line per path stating the rule broken. */
   readonly reason: string;
-  /** One repair sentence per path. */
-  readonly hint: string;
-}
-
-/** Repair sentence for one value: names the argument attached after the value's own text, when there is one. */
-function repairSentence(path: string, value: string): string {
-  const first = NOTATION.exec(value)!;
-  const attached = /<parameter\s+name="([A-Za-z_]\w*)"\s*>/.exec(value)?.[1];
-  return attached && value.slice(0, first.index).trim() !== ''
-    ? `End \`${path}\` before the notation and send \`${attached}\` as its own argument.`
-    : `Send \`${path}\` as its own value only, without the notation.`;
 }
 
 function collect(value: unknown, path: string, found: Array<{ path: string; value: string }>): void {
@@ -43,6 +32,5 @@ export function toolCallNotationFault(input: unknown): ToolCallNotationFault | n
   return {
     issuePaths: found.map(item => item.path),
     reason: found.map(item => `${item.path}: ${NOTATION_RULE}`).join('\n'),
-    hint: found.map(item => repairSentence(item.path, item.value)).join(' '),
   };
 }

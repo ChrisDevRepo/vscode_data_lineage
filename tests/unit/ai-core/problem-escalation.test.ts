@@ -1,4 +1,4 @@
-/** Spec 08 / D-105 / D-099 / D-103: one `{code, errors, resend}` problem per rejection, escalated over three corrections, then the hop terminates. */
+/** Spec 08 / D-105 / D-099 / D-103: one `{code, attempt, guidance, resend}` problem per rejection, escalated over three corrections, then the hop terminates. */
 import { describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { z } from 'zod';
@@ -13,7 +13,7 @@ import {
 } from '../../../src/ai/agent/toolAttempt';
 import { TurnEventSink } from '../../../src/ai/runtime/turnEventSink';
 import { ToolRegistry } from '../../../src/ai/tools/registry';
-import { PROBLEM_MESSAGES, makeRejection, rejectionFromZodError } from '../../../src/ai/support/toolErrorEnvelope';
+import { ISSUES, at as errorsAt, makeRejection, rejectionFromZodError } from '../../../src/ai/support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../../../src/ai/support/rejectionCodes';
 import { AiSession } from '../../../src/ai/session/session';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
@@ -68,7 +68,10 @@ function bbHop() {
 const faulty = (focus: string) => ({ focus_node_id: focus, sections: { technical: 'Report selects Value from Source unchanged.' },
   badge_label: '', questions: [{ nodeId: '[dbo].[Nope]', question: 'What does Nope establish for Value?' }] });
 
-interface Problem { code: string; errors: Array<{ path: string; code: string; message: string; allowed?: string[] }>; resend: string[] }
+interface ShownError { path: string; fault: string; correction: string; allowed?: string[]; missing?: string[]; more?: number }
+interface Problem { code: string; attempt: string; notice?: string; guidance: Array<{ category: string; instruction: string; errors: ShownError[]; fallback?: string }>; resend: string[]; resend_rule?: string }
+const PROBLEM_KEYS = ['attempt', 'code', 'guidance', 'notice', 'resend', 'resend_rule'];
+const shown = (problem: Problem): ShownError[] => problem.guidance.flatMap(group => group.errors);
 
 async function reply(hop: ReturnType<typeof bbHop>, state: ToolPhaseAttemptState, input: unknown, id: string) {
   const attempt = await executeToolAttempt(nativePort(() => [new vscode.LanguageModelToolCallPart(id, TOOL, input as object)]), hop.plan, { priorState: state });
@@ -93,21 +96,21 @@ describe('D-105 feedback stages through the dispatcher and the real submit_findi
       state = sent.next;
     }
     // D-103: one problem shape for every tool.
-    expect(Object.keys(problem!).sort()).toEqual(['code', 'errors', 'resend']);
-    for (const error of problem!.errors) {
-      expect(Object.keys(error).every(key => ['path', 'code', 'message', 'allowed'].includes(key))).toBe(true);
-      expect(error.code).toEqual(expect.any(String));
+    expect(Object.keys(problem!).every(key => PROBLEM_KEYS.includes(key))).toBe(true);
+    expect(problem!.attempt).toBe(`${stage}/3`);
+    for (const error of shown(problem!)) {
+      expect(Object.keys(error).every(key => ['path', 'fault', 'correction', 'allowed', 'missing', 'more'].includes(key))).toBe(true);
     }
-    const at = (path: string) => problem!.errors.find(error => error.path === path)!;
+    const at = (path: string) => shown(problem!).find(error => error.path === path)!;
     // D-099: every fault in every feedback, each with its path.
     for (const path of ['summary', 'badge_label', 'questions.0.nodeId']) expect(at(path)).toBeDefined();
-    expect(at('summary').code).toBe('missing');
+    expect(at('summary')).toMatchObject({ fault: ISSUES.missing.label, correction: ISSUES.missing.correction });
     expect(problem!.resend).toEqual(expect.arrayContaining(['summary', 'badge_label', 'questions']));
     // D-077/D-105: allowed values from metadata from feedback 2 on.
     if (allowed) expect(at('questions.0.nodeId').allowed).toEqual([hop.source.id]);
-    else for (const error of problem!.errors) expect(error).not.toHaveProperty('allowed');
-    // D-105: the fallback is only for reference leaves; text, a missing field and a neighbor decision get none at any stage.
-    for (const path of ['summary', 'badge_label', 'questions.0.nodeId']) expect(at(path).message).not.toContain(PROBLEM_MESSAGES.fallback);
+    else for (const error of shown(problem!)) expect(error).not.toHaveProperty('allowed');
+    // D-105: a fallback belongs only to an issue whose fact no structured field holds; text, a missing field and a neighbor decision get none at any stage.
+    for (const group of problem!.guidance) expect(group).not.toHaveProperty('fallback');
   });
 
   it('accepts correction 3 that corrects summary and questions and sends no badge_label (schema-valid; the feedback never recommends it)', async () => {
@@ -146,7 +149,7 @@ describe('D-103: every rejecting path renders the one problem shape', () => {
       execute: (value: unknown) => {
         const parsed = Schema.safeParse(value);
         if (!parsed.success) return JSON.stringify(rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidToolInput, input: value, schema: Schema }));
-        return JSON.stringify(makeRejection({ code: 'out_of_scope_or_not_neighbor', reason: 'Not a neighbor of the current object.', issuePaths: ['query'] }));
+        return JSON.stringify(makeRejection({ code: 'out_of_scope_or_not_neighbor', errors: errorsAt('not_neighbor', ['query']) }));
       } });
     const plan = compileInstructionPlan({ kind: 'converse', stage: { kind: 'discover' }, registry,
       messages: [new HumanMessage('Find Orders.')], sink: new TurnEventSink(() => {}), facts: { memorySections: [] }, toolChoice: 'auto' });
@@ -154,10 +157,10 @@ describe('D-103: every rejecting path renders the one problem shape', () => {
     for (const stage of [1, 2]) {
       const attempt = await executeToolAttempt(nativePort(() => [new vscode.LanguageModelToolCallPart(`c${stage}`, 'lineage_search_objects', input)]), plan, { priorState: state });
       const problem = JSON.parse(String((attempt.messages.find(item => item instanceof ToolMessage) as ToolMessage).content)) as Problem;
-      expect(Object.keys(problem).sort()).toEqual(['code', 'errors', 'resend']);
-      expect(problem.errors.map(error => error.path)).toEqual(expect.arrayContaining(paths));
+      expect(Object.keys(problem).every(key => PROBLEM_KEYS.includes(key))).toBe(true);
+      expect(shown(problem).map(error => error.path)).toEqual(expect.arrayContaining(paths));
       for (const [path, values] of Object.entries(allowedAt)) {
-        expect(problem.errors.find(error => error.path === path)?.allowed).toEqual(stage === 1 ? undefined : values);
+        expect(shown(problem).find(error => error.path === path)?.allowed).toEqual(stage === 1 ? undefined : values);
       }
       state = recordToolAttempt(state, attempt);
     }

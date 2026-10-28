@@ -31,7 +31,7 @@ import { getAllowedLmToolNames, activeModeOf, EXTERNAL_TOOL_NAMES, type LmStage 
 import { ToolRegistry } from '../tools/registry';
 import { TOOL_DEFS, EXTERNAL_TOOL_DEFS, type ToolContract, type ToolName } from '../tools/toolDefs';
 import { getToolInvocationLabel } from '../tools/toolLabels';
-import { readToolError, readToolErrorText, isConsentGateRejection, makeRejection, renderProblem, NoProjectLoadedError, buildNoProjectLoadedError } from '../support/toolErrorEnvelope';
+import { at, readToolError, readToolErrorText, isConsentGateRejection, makeRejection, renderProblem, NoProjectLoadedError, buildNoProjectLoadedError } from '../support/toolErrorEnvelope';
 import { evaluateToolPhaseRule } from '../interaction/rules/toolPhaseRules';
 import { assertActiveTurnLease, type TurnLease } from '../session/turnLease';
 import { DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
@@ -190,6 +190,7 @@ class ToolHandler implements ToolServices {
     return JSON.stringify(makeRejection({
       code: REJECTION_CODES.internalError,
       reason: msg || `Unexpected internal error running ${toolName}.`,
+      errors: at('backend_fault'),
       detail: { tool: toolName },
     }));
   }
@@ -199,7 +200,7 @@ class ToolHandler implements ToolServices {
     const sess = this.getSession();
     const stage = this.deriveLmStage(sess);
     const allowed = getAllowedLmToolNames(stage);
-    const violation = evaluateToolPhaseRule(toolName, stage, allowed);
+    const violation = evaluateToolPhaseRule(toolName, allowed);
     return violation ? this.logAndReturn(toolName, violation, input) : null;
   }
 
@@ -316,7 +317,7 @@ class ToolHandler implements ToolServices {
         edges,
       }, this.turnEpoch(sess));
       if (stored.kind !== 'accepted') {
-        return this.logAndReturn('lineage_get_scope_bundle', makeRejection({ code: REJECTION_CODES.staleTurn, reason: 'The turn no longer owns this session; the scope was not stored.' }), input);
+        return this.logAndReturn('lineage_get_scope_bundle', makeRejection({ code: REJECTION_CODES.staleTurn, reason: 'The turn no longer owns this session; the scope was not stored.', errors: at('backend_fault') }), input);
       }
       return this.logAndReturn('lineage_get_scope_bundle', bundle, input);
     } catch (err) { return this.toolError('get_scope_bundle', err); }
@@ -387,6 +388,7 @@ class ToolHandler implements ToolServices {
         return this.logAndReturn('lineage_get_neighbor_columns', makeRejection({
           code: REJECTION_CODES.noActiveSession,
           reason: 'No exploration is active.',
+          errors: at('no_session'),
         }), input);
       }
 
@@ -398,12 +400,9 @@ class ToolHandler implements ToolServices {
       const invalidIds = engine.validateNeighborIds(ids);
       if (invalidIds.length > 0) {
         return this.logAndReturn('lineage_get_neighbor_columns', makeRejection({
-          code: 'out_of_scope_or_not_neighbor',
-          reason: `Not a direct neighbor of the current object, or outside the scope: ${invalidIds.join(', ')}.`,
-          hint: 'Send only ids listed as neighbors of the current object.',
-          issuePaths: ids.flatMap((id, index) => invalidIds.includes(id) ? [`ids.${index}`] : []),
-          detail: ids.flatMap((id, index) => invalidIds.includes(id)
-            ? [{ path: `ids.${index}`, allowed_values: engine.neighborColumnIds }] : []),
+          code: REJECTION_CODES.outOfScopeOrNotNeighbor,
+          reason: 'Not a direct neighbor of the current object, or outside the scope.',
+          errors: at('not_neighbor', ids.flatMap((id, index) => invalidIds.includes(id) ? [`ids.${index}`] : []), engine.neighborColumnIds),
         }), input);
       }
 
@@ -538,7 +537,7 @@ export function buildAiToolRegistry(
           const ambiguous = starts > 1 || auth?.round === round || auth?.ambiguous === true;
           const parts = RepairDraftStore.inputParts(owner, merged, rejection.issuePaths, !!rejection.resend?.length);
           store.hold(ambiguous ? {} : parts, { context: capturedContext, round, paths: [...rejection.issuePaths, ...(rejection.resend ?? [])], ambiguous });
-          if (ambiguous) return JSON.stringify({ ...JSON.parse(result), hint: 'Several calls need correction. Resend a fully identified complete tool call; no values are held.' });
+          if (ambiguous) return JSON.stringify({ ...rejection, errors: [...rejection.errors, ...at('ambiguous_repair')], resend: undefined, resendRules: undefined });
           return result;
         };
         try { return await (def.effect === 'read' ? invoke() : serialize(invoke)); }

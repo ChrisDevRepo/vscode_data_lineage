@@ -1,4 +1,4 @@
-/** Single owner for rejection codes that appear on more than one surface. */
+/** Single owner of every top-level rejection code; an emit site never writes a code literal. */
 export const REJECTION_CODES = {
   /** Tool called outside the current phase's `toolPolicy` allow-list. */
   offPolicy: 'off_policy',
@@ -70,4 +70,19 @@ export const REJECTION_CODES = {
   unknownTool: 'unknown_tool',
   /** The synthetic structured-output call was missing, duplicated or schema-invalid (`structuredOutput.ts`, `vscodeModelPort.ts`). */
   invalidStructuredOutput: 'invalid_structured_output',
+  parallelCallForbidden: 'parallel_call_forbidden', // A second `start_exploration` call in the same reply.
+  unknownColumns: 'unknown_columns', // CT `targetColumns` that are not declared columns of the origin.
+  unknownNodeIds: 'unknown_node_ids', // `excludeNodeIds`/`passNodeIds` entries that resolve to no loaded object.
+  originNotFound: 'origin_not_found', // A start origin that resolves to no loaded object.
+  asymmetricDepthBothZero: 'asymmetric_depth_both_zero', // A depth with both sides at level 0, which would seed an empty scope.
+  missingResultGraph: 'missing_result_graph', // `lineage_present_result` with no result graph to present.
+  resultTooLarge: 'result_too_large', // A tool result above the per-result size budget.
+  phaseClosed: 'phase_closed', // A call after an accepted terminal call closed the phase; not evaluated.
+  extraCallNotEvaluated: 'extra_call_not_evaluated', // An extra call in a reply whose terminal call was rejected; not evaluated.
+  outOfScopeOrNotNeighbor: 'out_of_scope_or_not_neighbor', // A screen-state or detail lookup outside the run's scope or neighbors.
+  previewSourceUnavailable: 'preview_source_unavailable', // A preview whose source graph is no longer available.
+  freshProposalRequired: 'fresh_proposal_required', // `start_exploration` with a legacy `supplement` after a completed answer.
+  noOpRefine: 'no_op_refine', // A refine that changes nothing in the pending proposal.
+  queryTooShort: 'query_too_short', // A search query below the minimum length.
+  queryNotAName: 'query_not_a_name', // A substring search query of punctuation only.
 } as const;

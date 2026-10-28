@@ -1,8 +1,5 @@
 import { z } from 'zod';
 
-/** Structural reject code: a `{upstream,downstream}` depth with both sides `levels: 0`, which would seed an empty starting scope. Single source of truth — interpolated by every surface that emits or maps this code (the Zod issue tag here, and the reject-hint mapper in `startExplorationRules.ts`) so a rename cannot drift silently between them. */
-export const ASYMMETRIC_DEPTH_BOTH_ZERO = 'asymmetric_depth_both_zero';
-
 /** One side's depth verdict: how far to start, and whether that count is a border. */
 export interface DepthSideValue {
   /** Starting level count for this side, or `'all'` for the full chain. */
@@ -63,8 +60,7 @@ export const ExplorationDepthSelectionSchema = z.object({
   if (bothSidesClosed(data.upstream, data.downstream)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: 'Depth cannot be 0 in both directions.',
-      params: { startIssue: ASYMMETRIC_DEPTH_BOTH_ZERO },
+      message: 'Depth cannot be 0 in both directions; set at least one side to ≥ 1 or "all".',
     });
   }
 });

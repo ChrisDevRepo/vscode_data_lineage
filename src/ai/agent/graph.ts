@@ -545,7 +545,6 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       if (providerCalls < 1) {
         throw new InternalInvariantError('Structured-generation model-port contract violated: rejected output recorded no provider call.');
       }
-      const entryDetectionHint = error.hint ?? 'Return exactly one object matching the entry-detection schema.';
       const nextAttempt = recordToolAttempt(priorAttempt, {
         stop: 'continue',
         providerCalls,
@@ -555,10 +554,10 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
           toolName: 'entry_detection',
           code: error.code,
           reason: error.reason,
-          hint: entryDetectionHint,
+          errors: [...error.errors],
         }],
         messages: [
-          modelUserMessage(noCallCorrectionText('entry_detection', error.reason, entryDetectionHint, priorAttempt)),
+          modelUserMessage(noCallCorrectionText({ code: error.code, reason: error.reason, errors: [...error.errors] }, priorAttempt)),
         ],
       });
       logGraphDebug(deps,

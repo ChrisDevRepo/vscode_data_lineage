@@ -1,7 +1,7 @@
 import type { InvalidRoute, DepthIntent, HeldSubmissionParts } from './smTypes';
 import { buildRouteValidationRejection } from './smRouteValidation';
 import { extractRawSectionAngles, validateSectionsAgainstClassification } from '../interaction/rules/submitFindingsRules';
-import { ColumnFlowSchema, validateHopSubmissionShape, type SubmitFindingsHopColumns, type validatedFindingFields } from '../tools/toolSchemas';
+import { BB_TARGET_COLUMNS_FAULT, ColumnFlowSchema, validateHopSubmissionShape, type SubmitFindingsHopColumns, type validatedFindingFields } from '../tools/toolSchemas';
 
 import type Graph from 'graphology';
 import { bidirectional } from 'graphology-shortest-path/unweighted';
@@ -9,7 +9,7 @@ import { bfsFromNode } from 'graphology-traversal';
 import type { DatabaseModel, LineageNode } from '../../engine/types';
 import type { ColumnStore } from '../../engine/columnStore';
 import { isIndirectOnly } from '../../engine/shared/bridgeContract';
-import { ASYMMETRIC_DEPTH_BOTH_ZERO, bothSidesClosed, directionFromDepth, resolveDepthBorder, type DepthSideValue } from '../../engine/shared/explorationDepthContract';
+import { bothSidesClosed, directionFromDepth, resolveDepthBorder, type DepthSideValue } from '../../engine/shared/explorationDepthContract';
 import type { SerializedFilterState } from '../../engine/projectStore';
 import { buildEdgeTypeMap, buildHopFocusNode, buildUnrelatedMap } from '../tools/tools';
 import { buildNodeMap, getNodeColumns, getNodeDdl, SCRIPT_TYPES } from '../support/graphUtils';
@@ -32,7 +32,7 @@ import { TaskLedger, type InvestigationTaskInput } from './taskLedger';
 import { resolveScalarReturnTarget, resolveFunctionCallerTarget, functionCallerDdlHash, uniqueScalarReturnTargets } from './scalarReturnBinding';
 import { parseNavigationSnapshot, InvalidEngineCheckpointError } from './navigationSnapshotSchema';
 import { REJECTION_CODES } from '../support/rejectionCodes';
-import { combineToolRejections, makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
+import { at, combineToolRejections, makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 
 /** Resolved mentions from rejected decision fields; never accepted decisions. */
 type ActionMentions = Partial<Record<'questions' | 'prune_neighbors' | 'column_flow', ReadonlySet<string>>>;
@@ -258,6 +258,9 @@ interface ValidatedHop {
   stagedColumnEdges: ColumnEdge[];
   stagedColumnFlowEntries: number;
 }
+
+/** A supplier node reference of a column_flow entry; group 1 is the entry index. */
+const SUPPLIER_NODE_PATH = /^column_flow\.(\d+)\.upstream_columns\.\d+\.node$/;
 
 /** Unified Navigation Engine — the core state machine for all exploration modes. */
 export class NavigationEngine implements IHopStateMachine {
@@ -502,7 +505,7 @@ export class NavigationEngine implements IHopStateMachine {
         return makeRejection({
           code: REJECTION_CODES.missingField,
           reason: 'sections and summary are empty and no draft is held for this node.',
-          errors: [{ path: 'sections', code: 'missing', message: 'Empty and no draft is held for this node; send authored sections and a non-empty summary.' }],
+          errors: at('missing', ['sections', 'summary']),
           resend: ['sections', 'summary'],
         });
       }
@@ -528,8 +531,7 @@ export class NavigationEngine implements IHopStateMachine {
     return makeRejection({
       code: REJECTION_CODES.missingField,
       reason: 'summary is empty and no summary is held for this node.',
-      issuePaths: ['summary'],
-      errors: [{ path: 'summary', code: 'missing', message: 'Empty and none is held for this node; send one sentence on what this node does to the data and hands on.' }],
+      errors: at('missing', ['summary']),
       resend: ['summary'],
       ...(this.heldPartsOfCurrentFocus() ? { missingParts: ['summary'] } : {}),
     });
@@ -610,10 +612,18 @@ export class NavigationEngine implements IHopStateMachine {
       if (ids?.every((id): id is string => !!id && this.graph.areNeighbors(focusId, id))) actionMentions[field] = new Set(ids);
     }
     const facts = this.collectFindingPlan(focusId, fields, unavailable, false, diagnosticEdges, actionMentions);
-    facts.invalidRoutes.push(...diagnosticRoutes);
-    // A verified reference fault explains the same identity refusal more precisely; keep independent schema faults.
+    // A verified reference fault explains the same identity refusal more precisely and takes over its served choices; keep independent schema faults.
+    // A supplier choice never names the entry's own write target or the current object: that would be a self-loop.
+    const suppliers = (path: string, values: readonly string[]): string[] => !SUPPLIER_NODE_PATH.test(path) ? [...values]
+      : values.filter(node => node !== focusId && !this.writeTargetOf(raw.column_flow, path, node));
+    const choices = new Map(rejection.errors.flatMap(error => error.values ? [[error.path, error.values] as const] : []));
+    facts.invalidRoutes.push(...diagnosticRoutes.map(fault => {
+      const values = fault.path?.endsWith('.node') ? fault.allowed_values ?? choices.get(fault.path) : undefined;
+      return values ? { ...fault, allowed_values: suppliers(fault.path!, values) } : fault;
+    }));
     const referencePaths = new Set(diagnosticRoutes.filter(fault => fault.path?.endsWith('.node')).map(fault => fault.path));
-    if (referencePaths.size) rejection = { ...rejection, errors: rejection.errors?.filter(error => !referencePaths.has(error.path) || error.allowed === undefined) };
+    rejection = { ...rejection, errors: rejection.errors.filter(error => !referencePaths.has(error.path) || error.values === undefined)
+      .map(error => (error.values ? { ...error, values: suppliers(error.path, error.values) } : error)) };
     // A mapping participating in an action conflict is still valid held content. Only intrinsic
     // schema/state faults require replacing it; the merged action correction is revalidated.
     const holdPaths = [...(rejection.issuePaths ?? []), ...facts.invalidRoutes.flatMap(fault => fault.path ? [fault.path] : []),
@@ -622,7 +632,14 @@ export class NavigationEngine implements IHopStateMachine {
       ? combineToolRejections([rejection, { ...buildRouteValidationRejection(facts.invalidRoutes),
         issuePaths: [...facts.invalidRoutes.flatMap(fault => fault.path ? [fault.path] : []), ...facts.conflictPaths] }]) : rejection;
     const parts = this.holdRejectedSubmission({ ...raw, focus_node_id: focusId }, holdPaths, internalSections, facts.invalidRoutes.flatMap(fault => fault.alternatives ?? []));
-    return this.asForm(rejection, parts?.resend ?? this.failedParts(holdPaths));
+    return this.asForm(rejection, parts?.resend ?? this.failedParts(holdPaths), facts.invalidRoutes.flatMap(fault => fault.alternatives ?? []));
+  }
+
+  /** Whether `node` at a supplier path is the write target its own column_flow entry names. */
+  private writeTargetOf(flow: unknown, path: string, node: string): boolean {
+    const match = SUPPLIER_NODE_PATH.exec(path);
+    const target = match && Array.isArray(flow) ? (flow[Number(match[1])] as { writes_to?: { node?: unknown } | null } | undefined)?.writes_to : undefined;
+    return typeof target?.node === 'string' && resolveModelNodeId(target.node, this.nodeMap, this.identifierCaseSensitive) === node;
   }
 
   /** Only parts declared for the active finding can be owed; unsupported input remains rejected, never held. */
@@ -677,12 +694,11 @@ export class NavigationEngine implements IHopStateMachine {
     ];
   }
 
-  /** States a rejection as a form owing `resend`; a part owed without a stated fault is named missing. */
-  private asForm(rejection: ToolRejection, resend: readonly string[]): ToolRejection {
-    const stated = (rejection.errors ?? []).map(error => error.path);
-    const missing = resend.filter(part => !rejection.errors?.some(error => error.alternatives?.includes(part)) && !stated.some(path => path === part || path.startsWith(`${part}.`) || part.startsWith(`${path}.`)));
-    return { ...rejection, resend: [...resend],
-      errors: [...(rejection.errors ?? []), ...missing.map(path => ({ path, code: 'missing', message: 'Missing or still faulty, with no valid copy held: send it corrected.' }))] };
+  /** States a rejection as a form owing `resend`; a part owed without a stated fault, and not an alternative field of a missing decision, is named missing. */
+  private asForm(rejection: ToolRejection, resend: readonly string[], alternatives: readonly string[] = []): ToolRejection {
+    const stated = rejection.errors.map(error => error.path).filter(Boolean);
+    const missing = resend.filter(part => !alternatives.includes(part) && !stated.some(path => path === part || path.startsWith(`${part}.`) || part.startsWith(`${path}.`)));
+    return { ...rejection, resend: [...resend], errors: [...rejection.errors, ...at('missing', missing)] };
   }
 
   /** The parts of a held draft, as a rejection names them to the model. */
@@ -1469,22 +1485,13 @@ export class NavigationEngine implements IHopStateMachine {
   public init(params: NavigationInitParams): { ok: true } | ToolRejection {
     const depthIntent: DepthIntent = params.depthIntent;
     if (bothSidesClosed(depthIntent.upstream, depthIntent.downstream)) {
-      return makeRejection({
-        code: ASYMMETRIC_DEPTH_BOTH_ZERO,
-        hint: 'This refine closes the last open side: resend depth with at least one side ≥ 1 or "all".',
-      });
+      return makeRejection({ code: REJECTION_CODES.asymmetricDepthBothZero, errors: at('depth_zero', ['depth']) });
     }
     if (params.analysisMode === 'ct' && (!params.targetColumns || params.targetColumns.length === 0)) {
-      return makeRejection({
-        code: REJECTION_CODES.missingField,
-        hint: 'Resend with at least one named targetColumns value for CT, or change analysisMode to "bb" and resend.',
-      });
+      return makeRejection({ code: REJECTION_CODES.missingField, errors: at('missing', ['targetColumns']) });
     }
     if (params.analysisMode === 'bb' && params.targetColumns !== undefined) {
-      return makeRejection({
-        code: REJECTION_CODES.ctFieldForbiddenInBb,
-        hint: 'Omit targetColumns and resubmit the BB specification.',
-      });
+      return makeRejection({ code: REJECTION_CODES.ctFieldForbiddenInBb, reason: BB_TARGET_COLUMNS_FAULT, errors: at('never', ['targetColumns']) });
     }
     const wasRefine = this.initSnapshot !== null;
     const prevScopeSize = this.scopeNodeIds.size;
@@ -1504,12 +1511,8 @@ export class NavigationEngine implements IHopStateMachine {
     if (excludeIds.unresolved.length > 0 || passIds.unresolved.length > 0) {
       this.log('debug', `[NL] excludeNodeIds resolved=[${excludeIds.resolved.join(',')}] unresolved=[${excludeIds.unresolved.join(',')}] passNodeIds resolved=[${passIds.resolved.join(',')}] unresolved=[${passIds.unresolved.join(',')}]`);
       return makeRejection({
-        code: 'unknown_node_ids',
-        reason: [
-          ...(excludeIds.unresolved.length > 0 ? [`excludeNodeIds not in the loaded model: ${excludeIds.unresolved.join(', ')}`] : []),
-          ...(passIds.unresolved.length > 0 ? [`passNodeIds not in the loaded model: ${passIds.unresolved.join(', ')}`] : []),
-        ].join('; '),
-        hint: "These references do not resolve to loaded object identities. Call lineage_search_objects with each user-named identifier to resolve the canonical schema-qualified id, then re-call lineage_start_exploration with the corrected list.",
+        code: REJECTION_CODES.unknownNodeIds,
+        errors: at('not_found', (['excludeNodeIds', 'passNodeIds'] as const).flatMap(field => (params[field] ?? []).flatMap((raw, index) => resolveId(raw) ? [] : [`${field}.${index}`]))),
         detail: { unresolved_excludeNodeIds: excludeIds.unresolved, unresolved_passNodeIds: passIds.unresolved },
       });
     }
@@ -1520,12 +1523,7 @@ export class NavigationEngine implements IHopStateMachine {
     const resolvedOriginId = resolveModelNodeId(params.origin, this.nodeMap, this.identifierCaseSensitive);
     const originNode = resolvedOriginId ? this.nodeMap.get(resolvedOriginId) : null;
     if (!originNode) {
-      return makeRejection({
-        code: 'origin_not_found',
-        reason: 'origin must resolve unambiguously to a loaded object ID.',
-        issuePaths: ['origin'],
-        hint: 'Verify the origin node id with lineage_search_objects first. Use the canonical id it returns.',
-      });
+      return makeRejection({ code: REJECTION_CODES.originNotFound, errors: at('not_found', ['origin']) });
     }
 
     const analysisMode: 'bb' | 'ct' = params.analysisMode ?? ((params.targetColumns?.length ?? 0) > 0 ? 'ct' : 'bb');
@@ -1888,12 +1886,13 @@ export class NavigationEngine implements IHopStateMachine {
   private validateCurrentHopFocus(rawFocusId: unknown): string | ToolRejection {
     if (this._status === 'complete') return makeRejection({
       code: REJECTION_CODES.explorationComplete,
-      hint: 'Hop loop is closed - every scope node has been analyzed and the archive is sealed. Call lineage_present_result to assemble the final report from the archive. Do not retry submit_findings.',
+      errors: at('exploration_complete'),
       detail: { next_action: 'present_result' },
     });
     if (this._status !== 'awaiting_findings') return makeRejection({
       code: REJECTION_CODES.invalidStatus,
       reason: `A hop decision arrived while the engine is in status '${this._status}', not 'awaiting_findings'.`,
+      errors: at('backend_fault'),
       detail: { current_status: this._status },
     });
     const expected = this.currentFocusNodeId ?? '';
@@ -1901,9 +1900,8 @@ export class NavigationEngine implements IHopStateMachine {
     const focusId = typeof rawFocusId === 'string' ? rawFocusId : undefined;
     if (focusId !== expected) return makeRejection({
       code: REJECTION_CODES.focusNodeIdMismatch,
-      reason: `focus_node_id names \`${String(rawFocusId)}\`; the current object is \`${expected}\`.`,
-      hint: `Omit focus_node_id or send \`${expected}\`.`,
-      issuePaths: ['focus_node_id'],
+      reason: 'focus_node_id is not the current object.',
+      errors: at('not_current_object', ['focus_node_id'], [expected]),
       detail: { expected, got: rawFocusId },
     });
     return focusId;
@@ -1947,22 +1945,22 @@ export class NavigationEngine implements IHopStateMachine {
     const focusId = this.validateCurrentHopFocus(focusNodeId);
     if (typeof focusId !== 'string') return focusId;
     if (typeof reason !== 'string' || !reason.trim()) return makeRejection({
-      code: REJECTION_CODES.invalidInput, reason: 'A non-empty reason must explain why this object is unrelated.',
+      code: REJECTION_CODES.invalidInput, reason: 'A non-empty reason must explain why this object is unrelated.', errors: at('missing', ['reason']),
     });
     const fromNodeId = this.passthroughSender();
-    const hint = 'Use lineage_submit_findings to resolve this hop.';
+    const refused = at('prune_current_refused');
     if (fromNodeId === undefined) return makeRejection({
-      code: REJECTION_CODES.invalidInput, reason: 'The current hop was not reached through passthrough.', hint,
+      code: REJECTION_CODES.invalidInput, reason: 'The current hop was not reached through passthrough.', errors: refused,
     });
     const refusal = this.pruneRefusal([focusId]);
-    if (refusal) return makeRejection({ code: REJECTION_CODES.invalidInput, reason: refusal, hint });
+    if (refusal) return makeRejection({ code: REJECTION_CODES.invalidInput, reason: refusal, errors: refused });
     const removal = this.removalSupport(this.removedSet, new Set([...this.removedSet, focusId]));
     const removed = new Set([focusId, ...removal.cutIds]);
     const mapped = (this.tracer?.edges ?? []).filter(edge => removed.has(edge.from_node) || removed.has(edge.to_node));
     if (mapped.length > 0) return makeRejection({
       code: REJECTION_CODES.invalidInput,
       reason: `Committed column mappings name ${[...new Set(mapped.flatMap(edge => [edge.from_node, edge.to_node]).filter(id => removed.has(id)))].join(', ')}; pruning would remove them.`,
-      hint,
+      errors: refused,
     });
 
     this.beginHopCommit(0);
@@ -2071,6 +2069,7 @@ export class NavigationEngine implements IHopStateMachine {
       return makeRejection({
         code: REJECTION_CODES.engineCrash,
         reason: message || 'The engine failed while applying findings.',
+        errors: at('backend_fault'),
       });
     }
   }
@@ -2080,7 +2079,7 @@ export class NavigationEngine implements IHopStateMachine {
       // No model reply can restore the caller's loaded SQL: stop the engine as the dispatch check
       // does, and answer with a backend-fault code so the run ends on this reply.
       this.failInvariant(this.currentFocusNodeId ?? '', 'callerContext', CALLER_CONTEXT_CHANGED);
-      return makeRejection({ code: REJECTION_CODES.invalidStatus, reason: CALLER_CONTEXT_CHANGED });
+      return makeRejection({ code: REJECTION_CODES.invalidStatus, reason: CALLER_CONTEXT_CHANGED, errors: at('backend_fault') });
     }
   }
 
@@ -2125,8 +2124,8 @@ export class NavigationEngine implements IHopStateMachine {
         const { border, depthBreach } = this.admitsRoute(nid, node, focusId);
         const outside = border.kind === 'excluded' ? 'excluded' : border.kind === 'out_of_direction' ? 'out of direction' : depthBreach !== null ? `beyond depth ${depthBreach}` : null;
         if (!outside) continue;
-        faults.push({ kind: 'column_out_of_scope', id: nid, path: ref.path,
-          reason: `\`${nid}\` is out of scope (${outside}).` });
+        faults.push({ kind: ref.isWrite ? 'column_out_of_scope' : 'supplier_out_of_scope', id: nid, path: ref.path,
+          reason: `The object is out of scope (${outside}).` });
       }
     }
     return { invalidRoutes: faults, ...(complete ? { mentionedNodeIds } : {}) };
@@ -2345,7 +2344,7 @@ export class NavigationEngine implements IHopStateMachine {
     (questions ?? []).forEach((q, index) => {
       const nid = resolveModelNodeId(q.nodeId, this.nodeMap, this.identifierCaseSensitive);
       if (!nid) {
-        invalidRoutes.push({ kind: 'question_not_neighbor', id: q.nodeId, path: `questions.${index}.nodeId`, reason: `Object \`${q.nodeId}\` is not in the loaded model.` });
+        invalidRoutes.push({ kind: 'question_not_neighbor', id: q.nodeId, path: `questions.${index}.nodeId`, reason: 'The object is not in the loaded model.' });
         return;
       }
       if (!neighbors.has(nid)) {
@@ -2353,13 +2352,13 @@ export class NavigationEngine implements IHopStateMachine {
           kind: 'question_not_neighbor',
           id: nid,
           path: `questions.${index}.nodeId`,
-          reason: `\`${nid}\` is not a neighbor of the focus \`${focusId}\`.`,
+          reason: 'The object is not a neighbor of the focus.',
         });
         return;
       }
       if (!neighbors.get(nid)!.can_question) {
         invalidRoutes.push({ kind: 'question_closed', id: nid, path: `questions.${index}.nodeId`,
-          reason: `\`${nid}\` is already ${this.removedSet.has(nid) ? 'pruned' : 'visited'} and cannot receive another investigation in this run.`,
+          reason: `The object is already ${this.removedSet.has(nid) ? 'pruned' : 'visited'} and cannot receive another investigation in this run.`,
         });
         return;
       }
@@ -2370,7 +2369,7 @@ export class NavigationEngine implements IHopStateMachine {
           kind: 'prune_question_conflict',
           id: nid,
           path: `questions.${index}.nodeId`,
-          reason: `\`${nid}\` is also named in prune_neighbors; the same submission cannot prune and investigate it.`,
+          reason: 'The object is also named in prune_neighbors; the same submission cannot prune and investigate it.',
         });
         return;
       }
@@ -2398,7 +2397,7 @@ export class NavigationEngine implements IHopStateMachine {
       if (!neighbors.has(target.resolved)) {
         outOfScopePruneIds.add(target.resolved);
         invalidRoutes.push({ kind: 'prune_unsupported', id: target.resolved, path: target.path,
-          reason: `\`${target.resolved}\` is not a neighbor of the focus \`${focusId}\`; prune_neighbors may name only this hop's neighbors.` });
+          reason: "The object is not a neighbor of the focus; prune_neighbors may name only this hop's neighbors." });
         continue;
       }
       const targetNode = this.nodeMap.get(target.resolved);
@@ -2409,7 +2408,7 @@ export class NavigationEngine implements IHopStateMachine {
           kind: 'prune_noop_out_of_scope',
           id: target.resolved,
           path: target.path,
-          reason: `\`${target.resolved}\` is outside the approved exploration scope and cannot be pruned.`,
+          reason: 'The object is outside the approved exploration scope and cannot be pruned.',
         });
       }
     }
@@ -2431,7 +2430,7 @@ export class NavigationEngine implements IHopStateMachine {
       if (refusal) {
         // Only this draft's mapping can be reconsidered; committed or independently routed protection remains binding.
         const mutableMapping = !!stagedColumnEdges && !this.neighborPruneRefusal(focusId, [target.resolved], acceptedNids);
-        invalidRoutes.push({ kind: 'prune_unsupported', id: target.resolved, path: target.path, reason: `\`${target.resolved}\`: ${refusal}`,
+        invalidRoutes.push({ kind: 'prune_unsupported', id: target.resolved, path: target.path, reason: refusal,
           ...(mutableMapping ? { alternatives: ['column_flow'] } : {}) });
         if (mutableMapping) mutablePruneConflicts.push(target.resolved);
       }
@@ -2450,7 +2449,7 @@ export class NavigationEngine implements IHopStateMachine {
           invalidRoutes.push({ kind: 'neighbor_outcome_missing', id,
             alternatives: ['questions', ...(neighbors.get(id)?.can_prune && !this.neighborPruneRefusal(focusId, [id], acceptedNids, stagedColumnEdges ?? []) ? ['prune_neighbors'] : []),
               ...(offerFlow ? ['column_flow'] : [])],
-            reason: `Neighbor \`${id}\` has no authored outcome. ${ct && !offerFlow ? 'Keep / question it in questions, or prune it in prune_neighbors if allowed' : 'Map its value in column_flow (CT), prune it in prune_neighbors if allowed, or keep / question it in questions'}. Send the complete list for any action field you change, including entries you keep.` });
+            reason: `This neighbor has no authored outcome. ${ct && !offerFlow ? 'Keep / question it in questions, or prune it in prune_neighbors if allowed' : 'Map its value in column_flow (CT), prune it in prune_neighbors if allowed, or keep / question it in questions'}. Send the complete list for any action field you change, including entries you keep.` });
           continue;
         }
         // The authored mapping supplies the outcome; its qualified column question travels separately.
@@ -2486,11 +2485,11 @@ export class NavigationEngine implements IHopStateMachine {
     const rejections: ToolRejection[] = [];
     if (classViolation) rejections.push(makeRejection({
       code: REJECTION_CODES.invalidInput, reason: `sections: ${classViolation}`, issuePaths: ['sections'],
-      errors: [{ path: 'sections', code: 'invalid', message: classViolation }],
+      errors: at('missing', owedAngles.length ? owedAngles : ['sections']),
     }));
     if (fatalRoutes.length) rejections.push(buildRouteValidationRejection(fatalRoutes));
-    const rejection = combineToolRejections(rejections, classViolation && fatalRoutes.length ? 'Nothing was committed.' : undefined);
-    return { ...this.asForm(rejection, held?.resend ?? this.failedParts(failed)), ...missingContent,
+    const rejection = combineToolRejections(rejections);
+    return { ...this.asForm(rejection, held?.resend ?? this.failedParts(failed), fatalRoutes.flatMap(route => route.alternatives ?? [])), ...missingContent,
       issuePaths: [...new Set([...(rejection.issuePaths ?? []), ...conflictPaths])] };
   }
 
@@ -2795,7 +2794,7 @@ export class NavigationEngine implements IHopStateMachine {
       const refusal = analysis.rejection
         ? REMOVAL_REFUSAL[analysis.rejection]
         : `retained because removing it would disconnect previously visited analysis: ${analysis.disconnectedVisited.join(', ')}.`;
-      this.memory.recordRejection(nodeId, `\`${nodeId}\`: ${refusal}`, this.hopCount);
+      this.memory.recordRejection(nodeId, refusal, this.hopCount);
       this.log('debug', `[Prune] reject id=${nodeId} reason=${analysis.rejection ?? 'visited_support'} count=${analysis.disconnectedVisited.length}`);
       this.taskLedger.dismissNodeLeads(nodeId, 'pruned_by_ai');
     };

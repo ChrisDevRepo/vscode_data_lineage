@@ -32,7 +32,7 @@ const closedNeighbor = (field: 'prune_neighbors' | 'questions') => ({
     [field]: [field === 'prune_neighbors' ? { id: '[demo].[closed]', reason: 'Not needed.' } : { nodeId: '[demo].[closed]', question: 'What supplies the value?' }] },
 });
 
-type Fault = { path: string; code: string; allowed?: unknown };
+type Fault = { path: string; code: string; values?: unknown };
 
 describe('Zod issue matrix', () => {
   it.each<{ name: string; schema: z.ZodType; input: unknown; faults: Fault[]; values?: string[] }>([
@@ -41,19 +41,19 @@ describe('Zod issue matrix', () => {
     { name: 'invalid_type, present with the wrong type', schema: PresentResultModelSchema, input: { ...render, highlight_groups: 'Sources' },
       faults: [{ path: 'highlight_groups', code: 'type' }] },
     { name: 'valid JSON encoded as a string', schema: PresentResultModelSchema, input: { ...render, sections: JSON.stringify(render.sections) },
-      faults: [{ path: 'sections', code: 'type' }] },
+      faults: [{ path: 'sections', code: 'json_text' }] },
     { name: 'text that is not valid JSON', schema: PresentResultModelSchema, input: { ...render, sections: '[{"label":"Sources","node_ids":["dbo.a"' },
-      faults: [{ path: 'sections', code: 'type' }] },
+      faults: [{ path: 'sections', code: 'json_text' }] },
     { name: 'a prune_neighbors entry with no eligible IDs', ...closedNeighbor('prune_neighbors'), faults: [{ path: 'prune_neighbors.0.id', code: 'never' }] },
     { name: 'a questions entry with no eligible IDs', ...closedNeighbor('questions'), faults: [{ path: 'questions.0.nodeId', code: 'never' }] },
     { name: 'unrecognized_keys at the root', schema: GetObjectDetailInputSchema, input: { id: 'dbo.a', depth: 2 },
-      faults: [{ path: 'depth', code: 'unknown_key', allowed: ['id', 'cursor'] }] },
+      faults: [{ path: 'depth', code: 'unknown_key', values: ['id', 'cursor'] }] },
     { name: 'unrecognized_keys at the root and inside a list entry', schema: PresentResultModelSchema,
       input: { ...render, caption: 'x', sections: [{ label: 'S', node_ids: [], text: 't', caption: 'c' }] },
-      faults: [{ path: 'caption', code: 'unknown_key', allowed: expect.arrayContaining(['sections', 'notes']) },
-        { path: 'sections.0.caption', code: 'unknown_key', allowed: expect.arrayContaining(['label', 'text']) }] },
+      faults: [{ path: 'caption', code: 'unknown_key', values: expect.arrayContaining(['sections', 'notes']) },
+        { path: 'sections.0.caption', code: 'unknown_key', values: expect.arrayContaining(['label', 'text']) }] },
     { name: 'invalid_value', schema: PresentResultModelSchema, input: { ...render, highlight_groups: [{ label: 'S', color: 'blue', node_ids: ['dbo.a'] }] },
-      faults: [{ path: 'highlight_groups.0.color', code: 'enum', allowed: expect.arrayContaining(['source']) }], values: ['blue'] },
+      faults: [{ path: 'highlight_groups.0.color', code: 'enum', values: expect.arrayContaining(['source']) }], values: ['blue'] },
     { name: 'too_small on an array', schema: PresentResultModelSchema, input: { ...render, highlight_groups: [] },
       faults: [{ path: 'highlight_groups', code: 'size' }] },
     { name: 'too_big on a string', schema: SubmitFindingsBbInputSchema,
@@ -79,17 +79,14 @@ describe('Zod issue matrix', () => {
     const r = reject(schema, input);
     for (const fault of faults) expect(r.errors).toContainEqual(expect.objectContaining(fault));
     expect(r.issuePaths).toEqual(expect.arrayContaining(faults.map(fault => fault.path)));
-    expect(r.resend).toEqual([]);
-    // D-102: a submitted value is never echoed.
-    for (const error of r.errors!) for (const value of values) expect(error.message).not.toContain(value);
+    expect(r.resend).toBeUndefined();
+    // D-102: a submitted value is never carried as a value.
+    for (const value of values) expect(JSON.stringify(r.errors)).not.toContain(value);
   });
 
   it('a structured field sent as text is told apart from a plain wrong type', () => {
-    const message = (input: unknown) => reject(PresentResultModelSchema, input).errors!.find(error => error.path === 'sections')!.message;
-    const stringified = message({ ...render, sections: JSON.stringify(render.sections) });
-    const cut = message({ ...render, sections: '[{"label":"Sources"' });
-    const plain = message({ ...render, sections: 7 });
-    expect(new Set([stringified, cut, plain]).size).toBe(3);
+    const code = (input: unknown) => reject(PresentResultModelSchema, input).errors.find(error => error.path === 'sections')!.code;
+    expect([JSON.stringify(render.sections), '[{"label":"Sources"', 7].map(sections => code({ ...render, sections }))).toEqual(['json_text', 'json_text', 'type']);
   });
 
   it('an entry with no eligible ids can be withdrawn by the served schema', () => {
@@ -99,8 +96,8 @@ describe('Zod issue matrix', () => {
     }
   });
 
-  it('custom without allowed values carries its schema-authored rule', () => {
+  it('a custom refinement without allowed values carries the issue code it names', () => {
     const r = reject(GetScreenStateInputSchema, { ids: ['dbo.a'], filter: 'pruned' });
-    expect(r.errors).toEqual([expect.objectContaining({ code: 'invalid' })]);
+    expect(r.errors).toEqual([{ path: 'filter', code: 'never' }]);
   });
 });
