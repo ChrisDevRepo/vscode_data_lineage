@@ -61,7 +61,8 @@ export function schemaFaults(raw: Record<string, unknown>, seed: unknown, path: 
   const active = variants.find(part => (part.type === 'integer' ? 'number' : part.type) === typeOf(seed)) ?? node;
   const faults: SchemaFault[] = [];
   const add = (kind: string, value: unknown) => { if (path.length) faults.push({ path, kind, value }); };
-  const invalidType = [null, false, [], {}, 1, '__wrong_type__'].find(value => !types.includes(typeOf(value)));
+  // null is a legal withdrawal for optional product fields (D-103), so prefer a non-null mistype.
+  const invalidType = [false, null, [], {}, 1, '__wrong_type__'].find(value => !types.includes(typeOf(value)));
   if (types.length && invalidType !== undefined) add('type', invalidType);
   const domain = active.enum ?? (Object.hasOwn(active, 'const') ? [active.const] : undefined);
   if (domain?.length) {

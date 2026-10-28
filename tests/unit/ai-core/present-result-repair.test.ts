@@ -1,466 +1,196 @@
-/** Owns presentResult.ts draft holding, repair authorization and pure keyed/indexed merges. */
+/** Approved08 report draft contracts through the actual handler; no repair-only schema or merge protocol. */
 import { describe, expect, it } from 'vitest';
-import { z } from 'zod';
-import { RepairDraftStore } from '../../../src/ai/support/repairDraftStore';
-import { makeRejection, rejectionFromZodError, type ToolRejection } from '../../../src/ai/support/toolErrorEnvelope';
-import { REJECTION_CODES } from '../../../src/ai/support/rejectionCodes';
-import { holdRejectedPresentResult, mergePresentResultRepairPatch, validatePresentResult,
-  type PresentResultInput, type PresentResultRepairAuthorization, type PresentResultRepairPatch } from '../../../src/ai/tools/presentResult';
+import { AiSession } from '../../../src/ai/session/session';
+import { executePresentResult } from '../../../src/ai/tools/handlers/presentResult';
+import type { ToolServices } from '../../../src/ai/tools/handlers/toolServices';
+import { makeIndexedModel, makeNode } from '../helpers/modelFixtures';
+import { renderProblem } from '../../../src/ai/support/toolErrorEnvelope';
+import { presentResultSchemaForPhase } from '../../../src/ai/tools/toolSchemas';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
-import { PresentResultModelSchema, presentResultRepairPatchSchemaForFields, presentResultSchemaForPhase } from '../../../src/ai/tools/toolSchemas';
 
-const nodeId = '[dbo].[Result]';
-
-function resultWith(highlightGroups: unknown) {
-  return {
-    name: 'Result lineage',
-    summary: 'Shows how the result is produced.',
-    highlight_groups: highlightGroups,
-    sections: [{ label: 'Result', node_ids: [nodeId], text: 'The requested result.' }],
-  };
+function draftWorld() {
+  const ids = ['[dbo].[Result]', '[dbo].[Source]', '[dbo].[Outside]'];
+  const model = makeIndexedModel(ids.map(id => makeNode({ id, schema: 'dbo', name: id, type: 'table' })), [[ids[1], ids[0]]]);
+  const session = new AiSession();
+  const epoch = session.beginTurn();
+  session.resultGraph = { nodeIds: ids.slice(0, 2), edges: [[ids[1], ids[0], 'read']], source: 'blackboard', originNodeId: ids[0] };
+  session.enterCompleted(epoch);
+  const logs: string[] = [];
+  const services = {
+    getSession: () => session, turnEpoch: () => epoch, requireModel: () => model,
+    logger: { debug: (message: string) => logs.push(message), info() {}, warn() {}, error() {} }, deliverPreview: async () => 'delivered',
+    logAndReturn: (_tool: string, value: unknown) => JSON.stringify(value),
+    toolError: (_tool: string, error: unknown) => { throw error; },
+  } as unknown as ToolServices;
+  const report = { name: 'Result', summary: 'Source feeds Result.', title: 'Held title sentinel',
+    sections: [{ label: 'Flow', node_ids: ids.slice(0, 2), text: 'Source feeds the Result.' }],
+    highlight_groups: [{ label: 'Flow', color: 'source' as const, node_ids: ids.slice(0, 2) }] };
+  return { session, ids, report, logs, send: async (input: unknown) => JSON.parse(await executePresentResult(input, services)) };
 }
 
-const upper = '[scope].[Object]', lower = '[scope].[object]';
-const labelDraft = { name: 'Pair', summary: 'Distinct sources.', highlight_groups: [{ label: 'Sources', color: 'source', node_ids: [upper, lower] }], sections: [
-  { label: 'Source   Alpha', text: 'Upper source.', node_ids: [upper] },
-  { label: ' source alpha ', text: 'Lower source.', node_ids: [lower] },
-] } as PresentResultInput;
-/** A schema rejection that the hold call completes with its resend list, merge rules and label errors. */
-const emptyRejection = (): ToolRejection => makeRejection({ code: 'invalid_input', errors: [{ path: 'sections', code: 'type' }] });
-
-const render = {
-  name: 'Orders lineage', summary: 'How Orders is produced.',
-  highlight_groups: [{ label: 'Sources', color: 'source', node_ids: ['dbo.a'] }],
-  sections: [{ label: 'Sources', node_ids: ['dbo.a'], text: 'Reads dbo.a.' }],
-};
-
-describe('held present_result fields', () => {
-  it.each(['synthesis', 'completed', 'visual_preview'])('offers only authorized sections in %s repair', stage => {
-    const schema = presentResultRepairPatchSchemaForFields(['sections'], stage, 1);
-    expect(Object.keys((toModelJsonSchema(schema) as any).properties)).toEqual(['sections']);
-    const correction = { sections: [{ label: 'Sources', node_ids: [nodeId], ...(stage === 'visual_preview' ? { start: 'B1' } : { text: 'Corrected body.' }) }] };
-    expect(schema.safeParse(correction).success).toBe(true);
-    for (const field of ['name', 'summary', 'title', 'intro', 'closing', 'layout_direction', 'highlight_groups', 'notes', 'is_update']) {
-      expect(schema.safeParse({ ...correction, [field]: field === 'is_update' ? true : 'Unrequested' }).success, field).toBe(false);
-    }
+describe('Approved08 full-schema report draft boundary', () => {
+  it('reports independent schema and report-reference faults together before accepting only their corrections (D-099)', async () => {
+    const { session, ids, report, send } = draftWorld();
+    const graph = structuredClone(session.resultGraph);
+    const rejected = await send({ ...report, summary: 42, notes: [{ node_id: ids[2], caption: 'Outside source is unresolved.' }] });
+    expect(rejected.errors).toEqual(expect.arrayContaining([
+      { path: 'summary', code: 'type', values: ['string'] },
+      { path: 'notes.0.node_id', code: 'result_out_of_scope', values: ids.slice(0, 2) },
+    ]));
+    expect(session.resultGraph).toEqual(graph);
+    expect(session.presentationArtifact).toBeNull();
+    expect(await send({ summary: report.summary, notes: [] })).toHaveProperty('success', true);
+    expect(session.presentationArtifact?.aiMetadata.description).toContain(report.sections[0].text);
   });
 
-  it('repairs malformed section links without resending large held bodies', () => {
-    const body = 'SQL-supported explanation. '.repeat(5000);
-    const report = { ...render, sections: [
-      { label: 'Sources', node_ids: [42], text: body },
-      { label: 'Operations', node_ids: [], text: body },
-    ] };
-    const parsed = PresentResultModelSchema.safeParse(report);
-    expect(parsed.success).toBe(false);
-    const rejection = rejectionFromZodError(parsed.error!, { code: 'invalid_input', input: report, schema: PresentResultModelSchema });
-    const store = new RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>();
-    expect(holdRejectedPresentResult(store, report, rejection.issuePaths!, 'synthesis', null, false, rejection)).toBe(true);
-    expect(rejection.resend).toEqual(['sections']);
-    expect(rejection.resendRules).toEqual(['indexed']);
-    expect(store.get()?.sections).toEqual(report.sections);
-    const auth = store.getAuthorization()!;
-    const schema = presentResultRepairPatchSchemaForFields(auth.fields, 'synthesis', 0, auth.highlightLabelIndexes, auth.sectionLeaves);
-    const patch = { sections: [{ index: 0, node_ids: ['dbo.a'] }] };
-    expect(schema.safeParse(patch).success).toBe(true);
-    expect(schema.safeParse({ sections: [{ ...patch.sections[0], text: 'Unrequested rewrite' }] }).success).toBe(false);
-    const merged = mergePresentResultRepairPatch(store.get()!, schema.parse(patch), auth);
-    expect(merged.sections).toEqual([{ ...report.sections[0], node_ids: ['dbo.a'] }, report.sections[1]]);
-    expect(PresentResultModelSchema.safeParse(merged).success).toBe(true);
-    expect(JSON.stringify(rejection)).not.toContain(body);
-    expect(JSON.stringify(patch).length * 100).toBeLessThan(JSON.stringify(report).length);
+  it('collects independent add, prune and reference faults with a schema fault (D-099)', async () => {
+    const { session, ids, report, send } = draftWorld();
+    const graph = structuredClone(session.resultGraph);
+    const rejected = await send({ ...report, summary: 42, add_node_ids: ['missing-add'], prune_node_ids: ['missing-prune'],
+      notes: [{ node_id: ids[2], caption: 'Outside source is unresolved.' }] });
+    expect(rejected.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: 'summary', code: 'type' }),
+      expect.objectContaining({ path: 'add_node_ids.0', code: 'not_found' }),
+      expect.objectContaining({ path: 'prune_node_ids.0', code: 'not_found' }),
+      expect.objectContaining({ path: 'notes.0.node_id', code: 'result_out_of_scope' }),
+    ]));
+    expect(session.resultGraph).toEqual(graph);
+    expect(session.presentationArtifact).toBeNull();
+    expect(await send({ summary: report.summary, add_node_ids: [], prune_node_ids: [], notes: [] })).toHaveProperty('success', true);
   });
 
-  it.each([
-    ['correcting the optional field', { title: 'Orders lineage' }],
-    ['withdrawing the optional field with an empty patch', {}],
-  ])('repairs a large held report by %s', (_label, patch) => {
-    const report = {
-      ...render,
-      title: 42 as unknown as string,
-      intro: 'Intro. '.repeat(200),
-      closing: 'Closing. '.repeat(200),
-      sections: Array.from({ length: 6 }, (_, index) => ({ label: `Section ${index}`, node_ids: ['dbo.a'], text: 'Body. '.repeat(5000) })),
-      notes: [{ node_id: 'dbo.a', caption: 'A caption.' }],
-    };
-    const parsed = PresentResultModelSchema.safeParse(report);
-    const rejection = rejectionFromZodError(parsed.error!, { code: 'invalid_input', input: report, schema: PresentResultModelSchema });
-    expect(rejection.issuePaths).toEqual(['title']);
-    const store = new RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>();
-    expect(holdRejectedPresentResult(store, report, rejection.issuePaths ?? [], 'synthesis', null, false, rejection)).toBe(true);
-    expect(rejection.resend).toEqual(['title']);
-    expect(rejection.resendRules).toEqual([]);
-    expect(JSON.stringify(rejection)).not.toContain(report.sections[0].text);
-    const authorization = store.getAuthorization()!;
-    expect(presentResultRepairPatchSchemaForFields(authorization.fields, 'synthesis').safeParse(patch).success).toBe(true);
-    const merged = mergePresentResultRepairPatch(store.get()!, patch, authorization);
-    const { title: _invalidTitle, ...validReport } = report;
-    expect(merged).toEqual({ ...validReport, ...patch });
-    expect(PresentResultModelSchema.safeParse(merged).success).toBe(true);
+  it.each((['sections', 'highlight_groups'] as const).flatMap(field => ['not a list', { length: { toString: 42 } }].map(value => ({ field, value }))))('rejects malformed reference container $field=$value without inventing coverage (D-099)', async ({ field, value }) => {
+    const { session, report, send } = draftWorld();
+    const rejected = await send({ ...report, [field]: value, notes: [{ caption: 'Missing identity.' }] });
+    expect(rejected.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: field, code: 'type' }),
+      expect.objectContaining({ path: 'notes.0.node_id', code: 'missing' }),
+    ]));
+    expect(rejected.errors.some((error: { code: string }) => error.code === 'node_unexplained')).toBe(false);
+    expect(session.presentationArtifact).toBeNull();
+    expect(await send({ [field]: report[field], notes: [] })).toHaveProperty('success', true);
   });
-});
 
-const source = '[stage].[orders]';
-const target = '[mart].[orders]';
+  it('logs an identical saved-field resend as a no-op while still requiring its missing content (D-098)', async () => {
+    const { session, report, logs, send } = draftWorld();
+    const { summary: _summary, ...incomplete } = report;
+    expect(await send(incomplete)).toHaveProperty('code', 'invalid_input');
+    const repeated = await send({ name: report.name });
+    expect(repeated.errors).toContainEqual(expect.objectContaining({ path: 'summary', code: 'missing' }));
+    expect(logs.some(line => line.includes('[Hold] identical resend no-op tool=lineage_present_result'))).toBe(true);
+    expect(session.presentationArtifact).toBeNull();
+    expect(await send({ summary: report.summary })).toHaveProperty('success', true);
+  });
 
-function holdGarbledCall() {
-  const store = new RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>();
-  const garbled = {
-    name: 'Orders lineage', summary: 'Orders from stage to mart.', title: 'Orders', intro: 'How orders load.',
-    sections: 'Stage <parameter name="text">Raw orders.',
-    label: 'Stage', node_ids: [source],
-  };
-  const schema = presentResultSchemaForPhase('synthesis', null, false);
-  const parsed = schema.safeParse(garbled);
-  expect(parsed.success).toBe(false);
-  const rejection = rejectionFromZodError(parsed.error!, { code: REJECTION_CODES.invalidInput, input: garbled, schema });
-  const hint = holdRejectedPresentResult(store, garbled, rejection.issuePaths ?? [], 'synthesis');
-  return { store, hint, issuePaths: rejection.issuePaths ?? [] };
-}
+  it.each([42, null, { unexpected: 'label' }])('rejects a malformed section label %j while independently checking its text (D-099)', async label => {
+    const { session, report, send } = draftWorld();
+    const before = structuredClone(session.resultGraph);
+    const rejected = await send({ ...report, sections: [{ ...report.sections[0], label }] });
+    expect(rejected).toMatchObject({ code: 'invalid_input' });
+    expect(rejected.errors).toContainEqual(expect.objectContaining({ path: 'sections.0.label', code: 'type', values: ['string'] }));
+    expect(session.presentationArtifact).toBeNull();
+    expect(session.resultGraph).toEqual(before);
+    expect(await send({ sections: [{ ...report.sections[0], label: 'Corrected label' }] })).toHaveProperty('success', true);
+    expect(session.presentationArtifact?.aiMetadata.description).toContain(report.sections[0].text);
+  });
 
-it('holds the valid fields of a call that also carries keys the tool does not define', () => {
-  const { store, hint, issuePaths } = holdGarbledCall();
+  it('accepts the advertised stage-3 note fallback with sections and resent held fields (D-098/D-105)', async () => {
+    const { session, ids, report, send } = draftWorld();
+    const rejected = await send({ ...report, notes: [{ node_id: ids[2], caption: 'Outside source is unresolved.' }] });
+    expect(rejected.errors).toContainEqual(expect.objectContaining({ path: 'notes.0.node_id', code: 'result_out_of_scope' }));
+    expect(JSON.parse(renderProblem(rejected, 3)).resend).toEqual(expect.arrayContaining(['notes', 'sections']));
+    const sections = [{ ...report.sections[0], text: 'Source feeds the Result. ⚠️ Outside source remains unresolved.' }];
+    expect(await send({ notes: [], sections, name: report.name, title: report.title })).toHaveProperty('success', true);
+    expect(session.presentationArtifact?.aiMetadata.description).toContain(sections[0].text);
+  });
 
-  expect(issuePaths).toEqual(expect.arrayContaining(['label', 'node_ids', 'sections', 'highlight_groups']));
-  expect(hint).toBe(true);
-  expect(store.get()).toEqual({ name: 'Orders lineage', summary: 'Orders from stage to mart.', title: 'Orders', intro: 'How orders load.' });
-  expect([...store.getAuthorization()!.fields].sort()).toEqual(['highlight_groups', 'sections']);
-});
+  it('replaces supplied lists whole rather than merging entries by identity (D-101)', async () => {
+    const { session, ids, report, send } = draftWorld();
+    await send({ ...report, summary: 42, notes: ids.slice(0, 2).map(node_id => ({ node_id, caption: 'Held caption.' })) });
+    expect(await send({ summary: report.summary, notes: [{ node_id: ids[1], caption: 'Only supplied caption.' }] })).toHaveProperty('success', true);
+    expect(session.presentationArtifact?.aiMetadata.notes).toEqual([{ nodeId: ids[1], text: 'Only supplied caption.' }]);
+  });
 
-it('rejects unrequested report fields and merges only the authorized repair', () => {
-  const { store } = holdGarbledCall();
-  const authorization = store.getAuthorization()!;
-  const repair = {
-    highlight_groups: [{ label: 'Source', color: 'source' as const, node_ids: [source] }],
-    sections: [
-      { label: 'Stage', node_ids: [source], text: 'Raw orders.' },
-      { label: 'Mart', node_ids: [target], text: 'Reporting orders.' },
-    ],
-    notes: [{ node_id: target, caption: 'Loaded nightly.' }],
-    closing: 'Orders flow from stage to mart.',
-  };
-
-  const held = structuredClone(store.get());
-  const schema = presentResultSchemaForPhase('synthesis', authorization.fields, false);
-  expect(schema.safeParse(repair).success).toBe(false);
-  expect(() => mergePresentResultRepairPatch(store.get()!, repair, authorization)).toThrow('Unauthorized present_result repair field: notes');
-  expect(() => mergePresentResultRepairPatch(store.get()!, { is_update: true }, authorization)).toThrow('Unauthorized present_result repair field: is_update');
-  expect(store.get()).toEqual(held);
-  const { notes: _notes, closing: _closing, ...correction } = repair;
-  const merged = mergePresentResultRepairPatch(store.get()!, schema.parse(correction) as PresentResultRepairPatch, authorization);
-  expect(merged.name).toBe('Orders lineage');
-  expect(merged.closing).toBeUndefined();
-  expect(merged.notes).toBeUndefined();
-  expect(merged.sections?.map(section => section.label)).toEqual(['Stage', 'Mart']);
-  expect(merged.highlight_groups).toHaveLength(1);
-});
-
-it('still refuses a graph edit the rejection did not authorize', () => {
-  const { store } = holdGarbledCall();
-  const authorization = store.getAuthorization()!;
-  const repair = {
-    highlight_groups: [{ label: 'Source', color: 'source', node_ids: [source] }],
-    sections: [{ label: 'Stage', node_ids: [source], text: 'Raw orders.' }],
-    prune_node_ids: [target],
-  };
-
-  expect(presentResultSchemaForPhase('synthesis', authorization.fields, false).safeParse(repair).success).toBe(false);
-  expect(() => mergePresentResultRepairPatch(store.get()!, repair as PresentResultRepairPatch, authorization)).toThrow('prune_node_ids');
-});
-
-it('holds nothing when only undefined keys failed', () => {
-  const store = new RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>();
-
-  expect(holdRejectedPresentResult(store, { name: 'Orders lineage', label: 'Stage' }, ['label'], 'synthesis')).toBe(false);
-  expect(store.get()).toBeFalsy();
-});
-
-it('merges a notes repair by node id: one missing caption is one resent entry', () => {
-  const store = new RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>();
-  const stale = '[mart].[retired]';
-  store.hold({
-    name: 'Orders lineage', summary: 'Orders from stage to mart.',
-    highlight_groups: [{ label: 'Source', color: 'source', node_ids: [source] }],
-    sections: [{ label: 'Stage', node_ids: [source], text: 'Raw orders.' }],
-    notes: [{ node_id: source, caption: 'Landed hourly.' }, { node_id: stale, caption: 'Dropped object.' }],
-  } as PresentResultInput, { fields: ['notes'] });
-  const authorization = store.getAuthorization()!;
-  const repair = { notes: [{ node_id: 'mart.orders', caption: 'Loaded nightly.' }, { node_id: stale, remove: true }] };
-
-  const parsed = presentResultSchemaForPhase('synthesis', authorization.fields, false).safeParse(repair);
-  expect(parsed.success, JSON.stringify(parsed.success ? null : parsed.error.issues)).toBe(true);
-
-  const merged = mergePresentResultRepairPatch(store.get()!, parsed.data as PresentResultRepairPatch, authorization);
-  expect(merged.notes).toEqual([{ node_id: source, caption: 'Landed hourly.' }, { node_id: 'mart.orders', caption: 'Loaded nightly.' }]);
-});
-
-it('merges notes by case only when the model folds identifier case', () => {
-  const draft = { name: 'n', summary: 's', notes: [{ node_id: '[mart].[Orders]', caption: 'Upper.' }] } as PresentResultInput;
-  const patch = { notes: [{ node_id: '[mart].[orders]', caption: 'Lower.' }] } as PresentResultRepairPatch;
-  const authorization = { fields: ['notes'] } as PresentResultRepairAuthorization;
-
-  expect(mergePresentResultRepairPatch(draft, patch, authorization).notes)
-    .toEqual([{ node_id: '[mart].[orders]', caption: 'Lower.' }]);
-  expect(mergePresentResultRepairPatch(draft, patch, authorization, true).notes)
-    .toEqual([{ node_id: '[mart].[Orders]', caption: 'Upper.' }, { node_id: '[mart].[orders]', caption: 'Lower.' }]);
-});
-
-it.each([
-  ['[a.b].[c]', '[a].[b.c]'],
-  ['[dbo].[ab]', '[dbo].[a[b]'],
-])('keeps distinct quoted note identities %s and %s during repair', (heldId, repairedId) => {
-  const held = { node_id: heldId, caption: 'Keep this caption.' };
-  const repaired = { node_id: repairedId, caption: 'Corrected caption.' };
-  const draft = { name: 'n', summary: 's', notes: [held] } as PresentResultInput;
-  const patch = { notes: [repaired] } as PresentResultRepairPatch;
-  expect(mergePresentResultRepairPatch(draft, patch, { fields: ['notes'] }).notes)
-    .toEqual([held, repaired]);
-});
-
-describe('unknown repair keys', () => {
-  it.each([
-    ['a key with a space', 'node ids'],
-    ['a key longer than the path grammar admits', 'k'.repeat(130)],
-  ])('never holds %s across complete and missing-field calls', (_label, key) => {
-    for (const complete of [true, false]) {
-      const input = complete ? { ...render, title: 42 as unknown as string, [key]: ['dbo.a'] }
-        : { name: 'Orders lineage', summary: 'Orders from stage to mart.', title: 42 as unknown as string, [key]: [source] };
-      const schema = complete ? PresentResultModelSchema : presentResultSchemaForPhase('synthesis', null, false);
-      const rejection = rejectionFromZodError(schema.safeParse(input).error!, { code: 'invalid_input', input, schema });
-      expect(rejection.issuePaths ?? []).not.toContain(key);
-      if (complete) expect(rejection.issuePaths).toEqual(['title']);
-      const store = new RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>();
-      expect(holdRejectedPresentResult(store, input, rejection.issuePaths ?? [], 'synthesis', null, false, rejection)).toBe(true);
-      if (complete) {
-        expect(rejection.resend).toEqual(['title']);
-        expect(Object.keys(store.get()!).sort()).toEqual(['highlight_groups', 'name', 'sections', 'summary']);
-      } else expect(store.get()).toEqual({ name: 'Orders lineage', summary: 'Orders from stage to mart.' });
-    }
+  it('keeps a held value on a faulty overwrite, reports it without echo, and accepts the next correction (D-101/D-102)', async () => {
+    const { session, report, send } = draftWorld();
+    await send({ ...report, summary: 42 });
+    const rejected = await send({ summary: report.summary, title: ['new invalid title sentinel'] });
+    expect(rejected.errors).toContainEqual(expect.objectContaining({ path: 'title', code: 'not_overwritten' }));
+    const shown = renderProblem(rejected, 1);
+    expect(shown).not.toContain(report.title);
+    expect(shown).not.toContain('new invalid title sentinel');
+    expect(await send({ summary: report.summary })).toHaveProperty('success', true);
+    expect(session.presentationArtifact?.aiMetadata.description).toContain(report.title);
   });
 });
 
-/** Builds only the supplied held transaction; expected authorization and results stay on each case. */
-function indexedRepair(draft: PresentResultInput, paths: string[]) {
-  const store = new RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>();
-  const instruction = emptyRejection();
-  expect(holdRejectedPresentResult(store, draft, paths, 'synthesis', null, false, instruction)).toBe(true);
-  const authorization = store.getAuthorization()!;
-  const schema = presentResultRepairPatchSchemaForFields(authorization.fields, 'synthesis', 0,
-    authorization.highlightLabelIndexes, authorization.sectionLeaves);
-  return { store, instruction, authorization, schema };
-}
-
-describe('indexed repair transactions', () => {
-  it('repairs only rejected label leaves and preserves held group identity', () => {
-    const draft = resultWith([
-      { label: '   ', color: 'source', node_ids: ['source'] },
-      { label: 'Transforms', color: 'transform', node_ids: ['middle'] },
-      { label: '', color: 'target', node_ids: ['target'] },
-    ]) as PresentResultInput;
-    const { store, instruction, authorization, schema } = indexedRepair(draft, ['highlight_groups.0.label', 'highlight_groups.2.label']);
-    const servedSchema = z.toJSONSchema(schema, { io: 'input' });
-    const servedItems = (servedSchema.properties?.highlight_groups as {
-      items?: {
-        anyOf?: Array<{
-          properties?: { index?: { const?: number } };
-          required?: string[];
-        }>;
-      };
-    }).items;
-
-    expect(instruction.resend).toEqual(['highlight_groups']);
-    expect(instruction.resendRules).toEqual(['indexed']);
-    expect(servedItems?.anyOf?.map(item => item.properties?.index?.const)).toEqual([0, 2]);
-    expect(servedItems?.anyOf?.map(item => item.required)).toEqual([
-      ['index', 'label'],
-      ['index', 'label'],
-    ]);
-    expect(schema.safeParse({ highlight_groups: draft.highlight_groups }).success).toBe(false);
-    expect(schema.safeParse({ highlight_groups: [
-      { index: 0, label: 'Sources' },
-      { index: 1, label: 'Unauthorized' },
-    ] }).success).toBe(false);
-    const patch = schema.parse({ highlight_groups: [
-      { index: 0, label: 'Sources' },
-      { index: 2, label: 'Target' },
-    ] });
-    const merged = mergePresentResultRepairPatch(store.get()!, patch, authorization);
-
-    expect(merged.highlight_groups).toEqual([
-      { label: 'Sources', color: 'source', node_ids: ['source'] },
-      { label: 'Transforms', color: 'transform', node_ids: ['middle'] },
-      { label: 'Target', color: 'target', node_ids: ['target'] },
-    ]);
-    expect(merged.sections).toBe(draft.sections);
-  });
-
-  it('keeps label leaves narrow when another text field also needs repair', () => {
-    const draft = {
-      ...resultWith([{ label: '   ', color: 'source', node_ids: [nodeId] }]),
-      title: 42 as unknown as string,
-    } as PresentResultInput;
-    const { store, authorization, schema } = indexedRepair(draft, ['title', 'highlight_groups.0.label']);
-
-    expect(store.get()?.highlight_groups).toEqual(draft.highlight_groups);
-    expect(store.get()?.title).toBeUndefined();
-    // A shape-rejected optional field may be withdrawn by omission; the indexed label leaf may not.
-    expect(schema.safeParse({ highlight_groups: [{ index: 0, label: 'Sources' }] }).success).toBe(true);
-    expect(schema.safeParse({ title: 'Result lineage' }).success).toBe(false);
-    const patch = schema.parse({
-      title: 'Result lineage',
-      highlight_groups: [{ index: 0, label: 'Sources' }],
-    });
-    expect(mergePresentResultRepairPatch(store.get()!, patch, authorization)).toMatchObject({
-      title: 'Result lineage',
-      highlight_groups: [{ label: 'Sources', color: 'source', node_ids: [nodeId] }],
-    });
-  });
-
-  it('repairs only rejected section text leaves and preserves section identity', () => {
-    const draft = {
-      ...resultWith([{ label: 'Sources', color: 'source', node_ids: [nodeId] }]),
-      sections: [
-        { label: 'Sources', node_ids: ['source'], text: '   ' },
-        { label: 'Transformations', node_ids: ['middle'], text: 'Existing detail.' },
-      ],
-    } as PresentResultInput;
-    const { store, instruction, authorization, schema } = indexedRepair(draft, ['sections.0.text']);
-
-    expect(instruction.resend).toEqual(['sections']);
-    expect(instruction.resendRules).toEqual(['indexed']);
-    expect(store.get()?.sections).toEqual(draft.sections);
-    expect(schema.safeParse({ sections: draft.sections }).success).toBe(false);
-    expect(schema.safeParse({ sections: [{ index: 1, text: 'Wrong index.' }] }).success).toBe(false);
-    const patch = schema.parse({ sections: [{ index: 0, text: 'Source detail.' }] });
-    const merged = mergePresentResultRepairPatch(store.get()!, patch, authorization);
-    expect(merged.sections).toEqual([
-      { label: 'Sources', node_ids: ['source'], text: 'Source detail.' },
-      draft.sections?.[1],
-    ]);
-    expect(merged.sections?.[1]).toBe(draft.sections?.[1]);
-    expect(merged.highlight_groups).toBe(draft.highlight_groups);
-    expect(draft.sections?.[0]?.text).toBe('   ');
-  });
-
-  it('repairs mixed rejected leaves in one transaction without exposing either full list', () => {
-    const draft = {
-      ...resultWith([
-        { label: '   ', color: 'source', node_ids: ['source'] },
-        { label: 'Target', color: 'target', node_ids: ['target'] },
-      ]),
-      sections: [
-        { label: '   ', node_ids: ['source'], text: '   ' },
-        { label: 'Target', node_ids: ['target'], text: 'Existing target detail.' },
-      ],
-    } as PresentResultInput;
-    const { store, authorization, schema } = indexedRepair(draft, ['highlight_groups.0.label', 'sections.0.label', 'sections.0.text']);
-
-    expect(schema.safeParse({
-      highlight_groups: [{ index: 0, label: 'Sources' }],
-      sections: [{ index: 0, label: 'Sources' }],
-    }).success).toBe(false);
-    expect(schema.safeParse({
-      highlight_groups: draft.highlight_groups,
-      sections: draft.sections,
-    }).success).toBe(false);
-    const patch = schema.parse({
-      highlight_groups: [{ index: 0, label: 'Sources' }],
-      sections: [{ index: 0, label: 'Sources', text: 'Source detail.' }],
-    });
-    const merged = mergePresentResultRepairPatch(store.get()!, patch, authorization);
-
-    expect(merged.highlight_groups).toEqual([
-      { label: 'Sources', color: 'source', node_ids: ['source'] },
-      draft.highlight_groups?.[1],
-    ]);
-    expect(merged.sections).toEqual([
-      { label: 'Sources', node_ids: ['source'], text: 'Source detail.' },
-      draft.sections?.[1],
-    ]);
-    expect(merged.highlight_groups?.[1]).toBe(draft.highlight_groups?.[1]);
-    expect(merged.sections?.[1]).toBe(draft.sections?.[1]);
-  });
-
-  it('does not authorize a leaf transaction from malformed or out-of-range issue paths', () => {
-    const draft = resultWith([{ label: 'Sources', color: 'source', node_ids: [nodeId] }]) as PresentResultInput;
-    const malformed = new RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>();
-    const outOfRange = new RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>();
-
-    const whole = emptyRejection(), outside = emptyRejection();
-    expect(holdRejectedPresentResult(malformed, draft, ['sections.bad.text'], 'synthesis', null, false, whole)).toBe(true);
-    expect(whole.resend).toEqual(['sections']);
-    expect(whole.resendRules).toEqual(['whole']);
-    expect(malformed.getAuthorization()?.sectionLeaves).toBeUndefined();
-    expect(malformed.get()?.sections).toBeUndefined();
-    expect(holdRejectedPresentResult(outOfRange, draft, ['highlight_groups.9.label'], 'synthesis', null, false, outside)).toBe(true);
-    expect(outside.resend).toEqual(['highlight_groups']);
-    expect(outside.resendRules).toEqual(['whole']);
-    expect(outOfRange.getAuthorization()?.highlightLabelIndexes).toBeUndefined();
-    expect(outOfRange.get()?.highlight_groups).toBeUndefined();
-  });
-  it('authorizes only the rejected indexed label, retaining source IDs and factual text', () => {
-    const store = new RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>();
-    holdRejectedPresentResult(store, labelDraft, ['sections.1.label'], 'synthesis');
-    const auth = store.getAuthorization()!;
-    expect(auth.sectionLeaves).toEqual([{ index: 1, fields: ['label'] }]);
-    const schema = presentResultRepairPatchSchemaForFields(auth.fields, 'synthesis', 0, auth.highlightLabelIndexes, auth.sectionLeaves);
-    expect(schema.safeParse({ sections: [{ index: 0, label: 'Wrong' }] }).success).toBe(false);
-    expect(schema.safeParse({ sections: [{ index: 1, label: 'Source Beta', text: 'Rewrite' }] }).success).toBe(false);
-    const merged = mergePresentResultRepairPatch(store.get()!, schema.parse({ sections: [{ index: 1, label: 'Source Beta' }] }), auth);
-    expect(merged.sections![0]).toEqual(labelDraft.sections![0]);
-    expect(merged.sections![1]).toEqual({ ...labelDraft.sections![1], label: 'Source Beta' });
-    expect(merged.sections!.map(section => section.node_ids)).toEqual([[upper], [lower]]);
-    expect(PresentResultModelSchema.safeParse(merged).success).toBe(true);
-  });
+it.each([false, true])('keeps the full served schema and accepts identical or changed held fields (D-098, changed=%s)', async changed => {
+  const { session, report, send } = draftWorld();
+  const before = toModelJsonSchema(presentResultSchemaForPhase('completed'));
+  expect(await send({ ...report, summary: 42 })).toHaveProperty('code', 'invalid_input');
+  expect(toModelJsonSchema(presentResultSchemaForPhase('completed'))).toEqual(before);
+  const name = changed ? 'Replacement result' : report.name;
+  expect(await send({ ...report, name })).toHaveProperty('success', true);
+  expect(session.presentationArtifact?.name).toBe(name);
 });
 
-it('names highlight_groups as the field to resend when a two-field repair returns only the other field', () => {
-  const id = '[dbo].[report]';
-  const store = new RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>();
-  const rejected = {
-    name: 'Report', summary: '', highlight_groups: [],
-    sections: [{ label: 'Report', node_ids: [id], text: 'Report output.' }],
-  };
-  const held = emptyRejection();
-  expect(holdRejectedPresentResult(store, rejected, ['summary', 'highlight_groups'], 'synthesis', null, false, held)).toBe(true);
-  expect(held.resend).toEqual(['summary', 'highlight_groups']);
-  const authorization = store.getAuthorization()!;
-  expect(authorization.fields).toEqual(['summary', 'highlight_groups']);
-
-  const merged = mergePresentResultRepairPatch(store.get()!, { summary: 'Report lineage.' }, authorization);
-  expect(merged.highlight_groups).toBeUndefined();
-
-  const result = validatePresentResult(merged, [id], undefined, undefined, [], 'synthesis');
-  expect(result.success).toBe(false);
-  if (result.success === false) {
-    expect(result.rejection.issuePaths).toEqual(['highlight_groups']);
-    expect(result.rejection.errors).toEqual([{ path: 'highlight_groups', code: 'missing' }]);
-  }
+it.each(['correct', 'withdraw'] as const)('repairs an optional field with an explicit %s (D-103)', async mode => {
+  const { session, report, send } = draftWorld();
+  await send({ ...report, summary: 42 });
+  expect(await send({ summary: report.summary, title: mode === 'withdraw' ? null : 'Corrected title' })).toHaveProperty('success', true);
+  const description = session.presentationArtifact?.aiMetadata.description ?? '';
+  expect(description).not.toContain(report.title);
+  if (mode === 'correct') expect(description).toContain('Corrected title');
 });
 
-it('accepts a call without sections after an unheld-section rejection, whose hint states the committed-label correction', () => {
-  const store = new RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>();
-  const committed = [{ label: 'Report', text: 'Committed body.' }];
-  const rejected = {
-    name: 'Report', summary: 'Report lineage.',
-    highlight_groups: [{ label: 'Source', color: 'source', node_ids: ['[dbo].[report]'] }],
-    sections: [{ label: 'Brand new', node_ids: [' '] }],
-  };
+it('keeps large section bodies byte-equivalent when only another field needs a correction (D-098/D-102)', async () => {
+  const { session, report, send } = draftWorld();
+  const text = 'SQL-supported explanation. '.repeat(5000);
+  const sections = [{ ...report.sections[0], text }];
+  const rejected = await send({ ...report, sections, title: 42 });
+  expect(renderProblem(rejected, 1)).not.toContain(text);
+  expect(await send({ title: 'Corrected title' })).toHaveProperty('success', true);
+  expect(session.presentationArtifact?.aiMetadata.description).toContain(text);
+});
 
-  const retainingSchema = presentResultSchemaForPhase('synthesis', null, true);
-  const first = retainingSchema.safeParse(rejected);
-  expect(first.success).toBe(false);
-  const failedPaths = first.success ? [] : first.error.issues.map(issue => issue.path.join('.'));
+it.each(['node ids', 'k'.repeat(130)])('rejects an unknown key and never retains it across correction (Approved08, %s)', async key => {
+  const { session, report, send } = draftWorld();
+  const rejected = await send({ ...report, summary: 42, [key]: ['untrusted sentinel'] });
+  expect(rejected.code).toBe('invalid_input');
+  expect(session.presentResultRepairDraft.get()).not.toHaveProperty(key);
+  expect(await send({ summary: report.summary })).toHaveProperty('success', true);
+  expect(JSON.stringify(session.presentationArtifact)).not.toContain('untrusted sentinel');
+});
 
-  const hint = emptyRejection();
-  expect(holdRejectedPresentResult(store, rejected, failedPaths, 'synthesis', committed, false, hint)).toBe(true);
-  expect(hint.errors).toContainEqual({ path: 'sections', code: 'uncommitted_label', values: ['Report'] });
-  expect(JSON.stringify(hint)).not.toContain('Brand new');
-  const authorization = store.getAuthorization()!;
-  expect(authorization.fields).toContain('sections');
+it.each(['__proto__', 'constructor', 'prototype'].flatMap(key => [null, { untrusted: true }].map(value => ({ key, value }))))('rejects an own JSON key $key without applying inherited object members (Approved08)', async ({ key, value }) => {
+  const { report, send } = draftWorld();
+  const input = Object.fromEntries([...Object.entries(report), [key, value]]);
+  const rejected = await send(input);
+  expect(rejected.code).toBe('invalid_input');
+  expect(rejected.errors).toContainEqual(expect.objectContaining({ path: key, code: 'unknown_key' }));
+});
 
-  const hintedCall = {};
-  const served = presentResultSchemaForPhase('synthesis', authorization.fields, true);
-  const result = served.safeParse(hintedCall);
-  expect(result.success, JSON.stringify(result.success ? null : result.error.issues)).toBe(true);
+it('revalidates every required field of a whole-list replacement and accepts its next complete correction (D-099/D-101)', async () => {
+  const { session, report, send } = draftWorld();
+  await send({ ...report, summary: 42 });
+  const rejected = await send({ summary: report.summary, sections: [{ label: 'Incomplete' }] });
+  expect(rejected.errors).toEqual(expect.arrayContaining([
+    expect.objectContaining({ path: 'sections.0.text', code: 'missing' }),
+    expect.objectContaining({ path: 'sections.0.node_ids', code: 'missing' }),
+    expect.objectContaining({ path: 'sections', code: 'not_overwritten' }),
+  ]));
+  expect(session.presentationArtifact).toBeNull();
+  expect(await send({ sections: report.sections })).toHaveProperty('success', true);
+});
+
+it('rejects retired key/index repair grammar instead of silently merging it (D-101)', async () => {
+  const { report, send } = draftWorld();
+  await send({ ...report, summary: 42 });
+  const rejected = await send({ summary: report.summary, sections: [{ index: 0, label: 'Replacement', remove: true }] });
+  expect(rejected.code).toBe('invalid_input');
+  expect(rejected.errors).toEqual(expect.arrayContaining([
+    expect.objectContaining({ path: 'sections.0.index', code: 'unknown_key' }),
+    expect.objectContaining({ path: 'sections.0.remove', code: 'unknown_key' }),
+  ]));
+  expect(await send({ sections: report.sections })).toHaveProperty('success', true);
 });

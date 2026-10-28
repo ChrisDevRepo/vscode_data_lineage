@@ -1,17 +1,10 @@
 /** AI `present_result` contract: input/output types, validation, and the deterministic markdown assembly. Zero VS Code imports. */
 import {
   PresentResultModelSchema,
-  PresentResultAuthorizableRepairSchema,
-  normalizePresentSectionLabel,
-  PRESENT_RESULT_DEFINED_FIELDS,
-  PRESENT_RESULT_REPAIR_FIELDS,
   type PresentResultRepairField,
-  type PresentResultSectionRepairField,
 } from './toolSchemas';
-import { sqlIdentifierComparisonKey } from '../../engine/shared/sqlIdentifier';
 import { normalizeColName, schemaKey } from '../../utils/sql';
-import { RepairDraftStore, indexedRepairFields, type IndexedRepairFields } from '../support/repairDraftStore';
-import { at, makeRejection, type IssueCode, type ResendRule, type ToolError, type ToolRejection } from '../support/toolErrorEnvelope';
+import { makeRejection, type IssueCode, type ToolError, type ToolRejection } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { FOCUS_NODE_HREF_PREFIX, type ColumnTransformClass } from '../../engine/shared/bridgeContract';
 import type { DetailSlot } from '../session/memoryManager';
@@ -38,41 +31,8 @@ export const ADD_NODE_IDS_REVEALS = 'reveals any object in the approved explorat
 
 /** The AI's submission to `lineage_present_result`. */
 export type PresentResultInput = z.infer<typeof PresentResultModelSchema>;
-type PresentResultBaseRepairPatch = z.infer<typeof PresentResultAuthorizableRepairSchema>;
-
-/** One repair-only replacement for a held highlight label. */
-interface PresentResultHighlightLabelPatch {
-  readonly index: number;
-  readonly label: string;
-}
-
-/** Repair-only fields for one held section, leaving its other content intact. */
-interface PresentResultSectionPatch {
-  readonly index: number;
-  readonly label?: string;
-  readonly text?: string;
-  readonly node_ids?: string[];
-  readonly start?: string;
-}
-
-/** A validated `present_result` repair patch. Ordinary fields derive from {@link PresentResultAuthorizableRepairSchema}; a label-only rejection narrows `highlight_groups` to indexed label leaves through the dynamic schema served for that authorization. */
-export type PresentResultRepairPatch = Omit<PresentResultBaseRepairPatch, 'highlight_groups' | 'sections'> & {
-  readonly highlight_groups?: PresentResultBaseRepairPatch['highlight_groups'] | readonly PresentResultHighlightLabelPatch[];
-  readonly sections?: PresentResultBaseRepairPatch['sections'] | readonly PresentResultSectionPatch[];
-};
-
-/** What a held-draft rejection authorized: the presentation fields a resend may patch. */
-export interface PresentResultRepairAuthorization {
-  readonly fields: readonly PresentResultRepairField[];
-  /** Zero-based highlight entries whose overlong labels may be replaced without resending the list. */
-  readonly highlightLabelIndexes?: readonly number[];
-  /** Zero-based held sections and the fields authorized for replacement. */
-  readonly sectionLeaves?: readonly IndexedRepairFields<PresentResultSectionRepairField>[];
-}
-
-/** A preview section carries the served block id it starts at instead of a body. */
+/** A preview section names its source block instead of an authored body. */
 type PresentSection = NonNullable<PresentResultInput['sections']>[number] & { start?: string };
-type PresentSectionPatch = NonNullable<PresentResultBaseRepairPatch['sections']>[number] & { start?: string };
 
 /** The validated, engine-assembled result ready for the UI. */
 type PresentResultRequest = {
@@ -135,9 +95,10 @@ export function discoveryPreviewNarrative(answer: string): {
 export const START_ORDER_FAULT = 'Starts ascend strictly; this section starts at or before the one above.';
 
 /** Indexes of preview `sections` that do not start strictly after the section before them. The first section always begins at B1; the served schema constrains the ids, and order depends on the whole (merged) list, so it is checked here. */
-export function findStartOrderIssues(sections: ReadonlyArray<{ label: string; start?: string }>): number[] {
+export function findStartOrderIssues(sections: ReadonlyArray<{ label: string; start?: string }>, known: (path: string) => boolean = () => true): number[] {
   return sections.flatMap((section, index) =>
-    index > 0 && section.start && startBlock(sections, index) <= startBlock(sections, index - 1) ? [index] : []);
+    index > 0 && section && sections[index - 1] && known(`sections.${index}.start`) && known(`sections.${index - 1}.start`)
+      && section.start && startBlock(sections, index) <= startBlock(sections, index - 1) ? [index] : []);
 }
 
 /** The 1-based block a preview section starts at; the first section always begins at B1. */
@@ -170,140 +131,6 @@ export interface PresentResultViolation {
   readonly paths: readonly string[];
   /** The backend-loaded node ids this violation asks the AI to place (an uncovered detail-slot or CT-chain node); the unexplained-node check skips them. */
   readonly entryIds?: readonly string[];
-}
-
-/** Identity of a held section: its normalized label. */
-const sectionKey = (section: { label?: string }): string => normalizePresentSectionLabel(section.label ?? '');
-
-/** Indexes of resent `sections` patch entries that match no held section and carry no text. */
-export function findTextlessNewSections(
-  held: readonly PresentSection[] | undefined,
-  resent: readonly PresentSectionPatch[],
-): number[] {
-  const heldKeys = new Set((held ?? []).map(sectionKey));
-  return resent.flatMap((section, index) =>
-    !('remove' in section && section.remove) && !heldKeys.has(sectionKey(section)) && !section.start && !('text' in section && section.text?.trim()) ? [index] : []);
-}
-
-/** Held preview sections with each `start` replaced by the block it effectively starts at (the first always B1). */
-function withEffectiveStarts(sections: readonly PresentSection[]): PresentSection[] {
-  return sections.map((section, index) => (section.start ? { ...section, start: `B${startBlock(sections, index)}` } : section));
-}
-
-/** How the resent fields of a repair merge into the held draft: by section label or note node_id, by index for leaf repairs, and whole for a list held whole or with no section held. */
-export function presentResultResendRules(
-  resendList: readonly PresentResultRepairField[],
-  sectionsHeld = true,
-  highlightLabelIndexes?: readonly number[],
-  sectionLeaves?: PresentResultRepairAuthorization['sectionLeaves'],
-): ResendRule[] {
-  return [
-    ...(resendList.includes('sections') && !sectionLeaves ? [sectionsHeld ? 'sections' as const : 'whole' as const] : []),
-    ...(highlightLabelIndexes || sectionLeaves ? ['indexed' as const] : []),
-    ...(resendList.includes('notes') ? ['notes' as const] : []),
-    ...(resendList.includes('highlight_groups') && !highlightLabelIndexes ? ['whole' as const] : []),
-  ];
-}
-
-/** Holds the valid fields of a `lineage_present_result` call its stage schema rejected in the handler, so the retry resends only the failed field(s) and {@link mergePresentResultRepairPatch} restores the rest. */
-export function holdRejectedPresentResult(
-  store: RepairDraftStore<PresentResultInput, PresentResultRepairAuthorization>,
-  input: unknown,
-  failedPaths: readonly string[],
-  stage: PresentResultStage,
-  committed: ReadonlyArray<{ label: string; text?: string }> | null = null,
-  replaceHeld = false,
-  rejection?: ToolRejection,
-): boolean {
-  if ((!replaceHeld && store.get()) || typeof input !== 'object' || input === null || Array.isArray(input) || failedPaths.length === 0) return false;
-  const repairable = new Set<string>(PRESENT_RESULT_REPAIR_FIELDS);
-  const failedKeys = [...new Set(failedPaths.map(path => path.split('.')[0]))];
-  const failed = failedKeys.filter(key => PRESENT_RESULT_DEFINED_FIELDS.has(key));
-  if (failed.length === 0 || !failed.every(field => repairable.has(field))) return false;
-  const raw = input as Record<string, unknown>;
-  const highlightLabelIndexes = indexedRepairFields(failedPaths, 'highlight_groups', raw.highlight_groups, ['label'])?.map(leaf => leaf.index);
-  const rawSections = raw.sections;
-  let sectionLeaves = indexedRepairFields<PresentResultSectionRepairField>(failedPaths, 'sections', rawSections, stage === 'visual_preview'
-    ? ['label', 'node_ids', 'start'] : ['label', 'node_ids', 'text']);
-  const bodies = new Set((committed ?? []).filter(sec => sec.text).map(sectionKey));
-  const unkept = Array.isArray(rawSections) && committed
-    ? (rawSections as PresentSectionPatch[]).filter(sec => sec && typeof sec === 'object' && typeof sec.label === 'string'
-      && !('text' in sec && typeof sec.text === 'string' && sec.text.trim()) && !sec.start && !bodies.has(sectionKey(sec))).map(sec => sec.label)
-    : [];
-  if (unkept.length > 0) sectionLeaves = undefined;
-  const hasLeafRepair = highlightLabelIndexes || sectionLeaves;
-  if (unkept.length > 0 && !hasLeafRepair && !failed.includes('sections')) failed.push('sections');
-  // Only fields the tool defines are held: a key the schema does not know never rides the draft,
-  // whether or not the rejection could name it by path.
-  const kept = Object.fromEntries(Object.entries(input).filter(([key]) => PRESENT_RESULT_DEFINED_FIELDS.has(key) && (
-    replaceHeld || !failed.includes(key)
-    || (key === 'highlight_groups' && highlightLabelIndexes)
-    || (key === 'sections' && sectionLeaves)
-  )));
-  if (Object.keys(kept).length === 0) return false;
-  const fields = failed as PresentResultRepairField[];
-  store.hold(kept as PresentResultInput, {
-    fields,
-    ...(highlightLabelIndexes ? { highlightLabelIndexes } : {}),
-    ...(sectionLeaves ? { sectionLeaves } : {}),
-  });
-  if (rejection) {
-    rejection.resend = [...fields];
-    rejection.resendRules = presentResultResendRules(fields, Array.isArray(kept.sections) && kept.sections.length > 0, highlightLabelIndexes, sectionLeaves);
-    // A section sent without text keeps a committed section, so its label names one.
-    if (unkept.length > 0 && !hasLeafRepair) rejection.errors.push(...at('uncommitted_label', ['sections'], (committed ?? []).map(sec => sec.label)));
-  }
-  return true;
-}
-
-type PresentNote = NonNullable<PresentResultInput['notes']>[number];
-type PresentNotePatch = Partial<PresentNote> & { remove?: boolean };
-
-/** Compares note identities using SQL quoting and the model's identifier case policy. */
-function noteKey(note: Partial<PresentNote>, identifierCaseSensitive: boolean): string {
-  const id = note.node_id ?? '';
-  return sqlIdentifierComparisonKey(id, identifierCaseSensitive) ?? id;
-}
-
-/** Merges a strict repair patch into a held full `present_result` draft. */
-export function mergePresentResultRepairPatch(
-  draft: PresentResultInput,
-  patch: PresentResultRepairPatch,
-  authorization: PresentResultRepairAuthorization,
-  identifierCaseSensitive = false,
-): PresentResultInput {
-  const allowed = new Set<string>(authorization.fields);
-  const updates: Partial<PresentResultInput> = {};
-  for (const [key, value] of Object.entries(patch)) {
-    if (!allowed.has(key)) throw new Error(`Unauthorized present_result repair field: ${key}`);
-    if (key === 'highlight_groups' && authorization.highlightLabelIndexes && Array.isArray(value)) {
-      updates.highlight_groups = RepairDraftStore.mergeIndexed(draft.highlight_groups ?? [],
-        value as PresentResultHighlightLabelPatch[], authorization.highlightLabelIndexes.map(index => ({ index, fields: ['label'] })));
-      continue;
-    }
-    if (key === 'sections' && authorization.sectionLeaves && Array.isArray(value)) {
-      updates.sections = RepairDraftStore.mergeIndexed(draft.sections ?? [], value as PresentResultSectionPatch[], authorization.sectionLeaves);
-      continue;
-    }
-    if (key === 'sections' && Array.isArray(value)) {
-      const merged = RepairDraftStore.mergeByKey<PresentSection>(withEffectiveStarts(draft.sections ?? []), value as PresentSectionPatch[], sectionKey)
-        .map(section => ({ ...section, node_ids: section.node_ids ?? [] }));
-      updates.sections = merged.every(section => section.start)
-        ? merged.sort((a, b) => Number(a.start!.slice(1)) - Number(b.start!.slice(1)))
-        : merged;
-      continue;
-    }
-    if (key === 'notes' && Array.isArray(value)) {
-      updates.notes = RepairDraftStore.mergeByKey<PresentNote>(draft.notes ?? [], value as PresentNotePatch[], note => noteKey(note, identifierCaseSensitive));
-      continue;
-    }
-    Object.assign(updates, { [key]: value });
-  }
-  return {
-    ...draft,
-    ...updates,
-    is_update: draft.is_update,
-  };
 }
 
 /** Encodes a node id for the `#focus-node:` destination of an engine-assembled object link. */
@@ -730,10 +557,19 @@ export function requiredCtChainNodeIds(
 export function findUnrenderedDetailSlotIds(
   slotNodeIds: readonly string[],
   input: PresentResultInput,
-): string[] {
-  if (slotNodeIds.length === 0 || !input.sections || input.sections.length === 0) return [];
+  known: (path: string) => boolean = () => true,
+): string[] | undefined {
+  if (slotNodeIds.length === 0 || (known('sections') && (!input.sections || input.sections.length === 0))) return [];
+  if (!known('sections') || !Array.isArray(input.sections)) return undefined;
   const sectionNodeIds = new Set<string>();
-  for (const sec of input.sections) for (const id of sec.node_ids ?? []) sectionNodeIds.add(id);
+  for (const [index, sec] of input.sections.entries()) {
+    const path = `sections.${index}.node_ids`;
+    if (!sec || !known(`sections.${index}`) || !known(path) || !Array.isArray(sec.node_ids)) return undefined;
+    for (const [idIndex, id] of sec.node_ids.entries()) {
+      if (!known(`${path}.${idIndex}`) || typeof id !== 'string') return undefined;
+      sectionNodeIds.add(id);
+    }
+  }
   return slotNodeIds.filter(id => !sectionNodeIds.has(id));
 }
 
@@ -746,6 +582,8 @@ export function validatePresentResult(
   externalViolations: readonly PresentResultViolation[] = [],
   stage: PresentResultStage = 'completed',
   nodeIdState?: PresentNodeIdStateLookup,
+  known: (path: string) => boolean = () => true,
+  viewKnown = true,
 ): PresentResultRequest | PresentResultFailure {
   const faults: ToolError[] = [];
   let allRepairable = true;
@@ -767,7 +605,7 @@ export function validatePresentResult(
     violation.errors.forEach((error, index) => addError(error, violation.repairFields, index === 0 ? violation.paths : []));
   }
 
-  if (resolvedNodeIds.length === 0) {
+  if (viewKnown && resolvedNodeIds.length === 0) {
     addError({ path: '', code: 'empty_view' });
   }
 
@@ -786,61 +624,66 @@ export function validatePresentResult(
   /** One fault per unlinkable id, at its element path, by the engine state of the id and never the id (D-102); in a completed run `add_node_ids` brings any in-scope id into view. */
   const addNodeIdError = (field: PresentResultRepairField, heldPath: string, path: string, nodeId: string): void => {
     const state = stateOf(nodeId);
+    if (!viewKnown && state !== 'not_in_model' && state !== 'out_of_scope') return;
     const code: IssueCode = state === 'not_in_model' ? 'not_found' : state === 'out_of_scope' ? 'result_out_of_scope'
       : stage === 'completed' ? 'addable_to_result' : 'not_in_result';
     if (code === 'addable_to_result') repairFields.add('add_node_ids');
     addError({ path, code, values: [...resolvedNodeIds] }, [field], [heldPath]);
   };
 
-  for (const [sectionIndex, sec] of (input.sections ?? []).entries()) {
-    for (const [idIndex, nodeId] of (sec.node_ids ?? []).entries()) if (!resolvedSet.has(nodeId)) addNodeIdError('sections', `sections.${sectionIndex}`, `sections.${sectionIndex}.node_ids.${idIndex}`, nodeId);
-    for (const nodeId of sec.node_ids ?? []) {
-      if (resolvedSet.has(nodeId)) sectionLinkedNodeIds.add(nodeId);
+  let coverageKnown = viewKnown && known('sections') && known('notes');
+  if (Array.isArray(input.sections) && known('sections')) for (const [sectionIndex, sec] of input.sections.entries()) {
+    const path = `sections.${sectionIndex}.node_ids`;
+    if (!sec || !known(`sections.${sectionIndex}`) || !known(path) || !Array.isArray(sec.node_ids)) { coverageKnown = false; continue; }
+    for (const [idIndex, nodeId] of sec.node_ids.entries()) {
+      const idPath = `${path}.${idIndex}`;
+      if (!known(idPath) || typeof nodeId !== 'string') { coverageKnown = false; continue; }
+      if (!resolvedSet.has(nodeId)) addNodeIdError('sections', `sections.${sectionIndex}`, idPath, nodeId);
+      else sectionLinkedNodeIds.add(nodeId);
     }
-  }
+  } else if (input.sections !== undefined) coverageKnown = false;
 
   const noteNodeIds = new Set<string>();
-  if (input.notes?.length) {
+  if (Array.isArray(input.notes) && known('notes')) {
     for (const [noteIndex, note] of input.notes.entries()) {
+      const path = `notes.${noteIndex}.node_id`;
+      if (!note || !known(`notes.${noteIndex}`) || !known(path) || typeof note.node_id !== 'string') { coverageKnown = false; continue; }
       if (resolvedSet.has(note.node_id)) {
         noteNodeIds.add(note.node_id);
       } else {
         addNodeIdError('notes', `notes.${noteIndex}.node_id`, `notes.${noteIndex}.node_id`, note.node_id);
       }
     }
-  }
+  } else if (input.notes !== undefined) coverageKnown = false;
 
   // A repair patch can leave a held draft without the field: the schema that requires it never saw the merged draft.
-  if (!input.highlight_groups) {
+  if (known('highlight_groups') && !input.highlight_groups) {
     addError({ path: 'highlight_groups', code: 'missing' }, ['highlight_groups'], ['highlight_groups']);
   }
-  for (const [groupIndex, g] of (input.highlight_groups ?? []).entries()) {
-    for (const [idIndex, nodeId] of (g.node_ids ?? []).entries()) if (!resolvedSet.has(nodeId)) addNodeIdError('highlight_groups', `highlight_groups.${groupIndex}`, `highlight_groups.${groupIndex}.node_ids.${idIndex}`, nodeId);
+  if (Array.isArray(input.highlight_groups) && known('highlight_groups')) for (const [groupIndex, g] of input.highlight_groups.entries()) {
+    const path = `highlight_groups.${groupIndex}.node_ids`;
+    if (!g || !known(`highlight_groups.${groupIndex}`) || !known(path) || !Array.isArray(g.node_ids)) continue;
+    for (const [idIndex, nodeId] of g.node_ids.entries()) if (known(`${path}.${idIndex}`) && typeof nodeId === 'string' && !resolvedSet.has(nodeId)) addNodeIdError('highlight_groups', `highlight_groups.${groupIndex}`, `${path}.${idIndex}`, nodeId);
   }
 
   // An id an external violation already asks to place in a section (or note) is not repeated with a second repair.
   const alreadyRepairedIds = new Set(externalViolations.flatMap(v => v.entryIds ?? []));
   const unexplainedNodeIds = resolvedNodeIds.filter(id => !sectionLinkedNodeIds.has(id) && !noteNodeIds.has(id) && !alreadyRepairedIds.has(id));
-  if (unexplainedNodeIds.length > 0) {
+  if (coverageKnown && unexplainedNodeIds.length > 0) {
     addError({ path: 'sections.*.node_ids', code: 'node_unexplained', values: unexplainedNodeIds }, ['sections', 'notes'], ['sections', 'notes']);
   }
 
   if (faults.length > 0) {
     const resendList = [...repairFields];
     const repairInstructed = allRepairable && resendList.length > 0;
-    const externalCount = externalViolations.reduce((sum, violation) => sum + violation.errors.length, 0);
     return {
       success: false,
       rejection: makeRejection({
         code: REJECTION_CODES.validation,
-        ...(allRepairable && (externalViolations.length > 0 || unexplainedNodeIds.length > 0) && externalViolations.every(violation => violation.missingContent)
-          && faults.length === externalCount + (unexplainedNodeIds.length > 0 ? 1 : 0)
-          ? { missingParts: resendList } : {}),
         reason: faults.map(fault => `${fault.path}: ${fault.code}`).join('\n'),
         issuePaths: [...issuePaths],
         errors: faults,
         resend: repairInstructed ? resendList : [],
-        ...(repairInstructed ? { resendRules: presentResultResendRules(resendList) } : {}),
       }),
       repairable: allRepairable,
       repairFields: resendList,

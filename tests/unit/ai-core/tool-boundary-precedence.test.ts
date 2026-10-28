@@ -2,6 +2,7 @@
 /** The strict boundary that runs first owns these rejections, so the handler and engine never see the shapes below: a start with no origin/supplement/revision, a non-string scope list, an empty highlight-group list in any served present_result stage, and a neighbour id the engine has not validated as an in-scope direct neighbour. */
 import { describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
+import { z } from 'zod';
 import { VscodeModelPort } from '../../../src/ai/model/vscodeModelPort';
 import { modelUserMessage } from '../../../src/ai/model/modelPort';
 import { REGEX_MAX_LENGTH, checkScopeBudget, createTurnTokenBudget } from '../../../src/ai/support/tokenBudget';
@@ -17,7 +18,7 @@ import { buildActiveHopInstruction } from '../../../src/ai/agent/stagePrompts';
 import { executeSubmitFindings } from '../../../src/ai/tools/handlers/submitFindings';
 import { executePruneCurrent } from '../../../src/ai/tools/handlers/pruneCurrent';
 import { executeStartExploration } from '../../../src/ai/tools/handlers/startExploration';
-import { StartExplorationInputSchema, StartExplorationFreshProviderInputSchema, StartExplorationProviderInputSchema, StartExplorationRefineProviderInputSchema, PruneCurrentInputSchema, presentResultSchemaForPhase, submitFindingsSchemaForMode } from '../../../src/ai/tools/toolSchemas';
+import { ColumnFlowSchema, StartExplorationInputSchema, StartExplorationFreshProviderInputSchema, StartExplorationProviderInputSchema, StartExplorationRefineProviderInputSchema, PruneCurrentInputSchema, presentResultSchemaForPhase, submitFindingsSchemaForMode } from '../../../src/ai/tools/toolSchemas';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import Ajv from 'ajv';
 import { ISSUES, isAdmissionRefusal, isConsentGateRejection, readToolErrorText, renderProblem } from '../../../src/ai/support/toolErrorEnvelope';
@@ -377,7 +378,7 @@ describe('large findings repairs', () => {
     expect(engine.toJSON().agenda).toEqual(before.agenda);
     expect(engine.toJSON().visited).toEqual(before.visited);
     const held = engine.toJSON();
-    expect(JSON.parse(executeSubmitFindings({ focus_node_id: BRANCH }, services))).toHaveProperty('code', 'focus_node_id_mismatch');
+    expect(JSON.parse(executeSubmitFindings({ focus_node_id: BRANCH }, services))).toMatchObject({ code: 'invalid_input', errors: expect.arrayContaining([{ path: 'focus_node_id', code: 'not_current_object', values: [ORIGIN] }]) });
     expect(engine.toJSON()).toEqual(held);
     expect(JSON.parse(executeSubmitFindings({}, services))).toMatchObject({ ok: true, withdrawn: ['badge_label'] });
     expect(engine.columnAspect!.edges).toEqual([expect.objectContaining({ from_node: BRANCH, note: 'Original mapping note.' })]);
@@ -429,6 +430,74 @@ describe('large findings repairs', () => {
     expect(engine.toJSON().memory.detailSlots[ORIGIN]).toMatchObject({ summary: 'Branch supplies Value.',
       sections: [{ angle: 'technical', text: 'Keep the valid prose.' }] });
   });
+  it('MW7: a malformed sections container never invents missing child bodies beside independent faults', () => {
+    const { engine, session, model, graph } = ctWorld();
+    engine.classification = 'both'; session.classification = 'both';
+    const { services } = stubToolServices({ session, model, graph });
+    const rejected = JSON.parse(executeSubmitFindings({ summary: 'Preserve findings.', badge_label: 42,
+      sections: '{broken JSON', questions: [{ nodeId: BRANCH, question: 'Resolve Value.' }],
+      column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }],
+    }, services));
+    expect(rejected.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: 'sections', code: 'json_text' }),
+      expect.objectContaining({ path: 'badge_label', code: 'type' }),
+    ]));
+    expect(rejected.errors.filter((error: { path: string }) => error.path.startsWith('sections.'))).toEqual([]);
+    expect(engine.getDetailSlots()).toEqual([]);
+    expect(JSON.parse(executeSubmitFindings({ sections: { business: 'Business evidence.', technical: 'Technical evidence.' }, badge_label: 'Short' }, services))).toHaveProperty('ok', true);
+  });
+
+  it('MW7: keeps an independent missing neighbor outcome beside a required write-target omission', () => {
+    const { engine, session, model, graph } = ctWorld({ selfLoop: true, outsideWrite: true });
+    const { services } = stubToolServices({ session, model, graph });
+    const rejected = JSON.parse(executeSubmitFindings({ summary: 'Outside supplier evidence.',
+      sections: { technical: 'Retain the supplied evidence.' },
+      column_flow: [{ out_col: 'Value', upstream_columns: [{ node: OTHER, col: 'Value' }] }],
+    }, services));
+    expect(rejected.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: 'column_flow.0.writes_to', code: 'missing' }),
+      expect.objectContaining({ path: '', code: 'neighbor_undecided', values: [BRANCH] }),
+    ]));
+    expect(engine.getDetailSlots()).toEqual([]);
+    expect(JSON.parse(executeSubmitFindings({ column_flow: [{ out_col: 'Value', writes_to: null, upstream_columns: [{ node: BRANCH, col: 'Value' }] }], questions: [{ nodeId: BRANCH, question: 'Resolve the source Value.' }] }, services))).toHaveProperty('ok', true);
+  });
+
+  it('MW7: validates a findings candidate once and derives partial diagnostics without reparsing its fields', () => {
+    const { engine, session, model, graph } = ctWorld();
+    const { services } = stubToolServices({ session, model, graph });
+    const schema = submitFindingsSchemaForMode('ct', 'technical', true, engine.hopSubmitColumns, false, true);
+    const owners = new Set<z.ZodType>();
+    const visit = (owner: z.ZodType): void => {
+      if (owners.has(owner)) return;
+      owners.add(owner);
+      if (owner instanceof z.ZodObject) Object.values(owner.shape).forEach(child => visit(child as z.ZodType));
+      else if (owner instanceof z.ZodArray) visit(owner.element as z.ZodType);
+      else if (owner instanceof z.ZodOptional || owner instanceof z.ZodNullable) visit(owner.unwrap() as z.ZodType);
+      else if (owner instanceof z.ZodUnion) owner.options.forEach(child => visit(child as z.ZodType));
+    };
+    visit(schema);
+    const full = vi.spyOn(schema, 'safeParse');
+    const children = [...owners].filter(owner => owner !== schema).map(owner => vi.spyOn(owner, 'safeParse'));
+    const baseFlow = vi.spyOn(ColumnFlowSchema, 'safeParse');
+    try {
+      const rejected = JSON.parse(executeSubmitFindings({ summary: 'Preserve findings.',
+        sections: { technical: 'Retain SQL evidence.' }, badge_label: 42,
+        column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Missing' }] }],
+        questions: [{ nodeId: BRANCH, question: 'Resolve Value.' }],
+      }, services));
+      expect(rejected.errors).toEqual(expect.arrayContaining([
+        expect.objectContaining({ path: 'badge_label', code: 'type' }),
+        expect.objectContaining({ path: 'column_flow.0.upstream_columns.0.col', code: 'unknown_column' }),
+      ]));
+      expect(full).toHaveBeenCalledTimes(1);
+      expect(children.reduce((sum, spy) => sum + spy.mock.calls.length, 0)).toBe(0);
+      expect(baseFlow).not.toHaveBeenCalled();
+      expect(engine.getDetailSlots()).toEqual([]);
+    } finally { full.mockRestore(); children.forEach(spy => spy.mockRestore()); baseFlow.mockRestore(); }
+    expect(JSON.parse(executeSubmitFindings({ column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }] }, services))).toHaveProperty('ok', true);
+    expect(engine.getDetailSlots()).toContainEqual(expect.objectContaining({ summary: 'Preserve findings.' }));
+  });
+
   it.each(['unsupported-key', 'bad-output'] as const)('reports a bad supplier independently of its $0 entry header', fault => {
     const { engine, session, model, graph } = ctWorld();
     const { services } = stubToolServices({ session, model, graph });
@@ -781,11 +850,11 @@ describe('large findings repairs', () => {
     const before = engine.toJSON();
     const rejected = submit({ summary: 'A valid replacement summary.', ...malformed });
     expect(rejected).toHaveProperty('code', 'invalid_input');
-    expect(rejected.issuePaths).toEqual([path]);
-    expect(rejected.resend).toEqual([path]);
+    expect(rejected.issuePaths).toEqual(path === 'sections.technical' ? [path, 'sections'] : [path]);
+    expect(rejected.resend).toEqual(path === 'sections.technical' ? ['sections'] : [path]);
     const after = engine.toJSON();
     const summaryHeld = path !== 'summary';
-    expect(engine.heldPartsOfCurrentFocus()).toMatchObject({ sections: ['technical'], summary: summaryHeld, resend: [path] });
+    expect(engine.heldPartsOfCurrentFocus()).toMatchObject({ sections: ['technical'], summary: summaryHeld, resend: path === 'sections.technical' ? ['sections'] : [path] });
     expect(after.engineInternals.heldFinding?.finding).toEqual({ ...before.engineInternals.heldFinding?.finding,
       ...(summaryHeld ? { summary: 'A valid replacement summary.' } : {}) });
     for (const key of ['agenda', 'visited', 'removedSet', 'columnAspect', 'scopeNodeIds'] as const) expect(after[key]).toEqual(before[key]);
@@ -982,16 +1051,14 @@ describe('lineage_present_result boundary', () => {
   it.each([
     ['completed', false], ['completed', true], ['synthesis', false], ['synthesis', true],
   ] as const)('rejects missing or empty highlight_groups in the %s schema (retainable=%s)', (stage, retainable) => {
-    const schema = presentResultSchemaForPhase(stage, null, retainable);
+    const schema = presentResultSchemaForPhase(stage, retainable);
     expect(schema.safeParse({ ...base, is_update: stage === 'completed' ? true : undefined }).success).toBe(false);
     expect(schema.safeParse({ ...base, highlight_groups: [] }).success).toBe(false);
   });
 
-  it('rejects empty highlight_groups in the preview schema and in a repair patch', () => {
-    const preview = presentResultSchemaForPhase('visual_preview', null, false, 1);
+  it('rejects empty highlight_groups in the preview schema', () => {
+    const preview = presentResultSchemaForPhase('visual_preview', false, 1);
     expect(preview.safeParse({ name: 'View', sections: [{ label: 'One', node_ids: [ORIGIN], start: 'B1' }], highlight_groups: [] }).success).toBe(false);
-    const repair = presentResultSchemaForPhase('completed', ['highlight_groups']);
-    expect(repair.safeParse({ highlight_groups: [] }).success).toBe(false);
   });
 });
 
@@ -1345,11 +1412,11 @@ it.each([
 });
 
 it('keeps outside-supplier withdrawal alongside the nullable write exit in first feedback', () => {
-  const { engine, session, model, graph } = ctWorld({ deferred: true });
+  const { engine, session, model, graph } = ctWorld({ selfLoop: true, outsideWrite: true });
   const { services } = stubToolServices({ session, model, graph });
   const rejected = JSON.parse(executeSubmitFindings({ summary: 'Outside supplier evidence.',
     sections: { technical: 'Keep the outside supplier fact.' },
-    column_flow: [{ out_col: 'Value', upstream_columns: [{ node: OTHER, col: 'Value' }] }],
+    column_flow: [{ out_col: 'Value', writes_to: null, upstream_columns: [{ node: OTHER, col: 'Value' }] }],
     questions: [{ nodeId: BRANCH, question: 'Trace the reachable Value.' }],
   }, services));
   const first = JSON.parse(renderProblem(readToolErrorText(JSON.stringify(rejected))!, 1));
@@ -1357,7 +1424,7 @@ it('keeps outside-supplier withdrawal alongside the nullable write exit in first
   expect(scopeIssue).toMatchObject({ path: 'column_flow.0.upstream_columns.0.node', correction: ISSUES.supplier_out_of_scope.correction });
   expect(scopeIssue).not.toHaveProperty('allowed');
   expect(engine.getDetailSlots()).toEqual([]);
-  expect(JSON.parse(executeSubmitFindings({column_flow: [{out_col:'Value', upstream_columns:[{node:BRANCH,col:'Value'}]}]},services))).toHaveProperty('ok',true);
+  expect(JSON.parse(executeSubmitFindings({column_flow: [{out_col:'Value', writes_to:null, upstream_columns:[{node:BRANCH,col:'Value'}]}]},services))).toHaveProperty('ok',true);
   expect(engine.getDetailSlots()).toContainEqual(expect.objectContaining({summary:'Outside supplier evidence.'}));
 });
 
@@ -1515,10 +1582,16 @@ it('clears a held start draft on cancellation and never revives it in a new turn
   // A later generation of the same model, through a registry that was not cancelled.
   const resume = buildAiToolRegistry(() => session, { info() {}, debug() {}, warn() {}, error() {} } as never, () => undefined, undefined, { model: port });
   await batch([]);
-  expect(await resume.invoke('lineage_start_exploration', partial), 'nothing revived after cancellation').toBe(expected);
+  const afterCancel = JSON.parse(await resume.invoke('lineage_start_exploration', partial));
+  expect(afterCancel, 'nothing revived after cancellation').toMatchObject(JSON.parse(expected));
+  expect(afterCancel.resend).toEqual(['depth']);
+  expect(session.pendingExploration).toBeNull();
   session.beginTurn(); session.enterLmStage({ kind: 'sm_entry' }, session.turnEpoch);
   await batch([]);
-  expect(await resume.invoke('lineage_start_exploration', partial), 'nothing revived in a new turn').toBe(expected);
+  const afterTurn = JSON.parse(await resume.invoke('lineage_start_exploration', partial));
+  expect(afterTurn, 'nothing revived in a new turn').toMatchObject(JSON.parse(expected));
+  expect(afterTurn.resend).toEqual(['depth']);
+  expect(session.pendingExploration).toBeNull();
 });
 
 it('clears proposal repair on cancel and keeps mission text redacted in original-call evidence', async () => {
@@ -1531,11 +1604,11 @@ it('clears proposal repair on cancel and keeps mission text redacted in original
   void projected.get('lineage_start_exploration')!.inputSchema;
   await invoke('lineage_start_exploration', { proposalRevision: 1, mission_brief: 'private mission text',
     depth: { upstream: { levels: null, exactness: 'exact' } } });
-  expect(session.toolInputRepairDrafts.get('lineage_start_exploration')?.get()).not.toBeNull();
+  expect(session.startExplorationDraft.get()).not.toBeNull();
   expect(session.hopLog.at(-1)?.input).toMatchObject({ mission_brief: { provenance: 'tool_payload', length: 20 } });
   expect(JSON.stringify(session.hopLog)).not.toContain('private mission text');
   session.cancelPendingExploration(session.turnEpoch);
-  expect(session.toolInputRepairDrafts.size).toBe(0);
+  expect(session.startExplorationDraft.get()).toBeNull();
   expect(projected.get('lineage_start_exploration')!.inputSchema.safeParse({}).success).toBe(false);
 });
 
@@ -1606,7 +1679,7 @@ it('does not resurrect an authoritative metadata-invalid optional list when repa
   const rejected = JSON.parse(await invoke('lineage_start_exploration', { origin: ORIGIN, analysisMode: 'ct', classification: 'technical',
     targetColumns: ['Missing'], depth: { upstream: { levels: 1, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } }));
   expect(rejected.issuePaths).toEqual(['targetColumns.0']);
-  expect(session.toolInputRepairDrafts.get('lineage_start_exploration')?.get()).not.toHaveProperty('targetColumns');
+  expect(session.startExplorationDraft.get()).not.toHaveProperty('targetColumns');
   const gate = JSON.parse(await invoke('lineage_start_exploration', { analysisMode: 'bb' }));
   expect(gate.code).toBe('action_required');
   expect(session.pendingExploration?.init.analysisMode).toBe('bb');

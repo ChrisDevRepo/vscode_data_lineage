@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { rejectionFromZodError } from '../../../src/ai/support/toolErrorEnvelope';
 import {
   GetObjectDetailInputSchema,
+  GetScopeBundleInputSchema,
   GetScreenStateInputSchema,
   PresentResultModelSchema,
   SearchObjectsInputSchema,
@@ -36,6 +37,11 @@ type Fault = { path: string; code: string; values?: unknown };
 
 describe('Zod issue matrix', () => {
   it.each<{ name: string; schema: z.ZodType; input: unknown; faults: Fault[]; values?: string[] }>([
+    ...(['upstream_depth', 'downstream_depth'] as const).map(missing => ({
+      name: `Approved08 asymmetric scope: missing ${missing}`, schema: GetScopeBundleInputSchema,
+      input: { origin: 'dbo.a', direction: 'bidirectional', [missing === 'upstream_depth' ? 'downstream_depth' : 'upstream_depth']: 2 },
+      faults: [{ path: missing, code: 'missing' }],
+    })),
     { name: 'invalid_type, absent', schema: SearchObjectsInputSchema, input: {}, faults: [{ path: 'query', code: 'missing' }] },
     { name: 'empty arguments', schema: GetObjectDetailInputSchema, input: {}, faults: [{ path: 'id', code: 'missing' }] },
     { name: 'invalid_type, present with the wrong type', schema: PresentResultModelSchema, input: { ...render, highlight_groups: 'Sources' },

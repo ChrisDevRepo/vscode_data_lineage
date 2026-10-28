@@ -6,7 +6,7 @@ import { HumanMessage } from '@langchain/core/messages';
 import { VscodeModelPort } from '../../../src/ai/model/vscodeModelPort';
 import { markObjectIdField, normalizeModelInput } from '../../../src/ai/tools/normalizeModelInput';
 import { ExplorationDepthSelectionSchema } from '../../../src/engine/shared/explorationDepthContract';
-import { GetScopeBundleInputSchema, SearchObjectsInputSchema, StartExplorationFreshProviderInputSchema, presentResultRepairPatchSchemaForFields } from '../../../src/ai/tools/toolSchemas';
+import { GetScopeBundleInputSchema, SearchObjectsInputSchema, StartExplorationFreshProviderInputSchema } from '../../../src/ai/tools/toolSchemas';
 
 const schema = z.object({
   rows: z.array(z.object({ id: z.string(), n: z.number(), on: z.boolean() })),
@@ -26,15 +26,6 @@ describe('normalizeModelInput', () => {
       expect(normalizeModelInput(owner, '1')).toEqual({ input: '1', fixes: [] });
     }
     expect(normalizeModelInput(z.literal([1, true]), 'true')).toEqual({ input: true, fixes: [{ path: '', before: 'true', after: true }] });
-  });
-  it('normalizes the numeric literal in an actual served indexed repair schema', () => {
-    const owner = presentResultRepairPatchSchemaForFields(['sections'], 'synthesis', 0, undefined, [{ index: 1, fields: ['label'] }]);
-    const input = { sections: [{ index: '1', label: 'Corrected label' }] };
-    const normalized = normalizeModelInput(owner, input);
-    expect(normalized).toEqual({ input: { sections: [{ index: 1, label: 'Corrected label' }] },
-      fixes: [{ path: 'sections.0.index', before: '1', after: 1 }] });
-    expect(owner.safeParse(normalized.input).success).toBe(true);
-    expect(input.sections[0]!.index).toBe('1');
   });
   it.each([
     '{"business":"First authored body","business":"Different authored body"}',

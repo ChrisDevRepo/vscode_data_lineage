@@ -2,7 +2,7 @@
 import Ajv from 'ajv';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { PresentResultModelSchema, normalizePresentSectionLabel, presentResultRepairPatchSchemaForFields } from '../../../src/ai/tools/toolSchemas';
+import { PresentResultModelSchema, normalizePresentSectionLabel, presentResultSchemaForPhase } from '../../../src/ai/tools/toolSchemas';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import type { PresentResultInput } from '../../../src/ai/tools/presentResult';
 
@@ -24,20 +24,6 @@ const labelDraft = { name: 'Pair', summary: 'Distinct sources.', highlight_group
 ] } as PresentResultInput;
 
 describe('present-result schema and provider contract', () => {
-  it.each([
-    [['title'], true],
-    [['title', 'layout_direction'], true],
-    [['name'], false],
-    [['title', 'name'], false],
-    [['sections'], false],
-  ] as const)('serves empty repair patch acceptance for %j as %s', (fields, accepted) => {
-    const schema = presentResultRepairPatchSchemaForFields(fields);
-    const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
-    expect(schema.safeParse({}).success).toBe(accepted);
-    // Cross-field refinements run after the provider's structural schema check.
-    if (accepted) expect(wire({})).toBe(true);
-  });
-
   it('preserves authored whitespace instead of trimming valid content', () => {
     const payload = { ...resultWith([{ label: ' Sources ', color: 'source', node_ids: [nodeId] }]),
       name: ' Result ', summary: ' Summary. ', sections: [{ label: ' Detail ', text: ' Body. ', node_ids: [nodeId] }] };
@@ -68,10 +54,7 @@ describe('present-result schema and provider contract', () => {
     const badge = { ...input, sections: [{ label: 'x'.repeat(91), node_ids: [nodeId], text }] };
     expect(PresentResultModelSchema.parse(badge)).toEqual(badge);
     expect(wire(badge)).toBe(true);
-    const patch = { sections: badge.sections };
-    const repair = presentResultRepairPatchSchemaForFields(['sections']);
-    expect(repair.parse(patch)).toEqual(patch);
-    expect(new Ajv({ strict: false }).compile(toModelJsonSchema(repair))(patch)).toBe(true);
+
   });
 
   it.each([
@@ -95,68 +78,20 @@ describe('present-result schema and provider contract', () => {
     expect(highlightGroups.items?.properties?.label).not.toHaveProperty('maxLength');
   });
 
-  it('preserves long legend text without a group cap on held-draft repairs', () => {
-    const repairSchema = presentResultRepairPatchSchemaForFields(['highlight_groups']);
-    const sixty = 'x'.repeat(60);
-    const groups = Array.from({ length: 6 }, (_, index) => ({
-      label: index === 0 ? sixty : `Group ${index + 1}`,
-      color: 'source' as const,
-      node_ids: [nodeId],
-    }));
-
-    const repaired = repairSchema.safeParse({ highlight_groups: groups });
-    expect(repaired.success).toBe(true);
-    if (repaired.success) {
-      expect(repaired.data.highlight_groups?.map(group => group.label)).toEqual([
-        sixty,
-        ...groups.slice(1).map(group => group.label),
-      ]);
-    }
-    expect(repairSchema.safeParse({
-      highlight_groups: [{ label: 'x'.repeat(61), color: 'source', node_ids: [nodeId] }],
-    }).success).toBe(true);
-
-    const schema = z.toJSONSchema(repairSchema, { io: 'input' });
-    const field = schema.properties?.highlight_groups as {
-      items?: { properties?: { label?: Record<string, unknown> } };
-      maxItems?: number;
-    };
-    expect(field).not.toHaveProperty('maxItems');
-    expect(field.items?.properties?.label).not.toHaveProperty('maxLength');
-  });
-
-  it.each(['synthesis', 'visual_preview'] as const)('serves exclusive delete or edit patches in %s', stage => {
-    const schema = presentResultRepairPatchSchemaForFields(['sections'], stage, stage === 'visual_preview' ? 2 : 0);
-    const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
-    const edit = stage === 'visual_preview' ? { start: 'B1' } : { text: 'Corrected detail.' };
-    for (const entry of [{ label: 'Source', remove: true }, { label: 'Source', ...edit }, { label: 'Source', node_ids: [upper] }]) {
-      expect(schema.safeParse({ sections: [entry] }).success).toBe(true);
-      expect(wire({ sections: [entry] })).toBe(true);
-    }
-    for (const entry of [{ label: 'Source', remove: true, ...edit }, { label: 'Source', remove: true, node_ids: [upper] }]) {
-      expect(schema.safeParse({ sections: [entry] }).success).toBe(false);
-      expect(wire({ sections: [entry] })).toBe(false);
-    }
-  });
-
   it('rejects the normalized duplicate at the exact second label path', () => {
     expect(normalizePresentSectionLabel(labelDraft.sections![0]!.label)).toBe('source alpha');
     const parsed = PresentResultModelSchema.safeParse(labelDraft);
     expect(parsed.success).toBe(false);
     if (!parsed.success) expect(parsed.error.issues).toEqual(expect.arrayContaining([expect.objectContaining({ path: ['sections', 1, 'label'], message: expect.stringContaining('Duplicate section label') })]));
   });
-  it('advertises the same normalization in the indexed label repair schema', () => {
-    const schema = presentResultRepairPatchSchemaForFields(['sections'], 'synthesis', 0, undefined, [{ index: 1, fields: ['label'] }]);
-    const projected = toModelJsonSchema(schema) as { properties: { sections: { items: { properties: { label: { description: string } } } } } };
-    const description = projected.properties.sections.items.properties.label.description;
-    expect(description).toMatch(/lowercas|case.insensitive/i);
-    expect(description).toMatch(/trimm/i);
-    expect(description).toMatch(/whitespace.*collaps|collaps.*whitespace/i);
-  });
-  it('serves the text constraint on a repair section entry where the model decides the field', () => {
-    const schema = presentResultRepairPatchSchemaForFields(['sections'], 'synthesis', 0);
-    const projected = toModelJsonSchema(schema) as { properties: { sections: { items: { anyOf: Array<{ properties: { text?: { description: string } } }> } } } };
-    const description = projected.properties.sections.items.anyOf[0]!.properties.text!.description;
-    expect(description).toBe("Detail body for this section label. Required when the label is not a held label; omit to keep a held label's text.");
+  it.each(['synthesis', 'visual_preview', 'completed'])('keeps full stage shape and excludes retired repair grammar in %s (D-098/D-101)', stage => {
+    const schema = presentResultSchemaForPhase(stage, false, 2);
+    const projected = toModelJsonSchema(schema) as { properties: Record<string, unknown> };
+    expect(Object.keys(projected.properties)).toEqual(expect.arrayContaining(['name', 'sections', 'highlight_groups', 'notes']));
+    const entry = stage === 'visual_preview' ? { start: 'B1' } : { text: 'Full section body.' };
+    const payload = { ...resultWith([{ label: 'Source', color: 'source', node_ids: [nodeId] }]), sections: [{ label: 'Source', node_ids: [nodeId], ...entry }] };
+    if (stage === 'visual_preview') delete (payload as Record<string, unknown>).summary;
+    expect(schema.safeParse(payload).success).toBe(true);
+    expect(schema.safeParse({ ...payload, sections: [{ ...payload.sections[0], index: 0, remove: true }] }).success).toBe(false);
   });
 });

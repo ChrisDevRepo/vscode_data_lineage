@@ -11,7 +11,6 @@ import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { getObjectDetail } from '../../../src/ai/tools/tools';
 import { presentRunRecall } from '../../../src/ai/tools/screenStatePresenter';
 import { validatePresentResult } from '../../../src/ai/tools/presentResult';
-import { presentResultRepairPatchSchemaForFields } from '../../../src/ai/tools/toolSchemas';
 import { DEFAULT_TURN_TOKEN_BUDGET } from '../../../src/ai/support/tokenBudget';
 import { ISSUES, at, renderProblem } from '../../../src/ai/support/toolErrorEnvelope';
 import { reconcileAiView } from '../../../src/components/aiViewReconcile';
@@ -224,7 +223,6 @@ describe('present_result id rejection route', () => {
       expect(result.rejection.errors).toEqual([{ path: 'sections.0.node_ids.1', code: 'addable_to_result', values: ['[dbo].[a]'] }]);
       expect(ISSUES.addable_to_result.correction).toContain('add_node_ids');
       expect([...result.repairFields].sort()).toEqual(['add_node_ids', 'sections']);
-      expect(presentResultRepairPatchSchemaForFields(result.repairFields).safeParse({ sections: [{ label: 'Report', node_ids: ['[dbo].[a]'] }], add_node_ids: ['[dbo].[x]'] }).success).toBe(true);
     }
   });
 });

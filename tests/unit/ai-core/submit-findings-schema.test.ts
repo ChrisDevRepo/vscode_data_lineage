@@ -7,6 +7,12 @@ import { SubmitFindingsCtInputSchema, submitFindingsSchemaForMode, validatedFind
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import { normalizeModelInput } from '../../../src/ai/tools/normalizeModelInput';
 
+const findingFields = (input: unknown, schema: Parameters<typeof validatedFindingFields>[1]) => {
+  const parsed = schema.safeParse(input);
+  if (parsed.success) throw new Error('Expected the diagnostic fixture to fail its full schema.');
+  return validatedFindingFields(input, schema, parsed.error);
+};
+
 describe('fresh kept required-field projection', () => {
   it.each([
     { caseSensitive: true, reference: 'dbo.Source', ambiguous: false, accepted: true },
@@ -77,18 +83,18 @@ describe('fresh kept required-field projection', () => {
     });
     const raw = { [field]: [{ [idKey]: 'source', [textKey]: 'Explain its role.', surplus: '' }] };
     const before = structuredClone(raw);
-    const safe = validatedFindingFields(raw, schema);
+    const safe = findingFields(raw, schema);
     expect(safe.actionIdentities?.[field]).toEqual(['source']);
     expect(safe.unavailable.has(field)).toBe(true);
     expect(safe.fields).not.toHaveProperty(field);
     expect(raw).toEqual(before);
     // Base-schema references are diagnostic only: the engine must still resolve unknown ids.
-    const unknown = validatedFindingFields({ [field]: [{ [idKey]: 'unknown', [textKey]: 'Explain its role.' }] }, schema);
+    const unknown = findingFields({ [field]: [{ [idKey]: 'unknown', [textKey]: 'Explain its role.' }] }, schema);
     expect(unknown.actionIdentities?.[field]).toEqual(['unknown']);
     expect(unknown.unavailable.has(field)).toBe(true);
     expect(unknown.fields).not.toHaveProperty(field);
-    expect(validatedFindingFields({ [field]: 'source' }, schema).actionIdentities?.[field]).toBeUndefined();
-    expect(validatedFindingFields({ [field]: [{ [idKey]: 42, [textKey]: 'Explain its role.' }] }, schema).actionIdentities?.[field]).toBeUndefined();
+    expect(findingFields({ [field]: 'source' }, schema).actionIdentities?.[field]).toBeUndefined();
+    expect(findingFields({ [field]: [{ [idKey]: 42, [textKey]: 'Explain its role.' }] }, schema).actionIdentities?.[field]).toBeUndefined();
   });
 
   it.each(['outside', 'OUTSIDE', 'unknown'])('keeps rejected supplier identity %s readable for engine diagnostics without admitting the field', node => {
@@ -97,7 +103,7 @@ describe('fresh kept required-field projection', () => {
     });
     const input = { column_flow: [{ out_col: 'Amount', upstream_columns: [{ node, col: 'Amount' }] }] };
     const before = structuredClone(input);
-    const safe = validatedFindingFields(input, schema);
+    const safe = findingFields(input, schema);
     expect(schema.safeParse(input).success).toBe(false);
     expect(safe.unavailable.has('column_flow')).toBe(true);
     expect(safe.fields).not.toHaveProperty('column_flow');

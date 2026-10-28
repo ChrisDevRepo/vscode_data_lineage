@@ -125,7 +125,7 @@ describe('AI tool registration', () => {
       const binding = lmBindings.get(first.name)!;
       const tokenSource = new vscode.CancellationTokenSource();
       // VS Code receives the same one problem shape (D-103): the call-level fault under the stable code.
-      const thrown = await binding.invoke({ input: {}, toolInvocationToken: undefined }, tokenSource.token).then(() => null, (error: Error) => error);
+      const thrown = await Promise.resolve(binding.invoke({ input: {}, toolInvocationToken: undefined }, tokenSource.token)).then(() => null, (error: Error) => error);
       expect(JSON.parse(thrown!.message)).toEqual({ code: 'no_project_loaded', attempt: '2/3', resend: [],
         guidance: [expect.objectContaining({ errors: [{ path: '', fault: ISSUES.no_project.label, correction: ISSUES.no_project.correction }] })] });
       session.model = makeModel([], [], []);

@@ -3,7 +3,6 @@ import * as vscode from 'vscode';
 import { redactMissionBriefForLog } from '../support/missionBriefDiagnostics';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
-import { RepairDraftStore } from '../support/repairDraftStore';
 import type Graph from 'graphology';
 import { NavigationEngine } from '../sm/smBase';
 import { type AiSession } from '../session/session';
@@ -484,7 +483,7 @@ export function buildAiToolRegistry(
   const ownsInputRepair = host?.caller !== 'external' && typeof host?.model?.modelCalls === 'number';
   const repairEpoch = getSession().turnEpoch;
   if (ownsInputRepair) handler.signal?.addEventListener('abort', () => {
-    if (getSession().turnEpoch === repairEpoch) getSession().toolInputRepairDrafts.clear();
+    if (getSession().turnEpoch === repairEpoch) getSession().startExplorationDraft.clear();
   }, { once: true });
   for (const def of TOOL_DEFS) {
     const execute = dispatch[def.name];
@@ -494,13 +493,8 @@ export function buildAiToolRegistry(
     let startedRound = -1, starts = 0, startedContext = '';
     const context = () => { const s = getSession(); return JSON.stringify([s.turnEpoch, s.phase.kind, s.activeLmStage,
       s.stateMachine?.currentFocus, s.pendingExploration?.revision]); };
-    const draft = () => {
-      const drafts = getSession().toolInputRepairDrafts;
-      let store = drafts.get(def.name);
-      if (store?.getAuthorization()?.context !== context()) { drafts.delete(def.name); store = undefined; }
-      if (!store) { store = new RepairDraftStore(); drafts.set(def.name, store); }
-      return store;
-    };
+    const draft = () => getSession().startExplorationDraft;
+    let heldRound = -1;
     // A repair keeps the full schema; a resent held field replaces its copy (D-098).
     const project = (schema: z.ZodType) => { owner = schema; return schema; };
     registry.register({
@@ -522,23 +516,23 @@ export function buildAiToolRegistry(
             if (turnLease) assertActiveTurnLease(turnLease, getSession().turnEpoch);
             return result;
           }
-          const store = repairable ? draft() : undefined, auth = store?.getAuthorization();
-          const isObject = input !== null && typeof input === 'object' && !Array.isArray(input);
-          const repairing = repairable && starts === 1 && isObject && auth && !auth.ambiguous && auth.round < round;
-          const merged = repairing
-            ? RepairDraftStore.mergeInput(store?.get() ?? {}, input as Record<string, unknown>) : input;
-          const result = await invocationInput.run({ input: redactMissionBriefForLog(input) }, () => execute(merged));
+          const store = repairable ? draft() : undefined;
+          const ambiguous = !!store && (starts > 1 || heldRound === round);
+          if (ambiguous) store!.clear();
+          const candidate = store && !ambiguous ? store.apply(capturedContext, input, owner) : input;
+          if (store?.unchanged) handler.logger.debug(`[Hold] identical resend no-op tool=${def.name}`);
+          const result = await invocationInput.run({ input: redactMissionBriefForLog(input) }, () => execute(candidate));
           if (turnLease) assertActiveTurnLease(turnLease, getSession().turnEpoch);
           const rejection = readToolErrorText(result);
-          if (!repairable || !store || capturedContext !== context() || handler.signal?.aborted || !rejection || isConsentGateRejection(rejection.code)) {
+          if (!store || capturedContext !== context() || handler.signal?.aborted || !rejection || isConsentGateRejection(rejection.code)) {
             store?.clear(); return result;
           }
-          if (!(owner instanceof z.ZodObject) || !rejection.issuePaths?.length || !isObject) { store.clear(); return result; }
-          const ambiguous = starts > 1 || auth?.round === round || auth?.ambiguous === true;
-          const parts = RepairDraftStore.inputParts(owner, merged, rejection.issuePaths, !!rejection.resend?.length);
-          store.hold(ambiguous ? {} : parts, { context: capturedContext, round, paths: [...rejection.issuePaths, ...(rejection.resend ?? [])], ambiguous });
           if (ambiguous) return JSON.stringify({ ...rejection, errors: [...rejection.errors, ...at('ambiguous_repair')], resend: undefined, resendRules: undefined });
-          return result;
+          const paths = rejection.errors.map(error => error.path).filter(Boolean);
+          const overwritten = store.retain(candidate, paths, owner);
+          heldRound = round;
+          return JSON.stringify({ ...rejection, errors: [...rejection.errors, ...at('not_overwritten', overwritten)],
+            resend: [...new Set([...(rejection.resend ?? []), ...paths.map(path => path.split('.')[0])])] });
         };
         try { return await (def.effect === 'read' ? invoke() : serialize(invoke)); }
         catch (error) { if (repairable && capturedContext === context()) draft().clear(); throw error; }

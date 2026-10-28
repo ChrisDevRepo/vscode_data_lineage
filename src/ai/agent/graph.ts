@@ -673,9 +673,6 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     ].join('\n'))];
     const attempt = await executeStandardPhaseAttempt(priorAttempt, 'visual_preview', {
       stage: { kind: 'visual_preview' },
-      presentResultRepairFields: () => sess.presentResultRepairFields,
-      presentResultRepairHighlightLabelIndexes: () => sess.presentResultRepairHighlightLabelIndexes,
-      presentResultRepairSectionLeaves: () => sess.presentResultRepairSectionLeaves,
       presentResultPreviewBlockCount: narrative.blocks.length,
       facts: { memorySections: ['discovery_answer', 'discovery_scope'] },
       messages,
@@ -1090,9 +1087,6 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
 
     const attempt = await executeStandardPhaseAttempt(priorAttempt, 'synthesis', {
       stage: { kind: 'synthesis' },
-      presentResultRepairFields: () => sess.presentResultRepairFields,
-      presentResultRepairHighlightLabelIndexes: () => sess.presentResultRepairHighlightLabelIndexes,
-      presentResultRepairSectionLeaves: () => sess.presentResultRepairSectionLeaves,
       presentResultRetainableSections: () => sess.retainableReportSections() !== null,
       facts: explorationFacts(engine.currentAnalysisMode, engine.currentTargetColumns ?? undefined, {
         classification,
@@ -1143,9 +1137,6 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const attempt = await executeStandardPhaseAttempt(priorAttempt, 'completed', {
       stage: { kind: 'completed' },
       toolSchemaOverrides: new Map([['lineage_start_exploration', StartExplorationFreshProviderInputSchema]]),
-      presentResultRepairFields: () => sess.presentResultRepairFields,
-      presentResultRepairHighlightLabelIndexes: () => sess.presentResultRepairHighlightLabelIndexes,
-      presentResultRepairSectionLeaves: () => sess.presentResultRepairSectionLeaves,
       presentResultRetainableSections: () => sess.retainableReportSections() !== null,
       facts: { memorySections: ['conversation_history'] },
       messages,

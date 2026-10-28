@@ -50,12 +50,6 @@ describe("tool-error-envelope", () => {
     expect(JSON.stringify(error)).not.toContain('Col17x');
   });
 
-  it('caps each category at 8 errors and counts the rest', () => {
-    const rejection = makeRejection({ code: 'invalid_input', errors: Array.from({ length: 11 }, (_, index) => ({ path: `column_flow.${index}.out_col`, code: 'unknown_column' as const })) });
-    const [group] = render(rejection, 1).guidance;
-    expect(group.errors).toHaveLength(8);
-    expect(group.more).toBe(3);
-  });
 
   it('derives errors from Zod issues with schema values, never the submitted value (D-102)', () => {
     const schema = z.object({ mode: z.enum(['a', 'b']), items: z.array(z.object({ name: z.string() }).strict()), count: z.number() }).strict();
@@ -135,7 +129,7 @@ describe("tool-error-envelope", () => {
   it('present_result unknown node ids: each at its element path with the result ids, no echo (D-102)', () => {
     for (const stage of ['completed', 'synthesis', 'visual_preview'] as const) {
       const sentId = '[dbo].[x]', sentLabel = 'LabelSentinel';
-      const input = { name: 'Reports', summary: 'Reports lineage.', highlight_groups: [{ label: 'Out', color: 'target', node_ids: [sentId] }],
+      const input = { name: 'Reports', summary: 'Reports lineage.', highlight_groups: [{ label: 'Out', color: 'target' as const, node_ids: [sentId] }],
         sections: [{ label: sentLabel, node_ids: ['[dbo].[a]', sentId], text: 'Report output.' }] };
       const result = validatePresentResult(input, ['[dbo].[a]'], undefined, undefined, [], stage, () => 'out_of_scope');
       if (result.success) throw new Error('Expected a node-id rejection');
@@ -255,7 +249,7 @@ describe("tool-error-envelope", () => {
 /** A present_result call with one unknown section id and detail slots that reached no section, rejected by the real handler. */
 describe('renderProblem over a real present_result rejection: an unknown section id and unplaced detail slots', () => {
   const ids = ['[ai].[a]', '[ai].[b]', '[ai].[c]', '[ai].[d]'];
-  async function rejectR3(): Promise<ToolRejection> {
+  async function rejectR3(verifyRepair = false): Promise<ToolRejection> {
     const model = buildModel(ids.map(id => ({ fullName: id, type: 'view' as const, bodyScript: 'SELECT 1 AS Qty', columns: [{ name: 'Qty', type: 'int', nullable: 'NULL', extra: '' }] })),
       [], undefined, undefined, true, undefined, false);
     const session = new AiSession();
@@ -273,6 +267,16 @@ describe('renderProblem over a real present_result rejection: an unknown section
       highlight_groups: [{ label: 'All', color: 'source', node_ids: [ids[0]] }],
       sections: [{ label: 'Origin', node_ids: [ids[0]], text: 'The origin.' }, { label: 'Cleaning', node_ids: ['[placeholder]'], text: 'Cleans rows.' }] }, services));
     if (!rejected) throw new Error('Expected a present_result rejection');
+    if (verifyRepair) {
+      const sections = [
+        { label: 'Origin', node_ids: [ids[0]], text: 'The origin.' },
+        { label: 'Captured findings', node_ids: ids.slice(1), text: 'Captured finding.' },
+      ];
+      const repaired = JSON.parse(await executePresentResult({ sections }, services));
+      expect(repaired).toHaveProperty('success', true);
+      expect(session.resultGraph?.sections).toEqual(sections);
+      expect(session.resultGraph?.nodeIds).toEqual(ids);
+    }
     return rejected;
   }
   const problem = async (stage: FeedbackStage) => render(await rejectR3(), stage);
@@ -288,8 +292,10 @@ describe('renderProblem over a real present_result rejection: an unknown section
     expect(at(await problem(2), 'sections.1.node_ids.0')?.allowed).toEqual(ids);
   });
 
-  it('resends sections with the keyed merge rule', async () => {
-    expect(await problem(1)).toMatchObject({ resend: ['sections'], resend_rule: expect.any(String) });
+  it('accepts a complete sections replacement correcting every listed fault (Approved08 D-099)', async () => {
+    const shown = render(await rejectR3(true), 1);
+    expect(shown.resend).toEqual(['sections']);
+    expect(shown).not.toHaveProperty('resend_rule');
   });
 });
 
@@ -326,19 +332,22 @@ describe('renderProblem over a real submit_findings rejection: a supplier beyond
   }
   const flow = (col: string) => ({ out_col: col, upstream_columns: [{ node: id('raw'), col }], writes_to: { node: id('staging'), col } });
 
-  it('offers no supplier choice at feedback 2 when the only in-scope node is the entry\'s own write target', async () => {
+  it('keeps same-table supplier choices and accepts a different-column correction (Approved08)', async () => {
     const registry = await world();
     const rejection = readToolErrorText(String(await registry.invoke('lineage_submit_findings', { focus_node_id: id('loader'), summary: 'Loads staging from raw.',
       sections: { technical: 'Copies raw into staging.' }, column_flow: [flow('Amount'), { ...flow('Region'), writes_to: { node: id('staging'), col: 'Amount' } }] })));
     if (!rejection) throw new Error('Expected a rejection');
     expect(rejection.errors.filter(error => error.path === 'column_flow.0.upstream_columns.0.node')).toEqual([
-      { path: 'column_flow.0.upstream_columns.0.node', code: 'supplier_out_of_scope', values: [] }]);
-    // The only in-scope node is the entry's own write target, so no supplier choice remains; the fallback waits for the third rejection.
+      { path: 'column_flow.0.upstream_columns.0.node', code: 'supplier_out_of_scope', values: [id('staging')] }]);
+    // Object choices stay metadata-complete; the existing tracer checks identical column endpoints.
     expect(at(render(rejection, 1), 'column_flow.0.upstream_columns.0.node')).not.toHaveProperty('allowed');
-    expect(at(render(rejection, 2), 'column_flow.0.upstream_columns.0.node')?.allowed).toEqual([]);
+    expect(at(render(rejection, 2), 'column_flow.0.upstream_columns.0.node')?.allowed).toEqual([id('staging')]);
     expect(render(rejection, 2).guidance.find(group => group.category === 'reference')?.fallback).toBeUndefined();
     expect(render(rejection, 3).guidance.find(group => group.category === 'reference')?.fallback).toBe(ISSUES.supplier_out_of_scope.fallback);
-    // Each entry writes staging, so staging is a choice for neither entry's suppliers.
-    expect(at(render(rejection, 2), 'column_flow.1.upstream_columns.0.node')?.allowed).toEqual([]);
+    // Region and Amount are distinct endpoints on the same table; metadata, not SQL inference, decides eligibility.
+    expect(at(render(rejection, 2), 'column_flow.1.upstream_columns.0.node')?.allowed).toEqual([id('staging')]);
+    const repaired = JSON.parse(String(await registry.invoke('lineage_submit_findings', { focus_node_id: id('loader'),
+      column_flow: [{ out_col: 'Amount', upstream_columns: [{ node: id('staging'), col: 'Region' }], writes_to: { node: id('staging'), col: 'Amount' } }] })));
+    expect(repaired).toHaveProperty('ok', true);
   });
 });

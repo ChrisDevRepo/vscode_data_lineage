@@ -18,10 +18,10 @@ import type { SessionPhase, ToolControlSignal } from '../session/sessionPhase';
 import { InternalInvariantError } from '../support/internalInvariant';
 import { ClassificationSchema, type ClassificationValue } from '../session/classification';
 import { contextBlockBytes, storedEvidenceKindBytes, type TurnTokenBudget } from '../support/tokenBudget';
-import { RepairDraftStore, type InputRepairAuthorization } from '../support/repairDraftStore';
 import { readToolError, type ToolRejection } from '../support/toolErrorEnvelope';
 import { sanitizeForLog, trunc } from '../../utils/log';
-import type { PresentResultInput, PresentResultRepairAuthorization } from '../tools/presentResult';
+import type { PresentResultInput } from '../tools/presentResult';
+import { ToolDraft } from '../support/toolDraft';
 import type { ChatLmStage } from '../tools/toolPolicy';
 import { errorMessage } from '../../utils/errorMessage';
 
@@ -209,28 +209,10 @@ export class AiSession {
   private _presentResultFailureCountThisTurn = 0;
   /** Count of failed `present_result` invocations in the current turn. */
   public get presentResultFailureCountThisTurn(): number { return this._presentResultFailureCountThisTurn; }
-  /** Nonform input drafts are uncommitted and scoped to one turn/phase/focus/proposal. */
-  public readonly toolInputRepairDrafts = new Map<string, RepairDraftStore<Record<string, unknown>, InputRepairAuthorization>>();
-  /** Held full `present_result` draft for narrow patch-only synthesis repair. */
-  public readonly presentResultRepairDraft = new RepairDraftStore<
-    PresentResultInput,
-    PresentResultRepairAuthorization
-  >();
-
-  /** Fields the held `present_result` repair draft authorizes a resend to patch, or `null` when none is held. */
-  public get presentResultRepairFields(): PresentResultRepairAuthorization['fields'] | null {
-    return this.presentResultRepairDraft.getAuthorization()?.fields ?? null;
-  }
-
-  /** Highlight label indexes authorized for leaf-only repair, or `null` for ordinary field repair. */
-  public get presentResultRepairHighlightLabelIndexes(): readonly number[] | null {
-    return this.presentResultRepairDraft.getAuthorization()?.highlightLabelIndexes ?? null;
-  }
-
-  /** Held section fields authorized for indexed repair, or `null` for ordinary section repair. */
-  public get presentResultRepairSectionLeaves(): PresentResultRepairAuthorization['sectionLeaves'] | null {
-    return this.presentResultRepairDraft.getAuthorization()?.sectionLeaves ?? null;
-  }
+  /** Uncommitted start fields, scoped to the turn, stage and pending proposal. */
+  public readonly startExplorationDraft = new ToolDraft<Record<string, unknown>>();
+  /** Uncommitted report fields; the phase schema remains complete during correction. */
+  public readonly presentResultRepairDraft = new ToolDraft<PresentResultInput>();
 
   /** Reason the current turn's synthesis rendered the model's held text without a working preview/panel step, or `null` when the last render was clean. Set by {@link markSynthesisRenderDegraded}; read and cleared once by the participant's one-shot warning toast via {@link consumeSynthesisRenderDegraded}. */
   private _synthesisRenderDegradedReason: string | null = null;
@@ -328,7 +310,7 @@ export class AiSession {
 
   /** Opens a new turn: bumps and returns the turn-ownership epoch the caller threads into this turn's guarded session writes. */
   public beginTurn(): number {
-    this.toolInputRepairDrafts.clear();
+    this.startExplorationDraft.clear();
     this._turnEpoch += 1;
     return this._turnEpoch;
   }
@@ -372,7 +354,7 @@ export class AiSession {
 
   /** Clears all exploration-specific state while preserving environment metadata. */
   public resetExploration(): void {
-    this.toolInputRepairDrafts.clear();
+    this.startExplorationDraft.clear();
     this.memory.reset();
     this.stateMachine = null;
     this.explorationRunId = null;
@@ -614,7 +596,7 @@ export class AiSession {
   public cancelPendingExploration(token: number): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'cancelPendingExploration');
     if (guard.kind !== 'accepted') return guard;
-    this.toolInputRepairDrafts.clear();
+    this.startExplorationDraft.clear();
     this.pendingExploration = null;
     if (this.stateMachine?.status === 'complete' && this.resultGraph) this.enterCompleted(token);
     else this.enterIdle(token);

@@ -1047,9 +1047,7 @@ describe('current task completeness before advancement', () => {
       ]) });
     if (!('code' in rejected)) throw new Error('Expected both independent boundary faults');
     expect(rejected.issuePaths).toHaveLength(2);
-    expect(rejected.hint ?? '').not.toContain('Held:');
     expect(engine.toJSON().engineInternals.heldFinding?.finding.sections).toEqual(finding.sections);
-    expect(rejected.hint ?? '').not.toContain('Resend the full tool call');
     expect(rejected.issuePaths).not.toContain('column_flow.0');
     const after = engine.toJSON();
     for (const key of ['agenda', 'visited', 'removedSet', 'columnAspect', 'scopeNodeIds', 'nodeStates'] as const) expect(after[key]).toEqual(before[key]);
@@ -1586,7 +1584,7 @@ describe('result dispositions', () => {
     const rejected = engine.submitFindings({ ...record(producer),
       column_flow: [{ out_col: 'X', upstream_columns: [], writes_to: { node: equivalent ? ' "D" . "stored" ' : stored, col: 'X' } }] });
     expect(rejected).toMatchObject({ code: 'route_validation_failed', issuePaths: ['column_flow.0.writes_to.node'],
-      errors: expect.arrayContaining([{ path: 'column_flow.0.writes_to.node', code: 'out_of_scope' }]) });
+      errors: [{ path: 'column_flow.0.writes_to.node', code: 'out_of_scope' }] });
     expect(shownMessages(rejected), 'D-102: no echoed id').not.toContain(stored);
     expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
     expect(engine.submitFindings({ ...record(producer), column_flow: [{ out_col: 'X', upstream_columns: [] }],
@@ -1942,7 +1940,7 @@ describe('CT boundary rejects instead of dropping a column reference', () => {
     const rejected = engine.submitFindings({ ...guardRecord(origin), column_flow: [{ out_col: 'Total', upstream_columns: [{ node: source, col: 'Amount' }, { node, col: 'Amount' }] }],
       questions: [{ nodeId: source, question: 'Resolve Amount.' }] });
     expect(rejected).toMatchObject({ issuePaths: ['column_flow.0.upstream_columns.1.node'],
-      errors: expect.arrayContaining([{ path: 'column_flow.0.upstream_columns.1.node', code: 'not_neighbor' }]) });
+      errors: [{ path: 'column_flow.0.upstream_columns.1.node', code: 'not_neighbor' }] });
     expect(shownMessages(rejected), 'D-102: no echoed id').not.toContain(node);
     expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
     expect(engine.toJSON().agenda).toEqual(before.agenda);

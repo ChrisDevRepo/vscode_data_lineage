@@ -75,39 +75,30 @@ it.each([false, true])('stages accepted node choices and keeps the held report (
   const first = renderProblem(rejected, 1);
   expect(first, 'D-102: the sent id is not echoed').not.toContain('dbo.missing');
   expect(shownErrors(first)).toContainEqual(expect.objectContaining({ path: 'sections.1.node_ids.0' }));
-  expect(JSON.parse(first)).toMatchObject({ resend: ['sections'], resend_rule: expect.any(String) });
+  expect(JSON.parse(first)).toMatchObject({ resend: ['sections'] });
   expect(first).not.toContain('Accepted ids');
   expect(first).not.toContain(source);
   expect(first).not.toContain(sibling);
-  const repeated = repeatFault ? JSON.parse(await executePresentResult({ sections: [{ label: 'Unknown', node_ids: ['dbo.missing'] }] }, services)) : rejected;
+  const repeated = repeatFault ? JSON.parse(await executePresentResult({ sections: input.sections }, services)) : rejected;
   expect(repeated.code).toBe('validation');
   expect(shownErrors(renderProblem(repeated, 2))).toContainEqual(expect.objectContaining({ path: 'sections.1.node_ids.0', allowed: [origin, sibling, source].sort() }));
   expect(deliverPreview).not.toHaveBeenCalled();
-  expect(session.presentResultRepairDraft.get()?.sections?.map(section => section.text)).toEqual(input.sections.map(section => section.text));
-  expect(JSON.parse(await executePresentResult({ sections: [{ label: 'Unknown', node_ids: [] }] }, services)).success).toBe(true);
+  expect(session.presentResultRepairDraft.get()?.sections).toBeUndefined();
+  expect(JSON.parse(await executePresentResult({ sections: input.sections.map(section => section.label === 'Unknown' ? { ...section, node_ids: [] } : section) }, services)).success).toBe(true);
   expect(session.presentationArtifact?.aiMetadata.description).toContain('All known objects.');
   expect(session.presentationArtifact?.aiMetadata.description).toContain('A rejected link.');
 });
 
-it.each([false, true])('rejects held presentation fields without widening sections repair (repeat full=%s)', async repeatFull => {
+it.each([false, true])('accepts a section correction with held presentation fields resent (D-098, repeat full=%s)', async repeatFull => {
   const { session, services, origin, source, sibling, deliverPreview } = world(false);
   const original = { ...firstCall(origin), title: 'Held title', sections: [
     { label: 'Known', node_ids: [origin, source, sibling], text: 'Held known body.' },
     { label: 'Unknown', node_ids: ['dbo.missing'], text: 'Held rejected-link body.' },
   ] };
   expect(JSON.parse(await executePresentResult(original, services)).code).toBe('validation');
-  const held = structuredClone(session.presentResultRepairDraft.get());
-  const auth = structuredClone(session.presentResultRepairDraft.getAuthorization());
-  expect(auth?.fields).toEqual(['sections']);
-  const correction = { sections: [{ label: 'Unknown', node_ids: [] }] };
-  if (repeatFull) {
-    const repeated = JSON.parse(await executePresentResult({ ...correction, summary: original.summary, title: original.title, name: original.name, is_update: true }, services));
-    expect(repeated.code).toBe('invalid_input');
-    expect(session.presentResultRepairDraft.get()).toEqual(held);
-    expect(session.presentResultRepairDraft.getAuthorization()).toEqual(auth);
-    expect(deliverPreview).not.toHaveBeenCalled();
-  }
-  expect(JSON.parse(await executePresentResult(correction, services)).success).toBe(true);
+  const correction = { sections: original.sections.map(section => section.label === 'Unknown' ? { ...section, node_ids: [] } : section) };
+  const resent = repeatFull ? { summary: original.summary, title: original.title, name: original.name, is_update: true } : {};
+  expect(JSON.parse(await executePresentResult({ ...correction, ...resent }, services)).success).toBe(true);
   expect(deliverPreview).toHaveBeenCalledOnce();
   expect(session.presentationArtifact?.name).toBe(original.name);
   expect(session.presentationArtifact?.aiMetadata.summary).toBe(original.summary);
@@ -126,9 +117,9 @@ it('stages committed section choices after first feedback and keeps a call witho
   const rejected = JSON.parse(await executePresentResult({ ...firstCall(origin), sections: [{ label: 'New label', node_ids: [' '] }] }, services));
   const first = renderProblem(rejected, 1);
   expect(first, 'D-102: the sent label is not echoed').not.toContain('New label');
-  expect(rejected.errors).toContainEqual(expect.objectContaining({ path: 'sections', code: 'uncommitted_label' }));
+  expect(rejected.errors).toContainEqual(expect.objectContaining({ path: 'sections.0.label', code: 'uncommitted_label' }));
   expect(first).not.toContain('Committed sources sentinel');
-  expect(shownErrors(renderProblem(rejected, 2))).toContainEqual(expect.objectContaining({ path: 'sections', allowed: ['Committed sources sentinel'] }));
+  expect(shownErrors(renderProblem(rejected, 2))).toContainEqual(expect.objectContaining({ path: 'sections.0.label', allowed: ['Committed sources sentinel'] }));
   expect(JSON.parse(await executePresentResult({}, services)).success).toBe(true);
   expect(session.presentationArtifact?.aiMetadata.description).toContain('The committed body.');
 });
@@ -144,15 +135,15 @@ it.each(['Missing', 42])('holds a preview with start %j and repairs only that fi
   const rejected = JSON.parse(await executePresentResult(raw, services));
   expect(rejected).toMatchObject({ code: 'invalid_input', issuePaths: ['sections.0.start'] });
   expect(rejected).not.toHaveProperty('missingParts');
-  expect(session.presentResultRepairDraft.get()?.sections).toEqual(raw.sections);
+  expect(session.presentResultRepairDraft.get()?.sections).toBeUndefined();
   expect(deliverPreview).not.toHaveBeenCalled();
   const held = structuredClone(session.presentResultRepairDraft.get());
-  expect(JSON.parse(await executePresentResult({ sections: [{ index: 0, start: 'B99' }] }, services))).toHaveProperty('code', 'invalid_input');
+  expect(JSON.parse(await executePresentResult({ sections: [{ ...raw.sections[0], start: 'B99' }] }, services))).toHaveProperty('code', 'invalid_input');
   expect(session.presentResultRepairDraft.get()).toEqual(held);
   const empty = JSON.parse(await executePresentResult({}, services));
   expect(empty.resend).toEqual(['sections']);
   expect(session.presentResultRepairDraft.get()).toEqual(held);
-  const repaired = JSON.parse(await executePresentResult({ sections: [{ index: 0, start: 'B1' }] }, services));
+  const repaired = JSON.parse(await executePresentResult({ sections: [{ ...raw.sections[0], start: 'B1' }] }, services));
   expect(repaired).toMatchObject({ success: true });
   expect(deliverPreview).toHaveBeenCalledOnce();
   expect(session.presentationArtifact?.aiMetadata.description).toContain('Source prices feed the report.');
@@ -170,28 +161,33 @@ it('states each out-of-order preview start at its own start path without echoing
   expect(deliverPreview).not.toHaveBeenCalled();
   for (const stage of [1, 2, 3] as const) {
     const shown = renderProblem(rejected, stage);
-    expect(shownErrors(shown).filter((error: { path: string }) => error.path !== '').map((error: { path: string }) => error.path)).toEqual(['sections.2.start', 'sections.3.start']);
+    expect(shownErrors(shown).filter(error => error.path !== '').map(error => error.path)).toEqual(['sections.2.start', 'sections.3.start']);
     expect(shown, 'D-102: no echoed label').not.toContain('Sentinel');
     expect(shown, 'D-102: no echoed start').not.toMatch(/\bB[23]\b/);
   }
 });
 
-it('keeps a merged report label fault and one held repair scope together', async () => {
-  const { session, services, origin, deliverPreview } = world(false);
+it('revalidates duplicate labels on a whole section replacement (D-101)', async () => {
+  const { session, services, origin, source, sibling, deliverPreview } = world(false);
   const input = { ...firstCall(origin), sections: [
     { label: '', node_ids: [origin], text: 'The report body stays held.' },
     { label: 'Other', node_ids: [], text: 'The other body stays held.' },
   ] };
   const first = JSON.parse(await executePresentResult(input, services));
   expect(first.issuePaths).toContain('sections.0.label');
-  const rejected = JSON.parse(await executePresentResult({ sections: [{ index: 0, label: 'Other' }] }, services));
-  expect(rejected).toMatchObject({ code: 'validation', issuePaths: ['sections.1.label'] });
-  expect(rejected.errors).toEqual([expect.objectContaining({ path: 'sections.1.label', code: 'duplicate' })]);
-  expect(rejected.resend).toEqual(['sections']);
-  expect(session.presentResultRepairDraft.get()?.sections?.map(section => section.text)).toEqual([
-    'The report body stays held.', 'The other body stays held.',
+  const rejected = JSON.parse(await executePresentResult({ sections: input.sections.map((section, index) => index === 0 ? { ...section, label: 'Other' } : section) }, services));
+  expect(rejected).toMatchObject({ code: 'invalid_input' });
+  expect(rejected.errors).toEqual([
+    expect.objectContaining({ path: 'sections.1.label', code: 'duplicate' }),
+    { path: 'sections.*.node_ids', code: 'node_unexplained', values: [source, sibling] },
   ]);
+  expect(rejected.resend).toEqual(['sections', 'notes']);
+  expect(session.presentResultRepairDraft.get()?.sections).toBeUndefined();
   expect(deliverPreview).not.toHaveBeenCalled();
+  expect(JSON.parse(await executePresentResult({ sections: [
+    { ...input.sections[0], label: 'Report', node_ids: [origin, source, sibling] }, input.sections[1],
+  ] }, services))).toHaveProperty('success', true);
+  expect(deliverPreview).toHaveBeenCalledOnce();
 });
 
 it.each([null, []])('requests one complete resend when no report draft can be held: %j', async input => {
@@ -303,7 +299,8 @@ describe('CT chain-coverage rejection', () => {
   it('names sections and notes as the repair fields, never highlight_groups', async () => {
     const { services, origin, source } = ctWorld();
     const result = JSON.parse(await executePresentResult(firstCall(origin), services));
-    expect(result).toMatchObject({ code: 'validation', missingParts: ['sections', 'notes'], feedbackAt: expect.any(String) });
+    expect(result).toMatchObject({ code: 'validation' });
+    expect(result).not.toHaveProperty('missingParts');
     expect(result.errors).toContainEqual({ path: 'sections.*.node_ids', code: 'node_unexplained', values: [source] });
     expect(result.resend).toEqual(['sections', 'notes']);
   });
@@ -319,10 +316,10 @@ describe('CT chain-coverage rejection', () => {
     const third = JSON.parse(await executePresentResult(textless, services));
 
     for (const rejected of [second, third]) {
-      expect(rejected).toMatchObject({ code: 'validation', issuePaths: ['sections'] });
-      expect(rejected.errors).toEqual([expect.objectContaining({ path: 'sections.0.text', code: 'missing' })]);
+      expect(rejected).toMatchObject({ code: 'invalid_input', issuePaths: ['sections.0.text'] });
+      expect(rejected.errors).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'sections.0.text', code: 'missing' })]));
       expect(JSON.stringify(rejected), 'D-102: the sent label is not echoed').not.toContain('Upstream: Staging');
-      expect(rejected).toMatchObject({ resend: ['sections', 'notes'], resendRules: ['sections', 'notes'] });
+      expect(rejected).toMatchObject({ resend: ['sections'] });
     }
     expect(renderProblem(second, 2)).toBe(renderProblem(third, 2));
     expect(first.resend).toEqual(['sections', 'notes']);

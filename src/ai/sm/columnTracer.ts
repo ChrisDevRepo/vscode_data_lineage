@@ -1,6 +1,7 @@
 import { resolveScalarReturnTarget, resolveFunctionCallerTarget } from './scalarReturnBinding';
 import { ColumnAspect, ColumnFlowEntry, ColumnEdge, HopFinding, InvalidRoute } from './smTypes';
 import type { DatabaseModel, LineageNode } from '../../engine/types';
+import { resolveModelNodeId } from '../support/modelReferences';
 import { edgeApiType } from '../support/aiPresenter';
 import { getNodeColumns, SCRIPT_TYPES } from '../support/graphUtils';
 import { ColumnStore } from '../../engine/columnStore';
@@ -217,7 +218,7 @@ export class ColumnTracer {
       }
 
       const stagedBeforeEntry = stagedEdges.length;
-      const resolvedTarget = resolveColumnFlowTarget(entry, focusId, nodeMap);
+      const resolvedTarget = resolveColumnFlowTarget(entry, focusId, nodeMap, this.identifierCaseSensitive);
       const toNodeId = resolvedTarget?.attributionTo ?? null;
       const toNodeObj = toNodeId ? nodeMap.get(toNodeId) : null;
       if (entry.writes_to && !toNodeObj) {
@@ -332,7 +333,7 @@ export class ColumnTracer {
       const upDetached = detachedIn(edges, attached);
       const downDetached = detachedIn(edges, downstreamAttached);
       if (entry.upstream_columns.length === 0) {
-        const target = resolveColumnFlowTarget(entry, focusId, nodeMap);
+        const target = resolveColumnFlowTarget(entry, focusId, nodeMap, this.identifierCaseSensitive);
         const upstream = activeNorm.includes(this.columnKey(entry.out_col)) && (anchors.has(endpointKey(focusId, entry.out_col))
           || target !== null && anchors.has(endpointKey(target.attributionTo, target.attributionCol)));
         const downstream = incomingDownstreamRefs.some(ref => this.columnKey(ref.col) === this.columnKey(entry.out_col));
@@ -442,14 +443,15 @@ export function resolveColumnFlowTarget(
   entry: ColumnFlowEntry,
   focusId: string,
   nodeMap: Map<string, LineageNode>,
+  identifierCaseSensitive = false,
 ): ColumnFlowTargetResolution | null {
   if (entry.returns_to) {
-    const toNode = nodeMap.get(entry.returns_to.node)?.id;
+    const toNode = resolveModelNodeId(entry.returns_to.node, nodeMap, identifierCaseSensitive);
     if (!toNode) return null;
     return { attributionTo: toNode, attributionCol: entry.returns_to.col, writerEdge: null };
   }
   if (entry.writes_to?.node) {
-    const toNode = nodeMap.get(entry.writes_to.node)?.id;
+    const toNode = resolveModelNodeId(entry.writes_to.node, nodeMap, identifierCaseSensitive);
     if (!toNode) return null;
     return {
       attributionTo: toNode,

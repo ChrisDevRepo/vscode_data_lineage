@@ -1,5 +1,5 @@
 /** Owns presentResult.ts coverage APIs: highlights cover bare nodes; only sections render detail slots. */
-import { describe, expect, it } from 'vitest';
+import { assert, describe, expect, it } from 'vitest';
 import { findBareNonPrunedNodes, findUnrenderedDetailSlotIds, type PresentResultInput } from '../../../src/ai/tools/presentResult';
 
 interface CoverageCase {
@@ -46,6 +46,8 @@ describe('presentation coverage contracts', () => {
     const input = row.input as PresentResultInput;
     const result = row.api === 'bare' ? findBareNonPrunedNodes({ node_states: row.states }, input, row.ids)
       : findUnrenderedDetailSlotIds(row.ids, input);
+    assert(result, 'The supplied reference containers are known');
+    assert(result, 'Expected known coverage for a fully shaped fixture');
     expect(result.slice().sort()).toEqual(row.expected.slice().sort());
     expect(JSON.stringify(row.input), 'coverage observation must not mutate the payload').toBe(before);
     if (row.excluded) expect(result).not.toContain(row.excluded);

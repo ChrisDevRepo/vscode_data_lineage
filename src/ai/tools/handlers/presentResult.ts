@@ -6,28 +6,23 @@ import {
   validatePresentResult, orderAndAssemble, findDisconnectedViewNodes,
   findBareNonPrunedNodes, findUnrenderedDetailSlotIds, requiredDetailSlotIds, buildColumnChainPreface,
   discoveryPreviewNarrative,
-  mergePresentResultRepairPatch,
-  holdRejectedPresentResult,
-  findTextlessNewSections,
   findStartOrderIssues,
   START_ORDER_FAULT,
-  presentResultResendRules,
   assemblePreviewSections,
   assignEvidenceIds,
   expandEvidenceRefs,
   evidenceCoverage,
   type PresentResultViolation,
   type PresentResultInput,
-  type PresentResultRepairPatch,
   type PresentResultStage,
   type PresentNodeIdState,
   type PresentNodeIdStateLookup,
 } from '../../tools/presentResult';
-import { mergedSectionsSchemaForPhase, normalizePresentSectionLabel, presentResultSchemaForPhase } from '../../tools/toolSchemas';
+import { normalizePresentSectionLabel, presentResultSchemaForPhase } from '../../tools/toolSchemas';
 import { edgeApiType } from '../../support/aiPresenter';
 import { prunePreserveOnly } from '../../support/viewPrune';
 import { resolveModelNodeId, resolveModelNodeIds } from '../../support/modelReferences';
-import { at, makeRejection, rejectionFromZodError, type IssueCode, type ToolRejection } from '../../support/toolErrorEnvelope';
+import { at, combineToolRejections, makeRejection, rejectionFromZodError, type IssueCode, type ToolRejection } from '../../support/toolErrorEnvelope';
 import { type ToolServices, getModelNodeMap } from './toolServices';
 import type { ResultGraph, PresentationArtifact } from '../../session/types';
 import type { SmState } from '../../sm/smTypes';
@@ -35,7 +30,7 @@ import { REJECTION_CODES } from '../../support/rejectionCodes';
 import { isCancellationOutcome } from '../../support/cancellation';
 
 /** Binds only declared report-reference fields; raw arguments and authored text remain intact. */
-function bindPresentationReferences<T extends PresentResultInput | PresentResultRepairPatch>(input: T, model: NonNullable<AiSession['model']>): T {
+function bindPresentationReferences<T extends PresentResultInput>(input: T, model: NonNullable<AiSession['model']>): T {
   const nodeMap = getModelNodeMap(model);
   const bind = (id: string): string => typeof id === 'string'
     ? resolveModelNodeId(id, nodeMap, model.identifierCaseSensitive) ?? id : id;
@@ -65,6 +60,7 @@ function resolveRetainedSections(
   supplied: ReadonlyArray<{ label: string; node_ids?: string[]; text?: string }> | undefined,
   committed: NonNullable<ResultGraph['sections']>,
   renderedNodeIds: ReadonlySet<string>,
+  known: (path: string) => boolean = () => true,
 ): { sections: Array<{ label: string; node_ids: string[]; text: string }>; unknownIndexes: number[] } {
   const byLabel = new Map(committed.map(sec => [normalizePresentSectionLabel(sec.label), sec]));
   const source: ReadonlyArray<{ label: string; node_ids?: string[]; text?: string }> = supplied?.length
@@ -73,6 +69,7 @@ function resolveRetainedSections(
   const sections: Array<{ label: string; node_ids: string[]; text: string }> = [];
   const unknownIndexes: number[] = [];
   for (const [index, sec] of source.entries()) {
+    if (!sec || typeof sec !== 'object' || typeof sec.label !== 'string' || !known(`sections.${index}.label`) || !known(`sections.${index}.text`)) continue;
     const kept = byLabel.get(normalizePresentSectionLabel(sec.label));
     const nodeIds = sec.node_ids ?? kept?.node_ids?.filter(id => renderedNodeIds.has(id)) ?? [];
     if (typeof sec.text === 'string') {
@@ -148,96 +145,41 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         ? discoveryPreviewNarrative(sess.lastDiscoveryAnswer)
         : null;
 
-      const reject = (rejection: ToolRejection): string => {
-        sess.recordPresentResultFailure(turnEpoch);
-        return s.logAndReturn('lineage_present_result', rejection, rawInput);
-      };
-
       const retainableSections = !isVisualPreview ? sess.retainableReportSections() : null;
-      const schema = presentResultSchemaForPhase(
-          presentResultStage, sess.presentResultRepairFields, retainableSections !== null,
-          previewNarrative?.blocks.length ?? 0, sess.presentResultRepairHighlightLabelIndexes ?? undefined,
-          sess.presentResultRepairSectionLeaves ?? undefined,
-        );
-      const parsed = schema.safeParse(input);
-      if (!parsed.success) {
-        const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
-        const repaired = holdRejectedPresentResult(drafts, input, rejection.issuePaths ?? [], presentResultStage, retainableSections, false, rejection);
-        const authorization = drafts.getAuthorization();
-        const held = drafts.get();
-        if (!repaired && held && authorization) {
-          rejection.resend = [...authorization.fields];
-          rejection.resendRules = presentResultResendRules(authorization.fields, (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes, authorization.sectionLeaves);
-        }
-        return reject(rejection);
-      }
-      input = bindPresentationReferences(parsed.data as PresentResultInput | PresentResultRepairPatch, model);
-
-      const heldDraft = drafts.get();
-      const held = heldDraft ? bindPresentationReferences(heldDraft, model) : heldDraft;
-      const authorization = drafts.getAuthorization();
-      let presentInput: PresentResultInput;
-      if (held && authorization) {
-        const patch = input as PresentResultRepairPatch;
-        const textless = authorization.sectionLeaves
-          ? []
-          : findTextlessNewSections(
-            held.sections,
-            (patch.sections ?? []) as Parameters<typeof findTextlessNewSections>[1],
-          );
-        if (textless.length > 0) {
-          const body = isVisualPreview ? 'start' : 'text';
-          return reject(makeRejection({
-            code: REJECTION_CODES.validation,
-            errors: at('missing', textless.map(index => `sections.${index}.${body}`)),
-            issuePaths: ['sections'],
-            resend: [...authorization.fields],
-            resendRules: presentResultResendRules(authorization.fields, (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes),
-          }));
-        }
-        presentInput = mergePresentResultRepairPatch(held, patch, authorization, model.identifierCaseSensitive);
-        const mergedSchema = mergedSectionsSchemaForPhase(presentResultStage, previewNarrative?.blocks.length ?? 0);
-        const merged = presentInput.sections === undefined && retainableSections
-          ? { success: true as const }
-          : mergedSchema.safeParse({ sections: presentInput.sections });
-        if (!merged.success) {
-          const paths = [...merged.error.issues.map(issue => issue.path.join('.')),
-            ...authorization.fields.filter(field => presentInput[field] === undefined)];
-          const rejection = rejectionFromZodError(merged.error, {
-            code: REJECTION_CODES.validation, input: { sections: presentInput.sections }, schema: mergedSchema,
-          });
-          if (!holdRejectedPresentResult(drafts, presentInput, paths, presentResultStage, retainableSections, true, rejection)) {
-            rejection.resend = [...authorization.fields];
-            rejection.resendRules = presentResultResendRules(authorization.fields, (held.sections?.length ?? 0) > 0, authorization.highlightLabelIndexes, authorization.sectionLeaves);
-          }
-          return reject(rejection);
-        }
-      } else {
-        presentInput = input as PresentResultInput;
-      }
+      const schema = presentResultSchemaForPhase(presentResultStage, retainableSections !== null, previewNarrative?.blocks.length ?? 0);
+      const candidate = drafts.apply(`${turnEpoch}:${presentResultStage}`, input, schema);
+      if (drafts.unchanged) s.logger.debug('[Hold] identical resend no-op tool=lineage_present_result');
+      const reject = (rejection: ToolRejection): string => {
+        const paths = [...new Set(rejection.errors.map(error => error.path))];
+        const overwritten = drafts.retain(candidate, paths, schema);
+        const resend = [...new Set([...(rejection.resend ?? []), ...paths.map(path => path.split('.')[0]).filter(Boolean)])];
+        sess.recordPresentResultFailure(turnEpoch);
+        return s.logAndReturn('lineage_present_result', { ...rejection, resend,
+          errors: [...rejection.errors, ...at('not_overwritten', overwritten)] }, rawInput);
+      };
+      const parsed = schema.safeParse(candidate);
+      const schemaProblem = parsed.success ? undefined : rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input: candidate, schema });
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return reject(schemaProblem!);
+      const rejections: ToolRejection[] = schemaProblem ? [schemaProblem] : [];
+      const known = (path: string): boolean => !schemaProblem?.errors.some(error => error.code !== 'unknown_key'
+        && (error.path === '' || error.path === path || path.startsWith(`${error.path}.`)));
+      let presentInput = bindPresentationReferences((parsed.success ? parsed.data : candidate) as PresentResultInput, model);
       if (isVisualPreview) {
         const scope = sess.discoveryScopeArtifact?.turnEpoch === turnEpoch
           ? sess.discoveryScopeArtifact
           : null;
         if (!previewNarrative?.summary || !scope) {
-          return reject(makeRejection({ code: REJECTION_CODES.previewSourceUnavailable, errors: at('no_result_source') }));
+          return reject(combineToolRejections([...rejections, makeRejection({ code: REJECTION_CODES.previewSourceUnavailable, errors: at('no_result_source') })]));
         }
         presentInput = { ...presentInput, summary: previewNarrative.summary, title: previewNarrative.title };
       }
 
-      const rejectGraphEdit = (field: 'add_node_ids' | 'prune_node_ids', rejection: ToolRejection): string => {
-        if (!held) return reject(rejection);
-        drafts.hold(presentInput, { fields: [field] });
-        return reject({ ...rejection, resend: [field] });
-      };
-
-      if (previewNarrative) {
-        const partition = findStartOrderIssues(presentInput.sections ?? []);
+      if (previewNarrative && Array.isArray(presentInput.sections) && known('sections')) {
+        const partition = findStartOrderIssues(presentInput.sections, known);
         if (partition.length > 0) {
           const paths = partition.map(index => `sections.${index}.start`);
-          const rejection = makeRejection({ code: REJECTION_CODES.validation, reason: START_ORDER_FAULT, errors: at('start_order', paths), resend: ['sections'], resendRules: ['sections'] });
-          holdRejectedPresentResult(drafts, presentInput, paths, presentResultStage, null, true, rejection);
-          return reject(rejection);
+          const rejection = makeRejection({ code: REJECTION_CODES.validation, reason: START_ORDER_FAULT, errors: at('start_order', paths), resend: ['sections'] });
+          rejections.push(rejection);
         }
       }
 
@@ -255,7 +197,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         originNodeId: previewScope.origin,
       } : null;
       const resultGraph = previewGraph ?? sess.resultGraph;
-      if (!resultGraph) return reject(makeRejection({ code: REJECTION_CODES.missingResultGraph, errors: at('no_result_source') }));
+      if (!resultGraph) return reject(combineToolRejections([...rejections, makeRejection({ code: REJECTION_CODES.missingResultGraph, errors: at('no_result_source') })]));
 
       let resolvedNodeIds: string[] = [...resultGraph.nodeIds];
       let resolvedEdges: [string, string, string][] = [...resultGraph.edges];
@@ -264,86 +206,72 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       // A graph edit changes the rendered view, so its ids and edges commit with it.
       let graphEdited = false;
 
-      if (graphEditable && presentInput.add_node_ids?.length) {
-        const currentSet = new Set(resolvedNodeIds);
-        const addResolution = resolveModelNodeIds(presentInput.add_node_ids, modelNodeMap, model.identifierCaseSensitive);
-        if (addResolution.unresolved.length > 0) {
-          return rejectGraphEdit('add_node_ids', idFaults('add_node_ids', presentInput.add_node_ids, addResolution.unresolved, 'not_found'));
+      let viewKnown = !graphEditable || (['add_node_ids', 'prune_node_ids'] as const).every(field => known(field)
+        && (presentInput[field] === undefined || (Array.isArray(presentInput[field]) && presentInput[field]!.every((_id, index) => known(`${field}.${index}`)))));
+      let toAdd: string[] = [], toPrune: string[] = [];
+      for (const field of ['add_node_ids', 'prune_node_ids'] as const) {
+        const sent = presentInput[field];
+        if (!graphEditable || !Array.isArray(sent) || !known(field)) continue;
+        const identifiers = sent.filter((id, index) => known(`${field}.${index}`) && typeof id === 'string');
+        const resolution = resolveModelNodeIds(identifiers, modelNodeMap, model.identifierCaseSensitive);
+        if (resolution.unresolved.length) { rejections.push(idFaults(field, sent, resolution.unresolved, 'not_found')); viewKnown = false; }
+        if (field === 'prune_node_ids') toPrune = resolution.resolved;
+        else {
+          const scope = sess.stateMachine?.toJSON();
+          const outside = scope ? resolution.resolved.filter(id => !resolvedNodeIds.includes(id) && !scope.scopeNodeIds.includes(id)) : [];
+          if (outside.length) { rejections.push(idFaults(field, sent, outside, 'out_of_scope')); viewKnown = false; }
+          toAdd = resolution.resolved.filter(id => !resolvedNodeIds.includes(id));
         }
-        const toAdd = addResolution.resolved.filter(id => !currentSet.has(id));
-        const scopeSnapshot = sess.stateMachine?.toJSON() ?? null;
-        const outOfScope = scopeSnapshot
-          ? toAdd.filter(id => !scopeSnapshot.scopeNodeIds.includes(id))
-          : [];
-        if (outOfScope.length > 0) {
-          return rejectGraphEdit('add_node_ids', idFaults('add_node_ids', presentInput.add_node_ids,
-            presentInput.add_node_ids.filter(raw => outOfScope.includes(resolveModelNodeId(raw, modelNodeMap, model.identifierCaseSensitive) ?? raw)), 'out_of_scope'));
-        }
+      }
+      if (viewKnown && toAdd.length) {
         resolvedNodeIds.push(...toAdd);
         const newSet = new Set(resolvedNodeIds);
-        resolvedEdges = model.edges
-          .filter(e => newSet.has(e.source) && newSet.has(e.target))
-          .map(e => [e.source, e.target, edgeApiType(e.type, modelNodeMap.get(e.source)?.type ?? '')] as [string, string, string]);
+        resolvedEdges = model.edges.filter(edge => newSet.has(edge.source) && newSet.has(edge.target))
+          .map(edge => [edge.source, edge.target, edgeApiType(edge.type, modelNodeMap.get(edge.source)?.type ?? '')] as [string, string, string]);
         graphEdited = true;
       }
-
-      if (graphEditable && presentInput.prune_node_ids?.length) {
-        const pruneResolution = resolveModelNodeIds(presentInput.prune_node_ids, modelNodeMap, model.identifierCaseSensitive);
-        if (pruneResolution.unresolved.length > 0) {
-          return rejectGraphEdit('prune_node_ids', idFaults('prune_node_ids', presentInput.prune_node_ids, pruneResolution.unresolved, 'not_found'));
-        }
-        const pruned = prunePreserveOnly(resolvedNodeIds, resolvedEdges, pruneResolution.resolved);
-        resolvedNodeIds = pruned.nodeIds;
-        resolvedEdges = pruned.edges;
-        graphEdited = true;
+      if (viewKnown && toPrune.length) {
+        const pruned = prunePreserveOnly(resolvedNodeIds, resolvedEdges, toPrune);
+        resolvedNodeIds = pruned.nodeIds; resolvedEdges = pruned.edges; graphEdited = true;
       }
-
       if (resultGraph.originNodeId) {
-        if (!resolvedNodeIds.includes(resultGraph.originNodeId)) {
-          return reject(makeRejection({
-            code: REJECTION_CODES.validation,
-            reason: 'The view must keep the origin node, and prune_node_ids prunes it.',
-            errors: at('prunes_origin', ['prune_node_ids']),
-          }));
+        if ((viewKnown && !resolvedNodeIds.includes(resultGraph.originNodeId)) || (!viewKnown && toPrune.includes(resultGraph.originNodeId))) {
+          rejections.push(makeRejection({ code: REJECTION_CODES.validation, reason: 'The view must keep the origin node, and prune_node_ids prunes it.', errors: at('prunes_origin', ['prune_node_ids']) }));
         }
-        const disconnected = findDisconnectedViewNodes(resolvedNodeIds, resolvedEdges, resultGraph.originNodeId);
-        if (disconnected.length > 0) {
-          return reject(makeRejection({
-            code: REJECTION_CODES.validation,
-            reason: `${disconnected.length} view node(s) would be disconnected from the origin node.`,
-            errors: at('disconnects_view'),
-          }));
+        if (viewKnown) {
+          const disconnected = findDisconnectedViewNodes(resolvedNodeIds, resolvedEdges, resultGraph.originNodeId);
+          if (disconnected.length) rejections.push(makeRejection({ code: REJECTION_CODES.validation, reason: `${disconnected.length} view node(s) would be disconnected from the origin node.`, errors: at('disconnects_view') }));
         }
       }
 
-      if (retainableSections) {
-        const retained = resolveRetainedSections(presentInput.sections, retainableSections, new Set(resolvedNodeIds));
+      if (retainableSections && (presentInput.sections === undefined || Array.isArray(presentInput.sections))) {
+        const retained = resolveRetainedSections(presentInput.sections, retainableSections, new Set(resolvedNodeIds), known);
         if (retained.unknownIndexes.length > 0) {
           const labels = retainableSections.map(sec => sec.label);
-          return reject(makeRejection({
+          rejections.push(makeRejection({
             code: REJECTION_CODES.validation,
             errors: presentInput.sections?.length ? at('uncommitted_label', retained.unknownIndexes.map(index => `sections.${index}.label`), labels) : at('missing', ['sections']),
             issuePaths: ['sections'],
             resend: ['sections'],
           }));
         }
-        const keptCount = retained.sections.length - (presentInput.sections ?? []).filter(sec => typeof sec.text === 'string').length;
+        const keptCount = parsed.success ? retained.sections.length - (presentInput.sections ?? []).filter(sec => typeof sec.text === 'string').length : 0;
         if (keptCount > 0) {
           s.logger.debug(`[Presentation] ${keptCount} of ${retained.sections.length} section(s) kept from the committed report — run=${sess.explorationRunId ?? '(none)'}`);
         }
-        presentInput.sections = retained.sections;
+        if (viewKnown && !retained.unknownIndexes.length && !schemaProblem?.errors.some(error => error.path === 'sections' || error.path.startsWith('sections.'))) presentInput.sections = retained.sections;
       }
 
-      if (isAmendment) {
+      if (isAmendment && parsed.success) {
         presentInput.notes = mergeAmendedNotes(resultGraph.notes, presentInput.notes ?? [], resolvedNodeIds)
           .map(note => ({ node_id: note.nodeId, caption: note.text }));
       }
 
       const evidenceViolations: PresentResultViolation[] = [];
-      let renderInput: PresentResultInput = isVisualPreview && presentInput.sections
+      let renderInput: PresentResultInput = isVisualPreview && parsed.success && !rejections.length && presentInput.sections
         ? { ...presentInput, sections: assemblePreviewSections(previewNarrative?.blocks ?? [], presentInput.sections) }
         : presentInput;
-      if (!isVisualPreview && presentInput.sections?.length) {
+      if (!isVisualPreview) {
         // Validate SQL fences and expand references to captured evidence.
         // Number fences over the slots the completion envelope served: the render bound stored with the result.
         const servedIds = new Set(sess.resultGraph?.evidenceNodeIds ?? []);
@@ -371,17 +299,19 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           return expanded.text;
         };
         const expandOptional = (text: string | undefined, fieldLabel: string): string | undefined =>
-          text === undefined ? text : expand(text, fieldLabel);
+          text === undefined || !known(fieldLabel) || typeof text !== 'string' ? text : expand(text, fieldLabel);
         renderInput = {
           ...presentInput,
           title: expandOptional(presentInput.title, 'title'),
           intro: expandOptional(presentInput.intro, 'intro'),
           closing: expandOptional(presentInput.closing, 'closing'),
-          sections: presentInput.sections.map((sec, index) => {
-            const expanded = expand(sec.text, `section "${trunc(sec.label, 60)}"`, `sections.${index}.text`);
+          ...(Array.isArray(presentInput.sections) && known('sections') ? { sections: presentInput.sections.map((sec, index) => {
+            if (!sec || !known(`sections.${index}.text`) || typeof sec.text !== 'string') return sec;
+            const expanded = expand(sec.text, `sections.${index}.text`);
             return expanded === sec.text ? sec : { ...sec, text: expanded };
-          }),
+          }) } : {}),
         };
+        if (parsed.success && Array.isArray(presentInput.sections)) {
         const slotChars = sess.memory.getResult().detail_slots
           .reduce((total, slot) => total + slot.sections.reduce((sum, section) => sum + section.text.length, 0), 0);
         const coverage = evidenceCoverage(evidenceBlocks, [renderInput.title, renderInput.intro, renderInput.closing, ...(renderInput.sections ?? []).map(sec => sec.text)].filter((text): text is string => text !== undefined));
@@ -390,27 +320,28 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           `sections(nodes:chars)=[${presentInput.sections.map(sec => `${sec.node_ids?.length ?? 0}:${sec.text.length}`).join(', ')}] ` +
           `fences served=${coverage.served} shown=${coverage.served - coverage.unusedIds.length} unused=[${coverage.unusedIds.join(', ')}]`,
         );
+        }
       }
 
-      s.logger.debug(`presentResult section[0] preview: ${trunc(renderInput.sections?.[0]?.text ?? '(empty)', 200)}`);
+      if (parsed.success) s.logger.debug(`presentResult section[0] preview: ${trunc(renderInput.sections?.[0]?.text ?? '(empty)', 200)}`);
 
-      const bareNodeIds = findBareNonPrunedNodes(resultGraph, renderInput, resolvedNodeIds);
+      const bareNodeIds = parsed.success ? findBareNonPrunedNodes(resultGraph, renderInput, resolvedNodeIds) : [];
       if (bareNodeIds.length > 0) {
         s.logger.debug(`[Presentation] ${bareNodeIds.length} non-pruned node(s) left bare by the AI (rendered unlabeled/uncolored) — ${trunc(bareNodeIds.join(', '), 200)}`);
       }
 
       const renderedNodeIds = new Set(resolvedNodeIds);
-      const unrenderedSlotIds = findUnrenderedDetailSlotIds(
+      const unrenderedSlotIds = viewKnown ? findUnrenderedDetailSlotIds(
         requiredDetailSlotIds(sess.memory.notedNodeIds, renderedNodeIds),
-        renderInput,
-      );
-      if (unrenderedSlotIds.length > 0) {
+        renderInput, known,
+      ) : undefined;
+      if (unrenderedSlotIds && unrenderedSlotIds.length > 0) {
         s.logger.debug(`[Presentation] ${unrenderedSlotIds.length} of ${sess.memory.slotCount} detail slot(s) reached no section — ${trunc(unrenderedSlotIds.join(', '), 200)}`);
       }
 
       let assembledBadges: Array<{ node_id: string; text: string }> = [];
       let assembledDescription: string | undefined = undefined;
-      if (renderInput.sections?.length) {
+      if (parsed.success && !rejections.length && !evidenceViolations.length && renderInput.sections?.length) {
         const nodeMap = getModelNodeMap(model);
         const columnChainPreface = resultGraph.columnAspect
           ? buildColumnChainPreface(resultGraph.columnAspect.edges, resultGraph.columnAspect.requested, model.identifierCaseSensitive)
@@ -432,13 +363,13 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         }
       }
 
-      s.logger.info(
-        `[Presentation] Output assembled — sections=${presentInput.sections?.length ?? 0} badges=${assembledBadges.length} desc=${assembledDescription?.length ?? 0}chars classification=${sess.classification ?? '(none)'} slots=${sess.memory.slotCount} slotsUnrendered=${unrenderedSlotIds.length}`
+      if (parsed.success) s.logger.info(
+        `[Presentation] Output assembled — sections=${presentInput.sections?.length ?? 0} badges=${assembledBadges.length} desc=${assembledDescription?.length ?? 0}chars classification=${sess.classification ?? '(none)'} slots=${sess.memory.slotCount} slotsUnrendered=${unrenderedSlotIds?.length ?? 'unknown'}`
       );
-      s.logger.debug(`[Presentation] Output assembled title="${trunc(presentInput.title ?? '(none)', 60)}"`);
+      if (parsed.success) s.logger.debug(`[Presentation] Output assembled title="${trunc(presentInput.title ?? '(none)', 60)}"`);
 
       const externalViolations: PresentResultViolation[] = [...evidenceViolations];
-      if (unrenderedSlotIds.length > 0) {
+      if (unrenderedSlotIds?.length) {
         externalViolations.push({
           missingContent: true,
           errors: at('slot_unplaced', ['sections.*.node_ids'], unrenderedSlotIds),
@@ -458,16 +389,10 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         if (smSnapshot.scopeNodeIds.includes(nodeId)) return 'in_scope_undispositioned';
         return 'out_of_scope';
       };
-      const validation = validatePresentResult(renderInput, resolvedNodeIds, assembledBadges, assembledDescription, externalViolations, presentResultStage, nodeIdState);
+      const validation = validatePresentResult(renderInput, resolvedNodeIds, assembledBadges, assembledDescription, externalViolations, presentResultStage, nodeIdState, known, viewKnown);
 
-      if (!validation.success) {
-        if (validation.repairable) {
-          if (!holdRejectedPresentResult(drafts, presentInput, validation.rejection.issuePaths ?? [], presentResultStage, retainableSections, true, validation.rejection)) {
-            drafts.hold(presentInput, { fields: validation.repairFields });
-          }
-        }
-        return reject(validation.rejection);
-      }
+      if (!validation.success) return reject(combineToolRejections([...rejections, validation.rejection]));
+      if (rejections.length) return reject(combineToolRejections(rejections));
 
       // A rendered result belongs to its run.
       const runId = sess.explorationRunId ?? sess.id;

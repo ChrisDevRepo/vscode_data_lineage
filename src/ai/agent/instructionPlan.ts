@@ -21,9 +21,7 @@ import {
   presentResultSchemaForPhase,
   submitFindingsSchemaForMode,
   type SubmitFindingsHopColumns,
-  type PresentResultRepairField,
 } from '../tools/toolSchemas';
-import type { PresentResultRepairAuthorization } from '../tools/presentResult';
 import type { ToolControlSignal } from '../session/sessionPhase';
 
 /** Model-call phase labels emitted by the production LangGraph runtime. */
@@ -116,12 +114,6 @@ export type ConversePlanDraft = Omit<ConversePlanInput, 'phase' | 'instructionCo
   readonly facts?: InstructionPlanFacts;
   /** Phase-derived provider schema replacements; dispatch still uses the canonical registry. */
   readonly toolSchemaOverrides?: ReadonlyMap<string, z.ZodType>;
-  /** Live ephemeral session fact read at each provider step; never copied into frame/context state. */
-  readonly presentResultRepairFields?: () => readonly PresentResultRepairField[] | null;
-  /** Held highlight indexes whose labels alone are authorized for repair; read live with the fields. */
-  readonly presentResultRepairHighlightLabelIndexes?: () => readonly number[] | null;
-  /** Held section fields authorized for indexed repair; read live with the fields. */
-  readonly presentResultRepairSectionLeaves?: () => PresentResultRepairAuthorization['sectionLeaves'] | null;
   /** Whether a committed report from this run exists for `present_result` to amend; read live. */
   readonly presentResultRetainableSections?: () => boolean;
   /** Number of served `answer_blocks` the visual preview's section ranges may name (`B1`..`B<count>`). */
@@ -294,9 +286,6 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
     registry: sourceRegistry,
     facts,
     toolSchemaOverrides,
-    presentResultRepairFields,
-    presentResultRepairHighlightLabelIndexes,
-    presentResultRepairSectionLeaves,
     freshSubmission,
     hopColumns,
     heldColumnFlow,
@@ -314,9 +303,6 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
       throw new Error(`InstructionPlan: active stage mode ${stageMode} does not match the approved analysis mode.`);
     }
   }
-  if (presentResultRepairFields && !stageSupportsPresentResultRepair(stage)) {
-    throw new Error('InstructionPlan: present_result repair authorization is valid only in synthesis, visual preview, or completed.');
-  }
   const allowed = new Set(getAllowedLmToolNames(stage));
   if (stage.kind !== 'active' || !(canPruneCurrent?.() ?? false)) allowed.delete('lineage_prune_current');
   const filteredRegistry = filterRegistry(sourceRegistry, allowed);
@@ -329,26 +315,11 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
       () => submitFindingsSchemaForMode(submitMode, frozenFacts?.classification, freshSubmission?.() ?? true, hopColumns?.(), heldColumnFlow?.() ?? false),
     );
   }
-  const liveRepairResolver = stageSupportsPresentResultRepair(stage) && presentResultRepairFields;
-  if (stageSupportsPresentResultRepair(stage) && !liveRepairResolver) {
-    schemaOverrides.set('lineage_present_result', presentResultSchemaForPhase(stage.kind, null, presentResultRetainableSections?.() ?? false, presentResultPreviewBlockCount));
+  if (stageSupportsPresentResultRepair(stage)) {
+    liveResolvers.set('lineage_present_result', () => presentResultSchemaForPhase(
+      stage.kind, presentResultRetainableSections?.() ?? false, presentResultPreviewBlockCount));
   }
-  let registry = schemaOverrides.size
-    ? overrideRegistrySchemas(filteredRegistry, schemaOverrides)
-    : filteredRegistry;
-  if (liveRepairResolver) {
-    liveResolvers.set(
-      'lineage_present_result',
-      () => presentResultSchemaForPhase(
-        stage.kind,
-        presentResultRepairFields(),
-        presentResultRetainableSections?.() ?? false,
-        presentResultPreviewBlockCount,
-        presentResultRepairHighlightLabelIndexes?.() ?? undefined,
-        presentResultRepairSectionLeaves?.() ?? undefined,
-      ),
-    );
-  }
+  let registry = schemaOverrides.size ? overrideRegistrySchemas(filteredRegistry, schemaOverrides) : filteredRegistry;
   if (liveResolvers.size) registry = resolveRegistrySchemas(registry, liveResolvers);
   const toolNames = registry.getTools().map(tool => tool.name);
   if (input.requiredTerminalTool && !registry.has(input.requiredTerminalTool)) {

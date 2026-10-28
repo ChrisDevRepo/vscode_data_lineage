@@ -99,7 +99,7 @@ flowchart TD
 
 Tool batches execute in provider order with unique call IDs. Missing or repeated call IDs fail the model response before tool execution. A successful gate, route change or phase completion closes the active batch.
 
-Schema validation (Zod) and engine state checks validate tool arguments deterministically. When an argument or domain constraint fails, the engine returns a structured rejection envelope indicating the faulty fields and acceptable values. Valid findings are held in draft state so that retries need only supply corrected fields.
+Schema validation and engine checks remain deterministic. Findings and report checks collect independent faults after one full candidate parse; shared drafts retain valid fields, replace resent values without keyed/index merging, and preserve a prior valid value when its replacement fails. One typed renderer builds staged correction feedback from issue tables and metadata. Start validation and retry-context work remain separate paths.
 
 The engine bounds retries per hop. If a hop cannot be validated within the attempt budget, it terminates without committing partial or unverified findings. The LangChain bridge translates model and tool messages without executing them; Zod validates message shapes; the engine enforces state and graph integrity; and LangGraph manages phase transitions.
 

@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { buildStartExplorationReject } from '../../../src/ai/interaction/rules/startExplorationRules';
 import { rejectionFromZodError } from '../../../src/ai/support/toolErrorEnvelope';
 import {
-  MergedSectionsSchema,
   StartExplorationInputSchema,
   presentResultSchemaForPhase,
 } from '../../../src/ai/tools/toolSchemas';
@@ -18,11 +17,8 @@ const stages = [
   ['external', presentResultSchemaForPhase('external')],
   ['synthesis', presentResultSchemaForPhase('synthesis')],
   ['completed', presentResultSchemaForPhase('completed')],
-  ['retained', presentResultSchemaForPhase('completed', null, true)],
-  ['preview', presentResultSchemaForPhase('visual_preview', null, false, 1)],
-  ['repair', presentResultSchemaForPhase('synthesis', ['sections'])],
-  ['preview repair', presentResultSchemaForPhase('visual_preview', ['sections'], false, 1)],
-  ['merged', MergedSectionsSchema],
+  ['retained', presentResultSchemaForPhase('completed', true)],
+  ['preview', presentResultSchemaForPhase('visual_preview', false, 1)],
 ] as const;
 
 describe('malformed present_result section entries', () => {

@@ -1,5 +1,5 @@
 /** Per-call, per-reply and recovery outcomes of the tool dispatcher. */
-import { describe, expect, it, vi } from 'vitest';
+import { assert, describe, expect, it, vi } from 'vitest';
 import { appendFileSync } from 'node:fs';
 import * as vscode from 'vscode';
 import { z } from 'zod';
@@ -557,7 +557,11 @@ describe('model-facing rejection text', () => {
     for (const path of ['column_flow.0.out_col', 'column_flow.1.out_col']) {
       const error = shown(content).find(item => item.path === path);
       expect(error).toMatchObject(fault('unknown_column', path));
-      expect([...error!.allowed!, ...Array(error!.more ?? 0)]).toHaveLength(columns.length);
+      expect(error!.allowed).toHaveLength(Math.min(15, columns.length));
+      expect(new Set(error!.allowed).size).toBe(error!.allowed!.length);
+      expect(error!.allowed!.every(value => columns.includes(value))).toBe(true);
+      expect(error!.more ?? 0).toBe(columns.length - error!.allowed!.length);
+      if (columns.length <= 15) expect([...error!.allowed!].sort()).toEqual([...columns].sort());
     }
     expect(content).not.toContain(input.sections.technical);
   });
@@ -596,7 +600,11 @@ describe('model-facing rejection text', () => {
       expect(content).not.toContain('replies_remaining');
       const error = shown(content).find(item => item.path === path);
       expect(error).toMatchObject(fault(code, path));
-      expect([...error!.allowed!, ...Array(error!.more ?? 0)]).toHaveLength(columns.length);
+      expect(error!.allowed).toHaveLength(Math.min(15, columns.length));
+      expect(new Set(error!.allowed).size).toBe(error!.allowed!.length);
+      expect(error!.allowed!.every(value => columns.includes(value))).toBe(true);
+      expect(error!.more ?? 0).toBe(columns.length - error!.allowed!.length);
+      if (columns.length <= 15) expect([...error!.allowed!].sort()).toEqual([...columns].sort());
       expect(content).not.toMatch(/Recheck the named column|Rebuild the defective fields|Re-evaluate the proposed action/);
       if (count === 400 && kind !== 'enum') expect(next.rejections[0].detail).toMatchObject({ omitted: true });
       state = recordToolAttempt(state, next);
@@ -715,7 +723,7 @@ describe('model-facing rejection text', () => {
     expect(String(toolMessage(second.messages).content)).toContain('held');
   });
 
-  it('oversized reads retain errors for cached siblings and trimmed replays and exhaust the no-progress budget', async () => {
+  it.each([false, true])('oversized reads retain the refusal with trimmed history=%s (Approved08)', async trimmed => {
     const { registry, invoke } = registryWith(() => JSON.stringify({ results: 'x'.repeat(4_000_000) }));
     const plan = discoveryPlan(registry);
     let state = initialToolPhaseAttemptState('discover');
@@ -729,7 +737,7 @@ describe('model-facing rejection text', () => {
         expect(result).toMatchObject({ status: 'error', artifact: { code: 'result_too_large' } });
         expect(String(result.content)).toContain(ISSUES.result_too_large.correction);
       }
-      state = { ...recordToolAttempt(state, attempt), messages: [] };
+      state = { ...recordToolAttempt(state, attempt), ...(trimmed ? { messages: [] } : {}) };
     }
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(state).toMatchObject({ noProgressCalls: MAX_TOOL_PROVIDER_CALLS, stopReason: 'no_progress' });
@@ -972,6 +980,7 @@ describe('submit_findings rejection form', () => {
             return result;
           };
           const first = await sendCaptured(initial, 1);
+          assert(first.rejection, 'Expected a rejected submission');
           expect([...new Set(paths(first.rejection))].sort(), scenario.id).toEqual(expected.sort());
           for (const error of first.rejection.errors) expect(error).not.toHaveProperty('allowed');
           expect(first.rejection).not.toHaveProperty('example');
@@ -982,6 +991,7 @@ describe('submit_findings rejection form', () => {
             expect(projected.properties[field], `${scenario.id}: D-098 keeps held ${field} in the full schema`).toBeDefined();
           if (arm !== 'first_resend_success') {
             const second = await sendCaptured(initial, 2);
+            assert(second.rejection, 'Expected a rejected submission');
             expect(second.attempt.rejections).toHaveLength(1);
             // D-099: feedback 2 names the same faults (the root '' error is the identical-resend note).
             expect([...new Set(paths(second.rejection).filter(Boolean))].sort(), scenario.id).toEqual(expected.sort());
@@ -1018,7 +1028,7 @@ describe('submit_findings rejection form', () => {
     const steps = [initial, { badge_label: 'Source role', summary: 42 },
       ...(arm === 'repair' ? [{ badge_label: 'Source role' }]
         : [{ sections: { technical: 42 } }, { sections: { technical: 43 } }])];
-    const expectedPaths = [['badge_label'], ['summary'], ...(arm === 'repair' ? [[]] : [['sections.technical'], ['sections.technical']])];
+    const expectedPaths = [['badge_label'], ['summary', 'summary'], ...(arm === 'repair' ? [[]] : [['sections.technical', 'sections', 'sections'], ['sections.technical', 'sections', 'sections']])];
     for (const [index, input] of steps.entries()) {
       const result = await send(input);
       expect(result.rejection ? paths(result.rejection) : []).toEqual(expectedPaths[index]);
@@ -1072,6 +1082,7 @@ describe('submit_findings rejection form', () => {
       questions: [source, other].map(nodeId => ({ nodeId, question: 'Explain this supplied neighbor.' })) };
     const before = structuredClone(input);
     const first = await send(input);
+    assert(first.rejection, 'Expected a rejected submission');
     expect(paths(first.rejection).sort()).toEqual(['badge_label', 'summary']);
     expect(first.rejection.resend.sort()).toEqual(['badge_label', 'summary']);
     expect(first.rejection.errors).toEqual(expect.arrayContaining([fault('type', 'summary'), fault('type', 'badge_label')]));
@@ -1115,6 +1126,7 @@ describe('submit_findings rejection form', () => {
     const before = engine.toJSON();
     const flow = [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0' }] }, terminals[1]];
     const first = await send({ ...base, column_flow: flow });
+    assert(first.rejection, 'Expected a rejected submission');
     expect(first.attempt.rejections).toHaveLength(1);
     expect(JSON.stringify(first.rejection)).toContain(other);
     expect(first.rejection.resend).toEqual(['questions', 'prune_neighbors', 'column_flow']);
@@ -1142,13 +1154,17 @@ describe('submit_findings rejection form', () => {
       { out_col: 'Value', upstream_columns: [{ node: absent, col: 'C0' }, { node: source, col: 'Missing' }] },
       { out_col: 'Other', upstream_columns: [{ node: source, col: 'C1', transforms: ['bogus'] }], writes_to: { node: source, col: 'C0' } },
     ] });
+    assert(first.rejection, 'Expected a rejected submission');
     expect(first.attempt.rejections).toHaveLength(1);
     const expected = ['column_flow.0.upstream_columns.0.node', 'column_flow.0.upstream_columns.1.col',
       'column_flow.1.upstream_columns.0.transforms.0', 'column_flow.1.writes_to'];
     expect(paths(first.rejection).sort()).toEqual(expected);
     expect(first.rejection.resend).toEqual(['column_flow']);
-    const at = (path: string) => first.rejection.errors.find((error: { path: string }) => error.path === path);
-    for (const path of expected) expect(Object.keys(at(path)).sort()).toEqual(['correction', 'fault', 'path']);
+    for (const path of expected) {
+      const error = first.rejection.errors.find(error => error.path === path);
+      assert(error, `Expected a fault at ${path}`);
+      expect(Object.keys(error).sort()).toEqual(['correction', 'fault', 'path']);
+    }
     for (const absentKey of ['replies_remaining', 'example', 'way_out', 'reason', 'hint', 'detail']) expect(first.rejection).not.toHaveProperty(absentKey);
   });
 
@@ -1156,9 +1172,11 @@ describe('submit_findings rejection form', () => {
     const { engine, send } = hop();
     const first = await send({ ...base, badge_label: 'x'.repeat(51), questions: [{ nodeId: absent, question: 'Explain Absent.' }],
       prune_neighbors: [{ id: absent, reason: 'Outside.' }], column_flow: missingColumn });
+    assert(first.rejection, 'Expected a rejected submission');
     expect(paths(first.rejection).sort()).toEqual(['badge_label', 'column_flow.0.upstream_columns.0.col', 'prune_neighbors.0.id', 'questions.0.nodeId']);
     expect([...first.rejection.resend].sort()).toEqual(['badge_label', 'column_flow', 'prune_neighbors', 'questions']);
     const second = await send({ focus_node_id: root, badge_label: 'Source role', questions: [source, other].map(nodeId => ({ nodeId, question: 'Explain this neighboring SQL.' })), prune_neighbors: [], column_flow: missingColumn });
+    assert(second.rejection, 'Expected a rejected submission');
     expect(second.attempt.rejections).toHaveLength(1);
     expect(paths(second.rejection)).toEqual(['column_flow.0.upstream_columns.0.col']);
     expect(second.rejection.resend).toEqual(['column_flow']);
@@ -1197,10 +1215,12 @@ describe('submit_findings rejection form', () => {
     const invalidPrune = [{ id: absent, reason: 'Outside.' }];
     await send({ ...base, column_flow: flow, prune_neighbors: invalidPrune });
     const second = await send({ focus_node_id: root, prune_neighbors: invalidPrune });
+    assert(second.rejection, 'Expected a rejected submission');
     expect(second.rejection.resend).toEqual(['prune_neighbors']);
     expect(second.rejection.errors).toEqual([{ ...fault('not_neighbor', 'prune_neighbors.0.id'), allowed: [source, other].sort() }]);
     expect(second.rejection.guidance.some(group => group.fallback !== undefined)).toBe(false);
     const third = await send({ focus_node_id: root, prune_neighbors: [{ id: absent, reason: 'Still outside.' }] });
+    assert(third.rejection, 'Expected a rejected submission');
     expect(third.rejection.errors).toEqual([{ ...fault('not_neighbor', 'prune_neighbors.0.id'), allowed: [source, other].sort() }]);
     expect(third.rejection.guidance.some(group => group.fallback !== undefined)).toBe(false);
     const exit = { prune_neighbors: [] };
@@ -1217,6 +1237,7 @@ describe('submit_findings rejection form', () => {
   it('withdraws an omitted failing optional field and names it in the acknowledgement', async () => {
     const { engine, send } = hop();
     const first = await send({ ...base, column_flow: terminals, questions: [source, other].map(nodeId => ({ nodeId, question: 'Explain this neighboring SQL.' })), prune_neighbors: [{ id: absent, reason: 'Outside.' }] });
+    assert(first.rejection, 'Expected a rejected submission');
     expect(first.rejection.resend).toEqual(['prune_neighbors']);
     const second = await send({ focus_node_id: root });
     expect(second.attempt.stop).toBe('phase_complete');
@@ -1231,8 +1252,9 @@ describe('submit_findings rejection form', () => {
     // Pruning Source conflicts with the mapping that keeps it; the held prune of Other must survive.
     const second = await send({ focus_node_id: root, prune_neighbors: [{ id: source, reason: 'Outside.' }],
       column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0' }] }, terminals[1]] });
+    assert(second.rejection, 'Expected a rejected submission');
     // The resent list replaces the held one whole, so Other loses its outcome and both faults are reported together.
-    expect(paths(second.rejection).sort()).toEqual(['', 'prune_neighbors.0.id']);
+    expect(paths(second.rejection).sort()).toEqual(['', 'prune_neighbors', 'prune_neighbors.0.id']);
     expect(second.rejection.errors).toContainEqual({ ...fault('neighbor_undecided'), missing: [other] });
     expect(second.rejection.resend).toEqual(['prune_neighbors', 'column_flow', 'questions']);
     expect(engine.toJSON().engineInternals.heldFinding?.finding.prune_neighbors).toEqual(held);

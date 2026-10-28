@@ -42,6 +42,18 @@ const r1 = (): ToolRejection => buildRouteValidationRejection([{ kind: 'supplier
   reason: `${SENTINEL} is outside the approved scope.`, allowed_values: [] }]);
 
 describe('rejection renderer structure', () => {
+  it('reports every independent path and every owed subject together (Approved08 D-099)', () => {
+    const paths = Array.from({ length: 12 }, (_, index) => `sections.${index}.text`);
+    const missing = Array.from({ length: 20 }, (_, index) => `[dbo].[Node${index}]`);
+    const rejection = makeRejection({ code: 'invalid_input', errors: [
+      ...paths.map(path => ({ path, code: 'missing' as const })),
+      { path: 'sections.*.node_ids', code: 'slot_unplaced', values: missing },
+    ] });
+    const shown = render(rejection, 1).guidance.flatMap(group => group.errors);
+    expect(shown.map(error => error.path).sort()).toEqual([...paths, 'sections.*.node_ids'].sort());
+    expect(shown.find(error => error.path === 'sections.*.node_ids')?.missing).toEqual([...missing].sort((a, b) => a.localeCompare(b)));
+  });
+
   it('renders only static table strings, never a submitted value', () => {
     for (const stage of [1, 2, 3] as const) {
       const rendered = render(r1(), stage, { column_flow: [{ upstream_columns: [{ node: SENTINEL }] }] });

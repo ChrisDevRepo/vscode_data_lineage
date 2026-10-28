@@ -8,11 +8,10 @@ import {
   ExplorationDepthSelectionSchema,
 } from '../../engine/shared/explorationDepthContract';
 import { REJECTION_CODES } from '../support/rejectionCodes';
-import { rejectionFromZodError, type ToolRejection } from '../support/toolErrorEnvelope';
+import { ISSUES, rejectionFromZodError, type ToolRejection } from '../support/toolErrorEnvelope';
 import { CLASSIFICATION_KEPT_ANGLES, type ClassificationValue } from '../session/classification';
 import { extractRawSectionAngles } from '../interaction/rules/submitFindingsRules';
-import type { IndexedRepairFields } from '../support/repairDraftStore';
-import type { ColumnFlowEntry, HopFinding, HopFindingKept, HopSubmission } from '../sm/smTypes';
+import type { ColumnFlowEntry, HopFinding, HopFindingKept } from '../sm/smTypes';
 
 /** A column identifier named by the user. Wildcards are rejected at the boundary: a wildcard target column locks an unwinnable CT session because no real column can match it. */
 export const ColumnIdentifierSchema = z.string().regex(/\S/, 'Must contain non-whitespace text.').min(1).regex(/^[^*%?]+$/, 'wildcards are not column identifiers').describe(
@@ -239,7 +238,7 @@ export const GetScopeBundleInputSchema = z.object({
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['depth'], message: 'Use either depth or the asymmetric depth fields, not both.', params: { issue: 'never' } });
     }
     if (!symmetric && !asymmetric && (input.upstream_depth !== undefined || input.downstream_depth !== undefined)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['upstream_depth'], message: 'Provide both upstream_depth and downstream_depth.', params: { issue: 'missing' } });
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [input.upstream_depth === undefined ? 'upstream_depth' : 'downstream_depth'], message: 'Provide both upstream_depth and downstream_depth.', params: { issue: 'missing' } });
     }
   } else if (input.upstream_depth !== undefined || input.downstream_depth !== undefined) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['direction'], message: 'Asymmetric depths are valid only for bidirectional scope retrieval.', params: { issue: 'never' } });
@@ -393,10 +392,11 @@ type FlatSubmitFindings = z.output<typeof HopFindingBaseSchema> & { column_flow?
 
 const FINDING_DECISION_FIELDS = ['questions', 'prune_neighbors', 'column_flow'] as const;
 
-/** Independently usable decisions from the actual owning schemas; invalid fields remain explicitly unavailable. */
-export function validatedFindingFields(input: unknown, schema: z.ZodType): {
+/** Independently usable decisions projected from the original full-schema error; no field is reparsed. */
+export function validatedFindingFields(input: unknown, schema: z.ZodType, error: z.ZodError): {
   fields: Partial<Pick<HopFindingKept, typeof FINDING_DECISION_FIELDS[number]>>;
   unavailable: ReadonlySet<keyof HopFindingKept>;
+  columnFlowShapeComplete: boolean;
   /** Explicit action references for diagnostics only, independent of whether the action is admissible. */
   actionIdentities?: Partial<Record<'questions' | 'prune_neighbors', readonly string[]>>;
   /** Shape-valid slices for local diagnostics only; never substitute these for the unavailable full flow. */
@@ -407,69 +407,71 @@ export function validatedFindingFields(input: unknown, schema: z.ZodType): {
   const fields: Partial<Pick<HopFindingKept, typeof FINDING_DECISION_FIELDS[number]>> = {};
   const unavailable = new Set<keyof HopFindingKept>();
   if (!(schema instanceof z.ZodObject) || typeof input !== 'object' || input === null || Array.isArray(input)) {
-    return { fields, unavailable: new Set(FINDING_DECISION_FIELDS) };
+    return { fields, unavailable: new Set(FINDING_DECISION_FIELDS), columnFlowShapeComplete: false };
   }
   const raw = input as Record<string, unknown>;
+  const starts = (path: readonly PropertyKey[], prefix: readonly PropertyKey[]) => prefix.every((part, index) => path[index] === part);
+  const valueAt = (path: readonly PropertyKey[]): unknown => path.reduce<unknown>((value, key) => value && typeof value === 'object' && Object.prototype.hasOwnProperty.call(value, key) ? (value as Record<PropertyKey, unknown>)[key] : undefined, input);
+  // Project certainty from the original parse. A union slice is uncertain only when every branch faults that slice.
+  const failed = (path: readonly PropertyKey[], omitted: readonly PropertyKey[] = [], references = false): boolean => {
+    const visit = (issues: readonly z.core.$ZodIssue[], prefix: readonly PropertyKey[]): boolean => issues.some(issue => {
+      const at = [...prefix, ...issue.path];
+      const relevant = (at: readonly PropertyKey[]) => (starts(at, path) || starts(path, at)) && !(omitted.length && starts(at, omitted));
+      if (issue.code === 'invalid_union') return relevant(at) && issue.errors.every(branch => visit(branch, at));
+      if (issue.code === 'unrecognized_keys') return issue.keys.some(key => relevant([...at, key]));
+      if (!relevant(at)) return false;
+      // A dynamic required destination can be absent without making the supplied reference list unreadable.
+      const baseHeader = at[0] === 'column_flow' && typeof at[1] === 'number' && at.length === 3
+        ? ColumnFlowEntrySchema.shape[at[2] as keyof typeof ColumnFlowEntrySchema.shape] : undefined;
+      if (references && issue.code === 'invalid_type' && valueAt(at) === undefined && baseHeader instanceof z.ZodOptional) return false;
+      const choice = issue.code === 'custom' ? issue.params?.issue : undefined;
+      if (references && ((choice && ISSUES[choice as keyof typeof ISSUES]?.category === 'reference')
+        || (issue.code === 'invalid_type' && issue.expected === 'never' && typeof valueAt(at) === 'string'))) return false;
+      return true;
+    });
+    return visit(error.issues, []);
+  };
   for (const field of FINDING_DECISION_FIELDS) {
-    const owner = schema.shape[field];
-    if (!owner) { unavailable.add(field); continue; }
-    const parsed = owner.safeParse(raw[field]);
-    if (parsed.success) Object.assign(fields, { [field]: parsed.data });
-    else unavailable.add(field);
+    if (!Object.prototype.hasOwnProperty.call(schema.shape, field) || failed([field])) unavailable.add(field);
+    else Object.assign(fields, { [field]: raw[field] });
   }
-  // Read identities with the owning base fields; narrowed admission enums still reject the action.
   const actionIdentities: Partial<Record<'questions' | 'prune_neighbors', readonly string[]>> = {};
-  for (const [field, key, owner] of [
-    ['questions', 'nodeId', NeighborQuestionSchema.shape.nodeId],
-    ['prune_neighbors', 'id', PruneNeighborSchema.shape.id],
-  ] as const) {
+  for (const [field, key] of [['questions', 'nodeId'], ['prune_neighbors', 'id']] as const) {
     const entries = raw[field];
-    const identities = Array.isArray(entries)
-      ? entries.map(entry => owner.safeParse(entry && typeof entry === 'object' ? entry[key] : undefined)) : undefined;
-    if (identities?.every(result => result.success)) actionIdentities[field] = identities.map(result => result.data);
+    if (Array.isArray(entries) && entries.every((entry, index) => entry && typeof entry === 'object'
+      && typeof entry[key] === 'string' && !failed([field, index, key], [], true))) {
+      actionIdentities[field] = entries.map(entry => entry[key] as string);
+    }
   }
-  const flowField = schema.shape.column_flow;
-  const flowOwner = flowField instanceof z.ZodOptional ? flowField.unwrap() : flowField;
   const columnFlowDiagnostics: Array<{ entry: ColumnFlowEntry; index: number; upstreamIndexes: number[]; emptySourceAuthored: boolean }> = [];
   const columnSupplierDiagnostics: Array<{ ref: ColumnFlowEntry['upstream_columns'][number]; path: string }> = [];
-  if (unavailable.has('column_flow') && flowOwner instanceof z.ZodArray && Array.isArray(raw.column_flow)) {
-    const entryOwner = flowOwner.element as z.ZodType<ColumnFlowEntry>;
-    const variants = flowOwner.element instanceof z.ZodUnion ? flowOwner.element.options : [flowOwner.element];
-    const supplierOwners = variants.flatMap(variant => {
-      if (!(variant instanceof z.ZodObject)) return [];
-      const upstream = variant.shape.upstream_columns;
-      // Every flow variant uses this supplier owner, with the hop's node narrowing.
-      return upstream instanceof z.ZodArray && upstream.element instanceof z.ZodObject
-        ? [upstream.element as unknown as typeof ColumnRefSchema] : [];
-    });
-    const identityOwner = ColumnRefSchema.pick({ node: true, col: true });
+  if (unavailable.has('column_flow') && Array.isArray(raw.column_flow) && Object.prototype.hasOwnProperty.call(schema.shape, 'column_flow')) {
     for (const [index, entry] of raw.column_flow.entries()) {
       if (!entry || typeof entry !== 'object' || !Array.isArray(entry.upstream_columns)) continue;
-      const header = entryOwner.safeParse({ ...entry, upstream_columns: [] });
+      const path = ['column_flow', index];
+      const headerValid = !failed(path, [...path, 'upstream_columns']);
       const upstreamIndexes: number[] = [];
       const upstream_columns: ColumnFlowEntry['upstream_columns'] = [];
       for (const [refIndex, ref] of entry.upstream_columns.entries()) {
-        const parsed = supplierOwners.map(owner => owner.safeParse(ref)).find(result => result.success);
-        if (!parsed?.success) {
-          if (ref && typeof ref === 'object') {
-            const identity = identityOwner.safeParse({ node: ref.node, col: ref.col });
-            if (identity?.success) columnSupplierDiagnostics.push({ ref: identity.data, path: `column_flow.${index}.upstream_columns.${refIndex}` });
+        const refPath = [...path, 'upstream_columns', refIndex];
+        const valid = !failed(refPath);
+        if (!valid || !headerValid) {
+          if (ref && typeof ref === 'object' && typeof ref.node === 'string' && typeof ref.col === 'string'
+            && !failed([...refPath, 'node'], [], true) && !failed([...refPath, 'col'], [], true)) {
+            columnSupplierDiagnostics.push({ ref: valid ? ref : { node: ref.node, col: ref.col }, path: refPath.join('.') });
           }
           continue;
         }
-        if (!header.success) {
-          columnSupplierDiagnostics.push({ ref: parsed.data, path: `column_flow.${index}.upstream_columns.${refIndex}` });
-          continue;
-        }
         upstreamIndexes.push(refIndex);
-        upstream_columns.push(parsed.data);
+        upstream_columns.push(ref);
       }
-      if (header.success) columnFlowDiagnostics.push({ entry: { ...header.data, upstream_columns }, index, upstreamIndexes, emptySourceAuthored: entry.upstream_columns.length === 0 });
+      if (headerValid) columnFlowDiagnostics.push({ entry: { ...entry, upstream_columns }, index, upstreamIndexes, emptySourceAuthored: entry.upstream_columns.length === 0 });
     }
   }
-  return { fields, unavailable, actionIdentities,
+  return { fields, unavailable, actionIdentities, columnFlowShapeComplete: Array.isArray(raw.column_flow) && !failed(['column_flow'], [], true),
     ...(columnFlowDiagnostics.length ? { columnFlowDiagnostics } : {}),
     ...(columnSupplierDiagnostics.length ? { columnSupplierDiagnostics } : {}) };
+
 }
 
 /** Enforces the fresh kept shape of one flat `submit_findings` payload. */
@@ -487,9 +489,10 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
     const unknown = surplus.filter((key) => key !== offAngle);
     if (unknown.length > 0) ctx.addIssue({ code: 'unrecognized_keys', path: ['sections'], keys: unknown, message: 'Unrecognized keys' });
   }
-  const filled = new Set(Object.entries(value.sections ?? {})
+  const bodies = value.sections && typeof value.sections === 'object' && !Array.isArray(value.sections) ? value.sections : undefined;
+  const filled = new Set(Object.entries(bodies ?? {})
     .filter(([, body]) => typeof body === 'string').map(([angle]) => angle));
-  if (fresh && filled.size === 0) {
+  if (fresh && (value.sections === undefined || (bodies && filled.size === 0))) {
     ctx.addIssue({
       code: 'custom',
       path: ['sections'],
@@ -497,7 +500,7 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
       params: { issue: 'missing' },
     });
   }
-  if (bothAnglesRequired && filled.size > 0) {
+  if (bothAnglesRequired && bodies && filled.size > 0) {
     for (const angle of CLASSIFICATION_KEPT_ANGLES.both) {
       if (filled.has(angle)) continue;
       ctx.addIssue({ code: 'custom', path: ['sections', angle], message: 'Required with a both classification when sections is not empty.', params: { issue: 'missing' } });
@@ -532,6 +535,7 @@ function finalizeSubmitFindingsSchema(
   schema: typeof HopFindingBaseSchema | typeof HopFindingCtBaseSchema,
   fresh: boolean,
   classification?: ClassificationValue,
+  composedCandidate = false,
 ): z.ZodType<FlatSubmitFindings> {
   const keptAngles = classification ? CLASSIFICATION_KEPT_ANGLES[classification] : undefined;
   const source = fresh
@@ -544,7 +548,10 @@ function finalizeSubmitFindingsSchema(
     : schema.shape.summary ? schema.extend({
       summary: schema.shape.summary.unwrap().regex(/\S/, 'A supplied summary must contain non-whitespace text.').optional().describe(schema.shape.summary.description ?? ''),
     }).strict() : schema;
-  const validated = source
+  // Composition already supplied held values; archived sections may stay omitted, but every committed finding needs its summary.
+  const complete = composedCandidate && !fresh
+    ? source.safeExtend({ summary: schema.shape.summary.unwrap().regex(/\S/, 'A finding summary must contain non-whitespace text.') }) : source;
+  const validated = complete
     .check(superRefineAll((value, ctx) => refineSubmitFindingsShape(value as FlatSubmitFindings, ctx, fresh, classification)))
     .describe('A sent questions or prune_neighbors list replaces its held list whole; repeat entries you keep. Omit the list to retain it; [] withdraws it.') as z.ZodType<FlatSubmitFindings>;
   if (!fresh) return validated;
@@ -671,12 +678,14 @@ export function submitFindingsSchemaForMode(
   hop?: SubmitFindingsHopColumns,
   /** Whether a held draft of this focus carries a valid `column_flow`; the served schema then lets a retry omit it to keep the held list. */
   heldColumnFlow = false,
+  /** Validate a composed backend candidate, requiring its summary even when sections were archived on an earlier visit. */
+  composedCandidate = false,
 ): z.ZodType<FlatSubmitFindings> {
   const hopKey = hop ? JSON.stringify(hop) : '';
-  if (!classification && !hopKey && freshSubmission) {
+  if (!classification && !hopKey && freshSubmission && !composedCandidate) {
     return mode === 'ct' ? SubmitFindingsCtInputSchema : SubmitFindingsBbInputSchema;
   }
-  const cacheKey = `${mode}:${classification ?? ''}:${freshSubmission}:${hopKey}:${mode === 'ct' && heldColumnFlow}`;
+  const cacheKey = `${mode}:${classification ?? ''}:${freshSubmission}:${hopKey}:${mode === 'ct' && heldColumnFlow}:${composedCandidate}`;
   const cached = submitFindingsSchemaCache.get(cacheKey);
   if (cached) return cached;
   let narrowed = (mode === 'ct' ? HopFindingCtBaseSchema : HopFindingBaseSchema) as typeof HopFindingCtBaseSchema;
@@ -729,7 +738,7 @@ export function submitFindingsSchemaForMode(
       'Omit held sections; supply only section angles needing correction, keyed by business or technical.',
     ) }).strict() as typeof HopFindingCtBaseSchema;
   }
-  const schema = finalizeSubmitFindingsSchema(narrowed, freshSubmission, classification);
+  const schema = finalizeSubmitFindingsSchema(narrowed, freshSubmission, classification, composedCandidate);
   submitFindingsSchemaCache.set(cacheKey, schema);
   return schema;
 }
@@ -763,22 +772,6 @@ function internalKeptFindingSchema(
 /** Validates restorable held findings using the same fields as commit, without requiring resent CT flow. */
 export function heldHopFindingSchemaForMode(mode: 'bb' | 'ct'): z.ZodType<HopFindingKept> {
   return internalKeptFindingSchema(mode, undefined, false, undefined, false) as z.ZodType<HopFindingKept>;
-}
-
-/** Validates a typed finding before held merge or mutation, sharing wire fields and content checks. */
-export function validateHopSubmissionShape(
-  input: unknown,
-  mode: 'bb' | 'ct',
-  classification?: ClassificationValue,
-  freshSubmission = false,
-  hop?: SubmitFindingsHopColumns,
-): { readonly ok: true; readonly data: HopSubmission } | { readonly ok: false; readonly error: ToolRejection; readonly actions: ReturnType<typeof validatedFindingFields>; readonly sections?: HopFindingKept['sections'] } {
-  const schema = internalKeptFindingSchema(mode, classification, freshSubmission, hop);
-  const parsed = schema.safeParse(input);
-  if (parsed.success) return { ok: true, data: parsed.data as HopSubmission };
-  const sections = schema.shape.sections.safeParse(typeof input === 'object' && input !== null ? (input as Record<string, unknown>).sections : undefined);
-  return { ok: false, error: rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema }),
-    actions: validatedFindingFields(input, schema), ...(sections.success ? { sections: sections.data } : {}) };
 }
 
 /** Zod schema for `get_neighbor_columns` tool input. */
@@ -863,11 +856,15 @@ function rejectDuplicateSectionLabels(sections: ReadonlyArray<{ label: string }>
 }
 /** A non-empty `sections` list with unique labels: the one bound every stage's section array shares. */
 function sectionList<T extends z.ZodType<{ label: string }>>(item: T) {
-  return z.array(item).min(1).check(superRefineAll(rejectDuplicateSectionLabels));
+  return nonemptyList(item).check(superRefineAll(rejectDuplicateSectionLabels));
 }
 
-/** The merged held-draft `sections` field, held to the same bound as the served section arrays. */
-export const MergedSectionsSchema = z.object({ sections: sectionList(z.looseObject({ label: z.string() })) });
+/** Keep array bounds on arrays: malformed JSON may have a nonnumeric `length` member. */
+function nonemptyList<T extends z.ZodType>(item: T) {
+  return z.array(item).superRefine((value, ctx) => {
+    if (!value.length) ctx.addIssue({ code: 'too_small', origin: 'array', minimum: 1, inclusive: true });
+  }, { when: payload => Array.isArray(payload.value) }).meta({ minItems: 1 });
+}
 
 /** The Lineage color-scheme enum shared by every colored surface. Declared once so render paths cannot drift: flow-role schemes (`source` / `transform` / `target`) plus status schemes (`good` / `warn` / `fail`). */
 const HighlightSchemeSchema = z.enum(['source', 'transform', 'target', 'good', 'warn', 'fail']);
@@ -920,22 +917,6 @@ const PresentResultSectionSchema = z.object({
     : undefined,
 }).strict();
 
-/** Section fields whose defect can be repaired without resending the other content. */
-export type PresentResultSectionRepairField = keyof typeof PresentResultSectionSchema.shape | 'start';
-
-/** One section of a held repair draft: `node_ids` and `text` may each be omitted to keep the held value under that label, so a repair that adds one node id never retypes a body the model cannot see (the held-draft view shows labels and node ids only). */
-const PresentResultSectionDeletionSchema = z.object({
-  label: PresentResultSectionSchema.shape.label,
-  remove: z.literal(true).describe('true drops the held section under this label; omit replacement content.'),
-}).strict();
-const PresentResultSectionPatchSchema = z.union([
-  PresentResultSectionSchema.extend({
-    node_ids: PresentResultSectionSchema.shape.node_ids.optional(),
-    text: PresentResultSectionSchema.shape.text.optional().describe('Detail body for this section label. Required when the label is not a held label; omit to keep a held label\'s text.'),
-  }),
-  PresentResultSectionDeletionSchema,
-]);
-
 /** Memoized per block count: a fresh schema per request is a new identity, which defeats `toModelJsonSchema`'s cache. */
 const previewSchemaCache = new Map<number, ReturnType<typeof buildPreviewSchemas>>();
 
@@ -952,10 +933,6 @@ function buildPreviewSchemas(blockCount: number) {
       ? 'A section holds only label, node_ids and start. Below-node captions go in the top-level notes array as {node_id, caption} objects, never inside a section.'
       : undefined,
   }).strict();
-  const patch = z.union([
-    section.extend({ node_ids: PresentResultSectionSchema.shape.node_ids.optional(), start: start.optional() }),
-    PresentResultSectionDeletionSchema,
-  ]);
   const model = PresentResultModelSchema.omit({
     summary: true,
     title: true,
@@ -969,8 +946,7 @@ function buildPreviewSchemas(blockCount: number) {
       'Required report sections, at least one. Each names the block of the served `answer_blocks` it starts at; every node analysed and captured is linked into a section\'s node_ids.',
     ),
   }).strict();
-  const patchSections = sectionList(patch).optional().describe(REPAIR_SECTIONS_DESCRIPTION);
-  return { model, patchSections, section };
+  return { model, section };
 }
 
 function previewSchemas(blockCount: number) {
@@ -992,7 +968,7 @@ export const PresentResultModelSchema = z.object({
   prune_node_ids: z.array(NodeIdSchema).optional().describe('ONLY permitted during Completed Phase follow-ups. Strictly forbidden during the initial Synthesis Phase.'),
   add_node_ids: z.array(NodeIdSchema).optional().describe('ONLY permitted during Completed Phase follow-ups. Strictly forbidden during the initial Synthesis Phase.'),
   layout_direction: z.enum(['LR', 'TB']).optional().describe('Graph layout: left-to-right or top-to-bottom.'),
-  highlight_groups: z.array(HighlightGroupSchema).min(1).describe(
+  highlight_groups: nonemptyList(HighlightGroupSchema).describe(
     'REQUIRED, at least 1 group. For zero-trace or single-node results, use color "target" on the origin/result node.'
   ),
   sections: sectionList(PresentResultSectionSchema).describe(
@@ -1018,16 +994,12 @@ function withRetainableSections<T extends z.ZodObject<z.ZodRawShape>>(schema: T)
   });
 }
 
-/** Selects the model-facing `present_result` schema from the phase and held-draft authorization. Preview omits AI-authored wrapper prose; synthesis uses the full new-render contract; either phase projects the existing strict patch schema while a repairable draft is held. */
+/** The full phase schema is unchanged during repair; held fields are applied before its single validation. */
 export function presentResultSchemaForPhase(
   phase?: string,
-  repairFields: readonly PresentResultRepairField[] | null = null,
   retainable = false,
   previewBlockCount = 0,
-  highlightLabelIndexes?: readonly number[],
-  sectionLeaves?: readonly IndexedRepairFields<PresentResultSectionRepairField>[],
 ): z.ZodType {
-  if (repairFields) return presentResultRepairPatchSchemaForFields(repairFields, phase, previewBlockCount, highlightLabelIndexes, sectionLeaves, retainable);
   if (phase === 'visual_preview') return previewSchemas(previewBlockCount).model;
   const synthesis = phase === 'synthesis';
   const schema = retainable
@@ -1036,137 +1008,8 @@ export function presentResultSchemaForPhase(
   return schema;
 }
 
-/** How a resent `sections` list merges into the held draft is stated once, by the rejection's `resend_rule`. */
-const REPAIR_SECTIONS_DESCRIPTION = 'Sections to add or change, keyed by label.';
-
-/** One note of a held repair draft: a caption to add or replace under its node id, or the removal of the held one. */
-const PresentResultNotePatchSchema = z.union([
-  NoteSchema,
-  z.object({
-    node_id: NoteSchema.shape.node_id,
-    remove: z.literal(true).describe('true drops the held note for this node id.'),
-  }).strict(),
-]);
-
-/** Validates assembled sections against their stage's original schema after a repair merge. */
-export function mergedSectionsSchemaForPhase(phase: string, previewBlockCount: number): z.ZodType {
-  return phase === 'visual_preview' ? z.object({ sections: previewSchemas(previewBlockCount).model.shape.sections }) : MergedSectionsSchema;
-}
-
-/** Strict patch schema for repairing a held `present_result` draft. */
-const PresentResultRepairPatchSchema = PresentResultModelSchema.pick({
-  name: true,
-  summary: true,
-  title: true,
-  intro: true,
-  closing: true,
-  layout_direction: true,
-  highlight_groups: true,
-  sections: true,
-  notes: true,
-}).partial().extend({
-  sections: sectionList(PresentResultSectionPatchSchema).optional().describe(REPAIR_SECTIONS_DESCRIPTION),
-  notes: z.array(PresentResultNotePatchSchema).min(1).optional().describe('Notes to add or change, keyed by node_id.'),
-  is_update: z.boolean().optional().describe('Optional — a repair keeps the held draft\'s own value; the value sent here is not applied.'),
-}).strict();
-
-/** The repair patch plus the graph-edit fields, which only a rejection of that same edit may authorize. */
-export const PresentResultAuthorizableRepairSchema = PresentResultRepairPatchSchema.extend({
-  prune_node_ids: PresentResultModelSchema.shape.prune_node_ids,
-  add_node_ids: PresentResultModelSchema.shape.add_node_ids,
-}).strict();
-
-/** Fields that a held-draft rejection may explicitly authorize for repair. */
-export const PRESENT_RESULT_REPAIR_FIELDS = [
-  'name',
-  'summary',
-  'title',
-  'intro',
-  'closing',
-  'layout_direction',
-  'highlight_groups',
-  'sections',
-  'notes',
-] as const;
-
-/** Graph-edit fields that only a rejection of that same edit authorizes for repair. */
-const PRESENT_RESULT_GRAPH_EDIT_FIELDS = ['prune_node_ids', 'add_node_ids'] as const;
-
-/** Every top-level field `lineage_present_result` defines in any stage; a key outside it is not a field of the tool. */
-export const PRESENT_RESULT_DEFINED_FIELDS: ReadonlySet<string> = new Set(Object.keys(PresentResultModelSchema.shape));
-
-/** Presentation field that may be authorized in a held-draft repair patch. */
-export type PresentResultRepairField = typeof PRESENT_RESULT_REPAIR_FIELDS[number] | typeof PRESENT_RESULT_GRAPH_EDIT_FIELDS[number];
-
-/** Per-field-set memo for {@link presentResultRepairPatchSchemaForFields}. */
-const repairPatchSchemaCache = new Map<string, z.ZodType>();
-
-/** Strict indexed replacements derived from the original field schemas for both held lists. */
-function indexedRepairList(leaves: readonly IndexedRepairFields[], shape: z.ZodRawShape, list: string) {
-  const entries = leaves.map(leaf => z.object({ index: z.literal(leaf.index),
-    ...Object.fromEntries(leaf.fields.map(field => [field, shape[field]])),
-  }).strict());
-  const entry = entries.length === 1 ? entries[0]!
-    : z.union(entries as [typeof entries[number], typeof entries[number], ...Array<typeof entries[number]>]);
-  return z.array(entry).length(leaves.length).superRefine((values, ctx) => {
-    const seen = new Set<number>();
-    for (const [index, value] of values.entries()) {
-      if (seen.has(value.index)) ctx.addIssue({ code: 'custom', path: [index, 'index'], message: `Send each authorized ${list} index once.` });
-      seen.add(value.index);
-    }
-  }).describe(`Replace only indexed fields: ${leaves.map(leaf => `${leaf.index} (${leaf.fields.join(', ')})`).join('; ')}. Other fields and entries stay held.`);
-}
-
-/** Builds the strict provider/runtime patch schema for a held-draft repair. */
-export function presentResultRepairPatchSchemaForFields(
-  fields: readonly PresentResultRepairField[],
-  phase?: string,
-  previewBlockCount = 0,
-  highlightLabelIndexes?: readonly number[],
-  sectionLeaves?: readonly IndexedRepairFields<PresentResultSectionRepairField>[],
-  retainable = false,
-): z.ZodType<z.infer<typeof PresentResultAuthorizableRepairSchema>> {
-  const keys = [...new Set<PresentResultRepairField>(fields)].sort();
-  const preview = phase === 'visual_preview';
-  const labelIndexes = highlightLabelIndexes ? [...new Set(highlightLabelIndexes)].sort((left, right) => left - right) : undefined;
-  const sectionRepairs = sectionLeaves?.map(leaf => ({ index: leaf.index, fields: [...new Set(leaf.fields)].sort() }))
-    .sort((left, right) => left.index - right.index);
-  const cacheKey = `${preview ? `preview${previewBlockCount}:` : ''}${retainable ? 'retain:' : ''}${keys.join(',')}${labelIndexes ? `:labels=${labelIndexes.join(',')}` : ''}${sectionRepairs ? `:sections=${sectionRepairs.map(leaf => `${leaf.index}.${leaf.fields.join('+')}`).join(',')}` : ''}`;
-  const cached = repairPatchSchemaCache.get(cacheKey);
-  if (cached) return cached as z.ZodType<z.infer<typeof PresentResultAuthorizableRepairSchema>>;
-  const mask = Object.fromEntries(keys.map(key => [key, true]));
-  const picked = PresentResultAuthorizableRepairSchema.pick(
-    mask as Partial<Record<keyof typeof PresentResultAuthorizableRepairSchema.shape, true>>,
-  );
-  let staged = (preview && keys.includes('sections')
-    ? picked.extend({ sections: previewSchemas(previewBlockCount).patchSections })
-    : picked) as z.ZodObject<z.ZodRawShape>;
-  if (labelIndexes) staged = staged.extend({ highlight_groups: indexedRepairList(
-    labelIndexes.map(index => ({ index, fields: ['label'] })), HighlightGroupSchema.shape, 'highlight_groups') });
-  if (sectionRepairs) staged = staged.extend({ sections: indexedRepairList(sectionRepairs,
-    preview ? previewSchemas(previewBlockCount).section.shape : PresentResultSectionSchema.shape, 'sections') });
-  const optionalKeys = keys.filter(key => PresentResultModelSchema.shape[key].isOptional());
-  const declared = labelIndexes || sectionRepairs
-    ? staged.required(Object.fromEntries(keys.filter(key => !optionalKeys.includes(key)).map(key => [key, true])) as Record<string, true>)
-    // A committed report keeps its sections when the repair omits them, so a lone `sections` field is optional then.
-    : keys.length === 1 && optionalKeys.length === 0 && !(retainable && keys[0] === 'sections')
-    ? (staged as z.ZodObject<z.ZodRawShape>).required({ [keys[0]]: true })
-    : staged;
-  const strict = declared.strict().superRefine((data, ctx) => {
-    if (keys.length < 2 || optionalKeys.length === keys.length) return;
-    const touchesAuthorizedField = keys.some(
-      key => (data as Record<string, unknown>)[key] !== undefined,
-    );
-    if (touchesAuthorizedField) return;
-    const message = `Repair patch named no authorized field; send at least one of: ${keys.join(', ')}.`;
-    for (const key of keys) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [key], message });
-    }
-  });
-  const schema = strict as z.ZodType<z.infer<typeof PresentResultAuthorizableRepairSchema>>;
-  repairPatchSchemaCache.set(cacheKey, schema);
-  return schema;
-}
+/** Presentation fields named by deterministic validation errors. */
+export type PresentResultRepairField = keyof z.infer<typeof PresentResultModelSchema>;
 
 /** Model-facing schema for a new synthesis render. */
 const PresentResultSynthesisModelSchema = PresentResultModelSchema.omit({

@@ -810,7 +810,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
     const reused = reusableKey ? reusableObservations.get(reusableKey) : undefined;
     if (reused) {
       input.onToolResult?.(call.toolName, call.input, false, reused.result);
-      if (reusableKey && priorObservationKeys.has(reusableKey)) {
+      if (reusableKey && priorObservationKeys.has(reusableKey) && !reused.refused) {
         const outcome = recordToolOutcome(call, {
           status: 'rejected',
           code: REJECTION_CODES.duplicateRead,

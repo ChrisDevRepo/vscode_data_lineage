@@ -97,6 +97,7 @@ export const ISSUES = {
   prunes_origin: { category: 'value', label: 'would remove the origin from the view', correction: 'Keep the origin in the view; prune_node_ids names other nodes.' },
   disconnects_view: { category: 'value', label: 'would leave the view disconnected', correction: 'Keep every remaining node connected to the origin through the view.' },
   empty_view: { category: 'value', label: 'leaves no node in the view', correction: 'Keep at least one node in the view.' },
+  not_overwritten: { category: 'protocol', label: 'held value could not be overwritten', correction: 'Correct the supplied replacement; the earlier valid value stays held.' },
   identical_resend: { category: 'protocol', label: 'same call as the one already rejected', correction: 'Change the listed fields before sending the call again.' },
   duplicate_read: { category: 'protocol', label: 'read already answered in this step', correction: 'Answer from the result already in the conversation, or call a different read.' },
   one_call: { category: 'protocol', label: 'not evaluated: one commit call per reply', correction: 'Send one commit call per reply that carries all its content.' },
@@ -221,8 +222,7 @@ export function readToolErrorText(text: string): ToolRejection | null {
 /** Feedback stage of one hop (D-105): 1 states every fault, 2 adds the allowed values, 3 adds the per-code fallbacks and the last-correction notice. */
 export type FeedbackStage = 1 | 2 | 3;
 
-/** Most errors shown per category, and most allowed values shown per error; the rest is counted in `more`. */
-const MAX_ERRORS = 8;
+/** Most allowed alternatives shown per error; every fault and owed subject is retained. */
 const MAX_ALLOWED = 15;
 
 /** Normalized edit distance in [0, 1], case-insensitive: ranks allowed values against a submitted value that is never shown. */
@@ -258,12 +258,13 @@ export function renderProblem(rejection: ToolRejection, stage: FeedbackStage, in
     const group = errors.filter(error => ISSUES[error.code].category === category).sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
     if (!group.length) return [];
     const key = category === 'required' ? 'missing' : 'allowed';
-    const shown = group.slice(0, MAX_ERRORS).map(error => {
+    const shown = group.map(error => {
       const { label: fault, correction } = ISSUES[error.code];
       if (!error.values || (stage < 2 && category !== 'required')) return { path: error.path, fault, correction };
       const sent = valueAt(input, error.path);
       const ranked = [...error.values].sort((a, b) => (typeof sent === 'string' ? distance(sent, a) - distance(sent, b) : 0) || a.localeCompare(b));
-      return { path: error.path, fault, correction, [key]: ranked.slice(0, MAX_ALLOWED), ...(ranked.length > MAX_ALLOWED ? { more: ranked.length - MAX_ALLOWED } : {}) };
+      const limit = category === 'required' ? ranked.length : MAX_ALLOWED;
+      return { path: error.path, fault, correction, [key]: ranked.slice(0, limit), ...(ranked.length > limit ? { more: ranked.length - limit } : {}) };
     });
     const fallback = stage === 3 ? [...new Set(group.flatMap(error => {
       const issue = ISSUES[error.code];
@@ -272,7 +273,7 @@ export function renderProblem(rejection: ToolRejection, stage: FeedbackStage, in
     if (fallback) fallbackShown = true;
     const texts: { short: string; detailed: string } = ISSUE_CATEGORIES[category];
     return [{ category, instruction: stage === 1 ? texts.short : texts.detailed, errors: shown,
-      ...(group.length > MAX_ERRORS ? { more: group.length - MAX_ERRORS } : {}), ...(fallback ? { fallback } : {}) }];
+      ...(fallback ? { fallback } : {}) }];
   });
   const resend = [...new Set([...(rejection.resend ?? []), ...(fallbackShown ? [FALLBACK_FIELD] : [])])];
   const resendRule = [...new Set(rejection.resendRules ?? [])].map(rule => RESEND_RULES[rule]).join(' ');
