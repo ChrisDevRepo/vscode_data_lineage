@@ -3,6 +3,7 @@ import { assert, describe, expect, it, vi } from 'vitest';
 import { appendFileSync } from 'node:fs';
 import * as vscode from 'vscode';
 import { z } from 'zod';
+import Ajv from 'ajv';
 import { AIMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
 import { VscodeModelPort } from '../../../src/ai/model/vscodeModelPort';
 import { TOOL_ARGUMENTS_NOT_OBJECT_REASON } from '../../../src/ai/model/modelPort';
@@ -83,13 +84,16 @@ const shown = (value: unknown): ShownError[] => problemOf(value).guidance.flatMa
 /** One shown error of an issue code, without values. */
 const fault = (code: IssueCode, path = '') => ({ path, fault: ISSUES[code].label, correction: ISSUES[code].correction });
 
-/** Approved08 D-097: exercise the production graph, canonical handlers and actual model-port requests. */
-it.each(['bb', 'ct'] as const)('keeps the original request prefix and tools through %s corrections, resetting at the next hop', async mode => {
+/** Approved08 D-097/D-098: stable full-field wire updates and strict composed admission through the production graph. */
+it.each((['bb', 'ct'] as const).flatMap(mode => (['business', 'technical', 'both'] as const).map(classification => ({ mode, classification }))))(
+  'keeps the original request prefix and tools through $mode/$classification corrections, resetting at the next hop', async ({ mode, classification }) => {
+  const angles = classification === 'both' ? ['business', 'technical'] : [classification];
+  const heldSections = Object.fromEntries(angles.map(angle => [angle, `Held ${angle} detail unique-prefix.`]));
   const columns = [{ name: 'Value', type: 'int', nullable: 'NULL', extra: '' }];
   const source = makeNode({ id: '[dbo].[Source]', schema: 'dbo', name: 'Source', type: 'view', bodyScript: 'SELECT 1 AS Value;', columns });
   const focus = makeNode({ id: '[dbo].[Report]', schema: 'dbo', name: 'Report', type: 'view', bodyScript: 'SELECT Value FROM dbo.Source;', columns });
   const model = makeIndexedModel([source, focus], [[source.id, focus.id]]);
-  const session = new AiSession({ ...EMPTY_AI_TEMPLATES, technical_capture: 'Capture the supplied SQL.' });
+  const session = new AiSession({ ...EMPTY_AI_TEMPLATES, business_capture: 'Capture the supplied business facts.', technical_capture: 'Capture the supplied SQL.' });
   session.model = model;
   session.graph = makeGraph([source, focus], [[source.id, focus.id]]);
   const requests: Array<{ phase: string | undefined; focus: string | null; messages: string[]; system: string | undefined; tools: string; input: ToolGenerationInput }> = [];
@@ -111,7 +115,7 @@ it.each(['bb', 'ct'] as const)('keeps the original request prefix and tools thro
       let toolName: string, payload: Record<string, unknown>;
       if (input.phase === 'sm_entry') {
         toolName = 'lineage_start_exploration';
-        payload = { origin: focus.id, analysisMode: mode, classification: 'technical', ...(mode === 'ct' ? { targetColumns: ['Value'] } : {}),
+        payload = { origin: focus.id, analysisMode: mode, classification, ...(mode === 'ct' ? { targetColumns: ['Value'] } : {}),
           depth: { upstream: { levels: 1, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } };
       } else if (input.phase === 'active') {
         assert(engine && current);
@@ -120,11 +124,11 @@ it.each(['bb', 'ct'] as const)('keeps the original request prefix and tools thro
         counters.set(current, attempt + 1);
         toolName = 'lineage_submit_findings';
         if (current === focus.id) payload = attempt === 0
-          ? { summary: 'Held summary unique-prefix.', sections: { technical: 'Held detail unique-prefix.' }, badge_label: 42,
+          ? { summary: 'Held summary unique-prefix.', sections: heldSections, badge_label: 42,
             ...(mode === 'ct' ? { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source.id, col: 'Value', transforms: ['pass_through'] }] }] }
               : { questions: [{ nodeId: source.id, question: 'Describe the source.' }] }) }
           : { badge_label: 'Report' };
-        else payload = attempt === 0 ? {} : { summary: 'Source summary.', sections: { technical: 'Source detail.' }, ...(mode === 'ct' ? { column_flow: [] } : {}) };
+        else payload = attempt === 0 ? {} : { summary: 'Source summary.', sections: Object.fromEntries(angles.map(angle => [angle, 'Source detail.'])), ...(mode === 'ct' ? { column_flow: [] } : {}) };
       } else {
         toolName = 'lineage_present_result';
         payload = { name: 'Lineage', summary: 'Report reads Source.', sections: [{ label: 'Trace', text: 'Supplied facts.', node_ids: session.resultGraph!.nodeIds }],
@@ -144,7 +148,7 @@ it.each(['bb', 'ct'] as const)('keeps the original request prefix and tools thro
   assert(proposalId);
   expect(await runtime.run({ model: scripted, sink: sink(), request: { id: 'prefix-approve', prompt: 'Approve & Proceed', gateDecision: { kind: 'approve', proposalId } } })).toMatchObject({ outcome: 'ok' });
   const target = process.env.DLV_RETRY_PREFIX_OUTPUT;
-  if (target) appendFileSync(target, JSON.stringify({ mode, requests: requests.map(({ input: _input, ...request }) => request) }) + '\n');
+  if (target) appendFileSync(target, JSON.stringify({ mode, classification, requests: requests.map(({ input: _input, ...request }) => request) }) + '\n');
   const active = requests.filter(request => request.phase === 'active');
   for (const id of [focus.id, source.id]) {
     const [first, correction] = active.filter(request => request.focus === id);
@@ -160,7 +164,18 @@ it.each(['bb', 'ct'] as const)('keeps the original request prefix and tools thro
       : expect.arrayContaining(['summary', 'sections', ...(mode === 'ct' ? ['column_flow'] : [])]));
     const submit = first.input.tools.find(tool => tool.name === 'lineage_submit_findings');
     assert(submit);
-    expect(toModelJsonSchema(submit.inputSchema).required).toEqual(expect.arrayContaining(['summary', 'sections', ...(mode === 'ct' ? ['column_flow'] : [])]));
+    const validateWire = new Ajv({ strict: false }).compile(toModelJsonSchema(submit.inputSchema));
+    for (const partial of [{ badge_label: 'Report' }, { questions: [] }, { prune_neighbors: [] },
+      ...angles.map(angle => ({ sections: { [angle]: 'Corrected section.' } })), ...(mode === 'ct' ? [{ column_flow: [] }] : [])]) {
+      expect(validateWire(partial), `D-098: the stable full-field card admits ${JSON.stringify(partial)}`).toBe(true);
+    }
+    for (const invalid of [{ summary: 42 }, { sections: 42 }, { badge_label: 42 }, { unknown: true },
+      ...angles.map(angle => ({ sections: { [angle]: 42 } })), { sections: { unknown: 'Unsupported angle.' } },
+      { questions: [{ nodeId: '[dbo].[Unknown]', question: 'Explain the supplied value.' }] },
+      ...(mode === 'ct' ? [{ column_flow: 42 }, { column_flow: [{ out_col: 'Unknown', upstream_columns: [] }] }] : [])]) expect(validateWire(invalid)).toBe(false);
+    expect(Object.keys(toModelJsonSchema(submit.inputSchema).properties as object)).toEqual(mode === 'ct'
+      ? ['focus_node_id', 'column_flow', 'summary', 'badge_label', 'prune_neighbors', 'questions', 'sections']
+      : ['focus_node_id', 'summary', 'badge_label', 'prune_neighbors', 'questions', 'sections']);
     expect(JSON.stringify(feedback.content)).not.toContain('Held summary unique-prefix.');
   }
   const [firstHop] = active.filter(request => request.focus === focus.id);
@@ -168,7 +183,8 @@ it.each(['bb', 'ct'] as const)('keeps the original request prefix and tools thro
   expect(nextHop.messages).not.toEqual(firstHop.messages);
   expect(nextHop.input.messages.some(message => message instanceof ToolMessage)).toBe(false);
   expect(sent.filter(call => call.toolName === 'lineage_submit_findings').map(call => call.input)).toContainEqual({ badge_label: 'Report' });
-  expect(session.memory.getResult().detail_slots.find(slot => slot.nodeId === focus.id)).toMatchObject({ summary: 'Held summary unique-prefix.' });
+  expect(session.memory.getResult().detail_slots.find(slot => slot.nodeId === focus.id)).toMatchObject({ summary: 'Held summary unique-prefix.',
+    sections: angles.map(angle => ({ angle, text: heldSections[angle] })) });
 });
 
 it.each([
@@ -869,8 +885,7 @@ describe('missing-content exchange progress', () => {
     const plan = compileInstructionPlan({ kind: 'converse', stage: { kind: 'active', mode: 'sm_bb' }, registry,
       messages: [new HumanMessage('Explain Report.')], sink: new TurnEventSink(() => {}),
       facts: explorationFacts('bb', [], { classification: 'technical', memorySections: [] }),
-      freshSubmission: () => engine.heldFindingFocus === null && session.memory.getArchivedAngles(node.id).size === 0,
-      hopColumns: () => engine.hopSubmitColumns, heldColumnFlow: () => engine.heldColumnFlow,
+      hopColumns: () => engine.hopSubmitColumns,
       requiredTerminalTool: 'lineage_submit_findings', toolChoice: 'required',
       onToolResult: (_name, _input, isError) => { if (!isError) completed = true; }, isPhaseComplete: () => completed,
     });
@@ -992,8 +1007,7 @@ describe('submit_findings rejection form', () => {
     const plan = compileInstructionPlan({ kind: 'converse', stage: { kind: 'active', mode: mode === 'ct' ? 'sm_ct' : 'sm_bb' }, registry,
       messages: [new HumanMessage('Inspect Root.')], sink: new TurnEventSink(() => {}),
       facts: explorationFacts(mode, mode === 'ct' ? ['Value', 'Other'] : [], { classification, memorySections: [] }),
-      freshSubmission: () => engine.heldFindingFocus === null && session.memory.getArchivedAngles(root).size === 0,
-      hopColumns: () => engine.hopSubmitColumns, heldColumnFlow: () => engine.heldColumnFlow,
+      hopColumns: () => engine.hopSubmitColumns,
       requiredTerminalTool: 'lineage_submit_findings', toolChoice: 'required' });
     let state = initialToolPhaseAttemptState(plan.frame.phase);
     const send = async (input: unknown) => {
@@ -1076,7 +1090,7 @@ describe('submit_findings rejection form', () => {
           expect(first.rejection).not.toHaveProperty('example');
           expect(engine.getDetailSlots()).toEqual([]);
           const projected = toModelJsonSchema(submitFindingsSchemaForMode(mode, classification, false,
-            engine.hopSubmitColumns, engine.heldColumnFlow)) as any;
+            engine.hopSubmitColumns, engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false)) as any;
           for (const field of Object.keys(complete))
             expect(projected.properties[field], `${scenario.id}: D-098 keeps held ${field} in the full schema`).toBeDefined();
           if (arm !== 'first_resend_success') {
@@ -1201,7 +1215,7 @@ describe('submit_findings rejection form', () => {
     expect(engine.columnAspect?.edges).toEqual([]);
     expect(engine.getDetailSlots()).toEqual([]);
     const correctionInput = correction === 'keep-mapping' ? { prune_neighbors: [] } : { column_flow: terminals, prune_neighbors: prune };
-    const schema = submitFindingsSchemaForMode('ct', 'technical', false, engine.hopSubmitColumns, engine.heldColumnFlow);
+    const schema = submitFindingsSchemaForMode('ct', 'technical', false, engine.hopSubmitColumns, engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false);
     expect(schema.safeParse(correctionInput).success, 'the served repair schema must admit the complete joint replacement').toBe(true);
     const accepted = await send(correctionInput);
     expect(accepted.attempt.rejections).toEqual([]);
@@ -1316,7 +1330,7 @@ describe('submit_findings rejection form', () => {
     expect(third.rejection.errors).toEqual([{ ...fault('not_neighbor', 'prune_neighbors.0.id'), allowed: [source, other].sort() }]);
     expect(third.rejection.guidance.some(group => group.fallback !== undefined)).toBe(false);
     const exit = { prune_neighbors: [] };
-    const schema = submitFindingsSchemaForMode('ct', 'technical', false, engine.hopSubmitColumns, engine.heldColumnFlow);
+    const schema = submitFindingsSchemaForMode('ct', 'technical', false, engine.hopSubmitColumns, engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false);
     expect(schema.safeParse({ focus_node_id: root, ...exit }).success).toBe(true);
     const held = structuredClone(engine.toJSON().engineInternals.heldFinding?.finding);
     const fourth = await send({ focus_node_id: root, ...exit });

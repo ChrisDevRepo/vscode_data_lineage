@@ -118,12 +118,8 @@ export type ConversePlanDraft = Omit<ConversePlanInput, 'phase' | 'instructionCo
   readonly presentResultRetainableSections?: () => boolean;
   /** Number of served `answer_blocks` the visual preview's section ranges may name (`B1`..`B<count>`). */
   readonly presentResultPreviewBlockCount?: number;
-  /** Whether the active hop's next `submit_findings` is fresh, with no held draft or archived angle; read live, `true` when absent. */
-  readonly freshSubmission?: () => boolean;
   /** The active CT hop's tracked-column facts that narrow the served `column_flow`; read live, absent serves the general schema. */
   readonly hopColumns?: () => SubmitFindingsHopColumns;
-  /** Whether a held draft of the focus carries a valid `column_flow` a retry may omit; read live, `false` when absent. */
-  readonly heldColumnFlow?: () => boolean;
   /** Live engine eligibility for the optional current-candidate removal command; absent denies it. */
   readonly canPruneCurrent?: () => boolean;
 };
@@ -286,9 +282,7 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
     registry: sourceRegistry,
     facts,
     toolSchemaOverrides,
-    freshSubmission,
     hopColumns,
-    heldColumnFlow,
     canPruneCurrent,
     presentResultRetainableSections,
     presentResultPreviewBlockCount,
@@ -312,7 +306,7 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
     const submitMode = stage.mode === 'sm_ct' ? 'ct' : 'bb';
     liveResolvers.set(
       'lineage_submit_findings',
-      () => submitFindingsSchemaForMode(submitMode, frozenFacts?.classification, freshSubmission?.() ?? true, hopColumns?.(), heldColumnFlow?.() ?? false),
+      () => submitFindingsSchemaForMode(submitMode, frozenFacts?.classification, false, hopColumns?.(), true),
     );
   }
   if (stageSupportsPresentResultRepair(stage)) {

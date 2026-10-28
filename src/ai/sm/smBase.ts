@@ -468,11 +468,6 @@ export class NavigationEngine implements IHopStateMachine {
     return Array.from(this.guiExcludedNodeIds);
   }
 
-  /** Whether the draft held for the current focus carries a `column_flow`, so a retry may omit it to keep the held list. */
-  public get heldColumnFlow(): boolean {
-    return this.heldFindingFocus !== null && this.heldFindingDraft.get()?.column_flow !== undefined;
-  }
-
   /** Canonical focus of a nonempty safe draft in this hop, mode and session. */
   public get heldFindingFocus(): string | null {
     const held = this.heldFindingDraft.get();

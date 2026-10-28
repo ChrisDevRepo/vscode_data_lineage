@@ -87,7 +87,7 @@ describe('neighbor-specific function caller context', () => {
     expect(engine.peekHopContext()).toEqual(contextBeforeRetry);
     expect(engine.getCurrentTasks()).toEqual(tasksBeforeRetry);
     expect(engine.columnAspect!.edges).toEqual([]);
-    const repair = submitFindingsSchemaForMode('ct', 'technical', false, engine.hopSubmitColumns, engine.heldColumnFlow).parse({
+    const repair = submitFindingsSchemaForMode('ct', 'technical', false, engine.hopSubmitColumns, engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false).parse({
       focus_node_id: fn,
       column_flow: [{ out_col: 'Value', returns_to: { node: caller, col: 'Value' }, upstream_columns: [{ node: source, col: 'Amount', transforms: ['compute'] }] }],
     });

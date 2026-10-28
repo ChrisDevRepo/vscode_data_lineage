@@ -950,9 +950,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       toolChoice: 'required',
       requiredTerminalTool: 'lineage_submit_findings',
       proseGate: 'buffer-until-tool',
-      freshSubmission: () => engine.heldFindingFocus === null && sess.memory.getArchivedAngles(focusId).size === 0,
       hopColumns: () => engine.hopSubmitColumns,
-      heldColumnFlow: () => engine.heldColumnFlow,
       canPruneCurrent: () => engine.canPruneCurrent,
       isPhaseComplete: () => submitted,
       onToolResult: (toolName, _input, isError) => {

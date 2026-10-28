@@ -110,7 +110,7 @@ function findingRepair(engine: NavigationEngine, input: object): object {
     })) : value;
   const selected = select(input, '') as object;
   const schema = submitFindingsSchemaForMode(engine.currentHopAnalysisMode, engine.classification ?? undefined,
-    false, engine.hopSubmitColumns, engine.heldColumnFlow);
+    false, engine.hopSubmitColumns, engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false);
   expect(schema.safeParse(selected).success).toBe(true);
   return selected;
 }
@@ -580,10 +580,10 @@ describe('large findings repairs', () => {
     expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
     expect(engine.toJSON().agenda).toEqual(before.agenda);
     expect(engine.toJSON().removedSet).toEqual(before.removedSet);
-    expect(engine.heldColumnFlow).toBe(true);
+    expect(engine.heldPartsOfCurrentFocus()?.fields).toContain('column_flow');
     const correction = { focus_node_id: ORIGIN, prune_neighbors: [],
       questions: [{ nodeId: BRANCH, question: 'Establish the source of Value.' }] };
-    const schema = submitFindingsSchemaForMode('ct', 'technical', false, engine.hopSubmitColumns, engine.heldColumnFlow);
+    const schema = submitFindingsSchemaForMode('ct', 'technical', false, engine.hopSubmitColumns, engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false);
     expect(schema.safeParse(correction).success).toBe(true);
     expect(new Ajv({ strict: false }).compile(toModelJsonSchema(schema))(correction)).toBe(true);
     expect(JSON.parse(executeSubmitFindings(findingRepair(engine, correction), services))).toHaveProperty('ok', true);
@@ -762,7 +762,7 @@ describe('large findings repairs', () => {
       { out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] },
       { out_col: 'Other', upstream_columns: [sibling, { node: BRANCH, col: 'Other', note: 'Retain this supplier note.' }] },
     ] };
-    const schema = submitFindingsSchemaForMode('ct', 'technical', false, engine.hopSubmitColumns, engine.heldColumnFlow);
+    const schema = submitFindingsSchemaForMode('ct', 'technical', false, engine.hopSubmitColumns, engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false);
     expect(schema.safeParse(correction).success).toBe(true);
     expect(new Ajv({ strict: false }).compile(toModelJsonSchema(schema))(correction)).toBe(true);
     expect(JSON.parse(executeSubmitFindings(findingRepair(engine, correction), services))).toHaveProperty('ok', true);
@@ -793,7 +793,7 @@ describe('large findings repairs', () => {
     expect(engine.currentFocus).toBe(ORIGIN);
     const patch = { focus_node_id: ORIGIN, column_flow: flow.map((entry, index) => index === 1
       ? { ...entry, upstream_columns: defect === 'remove' ? entry.upstream_columns.slice(0, 1) : [entry.upstream_columns[0]!, valid] } : entry) };
-    const schema = submitFindingsSchemaForMode('ct', 'technical', false, engine.hopSubmitColumns, engine.heldColumnFlow);
+    const schema = submitFindingsSchemaForMode('ct', 'technical', false, engine.hopSubmitColumns, engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false);
     expect(schema.safeParse(patch).success).toBe(true);
     expect(new Ajv({ strict: false }).compile(toModelJsonSchema(schema))(patch)).toBe(true);
     expect(JSON.parse(executeSubmitFindings(patch, services))).toHaveProperty('ok', true);
@@ -1231,7 +1231,7 @@ describe('lineage_submit_findings boundary', () => {
     const { services } = stubToolServices({ session, model, graph });
     const input = { ...finding(), badge_label: 'x'.repeat(length) };
     const before = structuredClone(input);
-    const schema = submitFindingsSchemaForMode('ct', 'technical', true, engine.hopSubmitColumns, engine.heldColumnFlow);
+    const schema = submitFindingsSchemaForMode('ct', 'technical', true, engine.hopSubmitColumns, engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false);
     const wireValid = new Ajv({ strict: false }).compile(toModelJsonSchema(schema))(input);
     const result = JSON.parse(executeSubmitFindings(input, services));
     expect(schema.safeParse(input).success).toBe(length <= 50);
@@ -1652,7 +1652,7 @@ it.each([
   const engine = world.engine;
   const served = resolveRegistrySchemas(registry, new Map<string, () => import('zod').ZodType>([
     ['lineage_start_exploration', () => StartExplorationFreshProviderInputSchema],
-    ['lineage_submit_findings', () => submitFindingsSchemaForMode('ct', 'technical', true, engine.hopSubmitColumns, engine.heldColumnFlow)],
+    ['lineage_submit_findings', () => submitFindingsSchemaForMode('ct', 'technical', true, engine.hopSubmitColumns, engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false)],
   ]));
   const tools = served.getTools().map(tool => ({ name: tool.name, description: tool.name, inputSchema: tool.inputSchema }));
   vi.mocked(normalizeModelInput).mockClear();
@@ -1870,8 +1870,8 @@ it.each([false, true])('repairs an owed section through the compiled active hop 
   const patch = { sections: { technical: 'Corrected technical body.' } };
   const plan = () => compileInstructionPlan({ kind: 'converse', stage: { kind: 'active', mode: 'sm_ct' }, registry,
     facts: { analysisMode: 'ct', targetColumns: ['Value'], classification: 'both', memorySections: [] }, messages: [modelUserMessage('Trace Value.')],
-    sink: new TurnEventSink(() => {}), freshSubmission: () => engine.heldFindingFocus === null,
-    hopColumns: () => engine.hopSubmitColumns, heldColumnFlow: () => engine.heldColumnFlow,
+    sink: new TurnEventSink(() => {}),
+    hopColumns: () => engine.hopSubmitColumns,
     toolChoice: 'required', requiredTerminalTool: 'lineage_submit_findings' });
   queue([{ tool: 'lineage_submit_findings', input }]);
   const first = await executeToolAttempt(port, plan(), { priorState: initialToolPhaseAttemptState('active') });
@@ -1882,6 +1882,8 @@ it.each([false, true])('repairs an owed section through the compiled active hop 
   const schema = offered[1]!.find(tool => tool.name === 'lineage_submit_findings').inputSchema;
   expect(Object.keys(schema.properties)).toEqual(Object.keys(offered[0]!.find(tool => tool.name === 'lineage_submit_findings').inputSchema.properties));
   expect(schema, 'D-097: the original full schema stays unchanged').toEqual(offered[0]!.find(tool => tool.name === 'lineage_submit_findings').inputSchema);
+  expect(new Ajv({ strict: false }).compile(schema)(patch),
+    'D-098: the served native wire card admits the named technical-leaf correction alone').toBe(true);
   expect(new Ajv({ strict: false }).compile(schema)({ ...input, sections: { ...input.sections, ...patch.sections } }),
     'D-098/D-101: the composed candidate, with the held business leaf, satisfies the original full schema').toBe(true);
   expect(second.rejections, 'D-098: resent saved fields are never rejected').toHaveLength(0);
@@ -1898,8 +1900,8 @@ it('keeps the original provider schema while rechecking held fields against curr
     column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }] };
   const plan = () => compileInstructionPlan({ kind: 'converse', stage: { kind: 'active', mode: 'sm_ct' }, registry,
     facts: { analysisMode: 'ct', targetColumns: ['Value'], classification: 'technical' }, messages: [modelUserMessage('Trace Value.')],
-    sink: new TurnEventSink(() => {}), freshSubmission: () => engine.heldFindingFocus === null,
-    hopColumns: () => engine.hopSubmitColumns, heldColumnFlow: () => engine.heldColumnFlow,
+    sink: new TurnEventSink(() => {}),
+    hopColumns: () => engine.hopSubmitColumns,
     toolChoice: 'required', requiredTerminalTool: 'lineage_submit_findings' });
   queue([{ tool: 'lineage_submit_findings', input: original }]);
   const state = initialToolPhaseAttemptState('active');
@@ -1932,8 +1934,8 @@ it.each(['column_flow', 'unknown-root'] as const)('uses the existing active auth
     : { ...valid, unknown: true };
   const plan = () => compileInstructionPlan({ kind: 'converse', stage: { kind: 'active', mode: 'sm_ct' }, registry,
     facts: { analysisMode: 'ct', targetColumns: ['Value'], classification: 'technical', memorySections: [] }, messages: [modelUserMessage('Trace Value.')],
-    sink: new TurnEventSink(() => {}), freshSubmission: () => engine.heldFindingFocus === null,
-    hopColumns: () => engine.hopSubmitColumns, heldColumnFlow: () => engine.heldColumnFlow,
+    sink: new TurnEventSink(() => {}),
+    hopColumns: () => engine.hopSubmitColumns,
     toolChoice: 'required', requiredTerminalTool: 'lineage_submit_findings' });
   queue([{ tool: 'lineage_submit_findings', input: invalid }]);
   const first = await executeToolAttempt(port, plan(), { priorState: initialToolPhaseAttemptState('active') });

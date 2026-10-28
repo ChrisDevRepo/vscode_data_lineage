@@ -58,8 +58,7 @@ function bbHop() {
     execute: (input: unknown) => executeSubmitFindings(input, services) });
   const plan = compileInstructionPlan({ kind: 'converse', stage: { kind: 'active', mode: 'sm_bb' }, registry,
     messages: [new HumanMessage('Inspect the current object.')], sink: new TurnEventSink(() => {}),
-    facts: explorationFacts('bb', [], { classification: 'technical', memorySections: [] }),
-    freshSubmission: () => engine.heldFindingFocus === null, hopColumns: () => engine.hopSubmitColumns,
+    facts: explorationFacts('bb', [], { classification: 'technical', memorySections: [] }), hopColumns: () => engine.hopSubmitColumns,
     requiredTerminalTool: TOOL, toolChoice: 'required' });
   return { focus, source, engine, plan };
 }

@@ -352,7 +352,7 @@ const COLUMN_FLOW_DESCRIPTION = 'One entry per SQL-proved output related to the 
 export const ColumnFlowSchema = z.array(ColumnFlowEntrySchema).describe(COLUMN_FLOW_DESCRIPTION);
 
 /** Single source for the `sections` describe text, shared by the per-mode schemas and the participant union. */
-const SECTIONS_DESCRIPTION = 'Required. An object keyed by angle, never a string: {"business": "…"} or {"technical": "…"}; only the classification\'s angle key(s). Each value is the section body per its capture recipe.';
+const SECTIONS_DESCRIPTION = 'Required for a fresh finding; omit held section angles on correction. An object keyed by angle, never a string: {"business": "…"} or {"technical": "…"}; only the classification\'s angle key(s). Each value is the section body per its capture recipe.';
 
 /** Single source for the `summary` describe text, shared by the per-mode schemas and the participant union. */
 const SUMMARY_DESCRIPTION =
@@ -374,7 +374,7 @@ const HopFindingBaseSchema = z.object({
 
 const { sections, summary, badge_label, prune_neighbors } = HopFindingBaseSchema.shape;
 
-/** CT form: the BB form plus `column_flow` (served-required — always in the served `required` list, `[]` allowed when no columns continue), declared right after `focus_node_id`, ahead of `sections`/`summary`, so the short required structured field is emitted before the long capture prose: a model emits arguments in schema order, and a required field placed after several thousand characters of section text tends to drop on the longest generations. */
+/** CT base requires `column_flow` for composed admission. Keep it after `focus_node_id`, before long capture prose. */
 const HopFindingCtBaseSchema = HopFindingBaseSchema
   .omit({ sections: true, summary: true, badge_label: true, prune_neighbors: true, questions: true })
   .extend({
@@ -670,13 +670,13 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
   return hop.outCols?.length === 0 ? flow.max(0) : flow;
 }
 
-/** Selects the strict, mode-and-classification-locked `submit_findings` schema advertised to the model during an active SM hop. */
+/** Shared full-field finding schema. Wire updates may omit held content; composed admission enforces fresh requirements. */
 export function submitFindingsSchemaForMode(
   mode: 'bb' | 'ct',
   classification?: ClassificationValue,
   freshSubmission = false,
   hop?: SubmitFindingsHopColumns,
-  /** Whether a held draft of this focus carries a valid `column_flow`; the served schema then lets a retry omit it to keep the held list. */
+  /** Wire updates may omit a held flow; composed backend candidates still require it. */
   heldColumnFlow = false,
   /** Validate a composed backend candidate, requiring its summary even when sections were archived on an earlier visit. */
   composedCandidate = false,
@@ -717,15 +717,14 @@ export function submitFindingsSchemaForMode(
     narrowed = narrowed.extend({ questions: z.array(question).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION) }).strict() as typeof HopFindingCtBaseSchema;
   }
   if (mode === 'ct' && heldColumnFlow) {
-    // A held retry keeps a valid flow by omission, like every other held field; the engine rejects
-    // a CT finding that ends up with no flow at all.
+    // Wire omission retains a held flow; full composed admission requires a flow for every CT finding.
     narrowed = narrowed.extend({
-      column_flow: (narrowed.shape.column_flow as z.ZodType).optional().describe(`${COLUMN_FLOW_DESCRIPTION} Omit to keep the held list; a sent column_flow replaces it whole.`),
+      column_flow: (narrowed.shape.column_flow as z.ZodType).optional().describe(`${COLUMN_FLOW_DESCRIPTION} Required for a fresh CT finding; omit to keep the held list on correction. A sent list replaces it whole.`),
     }).strict() as unknown as typeof HopFindingCtBaseSchema;
   }
   if (classification) {
     const kept = CLASSIFICATION_KEPT_ANGLES[classification];
-    const sectionsDescribe = (freshSubmission ? 'Required. ' : 'Omit held sections; supply only section angles needing correction. ')
+    const sectionsDescribe = (freshSubmission ? 'Required. ' : 'Required for a fresh finding; omit held section angles on correction. ')
       + (kept.length === CLASSIFICATION_KEPT_ANGLES.both.length
         ? 'Pre-formatted section body for the `business` and `technical` recipes, under keys `business` and `technical`.'
         : `Pre-formatted section body for the \`${kept[0]}\` recipe, under key \`${kept[0]}\`.`);
@@ -735,7 +734,7 @@ export function submitFindingsSchemaForMode(
     narrowed = narrowed.extend({ sections: narrowedSections }).strict() as typeof HopFindingCtBaseSchema;
   } else if (!freshSubmission) {
     narrowed = narrowed.extend({ sections: narrowed.shape.sections.describe(
-      'Omit held sections; supply only section angles needing correction, keyed by business or technical.',
+      SECTIONS_DESCRIPTION,
     ) }).strict() as typeof HopFindingCtBaseSchema;
   }
   const schema = finalizeSubmitFindingsSchema(narrowed, freshSubmission, classification, composedCandidate);
