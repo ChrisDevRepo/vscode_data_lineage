@@ -250,8 +250,8 @@ export function renderProblem(rejection: ToolRejection, stage: FeedbackStage, in
     const values = known?.values || error.values ? [...new Set([...(known?.values ?? []), ...(error.values ?? [])])] : undefined;
     merged.set(key, { path: error.path, code: error.code, ...(values ? { values } : {}) });
   }
-  // A missing parent covers its descendants; children under a mistyped object stay, since they state the expected structure.
-  const missingParents = [...merged.values()].filter(error => error.path && error.code === 'missing').map(error => `${error.path}.`);
+  // An absent parent covers its descendants; children under a present or mistyped parent stay, since they state the expected structure.
+  const missingParents = [...merged.values()].filter(error => error.path && error.code === 'missing' && valueAt(input, error.path) == null).map(error => `${error.path}.`);
   const errors = [...merged.values()].filter(error => !missingParents.some(prefix => error.path.startsWith(prefix)));
   let fallbackShown = false;
   const guidance = CATEGORY_ORDER.flatMap(category => {

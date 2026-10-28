@@ -2370,6 +2370,8 @@ export class NavigationEngine implements IHopStateMachine {
           id: nid,
           path: `questions.${index}.nodeId`,
           reason: 'The object is also named in prune_neighbors; the same submission cannot prune and investigate it.',
+          // The resent prune_neighbors list resolves the conflict, so it is owed as an alternative, never as a missing field.
+          alternatives: ['prune_neighbors'],
         });
         return;
       }

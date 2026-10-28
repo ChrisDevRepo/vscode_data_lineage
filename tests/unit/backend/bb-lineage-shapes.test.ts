@@ -79,8 +79,7 @@ describe('BB lineage: a prune inside a cycle through the origin', () => {
       code: 'route_validation_failed', issuePaths: ['prune_neighbors.0.id'],
       detail: [expect.objectContaining({ kind: 'prune_unsupported', id: 'd', path: 'prune_neighbors.0.id' }),
         expect.objectContaining({ kind: 'neighbor_outcome_missing', id: 'd' })],
-      errors: [expect.objectContaining({ path: 'prune_neighbors.0.id', code: 'prune_unsupported' }),
-        expect.objectContaining({ path: 'd', code: 'neighbor_outcome_missing', alternatives: ['questions'] })],
+      errors: [{ path: 'prune_neighbors.0.id', code: 'prune_target', values: [] }, { path: '', code: 'neighbor_undecided', values: ['d'] }],
       resend: ['prune_neighbors', 'questions'],
     });
     expect(w.engine.toJSON().removedSet).toEqual(before.removedSet);
@@ -114,7 +113,7 @@ describe('BB lineage: a prune without support is rejected at submission', () => 
   it('rejects the prune entry with the analysis it would disconnect', () => {
     const w = world(types, edges, 'o', ALL, ALL);
     expect(() => drain(w.engine, w.graph, { o: { prune: ['s'] }, d: { prune: ['s', 't'] } }))
-      .toThrow(/hop d rejected: .*"path":"prune_neighbors\.0\.id","code":"prune_unsupported"/);
+      .toThrow(/hop d rejected: .*"kind":"prune_unsupported","id":"s","path":"prune_neighbors\.0\.id".*"errors":\[\{"path":"prune_neighbors\.0\.id","code":"prune_target"/);
     expect(w.engine.toJSON().agenda.map(entry => entry.nodeId)).not.toContain('s');
   });
 

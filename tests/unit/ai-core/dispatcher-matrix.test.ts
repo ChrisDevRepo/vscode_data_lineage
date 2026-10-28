@@ -10,7 +10,6 @@ import { assertToolPairingWellFormed } from '../../../src/ai/model/messageWellFo
 import { compileInstructionPlan, explorationFacts } from '../../../src/ai/agent/instructionPlan';
 import {
   executeToolAttempt,
-  IDENTICAL_RESEND_HINT,
   initialToolPhaseAttemptState,
   MAX_TOOL_PROVIDER_CALLS,
   recordToolAttempt,
@@ -21,7 +20,7 @@ import {
 import { TurnEventSink } from '../../../src/ai/runtime/turnEventSink';
 import { ToolRegistry, type IToolRegistry } from '../../../src/ai/tools/registry';
 import { classifyRejectionCode } from '../../../src/ai/tools/toolProvider';
-import { CLARIFICATION_WINDOW_MS, ISSUES, at, makeRejection, rejectionFromZodError } from '../../../src/ai/support/toolErrorEnvelope';
+import { CLARIFICATION_WINDOW_MS, ISSUE_CATEGORIES, ISSUES, LAST_CORRECTION, at, makeRejection, rejectionFromZodError, type IssueCode } from '../../../src/ai/support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../../../src/ai/support/rejectionCodes';
 import { buildRouteValidationRejection } from '../../../src/ai/sm/smRouteValidation';
 import { createTurnTokenBudget } from '../../../src/ai/support/tokenBudget';
@@ -71,6 +70,15 @@ function discoveryPlan(registry: IToolRegistry<string>) {
 const toolMessage = (messages: readonly unknown[]): ToolMessage => messages.find(item => item instanceof ToolMessage) as ToolMessage;
 const call = (id: string, input: unknown, tool = 'lineage_search_objects') => new vscode.LanguageModelToolCallPart(id, tool, input as object);
 
+/** The rendered problem the model reads (D-103) and its errors across categories. */
+interface ShownError { path: string; fault: string; correction: string; allowed?: string[]; missing?: string[]; more?: number }
+interface Problem { code: string; attempt: string; notice?: string; guidance: Array<{ category: string; instruction: string; errors: ShownError[]; more?: number; fallback?: string }>; resend: string[]; resend_rule?: string }
+const PROBLEM_KEYS = ['attempt', 'code', 'guidance', 'notice', 'resend', 'resend_rule'];
+const problemOf = (value: unknown): Problem => (typeof value === 'string' ? JSON.parse(value) : value) as Problem;
+const shown = (value: unknown): ShownError[] => problemOf(value).guidance.flatMap(group => group.errors);
+/** One shown error of an issue code, without values. */
+const fault = (code: IssueCode, path = '') => ({ path, fault: ISSUES[code].label, correction: ISSUES[code].correction });
+
 it.each([
   { phase: 'active', prior: true, human: true, order: ['anchor', 'call', 'result', 'current'] },
   { phase: 'discover', prior: true, human: true, order: ['anchor', 'current', 'call', 'result'] },
@@ -119,7 +127,7 @@ describe('optional table-arrival prune command delivery', () => {
     { mode: 'bb', accepted: false }, { mode: 'ct', accepted: false },
   ] as const)('serves conditional self-prune and evaluates one commit in $mode (accepted=$accepted)', async ({ mode, accepted }) => {
     const registry = new ToolRegistry<string>();
-    const prune = vi.fn(() => JSON.stringify(accepted ? { ok: true } : makeRejection({ code: REJECTION_CODES.offPolicy, reason: 'Removal no longer admitted.' })));
+    const prune = vi.fn(() => JSON.stringify(accepted ? { ok: true } : makeRejection({ code: REJECTION_CODES.offPolicy, reason: 'Removal no longer admitted.', errors: at('off_policy') })));
     registry.register({ name: 'lineage_submit_findings', inputSchema: z.object({}), effect: 'hop_commit', execute: () => '{}' });
     registry.register({ name: 'lineage_prune_current', inputSchema: PruneCurrentInputSchema, effect: 'hop_commit', execute: prune });
     const draft = {
@@ -208,7 +216,7 @@ describe('rejection classification', () => {
   });
 
   it('a no-project result inside a reply ends the run and executes no later sibling', async () => {
-    const { registry, invoke } = registryWith(() => JSON.stringify(makeRejection({ code: REJECTION_CODES.noProjectLoaded, hint: 'No project is loaded; open the project and ask again.' })));
+    const { registry, invoke } = registryWith(() => JSON.stringify(makeRejection({ code: REJECTION_CODES.noProjectLoaded, errors: at('no_project') })));
     const model = nativePort(() => [call('first', { query: 'Orders' }), call('second', { query: 'Sales' })]);
     const attempt = await executeToolAttempt(model.port, discoveryPlan(registry));
     expect(invoke).toHaveBeenCalledTimes(1);
@@ -268,8 +276,9 @@ describe('a tool call whose arguments are not a JSON object', () => {
     const results = attempt.messages.filter(item => item instanceof ToolMessage) as ToolMessage[];
     expect(results.map(item => item.status)).toEqual(['error', 'success']);
     // D-103: the call-level fault is the root error; its message comes from the port's reason.
-    expect(JSON.parse(String(results[0].content))).toEqual({ code: REJECTION_CODES.invalidToolInput,
-      errors: [{ path: '', code: REJECTION_CODES.invalidToolInput, message: TOOL_ARGUMENTS_NOT_OBJECT_REASON }], resend: [] });
+    // Without step state the rejection renders at feedback 2, so the accepted JSON type is stated.
+    expect(problemOf(String(results[0].content))).toMatchObject({ code: REJECTION_CODES.invalidToolInput, attempt: '2/3', resend: [] });
+    expect(shown(String(results[0].content))).toEqual([{ ...fault('type'), allowed: ['object'] }]);
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(attempt.rejections).toEqual([expect.objectContaining({ callId: 'bad', code: REJECTION_CODES.invalidToolInput })]);
     expect(lines.filter(line => line.startsWith('[ToolOutcome]'))).toEqual([
@@ -284,7 +293,7 @@ describe('a tool call whose arguments are not a JSON object', () => {
     const attempt = await executeToolAttempt(model.port, discoveryPlan(registry));
     const content = String(toolMessage(attempt.messages).content);
     expect(invoke).not.toHaveBeenCalled();
-    expect(JSON.parse(content).errors).toEqual([expect.objectContaining({ path: 'query', code: 'missing' })]);
+    expect(shown(content)).toEqual([fault('missing', 'query')]);
   });
 
   it('rejects a missing tool input instead of accepting the empty object an empty schema allows', async () => {
@@ -382,16 +391,16 @@ describe('model-facing rejection text', () => {
     expect(feedback).toMatchObject({ code: REJECTION_CODES.routeValidationFailed });
     expect([...feedback.resend].sort()).toEqual(['column_flow', 'prune_neighbors', 'questions']);
     for (const absent of ['replies_remaining', 'reason', 'hint', 'detail']) expect(feedback).not.toHaveProperty(absent);
-    expect(feedback.errors.map((error: { path: string }) => error.path)).toEqual(expect.arrayContaining(['questions.0.nodeId', 'questions.1.nodeId', 'prune_neighbors.0.id']));
+    expect(shown(feedback).map(error => error.path)).toEqual(expect.arrayContaining(['questions.0.nodeId', 'questions.1.nodeId', 'prune_neighbors.0.id']));
     const lastModel = nativePort(() => []);
     const secondState = recordToolAttempt(state, next, 'lineage_submit_findings');
     await executeToolAttempt(lastModel.port, plan, { priorState: secondState });
     const last = consumedRejection(lastModel, 'facts-retry').feedback;
     // Replacement is schema-eligible; keeping the conflicting effective mapping still rejects every action fault.
-    expect(last.errors).toEqual([
-      expect.objectContaining({ path: 'questions.0.nodeId', allowed: [protectedId, independentId] }),
-      expect.objectContaining({ path: 'questions.1.nodeId', allowed: [protectedId, independentId] }),
-      expect.objectContaining({ path: 'prune_neighbors.0.id', allowed: [independentId] }),
+    expect(shown(last).map(error => [error.path, [...(error.allowed ?? [])].sort()])).toEqual([
+      ['prune_neighbors.0.id', [independentId]],
+      ['questions.0.nodeId', [independentId, protectedId].sort()],
+      ['questions.1.nodeId', [independentId, protectedId].sort()],
     ]);
     expect(toolMessage(next.messages)).toMatchObject({ status: 'error', tool_call_id: 'facts-retry' });
     expect(toolMessage(first.messages).artifact).toMatchObject({ detail: expect.arrayContaining([
@@ -404,11 +413,11 @@ describe('model-facing rejection text', () => {
   it.each([
     { id: 'invalid-fields', schema: z.object({ query: z.enum(['Orders', 'Sales']), limit: z.number().int().min(1) }).strict(),
       input: { query: 'Missing', limit: 0 }, issueCount: 2, issuePaths: ['query', 'limit'],
-      errors: [{ path: 'query', code: 'enum', allowed: ['Orders', 'Sales'] }, { path: 'limit', code: 'size' }] },
+      errors: [{ path: 'query', code: 'enum' as IssueCode, allowed: ['Orders', 'Sales'] }, { path: 'limit', code: 'size' as IssueCode }] },
     { id: 'unknown-keys', schema: z.object({ column_flow: z.array(z.object({ out_col: z.string() }).strict()) }).strict(),
       input: { column_flow: Array.from({ length: 7 }, (_, index) => ({ out_col: `Value${index}`, note: 'RAW_NOTE_SENTINEL' })) }, issueCount: 7,
       issuePaths: Array.from({ length: 7 }, (_, index) => `column_flow.${index}.note`),
-      errors: Array.from({ length: 7 }, (_, index) => ({ path: `column_flow.${index}.note`, code: 'unknown_key', allowed: ['out_col'] })) },
+      errors: Array.from({ length: 7 }, (_, index) => ({ path: `column_flow.${index}.note`, code: 'unknown_key' as IssueCode, allowed: ['out_col'] })) },
   ])('delivers every schema correction fact in the next consumed request: $id', async ({ id, schema, input, issueCount, issuePaths, errors }) => {
     const parsed = schema.safeParse(input);
     if (parsed.success) throw new Error('Expected schema faults');
@@ -425,15 +434,16 @@ describe('model-facing rejection text', () => {
     expect(invoke).toHaveBeenCalledTimes(2);
     const { content, feedback } = consumedRejection(model, id);
     // Feedback 1: every fault by path and code, no allowed values yet (D-105).
-    expect(Object.keys(feedback).sort()).toEqual(['code', 'errors', 'resend']);
+    expect(Object.keys(feedback).every(key => PROBLEM_KEYS.includes(key))).toBe(true);
     expect(feedback.code).toBe(REJECTION_CODES.invalidInput);
-    expect(feedback.errors).toEqual(errors.map(({ allowed: _allowed, ...fault }) => expect.objectContaining(fault)));
-    for (const error of feedback.errors) expect(error).not.toHaveProperty('allowed');
+    const byPath = <T extends { path: string }>(rows: T[]) => [...rows].sort((a, b) => a.path.localeCompare(b.path));
+    expect(shown(feedback)).toEqual(byPath(errors.map(({ path, code }) => fault(code, path))));
     const lastModel = nativePort(() => []);
     await executeToolAttempt(lastModel.port, plan, { priorState: recordToolAttempt(state, second) });
     const last = consumedRejection(lastModel, `${id}-retry`).feedback;
     // Feedback 2: the same faults, now with the schema's allowed values.
-    expect(last.errors).toEqual(errors.map(fault => expect.objectContaining(fault)));
+    const sortedValues = (rows: ShownError[]) => rows.map(row => (row.allowed ? { ...row, allowed: [...row.allowed].sort() } : row));
+    expect(sortedValues(shown(last))).toEqual(byPath(errors.map(({ path, code, ...values }) => ({ ...fault(code, path), ...values }))));
     expect(last).not.toHaveProperty('replies_remaining');
     expect(toolMessage(first.messages).artifact).toMatchObject({ issuePaths });
     expect(content).not.toContain('RAW_NOTE_SENTINEL');
@@ -446,7 +456,7 @@ describe('model-facing rejection text', () => {
     const registry = new ToolRegistry<string>();
     registry.register({ name: 'lineage_submit_findings', inputSchema: z.object({ focus_node_id: z.string() }), effect: 'hop_commit',
       execute: () => JSON.stringify(makeRejection({ code: REJECTION_CODES.routeValidationFailed,
-        reason: 'An eligible kept neighbor needs an investigation-purpose question.', issuePaths: ['questions'] })) });
+        reason: 'An eligible kept neighbor needs an investigation-purpose question.', errors: at('neighbor_undecided', ['questions']) })) });
     const plan = compileInstructionPlan({ kind: 'converse', stage: { kind: 'active', mode: 'sm_ct' }, registry,
       messages: [new HumanMessage('Inspect the current object.')], sink: new TurnEventSink(() => {}),
       facts: explorationFacts('ct', ['Value'], { classification: 'technical', memorySections: [] }),
@@ -457,8 +467,8 @@ describe('model-facing rejection text', () => {
       const model = nativePort(() => [call(`finding-${index}`, { focus_node_id: 'focus' }, 'lineage_submit_findings')]);
       const attempt = await executeToolAttempt(model.port, plan, { priorState: state });
       expect(JSON.stringify(model.sendRequest.mock.calls)).not.toContain(alternative);
-      expect(JSON.parse(String(toolMessage(attempt.messages).content))).toMatchObject({ code: REJECTION_CODES.routeValidationFailed,
-        errors: expect.arrayContaining([expect.objectContaining({ path: 'questions', code: REJECTION_CODES.routeValidationFailed })]) });
+      expect(problemOf(String(toolMessage(attempt.messages).content)).code).toBe(REJECTION_CODES.routeValidationFailed);
+      expect(shown(String(toolMessage(attempt.messages).content))).toContainEqual(fault('neighbor_undecided', 'questions'));
       expect(String(toolMessage(attempt.messages).content)).not.toContain('replies_remaining');
       state = recordToolAttempt(state, attempt, 'lineage_submit_findings');
     }
@@ -466,7 +476,7 @@ describe('model-facing rejection text', () => {
     expect(state.rejections).toHaveLength(MAX_TOOL_PROVIDER_CALLS);
   });
 
-  it.each([false, true])('serves a delivery alternative before the last reply for a missing call (required=%s)', async required => {
+  it.each([false, true])('states a missing call by its fault on every reply and the last-correction notice only before the last reply (required=%s)', async required => {
     const { registry } = registryWith(() => '{}');
     const base = discoveryPlan(registry);
     const plan = required ? { ...base, input: { ...base.input, requiredTerminalTool: 'lineage_search_objects' } } : base;
@@ -475,7 +485,9 @@ describe('model-facing rejection text', () => {
       const model = nativePort(() => []);
       const attempt = await executeToolAttempt(model.port, plan, { priorState: state });
       const delivered = JSON.stringify(model.sendRequest.mock.calls);
-      expect(delivered.includes('Use the requested delivery channel')).toBe(index === MAX_TOOL_PROVIDER_CALLS - 1);
+      expect(delivered.includes(LAST_CORRECTION)).toBe(index === MAX_TOOL_PROVIDER_CALLS - 1);
+      // No issue code of a missing call carries a fallback, so none is ever delivered.
+      for (const issue of Object.values(ISSUES)) if ('fallback' in issue) expect(delivered).not.toContain(issue.fallback);
       state = recordToolAttempt(state, attempt);
     }
     expect(state).toMatchObject({ stopReason: 'no_progress', providerCalls: MAX_TOOL_PROVIDER_CALLS });
@@ -495,13 +507,12 @@ describe('model-facing rejection text', () => {
       facts: explorationFacts('bb', [], { classification: 'technical', memorySections: [] }) });
     const model = nativePort(() => [call('report', { start: 'Missing' }, 'lineage_present_result')]);
     const first = await executeToolAttempt(model.port, plan, { priorState: initialToolPhaseAttemptState('synthesis') });
-    expect(JSON.parse(String(toolMessage(first.messages).content))).toEqual({ code: REJECTION_CODES.invalidInput,
-      errors: [expect.objectContaining({ path: 'start', code: 'enum' })], resend: [] });
-    expect(JSON.parse(String(toolMessage(first.messages).content)).errors[0]).not.toHaveProperty('allowed');
+    expect(problemOf(String(toolMessage(first.messages).content))).toMatchObject({ code: REJECTION_CODES.invalidInput, resend: [] });
+    expect(shown(String(toolMessage(first.messages).content))).toEqual([fault('enum', 'start')]);
     const second = await executeToolAttempt(model.port, plan, {
       priorState: recordToolAttempt(initialToolPhaseAttemptState('synthesis'), first),
     });
-    expect(JSON.parse(String(toolMessage(second.messages).content)).errors).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'start', code: 'enum', allowed: ['B1', 'B2'] })]));
+    expect(shown(String(toolMessage(second.messages).content))).toContainEqual({ ...fault('enum', 'start'), allowed: ['B1', 'B2'] });
     assertToolPairingWellFormed(second.messages);
   });
 
@@ -539,20 +550,22 @@ describe('model-facing rejection text', () => {
     const first = await executeToolAttempt(nativePort(() => [call('first', { query: 'Missing' })]).port, plan, { priorState: state });
     const initialFeedback = JSON.parse(String(toolMessage(first.messages).content));
     for (const path of ['column_flow.0.out_col', 'column_flow.1.out_col'])
-      expect(initialFeedback.errors).toContainEqual(expect.objectContaining({ path, code: 'enum' }));
-    for (const error of initialFeedback.errors) expect(error).not.toHaveProperty('allowed');
+      expect(shown(initialFeedback)).toContainEqual(fault('unknown_column', path));
     state = recordToolAttempt(state, first);
     const second = await executeToolAttempt(nativePort(() => [call('second', { query: 'MissingInput' })]).port, plan, { priorState: state });
     const content = String(toolMessage(second.messages).content);
-    expect(JSON.parse(content).errors).toEqual(expect.arrayContaining(
-      ['column_flow.0.out_col', 'column_flow.1.out_col'].map(path => expect.objectContaining({ path, code: 'enum', allowed: columns }))));
+    for (const path of ['column_flow.0.out_col', 'column_flow.1.out_col']) {
+      const error = shown(content).find(item => item.path === path);
+      expect(error).toMatchObject(fault('unknown_column', path));
+      expect([...error!.allowed!, ...Array(error!.more ?? 0)]).toHaveLength(columns.length);
+    }
     expect(content).not.toContain(input.sections.technical);
   });
 
   it.each([3, 400].flatMap(count => ['column', 'neighbor', 'enum'].map(kind => ({ count, kind }))))('delivers faults and guidance first and all $count $kind choices from the second feedback on, without domain inference', async ({ count, kind }) => {
     const columns = Array.from({ length: count }, (_, i) => `VerifiedColumn${i}`);
     const path = kind === 'column' ? 'column_flow.0.upstream_columns.0.col' : kind === 'neighbor' ? 'questions.0.nodeId' : 'query';
-    const code = kind === 'enum' ? 'enum' : kind === 'column' ? REJECTION_CODES.contributorColNotOnSource : 'question_not_neighbor';
+    const code: IssueCode = kind === 'enum' ? 'enum' : kind === 'column' ? 'unknown_column' : 'not_neighbor';
     const invalidEnum = z.object({ query: z.enum(columns as [string, ...string[]]) }).safeParse({ query: 'Missing' });
     if (invalidEnum.success) throw new Error('Expected invalid enum');
     const rejection = kind === 'enum' ? rejectionFromZodError(invalidEnum.error, { code: 'invalid_tool_input', input: { query: 'Missing' } })
@@ -567,8 +580,7 @@ describe('model-facing rejection text', () => {
       { priorState: state, debugLog: line => lines.push(line) });
     const firstFeedback = JSON.parse(String(toolMessage(first.messages).content));
     expect(firstFeedback).not.toHaveProperty('replies_remaining');
-    expect(firstFeedback.errors).toContainEqual(expect.objectContaining({ path, code }));
-    for (const error of firstFeedback.errors) expect(error).not.toHaveProperty('allowed');
+    expect(shown(firstFeedback)).toContainEqual(fault(code, path));
     expect(String(toolMessage(first.messages).content)).not.toContain('VerifiedColumn0');
     expect(toolMessage(first.messages).artifact).toMatchObject({ errors: expect.arrayContaining([expect.objectContaining({ path })]) });
     expect(String(toolMessage(first.messages).content)).not.toMatch(/Recheck the named column|Rebuild the defective fields|Re-evaluate the proposed action/);
@@ -582,7 +594,9 @@ describe('model-facing rejection text', () => {
       const next = await executeToolAttempt(nativePort(() => [call(`retry-${index}`, { query })]).port, plan, { priorState: state });
       const content = String(toolMessage(next.messages).content);
       expect(content).not.toContain('replies_remaining');
-      expect(JSON.parse(content).errors).toContainEqual(expect.objectContaining({ path, code, allowed: columns }));
+      const error = shown(content).find(item => item.path === path);
+      expect(error).toMatchObject(fault(code, path));
+      expect([...error!.allowed!, ...Array(error!.more ?? 0)]).toHaveLength(columns.length);
       expect(content).not.toMatch(/Recheck the named column|Rebuild the defective fields|Re-evaluate the proposed action/);
       if (count === 400 && kind !== 'enum') expect(next.rejections[0].detail).toMatchObject({ omitted: true });
       state = recordToolAttempt(state, next);
@@ -610,9 +624,8 @@ describe('model-facing rejection text', () => {
     let state = initialToolPhaseAttemptState('discover');
     const first = await executeToolAttempt(nativePort(() => [call('first', { query: 'OrderAmount' })]).port, plan, { priorState: state });
     const firstFeedback = JSON.parse(String(toolMessage(first.messages).content));
-    expect(firstFeedback).toMatchObject({ code: REJECTION_CODES.columnSelfLoop,
-      errors: [expect.objectContaining({ path: 'column_flow.0.upstream_columns.0', code: REJECTION_CODES.columnSelfLoop })] });
-    expect(firstFeedback.errors[0]).not.toHaveProperty('allowed');
+    expect(firstFeedback.code).toBe(REJECTION_CODES.columnSelfLoop);
+    expect(shown(firstFeedback)).toEqual([fault('self_loop', 'column_flow.0.upstream_columns.0')]);
     for (const absent of ['replies_remaining', 'detail', 'reason', 'hint']) expect(firstFeedback).not.toHaveProperty(absent);
     expect(toolMessage(first.messages).artifact).toMatchObject({ detail: expect.arrayContaining([expect.objectContaining({
       path: 'column_flow.0.upstream_columns.0', allowed_values: columns, when: { node: '[ai].[salesstaging]' },
@@ -620,7 +633,7 @@ describe('model-facing rejection text', () => {
     state = recordToolAttempt(state, first);
     const second = await executeToolAttempt(nativePort(() => [call('second', { query: 'OrderAmount' })]).port, plan, { priorState: state });
     const content = String(toolMessage(second.messages).content);
-    expect(JSON.parse(content).errors).toContainEqual(expect.objectContaining({ path: 'column_flow.0.upstream_columns.0', code: REJECTION_CODES.columnSelfLoop, allowed: columns }));
+    expect(shown(content)).toContainEqual({ ...fault('self_loop', 'column_flow.0.upstream_columns.0'), allowed: [...columns].sort() });
     expect(content).not.toContain('Recheck the named column');
     state = recordToolAttempt(state, second);
     const third = await executeToolAttempt(nativePort(() => [call('third', { query: 'OrderAmount' })]).port, plan, { priorState: state });
@@ -634,40 +647,38 @@ describe('model-facing rejection text', () => {
     expect(recordToolAttempt(state, fourth).stopReason).toBe('no_progress');
   });
 
-  it('never shows a bare machine code when a hint states the fault', async () => {
-    const { registry } = registryWith(() => JSON.stringify(makeRejection({ code: 'off_policy', hint: 'Call lineage_get_object_detail for one object.' })));
+  it('states a call-level fault by its category instruction, fault label and correction, never by a logs-only reason', async () => {
+    const { registry } = registryWith(() => JSON.stringify(makeRejection({ code: 'off_policy', reason: 'LOGS_ONLY_REASON', errors: at('off_policy') })));
     const model = nativePort(() => [call('c1', { query: 'Orders' })]);
     const attempt = await executeToolAttempt(model.port, discoveryPlan(registry), { priorState: initialToolPhaseAttemptState('discover') });
     const content = String(toolMessage(attempt.messages).content);
-    expect(JSON.parse(content)).toEqual({ code: 'off_policy', errors: [{ path: '', code: 'off_policy', message: 'Call lineage_get_object_detail for one object.' }], resend: [] });
+    expect(JSON.parse(content)).toEqual({ code: 'off_policy', attempt: '1/3', resend: [],
+      guidance: [{ category: 'stage', instruction: ISSUE_CATEGORIES.stage.short, errors: [fault('off_policy')] }] });
   });
 
-  it('keeps a bare code when neither a reason nor a table message exists, so the model is never answered with nothing', async () => {
-    const { registry } = registryWith(() => JSON.stringify(makeRejection({ code: 'unlisted_fault' })));
-    const model = nativePort(() => [call('c1', { query: 'Orders' })]);
-    const attempt = await executeToolAttempt(model.port, discoveryPlan(registry));
-    expect(JSON.parse(String(toolMessage(attempt.messages).content))).toEqual({ code: 'unlisted_fault', errors: [{ path: '', code: 'unlisted_fault', message: 'unlisted_fault' }], resend: [] });
+  it('refuses a rejection without a fault at its producer, so the model is never answered with nothing', () => {
+    expect(() => makeRejection({ code: 'unlisted_fault', errors: [] })).toThrow('at least one error');
   });
 
-  it('states a reasonless rejection code by its issue-code table message', async () => {
-    const { registry } = registryWith(() => JSON.stringify(makeRejection({ code: 'not_found' })));
+  it('states a reference fault of the call by its issue-code label and correction', async () => {
+    const { registry } = registryWith(() => JSON.stringify(makeRejection({ code: 'not_found', errors: at('not_found') })));
     const model = nativePort(() => [call('c1', { query: 'Orders' })]);
     const attempt = await executeToolAttempt(model.port, discoveryPlan(registry));
-    expect(JSON.parse(String(toolMessage(attempt.messages).content))).toEqual({ code: 'not_found', errors: [{ path: '', code: 'not_found', message: PROBLEM_MESSAGES.not_found }], resend: [] });
+    expect(shown(String(toolMessage(attempt.messages).content))).toEqual([fault('not_found')]);
   });
 
   it('an unchanged resend of a rejected call is named as such; a changed call is not', async () => {
-    const { registry } = registryWith(() => JSON.stringify(makeRejection({ code: 'not_found', reason: 'No object matches.', hint: 'Use an id from lineage_search_objects.' })));
+    const { registry } = registryWith(() => JSON.stringify(makeRejection({ code: 'not_found', reason: 'No object matches.', errors: at('not_found') })));
     const plan = discoveryPlan(registry);
     let state = initialToolPhaseAttemptState('discover');
     const first = await executeToolAttempt(nativePort(() => [call('c1', { query: 'Orders' })]).port, plan, { priorState: state });
-    expect(String(toolMessage(first.messages).content)).not.toContain(IDENTICAL_RESEND_HINT);
+    expect(String(toolMessage(first.messages).content)).not.toContain(ISSUES.identical_resend.label);
     state = recordToolAttempt(state, first);
     const same = await executeToolAttempt(nativePort(() => [call('c2', { query: 'Orders' })]).port, plan, { priorState: state });
-    expect(String(toolMessage(same.messages).content)).toContain(IDENTICAL_RESEND_HINT);
+    expect(String(toolMessage(same.messages).content)).toContain(ISSUES.identical_resend.label);
     expect(toolMessage(same.messages).artifact).toMatchObject({ code: 'not_found', reason: 'No object matches.' });
     const changed = await executeToolAttempt(nativePort(() => [call('c3', { query: 'Sales' })]).port, plan, { priorState: recordToolAttempt(state, same) });
-    expect(String(toolMessage(changed.messages).content)).not.toContain(IDENTICAL_RESEND_HINT);
+    expect(String(toolMessage(changed.messages).content)).not.toContain(ISSUES.identical_resend.label);
   });
 
   it('an unchanged resend of a schema-rejected call is named as such too', async () => {
@@ -676,7 +687,7 @@ describe('model-facing rejection text', () => {
     const first = await executeToolAttempt(nativePort(() => [call('c1', { query: '' , extra: 1 })]).port, plan, { priorState: initialToolPhaseAttemptState('discover') });
     const state = recordToolAttempt(initialToolPhaseAttemptState('discover'), first);
     const same = await executeToolAttempt(nativePort(() => [call('c2', { extra: 1, query: '' })]).port, plan, { priorState: state });
-    expect(String(toolMessage(same.messages).content)).toContain(IDENTICAL_RESEND_HINT);
+    expect(String(toolMessage(same.messages).content)).toContain(ISSUES.identical_resend.label);
   });
 
   it('a read repeated from an earlier reply is a duplicate_read naming the accepted call', async () => {
@@ -716,7 +727,7 @@ describe('model-facing rejection text', () => {
       expect(results).toHaveLength(index === 0 ? 2 : 1);
       for (const result of results) {
         expect(result).toMatchObject({ status: 'error', artifact: { code: 'result_too_large' } });
-        expect(String(result.content)).toContain('Narrow the request');
+        expect(String(result.content)).toContain(ISSUES.result_too_large.correction);
       }
       state = { ...recordToolAttempt(state, attempt), messages: [] };
     }
@@ -892,7 +903,8 @@ describe('submit_findings rejection form', () => {
       const attempt = await executeToolAttempt(nativePort(() => [call(`c${state.providerCalls}`, input, 'lineage_submit_findings')]).port, plan, { priorState: state, debugLog: line => lines.push(line) });
       state = recordToolAttempt(state, attempt, 'lineage_submit_findings');
       const content = String(toolMessage(attempt.messages).content);
-      return { attempt, content, lines, rejection: attempt.rejections.length ? JSON.parse(content) : undefined };
+      const problem = attempt.rejections.length ? problemOf(content) : undefined;
+      return { attempt, content, lines, rejection: problem ? { ...problem, errors: shown(problem) } : undefined };
     };
     return { engine, send, state: () => state };
   }
@@ -1062,11 +1074,8 @@ describe('submit_findings rejection form', () => {
     const first = await send(input);
     expect(paths(first.rejection).sort()).toEqual(['badge_label', 'summary']);
     expect(first.rejection.resend.sort()).toEqual(['badge_label', 'summary']);
-    expect(first.rejection.errors).toEqual(expect.arrayContaining([
-      expect.objectContaining({ path: 'summary', code: 'type' }),
-      expect.objectContaining({ path: 'badge_label', code: 'type' }),
-    ]));
-    for (const error of first.rejection.errors) expect(Object.keys(error).sort()).toEqual(['code', 'message', 'path']);
+    expect(first.rejection.errors).toEqual(expect.arrayContaining([fault('type', 'summary'), fault('type', 'badge_label')]));
+    for (const error of first.rejection.errors) expect(Object.keys(error).sort()).toEqual(['correction', 'fault', 'path']);
     const held = engine.toJSON().engineInternals.heldFinding?.finding;
     expect(held?.column_flow).toEqual(flow);
     expect(held?.sections).toEqual([{ angle: 'technical', text: base.sections.technical }]);
@@ -1108,9 +1117,8 @@ describe('submit_findings rejection form', () => {
     const first = await send({ ...base, column_flow: flow });
     expect(first.attempt.rejections).toHaveLength(1);
     expect(JSON.stringify(first.rejection)).toContain(other);
-    expect(JSON.stringify(first.rejection)).toMatch(/map.*prune.*question/i);
     expect(first.rejection.resend).toEqual(['questions', 'prune_neighbors', 'column_flow']);
-    expect(first.rejection.errors).toEqual(expect.arrayContaining([expect.objectContaining({ path: other, code: expect.any(String) })]));
+    expect(first.rejection.errors).toContainEqual({ ...fault('neighbor_undecided'), missing: [other] });
     expect(first.rejection).not.toHaveProperty('way_out');
     expect(first.rejection).not.toHaveProperty('example');
     expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
@@ -1140,7 +1148,7 @@ describe('submit_findings rejection form', () => {
     expect(paths(first.rejection).sort()).toEqual(expected);
     expect(first.rejection.resend).toEqual(['column_flow']);
     const at = (path: string) => first.rejection.errors.find((error: { path: string }) => error.path === path);
-    for (const path of expected) expect(Object.keys(at(path)).sort()).toEqual(['code', 'message', 'path']);
+    for (const path of expected) expect(Object.keys(at(path)).sort()).toEqual(['correction', 'fault', 'path']);
     for (const absentKey of ['replies_remaining', 'example', 'way_out', 'reason', 'hint', 'detail']) expect(first.rejection).not.toHaveProperty(absentKey);
   });
 
@@ -1158,25 +1166,25 @@ describe('submit_findings rejection form', () => {
       fields: expect.arrayContaining(['badge_label', 'questions', 'prune_neighbors']) });
     // Feedback 2 carries the complete allowed list; the leave-out instruction waits for feedback 3 (D-105).
     expect(second.rejection.errors[0].allowed).toEqual(sourceColumns);
-    for (const rejection of [first.rejection, second.rejection])
-      for (const error of rejection.errors) expect(error.message).not.toContain(PROBLEM_MESSAGES.fallback);
+    for (const rejection of [first.rejection, second.rejection]) for (const group of rejection.guidance) expect(group).not.toHaveProperty('fallback');
     const third = await send({ focus_node_id: root, column_flow: [] });
     expect(third.attempt.stop).toBe('phase_complete');
     expect(third.content).toContain('ended_columns');
     expect(third.content).not.toContain('Missing');
   });
 
-  it('a reference-leaf fault carries the stage-3 fallback at reply 3 only (D-105)', async () => {
+  it('a fault a valid value can correct carries no fallback at any reply, and reply 3 carries the last-correction notice (D-105)', async () => {
     const { send } = hop();
     const replies = [];
     for (let n = 1; n <= 3; n++) replies.push(await send({ ...base, column_flow: missingColumn }));
     const leaf = 'column_flow.0.upstream_columns.0.col';
     for (const [index, reply] of replies.entries()) {
-      const error = reply.rejection.errors.find((item: { path: string }) => item.path === leaf);
+      const error = reply.rejection!.errors.find(item => item.path === leaf);
       expect(error).toBeDefined();
-      expect(error.message.includes(PROBLEM_MESSAGES.fallback)).toBe(index === 2);
-      // The outcome log marks the reply that carried the fallback.
-      expect(reply.lines.filter(line => line.startsWith('[ToolOutcome]') && line.includes(' fallback=true'))).toHaveLength(index === 2 ? 1 : 0);
+      expect(error).toMatchObject(fault('unknown_column', leaf));
+      expect(reply.rejection!.guidance.some(group => group.fallback !== undefined)).toBe(false);
+      expect(reply.rejection!.notice).toBe(index === 2 ? LAST_CORRECTION : undefined);
+      expect(reply.lines.filter(line => line.startsWith('[ToolOutcome]') && line.includes(' fallback=true'))).toHaveLength(0);
     }
   });
 
@@ -1190,11 +1198,11 @@ describe('submit_findings rejection form', () => {
     await send({ ...base, column_flow: flow, prune_neighbors: invalidPrune });
     const second = await send({ focus_node_id: root, prune_neighbors: invalidPrune });
     expect(second.rejection.resend).toEqual(['prune_neighbors']);
-    expect(second.rejection.errors).toEqual([expect.objectContaining({ path: 'prune_neighbors.0.id', allowed: [source, other] })]);
-    expect(second.rejection.errors[0].message).not.toContain(PROBLEM_MESSAGES.fallback);
+    expect(second.rejection.errors).toEqual([{ ...fault('not_neighbor', 'prune_neighbors.0.id'), allowed: [source, other].sort() }]);
+    expect(second.rejection.guidance.some(group => group.fallback !== undefined)).toBe(false);
     const third = await send({ focus_node_id: root, prune_neighbors: [{ id: absent, reason: 'Still outside.' }] });
-    expect(third.rejection.errors).toEqual([expect.objectContaining({ path: 'prune_neighbors.0.id', allowed: [source, other] })]);
-    expect(third.rejection.errors[0].message).not.toContain(PROBLEM_MESSAGES.fallback);
+    expect(third.rejection.errors).toEqual([{ ...fault('not_neighbor', 'prune_neighbors.0.id'), allowed: [source, other].sort() }]);
+    expect(third.rejection.guidance.some(group => group.fallback !== undefined)).toBe(false);
     const exit = { prune_neighbors: [] };
     const schema = submitFindingsSchemaForMode('ct', 'technical', false, engine.hopSubmitColumns, engine.heldColumnFlow);
     expect(schema.safeParse({ focus_node_id: root, ...exit }).success).toBe(true);
@@ -1224,7 +1232,8 @@ describe('submit_findings rejection form', () => {
     const second = await send({ focus_node_id: root, prune_neighbors: [{ id: source, reason: 'Outside.' }],
       column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0' }] }, terminals[1]] });
     // The resent list replaces the held one whole, so Other loses its outcome and both faults are reported together.
-    expect(paths(second.rejection)).toEqual(['prune_neighbors.0.id', other]);
+    expect(paths(second.rejection).sort()).toEqual(['', 'prune_neighbors.0.id']);
+    expect(second.rejection.errors).toContainEqual({ ...fault('neighbor_undecided'), missing: [other] });
     expect(second.rejection.resend).toEqual(['prune_neighbors', 'column_flow', 'questions']);
     expect(engine.toJSON().engineInternals.heldFinding?.finding.prune_neighbors).toEqual(held);
     const third = await send({ focus_node_id: root, column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0' }] }, terminals[1]] });

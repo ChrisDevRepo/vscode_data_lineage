@@ -10,7 +10,8 @@ import { NavigationEngine, type HopNeighborDisclosure } from '../../../src/ai/sm
 import { submitFindingsSchemaForMode, toHopFinding } from '../../../src/ai/tools/toolSchemas';
 import { rejectionFromZodError, renderProblem, type ToolRejection } from '../../../src/ai/support/toolErrorEnvelope';
 /** The model-visible messages of an engine rejection at feedback 3. */
-const shownMessages = (rejection: unknown): string => (JSON.parse(renderProblem(rejection as ToolRejection, 3, 'lineage_submit_findings')).errors as Array<{ message: string }>).map(error => error.message).join('\n');
+/** Everything the model reads of a rejection at its last feedback stage. */
+const shownMessages = (rejection: unknown): string => renderProblem(rejection as ToolRejection, 3);
 
 import type { LineageNode, ObjectType } from '../../../src/engine/types';
 import { makeGraph, makeIndexedModel, makeModel, makeNode } from '../helpers/modelFixtures';
@@ -243,7 +244,7 @@ describe('declared contributor identities', () => {
       expect(engine.columnAspect?.target_columns).toEqual([target]);
       expect(engine.columnAspect?.active_columns).toEqual(['Value']);
     } else {
-      expect(result).toMatchObject({ detail: [{ path: 'targetColumns.0', allowed_values: ['Value'], when: { node: 'root' } }] });
+      expect(result).toMatchObject({ detail: { node: 'root' }, errors: [{ path: 'targetColumns.0', code: 'unknown_column', values: ['Value'] }] });
       expect(result).not.toHaveProperty('hint');
       expect(result).toHaveProperty('reason', expect.not.stringContaining(target));
     }
@@ -1041,8 +1042,8 @@ describe('current task completeness before advancement', () => {
     });
     expect(rejected).toMatchObject({ code: 'invalid_input', issuePaths: expect.arrayContaining(['column_flow', 'questions.0.nodeId']),
       errors: expect.arrayContaining([
-        expect.objectContaining({ path: 'column_flow', code: 'type' }),
-        expect.objectContaining({ path: 'questions.0.nodeId', code: 'question_not_neighbor' }),
+        expect.objectContaining({ path: 'column_flow', code: 'json_text' }),
+        expect.objectContaining({ path: 'questions.0.nodeId', code: 'not_neighbor' }),
       ]) });
     if (!('code' in rejected)) throw new Error('Expected both independent boundary faults');
     expect(rejected.issuePaths).toHaveLength(2);
@@ -1073,8 +1074,8 @@ describe('current task completeness before advancement', () => {
     });
     // A refused prune leaves one legal repair for its neighbor: the refusal and the conflict are both stated at their paths.
     expect(rejected).toMatchObject({ code: 'route_validation_failed',
-      errors: expect.arrayContaining([expect.objectContaining({ path: 'prune_neighbors.0.id', code: 'prune_unsupported' }),
-        expect.objectContaining({ code: 'prune_question_conflict' })]),
+      errors: expect.arrayContaining([expect.objectContaining({ path: 'prune_neighbors.0.id', code: 'prune_target' }),
+        expect.objectContaining({ code: 'conflict' })]),
       issuePaths: expect.arrayContaining(['questions.0.nodeId', 'prune_neighbors.0.id']),
       detail: expect.arrayContaining([
         expect.objectContaining({ id: neighbor, path: 'prune_neighbors.0.id' }),
@@ -1102,9 +1103,8 @@ describe('current task completeness before advancement', () => {
       prune_neighbors: [{ id: neighbor, reason: 'No contribution to the traced constants.' }],
     });
     expect(rejected).toMatchObject({ code: 'route_validation_failed',
-      errors: expect.arrayContaining([expect.objectContaining({ code: 'prune_question_conflict' })]),
+      errors: [{ path: 'questions.0.nodeId', code: 'conflict', values: [neighbor] }],
     });
-    expect(rejected).not.toMatchObject({ errors: expect.arrayContaining([expect.objectContaining({ code: 'prune_unsupported' })]) });
     expect(engine.submitFindings({ ...finding, column_flow, questions: [],
       prune_neighbors: [{ id: neighbor, reason: 'No contribution to the traced constants.' }],
     })).toHaveProperty('ok', true);
@@ -1586,7 +1586,7 @@ describe('result dispositions', () => {
     const rejected = engine.submitFindings({ ...record(producer),
       column_flow: [{ out_col: 'X', upstream_columns: [], writes_to: { node: equivalent ? ' "D" . "stored" ' : stored, col: 'X' } }] });
     expect(rejected).toMatchObject({ code: 'route_validation_failed', issuePaths: ['column_flow.0.writes_to.node'],
-      errors: expect.arrayContaining([expect.objectContaining({ path: 'column_flow.0.writes_to.node', code: 'column_out_of_scope' })]) });
+      errors: expect.arrayContaining([{ path: 'column_flow.0.writes_to.node', code: 'out_of_scope' }]) });
     expect(shownMessages(rejected), 'D-102: no echoed id').not.toContain(stored);
     expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
     expect(engine.submitFindings({ ...record(producer), column_flow: [{ out_col: 'X', upstream_columns: [] }],
@@ -1942,7 +1942,7 @@ describe('CT boundary rejects instead of dropping a column reference', () => {
     const rejected = engine.submitFindings({ ...guardRecord(origin), column_flow: [{ out_col: 'Total', upstream_columns: [{ node: source, col: 'Amount' }, { node, col: 'Amount' }] }],
       questions: [{ nodeId: source, question: 'Resolve Amount.' }] });
     expect(rejected).toMatchObject({ issuePaths: ['column_flow.0.upstream_columns.1.node'],
-      errors: expect.arrayContaining([expect.objectContaining({ path: 'column_flow.0.upstream_columns.1.node', code: 'absent_contributor' })]) });
+      errors: expect.arrayContaining([{ path: 'column_flow.0.upstream_columns.1.node', code: 'not_neighbor' }]) });
     expect(shownMessages(rejected), 'D-102: no echoed id').not.toContain(node);
     expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
     expect(engine.toJSON().agenda).toEqual(before.agenda);
@@ -2043,7 +2043,7 @@ describe('CT boundary rejects instead of dropping a column reference', () => {
     const flow = [{ out_col: 'Value', writes_to: { node: kept, col: 'Value' }, upstream_columns: [{ node: root, col: 'Value' }] }];
     // The mapping is this hop's keep vote, so the stale ballot leaves pruning the unrelated leaf open.
     expect(engine.submitFindings({ ...guardRecord(writer), column_flow: flow })).toMatchObject({ code: 'route_validation_failed',
-      errors: [expect.objectContaining({ path: unused, alternatives: ['questions', 'prune_neighbors', 'column_flow'] })] });
+      errors: [{ path: '', code: 'neighbor_undecided', values: [unused] }], resend: ['questions', 'prune_neighbors', 'column_flow'] });
     const accepted = engine.submitFindings({ ...guardRecord(writer), column_flow: flow, prune_neighbors: [{ id: unused, reason: 'The delete target carries no Value.' }] });
     expect(accepted, JSON.stringify(accepted)).toHaveProperty('ok', true);
     expect(engine.getHopContext()).toHaveProperty('done', true);
@@ -2105,9 +2105,9 @@ describe('authored outcomes for every open neighbor', () => {
     for (const id of required) expect(JSON.stringify(result)).toContain(id);
     // column_flow is offered only for a neighbor that can supply the focus's value; a downstream reader is never mapped as a source, and in CT its keep / question option comes first.
     const mapsSupplier = mode === 'bb' || direction !== 'downstream';
-    expect(JSON.stringify(result)).toMatch(mapsSupplier ? /map.*prune.*question/i : mode === 'ct' ? /question.*prune/i : /prune.*question/i);
-    expect(result).toMatchObject({ errors: expect.arrayContaining(required.map(id => expect.objectContaining({ path: id, code: 'neighbor_outcome_missing' }))) });
-    for (const id of required) expect(shownMessages(result), 'D-102: no echoed id').not.toContain(id);
+    expect((result as ToolRejection).resend?.includes('column_flow')).toBe(mode === 'ct' && mapsSupplier);
+    // The undecided neighbors are backend facts, listed as missing from the first feedback.
+    expect(result).toMatchObject({ errors: required.map(id => ({ path: '', code: 'neighbor_undecided', values: [id] })) });
     const after = engine.toJSON();
     expectUnchangedRouting(after, before);
     expect(after.visited).toEqual(before.visited);
