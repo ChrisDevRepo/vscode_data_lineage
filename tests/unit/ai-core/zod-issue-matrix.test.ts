@@ -51,7 +51,7 @@ describe('Canonical tool issue matrix', () => {
       faults: [{ path: 'sections', code: 'json_text' }] },
     { name: 'text that is not valid JSON', schema: PresentResultModelSchema, input: { ...render, sections: '[{"label":"Sources","node_ids":["dbo.a"' },
       faults: [{ path: 'sections', code: 'json_text' }] },
-    { name: 'a prune_neighbors entry with no eligible IDs', ...closedNeighbor('prune_neighbors'), faults: [{ path: 'prune_neighbors.0.id', code: 'never' }] },
+    { name: 'a prune_neighbors list when no neighbor is prunable', ...closedNeighbor('prune_neighbors'), faults: [{ path: 'prune_neighbors', code: 'size' }] },
     { name: 'a questions entry with no eligible IDs', ...closedNeighbor('questions'), faults: [{ path: 'questions.0.nodeId', code: 'never' }] },
     { name: 'unrecognized_keys at the root', schema: GetObjectDetailInputSchema, input: { id: 'dbo.a', depth: 2 },
       faults: [{ path: 'depth', code: 'unknown_key', values: ['id', 'cursor'] }] },

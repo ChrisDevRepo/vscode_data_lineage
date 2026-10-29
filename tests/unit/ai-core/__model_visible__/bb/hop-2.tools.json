@@ -23,13 +23,15 @@
         },
         "prune_neighbors": {
           "description": "Prune eligible neighbors that do not contribute to answering the user's question.",
-          "maxItems": 500,
+          "maxItems": 0,
           "type": "array",
           "items": {
             "type": "object",
             "properties": {
               "id": {
-                "not": {}
+                "type": "string",
+                "minLength": 1,
+                "description": "A neighbor id from `<hop_context>`."
               },
               "reason": {
                 "type": "string",

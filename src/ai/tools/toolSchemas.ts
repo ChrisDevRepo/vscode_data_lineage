@@ -514,7 +514,7 @@ function suppliedValueSchema(values: readonly string[], identifierCaseSensitive 
 }
 
 /** Offers canonical IDs while admitting only equivalent, unambiguous metadata spellings. */
-function objectIdSchema(ids: readonly string[], identifierCaseSensitive = false, issue?: 'not_neighbor' | 'bad_write_target') {
+function objectIdSchema(ids: readonly string[], identifierCaseSensitive = false, issue?: 'not_neighbor' | 'bad_write_target' | 'prune_target') {
   if (ids.length === 0) return z.never().meta({ toolAdmission: { toolIssue: issue ?? 'never' } });
   const known = new Map(ids.map(id => [id, true]));
   const field = z.string().meta({ enum: [...ids], toolIdentifier: { kind: 'object', values: [...ids], caseSensitive: identifierCaseSensitive, issue: issue ?? 'not_neighbor' } });
@@ -605,8 +605,11 @@ export function submitFindingsSchemaForMode(
     ? NeighborQuestionSchema.extend({ nodeId: stringFact(objectIdSchema(hop.neighbors.filter(n => n.can_question).map(n => n.id), hop.identifierCaseSensitive), 'questionIdentity') })
     : NeighborQuestionSchema;
   if (mode === 'ct' && hop) narrowed = narrowed.extend({ column_flow: columnFlowSchemaForHop(hop) }).strict() as typeof HopFindingCtBaseSchema;
+  const prunableIds = hop?.neighbors?.filter(n => n.can_prune).map(n => n.id) ?? [];
   if (hop?.neighbors) narrowed = narrowed.extend({
-    prune_neighbors: z.array(PruneNeighborSchema.extend({ id: stringFact(objectIdSchema(hop.neighbors.filter(n => n.can_prune).map(n => n.id), hop.identifierCaseSensitive), 'pruneIdentity') })).max(MAX_ID_LIST_LENGTH).optional().describe(mode === 'bb' ? BB_PRUNE_NEIGHBORS_DESCRIPTION : PRUNE_NEIGHBORS_DESCRIPTION),
+    prune_neighbors: (prunableIds.length
+      ? z.array(PruneNeighborSchema.extend({ id: stringFact(objectIdSchema(prunableIds, hop.identifierCaseSensitive, 'prune_target'), 'pruneIdentity') })).max(MAX_ID_LIST_LENGTH)
+      : z.array(PruneNeighborSchema).max(0)).optional().describe(mode === 'bb' ? BB_PRUNE_NEIGHBORS_DESCRIPTION : PRUNE_NEIGHBORS_DESCRIPTION),
     questions: z.array(baseQuestion).max(MAX_ID_LIST_LENGTH).optional().describe(mode === 'bb' ? BB_QUESTIONS_DESCRIPTION : QUESTIONS_DESCRIPTION),
   }).strict() as typeof HopFindingCtBaseSchema;
   if (mode === 'ct' && hop?.callerContextNodeIds) {

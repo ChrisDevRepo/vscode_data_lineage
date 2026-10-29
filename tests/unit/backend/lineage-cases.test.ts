@@ -1438,10 +1438,9 @@ describe('shared object dispatch', () => {
     expect(engine.heldPartsOfCurrentFocus()?.fields).toContain('column_flow');
     const schema = submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns, engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false);
     const malformed = { focus_node_id: focus, prune_neighbors: [{ id: outside, reason: 42 }] };
-    const parsed = schema.safeParse(malformed);
-    expect(parsed.success).toBe(false);
+    const parsed = validateToolCandidate(schema, malformed);
     if (parsed.success) throw new Error('Expected a numeric prune reason to be rejected');
-    expect(rejectionFromZodError(parsed.error, { code: 'invalid_input', input: malformed, schema }).issuePaths).toEqual(['prune_neighbors.0.id', 'prune_neighbors.0.reason']);
+    expect(parsed.rejection.issuePaths).toEqual(['prune_neighbors', 'prune_neighbors.0.reason']);
     rejectAndReadHeld(engine, malformed);
     expect(engine.heldPartsOfCurrentFocus()?.fields).toContain('column_flow');
     expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
