@@ -1,6 +1,5 @@
 const FORBIDDEN_KEY = /(?:^|_)(?:authorization|api_?key|credential|password|secret|(?:request|response)_?headers?|headers?|endpoint|base_?url|uri|access_?token|refresh_?token|auth_?token)$/i;
-const SECRET_ENV_KEY = /(?:^|_)(?:api|(?:api|secret)_?key|secret|password|token|credential)$/i;
-const URL_ENV_KEY = /(?:^|_)(?:endpoint|base_?url)$/i;
+const SECRET_ENV_KEY = /(?:^|_)(?:api|api_?key|secret|password|token|credential)$/i;
 
 /** Secret shapes refused before a value can reach a trace or a retry payload. */
 const SECRET_VALUE_PATTERNS: readonly RegExp[] = [
@@ -45,15 +44,10 @@ function normalizedKey(key: string): string {
 
 let cachedSecrets: string[] | undefined;
 
-/** Secret environment values and the bare host of each configured endpoint URL. */
-export function configuredSecrets(): string[] {
-  cachedSecrets ??= Object.entries(process.env).flatMap(([key, value]) => {
-    const name = normalizedKey(key);
-    if (typeof value !== 'string') return [];
-    if (SECRET_ENV_KEY.test(name)) return [value];
-    if (!URL_ENV_KEY.test(name)) return [];
-    try { return [new URL(value).hostname]; } catch { return []; }
-  }).filter(secret => secret.length >= 8);
+function configuredSecrets(): string[] {
+  cachedSecrets ??= Object.entries(process.env)
+    .filter(([key, value]) => SECRET_ENV_KEY.test(normalizedKey(key)) && typeof value === 'string' && value.length >= 8)
+    .map(([, value]) => value as string);
   return cachedSecrets;
 }
 

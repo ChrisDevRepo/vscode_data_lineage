@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { sensitiveTraceReason } from '../../../src/ai/providers/traceSecurity';
 import {
   systemPromptHash,
@@ -134,18 +134,5 @@ describe('trace security redaction', () => {
     const startedMiss = Date.now();
     expect(sensitiveTraceReason(hostileMiss)).toBeUndefined();
     expect(Date.now() - startedMiss).toBeLessThan(1_000);
-  });
-});
-
-describe('configured environment secrets', () => {
-  afterEach(() => { vi.unstubAllEnvs(); vi.resetModules(); });
-
-  it('covers secret tokens and the bare host of a configured endpoint URL', async () => {
-    vi.stubEnv('DB_TEST_TOKEN', 'fake-db-token-0123');
-    vi.stubEnv('AI_TEST_ENDPOINT', 'https://private-gateway.invalid/openai/v1?api-version=1');
-    vi.resetModules();
-    const { configuredSecrets, sensitiveTraceReason: reason } = await import('../../../src/ai/providers/traceSecurity');
-    expect(configuredSecrets()).toEqual(expect.arrayContaining(['fake-db-token-0123', 'private-gateway.invalid']));
-    expect(reason({ type: 'wire-error', message: 'connect ECONNREFUSED private-gateway.invalid:443' })).toBe('secret_value');
   });
 });

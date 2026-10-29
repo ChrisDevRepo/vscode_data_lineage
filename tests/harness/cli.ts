@@ -8,7 +8,7 @@ import { join, resolve } from 'node:path';
 import type * as vscode from 'vscode';
 import { z } from 'zod';
 import { sanitizeProviderErrorDiagnostic } from '../../src/ai/support/text';
-import { configuredSecrets } from '../../src/ai/providers/traceSecurity';
+import { harnessSecrets } from './harnessSecrets';
 import { AiTraceWriter } from '../../src/ai/observability/aiTraceWriter';
 import { BuiltInConnectionSchema } from '../../src/engine/db/connectionSettings';
 import { openBuiltInSession } from '../../src/engine/db/builtInProvider';
@@ -796,7 +796,7 @@ export async function main(kind: 'ai' | 'db', args: readonly string[], onResult?
           const questionHash = createHash('sha256').update(prompt).digest('hex');
           const expectedApproval = baselineReviews[promptIndex].find(review => review.expected)?.expected;
           const port = new OpenAiCompatiblePort({
-            baseUrl: process.env.AI_TEST_ENDPOINT!, chatCompletionsUrl: endpoint, wire: isResponsesEndpoint(endpoint) ? 'responses' as const : 'chat_completions' as const, apiKey: process.env.AI_TEST_API_KEY!,
+            baseUrl: process.env.AI_TEST_ENDPOINT!, chatCompletionsUrl: endpoint, wire: isResponsesEndpoint(endpoint) ? 'responses' as const : 'chat_completions' as const, apiKey: process.env.AI_TEST_API_KEY!, redact: harnessSecrets(),
             model: provider!.model, laneId: provider!.provider, requestTimeoutMs: options.requestTimeoutMs,
             ...(provider!.provider === 'azure' ? { apiKeyHeader: 'api-key' as const } : {}),
             ...(reasoningEffort ? { requestTuning: { reasoning: { effort: reasoningEffort } } } : {}),
@@ -850,8 +850,7 @@ export async function main(kind: 'ai' | 'db', args: readonly string[], onResult?
       result.failedChecks = turns.reduce((total, turn) => total + turn.failedChecks.length, 0);
       await traceWriter.close();
       if (langfuse && tracePath) {
-        const redact = process.env.AI_TEST_API_KEY ? [process.env.AI_TEST_API_KEY] : [];
-        const frozen = freezeRunEvidence(runDir, collectAttachments(runDir, tracePath, turns.length, redact),
+        const frozen = freezeRunEvidence(runDir, collectAttachments(runDir, tracePath, turns.length, harnessSecrets()),
           options.attach, [langfuse.secretKey]);
         logger.redirect(join(runDir, 'runner-diagnostics.log'));
         const frozenTrace = frozen.attachments.run!.find(file => file.name === 'event-trace')!.content;
@@ -883,7 +882,7 @@ export async function main(kind: 'ai' | 'db', args: readonly string[], onResult?
     const diagnostic = sanitizeProviderErrorDiagnostic(error, kind);
     const safeDiagnostic = JSON.stringify(diagnostic, (_key, value: unknown) => {
       if (typeof value !== 'string') return value;
-      for (const secret of configuredSecrets()) value = (value as string).split(secret).join('[redacted]');
+      for (const secret of harnessSecrets()) value = (value as string).split(secret).join('[redacted]');
       return value;
     });
     logger.error(`Smoke failed: ${safeDiagnostic}`);

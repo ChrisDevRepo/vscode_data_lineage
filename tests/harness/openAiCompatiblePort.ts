@@ -133,6 +133,8 @@ export interface OpenAiCompatiblePortConfig {
   readonly model: string;
   /** Sent only in the configured authentication header; never logged or traced. */
   readonly apiKey: string;
+  /** Further literals, such as the endpoint host, removed from error diagnostics. */
+  readonly redact?: readonly string[];
   /** Lane identifier, surfaced as the identity vendor so a trace names its lane. */
   readonly laneId?: string;
   /** Azure deployment authentication uses api-key instead of Bearer authorization. */
@@ -730,7 +732,7 @@ export class OpenAiCompatiblePort implements ModelPort {
         }
         if (retryDelayMs === undefined) {
           const responseText = await response!.text();
-          const raw = this.config.apiKey ? responseText.split(this.config.apiKey).join('[redacted]') : responseText;
+          const raw = this.redact(responseText);
           let body: unknown;
           try {
             body = JSON.parse(raw);
@@ -778,6 +780,8 @@ export class OpenAiCompatiblePort implements ModelPort {
           }
         } else {
           if (error instanceof ModelPortError) throw error;
+          // The thrown error reaches callers' own diagnostics, so the transport's message is cleaned at its source.
+          if (error instanceof Error) error.message = this.redact(error.message);
           throw new ModelPortError(
             'provider_error',
             sanitizeProviderError(error instanceof Error ? error.message : String(error))
@@ -793,12 +797,15 @@ export class OpenAiCompatiblePort implements ModelPort {
     }
   }
 
-  /** Removes the configured literal key even when a provider echoes an unfamiliar key format. */
+  /** Removes the configured literal key and `redact` values, even when a provider echoes an unfamiliar key format. */
+  private redact(text: string): string {
+    return [this.config.apiKey, ...(this.config.redact ?? [])].filter(Boolean).reduce((value, secret) => value.split(secret).join('[redacted]'), text);
+  }
+
   private safeDiagnostic(error: unknown, phase: string): ReturnType<typeof sanitizeProviderErrorDiagnostic> {
     const diagnostic = sanitizeProviderErrorDiagnostic(error, phase);
     return JSON.parse(JSON.stringify(diagnostic, (_key, value: unknown) =>
-      typeof value === 'string' && this.config.apiKey
-        ? value.split(this.config.apiKey).join('[redacted]') : value,
+      typeof value === 'string' ? this.redact(value) : value,
     )) as ReturnType<typeof sanitizeProviderErrorDiagnostic>;
   }
 
