@@ -401,14 +401,14 @@ describe('renderProblem over a real submit_findings rejection: a supplier beyond
       sections: { technical: 'Copies raw into staging.' }, column_flow: [flow('Amount'), { ...flow('Region'), out_col: 'Amount' }] })));
     if (!rejection) throw new Error('Expected a rejection');
     expect(rejection.errors.filter(error => error.path === 'column_flow.0.upstream_columns.0.node')).toEqual([
-      { path: 'column_flow.0.upstream_columns.0.node', code: 'column_out_of_scope', values: [id('staging')] }]);
+      { path: 'column_flow.0.upstream_columns.0.node', code: 'column_out_of_scope', values: [id('loader'), id('staging')] }]);
     // Object choices stay metadata-complete; the existing tracer checks identical column endpoints.
     expect(at(render(rejection, 1), 'column_flow.0.upstream_columns.0.node')).not.toHaveProperty('allowed');
-    expect(at(render(rejection, 2), 'column_flow.0.upstream_columns.0.node')?.allowed).toEqual([id('staging')]);
+    expect(at(render(rejection, 2), 'column_flow.0.upstream_columns.0.node')?.allowed).toEqual([id('loader'), id('staging')]);
     expect(render(rejection, 2).errors.some(error => error.message.includes(ISSUES.column_out_of_scope.fallback))).toBe(false);
     expect(at(render(rejection, 3), 'column_flow.0.upstream_columns.0.node')?.message).toContain(ISSUES.column_out_of_scope.fallback);
     // Region and Amount are distinct endpoints on the same table; metadata, not SQL inference, decides eligibility.
-    expect(at(render(rejection, 2), 'column_flow.1.upstream_columns.0.node')?.allowed).toEqual([id('staging')]);
+    expect(at(render(rejection, 2), 'column_flow.1.upstream_columns.0.node')?.allowed).toEqual([id('loader'), id('staging')]);
     const repaired = JSON.parse(String(await registry.invoke('lineage_submit_findings', { focus_node_id: id('loader'),
       column_flow: [{ out_node: id('staging'), out_col: 'Amount', upstream_columns: [{ node: id('staging'), col: 'Region' }] }] })));
     expect(repaired).toHaveProperty('ok', true);

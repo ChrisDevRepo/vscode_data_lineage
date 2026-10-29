@@ -481,7 +481,7 @@ describe('stored-column arrival admission and delivery', () => {
     const arrivals = engine.toJSON().engineInternals.investigationTasks.filter(task => task.kind === 'column_lineage' && task.status === 'pending');
     expect(arrivals.find(task => task.nodeId === left)).toMatchObject({ activeColumns: ['SavedLeft'], sourceRefs: [{ node: left, col: 'SavedLeft' }] });
     expect(arrivals.find(task => task.nodeId === right)).toMatchObject({ activeColumns: ['SavedRight'], sourceRefs: [{ node: right, col: 'SavedRight' }] });
-    expect(arrivals.find(task => task.nodeId === reader)).not.toHaveProperty('sourceRefs');
+    expect(arrivals.some(task => task.nodeId === reader && 'sourceRefs' in task)).toBe(false);
     expect(engine.columnAspect!.edges.map(edge => `${edge.from_node}.${edge.from_col}->${edge.to_node}.${edge.to_col}`)).toEqual([
       `${producer}.LeftPort->${left}.SavedLeft`, `${producer}.RightPort->${right}.SavedRight`,
     ]);
@@ -1581,7 +1581,7 @@ describe('result dispositions', () => {
     const rejected = engine.submitFindings({ ...record(producer),
       column_flow: [{ out_node: equivalent ? ' "D" . "stored" ' : stored, out_col: 'X', upstream_columns: [{ node: producer, col: 'X' }] }] });
     expect(rejected).toMatchObject({ code: 'route_validation_failed', issuePaths: ['column_flow.0.out_node'],
-      errors: [{ path: 'column_flow.0.out_node', code: 'not_neighbor' }] });
+      errors: [{ path: 'column_flow.0.out_node', code: 'column_out_of_scope' }] });
     expect(shownMessages(rejected), 'D-102: no echoed id').not.toContain(stored);
     expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
     expect(engine.submitFindings({ ...record(producer), column_flow: [{ out_col: 'X', upstream_columns: [] }],

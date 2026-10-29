@@ -651,19 +651,20 @@ describe('large findings repairs', () => {
     expect(engine.columnAspect!.edges).toHaveLength(1);
   });
   it.each([
-    { name: 'rejected suppliers', explicitEmpty: false, validSupplier: false, sibling: false, badTarget: false, rejectedSibling: false, protectedTarget: false },
-    { name: 'authored empty suppliers', explicitEmpty: true, validSupplier: false, sibling: false, badTarget: false, rejectedSibling: false, protectedTarget: true },
-    { name: 'valid partial supplier', explicitEmpty: false, validSupplier: true, sibling: false, badTarget: false, rejectedSibling: false, protectedTarget: true },
-    { name: 'valid sibling mapping', explicitEmpty: false, validSupplier: false, sibling: true, badTarget: false, rejectedSibling: false, protectedTarget: true },
-    { name: 'independent target fault', explicitEmpty: false, validSupplier: false, sibling: false, badTarget: true, rejectedSibling: false, protectedTarget: false },
-    { name: 'authored empty suppliers beside a rejected sibling', explicitEmpty: true, validSupplier: false, sibling: false, badTarget: false, rejectedSibling: true, protectedTarget: true },
-  ])('preserves original source-list presence in $name diagnostics', ({ explicitEmpty, validSupplier, sibling, badTarget, rejectedSibling, protectedTarget }) => {
+    { name: 'rejected suppliers', explicitEmpty: false, born: false, validSupplier: false, sibling: false, badTarget: false, rejectedSibling: false, protectedTarget: false },
+    // D-130: a procedure-created value is the pair procedure.col -> out_node.out_col; [] records no pair.
+    { name: 'procedure-created value', explicitEmpty: false, born: true, validSupplier: false, sibling: false, badTarget: false, rejectedSibling: false, protectedTarget: true },
+    { name: 'valid partial supplier', explicitEmpty: false, born: false, validSupplier: true, sibling: false, badTarget: false, rejectedSibling: false, protectedTarget: true },
+    { name: 'valid sibling mapping', explicitEmpty: false, born: false, validSupplier: false, sibling: true, badTarget: false, rejectedSibling: false, protectedTarget: true },
+    { name: 'independent target fault', explicitEmpty: false, born: false, validSupplier: false, sibling: false, badTarget: true, rejectedSibling: false, protectedTarget: false },
+    { name: 'authored empty suppliers beside a rejected sibling', explicitEmpty: true, born: false, validSupplier: false, sibling: false, badTarget: false, rejectedSibling: true, protectedTarget: false },
+  ])('preserves original source-list presence in $name diagnostics', ({ explicitEmpty, born, validSupplier, sibling, badTarget, rejectedSibling, protectedTarget }) => {
     const { engine, session, model, graph } = ctWorld({ selfLoop: true, sibling: true });
     const { services } = stubToolServices({ session, model, graph });
     const before = engine.toJSON();
     const result = JSON.parse(executeSubmitFindings({ summary: 'Authored evidence.', sections: { technical: 'Keep the supplied source facts.' },
       column_flow: [
-        { out_col: 'Value', upstream_columns: explicitEmpty ? [] : [
+        { out_col: 'Value', upstream_columns: explicitEmpty ? [] : born ? [{ node: ORIGIN, col: 'Value' }] : [
           { node: '[hop].[unknown]', col: 'Value' }, ...(validSupplier ? [{ node: OTHER, col: 'Value' }] : []),
         ], out_node: BRANCH, ...(badTarget ? { out_col: 'Missing' } : {}) },
         ...(rejectedSibling ? [{ out_node: BRANCH, out_col: 'Value', upstream_columns: [{ node: '[hop].[unknown]', col: 'Value' }] }] : []),

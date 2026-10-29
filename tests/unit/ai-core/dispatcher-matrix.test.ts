@@ -1629,7 +1629,7 @@ describe('submit_findings rejection form', () => {
     assert(first.rejection, 'Expected a rejected submission');
     expect(first.attempt.rejections).toHaveLength(1);
     const expected = ['column_flow.0.upstream_columns.0.node', 'column_flow.0.upstream_columns.1.col',
-      'column_flow.1.upstream_columns.0.transforms.0', 'column_flow.1.out_node'];
+      'column_flow.1.out_node', 'column_flow.1.upstream_columns.0.transforms.0'];
     expect(paths(first.rejection).sort()).toEqual(expected);
     expect(first.rejection.resend).toEqual(['column_flow']);
     for (const path of expected) {
