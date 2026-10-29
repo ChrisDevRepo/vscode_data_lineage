@@ -186,11 +186,6 @@ class ToolHandler implements ToolServices {
   public toolError(toolName: string, err: unknown): string {
     const msg = errorMessage(err);
     const noProject = err instanceof NoProjectLoadedError;
-    const effect = TOOL_DEFS.find(def => def.name === `lineage_${toolName}`)?.effect;
-    if (effect === 'presentation_commit' && this.caller === 'turn') {
-      const sess = this.getSession();
-      sess.recordPresentResultFailure(this.turnEpoch(sess));
-    }
     if (noProject) {
       this.logger.info(`Tool ${toolName} ran with no project loaded`);
       return buildNoProjectLoadedError();

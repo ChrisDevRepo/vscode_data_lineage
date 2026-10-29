@@ -219,28 +219,28 @@ describe('D-105 escalation of a rejected start_exploration in sm_entry and gate_
     await runtime.run({ model: scripted, sink: sink(), request: refine
       ? { id: 'refine', prompt: 'Change the scope.', gateDecision: { kind: 'refine', proposalId: proposalId!, refine: { instruction: 'Change the scope.' } } }
       : { id: 'open', prompt: `/trace ${origin}` } });
-    return { stages, breaker, replies };
+    return { stages, breaker, replies, pending: session.pendingExploration?.revision };
   }
 
   it.each([{ phase: 'sm_entry', refine: false }, { phase: 'gate_refine', refine: true }])(
     '$phase: three rejected start replies interleaved with accepted reads give feedback 1, 2, 3 and the fourth ends the step as no_progress', async ({ refine }) => {
-    expect(await run(refine)).toEqual({ stages: ['1/3', '2/3', '3/3'], breaker: ['sm_entry no_progress'], replies: MAX_TOOL_PROVIDER_CALLS });
+    expect(await run(refine)).toEqual({ stages: ['1/3', '2/3', '3/3'], breaker: ['sm_entry no_progress'], replies: MAX_TOOL_PROVIDER_CALLS, pending: refine ? 1 : undefined });
   });
 });
 
 describe('D-105: the registry effect of a rejected call decides whether the reply counts as a rejected commit', () => {
   const Schema = z.object({ query: z.string() }).strict();
   const fails = () => JSON.stringify(makeRejection({ code: REJECTION_CODES.invalidInput, errors: errorsAt('missing', ['query']) }));
-  function world(stage: 'sm_entry' | 'completed' | 'discover', commit: { name: string; effect: 'session_start' | 'presentation_commit' | 'scope_store' }) {
+  function world(stage: 'sm_entry' | 'completed' | 'discover', commit: { name: string; effect?: 'session_start' | 'presentation_commit' | 'scope_store' }) {
     const registry = new ToolRegistry<string>();
     registry.register({ name: 'lineage_search_objects', inputSchema: Schema, effect: 'read', modelDescription: 'Search.', execute: () => '{"results":[]}' });
-    registry.register({ name: commit.name, inputSchema: Schema, effect: commit.effect, modelDescription: 'Commit.', execute: fails });
+    if (commit.effect) registry.register({ name: commit.name, inputSchema: Schema, effect: commit.effect, modelDescription: 'Commit.', execute: fails });
     const plan = compileInstructionPlan({ kind: 'converse', stage: { kind: stage }, registry,
       messages: [new HumanMessage('Continue.')], sink: new TurnEventSink(() => {}), facts: { memorySections: [] } });
     return { registry, plan };
   }
   /** Four replies, each with one rejected call of the tool and one fresh accepted read. */
-  async function replies(stage: 'sm_entry' | 'completed' | 'discover', commit: { name: string; effect: 'session_start' | 'presentation_commit' | 'scope_store' }) {
+  async function replies(stage: 'sm_entry' | 'completed' | 'discover', commit: { name: string; effect?: 'session_start' | 'presentation_commit' | 'scope_store' }) {
     const { registry, plan } = world(stage, commit);
     let state = initialToolPhaseAttemptState(plan.frame.phase);
     const seen: Array<{ stage: string; stop: ToolPhaseAttemptState['stopReason'] }> = [];
@@ -258,7 +258,8 @@ describe('D-105: the registry effect of a rejected call decides whether the repl
   it.each([
     { stage: 'sm_entry' as const, commit: { name: 'lineage_start_exploration', effect: 'session_start' as const } },
     { stage: 'completed' as const, commit: { name: 'lineage_present_result', effect: 'presentation_commit' as const } },
-  ])('a rejected $commit.effect call is counted through interleaved reads: feedback 1, 2, 3, then no_progress on the fourth reply', async ({ stage, commit }) => {
+    { stage: 'sm_entry' as const, commit: { name: 'lineage_unregistered' } },
+  ])('a rejected $commit.name call is counted through interleaved reads: feedback 1, 2, 3, then no_progress on the fourth reply', async ({ stage, commit }) => {
     expect(await replies(stage, commit)).toEqual([
       { stage: '1/3', stop: null }, { stage: '2/3', stop: null }, { stage: '3/3', stop: null }, { stage: '3/3', stop: 'no_progress' },
     ]);

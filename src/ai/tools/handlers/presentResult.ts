@@ -412,6 +412,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         ? s.logAndReturn('lineage_present_result', outcome, rawInput) : await outcome;
     } catch (err) {
       if (isCancellationOutcome(err, s.signal)) throw err;
+      if (s.caller === 'turn') s.getSession().recordPresentResultFailure(s.turnEpoch(s.getSession()));
       return s.toolError('present_result', err);
     }
 }

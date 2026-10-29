@@ -976,6 +976,7 @@ async function executeToolGenerationAttempt(
       && generated.toolCalls.length === 0
       && generated.text.trim().length === 0;
     if (emptyOptionalGeneration) {
+      // `lineage_answer` is unregistered, so its rejection counts for escalation like any commit (an unregistered tool is not a read).
       const synthesized = emitSynthesizedRejection(input, rejections, {
         toolName: 'lineage_answer',
         emptyGeneration: true,
