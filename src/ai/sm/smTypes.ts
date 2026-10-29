@@ -63,10 +63,10 @@ export interface ColumnAspect {
 
 /** Structured attribution of data flow for a specific output column. */
 export interface ColumnFlowEntry {
-  /** SQL-established output; for a procedure, the produced expression identified by its written column. */
+  /** SQL-established output column on `out_node`, else on the focus. */
   out_col: string;
-  /** Explicit destination column written by this focus. A named destination stages `focus_node.out_col → writes_to.node.writes_to.col`, including terminal writes with no upstream contributors. Contributor attribution lands on the named destination. Required at a procedure focus: a written neighbor table column, or null when the SQL writes no neighbor table (an outside write is recorded in sections). Never inferred from topology or matching column names. */
-  writes_to?: { node: string; col: string } | null;
+  /** Object owning `out_col` when it is not the focus: each `upstream_columns` entry stores one pair into `out_node.out_col` (D-130). Required at a procedure focus, whose own value is an `upstream_columns` entry naming the procedure. Never inferred from topology or matching column names. */
+  out_node?: string;
   /** Declared real caller output supplied by a scalar-return task; never a table write. */
   returns_to?: ScalarReturnTarget;
   /** Supported dependencies recorded within the requested trace; sections retain known outside dependencies and unresolved evidence. */
@@ -85,7 +85,7 @@ export interface ColumnRef {
   note?: string;
 }
 
-/** One directed edge in the accumulated column lineage chain. Built from validated `column_flow` submissions: one edge per upstream real column, plus the focus→carrier writer edge each entry with a resolved write target stages. */
+/** One directed edge in the accumulated column lineage chain: one AI-supplied pair from a validated `column_flow` entry's upstream column to its destination column (D-130). */
 export interface ColumnEdge {
   /** Focus node where this edge was analyzed. */
   hop_node: string;
@@ -726,13 +726,10 @@ export interface HopLogEntry {
 export type InvalidRouteKind = | 'absent_contributor'
       | 'bad_out_col'
       | 'bad_contributor_col'
-      | 'self_loop_column'
       | 'bad_return_target'
-      | 'bad_write_target'
       | 'bad_caller_context'
       | 'pruned_contributor'
       | 'column_out_of_scope'
-      | 'supplier_out_of_scope'
       | 'prune_absent'
       | 'prune_noop_removed'
       | 'prune_noop_visited'

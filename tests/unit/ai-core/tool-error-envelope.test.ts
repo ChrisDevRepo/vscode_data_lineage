@@ -101,7 +101,7 @@ describe("tool-error-envelope", () => {
   describe('D-105 fallback: per issue code, only with the third rejection, never early', () => {
     const fallbacks = Object.values(ISSUES).flatMap(issue => 'fallback' in issue ? [issue.fallback] : []);
     const hasFallback = (problem: Problem) => problem.errors.some(error => fallbacks.some(fallback => error.message.includes(fallback)));
-    it.each([['bad_write_target', 'column_flow.0.writes_to.node'], ['supplier_out_of_scope', 'column_flow.0.upstream_columns.0.node'], ['result_out_of_scope', 'sections.0.node_ids.3'], ['unknown_column', 'column_flow.0.upstream_columns.0.col']] as const)('%s at %s', (code, path) => {
+    it.each([['column_out_of_scope', 'column_flow.0.out_node'], ['column_out_of_scope', 'column_flow.0.upstream_columns.0.node'], ['result_out_of_scope', 'sections.0.node_ids.3'], ['unknown_column', 'column_flow.0.upstream_columns.0.col']] as const)('%s at %s', (code, path) => {
       for (const values of [[], ['x']]) {
         const rejection = makeRejection({ code: 'invalid_input', errors: [{ path, code, values }] });
         for (const stage of [1, 2] as const) expect(hasFallback(render(rejection, stage))).toBe(false);
@@ -111,7 +111,7 @@ describe("tool-error-envelope", () => {
       }
     });
     // Approved08 D-105 permits these report-reference families, never structural/control/text faults.
-    const reportReferenceCodes = new Set<keyof typeof ISSUES>(['bad_write_target', 'supplier_out_of_scope', 'result_out_of_scope', 'unknown_column',
+    const reportReferenceCodes = new Set<keyof typeof ISSUES>(['column_out_of_scope', 'result_out_of_scope', 'unknown_column',
       'report_not_found', 'not_in_result', 'addable_to_result']);
     const negativePaths: Record<string, string> = { out_of_scope: 'add_node_ids.0', not_found: 'origin',
       unknown_target_column: 'targetColumns.0', missing: 'summary' };
@@ -253,10 +253,10 @@ describe("tool-error-envelope", () => {
 
   it('a key misplaced on a column_flow entry names the concrete path with the declared fields', () => {
     const ref = z.object({ node: z.string(), col: z.string(), note: z.string().optional() }).strict();
-    const entry = z.object({ out_col: z.string(), writes_to: z.object({ node: z.string(), col: z.string() }).strict().nullish(), upstream_columns: z.array(ref) }).strict();
-    const ok = { out_col: 'a', writes_to: null, upstream_columns: [] };
+    const entry = z.object({ out_col: z.string(), out_node: z.string().optional(), upstream_columns: z.array(ref) }).strict();
+    const ok = { out_col: 'a', upstream_columns: [] };
     const rejection = zodRejection(z.object({ column_flow: z.array(entry) }).strict(), { column_flow: [ok, ok, ok, ok, { ...ok, note: 'misplaced' }] });
-    expect(rejection.errors).toEqual([{ path: 'column_flow.4.note', code: 'unknown_key', values: ['out_col', 'writes_to', 'upstream_columns'] }]);
+    expect(rejection.errors).toEqual([{ path: 'column_flow.4.note', code: 'unknown_key', values: ['out_col', 'out_node', 'upstream_columns'] }]);
   });
 });
 
@@ -345,14 +345,14 @@ describe('renderProblem over a real submit_findings rejection: a supplier beyond
     expect(first).toMatchObject({ ok: true, next_focus: id('loader') });
     return registry;
   }
-  const flow = (col: string) => ({ out_col: col, upstream_columns: [{ node: id('raw'), col }], writes_to: { node: id('staging'), col } });
+  const flow = (col: string) => ({ out_node: id('staging'), out_col: col, upstream_columns: [{ node: id('raw'), col }] });
 
-  it('preserves the write-target fault when the schema has no available targets', () => {
-    const schema = submitFindingsSchemaForMode('ct', 'technical', false, { outCols: null, writesTo: true, writeTargetNodeIds: [] });
-    const result = validateToolCandidate(schema, { column_flow: [{ out_col: 'Amount', upstream_columns: [], writes_to: { node: id('archive'), col: 'Amount' } }] });
-    if (result.success) throw new Error('Expected unavailable write target to reject');
-    expect(result.rejection.errors).toContainEqual({ path: 'column_flow.0.writes_to.node', code: 'bad_write_target' });
-    expect(validateToolCandidate(schema, { column_flow: [{ out_col: 'Amount', upstream_columns: [], writes_to: null }] }).success).toBe(true);
+  it('rejects any out_node when the hop offers no destination', () => {
+    const schema = submitFindingsSchemaForMode('ct', 'technical', false, { outCols: null, outNode: true, columnSourceNodeIds: [] });
+    const result = validateToolCandidate(schema, { column_flow: [{ out_node: id('archive'), out_col: 'Amount', upstream_columns: [] }] });
+    if (result.success) throw new Error('Expected an unavailable out_node to reject');
+    expect(result.rejection.errors).toContainEqual({ path: 'column_flow.0.out_node', code: 'never' });
+    expect(validateToolCandidate(schema, { column_flow: [] }).success).toBe(true);
   });
 
   it('states the scope alternative from the first supplier rejection without declaring a born value', async () => {
@@ -364,7 +364,7 @@ describe('renderProblem over a real submit_findings rejection: a supplier beyond
     expect(render(rejection, 1).resend.sort()).toEqual(['column_flow', 'questions', 'sections']);
     const first = at(render(rejection, 1), 'column_flow.0.upstream_columns.0.node');
     expect(first?.allowed).toBeUndefined();
-    expect(rejection.errors).toContainEqual(expect.objectContaining({ path: 'column_flow.0.upstream_columns.0.node', code: 'supplier_out_of_scope' }));
+    expect(rejection.errors).toContainEqual(expect.objectContaining({ path: 'column_flow.0.upstream_columns.0.node', code: 'column_out_of_scope' }));
     const repaired = JSON.parse(String(await registry.invoke('lineage_submit_findings', {
       column_flow: [], questions: [{ nodeId: id('raw'), question: 'What supplies Amount outside the approved depth?' }],
       sections: { technical: '⚠️ raw.Amount supplies staging.Amount beyond the approved depth.' },
@@ -372,23 +372,23 @@ describe('renderProblem over a real submit_findings rejection: a supplier beyond
     expect(repaired).toHaveProperty('ok', true);
   });
 
-  it('offers the report-reference fallback for an out-of-scope write, without changing control references (Approved08)', async () => {
+  it('offers the report-reference fallback for an out-of-scope out_node, without changing control references (Approved08)', async () => {
     const registry = await world();
     const rejection = readToolErrorText(String(await registry.invoke('lineage_submit_findings', {
       summary: 'Loads staging and archive.', sections: { technical: 'Copies values to both destinations.' },
-      column_flow: [{ out_col: 'Amount', upstream_columns: [{ node: id('staging'), col: 'Region' }], writes_to: { node: id('archive'), col: 'Amount' } }],
+      column_flow: [{ out_node: id('archive'), out_col: 'Amount', upstream_columns: [{ node: id('staging'), col: 'Region' }] }],
     })));
     if (!rejection) throw new Error('Expected an out-of-scope write rejection');
     expect(render(rejection, 1).resend.sort()).toEqual(['column_flow', 'questions', 'sections']);
-    expect(rejection.errors).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'column_flow.0.writes_to.node' })]));
-    const writePath = 'column_flow.0.writes_to.node';
-    for (const stage of [1, 2] as const) expect(at(render(rejection, stage), writePath)?.message).not.toContain(ISSUES.bad_write_target.fallback);
-    expect(at(render(rejection, 3), writePath)).toMatchObject({ code: 'bad_write_target', message: expect.stringContaining(ISSUES.bad_write_target.fallback) });
+    expect(rejection.errors).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'column_flow.0.out_node' })]));
+    const writePath = 'column_flow.0.out_node';
+    for (const stage of [1, 2] as const) expect(at(render(rejection, stage), writePath)?.message).not.toContain(ISSUES.column_out_of_scope.fallback);
+    expect(at(render(rejection, 3), writePath)).toMatchObject({ code: 'column_out_of_scope', message: expect.stringContaining(ISSUES.column_out_of_scope.fallback) });
     expect(render(rejection, 3).resend).toContain('sections');
     const control = makeRejection({ code: 'invalid_input', errors: [{ path: 'add_node_ids.0', code: 'out_of_scope' }] });
-    expect(render(control, 3).errors.some(error => error.message.includes(ISSUES.bad_write_target.fallback))).toBe(false);
+    expect(render(control, 3).errors.some(error => error.message.includes(ISSUES.column_out_of_scope.fallback))).toBe(false);
     const repaired = JSON.parse(String(await registry.invoke('lineage_submit_findings', {
-      column_flow: [{ out_col: 'Amount', upstream_columns: [{ node: id('staging'), col: 'Region' }], writes_to: null }],
+      column_flow: [],
       questions: [{ nodeId: id('archive'), question: 'What receives the outside write?' }],
       sections: { technical: '⚠️ The archive.Amount write is outside the approved direction.' },
     })));
@@ -398,19 +398,19 @@ describe('renderProblem over a real submit_findings rejection: a supplier beyond
   it('keeps same-table supplier choices and accepts a different-column correction (Approved08)', async () => {
     const registry = await world();
     const rejection = readToolErrorText(String(await registry.invoke('lineage_submit_findings', { focus_node_id: id('loader'), summary: 'Loads staging from raw.',
-      sections: { technical: 'Copies raw into staging.' }, column_flow: [flow('Amount'), { ...flow('Region'), writes_to: { node: id('staging'), col: 'Amount' } }] })));
+      sections: { technical: 'Copies raw into staging.' }, column_flow: [flow('Amount'), { ...flow('Region'), out_col: 'Amount' }] })));
     if (!rejection) throw new Error('Expected a rejection');
     expect(rejection.errors.filter(error => error.path === 'column_flow.0.upstream_columns.0.node')).toEqual([
-      { path: 'column_flow.0.upstream_columns.0.node', code: 'supplier_out_of_scope', values: [id('staging')] }]);
+      { path: 'column_flow.0.upstream_columns.0.node', code: 'column_out_of_scope', values: [id('staging')] }]);
     // Object choices stay metadata-complete; the existing tracer checks identical column endpoints.
     expect(at(render(rejection, 1), 'column_flow.0.upstream_columns.0.node')).not.toHaveProperty('allowed');
     expect(at(render(rejection, 2), 'column_flow.0.upstream_columns.0.node')?.allowed).toEqual([id('staging')]);
-    expect(render(rejection, 2).errors.some(error => error.message.includes(ISSUES.supplier_out_of_scope.fallback))).toBe(false);
-    expect(at(render(rejection, 3), 'column_flow.0.upstream_columns.0.node')?.message).toContain(ISSUES.supplier_out_of_scope.fallback);
+    expect(render(rejection, 2).errors.some(error => error.message.includes(ISSUES.column_out_of_scope.fallback))).toBe(false);
+    expect(at(render(rejection, 3), 'column_flow.0.upstream_columns.0.node')?.message).toContain(ISSUES.column_out_of_scope.fallback);
     // Region and Amount are distinct endpoints on the same table; metadata, not SQL inference, decides eligibility.
     expect(at(render(rejection, 2), 'column_flow.1.upstream_columns.0.node')?.allowed).toEqual([id('staging')]);
     const repaired = JSON.parse(String(await registry.invoke('lineage_submit_findings', { focus_node_id: id('loader'),
-      column_flow: [{ out_col: 'Amount', upstream_columns: [{ node: id('staging'), col: 'Region' }], writes_to: { node: id('staging'), col: 'Amount' } }] })));
+      column_flow: [{ out_node: id('staging'), out_col: 'Amount', upstream_columns: [{ node: id('staging'), col: 'Region' }] }] })));
     expect(repaired).toHaveProperty('ok', true);
   });
 });

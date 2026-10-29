@@ -28,7 +28,7 @@ const render = {
 };
 
 const closedNeighbor = (field: 'prune_neighbors' | 'questions') => ({
-  schema: submitFindingsSchemaForMode('bb', 'technical', true, { outCols: null, writesTo: false,
+  schema: submitFindingsSchemaForMode('bb', 'technical', true, { outCols: null, outNode: false,
     neighbors: [{ id: '[demo].[closed]', can_prune: false, can_question: false }] }),
   input: { focus_node_id: '[demo].[focus]', summary: 'A supported finding.', sections: { technical: 'The supplied SQL establishes this finding.' },
     [field]: [field === 'prune_neighbors' ? { id: '[demo].[closed]', reason: 'Not needed.' } : { nodeId: '[demo].[closed]', question: 'What supplies the value?' }] },

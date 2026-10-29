@@ -433,7 +433,7 @@ export function buildCurrentTaskBlock(
         : `  <assigned_endpoints>${endpoints(assigned)}: Record the SQL-established relations for these columns, retaining known facts beyond the requested trace limit and unresolved evidence in sections.</assigned_endpoints>`,
     );
     if (external.length) lines.push(
-      `  <neighbor_columns>${endpoints(external)}: Candidate neighbor columns, not assigned endpoints. Map one only when this object's SQL establishes the relation (a written table column goes in writes_to as {node, col}); otherwise leave it out of column_flow.</neighbor_columns>`,
+      `  <neighbor_columns>${endpoints(external)}: Candidate neighbor columns, not assigned endpoints. Map one only when this object's SQL establishes the relation (a written table column goes in out_node and out_col); otherwise leave it out of column_flow.</neighbor_columns>`,
     );
   }
   if (columnTraceColumns && columnTraceColumns.length > 0) {

@@ -23,7 +23,7 @@ describe('fresh kept required-field projection', () => {
   ])('preserves source-policy refusal at the normalized provider boundary: %j', row => {
     const ids = ['[dbo].[Source]', ...(row.ambiguous ? ['[DBO].[source]'] : [])];
     const schema = submitFindingsSchemaForMode('ct', 'technical', false, {
-      outCols: ['Value'], writesTo: false, columnSourceNodeIds: ids,
+      outCols: ['Value'], outNode: false, columnSourceNodeIds: ids,
       identifierCaseSensitive: row.caseSensitive,
     });
     const input = { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: row.reference, col: 'Value' }] }] };
@@ -39,14 +39,14 @@ describe('fresh kept required-field projection', () => {
       const mode = kind === 'bb' ? 'bb' : 'ct';
       const held = kind === 'held';
       const schema = submitFindingsSchemaForMode(mode, 'technical', !held, {
-        outCols: ['Value'], writesTo: kind === 'procedure', columnSourceNodeIds: [source],
+        outCols: ['Value'], outNode: kind === 'procedure', columnSourceNodeIds: [source],
         ...(kind === 'scalar' ? { returnTargets: [{ node: caller, col: 'Value' }] } : {}),
         neighbors: [{ id: source, can_question: true, can_prune: true }],
       }, held);
       const input = { ...(!held ? { summary: 'Recorded findings.', sections: { technical: 'Authored findings.' } } : {}),
         ...(kind === 'bb' || held ? { questions: [{ nodeId: 'dbo.source', question: 'Establish Value.' }] }
           : { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: 'dbo.source', col: 'Value' }],
-            ...(kind === 'procedure' ? { writes_to: null } : {}),
+            ...(kind === 'procedure' ? { out_node: source } : {}),
             ...(kind === 'scalar' ? { returns_to: { node: 'dbo.caller', col: 'Value' } } : {}),
           }] }),
       };
@@ -80,7 +80,7 @@ describe('fresh kept required-field projection', () => {
     { field: 'questions', idKey: 'nodeId', textKey: 'question' },
   ] as const)('projects readable $field references without admitting invalid actions', ({ field, idKey, textKey }) => {
     const schema = submitFindingsSchemaForMode('ct', undefined, false, {
-      outCols: ['Value'], writesTo: false, neighbors: [{ id: 'source', can_question: true, can_prune: true }],
+      outCols: ['Value'], outNode: false, neighbors: [{ id: 'source', can_question: true, can_prune: true }],
     });
     const raw = { [field]: [{ [idKey]: 'source', [textKey]: 'Explain its role.', surplus: '' }] };
     const before = structuredClone(raw);
@@ -100,7 +100,7 @@ describe('fresh kept required-field projection', () => {
 
   it.each(['outside', 'OUTSIDE', 'unknown'])('keeps rejected supplier identity %s readable for engine diagnostics without admitting the field', node => {
     const schema = submitFindingsSchemaForMode('ct', 'technical', false, {
-      outCols: ['Amount'], writesTo: false, columnSourceNodeIds: ['stored'],
+      outCols: ['Amount'], outNode: false, columnSourceNodeIds: ['stored'],
     });
     const input = { column_flow: [{ out_col: 'Amount', upstream_columns: [{ node, col: 'Amount' }] }] };
     const before = structuredClone(input);
@@ -115,7 +115,7 @@ describe('fresh kept required-field projection', () => {
 
   it('accepts a valid full resend without decoding malformed sections', () => {
     const schema = submitFindingsSchemaForMode('ct', 'business', false, {
-      outCols: ['Value'], writesTo: false,
+      outCols: ['Value'], outNode: false,
     });
     const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
     const full = { focus_node_id: 'focus', column_flow: [], summary: 'Amended summary.', sections: { business: 'Valid decoded prose.' } };
@@ -125,15 +125,15 @@ describe('fresh kept required-field projection', () => {
       expect(wire(input)).toBe(accepted);
     }
   });
-  it('requires a nullable procedure destination at both submission boundaries', () => {
+  it('requires a procedure out_node at both submission boundaries', () => {
     const schema = submitFindingsSchemaForMode('ct', 'technical', true, {
-      outCols: ['Value'], writesTo: true, columnSourceNodeIds: ['input'],
+      outCols: ['Value'], outNode: true, columnSourceNodeIds: ['input'],
     });
     const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
     const projected = JSON.stringify(toModelJsonSchema(schema));
-    expect(projected).toContain('"required":["out_col","upstream_columns","writes_to"]');
-    for (const destination of [{}, { writes_to: null }, { writes_to: { node: 'stored', col: 'Value' } }]) {
-      const omitted = !('writes_to' in destination);
+    expect(projected).toContain('"required":["out_col","upstream_columns","out_node"]');
+    for (const destination of [{}, { out_node: null }, { out_node: 'input' }]) {
+      const omitted = !destination.out_node;
       const input = { focus_node_id: 'procedure', summary: 'SQL produces Value.',
         sections: { technical: 'Recorded SQL findings; destination relationships are retained separately.' },
         column_flow: [{ out_col: 'Value', upstream_columns: [{ node: 'input', col: 'Value' }], ...destination }] };
@@ -153,7 +153,7 @@ describe('fresh kept required-field projection', () => {
     { cs: false, raw: 'server.db.Sales.Source', accepted: false },
   ])('binds only metadata-equivalent action, contributor and scalar IDs: $raw CS=$cs', ({ cs, raw, accepted }) => {
     const canonical = '[Sales].[Source]';
-    const hop = { outCols: ['Value'], writesTo: false, identifierCaseSensitive: cs,
+    const hop = { outCols: ['Value'], outNode: false, identifierCaseSensitive: cs,
       neighbors: [{ id: canonical, can_question: true, can_prune: true }],
       columnSourceNodeIds: [canonical],
     };
@@ -174,7 +174,7 @@ describe('fresh kept required-field projection', () => {
   });
 
   it.each(['bb', 'ct'] as const)('serves an empty neighbor choice set safely in %s', mode => {
-    const schema = submitFindingsSchemaForMode(mode, undefined, false, { outCols: null, writesTo: false, neighbors: [] });
+    const schema = submitFindingsSchemaForMode(mode, undefined, false, { outCols: null, outNode: false, neighbors: [] });
     const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
     const input = { focus_node_id: 'focus', ...(mode === 'ct' ? { column_flow: [] } : {}), questions: [], prune_neighbors: [] };
     expect(validateToolCandidate(schema, input).success).toBe(true);
@@ -184,7 +184,7 @@ describe('fresh kept required-field projection', () => {
 
   it.each(['bb', 'ct'] as const)('uses the same hop neighbor choices for model and runtime in %s', mode => {
     const schema = submitFindingsSchemaForMode(mode, undefined, false, {
-      outCols: null, writesTo: false,
+      outCols: null, outNode: false,
       neighbors: [{ id: 'open', can_question: true, can_prune: true },
         { id: 'queued', can_question: true, can_prune: false },
         { id: 'visited', can_question: false, can_prune: false }],
@@ -211,7 +211,7 @@ describe('fresh kept required-field projection', () => {
   ])('uses column comparison consistently for $name under caseSensitive=$caseSensitive', ({ caseSensitive, name, accepted }) => {
     for (const scalar of [false, true]) {
       const schema = submitFindingsSchemaForMode('ct', undefined, false, {
-        outCols: ['Value'], writesTo: false, identifierCaseSensitive: caseSensitive,
+        outCols: ['Value'], outNode: false, identifierCaseSensitive: caseSensitive,
         ...(scalar ? { returnTargets: [{ node: 'caller', col: 'Value' }] } : {}),
       });
       const input = { focus_node_id: 'focus', column_flow: [{ out_col: name, upstream_columns: [],
@@ -350,7 +350,7 @@ describe('fresh kept required-field projection', () => {
   });
 
   it('normalizes an equivalent caller_context spelling to the focus id at the boundary without changing the served schema', () => {
-    const hop = { focusNodeId: '[dbo].[Caller]', outCols: ['Value'], writesTo: false, callerContextNodeIds: ['[dbo].[Fn]'],
+    const hop = { focusNodeId: '[dbo].[Caller]', outCols: ['Value'], outNode: false, callerContextNodeIds: ['[dbo].[Fn]'],
       neighbors: [{ id: '[dbo].[Fn]', can_question: true, can_prune: true }] };
     const schema = submitFindingsSchemaForMode('ct', undefined, false, hop);
     const question = { nodeId: '[dbo].[Fn]', question: 'Establish Value from the caller argument.' };
@@ -370,8 +370,7 @@ describe('fresh kept required-field projection', () => {
 it.each(['view', 'procedure', 'caller'] as const)('keeps a served %s flow example coherent with its owning schema', kind => {
   const source = '[dbo].[Orders]', target = '[dbo].[Target]', caller = '[dbo].[Caller]';
   const schema = submitFindingsSchemaForMode('ct', 'technical', false, {
-    outCols: ['Total'], writesTo: kind === 'procedure', columnSourceNodeIds: [source],
-    ...(kind === 'procedure' ? { writeTargetNodeIds: [target] } : {}),
+    outCols: ['Total'], outNode: kind === 'procedure', columnSourceNodeIds: kind === 'procedure' ? [source, target] : [source],
     ...(kind === 'caller' ? { returnTargets: [{ node: caller, col: 'Total' }] } : {}),
   });
   const wire = toModelJsonSchema(schema) as any;
@@ -396,7 +395,7 @@ it.each((['bb', 'ct'] as const).flatMap(mode => (['business', 'technical', 'both
 // Resource bound (no spec clause owns it): distinct hops arrive for the life of the extension host, so neither Ajv nor the
 // per-hop schema memo may keep every schema ever built. The compiled validator must stay usable without its Ajv cache entry.
 it('retains no Ajv cache entry per hop and bounds the per-hop findings schemas', () => {
-  const hop = (i: number) => ({ focusNodeId: `[dbo].[Focus${i}]`, outCols: ['Value'], writesTo: false, columnSourceNodeIds: [`[dbo].[Src${i}]`] });
+  const hop = (i: number) => ({ focusNodeId: `[dbo].[Focus${i}]`, outCols: ['Value'], outNode: false, columnSourceNodeIds: [`[dbo].[Src${i}]`] });
   const build = (i: number) => submitFindingsSchemaForMode('ct', 'technical', false, hop(i));
   const flow = (i: number) => ({ column_flow: [{ out_col: 'Value', upstream_columns: [{ node: `[dbo].[Src${i}]`, col: 'Value' }] }] });
   const compile = vi.spyOn(Ajv.prototype, 'compile');

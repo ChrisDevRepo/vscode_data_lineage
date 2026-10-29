@@ -288,7 +288,7 @@ describe('declared contributor identities', () => {
     expect(result.invalidRoutes).toEqual([]);
     expect(result.stagedEdges.map(edge => edge.from_col)).toEqual([output]);
   });
-  it('rejects a self-loop column mapping with the object columns as allowed_values and node qualifier', () => {
+  it('stores a supplied pair whose endpoints share one object column as one direct pair (D-130)', () => {
     const columns = ['OrderAmount', 'RegionCode', 'Discount'];
     const nodes = [
       makeNode({ id: 'writer', name: 'writer', schema: 'dbo', type: 'procedure', bodyScript: 'INSERT INTO staging SELECT * FROM staging;' }),
@@ -296,22 +296,16 @@ describe('declared contributor identities', () => {
     ];
     const result = new ColumnTracer(['OrderAmount']).validateColumnFlow('writer',
       { column_flow: [{
+        out_node: 'staging',
         out_col: 'OrderAmount',
-        writes_to: { node: 'staging', col: 'OrderAmount' },
         upstream_columns: [{ node: 'staging', col: 'OrderAmount' }],
       }] },
       new Map(nodes.map(node => [node.id, node])),
       makeIndexedModel(nodes, [['writer', 'staging'], ['staging', 'writer']]),
       null, undefined, undefined, 'upstream', undefined, [], [], [], [{ node: 'staging', col: 'OrderAmount' }],
     );
-    expect(result.invalidRoutes).toHaveLength(1);
-    expect(result.invalidRoutes[0]).toMatchObject({
-      kind: 'self_loop_column',
-      id: 'staging',
-      path: 'column_flow.0.upstream_columns.0',
-      allowed_values: columns,
-      when: { node: 'staging' },
-    });
+    expect(result.invalidRoutes).toEqual([]);
+    expect(result.stagedEdges).toMatchObject([{ from_node: 'staging', from_col: 'OrderAmount', to_node: 'staging', to_col: 'OrderAmount' }]);
   });
 });
 
@@ -410,7 +404,7 @@ describe('carrier value-edge orientation', () => {
     engine.getHopContext();
     const question = 'Establish the stored Value contribution from actual SQL.';
     expect(engine.submitFindings({ ...guardRecord(origin), column_flow: [{ out_col: 'Value',
-      upstream_columns: upstream ? [{ node: carrier, col: 'Value' }] : [], ...(!upstream ? { writes_to: { node: carrier, col: 'Value' } } : {}),
+      upstream_columns: [{ node: upstream ? carrier : origin, col: 'Value' }], ...(!upstream ? { out_node: carrier } : {}),
     }], questions: [{ nodeId: carrier, question }] })).toHaveProperty('ok', true);
     const edges = structuredClone(engine.columnAspect!.edges);
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: next }, analysis_mode: 'ct', storage_context: [expect.objectContaining({ id: carrier })] });
@@ -455,14 +449,14 @@ describe('stored-column arrival admission and delivery', () => {
       depthIntent: { upstream: { levels: 0, exactness: 'exact' }, downstream: { levels: 'all', exactness: 'exact' } },
     })).toHaveProperty('ok', true);
     engine.getHopContext();
-    expect(engine.submitFindings({ ...record(producer), column_flow: ['X', 'Y'].map(out_col => ({ out_col,
-      upstream_columns: [], writes_to: { node: stored, col: out_col } })), questions: [{ nodeId: stored, question }],
+    expect(engine.submitFindings({ ...record(producer), column_flow: ['X', 'Y'].map(out_col => ({ out_node: stored, out_col,
+      upstream_columns: [{ node: producer, col: out_col }] })), questions: [{ nodeId: stored, question }],
     })).toHaveProperty('ok', true);
     const producerEdges = structuredClone(engine.columnAspect!.edges);
     return { engine, nodes, pairs, producerEdges };
   }
 
-  it('assigns each write destination its own renamed endpoints and other readers only producer outputs', () => {
+  it('assigns each write destination its own renamed endpoints and carries nothing the AI did not pair (D-130)', () => {
     const left = '[d].[LeftTarget]', right = '[d].[RightTarget]', reader = '[d].[Reader]';
     const nodes = [
       makeNode({ id: producer, schema: 'd', name: 'Producer', type: 'procedure', columns: [],
@@ -480,22 +474,21 @@ describe('stored-column arrival admission and delivery', () => {
     expect(engine.submitFindings({ focus_node_id: producer, summary: 'Writes two separate destinations.',
       sections: [{ angle: 'technical', text: 'Each destination has its own qualified output.' }],
       column_flow: [
-        { out_col: 'LeftPort', writes_to: { node: left, col: 'SavedLeft' }, upstream_columns: [] },
-        { out_col: 'RightPort', writes_to: { node: right, col: 'SavedRight' }, upstream_columns: [] },
+        { out_node: left, out_col: 'SavedLeft', upstream_columns: [{ node: producer, col: 'LeftPort' }] },
+        { out_node: right, out_col: 'SavedRight', upstream_columns: [{ node: producer, col: 'RightPort' }] },
       ], questions: [left, right, reader].map(nodeId => ({ nodeId, question: 'Inspect this destination or reader.' })),
     })).toHaveProperty('ok', true);
     const arrivals = engine.toJSON().engineInternals.investigationTasks.filter(task => task.kind === 'column_lineage' && task.status === 'pending');
     expect(arrivals.find(task => task.nodeId === left)).toMatchObject({ activeColumns: ['SavedLeft'], sourceRefs: [{ node: left, col: 'SavedLeft' }] });
     expect(arrivals.find(task => task.nodeId === right)).toMatchObject({ activeColumns: ['SavedRight'], sourceRefs: [{ node: right, col: 'SavedRight' }] });
-    expect(arrivals.find(task => task.nodeId === reader)).toMatchObject({ activeColumns: ['LeftPort', 'RightPort'],
-      sourceRefs: [{ node: producer, col: 'LeftPort' }, { node: producer, col: 'RightPort' }] });
+    expect(arrivals.find(task => task.nodeId === reader)).not.toHaveProperty('sourceRefs');
     expect(engine.columnAspect!.edges.map(edge => `${edge.from_node}.${edge.from_col}->${edge.to_node}.${edge.to_col}`)).toEqual([
       `${producer}.LeftPort->${left}.SavedLeft`, `${producer}.RightPort->${right}.SavedRight`,
     ]);
   });
 
   it.each((['filter', 'combine'] as const).flatMap(role => [false, true].map(declareBirth => ({ role, declareBirth }))))(
-    'retains $role influence and adds a procedure origin only when explicitly declared: $declareBirth', ({ role, declareBirth }) => {
+    'retains $role influence and stores a procedure origin only when the AI pairs it: $declareBirth', ({ role, declareBirth }) => {
     const source = '[d].[Source]', writer = '[d].[Producer]', stored = '[d].[Stored]';
     const nodes = [
       makeNode({ id: source, schema: 'd', name: 'Source', type: 'table', columns: [column('Flag')] }),
@@ -510,9 +503,9 @@ describe('stored-column arrival admission and delivery', () => {
     engine.getHopContext();
     expect(engine.submitFindings({ focus_node_id: writer, summary: 'Discount is written after a row test.',
       sections: [{ angle: 'technical', text: 'Source.Flag only selects the row.' }],
-      column_flow: [{ out_col: 'Discount', writes_to: { node: stored, col: 'Discount' },
+      column_flow: [{ out_node: stored, out_col: 'Discount',
         upstream_columns: [{ node: source, col: 'Flag', transforms: [role] }] },
-      ...(declareBirth ? [{ out_col: 'Discount', writes_to: { node: stored, col: 'Discount' }, upstream_columns: [] }] : [])],
+      ...(declareBirth ? [{ out_node: stored, out_col: 'Discount', upstream_columns: [{ node: writer, col: 'Discount' }] }] : [])],
     })).toHaveProperty('ok', true);
     expect(engine.columnAspect!.edges.map(edge => ({
       from: `${edge.from_node}.${edge.from_col}`, to: `${edge.to_node}.${edge.to_col}`, transforms: edge.transforms ?? null,
@@ -538,7 +531,7 @@ describe('stored-column arrival admission and delivery', () => {
     engine.getHopContext();
     expect(engine.submitFindings({ focus_node_id: writer, summary: 'Discount carries Amount.',
       sections: [{ angle: 'technical', text: 'Source.Amount is the written value.' }],
-      column_flow: [{ out_col: 'Discount', writes_to: { node: stored, col: 'Discount' },
+      column_flow: [{ out_node: stored, out_col: 'Discount',
         upstream_columns: [{ node: source, col: 'Amount', transforms: ['compute'] }] }],
     })).toHaveProperty('ok', true);
     expect(engine.columnAspect!.edges).toEqual([
@@ -614,7 +607,7 @@ describe('stored-column arrival admission and delivery', () => {
         }
         expect(engine.submitFindings({ ...record(id),
           column_flow: reader.used.map(col => ({ out_col: `Result${col}`, upstream_columns: [{ node: stored, col }],
-            ...(reader.type === 'procedure' ? { writes_to: { node: reader.sink, col: `Result${col}` } } : {}) })),
+            ...(reader.type === 'procedure' ? { out_node: reader.sink } : {}) })),
           questions: [{ nodeId: reader.sink, question: 'Follow confirmed outputs or explain the remaining object dependency.' }],
         })).toHaveProperty('ok', true);
         expect(engine.columnAspect!.edges.slice(0, before.length)).toEqual(before);
@@ -935,7 +928,7 @@ describe('current task completeness before advancement', () => {
     expect(engine.hopSubmitColumns.columnSourceNodeIds?.includes(source)).toBe(border === 'admitted');
     expect(engine.hopSubmitColumns.columnSourceNodeIds).toContain(root);
     // can_map and the served enums are one projection: a neighbour is mappable exactly when the enum names it.
-    const served = new Set([...(engine.hopSubmitColumns.columnSourceNodeIds ?? []), ...(engine.hopSubmitColumns.writeTargetNodeIds ?? [])]);
+    const served = new Set(engine.hopSubmitColumns.columnSourceNodeIds ?? []);
     for (const neighbor of context.neighbors as HopNeighborDisclosure[]) expect(neighbor.can_map).toBe(served.has(neighbor.id));
     expect((context.neighbors as HopNeighborDisclosure[]).find(neighbor => neighbor.id === source)?.can_map).toBe(border === 'admitted');
     const result = engine.submitFindings({ focus_node_id: writer, summary: 'No output is recorded.',
@@ -962,15 +955,14 @@ describe('current task completeness before advancement', () => {
     })).toHaveProperty('ok', true);
     const context = engine.getHopContext();
     expect(context).toMatchObject({ focus_node: { id: writer } });
-    expect(engine.hopSubmitColumns.columnSourceNodeIds).toEqual([root, source]);
+    expect(engine.hopSubmitColumns.columnSourceNodeIds).toEqual([root, source, writer]);
     expect((context.neighbors as HopNeighborDisclosure[]).find(neighbor => neighbor.id === source)?.can_map).toBe(true);
     expect(engine.submitFindings({ focus_node_id: writer, summary: 'Combines Value and Rate.', sections: [{ angle: 'technical', text: 'Combines Value and Rate.' }],
-      column_flow: [{ out_col: 'Value', writes_to: null, upstream_columns: [{ node: root, col: 'Value' }, { node: source, col: 'Rate' }] }],
-      questions: [],
+      column_flow: [], questions: [],
     })).toHaveProperty('ok', true);
   });
 
-  it.each(['depth', 'direction', 'excluded', 'admitted'] as const)('filters write destinations against the %s scope boundary', border => {
+  it.each(['depth', 'direction', 'excluded', 'admitted'] as const)('filters out_node and source choices against the %s scope boundary', border => {
     const root = 'root', writer = 'writer', target = 'target';
     const nodes = [makeNode({ id: root, name: root, schema: 'dbo', type: 'view', columns: [column('Value')], bodyScript: 'SELECT 1 AS Value;' }),
       makeNode({ id: writer, name: writer, schema: 'dbo', type: 'procedure', bodyScript: 'INSERT target SELECT 1 AS Value;' }),
@@ -990,7 +982,7 @@ describe('current task completeness before advancement', () => {
       questions: [{ nodeId: writer, question: 'Explain Value.' }],
     })).toHaveProperty('ok', true);
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: writer } });
-    expect(engine.hopSubmitColumns.writeTargetNodeIds).toEqual(border === 'admitted' ? [root, target] : [root]);
+    expect(engine.hopSubmitColumns.columnSourceNodeIds).toEqual(border === 'admitted' ? [root, target, writer] : [root, writer]);
   });
 
   it.each(['bb', 'ct'] as const)('rejects a non-neighbor prune before committing %s findings', analysisMode => {
@@ -1544,7 +1536,7 @@ describe('result dispositions', () => {
   const record = (focus_node_id: string) => ({ focus_node_id,
     summary: 'Record the supplied definition.', sections: [{ angle: 'technical' as const, text: 'The supplied SQL establishes this hop.' }] });
 
-  it('retains an in-scope procedure expression while sending null for its outside SQL destination', () => {
+  it('omits the entry of a write to an outside SQL destination and stores no pair (D-096)', () => {
     const input = '[d].[Input]', procedure = '[d].[Procedure]', stored = '[d].[Stored]';
     const nodes = [
       makeNode({ id: input, schema: 'd', name: 'Input', type: 'view', columns: [column('X')], bodyScript: 'SELECT 10 AS X' }),
@@ -1563,12 +1555,8 @@ describe('result dispositions', () => {
     const schema = submitFindingsSchemaForMode('ct', 'technical', true, engine.hopSubmitColumns);
     const payload = { focus_node_id: procedure, summary: 'The procedure inserts X into Stored beyond the requested limit.',
       sections: { technical: 'INSERT d.Stored(X) SELECT X FROM d.Input; Stored is beyond downstream one.' },
-      column_flow: [{ out_col: 'X', upstream_columns: [{ node: input, col: 'X' }], writes_to: null }] };
-    const before = engine.toJSON().columnAspect;
-    expect(engine.submitFindings(toHopFinding(schema.parse({ ...payload, column_flow: [{
-      out_col: 'X', upstream_columns: [{ node: input, col: 'Missing' }], writes_to: null,
-    }] })))).toMatchObject({ code: 'contributor_col_not_on_source', issuePaths: ['column_flow.0.upstream_columns.0.col'] });
-    expect(engine.toJSON().columnAspect).toEqual(before);
+      column_flow: [] };
+    expect(engine.hopSubmitColumns.columnSourceNodeIds).not.toContain(stored);
     expect(engine.submitFindings(toHopFinding(schema.parse(payload)))).toHaveProperty('ok', true);
     expect(engine.columnAspect!.edges).toEqual([]);
     expect(engine.columnAspect!.edges.some(edge => edge.from_node === stored || edge.to_node === stored)).toBe(false);
@@ -1587,9 +1575,9 @@ describe('result dispositions', () => {
     engine.getHopContext();
     const before = engine.toJSON();
     const rejected = engine.submitFindings({ ...record(producer),
-      column_flow: [{ out_col: 'X', upstream_columns: [], writes_to: { node: equivalent ? ' "D" . "stored" ' : stored, col: 'X' } }] });
-    expect(rejected).toMatchObject({ code: 'route_validation_failed', issuePaths: ['column_flow.0.writes_to.node'],
-      errors: [{ path: 'column_flow.0.writes_to.node', code: 'bad_write_target' }] });
+      column_flow: [{ out_node: equivalent ? ' "D" . "stored" ' : stored, out_col: 'X', upstream_columns: [{ node: producer, col: 'X' }] }] });
+    expect(rejected).toMatchObject({ code: 'route_validation_failed', issuePaths: ['column_flow.0.out_node'],
+      errors: [{ path: 'column_flow.0.out_node', code: 'not_neighbor' }] });
     expect(shownMessages(rejected), 'D-102: no echoed id').not.toContain(stored);
     expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
     expect(engine.submitFindings({ ...record(producer), column_flow: [{ out_col: 'X', upstream_columns: [] }],
@@ -1646,7 +1634,7 @@ describe('result dispositions', () => {
     engine.getHopContext();
     expect(engine.submitFindings({
       ...guardRecord(origin),
-      column_flow: [{ out_col: 'X', writes_to: { node: sink, col: 'X' }, upstream_columns: [{ node: focus, col: 'X' }] }],
+      column_flow: [{ out_node: sink, out_col: 'X', upstream_columns: [{ node: focus, col: 'X' }] }],
       questions: [{ nodeId: focus, question: 'Follow Src.' }],
     })).toHaveProperty('ok', true);
     const hop = engine.getHopContext();
@@ -1750,7 +1738,7 @@ describe('passthrough candidates at the next object', () => {
     expect(engine.init({ origin: a, question: 'Where do X and Y go?', analysisMode: 'ct', targetColumns: ['X', 'Y'], direction: 'downstream',
       depthIntent: { upstream: { levels: 0, exactness: 'exact' }, downstream: { levels: 'all', exactness: 'exact' } } })).toHaveProperty('ok', true);
     engine.getHopContext();
-    expect(engine.submitFindings({ ...guardRecord(a), column_flow: ['X', 'Y'].map(col => ({ out_col: col, upstream_columns: [], writes_to: { node: b, col } })),
+    expect(engine.submitFindings({ ...guardRecord(a), column_flow: ['X', 'Y'].map(col => ({ out_node: b, out_col: col, upstream_columns: [{ node: a, col }] })),
       questions: [{ nodeId: b, question: 'Where are X and Y read?' }] })).toHaveProperty('ok', true);
     // D-093: generated work names metadata only; mapping instructions belong to the prompt/schema.
     expect(engine.toJSON().agenda).toContainEqual(expect.objectContaining({ nodeId: b,
@@ -1758,7 +1746,7 @@ describe('passthrough candidates at the next object', () => {
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: c }, analysis_mode: 'ct' });
     expect(engine.getCurrentTasks()).toContainEqual(expect.objectContaining({ question: 'Where are X and Y read?',
       sourceRefs: [{ node: b, col: 'X' }, { node: b, col: 'Y' }] }));
-    expect(engine.submitFindings({ ...guardRecord(c), column_flow: [{ out_col: 'X', upstream_columns: [{ node: b, col: 'X' }], writes_to: { node: t, col: 'Z' } }],
+    expect(engine.submitFindings({ ...guardRecord(c), column_flow: [{ out_node: t, out_col: 'Z', upstream_columns: [{ node: b, col: 'X' }] }],
       questions: [{ nodeId: t, question: 'Describe T.' }] })).toHaveProperty('ok', true);
     expect(logs.some(message => message.includes('columns end') && message.includes(`${b}.Y`))).toBe(true);
     expect(engine.getHopContext()).toHaveProperty('done', true);
@@ -1794,7 +1782,7 @@ describe('out_col enum is the arriving columns', () => {
   });
 });
 
-describe('writes_to is required at a procedure focus', () => {
+describe('out_node is required at a procedure focus', () => {
   const v = '[d].[V]', p = '[d].[P]', t = '[d].[T]', src = '[d].[S]';
   const nodes = [
     makeNode({ id: v, schema: 'd', name: 'V', type: 'view', columns: [column('X')], bodyScript: 'CREATE VIEW d.V AS SELECT X FROM d.T;' }),
@@ -1814,17 +1802,18 @@ describe('writes_to is required at a procedure focus', () => {
   };
   const body = (entry: Record<string, unknown>, focus: string) => ({ focus_node_id: focus, summary: 's', sections: { technical: 't' }, column_flow: [{ out_col: 'X', upstream_columns: [{ node: src, col: 'Z' }], ...entry }] });
 
-  it('rejects an entry without writes_to, accepts null and a neighbor destination', () => {
+  it('rejects an entry without out_node or with null, accepts a neighbor destination and the procedure as a source', () => {
     const schema = served(p);
     expect(schema.safeParse(body({}, p)).success).toBe(false);
-    expect(schema.safeParse(body({ writes_to: null }, p)).success).toBe(true);
-    expect(schema.safeParse(body({ writes_to: { node: t, col: 'X' } }, p)).success).toBe(true);
+    expect(schema.safeParse(body({ out_node: null }, p)).success).toBe(false);
+    expect(schema.safeParse(body({ out_node: t }, p)).success).toBe(true);
+    expect(schema.safeParse(body({ out_node: t, upstream_columns: [{ node: p, col: 'X' }] }, p)).success).toBe(true);
   });
 
-  it('does not admit writes_to at a view focus', () => {
+  it('does not admit out_node at a view focus', () => {
     const schema = served(v);
     expect(schema.safeParse({ focus_node_id: v, summary: 's', sections: { technical: 't' }, column_flow: [{ out_col: 'X', upstream_columns: [{ node: t, col: 'X' }] }] }).success).toBe(true);
-    expect(schema.safeParse({ focus_node_id: v, summary: 's', sections: { technical: 't' }, column_flow: [{ out_col: 'X', upstream_columns: [{ node: t, col: 'X' }], writes_to: null }] }).success).toBe(false);
+    expect(schema.safeParse({ focus_node_id: v, summary: 's', sections: { technical: 't' }, column_flow: [{ out_col: 'X', upstream_columns: [{ node: t, col: 'X' }], out_node: t }] }).success).toBe(false);
   });
 });
 
@@ -1839,7 +1828,7 @@ describe('a procedure that writes and reads back the same table', () => {
     makeNode({ id: other, schema: 'd', name: 'U', type: 'table', columns: [column('V')] }),
   ];
   const pairs: Array<[string, string]> = [[staged, origin], [proc, staged], [work, proc], [proc, work], [source, proc], [proc, other]];
-  const readBack = { out_col: 'X', upstream_columns: [{ node: work, col: 'Y' }], writes_to: { node: staged, col: 'X' } };
+  const readBack = { out_node: staged, out_col: 'X', upstream_columns: [{ node: work, col: 'Y' }] };
   const atProc = () => {
     const engine = engineFor(nodes, pairs);
     expect(engine.init({ origin, question: 'Trace X.', analysisMode: 'ct', targetColumns: ['X'], direction: 'upstream', depthIntent: upstreamAll })).toHaveProperty('ok', true);
@@ -1855,7 +1844,7 @@ describe('a procedure that writes and reads back the same table', () => {
     const engine = atProc();
     const served = submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns).parse({ focus_node_id: proc,
       summary: 'Trace X.', sections: { technical: 'P merges W into T and loads S2 from T.' }, questions,
-      column_flow: [readBack, { out_col: 'Y', upstream_columns: [{ node: source, col: 'Z' }], writes_to: { node: work, col: 'Y' } }] });
+      column_flow: [readBack, { out_node: work, out_col: 'Y', upstream_columns: [{ node: source, col: 'Z' }] }] });
     expect(engine.submitFindings(toHopFinding(served)), 'internal write is declared').toHaveProperty('ok', true);
     expect(engine.columnAspect!.edges).toContainEqual(expect.objectContaining({ from_node: source, from_col: 'Z', to_node: work, to_col: 'Y', hop_node: proc }));
     const visits: string[] = [];
@@ -1874,15 +1863,15 @@ describe('a procedure that writes and reads back the same table', () => {
   it('rejects a write to an out-of-direction neighbor and keeps the in-scope mapping', () => {
     const engine = atProc();
     expect(engine.submitFindings({ ...guardRecord(proc), questions, column_flow: [readBack,
-      { out_col: 'V', upstream_columns: [{ node: source, col: 'Z' }], writes_to: { node: other, col: 'V' } }] }))
-      .toMatchObject({ code: 'route_validation_failed', issuePaths: ['column_flow.1.writes_to.node'] });
+      { out_node: other, out_col: 'V', upstream_columns: [{ node: source, col: 'Z' }] }] }))
+      .toMatchObject({ code: 'route_validation_failed', issuePaths: ['column_flow.1.out_node'] });
   });
 
   it('accepts an extra in-direction mapping that is not on the requested column chain', () => {
     const engine = atProc();
     expect(engine.submitFindings({ ...guardRecord(proc), questions, column_flow: [
       { ...readBack, upstream_columns: [{ node: source, col: 'Z' }] },
-      { out_col: 'Y', upstream_columns: [{ node: source, col: 'Z' }], writes_to: { node: work, col: 'Y' } },
+      { out_node: work, out_col: 'Y', upstream_columns: [{ node: source, col: 'Z' }] },
     ] })).toHaveProperty('ok', true);
   });
 });
@@ -2019,7 +2008,7 @@ describe('CT boundary rejects instead of dropping a column reference', () => {
     expect(engine.toJSON().removedSet).not.toContain(kept);
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: writer } });
     expect(engine.submitFindings({ ...guardRecord(writer),
-      column_flow: [{ out_col: 'Value', writes_to: { node: kept, col: 'Value' }, upstream_columns: [{ node: root, col: 'Value' }] }],
+      column_flow: [{ out_node: kept, out_col: 'Value', upstream_columns: [{ node: root, col: 'Value' }] }],
       questions: [{ nodeId: kept, question: 'Establish how the stored Value continues.' }],
       prune_neighbors: [{ id: unused, reason: 'The delete target carries no Value.' }],
     })).toHaveProperty('ok', true);
@@ -2047,7 +2036,7 @@ describe('CT boundary rejects instead of dropping a column reference', () => {
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: first } });
     expect(engine.submitFindings({ ...guardRecord(first), column_flow: [], prune_neighbors: [{ id: kept, reason: 'No Value is written on this branch.' }] })).toHaveProperty('ok', true);
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: writer } });
-    const flow = [{ out_col: 'Value', writes_to: { node: kept, col: 'Value' }, upstream_columns: [{ node: root, col: 'Value' }] }];
+    const flow = [{ out_node: kept, out_col: 'Value', upstream_columns: [{ node: root, col: 'Value' }] }];
     // The mapping is this hop's keep vote, so the stale ballot leaves pruning the unrelated leaf open.
     expect(engine.submitFindings({ ...guardRecord(writer), column_flow: flow })).toMatchObject({ code: 'route_validation_failed',
       errors: [{ path: '', code: 'neighbor_undecided', values: [unused] }], resend: ['questions', 'prune_neighbors', 'column_flow'] });
@@ -2152,7 +2141,7 @@ describe('authored column endpoints and downstream decisions', () => {
       column_flow: [{ out_col: 'Value', upstream_columns: [] }], questions: [{ nodeId: writer, question: 'Where does Value land?' }] })).toHaveProperty('ok', true);
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: writer } });
     const before = engine.toJSON();
-    const flow = [{ out_col: 'Value', writes_to: { node: stored, col: 'Value' }, upstream_columns: [{ node: root, col: 'Value' }] }];
+    const flow = [{ out_node: stored, out_col: 'Value', upstream_columns: [{ node: root, col: 'Value' }] }];
     const result = engine.submitFindings({ focus_node_id: writer, summary: 'Persists Value.', sections: [{ angle: 'technical', text: 'Declared insert.' }], column_flow: flow });
     expect(result).toMatchObject({ code: 'route_validation_failed', detail: [expect.objectContaining({ kind: 'neighbor_outcome_missing', id: consumer })] });
     expectUnchangedRouting(engine.toJSON(), before);

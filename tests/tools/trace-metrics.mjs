@@ -50,7 +50,7 @@ export function summariseSubmission(input) {
     pruned: [...pruned].sort(),
     prunedAndNamed: pruned.filter(id => named.has(id)).sort(),
     entries: flow.length,
-    entriesWithoutWritesTo: flow.filter(entry => entry?.writes_to === undefined).length,
+    entriesWithoutWritesTo: flow.filter(entry => entry?.writes_to === undefined && entry?.out_node === undefined).length,
     questions: (Array.isArray(input.questions) ? input.questions : []).map(q => String(q?.nodeId ?? '')).sort(),
   };
 }
@@ -565,7 +565,7 @@ export const RULES = {
   snippet_citations_differ_between_runs: { kind: 'signal', verify: 'Read both reports against the captured SQL: which one keeps the deciding SQL, and does the other state anything the SQL does not show?' },
   row_role_contributors_present: { kind: 'signal', verify: 'Compare recorded row-role contributors with the actual column edges, report and SQL; presence alone does not establish whether they were retained correctly.' },
   rejection_answered_not_resent: { kind: 'signal', verify: 'Is the text answer a correct decline for the question (unknown object or column, a request to execute SQL)?' },
-  writes_to_rejected: { kind: 'signal', verify: 'Was writes_to required for this procedure hop, and does the field description say so?' },
+  writes_to_rejected: { kind: 'signal', verify: 'Was writes_to (out_node since D-130) required for this procedure hop, and does the field description say so?' },
   discovery_budget_rejected: { kind: 'signal', verify: 'Could the call have been avoided from what the model was told about the scope size?' },
   rejections_differ_between_runs: { kind: 'signal', verify: 'Compare rejection differences; inspect paired exchange evidence.' },
   resend_tokens_differ_between_runs: { kind: 'signal', verify: 'Compare repair token differences; inspect generation attribution and paired exchange evidence.' },
@@ -594,7 +594,7 @@ export function findings(run) {
     else if (chain.rejections >= 2) out.push(finding('repair_needed_several_retries', { focus: chain.focus, detail: `${chain.tool} accepted at retry ${chain.rejections}` }));
   }
   for (const item of run.rejected) {
-    if (item.paths.some(path => path === 'writes_to' || path.endsWith('.writes_to'))) out.push(finding('writes_to_rejected', { detail: `${item.tool}: ${item.paths.join(', ')}` }));
+    if (item.paths.some(path => /(^|\.)(writes_to|out_node)$/.test(path))) out.push(finding('writes_to_rejected', { detail: `${item.tool}: ${item.paths.join(', ')}` }));
     if (item.code === 'over_discovery_budget') out.push(finding('discovery_budget_rejected', { detail: item.tool }));
   }
   for (const step of run.repair.steps) {

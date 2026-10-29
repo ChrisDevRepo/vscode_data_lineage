@@ -264,17 +264,6 @@ describe('missing neighbor outcomes beside an invalid column_flow', () => {
       questions: [{ nodeId: OTHER, question: 'Explain the other source.' }] }, services))).toHaveProperty('ok', true);
   });
 
-  it('owes the same neighbors as the corrected flow when a faulty procedure entry lands nowhere', () => {
-    for (const col of ['Missing', 'Value']) {
-      const world = ctWorld({ sibling: true, selfLoop: true });
-      const { services } = stubToolServices({ session: world.session, model: world.model, graph: world.graph });
-      const rejected = JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN, summary: 'Value provenance.',
-        sections: { technical: 'Authored evidence.' }, column_flow: [{ out_col: 'Value', writes_to: null, upstream_columns: [{ node: BRANCH, col }] }] }, services));
-      // A procedure value with no destination maps no supplier, even when its supplied column is valid.
-      expect(missingIds(rejected)).toEqual([BRANCH, OTHER]);
-    }
-  });
-
   it('accepts a filter-only supplier as an indirect edge and maps its neighbor', () => {
     const { submit } = setup();
     const accepted = submit([{ out_col: 'Value', upstream_columns: [
@@ -474,7 +463,7 @@ describe('large findings repairs', () => {
     expect(JSON.parse(executeSubmitFindings({ sections: { business: 'Business evidence.', technical: 'Technical evidence.' }, badge_label: 'Short' }, services))).toHaveProperty('ok', true);
   });
 
-  it('MW7: keeps an independent missing neighbor outcome beside a required write-target omission', () => {
+  it('MW7: keeps an independent missing neighbor outcome beside a required out_node omission', () => {
     const { engine, session, model, graph } = ctWorld({ selfLoop: true, outsideWrite: true });
     const { services } = stubToolServices({ session, model, graph });
     const rejected = JSON.parse(executeSubmitFindings({ summary: 'Outside supplier evidence.',
@@ -482,11 +471,11 @@ describe('large findings repairs', () => {
       column_flow: [{ out_col: 'Value', upstream_columns: [{ node: OTHER, col: 'Value' }] }],
     }, services));
     expect(rejected.errors).toEqual(expect.arrayContaining([
-      expect.objectContaining({ path: 'column_flow.0.writes_to', code: 'missing' }),
+      expect.objectContaining({ path: 'column_flow.0.out_node', code: 'missing' }),
       expect.objectContaining({ path: '', code: 'neighbor_undecided', values: [BRANCH] }),
     ]));
     expect(engine.getDetailSlots()).toEqual([]);
-    expect(JSON.parse(executeSubmitFindings({ column_flow: [{ out_col: 'Value', writes_to: null, upstream_columns: [{ node: BRANCH, col: 'Value' }] }], questions: [{ nodeId: BRANCH, question: 'Resolve the source Value.' }] }, services))).toHaveProperty('ok', true);
+    expect(JSON.parse(executeSubmitFindings({ column_flow: [], questions: [{ nodeId: BRANCH, question: 'Resolve the source Value.' }] }, services))).toHaveProperty('ok', true);
   });
 
   it('MW7: validates a findings candidate once and derives partial diagnostics without reparsing its fields', () => {
@@ -665,14 +654,14 @@ describe('large findings repairs', () => {
       column_flow: [
         { out_col: 'Value', upstream_columns: explicitEmpty ? [] : [
           { node: '[hop].[unknown]', col: 'Value' }, ...(validSupplier ? [{ node: OTHER, col: 'Value' }] : []),
-        ], writes_to: { node: BRANCH, col: badTarget ? 'Missing' : 'Value' } },
-        ...(rejectedSibling ? [{ out_col: 'Value', upstream_columns: [{ node: '[hop].[unknown]', col: 'Value' }], writes_to: { node: BRANCH, col: 'Value' } }] : []),
-        ...(sibling ? [{ out_col: 'Value', upstream_columns: [{ node: OTHER, col: 'Value' }], writes_to: { node: BRANCH, col: 'Value' } }] : []),
+        ], out_node: BRANCH, ...(badTarget ? { out_col: 'Missing' } : {}) },
+        ...(rejectedSibling ? [{ out_node: BRANCH, out_col: 'Value', upstream_columns: [{ node: '[hop].[unknown]', col: 'Value' }] }] : []),
+        ...(sibling ? [{ out_node: BRANCH, out_col: 'Value', upstream_columns: [{ node: OTHER, col: 'Value' }] }] : []),
       ], prune_neighbors: [{ id: BRANCH, reason: 'Outside this investigation.' }],
       questions: validSupplier || sibling ? [] : [{ nodeId: OTHER, question: 'Explain Value.' }],
     }, services));
     expect([result.detail ?? []].flat().filter((fault: { kind: string }) => fault.kind === 'prune_unsupported')).toHaveLength(protectedTarget ? 1 : 0);
-    if (badTarget) expect(result.detail).toContainEqual(expect.objectContaining({ kind: 'bad_out_col', path: 'column_flow.0.writes_to.col' }));
+    if (badTarget) expect(result.detail).toContainEqual(expect.objectContaining({ kind: 'bad_out_col', path: 'column_flow.0.out_col' }));
     expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
     expect(engine.toJSON().agenda).toEqual(before.agenda);
     expect(engine.toJSON().removedSet).toEqual(before.removedSet);
@@ -701,7 +690,6 @@ describe('large findings repairs', () => {
     { target: OTHER, shape: 'normal', scope: true },
     { target: OTHER.toUpperCase(), shape: 'normal', scope: true },
     { target: '[hop].[missing]', shape: 'normal', scope: false },
-    { target: OTHER, shape: 'target-col', scope: true },
     { target: OTHER, shape: 'target-type', scope: false },
     { target: OTHER, shape: 'source-type', scope: true },
   ])('reports write references and only established scope alternatives beside $shape faults ($target)', ({ target, shape, scope }) => {
@@ -711,24 +699,23 @@ describe('large findings repairs', () => {
     const result = JSON.parse(executeSubmitFindings({ summary: 'Known outside destination.', sections: { technical: 'Keep the outside write in these findings.' },
       questions: [{ nodeId: BRANCH, question: 'Establish the supplied Value.' }],
       column_flow: [{ out_col: 'Value', upstream_columns: shape === 'source-type' ? 42 : [{ node: BRANCH, col: 'Value' }],
-        writes_to: shape === 'target-type' ? 42 : shape === 'target-col' ? { node: target } : { node: target, col: 'Value' } }],
+        out_node: shape === 'target-type' ? 42 : target }],
     }, services));
     const errors = result.errors as Array<{ path: string; code: string }>;
-    expect(errors.some(error => error.path === 'column_flow.0.writes_to.node' && error.code === 'bad_write_target')).toBe(shape !== 'target-type');
+    expect(errors.some(error => error.path === 'column_flow.0.out_node' && error.code === (scope ? 'column_out_of_scope' : 'not_neighbor'))).toBe(shape !== 'target-type');
     if (scope) {
-      expect(errors.filter(error => error.path === 'column_flow.0.writes_to.node')).toHaveLength(1);
+      expect(errors.filter(error => error.path === 'column_flow.0.out_node')).toHaveLength(1);
       const firstFeedback = JSON.parse(renderProblem(readToolErrorText(JSON.stringify(result))!, 1));
-      const scopeIssue = shownErrors(firstFeedback).find(error => error.code === 'bad_write_target');
-      expect(scopeIssue).toMatchObject({ path: 'column_flow.0.writes_to.node', code: 'bad_write_target' });
+      const scopeIssue = shownErrors(firstFeedback).find(error => error.code === 'column_out_of_scope');
+      expect(scopeIssue).toMatchObject({ path: 'column_flow.0.out_node', code: 'column_out_of_scope' });
       expect(scopeIssue).not.toHaveProperty('allowed');
     }
-    const shapePath = shape === 'target-type' ? 'column_flow.0.writes_to' : shape === 'target-col' ? 'column_flow.0.writes_to.col'
-      : shape === 'source-type' ? 'column_flow.0.upstream_columns' : undefined;
+    const shapePath = shape === 'target-type' ? 'column_flow.0.out_node' : shape === 'source-type' ? 'column_flow.0.upstream_columns' : undefined;
     if (shapePath) expect(errors.some(error => error.path === shapePath)).toBe(true);
     expect([...result.resend].sort()).toEqual(scope ? ['column_flow', 'questions', 'sections'] : ['column_flow']);
     expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
     expect(engine.toJSON().agenda).toEqual(before.agenda);
-    expect(JSON.parse(executeSubmitFindings({ column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }], writes_to: null }] }, services))).toHaveProperty('ok', true);
+    expect(JSON.parse(executeSubmitFindings({ column_flow: [] }, services))).toHaveProperty('ok', true);
     expect(engine.getDetailSlots()).toEqual(expect.arrayContaining([expect.objectContaining({ summary: 'Known outside destination.' })]));
   });
   it.each(['known', 'unknown-target', 'unreadable-target', 'unknown-source', 'unreadable-sources'] as const)('reports certain missing outcomes without admitting a %s flow header', kind => {
@@ -739,13 +726,13 @@ describe('large findings repairs', () => {
       questions: [{ nodeId: BRANCH, question: 'Establish the source Value.' }],
       column_flow: [{ out_col: 'Value', upstream_columns: kind === 'unreadable-sources' ? 42
         : [{ node: kind === 'unknown-source' ? '[hop].[missing]' : BRANCH, col: 'Value' }],
-        writes_to: kind === 'unreadable-target' ? 42 : { node: kind === 'unknown-target' ? '[hop].[missing]' : OTHER, col: 'Value' } }],
+        out_node: kind === 'unreadable-target' ? 42 : kind === 'unknown-target' ? '[hop].[missing]' : OTHER }],
     }, services));
     const missingIds = (result.detail ?? []).filter((fault: { kind: string }) => fault.kind === 'neighbor_outcome_missing').map((fault: { id: string }) => fault.id);
     expect(missingIds).toEqual(kind === 'known' ? ['[hop].[extra]'] : []);
     expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
     expect(engine.toJSON().agenda).toEqual(before.agenda);
-    const correction = { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }], writes_to: null }],
+    const correction = { column_flow: [],
       prune_neighbors: [{ id: '[hop].[extra]', reason: 'No required contribution.' }] };
     const repaired = JSON.parse(executeSubmitFindings(findingRepair(engine, correction), services));
     if (kind !== 'known') {
@@ -1201,13 +1188,13 @@ describe('lineage_submit_findings boundary', () => {
 
   it.each([
     { name: 'bad supplier column', selfLoop: false, kind: 'bad_contributor_col', path: 'column_flow.0.upstream_columns.0.col' },
-    { name: 'self-loop relation', selfLoop: true, kind: 'self_loop_column', path: 'column_flow.0.upstream_columns.0' },
+    { name: 'bad out_node column', selfLoop: true, kind: 'bad_out_col', path: 'column_flow.0.out_col' },
   ])('collects a safe CT fault beside invalid narrative: $name', ({ selfLoop, kind, path }) => {
     const { session, model, graph, engine } = ctWorld({ selfLoop });
     const { services } = stubToolServices({ session, model, graph });
     const input = { summary: 'SQL findings retained.', sections: { technical: 42 },
-      column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: selfLoop ? 'Value' : 'Absent' }],
-        ...(selfLoop ? { writes_to: { node: BRANCH, col: 'Value' } } : {}) }],
+      column_flow: [{ out_col: selfLoop ? 'Absent' : 'Value', upstream_columns: [{ node: BRANCH, col: selfLoop ? 'Value' : 'Absent' }],
+        ...(selfLoop ? { out_node: BRANCH } : {}) }],
       questions: [{ nodeId: BRANCH, question: 'Establish Value provenance.' }] };
     const before = engine.toJSON();
     const result = JSON.parse(executeSubmitFindings(input, services));
@@ -1220,8 +1207,7 @@ describe('lineage_submit_findings boundary', () => {
     expect(control.detail, `the same typed CT fault is independently observable when narrative is valid: ${JSON.stringify(control)}`)
       .toEqual(expect.arrayContaining([expect.objectContaining({ kind, path })]));
     const repaired = JSON.parse(executeSubmitFindings({
-      column_flow: [{ out_col: 'Value', upstream_columns: selfLoop ? [] : [{ node: BRANCH, col: 'Value' }],
-        ...(selfLoop ? { writes_to: { node: BRANCH, col: 'Value' } } : {}) }] }, services));
+      column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }], ...(selfLoop ? { out_node: BRANCH } : {}) }] }, services));
     expect(repaired, JSON.stringify(repaired)).toHaveProperty('ok', true);
   });
 
@@ -1450,20 +1436,20 @@ it.each([
   expect(session.stateMachine).toBeNull();
 });
 
-it('keeps outside-supplier withdrawal alongside the nullable write exit in first feedback', () => {
+it('keeps outside-supplier withdrawal in first feedback', () => {
   const { engine, session, model, graph } = ctWorld({ selfLoop: true, outsideWrite: true });
   const { services } = stubToolServices({ session, model, graph });
   const rejected = JSON.parse(executeSubmitFindings({ summary: 'Outside supplier evidence.',
     sections: { technical: 'Keep the outside supplier fact.' },
-    column_flow: [{ out_col: 'Value', writes_to: null, upstream_columns: [{ node: OTHER, col: 'Value' }] }],
+    column_flow: [{ out_node: BRANCH, out_col: 'Value', upstream_columns: [{ node: OTHER, col: 'Value' }] }],
     questions: [{ nodeId: BRANCH, question: 'Trace the reachable Value.' }],
   }, services));
   const first = JSON.parse(renderProblem(readToolErrorText(JSON.stringify(rejected))!, 1));
-  const scopeIssue = shownErrors(first).find(error => error.code === 'supplier_out_of_scope');
-  expect(scopeIssue).toMatchObject({ path: 'column_flow.0.upstream_columns.0.node', code: 'supplier_out_of_scope' });
+  const scopeIssue = shownErrors(first).find(error => error.code === 'column_out_of_scope');
+  expect(scopeIssue).toMatchObject({ path: 'column_flow.0.upstream_columns.0.node', code: 'column_out_of_scope' });
   expect(scopeIssue).not.toHaveProperty('allowed');
   expect(engine.getDetailSlots()).toEqual([]);
-  expect(JSON.parse(executeSubmitFindings({column_flow: [{out_col:'Value', writes_to:null, upstream_columns:[{node:BRANCH,col:'Value'}]}]},services))).toHaveProperty('ok',true);
+  expect(JSON.parse(executeSubmitFindings({ column_flow: [] }, services))).toHaveProperty('ok', true);
   expect(engine.getDetailSlots()).toContainEqual(expect.objectContaining({summary:'Outside supplier evidence.'}));
 });
 
