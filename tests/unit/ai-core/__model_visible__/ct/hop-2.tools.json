@@ -64,7 +64,7 @@
                   ],
                   "additionalProperties": false
                 },
-                "description": "Neighbor columns that feed out_col: value sources (expression operands, aggregate arguments, each UNION branch column, caller-bound inputs) and columns that only join, filter, group or order its rows. Resolve parameters and aliases to source columns. A value this procedure creates lists this procedure with col = out_col; [] records no pair."
+                "description": "Neighbor columns that feed out_col: value sources (expression operands, aggregate arguments, each UNION branch column, caller-bound inputs) and columns that only join, filter, group or order its rows. Resolve parameters and aliases to source columns. A value this procedure creates lists this procedure with the column its task names, else out_col; [] records no pair."
               },
               "out_node": {
                 "type": "string",
