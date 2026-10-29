@@ -65,10 +65,10 @@
     "label": "outside the approved scope",
     "correction": "Name an object inside the approved scope; where the field's schema description names a form for an object outside it, use that form."
   },
-  "supplier_out_of_scope": {
+  "column_out_of_scope": {
     "category": "reference",
-    "label": "supplier outside the approved scope",
-    "correction": "Remove the outside supplier; if it is the only supplier, omit the column_flow entry, never empty upstream_columns (that declares a born value). Ask the outside object a follow-up in questions and record the fact in sections.",
+    "label": "column outside the approved scope",
+    "correction": "Remove the outside column; if it is the entry's only supplier or its out_node, omit the column_flow entry, never empty upstream_columns (that declares a born value). Ask the outside object a follow-up in questions and record the fact in sections.",
     "fallback": "If no in-scope supplier can express the fact, write it in sections instead, highlighted with a callout naming the unresolved supplier and columns."
   },
   "result_out_of_scope": {
@@ -97,17 +97,6 @@
     "category": "reference",
     "label": "neighbor already pruned or visited",
     "correction": "Name a neighbor that is still open; a pruned or visited neighbor takes no further decision."
-  },
-  "self_loop": {
-    "category": "reference",
-    "label": "supplier is this entry's own write target",
-    "correction": "Name a supplier other than this entry's write target; the write target receives the column."
-  },
-  "bad_write_target": {
-    "fallback": "If you cannot correct it, write that information in the detail memory instead, highlighted with a callout naming the unresolved issue.",
-    "category": "reference",
-    "label": "not an available write target",
-    "correction": "Name an in-scope table this object writes to; for an outside write, set writes_to to null, ask the outside object a follow-up in questions, and state the write in sections."
   },
   "bad_caller_output": {
     "category": "reference",

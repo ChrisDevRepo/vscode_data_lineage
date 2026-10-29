@@ -31,6 +31,7 @@
                         "[ai].[markuprules]",
                         "[ai].[pricemaster]",
                         "[ai].[regionlookup]",
+                        "[ai].[sprefreshprices]",
                         "[ai].[supplierprices]"
                       ]
                     },
@@ -63,41 +64,24 @@
                   ],
                   "additionalProperties": false
                 },
-                "description": "Neighbor columns that feed out_col: value sources (expression operands, aggregate arguments, each UNION branch column, caller-bound inputs) and columns that only join, filter, group or order its rows. Resolve parameters and aliases to source columns; exclude the entry's own writes_to column. [] means the value originates here."
+                "description": "Neighbor columns that feed out_col: value sources (expression operands, aggregate arguments, each UNION branch column, caller-bound inputs) and columns that only join, filter, group or order its rows. Resolve parameters and aliases to source columns. [] means the value originates here."
               },
-              "writes_to": {
-                "anyOf": [
-                  {
-                    "type": "object",
-                    "properties": {
-                      "node": {
-                        "type": "string",
-                        "enum": [
-                          "[ai].[pricemaster]"
-                        ]
-                      },
-                      "col": {
-                        "type": "string",
-                        "description": "Column name on that object."
-                      }
-                    },
-                    "required": [
-                      "node",
-                      "col"
-                    ],
-                    "additionalProperties": false
-                  },
-                  {
-                    "type": "null"
-                  }
+              "out_node": {
+                "type": "string",
+                "enum": [
+                  "[ai].[currencyconfig]",
+                  "[ai].[markuprules]",
+                  "[ai].[pricemaster]",
+                  "[ai].[regionlookup]",
+                  "[ai].[supplierprices]"
                 ],
-                "description": "Table column {node, col} this output is written to, when that table is a neighbor in <hop_context>; otherwise null and name the write in sections."
+                "description": "Table from <hop_context> that this procedure writes out_col to. For a write to an object not listed, omit the entry and name the write in sections. A value this procedure creates itself lists this procedure in upstream_columns."
               }
             },
             "required": [
               "out_col",
               "upstream_columns",
-              "writes_to"
+              "out_node"
             ],
             "additionalProperties": false
           }

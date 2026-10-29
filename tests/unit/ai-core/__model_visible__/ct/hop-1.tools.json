@@ -62,7 +62,7 @@
                   ],
                   "additionalProperties": false
                 },
-                "description": "Neighbor columns that feed out_col: value sources (expression operands, aggregate arguments, each UNION branch column, caller-bound inputs) and columns that only join, filter, group or order its rows. Resolve parameters and aliases to source columns; exclude the entry's own writes_to column. [] means the value originates here."
+                "description": "Neighbor columns that feed out_col: value sources (expression operands, aggregate arguments, each UNION branch column, caller-bound inputs) and columns that only join, filter, group or order its rows. Resolve parameters and aliases to source columns. [] means the value originates here."
               }
             },
             "required": [

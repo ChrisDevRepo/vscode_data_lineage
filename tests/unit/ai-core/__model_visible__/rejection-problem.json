@@ -15,8 +15,8 @@
         },
         {
           "path": "column_flow.0.upstream_columns.0.node",
-          "code": "supplier_out_of_scope",
-          "message": "supplier outside the approved scope. Remove the outside supplier; if it is the only supplier, omit the column_flow entry, never empty upstream_columns (that declares a born value). Ask the outside object a follow-up in questions and record the fact in sections."
+          "code": "column_out_of_scope",
+          "message": "column outside the approved scope. Remove the outside column; if it is the entry's only supplier or its out_node, omit the column_flow entry, never empty upstream_columns (that declares a born value). Ask the outside object a follow-up in questions and record the fact in sections."
         },
         {
           "path": "summary",
@@ -46,8 +46,8 @@
         },
         {
           "path": "column_flow.0.upstream_columns.0.node",
-          "code": "supplier_out_of_scope",
-          "message": "supplier outside the approved scope. Remove the outside supplier; if it is the only supplier, omit the column_flow entry, never empty upstream_columns (that declares a born value). Ask the outside object a follow-up in questions and record the fact in sections.",
+          "code": "column_out_of_scope",
+          "message": "column outside the approved scope. Remove the outside column; if it is the entry's only supplier or its out_node, omit the column_flow entry, never empty upstream_columns (that declares a born value). Ask the outside object a follow-up in questions and record the fact in sections.",
           "allowed": [
             "[ai].[pricemaster]"
           ]
@@ -81,8 +81,8 @@
         },
         {
           "path": "column_flow.0.upstream_columns.0.node",
-          "code": "supplier_out_of_scope",
-          "message": "supplier outside the approved scope. Remove the outside supplier; if it is the only supplier, omit the column_flow entry, never empty upstream_columns (that declares a born value). Ask the outside object a follow-up in questions and record the fact in sections. If no in-scope supplier can express the fact, write it in sections instead, highlighted with a callout naming the unresolved supplier and columns.",
+          "code": "column_out_of_scope",
+          "message": "column outside the approved scope. Remove the outside column; if it is the entry's only supplier or its out_node, omit the column_flow entry, never empty upstream_columns (that declares a born value). Ask the outside object a follow-up in questions and record the fact in sections. If no in-scope supplier can express the fact, write it in sections instead, highlighted with a callout naming the unresolved supplier and columns.",
           "allowed": [
             "[ai].[pricemaster]"
           ]
