@@ -1244,7 +1244,7 @@ export class NavigationEngine implements IHopStateMachine {
     return this.neighborChoices(this.currentFocusNodeId ?? '').filter(neighbor => this.scopeNodeIds.has(neighbor.id)).map(neighbor => neighbor.id);
   }
 
-  /** The current hop's sub-questions as archived beside its findings: every non-blank task question in dispatch order. The mission question, carried separately as the original question, is left out in either mode and wherever routing re-sends it. `from_node` names the asking hop only for a model-authored question whose parent task belongs to a visited node; engine-routed text is kept without a sender. */
+  /** The current hop's sub-questions as archived beside its findings: every non-blank task question in dispatch order. The mission question, carried separately as the original question, is left out in either mode and wherever routing re-sends it. `from_node` names the asking hop only for a model-authored question whose asking task, with relay nodes skipped, belongs to a visited node; engine-routed text is kept without a sender. */
   private currentIncomingQuestions(): IncomingQuestion[] {
     const focusId = this.currentFocusNodeId;
     const mission = (this.memory.getUserQuestion() ?? '').trim();
@@ -1260,9 +1260,9 @@ export class NavigationEngine implements IHopStateMachine {
   /** The task that raised `task`'s question: its parent, skipping the nodes the engine passed the question through, which only relay it. */
   private askerTask(task: InvestigationTask): InvestigationTask | undefined {
     let parent = task.parentTaskId ? this.taskLedger.getTask(task.parentTaskId) : undefined;
-    while (parent?.parentTaskId && parent.nodeId === task.passthroughFromNodeId) {
+    while (parent && parent.nodeId === task.passthroughFromNodeId) {
       task = parent;
-      parent = this.taskLedger.getTask(parent.parentTaskId);
+      parent = parent.parentTaskId ? this.taskLedger.getTask(parent.parentTaskId) : undefined;
     }
     return parent;
   }
@@ -2674,7 +2674,7 @@ export class NavigationEngine implements IHopStateMachine {
         }
         forwarded.add(context);
         if (!admission.admitted && !this.scopeNodeIds.has(nid)) {
-          this.deferQuestion({ nodeId: nid, schema: next.schema, fromFocusNodeId: entry.nodeId,
+          this.deferQuestion({ nodeId: nid, schema: next.schema, fromFocusNodeId: this.askerTask(task)?.nodeId ?? entry.nodeId,
             question: task.question, reason: 'depth', depth: admission.depthBreach ?? undefined, atHop: this.hopCount },
           carried.length && side ? [{ sourceRefs: carried, traversalSide: side }] : []);
           this.log('debug', `[Storage] deferred from=${entry.nodeId} next=${nid} — depth`);

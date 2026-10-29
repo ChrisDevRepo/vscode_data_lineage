@@ -57,6 +57,14 @@ const bbRun = await driveWalk(bb, { origin: '[ai].[vwconsolidatedsales]', questi
   mission_brief: 'Name the procedures and views that produce the quantities.', scopeNotes: ['Ignore audit logging.'] }, 'both', BB_SCRIPT,
 'The user asked where vwConsolidatedSales quantities come from; discovery found SalesStaging as the source.');
 
+/** The same origin one level upstream: the table SalesStaging is reached, and the procedure behind it lies past the border, so the table's relay defers the question. */
+const SHALLOW_SCRIPT: Record<string, ScriptedHop> = {
+  '[ai].[vwconsolidatedsales]': { submit: { summary: 'Renames OrderQty to Qty.', sections: { business: 'Quantities are staged order quantities.', technical: 'Qty is OrderQty.' },
+    questions: [{ nodeId: SS, question: 'Which procedure loads SalesStaging, and from what?' }], prune_neighbors: [{ id: DC, reason: 'Filter-only join; no column is selected from it.' }] } },
+};
+const shallowRun = await driveWalk(await openFixtureWalk(), { origin: '[ai].[vwconsolidatedsales]', question: 'Where do the quantities of vwConsolidatedSales come from?', analysisMode: 'bb', direction: 'upstream', depthIntent: upstreamOnly(1),
+  mission_brief: 'Name the procedures and views that produce the quantities.' }, 'both', SHALLOW_SCRIPT);
+
 /** Every rendered model-visible artifact by stored path. Only a text file gains the single final newline the editorconfig asks for, so no text change is masked. */
 function renderAll(): Map<string, string> {
   const files = new Map<string, string>();
@@ -187,6 +195,12 @@ describe('request assembly', () => {
   // Internal 09-memory-context, "What goes to synthesis": a follow-up question reaches synthesis with the object that asked it; a table only passes it on and never becomes the asker.
   it('names the origin view as the asker of a question that passed through a storage table', () => {
     expect(senders(bbRun.synthesis.message)).toContainEqual({ question: 'Which procedure loads SalesStaging, and from what?', from_node: '[ai].[vwconsolidatedsales]' });
+  });
+
+  // Internal 09-memory-context, "What goes to synthesis": a follow-up question deferred past the border names the object that asked it, never the table that relayed it.
+  it('names the origin view as the asker of a question deferred while a storage table relayed it', () => {
+    const deferred = (payload(shallowRun.synthesis.message, 'synthesis_envelope')!.result as { deferred_questions: Array<{ nodeId: string; fromFocusNodeId: string; question: string }> }).deferred_questions;
+    expect(deferred).toContainEqual(expect.objectContaining({ nodeId: '[ai].[sploadsalesstaging]', fromFocusNodeId: '[ai].[vwconsolidatedsales]', question: 'Which procedure loads SalesStaging, and from what?' }));
   });
 
   // `synthesis.tools.json` stores the one served set; both walks must serve exactly it.
