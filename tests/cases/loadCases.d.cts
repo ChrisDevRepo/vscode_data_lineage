@@ -8,11 +8,15 @@ export interface WalkDecision {
   prune?: string[];
 }
 
-/** A reply the backend must reject: the rejection code, the offending field path and the issue code at it. */
+/** How a refused reply is malformed on the wire: tool-call notation inside the text of `field`, `field` delivered as cut-off JSON text, or plain text with no tool call at all. */
+export type WalkWire = 'notation' | 'cut_off_json' | 'text_only';
+
+/** A reply the backend must reject: the rejection code, the offending field path and the issue code at it. Without `wire` the reply is well formed and the decision itself is refused. */
 export interface WalkRefusal extends WalkDecision {
   kind: string;
   field: string;
   issue: string;
+  wire?: WalkWire;
 }
 
 /** The hop the walk reaches at `at`, in order; `refuse` is submitted first and `decide` is the correction or the plain reply. */

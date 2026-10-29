@@ -1,11 +1,11 @@
 /** Catalog walk rows (`contract: walk`): `authorReply` is the one place that turns a semantic decision into the current wire shape, and `walkRow` drives the production hop loop through the registered tools while checking every served hop. */
 import Ajv2020, { type ValidateFunction } from 'ajv/dist/2020';
 import { createRequire } from 'node:module';
-import type { WalkCase, WalkDecision } from '../../../cases/loadCases.cjs';
+import type { WalkCase, WalkDecision, WalkWire } from '../../../cases/loadCases.cjs';
 import type { HopNeighborDisclosure } from '../../../../src/ai/sm/smBase';
-import { readToolErrorText, renderProblem, type ToolRejection } from '../../../../src/ai/support/toolErrorEnvelope';
+import { renderProblem } from '../../../../src/ai/support/toolErrorEnvelope';
 import type { ObjectType } from '../../../../src/engine/types';
-import { hopMessage, hopTools, openModelWalk, startWalk } from '../../ai-core/helpers/modelRequests';
+import { hopMessage, hopReply, hopTools, openModelWalk, startWalk } from '../../ai-core/helpers/modelRequests';
 import { makeGraph, makeIndexedModel, makeNode } from '../../helpers/modelFixtures';
 
 const { loadCases } = createRequire(import.meta.url)('../../../cases/loadCases.cjs') as { loadCases: (runner?: string) => Array<{ contract?: string }> };
@@ -23,10 +23,16 @@ export interface HopView {
   readonly mode: 'bb' | 'ct';
 }
 
-/** The current wire shape of one hop reply (D-130 `column_flow` with `out_node` at a procedure). A contract change edits this function and no row. */
-export function authorReply(hop: HopView, decision: WalkDecision): Record<string, unknown> {
+/** The malformed wire shapes of a text field: the value followed by the notation of the next argument, or the value serialized and cut off. */
+const MALFORMED: Record<Exclude<WalkWire, 'text_only'>, (value: unknown) => string> = {
+  notation: value => `${String(value)}</parameter>\n<parameter name="sections">{"technical":"detail"}`,
+  cut_off_json: value => JSON.stringify(value).slice(0, -8),
+};
+
+/** The current wire shape of one hop reply (D-130 `column_flow` with `out_node` at a procedure); `malformed` damages one top-level field of it. A contract change edits this function and no row. */
+export function authorReply(hop: HopView, decision: WalkDecision, malformed?: { wire: Exclude<WalkWire, 'text_only'>; field: string }): Record<string, unknown> {
   const name = shorten(hop.focus);
-  return {
+  const reply: Record<string, unknown> = {
     focus_node_id: hop.focus,
     summary: `Observed ${name}`,
     sections: { technical: `SQL at ${name}` },
@@ -38,6 +44,8 @@ export function authorReply(hop: HopView, decision: WalkDecision): Record<string
     ...(decision.ask ? { questions: decision.ask.map(node => ({ nodeId: qualify(node), question: `Establish what ${node} contributes.` })) } : {}),
     ...(decision.prune ? { prune_neighbors: decision.prune.map(node => ({ id: qualify(node), reason: `${node} does not contribute.` })) } : {}),
   };
+  if (malformed) reply[malformed.field] = MALFORMED[malformed.wire](reply[malformed.field]);
+  return reply;
 }
 
 type Schema = { type?: string; enum?: unknown[]; const?: unknown; not?: object; anyOf?: Schema[]; properties?: Record<string, Schema>;
@@ -112,7 +120,8 @@ const changedFields = (before: Record<string, unknown>, after: Record<string, un
  * questionable neighbors ahead (an exploration without a prune), whose delivered graph the closure oracle fixes.
  * Per hop: (a) the served schema offers nothing unsatisfiable and admits the reply built from its own allowed values,
  * (b) the hop message names every endpoint of the current tasks, (c) a refusal's named fields are the only change its
- * correction needs, (d) the walk ends complete, every correction accepted, every hop serializes its state and is served in the mode the row expects (a BB row serves only BB hops).
+ * correction needs, and a reply the dispatcher refuses before the handler (tool-call notation, no tool call) leaves the engine untouched,
+ * (d) the walk ends complete, every correction accepted, every hop serializes its state and is served in the mode the row expects (a BB row serves only BB hops).
  */
 export async function walkRow(row: WalkCase, scripted: boolean): Promise<WalkOutcome> {
   const { graph: spec } = row;
@@ -153,16 +162,21 @@ export async function walkRow(row: WalkCase, scripted: boolean): Promise<WalkOut
       if (JSON.stringify(served) !== JSON.stringify(wantedRefs)) violations.push(`(d) ${name}: the hop's column tasks are ${served.join(', ')} where the row expects ${wantedRefs.join(', ')}`);
     }
     if ('refuse' in hop && hop.refuse) {
-      const refused = authorReply(view, hop.refuse);
-      const rejection = readToolErrorText(await walk.registry.invoke('lineage_submit_findings', refused)) as ToolRejection | null;
+      const { wire, kind, field, issue } = hop.refuse;
+      const refused = wire === 'text_only' ? `The ${name} view passes the traced values through.` : authorReply(view, hop.refuse, wire && { wire, field });
+      const before = JSON.stringify(engine.toJSON());
+      const rejection = await hopReply(walk, refused);
       if (!rejection) violations.push(`(c) ${name}: the reply the row refuses was accepted`);
       else {
-        if (rejection.code !== hop.refuse.kind || !rejection.errors.some(error => error.path === hop.refuse!.field && error.code === hop.refuse!.issue)) {
-          violations.push(`(c) ${name}: expected ${hop.refuse.kind} ${hop.refuse.issue} at ${hop.refuse.field}, got ${rejection.code} ${JSON.stringify(rejection.errors)}`);
+        if (rejection.code !== kind || !rejection.errors.some(error => error.path === field && error.code === issue)) {
+          violations.push(`(c) ${name}: expected ${kind} ${issue} at ${field}, got ${rejection.code} ${JSON.stringify(rejection.errors)}`);
         }
-        const named = new Set([...rejection.errors.map(error => error.path.split('.')[0]), ...(JSON.parse(renderProblem(rejection, 3, refused)) as { resend: string[] }).resend]);
-        const extra = changedFields(refused, authorReply(view, hop.decide)).filter(field => !named.has(field));
-        if (extra.length) violations.push(`(c) ${name}: the correction changes ${extra.join(', ')}, which the rejection does not name`);
+        if (typeof refused !== 'string') {
+          const named = new Set([...rejection.errors.map(error => error.path.split('.')[0]), ...(JSON.parse(renderProblem(rejection, 3, refused)) as { resend: string[] }).resend]);
+          const extra = changedFields(refused, authorReply(view, hop.decide)).filter(changed => !named.has(changed));
+          if (extra.length) violations.push(`(c) ${name}: the correction changes ${extra.join(', ')}, which the rejection does not name`);
+        }
+        if (wire !== undefined && wire !== 'cut_off_json' && JSON.stringify(engine.toJSON()) !== before) violations.push(`(c) ${name}: a reply refused before the handler changed the engine`);
       }
     }
     const result = JSON.parse(await walk.registry.invoke('lineage_submit_findings', authorReply(view, hop.decide))) as Record<string, unknown>;

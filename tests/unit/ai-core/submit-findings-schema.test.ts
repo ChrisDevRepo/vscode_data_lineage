@@ -349,6 +349,13 @@ describe('fresh kept required-field projection', () => {
     expect(new Ajv({ strict: false }).compile(toModelJsonSchema(fresh))(patch)).toBe(false);
   });
 
+  it('extends a question with caller binding only in CT', () => {
+    const input = { focus_node_id: 'origin', summary: 'Observed SQL.', sections: { technical: 'Observed SQL.' },
+      questions: [{ nodeId: 'branch', question: 'Investigate the row effect.', caller_context: { node: 'origin', col: 'Value' } }] };
+    expect(validateToolCandidate(submitFindingsSchemaForMode('bb', 'technical', true), input).success).toBe(false);
+    expect(validateToolCandidate(submitFindingsSchemaForMode('ct', 'technical', true), { ...input, column_flow: [] }).success).toBe(true);
+  });
+
   it('normalizes an equivalent caller_context spelling to the focus id at the boundary without changing the served schema', () => {
     const hop = { focusNodeId: '[dbo].[Caller]', outCols: ['Value'], outNode: false, callerContextNodeIds: ['[dbo].[Fn]'],
       neighbors: [{ id: '[dbo].[Fn]', can_question: true, can_prune: true }] };

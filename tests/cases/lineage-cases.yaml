@@ -895,6 +895,65 @@ cases:
       edges: [[Raw, A], [A, O], [O, C], [C, D], [D, Sink]]
       column_edges: [[A, Amount, O, Amount], [Raw, Amount, A, Amount], [O, Amount, C, Total], [C, Total, D, Total]]
 
+  # Walk rows whose refusal is malformed on the wire (`wire`): the dispatcher refuses them before the handler (notation, no tool call) or the handler names the field (cut-off JSON).
+  - id: walk-bb-text-only-reply-refused
+    story: A reply with plain text and no tool call is refused as a missing call and leaves the hop untouched; the next reply commits it.
+    runners: [scripted]
+    contract: walk
+    mode: bb
+    direction: upstream
+    graph:
+      origin: O
+      nodes: { O: view, A: table }
+      columns: [X]
+      edges: [[A, O]]
+    hops:
+      - at: O
+        refuse: { kind: missing_required_tool_call, field: "", issue: no_tool_call, wire: text_only }
+        decide: { ask: [A] }
+    expect:
+      nodes: [O, A]
+      edges: [[A, O]]
+
+  - id: walk-bb-tool-call-notation-in-text-refused
+    story: Tool-call notation inside a text argument is refused at that field before the engine sees the call; the corrected resend commits the hop.
+    runners: [scripted]
+    contract: walk
+    mode: bb
+    direction: upstream
+    graph:
+      origin: O
+      nodes: { O: view, A: table }
+      columns: [X]
+      edges: [[A, O]]
+    hops:
+      - at: O
+        refuse: { ask: [A], kind: tool_call_notation, field: summary, issue: tool_call_notation, wire: notation }
+        decide: { ask: [A] }
+    expect:
+      nodes: [O, A]
+      edges: [[A, O]]
+
+  - id: walk-ct-cut-off-json-sections-refused
+    story: A structured argument delivered as cut-off JSON text is refused at its field by name; the correction sends it as an object.
+    runners: [scripted]
+    contract: walk
+    mode: ct
+    direction: upstream
+    graph:
+      origin: Out
+      nodes: { Out: view, Src: table }
+      columns: [X]
+      edges: [[Src, Out]]
+    hops:
+      - at: Out
+        refuse: { map: [{ col: X, from: [{ node: Src, col: X }] }], kind: invalid_input, field: sections, issue: json_text, wire: cut_off_json }
+        decide: { map: [{ col: X, from: [{ node: Src, col: X }] }] }
+    expect:
+      nodes: [Out, Src]
+      edges: [[Src, Out]]
+      column_edges: [[Src, X, Out, X]]
+
   - id: playwright-open-demo
     runners: [playwright]
     command: "Data Lineage: Open Demo"

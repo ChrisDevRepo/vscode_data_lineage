@@ -1,5 +1,6 @@
 // Owner: src/ai/tools/toolProvider.ts and tools/handlers; raw tool admission and handler functional contracts.
 /** The strict boundary that runs first owns these rejections, so the handler and engine never see the shapes below: a start with no origin/supplement/revision, a non-string scope list, an empty highlight-group list in any served present_result stage, and a neighbour id the engine has not validated as an in-scope direct neighbour. */
+import { getEventListeners } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { z } from 'zod';
@@ -14,7 +15,11 @@ import { TurnEventSink } from '../../../src/ai/runtime/turnEventSink';
 import { overrideRegistrySchemas, resolveRegistrySchemas } from '../../../src/ai/tools/registry';
 import { normalizeModelInput } from '../../../src/ai/tools/normalizeModelInput';
 import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
+import { ingestToolInput, toolInputReceipt, type ToolInputView } from '../../../src/ai/support/toolIngestion';
+import { ToolDraft } from '../../../src/ai/support/toolDraft';
+import { getAllowedLmToolNames } from '../../../src/ai/tools/toolPolicy';
 import { buildActiveHopInstruction } from '../../../src/ai/agent/stagePrompts';
+import { buildCurrentTaskBlock } from '../../../src/ai/prompting/prompts';
 import { executeSubmitFindings } from '../../../src/ai/tools/handlers/submitFindings';
 import { executePruneCurrent } from '../../../src/ai/tools/handlers/pruneCurrent';
 import { executeStartExploration } from '../../../src/ai/tools/handlers/startExploration';
@@ -23,7 +28,7 @@ import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import Ajv from 'ajv/dist/2020';
 import * as toolValidation from '../../../src/ai/support/toolValidation';
 const { validateToolCandidate } = toolValidation;
-import { ISSUES, isAdmissionRefusal, isConsentGateRejection, readToolErrorText, renderProblem, type ToolProblem } from '../../../src/ai/support/toolErrorEnvelope';
+import { ISSUES, at, isAdmissionRefusal, isConsentGateRejection, makeRejection, readToolErrorText, renderProblem, type ToolProblem } from '../../../src/ai/support/toolErrorEnvelope';
 
 /** The errors delivered by the shared renderer. */
 const shownErrors = (problem: ToolProblem) => problem.errors;
@@ -1121,6 +1126,15 @@ describe('lineage_get_neighbor_columns boundary', () => {
     expect(result).not.toHaveProperty('results');
   });
 
+  it('serves and authorizes only the BB tools on BB work, so the read is off policy and the engine untouched', async () => {
+    const { registry, engine } = ctWorld({ mode: 'bb' });
+    const before = engine.toJSON();
+    expect([...getAllowedLmToolNames({ kind: 'active', mode: 'sm_bb' })]).toEqual(['lineage_submit_findings', 'lineage_prune_current']);
+    expect(getAllowedLmToolNames({ kind: 'active', mode: 'sm_ct' }).has('lineage_get_neighbor_columns')).toBe(true);
+    expect(JSON.parse(await registry.invoke('lineage_get_neighbor_columns', { ids: [BRANCH] }))).toMatchObject({ code: 'off_policy' });
+    expect(engine.toJSON()).toEqual(before);
+  });
+
   it('binds a case-equivalent neighbor without changing the supplied request', async () => {
     const { registry } = ctWorld();
     const input = { ids: ['HOP.BRANCH'] };
@@ -2058,5 +2072,184 @@ describe('control routing takes the typed handler signal, never the result text 
     for (const stage of [1, 2, 3] as const) expect(detectOverBudgetFromResult('lineage_get_scope_bundle', renderProblem(readToolErrorText(overBudget)!, stage))).toBe(false);
     expect(isConsentGateRejection('action_required')).toBe(true);
     expect(isAdmissionRefusal(readToolErrorText(JSON.stringify({ code: 'over_active_scope_budget', reason: 'Too large.', errors: [{ path: '', code: 'over_budget' }] }))!.code)).toBe(true);
+  });
+});
+
+const byPath = (a: { path: string }, b: { path: string }) => a.path.localeCompare(b.path);
+
+describe('independent read faults', () => {
+  it.each([
+    { name: 'detail structural control', tool: 'lineage_get_object_detail', input: { id: ORIGIN, cursor: 42 }, faults: [{ path: 'cursor', code: 'type' }] },
+    { name: 'detail reference control', tool: 'lineage_get_object_detail', input: { id: '[hop].[Missing]' }, faults: [{ path: 'id', code: 'not_found' }] },
+    { name: 'detail combined faults', tool: 'lineage_get_object_detail', input: { id: '[hop].[Missing]', cursor: 42 }, faults: [{ path: 'cursor', code: 'type' }, { path: 'id', code: 'not_found' }] },
+    { name: 'scope structural control', tool: 'lineage_get_scope_bundle', input: { origin: ORIGIN, direction: 'sideways' }, faults: [{ path: 'direction', code: 'enum' }] },
+    { name: 'scope reference control', tool: 'lineage_get_scope_bundle', input: { origin: '[hop].[Missing]' }, faults: [{ path: 'origin', code: 'not_found' }] },
+    { name: 'scope combined faults', tool: 'lineage_get_scope_bundle', input: { origin: '[hop].[Missing]', direction: 'sideways' }, faults: [{ path: 'direction', code: 'enum' }, { path: 'origin', code: 'not_found' }] },
+  ])('$name', async ({ tool, input, faults }) => {
+    const { session, engine, registry } = ctWorld();
+    session.enterLmStage({ kind: 'discover' }, session.turnEpoch);
+    const before = engine.toJSON();
+    const result = JSON.parse(String(await registry.invoke(tool, input)));
+    expect(result.errors?.map(({ path, code }: { path: string; code: string }) => ({ path, code })).sort(byPath)).toEqual(faults);
+    expect(engine.toJSON()).toEqual(before);
+    expect(engine.heldFindingFocus).toBeNull();
+    expect(session.discoveryScopeArtifact).toBeNull();
+  });
+});
+
+describe('shared ingestion transaction', () => {
+  const references = z.array(z.string().meta({ toolStringFact: 'reference' }));
+  const schema = z.object({ title: z.string(), detail: z.string(), refs: references }).strict();
+  /** Facts collect their problems on the context, so each call takes its own. */
+  const unknownReference = () => ({ strings: new Map([['reference', (value: string, context: { instancePath: string }) => value === 'missing'
+    ? makeRejection({ code: 'unknown_node_ids', errors: at('not_found', [context.instancePath.slice(1).replace('/', '.')]) }) : null]]) });
+
+  it('collects independent schema and metadata faults once, then accepts a minimal repair without partial publication', () => {
+    const parse = vi.spyOn(toolValidation, 'validateToolCandidate');
+    const draft = new ToolDraft<object>();
+    const published: unknown[] = [];
+    const inspect = vi.fn((view: ToolInputView<typeof schema>) => view.parsed.success ? () => { published.push(view.parsed.success ? view.parsed.data : null); return { ok: true }; } : undefined);
+    try {
+      const rejected = ingestToolInput({ input: { title: 42, detail: 'Keep exact authored detail.', refs: ['known', 'missing'] }, schema, context: 'same', draft, facts: unknownReference(), inspect });
+      expect(rejected).toHaveProperty('code');
+      if (!('errors' in rejected)) throw new Error('Expected rejection');
+      expect(rejected.errors.map(({ path, code }) => ({ path, code })).sort(byPath)).toEqual([{ path: 'refs.1', code: 'not_found' }, { path: 'title', code: 'type' }]);
+      expect(parse).toHaveBeenCalledTimes(1); expect(inspect).toHaveBeenCalledTimes(1);
+      expect(published).toEqual([]); expect(draft.get()).toEqual({ detail: 'Keep exact authored detail.' });
+      expect(ingestToolInput({ input: { title: 'Correct title', refs: ['known'] }, schema, context: 'same', draft, facts: unknownReference(), inspect })).toEqual({ ok: true });
+      expect(parse).toHaveBeenCalledTimes(2); expect(inspect).toHaveBeenCalledTimes(2);
+      expect(published).toEqual([{ title: 'Correct title', detail: 'Keep exact authored detail.', refs: ['known'] }]);
+      expect(draft.get()).toBeNull();
+    } finally { parse.mockRestore(); }
+  });
+
+  it('does not treat an inapplicable union alternative as proof of a selected field type', () => {
+    const union = z.union([z.object({ kind: z.literal('a'), value: z.string() }), z.object({ kind: z.literal('b'), value: z.number() })]).meta({ toolValidated: 'choice' });
+    const receive = vi.fn();
+    expect(validateToolCandidate(union, { kind: 'a', value: 42 }, { validated: new Map([['choice', toolValidation.captureToolFact(union, receive)]]) }).success).toBe(false);
+    expect(receive).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { name: 'valid field beside invalid sibling', input: { other: 'wrong', rows: [{ id: 'a' }] }, success: false, facts: ['row:/rows/0', 'rows:/rows'], checks: 1 },
+    { name: 'mixed items preserve original index', input: { rows: [42, { id: 'a' }] }, success: false, facts: ['row:/rows/1'], checks: 1 },
+    { name: 'explicit empty list', input: { rows: [] }, success: true, facts: ['rows:/rows'], checks: 0 },
+    { name: 'malformed parent', input: { rows: 42 }, success: false, facts: [], checks: 0 },
+    { name: 'missing parent', input: {}, success: false, facts: [], checks: 0 },
+  ])('native facts: $name', ({ input, success, facts, checks }) => {
+    const row = z.object({ id: z.string().meta({ toolStringFact: 'checkedId' }) }).strict().meta({ toolValidated: 'row' });
+    const rows = z.array(row).meta({ toolValidated: 'rows' });
+    const received: string[] = [];
+    const checked = vi.fn();
+    const before = structuredClone(input);
+    const result = validateToolCandidate(z.object({ other: z.number().optional(), rows }).strict(), input, {
+      strings: new Map([['checkedId', checked]]),
+      validated: new Map([
+        ['row', toolValidation.captureToolFact(row, (_value, path) => { received.push(`row:${path}`); })],
+        ['rows', toolValidation.captureToolFact(rows, (_value, path) => { received.push(`rows:${path}`); })],
+      ]),
+    });
+    expect(result.success).toBe(success);
+    expect(received.sort()).toEqual([...facts].sort());
+    expect(checked).toHaveBeenCalledTimes(checks);
+    expect(input).toEqual(before);
+  });
+});
+
+describe('committed REPORT link dependencies (Approved08 / D-099)', () => {
+  it.each([
+    { label: 'omitted links retain the committed set', section: { label: 'Sources' }, errors: [{ path: 'sections.*.node_ids', code: 'node_unexplained', values: [BRANCH] }] },
+    { label: 'malformed links remain unknown rather than retained', section: { label: 'Sources', node_ids: 42 }, errors: [{ path: 'sections.0.node_ids', code: 'type', values: ['array'] }] },
+  ])('$label', async ({ section, errors }) => {
+    const { session, registry } = ctWorld({ mode: 'bb' });
+    session.explorationRunId = 'synthetic-report-run';
+    session.resultGraph = { nodeIds: [ORIGIN, BRANCH], edges: [[BRANCH, ORIGIN, 'read']], source: 'blackboard', originNodeId: ORIGIN,
+      sectionsRunId: session.explorationRunId, sections: [{ label: 'Sources', node_ids: [ORIGIN], text: 'Committed body.' }] };
+    session.enterCompleted(session.turnEpoch);
+    const before = structuredClone(session.resultGraph);
+    const report = { name: 'Report', summary: 'Branch supplies the report.', sections: [section],
+      highlight_groups: [{ label: 'Origin', color: 'target', node_ids: [ORIGIN] }] };
+    expect(JSON.parse(await registry.invoke('lineage_present_result', report)).errors).toEqual(errors);
+    expect(session.resultGraph).toEqual(before);
+    expect(session.presentationArtifact).toBeNull();
+    expect(JSON.parse(await registry.invoke('lineage_present_result', { sections: [{ label: 'Sources', node_ids: [ORIGIN, BRANCH] }] }))).toMatchObject({ success: true });
+    expect(session.resultGraph?.sections).toEqual([{ label: 'Sources', node_ids: [ORIGIN, BRANCH], text: 'Committed body.' }]);
+  });
+});
+
+describe('shared ingestion draft ownership', () => {
+  it('preserves staged values when publication throws instead of clearing them before commit', () => {
+    const schema = z.object({ title: z.string(), detail: z.string() }).strict();
+    const draft = new ToolDraft<object>();
+    draft.retain(draft.apply('same', { detail: 'Preserved draft' }, schema), [], schema);
+    expect(() => ingestToolInput({ input: { title: 'Title' }, schema, context: 'same', draft,
+      inspect: () => () => { throw new Error('Publication interrupted'); } })).toThrow('Publication interrupted');
+    expect(draft.get()).toEqual({ detail: 'Preserved draft' });
+  });
+
+  it('retains no read listeners and one cancellable draft subscription across repeated rejected calls', () => {
+    const schema = z.object({ saved: z.string(), correction: z.string() });
+    const controller = new AbortController();
+    const draft = new ToolDraft<object>();
+    const run = (input: unknown, store?: ToolDraft<object>) => toolInputReceipt.run({ input, context: 'turn', signal: controller.signal }, () =>
+      ingestToolInput({ input, schema, context: 'turn', draft: store, inspect: view => view.parsed.success ? () => 'accepted' : undefined }));
+    const listeners = () => getEventListeners(controller.signal, 'abort');
+    for (let index = 0; index < 12; index++) run({ saved: 'Read', correction: 'Complete' });
+    expect(listeners()).toHaveLength(0);
+    for (let index = 0; index < 12; index++) run({ saved: 'Held exact text', correction: 42 }, draft);
+    expect(draft.get()).toEqual({ saved: 'Held exact text' });
+    expect(listeners()).toHaveLength(1);
+    expect(run({ correction: 'Complete' }, draft)).toBe('accepted');
+    expect(listeners()).toHaveLength(0);
+    run({ saved: 'New held text', correction: 42 }, draft);
+    controller.abort();
+    expect(draft.get()).toBeNull();
+    expect(listeners()).toHaveLength(0);
+  });
+});
+
+describe('START scope admission faults stay independent', () => {
+  it.each([
+    { name: 'budget control', badMission: false, lowBudget: true, faults: [{ path: '', code: 'over_budget' }] },
+    { name: 'mission control', badMission: true, lowBudget: false, faults: [{ path: 'mission_brief', code: 'type' }] },
+    { name: 'combined faults', badMission: true, lowBudget: true, faults: [{ path: '', code: 'over_budget' }, { path: 'mission_brief', code: 'type' }] },
+  ])('$name', async ({ badMission, lowBudget, faults }) => {
+    const { session, model, graph } = ctWorld();
+    session.stateMachine = null; session.enterLmStage({ kind: 'sm_entry' }, session.turnEpoch);
+    const { services } = stubToolServices({ session, model, graph, turnEpoch: () => session.turnEpoch, budget: createTurnTokenBudget({ maxRounds: lowBudget ? 1 : 100 }) });
+    const candidate = { origin: ORIGIN, analysisMode: 'bb', classification: 'technical', mission_brief: badMission ? 42 : 'Exact authored mission.',
+      depth: { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } };
+    const before = structuredClone(candidate);
+    const result = JSON.parse(await executeStartExploration(candidate, services));
+    expect(candidate).toEqual(before);
+    expect(session.pendingExploration).toBeNull();
+    expect(result.errors.map(({ path, code }: { path: string; code: string }) => ({ path, code })).sort((a: { path: string }, b: { path: string }) => a.path.localeCompare(b.path))).toEqual(faults);
+  });
+});
+
+describe('BB hops carry no column-trace continuation', () => {
+  const tasks = [{ kind: 'root' as const, question: 'Trace Value.' }];
+
+  it.each([undefined, []])('the task renderer suppresses CT-only blocks without active columns: %j', columns => {
+    const bb = buildCurrentTaskBlock(tasks, columns, ['Trace stale Value.']);
+    expect(bb).toContain('Trace Value.');
+    expect(bb).not.toContain('<lineage_questions>');
+    expect(bb).not.toContain('<column_trace>');
+    const ct = buildCurrentTaskBlock(tasks, ['Value'], ['Trace Value.']);
+    for (const block of ['<lineage_questions>', '<column_trace>', 'Trace Value.']) expect(ct).toContain(block);
+  });
+
+  it('a BB hop of a CT run projects no stale lineage rider and keeps the authored question', async () => {
+    const { session, engine, registry } = ctWorld();
+    // BRANCH gets an explicit outcome (a question, D-031); no value lands, so its visit is object-level.
+    const accepted = JSON.parse(await registry.invoke('lineage_submit_findings', { focus_node_id: ORIGIN, summary: 'Origin reads Branch.',
+      sections: { technical: 'Origin selects from Branch.' }, column_flow: [], questions: [{ nodeId: BRANCH, question: 'How does Branch affect the rows?' }] }));
+    expect(accepted).toHaveProperty('ok', true);
+    expect(engine.peekHopContext()).toMatchObject({ analysis_mode: 'bb', focus_node: { id: BRANCH } });
+    (engine as unknown as { _pendingLineageQuestions: string[] })._pendingLineageQuestions = ['Trace stale Value at this branch'];
+    const { message } = buildActiveHopInstruction(session, engine, BRANCH);
+    expect(message).toContain('<sub_question>How does Branch affect the rows?</sub_question>');
+    expect(message).not.toContain('<lineage_questions>');
+    expect(message).not.toContain('<column_trace>');
   });
 });

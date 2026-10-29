@@ -1,8 +1,12 @@
 /** Request-assembly seam: renders the model requests the agent graph assembles for the AdventureWorks AI fixture, committing scripted findings through the registered tools instead of a model. */
 import type Graph from 'graphology';
+import { HumanMessage, ToolMessage } from '@langchain/core/messages';
+import * as vscode from 'vscode';
 import { createHarnessSession, repoPath } from '../../../harness/sessionFactory';
 import { buildActiveHopInstruction, buildActiveInstruction, buildSynthesisInstruction } from '../../../../src/ai/agent/stagePrompts';
 import { buildSynthesisEnvelopeMessage } from '../../../../src/ai/agent/graph';
+import { executeToolAttempt } from '../../../../src/ai/agent/toolAttempt';
+import { VscodeModelPort } from '../../../../src/ai/model/vscodeModelPort';
 import { compileInstructionPlan, explorationFacts, type ConversePlanDraft } from '../../../../src/ai/agent/instructionPlan';
 import { deriveStagePromptContext } from '../../../../src/ai/prompting/hostPrompts';
 import { buildSmCompletionEnvelope } from '../../../../src/ai/prompting/smPrompts';
@@ -106,18 +110,35 @@ export function hopMessage(walk: FixtureWalk): string {
   return buildActiveHopInstruction(walk.session, walk.engine!, walk.engine!.currentFocus!).message;
 }
 
-/** The tools served with the dispatched hop. */
-export function hopTools(walk: FixtureWalk): ServedTool[] {
+/** The plan draft of the dispatched hop: the stage, facts and terminal tool its model request is built from. */
+function hopDraft(walk: FixtureWalk): Omit<ConversePlanDraft, 'kind' | 'registry' | 'sink' | 'messages'> {
   const { session, engine } = walk;
   const mode = engine!.currentHopAnalysisMode;
-  return servedTools(walk, {
+  return {
     stage: { kind: 'active', mode: activeModeOf(mode === 'ct') },
     facts: explorationFacts(mode, mode === 'ct' ? engine!.currentTargetColumns ?? undefined : undefined, { classification: session.requireLockedClassification() }),
     toolChoice: 'required',
     requiredTerminalTool: 'lineage_submit_findings',
     hopColumns: () => engine!.hopSubmitColumns,
     canPruneCurrent: () => engine!.canPruneCurrent,
-  });
+  };
+}
+
+/** The tools served with the dispatched hop. */
+export function hopTools(walk: FixtureWalk): ServedTool[] {
+  return servedTools(walk, hopDraft(walk));
+}
+
+/** One provider reply to the dispatched hop through the production dispatcher: a submit call with `reply` as its arguments, or plain text when `reply` is a string. Returns the rejection the model reads, or null when the dispatcher accepted the call. */
+export async function hopReply(walk: FixtureWalk, reply: object | string): Promise<ToolRejection | null> {
+  const plan = compileInstructionPlan({ kind: 'converse', registry: walk.registry, sink: new TurnEventSink(() => {}),
+    messages: [new HumanMessage('Inspect the current object.')], ...hopDraft(walk) });
+  const part = typeof reply === 'string' ? new vscode.LanguageModelTextPart(reply) : new vscode.LanguageModelToolCallPart('reply', 'lineage_submit_findings', reply);
+  const sendRequest = async () => ({ stream: { async *[Symbol.asyncIterator]() { yield part; } } });
+  const port = new VscodeModelPort({ id: 'synthetic', name: 'synthetic', vendor: 'test', family: 'test', version: '1', maxInputTokens: 128_000, countTokens: async () => 1, sendRequest } as never);
+  const attempt = await executeToolAttempt(port, plan);
+  const answer = attempt.messages.find((message): message is ToolMessage => message instanceof ToolMessage);
+  return (answer?.artifact as ToolRejection | undefined) ?? attempt.rejections[0] as ToolRejection | undefined ?? null;
 }
 
 /** The request of the dispatched hop, assembled as the graph's active worker assembles it. */
