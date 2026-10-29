@@ -600,11 +600,11 @@ export class OpenAiCompatiblePort implements ModelPort {
           body: received.ok
             ? (received.body !== undefined
                 ? (responses ? omitEncrypted(received.body) : received.body)
-                : received.raw.replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [redacted]'))
-            : redactProviderSecrets(received.raw),
+                : this.redact(received.raw.replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [redacted]')))
+            : this.redact(redactProviderSecrets(received.raw)),
         });
       }
-      if (!received.ok) throw httpError(received.status, received.statusText, received.raw);
+      if (!received.ok) throw httpError(received.status, received.statusText, this.redact(received.raw));
       if (received.body === undefined) {
         throw new ModelPortError(
           'unsupported_response',
@@ -732,7 +732,7 @@ export class OpenAiCompatiblePort implements ModelPort {
         }
         if (retryDelayMs === undefined) {
           const responseText = await response!.text();
-          const raw = this.redact(responseText);
+          const raw = this.config.apiKey ? responseText.split(this.config.apiKey).join('[redacted]') : responseText;
           let body: unknown;
           try {
             body = JSON.parse(raw);
@@ -780,8 +780,8 @@ export class OpenAiCompatiblePort implements ModelPort {
           }
         } else {
           if (error instanceof ModelPortError) throw error;
-          // The thrown error reaches callers' own diagnostics, so the transport's message is cleaned at its source.
-          if (error instanceof Error) error.message = this.redact(error.message);
+          // The thrown error and its causes reach callers' own diagnostics, so each message is cleaned at its source.
+          for (let link: unknown = error; link instanceof Error; link = link.cause) link.message = this.redact(link.message);
           throw new ModelPortError(
             'provider_error',
             sanitizeProviderError(error instanceof Error ? error.message : String(error))
