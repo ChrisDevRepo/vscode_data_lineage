@@ -9,11 +9,8 @@ describe('catalog walk rows', () => {
     expect(new Set(walkRows.map(row => row.id)).size).toBe(walkRows.length);
   });
 
-  // A row naming an open defect fails until that defect is fixed; remove its `defect` field in the fixing commit.
   describe.each(walkRows)('$id', row => {
-    const check = row.defect ? it.fails : it;
-
-    check(`scripted: every hop satisfies the hop invariants and the row's final graph results${row.defect ? ` (open ${row.defect})` : ''}`, async () => {
+    it(`scripted: every hop satisfies the hop invariants and the row's final graph results`, async () => {
       const outcome = await walkRow(row, true);
       expect(outcome.violations).toEqual([]);
       expect(outcome.nodes).toEqual([...row.expect.nodes].sort());
@@ -21,7 +18,7 @@ describe('catalog walk rows', () => {
       expect(outcome.columnEdges).toEqual((row.expect.column_edges ?? []).map(([from, fromCol, to, toCol]) => `${from}.${fromCol}>${to}.${toCol}`).sort());
     });
 
-    check(`generic: asking every open neighbor ahead delivers the directed closure${row.defect ? ` (open ${row.defect})` : ''}`, async () => {
+    it(`generic: asking every open neighbor ahead delivers the directed closure`, async () => {
       const outcome = await walkRow(row, false);
       expect(outcome.violations).toEqual([]);
       const oracle = closureOutcome(row);

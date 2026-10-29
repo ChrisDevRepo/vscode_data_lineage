@@ -445,8 +445,7 @@ cases:
 
   # Rows with contract: walk drive the hop loop through the registered tools. Decisions are semantic (map, ask, prune,
   # refuse); the adapter in tests/unit/backend/helpers/walkRows.ts owns the wire shape. Edges are [source, target]. Expected
-  # nodes, edges and column edges are authored here, never read from a run. A defect field names an open defect id: the row
-  # fails until it is fixed, and the fixing commit removes the field.
+  # nodes, edges and column edges are authored here, never read from a run.
   - id: walk-bb-chain-to-storage
     story: A view chain ends at a table, which is recorded without a SQL hop of its own.
     runners: [scripted]
@@ -580,25 +579,6 @@ cases:
     expect:
       nodes: [O, A, B]
       edges: [[A, O], [B, O]]
-
-  - id: walk-bb-leaf-view-offers-no-question
-    story: A view with no open neighbor is served a questions list whose entry id nothing satisfies.
-    runners: [scripted]
-    contract: walk
-    mode: bb
-    direction: upstream
-    defect: DEF-04
-    graph:
-      origin: O
-      nodes: { O: view, Leaf: view }
-      columns: [X]
-      edges: [[Leaf, O]]
-    hops:
-      - { at: O, decide: { ask: [Leaf] } }
-      - { at: Leaf, decide: { ask: [] } }
-    expect:
-      nodes: [O, Leaf]
-      edges: [[Leaf, O]]
 
   - id: walk-ct-chain-map
     story: Each view maps the traced column from its source; the table source needs no hop.

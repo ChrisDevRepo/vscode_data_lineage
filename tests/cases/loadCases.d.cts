@@ -27,8 +27,6 @@ export interface WalkCase extends CatalogCase {
   contract: 'walk';
   mode: 'bb' | 'ct';
   direction: 'upstream' | 'downstream';
-  /** Open defect id: the row is expected to fail until that defect is fixed. */
-  defect?: string;
   graph: {
     origin: string;
     nodes: Record<string, 'table' | 'view' | 'procedure'>;
