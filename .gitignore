@@ -7,6 +7,9 @@ test-results/
 tmp*
 .env*
 !.env.example
+*.pem
+*.key
+captures/
 *.log
 debug*.txt
 .DS_Store
