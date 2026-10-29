@@ -60,6 +60,7 @@ The newest version heading collects changes until that version ships.
 - Database query timeouts, live import metadata and saved-project timestamps.
 - A DACPAC three-part name to another database no longer resolves to a local object with the same schema and name; the DACPAC name is its current database, as on a live connection.
 - Reconnecting a database project by server now matches a saved connection whose server is written with a `tcp:` prefix.
+- A follow-up question that passed through a storage table is attributed to the object that asked it, not to the table.
 
 ### Dependencies
 - Security updates: DOMPurify.

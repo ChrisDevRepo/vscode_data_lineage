@@ -1252,9 +1252,19 @@ export class NavigationEngine implements IHopStateMachine {
       const question = task.question.trim();
       const isMission = task.source === 'mission' && !task.parentTaskId;
       if (isMission || !question || question === mission) return [];
-      const from = task.source === 'model' && task.parentTaskId ? this.taskLedger.getTask(task.parentTaskId)?.nodeId : undefined;
+      const from = task.source === 'model' ? this.askerTask(task)?.nodeId : undefined;
       return [{ question, ...(from && from !== focusId && this.visited.has(from) ? { from_node: from } : {}) }];
     });
+  }
+
+  /** The task that raised `task`'s question: its parent, skipping the nodes the engine passed the question through, which only relay it. */
+  private askerTask(task: InvestigationTask): InvestigationTask | undefined {
+    let parent = task.parentTaskId ? this.taskLedger.getTask(task.parentTaskId) : undefined;
+    while (parent?.parentTaskId && parent.nodeId === task.passthroughFromNodeId) {
+      task = parent;
+      parent = this.taskLedger.getTask(parent.parentTaskId);
+    }
+    return parent;
   }
 
   /** Structured tasks assigned to the current focus node, rendered as the `<current_task>` block. */

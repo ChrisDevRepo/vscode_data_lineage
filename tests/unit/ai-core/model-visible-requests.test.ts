@@ -184,6 +184,11 @@ describe('request assembly', () => {
     expect(senders(bbRun.synthesis.message).length).toBeGreaterThan(0);
   });
 
+  // Internal 09-memory-context, "What goes to synthesis": a follow-up question reaches synthesis with the object that asked it; a table only passes it on and never becomes the asker.
+  it('names the origin view as the asker of a question that passed through a storage table', () => {
+    expect(senders(bbRun.synthesis.message)).toContainEqual({ question: 'Which procedure loads SalesStaging, and from what?', from_node: '[ai].[vwconsolidatedsales]' });
+  });
+
   // `synthesis.tools.json` stores the one served set; both walks must serve exactly it.
   it('serves the same synthesis tools for a column trace and a whole-object walk', () => {
     expect(bbRun.synthesis.tools).toEqual(ctRun.synthesis.tools);
