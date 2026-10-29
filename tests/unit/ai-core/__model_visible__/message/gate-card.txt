@@ -1,0 +1,14 @@
+### Exploration plan
+
+**From the question**
+- Depth: all levels upstream
+
+**Plan**
+- **2 hops** · **7 nodes in scope** · upstream
+- **Tracing:** Column-Trace — columns: [UnitPrice]
+- **Analysis:** business-driven
+
+- **ai** — 7 nodes
+  - Procedure (1 node): spRefreshPrices
+  - View (1 node): vwPriceList
+  - Tables (5 nodes): CurrencyConfig, MarkupRules, PriceMaster, RegionLookup, SupplierPrices

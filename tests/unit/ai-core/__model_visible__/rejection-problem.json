@@ -1,0 +1,70 @@
+{
+  "lastCorrection": "This is the last correction before this hop ends.",
+  "stages": [
+    {
+      "code": "invalid_input",
+      "attempt": "1/3",
+      "errors": [
+        {
+          "path": "column_flow.0.upstream_columns.0.node",
+          "code": "supplier_out_of_scope",
+          "message": "supplier outside the approved scope. Remove the outside supplier; if it is the only supplier, omit the column_flow entry, never empty upstream_columns (that declares a born value). Ask the outside object a follow-up in questions and record the fact in sections."
+        },
+        {
+          "path": "summary",
+          "code": "missing",
+          "message": "required field. Add a value for this field as its schema describes."
+        }
+      ],
+      "resend": [
+        "column_flow"
+      ]
+    },
+    {
+      "code": "invalid_input",
+      "attempt": "2/3",
+      "errors": [
+        {
+          "path": "column_flow.0.upstream_columns.0.node",
+          "code": "supplier_out_of_scope",
+          "message": "supplier outside the approved scope. Remove the outside supplier; if it is the only supplier, omit the column_flow entry, never empty upstream_columns (that declares a born value). Ask the outside object a follow-up in questions and record the fact in sections.",
+          "allowed": [
+            "[ai].[pricemaster]"
+          ]
+        },
+        {
+          "path": "summary",
+          "code": "missing",
+          "message": "required field. Add a value for this field as its schema describes."
+        }
+      ],
+      "resend": [
+        "column_flow"
+      ]
+    },
+    {
+      "code": "invalid_input",
+      "attempt": "3/3",
+      "notice": "This is the last correction before this hop ends.",
+      "errors": [
+        {
+          "path": "column_flow.0.upstream_columns.0.node",
+          "code": "supplier_out_of_scope",
+          "message": "supplier outside the approved scope. Remove the outside supplier; if it is the only supplier, omit the column_flow entry, never empty upstream_columns (that declares a born value). Ask the outside object a follow-up in questions and record the fact in sections. If no in-scope supplier can express the fact, write it in sections instead, highlighted with a callout naming the unresolved supplier and columns.",
+          "allowed": [
+            "[ai].[pricemaster]"
+          ]
+        },
+        {
+          "path": "summary",
+          "code": "missing",
+          "message": "required field. Add a value for this field as its schema describes."
+        }
+      ],
+      "resend": [
+        "column_flow",
+        "sections"
+      ]
+    }
+  ]
+}

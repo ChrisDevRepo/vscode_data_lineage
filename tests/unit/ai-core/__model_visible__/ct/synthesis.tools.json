@@ -1,0 +1,151 @@
+[
+  {
+    "name": "lineage_present_result",
+    "description": "Renders the final report and diagram in the lineage panel: structured report sections (labels map to node badges), notes, and color highlights (`source`, `transform`, `target`). Follow-up updates can modify text, prune (`prune_node_ids`), or reveal nodes (`add_node_ids`).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S",
+          "description": "Name for the generated lineage view."
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S",
+          "description": "One-line summary shown with the generated view."
+        },
+        "title": {
+          "description": "Optional report heading.",
+          "type": "string"
+        },
+        "intro": {
+          "description": "Optional grounded introduction to the final report.",
+          "type": "string"
+        },
+        "closing": {
+          "description": "Closing synthesis. Length is never a rejection axis.",
+          "type": "string"
+        },
+        "layout_direction": {
+          "description": "Graph layout: left-to-right or top-to-bottom.",
+          "type": "string",
+          "enum": [
+            "LR",
+            "TB"
+          ]
+        },
+        "highlight_groups": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S",
+                "description": "Legend label describing the shared graph role or status; presentation style: see the `highlights` output template."
+              },
+              "color": {
+                "type": "string",
+                "enum": [
+                  "source",
+                  "transform",
+                  "target",
+                  "good",
+                  "warn",
+                  "fail"
+                ],
+                "description": "Flow role or status. `source`: upstream origins feeding the flow. `target`: destination or focal object. `transform`: intermediate nodes that transform values. `good` / `warn` / `fail`: diagnostic status. One role per group."
+              },
+              "node_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "\\S"
+                },
+                "description": "Node IDs that share this graph role or status."
+              }
+            },
+            "required": [
+              "label",
+              "color",
+              "node_ids"
+            ],
+            "additionalProperties": false
+          },
+          "description": "REQUIRED, at least 1 group. For zero-trace or single-node results, use color \"target\" on the origin/result node."
+        },
+        "sections": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S",
+                "description": "What the section's nodes share, as heading and badge (30 chars). No object names. Unique after trimming, whitespace collapse and lowercasing."
+              },
+              "node_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "\\S"
+                },
+                "description": "Nodes this section documents; put each node in one section. Empty array when it documents none."
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S",
+                "description": "Required detail body for this section label."
+              }
+            },
+            "required": [
+              "label",
+              "node_ids",
+              "text"
+            ],
+            "additionalProperties": false
+          },
+          "description": "Required final report sections, at least one. Every node analysed and captured this turn (anything with a detail slot) is linked into a section's node_ids, as that field describes — an analysed node absent from every section fails validation."
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "node_id": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S",
+                "description": "Node ID the caption sits below."
+              },
+              "caption": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S",
+                "description": "One-sentence caption, grounded in the evidence supplied for this stage."
+              }
+            },
+            "required": [
+              "node_id",
+              "caption"
+            ],
+            "additionalProperties": false
+          },
+          "description": "Below-node captions, one per node."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  }
+]

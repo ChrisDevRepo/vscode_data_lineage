@@ -1,0 +1,47 @@
+{
+  "name": "structured_output",
+  "description": "Return the structured result. Call this tool exactly once with the required fields.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "entry": {
+        "type": "string",
+        "enum": [
+          "column_trace",
+          "visual_render",
+          "discovery"
+        ],
+        "description": "Discrete entry route selected from the user request."
+      },
+      "targetColumns": {
+        "anyOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "allOf": [
+                {
+                  "pattern": "\\S"
+                },
+                {
+                  "pattern": "^[^*%?]+$"
+                }
+              ],
+              "description": "A field of a table or view that the user named verbatim; a column trace starts only when at least one such column is named. Wildcards are rejected at the boundary."
+            }
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Explicit user-named columns for column_trace; null for discovery or visual_render."
+      }
+    },
+    "required": [
+      "entry",
+      "targetColumns"
+    ],
+    "additionalProperties": false
+  }
+}

@@ -128,6 +128,7 @@ export const runtimeContractTests = [
   'tests/unit/ai-core/tool-error-envelope.test.ts',
   'tests/unit/ai-core/problem-escalation.test.ts',
   'tests/unit/ai-core/zod-issue-matrix.test.ts',
+  'tests/unit/ai-core/model-visible-requests.test.ts',
 ];
 
 /** Paths passed to Vitest for the coverage-floored core. */

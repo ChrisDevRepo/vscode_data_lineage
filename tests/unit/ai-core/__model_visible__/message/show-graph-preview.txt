@@ -1,0 +1,1 @@
+The user clicked the post-discovery "Show graph preview" link. Show a bounded lineage graph preview for [ai].[vwpricelist]. Preserve the direction and depth requested in this original question: "Where does UnitPrice come from?".

@@ -1,0 +1,120 @@
+[
+  {
+    "name": "lineage_submit_findings",
+    "description": "Submits or repairs the focus node's SQL findings and neighbor decisions.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "focus_node_id": {
+          "description": "Optional. Omit for the current hop; if sent, it must equal focus_node.id from <hop_context>.",
+          "type": "string"
+        },
+        "summary": {
+          "description": "Required for a fresh finding; omit a saved summary on correction. One sentence, readable without this hop: what this node does to the data and what it hands to which node.",
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "badge_label": {
+          "description": "2-4 word label for this node.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 50,
+          "pattern": "\\S"
+        },
+        "prune_neighbors": {
+          "description": "Prune eligible neighbors that do not contribute to answering the user's question.",
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "not": {}
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S",
+                "description": "What in this node's SQL shows the neighbor is off the answer."
+              }
+            },
+            "required": [
+              "id",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "questions": {
+          "description": "Ask each relevant neighbor what its own SQL must establish for the question. A question to an out-of-scope neighbor becomes a follow-up offer. No questions to visited or pruned neighbors.",
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "nodeId": {
+                "type": "string",
+                "enum": [
+                  "[ai].[archiveorders]",
+                  "[ai].[splogaudit]"
+                ]
+              },
+              "question": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The check, self-contained: name the neighbor and what to establish there."
+              }
+            },
+            "required": [
+              "nodeId",
+              "question"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "sections": {
+          "description": "Required for a fresh finding; omit held section angles on correction. Pre-formatted section body for the `business` and `technical` recipes, under keys `business` and `technical`.",
+          "type": "object",
+          "properties": {
+            "business": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "technical": {
+              "type": "string",
+              "pattern": "\\S"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "description": "A sent questions or prune_neighbors list replaces its held list whole; repeat entries you keep. Omit the list to retain it; [] withdraws it."
+    }
+  },
+  {
+    "name": "lineage_prune_current",
+    "description": "Alternative to submit_findings for SQL hops reached via auto-forwarded storage carriers. Hard-cuts the current node and unreachable unvisited descendants when SQL confirms it is irrelevant to the investigation (lists node in `pruned` and cut nodes in `cut_ids`). Rejected if committed analysis or column mappings depend on this node.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "focus_node_id": {
+          "description": "Optional. Omit for the current hop; if sent, it must equal focus_node.id from <hop_context>.",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S",
+          "description": "Why the whole current node is irrelevant to this investigation."
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "additionalProperties": false
+    }
+  }
+]

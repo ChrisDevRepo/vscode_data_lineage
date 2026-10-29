@@ -1,0 +1,241 @@
+[
+  {
+    "name": "lineage_submit_findings",
+    "description": "Submits or repairs the focus node's SQL findings and neighbor decisions.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "focus_node_id": {
+          "description": "Optional. Omit for the current hop; if sent, it must equal focus_node.id from <hop_context>.",
+          "type": "string"
+        },
+        "column_flow": {
+          "description": "One entry per SQL-proved output related to the arriving columns in <current_task>, with its contributing neighbor columns. Reference only neighbors in <hop_context>. Not sources: row operations (TRUNCATE, DELETE); describe them in sections. [] when nothing feeds the arriving columns. Required for a fresh CT finding; omit to keep the held list on correction. A sent list replaces it whole.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "out_col": {
+                "type": "string",
+                "description": "Output column of this hop from its column task; for a procedure, the column it writes. Never invent names."
+              },
+              "upstream_columns": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "node": {
+                      "type": "string",
+                      "enum": [
+                        "[ai].[currencyconfig]",
+                        "[ai].[markuprules]",
+                        "[ai].[pricemaster]",
+                        "[ai].[regionlookup]",
+                        "[ai].[supplierprices]"
+                      ]
+                    },
+                    "col": {
+                      "type": "string",
+                      "description": "Source column name on that node."
+                    },
+                    "transforms": {
+                      "description": "Role of this source column: pass_through (unchanged), compute (expression or CASE operand), aggregate (aggregate argument) — its value lands in out_col; combine (join, group, partition or order key) or filter (row predicate) — it only shapes which rows reach out_col. Omit when the SQL does not show the role.",
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "pass_through",
+                          "compute",
+                          "aggregate",
+                          "combine",
+                          "filter"
+                        ]
+                      }
+                    },
+                    "note": {
+                      "description": "At most 12 words: the deciding expression, e.g. \"Qty * Price\".",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "node",
+                    "col"
+                  ],
+                  "additionalProperties": false
+                },
+                "description": "Neighbor columns that feed out_col: value sources (expression operands, aggregate arguments, each UNION branch column, caller-bound inputs) and columns that only join, filter, group or order its rows. Resolve parameters and aliases to source columns; exclude the entry's own writes_to column. [] means the value originates here."
+              },
+              "writes_to": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "node": {
+                        "type": "string",
+                        "enum": [
+                          "[ai].[pricemaster]"
+                        ]
+                      },
+                      "col": {
+                        "type": "string",
+                        "description": "Column name on that object."
+                      }
+                    },
+                    "required": [
+                      "node",
+                      "col"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Table column {node, col} this output is written to, when that table is a neighbor in <hop_context>; otherwise null and name the write in sections."
+              }
+            },
+            "required": [
+              "out_col",
+              "upstream_columns",
+              "writes_to"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "summary": {
+          "description": "Required for a fresh finding; omit a saved summary on correction. One sentence, readable without this hop: what this node does to the data and what it hands to which node.",
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "badge_label": {
+          "description": "2-4 word label for this node.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 50,
+          "pattern": "\\S"
+        },
+        "prune_neighbors": {
+          "description": "Optional. A neighbor is either mapped or questioned (kept) or pruned, never both. Name each `can_prune: true` neighbor that supplies neither a value nor a join, filter, group or order column to an output column. A neighbor that does is mapped.",
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "enum": [
+                  "[ai].[supplierprices]",
+                  "[ai].[regionlookup]",
+                  "[ai].[currencyconfig]",
+                  "[ai].[markuprules]"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S",
+                "description": "What in this node's SQL shows the neighbor is off the answer."
+              }
+            },
+            "required": [
+              "id",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "questions": {
+          "description": "Optional. Ask a kept neighbor what its own SQL must answer for the arriving columns: its rules, calculations and thresholds, not only which columns feed this object. Column continuation to mapped neighbors is automatic. A question to an out-of-scope neighbor becomes a follow-up offer. No questions to visited or pruned neighbors.",
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "nodeId": {
+                "type": "string",
+                "enum": [
+                  "[ai].[supplierprices]",
+                  "[ai].[regionlookup]",
+                  "[ai].[currencyconfig]",
+                  "[ai].[markuprules]",
+                  "[ai].[splogaudit]"
+                ]
+              },
+              "question": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The check, self-contained: name the neighbor and what to establish there."
+              }
+            },
+            "required": [
+              "nodeId",
+              "question"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "sections": {
+          "description": "Required for a fresh finding; omit held section angles on correction. Pre-formatted section body for the `business` recipe, under key `business`.",
+          "type": "object",
+          "properties": {
+            "business": {
+              "description": "The only angle classification=business keeps; fold any technical content into this key — a separate \"technical\" key is rejected.",
+              "type": "string",
+              "pattern": "\\S"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "description": "A sent questions or prune_neighbors list replaces its held list whole; repeat entries you keep. Omit the list to retain it; [] withdraws it."
+    }
+  },
+  {
+    "name": "lineage_prune_current",
+    "description": "Alternative to submit_findings for SQL hops reached via auto-forwarded storage carriers. Hard-cuts the current node and unreachable unvisited descendants when SQL confirms it is irrelevant to the investigation (lists node in `pruned` and cut nodes in `cut_ids`). Rejected if committed analysis or column mappings depend on this node.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "focus_node_id": {
+          "description": "Optional. Omit for the current hop; if sent, it must equal focus_node.id from <hop_context>.",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S",
+          "description": "Why the whole current node is irrelevant to this investigation."
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "lineage_get_neighbor_columns",
+    "description": "Column metadata (types, keys) for direct neighbors of the focus, without SQL. Use it only when the focus SQL hides which neighbor columns it reads (SELECT *, dynamic SQL); a neighbor shown without cols needs no call.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "ids": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Neighbor ids, not the focus."
+        }
+      },
+      "required": [
+        "ids"
+      ],
+      "additionalProperties": false
+    }
+  }
+]

@@ -19,6 +19,8 @@ These need no database, model provider or display. Parser and lineage scenarios 
 
 A path argument to `test:core`, `test:lineage`, `test:runtime` or `test:support` runs that file only: `npm run test:core -- tests/unit/parser/identifier-case.test.ts`.
 
+Every rendered model-visible text (stage prompts, output templates, hop and synthesis messages, served tool schemas, the rejection table) is stored under `tests/unit/ai-core/__model_visible__/` and compared by [`model-visible-requests.test.ts`](../../tests/unit/ai-core/model-visible-requests.test.ts) on the gate. A change to any of that text fails the lane until the stored text is regenerated with `node tests/tools/run-vitest.mjs run tests/unit/ai-core/model-visible-requests.test.ts -u` in the same commit; a regenerated snapshot marks that commit as a prompt change.
+
 The gate prints `PASS`, `FAIL` and `SKIP` per step and exits nonzero on any `FAIL`. A `SKIP` is unverified: the template-schema step skips without a `v*` tag or `origin/main`, and fails instead when `CI` is set. Failed step logs and `test-results/gate/summary.json` (step outcomes, unit test counts) stay in untracked local output.
 
 ## Ownership and evidence

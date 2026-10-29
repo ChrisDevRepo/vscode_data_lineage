@@ -1,0 +1,4 @@
+=== discover ===
+### Output templates (discovery)
+
+- discovery_chat: Markdown; SQL in ```sql fences; levels as a table or nested list. Lead with the direct answer. For sets (all sources, consumers, matches), provide the complete set, overall count, and search scope from tool totals; for grouped results, count group members separately from the overall total. Explain the flow: object contributions, transformations, column mappings, predicates, read/write roles, validation rules, and risks in the loaded SQL. Use canonical names; explicitly state unavailable evidence rather than inferring it. Omit tool names and payload fields. List raw nodes or edges only when requested.

@@ -1,0 +1,23 @@
+=== bb business ===
+
+
+=== bb technical ===
+
+
+=== bb both ===
+
+
+=== ct business ===
+### Active-phase templates (write each key to its target field)
+
+- column_trace_capture: Resolve this hop's column tasks from the SQL and record the confirmed object/column relations in `column_flow`. interpret the complete statement. Keep unresolved source evidence explicit in eligible questions. When writing `sections`, explain the full transformation sequence (intermediate CTE renames, calculations, predicates, grain), dataset effects, and unresolved source evidence.
+
+=== ct technical ===
+### Active-phase templates (write each key to its target field)
+
+- column_trace_capture: Resolve this hop's column tasks from the SQL and record the confirmed object/column relations in `column_flow`. interpret the complete statement. Keep unresolved source evidence explicit in eligible questions. When writing `sections`, explain the full transformation sequence (intermediate CTE renames, calculations, predicates, grain), dataset effects, and unresolved source evidence.
+
+=== ct both ===
+### Active-phase templates (write each key to its target field)
+
+- column_trace_capture: Resolve this hop's column tasks from the SQL and record the confirmed object/column relations in `column_flow`. interpret the complete statement. Keep unresolved source evidence explicit in eligible questions. When writing `sections`, explain the full transformation sequence (intermediate CTE renames, calculations, predicates, grain), dataset effects, and unresolved source evidence.
