@@ -443,6 +443,241 @@ cases:
       edges: [Amount, Other]
       invalid: []
 
+  # Rows with contract: walk drive the hop loop through the registered tools. Decisions are semantic (map, ask, prune,
+  # refuse); the adapter in tests/unit/backend/helpers/walkRows.ts owns the wire shape. Edges are [source, target]. Expected
+  # nodes, edges and column edges are authored here, never read from a run. A defect field names an open defect id: the row
+  # fails until it is fixed, and the fixing commit removes the field.
+  - id: walk-bb-chain-to-storage
+    story: A view chain ends at a table, which is recorded without a SQL hop of its own.
+    runners: [scripted]
+    contract: walk
+    mode: bb
+    direction: upstream
+    graph:
+      origin: Out
+      nodes: { Out: view, Mid: view, Src: table }
+      columns: [X]
+      edges: [[Src, Mid], [Mid, Out]]
+    hops:
+      - { at: Out, decide: { ask: [Mid] } }
+      - { at: Mid, decide: { ask: [Src] } }
+    expect:
+      nodes: [Out, Mid, Src]
+      edges: [[Src, Mid], [Mid, Out]]
+
+  - id: walk-bb-diamond-shared-join-asked-twice
+    story: Both branches ask the shared join; it is visited once and the table behind it is reached.
+    runners: [scripted]
+    contract: walk
+    mode: bb
+    direction: upstream
+    graph:
+      origin: O
+      nodes: { O: view, A: view, B: view, J: view, T: table }
+      columns: [X]
+      edges: [[A, O], [B, O], [J, A], [J, B], [T, J]]
+    hops:
+      - { at: O, decide: { ask: [A, B] } }
+      - { at: A, decide: { ask: [J] } }
+      - { at: B, decide: { ask: [J] } }
+      - { at: J, decide: { ask: [T] } }
+    expect:
+      nodes: [O, A, B, J, T]
+      edges: [[A, O], [B, O], [J, A], [J, B], [T, J]]
+
+  - id: walk-bb-diamond-unanimous-prune
+    story: When every branch votes the shared join off the answer, the join and the table behind it are cut.
+    runners: [scripted]
+    contract: walk
+    mode: bb
+    direction: upstream
+    graph:
+      origin: O
+      nodes: { O: view, A: view, B: view, J: view, T: table }
+      columns: [X]
+      edges: [[A, O], [B, O], [J, A], [J, B], [T, J]]
+    hops:
+      - { at: O, decide: { ask: [A, B] } }
+      - { at: A, decide: { prune: [J] } }
+      - { at: B, decide: { prune: [J] } }
+    expect:
+      nodes: [O, A, B]
+      edges: [[A, O], [B, O]]
+
+  - id: walk-bb-excluded-neighbor-offers-no-prune
+    story: The only open neighbor is excluded from the run, so nothing is prunable; it is asked as a follow-up and stays out of the graph.
+    runners: [scripted]
+    contract: walk
+    mode: bb
+    direction: upstream
+    graph:
+      origin: O
+      nodes: { O: view, A: view, Ext: table }
+      columns: [X]
+      edges: [[A, O], [Ext, A]]
+      excluded: [Ext]
+    hops:
+      - { at: O, decide: { ask: [A] } }
+      - { at: A, decide: { ask: [Ext] } }
+    expect:
+      nodes: [O, A]
+      edges: [[A, O]]
+
+  - id: walk-bb-depth-one-defers-the-next-level
+    story: With one level approved, the question to the neighbor past the border becomes a follow-up and the graph stops there.
+    runners: [scripted]
+    contract: walk
+    mode: bb
+    direction: upstream
+    graph:
+      origin: O
+      nodes: { O: view, A: view, B: table }
+      columns: [X]
+      edges: [[A, O], [B, A]]
+      levels: 1
+    hops:
+      - { at: O, decide: { ask: [A] } }
+      - { at: A, decide: { ask: [B] } }
+    expect:
+      nodes: [O, A]
+      edges: [[A, O]]
+
+  - id: walk-bb-prune-visited-neighbor-refused
+    story: A neighbor already visited cannot be pruned; the correction names the prune field only.
+    runners: [scripted]
+    contract: walk
+    mode: bb
+    direction: upstream
+    graph:
+      origin: O
+      nodes: { O: view, M: view, S: table }
+      columns: [X]
+      edges: [[S, M], [M, O]]
+    hops:
+      - { at: O, decide: { ask: [M] } }
+      - at: M
+        refuse: { prune: [O], ask: [S], kind: invalid_input, field: prune_neighbors.0.id, issue: prune_target }
+        decide: { ask: [S] }
+    expect:
+      nodes: [O, M, S]
+      edges: [[S, M], [M, O]]
+
+  - id: walk-bb-undecided-neighbor-refused
+    story: Every open neighbor needs one decision; the correction adds the missing one.
+    runners: [scripted]
+    contract: walk
+    mode: bb
+    direction: upstream
+    graph:
+      origin: O
+      nodes: { O: view, A: table, B: table }
+      columns: [X]
+      edges: [[A, O], [B, O]]
+    hops:
+      - at: O
+        refuse: { ask: [A], kind: route_validation_failed, field: "", issue: neighbor_undecided }
+        decide: { ask: [A, B] }
+    expect:
+      nodes: [O, A, B]
+      edges: [[A, O], [B, O]]
+
+  - id: walk-bb-leaf-view-offers-no-question
+    story: A view with no open neighbor is served a questions list whose entry id nothing satisfies.
+    runners: [scripted]
+    contract: walk
+    mode: bb
+    direction: upstream
+    defect: DEF-04
+    graph:
+      origin: O
+      nodes: { O: view, Leaf: view }
+      columns: [X]
+      edges: [[Leaf, O]]
+    hops:
+      - { at: O, decide: { ask: [Leaf] } }
+      - { at: Leaf, decide: { ask: [] } }
+    expect:
+      nodes: [O, Leaf]
+      edges: [[Leaf, O]]
+
+  - id: walk-ct-chain-map
+    story: Each view maps the traced column from its source; the table source needs no hop.
+    runners: [scripted]
+    contract: walk
+    mode: ct
+    direction: upstream
+    graph:
+      origin: Out
+      nodes: { Out: view, Mid: view, Src: table }
+      columns: [X]
+      edges: [[Src, Mid], [Mid, Out]]
+    hops:
+      - { at: Out, decide: { map: [{ col: X, from: [{ node: Mid, col: X }] }] } }
+      - { at: Mid, decide: { map: [{ col: X, from: [{ node: Src, col: X }] }] } }
+    expect:
+      nodes: [Out, Mid, Src]
+      edges: [[Src, Mid], [Mid, Out]]
+      column_edges: [[Mid, X, Out, X], [Src, X, Mid, X]]
+
+  - id: walk-ct-stored-column-loaded-by-procedure
+    story: The view asks nothing; the continuation reaches the loading procedure through the stored table, which maps what it writes there.
+    runners: [scripted]
+    contract: walk
+    mode: ct
+    direction: upstream
+    graph:
+      origin: V
+      nodes: { V: view, T: table, P: procedure, S: table }
+      columns: [X]
+      edges: [[T, V], [P, T], [S, P]]
+    hops:
+      - { at: V, decide: { map: [{ col: X, from: [{ node: T, col: X }] }] } }
+      - { at: P, decide: { map: [{ col: X, to: T, from: [{ node: S, col: X }] }] } }
+    expect:
+      nodes: [V, T, P, S]
+      edges: [[T, V], [P, T], [S, P]]
+      column_edges: [[S, X, T, X], [T, X, V, X]]
+
+  - id: walk-ct-out-of-scope-write-refused
+    story: A write to a destination outside the approved scope is refused at out_node; the correction omits the entry and asks the destination instead.
+    runners: [scripted]
+    contract: walk
+    mode: ct
+    direction: downstream
+    graph:
+      origin: P
+      nodes: { P: procedure, R: table, S: table }
+      columns: [X]
+      edges: [[R, P], [P, S]]
+      excluded: [S]
+    hops:
+      - at: P
+        refuse: { map: [{ col: X, to: S, from: [{ node: P, col: X }] }], kind: invalid_input, field: column_flow.0.out_node, issue: column_out_of_scope }
+        decide: { map: [], ask: [S] }
+    expect:
+      nodes: [P]
+      edges: []
+
+  - id: walk-ct-downstream-procedure-write
+    story: Downstream, a consumer maps the traced column from the object that feeds it, and a procedure maps what it writes into the table it loads.
+    runners: [scripted]
+    contract: walk
+    mode: ct
+    direction: downstream
+    graph:
+      origin: Root
+      nodes: { Root: view, C1: view, W: procedure, T: table }
+      columns: [X]
+      edges: [[Root, C1], [C1, W], [W, T]]
+    hops:
+      - { at: Root, decide: { map: [{ col: X, from: [] }], ask: [C1] } }
+      - { at: C1, decide: { map: [{ col: X, from: [{ node: Root, col: X }] }], ask: [W] } }
+      - { at: W, decide: { map: [{ col: X, to: T, from: [{ node: C1, col: X }] }], ask: [T] } }
+    expect:
+      nodes: [Root, C1, W, T]
+      edges: [[Root, C1], [C1, W], [W, T]]
+      column_edges: [[C1, X, T, X], [Root, X, C1, X]]
+
   - id: playwright-open-demo
     runners: [playwright]
     command: "Data Lineage: Open Demo"

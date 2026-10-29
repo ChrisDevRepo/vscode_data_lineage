@@ -1,4 +1,5 @@
 /** Request-assembly seam: renders the model requests the agent graph assembles for the AdventureWorks AI fixture, committing scripted findings through the registered tools instead of a model. */
+import type Graph from 'graphology';
 import { createHarnessSession, repoPath } from '../../../harness/sessionFactory';
 import { buildActiveHopInstruction, buildActiveInstruction, buildSynthesisInstruction } from '../../../../src/ai/agent/stagePrompts';
 import { buildSynthesisEnvelopeMessage } from '../../../../src/ai/agent/graph';
@@ -8,7 +9,8 @@ import { buildSmCompletionEnvelope } from '../../../../src/ai/prompting/smPrompt
 import { readToolErrorText, type ToolRejection } from '../../../../src/ai/support/toolErrorEnvelope';
 import { TurnEventSink } from '../../../../src/ai/runtime/turnEventSink';
 import type { ClassificationValue } from '../../../../src/ai/session/classification';
-import type { AiSession } from '../../../../src/ai/session/session';
+import { AiSession } from '../../../../src/ai/session/session';
+import type { DatabaseModel } from '../../../../src/engine/types';
 import { NavigationEngine } from '../../../../src/ai/sm/smBase';
 import type { InvestigationTask, NavigationInitParams, ScopeSummary } from '../../../../src/ai/sm/smTypes';
 import { toModelJsonSchema } from '../../../../src/ai/tools/jsonSchema';
@@ -60,11 +62,21 @@ export async function openFixtureWalk(): Promise<FixtureWalk> {
   return { session, registry, engine: null };
 }
 
+/** A session over a synthetic model with the production tool registry bound to it; no output templates are loaded, so only hop messages and tools are assembled from it. */
+export function openModelWalk(model: DatabaseModel, graph: Graph): FixtureWalk {
+  const session = new AiSession();
+  session.model = model;
+  session.graph = graph;
+  const silent = { info() {}, debug() {}, warn() {}, error() {} };
+  const registry = buildAiToolRegistry(() => session, silent as never, () => undefined) as unknown as ToolRegistry<string>;
+  return { session, registry, engine: null };
+}
+
 /** The grounding context every host prompt of the loaded model carries. */
 export const promptContext = (walk: FixtureWalk) => deriveStagePromptContext(walk.session.model, walk.session.filter, walk.session.uiState);
 
 /** Starts the approved exploration as the graph's approval node does. */
-function startWalk(walk: FixtureWalk, init: NavigationInitParams, classification: ClassificationValue, discoverySummary?: string): NavigationEngine {
+export function startWalk(walk: FixtureWalk, init: NavigationInitParams, classification: ClassificationValue, discoverySummary?: string): NavigationEngine {
   const { session } = walk;
   const epoch = session.beginTurn();
   const engine = new NavigationEngine(session.model!, session.graph!, () => {}, {}, session.columnStore);
@@ -89,13 +101,16 @@ export function servedTools(walk: FixtureWalk, draft: Omit<ConversePlanDraft, 'k
   }));
 }
 
-/** The request of the dispatched hop, assembled as the graph's active worker assembles it. */
-function activeRequest(walk: FixtureWalk): ModelRequest {
+/** The user message of the dispatched hop. */
+export function hopMessage(walk: FixtureWalk): string {
+  return buildActiveHopInstruction(walk.session, walk.engine!, walk.engine!.currentFocus!).message;
+}
+
+/** The tools served with the dispatched hop. */
+export function hopTools(walk: FixtureWalk): ServedTool[] {
   const { session, engine } = walk;
   const mode = engine!.currentHopAnalysisMode;
-  const system = buildActiveInstruction(session, promptContext(walk), mode).system;
-  const message = buildActiveHopInstruction(session, engine!, engine!.currentFocus!).message;
-  const tools = servedTools(walk, {
+  return servedTools(walk, {
     stage: { kind: 'active', mode: activeModeOf(mode === 'ct') },
     facts: explorationFacts(mode, mode === 'ct' ? engine!.currentTargetColumns ?? undefined : undefined, { classification: session.requireLockedClassification() }),
     toolChoice: 'required',
@@ -103,7 +118,12 @@ function activeRequest(walk: FixtureWalk): ModelRequest {
     hopColumns: () => engine!.hopSubmitColumns,
     canPruneCurrent: () => engine!.canPruneCurrent,
   });
-  return { system, message, tools };
+}
+
+/** The request of the dispatched hop, assembled as the graph's active worker assembles it. */
+function activeRequest(walk: FixtureWalk): ModelRequest {
+  const { session, engine } = walk;
+  return { system: buildActiveInstruction(session, promptContext(walk), engine!.currentHopAnalysisMode).system, message: hopMessage(walk), tools: hopTools(walk) };
 }
 
 /** The synthesis request of the completed exploration, assembled as the graph's synthesis node assembles it. */

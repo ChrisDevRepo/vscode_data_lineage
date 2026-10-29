@@ -65,7 +65,7 @@ interface LineageCase {
 
 interface CatalogRow {
   readonly id: string;
-  readonly contract?: 'stored-arrival' | 'self-prune';
+  readonly contract?: 'stored-arrival' | 'self-prune' | 'walk';
   readonly runners?: readonly string[];
   readonly prompt?: string;
   readonly command?: string;
@@ -344,7 +344,7 @@ describe('lineage case catalog', () => {
     for (const row of selfPruneCases.filter(row => row.expect.eligible && !row.expect.refused)) {
       expect(Object.keys(row.expect)).toEqual(expect.arrayContaining(['unvisited', 'pruned', 'inspected', 'kept', 'edges']));
     }
-    expect(scriptedCatalog.every(row => row.contract === undefined || row.contract === 'stored-arrival' || row.contract === 'self-prune')).toBe(true);
+    expect(scriptedCatalog.every(row => row.contract === undefined || row.contract === 'stored-arrival' || row.contract === 'self-prune' || row.contract === 'walk')).toBe(true);
     expect(loadCases('scripted').some(row => row.runners?.includes('playwright'))).toBe(false);
     for (const runner of ['playwright', 'electron', 'headless'] as const) {
       const rows = loadCases(runner);
