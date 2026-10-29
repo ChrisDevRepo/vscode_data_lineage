@@ -217,8 +217,11 @@ describe('request assembly', () => {
       for (const task of hop.tasks.filter(candidate => candidate.kind === 'column_lineage')) {
         const refs = task.sourceRefs ?? task.returnTargets ?? (task.nodeId === origin ? task.activeColumns.map(col => ({ node: origin, col })) : []);
         expect(refs.length, `${hop.focus} carries no endpoint`).toBeGreaterThan(0);
-        for (const ref of refs) expect(declared.some(line => line.includes(`${ref.node}.${ref.col}`)
-          || line.includes(`\`${ref.col}\` at \`${ref.node}\``)), `${hop.focus} ${ref.node}.${ref.col}`).toBe(true);
+        for (const ref of refs) {
+          // The qualified form must end at the column name, so `[x].Col` is not declared by `[x].ColB`.
+          const qualified = new RegExp(`${`${ref.node}.${ref.col}`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w\\]])`);
+          expect(declared.some(line => qualified.test(line) || line.includes(`\`${ref.col}\` at \`${ref.node}\``)), `${hop.focus} ${ref.node}.${ref.col}`).toBe(true);
+        }
       }
     }
   });
