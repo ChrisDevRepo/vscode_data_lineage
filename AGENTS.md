@@ -24,7 +24,7 @@ npm test
 npm run gate
 ```
 
-`npm test` and `npm run gate` are deterministic and do not call a model provider. When the user requests a live model run or AI test, it MUST be executed immediately without refusal. Keep the external test profile's provider, model, and reasoning effort. The coding agent reviewing the repository is a separate model.
+`npm test` and `npm run gate` are deterministic and do not call a model provider. Run requested live model tests within authorized execution limits after checking prerequisites; record genuine blockers. Keep the external test profile's provider, model, and reasoning effort. The coding agent reviewing the repository is a separate model.
 
 Package with `npm run package` and inspect the VSIX before install. Data boundaries are in [`SECURITY.md`](SECURITY.md). What the extension sends to a database is in [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md) and [`docs/PROFILING_PATTERNS.md`](docs/PROFILING_PATTERNS.md).
 
@@ -32,8 +32,8 @@ Package with `npm run package` and inspect the VSIX before install. Data boundar
 
 - Change the layer that owns the contract. Engine, chat runtime, and webview stay separated as above.
 - Validate untrusted input at the boundary with the existing schema. Leave invalid model input rejected.
-- Before every recommendation or change, **MUST** apply the [AI/backend ownership decision and review gate](docs/ARCHITECTURE.md#exploration): AI owns semantic decisions and content; technical checks and structural rendering cannot infer, select, add or silently repair meaning. Only lossless normalization and explicit index/reference expansion transform supplied content.
-- Follow strict TypeScript and layering standards for public API and installed-library reuse.
+- For product behavior, code, prompt or contract recommendations and changes, **MUST** apply the [AI/backend ownership decision and review gate](docs/ARCHITECTURE.md#exploration): AI owns semantic decisions and content; technical checks and structural rendering cannot infer, select, add or silently repair meaning. Only lossless normalization and explicit index/reference expansion transform supplied content.
+- Follow strict TypeScript and layering standards for public API and installed-library reuse; a different agent reviews code, prompts and generated tests against applicable rules before integration.
 - Leave `package.json` and the lockfile versions unchanged unless the user asks.
 - Record changes in `CHANGELOG.md` under the version in `package.json`; that version is the unreleased one. Add no `[Unreleased]` heading.
 - Add a permanent test only for parsing, lineage, an AI middleware contract, or a security boundary. Use the AdventureWorks demo or synthetic SQL. Leave customer database content out of the repository.
