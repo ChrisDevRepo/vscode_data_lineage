@@ -104,11 +104,14 @@ describe('rejection renderer structure', () => {
   });
 
   it('attaches a fallback per issue code: only codes whose fact no structured field can hold carry one', () => {
-    expect(Object.entries(ISSUES).filter(([, issue]) => 'fallback' in issue).map(([code]) => code).sort()).toEqual(['result_out_of_scope', 'supplier_out_of_scope', 'unknown_column']);
-    // A write target outside the scope has a schema-defined form, so its third rejection ends without a fallback.
-    const write = render(makeRejection({ code: 'invalid_input', errors: [{ path: 'column_flow.0.writes_to.node', code: 'out_of_scope', values: [] }] }), 3);
-    expect(write.guidance[0].fallback).toBeUndefined();
-    expect(write.resend).toEqual([]);
+    expect(Object.entries(ISSUES).filter(([, issue]) => 'fallback' in issue).map(([code]) => code).sort()).toEqual(['bad_write_target', 'result_out_of_scope', 'supplier_out_of_scope', 'unknown_column']);
+    // Approved08 includes report write references; control references remain excluded.
+    const write = render(makeRejection({ code: 'invalid_input', errors: [{ path: 'column_flow.0.writes_to.node', code: 'bad_write_target', values: [] }] }), 3);
+    expect(write.guidance[0].fallback).toBe(FALLBACK('bad_write_target'));
+    expect(write.resend).toEqual(['sections']);
+    const control = render(makeRejection({ code: 'invalid_input', errors: [{ path: 'add_node_ids.0', code: 'out_of_scope', values: [] }] }), 3);
+    expect(control.guidance[0].fallback).toBeUndefined();
+    expect(control.resend).toEqual([]);
     const present = render(makeRejection({ code: 'invalid_input', errors: [{ path: 'sections.0.node_ids.1', code: 'result_out_of_scope', values: ['[dbo].[a]'] }] }), 3);
     assertStructural(present);
     expect(present.guidance[0].fallback).toBe(FALLBACK('result_out_of_scope'));

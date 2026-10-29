@@ -1589,7 +1589,7 @@ describe('result dispositions', () => {
     const rejected = engine.submitFindings({ ...record(producer),
       column_flow: [{ out_col: 'X', upstream_columns: [], writes_to: { node: equivalent ? ' "D" . "stored" ' : stored, col: 'X' } }] });
     expect(rejected).toMatchObject({ code: 'route_validation_failed', issuePaths: ['column_flow.0.writes_to.node'],
-      errors: [{ path: 'column_flow.0.writes_to.node', code: 'out_of_scope' }] });
+      errors: [{ path: 'column_flow.0.writes_to.node', code: 'bad_write_target' }] });
     expect(shownMessages(rejected), 'D-102: no echoed id').not.toContain(stored);
     expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
     expect(engine.submitFindings({ ...record(producer), column_flow: [{ out_col: 'X', upstream_columns: [] }],
@@ -1752,7 +1752,12 @@ describe('passthrough candidates at the next object', () => {
     engine.getHopContext();
     expect(engine.submitFindings({ ...guardRecord(a), column_flow: ['X', 'Y'].map(col => ({ out_col: col, upstream_columns: [], writes_to: { node: b, col } })),
       questions: [{ nodeId: b, question: 'Where are X and Y read?' }] })).toHaveProperty('ok', true);
+    // D-093: generated work names metadata only; mapping instructions belong to the prompt/schema.
+    expect(engine.toJSON().agenda).toContainEqual(expect.objectContaining({ nodeId: b,
+      lineageQuestions: [`Analyze column ${b}.X, ${b}.Y in ${b} (downstream).`] }));
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: c }, analysis_mode: 'ct' });
+    expect(engine.getCurrentTasks()).toContainEqual(expect.objectContaining({ question: 'Where are X and Y read?',
+      sourceRefs: [{ node: b, col: 'X' }, { node: b, col: 'Y' }] }));
     expect(engine.submitFindings({ ...guardRecord(c), column_flow: [{ out_col: 'X', upstream_columns: [{ node: b, col: 'X' }], writes_to: { node: t, col: 'Z' } }],
       questions: [{ nodeId: t, question: 'Describe T.' }] })).toHaveProperty('ok', true);
     expect(logs.some(message => message.includes('columns end') && message.includes(`${b}.Y`))).toBe(true);
@@ -1896,9 +1901,9 @@ describe('bodyless passthrough forwards to every writer', () => {
     expect(engine.submitFindings({ ...guardRecord(origin), column_flow: [{ out_col: 'A', upstream_columns: [{ node: stored, col: 'C' }] }],
       questions: [{ nodeId: stored, question: 'Resolve C.' }, { nodeId: loader, question: 'Describe the load.' }] })).toHaveProperty('ok', true);
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: loader }, analysis_mode: 'ct' });
-    expect(engine.getCurrentTasks()).toContainEqual(expect.objectContaining({ sourceRefs: [{ node: stored, col: 'C' }] }));
-    // A candidate asks whether the writer touches the endpoint at all; it is not an assignment.
-    expect(engine.toJSON().lineageQuestionsLastHop).toEqual([`Determine whether ${loader} writes ${stored}.C; map confirmed value contributions and end unused inputs on this branch.`]);
+    expect(engine.getCurrentTasks()).toContainEqual(expect.objectContaining({ question: 'Resolve C.', sourceRefs: [{ node: stored, col: 'C' }] }));
+    // D-093 fixes metadata-only WHAT serialization, not model response quality or repair hints.
+    expect(engine.toJSON().lineageQuestionsLastHop).toEqual([`Analyze column ${stored}.C in ${loader} (upstream).`]);
   });
 });
 

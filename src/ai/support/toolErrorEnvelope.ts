@@ -20,8 +20,8 @@ export const ISSUE_CATEGORIES = {
     detailed: 'Required content is missing; add each listed value where its path points and keep the other content unchanged.',
   },
   reference: {
-    short: 'Each reference must name an existing object or column inside the approved scope; correct each listed reference to an in-scope one.',
-    detailed: 'A reference takes a value from the allowed list of its path, which holds the in-scope objects that can fill it. Replace each listed reference with an allowed value and keep the rest of its entry unchanged.',
+    short: 'Use the correction for each reference fault; preserve the remaining findings.',
+    detailed: 'Use the correction for each reference fault and allowed values; preserve the remaining findings.',
   },
   value: {
     short: 'Each listed value must be one the field accepts in this scope; where the field\'s schema description names a form for a value outside the scope, send that form, otherwise send an accepted value.',
@@ -56,6 +56,7 @@ const FALLBACK_FIELD = 'sections';
 
 /** Column identity text is shared; report references alone offer the final fallback. */
 const COLUMN_IDENTITY_ISSUE = { category: 'reference', label: 'not a declared column of that object', correction: 'Name a column declared on that object.' } as const;
+const REPORT_REFERENCE_FALLBACK = { fallback: 'If you cannot correct it, write that information in the detail memory instead, highlighted with a callout naming the unresolved issue.' } as const;
 
 /** Every issue code: its category, a fixed fault label without values, the one positive correction for that fault and, only where a required fact has no structured field that can hold it, the prose `fallback` sent with the third, last rejection (D-105). */
 export const ISSUES = {
@@ -71,17 +72,16 @@ export const ISSUES = {
   node_unexplained: { category: 'required', label: 'result node ids placed in no section', correction: 'Add each listed id to the node_ids of the section that describes it.' },
   not_found: { category: 'reference', label: 'not an object in the loaded model', correction: 'Name an object of the loaded model by its id.' },
   out_of_scope: { category: 'reference', label: 'outside the approved scope', correction: 'Name an object inside the approved scope; where the field\'s schema description names a form for an object outside it, use that form.' },
-  supplier_out_of_scope: { category: 'reference', label: 'supplier outside the approved scope', correction: 'Name an in-scope object that supplies this column; the entry\'s write target is never its own supplier.',
-    fallback: 'Where no in-scope object supplies these columns, the supplier fact is still required: state it in sections as a callout starting with ⚠️ that names the supplier object and the columns it feeds. Keep every column_flow entry with its writes_to; its upstream_columns name only in-scope suppliers.' },
+  supplier_out_of_scope: { category: 'reference', label: 'supplier outside the approved scope', correction: 'Remove the outside supplier; if it is the only supplier, omit the column_flow entry, never empty upstream_columns (that declares a born value). Ask the outside object a follow-up in questions and record the fact in sections.',
+    fallback: 'If no in-scope supplier can express the fact, write it in sections instead, highlighted with a callout naming the unresolved supplier and columns.' },
   result_out_of_scope: { category: 'reference', label: 'outside the approved scope, so not an id of the result', correction: 'Name only node ids of the result.',
     fallback: 'Where the fact concerns an object outside the result, it is still required: state it in the text of the section that describes it as a callout starting with ⚠️ that names the object. Keep every other section unchanged; its node_ids name only ids of the result.' },
   not_neighbor: { category: 'reference', label: 'not a neighbor of the current object', correction: 'Name a direct neighbor of the current object.' },
   unknown_target_column: COLUMN_IDENTITY_ISSUE,
-  unknown_column: { ...COLUMN_IDENTITY_ISSUE,
-    fallback: 'If you cannot correct it, write that information in the detail memory instead, highlighted with a callout naming the unresolved issue.' },
+  unknown_column: { ...COLUMN_IDENTITY_ISSUE, ...REPORT_REFERENCE_FALLBACK },
   closed_neighbor: { category: 'reference', label: 'neighbor already pruned or visited', correction: 'Name a neighbor that is still open; a pruned or visited neighbor takes no further decision.' },
   self_loop: { category: 'reference', label: 'supplier is this entry\'s own write target', correction: 'Name a supplier other than this entry\'s write target; the write target receives the column.' },
-  bad_write_target: { category: 'reference', label: 'not a table this object writes to', correction: 'Name a table this object writes to; for any other write, set writes_to to null and state the write in sections.' },
+  bad_write_target: { ...REPORT_REFERENCE_FALLBACK, category: 'reference', label: 'not an available write target', correction: 'Name an in-scope table this object writes to; for an outside write, set writes_to to null, ask the outside object a follow-up in questions, and state the write in sections.' },
   bad_caller_output: { category: 'reference', label: 'not an active output of the caller', correction: 'Name an active output of the caller that reads this function.' },
   not_current_object: { category: 'reference', label: 'not the current object', correction: 'Use the id of the current object.' },
   not_in_result: { category: 'reference', label: 'not in the result graph, which is fixed at this stage', correction: 'Name a node id of the result graph.' },

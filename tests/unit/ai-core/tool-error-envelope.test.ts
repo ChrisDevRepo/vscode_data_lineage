@@ -3,7 +3,7 @@ import { ISSUES, readToolError, readToolErrorText, isConsentGateRejection, makeR
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { makeGraph, makeIndexedModel, makeModel, makeNode } from '../helpers/modelFixtures';
 import { validatePresentResult } from '../../../src/ai/tools/presentResult';
-import { presentResultSchemaForPhase } from '../../../src/ai/tools/toolSchemas';
+import { presentResultSchemaForPhase, submitFindingsSchemaForMode } from '../../../src/ai/tools/toolSchemas';
 import { AiSession } from '../../../src/ai/session/session';
 import { DEFAULT_TURN_TOKEN_BUDGET } from '../../../src/ai/support/tokenBudget';
 import { executePresentResult } from '../../../src/ai/tools/handlers/presentResult';
@@ -100,7 +100,7 @@ describe("tool-error-envelope", () => {
 
   describe('D-105 fallback: per issue code, only with the third rejection, never early', () => {
     const fallbackOf = (problem: Problem) => problem.guidance.find(group => group.fallback !== undefined)?.fallback;
-    it.each([['supplier_out_of_scope', 'column_flow.0.upstream_columns.0.node'], ['result_out_of_scope', 'sections.0.node_ids.3'], ['unknown_column', 'column_flow.0.upstream_columns.0.col']] as const)('%s at %s', (code, path) => {
+    it.each([['bad_write_target', 'column_flow.0.writes_to.node'], ['supplier_out_of_scope', 'column_flow.0.upstream_columns.0.node'], ['result_out_of_scope', 'sections.0.node_ids.3'], ['unknown_column', 'column_flow.0.upstream_columns.0.col']] as const)('%s at %s', (code, path) => {
       for (const values of [[], ['x']]) {
         const rejection = makeRejection({ code: 'invalid_input', errors: [{ path, code, values }] });
         for (const stage of [1, 2] as const) expect(fallbackOf(render(rejection, stage))).toBeUndefined();
@@ -109,9 +109,9 @@ describe("tool-error-envelope", () => {
         expect(third.resend).toContain('sections');
       }
     });
-    // Approved08 D-105 permits only these three report-reference families, never structural/control/text faults.
-    const fallbackCodes = new Set(['supplier_out_of_scope', 'result_out_of_scope', 'unknown_column']);
-    const negativePaths: Record<string, string> = { out_of_scope: 'column_flow.0.writes_to.node', bad_write_target: 'column_flow.0.writes_to.node',
+    // Approved08 D-105 permits these report-reference families, never structural/control/text faults.
+    const fallbackCodes = new Set(['bad_write_target', 'supplier_out_of_scope', 'result_out_of_scope', 'unknown_column']);
+    const negativePaths: Record<string, string> = { out_of_scope: 'add_node_ids.0',
       unknown_target_column: 'targetColumns.0', not_in_result: 'sections.0.node_ids.0', missing: 'summary' };
     it.each((Object.keys(ISSUES) as Array<keyof typeof ISSUES>).filter(code => !fallbackCodes.has(code)))('%s: no fallback at any feedback (Approved08 D-105)', code => {
       const path = negativePaths[code] ?? 'field';
@@ -315,8 +315,9 @@ describe('renderProblem over a real submit_findings rejection: a supplier beyond
       makeNode({ id: id('loader'), schema: 'ai', name: 'loader', type: 'procedure', columns: [],
         bodyScript: 'CREATE PROCEDURE [ai].[loader] AS BEGIN INSERT INTO [ai].[staging] (Amount, Region) SELECT v.Amount, v.Region FROM [ai].[raw] v; END' }),
       makeNode({ id: id('raw'), schema: 'ai', name: 'raw', type: 'view', columns: cols('Amount', 'Region'), bodyScript: 'SELECT 1 AS Amount, 2 AS Region' }),
+      makeNode({ id: id('archive'), schema: 'ai', name: 'archive', type: 'table', columns: cols('Amount') }),
     ];
-    const pairs: Array<[string, string]> = [[id('staging'), id('report')], [id('loader'), id('staging')], [id('raw'), id('loader')]];
+    const pairs: Array<[string, string]> = [[id('staging'), id('report')], [id('loader'), id('staging')], [id('raw'), id('loader')], [id('loader'), id('archive')]];
     const model = makeIndexedModel(nodes, pairs);
     const graph = makeGraph(nodes, pairs);
     const session = new AiSession();
@@ -336,6 +337,53 @@ describe('renderProblem over a real submit_findings rejection: a supplier beyond
     return registry;
   }
   const flow = (col: string) => ({ out_col: col, upstream_columns: [{ node: id('raw'), col }], writes_to: { node: id('staging'), col } });
+
+  it('preserves the write-target fault when the schema has no available targets', () => {
+    const schema = submitFindingsSchemaForMode('ct', 'technical', false, { outCols: null, writesTo: true, writeTargetNodeIds: [] });
+    const result = validateToolCandidate(schema, { column_flow: [{ out_col: 'Amount', upstream_columns: [], writes_to: { node: id('archive'), col: 'Amount' } }] });
+    if (result.success) throw new Error('Expected unavailable write target to reject');
+    expect(result.rejection.errors).toContainEqual({ path: 'column_flow.0.writes_to.node', code: 'bad_write_target' });
+    expect(validateToolCandidate(schema, { column_flow: [{ out_col: 'Amount', upstream_columns: [], writes_to: null }] }).success).toBe(true);
+  });
+
+  it('states the scope alternative from the first supplier rejection without declaring a born value', async () => {
+    const registry = await world();
+    const rejection = readToolErrorText(String(await registry.invoke('lineage_submit_findings', {
+      summary: 'Loads staging from raw.', sections: { technical: 'Copies raw into staging.' }, column_flow: [flow('Amount')],
+    })));
+    if (!rejection) throw new Error('Expected outside supplier rejection');
+    expect(render(rejection, 1).resend.sort()).toEqual(['column_flow', 'questions', 'sections']);
+    const first = at(render(rejection, 1), 'column_flow.0.upstream_columns.0.node');
+    expect(first?.allowed).toBeUndefined();
+    expect(rejection.errors).toContainEqual(expect.objectContaining({ path: 'column_flow.0.upstream_columns.0.node', code: 'supplier_out_of_scope' }));
+    const repaired = JSON.parse(String(await registry.invoke('lineage_submit_findings', {
+      column_flow: [], questions: [{ nodeId: id('raw'), question: 'What supplies Amount outside the approved depth?' }],
+      sections: { technical: '⚠️ raw.Amount supplies staging.Amount beyond the approved depth.' },
+    })));
+    expect(repaired).toHaveProperty('ok', true);
+  });
+
+  it('offers the report-reference fallback for an out-of-scope write, without changing control references (Approved08)', async () => {
+    const registry = await world();
+    const rejection = readToolErrorText(String(await registry.invoke('lineage_submit_findings', {
+      summary: 'Loads staging and archive.', sections: { technical: 'Copies values to both destinations.' },
+      column_flow: [{ out_col: 'Amount', upstream_columns: [{ node: id('staging'), col: 'Region' }], writes_to: { node: id('archive'), col: 'Amount' } }],
+    })));
+    if (!rejection) throw new Error('Expected an out-of-scope write rejection');
+    expect(render(rejection, 1).resend.sort()).toEqual(['column_flow', 'questions', 'sections']);
+    expect(rejection.errors).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'column_flow.0.writes_to.node' })]));
+    for (const stage of [1, 2] as const) expect(render(rejection, stage).guidance.some(group => group.fallback)).toBe(false);
+    expect(render(rejection, 3).guidance.find(group => group.category === 'reference')?.fallback).toBeDefined();
+    expect(render(rejection, 3).resend).toContain('sections');
+    const control = makeRejection({ code: 'invalid_input', errors: [{ path: 'add_node_ids.0', code: 'out_of_scope' }] });
+    expect(render(control, 3).guidance.some(group => group.fallback)).toBe(false);
+    const repaired = JSON.parse(String(await registry.invoke('lineage_submit_findings', {
+      column_flow: [{ out_col: 'Amount', upstream_columns: [{ node: id('staging'), col: 'Region' }], writes_to: null }],
+      questions: [{ nodeId: id('archive'), question: 'What receives the outside write?' }],
+      sections: { technical: '⚠️ The archive.Amount write is outside the approved direction.' },
+    })));
+    expect(repaired).toHaveProperty('ok', true);
+  });
 
   it('keeps same-table supplier choices and accepts a different-column correction (Approved08)', async () => {
     const registry = await world();

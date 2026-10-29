@@ -1636,7 +1636,7 @@ export class NavigationEngine implements IHopStateMachine {
 
   /** The metadata-driven question a passthrough candidate carries to the next object: whether that object touches the forwarded endpoints at all, not an assignment to map them. */
   private candidateQuestion(nid: string, side: 'upstream' | 'downstream', refs: ReadonlyArray<{ node: string; col: string }>): string {
-    return `Determine whether ${nid} ${side === 'upstream' ? 'writes' : 'uses'} ${refs.map(ref => `${ref.node}.${ref.col}`).join(', ')}; map confirmed value contributions and end unused inputs on this branch.`;
+    return `Analyze column ${refs.map(ref => `${ref.node}.${ref.col}`).join(', ')} in ${nid} (${side}).`;
   }
 
   /** Re-renders the current focus hop context without advancing the agenda. */
@@ -1943,7 +1943,7 @@ export class NavigationEngine implements IHopStateMachine {
       if (isWrite === undefined || (isWrite ? this.admitsRoute(nid, node, focusId).admitted || this.scopeNodeIds.has(nid) || this.visited.has(nid) : this.admitsColumnReference(nid, node, focusId))) continue;
       const { border, depthBreach } = this.admitsRoute(nid, node, focusId);
       const outside = border.kind === 'excluded' ? 'excluded' : border.kind === 'out_of_direction' ? 'out of direction' : depthBreach !== null ? `beyond depth ${depthBreach}` : null;
-      if (outside) invalidRoutes.push({ kind: isWrite ? 'column_out_of_scope' : 'supplier_out_of_scope', id: nid, path: paths(path), reason: `The object is out of scope (${outside}).` });
+      if (outside) invalidRoutes.push({ kind: isWrite ? 'column_out_of_scope' : 'supplier_out_of_scope', id: nid, path: paths(path), alternatives: ['questions', 'sections'], reason: `The object is out of scope (${outside}).` });
     }
     if (complete) mentions.column_flow = mentioned;
     const returnTargets = this.currentReturnTargets(), callerTargets = this.getCurrentTasks().flatMap(task => task.callerContext && task.nodeId && this.validFunctionCallerContext(task.nodeId, task.callerContext)
@@ -2073,9 +2073,7 @@ export class NavigationEngine implements IHopStateMachine {
           const routed = assigned.length ? assigned : continuation.filter(ref => this.identifierKey(ref.node) === this.identifierKey(focusId));
           for (const ref of routed) addCarry(nid, ref, 'downstream');
           if (routed.length > 0) {
-            flowQuestionByNode.set(nid, assigned.length
-              ? `Resolve the assigned endpoints ${routed.map(ref => `${ref.node}.${ref.col}`).join(', ')} in ${nid}; record their SQL-established relations and retain known outside dependencies or unresolved evidence in sections.`
-              : this.candidateQuestion(nid, 'downstream', routed));
+            flowQuestionByNode.set(nid, this.candidateQuestion(nid, 'downstream', routed));
           }
         }
       }

@@ -515,10 +515,10 @@ function suppliedValueSchema(values: readonly string[], identifierCaseSensitive 
 }
 
 /** Offers canonical IDs while admitting only equivalent, unambiguous metadata spellings. */
-function objectIdSchema(ids: readonly string[], identifierCaseSensitive = false, issue: 'not_neighbor' | 'bad_write_target' = 'not_neighbor') {
-  if (ids.length === 0) return z.never();
+function objectIdSchema(ids: readonly string[], identifierCaseSensitive = false, issue?: 'not_neighbor' | 'bad_write_target') {
+  if (ids.length === 0) return z.never().meta({ toolAdmission: { toolIssue: issue ?? 'never' } });
   const known = new Map(ids.map(id => [id, true]));
-  const field = z.string().meta({ enum: [...ids], toolIdentifier: { kind: 'object', values: [...ids], caseSensitive: identifierCaseSensitive, issue } });
+  const field = z.string().meta({ enum: [...ids], toolIdentifier: { kind: 'object', values: [...ids], caseSensitive: identifierCaseSensitive, issue: issue ?? 'not_neighbor' } });
   markObjectIdField(field, known, identifierCaseSensitive);
   return field;
 }

@@ -689,7 +689,7 @@ describe('large findings repairs', () => {
     { target: OTHER, shape: 'target-col', scope: true },
     { target: OTHER, shape: 'target-type', scope: false },
     { target: OTHER, shape: 'source-type', scope: true },
-  ])('reports only established write-target scope beside $shape faults ($target)', ({ target, shape, scope }) => {
+  ])('reports write references and only established scope alternatives beside $shape faults ($target)', ({ target, shape, scope }) => {
     const { engine, session, model, graph } = ctWorld({ selfLoop: true, outsideWrite: true });
     const { services } = stubToolServices({ session, model, graph });
     const before = engine.toJSON();
@@ -699,18 +699,18 @@ describe('large findings repairs', () => {
         writes_to: shape === 'target-type' ? 42 : shape === 'target-col' ? { node: target } : { node: target, col: 'Value' } }],
     }, services));
     const errors = result.errors as Array<{ path: string; code: string }>;
-    expect(errors.some(error => error.path === 'column_flow.0.writes_to.node' && error.code === 'out_of_scope')).toBe(scope);
+    expect(errors.some(error => error.path === 'column_flow.0.writes_to.node' && error.code === 'bad_write_target')).toBe(shape !== 'target-type');
     if (scope) {
       expect(errors.filter(error => error.path === 'column_flow.0.writes_to.node')).toHaveLength(1);
       const firstFeedback = JSON.parse(renderProblem(readToolErrorText(JSON.stringify(result))!, 1));
-      const scopeIssue = firstFeedback.guidance.flatMap((group: { errors: unknown[] }) => group.errors).find((error: { fault: string }) => error.fault === ISSUES.out_of_scope.label);
-      expect(scopeIssue).toMatchObject({ path: 'column_flow.0.writes_to.node', correction: ISSUES.out_of_scope.correction });
+      const scopeIssue = firstFeedback.guidance.flatMap((group: { errors: unknown[] }) => group.errors).find((error: { fault: string }) => error.fault === ISSUES.bad_write_target.label);
+      expect(scopeIssue).toMatchObject({ path: 'column_flow.0.writes_to.node', correction: ISSUES.bad_write_target.correction });
       expect(scopeIssue).not.toHaveProperty('allowed');
     }
     const shapePath = shape === 'target-type' ? 'column_flow.0.writes_to' : shape === 'target-col' ? 'column_flow.0.writes_to.col'
       : shape === 'source-type' ? 'column_flow.0.upstream_columns' : undefined;
     if (shapePath) expect(errors.some(error => error.path === shapePath)).toBe(true);
-    expect(result.resend).toEqual(['column_flow']);
+    expect([...result.resend].sort()).toEqual(scope ? ['column_flow', 'questions', 'sections'] : ['column_flow']);
     expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
     expect(engine.toJSON().agenda).toEqual(before.agenda);
     expect(JSON.parse(executeSubmitFindings({ column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }], writes_to: null }] }, services))).toHaveProperty('ok', true);

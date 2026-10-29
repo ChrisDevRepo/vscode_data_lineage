@@ -14,7 +14,7 @@ const ROUTE_ISSUE = {
   bad_write_target: 'bad_write_target',
   bad_caller_context: 'bad_caller_output',
   pruned_contributor: 'closed_neighbor',
-  column_out_of_scope: 'out_of_scope',
+  column_out_of_scope: 'bad_write_target',
   supplier_out_of_scope: 'supplier_out_of_scope',
   prune_absent: 'prune_target',
   prune_noop_removed: 'prune_target',
