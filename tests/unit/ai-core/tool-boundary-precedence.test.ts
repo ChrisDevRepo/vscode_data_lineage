@@ -264,6 +264,17 @@ describe('missing neighbor outcomes beside an invalid column_flow', () => {
       questions: [{ nodeId: OTHER, question: 'Explain the other source.' }] }, services))).toHaveProperty('ok', true);
   });
 
+  it('owes the same neighbors as the corrected flow when a faulty procedure entry lands nowhere', () => {
+    for (const col of ['Missing', 'Value']) {
+      const world = ctWorld({ sibling: true, selfLoop: true });
+      const { services } = stubToolServices({ session: world.session, model: world.model, graph: world.graph });
+      const rejected = JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN, summary: 'Value provenance.',
+        sections: { technical: 'Authored evidence.' }, column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col }] }] }, services));
+      // A procedure entry without out_node maps no supplier, even when its supplied column is valid.
+      expect(missingIds(rejected)).toEqual([BRANCH, OTHER]);
+    }
+  });
+
   it('accepts a filter-only supplier as an indirect edge and maps its neighbor', () => {
     const { submit } = setup();
     const accepted = submit([{ out_col: 'Value', upstream_columns: [

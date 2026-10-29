@@ -1556,6 +1556,11 @@ describe('result dispositions', () => {
       sections: { technical: 'INSERT d.Stored(X) SELECT X FROM d.Input; Stored is beyond downstream one.' },
       column_flow: [] };
     expect(engine.hopSubmitColumns.columnSourceNodeIds).not.toContain(stored);
+    const before = engine.toJSON().columnAspect;
+    expect(engine.submitFindings({ ...toHopFinding(schema.parse(payload)), column_flow: [{
+      out_col: 'X', upstream_columns: [{ node: input, col: 'Missing' }],
+    }] })).toMatchObject({ code: 'contributor_col_not_on_source', issuePaths: ['column_flow.0.upstream_columns.0.col'] });
+    expect(engine.toJSON().columnAspect).toEqual(before);
     expect(engine.submitFindings(toHopFinding(schema.parse(payload)))).toHaveProperty('ok', true);
     expect(engine.columnAspect!.edges).toEqual([]);
     expect(engine.columnAspect!.edges.some(edge => edge.from_node === stored || edge.to_node === stored)).toBe(false);

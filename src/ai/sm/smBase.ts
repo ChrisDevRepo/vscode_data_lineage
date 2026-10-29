@@ -1941,7 +1941,9 @@ export class NavigationEngine implements IHopStateMachine {
       if (!nid || !node) { complete = false; continue; }
       const returned = path.includes('/returns_to/');
       if (!returned && !this.graph.areNeighbors(focusId, nid)) continue;
-      mentioned.add(nid);
+      // At a procedure an entry pairs only through its out_node or returns_to; without one it maps no neighbor.
+      const row = rowOf(path);
+      if (this.nodeMap.get(focusId)?.type !== 'procedure' || facts.references.has(`${row}/out_node`) || facts.references.has(`${row}/returns_to/node`)) mentioned.add(nid);
       if (returned || this.admitsColumnReference(nid, node, focusId)) continue;
       const { border, depthBreach } = this.admitsRoute(nid, node, focusId);
       const outside = border.kind === 'excluded' ? 'excluded' : border.kind === 'out_of_direction' ? 'out of direction' : depthBreach !== null ? `beyond depth ${depthBreach}` : null;
