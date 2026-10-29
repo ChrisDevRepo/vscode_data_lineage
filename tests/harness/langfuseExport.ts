@@ -352,7 +352,7 @@ function buildSpans(
       && entry.requestId === turn.requestId && entry.lineIndex < (turn.terminal?.lineIndex ?? Infinity)).at(-1);
     const start = turn.start?.lineIndex ?? (previousTerminal ? previousTerminal.lineIndex + 1 : 0);
     const nextStart = run.turns.find(entry => entry.type === 'turn-start'
-      && entry.requestId === turn.requestId && entry.lineIndex > start)?.lineIndex ?? Infinity;
+      && entry.requestId === turn.requestId && entry.runFingerprint !== turn.runFingerprint && entry.lineIndex > start)?.lineIndex ?? Infinity;
     const end = turn.terminal?.lineIndex ?? nextStart - 1;
     const inTurn = (entry: { requestId: string; lineIndex: number }) =>
       entry.requestId === turn.requestId && entry.lineIndex >= start && entry.lineIndex <= end;

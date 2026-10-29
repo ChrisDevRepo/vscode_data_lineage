@@ -49,7 +49,7 @@ export interface ParsedRun {
   readonly malformed: readonly MalformedLine[];
 }
 
-/** One `turn-start` joined with its `turn-terminal`, when both exist in the run. */
+/** One request identity, spanning its first start through its last completed resume. */
 export interface JoinedTurn {
   readonly requestId: string;
   readonly runFingerprint: string;
@@ -128,7 +128,7 @@ function isRecordShape(value: unknown): value is { readonly at: string; readonly
   return typeof record.at === 'string' && typeof record.type === 'string';
 }
 
-/** Joins `turn-start` and `turn-terminal` lifecycle entries by `(requestId, runFingerprint)`. */
+/** Joins a request's pause/resume lifecycle by `(requestId, runFingerprint)`, retaining its first start and clearing an earlier terminal on resume. */
 export function joinTurns(run: ParsedRun): readonly JoinedTurn[] {
   const order: string[] = [];
   const byKey = new Map<string, { requestId: string; runFingerprint: string; start?: TurnStartEntry; terminal?: TurnTerminalEntry }>();
@@ -140,8 +140,10 @@ export function joinTurns(run: ParsedRun): readonly JoinedTurn[] {
       byKey.set(key, joined);
       order.push(key);
     }
-    if (entry.type === 'turn-start') joined.start = entry;
-    else joined.terminal = entry;
+    if (entry.type === 'turn-start') {
+      joined.start ??= entry;
+      joined.terminal = undefined;
+    } else joined.terminal = entry;
   }
   return order.map((key) => byKey.get(key) as JoinedTurn);
 }

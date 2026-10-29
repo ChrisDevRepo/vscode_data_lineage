@@ -498,6 +498,39 @@ describe('Langfuse free plan limits', () => {
 });
 
 describe('explicit attachment export boundary', () => {
+  // A consent pause and resume retain one request identity; every captured generation belongs to its export.
+  it.each([true, false])('exports the entire resumed request with final terminal=%s without crossing a reused request id', async completed => {
+    const requestId = 'shared-request';
+    const stamp = (second: number) => `2026-01-01T00:00:0${second}.000Z`;
+    const generation = (index: number) => [
+      { type: 'wire-request', requestId, generation: index, at: stamp(index), system: `captured-${index}`, messages: [], tools: [] },
+      { type: 'wire-response', requestId, generation: index, at: stamp(index), text: `reply-${index}`, toolCalls: [] },
+      { type: 'generation', requestId, generation: index, at: stamp(index), modelId: 'synthetic', phase: `phase-${index}`, latencyMs: 0, finishReason: 'stop' },
+    ];
+    const captured = parseTrace([
+      { type: 'turn-start', requestId, runFingerprint: 'first', at: stamp(0) },
+      ...generation(1),
+      { type: 'turn-terminal', requestId, runFingerprint: 'first', at: stamp(1), status: 'ok' },
+      { type: 'turn-start', requestId, runFingerprint: 'first', at: stamp(2) },
+      ...generation(2),
+      ...(completed ? [{ type: 'turn-terminal', requestId, runFingerprint: 'first', at: stamp(2), status: 'ok' }] : []),
+      { type: 'turn-start', requestId, runFingerprint: 'second', at: stamp(3) },
+      ...generation(3),
+      { type: 'turn-terminal', requestId, runFingerprint: 'second', at: stamp(4), status: 'ok' },
+    ].map(row => JSON.stringify(row)).join('\n'));
+    let payload = '';
+    await exportRunToLangfuse(captured, { baseUrl: 'https://export.example', publicKey: 'synthetic', secretKey: 'secret',
+      fetchImpl: async () => Response.json({}), onPayload: value => { payload = value; } });
+    const spans = JSON.parse(payload).resourceSpans[0].scopeSpans[0].spans;
+    const roots = spans.filter((span: { parentSpanId?: string }) => !span.parentSpanId);
+    const children = spans.filter((span: { parentSpanId?: string }) => span.parentSpanId);
+    const input = (span: { attributes: Array<{ key: string; value: { stringValue: string } }> }) =>
+      JSON.parse(span.attributes.find(attribute => attribute.key === 'langfuse.observation.input')?.value.stringValue ?? 'null')?.system;
+    expect(roots.map(input)).toEqual(['captured-1', 'captured-3']);
+    expect(children.map(input)).toEqual(['captured-1', 'captured-2', 'captured-3']);
+    expect(children.map((span: { parentSpanId: string }) => span.parentSpanId)).toEqual([roots[0].spanId, roots[0].spanId, roots[1].spanId]);
+    expect(new Set(spans.map((span: { spanId: string }) => span.spanId)).size).toBe(5);
+  });
   // Stored generation inputs retain the captured request context, not only its messages.
   it.each(['native', 'provider', 'missing'].flatMap(capture => [false, true].map(failed => ({ capture, failed }))))(
     'preserves captured request evidence for $capture with failed=$failed', async ({ capture, failed }) => {
