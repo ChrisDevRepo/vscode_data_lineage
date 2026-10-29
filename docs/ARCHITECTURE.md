@@ -93,19 +93,19 @@ flowchart TD
     ENGINE --> DECIDE{Any issues?}
     DECIDE -->|No| COMMIT[Publish prepared result and fan out tasks]
     DECIDE -->|Yes| REPAIR[Retain valid fields; render one correction]
-    REPAIR --> BUDGET[LangGraph bounded repair budget]
-    BUDGET --> PLAN
+    REPAIR --> BUDGET[Append feedback; bounded corrections]
+    BUDGET --> MODEL
     COMMIT --> AGENDA[Merge by object; dispatch when structurally ready]
     AGENDA --> PLAN
 ```
 
 Tool batches execute in provider order with unique call IDs. Missing or repeated call IDs fail the model response before tool execution. A successful gate, route change or phase completion closes the active batch.
 
-The shared ingestion controller stages the context-scoped candidate, invokes canonical validation once, collects independently decidable domain faults and makes one retain-or-publish decision. Native field facts preserve original array positions and distinguish valid, absent, invalid and inapplicable fields. An invalid parent stays unknown. Domain rules reuse the engine metadata and graph owners; validation never changes committed findings.
+`ToolDraft` holds uncommitted fields; `ingestToolInput` validates their candidate once, collects independent domain faults and either retains or commits. Native facts preserve array positions and distinguish valid, absent, invalid and inapplicable fields. Invalid parents stay unknown. Domain rules reuse engine metadata and graph owners; validation never changes committed findings.
 
-Zod owns structural schema authoring, types and normalization metadata. Ajv compiles canonical constraints with all errors enabled and coercion, defaults and property removal disabled. Canonical admission metadata stays private; the model receives the stable field-update card, with complete array-item requirements. Shared drafts retain omitted valid fields and preserve prior values after faulty replacements. One issue table and renderer produce correction feedback without echoing submitted values.
+Zod authors schemas, types and normalization metadata. Ajv compiles constraints with all errors enabled and coercion, defaults and property removal disabled. The model receives a stable full-field schema with complete array-item requirements. Sent values replace at their path; lists never merge by key or index. Omitted valid fields and prior values after faulty replacements stay held. `renderProblem` emits flat coded faults from the issue table without echoing submitted values.
 
-The engine bounds retries per hop. If a hop cannot be validated within the attempt budget, it terminates without committing partial or unverified findings. The LangChain bridge translates model and tool messages without executing them; Zod validates non-tool message contracts; the engine enforces state and graph integrity; and LangGraph manages phase transitions.
+The initial reply allows three corrections, four replies total. Feedback 1 names every fault; feedback 2 adds allowed values; feedback 3 offers the detail-memory fallback for report references only. Corrections append feedback to the original request. A still-invalid hop terminates without a partial commit. LangChain translates messages, Zod validates non-tool contracts, the engine enforces graph integrity and LangGraph manages phases.
 
 ## Design boundaries
 
