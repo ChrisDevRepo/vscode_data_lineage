@@ -307,6 +307,25 @@ describe('declared contributor identities', () => {
     expect(result.invalidRoutes).toEqual([]);
     expect(result.stagedEdges).toMatchObject([{ from_node: 'staging', from_col: 'OrderAmount', to_node: 'staging', to_col: 'OrderAmount' }]);
   });
+
+  it.each(['upstream', 'downstream'] as const)('commits an accepted same-column self pair, ends the hop and adds no agenda work (%s, D-130)', direction => {
+    const producer = '[d].[Producer]', stored = '[d].[Stored]';
+    const nodes = [
+      makeNode({ id: producer, schema: 'd', name: 'Producer', type: 'procedure', columns: [], bodyScript: 'UPDATE d.Stored SET X = X + 0;' }),
+      makeNode({ id: stored, schema: 'd', name: 'Stored', type: 'table', columns: [column('X')] }),
+    ];
+    const engine = navigationFor(nodes, [[stored, producer], [producer, stored]]);
+    expect(engine.init({ origin: producer, question: 'Where does X go?', analysisMode: 'ct', targetColumns: ['X'], direction,
+      depthIntent: { upstream: { levels: direction === 'upstream' ? 'all' : 0, exactness: 'exact' }, downstream: { levels: direction === 'downstream' ? 'all' : 0, exactness: 'exact' } },
+    })).toHaveProperty('ok', true);
+    engine.getHopContext();
+    expect(engine.submitFindings({ focus_node_id: producer, summary: 'Rewrites X in place.', sections: [{ angle: 'technical', text: 'UPDATE d.Stored SET X = X + 0.' }],
+      column_flow: [{ out_node: stored, out_col: 'X', upstream_columns: [{ node: stored, col: 'X' }] }] })).toEqual({ ok: true });
+    expect(engine.columnAspect!.edges.map(edge => [edge.from_node, edge.from_col, edge.to_node, edge.to_col])).toEqual([[stored, 'X', stored, 'X']]);
+    expect(engine.getHopContext()).toEqual({ done: true });
+    expect(engine.toJSON().agenda).toEqual([]);
+    expect(engine.toJSON().engineInternals.investigationTasks.filter(task => task.status !== 'resolved')).toEqual([]);
+  });
 });
 
 describe('lineage case catalog', () => {
