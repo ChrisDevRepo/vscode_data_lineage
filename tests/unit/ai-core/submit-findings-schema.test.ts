@@ -3,7 +3,7 @@
 import Ajv from 'ajv/dist/2020';
 import { validateToolCandidate } from '../../../src/ai/support/toolValidation';
 import { schemaFaults, withSchemaFaults } from './helpers/toolServices';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { SubmitFindingsCtInputSchema, submitFindingsSchemaForMode, findingAdmissionFacts } from '../../../src/ai/tools/toolSchemas';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import { normalizeModelInput } from '../../../src/ai/tools/normalizeModelInput';
@@ -391,4 +391,27 @@ it.each((['bb', 'ct'] as const).flatMap(mode => (['business', 'technical', 'both
   expect(repair.properties.summary.description).toBe(fresh.properties.summary.description);
   expect(repair.properties.summary.pattern).toBe('\\S');
   expect(repair.required ?? []).not.toContain('summary');
+});
+
+// Resource bound (no spec clause owns it): distinct hops arrive for the life of the extension host, so neither Ajv nor the
+// per-hop schema memo may keep every schema ever built. The compiled validator must stay usable without its Ajv cache entry.
+it('retains no Ajv cache entry per hop and bounds the per-hop findings schemas', () => {
+  const hop = (i: number) => ({ focusNodeId: `[dbo].[Focus${i}]`, outCols: ['Value'], writesTo: false, columnSourceNodeIds: [`[dbo].[Src${i}]`] });
+  const build = (i: number) => submitFindingsSchemaForMode('ct', 'technical', false, hop(i));
+  const flow = (i: number) => ({ column_flow: [{ out_col: 'Value', upstream_columns: [{ node: `[dbo].[Src${i}]`, col: 'Value' }] }] });
+  const compile = vi.spyOn(Ajv.prototype, 'compile');
+  try {
+    const first = build(0);
+    expect(validateToolCandidate(first, flow(0)).success).toBe(true);
+    const cache = (compile.mock.contexts[0] as unknown as { _cache: Map<unknown, unknown> })._cache, baseline = cache.size;
+    for (let i = 1; i < 40; i++) {
+      const schema = build(i);
+      expect(validateToolCandidate(schema, flow(i)).success).toBe(true);
+      expect(validateToolCandidate(schema, { column_flow: 42 }).success).toBe(false);
+    }
+    expect(compile).toHaveBeenCalledTimes(40);
+    expect(cache.size, 'compiled schemas do not accumulate in the Ajv cache').toBe(baseline);
+    expect(validateToolCandidate(first, flow(0)).success, 'a compiled validator outlives its cache entry').toBe(true);
+    expect(build(0), 'schemas of earlier hops are not kept forever').not.toBe(first);
+  } finally { compile.mockRestore(); }
 });

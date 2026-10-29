@@ -199,7 +199,9 @@ function rejection(errors: readonly ErrorObject[]): ToolRejection {
 export function validateToolCandidate<S extends z.ZodType>(schema: S, input: unknown, facts: ToolFactContext = {}): ToolValidation<z.output<S>> {
   let check = compiled.get(schema) as ValidateFunction<z.output<S>> | undefined;
   if (!check) {
-    check = validator.compile<z.output<S>>(canonicalSchema(schema));
+    const json = canonicalSchema(schema);
+    check = validator.compile<z.output<S>>(json);
+    validator.removeSchema(json); // Ajv would keep every compiled schema for good; the WeakMap owns the validator's lifetime.
     compiled.set(schema, check);
   }
   const evaluate: ValidateFunction<z.output<S>> = check.bind(facts);
