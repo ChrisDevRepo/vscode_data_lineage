@@ -248,7 +248,7 @@ export interface ToolPhaseAttemptState {
   readonly rejections: readonly ToolAttemptRejection[];
   /** The phase's append-only provider-native transcript: every attempt's own `AIMessage` and its paired `ToolMessage`s (or `AIMessage` + `HumanMessage` correction), oldest first. Appended after the unchanged original request. */
   readonly messages: readonly ModelMessage[];
-  /** Replies that rejected the step's terminal tool, including a synthesized rejection for a reply with no call, counted even when the same reply stored an accepted read. A read-only reply does not count here. Zero when no terminal tool is tracked. */
+  /** Replies that rejected any call but a read, including a synthesized rejection for a reply with no call, counted even when the same reply stored an accepted read. A reply whose rejections are all reads does not count here. */
   readonly rejectedTerminalCalls: number;
   /** `'backend_fault'` once a rejection of that group was recorded, `'no_progress'` once {@link MAX_TOOL_PROVIDER_CALLS} replies passed without progress or without an accepted terminal call, else null. */
   readonly stopReason: 'no_progress' | 'backend_fault' | null;
@@ -279,11 +279,14 @@ function acceptedCallKey(toolName: string, input: unknown): string {
   return createHash('sha256').update(toolName).update('\0').update(JSON.stringify(sort(input)) ?? 'undefined').digest('hex');
 }
 
+/** Whether a registry effect only reads state: the one place that tells a read from a commit. */
+const isReadEffect = (effect: string | undefined): boolean => effect === 'read' || effect === 'scope_store';
+
 /** Appends one attempt's counters and its own transcript delta, never retiring an earlier rejection — the transcript is append-only, so a repaired tool's earlier failed attempt stays exactly where it happened, the same standard behaviour every tool-calling client keeps. */
 export function recordToolAttempt(
   state: ToolPhaseAttemptState,
   attempt: Pick<ToolAttemptResult, 'stop' | 'providerCalls' | 'observations' | 'rejections' | 'messages' | 'prefix'>,
-  terminalTool?: string,
+  registry: IToolRegistry<string>,
 ): ToolPhaseAttemptState {
   const providerCalls = state.providerCalls + attempt.providerCalls;
   const stored = attempt.observations.some(observation => !observation.refused);
@@ -296,7 +299,7 @@ export function recordToolAttempt(
     || attempt.stop === 'reroute'
     || attempt.stop === 'refused'
     || attempt.stop === 'phase_complete';
-  const terminalRejected = terminalTool !== undefined && attempt.rejections.some(rejection => rejection.toolName === terminalTool);
+  const terminalRejected = attempt.rejections.some(rejection => !isReadEffect(registry.get(rejection.toolName)?.effect));
   const rejectedTerminalCalls = acceptedTerminal ? 0 : state.rejectedTerminalCalls + (terminalRejected ? attempt.providerCalls : 0);
   const stopReason = attempt.rejections.some(rejection => classifyRejectionCode(rejection.code) === 'backend_fault')
     ? 'backend_fault'
@@ -330,16 +333,10 @@ export function renderToolAttemptContext(state: ToolPhaseAttemptState): readonly
   return state.messages;
 }
 
-/** The one tool whose rejected draft the session holds for repair (`presentResultRepairDraft`). */
-const PRESENT_RESULT_TOOL = 'lineage_present_result';
-
-/** The once-per-reply slot every registered `hop_commit` tool shares. */
-const HOP_COMMIT_SLOT = 'hop_commit';
-
-/** The slot of a tool a reply carries once, or undefined for any other tool. Every hop commit command shares one slot: a second commit in the same reply competes with the first instead of adding to its held draft. `lineage_present_result` has its own. */
+/** The once-per-reply slot of a tool, named by its registry effect, or undefined for any other tool. Every hop commit command shares one slot: a second commit in the same reply competes with the first instead of adding to its held draft. A presentation commit has its own. */
 function oncePerReplySlot(toolName: string, registry: IToolRegistry<string>): string | undefined {
-  if (registry.get(toolName)?.effect === 'hop_commit') return HOP_COMMIT_SLOT;
-  return toolName === PRESENT_RESULT_TOOL ? toolName : undefined;
+  const effect = registry.get(toolName)?.effect;
+  return effect === 'hop_commit' || effect === 'presentation_commit' ? effect : undefined;
 }
 
 /** Stamps a rejection with the call's identity and, when an earlier attempt of this step rejected the identical call, names the resend as unchanged. */
@@ -704,7 +701,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
           errors: at('one_call'),
           detail: { closedByCallId: closedBy.callId, closedByTool: closedBy.toolName },
         }),
-      }, calls, observations, rejections, input.traceSyntheticRejection);
+      }, calls, observations, rejections, input.traceSyntheticRejection, input.priorState);
       toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
       logSyntheticRejection(input, 'batch_phase_closed', call, REJECTION_CODES.phaseClosed,
         `closed by ${closedBy.toolName} callId ${closedBy.callId}`);
@@ -719,7 +716,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
         closedByCallId: evaluatedCallId,
         rejection: makeRejection({
           code: REJECTION_CODES.extraCallNotEvaluated,
-          reason: onceKey === HOP_COMMIT_SLOT
+          reason: onceKey === 'hop_commit'
             ? 'Not evaluated: a reply carries one hop commit command, and an earlier findings or candidate-removal command in this reply was evaluated.'
             : `Not evaluated: a reply carries one ${call.toolName} call, and an earlier call in this reply was evaluated.`,
           errors: at('one_call'),
@@ -744,7 +741,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
     }
 
     const definition = input.registry.get(call.toolName);
-    const reusableKey = definition?.effect === 'read' || definition?.effect === 'scope_store'
+    const reusableKey = definition && isReadEffect(definition.effect)
       ? acceptedCallKey(call.toolName, call.input)
       : undefined;
     const reused = reusableKey ? reusableObservations.get(reusableKey) : undefined;

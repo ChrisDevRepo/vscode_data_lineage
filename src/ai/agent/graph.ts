@@ -247,9 +247,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     res: ToolAttemptResult,
     phaseLabel: string,
     startedAt?: number,
-    terminalTool?: string,
   ): ToolPhaseAttemptState => {
-    const nextAttempt = recordToolAttempt(priorAttempt, res, terminalTool);
+    const nextAttempt = recordToolAttempt(priorAttempt, res, deps.registry);
     const last = nextAttempt.rejections[nextAttempt.rejections.length - 1];
     logGraphDebug(deps,
       `[AI] [Attempt] phase=${phaseLabel} providerCalls=${nextAttempt.providerCalls} noProgressCalls=${nextAttempt.noProgressCalls} observations=${nextAttempt.observations.length} stop=${nextAttempt.stopReason ?? res.stop}`
@@ -511,7 +510,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (remainingProviderCalls < 1) {
       const exhaustedAttempt = priorAttempt.stopReason ? priorAttempt : recordToolAttempt(priorAttempt, {
         stop: 'continue', providerCalls: 0, observations: [], rejections: [], messages: [],
-      });
+      }, deps.registry);
       const stopped = attemptStop(exhaustedAttempt, 'Entry detection', 'without a valid route');
       if (!stopped) throw new InternalInvariantError('Entry-detection graph-attempt guard failed to select a stop reason.');
       return { ...failStopped(stopped, exhaustedAttempt), ctx, messages, toolAttempt: exhaustedAttempt };
@@ -556,7 +555,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
         messages: [
           modelUserMessage(noCallCorrectionText({ code: error.code, reason: error.reason, errors: [...error.errors] }, priorAttempt)),
         ],
-      });
+      }, deps.registry);
       logGraphDebug(deps,
         `[AI] [Attempt] phase=detect_entry providerCalls=${nextAttempt.providerCalls} noProgressCalls=${nextAttempt.noProgressCalls} stop=${nextAttempt.stopReason ?? 'continue'}`,
       );
@@ -919,7 +918,6 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const hopMessage = modelUserMessage(hopInstruction.message);
 
     let submitted = false;
-    let terminalTool = 'lineage_submit_findings';
     const committedFinding: { value: { summary: string } | null } = { value: null };
     const inputMessages = [...state.messages, hopMessage];
     const isHopCommit = (toolName: string): boolean => deps.registry.get(toolName)?.effect === 'hop_commit';
@@ -951,19 +949,15 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       canPruneCurrent: () => engine.canPruneCurrent,
       isPhaseComplete: () => submitted,
       onToolResult: (toolName, _input, isError) => {
-        if (!isHopCommit(toolName)) return;
-        terminalTool = toolName;
-        if (!isError) {
-          submitted = true;
-          const summary = sess.memory.getResult().detail_slots.find(slot => slot.nodeId === focusId)?.summary;
-          committedFinding.value = { summary: summary ?? '' };
-        }
+        if (!isHopCommit(toolName) || isError) return;
+        submitted = true;
+        const summary = sess.memory.getResult().detail_slots.find(slot => slot.nodeId === focusId)?.summary;
+        committedFinding.value = { summary: summary ?? '' };
       },
     }), priorAttempt));
 
     if (res.stop === 'cancelled') return { outcome: 'cancelled', toolAttempt: null, phase: 'done' };
-    const rejectedCommitTool = res.rejections.find(rejection => isHopCommit(rejection.toolName))?.toolName;
-    const nextAttempt = recordAttempt(priorAttempt, res, `active hop=${progress.current} focus=${sanitizeForLog(focusId)}`, hopStartedAt, rejectedCommitTool ?? terminalTool);
+    const nextAttempt = recordAttempt(priorAttempt, res, `active hop=${progress.current} focus=${sanitizeForLog(focusId)}`, hopStartedAt);
 
     if (res.stop === 'error') {
       return {

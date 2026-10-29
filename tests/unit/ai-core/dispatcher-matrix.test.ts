@@ -215,7 +215,7 @@ describe('start contract matrix through the native port and production registry'
     return { session, model, state: () => state, async send(value: unknown) {
       input = value;
       const attempt = await executeToolAttempt(model.port, current, { priorState: state });
-      state = recordToolAttempt(state, attempt, 'lineage_start_exploration');
+      state = recordToolAttempt(state, attempt, registry);
       const [messages, options] = model.sendRequest.mock.calls.at(-1) as unknown as [unknown[], { tools: Array<{ name: string; inputSchema: object }> }];
       const offered = options.tools.find(tool => tool.name === 'lineage_start_exploration');
       assert(offered);
@@ -450,7 +450,7 @@ it.each(reportScenarios)('report independent rule: $name ($phase, retainable=$re
     requiredTerminalTool: 'lineage_present_result', toolChoice: 'required' });
   let state = initialToolPhaseAttemptState(phase);
   const first = await executeToolAttempt(model.port, plan, { priorState: state });
-  state = recordToolAttempt(state, first);
+  state = recordToolAttempt(state, first, registry);
   const expected = faults.flatMap(fault => fault.errors).sort((a, b) => a.path.localeCompare(b.path));
   const check = (attempt: typeof first, stage: number) => {
     const raw = toolMessage(attempt.messages).artifact as { errors: Array<{ path: string; code: string; values?: string[] }> };
@@ -477,12 +477,12 @@ it.each(reportScenarios)('report independent rule: $name ($phase, retainable=$re
   check(first, 1);
   for (let stage = 2; stage < (correctAt ?? 4); stage++) {
     const rejected = await executeToolAttempt(model.port, plan, { priorState: state });
-    state = recordToolAttempt(state, rejected);
+    state = recordToolAttempt(state, rejected, registry);
     check(rejected, stage);
   }
   if (correctAt === null) {
     const terminal = await executeToolAttempt(model.port, plan, { priorState: state });
-    const finalState = recordToolAttempt(state, terminal);
+    const finalState = recordToolAttempt(state, terminal, registry);
     expect(terminal.rejections).toHaveLength(1);
     expect(finalState).toMatchObject({ stopReason: 'no_progress', providerCalls: MAX_TOOL_PROVIDER_CALLS });
     expect(session.resultGraph).toEqual(before);
@@ -498,7 +498,7 @@ it.each(reportScenarios)('report independent rule: $name ($phase, retainable=$re
   expect(validate(payload), `D-098: report wire must admit only corrected fields: ${JSON.stringify(validate.errors)}`).toBe(true);
   const accepted = await executeToolAttempt(model.port, plan, { priorState: state });
   expect(accepted.rejections).toEqual([]);
-  expect(recordToolAttempt(state, accepted).providerCalls).toBe(correctAt);
+  expect(recordToolAttempt(state, accepted, registry).providerCalls).toBe(correctAt);
   expect(session.presentationArtifact?.name).toBe(report.name);
   if (preview) {
     expect(session.presentationArtifact?.aiMetadata.description).toContain('Source supplies Report exactly.');
@@ -603,21 +603,22 @@ describe('per-reply progress accounting', () => {
   const observation = (index: number, extra: Partial<ToolAttemptObservation> = {}): ToolAttemptObservation =>
     ({ callId: `c${index}`, toolName: 'lineage_get_scope_bundle', result: refused, input: { origin: `o${index}` }, ...extra });
   const reply = (observations: ToolAttemptObservation[]) => ({ stop: 'continue' as const, providerCalls: 1, observations, rejections: [], messages: [] });
+  const { registry } = registryWith(() => '{}');
 
   it('a result refused for size stores nothing, so three such replies stop the step as no progress', () => {
     let state = initialToolPhaseAttemptState('discover');
     for (let index = 0; index < MAX_TOOL_PROVIDER_CALLS; index++) {
       expect(state.stopReason).toBeNull();
-      state = recordToolAttempt(state, reply([observation(index, { refused: true })]));
+      state = recordToolAttempt(state, reply([observation(index, { refused: true })]), registry);
     }
     expect(state).toMatchObject({ noProgressCalls: MAX_TOOL_PROVIDER_CALLS, stopReason: 'no_progress' });
   });
 
   it('a stored body resets the count; a refused body after it does not', () => {
-    let state = recordToolAttempt(initialToolPhaseAttemptState('discover'), reply([observation(0, { refused: true })]));
-    state = recordToolAttempt(state, reply([observation(1, { result: '{"nodes":[]}' })]));
+    let state = recordToolAttempt(initialToolPhaseAttemptState('discover'), reply([observation(0, { refused: true })]), registry);
+    state = recordToolAttempt(state, reply([observation(1, { result: '{"nodes":[]}' })]), registry);
     expect(state.noProgressCalls).toBe(0);
-    state = recordToolAttempt(state, reply([observation(2, { refused: true })]));
+    state = recordToolAttempt(state, reply([observation(2, { refused: true })]), registry);
     expect(state).toMatchObject({ noProgressCalls: 1, stopReason: null });
   });
 
@@ -625,7 +626,7 @@ describe('per-reply progress accounting', () => {
     const rejected = { callId: '', toolName: 'lineage_answer', code: REJECTION_CODES.emptyGeneration, reason: 'empty' };
     let state = initialToolPhaseAttemptState('discover');
     for (let index = 0; index < MAX_TOOL_PROVIDER_CALLS; index++) {
-      state = recordToolAttempt(state, { stop: 'continue', providerCalls: 1, observations: [], rejections: [rejected], messages: [] });
+      state = recordToolAttempt(state, { stop: 'continue', providerCalls: 1, observations: [], rejections: [rejected], messages: [] }, registry);
     }
     expect(state.stopReason).toBe('no_progress');
     expect(classifyRejectionCode(REJECTION_CODES.emptyGeneration)).toBe('correction');
@@ -654,7 +655,7 @@ describe('rejection classification', () => {
     const attempt = await executeToolAttempt(model.port, discoveryPlan(registry));
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(attempt.calls.map(item => item.status)).toEqual(['rejected', 'phase_closed']);
-    expect(recordToolAttempt(initialToolPhaseAttemptState('discover'), attempt).stopReason).toBe('backend_fault');
+    expect(recordToolAttempt(initialToolPhaseAttemptState('discover'), attempt, registry).stopReason).toBe('backend_fault');
   });
 });
 
@@ -680,7 +681,7 @@ describe('a tool call whose arguments are not a JSON object', () => {
     expect(invoke).not.toHaveBeenCalled();
     expect(toolMessage(attempt.messages).status).toBe('error');
     expect(() => assertToolPairingWellFormed(attempt.messages)).not.toThrow();
-    expect(recordToolAttempt(initialToolPhaseAttemptState('discover'), attempt).stopReason).toBeNull();
+    expect(recordToolAttempt(initialToolPhaseAttemptState('discover'), attempt, registry).stopReason).toBeNull();
   });
 
   it.each([
@@ -808,7 +809,7 @@ describe('model-facing rejection text', () => {
       requiredTerminalTool: 'lineage_submit_findings', toolChoice: 'required' });
     const first = await executeToolAttempt(nativePort(() => [call('facts', input, 'lineage_submit_findings')]).port, plan,
       { priorState: initialToolPhaseAttemptState('active') });
-    const state = recordToolAttempt(initialToolPhaseAttemptState('active'), first, 'lineage_submit_findings');
+    const state = recordToolAttempt(initialToolPhaseAttemptState('active'), first, registry);
     expect(first.rejections).toHaveLength(1);
     expect(state).toMatchObject({ providerCalls: 1, rejectedTerminalCalls: 1, stopReason: null });
     expect(engine.heldFindingFocus).toBe(root);
@@ -826,7 +827,7 @@ describe('model-facing rejection text', () => {
     for (const absent of ['replies_remaining', 'reason', 'hint', 'detail']) expect(feedback).not.toHaveProperty(absent);
     expect(shown(feedback).map(error => error.path)).toEqual(expect.arrayContaining(['questions.0.nodeId', 'questions.1.nodeId', 'prune_neighbors.0.id']));
     const lastModel = nativePort(() => []);
-    const secondState = recordToolAttempt(state, next, 'lineage_submit_findings');
+    const secondState = recordToolAttempt(state, next, registry);
     await executeToolAttempt(lastModel.port, plan, { priorState: secondState });
     const last = consumedRejection(lastModel, 'facts-retry').feedback;
     // Replacement is schema-eligible; keeping the conflicting effective mapping still rejects every action fault.
@@ -860,7 +861,7 @@ describe('model-facing rejection text', () => {
     const plan = discoveryPlan(registry);
     const first = await executeToolAttempt(nativePort(() => [call(id, { query: 'Orders' })]).port, plan,
       { priorState: initialToolPhaseAttemptState('discover') });
-    const state = recordToolAttempt(initialToolPhaseAttemptState('discover'), first);
+    const state = recordToolAttempt(initialToolPhaseAttemptState('discover'), first, registry);
     const model = nativePort(() => [call(`${id}-retry`, { query: 'Sales' })]);
     const second = await executeToolAttempt(model.port, plan, { priorState: state });
     expect(model.sendRequest).toHaveBeenCalledOnce();
@@ -872,7 +873,7 @@ describe('model-facing rejection text', () => {
     const byPath = <T extends { path: string }>(rows: T[]) => [...rows].sort((a, b) => a.path.localeCompare(b.path));
     expect(shown(feedback)).toEqual(byPath(errors.map(({ path, code }) => fault(code, path))));
     const lastModel = nativePort(() => []);
-    await executeToolAttempt(lastModel.port, plan, { priorState: recordToolAttempt(state, second) });
+    await executeToolAttempt(lastModel.port, plan, { priorState: recordToolAttempt(state, second, registry) });
     const last = consumedRejection(lastModel, `${id}-retry`).feedback;
     // Feedback 2: the same faults, now with the schema's allowed values.
     const sortedValues = (rows: ShownError[]) => rows.map(row => (row.allowed ? { ...row, allowed: [...row.allowed].sort() } : row));
@@ -903,7 +904,7 @@ describe('model-facing rejection text', () => {
       expect(problemOf(String(toolMessage(attempt.messages).content)).code).toBe(REJECTION_CODES.routeValidationFailed);
       expect(shown(String(toolMessage(attempt.messages).content))).toContainEqual(fault('neighbor_undecided', 'questions'));
       expect(String(toolMessage(attempt.messages).content)).not.toContain('replies_remaining');
-      state = recordToolAttempt(state, attempt, 'lineage_submit_findings');
+      state = recordToolAttempt(state, attempt, registry);
     }
     expect(state).toMatchObject({ stopReason: 'no_progress', providerCalls: MAX_TOOL_PROVIDER_CALLS, rejectedTerminalCalls: MAX_TOOL_PROVIDER_CALLS });
     expect(state.rejections).toHaveLength(MAX_TOOL_PROVIDER_CALLS);
@@ -921,7 +922,7 @@ describe('model-facing rejection text', () => {
       expect(delivered.includes(LAST_CORRECTION)).toBe(index === MAX_TOOL_PROVIDER_CALLS - 1);
       // No issue code of a missing call carries a fallback, so none is ever delivered.
       for (const issue of Object.values(ISSUES)) if ('fallback' in issue) expect(delivered).not.toContain(issue.fallback);
-      state = recordToolAttempt(state, attempt);
+      state = recordToolAttempt(state, attempt, registry);
     }
     expect(state).toMatchObject({ stopReason: 'no_progress', providerCalls: MAX_TOOL_PROVIDER_CALLS });
     expect(state.rejections).toHaveLength(MAX_TOOL_PROVIDER_CALLS);
@@ -943,7 +944,7 @@ describe('model-facing rejection text', () => {
     expect(problemOf(String(toolMessage(first.messages).content))).toMatchObject({ code: REJECTION_CODES.invalidInput, resend: [] });
     expect(shown(String(toolMessage(first.messages).content))).toEqual([fault('enum', 'start')]);
     const second = await executeToolAttempt(model.port, plan, {
-      priorState: recordToolAttempt(initialToolPhaseAttemptState('synthesis'), first),
+      priorState: recordToolAttempt(initialToolPhaseAttemptState('synthesis'), first, registry),
     });
     expect(shown(String(toolMessage(second.messages).content))).toContainEqual({ ...fault('enum', 'start'), allowed: ['B1', 'B2'] });
     assertToolPairingWellFormed(second.messages);
@@ -982,7 +983,7 @@ describe('model-facing rejection text', () => {
     const initialFeedback = JSON.parse(String(toolMessage(first.messages).content));
     for (const path of ['column_flow.0.out_col', 'column_flow.1.out_col'])
       expect(shown(initialFeedback)).toContainEqual(fault('unknown_column', path));
-    state = recordToolAttempt(state, first);
+    state = recordToolAttempt(state, first, registry);
     const second = await executeToolAttempt(nativePort(() => [call('second', { query: 'MissingInput' })]).port, plan, { priorState: state });
     const content = String(toolMessage(second.messages).content);
     for (const path of ['column_flow.0.out_col', 'column_flow.1.out_col']) {
@@ -1024,7 +1025,7 @@ describe('model-facing rejection text', () => {
     expect(outcome[0]).toContain('phase=discover tool=lineage_search_objects callId=first status=rejected');
     expect(outcome[0]).toContain(`issuePaths=${path}`);
     expect(outcome[0]).not.toContain('query=Missing');
-    state = recordToolAttempt(state, first);
+    state = recordToolAttempt(state, first, registry);
     for (const [index, query] of ['StillMissing', 'StillMissing2'].entries()) {
       const next = await executeToolAttempt(nativePort(() => [call(`retry-${index}`, { query })]).port, plan, { priorState: state });
       const content = String(toolMessage(next.messages).content);
@@ -1038,13 +1039,13 @@ describe('model-facing rejection text', () => {
       expect([...error!.allowed!].sort()).toEqual([...columns].sort());
       expect(content).not.toMatch(/Recheck the named column|Rebuild the defective fields|Re-evaluate the proposed action/);
       if (count === 400 && kind !== 'enum') expect(next.rejections[0].detail).toMatchObject({ omitted: true });
-      state = recordToolAttempt(state, next);
+      state = recordToolAttempt(state, next, registry);
     }
     const finalModel = nativePort(() => [call('fourth', { query: 'StillMissing3' })]);
     const fourth = await executeToolAttempt(finalModel.port, plan, { priorState: state });
     expect(JSON.stringify(finalModel.sendRequest.mock.calls)).toContain('VerifiedColumn0');
-    expect(recordToolAttempt(state, fourth)).toMatchObject({ stopReason: 'no_progress', providerCalls: MAX_TOOL_PROVIDER_CALLS });
-    expect(recordToolAttempt(state, fourth).rejections).toHaveLength(MAX_TOOL_PROVIDER_CALLS);
+    expect(recordToolAttempt(state, fourth, registry)).toMatchObject({ stopReason: 'no_progress', providerCalls: MAX_TOOL_PROVIDER_CALLS });
+    expect(recordToolAttempt(state, fourth, registry).rejections).toHaveLength(MAX_TOOL_PROVIDER_CALLS);
   });
 
   it('retains self-loop facts first and object-qualified owner choices on the last correction', async () => {
@@ -1069,21 +1070,21 @@ describe('model-facing rejection text', () => {
     expect(toolMessage(first.messages).artifact).toMatchObject({ detail: expect.arrayContaining([expect.objectContaining({
       path: 'column_flow.0.upstream_columns.0', allowed_values: columns, when: { node: '[ai].[salesstaging]' },
     })]) });
-    state = recordToolAttempt(state, first);
+    state = recordToolAttempt(state, first, registry);
     const second = await executeToolAttempt(nativePort(() => [call('second', { query: 'OrderAmount' })]).port, plan, { priorState: state });
     const content = String(toolMessage(second.messages).content);
     expect(shown(content)).toContainEqual({ ...fault('self_loop', 'column_flow.0.upstream_columns.0'), allowed: [...columns].sort() });
     expect(content).not.toContain('Recheck the named column');
-    state = recordToolAttempt(state, second);
+    state = recordToolAttempt(state, second, registry);
     const third = await executeToolAttempt(nativePort(() => [call('third', { query: 'OrderAmount' })]).port, plan, { priorState: state });
     const thirdContent = String(toolMessage(third.messages).content);
     expect(thirdContent).not.toContain('Recheck the named column');
     expect(thirdContent).not.toContain('not a column of');
     expect(third.observations).toEqual([]);
-    state = recordToolAttempt(state, third);
+    state = recordToolAttempt(state, third, registry);
     expect(state.stopReason).toBeNull();
     const fourth = await executeToolAttempt(nativePort(() => [call('fourth', { query: 'OrderAmount' })]).port, plan, { priorState: state });
-    expect(recordToolAttempt(state, fourth).stopReason).toBe('no_progress');
+    expect(recordToolAttempt(state, fourth, registry).stopReason).toBe('no_progress');
   });
 
   it('states a call-level coded fault and correction, never a logs-only reason (D-103)', async () => {
@@ -1112,11 +1113,11 @@ describe('model-facing rejection text', () => {
     let state = initialToolPhaseAttemptState('discover');
     const first = await executeToolAttempt(nativePort(() => [call('c1', { query: 'Orders' })]).port, plan, { priorState: state });
     expect(String(toolMessage(first.messages).content)).not.toContain(ISSUES.identical_resend.label);
-    state = recordToolAttempt(state, first);
+    state = recordToolAttempt(state, first, registry);
     const same = await executeToolAttempt(nativePort(() => [call('c2', { query: 'Orders' })]).port, plan, { priorState: state });
     expect(String(toolMessage(same.messages).content)).toContain(ISSUES.identical_resend.label);
     expect(toolMessage(same.messages).artifact).toMatchObject({ code: 'not_found', reason: 'No object matches.' });
-    const changed = await executeToolAttempt(nativePort(() => [call('c3', { query: 'Sales' })]).port, plan, { priorState: recordToolAttempt(state, same) });
+    const changed = await executeToolAttempt(nativePort(() => [call('c3', { query: 'Sales' })]).port, plan, { priorState: recordToolAttempt(state, same, registry) });
     expect(String(toolMessage(changed.messages).content)).not.toContain(ISSUES.identical_resend.label);
   });
 
@@ -1124,7 +1125,7 @@ describe('model-facing rejection text', () => {
     const { registry } = registryWith(() => '{}');
     const plan = discoveryPlan(registry);
     const first = await executeToolAttempt(nativePort(() => [call('c1', { query: '' , extra: 1 })]).port, plan, { priorState: initialToolPhaseAttemptState('discover') });
-    const state = recordToolAttempt(initialToolPhaseAttemptState('discover'), first);
+    const state = recordToolAttempt(initialToolPhaseAttemptState('discover'), first, registry);
     const same = await executeToolAttempt(nativePort(() => [call('c2', { extra: 1, query: '' })]).port, plan, { priorState: state });
     expect(String(toolMessage(same.messages).content)).toContain(ISSUES.identical_resend.label);
   });
@@ -1134,11 +1135,11 @@ describe('model-facing rejection text', () => {
     const model = nativePort(() => [call('again', { query: 'Orders' })]);
     const plan = discoveryPlan(registry);
     const first = await executeToolAttempt(model.port, plan);
-    const state = recordToolAttempt(initialToolPhaseAttemptState('discover'), first);
+    const state = recordToolAttempt(initialToolPhaseAttemptState('discover'), first, registry);
     const second = await executeToolAttempt(model.port, plan, { priorState: state });
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(toolMessage(second.messages).artifact).toMatchObject({ code: REJECTION_CODES.duplicateRead, detail: { acceptedCallId: 'again' } });
-    expect(recordToolAttempt(state, second).noProgressCalls).toBe(1);
+    expect(recordToolAttempt(state, second, registry).noProgressCalls).toBe(1);
   });
 
   it('a read repeated after its result was trimmed from the transcript is answered with the held result', async () => {
@@ -1146,7 +1147,7 @@ describe('model-facing rejection text', () => {
     const model = nativePort(() => [call('again', { query: 'Orders' })]);
     const plan = discoveryPlan(registry);
     const first = await executeToolAttempt(model.port, plan);
-    const trimmed = { ...recordToolAttempt(initialToolPhaseAttemptState('discover'), first), messages: [] };
+    const trimmed = { ...recordToolAttempt(initialToolPhaseAttemptState('discover'), first, registry), messages: [] };
     const second = await executeToolAttempt(model.port, plan, { priorState: trimmed });
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(second.rejections).toEqual([]);
@@ -1168,7 +1169,7 @@ describe('model-facing rejection text', () => {
         expect(result).toMatchObject({ status: 'error', artifact: { code: 'result_too_large' } });
         expect(String(result.content)).toContain(ISSUES.result_too_large.correction);
       }
-      state = { ...recordToolAttempt(state, attempt), ...(trimmed ? { messages: [] } : {}) };
+      state = { ...recordToolAttempt(state, attempt, registry), ...(trimmed ? { messages: [] } : {}) };
     }
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(state).toMatchObject({ noProgressCalls: MAX_TOOL_PROVIDER_CALLS, stopReason: 'no_progress' });
@@ -1239,7 +1240,7 @@ describe('missing-content exchange progress', () => {
       expect(engine.toJSON()).toMatchObject({ visited: before.visited, agenda: before.agenda,
         engineInternals: { heldFinding: { finding: { summary: 'Report returns a constant Value.' } } } });
       expect(session.memory.getShortTermMemory()).toEqual([]);
-      attemptState = recordToolAttempt(state, malformed, 'lineage_submit_findings');
+      attemptState = recordToolAttempt(state, malformed, plan.input.registry);
       expect(attemptState).toMatchObject({ providerCalls: 2, stopReason: null });
       assertToolPairingWellFormed(attemptState.messages);
     }
@@ -1344,7 +1345,7 @@ describe('submit_findings rejection form', () => {
       const lines: string[] = [];
       const native = nativePort(() => [call(`c${state.providerCalls}`, input, 'lineage_submit_findings')]);
       const attempt = await executeToolAttempt(native.port, plan, { priorState: state, debugLog: line => lines.push(line) });
-      state = recordToolAttempt(state, attempt, 'lineage_submit_findings');
+      state = recordToolAttempt(state, attempt, registry);
       const content = String(toolMessage(attempt.messages).content);
       const problem = attempt.rejections.length ? problemOf(content) : undefined;
       const [, options] = native.sendRequest.mock.calls.at(-1) as unknown as [unknown[], { tools: Array<{ name: string; inputSchema: object }> }];
@@ -1752,5 +1753,30 @@ describe('submit_findings rejection form', () => {
     const third = await send({ focus_node_id: root, column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0' }] }, terminals[1]] });
     expect(third.attempt.stop).toBe('phase_complete');
     expect(engine.toJSON().removedSet).toEqual([other]);
+  });
+});
+
+describe('tools are told apart by their registry effect, never by name', () => {
+  it('a reply carries one presentation commit: the second call is not evaluated and the first rejection stays', async () => {
+    const invoke = vi.fn(() => JSON.stringify(makeRejection({ code: REJECTION_CODES.invalidInput, errors: at('missing', ['name']) })));
+    const registry = new ToolRegistry<string>();
+    registry.register({ name: 'lineage_present_result', inputSchema: z.object({ name: z.string() }).strict(), effect: 'presentation_commit', execute: invoke });
+    const plan = compileInstructionPlan({ kind: 'converse', stage: { kind: 'completed' }, registry, messages: [new HumanMessage('Present the report.')],
+      sink: new TurnEventSink(() => {}), facts: { memorySections: [] }, requiredTerminalTool: 'lineage_present_result', toolChoice: 'required' });
+    const attempt = await executeToolAttempt(nativePort(() => [call('first', {}, 'lineage_present_result'), call('second', {}, 'lineage_present_result')]).port, plan);
+    expect(invoke).toHaveBeenCalledOnce();
+    expect(attempt.calls.map(item => item.status)).toEqual(['rejected', 'phase_closed']);
+    expect((attempt.messages.filter(item => item instanceof ToolMessage) as ToolMessage[])[1].artifact).toMatchObject({ code: REJECTION_CODES.extraCallNotEvaluated });
+    expect(attempt.rejections).toHaveLength(1);
+  });
+
+  it('a failure thrown inside a presentation commit counts against the turn; one thrown inside a read does not', async () => {
+    const session = new AiSession();
+    session.beginTurn(); session.enterLmStage({ kind: 'completed' }, session.turnEpoch);
+    const registry = buildAiToolRegistry(() => session, { debug() {}, info() {}, warn() {}, error() {} } as never, () => undefined);
+    await registry.invoke('lineage_search_objects', { query: 'Orders' });
+    expect(session.presentResultFailureCountThisTurn).toBe(0);
+    await registry.invoke('lineage_present_result', {});
+    expect(session.presentResultFailureCountThisTurn).toBe(1);
   });
 });

@@ -1798,7 +1798,7 @@ it.each(['feedback marker', 'next provider schema and acknowledgement', 'second 
     facts: { memorySections: [] }, messages, sink: new TurnEventSink(() => {}), toolChoice: 'auto' });
   let state = initialToolPhaseAttemptState('sm_entry');
   const first = await executeToolAttempt(model, plan([modelUserMessage('Start this exploration.')]), { priorState: state });
-  state = recordToolAttempt(state, first);
+  state = recordToolAttempt(state, first, registry);
   expect(model.modelCalls).toBe(1); expect(session.currentRoundId).toBe(1);
   if (check === 'feedback marker') {
     const toolResult = first.messages.find(message => message.getType() === 'tool')!;
@@ -1814,7 +1814,7 @@ it.each(['feedback marker', 'next provider schema and acknowledgement', 'second 
     for (const error of shownErrors(firstContent)) expect(error).not.toHaveProperty('allowed');
     const content = JSON.parse(String(second.messages.find(message => message.getType() === 'tool')!.content));
     expect(shownErrors(content)).toContainEqual(expect.objectContaining({ path: 'analysisMode', allowed: expect.arrayContaining(['bb']) }));
-    state = recordToolAttempt(state, second);
+    state = recordToolAttempt(state, second, registry);
     await executeToolAttempt(model, plan([modelUserMessage('Start this exploration.'), ...second.messages]), { priorState: state });
     expect(model.modelCalls).toBe(3); expect(session.currentRoundId).toBe(1);
     expect(session.pendingExploration?.revision).toBe(1);
@@ -1877,7 +1877,7 @@ it.each([
   expect(results.map(result => readToolErrorText(result)?.issuePaths)).toEqual(results.map(() => ['query']));
   const patch = { query: row.valid.query };
   queue([{ tool: row.tool, input: patch }]);
-  await executeToolAttempt(port, plan(), { priorState: recordToolAttempt(initialToolPhaseAttemptState('discover'), first) });
+  await executeToolAttempt(port, plan(), { priorState: recordToolAttempt(initialToolPhaseAttemptState('discover'), first, registry) });
   expect(port.modelCalls).toBe(2); expect(session.currentRoundId).toBe(1);
   expect(offered[1]!.find(tool => tool.name === row.tool).inputSchema, 'D-098: a repair serves the full schema')
     .toEqual(offered[0]!.find(tool => tool.name === row.tool).inputSchema);
@@ -1920,7 +1920,7 @@ it.each([false, true])('repairs an owed section through the compiled active hop 
   expect(first.rejections).toHaveLength(1);
   expect(engine.heldPartsOfCurrentFocus()?.resend).toEqual(['sections.technical']);
   queue([{ tool: 'lineage_submit_findings', input: full ? { ...input, ...patch } : patch }]);
-  const second = await executeToolAttempt(port, plan(), { priorState: recordToolAttempt(initialToolPhaseAttemptState('active'), first) });
+  const second = await executeToolAttempt(port, plan(), { priorState: recordToolAttempt(initialToolPhaseAttemptState('active'), first, registry) });
   const schema = offered[1]!.find(tool => tool.name === 'lineage_submit_findings').inputSchema;
   expect(Object.keys(schema.properties)).toEqual(Object.keys(offered[0]!.find(tool => tool.name === 'lineage_submit_findings').inputSchema.properties));
   expect(schema, 'D-097: the original full schema stays unchanged').toEqual(offered[0]!.find(tool => tool.name === 'lineage_submit_findings').inputSchema);
@@ -1953,14 +1953,14 @@ it('keeps the original provider schema while rechecking held fields against curr
   const branch = session.model!.nodes.find(node => node.id === BRANCH)!;
   branch.columns = [{ name: 'Other', type: 'int', nullable: 'NULL', extra: '' }];
   queue([{ tool: 'lineage_submit_findings', input: { badge_label: 'Source' } }]);
-  const next = recordToolAttempt(state, first);
+  const next = recordToolAttempt(state, first, registry);
   const second = await executeToolAttempt(port, plan(), { priorState: next });
   expect(second.rejections.flatMap(rejection => rejection.issuePaths ?? [])).toContain('column_flow.0.upstream_columns.0.col');
   expect(offered[1]!.find(tool => tool.name === 'lineage_submit_findings').inputSchema)
     .toEqual(offered[0]!.find(tool => tool.name === 'lineage_submit_findings').inputSchema);
   expect(engine.getDetailSlots()).toEqual([]);
   queue([{ tool: 'lineage_submit_findings', input: { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Other' }] }] } }]);
-  const third = await executeToolAttempt(port, plan(), { priorState: recordToolAttempt(next, second) });
+  const third = await executeToolAttempt(port, plan(), { priorState: recordToolAttempt(next, second, registry) });
   expect(third.rejections).toHaveLength(0);
   expect(engine.getDetailSlots()).toContainEqual(expect.objectContaining({ summary: original.summary }));
 });
@@ -1985,7 +1985,7 @@ it.each(['column_flow', 'unknown-root'] as const)('uses the existing active auth
   expect(engine.heldPartsOfCurrentFocus()?.resend).toEqual(fault === 'column_flow' ? ['column_flow'] : []);
   const patch = fault === 'column_flow' ? { column_flow: valid.column_flow } : {};
   queue([{ tool: 'lineage_submit_findings', input: patch }]);
-  const second = await executeToolAttempt(port, plan(), { priorState: recordToolAttempt(initialToolPhaseAttemptState('active'), first) });
+  const second = await executeToolAttempt(port, plan(), { priorState: recordToolAttempt(initialToolPhaseAttemptState('active'), first, registry) });
   const schema = offered[1]!.find(tool => tool.name === 'lineage_submit_findings').inputSchema;
   expect(Object.keys(schema.properties), 'D-098: a repair serves the full schema')
     .toEqual(Object.keys(offered[0]!.find(tool => tool.name === 'lineage_submit_findings').inputSchema.properties));

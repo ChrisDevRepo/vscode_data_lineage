@@ -186,7 +186,8 @@ class ToolHandler implements ToolServices {
   public toolError(toolName: string, err: unknown): string {
     const msg = errorMessage(err);
     const noProject = err instanceof NoProjectLoadedError;
-    if (toolName === 'present_result' && this.caller === 'turn') {
+    const effect = TOOL_DEFS.find(def => def.name === `lineage_${toolName}`)?.effect;
+    if (effect === 'presentation_commit' && this.caller === 'turn') {
       const sess = this.getSession();
       sess.recordPresentResultFailure(this.turnEpoch(sess));
     }
