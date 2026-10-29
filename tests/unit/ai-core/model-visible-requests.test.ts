@@ -183,7 +183,7 @@ function senders(message: string): Array<{ question: string; from_node: string }
   return found;
 }
 
-const WALKS = [{ name: 'ct', run: ctRun, origin: '[ai].[vwpricelist]' }, { name: 'bb', run: bbRun, origin: '[ai].[vwconsolidatedsales]' }] as const;
+const WALKS = [{ name: 'ct', run: ctRun, script: CT_SCRIPT, origin: '[ai].[vwpricelist]' }, { name: 'bb', run: bbRun, script: BB_SCRIPT, origin: '[ai].[vwconsolidatedsales]' }] as const;
 
 describe('request assembly', () => {
   it('reaches the cases the clauses below are about', () => {
@@ -209,15 +209,19 @@ describe('request assembly', () => {
   });
 
   // Spec 07: the backend forwards the mapped columns to each mapped neighbor as a technical continuation; the hop that receives it is told which qualified columns arrived, with or without a question.
-  // The column-trace walk is skipped here: its blank-question hop renders no endpoint until the separate blank-question fix lands.
-  it.each(WALKS.filter(walk => walk.name === 'bb'))('$name: a hop message names every qualified endpoint of its column_lineage tasks', ({ run, origin }) => {
+  it.each(WALKS)('$name: a hop message names every qualified endpoint of its column_lineage tasks', ({ run, origin }) => {
     for (const hop of run.hops) {
-      // A task's endpoints are declared in its own elements; the same text in a lineage question does not declare them.
-      const declared = [...hop.request.message.matchAll(/<(?:assigned_endpoints|neighbor_columns)>([^<]*)</g)].map(match => match[1]).join('\n');
+      // A task's endpoints are declared in its own elements or in the engine's continuation lines; an AI-authored sub_question does not declare them.
+      const continuations = /<lineage_questions>([\s\S]*?)<\/lineage_questions>/.exec(hop.request.message)?.[1].split('\n') ?? [];
+      const declared = [...[...hop.request.message.matchAll(/<(?:assigned_endpoints|neighbor_columns)>([^<]*)</g)].map(match => match[1]), ...continuations];
       for (const task of hop.tasks.filter(candidate => candidate.kind === 'column_lineage')) {
         const refs = task.sourceRefs ?? task.returnTargets ?? (task.nodeId === origin ? task.activeColumns.map(col => ({ node: origin, col })) : []);
         expect(refs.length, `${hop.focus} carries no endpoint`).toBeGreaterThan(0);
-        for (const ref of refs) expect(declared, hop.focus).toContain(`${ref.node}.${ref.col}`);
+        for (const ref of refs) {
+          // The qualified form must end at the column name, so `[x].Col` is not declared by `[x].ColB`.
+          const qualified = new RegExp(`${`${ref.node}.${ref.col}`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w\\]])`);
+          expect(declared.some(line => qualified.test(line) || line.includes(`\`${ref.col}\` at \`${ref.node}\``)), `${hop.focus} ${ref.node}.${ref.col}`).toBe(true);
+        }
       }
     }
   });
@@ -232,6 +236,17 @@ describe('request assembly', () => {
       }
       expect(servedChoices(hop, 'questions', 'nodeId'), hop.focus).toEqual(neighbors.filter(neighbor => neighbor.can_question).map(neighbor => neighbor.id).sort());
       expect(servedChoices(hop, 'prune_neighbors', 'id'), hop.focus).toEqual(neighbors.filter(neighbor => neighbor.can_prune).map(neighbor => neighbor.id).sort());
+    }
+  });
+
+  // Spec 07: questions are authored by the AI at a hop. A sender named beside a question is the hop whose findings asked it, never the storage object the question travelled through.
+  it('names as the sender of a question the hop that asked it', () => {
+    for (const { run, script } of WALKS) {
+      const asked = new Map(Object.entries(script).flatMap(([focus, hop]) => 'submit' in hop
+        ? ((hop.submit as { questions?: Array<{ question: string }> }).questions ?? []).map(entry => [entry.question, focus] as const) : []));
+      for (const message of [...run.hops.map(hop => hop.request.message), run.synthesis.message]) {
+        for (const sender of senders(message)) expect(sender.from_node, sender.question).toBe(asked.get(sender.question));
+      }
     }
   });
 });
