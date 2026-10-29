@@ -309,16 +309,17 @@ const ColumnFlowReturnsToObject = z.object({
 
 /** One closed `column_flow` entry; provider projection and runtime parsing reject surplus keys. */
 const OUT_COL_DESCRIPTION = "Output column of this hop from its column task; for a procedure, the column it writes. Never invent names.";
-const OUT_NODE_DESCRIPTION = 'Table from <hop_context> that this procedure writes out_col to. For a write to an object not listed, omit the entry and name the write in sections. A value this procedure creates itself lists this procedure in upstream_columns.';
+const OUT_NODE_DESCRIPTION = 'Table from <hop_context> that this procedure writes out_col to. For a write to an object not listed, omit the entry and name the write in sections.';
+const UPSTREAM_DESCRIPTION = 'Neighbor columns that feed out_col: value sources (expression operands, aggregate arguments, each UNION branch column, caller-bound inputs) and columns that only join, filter, group or order its rows. ' +
+  'Resolve parameters and aliases to source columns.';
+/** At a procedure, a created value is the pair procedure.col -> out_node.out_col (D-130). */
+const PROCEDURE_UPSTREAM_DESCRIPTION = `${UPSTREAM_DESCRIPTION} A value this procedure creates lists this procedure; [] records no pair.`;
 
 const ColumnFlowEntrySchema = z.object({
   out_col: z.string().describe(OUT_COL_DESCRIPTION),
   out_node: stringFact(z.string(), 'flowReference').optional().describe(OUT_NODE_DESCRIPTION),
   returns_to: ColumnFlowReturnsToObject.optional().meta({ toolValidated: 'returnTarget' }).describe('Real caller output supplied in caller_output_targets for this scalar-return task; never a table write.'),
-  upstream_columns: z.array(ColumnRefSchema).meta({ toolArrayFact: 'suppliers' }).describe(
-    'Neighbor columns that feed out_col: value sources (expression operands, aggregate arguments, each UNION branch column, caller-bound inputs) and columns that only join, filter, group or order its rows. ' +
-    'Resolve parameters and aliases to source columns. [] means the value originates here.',
-  ),
+  upstream_columns: z.array(ColumnRefSchema).meta({ toolArrayFact: 'suppliers' }).describe(`${UPSTREAM_DESCRIPTION} [] means the value originates here.`),
 }).strict().meta({ toolGroups: [{ name: 'flowHeader', fields: ['out_col', 'out_node', 'returns_to'] }], toolObjectFact: 'flowPresence' }).describe('One output column: out_col, upstream_columns, optional out_node or returns_to. note belongs inside an upstream_columns entry.');
 
 
@@ -544,9 +545,10 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
   const outCol = !hop.outCols?.length
     ? ColumnFlowEntrySchema.shape.out_col
     : suppliedValueSchema(hop.outCols, hop.identifierCaseSensitive).describe(OUT_COL_DESCRIPTION);
-  const upstreamColumns = hop.columnSourceNodeIds
-    ? z.array(columnRefSchemaForHop(hop)).meta({ toolArrayFact: 'suppliers' }).describe(ColumnFlowEntrySchema.shape.upstream_columns.description ?? '')
-    : ColumnFlowEntrySchema.shape.upstream_columns;
+  const upstreamColumns = (hop.columnSourceNodeIds
+    ? z.array(columnRefSchemaForHop(hop)).meta({ toolArrayFact: 'suppliers' })
+    : ColumnFlowEntrySchema.shape.upstream_columns
+  ).describe(hop.outNode ? PROCEDURE_UPSTREAM_DESCRIPTION : ColumnFlowEntrySchema.shape.upstream_columns.description ?? '');
   const shape = {
     out_col: outCol,
     upstream_columns: upstreamColumns,
