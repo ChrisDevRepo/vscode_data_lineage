@@ -10,9 +10,12 @@ import type { StoredAiRun } from '../../../src/ai/session/runStore';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { objectDetail } from '../helpers/objectDetail';
 import { presentRunRecall } from '../../../src/ai/tools/screenStatePresenter';
-import { inspectPresentInput } from '../helpers/inspectPresent';
+import { draftWorld } from '../helpers/presentWorld';
+import { makeNode } from '../helpers/modelFixtures';
+import { executePresentResult } from '../../../src/ai/tools/handlers/presentResult';
+import { stubToolServices } from './helpers/toolServices';
 import { DEFAULT_TURN_TOKEN_BUDGET } from '../../../src/ai/support/tokenBudget';
-import { ISSUES, at, renderProblem } from '../../../src/ai/support/toolErrorEnvelope';
+import { ISSUES, renderProblem } from '../../../src/ai/support/toolErrorEnvelope';
 import { reconcileAiView } from '../../../src/components/aiViewReconcile';
 import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
 
@@ -134,16 +137,22 @@ describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs =>
     ] });
   });
 
-  it('gives valid canonical-id repair guidance for an unresolved reference', () => {
+  it('gives valid canonical-id repair guidance for an unresolved reference', async () => {
     const canonical = cs ? '[dbo].[Report]' : '[dbo].[report]';
-    const rejection = inspectPresentInput({
+    const model = buildModel([{ fullName: canonical, type: 'table' }], [], undefined, undefined, true, undefined, cs);
+    const session = new AiSession();
+    session.model = model;
+    const epoch = session.beginTurn();
+    session.resultGraph = { nodeIds: [canonical], edges: [], source: 'blackboard', originNodeId: canonical };
+    session.enterCompleted(epoch);
+    const { services } = stubToolServices({ session, model, graph: session.graph, turnEpoch: () => epoch });
+    const rejection = JSON.parse(await executePresentResult({
       name: 'Reports', summary: 'Reports lineage.', highlight_groups: [],
-      sections: [{ label: 'Report', node_ids: ['[dbo].[REPORT]'], text: 'Report output.' }],
-    }, [canonical]);
-    expect(rejection).toBeDefined();
+      sections: [{ label: 'Report', node_ids: ['[dbo].[Missing]'], text: 'Report output.' }],
+    }, services));
     // The accepted canonical ids are the allowed values of the unresolved reference; the sent spelling is never echoed (D-102).
-    expect(rejection!.errors).toContainEqual({ path: 'sections.0.node_ids.0', code: 'report_not_found', values: [canonical] });
-    for (const stage of [1, 2, 3] as const) expect(renderProblem(rejection!, stage), 'D-102: no echoed id').not.toContain('[dbo].[REPORT]');
+    expect(rejection.errors).toContainEqual({ path: 'sections.0.node_ids.0', code: 'report_not_found', values: [canonical] });
+    for (const stage of [1, 2, 3] as const) expect(renderProblem(rejection, stage), 'D-102: no echoed id').not.toContain('[dbo].[Missing]');
   });
 });
 
@@ -182,43 +191,36 @@ it.each([undefined, false, true])('recalls historical identities using the saved
   expect(logs.some(log => log.includes('id resolved'))).toBe(false);
 });
 
-it('gives one repair per id: a highlighted id an external violation already places is not listed again', () => {
-  const id = '[ai].[vwpricelist]';
-  const rejection = inspectPresentInput({
-    name: 'Prices', summary: 'Price lineage.',
-    highlight_groups: [{ label: 'Prices', color: 'source', node_ids: [id] }],
-    sections: [{ label: 'Other', node_ids: [], text: 'Other.' }],
-  }, [id], [{
-    errors: at('slot_unplaced', ['sections.*.node_ids'], [id]), repairFields: ['sections'], paths: ['sections'], entryIds: [id],
-  }]);
-  expect(rejection?.errors).toEqual([{ path: 'sections.*.node_ids', code: 'slot_unplaced', values: [id] }]);
+it('gives one repair per id: a highlighted id an unplaced detail slot already owes is not listed again', async () => {
+  const { session, ids, report, send } = draftWorld();
+  session.memory.storeDetail(makeNode({ id: ids[1], schema: 'dbo', name: 'Source', type: 'table' }), [{ angle: 'technical', text: 'Captured finding.' }], 'Summary.');
+  const rejection = await send({ ...report, highlight_groups: [{ label: 'Flow', color: 'source', node_ids: [ids[1]] }], sections: [{ label: 'Other', node_ids: [ids[0]], text: 'Other.' }] });
+  expect(rejection.errors).toEqual([{ path: 'sections.*.node_ids', code: 'slot_unplaced', values: [ids[1]] }]);
 });
 
 describe('present_result id rejection route', () => {
-  const call = (state: 'pruned' | 'out_of_scope') => inspectPresentInput({
-    name: 'Reports', summary: 'Reports lineage.', highlight_groups: [],
-    sections: [{ label: 'Report', node_ids: ['[dbo].[a]', '[dbo].[x]'], text: 'Report output.' }],
-  }, ['[dbo].[a]'], [], 'completed', () => state);
+  const call = async (inScope: boolean) => {
+    const { ids, report, send } = draftWorld({ inScope });
+    return { ids, rejection: await send({ ...report, sections: [{ ...report.sections[0], node_ids: ids }] }) };
+  };
 
-  it('does not offer add_node_ids for an id outside the approved scope, and states the fault without a leave-out remedy or an echo (D-105, D-102)', () => {
-    const rejection = call('out_of_scope');
-    expect(rejection).toBeDefined();
-    expect(rejection!.errors).toEqual([{ path: 'sections.0.node_ids.1', code: 'result_out_of_scope', values: ['[dbo].[a]'] }]);
+  it('does not offer add_node_ids for an id outside the approved scope, and states the fault without a leave-out remedy or an echo (D-105, D-102)', async () => {
+    const { ids, rejection } = await call(false);
+    expect(rejection.errors).toEqual([{ path: 'sections.0.node_ids.2', code: 'result_out_of_scope', values: ids.slice(0, 2) }]);
     for (const stage of [1, 2, 3] as const) {
-      const text = renderProblem(rejection!, stage);
+      const text = renderProblem(rejection, stage);
       expect(text).not.toContain('add_node_ids');
-      expect(text, 'D-102: no echoed id').not.toContain('[dbo].[x]');
+      expect(text, 'D-102: no echoed id').not.toContain(ids[2]);
       expect(text).not.toMatch(/\b(drop|omit|remove|withdraw)\b/i);
     }
-    expect(rejection!.resend).toEqual(['sections']);
+    expect(rejection.resend).toEqual(['sections']);
   });
 
-  it('authorizes add_node_ids in the repair whenever the rejection names it', () => {
-    const rejection = call('pruned');
-    expect(rejection).toBeDefined();
-    expect(rejection!.errors).toEqual([{ path: 'sections.0.node_ids.1', code: 'addable_to_result', values: ['[dbo].[a]'] }]);
+  it('authorizes add_node_ids in the repair whenever the rejection names it', async () => {
+    const { ids, rejection } = await call(true);
+    expect(rejection.errors).toEqual([{ path: 'sections.0.node_ids.2', code: 'addable_to_result', values: ids.slice(0, 2) }]);
     expect(ISSUES.addable_to_result.correction).toContain('add_node_ids');
-    expect([...rejection!.resend ?? []].sort()).toEqual(['add_node_ids', 'sections']);
+    expect([...rejection.resend].sort()).toEqual(['add_node_ids', 'sections']);
   });
 });
 

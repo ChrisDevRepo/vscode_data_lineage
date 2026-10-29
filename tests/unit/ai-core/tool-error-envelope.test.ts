@@ -2,7 +2,7 @@
 import { ISSUES, readToolError, readToolErrorText, isConsentGateRejection, makeRejection, rejectionFromZodError, renderProblem, type FeedbackStage, type ToolProblem, type ToolRejection } from '../../../src/ai/support/toolErrorEnvelope';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { makeGraph, makeIndexedModel, makeModel, makeNode } from '../helpers/modelFixtures';
-import { inspectPresentInput } from '../helpers/inspectPresent';
+import { draftWorld } from '../helpers/presentWorld';
 import { presentResultSchemaForPhase, submitFindingsSchemaForMode } from '../../../src/ai/tools/toolSchemas';
 import { AiSession } from '../../../src/ai/session/session';
 import { DEFAULT_TURN_TOKEN_BUDGET } from '../../../src/ai/support/tokenBudget';
@@ -137,17 +137,24 @@ describe("tool-error-envelope", () => {
     for (const stage of [1, 2, 3] as const) expect(renderProblem(rejection, stage, { focus_node_id: sent })).not.toContain(sent);
   });
 
-  it('present_result unknown node ids: each at its element path with the result ids, no echo (D-102)', () => {
+  it('present_result unknown node ids: each at its element path with the result ids, no echo (D-102)', async () => {
     for (const stage of ['completed', 'synthesis', 'visual_preview'] as const) {
-      const sentId = '[dbo].[x]', sentLabel = 'LabelSentinel';
-      const input = { name: 'Reports', summary: 'Reports lineage.', highlight_groups: [{ label: 'Out', color: 'target' as const, node_ids: [sentId] }],
-        sections: [{ label: sentLabel, node_ids: ['[dbo].[a]', sentId], text: 'Report output.' }] };
-      const rejection = inspectPresentInput(input, ['[dbo].[a]'], [], stage, () => 'out_of_scope');
-      if (!rejection) throw new Error('Expected a node-id rejection');
+      const { session, ids, report, send } = draftWorld({ synthesis: stage === 'synthesis' });
+      const [origin, source, sentId] = ids, sentLabel = 'LabelSentinel';
+      const highlight_groups = [{ label: 'Out', color: 'target' as const, node_ids: [origin, sentId] }];
+      const sections = [{ label: sentLabel, node_ids: [origin, source, sentId] }];
+      if (stage === 'visual_preview') {
+        session.activeLmStage = { kind: 'visual_preview' };
+        session.lastDiscoveryAnswer = 'Report summary.\n\nSource feeds the report.';
+        session.storeDiscoveryScope({ turnEpoch: session.turnEpoch, origin, direction: 'upstream', nodeIds: [origin, source], edges: [[source, origin, 'read']] }, session.turnEpoch);
+      }
+      const input = { name: report.name, highlight_groups, sections: sections.map(section => stage === 'visual_preview' ? { ...section, start: 'B1' } : { ...section, text: 'Report output.' }),
+        ...(stage === 'visual_preview' ? {} : { summary: report.summary }) };
+      const rejection = await send(input);
       expect(rejection.errors).toEqual(expect.arrayContaining([
-        { path: 'sections.0.node_ids.1', code: 'result_out_of_scope', values: ['[dbo].[a]'] },
-        { path: 'highlight_groups.0.node_ids.0', code: 'result_out_of_scope', values: ['[dbo].[a]'] }]));
-      for (const feedback of [1, 2, 3] as const) expect(renderProblem(rejection, feedback, input)).not.toMatch(/\[dbo\]\.\[x\]|LabelSentinel/);
+        { path: 'sections.0.node_ids.2', code: 'result_out_of_scope', values: [origin, source] },
+        { path: 'highlight_groups.0.node_ids.1', code: 'result_out_of_scope', values: [origin, source] }]));
+      for (const feedback of [1, 2, 3] as const) expect(renderProblem(rejection, feedback, input)).not.toMatch(/\[dbo\]\.\[Outside\]|LabelSentinel/);
     }
   });
 
