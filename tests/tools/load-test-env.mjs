@@ -6,8 +6,8 @@ import { z } from 'zod';
 
 const ENV_FILE = resolve('.env');
 const testTimeout = z.coerce.number().int().min(1).max(2_147_423_647);
-const REQUIRED_AI_KEYS = ['AI_TEST_ENDPOINT', 'AI_TEST_API_KEY', 'AI_TEST_MODEL'];
-const PROVIDER_PROFILES = {
+export const REQUIRED_AI_KEYS = ['AI_TEST_ENDPOINT', 'AI_TEST_API_KEY', 'AI_TEST_MODEL'];
+export const PROVIDER_PROFILES = {
   azure: ['AZURE_URI', 'AZURE_API', 'AZURE_MODEL'],
   fireworks: ['FIREWORKS_URL', 'FIREWORKS_API', 'FIREWORKS_MODEL'],
   openrouter: ['OPENROUTER_URL', 'OPENROUTER_API', 'OPENROUTER_MODEL'],
@@ -17,6 +17,8 @@ const PROVIDER_PROFILES = {
     'AI_TEST_OPENAI_COMPATIBLE_MODEL',
   ],
 };
+/** Env names whose values are secrets and must never reach run evidence; the harness redacts them. */
+export const SECRET_ENV_KEYS = ['AI_TEST_API_KEY', 'DB_TEST_PASSWORD', 'DB_TEST_TOKEN', 'LANGFUSE_SECRET_KEY'];
 
 const execFileAsync = promisify(execFile);
 
