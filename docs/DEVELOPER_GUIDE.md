@@ -6,7 +6,7 @@ How to build, run and change this extension in a clone. Concepts: [`ARCHITECTURE
 
 | Tool | Requirement | Declared in |
 |---|---|---|
-| Node.js | `>=22` | `engines.node` in [`package.json`](../package.json) |
+| Node.js | 22.x ≥22.22.2, 24.x ≥24.15, or ≥26 | `engines.node` in [`package.json`](../package.json) |
 | npm | `>=10` | `engines.npm` |
 | VS Code | `^1.101.0` | `engines.vscode` |
 

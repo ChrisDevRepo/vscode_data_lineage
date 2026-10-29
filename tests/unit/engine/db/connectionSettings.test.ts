@@ -70,7 +70,7 @@ vi.mock('../../../../src/engine/db/builtInProvider', () => ({
 }));
 
 const {
-  BuiltInConnectionSchema, readBuiltInConnections, passwordSecretKey, encodeSavedPassword, readSavedPassword, savePassword,
+  BuiltInConnectionSchema, readBuiltInConnections, passwordSecretKey, readSavedPassword, savePassword,
   upsertBuiltInConnection, deleteBuiltInConnection,
 } = await import('../../../../src/engine/db/connectionSettings');
 const { registerConnectionCommands } = await import('../../../../src/engine/db/connectionCommands');
@@ -78,7 +78,7 @@ const { registerConnectionCommands } = await import('../../../../src/engine/db/c
 const outputChannel = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn() } as never;
 
 function makeContext() {
-  const secrets = { get: vi.fn(), store: vi.fn(async () => {}), delete: vi.fn(async () => {}) };
+  const secrets = { get: vi.fn(), store: vi.fn(async (_key: string, _value: string) => {}), delete: vi.fn(async () => {}) };
   return { context: { secrets, subscriptions: [] } as never, secrets };
 }
 
@@ -163,7 +163,8 @@ describe('connection commands', () => {
     expect(saved).toHaveLength(1);
     expect(saved[0]).toMatchObject({ id, server: 'localhost', authenticationType: 'sqlLogin', user: 'sa' });
     expect(JSON.stringify(saved)).not.toContain('s3cret');
-    expect(secrets.store).toHaveBeenCalledWith(passwordSecretKey(id), encodeSavedPassword({ ...valid, id }, 's3cret'));
+    expect(secrets.store.mock.calls.map(([key, value]) => [key, JSON.parse(value)]))
+      .toContainEqual([`dataLineageViz.database.password.${id}`, { server: 'localhost', port: 1433, user: 'sa', password: 's3cret' }]);
     for (const prompt of [host.showInputBox, host.showQuickPick, host.createInputBox, host.createQuickPick, host.withProgress]) {
       expect(prompt).not.toHaveBeenCalled();
     }
@@ -262,7 +263,8 @@ describe('connection commands', () => {
     await host.handlers.get('dataLineageViz.updateDatabasePassword')!(valid.id);
 
     expect(host.showInputBox.mock.calls[0][0]).toMatchObject({ password: true });
-    expect(secrets.store).toHaveBeenCalledWith(passwordSecretKey(valid.id), encodeSavedPassword(valid as never, 'new-pw'));
+    expect(secrets.store.mock.calls.map(([key, value]) => [key, JSON.parse(value)]))
+      .toContainEqual(['dataLineageViz.database.password.3f2b8c1e-5d34-4e0a-9a41-2b7c9d1e8f60', { server: 'localhost', port: 1433, user: 'sa', password: 'new-pw' }]);
   });
 
   it('updateDatabasePassword refuses an Entra ID connection named by id without prompting or storing', async () => {
@@ -404,7 +406,8 @@ describe('saved password follows the server it was entered for', () => {
 
     await add({ connection: { ...valid, server: 'other' }, password: 'fresh' });
 
-    expect(secrets.store).toHaveBeenCalledWith(key, encodeSavedPassword({ ...valid, server: 'other' } as never, 'fresh'));
+    expect(secrets.store.mock.calls.map(([key, value]) => [key, JSON.parse(value)]))
+      .toContainEqual(['dataLineageViz.database.password.3f2b8c1e-5d34-4e0a-9a41-2b7c9d1e8f60', { server: 'other', port: 1433, user: 'sa', password: 'fresh' }]);
     expect(secrets.delete).not.toHaveBeenCalled();
   });
 
@@ -504,7 +507,8 @@ describe('saved password follows the server it was entered for', () => {
     const saved = (host.updates.at(-1)!.value as Array<Record<string, unknown>>)[0];
     expect(saved).toMatchObject({ server, port, name: 'Moved' });
     expect(saved.trustServerCertificate).not.toBe(true);
-    expect(secrets.store).toHaveBeenCalledWith(passwordSecretKey(valid.id), encodeSavedPassword({ ...valid, server, port } as never, 'fresh'));
+    expect(secrets.store.mock.calls.map(([key, value]) => [key, JSON.parse(value)]))
+      .toContainEqual(['dataLineageViz.database.password.3f2b8c1e-5d34-4e0a-9a41-2b7c9d1e8f60', { server, port, user: 'sa', password: 'fresh' }]);
   });
 
   it('edit wizard keeps the saved password and trust when the server is unchanged', async () => {

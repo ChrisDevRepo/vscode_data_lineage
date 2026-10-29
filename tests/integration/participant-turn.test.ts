@@ -84,12 +84,9 @@ suite('Participant turn — public API, no CDP', () => {
     const fixture = vscode.extensions.getExtension(FIXTURE_ID);
     assert.ok(fixture, 'language-model fixture must be installed in this lane');
     await fixture.activate();
-  });
-
-  test('the fixture model resolves from the public API with the expected identity', async () => {
     const model = await fixtureModel();
-    assert.strictEqual(model.vendor, TEST_VENDOR);
-    assert.strictEqual(model.id, TEST_MODEL_ID);
+    assert.strictEqual(model.vendor, TEST_VENDOR, 'the fixture must use the declared test vendor');
+    assert.strictEqual(model.id, TEST_MODEL_ID, 'the fixture must use the declared model identity');
   });
 
   test('with no lineage data loaded the turn degrades to a notice rather than throwing', async () => {

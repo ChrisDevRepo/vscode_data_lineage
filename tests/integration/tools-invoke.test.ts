@@ -43,6 +43,8 @@ suite('Tool surface — invokeTool, no model, no CDP', () => {
     const extension = vscode.extensions.getExtension(EXTENSION_ID);
     assert.ok(extension, 'product extension must be present');
     await extension.activate();
+    assert.strictEqual((await vscode.lm.selectChatModels()).length, 0,
+      'the tool host must have no leaked model provider');
     await vscode.commands.executeCommand('dataLineageViz.openDemo');
 
     // The demo loads through the webview, so readiness is asynchronous. Poll the tool itself
@@ -60,23 +62,13 @@ suite('Tool surface — invokeTool, no model, no CDP', () => {
     assert.fail('demo model did not load within 60s');
   });
 
-  test('the host is bare — a green result cannot be explained by a leaked model', async () => {
-    assert.strictEqual((await vscode.lm.selectChatModels()).length, 0);
-  });
-
-  test('only the contributed external lineage tools are registered with VS Code', () => {
-    assert.ok(READ_TOOLS.length > 0, 'the manifest must contribute read tools');
-    const registered = new Set(vscode.lm.tools.map((tool) => tool.name));
-    for (const name of CONTRIBUTED_TOOLS) {
-      assert.ok(registered.has(name), `${name} must be registered via vscode.lm.registerTool`);
-    }
-    for (const name of CHAT_ONLY_TOOLS) {
-      assert.ok(!registered.has(name), `${name} must remain participant-owned`);
-    }
-  });
-
-  test('every read tool answers with data or its required-session error', async function () {
+  test('only public read tools are exposed and answer through actual invocation', async function () {
     this.timeout(60_000);
+    assert.ok(READ_TOOLS.length > 0, 'the manifest must contribute public read tools');
+    const exposed = new Set(vscode.lm.tools.map(tool => tool.name));
+    for (const name of CHAT_ONLY_TOOLS) {
+      assert.ok(!exposed.has(name), `${name} must remain participant-owned`);
+    }
     const inputs: Record<string, object> = {
       lineage_get_context: {},
       lineage_get_screen_state: {},
@@ -89,7 +81,14 @@ suite('Tool surface — invokeTool, no model, no CDP', () => {
     for (const name of READ_TOOLS) {
       assert.ok(inputs[name], `${name} is contributed but has no input case here`);
       if (name === 'lineage_get_neighbor_columns') {
-        await assert.rejects(async () => invoke(name, inputs[name]), /No exploration is active\./);
+        await assert.rejects(async () => invoke(name, inputs[name]), (error: unknown) => {
+          assert.ok(error instanceof Error);
+          const problem = JSON.parse(error.message) as { code: string; guidance: Array<{ errors: unknown[] }>; resend: string[] };
+          assert.strictEqual(problem.code, 'no_active_session');
+          assert.ok(problem.guidance.some(group => group.errors.length > 0));
+          assert.deepStrictEqual(problem.resend, []);
+          return true;
+        });
         continue;
       }
       const text = textOf(await invoke(name, inputs[name]));

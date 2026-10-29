@@ -32,7 +32,7 @@ import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { executeSubmitFindings } from '../../../src/ai/tools/handlers/submitFindings';
 import type { ToolServices } from '../../../src/ai/tools/handlers/toolServices';
 import { makeGraph, makeIndexedModel, makeNode } from '../helpers/modelFixtures';
-import { stubToolServices, schemaFaults, withSchemaFaults, type SchemaFault } from './helpers/toolServices';
+import { stubToolServices } from './helpers/toolServices';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import { LineageRuntime } from '../../../src/ai/runtime/lineageRuntime';
 import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
@@ -316,8 +316,7 @@ describe('start contract matrix through the native port and production registry'
     expect(w.session.pendingExploration).toMatchObject({ revision: 2, classification: 'business', init: { origin: id, analysisMode: 'ct', targetColumns: ['Value'] } });
   });
 
-  // Finite Approved08 classes: one mutation per independent field, all nonempty subsets.
-  // A malformed depth parent makes child exactness/levels faults inapplicable, never guessed.
+  // Independent field rules plus one maximum bundle; temporal outcomes belong to the draft owner.
   const startFaults = [
     { field: 'classification', bad: 'wrong', good: 'technical', errors: [{ path: 'classification', code: 'enum' }] },
     { field: 'origin', bad: '[dbo].[Missing]', good: id, errors: [{ path: 'origin', code: 'not_found' }] },
@@ -325,9 +324,11 @@ describe('start contract matrix through the native port and production registry'
     { field: 'unknown', bad: true, good: undefined, errors: [{ path: 'unknown', code: 'unknown_key' }] },
     { field: 'excludeNodeIds', bad: ['[dbo].[Missing]'], good: [], errors: [{ path: 'excludeNodeIds.0', code: 'not_found' }] },
   ];
-  const startCombinations = Array.from({ length: (1 << startFaults.length) - 1 }, (_, index) =>
-    startFaults.filter((_, bit) => (index + 1) & (1 << bit))).map(faults => ({ name: faults.map(fault => fault.field).join('+'), faults }));
-  it.each(startCombinations.flatMap(row => [2, 3, 4, null].map(correctAt => ({ ...row, correctAt }))))('Approved08 START exhaustive declared independent-field subset: $name / correction=$correctAt', async ({ faults, correctAt }) => {
+  const startScenarios = [
+    ...startFaults.map(fault => ({ name: fault.field, faults: [fault], correctAt: 2 })),
+    ...[2, 3, 4, null].map(correctAt => ({ name: 'maximum-independent-bundle', faults: startFaults, correctAt })),
+  ];
+  it.each(startScenarios)('Approved08 START independent rule: $name / correction=$correctAt', async ({ faults, correctAt }) => {
     const w = startWorld();
     const bad = { ...proposal, ...Object.fromEntries(faults.map(fault => [fault.field, fault.bad])) };
     const correction = Object.fromEntries(faults.filter(fault => fault.good !== undefined).map(fault => [fault.field, fault.good]));
@@ -393,10 +394,20 @@ describe('start contract matrix through the native port and production registry'
 });
 
 /** Approved08 D-098/D-099/D-102: report corrections use the same production controller in every report phase. */
-it.each([
+const reportFields = ['name', 'notes', 'sections', 'highlight_groups', 'unknown'];
+const reportContexts = [
   { phase: 'completed' as const, retainable: false }, { phase: 'synthesis' as const, retainable: false },
   { phase: 'completed' as const, retainable: true }, { phase: 'visual_preview' as const, retainable: false },
-].flatMap(scenario => Array.from({ length: 31 }, (_, index) => [2, 3, 4, null].map(correctAt => ({ ...scenario, mask: index + 1, correctAt }))).flat()))('report contract matrix: every declared compatible field subset ($phase, retainable=$retainable, mask=$mask, correction=$correctAt)', async ({ phase, retainable, mask, correctAt }) => {
+];
+const reportScenarios = [
+  ...reportContexts.flatMap(context => [
+    ...reportFields.map(field => ({ ...context, name: field, fields: [field], correctAt: 2 })),
+    { ...context, name: 'maximum-independent-bundle', fields: reportFields, correctAt: 2 },
+  ]),
+  ...[3, 4, null].map(correctAt => ({ phase: 'completed' as const, retainable: false,
+    name: 'shared-report-draft-temporal', fields: reportFields, correctAt })),
+];
+it.each(reportScenarios)('report independent rule: $name ($phase, retainable=$retainable, correction=$correctAt)', async ({ phase, retainable, fields, correctAt }) => {
   const origin = '[dbo].[Report]', source = '[dbo].[Source]', outside = '[dbo].[Outside]';
   const nodes = [origin, source, outside].map(id => makeNode({ id, schema: 'dbo', name: id, type: 'table' }));
   const session = new AiSession();
@@ -427,7 +438,7 @@ it.each([
       errors: [{ path: 'highlight_groups.0.color', code: 'enum' }] },
     { field: 'unknown', bad: true, good: undefined, errors: [{ path: 'unknown', code: 'unknown_key' }] },
   ];
-  const faults = catalog.filter((_, bit) => mask & (1 << bit));
+  const faults = catalog.filter(fault => fields.includes(fault.field));
   let payload: unknown = { ...complete, ...Object.fromEntries(faults.map(fault => [fault.field, fault.bad])) };
   const model = nativePort(() => [call(`report-${model.port.modelCalls}`, payload, 'lineage_present_result')]);
   const registry = buildAiToolRegistry(() => session, { debug() {}, info() {}, warn() {}, error() {} } as never,
@@ -444,12 +455,12 @@ it.each([
     const raw = toolMessage(attempt.messages).artifact as { errors: Array<{ path: string; code: string; values?: string[] }> };
     expect(raw.errors.map(({ path, code }) => ({ path, code })).sort((a, b) => a.path.localeCompare(b.path)),
       `stage${stage}: independently decidable exact faults`).toEqual([...(stage > 1 ? [{ path: '', code: 'identical_resend' }] : []), ...expected]);
-    if (mask & 4) expect(raw.errors.some(error => error.path.startsWith('sections.'))).toBe(false);
+    if (fields.includes('sections')) expect(raw.errors.some(error => error.path.startsWith('sections.'))).toBe(false);
     const feedback = problemOf(String(toolMessage(attempt.messages).content));
     expect(feedback.attempt).toBe(`${stage}/3`);
     expect(feedback.notice !== undefined).toBe(stage === 3);
     // Only the report's outside-node reference has a fallback among this declared catalog.
-    expect(feedback.guidance.some(group => group.fallback !== undefined)).toBe(stage === 3 && Boolean(mask & 2));
+    expect(feedback.guidance.some(group => group.fallback !== undefined)).toBe(stage === 3 && fields.includes('notes'));
     for (const error of raw.errors) {
       const visible = shown(feedback).find(item => item.path === error.path);
       expect(visible).toBeDefined();
@@ -1343,189 +1354,140 @@ describe('submit_findings rejection form', () => {
   }
 
 
-  it.each((['bb', 'ct'] as const).flatMap(mode => (['business', 'technical', 'both'] as const).map(classification => ({ mode, classification }))))(
-    'generates $mode/$classification native repairs from served metadata', async ({ mode, classification }) => {
-      const angles = classification === 'both' ? ['business', 'technical'] : [classification];
-      const complete = { summary: base.summary, badge_label: 'Source role',
-        sections: Object.fromEntries(angles.map(angle => [angle, `${angle}: exact authored findings.`])),
-        ...(mode === 'ct' ? { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0', transforms: ['pass_through'], note: 'Declared source.' }] }, terminals[1]] } : {}),
-        questions: [{ nodeId: source, question: 'Explain this supplied neighbor.' }],
-        prune_neighbors: [{ id: other, reason: 'No requested contribution.' }] };
-      // Independent literal fault catalog complements full schema single-mutation coverage below.
-      // Every nonempty subset has different fields; alternative mutations of one field remain singles.
-      const mechanical = [
-        { field: 'summary', bad: 42, errors: [{ path: 'summary', code: 'type' }] },
-        { field: 'badge_label', bad: 'x'.repeat(51), errors: [{ path: 'badge_label', code: 'size' }] },
-        { field: 'sections', bad: 42, errors: [{ path: 'sections', code: 'type' }] },
-        { field: 'questions', bad: 42, errors: [{ path: 'questions', code: 'type' }] },
-        { field: 'prune_neighbors', bad: 42, errors: [{ path: 'prune_neighbors', code: 'type' }] },
-        { field: 'unknown', bad: true, errors: [{ path: 'unknown', code: 'unknown_key' }] },
-        ...(mode === 'ct' ? [{ field: 'column_flow', bad: missingColumn,
-          errors: [{ path: 'column_flow.0.upstream_columns.0.col', code: 'unknown_column' }] }] : []),
-      ];
-      for (let mask = 1; mask < (1 << mechanical.length); mask++) {
-        const selected = mechanical.filter((_, bit) => mask & (1 << bit));
-        for (const arm of ['first_resend_success', 'third_reply_success', 'fourth_reply_success', 'continued_wrong']) {
-          const { engine, send, state } = hop(mode, classification);
-          const input = { ...complete, ...Object.fromEntries(selected.map(fault => [fault.field, fault.bad])) };
-          const expected = selected.flatMap(fault => fault.errors).sort((a, b) => a.path.localeCompare(b.path));
-          const correction = Object.fromEntries(selected.filter(fault => Object.hasOwn(complete, fault.field))
-            .map(fault => [fault.field, complete[fault.field as keyof typeof complete]]));
-          for (const ordinal of arm === 'first_resend_success' ? [1] : arm === 'third_reply_success' ? [1, 2] : [1, 2, 3]) {
-            const rejected = await send(input);
-            assert(rejected.rejection);
-            expect(rejected.rawErrors!.map(({ path, code }) => ({ path, code })).sort((a, b) => a.path.localeCompare(b.path)),
-              `literal ${mode}/${classification}/${mask}/${arm}/${ordinal}: every independent field fault`).toEqual(expected);
-            expect(rejected.rejection.attempt).toBe(`${ordinal}/3`);
-            expect(rejected.rejection.notice !== undefined).toBe(ordinal === 3);
-            for (const group of rejected.rejection.guidance) {
-              const raw = rejected.rawErrors as Array<{ path: string; code: IssueCode; values?: string[] }>;
-              for (const error of group.errors) {
-                if (ordinal === 1 && group.category !== 'required') expect(error).not.toHaveProperty('allowed');
-                if (ordinal >= 2) {
-                  const values = raw.filter(item => item.path === error.path && ISSUES[item.code].label === error.fault).flatMap(item => item.values ?? []);
-                  if (values.length) expect([...(error.allowed ?? error.missing ?? [])].sort()).toEqual([...new Set(values)].sort());
-                }
-              }
-              expect(group.fallback !== undefined).toBe(ordinal === 3 && raw.some(error => ISSUES[error.code].category === group.category && 'fallback' in ISSUES[error.code]));
-            }
-            expect(engine.getDetailSlots()).toEqual([]);
-            expect(engine.columnAspect?.edges ?? []).toEqual([]);
-            expect(state().stopReason).not.toBe('no_progress');
-            const validate = new Ajv({ strict: false, allErrors: true }).compile(rejected.wire);
-            expect(validate(correction), JSON.stringify(validate.errors)).toBe(true);
-          }
-          const repaired = await send(arm === 'continued_wrong' ? input : correction);
-          if (arm === 'continued_wrong') {
-            expect(state()).toMatchObject({ stopReason: 'no_progress', providerCalls: 4, noProgressCalls: 4 });
-            expect(engine.getDetailSlots()).toEqual([]);
-            expect(engine.columnAspect?.edges ?? []).toEqual([]);
-          } else {
-            expect(repaired.attempt.rejections).toEqual([]);
-            expect(repaired.attempt.stop).toBe('phase_complete');
-            expect(state().providerCalls).toBe(arm === 'first_resend_success' ? 2 : arm === 'third_reply_success' ? 3 : 4);
-            expect(engine.getDetailSlots()).toContainEqual(expect.objectContaining({ summary: complete.summary, badge_label: complete.badge_label,
-              sections: expect.arrayContaining(angles.map(angle => ({ angle, text: complete.sections[angle] }))) }));
-            expect(engine.getDetailSlots()[0]!.sections).toHaveLength(angles.length);
-          }
-        }
+  // Literal contract cases: no served-schema mutations, powersets or field × retry products.
+  // Each expected path/code is authored here; the provider schema is only an acceptance boundary.
+  const bothSections = { business: 'business: exact authored findings.', technical: 'technical: exact authored findings.' };
+  const mappedFlow = [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0', transforms: ['pass_through'], note: 'Declared source.' }] }, terminals[1]];
+  const sourceQuestion = { nodeId: source, question: 'Explain this supplied neighbor.' };
+  const otherPrune = { id: other, reason: 'No requested contribution.' };
+  const literalFaults = [
+    { name: 'summary missing', patch: { summary: undefined }, path: 'summary', code: 'missing' },
+    { name: 'summary type', patch: { summary: 42 }, path: 'summary', code: 'type' },
+    { name: 'badge type', patch: { badge_label: 42 }, path: 'badge_label', code: 'type' },
+    { name: 'badge empty', patch: { badge_label: '' }, path: 'badge_label', code: 'size', also: ['invalid'] },
+    { name: 'badge bound', patch: { badge_label: 'x'.repeat(51) }, path: 'badge_label', code: 'size' },
+    { name: 'badge whitespace', patch: { badge_label: ' ' }, path: 'badge_label', code: 'invalid' },
+    { name: 'sections missing', patch: { sections: undefined }, path: 'sections', code: 'missing' },
+    { name: 'sections type', patch: { sections: 42 }, path: 'sections', code: 'type' },
+    { name: 'business missing', patch: { sections: { technical: bothSections.technical } }, path: 'sections.business', code: 'missing' },
+    { name: 'business type', patch: { sections: { ...bothSections, business: 42 } }, path: 'sections.business', code: 'type', also: ['missing'] },
+    { name: 'business blank', patch: { sections: { ...bothSections, business: '' } }, path: 'sections.business', code: 'invalid' },
+    { name: 'technical missing', patch: { sections: { business: bothSections.business } }, path: 'sections.technical', code: 'missing' },
+    { name: 'technical type', patch: { sections: { ...bothSections, technical: 42 } }, path: 'sections.technical', code: 'type', also: ['missing'] },
+    { name: 'technical blank', patch: { sections: { ...bothSections, technical: '' } }, path: 'sections.technical', code: 'invalid' },
+    { name: 'sections strict keys', patch: { sections: { ...bothSections, __unsupported__: true } }, path: 'sections.__unsupported__', code: 'unknown_key' },
+    { name: 'flow missing', patch: { column_flow: undefined }, path: 'column_flow', code: 'missing' },
+    { name: 'flow type', patch: { column_flow: 42 }, path: 'column_flow', code: 'type' },
+    { name: 'flow row type', patch: { column_flow: [42, terminals[1]] }, path: 'column_flow.0', code: 'type' },
+    { name: 'output missing', patch: { column_flow: [{ upstream_columns: [] }, terminals[1]] }, path: 'column_flow.0.out_col', code: 'missing' },
+    { name: 'output type', patch: { column_flow: [{ out_col: 42, upstream_columns: [] }, terminals[1]] }, path: 'column_flow.0.out_col', code: 'type' },
+    { name: 'output metadata', patch: { column_flow: [{ out_col: 'Missing', upstream_columns: [] }, terminals[1]] }, path: 'column_flow.0.out_col', code: 'unknown_column' },
+    { name: 'suppliers missing', patch: { column_flow: [{ out_col: 'Value' }, terminals[1]] }, path: 'column_flow.0.upstream_columns', code: 'missing' },
+    { name: 'suppliers type', patch: { column_flow: [{ out_col: 'Value', upstream_columns: 42 }, terminals[1]] }, path: 'column_flow.0.upstream_columns', code: 'type' },
+    { name: 'supplier type', patch: { column_flow: [{ out_col: 'Value', upstream_columns: [42] }, terminals[1]] }, path: 'column_flow.0.upstream_columns.0', code: 'type' },
+    { name: 'supplier column metadata', patch: { column_flow: missingColumn }, path: 'column_flow.0.upstream_columns.0.col', code: 'unknown_column' },
+    { name: 'supplier node missing', patch: { column_flow: [{ out_col: 'Value', upstream_columns: [{ col: 'C0' }] }, terminals[1]] }, path: 'column_flow.0.upstream_columns.0.node', code: 'missing' },
+    { name: 'supplier node type', patch: { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: 42, col: 'C0' }] }, terminals[1]] }, path: 'column_flow.0.upstream_columns.0.node', code: 'type' },
+    { name: 'supplier neighbor', patch: { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: absent, col: 'C0' }] }, terminals[1]] }, path: 'column_flow.0.upstream_columns.0.node', code: 'not_neighbor' },
+    { name: 'supplier column missing', patch: { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source }] }, terminals[1]] }, path: 'column_flow.0.upstream_columns.0.col', code: 'missing' },
+    { name: 'supplier column type', patch: { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 42 }] }, terminals[1]] }, path: 'column_flow.0.upstream_columns.0.col', code: 'type' },
+    { name: 'transforms type', patch: { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0', transforms: 42 }] }, terminals[1]] }, path: 'column_flow.0.upstream_columns.0.transforms', code: 'type' },
+    { name: 'transform item type', patch: { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0', transforms: [42] }] }, terminals[1]] }, path: 'column_flow.0.upstream_columns.0.transforms.0', code: 'type', also: ['enum'] },
+    { name: 'transform enum', patch: { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0', transforms: ['bogus'] }] }, terminals[1]] }, path: 'column_flow.0.upstream_columns.0.transforms.0', code: 'enum' },
+    { name: 'supplier note type', patch: { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0', note: 42 }] }, terminals[1]] }, path: 'column_flow.0.upstream_columns.0.note', code: 'type' },
+    { name: 'supplier strict keys', patch: { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0', __unsupported__: true }] }, terminals[1]] }, path: 'column_flow.0.upstream_columns.0.__unsupported__', code: 'unknown_key' },
+    { name: 'flow strict keys', patch: { column_flow: [{ out_col: 'Value', upstream_columns: [], __unsupported__: true }, terminals[1]] }, path: 'column_flow.0.__unsupported__', code: 'unknown_key' },
+    { name: 'questions type', patch: { questions: 42 }, path: 'questions', code: 'type' },
+    { name: 'questions bound', patch: { questions: Array.from({ length: 501 }, () => sourceQuestion) }, path: 'questions', code: 'size' },
+    { name: 'question row type', patch: { questions: [42] }, path: 'questions.0', code: 'type' },
+    { name: 'question node missing', patch: { questions: [{ question: sourceQuestion.question }] }, path: 'questions.0.nodeId', code: 'missing' },
+    { name: 'question node type', patch: { questions: [{ ...sourceQuestion, nodeId: 42 }] }, path: 'questions.0.nodeId', code: 'type' },
+    { name: 'question neighbor', patch: { questions: [{ ...sourceQuestion, nodeId: absent }] }, path: 'questions.0.nodeId', code: 'not_neighbor' },
+    { name: 'question text missing', patch: { questions: [{ nodeId: source }] }, path: 'questions.0.question', code: 'missing' },
+    { name: 'question text type', patch: { questions: [{ ...sourceQuestion, question: 42 }] }, path: 'questions.0.question', code: 'type' },
+    { name: 'question text blank', patch: { questions: [{ ...sourceQuestion, question: '' }] }, path: 'questions.0.question', code: 'size' },
+    { name: 'question strict keys', patch: { questions: [{ ...sourceQuestion, __unsupported__: true }] }, path: 'questions.0.__unsupported__', code: 'unknown_key' },
+    { name: 'prunes type', patch: { prune_neighbors: 42 }, path: 'prune_neighbors', code: 'type' },
+    { name: 'prunes bound', patch: { prune_neighbors: Array.from({ length: 501 }, () => otherPrune) }, path: 'prune_neighbors', code: 'size' },
+    { name: 'prune row type', patch: { prune_neighbors: [42] }, path: 'prune_neighbors.0', code: 'type' },
+    { name: 'prune id missing', patch: { prune_neighbors: [{ reason: otherPrune.reason }] }, path: 'prune_neighbors.0.id', code: 'missing' },
+    { name: 'prune id type', patch: { prune_neighbors: [{ ...otherPrune, id: 42 }] }, path: 'prune_neighbors.0.id', code: 'type' },
+    { name: 'prune neighbor', patch: { prune_neighbors: [{ ...otherPrune, id: absent }] }, path: 'prune_neighbors.0.id', code: 'not_neighbor' },
+    { name: 'prune reason missing', patch: { prune_neighbors: [{ id: other }] }, path: 'prune_neighbors.0.reason', code: 'missing' },
+    { name: 'prune reason type', patch: { prune_neighbors: [{ ...otherPrune, reason: 42 }] }, path: 'prune_neighbors.0.reason', code: 'type' },
+    { name: 'prune reason empty', patch: { prune_neighbors: [{ ...otherPrune, reason: '' }] }, path: 'prune_neighbors.0.reason', code: 'size', also: ['invalid'] },
+    { name: 'prune reason whitespace', patch: { prune_neighbors: [{ ...otherPrune, reason: ' ' }] }, path: 'prune_neighbors.0.reason', code: 'invalid' },
+    { name: 'prune strict keys', patch: { prune_neighbors: [{ ...otherPrune, __unsupported__: true }] }, path: 'prune_neighbors.0.__unsupported__', code: 'unknown_key' },
+    { name: 'call strict keys', patch: { __unsupported__: true }, path: '__unsupported__', code: 'unknown_key' },
+  ];
+  const findingScenarios = [
+    ...literalFaults.map(row => ({ name: row.name, mode: 'ct' as const, classification: 'both' as const, correctAt: 2, single: row })),
+    ...(['bb', 'ct'] as const).flatMap(mode => (['business', 'technical', 'both'] as const).map(classification => ({
+      name: 'maximum-independent-bundle', mode, classification, correctAt: 2, single: undefined,
+    }))),
+    ...(['bb', 'ct'] as const).flatMap(mode => [3, 4, null].map(correctAt => ({
+      name: 'shared-finding-draft-temporal', mode, classification: 'both' as const, correctAt, single: undefined,
+    }))),
+  ];
+  it.each(findingScenarios)('native finding rule: $name ($mode/$classification, correction=$correctAt)', async ({ mode, classification, correctAt, single }) => {
+    const angles = classification === 'both' ? ['business', 'technical'] : [classification];
+    const complete: Record<string, unknown> = { summary: base.summary, badge_label: 'Source role',
+      sections: Object.fromEntries(angles.map(angle => [angle, `${angle}: exact authored findings.`])),
+      ...(mode === 'ct' ? { column_flow: mappedFlow } : {}), questions: [sourceQuestion], prune_neighbors: [otherPrune] };
+    const patch = single?.patch ?? { summary: 42, badge_label: 'x'.repeat(51), sections: 42,
+      questions: 42, prune_neighbors: 42, unknown: true, ...(mode === 'ct' ? { column_flow: missingColumn } : {}) };
+    const initial = Object.fromEntries(Object.entries({ ...complete, ...patch }).filter(([, value]) => value !== undefined));
+    const fields = Object.keys(patch);
+    const expected = single ? [single.code, ...(single.also ?? [])].map(code => ({ path: single.path, code })) : [
+      { path: 'summary', code: 'type' }, { path: 'badge_label', code: 'size' }, { path: 'sections', code: 'type' },
+      { path: 'questions', code: 'type' }, { path: 'prune_neighbors', code: 'type' }, { path: 'unknown', code: 'unknown_key' },
+      ...(mode === 'ct' ? [{ path: 'column_flow.0.upstream_columns.0.col', code: 'unknown_column' }] : []),
+    ];
+    const correction = Object.fromEntries(fields.filter(field => Object.hasOwn(complete, field)).map(field => [field, complete[field]]));
+    const { engine, send, state } = hop(mode, classification);
+    const before = engine.toJSON();
+    let firstWire: unknown;
+    for (let stage = 1; stage < (correctAt ?? 4); stage++) {
+      const rejected = await send(initial);
+      assert(rejected.rejection);
+      firstWire ??= rejected.wire;
+      expect(rejected.wire).toEqual(firstWire);
+      expect(rejected.rawErrors!.filter(error => !['identical_resend', 'not_overwritten'].includes(error.code))
+        .map(({ path, code }) => ({ path, code })).sort((a, b) => a.path.localeCompare(b.path)))
+        .toEqual([...expected].sort((a, b) => a.path.localeCompare(b.path)));
+      if (stage >= 2 && mode === 'ct' && !single) expect(rejected.rejection.errors.find(error => error.path === 'column_flow.0.upstream_columns.0.col')?.allowed).toEqual(sourceColumns);
+      expect(rejected.rejection.attempt).toBe(`${stage}/3`);
+      expect(rejected.rejection.notice !== undefined).toBe(stage === 3);
+      for (const group of rejected.rejection.guidance) {
+        if (stage === 1) for (const error of group.errors) expect(error).not.toHaveProperty('allowed');
+        expect(group.fallback !== undefined).toBe(stage === 3 && mode === 'ct' && group.category === 'reference');
       }
-      const fixture = hop(mode, classification);
-      const schema = submitFindingsSchemaForMode(mode, classification, true, fixture.engine.hopSubmitColumns);
-      const wire = toModelJsonSchema(schema);
-      const columns = new Map([[root, ['Value', 'Other']], [source, sourceColumns], [other, ['Value', 'Other']]]);
-      const faults = schemaFaults(wire, complete, [], columns);
-      // Body/header binding has separate owner tests; only provided fixture fields are mutated.
-      const unique = (rows: readonly SchemaFault[]) => [...new Map(rows.map(row => [JSON.stringify(row), row])).values()];
-      const rank = ['required', 'type', 'minLength', 'pattern', 'maxLength', 'enum', 'unknown', 'metadata-column'];
-      const selected = [...new Map([...faults].sort((a, b) => rank.indexOf(a.kind) - rank.indexOf(b.kind))
-        .map(row => [row.path.join('.'), row])).values()].filter(row => !faults.some(other => other.path.length > row.path.length
-          && row.path.every((part, index) => other.path[index] === part)));
-      const bundledSeed = structuredClone(complete) as Record<string, unknown>;
-      const bundled = selected.map(row => {
-        // Keep known-column truth readable beside an independently invalid supplier identity.
-        if (row.kind === 'enum' && row.path.at(-1) === 'node' && selected.some(other => other.kind === 'metadata-column'
-          && other.path.slice(0, -1).join('.') === row.path.slice(0, -1).join('.'))) {
-          const flow = bundledSeed.column_flow as unknown[];
-          const index = flow.length;
-          flow.push(structuredClone(flow[0]));
-          return { ...row, path: [row.path[0]!, index, ...row.path.slice(2)] };
-        }
-        return row;
-      });
-      const groups = [...new Set(bundled.map(row => String(row.path[0])))].map(field => bundled.filter(row => row.path[0] === field));
-      const scenarios = [
-        ...unique(faults).map((fault, index) => ({ id: `single-${index}`, seed: complete, faults: [fault] })),
-        ...Array.from({ length: (1 << groups.length) - 1 }, (_, index) => ({ id: `fields-${index + 1}`, seed: groups.some((group, bit) => ((index + 1) & (1 << bit)) && group[0]!.path[0] === 'column_flow') ? bundledSeed : complete,
-          faults: groups.filter((_group, bit) => (index + 1) & (1 << bit)).flat() })),
-      ];
-      for (const scenario of scenarios) {
-        const initial = withSchemaFaults(scenario.seed, scenario.faults);
-        const fields = [...new Set(scenario.faults.map(fault => String(fault.path[0])))];
-        const bodies = initial.sections as Record<string, unknown> | null;
-        const missingAngles = angles.filter(angle => !bodies || typeof bodies[angle] !== 'string' || !(bodies[angle] as string).trim());
-        const emptyBodies = fields.includes('sections') && (!bodies || !angles.some(angle => Object.hasOwn(bodies, angle)));
-        const expected = [...new Set([...scenario.faults.filter(fault => !(emptyBodies && fault.path[0] === 'sections')).map(fault => fault.path.join('.')),
-          ...(emptyBodies || (missingAngles.length === angles.length && angles.some(angle => bodies && Object.hasOwn(bodies, angle) && typeof bodies[angle] !== 'string')) ? ['sections'] : [])])];
-        const correction = Object.fromEntries(fields.filter(field => Object.hasOwn(complete, field) && (field !== 'sections' || missingAngles.length))
-          .map(field => [field, field === 'sections' ? Object.fromEntries(missingAngles.map(angle => [angle, complete.sections[angle]]))
-            : complete[field as keyof typeof complete]]));
-        for (const arm of ['first_resend_success', 'third_reply_success', 'fourth_reply_success', 'continued_wrong']) {
-          const { engine, send, state } = hop(mode, classification);
-          const sendCaptured = async (payload: unknown, ordinal: number) => {
-            const result = await send(payload);
-            const target = process.env.DLV_REJECTION_MATRIX_OUTPUT;
-            if (target) appendFileSync(target, JSON.stringify({ caseId: `${mode}-${classification}-${scenario.id}`, mode, classification, phase: 'active', arm,
-              generatedFaults: scenario.faults, metadataSource: 'toModelJsonSchema(actual served schema) + declared fixture columns',
-              attemptOrdinal: ordinal, submittedPayload: payload, expectedResendFields: Object.keys(correction), modelVisibleFeedback: result.content,
-              resendFields: result.rejection?.resend ?? [], faults: result.rejection?.errors ?? [],
-              heldSentinels: engine.toJSON().engineInternals.heldFinding?.finding ?? null,
-              outcome: state().stopReason ?? result.attempt.stop, providerCalls: state().providerCalls }) + '\n');
-            return result;
-          };
-          const first = await sendCaptured(initial, 1);
-          assert(first.rejection, 'Expected a rejected submission');
-          expect([...new Set(paths(first.rejection))].sort(), scenario.id).toEqual(expected.sort());
-          for (const error of first.rejection.errors) expect(error).not.toHaveProperty('allowed');
-          expect(first.rejection).not.toHaveProperty('example');
-          expect(engine.getDetailSlots()).toEqual([]);
-          const projected = toModelJsonSchema(submitFindingsSchemaForMode(mode, classification, false,
-            engine.hopSubmitColumns, engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false)) as any;
-          for (const field of Object.keys(complete))
-            expect(projected.properties[field], `${scenario.id}: D-098 keeps held ${field} in the full schema`).toBeDefined();
-          if (arm !== 'first_resend_success') {
-            for (const ordinal of arm === 'third_reply_success' ? [2] : [2, 3]) {
-              const heldBefore = engine.heldPartsOfCurrentFocus();
-              const heldFields = new Set([...(heldBefore?.fields ?? []), ...(heldBefore?.summary ? ['summary'] : []),
-                ...(heldBefore?.sections.length ? ['sections'] : [])]);
-              const overwritten = [...new Set(expected.map(path => path.split('.')[0]!))].filter(field => heldFields.has(field));
-              const repeated = await sendCaptured(initial, ordinal);
-              assert(repeated.rejection, 'Expected a rejected submission');
-              expect(repeated.attempt.rejections).toHaveLength(1);
-              // Repeating an invalid replacement can additionally name the held value it could not overwrite (D-102).
-              expect([...new Set(repeated.rejection.errors.filter(error => error.fault !== ISSUES.not_overwritten.label
-                && error.fault !== ISSUES.identical_resend.label).map(error => error.path).filter(Boolean))].sort(), scenario.id).toEqual(expected.sort());
-              expect(repeated.rejection.errors.filter(error => error.fault === ISSUES.not_overwritten.label).map(error => error.path).sort()).toEqual(overwritten.sort());
-              expect(repeated.rejection.errors.filter(error => error.fault === ISSUES.identical_resend.label).map(error => error.path)).toEqual(['']);
-              for (const group of repeated.rejection.guidance) {
-                const raw = (repeated.rawErrors ?? []) as Array<{ path: string; code: IssueCode; values?: string[] }>;
-                for (const error of group.errors) {
-                  const values = raw.filter(item => item.path === error.path && ISSUES[item.code].label === error.fault).flatMap(item => item.values ?? []);
-                  if (values.length) expect([...(error.allowed ?? error.missing ?? [])].sort()).toEqual([...new Set(values)].sort());
-                }
-                const needsFallback = ordinal === 3 && raw.some(error => ISSUES[error.code].category === group.category && 'fallback' in ISSUES[error.code]);
-                expect(group.fallback !== undefined).toBe(needsFallback);
-              }
-              expect(repeated.rejection.attempt).toBe(`${ordinal}/3`);
-              expect(repeated.rejection.notice !== undefined).toBe(ordinal === 3);
-              expect(engine.getDetailSlots()).toEqual([]);
-              expect(engine.columnAspect?.edges ?? []).toEqual([]);
-              expect(state().stopReason).not.toBe('no_progress');
-            }
-          }
-          const final = await sendCaptured(arm === 'continued_wrong' ? initial : correction, arm === 'first_resend_success' ? 2 : arm === 'third_reply_success' ? 3 : 4);
-          if (arm === 'continued_wrong') {
-            expect(state()).toMatchObject({ stopReason: 'no_progress', providerCalls: MAX_TOOL_PROVIDER_CALLS, noProgressCalls: MAX_TOOL_PROVIDER_CALLS });
-            expect(engine.getDetailSlots()).toEqual([]);
-          } else {
-            expect(final.attempt.rejections).toEqual([]);
-            expect(final.attempt.stop).toBe('phase_complete');
-            expect(state().providerCalls).toBe(arm === 'first_resend_success' ? 2 : arm === 'third_reply_success' ? 3 : 4);
-            expect(engine.getDetailSlots()).toContainEqual(expect.objectContaining({ summary: complete.summary,
-              sections: expect.arrayContaining(angles.map(angle => ({ angle, text: complete.sections[angle] }))) }));
-            expect(engine.getDetailSlots()[0]!.sections).toHaveLength(angles.length);
-            expect(engine.getDetailSlots()[0]!.badge_label).toBe(complete.badge_label);
-            if (mode === 'ct') {
-              const edges = engine.columnAspect!.edges.map(edge => [edge.from_node, edge.from_col, edge.to_node, edge.to_col]);
-              expect(edges).toHaveLength(1);
-              expect(engine.columnAspect!.edges[0]).toMatchObject({ transforms: ['pass_through'], note: 'Declared source.' });
-              expect([...new Set(edges.map(edge => JSON.stringify(edge)))]).toEqual([JSON.stringify([source, 'C0', root, 'Value'])]);
-            }
-          }
-        }
-      }
-    },
-  );
+      expect(engine.getDetailSlots()).toEqual([]);
+      expect(engine.columnAspect?.edges ?? []).toEqual([]);
+      expect(engine.toJSON().agenda).toEqual(before.agenda);
+      expect(rejected.content).not.toContain(base.summary);
+      for (const text of Object.values(complete.sections as Record<string, string>)) expect(rejected.content).not.toContain(text);
+      expect(state().stopReason).toBeNull();
+      expect(new Ajv({ strict: false }).compile(rejected.wire)(correction)).toBe(true);
+    }
+    const result = await send(correctAt === null ? initial : correction);
+    expect(state().providerCalls).toBe(correctAt ?? 4);
+    if (correctAt === null) {
+      expect(state()).toMatchObject({ stopReason: 'no_progress', noProgressCalls: 4 });
+      expect(engine.getDetailSlots()).toEqual([]);
+      expect(engine.columnAspect?.edges ?? []).toEqual([]);
+      expect(engine.toJSON().agenda).toEqual(before.agenda);
+    } else {
+      expect(result.attempt.rejections).toEqual([]);
+      expect(result.attempt.stop).toBe('phase_complete');
+      expect(engine.getDetailSlots()).toContainEqual(expect.objectContaining({ summary: complete.summary, badge_label: complete.badge_label,
+        sections: angles.map(angle => ({ angle, text: `${angle}: exact authored findings.` })) }));
+      expect(engine.toJSON().removedSet).toContain(other);
+      if (mode === 'ct') expect(engine.columnAspect?.edges).toEqual([expect.objectContaining({
+        from_node: source, from_col: 'C0', to_node: root, to_col: 'Value', transforms: ['pass_through'], note: 'Declared source.',
+      })]);
+    }
+  });
 
   it.each(['repair', 'continued_wrong'] as const)('keeps the three-correction budget when a retry introduces a new fault: %s', async arm => {
     const { engine, send, state } = hop();

@@ -4,7 +4,7 @@ What a machine needs for each test tier, and how to report one it cannot run. Co
 
 | Tier | Commands | Needs |
 |---|---|---|
-| Deterministic | `npm ci`, `npm test`, `npm run gate`, `npm run package` | Node.js `>=22`, npm `>=10`, Git. |
+| Deterministic | `npm ci`, `npm test`, `npm run gate`, `npm run package` | Node.js 22.x ≥22.22.2, 24.x ≥24.15, or ≥26, npm `>=10`, Git. |
 | VS Code Electron | `npm run test:edh`, `npm run test:gui:host` with `npm run test:gui:smoke`, chat-UI fixture lane | A graphical display, or `xvfb-run -a` on headless Linux. |
 | Live model | `npm run test:ai:smoke`, `npm run test:ai:headless`, chat-UI `live` | `AI_TEST_*` settings and access to the configured hosted or local model endpoint. |
 | Database smoke | `npm run test:db:smoke` | Local SQL Server with disposable fixture data and `DB_TEST_AUTH_TYPE=sqlLogin`; set `DB_TEST_SERVER`, `DB_TEST_PORT`, `DB_TEST_DATABASE`, `DB_TEST_USER` and `DB_TEST_PASSWORD`. Azure SQL requires an explicitly selected manual profile when available. |

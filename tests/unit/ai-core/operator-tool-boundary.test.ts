@@ -468,8 +468,8 @@ describe('Langfuse free plan limits', () => {
     expect(LANGFUSE_FREE_PLAN.projectRetention).toBe(false);
     expect(LANGFUSE_FREE_PLAN.retainDays).toBe(7);
     expect(limitIntervalMs(30)).toBe(2_000);
-    expect(exportBudgetMs(1)).toBe(2 * limitIntervalMs(30) + limitIntervalMs(1_000) + 15_000);
-    expect(exportBudgetMs(2)).toBe(4 * limitIntervalMs(30) + limitIntervalMs(1_000) + 30_000);
+    expect(exportBudgetMs(1)).toBe(19_060);
+    expect(exportBudgetMs(2)).toBe(38_060);
     expect(LANGFUSE_FREE_PLAN.retiredReadPaths).toContain('GET /api/public/traces/{traceId}');
     let now = 0;
     const waits: number[] = [];

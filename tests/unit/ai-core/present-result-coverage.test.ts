@@ -47,7 +47,6 @@ describe('presentation coverage contracts', () => {
     const result = row.api === 'bare' ? findBareNonPrunedNodes({ node_states: row.states }, input, row.ids)
       : findUnrenderedDetailSlotIds(row.ids, input);
     assert(result, 'The supplied reference containers are known');
-    assert(result, 'Expected known coverage for a fully shaped fixture');
     expect(result.slice().sort()).toEqual(row.expected.slice().sort());
     expect(JSON.stringify(row.input), 'coverage observation must not mutate the payload').toBe(before);
     if (row.excluded) expect(result).not.toContain(row.excluded);

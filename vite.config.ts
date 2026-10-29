@@ -16,22 +16,20 @@ export default defineConfig({
     // The webview CSP permits fonts from its asset source, so fonts must remain files.
     assetsInlineLimit: (filePath) => /\.(?:woff2?|ttf|otf)$/i.test(filePath) ? false : undefined,
     // Webview only runs in VS Code's current-Electron Chromium; a modern target
-    // keeps esbuild from down-leveling natively-supported syntax (e.g. destructuring).
+    // keeps the bundler from down-leveling natively-supported syntax (e.g. destructuring).
     target: 'es2022',
     outDir: '../dist',
     emptyOutDir: true,
-    rollupOptions: {
+    rolldownOptions: {
       input: resolve(__dirname, 'src/index.html'),
       output: {
         entryFileNames: `assets/[name].js`,
         chunkFileNames: `assets/[name].js`,
         assetFileNames: `assets/[name].[ext]`,
-        manualChunks: {
-          'flow-vendor': ['@xyflow/react'],
-          'monaco-vendor': [
-            'monaco-editor/editor/editor.api',
-            'monaco-editor/languages/definitions/sql/register',
-            'monaco-editor/features/folding/register',
+        codeSplitting: {
+          groups: [
+            { name: 'flow-vendor', test: /node_modules[\\/]@xyflow[\\/]react[\\/]/ },
+            { name: 'monaco-vendor', test: /node_modules[\\/]monaco-editor[\\/]/ },
           ],
         },
       },

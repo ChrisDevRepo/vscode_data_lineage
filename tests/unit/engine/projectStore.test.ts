@@ -293,31 +293,22 @@ describe('stripSensitiveFields → persisted shape', () => {
     multipleActiveResultSets: false,
   } as Record<string, unknown>;
 
-  it('drops secrets', () => {
-    const stored = stripSensitiveFields(liveShapedConnection) as Record<string, unknown>;
-    expect(stored.password).toBeUndefined();
-    expect(stored.connectionString).toBeUndefined();
+  it('persists and reloads the safe connection fields without secrets or runtime-only fields', () => {
+    const stored = stripSensitiveFields(liveShapedConnection);
+    expect(stored).not.toHaveProperty('password');
+    expect(stored).not.toHaveProperty('connectionString');
     expect(JSON.stringify(stored)).not.toContain('hunter2');
-  });
-
-  it('drops unknown runtime fields so the record stays readable', () => {
-    const stored = stripSensitiveFields(liveShapedConnection) as Record<string, unknown>;
     for (const key of ['applicationName', 'connectTimeout', 'persistSecurityInfo', 'multipleActiveResultSets']) {
-      expect(stored[key], `${key} must not be persisted`).toBeUndefined();
+      expect(stored, `${key} must not be persisted`).not.toHaveProperty(key);
     }
-  });
-
-  it('round-trips through the strict read schema', () => {
-    const parsed = StoredConnectionInfoSchema.safeParse(stripSensitiveFields(liveShapedConnection));
+    const parsed = StoredConnectionInfoSchema.safeParse(stored);
     expect(parsed.success, parsed.success ? '' : JSON.stringify(parsed.error.issues)).toBe(true);
-  });
-
-  it('survives a full save-then-load cycle without dropping the project', () => {
+    const expected = {
+      server: 'sql.example.net', database: 'AdventureWorks', authenticationType: 'Integrated', port: 1433,
+    };
+    expect(stored).toEqual(expected);
     const project = createProject('Live', {
-      type: 'database',
-      connectionInfo: stripSensitiveFields(liveShapedConnection),
-      sourceName: 'sql.example.net / AdventureWorks',
-      schemas: ['dbo'],
+      type: 'database', connectionInfo: stored, sourceName: 'sql.example.net / AdventureWorks', schemas: ['dbo'],
     });
     let report: ProjectStoreDropReport | undefined;
     const store = migrateProjectStore(
@@ -326,10 +317,7 @@ describe('stripSensitiveFields → persisted shape', () => {
     );
     expect(report, 'no project may be dropped').toBeUndefined();
     expect(store.projects).toHaveLength(1);
-  });
-
-  it('preserves the fields that are worth keeping', () => {
-    const stored = stripSensitiveFields(liveShapedConnection);
+    expect(store.projects[0].connection).toMatchObject({ type: 'database', connectionInfo: expected });
     expect(stored.server).toBe('sql.example.net');
     expect(stored.database).toBe('AdventureWorks');
     expect(stored.authenticationType).toBe('Integrated');

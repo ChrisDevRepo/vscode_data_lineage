@@ -62,6 +62,17 @@ function manifestSettings(): Record<string, Setting> {
 }
 
 describe('VS Code settings manifest consistency', () => {
+  it('restricts executable workspace configuration in Restricted Mode', () => {
+    const pkg = JSON.parse(readFileSync(rootPath('package.json'), 'utf-8'));
+    expect(pkg.capabilities.untrustedWorkspaces.supported).toBe('limited');
+    expect(pkg.capabilities.untrustedWorkspaces.restrictedConfigurations.slice().sort()).toEqual([
+      'dataLineageViz.ai.outputTemplateFile',
+      'dataLineageViz.dmvQueriesFile',
+      'dataLineageViz.excludePatterns',
+      'dataLineageViz.parseRulesFile',
+    ]);
+  });
+
   it('package.json defaults match every shared runtime default', () => {
     const settings = manifestSettings();
 

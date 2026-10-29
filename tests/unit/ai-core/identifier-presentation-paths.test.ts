@@ -1,6 +1,6 @@
 /** Canonical CI/CS identities survive discovery, focus-template routing, recall and presentation repair. */
 import { describe, expect, it } from 'vitest';
-import { buildModel, normalizeName } from '../../../src/engine/modelBuilder';
+import { buildModel } from '../../../src/engine/modelBuilder';
 import { buildGraphologyGraph } from '../../../src/engine/graphBuilder';
 import { buildActiveHopInstruction } from '../../../src/ai/agent/stagePrompts';
 import { captureDiscoveryWalkFromObservations } from '../../../src/ai/agent/discoveryCapture';
@@ -29,7 +29,7 @@ function neighborWorld(cs: boolean) {
   session.model = model;
   session.graph = buildGraphologyGraph(model);
   const engine = new NavigationEngine(model, session.graph, () => {}, {});
-  expect(engine.init({ origin: normalizeName('dbo.Reader', cs), question: 'Trace Value.', direction: 'upstream', analysisMode: 'ct', targetColumns: ['Value'],
+  expect(engine.init({ origin: cs ? '[dbo].[Reader]' : '[dbo].[reader]', question: 'Trace Value.', direction: 'upstream', analysisMode: 'ct', targetColumns: ['Value'],
     depthIntent: { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } },
   })).toMatchObject({ ok: true });
   engine.getHopContext();
@@ -49,7 +49,8 @@ describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs =>
       : ['SALES.ORDERS', '"sALES"."oRDERS"', '[SALES].[ORDERS]', 'Sales.orders'] };
     const before = structuredClone(input);
     const result = JSON.parse(String(await registry.invoke('lineage_get_neighbor_columns', input)));
-    expect(result).toMatchObject({ total: 4, results: input.ids.map(id => ({ id: normalizeName(id, cs) })) });
+    expect(result).toMatchObject({ total: 4, results: (cs ? ['[Sales].[Orders]', '[Sales].[Orders]', '[Sales].[Orders]', '[Sales].[orders]']
+      : ['[sales].[orders]', '[sales].[orders]', '[sales].[orders]', '[sales].[orders]']).map(id => ({ id })) });
     expect(result.results.every((entry: { error?: string }) => !entry.error)).toBe(true);
     if (cs) expect(result.results.map((entry: { columns: { n: string }[] }) => entry.columns[0].n)).toEqual(['Upper', 'Upper', 'Upper', 'lower']);
     expect(input).toEqual(before);
@@ -84,7 +85,7 @@ describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs =>
     session.model = model;
     session.classification = 'technical';
     for (const [name, template] of [[tableName, 'structural_summary'], [viewName, 'technical_capture']] as const) {
-      const focusId = normalizeName(name, cs);
+      const focusId = cs ? name : name === tableName ? '[dbo].[report]' : '[dbo].[reportview]';
       const engine = {
         currentFocus: focusId, currentHopAnalysisMode: 'bb', currentHop: 1,
         getCurrentTasks: () => [], pendingLineageQuestions: [], peekHopContext: () => null, heldPartsOfCurrentFocus: () => null,
@@ -98,7 +99,8 @@ describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs =>
       { fullName: '[dbo].[Report]', type: 'table' },
       { fullName: '[dbo].[report]', type: 'table' },
     ], [], undefined, undefined, true, undefined, cs);
-    const observations = ['dbo.Report', 'dbo.report', 'dbo.Report'].map(id => normalizeName(id, cs)).map((id, i) => ({
+    const observations = (cs ? ['[dbo].[Report]', '[dbo].[report]', '[dbo].[Report]']
+      : ['[dbo].[report]', '[dbo].[report]', '[dbo].[report]']).map((id, i) => ({
       callId: `call-${i}`, toolName: 'lineage_get_object_detail', input: { id },
       result: JSON.stringify(getObjectDetail(model, id)),
     }));
@@ -133,7 +135,7 @@ describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs =>
   });
 
   it('gives valid canonical-id repair guidance for an unresolved reference', () => {
-    const canonical = normalizeName('dbo.Report', cs);
+    const canonical = cs ? '[dbo].[Report]' : '[dbo].[report]';
     const result = validatePresentResult({
       name: 'Reports', summary: 'Reports lineage.', highlight_groups: [],
       sections: [{ label: 'Report', node_ids: ['[dbo].[REPORT]'], text: 'Report output.' }],
@@ -233,7 +235,7 @@ it.each([false, true])('retains requested-column descriptors while reconciling o
   const metadata = { createdAt: '2026-10-22', modelName: 'Test', highlightGroups: [], badges: [],
     columnAspect: { edges: [], requested: { node: cs ? 'dbo.Target' : 'DBO.TARGET', columns: ['[Value]'] } } };
   const before = structuredClone(metadata);
-  const canonical = normalizeName('dbo.Target', cs);
+  const canonical = cs ? '[dbo].[Target]' : '[dbo].[target]';
   expect(reconcileAiView([canonical], metadata, model).metadata.columnAspect).toEqual({ edges: [], requested: { node: canonical, columns: ['[Value]'] } });
   expect(reconcileAiView([], metadata, model, () => null).metadata.columnAspect).toEqual({ edges: [] });
   expect(metadata).toEqual(before);

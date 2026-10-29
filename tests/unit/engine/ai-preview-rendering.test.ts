@@ -15,20 +15,12 @@ describe('ai preview rendering', () => {
     { hopNode: '[ai].[FactSalesReport]', fromNode: '[ai].[vwPriceList]', fromCol: 'UnitPrice', toNode: '[ai].[FactSalesReport]', toCol: 'TotalRevenue' },
   ];
 
-  it('a repeated relation does not repeat the row it lands on', () => {
+  it('projects repeated relations into unique edges and one incoming row with both contributors', () => {
     const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
     const target = view.nodes.find(n => n.id === '[ai].[FactSalesReport]');
     expect(target?.rows.map(r => r.name)).toEqual(['TotalRevenue']);
-  });
-
-  it('a repeated relation does not draw a second edge', () => {
-    const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
     expect(view.edges.length).toBe(2);
     expect(new Set(view.edges.map(e => e.id)).size).toBe(2);
-  });
-
-  it('two distinct upstream columns feeding one output read as incoming with two contributors', () => {
-    const view = buildColumnTraceView({ relations, objects, config: DEFAULT_CONFIG });
     const row = view.nodes.find(n => n.id === '[ai].[FactSalesReport]')?.rows[0];
     expect(row?.shape).toBe('incoming');
     expect(row?.contributors).toBe(2);

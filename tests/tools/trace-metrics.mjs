@@ -176,8 +176,7 @@ export function repairChains(calls, toolRecords, measured = null) {
     if (!event.repair) return [];
     const retry = measured.events.find(item => item.line === event.repair.outcomeLine);
     const resend = event.repair.resend;
-    const extraFields = resend.requiredResendFields === null ? null
-      : [...new Set([...resend.additionalHeldFieldsSent, ...resend.additionalNonHeldFieldsSent])].sort();
+    const extraFields = resend.additionalFieldsSent?.slice().sort() ?? null;
     return [{ tool: episode.tool, code: event.code, paths: event.paths ?? [],
       extraFields,
       rejectedChars: event.input === null ? 0 : JSON.stringify(event.input).length,
@@ -199,7 +198,7 @@ const fieldsOf = input => Object.fromEntries(Object.entries(input ?? {}).flatMap
 const heldResend = text => {
   try {
     const resend = JSON.parse(text)?.resend;
-    if (Array.isArray(resend)) return { held: [], required: resend };
+    if (Array.isArray(resend)) return { held: null, required: resend };
   } catch { /* Legacy feedback is prose. */ }
   const match = text?.match(/\bHeld: (.*?)\. Resend: (.*?)\./s);
   return match ? { held: match[1].split(',').map(s => s.trim()), required: match[2].split(',').map(s => s.trim()) } : null;
@@ -208,7 +207,8 @@ const feedbackHasAllowedValues = text => {
   if (text === null) return null;
   try {
     const parsed = JSON.parse(text);
-    const faults = [...(Array.isArray(parsed?.detail) ? parsed.detail : []), ...(Array.isArray(parsed?.errors) ? parsed.errors : [])];
+    const faults = [...(Array.isArray(parsed?.detail) ? parsed.detail : []), ...(Array.isArray(parsed?.errors) ? parsed.errors : []),
+      ...(Array.isArray(parsed?.guidance) ? parsed.guidance.flatMap(group => Array.isArray(group?.errors) ? group.errors : []) : [])];
     return faults.some(fault => Array.isArray(fault?.allowed_values) || Array.isArray(fault?.allowed));
   } catch { return text.includes('Allowed values for'); }
 };
@@ -240,11 +240,14 @@ function resendMeasure(rejected, repaired, feedback) {
   const sent = fieldsOf(repaired.input);
   const base = { classification: 'unknown_no_explicit_held_resend', sentFields: Object.keys(sent), heldFields: parsed?.held ?? null, requiredResendFields: parsed?.required ?? null, additionalHeldFieldsSent: null, unchangedAdditionalHeldFields: null, changedAdditionalHeldFields: null, serializedInputUtf16CodeUnits: repaired.input === null ? null : JSON.stringify(repaired.input).length, serializedInputUtf8Bytes: repaired.input === null ? null : Buffer.byteLength(JSON.stringify(repaired.input), 'utf8') };
   if (!parsed) return base;
+  const additionalFieldsSent = Object.keys(sent).filter(field => !['focus_node_id', 'verdict', 'is_update'].includes(field) && !parsed.required.includes(field) && !parsed.required.includes(field.split('.')[0]));
+  if (parsed.held === null) return { ...base, additionalFieldsSent, onlyRequestedFieldNames: additionalFieldsSent.length === 0,
+    classification: additionalFieldsSent.length ? 'correction_with_other_fields_held_unknown' : 'only_requested_correction' };
   const held = parsed.held.filter(field => !['none', '(none)'].includes(field));
   const extra = held.filter(field => (field in sent || field === 'sections' && Object.keys(sent).some(key => key.startsWith('sections.'))) && !parsed.required.includes(field) && !parsed.required.includes(field.split('.')[0]));
   const before = fieldsOf(rejected.input);
   const other = Object.keys(sent).filter(field => !['focus_node_id', 'verdict', 'is_update'].includes(field) && !parsed.required.includes(field) && !parsed.required.includes(field.split('.')[0]) && !held.includes(field));
-  return { ...base, additionalNonHeldFieldsSent: other, onlyRequestedFieldNames: extra.length === 0 && other.length === 0, classification: extra.length === 0 ? other.length === 0 ? 'only_requested_correction' : 'correction_with_other_nonheld_fields' : extra.length === held.length ? 'resent_all_held_fields' : 'resent_some_held_fields', additionalHeldFieldsSent: extra, unchangedAdditionalHeldFields: extra.filter(field => field in before && JSON.stringify(before[field]) === JSON.stringify(sent[field])), changedAdditionalHeldFields: extra.filter(field => field in before && JSON.stringify(before[field]) !== JSON.stringify(sent[field])) };
+  return { ...base, additionalFieldsSent, additionalNonHeldFieldsSent: other, onlyRequestedFieldNames: extra.length === 0 && other.length === 0, classification: extra.length === 0 ? other.length === 0 ? 'only_requested_correction' : 'correction_with_other_nonheld_fields' : extra.length === held.length ? 'resent_all_held_fields' : 'resent_some_held_fields', additionalHeldFieldsSent: extra, unchangedAdditionalHeldFields: extra.filter(field => field in before && JSON.stringify(before[field]) === JSON.stringify(sent[field])), changedAdditionalHeldFields: extra.filter(field => field in before && JSON.stringify(before[field]) !== JSON.stringify(sent[field])) };
 }
 const textSize = text => typeof text === 'string' ? { utf16CodeUnits: text.length, utf8Bytes: Buffer.byteLength(text, 'utf8') } : null;
 function repairExchange(rejected, reply, generation) {
@@ -383,7 +386,8 @@ function sampleStatistics(values) {
 function summariseRetryMeasurements(measurements) {
   const episodes = measurements.flatMap(item => item.episodes), generations = measurements.flatMap(item => item.generations), rejected = episodes.flatMap(item => item.rejected), repairs = rejected.flatMap(item => item.repair ? [item.repair] : []);
   const count = values => Object.fromEntries([...new Set(values)].sort().map(value => [value, values.filter(item => item === value).length]));
-  return { episodes: episodes.length, rejectedEvents: rejected.length, outcomes: count(episodes.map(item => item.outcome)), generationCount: generations.length, generationLatency: sampleStatistics(generations.map(item => item.generationMs)), rejectionValidationLatency: sampleStatistics(rejected.map(item => item.validationMs)), resendClasses: count(repairs.map(item => item.resend.classification)), actualFeedbackByRejectionOrdinal: Object.fromEntries([...new Set(rejected.map(item => item.rejectionOrdinal))].sort().map(ordinal => { const own = rejected.filter(item => item.rejectionOrdinal === ordinal); return [ordinal, { rejectedEvents: own.length, feedbackCaptured: own.filter(item => item.nextServedFeedback.text !== null).length, allowedValuesObserved: own.filter(item => item.nextServedFeedback.allowedValuesObserved === true).length }]; })), additionalHeldFieldOccurrences: { unchanged: repairs.reduce((sum, item) => sum + (item.resend.unchangedAdditionalHeldFields?.length ?? 0), 0), changed: repairs.reduce((sum, item) => sum + (item.resend.changedAdditionalHeldFields?.length ?? 0), 0) }, retries: Object.fromEntries([...new Set(repairs.map(item => item.retryOrdinal))].sort().map(ordinal => { const own = repairs.filter(item => item.retryOrdinal === ordinal); return [ordinal, { attempts: own.length, outcomes: count(own.map(item => item.status)), generationLatency: sampleStatistics(own.map(item => item.generationMs)), rejectToRepairOutcomeLatency: sampleStatistics(own.map(item => item.rejectionToOutcomeMs)), validationLatency: sampleStatistics(own.map(item => item.validationMs)), actualAllowedValuesObserved: own.filter(item => item.allowedValuesObserved === true).length, missingFeedback: own.filter(item => item.feedback === null).length }]; })), ambiguities: measurements.flatMap(item => item.ambiguities).map(item => ({ trace: item.trace, line: item.line, requestId: item.requestId, tool: item.tool, match: item.match })) };
+  const observedHeldRepairs = repairs.filter(item => item.resend.heldFields !== null);
+  return { episodes: episodes.length, rejectedEvents: rejected.length, outcomes: count(episodes.map(item => item.outcome)), generationCount: generations.length, generationLatency: sampleStatistics(generations.map(item => item.generationMs)), rejectionValidationLatency: sampleStatistics(rejected.map(item => item.validationMs)), resendClasses: count(repairs.map(item => item.resend.classification)), actualFeedbackByRejectionOrdinal: Object.fromEntries([...new Set(rejected.map(item => item.rejectionOrdinal))].sort().map(ordinal => { const own = rejected.filter(item => item.rejectionOrdinal === ordinal); return [ordinal, { rejectedEvents: own.length, feedbackCaptured: own.filter(item => item.nextServedFeedback.text !== null).length, allowedValuesObserved: own.filter(item => item.nextServedFeedback.allowedValuesObserved === true).length }]; })), additionalHeldFieldOccurrences: { observedInventoryRepairs: observedHeldRepairs.length, unknownInventoryRepairs: repairs.length - observedHeldRepairs.length, unchanged: observedHeldRepairs.length ? observedHeldRepairs.reduce((sum, item) => sum + item.resend.unchangedAdditionalHeldFields.length, 0) : null, changed: observedHeldRepairs.length ? observedHeldRepairs.reduce((sum, item) => sum + item.resend.changedAdditionalHeldFields.length, 0) : null }, retries: Object.fromEntries([...new Set(repairs.map(item => item.retryOrdinal))].sort().map(ordinal => { const own = repairs.filter(item => item.retryOrdinal === ordinal); return [ordinal, { attempts: own.length, outcomes: count(own.map(item => item.status)), generationLatency: sampleStatistics(own.map(item => item.generationMs)), rejectToRepairOutcomeLatency: sampleStatistics(own.map(item => item.rejectionToOutcomeMs)), validationLatency: sampleStatistics(own.map(item => item.validationMs)), actualAllowedValuesObserved: own.filter(item => item.allowedValuesObserved === true).length, missingFeedback: own.filter(item => item.feedback === null).length }]; })), ambiguities: measurements.flatMap(item => item.ambiguities).map(item => ({ trace: item.trace, line: item.line, requestId: item.requestId, tool: item.tool, match: item.match })) };
 }
 
 /** Literal authored markup measurements; these counts do not grade SQL, formula meaning or rendering. */
@@ -515,6 +519,7 @@ export function detailedMetrics(records, { finalSnapshot = null, causalAnnotatio
     markup: 'Literal authored delimiters outside code fences; no SQL, formula, rendering or quality verdict.',
     lineReferences: 'Physical NDJSON lines when parsed with parseTrace; otherwise one-based supplied-record indexes.',
     labels: 'ATX headings and standalone bold text lines outside fences; literal syntax counts only.',
+    heldInventory: 'Only explicit captured held inventories establish held-field counts; null means unknown. Occurrence totals cover observed inventories only, with observed and unknown repair counts stated separately. Fields beyond resend are measurable without knowing whether they were held.',
     exchange: 'Clarification requires recorded owner metadata, first feedback, a narrow accepted reply, and the recorded timing window. The classification clock uses owner feedback creation through the validated reply. Delivery in the next wire request and dispatch-rejection timing remain separate. Tool processing is the whole recorded dispatch duration, not isolated validator time. Per-message tokens are unknown; provider usage belongs to the whole generation and aggregate exchangeUsage counts shared/mixed generations once.',
     matching: 'Explicit callId, else unique tool name in current response of same request; legacy parallel accepted outcomes establish aggregate success only, without call identity; synthetic missing-required-call events do not consume authored calls.' },
     summary, usage: measureUsage(responses), feedbackUsage: measureUsage(responses.filter(record => feedbackGenerations.has(keyOf(record.requestId, record.generation)))), repairUsage: measureUsage(responses.filter(record => repairGenerations.has(keyOf(record.requestId, record.generation)))),

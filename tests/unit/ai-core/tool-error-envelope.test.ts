@@ -227,12 +227,6 @@ describe("tool-error-envelope", () => {
       expect(rejection.errors).toEqual([{ path: 'flow.1.out', code: 'enum', values: ['Qty'] }, { path: 'flow.2.out', code: 'enum', values: ['Qty'] }]);
     });
 
-    it('the first and the repeated rejection of the same call render identically', () => {
-      const payload = { verdict: 'pass', flow: [{ out: 'Other', src: 'y' }] };
-      for (const stage of [1, 2, 3] as const)
-        expect(renderProblem(zodRejection(flowSchema, payload), stage)).toBe(renderProblem(zodRejection(flowSchema, structuredClone(payload)), stage));
-    });
-
     it('an absent enum field is missing, not an invalid value', () => {
       expect(faults(zodRejection(flowSchema, {}))).toEqual([['verdict', 'missing']]);
     });

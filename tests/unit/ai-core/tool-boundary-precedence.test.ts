@@ -890,7 +890,7 @@ describe('large findings repairs', () => {
       expect(rejected).toMatchObject({ code: 'contributor_col_not_on_source',
         issuePaths: ['column_flow.0.upstream_columns.0.col'] });
       expect(rejected.resend).toEqual(['column_flow']);
-      expect(rejected.hint ?? '').not.toContain('resend the full call');
+      expect(rejected).not.toHaveProperty('hint');
       expect(JSON.stringify(rejected)).not.toContain(text);
       expect(engine.getDetailSlots()).toEqual([]);
     }

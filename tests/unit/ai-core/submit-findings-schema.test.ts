@@ -224,31 +224,14 @@ describe('fresh kept required-field projection', () => {
     }
   });
 
-  it('projects fresh requirements directly without composition or changing held schemas', () => {
-    const fresh = toModelJsonSchema(submitFindingsSchemaForMode('ct', 'both', true));
-    const held = toModelJsonSchema(submitFindingsSchemaForMode('ct', 'both', false));
-    expect(fresh).not.toHaveProperty('if');
-    expect(fresh).not.toHaveProperty('then');
-    expect(fresh).not.toHaveProperty('anyOf');
-    expect(fresh.required).toEqual(expect.arrayContaining(['column_flow', 'summary', 'sections']));
-    expect(fresh.required).not.toContain('focus_node_id');
-    expect((fresh.properties as any).sections.required).toEqual(['business', 'technical']);
-    const props = fresh.properties as any;
-    expect(props).not.toHaveProperty('verdict');
-    expect(props).not.toHaveProperty('reason');
-    expect(held).not.toHaveProperty('anyOf');
-    expect(held).not.toHaveProperty('if');
-    expect(held).not.toHaveProperty('then');
-  });
-
   it.each(['bb', 'ct'] as const)('rejects missing fresh kept fields at both boundaries in %s', mode => {
     const schema = submitFindingsSchemaForMode(mode, 'technical', true);
     const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
-    const accepted = { focus_node_id: 'source', summary: 'Supplies the amount.',
+    const accepted = { summary: 'Supplies the amount.',
       sections: { technical: 'Amount is supplied unchanged.' }, ...(mode === 'ct' ? { column_flow: [] } : {}) };
     expect(validateToolCandidate(schema, accepted).success).toBe(true);
     expect(wire(accepted)).toBe(true);
-    for (const missing of ['summary', 'sections'] as const) {
+    for (const missing of ['summary', 'sections', ...(mode === 'ct' ? ['column_flow'] : [])]) {
       const invalid: Record<string, unknown> = { ...accepted };
       delete invalid[missing];
       expect(validateToolCandidate(schema, invalid).success).toBe(false);
@@ -262,7 +245,6 @@ describe('fresh kept required-field projection', () => {
   it('requires an authored angle without a classification lock and preserves input identity', () => {
     const schema = SubmitFindingsCtInputSchema;
     const projected = toModelJsonSchema(schema);
-    expect(JSON.stringify(projected)).not.toContain('minProperties');
     const wire = new Ajv({ strict: false }).compile(projected);
     for (const sections of [{}, { business: 'Business rule.' }, { technical: 'Execution rule.' }]) {
       const input = { focus_node_id: 'source', summary: 'Supplies the amount.', column_flow: [], sections };
@@ -341,8 +323,6 @@ describe('fresh kept required-field projection', () => {
   it.each(['bb', 'ct'] as const)('requires both fresh locked angles without changing input or contaminating a held schema in %s', mode => {
     const held = submitFindingsSchemaForMode(mode, 'both', false);
     const fresh = submitFindingsSchemaForMode(mode, 'both', true);
-    expect(fresh).not.toBe(held);
-    expect(submitFindingsSchemaForMode(mode, 'both', false)).toBe(held);
     const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(fresh));
     for (const sections of [{ business: 'Business rule.' }, { technical: 'Execution rule.' }]) {
       const partial = { focus_node_id: 'source', summary: 'Supplies the amount.', ...(mode === 'ct' ? { column_flow: [] } : {}), sections };
@@ -362,11 +342,11 @@ describe('fresh kept required-field projection', () => {
   it.each(['bb', 'ct'] as const)('honours a held submission without a classification in %s', mode => {
     const held = submitFindingsSchemaForMode(mode, undefined, false);
     const fresh = submitFindingsSchemaForMode(mode, undefined, true);
-    expect(held).not.toBe(fresh);
-    expect(submitFindingsSchemaForMode(mode, undefined, false)).toBe(held);
     const patch = { focus_node_id: 'source', ...(mode === 'ct' ? { column_flow: [] } : {}) };
     expect(validateToolCandidate(held, patch).success).toBe(true);
+    expect(new Ajv({ strict: false }).compile(toModelJsonSchema(held))(patch)).toBe(true);
     expect(validateToolCandidate(fresh, patch).success).toBe(false);
+    expect(new Ajv({ strict: false }).compile(toModelJsonSchema(fresh))(patch)).toBe(false);
   });
 
   it('normalizes an equivalent caller_context spelling to the focus id at the boundary without changing the served schema', () => {

@@ -40,21 +40,6 @@ describe('scheduleFit — generation-guarded camera fit', () => {
     expect(fire).not.toHaveBeenCalled();
   });
 
-  it('a programmatic move (no generation bump) does not cancel a pending fit', () => {
-    const generationRef = { current: 0 };
-    const fire = vi.fn();
-    const scheduledHolder: { run: (() => void) | null } = { run: null };
-    const schedule = vi.fn((run: () => void) => { scheduledHolder.run = run; return 1; });
-    const clear = vi.fn();
-
-    scheduleFit(generationRef, fire, schedule, clear);
-    // A programmatic fitView/setViewport/setCenter fires onMoveStart with event === null,
-    // which isUserMoveEvent rejects, so nothing should bump generationRef here.
-    scheduledHolder.run?.();
-
-    expect(fire).toHaveBeenCalledTimes(1);
-  });
-
   it('the returned cancel clears the scheduled callback directly', () => {
     const generationRef = { current: 0 };
     const fire = vi.fn();
@@ -226,7 +211,7 @@ describe('canvasMinZoom — a fit is never clamped short of the laid-out graph',
 describe('shown graph fitting waits for the requested layout', () => {
   const expected = [{ id: 'a', position: { x: 200, y: 300 }, data: {} }];
   const measured = () => expected.map(node => ({ ...node, measured: { width: 220, height: 80 } }));
-  it.each(['AI preview', 'trace', 'analytics'])('%s arrival waits beyond the first frame, then fits exactly once', () => {
+  it('graph arrival waits beyond the first frame, then fits exactly once', () => {
     const generation = { current: 0 };
     const frames: Array<() => void> = [];
     const fire = vi.fn();

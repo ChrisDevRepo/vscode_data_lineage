@@ -91,7 +91,6 @@ export const engineSupportTests = [
   'tests/unit/engine/projectStore.test.ts',
   'tests/unit/engine/regexSearchIsolation.test.ts',
   'tests/unit/engine/schemaColors.test.ts',
-  'tests/unit/engine/settings-manifest.test.ts',
   'tests/unit/engine/storedConnectionIntegrity.test.ts',
   'tests/unit/engine/tableStatsSampling.test.ts',
   'tests/unit/engine/webviewErrorDiagnostics.test.ts',
@@ -99,7 +98,9 @@ export const engineSupportTests = [
 
 /** Deterministic contracts that stay on the gate: backend graph structure, malformed input, schema repair, secret redaction, cancellation, tool registration/dispatch, identifier boundaries, template structure, escaping, and the operator-runner secret boundary. Prompt sentences and routing scenarios are support, not rows in this list. */
 export const runtimeContractTests = [
+  'tests/unit/engine/settings-manifest.test.ts',
   'tests/unit/engine/logging-redaction.test.ts',
+  'tests/unit/ai-core/webview-security-boundary.test.ts',
   'tests/unit/ai-core/agent-runtime-no-langsmith.test.ts',
   'tests/unit/ai-core/dispatcher-matrix.test.ts',
   'tests/unit/ai-core/graph-patterns-labels.test.ts',

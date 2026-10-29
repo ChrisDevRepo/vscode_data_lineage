@@ -7,7 +7,7 @@
  *  which is itself derived from https://github.com/UziTech/marked-katex-extension (MIT).
  *
  *  Modifications: namespace flattened to module exports, VS Code-internal imports replaced
- *  with the `marked`/`katex` packages and a local `htmlAttributeEncodeValue`.
+ *  with `marked`/`katex`, local HTML-attribute encoding, and contextual inline boundaries.
  *  See THIRD_PARTY_NOTICES.md.
  *--------------------------------------------------------------------------------------------*/
 import type { KatexOptions } from 'katex';
@@ -27,7 +27,6 @@ const mathInlineRegExp =
 const katexContainerClassName = 'vscode-katex-container';
 const katexContainerLatexAttributeName = 'data-latex';
 
-const inlineRule = new RegExp('^' + mathInlineRegExp.source);
 const blockRule = /^(\${1,2})\n((?:\\[^]|[^\\])+?)\n\1(?:\n|$)/;
 
 interface MarkedKatexOptions extends KatexOptions { }
@@ -68,32 +67,17 @@ function createRenderer(
 }
 
 function inlineKatex(renderer: RendererExtensionFunction): TokenizerAndRendererExtension {
-  const ruleReg = inlineRule;
   return {
     name: 'inlineKatex',
     level: 'inline',
     start(src: string) {
-      let index;
-      let indexSrc = src;
-
-      while (indexSrc) {
-        index = indexSrc.indexOf('$');
-        if (index === -1) {
-          return;
-        }
-
-        const possibleKatex = indexSrc.substring(index);
-        if (possibleKatex.match(ruleReg)) {
-          return index;
-        }
-
-        indexSrc = indexSrc.substring(index + 1).replace(/^\$+/, '');
-      }
-      return;
+      return mathInlineRegExp.exec(src)?.index;
     },
-    tokenizer(src: string, _tokens: Token[]) {
-      const match = src.match(ruleReg);
-      if (match) {
+    tokenizer(src: string, tokens: Token[]) {
+      // Marked supplies the unconsumed suffix; restore its preceding raw character for the existing lookbehind.
+      const prefix = tokens.at(-1)?.raw.slice(-1) ?? '';
+      const match = mathInlineRegExp.exec(prefix + src);
+      if (match && match.index === prefix.length) {
         return {
           type: 'inlineKatex',
           raw: match[0],

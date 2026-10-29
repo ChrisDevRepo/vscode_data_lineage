@@ -92,9 +92,11 @@ const cases: Array<{ row: string; err: Error; target?: typeof builtIn; expected:
   { row: 'anything else', err: driver('Incorrect syntax near the keyword \'FROM\'.', { code: 'EREQUEST', number: 156 }), expected: ['showLog', 'editConnection'] },
 ];
 
-describe('describeConnectionError — text', () => {
-  it.each(cases)('$row: message is the connection name and the original text', ({ err, target }) => {
-    expect(describeConnectionError(err, target ?? builtIn, hooks).message).toBe(`${NAME}: ${err.message}`);
+describe('describeConnectionError — complete diagnostic', () => {
+  it.each(cases)('$row: preserves the driver detail and offers the expected actions', ({ err, target, expected }) => {
+    const diagnostic = describeConnectionError(err, target ?? builtIn, hooks);
+    expect(diagnostic.message).toBe(`${NAME}: ${err.message}`);
+    expect(diagnostic.actions.map(action => action.id)).toEqual(expected);
   });
 
   it('removes password, connection-string and token text', () => {
@@ -256,10 +258,6 @@ describe('describeConnectionError — rejected Microsoft token', () => {
 });
 
 describe('describeConnectionError — actions', () => {
-  it.each(cases)('$row → $expected', ({ err, target, expected }) => {
-    expect(ids(err, target ?? builtIn)).toEqual(expected);
-  });
-
   it('a SQL login failure without a database offers no Choose Database', () => {
     expect(ids(driver("Login failed for user 'x'.", { number: 18456 }), { ...builtIn, database: undefined })).toEqual(['updatePassword', 'editConnection']);
   });
