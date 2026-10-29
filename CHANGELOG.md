@@ -43,6 +43,8 @@ The newest version heading collects changes until that version ships.
 - Column-trace hops describe column_flow as one entry per arriving column, restore the recipe depth items (rules and branches, mapping, loading, error handling, gaps), and ask kept neighbors for their rules and thresholds.
 - Equivalent SQL identifier delimiters, outside whitespace and source-permitted casing bind to known object identities without changing authored content or guessing missing names.
 - Column-trace tool descriptions permit SQL-supported contextual dependencies without treating them as arithmetic or aggregate inputs.
+- A rejected call counts toward the three-correction escalation in every phase, including entry detection and scope refinement, even when accepted reads come in the same reply; an unknown tool call counts too, and a failed `present_result` is counted where it is handled.
+- Compiled tool validators are released from the validator's own cache instead of accumulating for the life of the extension host, and the per-hop findings schemas keep only the 16 most recent.
 - Column-trace instructions relate qualified columns to neighboring objects, and retain SQL facts beyond the requested trace in sections.
 - Prohibited neighbor entries receive removal guidance instead of invalid-JSON instructions, and object-valued repair fields retain their diagnostics without incompatible scalar choices.
 - Offered column sources follow the same scope admission rules as submitted mappings.
