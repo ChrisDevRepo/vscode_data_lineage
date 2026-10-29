@@ -5,6 +5,7 @@ import { buildSynthesisEnvelopeMessage } from '../../../../src/ai/agent/graph';
 import { compileInstructionPlan, explorationFacts, type ConversePlanDraft } from '../../../../src/ai/agent/instructionPlan';
 import { deriveStagePromptContext } from '../../../../src/ai/prompting/hostPrompts';
 import { buildSmCompletionEnvelope } from '../../../../src/ai/prompting/smPrompts';
+import { readToolErrorText, type ToolRejection } from '../../../../src/ai/support/toolErrorEnvelope';
 import { TurnEventSink } from '../../../../src/ai/runtime/turnEventSink';
 import type { ClassificationValue } from '../../../../src/ai/session/classification';
 import type { AiSession } from '../../../../src/ai/session/session';
@@ -29,8 +30,8 @@ export interface ModelRequest {
   readonly tools: readonly ServedTool[];
 }
 
-/** A scripted hop commit: findings for `lineage_submit_findings`, or the reason for `lineage_prune_current`. */
-export type ScriptedHop = { readonly submit: object } | { readonly prune: string };
+/** A scripted hop commit: findings for `lineage_submit_findings` (optionally preceded by `refused`, an invalid submission the backend must reject), or the reason for `lineage_prune_current`. */
+export type ScriptedHop = { readonly submit: object; readonly refused?: object } | { readonly prune: string };
 
 /** The request of one hop with the engine facts it was assembled from. */
 export interface HopRecord {
@@ -40,6 +41,8 @@ export interface HopRecord {
   readonly tasks: readonly InvestigationTask[];
   /** Ids the engine had visited or removed when the request was assembled. */
   readonly closed: ReadonlySet<string>;
+  /** The rejection the backend returned for the hop's scripted `refused` submission, with the input it answered. */
+  readonly refusal?: { readonly input: object; readonly rejection: ToolRejection };
 }
 
 /** A fixture session with the production tool registry bound to it. */
@@ -133,7 +136,14 @@ export async function driveWalk(
     const hop = script[focus];
     if (!hop) throw new Error(`No scripted commit for ${focus}.`);
     const { visited, removedSet } = engine.toJSON();
-    hops.push({ focus, request: activeRequest(walk), tasks: structuredClone(engine.getCurrentTasks()) as InvestigationTask[], closed: new Set([...visited, ...removedSet]) });
+    const record = { focus, request: activeRequest(walk), tasks: structuredClone(engine.getCurrentTasks()) as InvestigationTask[], closed: new Set([...visited, ...removedSet]) };
+    let refusal: HopRecord['refusal'];
+    if ('submit' in hop && hop.refused) {
+      const rejection = readToolErrorText(await walk.registry.invoke('lineage_submit_findings', hop.refused));
+      if (!rejection) throw new Error(`The scripted refused submission for ${focus} was not rejected.`);
+      refusal = { input: hop.refused, rejection };
+    }
+    hops.push(refusal ? { ...record, refusal } : record);
     const input = 'submit' in hop ? hop.submit : { reason: hop.prune };
     const result = JSON.parse(await walk.registry.invoke('submit' in hop ? 'lineage_submit_findings' : 'lineage_prune_current', input)) as { ok?: boolean };
     if (!result.ok) throw new Error(`The scripted commit for ${focus} was rejected: ${JSON.stringify(result)}`);

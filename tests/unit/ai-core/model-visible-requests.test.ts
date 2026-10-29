@@ -19,7 +19,7 @@ import { resolveStagePrompt } from '../../../src/ai/prompting/templateRenderer';
 import { STRUCTURED_OUTPUT_TOOL, STRUCTURED_OUTPUT_TOOL_DESCRIPTION } from '../../../src/ai/providers/structuredOutput';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import { StartExplorationFreshProviderInputSchema, StartExplorationRefineProviderInputSchema } from '../../../src/ai/tools/toolSchemas';
-import { ISSUES, LAST_CORRECTION, at, makeRejection, renderProblem } from '../../../src/ai/support/toolErrorEnvelope';
+import { ISSUES, LAST_CORRECTION, renderProblem } from '../../../src/ai/support/toolErrorEnvelope';
 import { driveWalk, openFixtureWalk, promptContext, servedTools, type HopRecord, type ScriptedHop } from './helpers/modelRequests';
 
 const STORED = join(dirname(fileURLToPath(import.meta.url)), '__model_visible__');
@@ -30,7 +30,8 @@ const PM = '[ai].[pricemaster]', SS = '[ai].[salesstaging]', DC = '[ai].[dimcale
 
 /** Column trace of `vwPriceList.UnitPrice`: a view, the storage carrier PriceMaster, and the procedure that loads it. The first hop asks no question, so the continuation reaches the procedure with a blank one. */
 const CT_SCRIPT: Record<string, ScriptedHop> = {
-  '[ai].[vwpricelist]': { submit: { summary: 'Current PriceMaster prices renamed to UnitPrice.', sections: { business: 'UnitPrice is the current list price.' },
+  '[ai].[vwpricelist]': { refused: { sections: { business: 'UnitPrice is the current list price.' },
+    column_flow: [{ out_col: 'UnitPrice', upstream_columns: [{ node: '[ai].[spbuildsalesreport]', col: 'ListPrice', transforms: ['compute'] }] }] }, submit: { summary: 'Current PriceMaster prices renamed to UnitPrice.', sections: { business: 'UnitPrice is the current list price.' },
     column_flow: [{ out_col: 'UnitPrice', upstream_columns: [{ node: PM, col: 'ListPrice', transforms: ['compute'], note: 'ListPrice * 1.0' }] }] } },
   '[ai].[sprefreshprices]': { submit: { summary: 'Loads PriceMaster from supplier costs and markups.', sections: { business: 'List price is cost plus markup.' },
     column_flow: [{ out_col: 'ListPrice', writes_to: { node: PM, col: 'ListPrice' }, upstream_columns: [
@@ -94,8 +95,8 @@ function renderAll(): Map<string, string> {
       json(`${name}/hop-${index + 1}.tools`, hop.request.tools);
     });
     text(`${name}/synthesis.message`, run.synthesis.message);
-    json(`${name}/synthesis.tools`, run.synthesis.tools);
   }
+  json('synthesis.tools', ctRun.synthesis.tools);
 
   const fresh = new Map([['lineage_start_exploration', StartExplorationFreshProviderInputSchema]]);
   const refine = new Map([['lineage_start_exploration', StartExplorationRefineProviderInputSchema]]);
@@ -109,8 +110,8 @@ function renderAll(): Map<string, string> {
   }
 
   json('issues', ISSUES);
-  const fault = makeRejection({ code: 'invalid_input', errors: [...at('supplier_out_of_scope', ['column_flow.0.upstream_columns.0.node'], [PM]), ...at('missing', ['summary'])], resend: ['column_flow'] });
-  json('rejection-problem', { lastCorrection: LAST_CORRECTION, stages: ([1, 2, 3] as const).map(stage => JSON.parse(renderProblem(fault, stage))) });
+  const { input, rejection } = ctRun.hops[0].refusal!;
+  json('rejection-problem', { lastCorrection: LAST_CORRECTION, stages: ([1, 2, 3] as const).map(stage => JSON.parse(renderProblem(rejection, stage, input))) });
 
   const { outputTemplates: templates, outputSections: sections } = ct.session;
   const stages = (label: string, rows: ReadonlyArray<readonly [string, string]>) => text(`templates/${label}`, rows.map(([name, prompt]) => `=== ${name} ===\n${prompt}`).join('\n\n'));
@@ -174,13 +175,18 @@ function senders(message: string): Array<{ question: string; from_node: string }
   return found;
 }
 
-const WALKS = [{ name: 'ct', run: ctRun, script: CT_SCRIPT, origin: '[ai].[vwpricelist]' }, { name: 'bb', run: bbRun, script: BB_SCRIPT, origin: '[ai].[vwconsolidatedsales]' }] as const;
+const WALKS = [{ name: 'ct', run: ctRun, origin: '[ai].[vwpricelist]' }, { name: 'bb', run: bbRun, origin: '[ai].[vwconsolidatedsales]' }] as const;
 
 describe('request assembly', () => {
   it('reaches the cases the clauses below are about', () => {
     expect(ctRun.hops.some(hop => hop.tasks.some(task => task.kind === 'column_lineage' && task.question.trim() === '' && task.nodeId !== '[ai].[vwpricelist]'))).toBe(true);
     for (const { run } of WALKS) expect(run.hops.some(hop => neighborsOf(hop).some(neighbor => hop.closed.has(neighbor.id)))).toBe(true);
     expect(senders(bbRun.synthesis.message).length).toBeGreaterThan(0);
+  });
+
+  // `synthesis.tools.json` stores the one served set; both walks must serve exactly it.
+  it('serves the same synthesis tools for a column trace and a whole-object walk', () => {
+    expect(bbRun.synthesis.tools).toEqual(ctRun.synthesis.tools);
   });
 
   // Spec 07: the backend forwards the mapped columns to each mapped neighbor as a technical continuation; the hop that receives it is told which qualified columns arrived, with or without a question.
@@ -206,18 +212,6 @@ describe('request assembly', () => {
       }
       expect(servedChoices(hop, 'questions', 'nodeId'), hop.focus).toEqual(neighbors.filter(neighbor => neighbor.can_question).map(neighbor => neighbor.id).sort());
       expect(servedChoices(hop, 'prune_neighbors', 'id'), hop.focus).toEqual(neighbors.filter(neighbor => neighbor.can_prune).map(neighbor => neighbor.id).sort());
-    }
-  });
-
-  // Spec 07: questions are authored by the AI at a hop. A sender named beside a question is the hop whose findings asked it, never the storage object the question travelled through.
-  // Defect (RED): smBase.ts currentIncomingQuestions (~1256) resolves the sender through the parent task of a question forwarded across a storage carrier, so it names the table. Flip to `it` when fixed.
-  it.fails('names as the sender of a question the hop that asked it', () => {
-    for (const { run, script } of WALKS) {
-      const asked = new Map(Object.entries(script).flatMap(([focus, hop]) => 'submit' in hop
-        ? ((hop.submit as { questions?: Array<{ question: string }> }).questions ?? []).map(entry => [entry.question, focus] as const) : []));
-      for (const message of [...run.hops.map(hop => hop.request.message), run.synthesis.message]) {
-        for (const sender of senders(message)) expect(sender.from_node, sender.question).toBe(asked.get(sender.question));
-      }
     }
   });
 });

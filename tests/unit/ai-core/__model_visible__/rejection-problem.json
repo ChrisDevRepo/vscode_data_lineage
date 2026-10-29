@@ -6,6 +6,14 @@
       "attempt": "1/3",
       "errors": [
         {
+          "path": "",
+          "code": "neighbor_undecided",
+          "message": "neighbor without a decision. Give each listed neighbor one decision as the schema describes.",
+          "allowed": [
+            "[ai].[pricemaster]"
+          ]
+        },
+        {
           "path": "column_flow.0.upstream_columns.0.node",
           "code": "supplier_out_of_scope",
           "message": "supplier outside the approved scope. Remove the outside supplier; if it is the only supplier, omit the column_flow entry, never empty upstream_columns (that declares a born value). Ask the outside object a follow-up in questions and record the fact in sections."
@@ -17,13 +25,25 @@
         }
       ],
       "resend": [
-        "column_flow"
+        "summary",
+        "column_flow",
+        "questions",
+        "sections",
+        "prune_neighbors"
       ]
     },
     {
       "code": "invalid_input",
       "attempt": "2/3",
       "errors": [
+        {
+          "path": "",
+          "code": "neighbor_undecided",
+          "message": "neighbor without a decision. Give each listed neighbor one decision as the schema describes.",
+          "allowed": [
+            "[ai].[pricemaster]"
+          ]
+        },
         {
           "path": "column_flow.0.upstream_columns.0.node",
           "code": "supplier_out_of_scope",
@@ -39,7 +59,11 @@
         }
       ],
       "resend": [
-        "column_flow"
+        "summary",
+        "column_flow",
+        "questions",
+        "sections",
+        "prune_neighbors"
       ]
     },
     {
@@ -47,6 +71,14 @@
       "attempt": "3/3",
       "notice": "This is the last correction before this hop ends.",
       "errors": [
+        {
+          "path": "",
+          "code": "neighbor_undecided",
+          "message": "neighbor without a decision. Give each listed neighbor one decision as the schema describes.",
+          "allowed": [
+            "[ai].[pricemaster]"
+          ]
+        },
         {
           "path": "column_flow.0.upstream_columns.0.node",
           "code": "supplier_out_of_scope",
@@ -62,8 +94,11 @@
         }
       ],
       "resend": [
+        "summary",
         "column_flow",
-        "sections"
+        "questions",
+        "sections",
+        "prune_neighbors"
       ]
     }
   ]
