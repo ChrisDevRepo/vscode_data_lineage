@@ -28,7 +28,7 @@ The newest version heading collects changes until that version ships.
 
 ### Fixed
 - Rejections retain all independent fault paths and owed subjects, identify the actually missing depth field, and preserve valid same-table different-column supplier choices. Repeated oversized reads retain the original refusal; malformed report labels and containers reject without becoming backend errors.
-- A hop with no prunable neighbor no longer offers an unsatisfiable `prune_neighbors` entry; the field takes no entries, and a prune of a neighbor that cannot be pruned is reported as `prune_target` with the prunable ids as choices instead of `never` or `not_neighbor`.
+- A hop with no prunable neighbor serves `prune_neighbors` with no entries allowed instead of an unsatisfiable id; on other hops a prune of a neighbor that cannot be pruned is reported as `prune_target` with the prunable ids instead of `not_neighbor`.
 - Updating a legacy bookmark preserves current selections when older spellings are ambiguous. Note repairs preserve distinct quoted object identities, and identifier binding preserves Unicode format characters inside identifiers while ignoring them around an id. An equivalent spelling of a function's caller in a CT follow-up question binds to the caller instead of costing a retry.
 - A branch may prune an unvisited shared neighbor already kept elsewhere without removing the node or its saved column mappings; conflicting actions in one reply remain rejected.
 - Longer report section labels are accepted unchanged in reports and repairs; blank and duplicate labels remain rejected.
