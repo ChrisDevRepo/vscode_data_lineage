@@ -17,7 +17,7 @@ export const PROVIDER_PROFILES = {
     'AI_TEST_OPENAI_COMPATIBLE_MODEL',
   ],
 };
-/** Env names whose values are secrets and must never reach run evidence (the harness redacts them; the internal vault tools list the provider aliases from the two lists above). */
+/** Env names whose values are secrets and must never reach run evidence; the harness redacts them. */
 export const SECRET_ENV_KEYS = ['AI_TEST_API_KEY', 'DB_TEST_PASSWORD', 'DB_TEST_TOKEN', 'LANGFUSE_SECRET_KEY'];
 
 const execFileAsync = promisify(execFile);
