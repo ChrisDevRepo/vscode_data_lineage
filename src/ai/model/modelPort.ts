@@ -104,6 +104,8 @@ export class ModelPortError extends Error {
     public readonly code: ModelPortErrorCode,
     message: string,
     public readonly cause?: unknown,
+    /** True once the provider emitted any reply part, including buffered or opaque output. */
+    public readonly replyReceived = false,
   ) {
     super(message);
     this.name = 'ModelPortError';

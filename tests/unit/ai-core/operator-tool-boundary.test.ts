@@ -29,6 +29,23 @@ import { modelUserMessage } from '../../../src/ai/model/modelPort';
 const secret = 'synthetic-secret';
 
 describe('headless tool-call correlation', () => {
+  it.each([
+    { name: 'text', message: { content: 'Partial answer' }, output: [{ type: 'message', content: [{ type: 'output_text', text: 'Partial answer' }] }], received: true },
+    { name: 'tool', message: { tool_calls: [{ id: 'call', type: 'function', function: { name: 'inspect', arguments: '{}' } }] }, output: [{ type: 'function_call', call_id: 'call', name: 'inspect', arguments: '{}' }], received: true },
+    { name: 'empty', message: {}, output: [], received: false },
+  ].flatMap(row => (['chat_completions', 'responses'] as const).map(wire => ({ ...row, wire }))))(
+    'retains $name reply receipt for $wire when a completed HTTP body also carries an interruption', async ({ message, output, received, wire }) => {
+    const error = { code: 'ECONNRESET', message: 'upstream socket hang up' };
+    const fetchImpl = vi.fn(async () => Response.json(wire === 'responses' ? { output, error }
+      : { choices: [{ finish_reason: 'error', message, error }] }));
+    const port = new OpenAiCompatiblePort({ baseUrl: 'https://provider.example/v1', apiKey: secret, model: 'synthetic', wire }, { fetchImpl });
+    const result = await port.generateToolTurn({ messages: [modelUserMessage('Inspect.')], tools: [], phase: 'discover' });
+    expect(result.status).toBe('error');
+    if (result.status !== 'error') throw new Error('Expected provider failure.');
+    expect(result.providerError.cause).toMatchObject({ code: 'ECONNRESET' });
+    expect(result.providerError.replyReceived).toBe(received ? true : undefined);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
   it.each(['{"query":"Sales"}', 'null'])('refuses repeated IDs with arguments %s as a transport error', async raw => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: {
       tool_calls: ['{"query":"Orders"}', raw].map(args => ({ id: 'same-id', type: 'function',
@@ -481,6 +498,43 @@ describe('Langfuse free plan limits', () => {
 });
 
 describe('explicit attachment export boundary', () => {
+  // Stored generation inputs retain the captured request context, not only its messages.
+  it.each(['native', 'provider', 'missing'].flatMap(capture => [false, true].map(failed => ({ capture, failed }))))(
+    'preserves captured request evidence for $capture with failed=$failed', async ({ capture, failed }) => {
+      const at = '2026-01-01T00:00:00.000Z';
+      const identity = { at, requestId: 'synthetic', generation: 1 };
+      const request = { type: 'wire-request', ...identity, system: 'Synthetic instructions', systemHash: 'captured-hash',
+        messages: [{ role: 'user', parts: [{ type: 'text', value: 'Inspect.' }] }], toolMode: 2,
+        tools: [{ name: 'inspect', descriptionHash: 'tool-hash', inputSchema: { type: 'object', required: ['id'] } }] };
+      const body = { model: 'synthetic', messages: [{ role: 'user', content: 'Inspect.' }], reasoning_effort: 'low',
+        tools: [{ type: 'function', function: { name: 'inspect', description: 'Inspect an object.', parameters: request.tools[0].inputSchema } }], tool_choice: 'required' };
+      const captured = parseTrace([
+        { type: 'turn-start', at, requestId: 'synthetic', runFingerprint: 'run' },
+        ...(capture === 'missing' ? [] : [request]),
+        { type: 'provider-raw', ...identity, generation: 2, direction: 'request', body: { unrelated: 'other-generation' } },
+        { type: 'provider-raw', ...identity, direction: 'response', body: { unrelated: 'provider-response' } },
+        ...(capture === 'provider' ? [{ type: 'provider-raw', ...identity, direction: 'request', url: 'https://provider.example', body }] : []),
+        ...(failed ? [{ type: 'wire-error', ...identity, diagnostic: { message: 'synthetic failure' } }]
+          : [{ type: 'wire-response', ...identity, text: 'Done.', toolCalls: [] },
+            { type: 'generation', ...identity, modelId: 'synthetic', finishReason: 'stop', latencyMs: 1 }]),
+        { type: 'turn-terminal', at, requestId: 'synthetic', runFingerprint: 'run', status: failed ? 'error' : 'ok' },
+      ].map(row => JSON.stringify(row)).join('\n'));
+      let payload = '';
+      await exportRunToLangfuse(captured, { baseUrl: 'https://export.example', publicKey: 'synthetic', secretKey: 'secret',
+        fetchImpl: async () => Response.json({}), onPayload: value => { payload = value; } });
+      const spans = JSON.parse(payload).resourceSpans[0].scopeSpans[0].spans;
+      expect(spans).toHaveLength(2);
+      for (const span of spans) {
+        const input = span.attributes.find((attribute: { key: string }) => attribute.key === 'langfuse.observation.input');
+        if (capture === 'missing') expect(input).toBeUndefined();
+        else expect(JSON.parse(input.value.stringValue)).toEqual({
+          system: request.system, systemHash: request.systemHash, messages: request.messages, tools: request.tools, toolMode: request.toolMode,
+          ...(capture === 'provider' ? { providerRequest: body } : {}),
+        });
+      }
+      expect(payload).not.toContain('https://provider.example');
+    },
+  );
   const run = parseTrace([
     { type: 'turn-start', at: '2026-01-01T00:00:00.000Z', requestId: 'synthetic', runFingerprint: 'run' },
     { type: 'turn-terminal', at: '2026-01-01T00:00:00.001Z', requestId: 'synthetic', runFingerprint: 'run', status: 'ok' },

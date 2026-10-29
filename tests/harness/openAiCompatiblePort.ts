@@ -873,16 +873,18 @@ interface ReadCompletion {
 function readCompletion(body: unknown): ReadCompletion {
   const root = asRecord(body);
   const choices = Array.isArray(root?.choices) ? root.choices : undefined;
+  const choice = asRecord(choices?.[0]) ?? {};
+  const message = asRecord(choice.message) ?? {};
   const error = asRecord(root?.error) ?? asRecord(asRecord(choices?.[0])?.error);
-  throwIfErrorEnvelope(error);
+  throwIfErrorEnvelope(error, Boolean(readContentText(message.content)
+    || (Array.isArray(message.tool_calls) && message.tool_calls.length) || message.reasoning_content
+    || (Array.isArray(message.reasoning_details) && message.reasoning_details.length)));
   if (!choices || choices.length === 0) {
     throw new ModelPortError(
       'unsupported_response',
       'Provider response carried no choices.',
     );
   }
-  const choice = asRecord(choices[0]) ?? {};
-  const message = asRecord(choice.message) ?? {};
   const rawFinishReason = typeof choice.finish_reason === 'string' ? choice.finish_reason : 'unknown';
   const parts: PortGenerationPart[] = [];
   const text = readContentText(message.content);
@@ -920,13 +922,14 @@ function readCompletion(body: unknown): ReadCompletion {
 }
 
 /** A provider error delivered inside an HTTP 200 body is a provider failure, never an answer. */
-function throwIfErrorEnvelope(error: Record<string, unknown> | undefined): void {
+function throwIfErrorEnvelope(error: Record<string, unknown> | undefined, replyReceived = false): void {
   if (!error) return;
   const detail = sanitizeProviderError(JSON.stringify({ code: error.code, type: error.type, message: error.message }));
   throw new ModelPortError(
     'provider_error',
     `Provider returned an error envelope${detail ? `: ${detail}` : ''}.`,
     Object.assign(new Error('Provider error envelope.'), { code: error.code }),
+    replyReceived,
   );
 }
 
@@ -945,7 +948,7 @@ function toolCallPart(callId: string, toolName: string, args: unknown, extraCont
 /** Decodes one `/responses` body into the same ordered parts as {@link readCompletion}. */
 function readResponse(body: unknown): ReadCompletion {
   const root = asRecord(body);
-  throwIfErrorEnvelope(asRecord(root?.error));
+  throwIfErrorEnvelope(asRecord(root?.error), Array.isArray(root?.output) && root.output.length > 0);
   if (!Array.isArray(root?.output)) {
     throw new ModelPortError('unsupported_response', 'Provider response carried no output.');
   }

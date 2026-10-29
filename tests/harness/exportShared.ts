@@ -2,21 +2,25 @@
 
 import type { GenerationEntry, ParsedRun } from './traceModel';
 
-/** Message content for one generation, present only while the trace ran verbose. */
-export function verboseContent(run: ParsedRun, generation: GenerationEntry): { input?: unknown; output?: unknown } {
+/** Captured context for one generation, including an existing provider request body but no transport headers or URL; verbose traces only. */
+export function verboseContent(run: ParsedRun, generation: Pick<GenerationEntry, 'requestId' | 'generation'>): { input?: unknown; output?: unknown } {
   const request = run.wire.find(
     (entry) => entry.type === 'wire-request'
       && entry.requestId === generation.requestId
       && entry.generation === generation.generation,
   );
   if (!request || request.type !== 'wire-request' || request.system === undefined) return {};
+  const provider = run.wire.find(entry => entry.type === 'provider-raw' && entry.direction === 'request'
+    && entry.requestId === generation.requestId && entry.generation === generation.generation);
   const response = run.wire.find(
     (entry) => entry.type === 'wire-response'
       && entry.requestId === generation.requestId
       && entry.generation === generation.generation,
   );
   return {
-    input: { system: request.system, messages: request.messages },
+    input: { system: request.system, systemHash: request.systemHash, messages: request.messages,
+      tools: request.tools, toolMode: request.toolMode,
+      providerRequest: provider?.type === 'provider-raw' ? provider.body : undefined },
     output: response && response.type === 'wire-response'
       ? { text: response.text, toolCalls: response.toolCalls }
       : undefined,

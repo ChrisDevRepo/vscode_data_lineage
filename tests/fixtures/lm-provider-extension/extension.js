@@ -102,6 +102,7 @@ function activate(context) {
     transports.clear();
   } });
   const uiErrors = [];
+  let interruption;
   const provider = {
     provideLanguageModelChatInformation() {
       return [{
@@ -116,6 +117,18 @@ function activate(context) {
     },
     async provideLanguageModelChatResponse(_model, messages, options, progress, token) {
       if (token.isCancellationRequested) return;
+      if (interruption && (!interruption.toolName || options.tools?.some(tool => tool.name === interruption.toolName))) {
+        const request = JSON.stringify(messages);
+        interruption.request ??= request;
+        if (interruption.request === request) interruption.attempts += 1;
+        if (interruption.request === request && interruption.attempts <= interruption.failures) {
+          if (interruption.afterReply) {
+            progress.report(new vscode.LanguageModelTextPart('Partial reply.'));
+            await new Promise(resolve => { interruption.release = resolve; });
+          }
+          throw Object.assign(new Error('ECONNRESET: fixture connection interrupted'), { code: 'ECONNRESET' });
+        }
+      }
       const request = {
         messages: messages.map((message) => ({
           role: message.role === vscode.LanguageModelChatMessageRole.User ? 'user' : 'assistant',
@@ -173,7 +186,10 @@ function activate(context) {
     },
   };
   context.subscriptions.push(vscode.lm.registerLanguageModelChatProvider(VENDOR, provider));
-  return { uiRequests: require('./chat-ui-provider').requests, uiResponses, uiErrors, providerProfile: liveProviderProfile() };
+  return {
+    uiRequests: require('./chat-ui-provider').requests, uiResponses, uiErrors, providerProfile: liveProviderProfile(),
+    setInterruption(value) { interruption = value; },
+  };
 }
 
 module.exports = { activate };

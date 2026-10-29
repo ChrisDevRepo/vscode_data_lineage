@@ -168,8 +168,6 @@ export interface ToolAttemptResult {
   readonly error?: string;
   /** Secret-sanitized diagnostic retained for tracing and logs. */
   readonly providerError?: ProviderErrorDiagnostic;
-  /** Set when a failed generation had already streamed reply text to the chat; such a reply is never retried. */
-  readonly replyStreamed?: true;
 }
 
 
@@ -860,7 +858,6 @@ async function executeToolGenerationAttempt(
 ): Promise<ToolAttemptResult> {
   const beforeCalls = model.modelCalls;
   const streamText = input.proseGate !== 'buffer-until-tool';
-  let replyStreamed = false;
   assertToolPairingWellFormed(input.messages);
   const pending = input.priorState?.rejections.length === 1 ? input.priorState.rejections[0] : undefined;
   const previousReply = [...(input.priorState?.messages ?? [])].reverse().find(message => AIMessage.isInstance(message));
@@ -887,12 +884,7 @@ async function executeToolGenerationAttempt(
       signal: input.signal,
       phase: input.phase,
       instructionContext: input.instructionContext,
-      ...(streamText ? {
-        onTextDelta: (text: string) => {
-          if (text.length > 0) replyStreamed = true;
-          input.sink.stream(text);
-        },
-      } : {}),
+      ...(streamText ? { onTextDelta: (text: string) => input.sink.stream(text) } : {}),
     });
 
     const providerCalls = model.modelCalls - beforeCalls;
@@ -913,7 +905,6 @@ async function executeToolGenerationAttempt(
         text: '',
         error: generated.error,
         providerError: generated.providerError,
-        ...(replyStreamed ? { replyStreamed: true as const } : {}),
       };
     }
     if (providerCalls !== 1) {

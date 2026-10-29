@@ -424,9 +424,7 @@ function buildSpans(
       if (failure.type !== 'wire-error' || failure.requestId !== turn.requestId) continue;
       const request = scopedRun.wire.find((entry) => entry.type === 'wire-request'
         && entry.requestId === failure.requestId && entry.generation === failure.generation);
-      const failedInput = request?.type === 'wire-request' && request.system !== undefined
-        ? { system: request.system, messages: request.messages }
-        : undefined;
+      const { input: failedInput } = verboseContent(scopedRun, failure);
       spans.push({
         traceId,
         spanId: otelSpanId(`${identity}:error:${failure.generation}:${failure.lineIndex}`),
@@ -538,7 +536,7 @@ function rootIo(run: ParsedRun, generations: readonly GenerationEntry[]): { inpu
   }
   if (input === undefined) {
     const request = run.wire.find(entry => entry.type === 'wire-request' && entry.system !== undefined);
-    if (request?.type === 'wire-request') input = { system: request.system, messages: request.messages };
+    if (request?.type === 'wire-request') input = verboseContent(run, request).input;
   }
   if (output === undefined) {
     const failure = run.wire.filter(entry => entry.type === 'wire-error').at(-1);

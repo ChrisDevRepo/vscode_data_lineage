@@ -138,4 +138,63 @@ suite('Participant turn — public API, no CDP', () => {
       source.dispose();
     }
   });
+
+  // Only a connection interruption before any reply gets one retry.
+  for (const scenario of [
+    { name: 'retries a dropped connection before the reply', failures: 1, afterReply: false, toolName: 'structured_output', status: 'ok', attempts: 2 },
+    { name: 'stops after a second dropped connection', failures: 2, afterReply: false, toolName: 'structured_output', status: 'error', attempts: 2 },
+    { name: 'does not retry buffered discovery after a reply starts', failures: 1, afterReply: true, toolName: 'lineage_search_objects', status: 'error', attempts: 1 },
+    { name: 'does not retry structured entry after a reply starts', failures: 1, afterReply: true, toolName: 'structured_output', status: 'error', attempts: 1 },
+  ]) {
+    test(scenario.name, async function () {
+      this.timeout(120_000);
+      const fixture = await vscode.extensions.getExtension(FIXTURE_ID)!.activate();
+      const extension = await vscode.extensions.getExtension(EXTENSION_ID)!.activate();
+      await vscode.commands.executeCommand('dataLineageViz.openDemo');
+      await waitForDemoModel();
+      const interruption = {
+        failures: scenario.failures, afterReply: scenario.afterReply, attempts: 0,
+        toolName: scenario.toolName,
+        release: undefined as (() => void) | undefined,
+      };
+      fixture.setInterruption(interruption);
+      const { stream, calls } = recordingStream();
+      const source = new vscode.CancellationTokenSource();
+      let replyReceived = false;
+      try {
+        const nativeModel = await fixtureModel();
+        const model: vscode.LanguageModelChat = scenario.afterReply ? {
+          ...nativeModel,
+          countTokens: nativeModel.countTokens.bind(nativeModel),
+          async sendRequest(...args) {
+            const response = await nativeModel.sendRequest(...args);
+            return {
+              text: response.text,
+              stream: (async function* () {
+                for await (const value of response.stream) {
+                  if (value instanceof vscode.LanguageModelTextPart && value.value === 'Partial reply.') {
+                    replyReceived = true;
+                    interruption.release!();
+                  }
+                  yield value;
+                }
+              })(),
+            };
+          },
+        } : nativeModel;
+        const result = await extension.participant.handleChatRequest(
+          chatRequest('Which tables feed Sales?', model),
+          { history: [] }, stream, source.token,
+        );
+        const metadata = (result as vscode.ChatResult)?.metadata as { status?: string } | undefined;
+        if (scenario.afterReply) assert.ok(replyReceived, `native model stream must deliver the partial reply before interruption: ${JSON.stringify({ metadata, calls, attempts: interruption.attempts })}`);
+        assert.strictEqual(metadata?.status, scenario.status);
+        assert.strictEqual(interruption.attempts, scenario.attempts, 'count retries of the same native request');
+      } finally {
+        interruption.release?.();
+        fixture.setInterruption(undefined);
+        source.dispose();
+      }
+    });
+  }
 });

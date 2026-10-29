@@ -146,6 +146,7 @@ export class VscodeLangChainBridge extends BaseChatModel<
         }
       : undefined;
     const providerParts: unknown[] = [];
+    let replyReceived = false;
     try {
       const nativeMessages = messages.map(toVscodeMessage);
       this.wire?.({
@@ -196,6 +197,7 @@ export class VscodeLangChainBridge extends BaseChatModel<
           break;
         }
         const part = next.value;
+        replyReceived ||= !(part instanceof vscode.LanguageModelTextPart) || part.value.length > 0;
         if (part instanceof vscode.LanguageModelTextPart) {
           if (capture) capture.text += part.value;
           const message = new AIMessageChunk({ content: part.value });
@@ -234,7 +236,7 @@ export class VscodeLangChainBridge extends BaseChatModel<
         throw cancelledError();
       }
     } catch (error) {
-      throw normalizeBridgeError(error, this.token, options.signal);
+      throw normalizeBridgeError(error, this.token, options.signal, replyReceived);
     } finally {
       if (iterator?.return && !reachedEof) {
         try {
@@ -352,8 +354,9 @@ function normalizeBridgeError(
   error: unknown,
   token: vscode.CancellationToken,
   signal?: AbortSignal,
+  replyReceived = false,
 ): ModelPortError {
-  if (error instanceof ModelPortError) return error;
+  if (error instanceof ModelPortError) return new ModelPortError(error.code, error.message, error.cause, replyReceived || error.replyReceived);
   if (token.isCancellationRequested || signal?.aborted || isHostCancellationError(error)) {
     return cancelledError();
   }
@@ -364,7 +367,7 @@ function normalizeBridgeError(
     NotFound: 'model_not_found',
   };
   const code = mapped[rawCode] ?? 'provider_error';
-  return new ModelPortError(code, providerFailureMessage(error, code), error);
+  return new ModelPortError(code, providerFailureMessage(error, code), error, replyReceived);
 }
 
 /** Redacted, length-capped provider message, falling back to the neutral code line when empty. */

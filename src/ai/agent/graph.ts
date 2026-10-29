@@ -295,7 +295,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
   };
 
   /** Logs a connection-level interruption, waits the transport-retry delay and runs the one retry. */
-  const retryAfterTransportWait = async <R>(phase: string, failure: ProviderErrorDiagnostic, attempt: () => Promise<R>): Promise<R> => {
+  const retryAfterTransportWait = async <R>(phase: string, failure: ProviderErrorDiagnostic, first: R, attempt: () => Promise<R>): Promise<R> => {
+    if (!isTransportProviderError(failure) || failure.replyReceived || deps.signal?.aborted) return first;
     logGraphDebug(deps, `[AI] transport-retry phase=${phase} ${formatProviderErrorDiagnostic(failure)}`);
     await abortableDelay(deps.transportRetryDelayMs ?? TRANSPORT_RETRY_DELAY_MS, deps.signal);
     return attempt();
@@ -312,12 +313,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       traceSyntheticRejection: deps.traceSyntheticRejection,
     });
     const first = await attempt();
-    if (first.stop !== 'error' || !first.providerError || !isTransportProviderError(first.providerError) || deps.signal?.aborted) return first;
-    if (first.replyStreamed) {
-      logGraphDebug(deps, `[AI] transport-retry skipped phase=${plan.frame.phase} reason=reply_streamed ${formatProviderErrorDiagnostic(first.providerError)}`);
-      return first;
-    }
-    return retryAfterTransportWait(plan.frame.phase, first.providerError, attempt);
+    if (first.stop !== 'error' || !first.providerError) return first;
+    return retryAfterTransportWait(plan.frame.phase, first.providerError, first, attempt);
   };
 
   /** Runs one forced structured-output generation under the provider-failure contract of the tool phases: a connection-level interruption is retried once after a short wait, and a failed request is returned as a provider failure for {@link failProvider}, never thrown. */
@@ -336,8 +333,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       }
     };
     const first = await attempt();
-    if (first.ok || !isTransportProviderError(first.providerError) || deps.signal?.aborted) return first;
-    return retryAfterTransportWait(plan.frame.phase, first.providerError, attempt);
+    if (first.ok) return first;
+    return retryAfterTransportWait(plan.frame.phase, first.providerError, first, attempt);
   };
 
   /** Returns the cumulative attempt state for one phase, or a fresh state when the phase changed. */
