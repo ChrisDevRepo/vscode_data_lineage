@@ -1876,8 +1876,10 @@ export class NavigationEngine implements IHopStateMachine {
         const routes = columnPlan?.invalidRoutes ?? [];
         const schemaProblem = view.problems[0];
         const choices = new Map(schemaProblem?.errors.flatMap(error => error.values ? [[error.path, error.values] as const] : []));
-        for (const route of invalidRoutes) if (route.path?.endsWith('.node') && !route.allowed_values && choices.has(route.path)) route.allowed_values = [...choices.get(route.path)!];
-        const referencePaths = new Set(routes.filter(route => route.path?.endsWith('.node')).map(route => route.path));
+        // A pair endpoint is a supplier `node` or the procedure `out_node` (D-130).
+        const isReference = (path?: string): path is string => !!path && /\.(out_)?node$/.test(path);
+        for (const route of invalidRoutes) if (isReference(route.path) && !route.allowed_values && choices.has(route.path)) route.allowed_values = [...choices.get(route.path)!];
+        const referencePaths = new Set(routes.filter(route => isReference(route.path)).map(route => route.path));
         if (schemaProblem) schemaProblem.errors = schemaProblem.errors.filter(error => !referencePaths.has(error.path) || ISSUES[error.code].category !== 'reference');
         conflictPaths.filter(path => !path.startsWith('column_flow.')).forEach(path => view.holdPaths.add(path));
         alternatives = invalidRoutes.flatMap(route => route.alternatives ?? []);
