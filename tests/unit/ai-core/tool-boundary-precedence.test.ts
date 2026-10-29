@@ -18,7 +18,7 @@ import { buildActiveHopInstruction } from '../../../src/ai/agent/stagePrompts';
 import { executeSubmitFindings } from '../../../src/ai/tools/handlers/submitFindings';
 import { executePruneCurrent } from '../../../src/ai/tools/handlers/pruneCurrent';
 import { executeStartExploration } from '../../../src/ai/tools/handlers/startExploration';
-import { ColumnFlowSchema, StartExplorationInputSchema, StartExplorationFreshProviderInputSchema, StartExplorationProviderInputSchema, StartExplorationRefineProviderInputSchema, PruneCurrentInputSchema, presentResultSchemaForPhase, submitFindingsSchemaForMode } from '../../../src/ai/tools/toolSchemas';
+import { ColumnFlowSchema, StartExplorationInputSchema, startExplorationSchemaForState, StartExplorationFreshProviderInputSchema, StartExplorationProviderInputSchema, StartExplorationRefineProviderInputSchema, PruneCurrentInputSchema, presentResultSchemaForPhase, submitFindingsSchemaForMode } from '../../../src/ai/tools/toolSchemas';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import Ajv from 'ajv/dist/2020';
 import * as toolValidation from '../../../src/ai/support/toolValidation';
@@ -1004,7 +1004,7 @@ describe('lineage_start_exploration boundary', () => {
   });
 
   it.each([{}, { question: 'What feeds it?' }, { excludeTypes: ['table'] }])('rejects a start with no origin, supplement or revision at the schema: %j', input => {
-    const parsed = validateToolCandidate(StartExplorationInputSchema, input);
+    const parsed = validateToolCandidate(startExplorationSchemaForState(false), input);
     expect(parsed.success).toBe(false);
     if (parsed.success) throw new Error('Fresh omissions admitted');
     expect(parsed.rejection.errors.map(({ code, path }) => ({ code, path })).sort((a, b) => a.path.localeCompare(b.path))).toEqual(

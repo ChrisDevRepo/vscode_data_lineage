@@ -34,7 +34,6 @@ export type PresentResultInput = z.infer<typeof PresentResultModelSchema>;
 
 /** The validated, engine-assembled result ready for the UI. */
 type PresentResultRequest = {
-  success: true;
   name: string;
   node_ids: string[];
   summary: string;
@@ -44,14 +43,6 @@ type PresentResultRequest = {
   highlight_groups: NonNullable<PresentResultInput['highlight_groups']>;
   badges: Array<{ node_id: string; text: string }>;
   notes: Array<{ node_id: string; caption: string }>;
-};
-
-/** A failed validation: the one rejection the model receives plus what the handler needs to hold the draft. */
-type PresentResultFailure = {
-  success: false;
-  rejection: ToolRejection;
-  repairable: boolean;
-  repairFields: PresentResultRepairField[];
 };
 
 /** One numbered top-level block of the cached discovery answer, served to the preview stage as `answer_blocks`. */
@@ -115,11 +106,9 @@ export function assemblePreviewSections(
   }));
 }
 
-/** A defect found outside {@link validatePresentResult} but reported through its accumulator. */
+/** A defect found outside {@link inspectPresentResult} but reported through its accumulator. */
 export interface PresentResultViolation {
-  /** True only for omitted report coverage; invalid values and references leave this absent. */
-  readonly missingContent?: true;
-  /** The faults reported through the validator's accumulator. */
+  /** The faults reported through the inspection's accumulator. */
   readonly errors: readonly ToolError[];
   /** Fields this violation authorizes for a repair resend. */
   readonly repairFields: readonly PresentResultRepairField[];
@@ -581,7 +570,7 @@ export function inspectPresentResult(
   stage: PresentResultStage = 'completed',
   nodeIdState?: PresentNodeIdStateLookup,
   viewKnown = true,
-): PresentResultFailure | undefined {
+): ToolRejection | undefined {
   const faults: ToolError[] = [];
   let allRepairable = true;
   const repairFields = new Set<PresentResultRepairField>();
@@ -645,18 +634,13 @@ export function inspectPresentResult(
   if (faults.length > 0) {
     const resendList = [...repairFields];
     const repairInstructed = allRepairable && resendList.length > 0;
-    return {
-      success: false,
-      rejection: makeRejection({
-        code: REJECTION_CODES.validation,
-        reason: faults.map(fault => `${fault.path}: ${fault.code}`).join('\n'),
-        issuePaths: [...issuePaths],
-        errors: faults,
-        resend: repairInstructed ? resendList : [],
-      }),
-      repairable: allRepairable,
-      repairFields: resendList,
-    };
+    return makeRejection({
+      code: REJECTION_CODES.validation,
+      reason: faults.map(fault => `${fault.path}: ${fault.code}`).join('\n'),
+      issuePaths: [...issuePaths],
+      errors: faults,
+      resend: repairInstructed ? resendList : [],
+    });
   }
 
   return undefined;
@@ -668,25 +652,10 @@ export function completePresentResult(
   assembledBadges: Array<{ node_id: string; text: string }> = [], assembledDescription?: string,
 ): PresentResultRequest {
   return {
-    success: true, name: input.name, node_ids: resolvedNodeIds, summary: input.summary,
+    name: input.name, node_ids: resolvedNodeIds, summary: input.summary,
     description: assembledDescription!, layout_direction: input.layout_direction,
     highlight_groups: input.highlight_groups, badges: assembledBadges, notes: input.notes ?? [],
   };
-}
-
-/** Typed direct callers use the same reference inspection as native tool admission. */
-export function validatePresentResult(
-  input: PresentResultInput, resolvedNodeIds: string[],
-  assembledBadges?: Array<{ node_id: string; text: string }>, assembledDescription?: string,
-  externalViolations: readonly PresentResultViolation[] = [], stage: PresentResultStage = 'completed',
-  nodeIdState?: PresentNodeIdStateLookup,
-): PresentResultRequest | PresentResultFailure {
-  const references: PresentReference[] = [];
-  for (const field of ['sections', 'highlight_groups'] as const) input[field]?.forEach((entry, index) => entry.node_ids?.forEach((nodeId, idIndex) =>
-    references.push({ field, heldPath: `${field}.${index}`, path: `${field}.${index}.node_ids.${idIndex}`, nodeId })));
-  input.notes?.forEach((note, index) => references.push({ field: 'notes', heldPath: `notes.${index}.node_id`, path: `notes.${index}.node_id`, nodeId: note.node_id }));
-  return inspectPresentResult({ references, coverageKnown: true }, resolvedNodeIds, externalViolations, stage, nodeIdState)
-    ?? completePresentResult(input, resolvedNodeIds, assembledBadges, assembledDescription);
 }
 
 /** Finds nodes that are disconnected from the given origin inside a result view. */

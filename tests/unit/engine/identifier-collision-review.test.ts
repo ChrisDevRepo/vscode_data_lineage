@@ -3,8 +3,8 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { buildModel, normalizeName } from '../../../src/engine/modelBuilder';
 import { parseSqlBody } from '../../../src/engine/sqlBodyParser';
 import { resolveModelNodeId } from '../../../src/engine/shared/nodeIdResolution';
-import { getObjectDetail } from '../../../src/ai/tools/tools';
 import { loadParseRules } from '../helpers/testUtils';
+import { objectDetail } from '../helpers/objectDetail';
 import { stripBrackets } from '../../../src/utils/sql';
 import { resolveModelNodeId as resolveToolNodeId } from '../../../src/ai/support/modelReferences';
 
@@ -39,11 +39,11 @@ describe.each([false, true])('escaped identifier ownership (CS=%s)', cs => {
     ]));
     expect(model.edges).toHaveLength(2);
   });
-  it('resolves current tool requests to the correct bracketed and unescaped objects', () => {
+  it('resolves current tool requests to the correct bracketed and unescaped objects', async () => {
     const model = buildModel([table(escaped), table(plain)], [], undefined, undefined, true, undefined, cs);
-    expect(getObjectDetail(model, '"dbo"."a]b"')).toMatchObject({ id: escaped, name: 'a]b' });
-    expect(getObjectDetail(model, escaped)).toMatchObject({ id: escaped, name: 'a]b' });
-    expect(getObjectDetail(model, plain)).toMatchObject({ id: plain, name: 'ab' });
+    expect(await objectDetail(model, '"dbo"."a]b"')).toMatchObject({ id: escaped, name: 'a]b' });
+    expect(await objectDetail(model, escaped)).toMatchObject({ id: escaped, name: 'a]b' });
+    expect(await objectDetail(model, plain)).toMatchObject({ id: plain, name: 'ab' });
   });
   it('does not treat a valid current canonical ID as a legacy alias', () => {
     const doubleBracket = '[dbo].[a]]]]b]';
@@ -89,7 +89,7 @@ const fileModel = (reverse = false) => buildModel((reverse
   : [fileProc('[dbo].[first]', firstUrl), fileProc('[dbo].[second]', secondUrl)]), []);
 
 describe('external URL hash collisions', () => {
-  it.each([false, true])('creates both exact URLs and their own consumers (reverse=%s)', reverse => {
+  it.each([false, true])('creates both exact URLs and their own consumers (reverse=%s)', async reverse => {
     const model = fileModel(reverse);
     const files = model.nodes.filter(node => node.externalType === 'file');
     expect(new Set(files.map(node => node.externalUrl))).toEqual(new Set([firstUrl, secondUrl]));
@@ -98,7 +98,7 @@ describe('external URL hash collisions', () => {
       const id = files.find(node => node.externalUrl === url)!.id;
       expect(id).toMatch(/^\[__ext__\]\.\[[0-9a-f]{64}\]$/);
       expect(model.edges.filter(edge => edge.source === id)).toEqual([{ source: id, target: consumer, type: 'body' }]);
-      expect(getObjectDetail(model, id)).toMatchObject({ id, external_url: url });
+      expect(await objectDetail(model, id)).toMatchObject({ id, external_url: url });
     }
     expect(files.map(node => node.id)).not.toContain(oldId);
   });

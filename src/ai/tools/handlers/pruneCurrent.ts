@@ -2,17 +2,16 @@ import { PruneCurrentInputSchema } from '../toolSchemas';
 import type { ToolServices } from './toolServices';
 import { captureToolFact } from '../../support/toolValidation';
 import { ingestToolInput, toolInputReceipt } from '../../support/toolIngestion';
-import { acknowledgeCommittedHop, prepareHopCommit } from './hopCommit';
+import { acknowledgeCommittedHop, activeHopEngine } from './hopCommit';
 
 /** Validates the reason-only command against live candidate eligibility before committing it. */
 export function executePruneCurrent(input: unknown, s: ToolServices): string {
   try {
-    const prepared = prepareHopCommit('lineage_prune_current', input, s);
-    if (typeof prepared === 'string') return prepared;
-    const { engine } = prepared;
+    const engine = activeHopEngine('lineage_prune_current', input, s);
+    if (typeof engine === 'string') return engine;
     let focusId: string | undefined;
     const receipt = toolInputReceipt.getStore();
-    const outcome = ingestToolInput({ input: prepared.input, schema: PruneCurrentInputSchema, context: receipt?.context ?? '',
+    const outcome = ingestToolInput({ input, schema: PruneCurrentInputSchema, context: receipt?.context ?? '',
       facts: { validated: new Map([['prune.focus', captureToolFact(PruneCurrentInputSchema.shape.focus_node_id, value => { focusId = value; })]]) },
       inspect: view => {
         const plan = engine.preparePruneCurrent(focusId);
@@ -27,6 +26,6 @@ export function executePruneCurrent(input: unknown, s: ToolServices): string {
         };
       },
     });
-    return typeof outcome === 'string' ? outcome : s.logAndReturn('lineage_prune_current', outcome, prepared.input);
+    return typeof outcome === 'string' ? outcome : s.logAndReturn('lineage_prune_current', outcome, input);
   } catch (err) { return s.toolError('prune_current', err); }
 }

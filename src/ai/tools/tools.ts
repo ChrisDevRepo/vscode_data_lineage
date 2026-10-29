@@ -354,23 +354,12 @@ const NEIGHBOR_PAGE = 25;
 
 /** Retrieves full metadata for a specific database object, including DDL, columns, and neighbors. */
 export interface ModelObjectPlan { id: string; node: LineageNode; nodeMap: Map<string, LineageNode> }
-/** One metadata fact shared by direct typed reads and native tool admission. */
+/** One metadata fact resolved by native tool admission. */
 export function prepareModelObject(model: DatabaseModel, raw: string, field: string): ModelObjectPlan | ToolRejection {
   const nodeMap = getModelNodeMap(model);
   const id = resolveModelNodeId(raw, nodeMap, model.identifierCaseSensitive) ?? '';
   const node = nodeMap.get(id);
   return node ? { id, node, nodeMap } : makeRejection({ code: REJECTION_CODES.notFound, errors: at('not_found', [field]), detail: { [field]: raw } });
-}
-
-/** Resolves an object once before executing its metadata read. */
-export function getObjectDetail(
-  model: DatabaseModel,
-  id: string,
-  store?: import('../../engine/columnStore').ColumnStore,
-  cursor?: string,
-): object {
-  const prepared = prepareModelObject(model, id, 'id');
-  return 'code' in prepared ? prepared : executeObjectDetail(model, prepared, store, cursor);
 }
 
 /** Reads metadata from the same object plan admitted by the caller. */
@@ -428,19 +417,7 @@ export function executeObjectDetail(model: DatabaseModel, prepared: ModelObjectP
   return { ...base, ddl, unresolved_refs };
 }
 
-/** Retrieves a bounded BFS scope in one call, optionally including all DDL. */
-export function getScopeBundle(
-  model: DatabaseModel,
-  graph: Graph,
-  input: GetScopeBundleInput,
-  budget: TurnTokenBudget,
-  store?: import('../../engine/columnStore').ColumnStore,
-): object {
-  const prepared = prepareModelObject(model, input.origin, 'origin');
-  return 'code' in prepared ? prepared : executeScopeBundle(model, graph, input, budget, prepared, store);
-}
-
-/** Builds the scope from its already admitted origin plan. */
+/** Retrieves a bounded BFS scope in one call, optionally including all DDL, from its already admitted origin plan. */
 export function executeScopeBundle(model: DatabaseModel, graph: Graph, input: GetScopeBundleInput, budget: TurnTokenBudget, prepared: ModelObjectPlan, store?: ColumnStore): object {
   const { nodeMap, node: originNode, id: origin } = prepared;
   const direction = input.direction ?? 'bidirectional';

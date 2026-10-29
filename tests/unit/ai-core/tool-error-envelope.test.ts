@@ -2,7 +2,7 @@
 import { ISSUES, readToolError, readToolErrorText, isConsentGateRejection, makeRejection, rejectionFromZodError, renderProblem, type FeedbackStage, type ToolProblem, type ToolRejection } from '../../../src/ai/support/toolErrorEnvelope';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { makeGraph, makeIndexedModel, makeModel, makeNode } from '../helpers/modelFixtures';
-import { validatePresentResult } from '../../../src/ai/tools/presentResult';
+import { inspectPresentInput } from '../helpers/inspectPresent';
 import { presentResultSchemaForPhase, submitFindingsSchemaForMode } from '../../../src/ai/tools/toolSchemas';
 import { AiSession } from '../../../src/ai/session/session';
 import { DEFAULT_TURN_TOKEN_BUDGET } from '../../../src/ai/support/tokenBudget';
@@ -142,12 +142,12 @@ describe("tool-error-envelope", () => {
       const sentId = '[dbo].[x]', sentLabel = 'LabelSentinel';
       const input = { name: 'Reports', summary: 'Reports lineage.', highlight_groups: [{ label: 'Out', color: 'target' as const, node_ids: [sentId] }],
         sections: [{ label: sentLabel, node_ids: ['[dbo].[a]', sentId], text: 'Report output.' }] };
-      const result = validatePresentResult(input, ['[dbo].[a]'], undefined, undefined, [], stage, () => 'out_of_scope');
-      if (result.success) throw new Error('Expected a node-id rejection');
-      expect(result.rejection.errors).toEqual(expect.arrayContaining([
+      const rejection = inspectPresentInput(input, ['[dbo].[a]'], [], stage, () => 'out_of_scope');
+      if (!rejection) throw new Error('Expected a node-id rejection');
+      expect(rejection.errors).toEqual(expect.arrayContaining([
         { path: 'sections.0.node_ids.1', code: 'result_out_of_scope', values: ['[dbo].[a]'] },
         { path: 'highlight_groups.0.node_ids.0', code: 'result_out_of_scope', values: ['[dbo].[a]'] }]));
-      for (const feedback of [1, 2, 3] as const) expect(renderProblem(result.rejection, feedback, input)).not.toMatch(/\[dbo\]\.\[x\]|LabelSentinel/);
+      for (const feedback of [1, 2, 3] as const) expect(renderProblem(rejection, feedback, input)).not.toMatch(/\[dbo\]\.\[x\]|LabelSentinel/);
     }
   });
 

@@ -263,7 +263,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       }
       const linkedSections = new Set([...nodeLists.values()].flat());
       const unrenderedSlotIds = viewKnown && sectionCoverageKnown ? unplacedDetailSlotIds(requiredDetailSlotIds(sess.memory.notedNodeIds, rendered), linkedSections) : undefined;
-      if (unrenderedSlotIds?.length) externalViolations.push({ missingContent: true,
+      if (unrenderedSlotIds?.length) externalViolations.push({
         errors: at('slot_unplaced', ['sections.*.node_ids'], unrenderedSlotIds), repairFields: ['sections'], paths: ['sections'], entryIds: unrenderedSlotIds });
       let smSnapshot: SmState | null | undefined;
       const nodeIdState: PresentNodeIdStateLookup = (nodeId): PresentNodeIdState => {
@@ -273,9 +273,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         if (smSnapshot.removedSet.includes(nodeId)) return 'pruned';
         return smSnapshot.scopeNodeIds.includes(nodeId) ? 'in_scope_undispositioned' : 'out_of_scope';
       };
-      const failure = inspectPresentResult({ references, coverageKnown: sectionCoverageKnown && notesKnown }, resolvedNodeIds,
-        externalViolations, presentResultStage, nodeIdState, viewKnown);
-      if (failure) view.add(failure.rejection);
+      view.add(inspectPresentResult({ references, coverageKnown: sectionCoverageKnown && notesKnown }, resolvedNodeIds,
+        externalViolations, presentResultStage, nodeIdState, viewKnown));
       if (!parsed.success || rejections.length) return undefined;
       // Required fields here have passed the complete native phase schema; optional section bodies
       // come only from admitted rows, explicit cached preview blocks, or committed label retention.

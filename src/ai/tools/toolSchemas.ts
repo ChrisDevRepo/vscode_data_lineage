@@ -69,7 +69,6 @@ const TargetScopeAdmission = [
   { if: { required: ['analysisMode'], properties: { analysisMode: { const: 'ct' } }, anyOf: [{ required: ['origin'] }, { required: ['targetColumns'] }] }, then: { required: ['targetColumns'], properties: { targetColumns: { minItems: 1 } } } },
   { if: { required: ['analysisMode'], properties: { analysisMode: { const: 'bb' } } }, then: { properties: { targetColumns: { maxItems: 0, toolIssue: 'never' } } } },
 ];
-const FreshRequest = { not: { required: ['proposalRevision'] } };
 const startScopeAdmission = (fresh: object) => [{ name: 'start.scope', fields: Object.keys(START_SCOPE_FIELDS), assertions: { allOf: [fresh, ...TargetScopeAdmission] } }];
 
 /** Strict domain boundary for fresh, refine, and completed-session exploration requests. */
@@ -94,10 +93,7 @@ export const StartExplorationInputSchema = z.object({
   scopeNotes: ScopeNotesValueSchema.optional().meta({ toolValidated: 'start.scopeNotes' }),
   mission_brief: MissionBriefValueSchema.optional().meta({ toolValidated: 'start.mission_brief' }),
   classification: ClassificationValueSchema.optional().meta({ toolValidated: 'start.classification' }),
- }).strict().meta({ toolObjectFact: 'start.input',
-  toolGroups: startScopeAdmission({ if: FreshRequest, then: FreshScopeAdmission }),
-  toolAdmission: { if: FreshRequest, then: { required: ['classification'] } },
-});
+ }).strict();
 
 const startPhaseSchemas = [false, true].map(refining => StartExplorationInputSchema.meta({ toolObjectFact: 'start.input',
   toolGroups: startScopeAdmission(refining ? {} : FreshScopeAdmission),
@@ -508,7 +504,7 @@ export interface SubmitFindingsHopColumns {
   readonly writeTargetNodeIds?: readonly string[];
 }
 
-/** One choice schema for supplied identifiers, with an optional comparison key for column names. The provider enum and rejection choices share the same values; parsing preserves input. */
+/** Advertises canonical column names while accepting their shared SQL comparison form without rewriting input. The provider enum and rejection choices share the same values; parsing preserves input. */
 function suppliedValueSchema(values: readonly string[], identifierCaseSensitive = false) {
   if (values.length === 0) return z.never();
   return z.string().meta({ enum: [...values], toolIdentifier: { kind: 'column', values: [...values], caseSensitive: identifierCaseSensitive, issue: 'unknown_column' } });
@@ -521,11 +517,6 @@ function objectIdSchema(ids: readonly string[], identifierCaseSensitive = false,
   const field = z.string().meta({ enum: [...ids], toolIdentifier: { kind: 'object', values: [...ids], caseSensitive: identifierCaseSensitive, issue: issue ?? 'not_neighbor' } });
   markObjectIdField(field, known, identifierCaseSensitive);
   return field;
-}
-
-/** Advertises canonical column names while accepting their shared SQL comparison form without rewriting input. */
-function columnNameSchema(names: readonly string[], identifierCaseSensitive = false, _node?: string) {
-  return suppliedValueSchema(names, identifierCaseSensitive);
 }
 
 /** One relational choice descriptor serves native admission and the model's enum projection. */
@@ -549,7 +540,7 @@ function columnRefSchemaForHop(hop: SubmitFindingsHopColumns) {
 function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
   const outCol = !hop.outCols?.length
     ? ColumnFlowEntrySchema.shape.out_col
-    : columnNameSchema(hop.outCols, hop.identifierCaseSensitive).describe(OUT_COL_DESCRIPTION);
+    : suppliedValueSchema(hop.outCols, hop.identifierCaseSensitive).describe(OUT_COL_DESCRIPTION);
   const upstreamColumns = hop.columnSourceNodeIds
     ? z.array(columnRefSchemaForHop(hop)).meta({ toolArrayFact: 'suppliers' }).describe(ColumnFlowEntrySchema.shape.upstream_columns.description ?? '')
     : ColumnFlowEntrySchema.shape.upstream_columns;

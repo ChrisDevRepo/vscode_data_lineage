@@ -8,11 +8,10 @@ import type { ToolServices } from './toolServices';
 /** A hop commit command's tool name. */
 type HopCommitTool = 'lineage_submit_findings' | 'lineage_prune_current';
 
-/** Resolves the active engine without changing the command payload before schema validation. */
-export function prepareHopCommit(tool: HopCommitTool, input: unknown, s: ToolServices): { engine: NavigationEngine; input: unknown } | string {
+/** Resolves the active engine, or answers that no exploration is active, before schema validation. */
+export function activeHopEngine(tool: HopCommitTool, input: unknown, s: ToolServices): NavigationEngine | string {
   const engine = s.getSession().stateMachine as NavigationEngine | null;
-  if (!engine) return s.logAndReturn(tool, makeRejection({ code: REJECTION_CODES.noActiveSession, reason: 'No exploration is active.', errors: at('no_session') }), input);
-  return { engine, input };
+  return engine ?? s.logAndReturn(tool, makeRejection({ code: REJECTION_CODES.noActiveSession, reason: 'No exploration is active.', errors: at('no_session') }), input);
 }
 
 /** Advances one committed hop and returns the shared acknowledgement or synthesis handoff. */

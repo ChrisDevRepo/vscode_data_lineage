@@ -2,7 +2,7 @@
 import type { ColumnFlowEntry } from '../../sm/smTypes';
 import { COLUMN_TRANSFORM_DIRECTION } from '../../../engine/shared/bridgeContract';
 import type { ToolServices } from './toolServices';
-import { acknowledgeCommittedHop, prepareHopCommit } from './hopCommit';
+import { acknowledgeCommittedHop, activeHopEngine } from './hopCommit';
 
 /** Hop-log counters over the submitted column refs: `refs_no_note` counts refs without a `note`, `role_mixed` counts refs that pair an INDIRECT class with a DIRECT one. */
 function columnRefSuffix(columnFlow: readonly ColumnFlowEntry[] | undefined): string {
@@ -18,11 +18,10 @@ function columnRefSuffix(columnFlow: readonly ColumnFlowEntry[] | undefined): st
 /** Validates and submits findings for the current exploration focus. */
 export function executeSubmitFindings(input: unknown, s: ToolServices): string {
     try {
-      const prepared = prepareHopCommit('lineage_submit_findings', input, s);
-      if (typeof prepared === 'string') return prepared;
-      const { engine } = prepared;
+      const engine = activeHopEngine('lineage_submit_findings', input, s);
+      if (typeof engine === 'string') return engine;
       const focus = engine.currentFocus;
-      const result = engine.submitModelFindings(prepared.input);
+      const result = engine.submitModelFindings(input);
       if ('code' in result) {
         const detail = result.detail as Array<{ id?: string; reason?: string }> | undefined;
         if (Array.isArray(detail)) {
@@ -30,12 +29,12 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
             if (d.reason) s.logger.debug(`[CT] rejection: id=${d.id ?? '?'} — ${d.reason}`);
           }
         }
-        return s.logAndReturn('lineage_submit_findings', result, prepared.input);
+        return s.logAndReturn('lineage_submit_findings', result, input);
       }
 
       const diag = engine.getHopDiagnostics();
       const ctSuffix = diag.columnEdgeCount !== undefined
-        ? ` ct_edges=${diag.columnEdgeCount} cols=${diag.activeColumnCount} flow=${diag.columnFlowEntries}${columnRefSuffix((prepared.input as { column_flow?: ColumnFlowEntry[] }).column_flow)}`
+        ? ` ct_edges=${diag.columnEdgeCount} cols=${diag.activeColumnCount} flow=${diag.columnFlowEntries}${columnRefSuffix((input as { column_flow?: ColumnFlowEntry[] }).column_flow)}`
         : '';
       s.logger.debug(
         `[Hop ${diag.hop}] focus=${diag.focus} schema=${diag.schema} depth=${diag.depth}/${diag.depthBudget ?? '∞'} verdict=${diag.verdict ?? 'none'} ` +
@@ -44,6 +43,6 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         `tally=R${diag.tally.analyze}/P${diag.tally.passthrough}/I${diag.tally.prune} expansions=${diag.scopeExpansions} allowed_schemas=${diag.allowedSchemaCount}${ctSuffix}`
       );
 
-      return s.logAndReturn('lineage_submit_findings', acknowledgeCommittedHop(engine, s, focus!, result), prepared.input);
+      return s.logAndReturn('lineage_submit_findings', acknowledgeCommittedHop(engine, s, focus!, result), input);
     } catch (err) { return s.toolError('submit_findings', err); }
 }

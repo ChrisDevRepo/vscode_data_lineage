@@ -8,9 +8,9 @@ import { AiSession } from '../../../src/ai/session/session';
 import { EMPTY_AI_TEMPLATES } from '../../../src/ai/session/types';
 import type { StoredAiRun } from '../../../src/ai/session/runStore';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
-import { getObjectDetail } from '../../../src/ai/tools/tools';
+import { objectDetail } from '../helpers/objectDetail';
 import { presentRunRecall } from '../../../src/ai/tools/screenStatePresenter';
-import { validatePresentResult } from '../../../src/ai/tools/presentResult';
+import { inspectPresentInput } from '../helpers/inspectPresent';
 import { DEFAULT_TURN_TOKEN_BUDGET } from '../../../src/ai/support/tokenBudget';
 import { ISSUES, at, renderProblem } from '../../../src/ai/support/toolErrorEnvelope';
 import { reconcileAiView } from '../../../src/components/aiViewReconcile';
@@ -94,16 +94,16 @@ describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs =>
     }
   });
 
-  it('counts distinct canonical object-detail observations without merging CS twins', () => {
+  it('counts distinct canonical object-detail observations without merging CS twins', async () => {
     const model = buildModel([
       { fullName: '[dbo].[Report]', type: 'table' },
       { fullName: '[dbo].[report]', type: 'table' },
     ], [], undefined, undefined, true, undefined, cs);
-    const observations = (cs ? ['[dbo].[Report]', '[dbo].[report]', '[dbo].[Report]']
-      : ['[dbo].[report]', '[dbo].[report]', '[dbo].[report]']).map((id, i) => ({
+    const observations = await Promise.all((cs ? ['[dbo].[Report]', '[dbo].[report]', '[dbo].[Report]']
+      : ['[dbo].[report]', '[dbo].[report]', '[dbo].[report]']).map(async (id, i) => ({
       callId: `call-${i}`, toolName: 'lineage_get_object_detail', input: { id },
-      result: JSON.stringify(getObjectDetail(model, id)),
-    }));
+      result: JSON.stringify(await objectDetail(model, id)),
+    })));
     const walk = captureDiscoveryWalkFromObservations(observations, 'Inspected reports.');
     expect(walk).toEqual(cs ? { walkCount: 2, origin: '[dbo].[Report]', answer: 'Inspected reports.' } : null);
   });
@@ -136,16 +136,14 @@ describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs =>
 
   it('gives valid canonical-id repair guidance for an unresolved reference', () => {
     const canonical = cs ? '[dbo].[Report]' : '[dbo].[report]';
-    const result = validatePresentResult({
+    const rejection = inspectPresentInput({
       name: 'Reports', summary: 'Reports lineage.', highlight_groups: [],
       sections: [{ label: 'Report', node_ids: ['[dbo].[REPORT]'], text: 'Report output.' }],
     }, [canonical]);
-    expect(result.success).toBe(false);
-    if (result.success === false) {
-      // The accepted canonical ids are the allowed values of the unresolved reference; the sent spelling is never echoed (D-102).
-      expect(result.rejection.errors).toContainEqual({ path: 'sections.0.node_ids.0', code: 'report_not_found', values: [canonical] });
-      for (const stage of [1, 2, 3] as const) expect(renderProblem(result.rejection, stage), 'D-102: no echoed id').not.toContain('[dbo].[REPORT]');
-    }
+    expect(rejection).toBeDefined();
+    // The accepted canonical ids are the allowed values of the unresolved reference; the sent spelling is never echoed (D-102).
+    expect(rejection!.errors).toContainEqual({ path: 'sections.0.node_ids.0', code: 'report_not_found', values: [canonical] });
+    for (const stage of [1, 2, 3] as const) expect(renderProblem(rejection!, stage), 'D-102: no echoed id').not.toContain('[dbo].[REPORT]');
   });
 });
 
@@ -186,46 +184,41 @@ it.each([undefined, false, true])('recalls historical identities using the saved
 
 it('gives one repair per id: a highlighted id an external violation already places is not listed again', () => {
   const id = '[ai].[vwpricelist]';
-  const result = validatePresentResult({
+  const rejection = inspectPresentInput({
     name: 'Prices', summary: 'Price lineage.',
     highlight_groups: [{ label: 'Prices', color: 'source', node_ids: [id] }],
     sections: [{ label: 'Other', node_ids: [], text: 'Other.' }],
-  }, [id], undefined, undefined, [{
+  }, [id], [{
     errors: at('slot_unplaced', ['sections.*.node_ids'], [id]), repairFields: ['sections'], paths: ['sections'], entryIds: [id],
   }]);
-  expect(result.success).toBe(false);
-  if (result.success === false) expect(result.rejection.errors).toEqual([{ path: 'sections.*.node_ids', code: 'slot_unplaced', values: [id] }]);
+  expect(rejection?.errors).toEqual([{ path: 'sections.*.node_ids', code: 'slot_unplaced', values: [id] }]);
 });
 
 describe('present_result id rejection route', () => {
-  const call = (state: 'pruned' | 'out_of_scope') => validatePresentResult({
+  const call = (state: 'pruned' | 'out_of_scope') => inspectPresentInput({
     name: 'Reports', summary: 'Reports lineage.', highlight_groups: [],
     sections: [{ label: 'Report', node_ids: ['[dbo].[a]', '[dbo].[x]'], text: 'Report output.' }],
-  }, ['[dbo].[a]'], undefined, undefined, [], 'completed', () => state);
+  }, ['[dbo].[a]'], [], 'completed', () => state);
 
   it('does not offer add_node_ids for an id outside the approved scope, and states the fault without a leave-out remedy or an echo (D-105, D-102)', () => {
-    const result = call('out_of_scope');
-    expect(result.success).toBe(false);
-    if (result.success === false) {
-      expect(result.rejection.errors).toEqual([{ path: 'sections.0.node_ids.1', code: 'result_out_of_scope', values: ['[dbo].[a]'] }]);
-      for (const stage of [1, 2, 3] as const) {
-        const text = renderProblem(result.rejection, stage);
-        expect(text).not.toContain('add_node_ids');
-        expect(text, 'D-102: no echoed id').not.toContain('[dbo].[x]');
-        expect(text).not.toMatch(/\b(drop|omit|remove|withdraw)\b/i);
-      }
-      expect(result.repairFields).toEqual(['sections']);
+    const rejection = call('out_of_scope');
+    expect(rejection).toBeDefined();
+    expect(rejection!.errors).toEqual([{ path: 'sections.0.node_ids.1', code: 'result_out_of_scope', values: ['[dbo].[a]'] }]);
+    for (const stage of [1, 2, 3] as const) {
+      const text = renderProblem(rejection!, stage);
+      expect(text).not.toContain('add_node_ids');
+      expect(text, 'D-102: no echoed id').not.toContain('[dbo].[x]');
+      expect(text).not.toMatch(/\b(drop|omit|remove|withdraw)\b/i);
     }
+    expect(rejection!.resend).toEqual(['sections']);
   });
 
   it('authorizes add_node_ids in the repair whenever the rejection names it', () => {
-    const result = call('pruned');
-    expect(result.success).toBe(false);
-    if (result.success === false) {
-      expect(result.rejection.errors).toEqual([{ path: 'sections.0.node_ids.1', code: 'addable_to_result', values: ['[dbo].[a]'] }]);
-      expect(ISSUES.addable_to_result.correction).toContain('add_node_ids');
-      expect([...result.repairFields].sort()).toEqual(['add_node_ids', 'sections']);
-    }
+    const rejection = call('pruned');
+    expect(rejection).toBeDefined();
+    expect(rejection!.errors).toEqual([{ path: 'sections.0.node_ids.1', code: 'addable_to_result', values: ['[dbo].[a]'] }]);
+    expect(ISSUES.addable_to_result.correction).toContain('add_node_ids');
+    expect([...rejection!.resend ?? []].sort()).toEqual(['add_node_ids', 'sections']);
   });
 });
 

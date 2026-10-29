@@ -14,7 +14,7 @@ export interface ToolDefinition {
   /** Detailed model-facing selection guidance. */
   readonly modelDescription?: string;
   /** Whether invoking the tool reads state or commits a lifecycle transition. Anything except `'read'` executes through the write-serializing effect queue — `'scope_store'` exists because the scope-bundle lookup also stores the discovery-scope artifact, so it must serialize with the other session writers even though the model perceives it as a read. */
-  readonly effect?: 'read' | 'scope_store' | 'session_start' | 'hop_commit' | 'preview_commit' | 'presentation_commit';
+  readonly effect?: 'read' | 'scope_store' | 'session_start' | 'hop_commit' | 'presentation_commit';
   /** Short, user-friendly label shown in the UI while the tool executes (e.g. "Searching database objects…"). A registered tool that omits it emits no status update — the previous status remains visible; only unregistered tools fall back to a generic running label. */
   readonly progressLabel?: string;
 }

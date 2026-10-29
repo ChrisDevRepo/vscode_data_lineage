@@ -121,10 +121,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         const norm = (v?: string[]): string => [...(v ?? [])].map(identifierKey).sort().join('\u0000');
         return norm(a) === norm(b);
       };
-      const depthIntent = data.depth ?? pendingInit?.depthIntent;
-      if (!depthIntent) {
-        view.add(makeRejection({ code: REJECTION_CODES.missingField, errors: at('missing', ['depth']) })); return undefined;
-      }
+      const depthIntent = data.depth ?? pendingInit!.depthIntent;
       const refineDirection = directionFromDepth(depthIntent);
       const sameDepthIntent = (a?: DepthIntent, b?: DepthIntent): boolean =>
         !!a && !!b && !depthSidesDiffer(a.upstream, b.upstream) && !depthSidesDiffer(a.downstream, b.downstream);
@@ -179,10 +176,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       }
 
       if (!parsed.success) return undefined;
-      const classification = data.classification ?? sess.pendingExploration?.classification;
-      if (!classification) {
-        view.add(makeRejection({ code: REJECTION_CODES.missingField, errors: at('missing', ['classification']) })); return undefined;
-      }
+      const classification = data.classification ?? sess.pendingExploration!.classification;
       engine.classification = classification;
       const summary = engine.getScopeSummary();
 
