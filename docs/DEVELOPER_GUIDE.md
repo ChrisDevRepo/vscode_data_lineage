@@ -135,10 +135,10 @@ Every message crossing the boundary is parsed with the Zod schemas in [`src/engi
 | Part | Location |
 |---|---|
 | Participant: requests, history, cancellation, progress, buttons | [`src/ai/participant/lineageParticipant.ts`](../src/ai/participant/lineageParticipant.ts) |
-| Outer graph: phases, semantic retries, interrupts, synthesis | [`src/ai/agent/graph.ts`](../src/ai/agent/graph.ts) |
+| Outer graph: phases, corrections, interrupts, synthesis | [`src/ai/agent/graph.ts`](../src/ai/agent/graph.ts) |
 | Navigation engine: agenda, topology, gates, validation, termination | `NavigationEngine` in [`src/ai/sm/smBase.ts`](../src/ai/sm/smBase.ts) |
 | Prompt builders | [`src/ai/prompting/`](../src/ai/prompting/); stage assembly in [`stagePrompts.ts`](../src/ai/agent/stagePrompts.ts), one-call planning in [`instructionPlan.ts`](../src/ai/agent/instructionPlan.ts) |
-| Tool registry, phase policy, Zod dispatcher | [`src/ai/tools/`](../src/ai/tools/) |
+| Tool registry, schemas and phase policy | [`src/ai/tools/`](../src/ai/tools/) |
 
 The model writes findings and structured presentation fields. The engine validates structure and graph consistency ([architecture guide](ARCHITECTURE.md)), rejects a prune that would disconnect committed analysis from the origin, and assembles the rendered answer from the structured parts. Validation does not prove that the model interpreted the SQL correctly. After changing the tool catalog, run `npm run generate:tool-manifest`.
 

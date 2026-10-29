@@ -34,14 +34,14 @@ Each contract has one owning suite. **Unit contracts** invoke a schema, rule or 
 | [Start rules](../../src/ai/interaction/rules/startExplorationRules.ts), [submit rules](../../src/ai/interaction/rules/submitFindingsRules.ts) and raw handler admission | [tool boundaries](../../tests/unit/ai-core/tool-boundary-precedence.test.ts) | Functional / runtime |
 | [Instruction delivery](../../src/ai/agent/instructionPlan.ts), [model port](../../src/ai/model/vscodeModelPort.ts) and [dispatcher](../../src/ai/agent/toolAttempt.ts) | [dispatcher matrix](../../tests/unit/ai-core/dispatcher-matrix.test.ts); malformed transport, unavailable calls, conditional tools, pairing, siblings and budgets | Unit + functional / runtime |
 | [BB/CT engine](../../src/ai/sm/smBase.ts), [routing](../../src/ai/sm/smRouteValidation.ts), [task ledger](../../src/ai/sm/taskLedger.ts) and [column tracing](../../src/ai/sm/columnTracer.ts) | [lineage runbooks](../../tests/unit/backend/lineage-cases.test.ts), [BB shapes](../../tests/unit/backend/bb-lineage-shapes.test.ts), [function columns](../../tests/unit/backend/function-column-contracts.test.ts) | Functional / runtime |
-| [Presentation schemas](../../src/ai/tools/toolSchemas.ts) and [draft/merge rules](../../src/ai/tools/presentResult.ts) | [schemas](../../tests/unit/ai-core/present-result-schema.test.ts), [repairs](../../tests/unit/ai-core/present-result-repair.test.ts), [coverage](../../tests/unit/ai-core/present-result-coverage.test.ts) | Unit / runtime |
+| [Presentation schemas](../../src/ai/tools/toolSchemas.ts), [shared drafts](../../src/ai/support/toolDraft.ts) and [ingestion](../../src/ai/support/toolIngestion.ts) | [schemas](../../tests/unit/ai-core/present-result-schema.test.ts), [repairs](../../tests/unit/ai-core/present-result-repair.test.ts), [coverage](../../tests/unit/ai-core/present-result-coverage.test.ts) | Unit + functional / runtime |
 | [Presentation handler](../../src/ai/tools/handlers/presentResult.ts) | [functional presentation](../../tests/unit/ai-core/present-result-functional.test.ts), [SQL/evidence boundary](../../tests/unit/ai-core/present-result-sql-fence-boundary.test.ts) | Functional; SQL expansion also unit / runtime |
 | Storage, database adapters and webview | Owning `engine`, `engine/db` and `webview` suites | Unit + functional / support |
 | VS Code API, native controls and live answers | [host tests](../../tests/integration), Electron/Playwright/headless commands below | Optional host/end-to-end or live review |
 
 `tests/tools` owns execution and partition checks; `tests/unit/helpers` owns shared input builders; domain helpers stay beside their suites. `tests/cases` and typed rows own independently authored inputs and expectations. `tests/harness` adapts the real runtime for optional service checks. There is no universal runbook interpreter. Add a regression or hypothesis as a row in its owner; do not repeat the same rule's matrix in every layer or enumerate arbitrary combinations without expected outcomes.
 
-Presentation repair owners cover large held bodies, indexed node-link corrections, preview start repairs, malformed retries and merged-report revalidation. A small repair payload proves transport savings and retention; it does not measure inference tokens or answer quality.
+Presentation repair owners cover large held bodies, whole-list replacement, preview start corrections, malformed retries and complete-candidate validation. Small corrections prove transport retention, not inference cost or answer quality.
 
 The tool-boundary suite covers malformed findings repairs without losing held content. Description-render parity tests also assert raw HTML escaping, unsafe URL removal, section-id restrictions and sanitizer isolation.
 
@@ -49,7 +49,7 @@ The gate runs core once and runtime once, with disjoint file membership; duplica
 
 The partition check requires the complete aggregate npm recipes and enabled core coverage. It rejects filters, shell suffixes, embedded command newlines and coverage-disabling flags in those recipes. Pass options or file filters to an individual run after `--` instead.
 
-Retirement is applied: nine fragmented presentation files are replaced by the four presentation owners above; synthetic traversal/depth assertions have moved out of the two graph-builder suites into the traversal table. The historical schema comparator derived from the current schema is removed; explicit acceptance/rejection expectations remain. A shared shape or SQL input across different entry boundaries is retained only for a distinct contract.
+A shared shape or SQL input across entry boundaries is retained only for a distinct contract, with independently authored acceptance/rejection expectations.
 
 ## Case catalogs
 
@@ -83,16 +83,16 @@ The source catalog is `src/ai/tools/toolDefs.ts`; availability is owned by `tool
 | `detect_graph_patterns` | `DetectGraphPatternsInputSchema` | D, C, X |
 | `search_ddl` | `SearchDdlInputSchema` | D, C, X |
 | `get_neighbor_columns` | `GetNeighborColumnsInputSchema`, engine scope/adjacency | T, X; needs an active engine |
-| `start_exploration` | Fresh/refine/completed provider schemas; strict `StartExplorationInputSchema` | E, C |
+| `start_exploration` | Fresh/refine provider schemas; actual-state `startExplorationSchemaForState` admission | E, C |
 | `submit_findings` | Broad provider schema; live `submitFindingsSchemaForMode` | B, T |
 | `prune_current` | `PruneCurrentInputSchema`; engine passthrough eligibility | B, T when eligible |
-| `present_result` | Broad provider schema; live `presentResultSchemaForPhase` and authorized repair schema | P, S, C |
+| `present_result` | Full `presentResultSchemaForPhase`; held values applied before validation | P, S, C |
 
-Zod shape checks and engine admission are separate contracts. Submit schemas depend on BB/CT, classification, fresh/held content, assigned columns, writer/return destinations and caller context; CS/CI identity resolution also uses model metadata. Nested contracts include column identifiers/transforms, `upstream_columns`, exclusive `writes_to`/`returns_to`, `questions[].caller_context` and scope depth/exclusions. Presentation schemas depend on stage, retained sections/highlights and authorized repair fields. Provider JSON Schema projection cannot establish every Zod refinement or graph rule. Test schema-invalid payloads at raw handler/registry boundaries, and malformed transport arguments at the model-port/dispatcher boundary; a typed direct-engine call does not test either boundary. Valid held repair content may change after rejection, while committed graph, columns and tasks must not.
+Zod authors tool schemas; canonical Ajv admission validates them once and supplies native field facts to engine rules. Submit schemas depend on BB/CT, classification, required content, assigned columns, writer/return destinations and caller context; CS/CI resolution also uses model metadata. Nested contracts include column identifiers/transforms, `upstream_columns`, exclusive `writes_to`/`returns_to`, `questions[].caller_context` and scope depth/exclusions. Presentation schemas depend on stage and committed-section retention, and stay full during repair. Model-facing projection alone cannot establish every admission or graph rule. Test schema-invalid input at raw handler/registry boundaries and malformed transport at the model-port/dispatcher boundary; typed engine calls test neither. Held draft content may change after rejection; committed graph, columns and tasks must not.
 
-`model/vscodeModelPort.ts` detects non-object arguments and unavailable tools; `agent/toolAttempt.ts` consumes those classifications and owns ordered rejection/dispatch, call/result pairing, duplicate reads, repeated rejected calls, progress limits, cancellation and phase closure. Submit and self-prune compete for one hop evaluation per reply even if the first rejects; presentation also has a single-evaluation rule. `toolProvider.ts` serializes mutating effects and the registry tracks in-flight calls. Internal `getHopContext`, `getResult` and `supplementAgenda` are engine APIs; supplements enter through `start_exploration`, not another tool.
+`model/vscodeModelPort.ts` detects non-object arguments and unavailable tools; `agent/toolAttempt.ts` consumes those classifications and owns ordered rejection/dispatch, call/result pairing, duplicate reads, repeated rejected calls, progress limits, cancellation and phase closure. Submit and self-prune compete for one hop evaluation per reply even if the first rejects; presentation also has a single-evaluation rule. `toolProvider.ts` serializes mutating effects and the registry tracks in-flight calls. `getHopContext` and `getResult` are engine APIs; additional SQL requires a fresh exploration proposal and approval.
 
-Coverage limits remain explicit: the current suites do not establish a complete stage-by-tool truth table or concurrent-effect ordering, nor complete scalar-return, external-endpoint and completed-supplement runbooks. Architecture checks in `rule-gates` do not substitute for executing interaction rules.
+Coverage limits remain explicit: the current suites do not establish a complete stage-by-tool truth table or concurrent-effect ordering, nor complete scalar-return and external-endpoint runbooks. Architecture checks in `rule-gates` do not substitute for executing interaction rules.
 
 ## What these checks establish
 
