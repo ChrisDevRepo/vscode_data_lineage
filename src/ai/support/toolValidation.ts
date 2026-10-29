@@ -163,7 +163,7 @@ const compiled = new WeakMap<z.ZodType, ValidateFunction>();
 export type ToolValidation<T> = { success: true; data: T } | { success: false; errors: readonly ErrorObject[]; rejection: ToolRejection };
 
 /** A JSON pointer has one original position; escaped identifiers never become array slices. */
-export function toolErrorPath(error: ErrorObject): string {
+function toolErrorPath(error: ErrorObject): string {
   const path = error.instancePath.split('/').slice(1).map(part => part.replace(/~1/g, '/').replace(/~0/g, '~'));
   const leaf = error.keyword === 'required' ? error.params.missingProperty : error.keyword === 'additionalProperties' ? error.params.additionalProperty : undefined;
   if (typeof leaf === 'string') path.push(leaf);

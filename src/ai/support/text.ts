@@ -184,11 +184,6 @@ export function sanitizeDescriptionForChat(description: string): string {
     .replace(/^### Objects\s+(.+)$/gm, (_m, tail: string) => `*Objects: ${tail}*`);
 }
 
-/** Renders ids as a backticked, comma-separated list for a rejection message — the single home for the offender-list quoting rule. */
-export function quoteIds(ids: readonly string[]): string {
-  return ids.map(id => `\`${id}\``).join(', ');
-}
-
 /** Reads a `cursor` input as the zero-based offset of the next page. */
 export function cursorOffset(cursor: string | undefined): number {
   return cursor === undefined ? 0 : Number.parseInt(cursor, 10);
