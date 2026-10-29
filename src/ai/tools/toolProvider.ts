@@ -70,7 +70,6 @@ type RejectionChatGroup = 'column_mapping' | 'source_selection' | 'answer_format
 const REJECTION_GROUPS: Readonly<Record<string, Exclude<RejectionChatGroup, 'correction'>>> = {
   [REJECTION_CODES.outColNotOnNode]: 'column_mapping',
   [REJECTION_CODES.contributorColNotOnSource]: 'column_mapping',
-  [REJECTION_CODES.columnSelfLoop]: 'column_mapping',
   [REJECTION_CODES.prunedContributor]: 'column_mapping',
   [REJECTION_CODES.routeValidationFailed]: 'source_selection',
   [REJECTION_CODES.validation]: 'answer_format',

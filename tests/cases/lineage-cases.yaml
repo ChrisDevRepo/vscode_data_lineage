@@ -225,8 +225,8 @@ cases:
     receiver_columns: []
     sink_columns: [ResultX, ResultY]
     column_flow:
-      - { out_col: ResultX, writes_to: { node: "[d].[Sink]", col: ResultX }, upstream_columns: [{ node: "[d].[Stored]", col: X }] }
-      - { out_col: ResultY, writes_to: { node: "[d].[Sink]", col: ResultY }, upstream_columns: [{ node: "[d].[Stored]", col: Y }] }
+      - { out_node: "[d].[Sink]", out_col: ResultX, upstream_columns: [{ node: "[d].[Stored]", col: X }] }
+      - { out_node: "[d].[Sink]", out_col: ResultY, upstream_columns: [{ node: "[d].[Stored]", col: Y }] }
     expect:
       mapped_inputs: [X, Y]
       receiver_rows: [X, ResultX, Y, ResultY]
@@ -241,7 +241,7 @@ cases:
     receiver_columns: []
     sink_columns: [ResultX]
     column_flow:
-      - { out_col: ResultX, writes_to: { node: "[d].[Sink]", col: ResultX }, upstream_columns: [{ node: "[d].[Stored]", col: X }] }
+      - { out_node: "[d].[Sink]", out_col: ResultX, upstream_columns: [{ node: "[d].[Stored]", col: X }] }
     expect:
       mapped_inputs: [X]
       receiver_rows: [X, ResultX]

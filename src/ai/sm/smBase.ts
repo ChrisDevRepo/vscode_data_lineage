@@ -54,7 +54,7 @@ export interface HopNeighborDisclosure extends HopNeighbor {
   can_question: boolean;
   /** A queued, visited, removed or protected target cannot be neighbor-pruned. */
   can_prune: boolean;
-  /** A `column_flow` mapping may name this neighbour: it is in the served `upstream_columns.node` or `writes_to.node` enum. Present in CT hops only; derived from the same ids as the enums. */
+  /** A `column_flow` mapping may name this neighbour: it is in the served `upstream_columns.node` or `out_node` enum. Present in CT hops only; derived from the same ids as the enums. */
   can_map?: boolean;
 }
 
@@ -982,7 +982,7 @@ export class NavigationEngine implements IHopStateMachine {
     return this.initSnapshot?.targetColumns ?? null;
   }
 
-  /** Neighbor action choices and column facts that narrow this hop's served schema: every declared focus column as `out_col` when metadata exists, and whether the focus is a procedure (the one node that may name a `writes_to` target). Eligible function neighbors narrow caller-context questions; stored column metadata narrows the admissible `upstream_columns` sources. */
+  /** Neighbor action choices and column facts that narrow this hop's served schema: every declared focus column as `out_col` when metadata exists, and whether the focus is a procedure (the one node whose entries name an `out_node`). Eligible function neighbors narrow caller-context questions; stored column metadata narrows the admissible `upstream_columns` sources. */
   public get hopSubmitColumns(): SubmitFindingsHopColumns {
     const focus = this.currentFocusNodeId ? this.nodeMap.get(this.currentFocusNodeId) : undefined;
     const neighbors = focus ? this.neighborChoices(focus.id) : [];
@@ -992,15 +992,17 @@ export class NavigationEngine implements IHopStateMachine {
     return {
       focusNodeId: focus?.id,
       neighbors,
-      outCols: declaredOutCols.length > 0 ? this.arrivingOutCols(declaredOutCols) : null,
-      writesTo: focus?.type === 'procedure',
+      // At a procedure, out_col names the out_node column, never a column of the focus (D-130).
+      outCols: declaredOutCols.length > 0 && focus?.type !== 'procedure' ? this.arrivingOutCols(declaredOutCols) : null,
+      outNode: focus?.type === 'procedure',
       callerContextNodeIds: focus && this.graph.hasNode(focus.id) && getNodeDdl(focus.id, this.nodeMap, this.store ?? undefined)
         ? neighbors.filter(neighbor => neighbor.can_question).map(neighbor => neighbor.id).filter(id =>
           this.getCurrentTasks().some(task => task.kind === 'column_lineage' && task.nodeId === focus.id
             && task.activeColumns.some(col => resolveFunctionCallerTarget(id, { node: focus.id, col }, this.nodeMap, this.model, this.store)))).sort()
         : [],
-      columnSourceNodeIds: focus && this.graph.hasNode(focus.id) ? this.columnSourceNodeIds(focus.id) : [],
-      ...(focus?.type === 'procedure' && this.graph.hasNode(focus.id) ? { writeTargetNodeIds: this.writeTargetNodeIds(focus.id) } : {}),
+      // A procedure names itself as the source of a value it creates (D-130).
+      columnSourceNodeIds: focus && this.graph.hasNode(focus.id)
+        ? [...this.columnSourceNodeIds(focus.id), ...(focus.type === 'procedure' ? [focus.id] : [])].sort() : [],
       identifierCaseSensitive: this.identifierCaseSensitive,
       ...(this.currentReturnTargets().length ? { returnTargets: this.currentReturnTargets() } : {}),
     };
@@ -1015,21 +1017,9 @@ export class NavigationEngine implements IHopStateMachine {
     return matched.length > 0 ? matched : [...declared];
   }
 
-  /** Metadata-derived `writes_to` target ids of a procedure focus. */
-  private writeTargetNodeIds(focusId: string): string[] {
-    return this.graph.outNeighbors(focusId).filter(id => {
-      const node = this.nodeMap.get(id);
-      return !!node && !this.removedSet.has(id) && this.admitsRoute(id, node, focusId).admitted;
-    }).sort();
-  }
-
-  /** Neighbour ids a `column_flow` mapping may name at this focus: the union of the served `upstream_columns.node` and `writes_to.node` enums, from the same helpers that build them. */
+  /** Neighbour ids a `column_flow` mapping may name at this focus: the served `upstream_columns.node` and `out_node` enums. */
   private mappableNeighborIds(focusId: string): Set<string> {
-    const focus = this.nodeMap.get(focusId);
-    return new Set([
-      ...(this.graph.hasNode(focusId) ? this.columnSourceNodeIds(focusId) : []),
-      ...(focus?.type === 'procedure' && this.graph.hasNode(focusId) ? this.writeTargetNodeIds(focusId) : []),
-    ]);
+    return new Set(this.graph.hasNode(focusId) ? this.columnSourceNodeIds(focusId) : []);
   }
 
   /** Object-graph ids an `upstream_columns` contributor may name at one hop: the focus's neighbors plus the read suppliers of its declared scalar callers. The served `node` enum and the contributor admission both read it, so a column edge never leaves the object graph. */
@@ -1886,8 +1876,10 @@ export class NavigationEngine implements IHopStateMachine {
         const routes = columnPlan?.invalidRoutes ?? [];
         const schemaProblem = view.problems[0];
         const choices = new Map(schemaProblem?.errors.flatMap(error => error.values ? [[error.path, error.values] as const] : []));
-        for (const route of invalidRoutes) if (route.path?.endsWith('.node') && !route.allowed_values && choices.has(route.path)) route.allowed_values = [...choices.get(route.path)!];
-        const referencePaths = new Set(routes.filter(route => route.path?.endsWith('.node')).map(route => route.path));
+        // A pair endpoint is a supplier `node` or the procedure `out_node` (D-130).
+        const isReference = (path?: string): path is string => !!path && /\.(out_)?node$/.test(path);
+        for (const route of invalidRoutes) if (isReference(route.path) && !route.allowed_values && choices.has(route.path)) route.allowed_values = [...choices.get(route.path)!];
+        const referencePaths = new Set(routes.filter(route => isReference(route.path)).map(route => route.path));
         if (schemaProblem) schemaProblem.errors = schemaProblem.errors.filter(error => !referencePaths.has(error.path) || ISSUES[error.code].category !== 'reference');
         conflictPaths.filter(path => !path.startsWith('column_flow.')).forEach(path => view.holdPaths.add(path));
         alternatives = invalidRoutes.flatMap(route => route.alternatives ?? []);
@@ -1940,20 +1932,22 @@ export class NavigationEngine implements IHopStateMachine {
     for (const [row, keys] of facts.rows) {
       const supplierCount = facts.arrays.get(`${row}/upstream_columns`);
       if (supplierCount === undefined || [...facts.references.keys()].filter(path => path.startsWith(`${row}/upstream_columns/`)).length !== supplierCount) complete = false;
-      for (const field of ['writes_to', 'returns_to']) if (keys.has(field) && !facts.references.has(`${row}/${field}/node`)
-        && !(facts.destinations.has(`${row}/${field}`) && facts.destinations.get(`${row}/${field}`) == null)) complete = false;
+      if (keys.has('out_node') && !facts.references.has(`${row}/out_node`)) complete = false;
+      if (keys.has('returns_to') && !facts.references.has(`${row}/returns_to/node`)
+        && !(facts.destinations.has(`${row}/returns_to`) && facts.destinations.get(`${row}/returns_to`) == null)) complete = false;
     }
     for (const [path, raw] of facts.references) {
       const nid = resolveModelNodeId(raw, this.nodeMap, this.identifierCaseSensitive), node = nid ? this.nodeMap.get(nid) : undefined;
       if (!nid || !node) { complete = false; continue; }
-      const isWrite = path.includes('/writes_to/') ? true : path.includes('/returns_to/') ? undefined : false;
-      if (isWrite !== undefined && !this.graph.areNeighbors(focusId, nid)) continue;
+      const returned = path.includes('/returns_to/');
+      if (!returned && !this.graph.areNeighbors(focusId, nid)) continue;
+      // At a procedure an entry pairs only through its out_node or returns_to; without one it maps no neighbor.
       const row = rowOf(path);
-      if (this.nodeMap.get(focusId)?.type !== 'procedure' || facts.references.has(`${row}/writes_to/node`) || facts.references.has(`${row}/returns_to/node`)) mentioned.add(nid);
-      if (isWrite === undefined || (isWrite ? this.admitsRoute(nid, node, focusId).admitted || this.scopeNodeIds.has(nid) || this.visited.has(nid) : this.admitsColumnReference(nid, node, focusId))) continue;
+      if (this.nodeMap.get(focusId)?.type !== 'procedure' || facts.references.has(`${row}/out_node`) || facts.references.has(`${row}/returns_to/node`)) mentioned.add(nid);
+      if (returned || this.admitsColumnReference(nid, node, focusId)) continue;
       const { border, depthBreach } = this.admitsRoute(nid, node, focusId);
       const outside = border.kind === 'excluded' ? 'excluded' : border.kind === 'out_of_direction' ? 'out of direction' : depthBreach !== null ? `beyond depth ${depthBreach}` : null;
-      if (outside) invalidRoutes.push({ kind: isWrite ? 'column_out_of_scope' : 'supplier_out_of_scope', id: nid, path: paths(path), alternatives: ['questions', 'sections'], reason: `The object is out of scope (${outside}).` });
+      if (outside) invalidRoutes.push({ kind: 'column_out_of_scope', id: nid, path: paths(path), alternatives: ['questions', 'sections'], reason: `The object is out of scope (${outside}).` });
     }
     if (complete) mentions.column_flow = mentioned;
     const returnTargets = this.currentReturnTargets(), callerTargets = this.getCurrentTasks().flatMap(task => task.callerContext && task.nodeId && this.validFunctionCallerContext(task.nodeId, task.callerContext)
@@ -1963,7 +1957,7 @@ export class NavigationEngine implements IHopStateMachine {
         const neighbor = verified.get(refPath);
         return rowOf(refPath) === path && neighbor ? [{ ref: { ...ref, node: neighbor.id }, path: paths(refPath), neighbor }] : [];
       });
-      const prepared = this.tracer.prepareColumnEntry(focusId, header, suppliers, facts.arrays.get(`${path}/upstream_columns`) === 0, paths(path), this.nodeMap, this.model, this.store ?? null, log, returnTargets, callerTargets);
+      const prepared = this.tracer.prepareColumnEntry(focusId, header, suppliers, paths(path), this.nodeMap, this.model, this.store ?? null, log, returnTargets, callerTargets, this.removedSet, contributors);
       invalidRoutes.push(...prepared.invalidRoutes); stagedEdges.push(...prepared.stagedEdges); entryEdges.set(Number(path.split('/')[2]), prepared.stagedEdges);
     }
     const returned = [...facts.destinations].filter(([path]) => path.endsWith('/returns_to')).flatMap(([, value]) => value ? [value] : []);
@@ -2024,7 +2018,7 @@ export class NavigationEngine implements IHopStateMachine {
       const refs = [
         { node: focusId, col: entry.out_col, path: `column_flow.${index}.out_col` },
         ...entry.upstream_columns.map((ref, refIndex) => ({ ...ref, path: `column_flow.${index}.upstream_columns.${refIndex}` })),
-        ...(entry.writes_to ? [{ ...entry.writes_to, path: `column_flow.${index}.writes_to` }] : []),
+        ...(entry.out_node ? [{ node: entry.out_node, col: entry.out_col, path: `column_flow.${index}.out_node` }] : []),
         ...(entry.returns_to ? [{ ...entry.returns_to, path: `column_flow.${index}.returns_to` }] : []),
       ];
       return refs.filter(ref => mappingDecisions.has(endpointKey(ref.node, ref.col)) && matches(ref.node, ref.col)).map(ref => ref.path);
@@ -2063,17 +2057,7 @@ export class NavigationEngine implements IHopStateMachine {
           if (!resolved) continue;
           const output = { node: resolved.attributionTo, col: resolved.attributionCol };
           const outputKey = endpointKey(output.node, output.col);
-          if (flowingDownstream.has(outputKey)) {
-            outputs.set(outputKey, output);
-            const writer = resolved.writerEdge;
-            // Only writes with no direct source carry a procedure-born output to its other consumers.
-            if (writer && entry.upstream_columns.every(ref => isIndirectOnly(ref.transforms)) && stagedColumnEdges.some(edge => edge.from_node === focusId
-              && this.columnKey(edge.from_col) === this.columnKey(entry.out_col)
-              && edge.to_node === writer.toNode && this.columnKey(edge.to_col) === this.columnKey(writer.toCol))) {
-              const localOutput = { node: focusId, col: entry.out_col };
-              if (flowingDownstream.has(endpointKey(localOutput.node, localOutput.col))) outputs.set(endpointKey(localOutput.node, localOutput.col), localOutput);
-            }
-          }
+          if (flowingDownstream.has(outputKey)) outputs.set(outputKey, output);
         }
         const continuation = [...outputs.values()];
         for (const nid of this.graph.outNeighbors(focusId)) {
@@ -2280,10 +2264,10 @@ export class NavigationEngine implements IHopStateMachine {
       for (const id of this.requiredNeighborIds(focusId)) {
         if (requested.has(id) || prunedNeighborNids.has(id) || actionMentions.questions?.has(id) || actionMentions.prune_neighbors?.has(id)) continue;
         if (!mappedNeighborIds.has(id)) {
-          // In CT, column_flow is offered only for a neighbor that can be a value source (incoming edge) or write target here; a downstream reader is never mapped as a source.
+          // In CT, column_flow is offered only for a neighbor that can be a value source (incoming edge) or, at a procedure, an out_node; a downstream reader is never mapped as a source.
           const ct = this.currentHopAnalysisMode === 'ct';
           const offerFlow = ct && this.mappableNeighborIds(focusId).has(id)
-            && (this.graph.inNeighbors(focusId).includes(id) || (this.nodeMap.get(focusId)?.type === 'procedure' && this.writeTargetNodeIds(focusId).includes(id)));
+            && (this.graph.inNeighbors(focusId).includes(id) || this.nodeMap.get(focusId)?.type === 'procedure');
           invalidRoutes.push({ kind: 'neighbor_outcome_missing', id,
             alternatives: ['questions', ...(neighbors.get(id)?.can_prune && !this.neighborPruneRefusal(focusId, [id], acceptedNids, stagedColumnEdges ?? []) ? ['prune_neighbors'] : []),
               ...(offerFlow ? ['column_flow'] : [])],

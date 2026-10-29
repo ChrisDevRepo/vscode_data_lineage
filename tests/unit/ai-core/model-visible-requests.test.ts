@@ -34,7 +34,7 @@ const CT_SCRIPT: Record<string, ScriptedHop> = {
     column_flow: [{ out_col: 'UnitPrice', upstream_columns: [{ node: '[ai].[spbuildsalesreport]', col: 'ListPrice', transforms: ['compute'] }] }] }, submit: { summary: 'Current PriceMaster prices renamed to UnitPrice.', sections: { business: 'UnitPrice is the current list price.' },
     column_flow: [{ out_col: 'UnitPrice', upstream_columns: [{ node: PM, col: 'ListPrice', transforms: ['compute'], note: 'ListPrice * 1.0' }] }] } },
   '[ai].[sprefreshprices]': { submit: { summary: 'Loads PriceMaster from supplier costs and markups.', sections: { business: 'List price is cost plus markup.' },
-    column_flow: [{ out_col: 'ListPrice', writes_to: { node: PM, col: 'ListPrice' }, upstream_columns: [
+    column_flow: [{ out_node: PM, out_col: 'ListPrice', upstream_columns: [
       { node: '[ai].[supplierprices]', col: 'CostPrice', transforms: ['compute'] }, { node: '[ai].[markuprules]', col: 'MarkupPct', transforms: ['compute'] },
       { node: '[ai].[currencyconfig]', col: 'IsBase', transforms: ['filter'] }, { node: '[ai].[regionlookup]', col: 'RegionCode', transforms: ['combine'] }] }] } },
 };

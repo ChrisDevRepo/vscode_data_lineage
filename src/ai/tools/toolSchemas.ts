@@ -302,23 +302,25 @@ const ColumnRefSchema = z.object({
   note: z.string().optional().describe('At most 12 words: the deciding expression, e.g. "Qty * Price".'),
 }).strict().meta(SUPPLIER_FACT).describe('One source column entry inside upstream_columns: fields node, col, transforms, note.');
 
-const ColumnFlowWritesToObject = z.object({
+const ColumnFlowReturnsToObject = z.object({
   node: stringFact(z.string(), 'flowReference').describe('Object id from <hop_context>.'),
   col: z.string().describe('Column name on that object.'),
 }).strict();
 
 /** One closed `column_flow` entry; provider projection and runtime parsing reject surplus keys. */
 const OUT_COL_DESCRIPTION = "Output column of this hop from its column task; for a procedure, the column it writes. Never invent names.";
+const OUT_NODE_DESCRIPTION = 'Table from <hop_context> that this procedure writes out_col to. For a write to an object not listed, omit the entry and name the write in sections.';
+const UPSTREAM_DESCRIPTION = 'Neighbor columns that feed out_col: value sources (expression operands, aggregate arguments, each UNION branch column, caller-bound inputs) and columns that only join, filter, group or order its rows. ' +
+  'Resolve parameters and aliases to source columns.';
+/** At a procedure, a created value is the pair procedure.col -> out_node.out_col (D-130). */
+const PROCEDURE_UPSTREAM_DESCRIPTION = `${UPSTREAM_DESCRIPTION} A value this procedure creates lists this procedure with the column its task names, else out_col; [] records no pair.`;
 
 const ColumnFlowEntrySchema = z.object({
   out_col: z.string().describe(OUT_COL_DESCRIPTION),
-  writes_to: ColumnFlowWritesToObject.nullish().meta({ toolValidated: 'writeTarget' }).describe('Table column {node, col} this output is written to, when that table is a neighbor in <hop_context>; otherwise null and name the write in sections.'),
-  returns_to: ColumnFlowWritesToObject.optional().meta({ toolValidated: 'returnTarget' }).describe('Real caller output supplied in caller_output_targets for this scalar-return task; never a table write.'),
-  upstream_columns: z.array(ColumnRefSchema).meta({ toolArrayFact: 'suppliers' }).describe(
-    'Neighbor columns that feed out_col: value sources (expression operands, aggregate arguments, each UNION branch column, caller-bound inputs) and columns that only join, filter, group or order its rows. ' +
-    'Resolve parameters and aliases to source columns; exclude the entry\'s own writes_to column. [] means the value originates here.',
-  ),
-}).strict().meta({ toolGroups: [{ name: 'flowHeader', fields: ['out_col', 'writes_to', 'returns_to'] }], toolObjectFact: 'flowPresence' }).describe('One output column: out_col, upstream_columns, optional writes_to or returns_to. note belongs inside an upstream_columns entry.');
+  out_node: stringFact(z.string(), 'flowReference').optional().describe(OUT_NODE_DESCRIPTION),
+  returns_to: ColumnFlowReturnsToObject.optional().meta({ toolValidated: 'returnTarget' }).describe('Real caller output supplied in caller_output_targets for this scalar-return task; never a table write.'),
+  upstream_columns: z.array(ColumnRefSchema).meta({ toolArrayFact: 'suppliers' }).describe(`${UPSTREAM_DESCRIPTION} [] means the value originates here.`),
+}).strict().meta({ toolGroups: [{ name: 'flowHeader', fields: ['out_col', 'out_node', 'returns_to'] }], toolObjectFact: 'flowPresence' }).describe('One output column: out_col, upstream_columns, optional out_node or returns_to. note belongs inside an upstream_columns entry.');
 
 
 /** The engine owns the dispatched hop; a sent id only guards against a stale or misdirected call. */
@@ -382,7 +384,7 @@ export function findingAdmissionFacts(schema: z.ZodType) {
   if (!(schema instanceof z.ZodObject)) throw new Error('Finding admission requires its object schema.');
   const fields: Partial<Pick<HopFindingKept, typeof FINDING_DECISION_FIELDS[number]>> = {};
   const valid = new Set<string>();
-  const headers = new Map<string, Pick<ColumnFlowEntry, 'out_col' | 'writes_to' | 'returns_to'>>();
+  const headers = new Map<string, Pick<ColumnFlowEntry, 'out_col' | 'out_node' | 'returns_to'>>();
   const columns = new Map<string, string>();
   const suppliers = new Map<string, ColumnFlowEntry['upstream_columns'][number]>();
   const destinations = new Map<string, { node: string; col: string } | null | undefined>();
@@ -396,7 +398,7 @@ export function findingAdmissionFacts(schema: z.ZodType) {
     validated: new Map([
       ['flowHeader', captureToolFact(ColumnFlowEntrySchema.omit({ upstream_columns: true }), (value, path) => { headers.set(path, value); })],
       ['supplier', captureToolFact(ColumnRefSchema, (value, path) => { suppliers.set(path, value); })],
-      ...['writeTarget', 'returnTarget'].map(name => [name, captureToolFact(ColumnFlowWritesToObject.nullish(), (value, path) => { destinations.set(path, value); })] as const),
+      ['returnTarget', captureToolFact(ColumnFlowReturnsToObject.nullish(), (value, path) => { destinations.set(path, value); })],
       ['questions', captureToolFact(HopFindingCtBaseSchema.shape.questions, value => { fields.questions = value; valid.add('questions'); })],
       ['prune_neighbors', captureToolFact(HopFindingBaseSchema.shape.prune_neighbors, value => { fields.prune_neighbors = value; valid.add('prune_neighbors'); })],
       ['column_flow', captureToolFact(ColumnFlowSchema, value => { fields.column_flow = value; valid.add('column_flow'); })],
@@ -496,15 +498,14 @@ export interface SubmitFindingsHopColumns {
   /** Backend-owned current-hop neighbors, including closed evidence-only neighbors. */
   readonly neighbors?: readonly { readonly id: string; readonly can_question: boolean; readonly can_prune: boolean }[];
   readonly outCols: readonly string[] | null;
-  readonly writesTo: boolean;
+  /** A procedure focus: each entry names the `out_node` it writes. */
+  readonly outNode: boolean;
   readonly returnTargets?: readonly { readonly node: string; readonly col: string }[];
   readonly identifierCaseSensitive?: boolean;
   /** Neighboring functions eligible for an explicit current-caller output investigation. */
   readonly callerContextNodeIds?: readonly string[];
-  /** Sorted ids the loaded store metadata admits as `upstream_columns` sources: focus neighbors (and read suppliers of its declared scalar callers) that carry stored columns or are trusted without column metadata (procedure, external, function). A columnless function also stays eligible in `questions` via {@link SubmitFindingsHopColumns.callerContextNodeIds}. */
+  /** Sorted ids the loaded store metadata admits as `upstream_columns` sources and `out_node` values: focus neighbors (and read suppliers of its declared scalar callers) that carry stored columns or are trusted without column metadata (procedure, external, function). A columnless function also stays eligible in `questions` via {@link SubmitFindingsHopColumns.callerContextNodeIds}. */
   readonly columnSourceNodeIds?: readonly string[];
-  /** Sorted ids the focus has a recorded dependency into; the only admissible `writes_to.node` values. */
-  readonly writeTargetNodeIds?: readonly string[];
 }
 
 /** Advertises canonical column names while accepting their shared SQL comparison form without rewriting input. The provider enum and rejection choices share the same values; parsing preserves input. */
@@ -514,7 +515,7 @@ function suppliedValueSchema(values: readonly string[], identifierCaseSensitive 
 }
 
 /** Offers canonical IDs while admitting only equivalent, unambiguous metadata spellings. */
-function objectIdSchema(ids: readonly string[], identifierCaseSensitive = false, issue?: 'not_neighbor' | 'bad_write_target' | 'prune_target') {
+function objectIdSchema(ids: readonly string[], identifierCaseSensitive = false, issue?: 'not_neighbor' | 'prune_target') {
   if (ids.length === 0) return z.never().meta({ toolAdmission: { toolIssue: issue ?? 'never' } });
   const known = new Map(ids.map(id => [id, true]));
   const field = z.string().meta({ enum: [...ids], toolIdentifier: { kind: 'object', values: [...ids], caseSensitive: identifierCaseSensitive, issue: issue ?? 'not_neighbor' } });
@@ -530,7 +531,7 @@ function spellingField(ids: readonly string[], identifierCaseSensitive = false) 
   markObjectIdField(field, new Map(ids.map(id => [id, true])), identifierCaseSensitive);
   return field;
 }
-const FLOW_HEADER_FACT = { toolObjectFact: 'flowPresence', toolGroups: [{ name: 'flowHeader', fields: ['out_col', 'writes_to', 'returns_to'] }] };
+const FLOW_HEADER_FACT = { toolObjectFact: 'flowPresence', toolGroups: [{ name: 'flowHeader', fields: ['out_col', 'out_node', 'returns_to'] }] };
 
 /** The same supplier owner is used by full submissions and held tuple corrections. */
 function columnRefSchemaForHop(hop: SubmitFindingsHopColumns) {
@@ -539,22 +540,23 @@ function columnRefSchemaForHop(hop: SubmitFindingsHopColumns) {
     : ColumnRefSchema;
 }
 
-/** Projects {@link ColumnFlowSchema} onto one hop: declared output columns, permitted contributors and procedure write destinations. */
+/** Projects {@link ColumnFlowSchema} onto one hop: declared output columns and the permitted pair endpoints. */
 function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
   const outCol = !hop.outCols?.length
     ? ColumnFlowEntrySchema.shape.out_col
     : suppliedValueSchema(hop.outCols, hop.identifierCaseSensitive).describe(OUT_COL_DESCRIPTION);
-  const upstreamColumns = hop.columnSourceNodeIds
-    ? z.array(columnRefSchemaForHop(hop)).meta({ toolArrayFact: 'suppliers' }).describe(ColumnFlowEntrySchema.shape.upstream_columns.description ?? '')
-    : ColumnFlowEntrySchema.shape.upstream_columns;
+  const upstreamColumns = (hop.columnSourceNodeIds
+    ? z.array(columnRefSchemaForHop(hop)).meta({ toolArrayFact: 'suppliers' })
+    : ColumnFlowEntrySchema.shape.upstream_columns
+  ).describe(hop.outNode ? PROCEDURE_UPSTREAM_DESCRIPTION : ColumnFlowEntrySchema.shape.upstream_columns.description ?? '');
   const shape = {
     out_col: outCol,
     upstream_columns: upstreamColumns,
-    // Required at a procedure focus (null when no neighbor table is written); omission would silently attribute the edge to the procedure node.
-    writes_to: (hop.writeTargetNodeIds
-      ? ColumnFlowWritesToObject.extend({ node: stringFact(objectIdSchema(hop.writeTargetNodeIds, hop.identifierCaseSensitive, 'bad_write_target'), 'flowReference') })
-      : ColumnFlowWritesToObject
-    ).nullable().meta({ toolValidated: 'writeTarget' }).describe(ColumnFlowEntrySchema.shape.writes_to.description ?? ''),
+    // Required at a procedure focus: omission would attribute the pair to the procedure node.
+    out_node: (hop.columnSourceNodeIds
+      ? stringFact(objectIdSchema(hop.columnSourceNodeIds.filter(id => id !== hop.focusNodeId), hop.identifierCaseSensitive), 'flowReference')
+      : stringFact(z.string(), 'flowReference')
+    ).describe(OUT_NODE_DESCRIPTION),
   };
   if (hop.returnTargets?.length) {
     const ids = [...new Set(hop.returnTargets.map(target => target.node))], cols = [...new Set(hop.returnTargets.map(target => target.col))];
@@ -569,7 +571,7 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
     }).strict().meta({ toolObjectFact: 'flowPresence', toolGroups: [{ name: 'flowHeader', fields: ['out_col', 'returns_to'], assertions }], toolDisplay: { allOf: [assertions] } });
     return z.array(entry).describe('One mapping per entry in caller_output_targets, with matching returns_to. Identify dependencies from the supplied caller SQL and function body. List supported in-scope suppliers, or upstream_columns: [] when none can be recorded; retain known outside dependencies and unresolved evidence in sections.');
   }
-  const entry = (hop.writesTo
+  const entry = (hop.outNode
     ? z.object(shape)
     : z.object({ out_col: shape.out_col, upstream_columns: shape.upstream_columns })
   ).strict().meta(FLOW_HEADER_FACT);

@@ -33,7 +33,7 @@ function assertStructural(rendered: Rendered): void {
 }
 
 /** A supplier outside scope has no valid in-scope replacement. */
-const r1 = (): ToolRejection => buildRouteValidationRejection([{ kind: 'supplier_out_of_scope', id: SENTINEL, path: 'column_flow.0.upstream_columns.0.node',
+const r1 = (): ToolRejection => buildRouteValidationRejection([{ kind: 'column_out_of_scope', id: SENTINEL, path: 'column_flow.0.upstream_columns.0.node',
   reason: `${SENTINEL} is outside the approved scope.`, allowed_values: [] }]);
 
 describe('flat rejection renderer contract (D-103)', () => {
@@ -81,15 +81,15 @@ describe('flat rejection renderer contract (D-103)', () => {
     for (const stage of [1, 2, 3] as const) {
       const rendered = render(r1(), stage);
       assertStructural(rendered);
-      expect(rendered.errors).toEqual([expect.objectContaining({ path: 'column_flow.0.upstream_columns.0.node', code: 'supplier_out_of_scope' })]);
+      expect(rendered.errors).toEqual([expect.objectContaining({ path: 'column_flow.0.upstream_columns.0.node', code: 'column_out_of_scope' })]);
       expect(rendered.errors[0].allowed).toEqual(stage === 1 ? undefined : []);
-      expect(rendered.errors[0].message.includes(fallbackOf('supplier_out_of_scope')!)).toBe(stage === 3);
+      expect(rendered.errors[0].message.includes(fallbackOf('column_out_of_scope')!)).toBe(stage === 3);
       expect(rendered.resend.includes('sections')).toBe(stage === 3);
     }
   });
 
   it('withholds a non-empty allowed set until feedback 2', () => {
-    const rejection = makeRejection({ code: 'invalid_input', errors: [{ path: 'column_flow.0.upstream_columns.0.node', code: 'supplier_out_of_scope', values: ['[dbo].[b]', '[dbo].[a]'] }] });
+    const rejection = makeRejection({ code: 'invalid_input', errors: [{ path: 'column_flow.0.upstream_columns.0.node', code: 'column_out_of_scope', values: ['[dbo].[b]', '[dbo].[a]'] }] });
     const input = { column_flow: [{ upstream_columns: [{ node: '[dbo].[b]x' }] }] };
     const [one, two] = ([1, 2] as const).map(stage => render(rejection, stage, input));
     expect(one.errors[0]).not.toHaveProperty('allowed');
@@ -98,15 +98,15 @@ describe('flat rejection renderer contract (D-103)', () => {
 
   it('attaches fallback to each eligible report error and leaves a sibling control error unchanged (D-105)', () => {
     const rejection = makeRejection({ code: 'invalid_input', errors: [
-      { path: 'column_flow.0.writes_to.node', code: 'bad_write_target', values: [] },
+      { path: 'sections.0.node_ids.0', code: 'not_in_result', values: [] },
       { path: 'sections.0.node_ids.1', code: 'result_out_of_scope', values: ['[dbo].[a]'] },
       { path: 'add_node_ids.0', code: 'out_of_scope', values: [] },
     ] });
     for (const stage of [1, 2, 3] as const) {
       const rendered = render(rejection, stage);
       assertStructural(rendered);
-      for (const code of ['bad_write_target', 'result_out_of_scope'] as const) expect(rendered.errors.find(error => error.code === code)?.message.includes(fallbackOf(code)!)).toBe(stage === 3);
-      expect(rendered.errors.find(error => error.code === 'out_of_scope')?.message).not.toContain(fallbackOf('bad_write_target')!);
+      for (const code of ['not_in_result', 'result_out_of_scope'] as const) expect(rendered.errors.find(error => error.code === code)?.message.includes(fallbackOf(code)!)).toBe(stage === 3);
+      expect(rendered.errors.find(error => error.code === 'out_of_scope')?.message).not.toContain(fallbackOf('not_in_result')!);
       expect(rendered.resend).toEqual(stage === 3 ? ['sections'] : []);
     }
   });

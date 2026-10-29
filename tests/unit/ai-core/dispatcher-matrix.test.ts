@@ -968,7 +968,7 @@ describe('model-facing rejection text', () => {
   it('delivers schema-level column choices for each failed field without diagnostic clipping', async () => {
     const columns = Array.from({ length: 400 }, (_, i) => `Column${i}`);
     const schema = submitFindingsSchemaForMode('ct', 'technical', true, {
-      outCols: columns, writesTo: false,
+      outCols: columns, outNode: false,
     });
     const input = { focus_node_id: 'focus', summary: 'A valid summary.', sections: { technical: 'A long valid finding. '.repeat(5000) },
       column_flow: [{ out_col: 'Missing', upstream_columns: [] }, { out_col: 'AlsoMissing', upstream_columns: [] }] };
@@ -1048,32 +1048,32 @@ describe('model-facing rejection text', () => {
     expect(recordToolAttempt(state, fourth, registry).rejections).toHaveLength(MAX_TOOL_PROVIDER_CALLS);
   });
 
-  it('retains self-loop facts first and object-qualified owner choices on the last correction', async () => {
+  it('retains column facts first and object-qualified owner choices on the last correction', async () => {
     const columns = ['OrderAmount', 'RegionCode', 'Discount'];
     const rejection = buildRouteValidationRejection([{
-      kind: 'self_loop_column',
+      kind: 'bad_contributor_col',
       id: '[ai].[salesstaging]',
-      path: 'column_flow.0.upstream_columns.0',
-      reason: 'upstream_columns entry "[ai].[salesstaging].OrderAmount" is identical to its own writes_to target "[ai].[salesstaging].OrderAmount" - a column cannot be its own upstream source.',
+      path: 'column_flow.0.upstream_columns.0.col',
+      reason: 'Column "OrderAmt" does not exist on contributor "[ai].[salesstaging]".',
       allowed_values: columns,
       when: { node: '[ai].[salesstaging]' },
     }]);
-    expect(rejection.code).toBe(REJECTION_CODES.columnSelfLoop);
+    expect(rejection.code).toBe(REJECTION_CODES.contributorColNotOnSource);
     const { registry } = registryWith(() => JSON.stringify(rejection));
     const plan = discoveryPlan(registry);
     let state = initialToolPhaseAttemptState('discover');
     const first = await executeToolAttempt(nativePort(() => [call('first', { query: 'OrderAmount' })]).port, plan, { priorState: state });
     const firstFeedback = JSON.parse(String(toolMessage(first.messages).content));
-    expect(firstFeedback.code).toBe(REJECTION_CODES.columnSelfLoop);
-    expect(shown(firstFeedback)).toEqual([fault('self_loop', 'column_flow.0.upstream_columns.0')]);
+    expect(firstFeedback.code).toBe(REJECTION_CODES.contributorColNotOnSource);
+    expect(shown(firstFeedback)).toEqual([fault('unknown_column', 'column_flow.0.upstream_columns.0.col')]);
     for (const absent of ['replies_remaining', 'detail', 'reason', 'hint']) expect(firstFeedback).not.toHaveProperty(absent);
     expect(toolMessage(first.messages).artifact).toMatchObject({ detail: expect.arrayContaining([expect.objectContaining({
-      path: 'column_flow.0.upstream_columns.0', allowed_values: columns, when: { node: '[ai].[salesstaging]' },
+      path: 'column_flow.0.upstream_columns.0.col', allowed_values: columns, when: { node: '[ai].[salesstaging]' },
     })]) });
     state = recordToolAttempt(state, first, registry);
     const second = await executeToolAttempt(nativePort(() => [call('second', { query: 'OrderAmount' })]).port, plan, { priorState: state });
     const content = String(toolMessage(second.messages).content);
-    expect(shown(content)).toContainEqual({ ...fault('self_loop', 'column_flow.0.upstream_columns.0'), allowed: [...columns].sort() });
+    expect(shown(content)).toContainEqual({ ...fault('unknown_column', 'column_flow.0.upstream_columns.0.col'), allowed: [...columns].sort() });
     expect(content).not.toContain('Recheck the named column');
     state = recordToolAttempt(state, second, registry);
     const third = await executeToolAttempt(nativePort(() => [call('third', { query: 'OrderAmount' })]).port, plan, { priorState: state });
@@ -1624,12 +1624,12 @@ describe('submit_findings rejection form', () => {
     const { send } = hop();
     const first = await send({ ...base, column_flow: [
       { out_col: 'Value', upstream_columns: [{ node: absent, col: 'C0' }, { node: source, col: 'Missing' }] },
-      { out_col: 'Other', upstream_columns: [{ node: source, col: 'C1', transforms: ['bogus'] }], writes_to: { node: source, col: 'C0' } },
+      { out_col: 'Other', upstream_columns: [{ node: source, col: 'C1', transforms: ['bogus'] }], out_node: source },
     ] });
     assert(first.rejection, 'Expected a rejected submission');
     expect(first.attempt.rejections).toHaveLength(1);
     const expected = ['column_flow.0.upstream_columns.0.node', 'column_flow.0.upstream_columns.1.col',
-      'column_flow.1.upstream_columns.0.transforms.0', 'column_flow.1.writes_to'];
+      'column_flow.1.out_node', 'column_flow.1.upstream_columns.0.transforms.0'];
     expect(paths(first.rejection).sort()).toEqual(expected);
     expect(first.rejection.resend).toEqual(['column_flow']);
     for (const path of expected) {
