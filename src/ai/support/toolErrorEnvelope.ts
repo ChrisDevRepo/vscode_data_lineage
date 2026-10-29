@@ -33,7 +33,7 @@ export const ISSUES = {
   not_found: OBJECT_IDENTITY_ISSUE,
   report_not_found: { ...OBJECT_IDENTITY_ISSUE, ...REPORT_REFERENCE_FALLBACK },
   out_of_scope: { category: 'reference', label: 'outside the approved scope', correction: 'Name an object inside the approved scope; where the field\'s schema description names a form for an object outside it, use that form.' },
-  column_out_of_scope: { category: 'reference', label: 'column outside the approved scope', correction: 'Remove the outside column; if it is the entry\'s only supplier or its out_node, omit the column_flow entry. Ask the outside object a follow-up in questions and record the fact in sections.',
+  column_out_of_scope: { category: 'reference', label: 'column outside the approved scope', correction: 'Remove the outside column; if it is the entry\'s only supplier or its out_node, omit the column_flow entry, never empty upstream_columns. Ask the outside object a follow-up in questions and record the fact in sections.',
     fallback: 'If no in-scope supplier can express the fact, write it in sections instead, highlighted with a callout naming the unresolved supplier and columns.' },
   result_out_of_scope: { category: 'reference', label: 'outside the approved scope, so not an id of the result', correction: 'Name only node ids of the result.',
     fallback: 'Where the fact concerns an object outside the result, it is still required: state it in the text of the section that describes it as a callout starting with ⚠️ that names the object. Keep every other section unchanged; its node_ids name only ids of the result.' },
