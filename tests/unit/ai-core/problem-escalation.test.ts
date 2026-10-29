@@ -38,21 +38,9 @@ function nativePort(parts: () => vscode.LanguageModelToolCallPart[]) {
   );
 }
 
-/** A real BB hop at a view reading one table, driven through the real submit_findings handler and the dispatcher. */
-function bbHop() {
-  const source = makeNode({ id: '[dbo].[Source]', schema: 'dbo', name: 'Source', type: 'table' });
-  const focus = makeNode({ id: '[dbo].[Report]', schema: 'dbo', name: 'Report', type: 'view', bodyScript: 'SELECT Value FROM dbo.Source;' });
-  const model = makeIndexedModel([source, focus], [[source.id, focus.id]]);
-  const session = new AiSession();
-  const epoch = session.beginTurn();
-  session.model = model;
-  session.classification = 'technical';
-  const engine = new NavigationEngine(model, makeGraph([source, focus], [[source.id, focus.id]]), () => {}, { memory: session.memory });
-  session.stateMachine = engine;
-  expect(engine.init({ origin: focus.id, question: 'Explain Report.', direction: 'upstream', analysisMode: 'bb',
-    depthIntent: { upstream: { levels: 1, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } })).toHaveProperty('ok', true);
-  engine.classification = 'technical';
-  engine.getHopContext();
+/** The real submit_findings handler, registry and instruction plan bound to the engine's current hop. */
+function hopOf(session: AiSession, epoch: number, engine: NavigationEngine) {
+  const model = session.model!;
   const services = { getSession: () => session, turnEpoch: () => epoch, requireModel: () => model,
     logger: { debug() {}, info() {}, warn() {}, error() {} },
     logAndReturn: (_name: string, data: object) => JSON.stringify(data),
@@ -62,10 +50,33 @@ function bbHop() {
   registry.register({ name: TOOL, inputSchema: SubmitFindingsModelSchema, effect: 'hop_commit', modelDescription: 'Submit findings.',
     execute: (input: unknown) => executeSubmitFindings(input, services) });
   const plan = compileInstructionPlan({ kind: 'converse', stage: { kind: 'active', mode: 'sm_bb' }, registry,
-    messages: [new HumanMessage('Inspect the current object.')], sink: new TurnEventSink(() => {}),
-    facts: explorationFacts('bb', [], { classification: 'technical', memorySections: [] }), hopColumns: () => engine.hopSubmitColumns,
-    requiredTerminalTool: TOOL, toolChoice: 'required' });
-  return { focus, source, engine, plan, registry };
+    messages: [new HumanMessage('Inspect the current object.')], sink: new TurnEventSink(() => {}), facts: explorationFacts('bb', [], { classification: 'technical', memorySections: [] }),
+    hopColumns: () => engine.hopSubmitColumns, requiredTerminalTool: TOOL, toolChoice: 'required' });
+  return { engine, plan, registry };
+}
+
+/** A BB exploration of `nodes` from `origin`, started and at its first hop. */
+function bbSession(nodes: ReturnType<typeof makeNode>[], pairs: Array<[string, string]>, origin: string, levels: number | 'all') {
+  const model = makeIndexedModel(nodes, pairs);
+  const session = new AiSession();
+  const epoch = session.beginTurn();
+  session.model = model;
+  session.classification = 'technical';
+  const engine = new NavigationEngine(model, makeGraph(nodes, pairs), () => {}, { memory: session.memory });
+  session.stateMachine = engine;
+  expect(engine.init({ origin, question: 'Explain the origin.', direction: 'upstream', analysisMode: 'bb',
+    depthIntent: { upstream: { levels, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } })).toHaveProperty('ok', true);
+  engine.classification = 'technical';
+  engine.getHopContext();
+  return { session, epoch, engine };
+}
+
+/** A real BB hop at a view reading one table, driven through the real submit_findings handler and the dispatcher. */
+function bbHop() {
+  const source = makeNode({ id: '[dbo].[Source]', schema: 'dbo', name: 'Source', type: 'table' });
+  const focus = makeNode({ id: '[dbo].[Report]', schema: 'dbo', name: 'Report', type: 'view', bodyScript: 'SELECT Value FROM dbo.Source;' });
+  const { session, epoch, engine } = bbSession([source, focus], [[source.id, focus.id]], focus.id, 1);
+  return { focus, source, ...hopOf(session, epoch, engine) };
 }
 
 /** Faults: `summary` required and missing; `badge_label` optional and too short; `questions.0.nodeId` not a served neighbor. */
@@ -77,7 +88,7 @@ type Problem = ToolProblem;
 const PROBLEM_KEYS = ['attempt', 'code', 'errors', 'notice', 'resend'];
 const shown = (problem: Problem): ShownError[] => problem.errors;
 
-async function reply(hop: ReturnType<typeof bbHop>, state: ToolPhaseAttemptState, input: unknown, id: string) {
+async function reply(hop: Pick<ReturnType<typeof hopOf>, 'plan' | 'registry'>, state: ToolPhaseAttemptState, input: unknown, id: string) {
   const attempt = await executeToolAttempt(nativePort(() => [new vscode.LanguageModelToolCallPart(id, TOOL, input as object)]), hop.plan, { priorState: state });
   const message = attempt.messages.find(item => item instanceof ToolMessage) as ToolMessage;
   return { attempt, content: String(message.content), next: recordToolAttempt(state, attempt, hop.registry) };
@@ -137,6 +148,61 @@ describe('D-105 feedback stages through the dispatcher and the real submit_findi
       expect(state.stopReason).toBe(n < 4 ? null : 'no_progress');
     }
     expect(state).toMatchObject({ providerCalls: 4, rejectedTerminalCalls: 4 });
+  });
+});
+
+/** Spec 08 / D-099 / D-105: a prune of a neighbor the hop cannot prune is a fault on the prune target that leads to a valid call, whether the hop offers no prunable neighbor or only some. */
+describe('D-099 / D-105: a prune of a neighbor that cannot be pruned, through the dispatcher and the real submit_findings handler', () => {
+  /** A procedure hop reached through a loaded table, which the exploration already visited (not prunable here); `audit` adds a prunable neighbor. */
+  async function loaderHop(audit: boolean) {
+    const [report, staging, audit_, loader] = [
+      makeNode({ id: '[dbo].[Report]', schema: 'dbo', name: 'Report', type: 'view', bodyScript: 'SELECT Value FROM dbo.Staging;' }),
+      makeNode({ id: '[dbo].[Staging]', schema: 'dbo', name: 'Staging', type: 'table' }),
+      makeNode({ id: '[dbo].[Audit]', schema: 'dbo', name: 'Audit', type: 'table' }),
+      makeNode({ id: '[dbo].[Loader]', schema: 'dbo', name: 'Loader', type: 'procedure', bodyScript: 'INSERT INTO dbo.Staging SELECT Value FROM dbo.Audit;' }),
+    ];
+    const pairs: Array<[string, string]> = [[staging.id, report.id], [loader.id, staging.id], ...(audit ? [[audit_.id, loader.id] as [string, string]] : [])];
+    const { session, epoch, engine } = bbSession([report, staging, audit_, loader], pairs, report.id, 'all');
+    expect(engine.submitFindings({ focus_node_id: report.id, summary: 'Report reads Staging.', sections: { technical: 'Report selects Value from Staging.' },
+      questions: [{ nodeId: staging.id, question: 'Which procedure loads Staging?' }] } as never)).toHaveProperty('ok', true);
+    engine.getHopContext();
+    expect(engine.currentFocus).toBe(loader.id);
+    expect(engine.hopSubmitColumns.neighbors).toEqual(expect.arrayContaining([{ id: staging.id, can_question: false, can_prune: false }]));
+    return { staging, audit: audit_, loader, ...hopOf(session, epoch, engine) };
+  }
+  const finding = (focus: string, prune: object[]) => ({ focus_node_id: focus, summary: 'Loader fills Staging from Audit.',
+    sections: { technical: 'Loader inserts Value from Audit into Staging.' }, ...(prune.length ? { prune_neighbors: prune } : {}) });
+
+  it.each([1, 2, 3])('a hop with no prunable neighbor names the prune target at feedback %i and accepts the call without the prune entry', async stage => {
+    const hop = await loaderHop(false);
+    expect(hop.engine.hopSubmitColumns.neighbors!.some(neighbor => neighbor.can_prune)).toBe(false);
+    let state = initialToolPhaseAttemptState(hop.plan.frame.phase);
+    let problem!: Problem;
+    for (let n = 1; n <= stage; n++) {
+      const sent = await reply(hop, state, finding(hop.loader.id, [{ id: hop.staging.id, reason: `Already visited ${n}.` }]), `prune-${n}`);
+      problem = JSON.parse(sent.content) as Problem;
+      state = sent.next;
+    }
+    expect(shown(problem).map(error => error.code)).toEqual(['size']);
+    expect(shown(problem).map(error => error.path)).toEqual(['prune_neighbors']);
+    const fixed = await reply(hop, state, finding(hop.loader.id, []), 'fixed');
+    expect(fixed.attempt.rejections).toEqual([]);
+    expect(hop.engine.heldFindingFocus).toBeNull();
+  });
+
+  it('a hop with some prunable neighbors names the prunable ids for an unprunable neighbor and accepts the corrected prune', async () => {
+    const hop = await loaderHop(true);
+    const state = initialToolPhaseAttemptState(hop.plan.frame.phase);
+    const faultOf = (content: string) => shown(JSON.parse(content) as Problem).find(error => error.code === 'prune_target');
+    const sent = await reply(hop, state, finding(hop.loader.id, [{ id: hop.staging.id, reason: 'Already visited 1.' }]), 'prune-1');
+    expect(faultOf(sent.content)).toMatchObject({ path: 'prune_neighbors.0.id' });
+    expect(faultOf(sent.content)).not.toHaveProperty('allowed');
+    const second = await reply(hop, sent.next, finding(hop.loader.id, [{ id: hop.staging.id, reason: 'Already visited 2.' }]), 'prune-2');
+    expect(faultOf(second.content)).toMatchObject({ path: 'prune_neighbors.0.id', allowed: [hop.audit.id] });
+    expect(shown(JSON.parse(second.content) as Problem).map(error => error.code)).not.toContain('not_neighbor');
+    const fixed = await reply(hop, second.next, finding(hop.loader.id, [{ id: hop.audit.id, reason: 'Audit supplies no value.' }]), 'fixed');
+    expect(fixed.attempt.rejections).toEqual([]);
+    expect(hop.engine.heldFindingFocus).toBeNull();
   });
 });
 

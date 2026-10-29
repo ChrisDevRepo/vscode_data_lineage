@@ -1414,7 +1414,7 @@ describe('submit_findings rejection form', () => {
     { name: 'prune row type', patch: { prune_neighbors: [42] }, path: 'prune_neighbors.0', code: 'type' },
     { name: 'prune id missing', patch: { prune_neighbors: [{ reason: otherPrune.reason }] }, path: 'prune_neighbors.0.id', code: 'missing' },
     { name: 'prune id type', patch: { prune_neighbors: [{ ...otherPrune, id: 42 }] }, path: 'prune_neighbors.0.id', code: 'type' },
-    { name: 'prune neighbor', patch: { prune_neighbors: [{ ...otherPrune, id: absent }] }, path: 'prune_neighbors.0.id', code: 'not_neighbor' },
+    { name: 'prune neighbor', patch: { prune_neighbors: [{ ...otherPrune, id: absent }] }, path: 'prune_neighbors.0.id', code: 'prune_target' },
     { name: 'prune reason missing', patch: { prune_neighbors: [{ id: other }] }, path: 'prune_neighbors.0.reason', code: 'missing' },
     { name: 'prune reason type', patch: { prune_neighbors: [{ ...otherPrune, reason: 42 }] }, path: 'prune_neighbors.0.reason', code: 'type' },
     { name: 'prune reason empty', patch: { prune_neighbors: [{ ...otherPrune, reason: '' }] }, path: 'prune_neighbors.0.reason', code: 'size', also: ['invalid'] },
@@ -1709,11 +1709,11 @@ describe('submit_findings rejection form', () => {
     const second = await send({ focus_node_id: root, prune_neighbors: invalidPrune });
     assert(second.rejection, 'Expected a rejected submission');
     expect(second.rejection.resend).toEqual(['prune_neighbors']);
-    expect(second.rejection.errors).toEqual([{ ...fault('not_neighbor', 'prune_neighbors.0.id'), allowed: [source, other].sort() }]);
+    expect(second.rejection.errors).toEqual([{ ...fault('prune_target', 'prune_neighbors.0.id'), allowed: [source, other].sort() }]);
     expect(hasFallback(second.rejection)).toBe(false);
     const third = await send({ focus_node_id: root, prune_neighbors: [{ id: absent, reason: 'Still outside.' }] });
     assert(third.rejection, 'Expected a rejected submission');
-    expect(third.rejection.errors).toEqual([{ ...fault('not_neighbor', 'prune_neighbors.0.id'), allowed: [source, other].sort() }]);
+    expect(third.rejection.errors).toEqual([{ ...fault('prune_target', 'prune_neighbors.0.id'), allowed: [source, other].sort() }]);
     expect(hasFallback(third.rejection)).toBe(false);
     const exit = { prune_neighbors: [] };
     const schema = submitFindingsSchemaForMode('ct', 'technical', false, engine.hopSubmitColumns, engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false);
