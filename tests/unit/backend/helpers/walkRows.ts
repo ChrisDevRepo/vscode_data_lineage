@@ -87,7 +87,7 @@ function validatorFor(schema: object): ValidateFunction {
 const column = (name: string) => ({ name, type: 'int', nullable: 'NULL' as const, extra: '' });
 
 /** The independent oracle for a walk's scope: every object reached from `origin` along the edges, `limit` levels deep. */
-function directedClosure(origin: string, edges: ReadonlyArray<readonly [string, string]>, reverse: boolean, limit = Infinity): Set<string> {
+export function directedClosure(origin: string, edges: ReadonlyArray<readonly [string, string]>, reverse: boolean, limit = Infinity): Set<string> {
   const reached = new Set([origin]);
   let frontier = [origin];
   for (let depth = 0; frontier.length && depth < limit; depth++) {
@@ -109,6 +109,10 @@ interface WalkOutcome {
   columnEdges: string[];
   /** Follow-up questions the exploration kept for objects it did not visit. */
   deferred: string[];
+  /** Served lists that offer entries no allowed value satisfies (part of invariant (a)); a catalog row asserts it is empty. */
+  offers: string[];
+  /** The objects that own a detail slot of the delivered result. */
+  detailNodes: string[];
 }
 
 /** Top-level fields whose value differs between two replies. */
@@ -134,16 +138,19 @@ export async function walkRow(row: WalkCase, scripted: boolean): Promise<WalkOut
     ...(row.mode === 'ct' ? { targetColumns: spec.columns } : {}), excludeNodeIds: (spec.excluded ?? []).map(qualify),
     ...(spec.pass ? { passNodeIds: spec.pass.map(qualify) } : {}),
     depthIntent: { upstream: { levels: row.direction === 'downstream' ? 0 : depth, exactness: 'exact' }, downstream: { levels: row.direction === 'upstream' ? 0 : depth, exactness: 'exact' } } }, 'technical');
-  const violations: string[] = [];
+  const violations: string[] = [], offers: string[] = [], hopped = new Set<string>();
   engine.getHopContext();
   for (let step = 0; engine.status === 'awaiting_findings' && step <= nodes.length + 1; step++) {
     const focus = engine.currentFocus!, name = shorten(focus);
     const view: HopView = { focus, type: nodes.find(node => node.id === focus)!.type, mode: engine.currentHopAnalysisMode };
     const neighbors = (engine.peekHopContext()!.neighbors ?? []) as unknown as readonly HopNeighborDisclosure[];
+    if (view.type === 'table' || hopped.has(focus)) violations.push(`(d) ${name}: ${view.type === 'table' ? 'storage got a SQL hop' : 'a second SQL hop'}`);
+    if (new Set(neighbors.map(neighbor => neighbor.id)).size !== neighbors.length) violations.push(`(a) ${name}: a neighbor is listed twice`);
+    hopped.add(focus);
     const ahead = neighbors.filter(neighbor => neighbor.can_question && !neighbor.out_of_direction).map(neighbor => shorten(neighbor.id));
     try { engine.toJSON(); } catch (error) { violations.push(`(d) ${name}: the engine state cannot be serialized: ${String(error)}`); }
     const schema = hopTools(walk).find(tool => tool.name === 'lineage_submit_findings')!.inputSchema as Schema;
-    for (const field of unsatisfiableOffers(schema)) violations.push(`(a) ${name}: ${field} offers entries no allowed value satisfies`);
+    for (const field of unsatisfiableOffers(schema)) offers.push(`(a) ${name}: ${field} offers entries no allowed value satisfies`);
     const canonical = authorReply(view, { ask: neighbors.filter(neighbor => neighbor.can_question).map(neighbor => shorten(neighbor.id)) });
     if (!validatorFor(schema)(canonical)) violations.push(`(a) ${name}: the reply built from the allowed values is not admitted by the served schema`);
     const message = hopMessage(walk);
@@ -185,8 +192,15 @@ export async function walkRow(row: WalkCase, scripted: boolean): Promise<WalkOut
   if (engine.status !== 'complete') violations.push(`(d) the walk ended in status ${engine.status}`);
   else if (scripted && row.hops.length !== engine.toJSON().visited.filter(id => spec.nodes[shorten(id)] !== 'table' && !spec.pass?.includes(shorten(id))).length) violations.push('(d) the row scripts a different number of hops than the walk ran');
   const done = engine.status === 'complete' ? engine.getResult() : null;
-  return { violations, nodes: done ? done.fullNodes.map(node => shorten(node.id)).sort() : [], edges: done ? pairs(done.edges) : [],
+  // A generic walk questions every neighbor ahead, so the SQL hops are exactly the delivered objects that are neither storage nor pass-through; a scripted mapping may deliver a row-influence neighbor unwalked.
+  if (done && !scripted) {
+    const expectedHops = done.fullNodes.map(node => node.id).filter(id => spec.nodes[shorten(id)] !== 'table' && !spec.pass?.includes(shorten(id)));
+    for (const id of expectedHops.filter(candidate => !hopped.has(candidate))) violations.push(`(d) ${shorten(id)}: delivered without a SQL hop`);
+    for (const id of [...hopped].filter(candidate => !expectedHops.includes(candidate))) violations.push(`(d) ${shorten(id)}: a SQL hop at an object the result does not deliver`);
+  }
+  return { violations, offers, nodes: done ? done.fullNodes.map(node => shorten(node.id)).sort() : [], edges: done ? pairs(done.edges) : [],
     deferred: engine.deferredQuestions.map(question => shorten(question.nodeId)).sort(),
+    detailNodes: done ? done.detail_slots.map(slot => shorten(slot.nodeId)).sort() : [],
     columnEdges: done?.columnAspect ? done.columnAspect.edges.map(edge => `${shorten(edge.from_node)}.${edge.from_col}>${shorten(edge.to_node)}.${edge.to_col}`).sort() : [] };
 }
 

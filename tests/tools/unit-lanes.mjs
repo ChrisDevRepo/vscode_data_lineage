@@ -123,6 +123,7 @@ export const runtimeContractTests = [
   'tests/unit/backend/bb-lineage-shapes.test.ts',
   'tests/unit/backend/lineage-cases.test.ts',
   'tests/unit/backend/lineage-walk.test.ts',
+  'tests/unit/backend/generated-graph-walk.test.ts',
   'tests/unit/ai-core/submit-findings-schema.test.ts',
   'tests/unit/backend/function-column-contracts.test.ts',
   'tests/unit/ai-core/tool-boundary-precedence.test.ts',

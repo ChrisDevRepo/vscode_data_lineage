@@ -13,6 +13,7 @@ describe('catalog walk rows', () => {
     it(`scripted: every hop satisfies the hop invariants and the row's final graph results`, async () => {
       const outcome = await walkRow(row, true);
       expect(outcome.violations).toEqual([]);
+      expect(outcome.offers).toEqual([]);
       expect(outcome.nodes).toEqual([...row.expect.nodes].sort());
       expect(outcome.edges).toEqual(row.expect.edges.map(([from, to]) => `${from}>${to}`).sort());
       expect(outcome.columnEdges).toEqual((row.expect.column_edges ?? []).map(([from, fromCol, to, toCol]) => `${from}.${fromCol}>${to}.${toCol}`).sort());
@@ -22,6 +23,7 @@ describe('catalog walk rows', () => {
     it(`generic: asking every open neighbor ahead delivers the directed closure`, async () => {
       const outcome = await walkRow(row, false);
       expect(outcome.violations).toEqual([]);
+      expect(outcome.offers).toEqual([]);
       const oracle = closureOutcome(row);
       expect(outcome.nodes).toEqual(oracle.nodes);
       expect(outcome.edges).toEqual(oracle.edges);
