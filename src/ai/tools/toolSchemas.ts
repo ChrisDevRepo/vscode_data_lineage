@@ -313,7 +313,7 @@ const OUT_NODE_DESCRIPTION = 'Table from <hop_context> that this procedure write
 const UPSTREAM_DESCRIPTION = 'Neighbor columns that feed out_col: value sources (expression operands, aggregate arguments, each UNION branch column, caller-bound inputs) and columns that only join, filter, group or order its rows. ' +
   'Resolve parameters and aliases to source columns.';
 /** At a procedure, a created value is the pair procedure.col -> out_node.out_col (D-130). */
-const PROCEDURE_UPSTREAM_DESCRIPTION = `${UPSTREAM_DESCRIPTION} A value this procedure creates lists this procedure; [] records no pair.`;
+const PROCEDURE_UPSTREAM_DESCRIPTION = `${UPSTREAM_DESCRIPTION} A value this procedure creates lists this procedure with col = out_col; [] records no pair.`;
 
 const ColumnFlowEntrySchema = z.object({
   out_col: z.string().describe(OUT_COL_DESCRIPTION),
