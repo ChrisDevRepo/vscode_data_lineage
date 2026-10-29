@@ -23,12 +23,12 @@ import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import Ajv from 'ajv/dist/2020';
 import * as toolValidation from '../../../src/ai/support/toolValidation';
 const { validateToolCandidate } = toolValidation;
-import { ISSUES, isAdmissionRefusal, isConsentGateRejection, readToolErrorText, renderProblem } from '../../../src/ai/support/toolErrorEnvelope';
+import { ISSUES, isAdmissionRefusal, isConsentGateRejection, readToolErrorText, renderProblem, type ToolProblem } from '../../../src/ai/support/toolErrorEnvelope';
 
-/** The errors a rendered problem shows, across its category groups. */
-const shownErrors = (problem: { guidance: Array<{ errors: Array<Record<string, unknown>> }> }) => problem.guidance.flatMap(group => group.errors);
-/** Whether a rendered problem carries a fallback in any group. */
-const hasFallback = (problem: { guidance: Array<{ fallback?: string }> }) => problem.guidance.some(group => group.fallback !== undefined);
+/** The errors delivered by the shared renderer. */
+const shownErrors = (problem: ToolProblem) => problem.errors;
+/** Whether any error carries its issue-owned fallback. */
+const hasFallback = (problem: ToolProblem) => problem.errors.some(error => { const issue = ISSUES[error.code]; return 'fallback' in issue && error.message.endsWith(issue.fallback); });
 import { detectOverBudgetFromResult, queueDiscoveryBudgetNotice } from '../../../src/ai/agent/discoveryCapture';
 import { scriptedRegistry } from '../../harness/scriptedModelPort';
 import { makeGraph, makeIndexedModel, makeModel, makeNode } from '../helpers/modelFixtures';
@@ -360,17 +360,32 @@ describe('large findings repairs', () => {
     expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
     expect(engine.toJSON().agenda).toEqual(before.agenda);
   });
-  it.each([OTHER, null, 42])('exposes no held writing parts after an initial invalid explicit focus %s', focus => {
-    const { engine, session, model, graph } = ctWorld();
+  // D-099: a focus mismatch cannot hide independent metadata or topology faults in the same reply.
+  it.each((['bb', 'ct'] as const).flatMap(mode => [OTHER, null, 42].map(focus => ({ mode, focus }))))(
+    'reports independent $mode faults without holding an invalid explicit focus $focus', ({ mode, focus }) => {
+    const { engine, session, model, graph } = ctWorld({ mode });
     const { services } = stubToolServices({ session, model, graph });
-    expect(JSON.parse(executeSubmitFindings({ focus_node_id: focus, summary: 'Value provenance.',
+    const before = engine.toJSON();
+    const input = { focus_node_id: focus, summary: 'Value provenance.',
       sections: { technical: 'A complete finding for the wrong or unnamed focus.' },
-      column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }],
+      ...(mode === 'ct' ? { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Missing' }] }] }
+        : { prune_neighbors: [{ id: BRANCH, reason: 'Do not investigate this supplier.' }] }),
       questions: [{ nodeId: BRANCH, question: 'Establish Value.' }],
-    }, services))).toHaveProperty('code');
+    };
+    const rejected = JSON.parse(executeSubmitFindings(input, services));
+    expect(rejected.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: 'focus_node_id', code: 'not_current_object' }),
+      expect.objectContaining(mode === 'ct'
+        ? { path: 'column_flow.0.upstream_columns.0.col', code: 'unknown_column' }
+        : { path: 'questions.0.nodeId', code: 'conflict' }),
+    ]));
     expect(engine.heldPartsOfCurrentFocus()).toBeNull();
-    expect(engine.currentFocus).toBe(ORIGIN);
-    expect(engine.columnAspect!.edges).toEqual([]);
+    expect(engine.toJSON()).toEqual(before);
+    const corrected = { ...input, focus_node_id: ORIGIN,
+      ...(mode === 'ct' ? { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }] }
+        : { prune_neighbors: [] }),
+    };
+    expect(JSON.parse(executeSubmitFindings(corrected, services))).toHaveProperty('ok', true);
   });
   it('holds shape-valid content under the dispatched hop and commits a correction that omits the faulty field and names it withdrawn', () => {
     const { engine, session, model, graph } = ctWorld();
@@ -703,8 +718,8 @@ describe('large findings repairs', () => {
     if (scope) {
       expect(errors.filter(error => error.path === 'column_flow.0.writes_to.node')).toHaveLength(1);
       const firstFeedback = JSON.parse(renderProblem(readToolErrorText(JSON.stringify(result))!, 1));
-      const scopeIssue = firstFeedback.guidance.flatMap((group: { errors: unknown[] }) => group.errors).find((error: { fault: string }) => error.fault === ISSUES.bad_write_target.label);
-      expect(scopeIssue).toMatchObject({ path: 'column_flow.0.writes_to.node', correction: ISSUES.bad_write_target.correction });
+      const scopeIssue = shownErrors(firstFeedback).find(error => error.code === 'bad_write_target');
+      expect(scopeIssue).toMatchObject({ path: 'column_flow.0.writes_to.node', code: 'bad_write_target' });
       expect(scopeIssue).not.toHaveProperty('allowed');
     }
     const shapePath = shape === 'target-type' ? 'column_flow.0.writes_to' : shape === 'target-col' ? 'column_flow.0.writes_to.col'
@@ -1444,8 +1459,8 @@ it('keeps outside-supplier withdrawal alongside the nullable write exit in first
     questions: [{ nodeId: BRANCH, question: 'Trace the reachable Value.' }],
   }, services));
   const first = JSON.parse(renderProblem(readToolErrorText(JSON.stringify(rejected))!, 1));
-  const scopeIssue = shownErrors(first).find(error => error.fault === ISSUES.supplier_out_of_scope.label);
-  expect(scopeIssue).toMatchObject({ path: 'column_flow.0.upstream_columns.0.node', correction: ISSUES.supplier_out_of_scope.correction });
+  const scopeIssue = shownErrors(first).find(error => error.code === 'supplier_out_of_scope');
+  expect(scopeIssue).toMatchObject({ path: 'column_flow.0.upstream_columns.0.node', code: 'supplier_out_of_scope' });
   expect(scopeIssue).not.toHaveProperty('allowed');
   expect(engine.getDetailSlots()).toEqual([]);
   expect(JSON.parse(executeSubmitFindings({column_flow: [{out_col:'Value', writes_to:null, upstream_columns:[{node:BRANCH,col:'Value'}]}]},services))).toHaveProperty('ok',true);
@@ -1481,7 +1496,7 @@ it.each(startEnumCombinations.flatMap(row => [false, true].map(refining => ({ ..
   for (const fault of row.selected) expect(rejected.errors).toContainEqual(expect.objectContaining({ path: fault.path, code: 'enum' }));
   // D-105: feedback 1 names every fault without allowed values; feedback 2 adds them; start arguments get no fallback at 3.
   const first = JSON.parse(renderProblem(rejected, 1));
-  expect(Object.keys(first).sort()).toEqual(['attempt', 'code', 'guidance', 'resend']);
+  expect(Object.keys(first).sort()).toEqual(['attempt', 'code', 'errors', 'resend']);
   for (const fault of row.selected) expect(shownErrors(first)).toContainEqual(expect.objectContaining({ path: fault.path }));
   for (const error of shownErrors(first)) expect(error).not.toHaveProperty('allowed');
   for (const fault of row.selected) for (const value of fault.allowed) expect(JSON.stringify(first)).not.toContain(JSON.stringify(value));
@@ -1514,7 +1529,7 @@ it.each([
     expect(rejection!.code).toBe(row.code);
     const served = JSON.parse(renderProblem(rejection!, final ? 2 : 1));
     expect(shownErrors(served).length).toBeGreaterThan(0);
-    for (const error of shownErrors(served)) expect(error.correction).toEqual(expect.any(String));
+    for (const error of shownErrors(served)) expect(error.message).toEqual(expect.any(String));
     if (!final) for (const error of shownErrors(served)) expect(error).not.toHaveProperty('allowed');
     expect(session.pendingExploration).toBeNull();
     expect(session.stateMachine).toBeNull();
@@ -1742,7 +1757,7 @@ it.each([
   const rejection = JSON.parse(await registry.invoke(row.tool, row.bad));
   for (const stage of [1, 2, 3] as const) {
     const problem = JSON.parse(renderProblem(rejection, stage));
-    expect(shownErrors(problem)).toContainEqual(expect.objectContaining({ path: row.field, fault: ISSUES.type.label }));
+    expect(shownErrors(problem)).toContainEqual(expect.objectContaining({ path: row.field, code: 'type' }));
     expect(hasFallback(problem)).toBe(false);
   }
   session.currentRoundId = 2;
@@ -1788,7 +1803,7 @@ it.each(['feedback marker', 'next provider schema and acknowledgement', 'second 
   if (check === 'feedback marker') {
     const toolResult = first.messages.find(message => message.getType() === 'tool')!;
     const problem = JSON.parse(String(toolResult.content));
-    expect(Object.keys(problem).sort()).toEqual(['attempt', 'code', 'guidance', 'resend']);
+    expect(Object.keys(problem).sort()).toEqual(['attempt', 'code', 'errors', 'resend']);
     expect(shownErrors(problem).map(error => error.path)).toEqual(expect.arrayContaining(['depth.upstream.exactness', 'depth.downstream.exactness']));
     return;
   }

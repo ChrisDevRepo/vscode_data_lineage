@@ -1856,11 +1856,12 @@ export class NavigationEngine implements IHopStateMachine {
         }
       } : undefined,
       inspect: view => {
-        const focus = this.validateCurrentHopFocus(view.value('focus_node_id'));
-        if (typeof focus !== 'string') view.add(focus);
+        const focusCheck = this.validateCurrentHopFocus(view.value('focus_node_id'));
+        if (typeof focusCheck !== 'string') view.add(focusCheck);
         const callerFault = this.validateCallerContext();
         view.add(callerFault);
-        if (typeof focus !== 'string' || callerFault) return undefined;
+        if ((typeof focusCheck !== 'string' && focusCheck.code !== REJECTION_CODES.focusNodeIdMismatch) || callerFault) return undefined;
+        const focus = currentFocusId ?? '';
         const fields = admission.fields, unavailable = admission.unavailable();
         const diagnostics: Parameters<LogFn>[] = [];
         const { columnPlan, mentions } = this.prepareFindingColumns(focus, admission, (...args) => diagnostics.push(args));
@@ -1885,9 +1886,8 @@ export class NavigationEngine implements IHopStateMachine {
           problem.issuePaths = [...new Set([...(problem.issuePaths ?? []), ...conflictPaths])];
           view.add(problem);
         }
-        const parsed = view.parsed;
-        if (!parsed.success) return undefined;
-        const params = toHopFinding(parsed.data);
+        if (!view.parsed.success) return undefined;
+        const params = toHopFinding(view.parsed.data);
         const owed = missingSectionParts(params.sections, this.classification, archivedAngles);
         if (owed.length) view.add(makeRejection({ code: REJECTION_CODES.invalidInput, errors: at('missing', owed) }));
         return () => {

@@ -344,7 +344,7 @@ describe('whole report section correction diagnosis (D-101)', () => {
     expect(first.errors).toContainEqual({ path: 'sections.0.label', code: 'uncommitted_label', values: ['Alpha', 'Beta'] });
     expect(JSON.stringify(first)).not.toMatch(/Invented One|Invented Two/);
     expect(renderProblem(rejection, 1)).not.toContain('Alpha');
-    const shown = (JSON.parse(renderProblem(rejection, 2)).guidance as Array<{ errors: Array<{ path: string; allowed?: string[] }> }>).flatMap(group => group.errors);
+    const shown = JSON.parse(renderProblem(rejection, 2)).errors as Array<{ path: string; allowed?: string[] }>;
     expect(shown).toContainEqual(expect.objectContaining({ path: 'sections.0.label', allowed: ['Alpha', 'Beta'] }));
     expect(session.presentResultRepairDraft.get()?.sections).toBeUndefined();
     expect(session.presentResultRepairDraft.get()).toMatchObject({ is_update: true });

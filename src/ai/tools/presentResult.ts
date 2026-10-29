@@ -622,7 +622,7 @@ export function inspectPresentResult(
   const addNodeIdError = (field: PresentResultRepairField, heldPath: string, path: string, nodeId: string): void => {
     const state = stateOf(nodeId);
     if (!viewKnown && state !== 'not_in_model' && state !== 'out_of_scope') return;
-    const code: IssueCode = state === 'not_in_model' ? 'not_found' : state === 'out_of_scope' ? 'result_out_of_scope'
+    const code: IssueCode = state === 'not_in_model' ? 'report_not_found' : state === 'out_of_scope' ? 'result_out_of_scope'
       : stage === 'completed' ? 'addable_to_result' : 'not_in_result';
     if (code === 'addable_to_result') repairFields.add('add_node_ids');
     addError({ path, code, values: [...resolvedNodeIds] }, [field], [heldPath]);

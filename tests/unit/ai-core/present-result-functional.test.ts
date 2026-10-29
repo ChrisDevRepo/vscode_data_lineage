@@ -13,7 +13,7 @@ import type { ColumnEdge } from '../../../src/ai/sm/smTypes';
 import { renderProblem } from '../../../src/ai/support/toolErrorEnvelope';
 
 /** The errors a rendered problem shows, across its category groups. */
-const shownErrors = (text: string): Array<Record<string, unknown>> => JSON.parse(text).guidance.flatMap((group: { errors: unknown[] }) => group.errors);
+const shownErrors = (text: string): Array<Record<string, unknown>> => JSON.parse(text).errors;
 
 function completedWorld(model: DatabaseModel, resultGraph: ResultGraph) {
   const session = new AiSession();

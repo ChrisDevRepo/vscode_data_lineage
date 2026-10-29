@@ -27,6 +27,8 @@ import type {
 import {
   buildToolExecutionError,
   CLARIFICATION_WINDOW_MS,
+  ISSUES,
+  type ToolProblem,
   type FeedbackStage,
   at,
   makeRejection,
@@ -504,6 +506,7 @@ function logToolOutcome(
   rejection?: Pick<ToolRejection, 'code' | 'issuePaths' | 'reason'>,
   resultText?: string,
 ): void {
+  const problem = status === 'rejected' && resultText ? JSON.parse(resultText) as ToolProblem : undefined;
   input.debugLog?.(
     `[ToolOutcome] source=${source}`
     + ` phase=${safeLogIdentifier(input.phase, 'unknown')}`
@@ -514,7 +517,7 @@ function logToolOutcome(
       + (status === 'rejected' ? ` group=${classifyRejectionCode(rejection.code)}` : '')
       + ` issuePaths=${rejectionPathsForLog(rejection.issuePaths)}`
       + ` reason=${sanitizeForLog(rejection.reason)}` : '')
-    + (resultText?.includes('"fallback":') ? ' fallback=true' : ''),
+    + (problem?.attempt === '3/3' && problem.errors.some(error => 'fallback' in ISSUES[error.code]) ? ' fallback=true' : ''),
   );
 }
 

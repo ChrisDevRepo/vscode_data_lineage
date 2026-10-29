@@ -5,51 +5,10 @@ import { REJECTION_CODES } from './rejectionCodes';
 /** Product limit for a quick missing-content exchange; it does not change validation or reply budgets. */
 export const CLARIFICATION_WINDOW_MS = 5000;
 
-/** Issue categories in render order; each holds the one instruction the model reads for its faults. */
-const CATEGORY_ORDER = ['shape', 'required', 'reference', 'value', 'protocol', 'stage'] as const;
-type IssueCategory = typeof CATEGORY_ORDER[number];
-
-/** The instruction texts of each category: `short` at feedback 1, `detailed` from feedback 2. Static: no value is ever interpolated. */
-export const ISSUE_CATEGORIES = {
-  shape: {
-    short: 'Each listed field must have the type its schema defines; send it in that form with its full content.',
-    detailed: 'Each listed field must have the type its schema defines; send it in that form with its full content, and write line breaks inside strings as \\n.',
-  },
-  required: {
-    short: 'Required content is missing; add each listed value where its path points and keep the other content unchanged.',
-    detailed: 'Required content is missing; add each listed value where its path points and keep the other content unchanged.',
-  },
-  reference: {
-    short: 'Use the correction for each reference fault; preserve the remaining findings.',
-    detailed: 'Use the correction for each reference fault and allowed values; preserve the remaining findings.',
-  },
-  value: {
-    short: 'Each listed value must be one the field accepts in this scope; where the field\'s schema description names a form for a value outside the scope, send that form, otherwise send an accepted value.',
-    detailed: 'Each listed value must be one the field accepts in this scope; where the field\'s schema description names a form for a value outside the scope, send that form, otherwise send a value from allowed.',
-  },
-  protocol: {
-    short: 'Each listed fault states a rule of the exchange; resend the listed fields in full, keeping every entry that the rule allows.',
-    detailed: 'Each listed fault states a rule of the exchange; resend the listed fields in full, keeping every entry that the rule allows.',
-  },
-  stage: {
-    short: 'This action is not available in the current step; continue with an action the step offers.',
-    detailed: 'This action is not available in the current step; call a tool from allowed where it is listed, or answer in text from what the step already holds.',
-  },
-} as const satisfies Record<IssueCategory, { short: string; detailed: string }>;
+type IssueCategory = 'shape' | 'required' | 'reference' | 'value' | 'protocol' | 'stage';
 
 /** The top-level `notice` at feedback 3. */
 export const LAST_CORRECTION = 'This is the last correction before this hop ends.';
-
-/** How a resent list merges into the held draft, keyed by the resent list or by its merge form; a rejection names the rules its `resend` needs, rendered as `resend_rule`. */
-export const RESEND_RULES = {
-  sections: 'Sections merge by label: send each section you add or change with its label and only the fields you change; a sent node_ids list replaces the held list, so it includes every id that section keeps. Sections you do not send stay as held.',
-  notes: 'Notes merge by node_id: send each note you add or change with its node_id and only the fields you change. Notes you do not send stay as held.',
-  indexed: 'Entries merge by index: send each entry named in the errors with its index and only the fields you correct. Fields and entries you do not send stay as held.',
-  whole: 'A sent list replaces the held list whole, so it includes every entry, corrected.',
-} as const satisfies Readonly<Record<string, string>>;
-
-/** A key of {@link RESEND_RULES}. */
-export type ResendRule = keyof typeof RESEND_RULES;
 
 /** The text field a fallback writes its fact into; a rendered fallback adds it to `resend`. */
 const FALLBACK_FIELD = 'sections';
@@ -57,6 +16,7 @@ const FALLBACK_FIELD = 'sections';
 /** Column identity text is shared; report references alone offer the final fallback. */
 const COLUMN_IDENTITY_ISSUE = { category: 'reference', label: 'not a declared column of that object', correction: 'Name a column declared on that object.' } as const;
 const REPORT_REFERENCE_FALLBACK = { fallback: 'If you cannot correct it, write that information in the detail memory instead, highlighted with a callout naming the unresolved issue.' } as const;
+const OBJECT_IDENTITY_ISSUE = { category: 'reference', label: 'not an object in the loaded model', correction: 'Name an object of the loaded model by its id.' } as const;
 
 /** Every issue code: its category, a fixed fault label without values, the one positive correction for that fault and, only where a required fact has no structured field that can hold it, the prose `fallback` sent with the third, last rejection (D-105). */
 export const ISSUES = {
@@ -70,7 +30,8 @@ export const ISSUES = {
   neighbor_undecided: { category: 'required', label: 'neighbor without a decision', correction: 'Give each listed neighbor one decision as the schema describes.' },
   slot_unplaced: { category: 'required', label: 'detail slot ids placed in no section', correction: 'Add each listed id to the node_ids of the section that describes it, with its findings in that section\'s text.' },
   node_unexplained: { category: 'required', label: 'result node ids placed in no section', correction: 'Add each listed id to the node_ids of the section that describes it.' },
-  not_found: { category: 'reference', label: 'not an object in the loaded model', correction: 'Name an object of the loaded model by its id.' },
+  not_found: OBJECT_IDENTITY_ISSUE,
+  report_not_found: { ...OBJECT_IDENTITY_ISSUE, ...REPORT_REFERENCE_FALLBACK },
   out_of_scope: { category: 'reference', label: 'outside the approved scope', correction: 'Name an object inside the approved scope; where the field\'s schema description names a form for an object outside it, use that form.' },
   supplier_out_of_scope: { category: 'reference', label: 'supplier outside the approved scope', correction: 'Remove the outside supplier; if it is the only supplier, omit the column_flow entry, never empty upstream_columns (that declares a born value). Ask the outside object a follow-up in questions and record the fact in sections.',
     fallback: 'If no in-scope supplier can express the fact, write it in sections instead, highlighted with a callout naming the unresolved supplier and columns.' },
@@ -84,8 +45,8 @@ export const ISSUES = {
   bad_write_target: { ...REPORT_REFERENCE_FALLBACK, category: 'reference', label: 'not an available write target', correction: 'Name an in-scope table this object writes to; for an outside write, set writes_to to null, ask the outside object a follow-up in questions, and state the write in sections.' },
   bad_caller_output: { category: 'reference', label: 'not an active output of the caller', correction: 'Name an active output of the caller that reads this function.' },
   not_current_object: { category: 'reference', label: 'not the current object', correction: 'Use the id of the current object.' },
-  not_in_result: { category: 'reference', label: 'not in the result graph, which is fixed at this stage', correction: 'Name a node id of the result graph.' },
-  addable_to_result: { category: 'reference', label: 'not in the result graph', correction: 'Name a node id of the result graph, or bring the real id into view with add_node_ids.' },
+  not_in_result: { ...REPORT_REFERENCE_FALLBACK, category: 'reference', label: 'not in the result graph, which is fixed at this stage', correction: 'Name a node id of the result graph.' },
+  addable_to_result: { ...REPORT_REFERENCE_FALLBACK, category: 'reference', label: 'not in the result graph', correction: 'Name a node id of the result graph, or bring the real id into view with add_node_ids.' },
   unknown_evidence_id: { category: 'reference', label: 'not an evidence id of this step', correction: 'Use an evidence id shown on a sql fence line of this step, or write the SQL inside the fence.' },
   uncommitted_label: { category: 'reference', label: 'not a committed section label', correction: 'Use a committed section label, or give the new label its own text.' },
   enum: { category: 'value', label: 'not an allowed value', correction: 'Send one of the values the schema lists for this field.' },
@@ -155,8 +116,6 @@ export interface ToolRejection {
   feedbackAt?: string;
   /** Top-level fields the model resends; every other field stays held. */
   resend?: string[];
-  /** How the resent lists merge into the held draft. */
-  resendRules?: ResendRule[];
 }
 
 /** Engine code carried by the consent gate, which shares the rejection envelope without being one. */
@@ -182,7 +141,6 @@ const RejectionShape = z.object({
   missingParts: z.array(z.string().min(1)).min(1).optional(),
   feedbackAt: z.string().datetime().optional(),
   resend: z.array(z.string()).optional(),
-  resendRules: z.array(z.enum(Object.keys(RESEND_RULES) as [ResendRule, ...ResendRule[]])).optional(),
 }).strict();
 
 /** Write-side builder for the one tool-execution failure envelope both LM lanes record when a handler throws; the run ends on it. */
@@ -227,6 +185,15 @@ export function readToolErrorText(text: string): ToolRejection | null {
 /** Feedback stage of one hop (D-105): 1 states every fault, 2 adds the allowed values, 3 adds the per-code fallbacks and the last-correction notice. */
 export type FeedbackStage = 1 | 2 | 3;
 
+/** The model-visible rejection: one flat list of coded faults with table-owned messages and staged metadata. */
+export interface ToolProblem {
+  code: string;
+  attempt: `${FeedbackStage}/3`;
+  notice?: string;
+  errors: Array<{ path: string; code: IssueCode; message: string; allowed?: readonly string[] }>;
+  resend: string[];
+}
+
 /** Normalized edit distance in [0, 1], case-insensitive: ranks allowed values against a submitted value that is never shown. */
 function distance(a: string, b: string): number {
   const x = a.toLowerCase(), y = b.toLowerCase();
@@ -244,7 +211,7 @@ function valueAt(input: unknown, path: string): unknown {
   return resolveAtPath(input, path ? path.split('.').map(key => (/^\d+$/.test(key) ? Number(key) : key)) : []);
 }
 
-/** Renders one rejection as the problem the model reads: `{code, attempt, notice?, guidance[{category, instruction, errors[{path, fault, correction, allowed? | missing?}], fallback?}], resend, resend_rule?}`. Every sentence is a template of {@link ISSUE_CATEGORIES}, {@link RESEND_RULES} or {@link LAST_CORRECTION}, every fault, correction and fallback a static string of {@link ISSUES}; `input` only ranks allowed values and is never shown. Feedback 1 states each fault tersely under the short category instruction; feedback 2 uses the detailed instruction and adds `allowed` (an empty list when no valid value exists). Values of a required fault render as `missing` from feedback 1, since they name what is owed. At feedback 3 alone, a group states the fallbacks of its codes and the fallback field joins `resend`. */
+/** Renders every independent fault once. Required subjects appear immediately, allowed values from feedback 2, and report-reference fallbacks only at feedback 3; submitted values are never echoed. */
 export function renderProblem(rejection: ToolRejection, stage: FeedbackStage, input?: unknown): string {
   const merged = new Map<string, ToolError>();
   for (const error of rejection.errors) {
@@ -252,34 +219,23 @@ export function renderProblem(rejection: ToolRejection, stage: FeedbackStage, in
     const values = known?.values || error.values ? [...new Set([...(known?.values ?? []), ...(error.values ?? [])])] : undefined;
     merged.set(key, { path: error.path, code: error.code, ...(values ? { values } : {}) });
   }
-  // An absent parent covers its descendants; children under a present or mistyped parent stay, since they state the expected structure.
+  // An absent parent covers its descendants; children under a present or mistyped parent still explain the expected structure.
   const missingParents = [...merged.values()].filter(error => error.path && error.code === 'missing' && valueAt(input, error.path) == null).map(error => `${error.path}.`);
-  const errors = [...merged.values()].filter(error => !missingParents.some(prefix => error.path.startsWith(prefix)));
   let fallbackShown = false;
-  const guidance = CATEGORY_ORDER.flatMap(category => {
-    const group = errors.filter(error => ISSUES[error.code].category === category).sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-    if (!group.length) return [];
-    const key = category === 'required' ? 'missing' : 'allowed';
-    const shown = group.map(error => {
-      const { label: fault, correction } = ISSUES[error.code];
-      if (!error.values || (stage < 2 && category !== 'required')) return { path: error.path, fault, correction };
-      const sent = valueAt(input, error.path);
-      const ranked = [...error.values].sort((a, b) => (typeof sent === 'string' ? distance(sent, a) - distance(sent, b) : 0) || a.localeCompare(b));
-      return { path: error.path, fault, correction, [key]: ranked };
-    });
-    const fallback = stage === 3 ? [...new Set(group.flatMap(error => {
+  const errors = [...merged.values()].filter(error => !missingParents.some(prefix => error.path.startsWith(prefix)))
+    .sort((a, b) => a.path.localeCompare(b.path) || a.code.localeCompare(b.code)).map(error => {
       const issue = ISSUES[error.code];
-      return 'fallback' in issue ? [issue.fallback] : [];
-    }))].join(' ') : '';
-    if (fallback) fallbackShown = true;
-    const texts: { short: string; detailed: string } = ISSUE_CATEGORIES[category];
-    return [{ category, instruction: stage === 1 ? texts.short : texts.detailed, errors: shown,
-      ...(fallback ? { fallback } : {}) }];
-  });
-  const resend = [...new Set([...(rejection.resend ?? []), ...(fallbackShown ? [FALLBACK_FIELD] : [])])];
-  const resendRule = [...new Set(rejection.resendRules ?? [])].map(rule => RESEND_RULES[rule]).join(' ');
-  return JSON.stringify({ code: rejection.code, attempt: `${stage}/3`, ...(stage === 3 ? { notice: LAST_CORRECTION } : {}),
-    guidance, resend, ...(resendRule ? { resend_rule: resendRule } : {}) });
+      const fallback = stage === 3 && 'fallback' in issue ? issue.fallback : '';
+      if (fallback) fallbackShown = true;
+      const message = `${issue.label}. ${issue.correction}${fallback ? ` ${fallback}` : ''}`;
+      const sent = valueAt(input, error.path);
+      const allowed = error.values && (stage >= 2 || issue.category === 'required')
+        ? [...error.values].sort((a, b) => (typeof sent === 'string' ? distance(sent, a) - distance(sent, b) : 0) || a.localeCompare(b)) : undefined;
+      return { path: error.path, code: error.code, message, ...(allowed ? { allowed } : {}) };
+    });
+  const problem: ToolProblem = { code: rejection.code, attempt: `${stage}/3`, ...(stage === 3 ? { notice: LAST_CORRECTION } : {}), errors,
+    resend: [...new Set([...(rejection.resend ?? []), ...(fallbackShown ? [FALLBACK_FIELD] : [])])] };
+  return JSON.stringify(problem);
 }
 
 /** Faults with one issue code at each path; the call itself when no path is given. */
@@ -299,7 +255,6 @@ export function combineToolRejections(rejections: readonly ToolRejection[]): Too
     ...(details.length ? { detail: [...new Map(details.map(detail => [JSON.stringify(detail), detail])).values()] } : {}),
     errors: rejections.flatMap(rejection => rejection.errors),
     resend: [...new Set(rejections.flatMap(rejection => rejection.resend ?? []))],
-    resendRules: [...new Set(rejections.flatMap(rejection => rejection.resendRules ?? []))],
   });
 }
 
@@ -319,7 +274,6 @@ export function makeRejection(input: {
   issuePaths?: readonly string[];
   missingParts?: readonly string[];
   resend?: readonly string[];
-  resendRules?: readonly ResendRule[];
 }): ToolRejection {
   const reason = (input.reason ?? input.code).trim() || input.code;
   const errors = input.errors.map(error => (error.path === '' || ISSUE_PATH_GRAMMAR.test(error.path) ? error : { ...error, path: '' }));
@@ -334,7 +288,6 @@ export function makeRejection(input: {
     ...(issuePaths.length > 0 ? { issuePaths } : {}),
     ...(input.missingParts?.length ? { missingParts: [...input.missingParts], feedbackAt: new Date().toISOString() } : {}),
     ...(input.resend !== undefined ? { resend: [...input.resend] } : {}),
-    ...(input.resendRules?.length ? { resendRules: [...input.resendRules] } : {}),
   };
 }
 

@@ -1,4 +1,4 @@
-/** Spec 08 / D-105 / D-099 / D-103: one `{code, attempt, guidance, resend}` problem per rejection, escalated over three corrections, then the hop terminates. */
+/** Spec 08 / D-105 / D-099 / D-103: one flat `{code, attempt, errors, resend}` problem per rejection, escalated over three corrections, then the hop terminates. */
 import { describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { z } from 'zod';
@@ -13,7 +13,7 @@ import {
 } from '../../../src/ai/agent/toolAttempt';
 import { TurnEventSink } from '../../../src/ai/runtime/turnEventSink';
 import { ToolRegistry } from '../../../src/ai/tools/registry';
-import { ISSUES, at as errorsAt, makeRejection, rejectionFromZodError } from '../../../src/ai/support/toolErrorEnvelope';
+import { ISSUES, at as errorsAt, makeRejection, rejectionFromZodError, type ToolProblem } from '../../../src/ai/support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../../../src/ai/support/rejectionCodes';
 import { AiSession } from '../../../src/ai/session/session';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
@@ -67,10 +67,10 @@ function bbHop() {
 const faulty = (focus: string) => ({ focus_node_id: focus, sections: { technical: 'Report selects Value from Source unchanged.' },
   badge_label: '', questions: [{ nodeId: '[dbo].[Nope]', question: 'What does Nope establish for Value?' }] });
 
-interface ShownError { path: string; fault: string; correction: string; allowed?: string[]; missing?: string[]; more?: number }
-interface Problem { code: string; attempt: string; notice?: string; guidance: Array<{ category: string; instruction: string; errors: ShownError[]; fallback?: string }>; resend: string[]; resend_rule?: string }
-const PROBLEM_KEYS = ['attempt', 'code', 'guidance', 'notice', 'resend', 'resend_rule'];
-const shown = (problem: Problem): ShownError[] => problem.guidance.flatMap(group => group.errors);
+type ShownError = ToolProblem['errors'][number];
+type Problem = ToolProblem;
+const PROBLEM_KEYS = ['attempt', 'code', 'errors', 'notice', 'resend'];
+const shown = (problem: Problem): ShownError[] => problem.errors;
 
 async function reply(hop: ReturnType<typeof bbHop>, state: ToolPhaseAttemptState, input: unknown, id: string) {
   const attempt = await executeToolAttempt(nativePort(() => [new vscode.LanguageModelToolCallPart(id, TOOL, input as object)]), hop.plan, { priorState: state });
@@ -98,18 +98,18 @@ describe('D-105 feedback stages through the dispatcher and the real submit_findi
     expect(Object.keys(problem!).every(key => PROBLEM_KEYS.includes(key))).toBe(true);
     expect(problem!.attempt).toBe(`${stage}/3`);
     for (const error of shown(problem!)) {
-      expect(Object.keys(error).every(key => ['path', 'fault', 'correction', 'allowed', 'missing', 'more'].includes(key))).toBe(true);
+      expect(Object.keys(error).every(key => ['path', 'code', 'message', 'allowed'].includes(key))).toBe(true);
     }
     const at = (path: string) => shown(problem!).find(error => error.path === path)!;
     // D-099: every fault in every feedback, each with its path.
     for (const path of ['summary', 'badge_label', 'questions.0.nodeId']) expect(at(path)).toBeDefined();
-    expect(at('summary')).toMatchObject({ fault: ISSUES.missing.label, correction: ISSUES.missing.correction });
+    expect(at('summary')).toMatchObject({ code: 'missing', message: expect.stringContaining(ISSUES.missing.correction) });
     expect(problem!.resend).toEqual(expect.arrayContaining(['summary', 'badge_label', 'questions']));
     // D-077/D-105: allowed values from metadata from feedback 2 on.
     if (allowed) expect(at('questions.0.nodeId').allowed).toEqual([hop.source.id]);
     else for (const error of shown(problem!)) expect(error).not.toHaveProperty('allowed');
     // D-105: a fallback belongs only to an issue whose fact no structured field holds; text, a missing field and a neighbor decision get none at any stage.
-    for (const group of problem!.guidance) expect(group).not.toHaveProperty('fallback');
+    for (const error of problem!.errors) for (const issue of Object.values(ISSUES)) if ('fallback' in issue) expect(error.message).not.toContain(issue.fallback);
   });
 
   it('accepts correction 3 that corrects summary and questions and sends no badge_label (schema-valid; the feedback never recommends it)', async () => {

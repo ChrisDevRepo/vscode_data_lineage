@@ -1,5 +1,5 @@
 /** Deterministic production tool-error-envelope contract: the one rejection record, the Zod issue mapping and the one renderer (D-103, D-105). Tests assert paths, issue codes, backend values and the stage; every rendered sentence is a table string (see rejection-render.test.ts). */
-import { ISSUES, readToolError, readToolErrorText, isConsentGateRejection, makeRejection, rejectionFromZodError, renderProblem, type FeedbackStage, type ToolRejection } from '../../../src/ai/support/toolErrorEnvelope';
+import { ISSUES, readToolError, readToolErrorText, isConsentGateRejection, makeRejection, rejectionFromZodError, renderProblem, type FeedbackStage, type ToolProblem, type ToolRejection } from '../../../src/ai/support/toolErrorEnvelope';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { makeGraph, makeIndexedModel, makeModel, makeNode } from '../helpers/modelFixtures';
 import { validatePresentResult } from '../../../src/ai/tools/presentResult';
@@ -13,30 +13,30 @@ import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { validateToolCandidate } from '../../../src/ai/support/toolValidation';
 
-interface Shown { path: string; fault: string; correction: string; allowed?: string[]; missing?: string[]; more?: number }
-interface Problem { code: string; attempt: string; notice?: string; guidance: Array<{ category: string; instruction: string; errors: Shown[]; more?: number; fallback?: string }>; resend: string[]; resend_rule?: string }
+type Shown = ToolProblem['errors'][number];
+type Problem = ToolProblem;
 const render = (rejection: ToolRejection, stage: FeedbackStage, input?: unknown): Problem => JSON.parse(renderProblem(rejection, stage, input));
 const zodRejection = (schema: z.ZodType, input: unknown) => {
   const parsed = schema.safeParse(input);
   if (parsed.success) throw new Error('Expected schema faults');
   return rejectionFromZodError(parsed.error, { code: 'invalid_input', input, schema });
 };
-const shown = (problem: Problem): Shown[] => problem.guidance.flatMap(group => group.errors);
+const shown = (problem: Problem): Shown[] => problem.errors;
 const at = (problem: Problem, path: string) => shown(problem).find(error => error.path === path);
 const faults = (rejection: ToolRejection) => rejection.errors.map(error => [error.path, error.code]);
 
 describe("tool-error-envelope", () => {
-  it('retains resend fields and resend rules through JSON and the renderer', () => {
-    const rejection = makeRejection({ code: 'invalid_regex', errors: [{ path: 'query', code: 'invalid_regex' }], resend: ['sections'], resendRules: ['sections'] });
+  it('retains resend fields through JSON and the renderer (D-103)', () => {
+    const rejection = makeRejection({ code: 'invalid_regex', errors: [{ path: 'query', code: 'invalid_regex' }], resend: ['sections'] });
     expect(readToolError(JSON.parse(JSON.stringify(rejection)))).toEqual(rejection);
-    expect(render(rejection, 1)).toMatchObject({ resend: ['sections'], resend_rule: expect.any(String) });
+    expect(render(rejection, 1)).toMatchObject({ resend: ['sections'] });
   });
 
   it('keeps the fault at its path from feedback 1, its allowed values from feedback 2, and the record unchanged', () => {
     const rejection = makeRejection({ code: 'contributor_col_not_on_source', reason: 'Column does not exist on the contributor.',
       errors: [{ path: 'column_flow.0.upstream_columns.1.col', code: 'unknown_column', values: ['Rate', 'Amount'] }] });
     const original = structuredClone(rejection);
-    expect(at(render(rejection, 1), 'column_flow.0.upstream_columns.1.col')).toEqual({ path: 'column_flow.0.upstream_columns.1.col', fault: ISSUES.unknown_column.label, correction: ISSUES.unknown_column.correction });
+    expect(at(render(rejection, 1), 'column_flow.0.upstream_columns.1.col')).toEqual({ path: 'column_flow.0.upstream_columns.1.col', code: 'unknown_column', message: expect.stringContaining(ISSUES.unknown_column.correction) });
     expect(at(render(rejection, 2), 'column_flow.0.upstream_columns.1.col')?.allowed).toEqual(['Amount', 'Rate']);
     expect(rejection).toEqual(original);
   });
@@ -99,25 +99,27 @@ describe("tool-error-envelope", () => {
   });
 
   describe('D-105 fallback: per issue code, only with the third rejection, never early', () => {
-    const fallbackOf = (problem: Problem) => problem.guidance.find(group => group.fallback !== undefined)?.fallback;
+    const fallbacks = Object.values(ISSUES).flatMap(issue => 'fallback' in issue ? [issue.fallback] : []);
+    const hasFallback = (problem: Problem) => problem.errors.some(error => fallbacks.some(fallback => error.message.includes(fallback)));
     it.each([['bad_write_target', 'column_flow.0.writes_to.node'], ['supplier_out_of_scope', 'column_flow.0.upstream_columns.0.node'], ['result_out_of_scope', 'sections.0.node_ids.3'], ['unknown_column', 'column_flow.0.upstream_columns.0.col']] as const)('%s at %s', (code, path) => {
       for (const values of [[], ['x']]) {
         const rejection = makeRejection({ code: 'invalid_input', errors: [{ path, code, values }] });
-        for (const stage of [1, 2] as const) expect(fallbackOf(render(rejection, stage))).toBeUndefined();
+        for (const stage of [1, 2] as const) expect(hasFallback(render(rejection, stage))).toBe(false);
         const third = render(rejection, 3);
-        expect(fallbackOf(third)).toBe((ISSUES[code] as { fallback?: string }).fallback);
+        expect(at(third, path)?.message).toContain((ISSUES[code] as { fallback?: string }).fallback);
         expect(third.resend).toContain('sections');
       }
     });
     // Approved08 D-105 permits these report-reference families, never structural/control/text faults.
-    const fallbackCodes = new Set(['bad_write_target', 'supplier_out_of_scope', 'result_out_of_scope', 'unknown_column']);
-    const negativePaths: Record<string, string> = { out_of_scope: 'add_node_ids.0',
-      unknown_target_column: 'targetColumns.0', not_in_result: 'sections.0.node_ids.0', missing: 'summary' };
-    it.each((Object.keys(ISSUES) as Array<keyof typeof ISSUES>).filter(code => !fallbackCodes.has(code)))('%s: no fallback at any feedback (Approved08 D-105)', code => {
+    const reportReferenceCodes = new Set<keyof typeof ISSUES>(['bad_write_target', 'supplier_out_of_scope', 'result_out_of_scope', 'unknown_column',
+      'report_not_found', 'not_in_result', 'addable_to_result']);
+    const negativePaths: Record<string, string> = { out_of_scope: 'add_node_ids.0', not_found: 'origin',
+      unknown_target_column: 'targetColumns.0', missing: 'summary' };
+    it.each((Object.keys(ISSUES) as Array<keyof typeof ISSUES>).filter(code => !reportReferenceCodes.has(code)))('%s: no fallback at any feedback (Approved08 D-105)', code => {
       const path = negativePaths[code] ?? 'field';
       for (const values of [[], ['AllowedValue']]) for (const stage of [1, 2, 3] as const) {
         const problem = render(makeRejection({ code: 'invalid_input', errors: [{ path, code, values }], resend: ['field'] }), stage);
-        expect(fallbackOf(problem)).toBeUndefined();
+        expect(hasFallback(problem)).toBe(false);
         expect(problem.resend).not.toContain('sections');
       }
     });
@@ -164,7 +166,7 @@ describe("tool-error-envelope", () => {
       detail: [{ input: 'RAW_INPUT_SENTINEL', held_draft: { sections: [{ text: 'HELD_BODY_SENTINEL' }] } }] });
     for (const stage of [1, 2, 3] as const) {
       const content = renderProblem(rejection, stage);
-      expect(Object.keys(JSON.parse(content)).sort()).toEqual(['attempt', 'code', 'guidance', 'resend', ...(stage === 3 ? ['notice'] : [])].sort());
+      expect(Object.keys(JSON.parse(content)).sort()).toEqual(['attempt', 'code', 'errors', 'resend', ...(stage === 3 ? ['notice'] : [])].sort());
       expect(content).not.toMatch(/SENTINEL/);
     }
   });
@@ -288,12 +290,12 @@ describe('renderProblem over a real present_result rejection: an unknown section
 
   it('states each fault at its element path with its code and never echoes the sent id or label', async () => {
     const rejection = await rejectR3();
-    expect(faults(rejection).sort()).toEqual([['sections.*.node_ids', 'slot_unplaced'], ['sections.1.node_ids.0', 'not_found']]);
+    expect(faults(rejection).sort()).toEqual([['sections.*.node_ids', 'slot_unplaced'], ['sections.1.node_ids.0', 'report_not_found']]);
     for (const stage of [1, 2, 3] as const) expect(renderProblem(rejection, stage)).not.toMatch(/\[placeholder\]|Cleaning/);
   });
 
-  it('lists the unplaced slots as missing from feedback 1 and the result ids as allowed from feedback 2', async () => {
-    expect(at(await problem(1), 'sections.*.node_ids')?.missing).toEqual(ids.slice(1));
+  it('lists owed slots in allowed metadata from feedback 1 and replacement result ids from feedback 2', async () => {
+    expect(at(await problem(1), 'sections.*.node_ids')?.allowed).toEqual(ids.slice(1));
     expect(at(await problem(2), 'sections.1.node_ids.0')?.allowed).toEqual(ids);
   });
 
@@ -372,11 +374,12 @@ describe('renderProblem over a real submit_findings rejection: a supplier beyond
     if (!rejection) throw new Error('Expected an out-of-scope write rejection');
     expect(render(rejection, 1).resend.sort()).toEqual(['column_flow', 'questions', 'sections']);
     expect(rejection.errors).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'column_flow.0.writes_to.node' })]));
-    for (const stage of [1, 2] as const) expect(render(rejection, stage).guidance.some(group => group.fallback)).toBe(false);
-    expect(render(rejection, 3).guidance.find(group => group.category === 'reference')?.fallback).toBeDefined();
+    const writePath = 'column_flow.0.writes_to.node';
+    for (const stage of [1, 2] as const) expect(at(render(rejection, stage), writePath)?.message).not.toContain(ISSUES.bad_write_target.fallback);
+    expect(at(render(rejection, 3), writePath)).toMatchObject({ code: 'bad_write_target', message: expect.stringContaining(ISSUES.bad_write_target.fallback) });
     expect(render(rejection, 3).resend).toContain('sections');
     const control = makeRejection({ code: 'invalid_input', errors: [{ path: 'add_node_ids.0', code: 'out_of_scope' }] });
-    expect(render(control, 3).guidance.some(group => group.fallback)).toBe(false);
+    expect(render(control, 3).errors.some(error => error.message.includes(ISSUES.bad_write_target.fallback))).toBe(false);
     const repaired = JSON.parse(String(await registry.invoke('lineage_submit_findings', {
       column_flow: [{ out_col: 'Amount', upstream_columns: [{ node: id('staging'), col: 'Region' }], writes_to: null }],
       questions: [{ nodeId: id('archive'), question: 'What receives the outside write?' }],
@@ -395,8 +398,8 @@ describe('renderProblem over a real submit_findings rejection: a supplier beyond
     // Object choices stay metadata-complete; the existing tracer checks identical column endpoints.
     expect(at(render(rejection, 1), 'column_flow.0.upstream_columns.0.node')).not.toHaveProperty('allowed');
     expect(at(render(rejection, 2), 'column_flow.0.upstream_columns.0.node')?.allowed).toEqual([id('staging')]);
-    expect(render(rejection, 2).guidance.find(group => group.category === 'reference')?.fallback).toBeUndefined();
-    expect(render(rejection, 3).guidance.find(group => group.category === 'reference')?.fallback).toBe(ISSUES.supplier_out_of_scope.fallback);
+    expect(render(rejection, 2).errors.some(error => error.message.includes(ISSUES.supplier_out_of_scope.fallback))).toBe(false);
+    expect(at(render(rejection, 3), 'column_flow.0.upstream_columns.0.node')?.message).toContain(ISSUES.supplier_out_of_scope.fallback);
     // Region and Amount are distinct endpoints on the same table; metadata, not SQL inference, decides eligibility.
     expect(at(render(rejection, 2), 'column_flow.1.upstream_columns.0.node')?.allowed).toEqual([id('staging')]);
     const repaired = JSON.parse(String(await registry.invoke('lineage_submit_findings', { focus_node_id: id('loader'),

@@ -106,6 +106,7 @@ export const runtimeContractTests = [
   'tests/unit/ai-core/graph-patterns-labels.test.ts',
   'tests/unit/ai-core/identifier-presentation-paths.test.ts',
   'tests/unit/ai-core/operator-tool-boundary.test.ts',
+  'tests/unit/ai-core/normalize-model-input.test.ts',
   'tests/unit/ai-core/output-template-sections.test.ts',
   'tests/unit/ai-core/present-result-schema.test.ts',
   'tests/unit/ai-core/present-result-repair.test.ts',

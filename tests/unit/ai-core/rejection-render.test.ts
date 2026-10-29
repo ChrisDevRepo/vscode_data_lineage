@@ -1,63 +1,59 @@
-/** Structural contract of the one rejection renderer (D-103, D-105): every model-visible sentence is a category template or a static string of its issue code, and no submitted value reaches the model. */
-import { ISSUE_CATEGORIES, ISSUES, LAST_CORRECTION, RESEND_RULES, makeRejection, renderProblem, type FeedbackStage, type ToolRejection } from '../../../src/ai/support/toolErrorEnvelope';
+/** Approved08 / D-103 / D-105: one flat problem names every fault, stages metadata and report-reference fallback, and never echoes submitted values. */
+import { ISSUES, LAST_CORRECTION, makeRejection, renderProblem, type FeedbackStage, type IssueCode, type ToolProblem, type ToolRejection } from '../../../src/ai/support/toolErrorEnvelope';
 import { buildRouteValidationRejection } from '../../../src/ai/sm/smRouteValidation';
 import { describe, expect, it } from 'vitest';
 import { inspectTargetColumns } from '../../../src/ai/interaction/rules/startExplorationRules';
 
-interface Guidance { category: keyof typeof ISSUE_CATEGORIES; instruction: string; errors: Array<{ path: string; fault: string; correction: string; allowed?: string[]; missing?: string[]; more?: number }>; more?: number; fallback?: string }
-interface Rendered { code: string; attempt: string; notice?: string; guidance: Guidance[]; resend: string[]; resend_rule?: string }
+type Rendered = ToolProblem;
 
 const SENTINEL = 'zz_SUBMITTED_SENTINEL_zz';
-const FALLBACK = (code: keyof typeof ISSUES): string | undefined => (ISSUES[code] as { fallback?: string }).fallback;
+const fallbackOf = (code: IssueCode): string | undefined => (ISSUES[code] as { fallback?: string }).fallback;
+const render = (rejection: ToolRejection, stage: FeedbackStage, input?: unknown): Rendered =>
+  JSON.parse(renderProblem(rejection, stage, input));
 
-/** Every rendered sentence is a static template string: instructions are category texts, faults and corrections belong to one issue of that category, a fallback is the fallback of an issue code of its group and only at feedback 3, the notice and resend rule come from their tables. */
+/** D-103: every error owns its path, code and table message; D-105 adds eligible fallback only at feedback 3. */
 function assertStructural(rendered: Rendered): void {
-  expect(Object.keys(rendered).every(key => ['code', 'attempt', 'notice', 'guidance', 'resend', 'resend_rule'].includes(key))).toBe(true);
+  expect(Object.keys(rendered).sort()).toEqual(['code', 'attempt', 'errors', 'resend', ...(rendered.notice === undefined ? [] : ['notice'])].sort());
   expect(rendered.attempt).toMatch(/^[123]\/3$/);
   if (rendered.notice !== undefined) expect(rendered.notice).toBe(LAST_CORRECTION);
-  for (const group of rendered.guidance) {
-    const category: { short: string; detailed: string } = ISSUE_CATEGORIES[group.category];
-    expect([category.short, category.detailed]).toContain(group.instruction);
-    for (const error of group.errors) {
-      expect(Object.values(ISSUES).some(issue => issue.category === group.category && issue.label === error.fault && issue.correction === error.correction), error.fault).toBe(true);
+  expect(rendered.errors.length).toBeGreaterThan(0);
+  for (const error of rendered.errors) {
+    expect(Object.keys(error).sort()).toEqual(['path', 'code', 'message', ...(error.allowed === undefined ? [] : ['allowed'])].sort());
+    const issue = ISSUES[error.code];
+    expect(issue).toBeDefined();
+    expect(error.message).toContain(issue.label);
+    expect(error.message).toContain(issue.correction);
+    const fallback = fallbackOf(error.code);
+    if (fallback) {
+      expect(error.message.includes(fallback)).toBe(rendered.attempt === '3/3');
+      if (rendered.attempt === '3/3') expect(rendered.resend).toContain('sections');
     }
-    if (group.fallback !== undefined) {
-      expect(rendered.attempt).toBe('3/3');
-      expect(Object.values(ISSUES).some(issue => issue.category === group.category && (issue as { fallback?: string }).fallback === group.fallback)).toBe(true);
-      expect(rendered.resend).toContain('sections');
-    }
-  }
-  if (rendered.resend_rule !== undefined) {
-    let rest = rendered.resend_rule;
-    for (const rule of Object.values(RESEND_RULES)) rest = rest.replace(rule, '');
-    expect(rest.trim()).toBe('');
   }
   expect(JSON.stringify(rendered)).not.toContain(SENTINEL);
 }
 
-const render = (rejection: ToolRejection, stage: FeedbackStage, input?: unknown): Rendered =>
-  JSON.parse(renderProblem(rejection, stage, input));
-
-/** The R1 shape: a column supplier outside the approved scope, nothing in scope to name instead. */
+/** A supplier outside scope has no valid in-scope replacement. */
 const r1 = (): ToolRejection => buildRouteValidationRejection([{ kind: 'supplier_out_of_scope', id: SENTINEL, path: 'column_flow.0.upstream_columns.0.node',
   reason: `${SENTINEL} is outside the approved scope.`, allowed_values: [] }]);
 
-describe('rejection renderer structure', () => {
-  it('keeps the established final fallback for report columns and excludes start target controls (Approved08)', () => {
+describe('flat rejection renderer contract (D-103)', () => {
+  it('offers the final fallback for report columns and excludes start target controls (Approved08)', () => {
     const report = makeRejection({ code: 'invalid_input', resend: ['column_flow'], errors: [
       { path: 'column_flow.0.out_col', code: 'unknown_column', values: ['Known'] },
     ] });
     const start = inspectTargetColumns('[dbo].[Source]', ['Known'], ['Missing']).rejection!;
+    const fallback = fallbackOf('unknown_column')!;
     for (const stage of [1, 2, 3] as const) {
-      const shownReport = render(report, stage);
-      const shownStart = render(start, stage);
-      expect(shownReport.guidance[0].fallback).toBe(stage === 3
-        ? 'If you cannot correct it, write that information in the detail memory instead, highlighted with a callout naming the unresolved issue.' : undefined);
+      const shownReport = render(report, stage), shownStart = render(start, stage);
+      assertStructural(shownReport); assertStructural(shownStart);
+      expect(shownReport.errors[0].message.includes(fallback)).toBe(stage === 3);
       expect(shownReport.resend).toEqual(stage === 3 ? ['column_flow', 'sections'] : ['column_flow']);
-      expect(shownStart.guidance[0].fallback).toBeUndefined();
+      expect(shownStart.errors[0].message).not.toContain(fallback);
       expect(shownStart.resend).toEqual(['analysisMode']);
-      expect(shownStart.guidance[0].errors[0].fault).toBe(shownReport.guidance[0].errors[0].fault);
-      expect(shownStart.guidance[0].errors[0].correction).toBe(shownReport.guidance[0].errors[0].correction);
+      expect(shownStart.errors[0].code).toBe('unknown_target_column');
+      expect(shownReport.errors[0].code).toBe('unknown_column');
+      expect(shownStart.errors[0].allowed).toEqual(stage === 1 ? undefined : ['Known']);
+      expect(shownReport.errors[0].allowed).toEqual(stage === 1 ? undefined : ['Known']);
     }
   });
 
@@ -68,12 +64,12 @@ describe('rejection renderer structure', () => {
       ...paths.map(path => ({ path, code: 'missing' as const })),
       { path: 'sections.*.node_ids', code: 'slot_unplaced', values: missing },
     ] });
-    const shown = render(rejection, 1).guidance.flatMap(group => group.errors);
+    const shown = render(rejection, 1).errors;
     expect(shown.map(error => error.path).sort()).toEqual([...paths, 'sections.*.node_ids'].sort());
-    expect(shown.find(error => error.path === 'sections.*.node_ids')?.missing).toEqual([...missing].sort((a, b) => a.localeCompare(b)));
+    expect(shown.find(error => error.path === 'sections.*.node_ids')?.allowed).toEqual([...missing].sort((a, b) => a.localeCompare(b)));
   });
 
-  it('renders only static table strings, never a submitted value', () => {
+  it('renders only issue-table messages and the stage notice, never a submitted value', () => {
     for (const stage of [1, 2, 3] as const) {
       const rendered = render(r1(), stage, { column_flow: [{ upstream_columns: [{ node: SENTINEL }] }] });
       assertStructural(rendered);
@@ -81,56 +77,54 @@ describe('rejection renderer structure', () => {
     }
   });
 
-  it('states a fault tersely at feedback 1, in detail with an empty allowed set at feedback 2, and the fallback only with the third rejection', () => {
-    for (const stage of [1, 2] as const) {
+  it('adds the complete empty allowed set at feedback 2 and the fallback only with feedback 3 (D-105)', () => {
+    for (const stage of [1, 2, 3] as const) {
       const rendered = render(r1(), stage);
-      const reference = rendered.guidance.find(group => group.category === 'reference');
-      expect(reference?.instruction).toBe(stage === 1 ? ISSUE_CATEGORIES.reference.short : ISSUE_CATEGORIES.reference.detailed);
-      expect(reference?.errors).toEqual([{ path: 'column_flow.0.upstream_columns.0.node', fault: ISSUES.supplier_out_of_scope.label, correction: ISSUES.supplier_out_of_scope.correction, ...(stage === 2 ? { allowed: [] } : {}) }]);
-      expect(reference?.fallback).toBeUndefined();
-      expect(rendered.resend).not.toContain('sections');
+      assertStructural(rendered);
+      expect(rendered.errors).toEqual([expect.objectContaining({ path: 'column_flow.0.upstream_columns.0.node', code: 'supplier_out_of_scope' })]);
+      expect(rendered.errors[0].allowed).toEqual(stage === 1 ? undefined : []);
+      expect(rendered.errors[0].message.includes(fallbackOf('supplier_out_of_scope')!)).toBe(stage === 3);
+      expect(rendered.resend.includes('sections')).toBe(stage === 3);
     }
-    const third = render(r1(), 3);
-    expect(third.guidance.find(group => group.category === 'reference')?.fallback).toBe(FALLBACK('supplier_out_of_scope'));
-    expect(third.resend).toContain('sections');
   });
 
   it('withholds a non-empty allowed set until feedback 2', () => {
     const rejection = makeRejection({ code: 'invalid_input', errors: [{ path: 'column_flow.0.upstream_columns.0.node', code: 'supplier_out_of_scope', values: ['[dbo].[b]', '[dbo].[a]'] }] });
     const input = { column_flow: [{ upstream_columns: [{ node: '[dbo].[b]x' }] }] };
     const [one, two] = ([1, 2] as const).map(stage => render(rejection, stage, input));
-    expect(one.guidance[0].errors[0]).not.toHaveProperty('allowed');
-    expect(two.guidance[0].errors[0].allowed).toEqual(['[dbo].[b]', '[dbo].[a]']);
+    expect(one.errors[0]).not.toHaveProperty('allowed');
+    expect(two.errors[0].allowed).toEqual(['[dbo].[b]', '[dbo].[a]']);
   });
 
-  it('attaches a fallback per issue code: only codes whose fact no structured field can hold carry one', () => {
-    expect(Object.entries(ISSUES).filter(([, issue]) => 'fallback' in issue).map(([code]) => code).sort()).toEqual(['bad_write_target', 'result_out_of_scope', 'supplier_out_of_scope', 'unknown_column']);
-    // Approved08 includes report write references; control references remain excluded.
-    const write = render(makeRejection({ code: 'invalid_input', errors: [{ path: 'column_flow.0.writes_to.node', code: 'bad_write_target', values: [] }] }), 3);
-    expect(write.guidance[0].fallback).toBe(FALLBACK('bad_write_target'));
-    expect(write.resend).toEqual(['sections']);
-    const control = render(makeRejection({ code: 'invalid_input', errors: [{ path: 'add_node_ids.0', code: 'out_of_scope', values: [] }] }), 3);
-    expect(control.guidance[0].fallback).toBeUndefined();
-    expect(control.resend).toEqual([]);
-    const present = render(makeRejection({ code: 'invalid_input', errors: [{ path: 'sections.0.node_ids.1', code: 'result_out_of_scope', values: ['[dbo].[a]'] }] }), 3);
-    assertStructural(present);
-    expect(present.guidance[0].fallback).toBe(FALLBACK('result_out_of_scope'));
+  it('attaches fallback to each eligible report error and leaves a sibling control error unchanged (D-105)', () => {
+    const rejection = makeRejection({ code: 'invalid_input', errors: [
+      { path: 'column_flow.0.writes_to.node', code: 'bad_write_target', values: [] },
+      { path: 'sections.0.node_ids.1', code: 'result_out_of_scope', values: ['[dbo].[a]'] },
+      { path: 'add_node_ids.0', code: 'out_of_scope', values: [] },
+    ] });
+    for (const stage of [1, 2, 3] as const) {
+      const rendered = render(rejection, stage);
+      assertStructural(rendered);
+      for (const code of ['bad_write_target', 'result_out_of_scope'] as const) expect(rendered.errors.find(error => error.code === code)?.message.includes(fallbackOf(code)!)).toBe(stage === 3);
+      expect(rendered.errors.find(error => error.code === 'out_of_scope')?.message).not.toContain(fallbackOf('bad_write_target')!);
+      expect(rendered.resend).toEqual(stage === 3 ? ['sections'] : []);
+    }
   });
 
-  it('renders required values as missing from stage 1', () => {
+  it('states owed subjects in the flat allowed metadata from feedback 1', () => {
     const rendered = render(makeRejection({ code: 'invalid_input', errors: [{ path: 'sections.*.node_ids', code: 'slot_unplaced', values: ['slot_2', 'slot_1'] }] }), 1);
-    expect(rendered.guidance).toEqual([expect.objectContaining({ category: 'required', errors: [{ path: 'sections.*.node_ids', fault: ISSUES.slot_unplaced.label, correction: ISSUES.slot_unplaced.correction, missing: ['slot_1', 'slot_2'] }] })]);
+    expect(rendered.errors).toEqual([expect.objectContaining({ path: 'sections.*.node_ids', code: 'slot_unplaced', allowed: ['slot_1', 'slot_2'] })]);
+    assertStructural(rendered);
   });
 
-  it('states a category instruction once for three faults of that category, each with its correction', () => {
+  it('gives each independent fault its own code and correction (D-099, D-103)', () => {
     const rejection = makeRejection({ code: 'invalid_input', errors: [0, 1, 2].map(index => ({ path: `column_flow.${index}.out_col`, code: 'unknown_column' as const, values: ['a'] })) });
     const rendered = render(rejection, 1);
-    expect(JSON.stringify(rendered).split(ISSUE_CATEGORIES.reference.short).length - 1).toBe(1);
-    expect(rendered.guidance[0].errors.map(error => error.path)).toEqual(['column_flow.0.out_col', 'column_flow.1.out_col', 'column_flow.2.out_col']);
-    expect(rendered.guidance[0].errors.map(error => error.correction)).toEqual(Array(3).fill(ISSUES.unknown_column.correction));
+    assertStructural(rendered);
+    expect(rendered.errors.map(error => ({ path: error.path, code: error.code }))).toEqual([0, 1, 2].map(index => ({ path: `column_flow.${index}.out_col`, code: 'unknown_column' })));
   });
 
-  it('orders categories and suppresses only descendants of a missing parent', () => {
+  it('suppresses only descendants of a missing parent, preserving independent mistyped-parent faults (D-099)', () => {
     const rejection = makeRejection({ code: 'invalid_input', errors: [
       { path: 'summary', code: 'enum', values: ['x'] },
       { path: 'column_flow', code: 'missing' },
@@ -139,7 +133,8 @@ describe('rejection renderer structure', () => {
       { path: 'sections.business', code: 'missing' },
     ] });
     const rendered = render(rejection, 1);
-    expect(rendered.guidance.map(group => group.category)).toEqual(['shape', 'required', 'value']);
-    expect(rendered.guidance[1].errors.map(error => error.path)).toEqual(['column_flow', 'sections.business']);
+    expect(rendered.errors.map(error => [error.path, error.code]).sort()).toEqual([
+      ['summary', 'enum'], ['column_flow', 'missing'], ['sections', 'type'], ['sections.business', 'missing'],
+    ].sort());
   });
 });

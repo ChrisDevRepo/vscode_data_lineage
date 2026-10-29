@@ -1,20 +1,29 @@
 /** Approved08 report draft contracts through the actual handler; no repair-only schema or merge protocol. */
 import { describe, expect, it } from 'vitest';
 import { AiSession } from '../../../src/ai/session/session';
+import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { executePresentResult } from '../../../src/ai/tools/handlers/presentResult';
 import type { ToolServices } from '../../../src/ai/tools/handlers/toolServices';
-import { makeIndexedModel, makeNode } from '../helpers/modelFixtures';
-import { renderProblem } from '../../../src/ai/support/toolErrorEnvelope';
+import { makeGraph, makeIndexedModel, makeNode } from '../helpers/modelFixtures';
+import { ISSUES, renderProblem } from '../../../src/ai/support/toolErrorEnvelope';
 import { presentResultSchemaForPhase } from '../../../src/ai/tools/toolSchemas';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 
-function draftWorld() {
+function draftWorld(options: { inScope?: boolean; synthesis?: boolean } = {}) {
   const ids = ['[dbo].[Result]', '[dbo].[Source]', '[dbo].[Outside]'];
-  const model = makeIndexedModel(ids.map(id => makeNode({ id, schema: 'dbo', name: id, type: 'table' })), [[ids[1], ids[0]]]);
+  const pairs: Array<[string, string]> = [[ids[1], ids[0]], ...(options.inScope ? [[ids[2], ids[0]] as [string, string]] : [])];
+  const model = makeIndexedModel(ids.map(id => makeNode({ id, schema: 'dbo', name: id, type: 'table' })), pairs);
   const session = new AiSession();
   const epoch = session.beginTurn();
   session.resultGraph = { nodeIds: ids.slice(0, 2), edges: [[ids[1], ids[0], 'read']], source: 'blackboard', originNodeId: ids[0] };
-  session.enterCompleted(epoch);
+  if (options.inScope) {
+    const engine = new NavigationEngine(model, makeGraph(model.nodes, pairs), () => {}, {});
+    session.stateMachine = engine;
+    expect(engine.init({ origin: ids[0], question: 'Explain Result.', analysisMode: 'bb', direction: 'upstream',
+      depthIntent: { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } })).toHaveProperty('ok', true);
+  }
+  if (options.synthesis) session.enterExploring(epoch);
+  else session.enterCompleted(epoch);
   const logs: string[] = [];
   const services = {
     getSession: () => session, turnEpoch: () => epoch, requireModel: () => model,
@@ -54,6 +63,10 @@ describe('Approved08 full-schema report draft boundary', () => {
       expect.objectContaining({ path: 'prune_node_ids.0', code: 'not_found' }),
       expect.objectContaining({ path: 'notes.0.node_id', code: 'result_out_of_scope' }),
     ]));
+    const final = JSON.parse(renderProblem(rejected, 3));
+    for (const path of ['add_node_ids.0', 'prune_node_ids.0']) expect(final.errors).toContainEqual(expect.objectContaining({
+      path, code: 'not_found', message: `${ISSUES.not_found.label}. ${ISSUES.not_found.correction}`,
+    }));
     expect(session.resultGraph).toEqual(graph);
     expect(session.presentationArtifact).toBeNull();
     expect(await send({ summary: report.summary, add_node_ids: [], prune_node_ids: [], notes: [] })).toHaveProperty('success', true);
@@ -102,6 +115,39 @@ describe('Approved08 full-schema report draft boundary', () => {
     const sections = [{ ...report.sections[0], text: 'Source feeds the Result. ⚠️ Outside source remains unresolved.' }];
     expect(await send({ notes: [], sections, name: report.name, title: report.title })).toHaveProperty('success', true);
     expect(session.presentationArtifact?.aiMetadata.description).toContain(sections[0].text);
+  });
+
+  it.each((['sections', 'notes', 'highlight_groups'] as const).flatMap(field => [
+    { kind: 'missing', code: 'report_not_found' as const, inScope: false, synthesis: false },
+    { kind: 'synthesis', code: 'not_in_result' as const, inScope: true, synthesis: true },
+    { kind: 'completed', code: 'addable_to_result' as const, inScope: true, synthesis: false },
+  ].map(state => ({ field, ...state }))))('offers the last-correction fallback for $kind $field references (D-105)', async ({ field, code, inScope, synthesis }) => {
+    const { session, ids, report, send } = draftWorld({ inScope, synthesis });
+    const unresolved = inScope ? ids[2] : '[dbo].[Missing]';
+    const path = field === 'notes' ? 'notes.0.node_id' : `${field}.0.node_ids.2`;
+    const supplied = field === 'notes' ? [{ node_id: unresolved, caption: 'Unresolved supplier.' }]
+      : [{ ...report[field][0], node_ids: [...ids.slice(0, 2), unresolved] }];
+    const before = structuredClone(session.resultGraph);
+    const rejected = await send({ ...report, [field]: supplied });
+    expect(rejected.errors).toEqual([{ path, code, values: ids.slice(0, 2) }]);
+    expect(session.resultGraph).toEqual(before);
+    expect(session.presentationArtifact).toBeNull();
+    const issue = ISSUES[code];
+    for (const stage of [1, 2, 3] as const) {
+      const shown = JSON.parse(renderProblem(rejected, stage));
+      expect(shown.errors).toHaveLength(1);
+      expect(shown.errors[0]).toMatchObject({ path, code,
+        message: `${issue.label}. ${issue.correction}${stage === 3 ? ` ${issue.fallback}` : ''}` });
+      if (stage === 1) expect(shown.errors[0]).not.toHaveProperty('allowed');
+      else expect([...shown.errors[0].allowed].sort()).toEqual(ids.slice(0, 2).sort());
+      expect(shown.resend).toContain(field);
+      expect(shown.resend.includes('sections')).toBe(stage === 3 || field === 'sections');
+    }
+    const text = `${report.sections[0].text} ⚠️ ${unresolved} remains unresolved.`;
+    const sections = [{ ...report.sections[0], text }];
+    const corrected = { [field]: field === 'notes' ? [] : report[field], sections };
+    expect(await send(corrected)).toHaveProperty('success', true);
+    expect(session.presentationArtifact?.aiMetadata.description).toContain(text);
   });
 
   it('replaces supplied lists whole rather than merging entries by identity (D-101)', async () => {

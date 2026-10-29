@@ -22,7 +22,7 @@ import {
 import { TurnEventSink } from '../../../src/ai/runtime/turnEventSink';
 import { ToolRegistry, type IToolRegistry } from '../../../src/ai/tools/registry';
 import { classifyRejectionCode } from '../../../src/ai/tools/toolProvider';
-import { CLARIFICATION_WINDOW_MS, ISSUE_CATEGORIES, ISSUES, LAST_CORRECTION, at, makeRejection, rejectionFromZodError, type IssueCode } from '../../../src/ai/support/toolErrorEnvelope';
+import { CLARIFICATION_WINDOW_MS, ISSUES, LAST_CORRECTION, at, makeRejection, rejectionFromZodError, type IssueCode, type ToolProblem } from '../../../src/ai/support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../../../src/ai/support/rejectionCodes';
 import { buildRouteValidationRejection } from '../../../src/ai/sm/smRouteValidation';
 import { createTurnTokenBudget } from '../../../src/ai/support/tokenBudget';
@@ -77,13 +77,14 @@ const toolMessage = (messages: readonly unknown[]): ToolMessage => messages.find
 const call = (id: string, input: unknown, tool = 'lineage_search_objects') => new vscode.LanguageModelToolCallPart(id, tool, input as object);
 
 /** The rendered problem the model reads (D-103) and its errors across categories. */
-interface ShownError { path: string; fault: string; correction: string; allowed?: string[]; missing?: string[]; more?: number }
-interface Problem { code: string; attempt: string; notice?: string; guidance: Array<{ category: string; instruction: string; errors: ShownError[]; more?: number; fallback?: string }>; resend: string[]; resend_rule?: string }
-const PROBLEM_KEYS = ['attempt', 'code', 'guidance', 'notice', 'resend', 'resend_rule'];
+type ShownError = ToolProblem['errors'][number];
+type Problem = ToolProblem;
+const PROBLEM_KEYS = ['attempt', 'code', 'errors', 'notice', 'resend'];
 const problemOf = (value: unknown): Problem => (typeof value === 'string' ? JSON.parse(value) : value) as Problem;
-const shown = (value: unknown): ShownError[] => problemOf(value).guidance.flatMap(group => group.errors);
+const shown = (value: unknown): ShownError[] => problemOf(value).errors;
 /** One shown error of an issue code, without values. */
-const fault = (code: IssueCode, path = '') => ({ path, fault: ISSUES[code].label, correction: ISSUES[code].correction });
+const fault = (code: IssueCode, path = '') => ({ path, code, message: expect.stringContaining(ISSUES[code].correction) });
+const hasFallback = (value: unknown): boolean => shown(value).some(error => Object.values(ISSUES).some(issue => 'fallback' in issue && error.message.includes(issue.fallback)));
 
 /** Approved08 D-097/D-098: stable full-field wire updates and strict composed admission through the production graph. */
 it.each((['bb', 'ct'] as const).flatMap(mode => (['business', 'technical', 'both'] as const).map(classification => ({ mode, classification }))))(
@@ -343,7 +344,7 @@ describe('start contract matrix through the native port and production registry'
       const feedback = problemOf(String(toolMessage(rejected.attempt.messages).content));
       expect(feedback.attempt).toBe(`${stage}/3`);
       expect(feedback.notice !== undefined).toBe(stage === 3);
-      for (const group of feedback.guidance) expect(group).not.toHaveProperty('fallback');
+      expect(hasFallback(feedback)).toBe(false);
       for (const error of rejected.raw.errors ?? []) {
         const visible = shown(feedback).find(item => item.path === error.path);
         expect(visible).toBeDefined();
@@ -460,7 +461,7 @@ it.each(reportScenarios)('report independent rule: $name ($phase, retainable=$re
     expect(feedback.attempt).toBe(`${stage}/3`);
     expect(feedback.notice !== undefined).toBe(stage === 3);
     // Only the report's outside-node reference has a fallback among this declared catalog.
-    expect(feedback.guidance.some(group => group.fallback !== undefined)).toBe(stage === 3 && fields.includes('notes'));
+    expect(hasFallback(feedback)).toBe(stage === 3 && fields.includes('notes'));
     for (const error of raw.errors) {
       const visible = shown(feedback).find(item => item.path === error.path);
       expect(visible).toBeDefined();
@@ -1085,13 +1086,13 @@ describe('model-facing rejection text', () => {
     expect(recordToolAttempt(state, fourth).stopReason).toBe('no_progress');
   });
 
-  it('states a call-level fault by its category instruction, fault label and correction, never by a logs-only reason', async () => {
+  it('states a call-level coded fault and correction, never a logs-only reason (D-103)', async () => {
     const { registry } = registryWith(() => JSON.stringify(makeRejection({ code: 'off_policy', reason: 'LOGS_ONLY_REASON', errors: at('off_policy') })));
     const model = nativePort(() => [call('c1', { query: 'Orders' })]);
     const attempt = await executeToolAttempt(model.port, discoveryPlan(registry), { priorState: initialToolPhaseAttemptState('discover') });
     const content = String(toolMessage(attempt.messages).content);
     expect(JSON.parse(content)).toEqual({ code: 'off_policy', attempt: '1/3', resend: [],
-      guidance: [{ category: 'stage', instruction: ISSUE_CATEGORIES.stage.short, errors: [fault('off_policy')] }] });
+      errors: [fault('off_policy')] });
   });
 
   it('refuses a rejection without a fault at its producer, so the model is never answered with nothing', () => {
@@ -1458,10 +1459,12 @@ describe('submit_findings rejection form', () => {
       if (stage >= 2 && mode === 'ct' && !single) expect(rejected.rejection.errors.find(error => error.path === 'column_flow.0.upstream_columns.0.col')?.allowed).toEqual(sourceColumns);
       expect(rejected.rejection.attempt).toBe(`${stage}/3`);
       expect(rejected.rejection.notice !== undefined).toBe(stage === 3);
-      for (const group of rejected.rejection.guidance) {
-        if (stage === 1) for (const error of group.errors) expect(error).not.toHaveProperty('allowed');
-        expect(group.fallback !== undefined).toBe(stage === 3 && mode === 'ct' && group.category === 'reference');
+      for (const error of rejected.rejection.errors) {
+        if (stage === 1) expect(error).not.toHaveProperty('allowed');
+        const issue = ISSUES[error.code];
+        if ('fallback' in issue) expect(error.message.includes(issue.fallback)).toBe(stage === 3);
       }
+      expect(hasFallback(rejected.rejection)).toBe(stage === 3 && mode === 'ct');
       expect(engine.getDetailSlots()).toEqual([]);
       expect(engine.columnAspect?.edges ?? []).toEqual([]);
       expect(engine.toJSON().agenda).toEqual(before.agenda);
@@ -1499,7 +1502,7 @@ describe('submit_findings rejection form', () => {
     const expectedPaths = [['badge_label'], ['summary', 'summary'], ...(arm === 'repair' ? [[]] : [['sections.technical', 'sections', 'sections'], ['sections.technical', 'sections', 'sections']])];
     for (const [index, input] of steps.entries()) {
       const result = await send(input);
-      expect(result.rejection ? paths(result.rejection) : []).toEqual(expectedPaths[index]);
+      expect(result.rejection ? paths(result.rejection).sort() : []).toEqual([...expectedPaths[index]].sort());
       expect(state().providerCalls).toBe(index + 1);
       if (index < steps.length - 1) expect(state().noProgressCalls).toBe(index + 1);
       const target = process.env.DLV_REJECTION_CONTROL_OUTPUT;
@@ -1554,7 +1557,7 @@ describe('submit_findings rejection form', () => {
     expect(paths(first.rejection).sort()).toEqual(['badge_label', 'summary']);
     expect(first.rejection.resend.sort()).toEqual(['badge_label', 'summary']);
     expect(first.rejection.errors).toEqual(expect.arrayContaining([fault('type', 'summary'), fault('type', 'badge_label')]));
-    for (const error of first.rejection.errors) expect(Object.keys(error).sort()).toEqual(['correction', 'fault', 'path']);
+    for (const error of first.rejection.errors) expect(Object.keys(error).sort()).toEqual(['code', 'message', 'path']);
     const held = engine.toJSON().engineInternals.heldFinding?.finding;
     expect(held?.column_flow).toEqual(flow);
     expect(held?.sections).toEqual([{ angle: 'technical', text: base.sections.technical }]);
@@ -1598,7 +1601,7 @@ describe('submit_findings rejection form', () => {
     expect(first.attempt.rejections).toHaveLength(1);
     expect(JSON.stringify(first.rejection)).toContain(other);
     expect(first.rejection.resend).toEqual(['questions', 'prune_neighbors', 'column_flow']);
-    expect(first.rejection.errors).toContainEqual({ ...fault('neighbor_undecided'), missing: [other] });
+    expect(first.rejection.errors).toContainEqual({ ...fault('neighbor_undecided'), allowed: [other] });
     expect(first.rejection).not.toHaveProperty('way_out');
     expect(first.rejection).not.toHaveProperty('example');
     expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
@@ -1631,7 +1634,7 @@ describe('submit_findings rejection form', () => {
     for (const path of expected) {
       const error = first.rejection.errors.find(error => error.path === path);
       assert(error, `Expected a fault at ${path}`);
-      expect(Object.keys(error).sort()).toEqual(['correction', 'fault', 'path']);
+      expect(Object.keys(error).sort()).toEqual(['code', 'message', 'path']);
     }
     for (const absentKey of ['replies_remaining', 'example', 'way_out', 'reason', 'hint', 'detail']) expect(first.rejection).not.toHaveProperty(absentKey);
   });
@@ -1652,7 +1655,7 @@ describe('submit_findings rejection form', () => {
       fields: expect.arrayContaining(['badge_label', 'questions', 'prune_neighbors']) });
     // Feedback 2 carries the complete allowed list; the leave-out instruction waits for feedback 3 (D-105).
     expect(second.rejection.errors[0].allowed).toEqual(sourceColumns);
-    for (const rejection of [first.rejection, second.rejection]) for (const group of rejection.guidance) expect(group).not.toHaveProperty('fallback');
+    for (const rejection of [first.rejection, second.rejection]) expect(hasFallback(rejection)).toBe(false);
     const third = await send({ focus_node_id: root, column_flow: [] });
     expect(third.attempt.stop).toBe('phase_complete');
     expect(third.content).toContain('ended_columns');
@@ -1686,7 +1689,7 @@ describe('submit_findings rejection form', () => {
       const error = reply.rejection!.errors.find(item => item.path === leaf);
       expect(error).toBeDefined();
       expect(error).toMatchObject(fault('unknown_column', leaf));
-      expect(reply.rejection!.guidance.some(group => group.fallback !== undefined)).toBe(index === 2);
+      expect(hasFallback(reply.rejection!)).toBe(index === 2);
       expect(reply.rejection!.resend).toContain('column_flow');
       expect(reply.rejection!.resend.includes('sections')).toBe(index === 2);
       expect(reply.rejection!.notice).toBe(index === 2 ? LAST_CORRECTION : undefined);
@@ -1706,11 +1709,11 @@ describe('submit_findings rejection form', () => {
     assert(second.rejection, 'Expected a rejected submission');
     expect(second.rejection.resend).toEqual(['prune_neighbors']);
     expect(second.rejection.errors).toEqual([{ ...fault('not_neighbor', 'prune_neighbors.0.id'), allowed: [source, other].sort() }]);
-    expect(second.rejection.guidance.some(group => group.fallback !== undefined)).toBe(false);
+    expect(hasFallback(second.rejection)).toBe(false);
     const third = await send({ focus_node_id: root, prune_neighbors: [{ id: absent, reason: 'Still outside.' }] });
     assert(third.rejection, 'Expected a rejected submission');
     expect(third.rejection.errors).toEqual([{ ...fault('not_neighbor', 'prune_neighbors.0.id'), allowed: [source, other].sort() }]);
-    expect(third.rejection.guidance.some(group => group.fallback !== undefined)).toBe(false);
+    expect(hasFallback(third.rejection)).toBe(false);
     const exit = { prune_neighbors: [] };
     const schema = submitFindingsSchemaForMode('ct', 'technical', false, engine.hopSubmitColumns, engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false);
     expect(schema.safeParse({ focus_node_id: root, ...exit }).success).toBe(true);
@@ -1743,7 +1746,7 @@ describe('submit_findings rejection form', () => {
     assert(second.rejection, 'Expected a rejected submission');
     // The resent list replaces the held one whole, so Other loses its outcome and both faults are reported together.
     expect(paths(second.rejection).sort()).toEqual(['', 'prune_neighbors', 'prune_neighbors.0.id']);
-    expect(second.rejection.errors).toContainEqual({ ...fault('neighbor_undecided'), missing: [other] });
+    expect(second.rejection.errors).toContainEqual({ ...fault('neighbor_undecided'), allowed: [other] });
     expect(second.rejection.resend).toEqual(['prune_neighbors', 'column_flow', 'questions']);
     expect(engine.toJSON().engineInternals.heldFinding?.finding.prune_neighbors).toEqual(held);
     const third = await send({ focus_node_id: root, column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0' }] }, terminals[1]] });

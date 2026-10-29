@@ -143,7 +143,7 @@ describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs =>
     expect(result.success).toBe(false);
     if (result.success === false) {
       // The accepted canonical ids are the allowed values of the unresolved reference; the sent spelling is never echoed (D-102).
-      expect(result.rejection.errors).toContainEqual({ path: 'sections.0.node_ids.0', code: 'not_found', values: [canonical] });
+      expect(result.rejection.errors).toContainEqual({ path: 'sections.0.node_ids.0', code: 'report_not_found', values: [canonical] });
       for (const stage of [1, 2, 3] as const) expect(renderProblem(result.rejection, stage), 'D-102: no echoed id').not.toContain('[dbo].[REPORT]');
     }
   });

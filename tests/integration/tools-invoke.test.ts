@@ -83,9 +83,9 @@ suite('Tool surface — invokeTool, no model, no CDP', () => {
       if (name === 'lineage_get_neighbor_columns') {
         await assert.rejects(async () => invoke(name, inputs[name]), (error: unknown) => {
           assert.ok(error instanceof Error);
-          const problem = JSON.parse(error.message) as { code: string; guidance: Array<{ errors: unknown[] }>; resend: string[] };
+          const problem = JSON.parse(error.message) as { code: string; errors: unknown[]; resend: string[] };
           assert.strictEqual(problem.code, 'no_active_session');
-          assert.ok(problem.guidance.some(group => group.errors.length > 0));
+          assert.ok(problem.errors.length > 0);
           assert.deepStrictEqual(problem.resend, []);
           return true;
         });
