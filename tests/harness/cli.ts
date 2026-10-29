@@ -8,6 +8,7 @@ import { join, resolve } from 'node:path';
 import type * as vscode from 'vscode';
 import { z } from 'zod';
 import { sanitizeProviderErrorDiagnostic } from '../../src/ai/support/text';
+import { redactSecret } from './exportShared';
 import { harnessSecrets } from './harnessSecrets';
 import { AiTraceWriter } from '../../src/ai/observability/aiTraceWriter';
 import { BuiltInConnectionSchema } from '../../src/engine/db/connectionSettings';
@@ -851,7 +852,7 @@ export async function main(kind: 'ai' | 'db', args: readonly string[], onResult?
       await traceWriter.close();
       if (langfuse && tracePath) {
         const frozen = freezeRunEvidence(runDir, collectAttachments(runDir, tracePath, turns.length, harnessSecrets()),
-          options.attach, [langfuse.secretKey]);
+          options.attach);
         logger.redirect(join(runDir, 'runner-diagnostics.log'));
         const frozenTrace = frozen.attachments.run!.find(file => file.name === 'event-trace')!.content;
         const attachments = frozen.isBaseline ? frozen.attachments : undefined;
@@ -882,7 +883,7 @@ export async function main(kind: 'ai' | 'db', args: readonly string[], onResult?
     const diagnostic = sanitizeProviderErrorDiagnostic(error, kind);
     const safeDiagnostic = JSON.stringify(diagnostic, (_key, value: unknown) => {
       if (typeof value !== 'string') return value;
-      for (const secret of harnessSecrets()) value = (value as string).split(secret).join('[redacted]');
+      for (const secret of harnessSecrets()) value = redactSecret(value as string, secret);
       return value;
     });
     logger.error(`Smoke failed: ${safeDiagnostic}`);
