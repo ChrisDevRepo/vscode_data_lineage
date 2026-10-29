@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 const SKIP_EXIT_CODE = 77;
 const stepOutcome = (status) => (status === 0 ? 'PASS' : status === SKIP_EXIT_CODE ? 'SKIP' : 'FAIL');
@@ -38,7 +38,8 @@ const npmRun = (name, script, args = []) => ({
 });
 
 /** Keep terminal progress and persist each unit lane's test failures in a JSON report. */
-const unitReportArgs = (lane) => ['--reporter=default', '--reporter=json', `--outputFile.json=${join(LOG_DIR, `${lane}-unit.json`)}`];
+const unitReport = (lane) => join(LOG_DIR, `${lane}-unit.json`);
+const unitReportArgs = (lane) => ['--reporter=default', '--reporter=json', `--outputFile.json=${unitReport(lane)}`];
 
 const STEPS = [
   npmRun('typecheck', 'typecheck'),
@@ -57,6 +58,9 @@ const STEPS = [
 ];
 
 mkdirSync(LOG_DIR, { recursive: true });
+const startedAt = new Date().toISOString();
+const unitReports = ['core', 'runtime'].map(unitReport);
+for (const file of unitReports) rmSync(file, { force: true });
 
 const results = [];
 for (const step of STEPS) {
@@ -79,9 +83,18 @@ for (const step of STEPS) {
       : run.status === null ? `killed by signal${run.signal ? ` ${run.signal}` : ''}`
       : !ok && step.viaShim ? 'ran via the PATH npm shim'
       : '',
+    ms: Date.now() - started,
     seconds: ((Date.now() - started) / 1000).toFixed(1),
   });
 }
+
+/** Machine-readable verdicts: step outcomes plus test counts from this run's unit reports (null if one is missing). */
+const totals = unitReports.every((file) => existsSync(file)) ? unitReports.map((file) => JSON.parse(readFileSync(file, 'utf8')))
+  .reduce((sum, r) => ({ passed: sum.passed + r.numPassedTests, failed: sum.failed + r.numFailedTests,
+    skipped: sum.skipped + r.numPendingTests + r.numTodoTests }), { passed: 0, failed: 0, skipped: 0 }) : null;
+const head = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout?.trim() || null;
+writeFileSync(join(LOG_DIR, 'summary.json'), `${JSON.stringify({ head, startedAt,
+  steps: results.map(({ name, outcome, ms }) => ({ name, outcome, ms })), totals }, null, 2)}\n`);
 
 const width = Math.max(...results.map((r) => r.name.length));
 process.stdout.write(`\n${'='.repeat(width + 18)}\nGATE SUMMARY\n${'='.repeat(width + 18)}\n`);

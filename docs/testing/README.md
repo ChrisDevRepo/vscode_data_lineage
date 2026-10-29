@@ -19,7 +19,7 @@ These need no database, model provider or display. Parser and lineage scenarios 
 
 A path argument to `test:core`, `test:lineage`, `test:runtime` or `test:support` runs that file only: `npm run test:core -- tests/unit/parser/identifier-case.test.ts`.
 
-The gate prints `PASS`, `FAIL` and `SKIP` per step and exits nonzero on any `FAIL`. A `SKIP` is unverified: the template-schema step skips without a `v*` tag or `origin/main`, and fails instead when `CI` is set. Failed step logs stay in untracked local output.
+The gate prints `PASS`, `FAIL` and `SKIP` per step and exits nonzero on any `FAIL`. A `SKIP` is unverified: the template-schema step skips without a `v*` tag or `origin/main`, and fails instead when `CI` is set. Failed step logs and `test-results/gate/summary.json` (step outcomes, unit test counts) stay in untracked local output.
 
 ## Ownership and evidence
 
@@ -115,7 +115,7 @@ Layout timings describe the tested dataset, hardware and runtime, not a general 
 | Playwright GUI smoke | `npm run test:gui:host`, then `npm run test:gui:smoke` | Opens the demo in an isolated VS Code host and checks the graph renders |
 | Playwright chat UI | `npx vscode-test --config .vscode-test.chat-ui.mjs` | Native chat confirmations, approval/cancellation and scope revisions |
 | Real-model smoke | `npm run test:ai:smoke` | One live `@lineage` turn against the demo DACPAC |
-| Headless review | `npm run test:ai:headless` | `--all` (also the default) runs every headless catalog row. `--case ID` selects one row; `--list` prints IDs/descriptions/hashes without provider calls. An explicit question uses `--prompt` (flags: `-- --help`). Full execution is baseline work. |
+| Headless review | `npm run test:ai:headless` | With no selector every headless catalog row runs in one capture; `--all` runs each row as its own capture and writes `inventory.json`. `--case ID` selects one row; `--list` prints IDs/descriptions/hashes without provider calls. An explicit question uses `--prompt` (flags: `-- --help`). Full execution is baseline work. |
 | Large layout scale | `npm run test:scale` | Layout check for a 1,500-node model |
 
 ## VS Code host checks

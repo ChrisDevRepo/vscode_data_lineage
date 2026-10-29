@@ -9,7 +9,7 @@
 | Core/runtime | Parser, lineage and AI/trust contracts; canonical partition in `tests/tools/unit-lanes.mjs` | `npm test`, then `npm run gate` |
 | Support | Remaining unit/tooling/webview/database adapter contracts | `npm run test:support` |
 | Backend case catalog | 31 scripted rows, expanded to 38 cases by BB/CT modes; included in runtime | `npm run test:runtime -- tests/unit/backend/lineage-cases.test.ts` |
-| Electron API | 15 tests: bare-environment 4, kill-switch 5, tools 3, participant-turn 3 | `npm run test:edh` |
+| Electron API | 9 tests: bare-environment 1, kill-switch 1, tools 1, participant-turn 6 | `npm run test:edh` |
 | Native scripted UI | Seven control/lifecycle tests | `npm run pretest:integration`, then `npx vscode-test --config .vscode-test.chat-ui.mjs` |
 | Native provider UI | Six approval/cancellation/scope controls | `npx vscode-test --config .vscode-test.chat-ui.mjs --label live` |
 | Separate provider API smoke | One real turn through VS Code public model API; separate from native UI | `npm run test:ai:smoke` |

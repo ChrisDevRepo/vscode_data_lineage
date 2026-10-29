@@ -160,6 +160,12 @@ function checkUnitProjectsCoverAll() {
 
 // ── 5. Template Schema Version ───────────────────────────────────────────────
 
+/** An unrun comparison is unverified: exit 77 so the gate reports SKIP, not PASS. */
+function skip(message) {
+  console.log(`SKIP  ${message}`);
+  process.exitCode = 77;
+}
+
 async function checkTemplateSchemaVersion() {
   const assetPath = path.join(repoRoot, 'assets/aiOutputTemplates.yaml');
   const typesPath = path.join(repoRoot, 'src/ai/session/types.ts');
@@ -181,16 +187,16 @@ async function checkTemplateSchemaVersion() {
     baseline = tag || 'origin/main';
     await git(['rev-parse', '--verify', '--quiet', baseline]);
   } catch {
-    console.log('SKIP  no git baseline tag or origin/main for template diff.');
-    return;
+    const ci = (process.env.CI ?? '').trim().toLowerCase();
+    if (ci && ci !== 'false' && ci !== '0') throw new Error('No v* tag or origin/main in this CI checkout; fetch them (actions/checkout fetch-depth: 0).');
+    return skip('no git baseline tag or origin/main for template diff.');
   }
 
   let baselineAsset;
   try {
     baselineAsset = (await git(['show', `${baseline}:assets/aiOutputTemplates.yaml`])).replace(/\r\n/g, '\n');
   } catch {
-    console.log(`SKIP  ${baseline} lacks templates asset.`);
-    return;
+    return skip(`${baseline} lacks templates asset.`);
   }
 
   if (baselineAsset === currentAsset) {
@@ -204,8 +210,7 @@ async function checkTemplateSchemaVersion() {
   try {
     baselineTypes = (await git(['show', `${baseline}:src/ai/session/types.ts`])).replace(/\r\n/g, '\n');
   } catch {
-    console.log(`SKIP  ${baseline} lacks types.ts.`);
-    return;
+    return skip(`${baseline} lacks types.ts.`);
   }
   const baseVerMatch = baselineTypes.match(/AI_TEMPLATE_SCHEMA_VERSION\s*=\s*(\d+)/);
   const baseVer = baseVerMatch ? Number(baseVerMatch[1]) : assetVer;

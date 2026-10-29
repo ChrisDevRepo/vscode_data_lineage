@@ -30,4 +30,4 @@ A new machine is ready when `npm ci`, `npm run gate` and `xvfb-run -a npm run te
 
 ## Reporting
 
-Report deterministic assertions as `PASSED` or `FAILED`; a check that could not execute is `NOT RUNNABLE` with its missing prerequisite. Report model execution separately as completed/error and content as unreviewed/SQL-supported/issue; runtime completion or matching metrics does not establish answer quality. Record the fixture and, for live checks, the provider, model and reasoning effort.
+Report deterministic assertions as `PASSED` or `FAILED`; a check that could not execute is `NOT RUNNABLE` with its missing prerequisite. Gate `PASS`, `FAIL` and `SKIP` map to `PASSED`, `FAILED` and `NOT RUNNABLE`. Report model execution separately as completed/error and content as unreviewed/SQL-supported/issue; runtime completion or matching metrics does not establish answer quality. Record the fixture and, for live checks, the provider, model and reasoning effort.
