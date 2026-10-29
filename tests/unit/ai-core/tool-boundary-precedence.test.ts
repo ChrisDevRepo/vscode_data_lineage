@@ -678,6 +678,18 @@ describe('large findings repairs', () => {
     expect(engine.toJSON().agenda).toEqual(before.agenda);
     expect(engine.toJSON().removedSet).toEqual(before.removedSet);
   });
+  it('accepts authored empty suppliers at a procedure as no pair, so the out_node prune applies (D-130)', () => {
+    const { engine, session, model, graph } = ctWorld({ selfLoop: true, sibling: true });
+    const { services } = stubToolServices({ session, model, graph });
+    const before = engine.toJSON();
+    expect(JSON.parse(executeSubmitFindings({ summary: 'Authored evidence.', sections: { technical: 'Keep the supplied source facts.' },
+      column_flow: [{ out_node: BRANCH, out_col: 'Value', upstream_columns: [] }],
+      prune_neighbors: [{ id: BRANCH, reason: 'Outside this investigation.' }],
+      questions: [{ nodeId: OTHER, question: 'Explain Value.' }],
+    }, services))).toHaveProperty('ok', true);
+    expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
+    expect(engine.toJSON().removedSet).toEqual([BRANCH]);
+  });
   it.each(['alternatives', 'mixed', 'flowfault'] as const)('keeps the original hop task after %s faults without a saved-field inventory', kind => {
     const { engine, session, model, graph } = ctWorld({ sibling: true });
     const { services } = stubToolServices({ session, model, graph });
