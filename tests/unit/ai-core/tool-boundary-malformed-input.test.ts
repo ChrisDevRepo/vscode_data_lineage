@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { validateToolCandidate } from '../../../src/ai/support/toolValidation';
 import {
-  StartExplorationInputSchema,
+  startExplorationSchemaForState,
   presentResultSchemaForPhase,
 } from '../../../src/ai/tools/toolSchemas';
 
@@ -52,7 +52,7 @@ describe('malformed present_result section entries', () => {
 describe('start_exploration schema diagnostics', () => {
   it('discloses every invalid field in the same rejection', () => {
     const input = { origin: 8, classification: 9, analysisMode: 10, question: 11, excludeSchemas: 12 };
-    const parsed = validateToolCandidate(StartExplorationInputSchema, input);
+    const parsed = validateToolCandidate(startExplorationSchemaForState(false), input);
     expect(parsed.success).toBe(false);
     if (parsed.success) throw new Error('Malformed start unexpectedly passed the boundary.');
     const rejection = parsed.rejection;

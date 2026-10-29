@@ -45,6 +45,7 @@ The newest version heading collects changes until that version ships.
 - Column-trace tool descriptions permit SQL-supported contextual dependencies without treating them as arithmetic or aggregate inputs.
 - A rejected call counts toward the three-correction escalation in every phase, including entry detection and scope refinement, even when accepted reads come in the same reply; an unknown tool call counts too, and a failed `present_result` is counted where it is handled.
 - Compiled tool validators are released from the validator's own cache instead of accumulating for the life of the extension host, and the per-hop findings schemas keep only the 16 most recent.
+- A sibling call that is not executed because an earlier call in the same provider reply closed the phase now receives the feedback stage of its own reply instead of always the second stage.
 - Column-trace instructions relate qualified columns to neighboring objects, and retain SQL facts beyond the requested trace in sections.
 - Prohibited neighbor entries receive removal guidance instead of invalid-JSON instructions, and object-valued repair fields retain their diagnostics without incompatible scalar choices.
 - Offered column sources follow the same scope admission rules as submitted mappings.

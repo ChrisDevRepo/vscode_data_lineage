@@ -466,7 +466,10 @@ export const SubmitFindingsBbInputSchema = finalizeSubmitFindingsSchema(HopFindi
 /** CT-mode submit_findings input. */
 export const SubmitFindingsCtInputSchema = finalizeSubmitFindingsSchema(HopFindingCtBaseSchema, true);
 
-/** Memoized per (mode, classification, hop) narrowed `submit_findings` schemas built by {@link submitFindingsSchemaForMode}; the oldest of 16 entries is evicted so finished hops are not kept for the life of the host. */
+/** Number of per-hop findings schemas the cache keeps. */
+const SUBMIT_FINDINGS_SCHEMA_CACHE_LIMIT = 16;
+
+/** Memoized per (mode, classification, hop) narrowed `submit_findings` schemas built by {@link submitFindingsSchemaForMode}; beyond {@link SUBMIT_FINDINGS_SCHEMA_CACHE_LIMIT} entries the oldest is evicted so finished hops are not kept for the life of the host. */
 const submitFindingsSchemaCache = new Map<string, z.ZodType<FlatSubmitFindings>>();
 
 /** Narrows {@link CapturedSectionsSchema} to the angle key(s) a locked classification keeps ({@link CLASSIFICATION_KEPT_ANGLES}). */
@@ -646,7 +649,7 @@ export function submitFindingsSchemaForMode(
     ) }).strict() as typeof HopFindingCtBaseSchema;
   }
   const schema = finalizeSubmitFindingsSchema(narrowed, freshSubmission, classification, composedCandidate);
-  if (submitFindingsSchemaCache.size >= 16) submitFindingsSchemaCache.delete([...submitFindingsSchemaCache.keys()][0]);
+  if (submitFindingsSchemaCache.size >= SUBMIT_FINDINGS_SCHEMA_CACHE_LIMIT) submitFindingsSchemaCache.delete([...submitFindingsSchemaCache.keys()][0]);
   submitFindingsSchemaCache.set(cacheKey, schema);
   return schema;
 }

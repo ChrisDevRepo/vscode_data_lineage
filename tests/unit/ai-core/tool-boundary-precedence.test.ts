@@ -991,7 +991,7 @@ describe('lineage_start_exploration boundary', () => {
     expect(validate(legacy)).toBe(false);
   });
   it.each([0, 1])('validates the imported depth rule natively with upstream level %s', upstream => {
-    const result = validateToolCandidate(StartExplorationInputSchema, { origin: ORIGIN, analysisMode: 'bb', classification: 'technical',
+    const result = validateToolCandidate(startExplorationSchemaForState(false), { origin: ORIGIN, analysisMode: 'bb', classification: 'technical',
       depth: { upstream: { levels: upstream, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } });
     expect(result.success).toBe(upstream === 1);
     if (!result.success) expect(result.rejection.errors).toEqual([expect.objectContaining({ path: 'depth', code: 'invalid' })]);
@@ -1000,7 +1000,7 @@ describe('lineage_start_exploration boundary', () => {
   it('rejects string depth without decoding it into a number', () => {
     const payload = { origin: ORIGIN, analysisMode: 'bb', classification: 'technical',
       depth: { upstream: { levels: '2', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } };
-    expect(StartExplorationInputSchema.safeParse(payload).success).toBe(false);
+    expect(startExplorationSchemaForState(false).safeParse(payload).success).toBe(false);
   });
 
   it.each([{}, { question: 'What feeds it?' }, { excludeTypes: ['table'] }])('rejects a start with no origin, supplement or revision at the schema: %j', input => {

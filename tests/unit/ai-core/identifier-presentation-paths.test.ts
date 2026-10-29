@@ -139,6 +139,8 @@ describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs =>
 
   it('gives valid canonical-id repair guidance for an unresolved reference', async () => {
     const canonical = cs ? '[dbo].[Report]' : '[dbo].[report]';
+    // Case-sensitive: the wrong-case spelling is unresolved. Case-insensitive: it would resolve, so an absent object stands in.
+    const sent = cs ? '[dbo].[REPORT]' : '[dbo].[Missing]';
     const model = buildModel([{ fullName: canonical, type: 'table' }], [], undefined, undefined, true, undefined, cs);
     const session = new AiSession();
     session.model = model;
@@ -148,11 +150,11 @@ describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs =>
     const { services } = stubToolServices({ session, model, graph: session.graph, turnEpoch: () => epoch });
     const rejection = JSON.parse(await executePresentResult({
       name: 'Reports', summary: 'Reports lineage.', highlight_groups: [],
-      sections: [{ label: 'Report', node_ids: ['[dbo].[Missing]'], text: 'Report output.' }],
+      sections: [{ label: 'Report', node_ids: [sent], text: 'Report output.' }],
     }, services));
     // The accepted canonical ids are the allowed values of the unresolved reference; the sent spelling is never echoed (D-102).
     expect(rejection.errors).toContainEqual({ path: 'sections.0.node_ids.0', code: 'report_not_found', values: [canonical] });
-    for (const stage of [1, 2, 3] as const) expect(renderProblem(rejection, stage), 'D-102: no echoed id').not.toContain('[dbo].[Missing]');
+    for (const stage of [1, 2, 3] as const) expect(renderProblem(rejection, stage), 'D-102: no echoed id').not.toContain(sent);
   });
 });
 
