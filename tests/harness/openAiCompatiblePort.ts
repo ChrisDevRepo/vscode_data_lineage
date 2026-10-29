@@ -128,7 +128,7 @@ export interface OpenAiCompatiblePortConfig {
   readonly baseUrl: string;
   /** Request wire: `chat_completions` (default) or the OpenAI Responses API (`/v1/responses`), which reasoning models need to combine function tools with reasoning effort. Same port, same decode, normalize and trace path for both. */
   readonly wire?: 'chat_completions' | 'responses';
-  /** Complete request URL, replacing `${baseUrl}/chat/completions` when set. Needed for an endpoint that `baseUrl` cannot express, such as an Azure deployment URL with an `api-version` query. The traced `provider-raw` URL is this value, so a trace names the endpoint actually called. */
+  /** Complete request URL, replacing `${baseUrl}/chat/completions` when set. Needed for an endpoint that `baseUrl` cannot express, such as an Azure deployment URL with an `api-version` query. */
   readonly chatCompletionsUrl?: string;
   readonly model: string;
   /** Sent only in the configured authentication header; never logged or traced. */
@@ -582,7 +582,7 @@ export class OpenAiCompatiblePort implements ModelPort {
         })),
       });
       if (this.options.traceVerbose) {
-        emitWire?.({ type: 'provider-raw', direction: 'request', url, method: 'POST', body: responses ? omitEncrypted(payload) : payload });
+        emitWire?.({ type: 'provider-raw', direction: 'request', method: 'POST', body: responses ? omitEncrypted(payload) : payload });
       }
       const received = await this.send(url, payload, signal);
       if (signal?.aborted) throw cancelledError();
@@ -590,7 +590,6 @@ export class OpenAiCompatiblePort implements ModelPort {
         emitWire?.({
           type: 'provider-raw',
           direction: 'response',
-          url,
           status: received.status,
           ...(received.contentType ? { contentType: received.contentType } : {}),
           ...(received.diagnosticHeaders ? { headers: received.diagnosticHeaders } : {}),

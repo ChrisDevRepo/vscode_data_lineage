@@ -8,6 +8,7 @@ import { join, resolve } from 'node:path';
 import type * as vscode from 'vscode';
 import { z } from 'zod';
 import { sanitizeProviderErrorDiagnostic } from '../../src/ai/support/text';
+import { configuredSecrets } from '../../src/ai/providers/traceSecurity';
 import { AiTraceWriter } from '../../src/ai/observability/aiTraceWriter';
 import { BuiltInConnectionSchema } from '../../src/engine/db/connectionSettings';
 import { openBuiltInSession } from '../../src/engine/db/builtInProvider';
@@ -747,7 +748,6 @@ export async function main(kind: 'ai' | 'db', args: readonly string[], onResult?
       result.timeoutMs = options.timeoutMs;
       result.requestTimeoutMs = options.requestTimeoutMs;
       if (reasoningEffort) result.thinkingLevel = reasoningEffort;
-      result.endpoint = endpoint;
       result.cases = runs.map(run => run.id);
       result.selection = { mode: options.promptFromCli ? 'prompt' : options.caseId ? 'case' : 'all',
         plannedCases: runs.length, plannedTurns: runs.reduce((sum, run) => sum + run.prompts.length, 0) };
@@ -883,10 +883,7 @@ export async function main(kind: 'ai' | 'db', args: readonly string[], onResult?
     const diagnostic = sanitizeProviderErrorDiagnostic(error, kind);
     const safeDiagnostic = JSON.stringify(diagnostic, (_key, value: unknown) => {
       if (typeof value !== 'string') return value;
-      for (const key of ['DB_TEST_PASSWORD', 'AI_TEST_API_KEY', 'LANGFUSE_SECRET_KEY']) {
-        const secret = process.env[key];
-        if (secret) value = (value as string).split(secret).join('[redacted]');
-      }
+      for (const secret of configuredSecrets()) value = (value as string).split(secret).join('[redacted]');
       return value;
     });
     logger.error(`Smoke failed: ${safeDiagnostic}`);

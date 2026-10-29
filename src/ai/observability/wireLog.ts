@@ -86,7 +86,6 @@ export type WireEvent =
       /** One verbatim provider HTTP body, captured only while the trace runs verbose. */
       readonly type: 'provider-raw';
       readonly direction: 'request' | 'response';
-      readonly url: string;
       readonly method?: string;
       readonly status?: number;
       /** Response media type, without exposing the response's other headers. */

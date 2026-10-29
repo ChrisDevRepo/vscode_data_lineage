@@ -546,7 +546,7 @@ describe('explicit attachment export boundary', () => {
         ...(capture === 'missing' ? [] : [request]),
         { type: 'provider-raw', ...identity, generation: 2, direction: 'request', body: { unrelated: 'other-generation' } },
         { type: 'provider-raw', ...identity, direction: 'response', body: { unrelated: 'provider-response' } },
-        ...(capture === 'provider' ? [{ type: 'provider-raw', ...identity, direction: 'request', url: 'https://provider.example', body }] : []),
+        ...(capture === 'provider' ? [{ type: 'provider-raw', ...identity, direction: 'request', body }] : []),
         ...(failed ? [{ type: 'wire-error', ...identity, diagnostic: { message: 'synthetic failure' } }]
           : [{ type: 'wire-response', ...identity, text: 'Done.', toolCalls: [] },
             { type: 'generation', ...identity, modelId: 'synthetic', finishReason: 'stop', latencyMs: 1 }]),

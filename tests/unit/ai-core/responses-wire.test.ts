@@ -52,7 +52,8 @@ describe('responses wire request (D-106)', () => {
     expect(body).not.toHaveProperty('reasoning_effort');
     expect(body.tools).toEqual([{ type: 'function', name: 'lineage_search_objects', description: 'Search.', strict: false, parameters: expect.any(Object) }]);
     expect(body.input).toEqual([{ role: 'system', content: 'Be brief.' }, { role: 'user', content: 'Find Sales.' }]);
-    expect(records.find(r => r.type === 'provider-raw' && r.direction === 'request')).toMatchObject({ url: URL_RESPONSES });
+    expect(records.find(r => r.type === 'provider-raw' && r.direction === 'request')).not.toHaveProperty('url');
+    expect(JSON.stringify(records)).not.toContain(new URL(URL_RESPONSES).hostname);
   });
 
   it.each<[ToolGenerationInput['toolChoice'], unknown]>([
