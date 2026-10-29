@@ -475,7 +475,7 @@ describe('stored-column arrival admission and delivery', () => {
     return { engine, nodes, pairs, producerEdges };
   }
 
-  it('assigns each write destination its own endpoints and carries nothing the AI did not pair (D-130)', () => {
+  it('assigns each write destination its own renamed endpoints and carries nothing the AI did not pair (D-130)', () => {
     const left = '[d].[LeftTarget]', right = '[d].[RightTarget]', reader = '[d].[Reader]';
     const nodes = [
       makeNode({ id: producer, schema: 'd', name: 'Producer', type: 'procedure', columns: [],
@@ -486,15 +486,15 @@ describe('stored-column arrival admission and delivery', () => {
     ];
     const pairs: Array<[string, string]> = [left, right, reader].map(id => [producer, id]);
     const engine = navigationFor(nodes, pairs);
-    expect(engine.init({ origin: producer, question: 'Trace both declared outputs.', analysisMode: 'ct', targetColumns: ['SavedLeft', 'SavedRight'], direction: 'downstream',
+    expect(engine.init({ origin: producer, question: 'Trace both declared outputs.', analysisMode: 'ct', targetColumns: ['LeftPort', 'RightPort'], direction: 'downstream',
       depthIntent: { upstream: { levels: 0, exactness: 'exact' }, downstream: { levels: 'all', exactness: 'exact' } },
     })).toHaveProperty('ok', true);
     engine.getHopContext();
     expect(engine.submitFindings({ focus_node_id: producer, summary: 'Writes two separate destinations.',
       sections: [{ angle: 'technical', text: 'Each destination has its own qualified output.' }],
       column_flow: [
-        { out_node: left, out_col: 'SavedLeft', upstream_columns: [{ node: producer, col: 'SavedLeft' }] },
-        { out_node: right, out_col: 'SavedRight', upstream_columns: [{ node: producer, col: 'SavedRight' }] },
+        { out_node: left, out_col: 'SavedLeft', upstream_columns: [{ node: producer, col: 'LeftPort' }] },
+        { out_node: right, out_col: 'SavedRight', upstream_columns: [{ node: producer, col: 'RightPort' }] },
       ], questions: [left, right, reader].map(nodeId => ({ nodeId, question: 'Inspect this destination or reader.' })),
     })).toHaveProperty('ok', true);
     const arrivals = engine.toJSON().engineInternals.investigationTasks.filter(task => task.kind === 'column_lineage' && task.status === 'pending');
@@ -504,7 +504,7 @@ describe('stored-column arrival admission and delivery', () => {
     expect(readerTasks).toEqual([expect.objectContaining({ kind: 'analytical', status: 'pending' })]);
     expect(readerTasks[0]).not.toHaveProperty('sourceRefs');
     expect(engine.columnAspect!.edges.map(edge => `${edge.from_node}.${edge.from_col}->${edge.to_node}.${edge.to_col}`)).toEqual([
-      `${producer}.SavedLeft->${left}.SavedLeft`, `${producer}.SavedRight->${right}.SavedRight`,
+      `${producer}.LeftPort->${left}.SavedLeft`, `${producer}.RightPort->${right}.SavedRight`,
     ]);
   });
 
