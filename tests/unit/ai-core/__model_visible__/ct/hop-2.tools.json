@@ -64,7 +64,7 @@
                   ],
                   "additionalProperties": false
                 },
-                "description": "Neighbor columns that feed out_col: value sources (expression operands, aggregate arguments, each UNION branch column, caller-bound inputs) and columns that only join, filter, group or order its rows. Resolve parameters and aliases to source columns. [] means the value originates here."
+                "description": "Neighbor columns that feed out_col: value sources (expression operands, aggregate arguments, each UNION branch column, caller-bound inputs) and columns that only join, filter, group or order its rows. Resolve parameters and aliases to source columns. A value this procedure creates lists this procedure; [] records no pair."
               },
               "out_node": {
                 "type": "string",
@@ -75,7 +75,7 @@
                   "[ai].[regionlookup]",
                   "[ai].[supplierprices]"
                 ],
-                "description": "Table from <hop_context> that this procedure writes out_col to. For a write to an object not listed, omit the entry and name the write in sections. A value this procedure creates itself lists this procedure in upstream_columns."
+                "description": "Table from <hop_context> that this procedure writes out_col to. For a write to an object not listed, omit the entry and name the write in sections."
               }
             },
             "required": [

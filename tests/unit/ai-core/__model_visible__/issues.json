@@ -68,7 +68,7 @@
   "column_out_of_scope": {
     "category": "reference",
     "label": "column outside the approved scope",
-    "correction": "Remove the outside column; if it is the entry's only supplier or its out_node, omit the column_flow entry, never empty upstream_columns (that declares a born value). Ask the outside object a follow-up in questions and record the fact in sections.",
+    "correction": "Remove the outside column; if it is the entry's only supplier or its out_node, omit the column_flow entry. Ask the outside object a follow-up in questions and record the fact in sections.",
     "fallback": "If no in-scope supplier can express the fact, write it in sections instead, highlighted with a callout naming the unresolved supplier and columns."
   },
   "result_out_of_scope": {
