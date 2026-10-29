@@ -107,13 +107,7 @@
     "fallback": "If you cannot correct it, write that information in the detail memory instead, highlighted with a callout naming the unresolved issue.",
     "category": "reference",
     "label": "not an available write target",
-    "correction": "Name an in-scope table this object writes to."
-  },
-  "write_out_of_scope": {
-    "fallback": "If you cannot correct it, write that information in the detail memory instead, highlighted with a callout naming the unresolved issue.",
-    "category": "reference",
-    "label": "write target outside the approved scope",
-    "correction": "Set writes_to to null, ask the outside object a follow-up in questions, and state the write in sections."
+    "correction": "Name an in-scope table this object writes to; for an outside write, set writes_to to null, ask the outside object a follow-up in questions, and state the write in sections."
   },
   "bad_caller_output": {
     "category": "reference",

@@ -1,5 +1,4 @@
 <current_task>
-  <neighbor_columns>[ai].[pricemaster].ListPrice: Candidate neighbor columns, not assigned endpoints. Map one only when this object's SQL establishes the relation (a written table column goes in writes_to as {node, col}); otherwise leave it out of column_flow.</neighbor_columns>
   <column_trace>
     Active columns: [ListPrice]
     These are the incoming column tasks. Record their real contributors and resolved outputs in `column_flow`, including downstream renames proved by the SQL; keep unrelated column analysis in `sections`.
