@@ -256,7 +256,7 @@ describe('declared contributor identities', () => {
       expect(result).toHaveProperty('reason', expect.not.stringContaining(target));
     }
   });
-  it.each(['source.Value'])('rejects target column alias %s without rewriting it', target => {
+  it.each(['source.Value', 'root.Value', '[dbo].[root].[Value]'])('rejects the node-qualified target column %s without rewriting it', target => {
     const nodes = [makeNode({ id: 'root', name: 'root', schema: 'dbo', type: 'view', columns: [column('Value')] })];
     const engine = navigationFor(nodes, []);
     expect(engine.init({ origin: 'root', question: 'Trace Value', direction: 'upstream', depthIntent: upstreamAll, analysisMode: 'ct', targetColumns: [target] })).toHaveProperty('code', 'unknown_columns');
@@ -306,6 +306,34 @@ describe('declared contributor identities', () => {
     );
     expect(result.invalidRoutes).toEqual([]);
     expect(result.stagedEdges).toMatchObject([{ from_node: 'staging', from_col: 'OrderAmount', to_node: 'staging', to_col: 'OrderAmount' }]);
+  });
+
+  describe.each(['table', 'view'] as const)('a procedure output bound to a %s destination (out_node)', type => {
+    const source = makeNode({ id: 'source', name: 'source', schema: 'dbo', type: 'table', columns: [column('Amount')] });
+    const writer = makeNode({ id: 'writer', name: 'writer', schema: 'dbo', type: 'procedure', bodyScript: 'INSERT dbo.owed SELECT Amount FROM dbo.source;' });
+    const bind = (destinationColumns: string[], out_col: string, caseSensitive = false) => {
+      const owed = makeNode({ id: 'owed', name: 'owed', schema: 'dbo', type, columns: destinationColumns.map(column) });
+      const nodes = [writer, owed, source];
+      return new ColumnTracer(['Amount'], undefined, caseSensitive).validateColumnFlow('writer',
+        { column_flow: [{ out_node: 'owed', out_col, upstream_columns: [{ node: 'source', col: 'Amount' }] }] },
+        new Map(nodes.map(node => [node.id, node])), { ...makeModel(nodes, [['owed', 'writer'], ['source', 'writer'], ['writer', 'owed']], ['dbo']), identifierCaseSensitive: caseSensitive },
+        null, undefined, undefined, 'upstream', [{ node: 'owed', col: 'Amount' }], [], [], [], [{ node: 'owed', col: 'Amount' }]);
+    };
+    it('stores the supplier pair on the destination column and no edge on the writer', () => {
+      const result = bind(['Amount', 'Stamp'], 'Amount');
+      expect(result.invalidRoutes).toEqual([]);
+      expect(result.stagedEdges).toEqual([expect.objectContaining({ from_node: 'source', from_col: 'Amount', to_node: 'owed', to_col: 'Amount' })]);
+    });
+    it.each(['Amount', 'amount'])('keeps the case-sensitive destination column %s as its own identity', out_col => {
+      const result = bind(['Amount', 'amount', 'Stamp'], out_col, true);
+      expect(result.invalidRoutes).toEqual([]);
+      expect(result.stagedEdges.map(edge => `${edge.to_node}.${edge.to_col}`)).toEqual([`owed.${out_col}`]);
+    });
+    it('refuses a column the destination does not declare, offering the declared columns', () => {
+      const result = bind(['Amount', 'Stamp'], 'Missing');
+      expect(result.invalidRoutes).toEqual([expect.objectContaining({ kind: 'bad_out_col', path: 'column_flow.0.out_col', allowed_values: ['Amount', 'Stamp'] })]);
+      expect(result.stagedEdges).toEqual([]);
+    });
   });
 
   it.each(['upstream', 'downstream'] as const)('commits an accepted same-column self pair, ends the hop and adds no agenda work (%s, D-130)', direction => {
@@ -1723,8 +1751,12 @@ describe('CT dispatch keeps the accepted carry', () => {
     const declared = stored.columns;
     stored.columns = [column('Renamed')];
     try {
+      const tasks = engine.investigationTasks.length;
       expect(engine.getHopContext()).toMatchObject({ done: false, sm_status: 'error' });
+      expect(engine.status).toBe('error');
       expect(engine.errorReason).toContain('no qualified source column');
+      expect(engine.investigationTasks, 'no BB visit is queued in its place').toHaveLength(tasks);
+      expect(() => engine.toJSON()).not.toThrow();
     } finally {
       stored.columns = declared;
     }
@@ -1745,6 +1777,26 @@ describe('CT dispatch keeps the accepted carry', () => {
     } finally {
       stored.columns = declared;
     }
+  });
+});
+
+describe('a column continuation that reaches a user pass object', () => {
+  it('leaves a BB task at the next object that names the qualified forwarded endpoint', () => {
+    const v = '[d].[V]', pass = '[d].[P]', stored = '[d].[T]', writer = '[d].[W]';
+    const nodes = [
+      makeNode({ id: v, schema: 'd', name: 'V', type: 'view', columns: [column('Amount')], bodyScript: 'SELECT Amount FROM d.P;' }),
+      makeNode({ id: pass, schema: 'd', name: 'P', type: 'view', columns: [column('Amount')], bodyScript: 'SELECT Amount FROM d.T;' }),
+      makeNode({ id: stored, schema: 'd', name: 'T', type: 'table', columns: [column('Amount')] }),
+      makeNode({ id: writer, schema: 'd', name: 'W', type: 'procedure', bodyScript: 'INSERT d.T(Amount) SELECT 1;' }),
+    ];
+    const engine = engineFor(nodes, [[stored, pass], [pass, v], [writer, stored]]);
+    expect(engine.init({ origin: v, question: 'Trace Amount.', analysisMode: 'ct', targetColumns: ['Amount'], direction: 'upstream', depthIntent: upstreamAll, passNodeIds: [pass] })).toHaveProperty('ok', true);
+    engine.getHopContext();
+    expect(engine.submitFindings({ ...guardRecord(v), column_flow: [{ out_col: 'Amount', upstream_columns: [{ node: pass, col: 'Amount' }] }] })).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toMatchObject({ focus_node: { id: writer }, analysis_mode: 'bb' });
+    const tasks = engine.getCurrentTasks();
+    expect(tasks.filter(task => task.kind === 'column_lineage')).toEqual([]);
+    expect(tasks.map(task => task.question).join('\n'), 'the question names the forwarded column by its qualified endpoint').toContain(`${pass}.Amount`);
   });
 });
 
@@ -2175,5 +2227,11 @@ describe('authored column endpoints and downstream decisions', () => {
     expect(engine.submitFindings(toHopFinding(schema.parse(repair)))).toHaveProperty('ok', true);
     expect(engine.columnAspect?.edges).toEqual([expect.objectContaining({ from_node: root, from_col: 'Value', to_node: stored, to_col: 'Value' })]);
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: consumer }, analysis_mode: 'bb' });
+    // A procedure's result set is not a graph column (D-015): a column_flow naming it at the reader's BB hop is refused with nothing to resend.
+    const reader = { focus_node_id: consumer, summary: 'Reads the writer result set.', sections: [{ angle: 'technical' as const, text: 'EXEC result set kept in the hop notes.' }] };
+    expect(engine.submitFindings({ ...reader, column_flow: [{ out_col: 'Value', upstream_columns: [{ node: writer, col: 'Value' }] }] } as never)).toMatchObject({ code: 'invalid_input', resend: [] });
+    expect(engine.submitFindings(reader)).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toMatchObject({ done: true });
+    expect(engine.getResult().columnAspect!.edges.some(edge => edge.from_node === consumer || edge.to_node === consumer)).toBe(false);
   });
 });

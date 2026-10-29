@@ -18,6 +18,10 @@ export interface WalkRefusal extends WalkDecision {
 /** The hop the walk reaches at `at`, in order; `refuse` is submitted first and `decide` is the correction or the plain reply. */
 export interface WalkHop {
   at: string;
+  /** The mode the hop is served in; a BB row expects `bb` at every hop, a CT row states it where the engine hands over a BB hop. */
+  mode?: 'bb' | 'ct';
+  /** The qualified column endpoints the hop's column tasks start from, with the side of the trace each one continues. */
+  arrives?: Array<{ node: string; col: string; side: 'upstream' | 'downstream' }>;
   refuse?: WalkRefusal;
   decide: WalkDecision;
 }
@@ -26,19 +30,25 @@ export interface WalkHop {
 export interface WalkCase extends CatalogCase {
   contract: 'walk';
   mode: 'bb' | 'ct';
-  direction: 'upstream' | 'downstream';
+  direction: 'upstream' | 'downstream' | 'bidirectional';
   graph: {
     origin: string;
     nodes: Record<string, 'table' | 'view' | 'procedure'>;
-    /** Columns of every table and view; a procedure carries none. */
+    /** Columns of every table and view, and the traced columns at the origin; a procedure carries none. */
     columns: string[];
+    /** Declared columns of single objects that differ from `columns`. */
+    node_columns?: Record<string, string[]>;
+    /** Objects the user passes through: the AI does not analyze them. */
+    pass?: string[];
     /** `[source, target]`: the target reads the source, or a procedure source writes the target. */
     edges: Array<[string, string]>;
     excluded?: string[];
     levels?: number;
   };
   hops: WalkHop[];
-  expect: { nodes: string[]; edges: Array<[string, string]>; column_edges?: Array<[string, string, string, string]> };
+  expect: { nodes: string[]; edges: Array<[string, string]>; column_edges?: Array<[string, string, string, string]>;
+    /** Objects whose follow-up question the exploration keeps without visiting them. */
+    deferred?: string[] };
 }
 
 export interface CatalogCase {

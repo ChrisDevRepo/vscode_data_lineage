@@ -99,6 +99,8 @@ interface WalkOutcome {
   nodes: string[];
   edges: string[];
   columnEdges: string[];
+  /** Follow-up questions the exploration kept for objects it did not visit. */
+  deferred: string[];
 }
 
 /** Top-level fields whose value differs between two replies. */
@@ -110,18 +112,19 @@ const changedFields = (before: Record<string, unknown>, after: Record<string, un
  * questionable neighbors ahead (an exploration without a prune), whose delivered graph the closure oracle fixes.
  * Per hop: (a) the served schema offers nothing unsatisfiable and admits the reply built from its own allowed values,
  * (b) the hop message names every endpoint of the current tasks, (c) a refusal's named fields are the only change its
- * correction needs, (d) the walk ends complete, every correction accepted.
+ * correction needs, (d) the walk ends complete, every correction accepted, every hop serializes its state and is served in the mode the row expects (a BB row serves only BB hops).
  */
 export async function walkRow(row: WalkCase, scripted: boolean): Promise<WalkOutcome> {
   const { graph: spec } = row;
   const nodes = Object.entries(spec.nodes).map(([name, type]) => makeNode({ id: qualify(name), schema: 'd', name, type,
-    columns: type === 'procedure' ? [] : spec.columns.map(column), ...(type === 'table' ? {} : { bodyScript: `-- ${name}` }) }));
+    columns: type === 'procedure' ? [] : (spec.node_columns?.[name] ?? spec.columns).map(column), ...(type === 'table' ? {} : { bodyScript: `-- ${name}` }) }));
   const edges = spec.edges.map(([from, to]) => [qualify(from), qualify(to)] as [string, string]);
   const walk = openModelWalk(makeIndexedModel(nodes, edges), makeGraph(nodes, edges));
-  const up = row.direction === 'upstream', depth = spec.levels ?? 'all';
+  const depth = spec.levels ?? 'all';
   const engine = startWalk(walk, { origin: qualify(spec.origin), question: `Trace ${spec.columns.join(', ')}`, analysisMode: row.mode, direction: row.direction,
     ...(row.mode === 'ct' ? { targetColumns: spec.columns } : {}), excludeNodeIds: (spec.excluded ?? []).map(qualify),
-    depthIntent: { upstream: { levels: up ? depth : 0, exactness: 'exact' }, downstream: { levels: up ? 0 : depth, exactness: 'exact' } } }, 'technical');
+    ...(spec.pass ? { passNodeIds: spec.pass.map(qualify) } : {}),
+    depthIntent: { upstream: { levels: row.direction === 'downstream' ? 0 : depth, exactness: 'exact' }, downstream: { levels: row.direction === 'upstream' ? 0 : depth, exactness: 'exact' } } }, 'technical');
   const violations: string[] = [];
   engine.getHopContext();
   for (let step = 0; engine.status === 'awaiting_findings' && step <= nodes.length + 1; step++) {
@@ -129,6 +132,7 @@ export async function walkRow(row: WalkCase, scripted: boolean): Promise<WalkOut
     const view: HopView = { focus, type: nodes.find(node => node.id === focus)!.type, mode: engine.currentHopAnalysisMode };
     const neighbors = (engine.peekHopContext()!.neighbors ?? []) as unknown as readonly HopNeighborDisclosure[];
     const ahead = neighbors.filter(neighbor => neighbor.can_question && !neighbor.out_of_direction).map(neighbor => shorten(neighbor.id));
+    try { engine.toJSON(); } catch (error) { violations.push(`(d) ${name}: the engine state cannot be serialized: ${String(error)}`); }
     const schema = hopTools(walk).find(tool => tool.name === 'lineage_submit_findings')!.inputSchema as Schema;
     for (const field of unsatisfiableOffers(schema)) violations.push(`(a) ${name}: ${field} offers entries no allowed value satisfies`);
     const canonical = authorReply(view, { ask: neighbors.filter(neighbor => neighbor.can_question).map(neighbor => shorten(neighbor.id)) });
@@ -141,6 +145,13 @@ export async function walkRow(row: WalkCase, scripted: boolean): Promise<WalkOut
     }
     const hop = scripted ? row.hops[step] : { at: name, decide: { ask: ahead, map: [] } };
     if (hop?.at !== name) { violations.push(`(d) the walk reached ${name} where the row expects ${hop?.at}`); break; }
+    const wanted = ('mode' in hop && hop.mode) || (row.mode === 'bb' ? 'bb' : undefined);
+    if (wanted && wanted !== view.mode) violations.push(`(d) ${name}: served as a ${view.mode} hop where the row expects ${wanted}`);
+    if ('arrives' in hop && hop.arrives) {
+      const served = engine.getCurrentTasks().flatMap(task => task.kind === 'column_lineage' ? (task.sourceRefs ?? []).map(ref => `${shorten(ref.node)}.${ref.col} ${task.traversalSide}`) : []).sort();
+      const wantedRefs = hop.arrives.map(ref => `${ref.node}.${ref.col} ${ref.side}`).sort();
+      if (JSON.stringify(served) !== JSON.stringify(wantedRefs)) violations.push(`(d) ${name}: the hop's column tasks are ${served.join(', ')} where the row expects ${wantedRefs.join(', ')}`);
+    }
     if ('refuse' in hop && hop.refuse) {
       const refused = authorReply(view, hop.refuse);
       const rejection = readToolErrorText(await walk.registry.invoke('lineage_submit_findings', refused)) as ToolRejection | null;
@@ -158,9 +169,10 @@ export async function walkRow(row: WalkCase, scripted: boolean): Promise<WalkOut
     if (result.ok !== true) { violations.push(`(d) ${name}: the reply was not accepted: ${JSON.stringify(result.errors ?? result)}`); break; }
   }
   if (engine.status !== 'complete') violations.push(`(d) the walk ended in status ${engine.status}`);
-  else if (scripted && row.hops.length !== engine.toJSON().visited.filter(id => spec.nodes[shorten(id)] !== 'table').length) violations.push('(d) the row scripts a different number of hops than the walk ran');
+  else if (scripted && row.hops.length !== engine.toJSON().visited.filter(id => spec.nodes[shorten(id)] !== 'table' && !spec.pass?.includes(shorten(id))).length) violations.push('(d) the row scripts a different number of hops than the walk ran');
   const done = engine.status === 'complete' ? engine.getResult() : null;
   return { violations, nodes: done ? done.fullNodes.map(node => shorten(node.id)).sort() : [], edges: done ? pairs(done.edges) : [],
+    deferred: engine.deferredQuestions.map(question => shorten(question.nodeId)).sort(),
     columnEdges: done?.columnAspect ? done.columnAspect.edges.map(edge => `${shorten(edge.from_node)}.${edge.from_col}>${shorten(edge.to_node)}.${edge.to_col}`).sort() : [] };
 }
 
@@ -168,6 +180,6 @@ export async function walkRow(row: WalkCase, scripted: boolean): Promise<WalkOut
 export function closureOutcome(row: WalkCase): { nodes: string[]; edges: string[] } {
   const { edges, origin, excluded = [], levels } = row.graph;
   const eligible = edges.filter(([from, to]) => !excluded.includes(from) && !excluded.includes(to));
-  const reached = directedClosure(origin, eligible, row.direction === 'upstream', levels);
+  const reached = new Set([...(row.direction === 'downstream' ? [] : directedClosure(origin, eligible, true, levels)), ...(row.direction === 'upstream' ? [] : directedClosure(origin, eligible, false, levels))]);
   return { nodes: [...reached].sort(), edges: eligible.filter(([from, to]) => reached.has(from) && reached.has(to)).map(([from, to]) => `${from}>${to}`).sort() };
 }

@@ -16,6 +16,7 @@ describe('catalog walk rows', () => {
       expect(outcome.nodes).toEqual([...row.expect.nodes].sort());
       expect(outcome.edges).toEqual(row.expect.edges.map(([from, to]) => `${from}>${to}`).sort());
       expect(outcome.columnEdges).toEqual((row.expect.column_edges ?? []).map(([from, fromCol, to, toCol]) => `${from}.${fromCol}>${to}.${toCol}`).sort());
+      if (row.expect.deferred) expect(outcome.deferred).toEqual([...row.expect.deferred].sort());
     });
 
     it(`generic: asking every open neighbor ahead delivers the directed closure`, async () => {

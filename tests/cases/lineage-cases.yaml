@@ -658,6 +658,243 @@ cases:
       edges: [[Root, C1], [C1, W], [W, T]]
       column_edges: [[C1, X, T, X], [Root, X, C1, X]]
 
+  # Qualified continuation, procedure outputs and bidirectional sides (ENG-08 I4). `node_columns` gives single objects their own declared columns,
+  # `pass` names user pass objects, a hop's `mode` states a hand-over to a BB hop and `deferred` the follow-up questions kept for unvisited objects.
+  - id: walk-ct-rename-continues-from-qualified-endpoint
+    story: A mapped contributor is continued from its own qualified column, not from the traced column's name.
+    runners: [scripted]
+    contract: walk
+    mode: ct
+    direction: upstream
+    graph:
+      origin: V
+      nodes: { V: view, A: view, Src: table }
+      columns: [Amount]
+      node_columns: { A: [Net], Src: [Raw] }
+      edges: [[A, V], [Src, A]]
+    hops:
+      - { at: V, decide: { map: [{ col: Amount, from: [{ node: A, col: Net }] }] } }
+      - { at: A, arrives: [{ node: A, col: Net, side: upstream }], decide: { map: [{ col: Net, from: [{ node: Src, col: Raw }] }] } }
+    expect:
+      nodes: [V, A, Src]
+      edges: [[A, V], [Src, A]]
+      column_edges: [[A, Net, V, Amount], [Src, Raw, A, Net]]
+
+  - id: walk-ct-mapping-past-depth-border-refused
+    story: With one level approved a mapping from the object past the border is refused at the supplier; the correction ends the column and keeps the question as a follow-up.
+    runners: [scripted]
+    contract: walk
+    mode: ct
+    direction: upstream
+    graph:
+      origin: V
+      nodes: { V: view, A: view, S1: view, S2: view }
+      columns: [Amount]
+      edges: [[A, V], [S1, A], [S2, A]]
+      levels: 1
+    hops:
+      - { at: V, decide: { map: [{ col: Amount, from: [{ node: A, col: Amount }] }] } }
+      - at: A
+        arrives: [{ node: A, col: Amount, side: upstream }]
+        refuse: { map: [{ col: Amount, from: [{ node: S1, col: Amount }] }], kind: invalid_input, field: column_flow.0.upstream_columns.0.node, issue: column_out_of_scope }
+        decide: { map: [{ col: Amount, from: [] }], ask: [S1] }
+    expect:
+      nodes: [V, A]
+      edges: [[A, V]]
+      column_edges: [[A, Amount, V, Amount]]
+      deferred: [S1]
+
+  - id: walk-ct-unresolved-arrival-keeps-stored-endpoint
+    story: The arriving stored column is not an output of its producer; the hop cannot name it as a local output, so it prunes the producer's input and no edge touches the producer.
+    runners: [scripted]
+    contract: walk
+    mode: ct
+    direction: upstream
+    graph:
+      origin: Origin
+      nodes: { Origin: view, Carrier: table, Producer: view, Source: table }
+      columns: [Net]
+      node_columns: { Carrier: [Raw], Source: [Input] }
+      edges: [[Carrier, Origin], [Producer, Carrier], [Source, Producer]]
+    hops:
+      - { at: Origin, decide: { map: [{ col: Net, from: [{ node: Carrier, col: Raw }] }] } }
+      - at: Producer
+        arrives: [{ node: Carrier, col: Raw, side: upstream }]
+        refuse: { map: [{ col: Raw, from: [] }], prune: [Source], kind: invalid_input, field: column_flow.0.out_col, issue: unknown_column }
+        decide: { map: [], prune: [Source] }
+    expect:
+      nodes: [Origin, Carrier, Producer]
+      edges: [[Carrier, Origin], [Producer, Carrier]]
+      column_edges: [[Carrier, Raw, Origin, Net]]
+
+  - id: walk-ct-user-pass-node-continues-as-bb-question
+    story: A column continuation that reaches a user pass object stays a question on its source; the next hop is a BB hop and only the authored pair is delivered.
+    runners: [scripted]
+    contract: walk
+    mode: ct
+    direction: upstream
+    graph:
+      origin: V
+      nodes: { V: view, P: view, T: table, W: procedure, Src: table }
+      columns: [Amount]
+      node_columns: { Src: [Raw] }
+      edges: [[T, P], [P, V], [W, T], [Src, W]]
+      pass: [P]
+    hops:
+      - { at: V, decide: { map: [{ col: Amount, from: [{ node: P, col: Amount }] }] } }
+      - { at: W, mode: bb, arrives: [], decide: { ask: [Src] } }
+    expect:
+      nodes: [V, P, T, W, Src]
+      edges: [[T, P], [P, V], [W, T], [Src, W]]
+      column_edges: [[P, Amount, V, Amount]]
+
+  - id: walk-ct-delete-only-writer-adds-no-edge
+    story: A writer that only deletes from the stored table maps nothing; the loading procedure's pair is the only column edge.
+    runners: [scripted]
+    contract: walk
+    mode: ct
+    direction: upstream
+    graph:
+      origin: Root
+      nodes: { Root: view, Owed: table, Other: table, Source: table, ArchiveWriter: procedure, Producer: procedure }
+      columns: [Amount]
+      edges: [[Owed, Root], [ArchiveWriter, Owed], [Owed, ArchiveWriter], [ArchiveWriter, Other], [Source, Producer], [Producer, Owed]]
+    hops:
+      - { at: Root, decide: { map: [{ col: Amount, from: [{ node: Owed, col: Amount }] }] } }
+      - { at: ArchiveWriter, arrives: [{ node: Owed, col: Amount, side: upstream }], decide: { map: [] } }
+      - { at: Producer, arrives: [{ node: Owed, col: Amount, side: upstream }], decide: { map: [{ col: Amount, to: Owed, from: [{ node: Source, col: Amount }] }] } }
+    expect:
+      nodes: [Root, Owed, ArchiveWriter, Producer, Source]
+      edges: [[Owed, Root], [ArchiveWriter, Owed], [Owed, ArchiveWriter], [Source, Producer], [Producer, Owed]]
+      column_edges: [[Owed, Amount, Root, Amount], [Source, Amount, Owed, Amount]]
+
+  - id: walk-bb-delete-only-writer-same-objects
+    story: The BB walk of the same graph reaches the same objects and edges as the CT walk.
+    runners: [scripted]
+    contract: walk
+    mode: bb
+    direction: upstream
+    graph:
+      origin: Root
+      nodes: { Root: view, Owed: table, Other: table, Source: table, ArchiveWriter: procedure, Producer: procedure }
+      columns: [Amount]
+      edges: [[Owed, Root], [ArchiveWriter, Owed], [Owed, ArchiveWriter], [ArchiveWriter, Other], [Source, Producer], [Producer, Owed]]
+    hops:
+      - { at: Root, decide: { ask: [Owed] } }
+      - { at: ArchiveWriter, decide: {} }
+      - { at: Producer, decide: { ask: [Source] } }
+    expect:
+      nodes: [Root, Owed, ArchiveWriter, Producer, Source]
+      edges: [[Owed, Root], [ArchiveWriter, Owed], [Owed, ArchiveWriter], [Source, Producer], [Producer, Owed]]
+
+  - id: walk-ct-bidirectional-consumer-writes-destination
+    story: Traced both ways, a consumer procedure downstream of the origin maps the origin column into the table it loads.
+    runners: [scripted]
+    contract: walk
+    mode: ct
+    direction: bidirectional
+    graph:
+      origin: Origin
+      nodes: { Origin: view, Source: table, Consumer: procedure, Destination: table }
+      columns: [Discount]
+      node_columns: { Source: [Amount] }
+      edges: [[Source, Origin], [Origin, Consumer], [Consumer, Destination]]
+    hops:
+      - { at: Origin, decide: { map: [{ col: Discount, from: [{ node: Source, col: Amount }] }], ask: [Consumer] } }
+      - { at: Consumer, arrives: [{ node: Origin, col: Discount, side: downstream }], decide: { map: [{ col: Discount, to: Destination, from: [{ node: Origin, col: Discount }] }] } }
+    expect:
+      nodes: [Origin, Source, Consumer, Destination]
+      edges: [[Source, Origin], [Origin, Consumer], [Consumer, Destination]]
+      column_edges: [[Source, Amount, Origin, Discount], [Origin, Discount, Destination, Discount]]
+
+  - id: walk-ct-bidirectional-exec-reader-is-bb-hop
+    story: A procedure's result set is not a graph column; the object that reads it is served a BB hop, and only the write into the stored table is a column edge.
+    runners: [scripted]
+    contract: walk
+    mode: ct
+    direction: bidirectional
+    graph:
+      origin: Origin
+      nodes: { Origin: view, Writer: procedure, Saved: table, Reader: procedure, Buffer: table }
+      columns: [Discount]
+      node_columns: { Saved: [Amount], Buffer: [Discount] }
+      edges: [[Origin, Writer], [Writer, Saved], [Writer, Reader], [Reader, Buffer]]
+    hops:
+      - { at: Origin, decide: { map: [{ col: Discount, from: [] }], ask: [Writer] } }
+      - { at: Writer, arrives: [{ node: Origin, col: Discount, side: downstream }], decide: { map: [{ col: Amount, to: Saved, from: [{ node: Origin, col: Discount }] }], ask: [Reader] } }
+      - { at: Reader, mode: bb, arrives: [], decide: { ask: [Buffer] } }
+    expect:
+      nodes: [Origin, Writer, Saved, Reader, Buffer]
+      edges: [[Origin, Writer], [Writer, Saved], [Writer, Reader], [Reader, Buffer]]
+      column_edges: [[Origin, Discount, Saved, Amount]]
+
+  - id: walk-ct-bidirectional-shared-writer-both-sides
+    story: A writer reached from both sides maps its two destinations from the origin column and prunes the input that supplies nothing.
+    runners: [scripted]
+    contract: walk
+    mode: ct
+    direction: bidirectional
+    graph:
+      origin: Origin
+      nodes: { Origin: view, Owed: table, Writer: procedure, Other: table, Foreign: table }
+      columns: [Discount]
+      edges: [[Owed, Origin], [Origin, Writer], [Writer, Owed], [Writer, Other], [Foreign, Writer]]
+    hops:
+      - { at: Origin, decide: { map: [{ col: Discount, from: [{ node: Owed, col: Discount }] }], ask: [Writer] } }
+      - at: Writer
+        arrives: [{ node: Owed, col: Discount, side: upstream }, { node: Origin, col: Discount, side: downstream }]
+        decide:
+          map:
+            - { col: Discount, to: Owed, from: [{ node: Origin, col: Discount }] }
+            - { col: Discount, to: Other, from: [{ node: Origin, col: Discount }] }
+          prune: [Foreign]
+    expect:
+      nodes: [Origin, Owed, Writer, Other]
+      edges: [[Owed, Origin], [Origin, Writer], [Writer, Owed], [Writer, Other]]
+      column_edges: [[Owed, Discount, Origin, Discount], [Origin, Discount, Owed, Discount], [Origin, Discount, Other, Discount]]
+
+  - id: walk-ct-bidirectional-terminal-input-ends-at-writer
+    story: A writer that stores only literals ends the arriving input there; its stored destination is asked, and the reader behind it gets a BB hop.
+    runners: [scripted]
+    contract: walk
+    mode: ct
+    direction: bidirectional
+    graph:
+      origin: Origin
+      nodes: { Origin: view, Owed: table, Writer: procedure, Other: table, Reader: view, Sink: table }
+      columns: [Discount]
+      edges: [[Owed, Origin], [Origin, Writer], [Writer, Owed], [Writer, Other], [Other, Reader], [Reader, Sink]]
+    hops:
+      - { at: Origin, decide: { map: [{ col: Discount, from: [{ node: Owed, col: Discount }] }], ask: [Writer] } }
+      - { at: Writer, arrives: [{ node: Owed, col: Discount, side: upstream }, { node: Origin, col: Discount, side: downstream }], decide: { map: [{ col: Discount, to: Owed, from: [] }], ask: [Other] } }
+      - { at: Reader, mode: bb, arrives: [], decide: { ask: [Sink] } }
+    expect:
+      nodes: [Origin, Owed, Writer, Other, Reader, Sink]
+      edges: [[Owed, Origin], [Origin, Writer], [Writer, Owed], [Writer, Other], [Other, Reader], [Reader, Sink]]
+      column_edges: [[Owed, Discount, Origin, Discount]]
+
+  - id: walk-ct-bidirectional-each-side-keeps-its-leg
+    story: Each side of a bidirectional trace continues on its own qualified leg, and every delivered edge chains back to the origin.
+    runners: [scripted]
+    contract: walk
+    mode: ct
+    direction: bidirectional
+    graph:
+      origin: O
+      nodes: { O: view, A: view, Raw: table, C: view, D: view, Sink: table }
+      columns: [Amount]
+      node_columns: { C: [Total], D: [Total], Sink: [Total] }
+      edges: [[Raw, A], [A, O], [O, C], [C, D], [D, Sink]]
+    hops:
+      - { at: O, decide: { map: [{ col: Amount, from: [{ node: A, col: Amount }] }], ask: [C] } }
+      - { at: A, arrives: [{ node: A, col: Amount, side: upstream }], decide: { map: [{ col: Amount, from: [{ node: Raw, col: Amount }] }] } }
+      - { at: C, arrives: [{ node: O, col: Amount, side: downstream }], decide: { map: [{ col: Total, from: [{ node: O, col: Amount }] }], ask: [D] } }
+      - { at: D, arrives: [{ node: C, col: Total, side: downstream }], decide: { map: [{ col: Total, from: [{ node: C, col: Total }] }], ask: [Sink] } }
+    expect:
+      nodes: [O, A, Raw, C, D, Sink]
+      edges: [[Raw, A], [A, O], [O, C], [C, D], [D, Sink]]
+      column_edges: [[A, Amount, O, Amount], [Raw, Amount, A, Amount], [O, Amount, C, Total], [C, Total, D, Total]]
+
   - id: playwright-open-demo
     runners: [playwright]
     command: "Data Lineage: Open Demo"
