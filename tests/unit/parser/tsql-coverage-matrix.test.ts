@@ -139,5 +139,5 @@ describe('the ANSI-89 comma-list scan is linear in the size of the body', () => 
       expect(time / Math.max(times.cpu[i], 0.01), `cpu scaling from ${SIZES_KB[i]} to ${SIZES_KB[i + 1]} KB`)
         .toBeLessThan(MAX_RATIO_PER_DOUBLING);
     });
-  });
+  }, RUNS * SIZES_KB.length * MAX_SECONDS * 1000); // the runner's timeout must not cut below the elapsed cap asserted above
 });
