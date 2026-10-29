@@ -500,7 +500,9 @@ describe('stored-column arrival admission and delivery', () => {
     const arrivals = engine.toJSON().engineInternals.investigationTasks.filter(task => task.kind === 'column_lineage' && task.status === 'pending');
     expect(arrivals.find(task => task.nodeId === left)).toMatchObject({ activeColumns: ['SavedLeft'], sourceRefs: [{ node: left, col: 'SavedLeft' }] });
     expect(arrivals.find(task => task.nodeId === right)).toMatchObject({ activeColumns: ['SavedRight'], sourceRefs: [{ node: right, col: 'SavedRight' }] });
-    expect(arrivals.some(task => task.nodeId === reader && 'sourceRefs' in task)).toBe(false);
+    const readerTasks = engine.toJSON().engineInternals.investigationTasks.filter(task => task.nodeId === reader);
+    expect(readerTasks).toEqual([expect.objectContaining({ kind: 'analytical', status: 'pending' })]);
+    expect(readerTasks[0]).not.toHaveProperty('sourceRefs');
     expect(engine.columnAspect!.edges.map(edge => `${edge.from_node}.${edge.from_col}->${edge.to_node}.${edge.to_col}`)).toEqual([
       `${producer}.SavedLeft->${left}.SavedLeft`, `${producer}.SavedRight->${right}.SavedRight`,
     ]);
