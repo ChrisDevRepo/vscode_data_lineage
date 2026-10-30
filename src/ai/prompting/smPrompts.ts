@@ -2,7 +2,7 @@
 
 import { buildColumnAspectPrompt } from './prompts';
 import { escapePromptText } from '../support/text';
-import { assignEvidenceIds, requiredCtChainNodeIds } from '../tools/presentResult';
+import { assignEvidenceIds, requiredCtChainNodeIds, requiredDetailSlotIds } from '../tools/presentResult';
 import type { ColumnEdge, DeferredQuestion, SmResult } from '../sm/smTypes';
 import { schemaKey } from '../../utils/sql';
 
@@ -375,6 +375,8 @@ export function buildSmCompletionEnvelope(
   const passthroughBlock = passthroughFacts ? '\n' + passthroughFacts : '';
   const formulaFacts = buildCapturedFormulaFacts(result, identifierCaseSensitive);
   const formulaBlock = formulaFacts ? '\n' + formulaFacts : '';
+  const mustLink = requiredDetailSlotIds(result.detail_slots.map(slot => slot.nodeId), presented);
+  const mustLinkBlock = mustLink.length > 0 ? `\nLink in \`sections[].node_ids\`: ${mustLink.join(', ')}` : '';
   const mustCover = requiredCtChainNodeIds(
     result.columnAspect?.edges ?? [], presentedNodeIds,
     [...result.detail_slots.map(slot => slot.nodeId), ...result.node_states.filter(state => state.action === 'prune').map(state => state.nodeId)],
@@ -392,6 +394,6 @@ export function buildSmCompletionEnvelope(
       detail_slots: assignEvidenceIds(result.detail_slots).slots,
       ...(deferredQuestions.length ? { deferred_questions: deferredQuestions } : {}),
     },
-    synthesis_reminder: buildSynthesisReminder(userQuestion) + flowBlock + analyzedBlock + passthroughBlock + formulaBlock + mustCoverBlock,
+    synthesis_reminder: buildSynthesisReminder(userQuestion) + flowBlock + analyzedBlock + passthroughBlock + formulaBlock + mustLinkBlock + mustCoverBlock,
   };
 }
