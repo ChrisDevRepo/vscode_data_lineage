@@ -243,7 +243,7 @@ type CapturedSectionsWire = z.infer<typeof CapturedSectionsSchema>;
 const PRUNE_NEIGHBORS_DESCRIPTION =
   'Optional. A neighbor is either mapped or questioned (kept) or pruned, never both. '
   + 'Name each `can_prune: true` neighbor that supplies neither a value nor a join, filter, group or order column to an output column. A neighbor that does is mapped. '
-  + 'That neighbor and whatever only it leads to are removed. The focus stays on the graph, including when every neighbor is named (a dead end).';
+  + 'That neighbor and whatever only it leads to are removed. The focus stays on the graph, including when every neighbor is named (a dead end). A neighbor named here gets no questions entry.';
 
 /** One `prune_neighbors[]` entry: the neighbour and why this node's SQL shows it is off the answer. */
 const PruneNeighborSchema = z.object({
@@ -292,7 +292,7 @@ const ColumnRefSchema = z.object({
 }).strict().meta(SUPPLIER_FACT).describe('One source column entry inside upstream_columns: fields node, col, transforms, note.');
 
 /** One closed `column_flow` entry; provider projection and runtime parsing reject surplus keys. */
-const OUT_COL_DESCRIPTION = "Output column of this hop from its column task; for a procedure, the column it writes. Never invent names.";
+const OUT_COL_DESCRIPTION = "Output column resolved from this hop\'s column task; for a procedure, the column it writes to out_node.";
 const OUT_NODE_DESCRIPTION = 'Table from <hop_context> that this procedure writes out_col to. For a write to an object not listed, omit the entry and name the write in sections.';
 const UPSTREAM_DESCRIPTION = 'Neighbor columns that feed out_col: value sources (expression operands, aggregate arguments, each UNION branch column, caller-bound inputs) and columns that only join, filter, group or order its rows. ' +
   'Exclude the entry’s own out_node column, unused expressions and columns only copied alongside out_col (SELECT *, the rest of a column list). Resolve parameters and aliases to source columns.';
