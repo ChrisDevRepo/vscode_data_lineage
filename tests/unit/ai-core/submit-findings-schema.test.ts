@@ -3,6 +3,7 @@
 import Ajv from 'ajv/dist/2020';
 import { validateToolCandidate } from '../../../src/ai/support/toolValidation';
 import { schemaFaults, withSchemaFaults } from './helpers/toolServices';
+import { canonicalResend } from '../helpers/testUtils';
 import { describe, expect, it, vi } from 'vitest';
 import {
   SubmitFindingsCtInputSchema,
@@ -61,6 +62,7 @@ describe('fresh kept required-field projection', () => {
         identifierCaseSensitive: row.caseSensitive,
       });
       const input = {
+        summary: 'Recorded findings.',
         column_flow: [
           {
             out_col: 'Value',
@@ -79,33 +81,34 @@ describe('fresh kept required-field projection', () => {
       if (!row.accepted) expect(normalized).toEqual({ input, fixes: [] });
     },
   );
-  it.each(['bb', 'view', 'procedure', 'scalar', 'held'] as const)(
+  it.each(['bb', 'view', 'procedure', 'scalar', 'revisit'] as const)(
     'keeps normalized metadata identities coherent with the served %s schema',
     (kind) => {
       const source = '[dbo].[Source]',
         caller = '[dbo].[Caller]';
       const mode = kind === 'bb' ? 'bb' : 'ct';
-      const held = kind === 'held';
-      const schema = submitFindingsSchemaForMode(
-        mode,
-        'technical',
-        !held,
-        {
-          outCols: ['Value'],
-          outNode: kind === 'procedure',
-          columnSourceNodeIds: [source],
-          ...(kind === 'scalar'
-            ? { columnDestinations: [{ node: caller, col: 'Value' }] }
-            : {}),
-          neighbors: [{ id: source, can_question: true, can_prune: true }],
-        },
-        held,
-      );
+      // A revisit serves the composed schema: archived sections stay omitted, summary and flow are resent.
+      const held = kind === 'revisit';
+      const schema = submitFindingsSchemaForMode(mode, 'technical', !held, {
+        outCols: ['Value'],
+        outNode: kind === 'procedure',
+        columnSourceNodeIds: [source],
+        ...(kind === 'scalar'
+          ? { columnDestinations: [{ node: caller, col: 'Value' }] }
+          : {}),
+        neighbors: [{ id: source, can_question: true, can_prune: true }],
+      });
       const input = {
-        ...(!held
+        summary: 'Recorded findings.',
+        ...(!held ? { sections: { technical: 'Authored findings.' } } : {}),
+        ...(held
           ? {
-              summary: 'Recorded findings.',
-              sections: { technical: 'Authored findings.' },
+              column_flow: [
+                {
+                  out_col: 'Value',
+                  upstream_columns: [{ node: source, col: 'Value' }],
+                },
+              ],
             }
           : {}),
         ...(kind === 'bb' || held
@@ -156,7 +159,7 @@ describe('fresh kept required-field projection', () => {
       expect(input).toEqual(before);
     },
   );
-  it('describes held sections as omittable in the actual provider schema', () => {
+  it('describes revisit sections as omittable in the actual provider schema', () => {
     const fresh = toModelJsonSchema(
       submitFindingsSchemaForMode('ct', 'business', true),
     ) as {
@@ -166,19 +169,13 @@ describe('fresh kept required-field projection', () => {
     expect(fresh.properties.sections.description).toMatch(/^Required\./);
     for (const classification of ['business', undefined] as const) {
       const held = toModelJsonSchema(
-        submitFindingsSchemaForMode(
-          'ct',
-          classification,
-          false,
-          undefined,
-          true,
-        ),
+        submitFindingsSchemaForMode('ct', classification, false),
       ) as {
         properties: Record<string, { description: string; pattern?: string }>;
         required?: string[];
       };
       expect(held.properties.sections.description).not.toMatch(/^Required\./);
-      expect(held.properties.sections.description).toContain('held');
+      expect(held.properties.sections.description).toContain('earlier visit');
     }
   });
 
@@ -338,7 +335,12 @@ describe('fresh kept required-field projection', () => {
           ],
         },
       ]) {
-        const input = { focus_node_id: 'focus', column_flow: [], ...part };
+        const input = {
+          focus_node_id: 'focus',
+          summary: 'Recorded findings.',
+          column_flow: [],
+          ...part,
+        };
         const schema = submitFindingsSchemaForMode('ct', undefined, false, hop);
         const before = structuredClone(input);
         const normalized = normalizeModelInput(schema, input);
@@ -354,6 +356,7 @@ describe('fresh kept required-field projection', () => {
       }
       const input = {
         focus_node_id: 'focus',
+        summary: 'Recorded findings.',
         column_flow: [
           { out_col: 'Value', upstream_columns: [], out_node: raw },
         ],
@@ -394,6 +397,7 @@ describe('fresh kept required-field projection', () => {
     const wire = new Ajv({ strict: false }).compile(projected);
     const input = {
       focus_node_id: 'focus',
+      summary: 'Recorded findings.',
       ...(mode === 'ct' ? { column_flow: [] } : {}),
       questions: [],
       prune_neighbors: [],
@@ -420,6 +424,7 @@ describe('fresh kept required-field projection', () => {
         const schema = submitFindingsSchemaForMode(mode, undefined, false, hop);
         const input = {
           focus_node_id: 'focus',
+          summary: 'Recorded findings.',
           ...(mode === 'ct' ? { column_flow: [] } : {}),
           questions: [{ nodeId: 'unbound', question: 'Explain this object.' }],
         };
@@ -466,6 +471,7 @@ describe('fresh kept required-field projection', () => {
       ]) {
         const input = {
           focus_node_id: 'focus',
+          summary: 'Recorded findings.',
           ...(mode === 'ct' ? { column_flow: [] } : {}),
           questions: [{ nodeId: raw, question: 'Explain this object.' }],
         };
@@ -486,6 +492,7 @@ describe('fresh kept required-field projection', () => {
       }
       const openInput = {
         focus_node_id: 'focus',
+        summary: 'Recorded findings.',
         ...(mode === 'ct' ? { column_flow: [] } : {}),
         questions: [{ nodeId: 'dbo.open', question: 'Explain this object.' }],
       };
@@ -517,6 +524,7 @@ describe('fresh kept required-field projection', () => {
         for (const prune of [false, true]) {
           const input = {
             focus_node_id: 'focus',
+            summary: 'Recorded findings.',
             ...(mode === 'ct' ? { column_flow: [] } : {}),
             ...(prune
               ? { prune_neighbors: [{ id, reason: 'Off path.' }] }
@@ -554,6 +562,7 @@ describe('fresh kept required-field projection', () => {
         });
         const input = {
           focus_node_id: 'focus',
+          summary: 'Recorded findings.',
           column_flow: [
             {
               out_col: name,
@@ -673,29 +682,35 @@ describe('fresh kept required-field projection', () => {
   );
 
   it.each(['', '   '])(
-    'rejects an explicitly blank repair summary %j instead of retaining an older summary silently',
+    'rejects a blank %j or omitted revisit summary while archived sections stay omitted',
     (summary) => {
       const schema = submitFindingsSchemaForMode('ct', 'technical', false);
+      for (const omitted of [{ summary }, {}])
+        expect(
+          validateToolCandidate(schema, {
+            focus_node_id: 'source',
+            ...omitted,
+            column_flow: [],
+          }).success,
+        ).toBe(false);
       expect(
         validateToolCandidate(schema, {
           focus_node_id: 'source',
-          summary,
-          column_flow: [],
-        }).success,
-      ).toBe(false);
-      expect(
-        validateToolCandidate(schema, {
-          focus_node_id: 'source',
+          summary: 'Recorded findings.',
           column_flow: [],
         }).success,
       ).toBe(true);
     },
   );
 
-  it('accepts held patches without resending held content', () => {
+  it('accepts a revisit finding without resending archived sections', () => {
     const schema = submitFindingsSchemaForMode('ct', 'both', false);
     const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
-    const patch = { focus_node_id: 'source', column_flow: [] };
+    const patch = {
+      focus_node_id: 'source',
+      summary: 'Recorded findings.',
+      column_flow: [],
+    };
     expect(validateToolCandidate(schema, patch).success).toBe(true);
     expect(wire(patch)).toBe(true);
     const oneAngle = {
@@ -706,22 +721,21 @@ describe('fresh kept required-field projection', () => {
     expect(wire(oneAngle)).toBe(true);
   });
 
-  it('admits only corrections when a valid CT flow is held in both provider and runtime schemas', () => {
-    const held = submitFindingsSchemaForMode(
-      'ct',
-      'both',
-      false,
-      undefined,
-      true,
-    );
-    const unheld = submitFindingsSchemaForMode('ct', 'both', false);
-    const ajv = new Ajv({ strict: false });
-    const wire = ajv.compile(toModelJsonSchema(held));
-    const unheldWire = ajv.compile(toModelJsonSchema(unheld));
-    const envelope = { focus_node_id: 'source' };
+  it('requires the held CT flow and summary to be resent with each correction in both provider and runtime schemas', () => {
+    // D-099: the served schema is the canonical fresh contract; D-098: a resent field replaces the held one.
+    const served = submitFindingsSchemaForMode('ct', 'both', true);
+    const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(served));
+    const held = {
+      focus_node_id: 'source',
+      summary: 'Held summary.',
+      sections: { business: 'Held rule.', technical: 'Held mechanics.' },
+      column_flow: [],
+    };
     const corrections = [
       { summary: 'Corrected summary.' },
-      { sections: { technical: 'Corrected mechanics.' } },
+      {
+        sections: { business: 'Held rule.', technical: 'Corrected mechanics.' },
+      },
       {
         questions: [
           { nodeId: 'neighbor', question: 'Establish its contribution.' },
@@ -732,23 +746,24 @@ describe('fresh kept required-field projection', () => {
           { id: 'neighbor', reason: 'SQL shows no contribution.' },
         ],
       },
+      { column_flow: [] },
     ];
     for (const correction of corrections) {
-      const patch = { ...envelope, ...correction };
-      expect(validateToolCandidate(held, patch).success).toBe(true);
-      expect(wire(patch)).toBe(true);
-      expect(validateToolCandidate(unheld, patch).success).toBe(false);
-      expect(unheldWire(patch)).toBe(false);
-    }
-    for (const patch of [{ ...envelope, column_flow: [] }]) {
-      expect(validateToolCandidate(held, patch).success).toBe(true);
-      expect(wire(patch)).toBe(true);
+      const partial = { focus_node_id: 'source', ...correction };
+      expect(validateToolCandidate(served, partial).success).toBe(false);
+      expect(wire(partial)).toBe(false);
+      const resend = canonicalResend(toModelJsonSchema(served), held, {
+        focus_node_id: 'source',
+        ...correction,
+      });
+      expect(validateToolCandidate(served, resend).success).toBe(true);
+      expect(wire(resend)).toBe(true);
     }
     for (const patch of [
-      { ...envelope, extra: true },
-      { ...envelope, questions: [{ nodeId: 'neighbor' }] },
+      { ...held, extra: true },
+      { ...held, questions: [{ nodeId: 'neighbor' }] },
     ]) {
-      expect(validateToolCandidate(held, patch).success).toBe(false);
+      expect(validateToolCandidate(served, patch).success).toBe(false);
       expect(wire(patch)).toBe(false);
     }
   });
@@ -790,12 +805,13 @@ describe('fresh kept required-field projection', () => {
   );
 
   it.each(['bb', 'ct'] as const)(
-    'honours a held submission without a classification in %s',
+    'honours a revisit submission without a classification in %s',
     (mode) => {
       const held = submitFindingsSchemaForMode(mode, undefined, false);
       const fresh = submitFindingsSchemaForMode(mode, undefined, true);
       const patch = {
         focus_node_id: 'source',
+        summary: 'Recorded findings.',
         ...(mode === 'ct' ? { column_flow: [] } : {}),
       };
       expect(validateToolCandidate(held, patch).success).toBe(true);
@@ -929,7 +945,7 @@ it.each(
     })),
   ),
 )(
-  'preserves declared summary guidance on the $mode/$classification repair schema',
+  'preserves declared summary guidance on the $mode/$classification revisit schema',
   ({ mode, classification }) => {
     const fresh = toModelJsonSchema(
       submitFindingsSchemaForMode(mode, classification, true),
@@ -947,7 +963,7 @@ it.each(
       fresh.properties.summary.description,
     );
     expect(repair.properties.summary.pattern).toBe('\\S');
-    expect(repair.required ?? []).not.toContain('summary');
+    expect(repair.required).toContain('summary');
   },
 );
 
@@ -963,6 +979,7 @@ it('retains no Ajv cache entry per hop and bounds the per-hop findings schemas',
   const build = (i: number) =>
     submitFindingsSchemaForMode('ct', 'technical', false, hop(i));
   const flow = (i: number) => ({
+    summary: 'Recorded findings.',
     column_flow: [
       {
         out_col: 'Value',
@@ -1006,9 +1023,10 @@ it('retains no Ajv cache entry per hop and bounds the per-hop findings schemas',
 it('rejects a column-source note over 200 characters and accepts the repaired note', () => {
   for (const schema of [
     submitFindingsSchemaForMode('ct', 'business'),
-    submitFindingsSchemaForMode('ct', 'business', false, undefined, true),
+    submitFindingsSchemaForMode('ct', 'business', false),
   ]) {
     const value = (length: number) => ({
+      summary: 'Recorded findings.',
       column_flow: [
         {
           out_col: 'Value',

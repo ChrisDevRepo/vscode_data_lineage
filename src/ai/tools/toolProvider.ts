@@ -7,7 +7,6 @@ import * as vscode from 'vscode';
 import { redactMissionBriefForLog } from '../support/missionBriefDiagnostics';
 import { ingestToolInput, toolInputReceipt } from '../support/toolIngestion';
 import { z } from 'zod';
-import { modelUpdateSchema } from './jsonSchema';
 import type Graph from 'graphology';
 import { NavigationEngine } from '../sm/smBase';
 import { type AiSession } from '../session/session';
@@ -778,20 +777,9 @@ export function buildAiToolRegistry(
   const serialize = host?.serialize ?? createEffectSerializer();
   for (const def of TOOL_DEFS) {
     const execute = dispatch[def.name];
-    let owner: z.ZodType = def.inputSchema;
     let group = { context: '', generation: -1, calls: 0 };
-    const project = (schema: z.ZodType) => {
-      owner = schema;
-      return ['session_start', 'presentation_commit'].includes(def.effect)
-        ? modelUpdateSchema(schema)
-        : schema;
-    };
     registry.register({
       ...def,
-      get inputSchema() {
-        return project(owner);
-      },
-      inputRepairSchema: project,
       execute: async (input: unknown) => {
         handler.signal?.throwIfAborted();
         const sess = getSession();

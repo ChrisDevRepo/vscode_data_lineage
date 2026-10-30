@@ -2811,6 +2811,16 @@ export class NavigationEngine implements IHopStateMachine {
       : undefined;
   }
 
+  /** The one `submit_findings` contract: served to the model and enforced at admission, so a card-valid reply is never rejected for an omitted field (Approved08 D-099). Stable through a hop's corrections; held fields still compose before admission (D-098). */
+  public findingSchema(modelBoundary = true) {
+    return submitFindingsSchemaForMode(
+      this.currentHopAnalysisMode,
+      this.classification,
+      this.memory.getArchivedAngles(this.currentFocusNodeId ?? '').size === 0,
+      modelBoundary ? this.hopSubmitColumns : undefined,
+    );
+  }
+
   /** Internal already-typed DTO adapter. Untrusted model input enters submitModelFindings; section arrays here already satisfy HopSubmission. */
   public submitFindings(params: HopSubmission): SubmitResult {
     return this.submitWireFindings(this.findingWire(params), false);
@@ -2831,14 +2841,7 @@ export class NavigationEngine implements IHopStateMachine {
         : {};
     const currentFocusId = this.currentFocusNodeId;
     const archivedAngles = this.memory.getArchivedAngles(currentFocusId ?? '');
-    const schema = submitFindingsSchemaForMode(
-      this.currentHopAnalysisMode,
-      this.classification,
-      archivedAngles.size === 0,
-      modelBoundary ? this.hopSubmitColumns : undefined,
-      false,
-      true,
-    );
+    const schema = this.findingSchema(modelBoundary);
     const admission = findingAdmissionFacts(schema);
     const bound =
       raw.focus_node_id === undefined || raw.focus_node_id === currentFocusId;

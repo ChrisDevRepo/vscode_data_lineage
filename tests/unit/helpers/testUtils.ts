@@ -145,3 +145,19 @@ export function detailHandlers(
     () => {},
   );
 }
+
+/** The correction a served tool card asks for (D-099/D-098): every required field the held draft supplies, resent, plus the corrected fields, which replace their held values. */
+export function canonicalResend(
+  card: object,
+  held: Record<string, unknown>,
+  correction: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    ...Object.fromEntries(
+      ((card as { required?: string[] }).required ?? [])
+        .filter((key) => Object.hasOwn(held, key))
+        .map((key) => [key, structuredClone(held[key])]),
+    ),
+    ...correction,
+  };
+}

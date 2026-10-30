@@ -88,6 +88,7 @@ import {
   makeNode,
 } from '../helpers/modelFixtures';
 import { TOOL_DEFS } from '../../../src/ai/tools/toolDefs';
+import { canonicalResend } from '../helpers/testUtils';
 import {
   schemaFaults,
   withSchemaFaults,
@@ -375,13 +376,16 @@ function ctWorld(
   return { session, model, graph, registry, engine };
 }
 
-/** Drives a correction that follows the feedback: the focus plus the parts the rejection asks to resend (D-097); the full schema still validates it (D-098). */
+/** Drives a correction that follows the feedback and the served card (D-099): the focus and the parts the rejection asks to resend, plus every required field of the model's own draft resent; a resent field replaces the held one (D-098). */
 function findingRepair(
   engine: NavigationEngine,
+  draft: Record<string, unknown>,
   input: object,
   rejection: { resend?: readonly string[] },
 ): object {
   if (!engine.heldPartsOfCurrentFocus()) return input;
+  const schema = engine.findingSchema();
+  const card = toModelJsonSchema(schema);
   const owed = ['focus_node_id', ...(rejection.resend ?? [])];
   const select = (value: unknown, prefix: string): unknown =>
     value && typeof value === 'object' && !Array.isArray(value)
@@ -395,15 +399,13 @@ function findingRepair(
           }),
         )
       : value;
-  const selected = select(input, '') as object;
-  const schema = submitFindingsSchemaForMode(
-    engine.currentHopAnalysisMode,
-    engine.classification ?? undefined,
-    false,
-    engine.hopSubmitColumns,
-    engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false,
+  const selected = canonicalResend(
+    card,
+    draft,
+    select(input, '') as Record<string, unknown>,
   );
   expect(schema.safeParse(selected).success).toBe(true);
+  expect(new Ajv({ strict: false }).compile(card)(selected)).toBe(true);
   return selected;
 }
 
@@ -1455,14 +1457,7 @@ describe('large findings repairs', () => {
   it('MW7: validates a findings candidate once and derives partial diagnostics without reparsing its fields', () => {
     const { engine, session, model, graph } = ctWorld();
     const { services } = stubToolServices({ session, model, graph });
-    const schema = submitFindingsSchemaForMode(
-      'ct',
-      'technical',
-      true,
-      engine.hopSubmitColumns,
-      false,
-      true,
-    );
+    const schema = engine.findingSchema();
     const owners = new Set<z.ZodType>();
     const visit = (owner: z.ZodType): void => {
       if (owners.has(owner)) return;
@@ -1776,25 +1771,23 @@ describe('large findings repairs', () => {
       const { engine, session, model, graph } = ctWorld();
       const { services } = stubToolServices({ session, model, graph });
       const before = engine.toJSON();
+      const draft = {
+        focus_node_id: ORIGIN,
+        summary: 'Value comes from Branch.',
+        sections: { technical: 'Retain the original SQL findings.' },
+        column_flow: [
+          {
+            out_col: 'Value',
+            upstream_columns: [
+              { node: BRANCH, col: 'Value', note: 'Keep this mapping.' },
+            ],
+          },
+        ],
+        prune_neighbors: [{ id: BRANCH, reason: 'No further investigation.' }],
+      };
       const rejected = JSON.parse(
         executeSubmitFindings(
-          {
-            focus_node_id: ORIGIN,
-            summary: 'Value comes from Branch.',
-            sections: { technical: 'Retain the original SQL findings.' },
-            column_flow: [
-              {
-                out_col: 'Value',
-                upstream_columns: [
-                  { node: BRANCH, col: 'Value', note: 'Keep this mapping.' },
-                ],
-              },
-            ],
-            prune_neighbors: [
-              { id: BRANCH, reason: 'No further investigation.' },
-            ],
-            ...(schemaFault ? { badge_label: 42 } : {}),
-          },
+          { ...draft, ...(schemaFault ? { badge_label: 42 } : {}) },
           services,
         ),
       );
@@ -1815,27 +1808,17 @@ describe('large findings repairs', () => {
           { nodeId: BRANCH, question: 'Establish the source of Value.' },
         ],
       };
-      const schema = submitFindingsSchemaForMode(
-        'ct',
-        'technical',
-        false,
-        engine.hopSubmitColumns,
-        engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ??
-          false,
+      const schema = engine.findingSchema();
+      const card = new Ajv({ strict: false }).compile(
+        toModelJsonSchema(schema),
       );
-      expect(schema.safeParse(correction).success).toBe(true);
+      // D-099: the served card asks for the held required fields again; D-098: admission still composes them.
+      expect(card(correction)).toBe(false);
       expect(
-        new Ajv({ strict: false }).compile(toModelJsonSchema(schema))(
-          correction,
-        ),
+        card(canonicalResend(toModelJsonSchema(schema), draft, correction)),
       ).toBe(true);
       expect(
-        JSON.parse(
-          executeSubmitFindings(
-            findingRepair(engine, correction, rejected),
-            services,
-          ),
-        ),
+        JSON.parse(executeSubmitFindings(correction, services)),
       ).toHaveProperty('ok', true);
       expect(engine.columnAspect!.edges).toEqual([
         expect.objectContaining({
@@ -1859,12 +1842,15 @@ describe('large findings repairs', () => {
       const { engine, session, model, graph } = ctWorld();
       const { services } = stubToolServices({ session, model, graph });
       const before = engine.toJSON();
+      const draft = {
+        focus_node_id: ORIGIN,
+        summary: 'Original findings.',
+        sections: { technical: 'Keep the SQL evidence.' },
+      };
       const rejected = JSON.parse(
         executeSubmitFindings(
           {
-            focus_node_id: ORIGIN,
-            summary: 'Original findings.',
-            sections: { technical: 'Keep the SQL evidence.' },
+            ...draft,
             questions: [],
             column_flow: [
               {
@@ -1915,7 +1901,7 @@ describe('large findings repairs', () => {
       };
       const repaired = JSON.parse(
         executeSubmitFindings(
-          findingRepair(engine, correction, rejected),
+          findingRepair(engine, draft, correction, rejected),
           services,
         ),
       );
@@ -1927,7 +1913,7 @@ describe('large findings repairs', () => {
         expect(
           JSON.parse(
             executeSubmitFindings(
-              findingRepair(engine, correction, repaired),
+              findingRepair(engine, draft, correction, repaired),
               services,
             ),
           ),
@@ -2291,13 +2277,14 @@ describe('large findings repairs', () => {
       });
       const { services } = stubToolServices({ session, model, graph });
       const before = engine.toJSON();
+      const draft = {
+        summary: 'Known reference facts.',
+        sections: { technical: 'Outside destination retained as evidence.' },
+      };
       const result = JSON.parse(
         executeSubmitFindings(
           {
-            summary: 'Known reference facts.',
-            sections: {
-              technical: 'Outside destination retained as evidence.',
-            },
+            ...draft,
             questions: [
               { nodeId: BRANCH, question: 'Establish the source Value.' },
             ],
@@ -2345,7 +2332,7 @@ describe('large findings repairs', () => {
       };
       const repaired = JSON.parse(
         executeSubmitFindings(
-          findingRepair(engine, correction, result),
+          findingRepair(engine, draft, correction, result),
           services,
         ),
       );
@@ -2360,7 +2347,7 @@ describe('large findings repairs', () => {
         expect(
           JSON.parse(
             executeSubmitFindings(
-              findingRepair(engine, correction, repaired),
+              findingRepair(engine, draft, correction, repaired),
               services,
             ),
           ),
@@ -2417,12 +2404,15 @@ describe('large findings repairs', () => {
       note: 'Retain this valid sibling verbatim.',
     };
     const before = engine.toJSON();
+    const draft = {
+      focus_node_id: ORIGIN,
+      summary: 'Original summary.',
+      sections: { technical: 'Original SQL findings.' },
+    };
     const rejected = JSON.parse(
       executeSubmitFindings(
         {
-          focus_node_id: ORIGIN,
-          summary: 'Original summary.',
-          sections: { technical: 'Original SQL findings.' },
+          ...draft,
           column_flow: [
             {
               out_col: 'Value',
@@ -2475,21 +2465,10 @@ describe('large findings repairs', () => {
         },
       ],
     };
-    const schema = submitFindingsSchemaForMode(
-      'ct',
-      'technical',
-      false,
-      engine.hopSubmitColumns,
-      engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false,
-    );
-    expect(schema.safeParse(correction).success).toBe(true);
-    expect(
-      new Ajv({ strict: false }).compile(toModelJsonSchema(schema))(correction),
-    ).toBe(true);
     expect(
       JSON.parse(
         executeSubmitFindings(
-          findingRepair(engine, correction, rejected),
+          findingRepair(engine, draft, correction, rejected),
           services,
         ),
       ),
@@ -2540,22 +2519,18 @@ describe('large findings repairs', () => {
       }));
       flow[1]!.upstream_columns[1] = bad;
       const before = engine.toJSON();
-      const rejected = JSON.parse(
-        executeSubmitFindings(
-          {
-            focus_node_id: ORIGIN,
-            summary: 'Both outputs use both inputs.',
-            sections: {
-              technical: 'Retain all valid relations and this original prose.',
-            },
-            column_flow: flow,
-            questions: [
-              { nodeId: BRANCH, question: 'Establish both source columns.' },
-            ],
-          },
-          services,
-        ),
-      );
+      const draft = {
+        focus_node_id: ORIGIN,
+        summary: 'Both outputs use both inputs.',
+        sections: {
+          technical: 'Retain all valid relations and this original prose.',
+        },
+        column_flow: flow,
+        questions: [
+          { nodeId: BRANCH, question: 'Establish both source columns.' },
+        ],
+      };
+      const rejected = JSON.parse(executeSubmitFindings(draft, services));
       expect(rejected).toHaveProperty('code');
       expect(rejected.issuePaths).toEqual(
         expect.arrayContaining([
@@ -2578,17 +2553,12 @@ describe('large findings repairs', () => {
             : entry,
         ),
       };
-      const schema = submitFindingsSchemaForMode(
-        'ct',
-        'technical',
-        false,
-        engine.hopSubmitColumns,
-        engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ??
-          false,
-      );
-      expect(schema.safeParse(patch).success).toBe(true);
+      // D-099: the served schema admits the canonical resend; D-098: the held fields still compose with the flow patch.
+      const schema = engine.findingSchema();
+      const resend = canonicalResend(toModelJsonSchema(schema), draft, patch);
+      expect(schema.safeParse(resend).success).toBe(true);
       expect(
-        new Ajv({ strict: false }).compile(toModelJsonSchema(schema))(patch),
+        new Ajv({ strict: false }).compile(toModelJsonSchema(schema))(resend),
       ).toBe(true);
       expect(JSON.parse(executeSubmitFindings(patch, services))).toHaveProperty(
         'ok',
@@ -3549,7 +3519,7 @@ describe('lineage_submit_findings boundary', () => {
       expect(
         JSON.parse(
           executeSubmitFindings(
-            findingRepair(engine, correction, result),
+            findingRepair(engine, valid, correction, result),
             services,
           ),
         ),
@@ -3630,7 +3600,7 @@ describe('lineage_submit_findings boundary', () => {
       };
       const corrected = JSON.parse(
         executeSubmitFindings(
-          findingRepair(engine, correction, result),
+          findingRepair(engine, input, correction, result),
           services,
         ),
       );
@@ -3641,7 +3611,7 @@ describe('lineage_submit_findings boundary', () => {
         expect(
           JSON.parse(
             executeSubmitFindings(
-              findingRepair(engine, correction, corrected),
+              findingRepair(engine, input, correction, corrected),
               services,
             ),
           ),
@@ -3831,7 +3801,7 @@ describe('lineage_submit_findings boundary', () => {
             };
       const accepted = JSON.parse(
         executeSubmitFindings(
-          findingRepair(engine, correction, result),
+          findingRepair(engine, complete, correction, result),
           services,
         ),
       );
@@ -3844,7 +3814,7 @@ describe('lineage_submit_findings boundary', () => {
         expect(
           JSON.parse(
             executeSubmitFindings(
-              findingRepair(engine, correction, accepted),
+              findingRepair(engine, complete, correction, accepted),
               services,
             ),
           ),
@@ -3863,14 +3833,7 @@ describe('lineage_submit_findings boundary', () => {
       const { services } = stubToolServices({ session, model, graph });
       const input = { ...finding(), badge_label: 'x'.repeat(length) };
       const before = structuredClone(input);
-      const schema = submitFindingsSchemaForMode(
-        'ct',
-        'technical',
-        true,
-        engine.hopSubmitColumns,
-        engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ??
-          false,
-      );
+      const schema = engine.findingSchema();
       const wireValid = new Ajv({ strict: false }).compile(
         toModelJsonSchema(schema),
       )(input);
@@ -4256,13 +4219,9 @@ it.each([
       : unsupported === 'questions.0.extra'
         ? { questions: [{ nodeId: BRANCH, question: 'Explain this source.' }] }
         : {};
+    // D-098: the held valid parts still satisfy admission beside a correction of only the owed parts.
     expect(
-      JSON.parse(
-        executeSubmitFindings(
-          findingRepair(engine, corrected, rejected),
-          services,
-        ),
-      ),
+      JSON.parse(executeSubmitFindings(corrected, services)),
     ).toHaveProperty('ok', true);
     expect(engine.getDetailSlots()).toContainEqual(
       expect.objectContaining({
@@ -4366,13 +4325,9 @@ it.each([
     const correction = row.retained
       ? {}
       : { sections: { [row.classification]: 'Corrected canonical body.' } };
+    // D-098: the held valid body still satisfies admission beside a correction of only the owed parts.
     expect(
-      JSON.parse(
-        executeSubmitFindings(
-          findingRepair(engine, correction, last),
-          services,
-        ),
-      ),
+      JSON.parse(executeSubmitFindings(correction, services)),
     ).toHaveProperty('ok', true);
     expect(engine.getDetailSlots()).toContainEqual(
       expect.objectContaining({
@@ -5324,19 +5279,7 @@ it.each([
           'lineage_start_exploration',
           () => StartExplorationFreshProviderInputSchema,
         ],
-        [
-          'lineage_submit_findings',
-          () =>
-            submitFindingsSchemaForMode(
-              'ct',
-              'technical',
-              true,
-              engine.hopSubmitColumns,
-              engine
-                .heldPartsOfCurrentFocus()
-                ?.fields.includes('column_flow') ?? false,
-            ),
-        ],
+        ['lineage_submit_findings', () => engine.findingSchema()],
       ]),
     );
     const tools = served.getTools().map((tool) => ({
@@ -5886,7 +5829,7 @@ it.each([false, true])(
 );
 
 it.each([false, true])(
-  'repairs an owed section through the compiled active hop under the full schema (full resend=%s)',
+  'repairs an owed section through the compiled active hop under the canonical schema (full resend=%s)',
   async (full) => {
     const { session, engine, registry, port, queue, offered } =
       ownedInputWorld();
@@ -5923,7 +5866,7 @@ it.each([false, true])(
         },
         messages: [modelUserMessage('Trace Value.')],
         sink: new TurnEventSink(() => {}),
-        hopColumns: () => engine.hopSubmitColumns,
+        findingSchema: () => engine.findingSchema(),
         toolChoice: 'required',
         requiredTerminalTool: 'lineage_submit_findings',
       });
@@ -5963,8 +5906,8 @@ it.each([false, true])(
     );
     expect(
       new Ajv({ strict: false }).compile(schema)(patch),
-      'D-098: the served native wire card admits the named technical-leaf correction alone',
-    ).toBe(true);
+      'D-099: the served card is canonical, so the technical-leaf patch alone omits required held fields',
+    ).toBe(false);
     expect(
       new Ajv({ strict: false }).compile(schema)({
         ...input,
@@ -5974,7 +5917,7 @@ it.each([false, true])(
     ).toBe(true);
     expect(
       second.rejections,
-      'D-098: resent saved fields are never rejected',
+      'D-098: held fields compose with the patch; resent saved fields replace them and are never rejected',
     ).toHaveLength(0);
     const detail = engine
       .getDetailSlots()
@@ -6018,7 +5961,7 @@ it('keeps the original provider schema while rechecking held fields against curr
       },
       messages: [modelUserMessage('Trace Value.')],
       sink: new TurnEventSink(() => {}),
-      hopColumns: () => engine.hopSubmitColumns,
+      findingSchema: () => engine.findingSchema(),
       toolChoice: 'required',
       requiredTerminalTool: 'lineage_submit_findings',
     });
@@ -6119,7 +6062,7 @@ it.each(['column_flow', 'unknown-root'] as const)(
         },
         messages: [modelUserMessage('Trace Value.')],
         sink: new TurnEventSink(() => {}),
-        hopColumns: () => engine.hopSubmitColumns,
+        findingSchema: () => engine.findingSchema(),
         toolChoice: 'required',
         requiredTerminalTool: 'lineage_submit_findings',
       });

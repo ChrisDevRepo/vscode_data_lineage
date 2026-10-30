@@ -25,6 +25,8 @@ const shownMessages = (rejection: unknown): string =>
   renderProblem(rejection as ToolRejection, 3);
 
 import type { LineageNode, ObjectType } from '../../../src/engine/types';
+import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
+import { canonicalResend } from '../helpers/testUtils';
 import {
   makeGraph,
   makeIndexedModel,
@@ -2950,20 +2952,12 @@ describe('current task completeness before advancement', () => {
       expect(after.engineInternals.investigationTasks).toEqual(
         before.engineInternals.investigationTasks,
       );
-      const schema = submitFindingsSchemaForMode(
-        analysisMode,
-        undefined,
-        false,
-        engine.hopSubmitColumns,
-        engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ??
-          false,
-      );
+      // D-098: held findings still satisfy admission beside the prune correction.
       expect(
-        engine.submitFindings(
-          toHopFinding(
-            schema.parse({ focus_node_id: root, prune_neighbors: [] }),
-          ),
-        ),
+        engine.submitModelFindings({
+          focus_node_id: root,
+          prune_neighbors: [],
+        }),
       ).toHaveProperty('ok', true);
       expect(engine.getHopContext()).toMatchObject({
         focus_node: { id: middle },
@@ -3022,6 +3016,12 @@ describe('current task completeness before advancement', () => {
       { angle: 'technical' as const, text: 'Both outputs are constants.' },
     ],
   };
+  /** The same finding as the model sends it: the held required fields it resends with a correction (D-099). */
+  const wireFinding = {
+    focus_node_id: root,
+    summary: finding.summary,
+    sections: { technical: finding.sections[0].text },
+  };
   const terminal = (out_col: string) => ({ out_col, upstream_columns: [] });
 
   it.each(['fresh', 'held'] as const)(
@@ -3079,25 +3079,11 @@ describe('current task completeness before advancement', () => {
       expect(after.engineInternals.investigationTasks).toEqual(
         before.engineInternals.investigationTasks,
       );
-      const schema = submitFindingsSchemaForMode(
-        'ct',
-        undefined,
-        false,
-        engine.hopSubmitColumns,
-        engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ??
-          false,
-      );
-      const repaired = engine.submitFindings(
-        toHopFinding(
-          schema.parse({
-            focus_node_id: root,
-            column_flow: [terminal('Value'), terminal('Other')],
-            questions: [
-              { nodeId: neighbor, question: 'Explain the source role.' },
-            ],
-          }),
-        ),
-      );
+      const repaired = engine.submitModelFindings({
+        focus_node_id: root,
+        column_flow: [terminal('Value'), terminal('Other')],
+        questions: [{ nodeId: neighbor, question: 'Explain the source role.' }],
+      });
       expect(repaired, JSON.stringify(repaired)).toHaveProperty('ok', true);
       expect(
         engine.toJSON().memory.detailSlots[root],
@@ -3235,14 +3221,6 @@ describe('current task completeness before advancement', () => {
           : [],
       });
       expect(held?.resend).toEqual(['column_flow']);
-      const schema = submitFindingsSchemaForMode(
-        'ct',
-        undefined,
-        false,
-        engine.hopSubmitColumns,
-        engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ??
-          false,
-      );
       const column_flow = [
         {
           out_col: 'Value',
@@ -3256,9 +3234,10 @@ describe('current task completeness before advancement', () => {
         },
         terminal('Other'),
       ];
-      const rejected = engine.submitFindings(
-        toHopFinding(schema.parse({ focus_node_id: root, column_flow })),
-      );
+      const rejected = engine.submitModelFindings({
+        focus_node_id: root,
+        column_flow,
+      });
       expect(rejected).toMatchObject({
         code: 'invalid_input',
         detail: expect.arrayContaining([
@@ -3270,28 +3249,16 @@ describe('current task completeness before advancement', () => {
         ]),
       });
       expectUnchangedRouting(engine.toJSON(), before);
-      const repair = submitFindingsSchemaForMode(
-        'ct',
-        undefined,
-        false,
-        engine.hopSubmitColumns,
-        engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ??
-          false,
-      );
       expect(engine.heldPartsOfCurrentFocus()?.fields).toContain('column_flow');
       expect(
-        engine.submitFindings(
-          toHopFinding(
-            repair.parse({
-              focus_node_id: root,
-              prune_neighbors: [],
-              questions: [neighbor, other].map((nodeId) => ({
-                nodeId,
-                question: 'Establish this source contribution.',
-              })),
-            }),
-          ),
-        ),
+        engine.submitModelFindings({
+          focus_node_id: root,
+          prune_neighbors: [],
+          questions: [neighbor, other].map((nodeId) => ({
+            nodeId,
+            question: 'Establish this source contribution.',
+          })),
+        }),
       ).toHaveProperty('ok', true);
       expect(engine.toJSON().removedSet).toEqual([]);
     },
@@ -3326,20 +3293,11 @@ describe('current task completeness before advancement', () => {
       expect(after.agenda).toEqual(before.agenda);
       expect(after.columnAspect).toEqual(before.columnAspect);
       expect(engine.currentFocus).toBe(root);
-      const schema = submitFindingsSchemaForMode(
-        'ct',
-        undefined,
-        false,
-        engine.hopSubmitColumns,
-        engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ??
-          false,
-      );
       expect(
-        engine.submitFindings(
-          toHopFinding(
-            schema.parse({ focus_node_id: root, prune_neighbors: [] }),
-          ),
-        ),
+        engine.submitModelFindings({
+          focus_node_id: root,
+          prune_neighbors: [],
+        }),
       ).toHaveProperty('ok', true);
       expect(engine.toJSON().agenda.map((entry) => entry.nodeId)).toEqual([
         neighbor,
@@ -3474,26 +3432,20 @@ describe('current task completeness before advancement', () => {
       },
       terminal('Other'),
     ];
-    const schema = submitFindingsSchemaForMode(
-      'ct',
-      undefined,
-      false,
-      engine.hopSubmitColumns,
-      engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false,
-    );
     expect(
-      schema.safeParse({
-        focus_node_id: root,
+      engine.findingSchema().safeParse({
+        ...wireFinding,
         column_flow,
         prune_neighbors: [],
       }).success,
     ).toBe(true);
-    const retry = (extra: Record<string, unknown>) =>
-      toHopFinding(
-        schema.parse({ focus_node_id: root, column_flow, ...extra }),
-      );
+    const retry = (extra: Record<string, unknown>) => ({
+      focus_node_id: root,
+      column_flow,
+      ...extra,
+    });
     expect(
-      engine.submitFindings(
+      engine.submitModelFindings(
         retry({
           prune_neighbors: [
             { id: other, reason: 'OtherSource supplies no tracked value.' },
@@ -3508,7 +3460,7 @@ describe('current task completeness before advancement', () => {
       ]),
     });
     expect(
-      engine.submitFindings(
+      engine.submitModelFindings(
         retry({
           questions: [questions[0]],
           prune_neighbors: [
@@ -3603,24 +3555,12 @@ describe('current task completeness before advancement', () => {
         expect(engine.heldPartsOfCurrentFocus()?.fields).toContain(
           'column_flow',
         );
-        const repair = submitFindingsSchemaForMode(
-          'ct',
-          undefined,
-          false,
-          engine.hopSubmitColumns,
-          engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ??
-            false,
-        );
         expect(
-          engine.submitFindings(
-            toHopFinding(
-              repair.parse({
-                focus_node_id: root,
-                questions: input.questions,
-                prune_neighbors: [prune],
-              }),
-            ),
-          ),
+          engine.submitModelFindings({
+            focus_node_id: root,
+            questions: input.questions,
+            prune_neighbors: [prune],
+          }),
         ).toHaveProperty('ok', true);
       } else expect(submitted).toHaveProperty('ok', true);
       expect(engine.toJSON().removedSet).toEqual([other]);
@@ -3669,24 +3609,19 @@ describe('current task completeness before advancement', () => {
       column_flow: [terminal('Value'), terminal('Other')],
       questions: [{ nodeId: neighbor, question: 'Explain Source rows.' }],
     });
-    const schema = submitFindingsSchemaForMode(
-      'ct',
-      undefined,
-      false,
-      engine.hopSubmitColumns,
-      engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false,
-    );
-    const patch = (summary?: string) =>
-      toHopFinding(
-        schema.parse({ focus_node_id: root, ...(summary ? { summary } : {}) }),
-      );
-    expect(engine.submitFindings(patch())).toMatchObject({
+    const patch = (summary?: string) => ({
+      focus_node_id: root,
+      ...(summary ? { summary } : {}),
+    });
+    expect(engine.submitModelFindings(patch())).toMatchObject({
       code: 'invalid_input',
       issuePaths: ['summary'],
       errors: [{ path: 'summary', code: 'missing' }],
     });
     expect(
-      engine.submitFindings(patch('Both requested outputs are constants.')),
+      engine.submitModelFindings(
+        patch('Both requested outputs are constants.'),
+      ),
     ).toHaveProperty('ok', true);
     expect(engine.getHopContext()).toMatchObject({
       focus_node: { id: neighbor },
@@ -3714,18 +3649,15 @@ describe('current task completeness before advancement', () => {
     expect(
       engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false,
     ).toBe(false);
-    const schema = submitFindingsSchemaForMode(
-      'ct',
-      undefined,
-      false,
-      engine.hopSubmitColumns,
-      engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false,
-    );
     const malformed = {
       focus_node_id: root,
       prune_neighbors: [{ id: '[d].[Absent]', reason: 42 }],
     };
-    const parsed = schema.safeParse(malformed);
+    const parsed = engine.findingSchema().safeParse({
+      ...wireFinding,
+      column_flow: [],
+      ...malformed,
+    });
     expect(parsed.success).toBe(false);
     if (parsed.success)
       throw new Error('Expected the malformed prune to be rejected');
@@ -3743,12 +3675,13 @@ describe('current task completeness before advancement', () => {
         { node: neighbor, col: 'Value', note: 'x'.repeat(200) },
       ],
     };
-    const retry = (column_flow: unknown[]) =>
-      toHopFinding(
-        schema.parse({ focus_node_id: root, column_flow, prune_neighbors: [] }),
-      );
+    const retry = (column_flow: unknown[]) => ({
+      focus_node_id: root,
+      column_flow,
+      prune_neighbors: [],
+    });
     expect(
-      engine.submitFindings(retry([corrected])),
+      engine.submitModelFindings(retry([corrected])),
       'the Other entry of the rejected call is not restored',
     ).toMatchObject({ ok: true, ended_columns: [`${root}.Other`] });
     expect(engine.getDetailSlots()).toContainEqual(
@@ -3798,23 +3731,17 @@ describe('current task completeness before advancement', () => {
         }),
       ).toMatchObject({ code: 'invalid_input', resend: ['column_flow'] });
       expectUnchangedRouting(engine.toJSON(), before);
-      const schema = submitFindingsSchemaForMode(
-        'ct',
-        undefined,
-        false,
-        engine.hopSubmitColumns,
-        engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ??
-          false,
-      );
+      const schema = engine.findingSchema();
       expect(
         schema.safeParse({
-          focus_node_id: root,
+          ...wireFinding,
           column_flow: [corrected, sibling],
         }).success,
       ).toBe(true);
       expect(
         schema.safeParse({
-          focus_node_id: root,
+          ...wireFinding,
+          column_flow: [sibling],
           column_flow_repairs: [{ entry_index: 0, replacement: corrected }],
         }).success,
         'a partial entry repair is not part of the contract',
@@ -3859,28 +3786,17 @@ describe('current task completeness before advancement', () => {
         questions: [{ nodeId: neighbor, question: 'Explain Source Value.' }],
       }),
     ).toHaveProperty('code', 'invalid_input');
-    const schema = submitFindingsSchemaForMode(
-      'ct',
-      undefined,
-      false,
-      engine.hopSubmitColumns,
-      engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false,
-    );
     expect(
-      engine.submitFindings(
-        toHopFinding(
-          schema.parse({
-            focus_node_id: root,
-            column_flow: [
-              {
-                out_col: 'Value',
-                upstream_columns: [{ node: neighbor, col: 'Absent' }],
-              },
-              terminal('Other'),
-            ],
-          }),
-        ),
-      ),
+      engine.submitModelFindings({
+        focus_node_id: root,
+        column_flow: [
+          {
+            out_col: 'Value',
+            upstream_columns: [{ node: neighbor, col: 'Absent' }],
+          },
+          terminal('Other'),
+        ],
+      }),
     ).toHaveProperty('code', 'invalid_input');
     expectUnchangedRouting(engine.toJSON(), before);
     expect(engine.heldPartsOfCurrentFocus()).toMatchObject({
@@ -3920,22 +3836,11 @@ describe('current task completeness before advancement', () => {
     });
     expect(rejectAndReadHeld(engine, input)?.resend).toEqual(['badge_label']);
     expect(engine.columnAspect?.edges).toEqual([]);
-    const schema = submitFindingsSchemaForMode(
-      'ct',
-      undefined,
-      false,
-      engine.hopSubmitColumns,
-      engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false,
-    );
     expect(
-      engine.submitFindings(
-        toHopFinding(
-          schema.parse({
-            focus_node_id: root,
-            badge_label: 'Source contribution',
-          }),
-        ),
-      ),
+      engine.submitModelFindings({
+        focus_node_id: root,
+        badge_label: 'Source contribution',
+      }),
     ).toHaveProperty('ok', true);
     expect(
       engine.columnAspect?.edges.find((edge) => edge.from_node === neighbor)
@@ -4013,23 +3918,18 @@ describe('current task completeness before advancement', () => {
       fields: ['questions', 'column_flow'],
       resend: ['sections.business'],
     });
-    const schema = submitFindingsSchemaForMode(
-      'ct',
-      'both',
-      false,
-      engine.hopSubmitColumns,
-      engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false,
-    );
-    const retry = (sections: Record<string, string>) =>
-      toHopFinding(schema.parse({ focus_node_id: root, sections }));
-    expect(engine.submitFindings(retry({}))).toMatchObject({
+    const retry = (sections: Record<string, string>) => ({
+      focus_node_id: root,
+      sections,
+    });
+    expect(engine.submitModelFindings(retry({}))).toMatchObject({
       code: 'invalid_input',
       issuePaths: expect.arrayContaining([
         expect.stringMatching(/^sections(?:\.|$)/),
       ]),
     });
     expect(
-      engine.submitFindings(
+      engine.submitModelFindings(
         retry({ business: 'Both outputs are fixed values.' }),
       ),
     ).toHaveProperty('ok', true);
@@ -4137,20 +4037,11 @@ describe('shared object dispatch', () => {
         before.engineInternals.investigationTasks,
       );
       expect(engine.getDetailSlots()).toEqual([]);
-      const schema = submitFindingsSchemaForMode(
-        'ct',
-        undefined,
-        false,
-        engine.hopSubmitColumns,
-        engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ??
-          false,
-      );
       expect(
-        engine.submitFindings(
-          toHopFinding(
-            schema.parse({ focus_node_id: origin, prune_neighbors: [] }),
-          ),
-        ),
+        engine.submitModelFindings({
+          focus_node_id: origin,
+          prune_neighbors: [],
+        }),
       ).toHaveProperty('ok', true);
       expect(engine.getHopContext()).toHaveProperty('done', true);
       expect(engine.getResult().columnAspect!.edges).toEqual([
@@ -4224,18 +4115,24 @@ describe('shared object dispatch', () => {
       issuePaths: ['prune_neighbors.0.id'],
     });
     expect(engine.heldPartsOfCurrentFocus()?.fields).toContain('column_flow');
-    const schema = submitFindingsSchemaForMode(
-      'ct',
-      undefined,
-      false,
-      engine.hopSubmitColumns,
-      engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false,
-    );
+    const schema = engine.findingSchema();
     const malformed = {
       focus_node_id: focus,
       prune_neighbors: [{ id: outside, reason: 42 }],
     };
-    const parsed = validateToolCandidate(schema, malformed);
+    // D-099: the served schema judges the canonical resend; only the malformed reason fails.
+    const parsed = validateToolCandidate(
+      schema,
+      canonicalResend(
+        toModelJsonSchema(schema),
+        {
+          summary: guardRecord(focus).summary,
+          sections: { technical: guardRecord(focus).sections[0].text },
+          column_flow: [],
+        },
+        malformed,
+      ),
+    );
     if (parsed.success)
       throw new Error('Expected a numeric prune reason to be rejected');
     expect(parsed.rejection.issuePaths).toEqual([
@@ -4246,11 +4143,7 @@ describe('shared object dispatch', () => {
     expect(engine.heldPartsOfCurrentFocus()?.fields).toContain('column_flow');
     expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
     expect(
-      engine.submitFindings(
-        toHopFinding(
-          schema.parse({ focus_node_id: focus, prune_neighbors: [] }),
-        ),
-      ),
+      engine.submitModelFindings({ focus_node_id: focus, prune_neighbors: [] }),
     ).toHaveProperty('ok', true);
     expect(engine.getHopContext()).toHaveProperty('done', true);
   });
@@ -5430,10 +5323,10 @@ describe('out_col enum is the arriving columns', () => {
       'technical',
       false,
       engine.hopSubmitColumns,
-      engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false,
     );
     const flow = (out_col: string) => ({
       focus_node_id: v,
+      summary: 'Recorded findings.',
       column_flow: [
         {
           out_col,
@@ -6063,27 +5956,20 @@ describe('CT boundary rejects instead of dropping a column reference', () => {
         expect(engine.heldPartsOfCurrentFocus()?.fields).toContain(
           'column_flow',
         );
-        // The schema permits atomic replacement; omitting that replacement still retains the conflicting mapping.
-        const served = submitFindingsSchemaForMode(
-          'ct',
-          undefined,
-          false,
-          engine.hopSubmitColumns,
-          true,
-        ).safeParse({ focus_node_id: origin, prune_neighbors: prunes });
-        expect(served.success).toBe(true);
-        // The effective submission still conflicts with its held mapping and is refused atomically.
-
+        // D-099: the served schema admits the canonical resend with a replacing prune list.
+        const served = engine.findingSchema();
+        expect(
+          served.safeParse(
+            canonicalResend(toModelJsonSchema(served), raw, {
+              prune_neighbors: prunes,
+            }),
+          ).success,
+        ).toBe(true);
+        // D-098: a prune-only correction composes with the held mapping, still conflicts and is refused atomically.
         submission = {
-          ...toHopFinding(
-            submitFindingsSchemaForMode(
-              'ct',
-              undefined,
-              false,
-              engine.hopSubmitColumns,
-              true,
-            ).parse({ focus_node_id: origin }),
-          ),
+          focus_node_id: origin,
+          summary: '',
+          sections: [],
           prune_neighbors: prunes,
         };
       }
@@ -6112,22 +5998,14 @@ describe('CT boundary rejects instead of dropping a column reference', () => {
         before.engineInternals.pruneBallots,
       );
       expect(engine.getDetailSlots()).toEqual([]);
-      const repair = toHopFinding(
-        submitFindingsSchemaForMode(
-          'ct',
-          undefined,
-          false,
-          engine.hopSubmitColumns,
-          engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ??
-            false,
-        ).parse({
+      expect(
+        engine.submitModelFindings({
           focus_node_id: origin,
           column_flow: flow,
           prune_neighbors: [prunes[1]],
           questions: [{ nodeId: source, question: 'Resolve Amount.' }],
         }),
-      );
-      expect(engine.submitFindings(repair)).toHaveProperty('ok', true);
+      ).toHaveProperty('ok', true);
       expect(engine.getHopContext()).toHaveProperty('done', true);
       expect(engine.toJSON().removedSet).toEqual([stranger]);
       expect(engine.getResult().columnAspect!.edges).toEqual([
@@ -6767,22 +6645,13 @@ describe('authored column endpoints and downstream decisions', () => {
       ],
     });
     expectUnchangedRouting(engine.toJSON(), before);
-    const schema = submitFindingsSchemaForMode(
-      'ct',
-      undefined,
-      false,
-      engine.hopSubmitColumns,
-      engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false,
-    );
     const repair = {
       focus_node_id: writer,
       questions: [
         { nodeId: consumer, question: 'How does it use the procedure result?' },
       ],
     };
-    expect(
-      engine.submitFindings(toHopFinding(schema.parse(repair))),
-    ).toHaveProperty('ok', true);
+    expect(engine.submitModelFindings(repair)).toHaveProperty('ok', true);
     expect(engine.columnAspect?.edges).toEqual([
       expect.objectContaining({
         from_node: root,

@@ -1554,7 +1554,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
           toolChoice: 'required',
           requiredTerminalTool: 'lineage_submit_findings',
           proseGate: 'buffer-until-tool',
-          hopColumns: () => engine.hopSubmitColumns,
+          findingSchema: () => engine.findingSchema(),
           canPruneCurrent: () => engine.canPruneCurrent,
           isPhaseComplete: () => submitted,
           onToolResult: (toolName, _input, isError) => {

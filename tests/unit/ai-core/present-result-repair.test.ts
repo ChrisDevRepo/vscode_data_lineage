@@ -7,6 +7,8 @@ import {
 } from '../../../src/ai/support/toolErrorEnvelope';
 import { presentResultSchemaForPhase } from '../../../src/ai/tools/toolSchemas';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
+import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
+import { resolveRegistrySchemas } from '../../../src/ai/tools/registry';
 
 describe('Approved08 full-schema report draft boundary', () => {
   it('reports independent schema and report-reference faults together before accepting only their corrections (D-099)', async () => {
@@ -465,3 +467,29 @@ it('rejects retired key/index repair grammar instead of silently merging it (D-1
     true,
   );
 });
+
+it.each([false, true])(
+  'serves every field fresh admission reports missing as required (D-099, synthesis=%s)',
+  async (synthesis) => {
+    const { session, send } = draftWorld({ synthesis });
+    const rejected = await send({});
+    const missing = (rejected.errors as Array<{ path: string; code: string }>)
+      .filter((error) => error.code === 'missing')
+      .map((error) => error.path);
+    expect(missing.length).toBeGreaterThan(0);
+    const owner = presentResultSchemaForPhase(
+      synthesis ? 'synthesis' : 'completed',
+    );
+    // The production serving seam: the live phase owner resolved through the registry view.
+    const tool = resolveRegistrySchemas(
+      buildAiToolRegistry(
+        () => session,
+        { debug() {}, info() {}, warn() {}, error() {} } as never,
+        () => undefined,
+      ),
+      new Map([['lineage_present_result', () => owner]]),
+    ).get('lineage_present_result');
+    const served = toModelJsonSchema(tool!.inputSchema);
+    expect(served.required).toEqual(expect.arrayContaining(missing));
+  },
+);

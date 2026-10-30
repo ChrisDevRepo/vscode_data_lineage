@@ -1108,6 +1108,7 @@ describe('renderProblem over a real submit_findings rejection: a supplier beyond
       columnSourceNodeIds: [],
     });
     const result = validateToolCandidate(schema, {
+      summary: 'Recorded findings.',
       column_flow: [
         { out_node: id('archive'), out_col: 'Amount', upstream_columns: [] },
       ],
@@ -1118,9 +1119,12 @@ describe('renderProblem over a real submit_findings rejection: a supplier beyond
       path: 'column_flow.0.out_node',
       code: 'never',
     });
-    expect(validateToolCandidate(schema, { column_flow: [] }).success).toBe(
-      true,
-    );
+    expect(
+      validateToolCandidate(schema, {
+        summary: 'Recorded findings.',
+        column_flow: [],
+      }).success,
+    ).toBe(true);
   });
 
   it('states the scope alternative from the first supplier rejection without declaring a born value', async () => {

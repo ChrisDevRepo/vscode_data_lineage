@@ -26,8 +26,6 @@ export interface ToolDefinition {
 
 /** A registered, executable tool: a {@link ToolDefinition} plus the bound handler. */
 export interface RegisteredTool<O = unknown> extends ToolDefinition {
-  /** Applies an active input-repair projection to the same phase-specific provider schema. */
-  readonly inputRepairSchema?: (owner: z.ZodType) => z.ZodType;
   /** Runs the tool. Receives the raw, model-supplied input unchanged so existing handler boundary validation and policy guards remain authoritative. The registry adds provider-neutral lookup and dispatch without introducing a second validation path. */
   execute(input: unknown): O | Promise<O>;
 }
@@ -166,8 +164,7 @@ export function resolveRegistrySchemas<O>(
     return {
       ...tool,
       get inputSchema(): z.ZodType {
-        const owner = resolve();
-        return tool.inputRepairSchema?.(owner) ?? owner;
+        return resolve();
       },
     };
   };

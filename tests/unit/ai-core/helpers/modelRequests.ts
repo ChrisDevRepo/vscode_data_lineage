@@ -176,7 +176,7 @@ export function hopDraft(
     ),
     toolChoice: 'required',
     requiredTerminalTool: 'lineage_submit_findings',
-    hopColumns: () => engine!.hopSubmitColumns,
+    findingSchema: () => engine!.findingSchema(),
     canPruneCurrent: () => engine!.canPruneCurrent,
   };
 }

@@ -53,6 +53,7 @@ import {
   makeNode,
 } from '../helpers/modelFixtures';
 import { stubToolServices } from './helpers/toolServices';
+import { canonicalResend } from '../helpers/testUtils';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import { LineageRuntime } from '../../../src/ai/runtime/lineageRuntime';
 import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
@@ -430,23 +431,17 @@ it.each(
         (tool) => tool.name === 'lineage_submit_findings',
       );
       assert(submit);
-      const validateWire = new Ajv({ strict: false }).compile(
-        toModelJsonSchema(submit.inputSchema),
-      );
-      for (const partial of [
-        { badge_label: 'Report' },
-        { questions: [] },
-        { prune_neighbors: [] },
-        ...angles.map((angle) => ({
-          sections: { [angle]: 'Corrected section.' },
-        })),
-        ...(mode === 'ct' ? [{ column_flow: [] }] : []),
-      ]) {
-        expect(
-          validateWire(partial),
-          `D-098: the stable full-field card admits ${JSON.stringify(partial)}`,
-        ).toBe(true);
-      }
+      const card = toModelJsonSchema(submit.inputSchema);
+      const validateWire = new Ajv({ strict: false }).compile(card);
+      // D-099: a field fresh admission reports missing is required on the served card, so a card-valid reply is never rejected for omitting it.
+      if (id === source.id)
+        expect(card.required).toEqual(
+          expect.arrayContaining(
+            shown(feedback.content)
+              .filter((issue) => issue.code === 'missing')
+              .map((issue) => issue.path),
+          ),
+        );
       for (const invalid of [
         { summary: 42 },
         { sections: 42 },
@@ -625,9 +620,13 @@ describe('start contract matrix through the native port and production registry'
     };
   }
 
-  it.each([false, true])(
-    'D-098/D-097: the actual served start card admits the minimal named correction (refine=%s)',
-    async (refining) => {
+  it.each(
+    [false, true].flatMap((refining) =>
+      [false, true].map((resend) => ({ refining, resend })),
+    ),
+  )(
+    'D-098/D-099/D-097: the served start card requires the canonical fields; held fields compose, a resend replaces them (refine=$refining, resend=$resend)',
+    async ({ refining, resend }) => {
       const w = startWorld();
       if (refining) {
         expect((await w.send(proposal)).attempt.rejections).toEqual([]);
@@ -661,17 +660,27 @@ describe('start contract matrix through the native port and production registry'
       expect(String(toolMessage(first.attempt.messages).content)).not.toContain(
         proposal.mission_brief,
       );
-      const correction = refining
+      const minimal = refining
         ? { depth: { upstream: { exactness: 'exact' } } }
         : { classification: 'technical' };
+      const resent = canonicalResend(
+        first.wire.schema,
+        refining ? { ...proposal, proposalRevision: 1 } : proposal,
+        refining
+          ? { depth: { ...depth, upstream: { levels: 2, exactness: 'exact' } } }
+          : { classification: 'technical' },
+      );
       const validate = new Ajv({ strict: false, allErrors: true }).compile(
         first.wire.schema,
       );
+      // D-099: the served card is the canonical contract, so it asks for the held required fields again.
+      expect(validate(minimal)).toBe(false);
       expect(
-        validate(correction),
-        `D-098: the exact model-facing card must admit the authored correction: ${JSON.stringify(validate.errors)}`,
+        validate(resent),
+        `D-099: the served card must admit the canonical resend: ${JSON.stringify(validate.errors)}`,
       ).toBe(true);
-      const accepted = await w.send(correction);
+      // D-098: held fields still satisfy admission; a resent field replaces the held one.
+      const accepted = await w.send(resend ? resent : minimal);
       expect(accepted.attempt.rejections).toEqual([]);
       expect(accepted.wire.tools).toEqual(first.wire.tools);
       expect(
@@ -707,6 +716,14 @@ describe('start contract matrix through the native port and production registry'
           }),
           expect.objectContaining({ path: 'depth', code: 'missing' }),
         ]),
+      );
+      // D-099: every field fresh admission reports missing is required on the served card.
+      expect((result.wire.schema as { required?: string[] }).required).toEqual(
+        expect.arrayContaining(
+          (result.raw.errors ?? [])
+            .filter((error) => error.code === 'missing')
+            .map((error) => error.path),
+        ),
       );
       expect(w.session.pendingExploration).toBeNull();
       expect(w.session.stateMachine).toBeNull();
@@ -820,7 +837,11 @@ describe('start contract matrix through the native port and production registry'
       ]);
       expect(w.session.pendingExploration).toBeNull();
       expect(w.session.stateMachine).toBeNull();
-      const correction = { [field]: target ? ['Value'] : [] };
+      const correction = canonicalResend(
+        rejected.wire.schema,
+        { ...proposal, ...(target ? { analysisMode: 'ct' } : {}) },
+        { [field]: target ? ['Value'] : [] },
+      );
       const validate = new Ajv({ strict: false, allErrors: true }).compile(
         rejected.wire.schema,
       );
@@ -930,7 +951,7 @@ describe('start contract matrix through the native port and production registry'
         ...proposal,
         ...Object.fromEntries(faults.map((fault) => [fault.field, fault.bad])),
       };
-      const correction = Object.fromEntries(
+      const corrected = Object.fromEntries(
         faults
           .filter((fault) => fault.good !== undefined)
           .map((fault) => [fault.field, fault.good]),
@@ -990,6 +1011,11 @@ describe('start contract matrix through the native port and production registry'
         expect(w.session.stateMachine).toBeNull();
         return;
       }
+      const correction = canonicalResend(
+        first.wire.schema,
+        proposal,
+        corrected,
+      );
       const validate = new Ajv({ strict: false, allErrors: true }).compile(
         first.wire.schema,
       );
@@ -1312,10 +1338,14 @@ it.each(reportScenarios)(
       (tool) => tool.name === 'lineage_present_result',
     );
     assert(offered);
-    payload = Object.fromEntries(
-      faults
-        .filter((fault) => fault.good !== undefined)
-        .map((fault) => [fault.field, fault.good]),
+    payload = canonicalResend(
+      offered.inputSchema,
+      complete,
+      Object.fromEntries(
+        faults
+          .filter((fault) => fault.good !== undefined)
+          .map((fault) => [fault.field, fault.good]),
+      ),
     );
     const validate = new Ajv({ strict: false, allErrors: true }).compile(
       offered.inputSchema,
@@ -1325,7 +1355,7 @@ it.each(reportScenarios)(
     );
     expect(
       validate(payload),
-      `D-098: report wire must admit only corrected fields: ${JSON.stringify(validate.errors)}`,
+      `D-099: report card must admit the canonical resend: ${JSON.stringify(validate.errors)}`,
     ).toBe(true);
     const accepted = await executeToolAttempt(model.port, plan, {
       priorState: state,
@@ -2044,13 +2074,7 @@ describe('model-facing rejection text', () => {
     const registry = new ToolRegistry<string>();
     registry.register({
       name: 'lineage_submit_findings',
-      inputSchema: submitFindingsSchemaForMode(
-        'ct',
-        'technical',
-        true,
-        engine.hopSubmitColumns,
-        false,
-      ),
+      inputSchema: engine.findingSchema(),
       effect: 'hop_commit',
       execute: invoke,
     });
@@ -3006,13 +3030,7 @@ describe('submit_findings rejection form', () => {
     let rawErrors: Array<{ path: string; code: string }> | undefined;
     registry.register({
       name: 'lineage_submit_findings',
-      inputSchema: submitFindingsSchemaForMode(
-        mode,
-        classification,
-        true,
-        engine.hopSubmitColumns,
-        false,
-      ),
+      inputSchema: engine.findingSchema(),
       effect: 'hop_commit',
       execute: async (sent: unknown) => {
         const result = await executeSubmitFindings(sent, services);
@@ -3031,7 +3049,7 @@ describe('submit_findings rejection form', () => {
         classification,
         memorySections: [],
       }),
-      hopColumns: () => engine.hopSubmitColumns,
+      findingSchema: () => engine.findingSchema(),
       requiredTerminalTool: 'lineage_submit_findings',
       toolChoice: 'required',
     });
@@ -3663,10 +3681,16 @@ describe('submit_findings rejection form', () => {
           expect(rejected.content).not.toContain(text);
         expect(state().stopReason).toBeNull();
         expect(
-          new Ajv({ strict: false }).compile(rejected.wire)(correction),
+          new Ajv({ strict: false }).compile(rejected.wire)(
+            canonicalResend(rejected.wire as object, complete, correction),
+          ),
         ).toBe(true);
       }
-      const result = await send(correctAt === null ? initial : correction);
+      const result = await send(
+        correctAt === null
+          ? initial
+          : canonicalResend(firstWire as object, complete, correction),
+      );
       expect(state().providerCalls).toBe(correctAt ?? 4);
       if (correctAt === null) {
         expect(state()).toMatchObject({
@@ -3899,30 +3923,27 @@ describe('submit_findings rejection form', () => {
         terminals[1],
       ];
       const prune = [{ id: source, reason: 'Outside the asked value path.' }];
-      const first = await send({
+      const draft = {
         ...base,
         column_flow: flow,
         questions: [{ nodeId: other, question: 'Explain Other.' }],
         prune_neighbors: prune,
-      });
+      };
+      const first = await send(draft);
       expect(first.attempt.rejections).toHaveLength(1);
       expect(engine.columnAspect?.edges).toEqual([]);
       expect(engine.getDetailSlots()).toEqual([]);
-      const correctionInput =
+      const schema = engine.findingSchema();
+      const correctionInput = canonicalResend(
+        toModelJsonSchema(schema),
+        draft,
         correction === 'keep-mapping'
           ? { prune_neighbors: [] }
-          : { column_flow: terminals, prune_neighbors: prune };
-      const schema = submitFindingsSchemaForMode(
-        'ct',
-        'technical',
-        false,
-        engine.hopSubmitColumns,
-        engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ??
-          false,
+          : { column_flow: terminals, prune_neighbors: prune },
       );
       expect(
         schema.safeParse(correctionInput).success,
-        'the served repair schema must admit the complete joint replacement',
+        'the served schema must admit the canonical joint resend',
       ).toBe(true);
       const accepted = await send(correctionInput);
       expect(accepted.attempt.rejections).toEqual([]);
@@ -4183,14 +4204,15 @@ describe('submit_findings rejection form', () => {
     }
   });
 
-  it('feedback 3 on a prune decision has no fallback, and a schema-valid empty correction is accepted while all mapped facts are held', async () => {
+  it('feedback 3 on a prune decision has no fallback; an empty prune correction is accepted while all mapped facts are held, and its canonical resend is schema-valid', async () => {
     const { engine, send } = hop();
     const flow = [
       { out_col: 'Value', upstream_columns: [{ node: source, col: 'C0' }] },
       { out_col: 'Other', upstream_columns: [{ node: other, col: 'Value' }] },
     ];
     const invalidPrune = [{ id: absent, reason: 'Outside.' }];
-    await send({ ...base, column_flow: flow, prune_neighbors: invalidPrune });
+    const draft = { ...base, column_flow: flow, prune_neighbors: invalidPrune };
+    await send(draft);
     const second = await send({
       focus_node_id: root,
       prune_neighbors: invalidPrune,
@@ -4217,16 +4239,11 @@ describe('submit_findings rejection form', () => {
     ]);
     expect(hasFallback(third.rejection)).toBe(false);
     const exit = { prune_neighbors: [] };
-    const schema = submitFindingsSchemaForMode(
-      'ct',
-      'technical',
-      false,
-      engine.hopSubmitColumns,
-      engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false,
-    );
-    expect(schema.safeParse({ focus_node_id: root, ...exit }).success).toBe(
-      true,
-    );
+    const schema = engine.findingSchema();
+    expect(
+      schema.safeParse(canonicalResend(toModelJsonSchema(schema), draft, exit))
+        .success,
+    ).toBe(true);
     const fourth = await send({ focus_node_id: root, ...exit });
     expect(fourth.attempt.stop).toBe('phase_complete');
     expect(engine.columnAspect?.edges).toHaveLength(2);

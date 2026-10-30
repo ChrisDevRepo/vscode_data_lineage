@@ -1,10 +1,6 @@
 /** Synthetic object-level (BB) worlds for tests/unit/backend/bb-*.test.ts. */
 import { expect } from 'vitest';
 import {
-  submitFindingsSchemaForMode,
-  toHopFinding,
-} from '../../../../src/ai/tools/toolSchemas';
-import {
   NavigationEngine,
   type HopNeighborDisclosure,
 } from '../../../../src/ai/sm/smBase';
@@ -189,14 +185,11 @@ export function drain(
         before.engineInternals.investigationTasks,
       );
       expect(engine.currentFocus).toBe(focus);
-      result = engine.submitFindings(
-        toHopFinding(
-          submitFindingsSchemaForMode('bb').parse({
-            focus_node_id: focus,
-            prune_neighbors: [],
-          }),
-        ),
-      );
+      // D-098: the held finding composes with the prune-only correction.
+      result = engine.submitModelFindings({
+        focus_node_id: focus,
+        prune_neighbors: [],
+      });
     }
     if (!('ok' in result))
       throw new Error(`hop ${focus} rejected: ${JSON.stringify(result)}`);

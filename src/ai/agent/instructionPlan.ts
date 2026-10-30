@@ -20,7 +20,6 @@ import { getAllowedLmToolNames, type ChatLmStage } from '../tools/toolPolicy';
 import {
   presentResultSchemaForPhase,
   submitFindingsSchemaForMode,
-  type SubmitFindingsHopColumns,
 } from '../tools/toolSchemas';
 import type { ToolControlSignal } from '../session/sessionPhase';
 
@@ -145,8 +144,8 @@ export type ConversePlanDraft = Omit<
   readonly presentResultRetainableSections?: () => boolean;
   /** Number of served `answer_blocks` the visual preview's section ranges may name (`B1`..`B<count>`). */
   readonly presentResultPreviewBlockCount?: number;
-  /** The active CT hop's tracked-column facts that narrow the served `column_flow`; read live, absent serves the general schema. */
-  readonly hopColumns?: () => SubmitFindingsHopColumns;
+  /** The active hop's admission `submit_findings` schema, served unchanged; read live, absent serves the general fresh schema. */
+  readonly findingSchema?: () => z.ZodType;
   /** Live engine eligibility for the optional current-candidate removal command; absent denies it. */
   readonly canPruneCurrent?: () => boolean;
 };
@@ -364,7 +363,7 @@ export function compileInstructionPlan<T>(
     registry: sourceRegistry,
     facts,
     toolSchemaOverrides,
-    hopColumns,
+    findingSchema,
     canPruneCurrent,
     presentResultRetainableSections,
     presentResultPreviewBlockCount,
@@ -393,14 +392,15 @@ export function compileInstructionPlan<T>(
   const liveResolvers = new Map<string, () => z.ZodType>();
   if (stage.kind === 'active') {
     const submitMode = stage.mode === 'sm_ct' ? 'ct' : 'bb';
-    liveResolvers.set('lineage_submit_findings', () =>
-      submitFindingsSchemaForMode(
-        submitMode,
-        frozenFacts?.classification,
-        false,
-        hopColumns?.(),
-        true,
-      ),
+    liveResolvers.set(
+      'lineage_submit_findings',
+      findingSchema ??
+        (() =>
+          submitFindingsSchemaForMode(
+            submitMode,
+            frozenFacts?.classification,
+            true,
+          )),
     );
   }
   if (stageSupportsPresentResultRepair(stage)) {

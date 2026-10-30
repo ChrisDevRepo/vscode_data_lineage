@@ -100,7 +100,7 @@ function hopOf(session: AiSession, epoch: number, engine: NavigationEngine) {
       classification: 'technical',
       memorySections: [],
     }),
-    hopColumns: () => engine.hopSubmitColumns,
+    findingSchema: () => engine.findingSchema(),
     requiredTerminalTool: TOOL,
     toolChoice: 'required',
   });

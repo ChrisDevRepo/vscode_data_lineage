@@ -667,11 +667,11 @@ export const ColumnFlowSchema = z
 
 /** Single source for the `sections` describe text, shared by the per-mode schemas and the participant union. */
 const SECTIONS_DESCRIPTION =
-  'Required for a fresh finding; omit held section angles on correction. An object keyed by angle, never a string: {"business": "…"} or {"technical": "…"}; only the classification\'s angle key(s). Each value is the section body per its capture recipe.';
+  'Required for a fresh finding; on a revisit, omit angles saved on an earlier visit. An object keyed by angle, never a string: {"business": "…"} or {"technical": "…"}; only the classification\'s angle key(s). Each value is the section body per its capture recipe.';
 
 /** Single source for the `summary` describe text, shared by the per-mode schemas and the participant union. */
 const SUMMARY_DESCRIPTION =
-  'Required for a fresh finding; omit a saved summary on correction. One sentence, readable without this hop: what this node does to the data and what it hands to which node.';
+  'Required. One sentence, readable without this hop: what this node does to the data and what it hands to which node.';
 
 /** Shared `submit_findings` fields across BB and CT modes, one flat object. */
 const HopFindingBaseSchema = z
@@ -912,7 +912,6 @@ function finalizeSubmitFindingsSchema(
   schema: typeof HopFindingBaseSchema | typeof HopFindingCtBaseSchema,
   fresh: boolean,
   classification?: ClassificationValue,
-  composedCandidate = false,
 ): z.ZodType<FlatSubmitFindings> {
   const keptAngles = classification
     ? CLASSIFICATION_KEPT_ANGLES[classification]
@@ -935,32 +934,16 @@ function finalizeSubmitFindingsSchema(
             .describe(schema.shape.sections.description ?? ''),
         })
         .strict()
-    : schema.shape.summary
-      ? schema
-          .extend({
-            summary: schema.shape.summary
-              .unwrap()
-              .regex(
-                /\S/,
-                'A supplied summary must contain non-whitespace text.',
-              )
-              .optional()
-              .describe(schema.shape.summary.description ?? ''),
-          })
-          .strict()
-      : schema;
-  // Composition already supplied held values; archived sections may stay omitted, but every committed finding needs its summary.
-  const complete =
-    composedCandidate && !fresh
-      ? source.safeExtend({
-          summary: schema.shape.summary
-            .unwrap()
-            .regex(/\S/, 'A finding summary must contain non-whitespace text.'),
-        })
-      : source;
-  const declared = complete.safeExtend(
+    : // Composition already supplied held values; archived sections may stay omitted, but every committed finding needs its summary.
+      schema.safeExtend({
+        summary: schema.shape.summary
+          .unwrap()
+          .regex(/\S/, 'A finding summary must contain non-whitespace text.')
+          .describe(schema.shape.summary.description ?? ''),
+      });
+  const declared = source.safeExtend(
     Object.fromEntries(
-      Object.entries(complete.shape).map(([name, field]) => [
+      Object.entries(source.shape).map(([name, field]) => [
         name,
         FINDING_DECISION_FIELDS.some((decision) => decision === name)
           ? field.meta({
@@ -1212,24 +1195,20 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
     : flow;
 }
 
-/** Shared full-field finding schema. Wire updates may omit held content; composed admission enforces fresh requirements. */
+/** Shared full-field finding schema, served and admitted alike; held content composes before admission. */
 export function submitFindingsSchemaForMode(
   mode: 'bb' | 'ct',
   classification?: ClassificationValue,
   freshSubmission = false,
   hop?: SubmitFindingsHopColumns,
-  /** Wire updates may omit a held flow; composed backend candidates still require it. */
-  heldColumnFlow = false,
-  /** Validate a composed backend candidate, requiring its summary even when sections were archived on an earlier visit. */
-  composedCandidate = false,
 ): z.ZodType<FlatSubmitFindings> {
   const hopKey = hop ? JSON.stringify(hop) : '';
-  if (!classification && !hopKey && freshSubmission && !composedCandidate) {
+  if (!classification && !hopKey && freshSubmission) {
     return mode === 'ct'
       ? SubmitFindingsCtInputSchema
       : SubmitFindingsBbInputSchema;
   }
-  const cacheKey = `${mode}:${classification ?? ''}:${freshSubmission}:${hopKey}:${mode === 'ct' && heldColumnFlow}:${composedCandidate}`;
+  const cacheKey = `${mode}:${classification ?? ''}:${freshSubmission}:${hopKey}`;
   const cached = submitFindingsSchemaCache.get(cacheKey);
   if (cached) return cached;
   let narrowed = (
@@ -1361,24 +1340,12 @@ export function submitFindingsSchemaForMode(
       })
       .strict() as typeof HopFindingCtBaseSchema;
   }
-  if (mode === 'ct' && heldColumnFlow) {
-    // Wire omission retains a held flow; full composed admission requires a flow for every CT finding.
-    narrowed = narrowed
-      .extend({
-        column_flow: (narrowed.shape.column_flow as z.ZodType)
-          .optional()
-          .describe(
-            `${COLUMN_FLOW_DESCRIPTION} Required for a fresh CT finding; omit to keep the held list on correction. A sent list replaces it whole.`,
-          ),
-      })
-      .strict() as unknown as typeof HopFindingCtBaseSchema;
-  }
   if (classification) {
     const kept = CLASSIFICATION_KEPT_ANGLES[classification];
     const sectionsDescribe =
       (freshSubmission
         ? 'Required. '
-        : 'Required for a fresh finding; omit held section angles on correction. ') +
+        : 'Required for a fresh finding; on a revisit, omit angles saved on an earlier visit. ') +
       (kept.length === CLASSIFICATION_KEPT_ANGLES.both.length
         ? 'Pre-formatted section body for the `business` and `technical` recipes, under keys `business` and `technical`.'
         : `Pre-formatted section body for the \`${kept[0]}\` recipe, under key \`${kept[0]}\`.`);
@@ -1401,7 +1368,6 @@ export function submitFindingsSchemaForMode(
     narrowed,
     freshSubmission,
     classification,
-    composedCandidate,
   );
   if (submitFindingsSchemaCache.size >= SUBMIT_FINDINGS_SCHEMA_CACHE_LIMIT)
     submitFindingsSchemaCache.delete([...submitFindingsSchemaCache.keys()][0]);

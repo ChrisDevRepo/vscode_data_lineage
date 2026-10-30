@@ -246,16 +246,9 @@ describe('neighbor-specific function caller context', () => {
     expect(engine.peekHopContext()).toEqual(contextBeforeRetry);
     expect(engine.getCurrentTasks()).toEqual(tasksBeforeRetry);
     expect(engine.columnAspect!.edges).toEqual([]);
-    const repair = admit(
-      submitFindingsSchemaForMode(
-        'ct',
-        'technical',
-        false,
-        engine.hopSubmitColumns,
-        engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ??
-          false,
-      ),
-      {
+    // D-098: the held summary and sections compose with the flow-only correction.
+    expect(
+      engine.submitModelFindings({
         focus_node_id: fn,
         column_flow: [
           {
@@ -266,12 +259,8 @@ describe('neighbor-specific function caller context', () => {
             ],
           },
         ],
-      },
-    );
-    expect(engine.submitFindings(toHopFinding(repair))).toHaveProperty(
-      'ok',
-      true,
-    );
+      }),
+    ).toHaveProperty('ok', true);
     expect(engine.columnAspect!.edges).toContainEqual(
       expect.objectContaining({
         from_node: source,
