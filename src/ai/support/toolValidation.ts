@@ -182,8 +182,9 @@ function rejection(errors: readonly ErrorObject[]): ToolRejection {
     else if (keyword === 'required') code = 'missing';
     else if (keyword === 'additionalProperties') { code = 'unknown_key'; values = Object.keys(parentSchema?.properties ?? {}); }
     else if (keyword === 'type') {
-      code = error.data === undefined ? 'missing' : (params.type === 'array' || params.type === 'object') && typeof error.data === 'string' && /^\s*[[{]/.test(error.data) ? 'json_text' : 'type';
-      values = Array.isArray(params.type) ? params.type : [params.type];
+      const types: string[] = [params.type].flat();
+      code = error.data === undefined ? 'missing' : types.some(type => type === 'array' || type === 'object') && typeof error.data === 'string' && /^\s*[[{]/.test(error.data) ? 'json_text' : 'type';
+      if (code !== 'json_text') values = types;
     } else if (keyword === 'enum' || keyword === 'const') { code = 'enum'; values = (params.allowedValues ?? [params.allowedValue]).map(String); }
     else if (/^(?:min|max)(?:Items|Length|imum|Properties)$/.test(keyword) || keyword === 'exclusiveMinimum' || keyword === 'exclusiveMaximum') code = 'size';
     else if (keyword === 'false schema') code = 'never';
@@ -192,7 +193,9 @@ function rejection(errors: readonly ErrorObject[]): ToolRejection {
     if (previous) { if (values) previous.values = [...new Set([...(previous.values ?? []), ...values])]; }
     else faults.push({ path, code, ...(values?.length ? { values } : {}) });
   }
-  return makeRejection({ code: REJECTION_CODES.invalidInput, errors: faults.length ? faults : at('invalid') });
+  // A value outside an enum or const is one fault; its wrong JSON type restates it.
+  const distinct = faults.filter(fault => fault.code !== 'type' || !faults.some(other => other.path === fault.path && other.code === 'enum'));
+  return makeRejection({ code: REJECTION_CODES.invalidInput, errors: distinct.length ? distinct : at('invalid') });
 }
 
 /** The schema object is the cache identity; parsed data is typed only after native admission succeeds. */

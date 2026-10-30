@@ -226,6 +226,13 @@ describe("tool-error-envelope", () => {
     });
   });
 
+  it('a wrong-typed enum value is one enum fault; JSON text where a list or object belongs is json_text without values', () => {
+    const schema = z.object({ action: z.enum(['approve', 'cancel']), mode: z.literal('bb'), list: z.array(z.string()).nullable(), node: z.object({ id: z.string() }) }).strict();
+    expect(schemaRejection(schema, { action: 1, mode: null, list: '["a"', node: '{"id":' }).errors).toEqual([
+      { path: 'action', code: 'enum', values: ['approve', 'cancel'] }, { path: 'mode', code: 'enum', values: ['bb'] },
+      { path: 'list', code: 'json_text' }, { path: 'node', code: 'json_text' }]);
+  });
+
   describe('schema rejection: a present value outside its enum', () => {
     const flowSchema = z.object({ verdict: z.enum(['pass', 'fail']), flow: z.array(z.object({ out: z.literal('Qty'), src: z.string() }).strict()).optional() }).strict();
 
