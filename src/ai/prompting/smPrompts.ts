@@ -186,9 +186,9 @@ function computeNodeFlowFacts(edges: ReadonlyArray<[string, string, string]>, id
 }
 
 /** Renders one node's flow facts as the shared `inputs: …; outputs: …` fragment: data flows from each input into the node and from the node into each output, whatever the object types (a procedure's inputs are what it reads, its outputs what it writes). An absent entry or empty list renders `(none)` — the byte-exact form the analyzed-node and passthrough digests share. */
-function renderFlowFactsFragment(facts: NodeFlowFacts | undefined): string {
+function renderFlowFactsFragment(facts: NodeFlowFacts | undefined, labels: readonly [string, string] = ['inputs:', 'outputs:']): string {
   const list = (arr: string[] | undefined): string => (arr && arr.length > 0 ? arr.join(', ') : '(none)');
-  return `inputs: ${list(facts?.writtenBy)}; outputs: ${list(facts?.readBy)}`;
+  return `${labels[0]} ${list(facts?.writtenBy)}; ${labels[1]} ${list(facts?.readBy)}`;
 }
 
 /** Renders engine flow facts for KEPT (non-pruned) nodes that received no detail slot — the envelope carries no other entry for them, so without grounded graph facts the model has nothing to state about them and drops them from sections/highlights/notes. */
@@ -208,7 +208,7 @@ function buildPassthroughFlowFacts(result: SmResult, identifierCaseSensitive = f
   const renderLine = (n: { id: string; type: string }): string => {
     const descriptor = [n.type, actionById.get(n.id)].filter(Boolean).join(', ');
     const prefix = descriptor ? ` — ${descriptor}` : '';
-    return `- ${n.id}${prefix}: ${renderFlowFactsFragment(flowFacts.get(n.id))}`;
+    return `- ${n.id}${prefix}: ${renderFlowFactsFragment(flowFacts.get(n.id), ['written by', 'read by'])}`;
   };
   const dispositioned = qualifying.filter(n => actionById.has(n.id));
   const undispositioned = qualifying.filter(n => !actionById.has(n.id));
