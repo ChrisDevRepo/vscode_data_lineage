@@ -116,8 +116,8 @@ export function buildGateRefinePrompt(
     '',
     `Requested change: "${escapePromptText(refine.instruction ?? '')}"`,
     '',
-    `Call \`lineage_start_exploration\` with \`proposalRevision: ${proposalRevision}\` and only the fields changed by requested edits.`,
-    'Preserve unchanged `origin`, `depth` (direction is derived from it), filters, `analysisMode`, `classification`, and `targetColumns` by omitting them. `mission_brief` is kept only when `origin`, `analysisMode`, `targetColumns`, and `depth` are unchanged; otherwise restate it. An analysis constraint that no other `lineage_start_exploration` field expresses goes in `scopeNotes`.',
+    `Call \`lineage_start_exploration\` with proposalRevision:${proposalRevision} and only the fields changed by the requested edits.`,
+    'Preserve unchanged origin, depth (direction is derived from it), filters, mode, classification, and columns by omitting them. mission_brief is kept only when origin, analysisMode, targetColumns and depth are unchanged; otherwise restate it. An analysis constraint that no other `lineage_start_exploration` field expresses goes in `scopeNotes`.',
   ].filter(Boolean).join('\n');
 }
 
