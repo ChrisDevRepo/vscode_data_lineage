@@ -18,7 +18,7 @@ function buildSynthesisReminder(question: string): string {
   return [
     '## Answer this question',
     `"${escapePromptText(question)}"`,
-    'Length follows the captured evidence, not the question: every kept node keeps its rules, predicates and formulas. Sections run in graph order — terminal sources, then each transform, then the origin and what reads it. State each default, fallback, correction and dedup or aggregation choice that changes a value on the traced path, with its condition. Name base tables at every level the evidence shows: those the object reads directly and the terminal origins behind them. A statement about the whole chain must hold for every captured node.',
+    'Length follows the captured evidence, not the question: every kept node keeps its rules, predicates and formulas. Sections run in graph order — terminal sources, then each transform, then the origin and what reads it.',
   ].join('\n');
 }
 
