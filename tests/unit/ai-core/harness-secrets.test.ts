@@ -1,5 +1,4 @@
 /** A configured private endpoint host and harness secrets never reach run evidence, even when a provider failure echoes them. */
-import { createRequire } from 'node:module';
 import { readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -8,6 +7,12 @@ import { modelUserMessage } from '../../../src/ai/model/modelPort';
 import { harnessSecrets } from '../../harness/harnessSecrets';
 import { OpenAiCompatiblePort } from '../../harness/openAiCompatiblePort';
 import { main } from '../../harness/cli';
+import { createProviderFetch } from '../../fixtures/lm-provider-extension/live-provider-adapter.js';
+
+vi.mock('../../fixtures/lm-provider-extension/live-provider-adapter.js', async importOriginal => ({
+  ...await importOriginal<object>(),
+  createProviderFetch: vi.fn(),
+}));
 
 const HOST = 'private-gateway.invalid';
 const TOKEN = 'fake-db-token';
@@ -26,14 +31,14 @@ async function runHarness(transport: () => unknown, model = 'synthetic-model') {
   vi.stubEnv('LANGFUSE_PUBLIC_KEY', 'fake-public');
   vi.stubEnv('LANGFUSE_SECRET_KEY', 'fake-secret');
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({})));
-  vi.spyOn(createRequire(import.meta.url)('../../fixtures/lm-provider-extension/live-provider-adapter.js'), 'createProviderFetch')
-    .mockImplementation(transport as () => never);
+  vi.mocked(createProviderFetch).mockReset().mockImplementation(transport as () => never);
   const logged: string[] = [];
   for (const method of ['error', 'warn', 'log', 'info'] as const) {
     vi.spyOn(console, method).mockImplementation((...parts: unknown[]) => { logged.push(parts.join(' ')); });
   }
   let result: Readonly<Record<string, unknown>> | undefined;
   await main('ai', ['--prompt', 'test'], value => { result = value; });
+  expect(createProviderFetch).toHaveBeenCalled();
   expect(logged.join('\n')).not.toContain('CONFIG');
   const runDir = String(result?.artifacts);
   const written = files(runDir).map(file => ({ file, text: readFileSync(file, 'utf8') }));
@@ -68,6 +73,7 @@ describe('harness secrets', () => {
     const { written, logged } = await runHarness(() => { throw new Error(`cannot build transport for ${HOST} ${TOKEN}`); });
     const evidence = [...written.map(({ text }) => text), ...logged].join('\n');
     expect(evidence).toContain('Smoke failed');
+    expect(evidence).not.toContain('provider-raw');
     expect(evidence).not.toContain(HOST);
     expect(evidence).not.toContain(TOKEN);
   }, 60_000);

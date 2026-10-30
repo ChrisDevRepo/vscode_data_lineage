@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execFile } from 'node:child_process';
+import ts from 'typescript';
 import { promisify } from 'node:util';
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -16,13 +17,10 @@ const git = async (args) => (await execAsync('git', args, { cwd: repoRoot, encod
 
 const SRC_ROOT = 'src';
 const DEFAULT_BASELINE = path.join(repoRoot, 'tests/tools/output-truncation-baseline.json');
-const EXPRESSION_LOOKAHEAD = 2;
-const CUT_CALL = /\.(?:slice|substring)\(\s*0\s*,|\.substr\(\s*0\s*,/;
 const ELLIPSIS = /…|\\u2026|\.\.\.['"`]/;
-const CUT_MARKERS = /truncated to|\[truncated|…\[\+|\\u2026 ?\[\+|\bcapRejectionText\b|\bcapUtf8Text\b|\bcapPreviewProse\b/;
-const TRUNC_CALL = /\btrunc(?:AtWordBoundary)?\(/;
-const TRUNC_DEFINITION = /\bfunction\s+trunc(?:AtWordBoundary)?\(/;
-const LOG_CALL = /\.(?:debug|info|warn|error|trace|log)\(|\b(?:log|debugLog|onDebugLog|debugLogger)\??\(/;
+const CUT_MARKERS = /truncated to|\[truncated|…\[\+|\\u2026 ?\[\+/;
+const CUT_HELPERS = /^(?:capRejectionText|capUtf8Text|capPreviewProse|trunc|truncAtWordBoundary)$/;
+const LOG_CALL = /(?:^|\.)(?:debug|info|warn|error|trace|log|debugLog|onDebugLog|debugLogger)$/;
 
 export const ALLOWLIST = [
   { file: 'src/ai/prompting/scopeSummaryRenderer.ts', symbol: 'CARD_OBJECT_TYPE_LIMIT', reason: 'card-summary-view: visible "…" line, full list in the full view' },
@@ -64,24 +62,60 @@ function listTsFiles(dir) {
   return out;
 }
 
+/** Finds truncation expressions by syntax so line wrapping cannot turn a log into output. */
 export function findSites(file, text) {
   if (file.startsWith('src/components/')) return [];
-  const lines = text.split('\n');
-  const sites = [];
-  lines.forEach((raw, i) => {
-    const line = raw.trim();
-    if (line.startsWith('//') || line.startsWith('*') || line.startsWith('/*')) return;
-    let hit = CUT_MARKERS.test(line) && !/^(?:async\s+)?function\s/.test(line);
-    if (!hit && CUT_CALL.test(line)) {
-      hit = ELLIPSIS.test(lines.slice(i, i + 1 + EXPRESSION_LOOKAHEAD).join('\n').split(';')[0]);
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+  const contexts = new Map();
+  const statementOf = node => ts.findAncestor(node, ts.isStatement) ?? node;
+  const ownerOf = node => ts.findAncestor(node, candidate => ts.isVariableDeclaration(candidate) || ts.isStatement(candidate)) ?? node;
+  const callName = node => ts.isIdentifier(node.expression) ? node.expression.text
+    : ts.isPropertyAccessExpression(node.expression) ? node.expression.name.text : '';
+  const inLog = node => !!ts.findAncestor(node, parent => ts.isCallExpression(parent)
+    && LOG_CALL.test(parent.expression.getText(source)));
+  // Scanner tokens preserve literal contents and identifier boundaries while discarding layout trivia.
+  const tokens = value => {
+    const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, value);
+    const parts = [];
+    for (let kind = scanner.scan(); kind !== ts.SyntaxKind.EndOfFileToken; kind = scanner.scan()) parts.push(scanner.getTokenText());
+    return parts.join('\0');
+  };
+  const visit = node => {
+    const context = statementOf(node);
+    let hit = false;
+    if (ts.isCallExpression(node)) {
+      const name = callName(node);
+      hit = CUT_HELPERS.test(name) || (['slice', 'substring', 'substr'].includes(name)
+        && node.arguments[0]?.getText(source) === '0' && ELLIPSIS.test(context.getText(source)));
+    } else if (ts.isIdentifier(node) && /^(?:capRejectionText|capUtf8Text|capPreviewProse)$/.test(node.text)) {
+      hit = !(ts.isFunctionDeclaration(node.parent) && node.parent.name === node);
+    } else if (ts.isStringLiteralLike(node) || ts.isTemplateSpan(node) || ts.isTemplateHead(node)
+      || ts.isTemplateMiddle(node) || ts.isTemplateTail(node)) hit = CUT_MARKERS.test(node.getText(source));
+    if (hit && !inLog(node)) {
+      const owner = ownerOf(node);
+      const hits = contexts.get(owner) ?? [];
+      hits.push(node); contexts.set(owner, hits);
     }
-    if (!hit && TRUNC_CALL.test(line) && !TRUNC_DEFINITION.test(line) && !/^import\s/.test(line) && !LOG_CALL.test(line)) {
-      hit = true;
-    }
-    if (!hit || ALLOWLIST.some((a) => a.file === file && raw.includes(a.symbol))) return;
-    sites.push({ file, line: i + 1, text: line });
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return [...contexts].flatMap(([node, hits]) => {
+    const declaration = ts.isVariableDeclaration(node) && ts.isVariableDeclarationList(node.parent) ? node.parent : null;
+    const keyword = declaration ? (declaration.flags & ts.NodeFlags.Const ? 'const' : declaration.flags & ts.NodeFlags.Let ? 'let' : 'var') : '';
+    const raw = declaration ? `${keyword} ${node.getText(source)};` : node.getText(source);
+    const branch = ts.isIfStatement(node.parent) && node.parent.thenStatement === node ? node.parent.getText(source) : raw;
+    const allowed = hit => ALLOWLIST.some(entry => {
+      if (entry.file !== file) return false;
+      const helper = ts.isIdentifier(hit) ? hit.text : ts.isCallExpression(hit) ? callName(hit) : '';
+      const local = ts.isIterationStatement(node, false) || ts.isIfStatement(node) || ts.isSwitchStatement(node)
+        ? hit.getText(source) : branch;
+      // A helper prohibition cannot inherit an exception for a different expression.
+      if (/^(?:capRejectionText|capUtf8Text|capPreviewProse)$/.test(helper) && entry.symbol && !entry.symbol.includes(helper)) return false;
+      return local.includes(entry.symbol) || tokens(local).includes(tokens(entry.symbol));
+    });
+    if (hits.every(allowed)) return [];
+    return [{ file, line: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1, text: raw }];
   });
-  return sites;
 }
 
 export function compare(sites, baseline) {

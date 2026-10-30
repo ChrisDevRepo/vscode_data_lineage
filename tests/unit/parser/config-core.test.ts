@@ -19,13 +19,14 @@ describe('parseAiOutputTemplatesYaml (assets/aiOutputTemplates.yaml)', () => {
     expect(parseAiOutputTemplatesYaml(text).schemaVersion).toBe(AI_TEMPLATE_SCHEMA_VERSION);
   });
 
-  it('carries every required key with a non-empty string instruction', () => {
+  it('carries every required key, with the shared channel disabled and other defaults non-empty', () => {
     const parsed = parseAiOutputTemplatesYaml(text) as Record<string, unknown>;
     for (const key of REQUIRED_AI_TEMPLATE_KEYS) {
       const entry = parsed[key] as { instruction?: string } | undefined;
       expect(entry, `required key '${key}' present`).toBeTruthy();
       expect(typeof entry?.instruction, `required key '${key}' has a string instruction`).toBe('string');
-      expect((entry?.instruction ?? '').trim().length, `required key '${key}' instruction non-empty`).toBeGreaterThan(0);
+      if (key === 'shared_capture') expect(entry?.instruction).toBe('');
+      else expect((entry?.instruction ?? '').trim().length, `required key '${key}' instruction non-empty`).toBeGreaterThan(0);
     }
   });
 

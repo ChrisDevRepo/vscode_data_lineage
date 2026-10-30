@@ -116,6 +116,12 @@ notes:
 # no cross-references between templates. Each key is self-contained;
 # synthesis groups across nodes at the next phase.
 
+# Optional shared coverage for custom templates; the built-in recipes stand alone.
+shared_capture:
+  stages: [active]
+  instruction: ""
+  example: ""
+
 # `sections` lists the bold labels this recipe writes, in order. Synthesis serves the labels of the active
 # angle(s) in `general` (Section structure), so a label is declared here once and nowhere else.
 business_capture:

@@ -31,6 +31,37 @@ const withTechnicalOnlyLabel: AiOutputSections = {
 };
 
 describe('section labels: one home per recipe', () => {
+  it.each(['', 'Custom shared coverage.'])(
+    'preserves the shared channel and renders only a non-empty custom instruction (%j)',
+    (instruction) => {
+      const overlay = parseAiOutputTemplatesYaml(
+        `schemaVersion: 2\nshared_capture:\n  instruction: ${JSON.stringify(instruction)}\n`,
+      );
+      const rendered = resolveStagePrompt(
+        {
+          ...builtInTemplates,
+          shared_capture: overlay.shared_capture?.instruction ?? '',
+        },
+        'active',
+        'both',
+        undefined,
+        false,
+        { scope: 'per_focus', focusKind: 'bodied' },
+        builtInSections,
+      );
+      expect(
+        rendered.shippedKeys.filter((key) => key === 'shared_capture'),
+      ).toHaveLength(instruction ? 1 : 0);
+      if (instruction)
+        expect(rendered.prompt.split(instruction)).toHaveLength(2);
+      else
+        expect(rendered.gatedOut).toContainEqual({
+          key: 'shared_capture',
+          reason: 'empty_template',
+        });
+    },
+  );
+
   it('built-in file declares the labels on both capture recipes and the placeholder once in general', () => {
     expect(builtInSections.business).toHaveLength(8);
     expect(builtInSections.technical).toEqual(builtInSections.business);
@@ -122,5 +153,7 @@ describe('readAiOutputSections', () => {
 });
 
 // Static contract check: keep the call unexecuted; the tests typecheck fails if sections becomes optional.
-// @ts-expect-error -- sections is required
-void (() => resolveStagePrompt(builtInTemplates, 'synthesis', 'both', 5, false, { scope: 'stable' }));
+void (() => {
+  // @ts-expect-error -- sections is required
+  resolveStagePrompt(builtInTemplates, 'synthesis', 'both', 5, false, { scope: 'stable' });
+});

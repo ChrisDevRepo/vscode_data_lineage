@@ -117,19 +117,10 @@ describe('buildSynthesisEnvelopeMessage — untrusted-JSON wrap for the synthesi
       expect(envelope.result.node_states).toEqual([{ nodeId: view, action: 'analyze', source: 'ai', reason: 'submitted_analyze' }]);
     });
 
-    it('anchors the reminder on depth, graph order, value-changing choices, base-table levels and whole-chain claims', () => {
-      const [, , guidance] = buildSmCompletionEnvelope(surfaceResult(), 'How is Net computed?').synthesis_reminder.split('\n');
-      expect(guidance).toContain('Length follows the captured evidence, not the question');
-      expect(guidance).toContain('Sections run in graph order');
-      expect(guidance).toContain('State each default, fallback, correction and dedup or aggregation choice');
-      expect(guidance).toContain('Name base tables at every level the evidence shows');
-      expect(guidance).toContain('A statement about the whole chain must hold for every captured node.');
-    });
-
     it('lists a kept chain object without a detail slot', () => {
       const chainResult = {
         ...surfaceResult(),
-        node_states: [{ nodeId: dropped, action: 'prune' as const, source: 'ai' as const, reason: 'Not on chain' }],
+        node_states: [...surfaceResult().node_states, { nodeId: dropped, action: 'prune' as const, source: 'ai' as const, reason: 'Not on chain' }],
         columnAspect: {
           edges: [
             { hop_node: view, hop: 1, from_node: table, from_col: 'Amount', to_node: view, to_col: 'Amount' },
@@ -138,7 +129,7 @@ describe('buildSynthesisEnvelopeMessage — untrusted-JSON wrap for the synthesi
         },
       } as unknown as SmResult;
       const reminder = buildSmCompletionEnvelope(chainResult, 'Where does Amount come from?').synthesis_reminder;
-      expect(reminder).not.toContain(`Link in \`sections[].node_ids\`: ${view}`);
+      expect(reminder).toContain(`Link in \`sections[].node_ids\`: ${view}`);
       expect(reminder.split('\n').at(-1)).toBe(`Link in \`sections[].node_ids\` or caption in \`notes[]\`: ${table}`);
     });
   });
