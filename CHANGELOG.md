@@ -6,64 +6,25 @@ The newest version heading collects changes until that version ships.
 ## [1.2.6] - 2026-10-08
 
 ### Added
-- Expanded parser regression coverage for batch boundaries, external-table creation, DMV dependency direction and metadata, and elapsed-time scaling; Vitest and its coverage tool use compatible security patches.
-- The output log warns when a module uses a cursor or dynamic SQL, which are not fully supported, with the module count (the debug log names the modules); the references the parser captures still load.
+- The output log warns when a module uses a cursor or dynamic SQL, which are not fully supported, with the module count; the references the parser captures still load.
 
 ### Changed
-- Fixed inline math boundaries around literal dollar signs; clarified SQL-comment fact checking; updated qs and stable build tools with supported Node versions; strengthened test oracles and consolidated duplicate coverage; the gate reports an unrun template comparison as skipped and writes a step summary; trace exports retain captured schemas, provider request bodies and all generations across consent pauses; interrupted generations retry only before any reply arrives, including buffered and structured output.
-- Tool ingestion uses one canonical validator and shared correction controller. Independent schema, metadata and neighbor-decision conflicts are collected together, including when sibling annotations are malformed or the submitted focus is wrong; valid saved fields survive while only faulty fields need correction. Shared drafts replace sent values without keyed/index merging and preserve prior values after faulty overwrites. Feedback uses one flat list of coded errors, adds complete metadata choices on the second rejection and permitted report-reference fallback guidance on the third, without echoing submitted values. Out-of-scope write and supplier corrections preserve the findings without inventing source-free values. Generated column questions contain metadata only, with instructions kept in the prompt and schema owners.
-- Column-trace instructions record each SQL-proved output related to arriving columns, including downstream fanout. Columns used only to join, filter, group or order rows remain indirect lineage; TRUNCATE and DELETE row operations stay in sections. Scope instructions distinguish complete chains, user-stated depths and approximate estimates; zero closes a side only when the user excludes it.
-- Stable tool schemas admit corrected fields for start requests, findings and reports, and accept valid saved fields resent alongside them. Whole lists replace their held copies; named object leaves can be corrected while valid sibling fields remain held. Committed mappings stay protected.
-- An arriving column-trace column without a mapping ends at that hop and is listed in the acknowledgement's `ended_columns`; the `terminated_inputs` field and its rejections are removed.
-- `focus_node_id` is optional on hop commands: an omitted id means the dispatched hop, which the acknowledgement names; a different id is still rejected.
-- Every open neighbor needs an authored column mapping, question or prune. Object mode uses question relevance and treats questions inherited through intermediate storage as context for the current SQL object. Independent shape and missing-decision faults are reported together; first-rejection repair alternatives include missing outcomes alongside refused prunes while valid fields stay held for correction.
-- Column-trace hops record every valid neighbor-and-column mapping; attachment to requested columns selects continuation. Procedure writes retain source-to-target pairs without duplicate procedure edges. A value a procedure creates lists the procedure in `upstream_columns` and an empty list records no pair; nonempty indirect references stay dashed. Authored notes on edges with no role tags are shown, and asked columns keep both a graph row and a Column Chain row even without a mapping.
-- The AI selects report SQL and formulas; captured-SQL coverage is logged without rejecting omissions or adding excerpts. Report repairs use ordinary full-field resends; after four unsuccessful synthesis replies, chat shows the held report or latest synthesis prose with a preview-failure notice.
-- At a procedure hop, each column-trace mapping must name the neighbor table (`out_node`) that receives its `out_col`. For a write to an object not listed, the entry is omitted and the write is described in sections.
-- Column-trace mappings retain solid value edges and dashed row-influence edges. Indirect-only neighbors stay mapped, while continuation follows direct lineage. Source role tags remain optional. Declared object dependencies remain dashed links when column edges do not represent them, keeping connected objects linked without adding column lineage.
-- The exploration plan card accepts Approve, Cancel and Change scope only while it is the card on display; an outdated card, including one restored after a window reload, never approves. Stopping a scope change before its revised plan is shown discards that revised plan.
+- AI analysis checks every tool reply together and asks for corrections only to the faulty fields; valid fields are kept. Feedback adds the allowed choices on the second rejection and fallback guidance on the third.
+- Column traces record every SQL-proved output of the arriving columns, including downstream fanout. Columns used only to join, filter, group or order rows stay indirect lineage, shown as dashed edges. Procedure writes keep their source-to-target pairs, and asked columns always get a graph row and a Column Chain row.
+- Every open neighbor needs a column mapping, a question or a prune. An arriving column without a mapping ends at that hop; `focus_node_id` is optional on hop commands.
+- The AI selects report SQL and formulas; after four unsuccessful synthesis replies, chat shows the latest report text with a preview-failure notice.
+- The exploration plan card accepts Approve, Cancel and Change scope only while it is on display; an outdated card, including one restored after a window reload, never approves.
 
 ### Removed
 - The SQL Server (mssql) extension integration and the `dataLineageViz.database.connectionProvider` setting; databases connect through built-in connections only. Projects saved with an mssql connection keep it without the password; set the password with **Update Database Password**.
 
 ### Fixed
-- Rejections retain all independent fault paths and owed subjects, identify the actually missing depth field, and preserve valid same-table different-column supplier choices. Repeated oversized reads retain the original refusal; malformed report labels and containers reject without becoming backend errors.
-- The headless test harness no longer records the provider endpoint URL in trace records, `run.json` or the printed result. The endpoint host, `DB_TEST_TOKEN`, the AI API key, the database password and the Langfuse secret are now removed from provider-error diagnostics (including nested causes), the failure log and uploaded evidence.
-- A hop with no prunable neighbor serves `prune_neighbors` with no entries allowed instead of an unsatisfiable id; on other hops a prune of a neighbor that cannot be pruned is reported as `prune_target` with the prunable ids instead of `not_neighbor`.
-- Updating a legacy bookmark preserves current selections when older spellings are ambiguous. Note repairs preserve distinct quoted object identities, and identifier binding preserves Unicode format characters inside identifiers while ignoring them around an id. An equivalent spelling of a function's caller in a CT follow-up question binds to the caller instead of costing a retry.
-- A branch may prune an unvisited shared neighbor already kept elsewhere without removing the node or its saved column mappings; conflicting actions in one reply remain rejected.
-- Longer report section labels are accepted unchanged in reports and repairs; blank and duplicate labels remain rejected.
-- Tool and structured responses share logged, lossless normalization of JSON-text objects and lists, exact numbers and booleans. Within JSON-text string values, unknown backslash escapes and raw C0 characters retain their values; keys, standard escapes, incomplete syntax and numeric precision remain strict.
-- A retry after a rejected findings call no longer offers a neighbor for pruning when the kept column mapping still uses it; the offered prune choices match the ones the check accepts.
-- A procedure mapping whose `out_node` names an object outside the served choices is rejected with those choices. It was rejected as an unknown source with advice to drop the reference.
-- A table reached by several paths forwards the same question and carried columns to each next object once, so chains of shared tables no longer double the queued work at every fork and merge.
-- An object passed through without analysis forwards the same question, carried columns and caller output to each next object once, as tables do, so chains of such objects no longer double the queued work at every fork and merge.
-- Investigation and follow-up ids are sequence numbers instead of a short hash, so two distinct investigations can no longer collide and stop the exploration with an error; caller-context columns are matched with the source's identifier case rule.
-- A function without declared columns now gets column-trace edges: its column names are accepted unverified like those of a procedure or external object, as a source and as the output of its own hop, but it is never offered as its own source. Tables and views without column metadata are still refused.
-- Exploration depth is strict only for a level count or complete chain the user stated; a vague request starts at an approximate 3 levels. The approval card identifies the origin and explains that approximate depth is not a limit.
-- The served `out_col` is limited to the columns arriving at an upstream hop.
-- Column-trace hops describe column_flow as one entry per arriving column, restore the recipe depth items (rules and branches, mapping, loading, error handling, gaps), and ask kept neighbors for their rules and thresholds.
-- Equivalent SQL identifier delimiters, outside whitespace and source-permitted casing bind to known object identities without changing authored content or guessing missing names.
-- Column-trace tool descriptions permit SQL-supported contextual dependencies without treating them as arithmetic or aggregate inputs.
-- A rejected call counts toward the three-correction escalation in every phase, including entry detection and scope refinement, even when accepted reads come in the same reply; an unknown tool call counts too, and a failed `present_result` is counted where it is handled.
-- Compiled tool validators are released from the validator's own cache instead of accumulating for the life of the extension host, and the per-hop findings schemas keep only the 16 most recent.
-- A sibling call that is not executed because an earlier call in the same provider reply closed the phase now receives the feedback stage of its own reply instead of always the second stage.
-- Column-trace instructions relate qualified columns to neighboring objects, and retain SQL facts beyond the requested trace in sections.
-- Prohibited neighbor entries receive removal guidance instead of invalid-JSON instructions, and object-valued repair fields retain their diagnostics without incompatible scalar choices.
-- Offered column sources follow the same scope admission rules as submitted mappings.
-- Malformed findings repairs preserve held questions, column mappings and sections until a valid correction is submitted.
-- Reports reject omitted captured SQL or result objects without a section or note; focused repairs preserve exact SQL and valid report fields, and malformed retries preserve the draft.
-- Distinct investigation questions retain SQL literal case and whitespace when tasks merge; authored deferred questions reach the final report request with their target and originating object.
-- Repeated tool-call IDs fail before execution through a shared native/headless transport guard. Live provider verification honors inherited HTTP(S) proxy and NO_PROXY settings while retaining deadlines and redirect credential protection. Stored baseline reads preserve API request spacing after delayed timers and across concurrent sources.
-- Hop neighbor choices now share one backend projection across context, schemas and routing. Neighbor, column and enum rejections share first-fault, second-choices feedback without exposing unrelated catalog columns.
-- Prune choices and submissions share the action-state policy. Queued column demands merge quoted and padded equivalents under the source case policy, preserving task identities and authored questions.
-- New SQL work after an answer requires a fresh approved exploration; completed results and permitted view or text edits remain available.
-- Column-name comparison is consistent across trace admission and hop schemas, accepting identifier quoting and outer whitespace while respecting source case sensitivity.
-- Neighbor pruning rejects non-adjacent targets atomically. Repeated AI rejections preserve complete repair choices for large objects and retain valid findings or report text for focused repairs.
-- Database query timeouts, live import metadata and saved-project timestamps.
-- A DACPAC three-part name to another database no longer resolves to a local object with the same schema and name; the DACPAC name is its current database, as on a live connection.
-- Reconnecting a database project by server now matches a saved connection whose server is written with a `tcp:` prefix.
-- A follow-up question that passed through a storage table is attributed to the object that asked it, not to the table.
+- AI analysis rejects malformed reports, labels and tool calls with clear repair choices, and keeps valid text and column mappings while a repair is pending.
+- Updating a legacy bookmark keeps current selections; SQL identifiers with equivalent quoting, casing or Unicode format characters bind to the right objects.
+- Tables and pass-through objects reached by several paths forward their question once, so shared chains no longer multiply the queued work. Investigation ids no longer collide.
+- Functions without declared columns now get column-trace edges; exploration depth is strict only when the user states a level count or complete chain, otherwise it starts at about 3 levels.
+- The headless test harness and diagnostics no longer record the provider endpoint, tokens, API keys or passwords in logs or uploaded evidence.
+- Database query timeouts, live import metadata and saved-project timestamps. A DACPAC three-part name to another database no longer resolves to a local object, and reconnecting by server matches a saved connection written with a `tcp:` prefix.
 
 ### Dependencies
 - Security updates: DOMPurify.
