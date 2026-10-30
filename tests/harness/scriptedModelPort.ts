@@ -16,7 +16,7 @@ import type {
   ValidGeneratedToolCall,
 } from '../../src/ai/model/modelPort';
 import type { ProviderErrorDiagnostic } from '../../src/ai/support/text';
-import { StructuredOutputError } from '../../src/ai/providers/structuredOutput';
+import { STRUCTURED_OUTPUT_TOOL } from '../../src/ai/providers/structuredOutput';
 import { TOOL_DEFS } from '../../src/ai/tools/toolDefs';
 import type { AiSession } from '../../src/ai/session/session';
 import {
@@ -24,7 +24,7 @@ import {
   estimateTokens,
   type TurnTokenBudget,
 } from '../../src/ai/support/tokenBudget';
-import { messageContentToText, modelToolCallMessage } from '../../src/ai/model/modelPort';
+import { finishStructured, messageContentToText, modelToolCallMessage } from '../../src/ai/model/modelPort';
 import type { MessageContent } from '@langchain/core/messages';
 
 /** One queued provider generation replayed by {@link ScriptedModelPort} in script order. */
@@ -105,7 +105,7 @@ export class ScriptedModelPort implements SingleGenerationModelPort {
     return reply;
   }
 
-  /** Unused by the discovery-summary compose round this double supports; present only to satisfy `ModelPort`. */
+  /** Finishes the next scripted structured reply through the product path, as one structured-output call. */
   public async generateStructured<T>(input: { schema: z.ZodType<T> }): Promise<T> {
     const reply = this.structuredScript[this.structuredCalls];
     this.structuredCalls += 1;
@@ -114,13 +114,7 @@ export class ScriptedModelPort implements SingleGenerationModelPort {
     }
     // A scripted Error is thrown as the model port would: the provider failed instead of answering.
     if (reply instanceof Error) throw reply;
-    const parsed = input.schema.safeParse(reply);
-    if (!parsed.success) {
-      throw new StructuredOutputError(
-        `scripted structured reply failed schema: ${parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ')}`,
-      );
-    }
-    return parsed.data;
+    return finishStructured([{ callId: `structured-${this.structuredCalls}`, toolName: STRUCTURED_OUTPUT_TOOL, args: reply as Record<string, unknown> }], input.schema);
   }
 
   /** Replays the next queued generation, incrementing the physical-call counter exactly once. */

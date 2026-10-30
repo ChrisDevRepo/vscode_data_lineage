@@ -22,7 +22,7 @@ import {
 import { TurnEventSink } from '../../../src/ai/runtime/turnEventSink';
 import { ToolRegistry, type IToolRegistry } from '../../../src/ai/tools/registry';
 import { classifyRejectionCode } from '../../../src/ai/tools/toolProvider';
-import { ISSUES, LAST_CORRECTION, at, makeRejection, rejectionFromZodError, type IssueCode, type ToolProblem } from '../../../src/ai/support/toolErrorEnvelope';
+import { ISSUES, LAST_CORRECTION, at, makeRejection, type IssueCode, type ToolProblem } from '../../../src/ai/support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../../../src/ai/support/rejectionCodes';
 import { buildRouteValidationRejection } from '../../../src/ai/sm/smRouteValidation';
 import { createTurnTokenBudget } from '../../../src/ai/support/tokenBudget';
@@ -57,8 +57,8 @@ function registryWith(result: (input: unknown) => string): { registry: IToolRegi
   registry.register({
     name: 'lineage_search_objects', inputSchema: SearchSchema, effect: 'read', modelDescription: 'Search objects.',
     execute: (input: unknown) => {
-      const parsed = SearchSchema.safeParse(input);
-      if (!parsed.success) return JSON.stringify(rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema: SearchSchema }));
+      const admitted = validateToolCandidate(SearchSchema, input);
+      if (!admitted.success) return JSON.stringify(admitted.rejection);
       return invoke(input) as string;
     },
   });
@@ -946,9 +946,9 @@ describe('model-facing rejection text', () => {
 
   it('keeps schema correction choices on a rejected report (D-102)', async () => {
     const schema = z.object({ start: z.enum(['B1', 'B2']) });
-    const parsed = schema.safeParse({ start: 'Missing' });
-    if (parsed.success) throw new Error('Expected invalid block');
-    const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, schema });
+    const admitted = validateToolCandidate(schema, { start: 'Missing' });
+    if (admitted.success) throw new Error('Expected invalid block');
+    const { rejection } = admitted;
     const registry = new ToolRegistry<string>();
     registry.register({ name: 'lineage_present_result', inputSchema: schema, effect: 'presentation_commit',
       execute: () => JSON.stringify(rejection) });
@@ -1018,9 +1018,9 @@ describe('model-facing rejection text', () => {
     const columns = Array.from({ length: count }, (_, i) => `VerifiedColumn${i}`);
     const path = kind === 'column' ? 'column_flow.0.upstream_columns.0.col' : kind === 'neighbor' ? 'questions.0.nodeId' : 'query';
     const code: IssueCode = kind === 'enum' ? 'enum' : kind === 'column' ? 'unknown_column' : 'not_neighbor';
-    const invalidEnum = z.object({ query: z.enum(columns as [string, ...string[]]) }).safeParse({ query: 'Missing' });
+    const invalidEnum = validateToolCandidate(z.object({ query: z.enum(columns as [string, ...string[]]) }), { query: 'Missing' });
     if (invalidEnum.success) throw new Error('Expected invalid enum');
-    const rejection = kind === 'enum' ? rejectionFromZodError(invalidEnum.error, { code: 'invalid_tool_input', input: { query: 'Missing' } })
+    const rejection = kind === 'enum' ? { ...invalidEnum.rejection, code: 'invalid_tool_input' }
       : buildRouteValidationRejection([{ kind: kind === 'column' ? 'bad_contributor_col' : 'question_not_neighbor', id: 'Source', path,
         reason: 'The supplied value is not allowed here.',
         allowed_values: columns, ...(kind === 'column' ? { when: { node: 'Source' } } : {}) }]);
@@ -1382,7 +1382,7 @@ describe('submit_findings rejection form', () => {
     { name: 'supplier column missing', patch: { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source }] }, terminals[1]] }, path: 'column_flow.0.upstream_columns.0.col', code: 'missing' },
     { name: 'supplier column type', patch: { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 42 }] }, terminals[1]] }, path: 'column_flow.0.upstream_columns.0.col', code: 'type' },
     { name: 'transforms type', patch: { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0', transforms: 42 }] }, terminals[1]] }, path: 'column_flow.0.upstream_columns.0.transforms', code: 'type' },
-    { name: 'transform item type', patch: { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0', transforms: [42] }] }, terminals[1]] }, path: 'column_flow.0.upstream_columns.0.transforms.0', code: 'type', also: ['enum'] },
+    { name: 'transform item type', patch: { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0', transforms: [42] }] }, terminals[1]] }, path: 'column_flow.0.upstream_columns.0.transforms.0', code: 'enum' },
     { name: 'transform enum', patch: { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0', transforms: ['bogus'] }] }, terminals[1]] }, path: 'column_flow.0.upstream_columns.0.transforms.0', code: 'enum' },
     { name: 'supplier note type', patch: { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0', note: 42 }] }, terminals[1]] }, path: 'column_flow.0.upstream_columns.0.note', code: 'type' },
     { name: 'supplier strict keys', patch: { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0', __unsupported__: true }] }, terminals[1]] }, path: 'column_flow.0.upstream_columns.0.__unsupported__', code: 'unknown_key' },

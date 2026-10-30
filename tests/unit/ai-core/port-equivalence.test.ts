@@ -110,6 +110,15 @@ describe('the finished structured payload is the same on both ports', () => {
   }
 });
 
+describe('the served JSON Schema alone admits a structured payload (D-126)', () => {
+  const generate = (port: ModelPort, schema: z.ZodType) => port.generateStructured({ messages: [modelUserMessage('q')], schema, phase: 'eq' });
+  it.each(ports)('rejects a value Zod would coerce and keeps every sent property (%s)', async (_name, make) => {
+    await expect(generate(make([structuredCall('{"query":5}')]), z.object({ query: z.coerce.string() }).strict()))
+      .rejects.toMatchObject({ code: 'invalid_structured_output', errors: [{ path: 'query', code: 'type', values: ['string'] }] });
+    await expect(generate(make([structuredCall('{"query":"x","extra":1}')]), z.object({ query: z.string() }))).resolves.toEqual({ query: 'x', extra: 1 });
+  });
+});
+
 describe('blank arguments, which only the HTTP wire can carry', () => {
   it('charges a blank tool call to the call and a blank structured payload as empty', async () => {
     expect(await toolTurn(harnessPort([{ id: 'c1', name: 'lineage_levels', arguments: ' ' }]))).toMatchObject({

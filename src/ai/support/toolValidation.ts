@@ -175,15 +175,17 @@ function rejection(errors: readonly ErrorObject[]): ToolRejection {
   const faults: ToolError[] = [];
   for (const error of errors) {
     const { keyword, params, parentSchema } = error;
-    if (['anyOf', 'oneOf', 'if'].includes(keyword)) continue;
+    // A value outside an enum or const is one fault; the wrong JSON type of the same node restates it.
+    if (['anyOf', 'oneOf', 'if'].includes(keyword) || (keyword === 'type' && (Array.isArray(parentSchema?.enum) || 'const' in (parentSchema ?? {})))) continue;
     const path = toolErrorPath(error);
     let code: IssueCode = 'invalid', values: string[] | undefined;
     if (parentSchema?.toolIssue && parentSchema.toolIssue in ISSUES) code = parentSchema.toolIssue as IssueCode;
     else if (keyword === 'required') code = 'missing';
     else if (keyword === 'additionalProperties') { code = 'unknown_key'; values = Object.keys(parentSchema?.properties ?? {}); }
     else if (keyword === 'type') {
-      code = error.data === undefined ? 'missing' : (params.type === 'array' || params.type === 'object') && typeof error.data === 'string' && /^\s*[[{]/.test(error.data) ? 'json_text' : 'type';
-      values = Array.isArray(params.type) ? params.type : [params.type];
+      const types: string[] = [params.type].flat();
+      code = error.data === undefined ? 'missing' : types.some(type => type === 'array' || type === 'object') && typeof error.data === 'string' && /^\s*[[{]/.test(error.data) ? 'json_text' : 'type';
+      if (code !== 'json_text') values = types;
     } else if (keyword === 'enum' || keyword === 'const') { code = 'enum'; values = (params.allowedValues ?? [params.allowedValue]).map(String); }
     else if (/^(?:min|max)(?:Items|Length|imum|Properties)$/.test(keyword) || keyword === 'exclusiveMinimum' || keyword === 'exclusiveMaximum') code = 'size';
     else if (keyword === 'false schema') code = 'never';

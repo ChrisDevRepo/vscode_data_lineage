@@ -375,6 +375,11 @@ describe('normalizeModelInput union decoding', () => {
 });
 
 
+it('decides by the served JSON Schema, not by what Zod would coerce (D-126)', () => {
+  const coerced = z.object({ n: z.coerce.number() }).strict();
+  expect(normalizeModelInput(coerced, { n: '2' })).toEqual({ input: { n: 2 }, fixes: [{ path: 'n', before: '2', after: 2 }] });
+});
+
 it('retains issue-path decoding for records and tuples', () => {
   const schema = z.object({ record: z.record(z.string(), z.number()), tuple: z.tuple([z.object({ n: z.number() })]) });
   const result = normalizeModelInput(schema, { record: { count: '2' }, tuple: ['{"n":"3"}'] });

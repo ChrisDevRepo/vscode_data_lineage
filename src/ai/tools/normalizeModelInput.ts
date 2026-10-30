@@ -2,6 +2,10 @@ import { z, type ZodType } from 'zod';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveModelNodeId } from '../support/modelReferences';
 import { splitSqlName, stripBrackets } from '../../utils/sql';
+import { validateToolCandidate } from '../support/toolValidation';
+
+/** Admission by the served JSON Schema decides every normalization step (D-126). */
+const admits = (schema: ZodType, value: unknown): boolean => validateToolCandidate(schema, value).success;
 
 /** One lossless format fix: same data, different spelling, exactly one possible result. */
 export interface ModelInputFix {
@@ -147,7 +151,7 @@ function respell(schema: ZodType, value: unknown, path: PropertyKey[], fixes: Mo
       const branchFixes: ModelInputFix[] = [];
       const clone = structuredClone(value);
       respell(option, clone, path, branchFixes);
-      return { clone, branchFixes, valid: option.safeParse(clone).success };
+      return { clone, branchFixes, valid: admits(option, clone) };
     }).filter(branch => branch.branchFixes.length > 0);
     const preferred = branches.filter(branch => branch.valid);
     const candidates = preferred.length > 0 ? preferred : branches;
@@ -218,14 +222,14 @@ function respellSearch(record: Record<string, unknown>, path: PropertyKey[], fix
 
 /** Decodes values through the schema; union branches must agree on one valid result. */
 function decodeText(schema: ZodType, input: unknown, path: PropertyKey[] = [], rounds = MAX_ROUNDS): { readonly input: unknown; readonly fixes: ModelInputFix[] } {
-  if (schema.safeParse(input).success || rounds === 0) return { input, fixes: [] };
+  if (admits(schema, input) || rounds === 0) return { input, fixes: [] };
   if (schema instanceof z.ZodOptional || schema instanceof z.ZodNullable || schema instanceof z.ZodDefault
     || schema instanceof z.ZodPrefault || schema instanceof z.ZodCatch || schema instanceof z.ZodReadonly
     || schema instanceof z.ZodNonOptional) return decodeText(schema.unwrap() as ZodType, input, path, rounds);
   if (schema instanceof z.ZodPipe) return decodeText(schema.in as ZodType, input, path, rounds);
   if (schema instanceof z.ZodUnion) {
     const candidates = schema.options.map(option => option as ZodType).map(option => ({ option, decoded: decodeText(option, input, path, rounds) }))
-      .filter(({ option, decoded }) => decoded.fixes.length > 0 && option.safeParse(decoded.input).success);
+      .filter(({ option, decoded }) => decoded.fixes.length > 0 && admits(option, decoded.input));
     const first = candidates[0]?.decoded;
     return first && candidates.every(({ decoded }) => isDeepStrictEqual(decoded.input, first.input))
       ? first : { input, fixes: [] };
@@ -235,7 +239,7 @@ function decodeText(schema: ZodType, input: unknown, path: PropertyKey[] = [], r
     for (const expected of ['number', 'boolean']) {
       if (!values.some(value => typeof value === expected)) continue;
       const after = decodeExact(input, expected);
-      if (after !== undefined && schema.safeParse(after).success) {
+      if (after !== undefined && admits(schema, after)) {
         return { input: after, fixes: [{ path: path.join('.'), before: input, after }] };
       }
     }
@@ -266,21 +270,19 @@ function decodeText(schema: ZodType, input: unknown, path: PropertyKey[] = [], r
       if (Object.prototype.hasOwnProperty.call(record, key)) visit(child as ZodType, key, record[key]);
     }
   } else {
-    // Other schema compositions retain the existing issue-path decoding contract.
-    const parsed = schema.safeParse(input);
-    if (!parsed.success) for (const issue of parsed.error.issues) {
-      if (issue.code !== 'invalid_type' || issue.path.length === 0) continue;
-      const parentPath = issue.path.slice(0, -1);
-      const key = issue.path[issue.path.length - 1];
-      const parent = parentPath.reduce<unknown>((node, step) => (node as Record<PropertyKey, unknown> | undefined)?.[step], input);
-      const value = (parent as Record<PropertyKey, unknown> | undefined)?.[key];
-      if (typeof value !== 'string') continue;
-      const after = decodeExact(value, issue.expected);
+    // Other schema compositions decode at the paths of the served schema's type faults.
+    const admitted = validateToolCandidate(schema, input);
+    if (!admitted.success) for (const error of admitted.errors) {
+      const steps = error.instancePath.split('/').slice(1).map(part => part.replace(/~1/g, '/').replace(/~0/g, '~'));
+      const key = steps.pop();
+      if (error.keyword !== 'type' || key === undefined) continue;
+      const value = (steps.reduce<unknown>((node, step) => (node as Record<string, unknown> | undefined)?.[step], input) as Record<string, unknown> | undefined)?.[key];
+      const expected = [error.params.type].flat().find(type => type !== 'null');
+      const after = typeof value === 'string' ? decodeExact(value, expected === 'integer' ? 'number' : expected) : undefined;
       if (after === undefined) continue;
       if (fixes.length === 0) current = structuredClone(input);
-      const target = parentPath.reduce<unknown>((node, step) => (node as Record<PropertyKey, unknown>)[step], current);
-      (target as Record<PropertyKey, unknown>)[key] = after;
-      fixes.push({ path: [...path, ...issue.path].join('.'), before: value, after });
+      (steps.reduce<unknown>((node, step) => (node as Record<string, unknown>)[step], current) as Record<string, unknown>)[key] = after;
+      fixes.push({ path: [...path, ...steps, key].join('.'), before: value as string, after });
     }
     if (fixes.length > 0) {
       const nested = decodeText(schema, current, path, rounds - 1);

@@ -204,7 +204,7 @@ function distance(a: string, b: string): number {
 
 /** The value at a dotted path of `input`. */
 function valueAt(input: unknown, path: string): unknown {
-  return resolveAtPath(input, path ? path.split('.').map(key => (/^\d+$/.test(key) ? Number(key) : key)) : []);
+  return (path ? path.split('.') : []).reduce<unknown>((value, key) => (value !== null && typeof value === 'object' ? (value as Record<string, unknown>)[key] : undefined), input);
 }
 
 /** Renders every independent fault once. Required subjects appear immediately, allowed values from feedback 2, and report-reference fallbacks only at feedback 3; submitted values are never echoed. */
@@ -287,107 +287,3 @@ export function makeRejection(input: {
   };
 }
 
-/** Longest object key named in a path; a longer key is reported at its container. */
-const KEY_ECHO_MAX_CHARS = 120;
-
-/** Walks `input` down one issue path; `undefined` when the path leaves the object graph. */
-function resolveAtPath(input: unknown, path: readonly PropertyKey[]): unknown {
-  let value: unknown = input;
-  for (const key of path) {
-    if (value === null || typeof value !== 'object') return undefined;
-    value = (value as Record<PropertyKey, unknown>)[key as keyof object];
-  }
-  return value;
-}
-
-/** The slice of a JSON Schema node the Zod mapping reads. */
-interface JsonSchemaShape {
-  type?: string | string[];
-  anyOf?: JsonSchemaShape[];
-  oneOf?: JsonSchemaShape[];
-  items?: JsonSchemaShape;
-  properties?: Record<string, JsonSchemaShape>;
-}
-
-/** The node and its union branches. */
-const variantsOf = (node: JsonSchemaShape): JsonSchemaShape[] => [node, ...(node.anyOf ?? []), ...(node.oneOf ?? [])];
-
-/** The input JSON Schema of `schema`, or `undefined` when it has none. */
-function inputJsonSchema(schema: z.ZodType | undefined): JsonSchemaShape | undefined {
-  if (!schema) return undefined;
-  try {
-    return z.toJSONSchema(schema, { io: 'input', unrepresentable: 'any' }) as JsonSchemaShape;
-  } catch {
-    return undefined;
-  }
-}
-
-/** The JSON Schema node `path` addresses inside `root`; `undefined` when the path leaves the schema. */
-function jsonSchemaNodeAt(root: JsonSchemaShape | undefined, path: readonly PropertyKey[]): JsonSchemaShape | undefined {
-  let node = root;
-  for (const key of path) {
-    node = node && variantsOf(node)
-      .map(variant => (typeof key === 'number' ? variant.items : variant.properties?.[String(key)]))
-      .find(candidate => candidate !== undefined);
-  }
-  return node;
-}
-
-/** The JSON types a schema node declares, as its allowed values. */
-const declaredTypes = (node: JsonSchemaShape | undefined): string[] | undefined => {
-  const types = node && [...new Set(variantsOf(node).flatMap(variant => (Array.isArray(variant.type) ? variant.type : variant.type ? [variant.type] : [])))];
-  return types?.length ? types : undefined;
-};
-
-/** The faults of a Zod failure, one per path and issue code; union alternatives contribute their leaf issues. An absent value is `missing`, whatever the issue. A custom refinement names its issue in `params.issue` and may carry `params.allowed_values`. */
-function zodProblemErrors(error: z.ZodError, input: unknown, root: JsonSchemaShape | undefined): ToolError[] {
-  const errors: ToolError[] = [];
-  const add = (path: readonly PropertyKey[], code: IssueCode, values?: readonly string[]): void => {
-    // Union alternatives repeat a fault at one path; it is one fault, with the values of every alternative.
-    const known = errors.find(error => error.path === path.join('.') && error.code === code);
-    const merged = known?.values || values ? [...new Set([...(known?.values ?? []), ...(values ?? []).map(String)])] : undefined;
-    if (known) { if (merged) known.values = merged; return; }
-    errors.push({ path: path.join('.'), code, ...(merged ? { values: merged } : {}) });
-  };
-  const visit = (issues: readonly z.core.$ZodIssue[], prefix: readonly PropertyKey[]): void => {
-    for (const issue of issues) {
-      const path = [...prefix, ...issue.path];
-      const received = resolveAtPath(input, path);
-      if (issue.code === 'invalid_union') {
-        for (const alternative of issue.errors) visit(alternative, path);
-      } else if (issue.code === 'unrecognized_keys') {
-        const allowed = Object.keys(jsonSchemaNodeAt(root, path)?.properties ?? {});
-        for (const key of issue.keys) add(key.length > KEY_ECHO_MAX_CHARS ? path : [...path, key], 'unknown_key', allowed.length ? allowed : undefined);
-      } else if (input !== undefined && received === undefined && path.length > 0) {
-        add(path, 'missing');
-      } else if ((issue.code === 'too_big' || issue.code === 'too_small') && issues.some(other => other.code === 'invalid_type' && other.path.join('.') === issue.path.join('.'))) {
-        continue;
-      } else if (issue.code === 'invalid_type') {
-        if (issue.expected === 'never') add(path, 'never');
-        else if ((issue.expected === 'array' || issue.expected === 'object') && typeof received === 'string' && /^\s*[[{]/.test(received)) add(path, 'json_text');
-        else add(path, 'type', declaredTypes(jsonSchemaNodeAt(root, path)) ?? [issue.expected]);
-      } else if (issue.code === 'invalid_value') {
-        add(path, 'enum', issue.values.map(String));
-      } else if (issue.code === 'too_big' || issue.code === 'too_small') {
-        add(path, 'size');
-      } else if (issue.code === 'custom') {
-        const params = issue.params as { issue?: IssueCode; allowed_values?: readonly string[] } | undefined;
-        add(path, params?.issue && params.issue in ISSUES ? params.issue : params?.allowed_values ? 'enum' : 'invalid', params?.allowed_values);
-      } else {
-        add(path, 'invalid');
-      }
-    }
-  };
-  visit(error.issues, []);
-  return errors;
-}
-
-/** The one Zod-failure rejection: every fault as an error by path and issue code. */
-export function rejectionFromZodError(error: z.ZodError, opts: { code: string; input?: unknown; schema?: z.ZodType }): ToolRejection {
-  const errors = zodProblemErrors(error, opts.input, inputJsonSchema(opts.schema));
-  return makeRejection({
-    code: opts.code,
-    reason: error.issues.map(issue => `${issue.path.join('.')}: ${issue.code}`).join('\n'),
-    errors: errors.length ? errors : at('invalid'),
-  });
-}

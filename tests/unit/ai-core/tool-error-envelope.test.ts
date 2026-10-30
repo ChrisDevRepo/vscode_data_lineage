@@ -1,5 +1,5 @@
 /** Deterministic production tool-error-envelope contract: the one rejection record, the Zod issue mapping and the one renderer (D-103, D-105). Tests assert paths, issue codes, backend values and the stage; every rendered sentence is a table string (see rejection-render.test.ts). */
-import { ISSUES, readToolError, readToolErrorText, isConsentGateRejection, makeRejection, rejectionFromZodError, renderProblem, type FeedbackStage, type ToolProblem, type ToolRejection } from '../../../src/ai/support/toolErrorEnvelope';
+import { ISSUES, readToolError, readToolErrorText, isConsentGateRejection, makeRejection, renderProblem, type FeedbackStage, type ToolProblem, type ToolRejection } from '../../../src/ai/support/toolErrorEnvelope';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { makeGraph, makeIndexedModel, makeModel, makeNode } from '../helpers/modelFixtures';
 import { draftWorld } from '../helpers/presentWorld';
@@ -16,10 +16,10 @@ import { validateToolCandidate } from '../../../src/ai/support/toolValidation';
 type Shown = ToolProblem['errors'][number];
 type Problem = ToolProblem;
 const render = (rejection: ToolRejection, stage: FeedbackStage, input?: unknown): Problem => JSON.parse(renderProblem(rejection, stage, input));
-const zodRejection = (schema: z.ZodType, input: unknown) => {
-  const parsed = schema.safeParse(input);
-  if (parsed.success) throw new Error('Expected schema faults');
-  return rejectionFromZodError(parsed.error, { code: 'invalid_input', input, schema });
+const schemaRejection = (schema: z.ZodType, input: unknown) => {
+  const admitted = validateToolCandidate(schema, input);
+  if (admitted.success) throw new Error('Expected schema faults');
+  return admitted.rejection;
 };
 const shown = (problem: Problem): Shown[] => problem.errors;
 const at = (problem: Problem, path: string) => shown(problem).find(error => error.path === path);
@@ -55,7 +55,7 @@ describe("tool-error-envelope", () => {
   it('derives errors from Zod issues with schema values, never the submitted value (D-102)', () => {
     const schema = z.object({ mode: z.enum(['a', 'b']), items: z.array(z.object({ name: z.string() }).strict()), count: z.number() }).strict();
     const input = { mode: 'zzz-sent', items: [{ name: 'ok', extra: 1 }], count: 'x'.repeat(200) };
-    const rejection = zodRejection(schema, input);
+    const rejection = schemaRejection(schema, input);
     expect(rejection.errors).toEqual(expect.arrayContaining([
       { path: 'mode', code: 'enum', values: ['a', 'b'] },
       { path: 'items.0.extra', code: 'unknown_key', values: ['name'] },
@@ -66,20 +66,20 @@ describe("tool-error-envelope", () => {
 
   it.each([z.number(), z.number().int()])('reports a numeric type fault without choosing or echoing a value: %s', owner => {
     for (const value of [null, 'three']) {
-      const rejection = zodRejection(z.object({ value: owner }), { value });
+      const rejection = schemaRejection(z.object({ value: owner }), { value });
       expect(rejection.issuePaths).toEqual(['value']);
       expect(faults(rejection)).toEqual([['value', 'type']]);
     }
   });
 
   it('reads a JSON string sent for an object as json_text', () => {
-    expect(faults(zodRejection(z.object({ sections: z.object({ a: z.string() }) }), { sections: '{"a":"x"}' }))).toEqual([['sections', 'json_text']]);
+    expect(faults(schemaRejection(z.object({ sections: z.object({ a: z.string() }) }), { sections: '{"a":"x"}' }))).toEqual([['sections', 'json_text']]);
   });
 
   it.each([false, true])('names an unknown key and its declared fields (nested=%s)', nested => {
     const schema = z.object({ entry: z.object({ value: z.string() }).strict() }).strict();
     const input = nested ? { entry: { value: 'Keep this text.', extra: 'x' } } : { entry: { value: 'Keep this text.' }, extra: 'x' };
-    const rejection = zodRejection(schema, input);
+    const rejection = schemaRejection(schema, input);
     const path = nested ? 'entry.extra' : 'extra';
     expect(rejection.errors).toEqual([{ path, code: 'unknown_key', values: [nested ? 'value' : 'entry'] }]);
     expect(at(render(rejection, 1), path)?.allowed).toBeUndefined();
@@ -87,15 +87,13 @@ describe("tool-error-envelope", () => {
   });
 
   it('states a native never fault without values', () => {
-    const rejection = zodRejection(z.object({ items: z.array(z.object({ id: z.never() }).strict()) }).strict(), { items: [{ id: 'invalid' }] });
+    const rejection = schemaRejection(z.object({ items: z.array(z.object({ id: z.never() }).strict()) }).strict(), { items: [{ id: 'invalid' }] });
     expect(faults(rejection)).toEqual([['items.0.id', 'never']]);
   });
 
-  it('maps a custom refinement through params.issue and params.allowed_values', () => {
-    const schema = z.object({ col: z.string().refine(value => value === 'A', { params: { issue: 'unknown_column', allowed_values: ['A'] } }),
-      other: z.string().refine(() => false, { params: { allowed_values: ['B'] } }), free: z.string().refine(() => false) });
-    expect(zodRejection(schema, { col: 'x', other: 'y', free: 'z' }).errors).toEqual([
-      { path: 'col', code: 'unknown_column', values: ['A'] }, { path: 'other', code: 'enum', values: ['B'] }, { path: 'free', code: 'invalid' }]);
+  it('maps a validator keyword through params.issue and its allowed values', () => {
+    const schema = z.object({ col: z.string().meta({ toolIdentifier: { kind: 'column', values: ['A'], caseSensitive: false, issue: 'unknown_column' } }), free: z.string().regex(/^B$/) });
+    expect(schemaRejection(schema, { col: 'x', free: 'z' }).errors).toEqual([{ path: 'col', code: 'unknown_column', values: ['A'] }, { path: 'free', code: 'invalid' }]);
   });
 
   describe('D-105 fallback: per issue code, only with the third rejection, never early', () => {
@@ -206,7 +204,7 @@ describe("tool-error-envelope", () => {
     expect(isConsentGateRejection(makeRejection({ code: 'validation', errors: [{ path: '', code: 'invalid' }] }).code)).toBe(false);
   });
 
-  describe('rejectionFromZodError: invalid_union', () => {
+  describe('schema rejection: a union', () => {
     it('a field missing in every variant is one missing fault, not one per branch', () => {
       const levelsSchema = z.union([z.number().int().min(0), z.literal('all')]);
       const sideSchema = z.object({ levels: levelsSchema, exactness: z.enum(['exact', 'approximate']) }).strict();
@@ -215,39 +213,51 @@ describe("tool-error-envelope", () => {
         z.object({ analysisMode: z.literal('bb'), depth }).strict(),
         z.object({ analysisMode: z.literal('ct'), depth, targetColumns: z.array(z.string()) }).strict(),
       ]);
-      const rejection = zodRejection(provider, { analysisMode: 'bb', depth: { upstream: { exactness: 'exact' }, downstream: { levels: 2, exactness: 'exact' } } });
+      const rejection = schemaRejection(provider, { analysisMode: 'bb', depth: { upstream: { exactness: 'exact' }, downstream: { levels: 2, exactness: 'exact' } } });
       expect(rejection.errors.filter(error => error.path === 'depth.upstream.levels')).toEqual([{ path: 'depth.upstream.levels', code: 'missing' }]);
     });
 
     it('an empty call names every field the variants require once', () => {
       const bbVariant = z.object({ origin: z.string(), classification: z.string(), analysisMode: z.literal('bb') }).strict();
       const ctVariant = z.object({ origin: z.string(), classification: z.string(), analysisMode: z.literal('ct'), targetColumns: z.array(z.string()) }).strict();
-      const rejection = zodRejection(z.union([bbVariant, ctVariant]), {});
+      const rejection = schemaRejection(z.union([bbVariant, ctVariant]), {});
       expect(rejection.errors.map(error => error.path)).toEqual(expect.arrayContaining(['origin', 'classification', 'analysisMode']));
       for (const path of ['origin', 'classification']) expect(rejection.errors.filter(error => error.path === path)).toHaveLength(1);
     });
   });
 
-  describe('rejectionFromZodError: a present value outside its enum', () => {
+  it.each(['abc', true])('a number-or-literal union given %s keeps the number type fault beside the literal', depth => {
+    const schema = z.object({ depth: z.union([z.number().int().min(0), z.literal('all')]) }).strict();
+    expect(schemaRejection(schema, { depth }).errors).toEqual([{ path: 'depth', code: 'type', values: ['integer'] }, { path: 'depth', code: 'enum', values: ['all'] }]);
+  });
+
+  it('a wrong-typed enum value is one enum fault; JSON text where a list or object belongs is json_text without values', () => {
+    const schema = z.object({ action: z.enum(['approve', 'cancel']), mode: z.literal('bb'), list: z.array(z.string()).nullable(), node: z.object({ id: z.string() }) }).strict();
+    expect(schemaRejection(schema, { action: 1, mode: null, list: '["a"', node: '{"id":' }).errors).toEqual([
+      { path: 'action', code: 'enum', values: ['approve', 'cancel'] }, { path: 'mode', code: 'enum', values: ['bb'] },
+      { path: 'list', code: 'json_text' }, { path: 'node', code: 'json_text' }]);
+  });
+
+  describe('schema rejection: a present value outside its enum', () => {
     const flowSchema = z.object({ verdict: z.enum(['pass', 'fail']), flow: z.array(z.object({ out: z.literal('Qty'), src: z.string() }).strict()).optional() }).strict();
 
     it('names each offending entry with the schema values', () => {
-      const rejection = zodRejection(flowSchema, { verdict: 'pass', flow: [{ out: 'Qty', src: 'x' }, { out: 'Other', src: 'y' }, { out: 'More', src: 'z' }] });
+      const rejection = schemaRejection(flowSchema, { verdict: 'pass', flow: [{ out: 'Qty', src: 'x' }, { out: 'Other', src: 'y' }, { out: 'More', src: 'z' }] });
       expect(rejection.errors).toEqual([{ path: 'flow.1.out', code: 'enum', values: ['Qty'] }, { path: 'flow.2.out', code: 'enum', values: ['Qty'] }]);
     });
 
     it('an absent enum field is missing, not an invalid value', () => {
-      expect(faults(zodRejection(flowSchema, {}))).toEqual([['verdict', 'missing']]);
+      expect(faults(schemaRejection(flowSchema, {}))).toEqual([['verdict', 'missing']]);
     });
   });
 
-  describe('rejectionFromZodError: size bounds', () => {
-    const schema = z.object({ notes: z.array(z.string()).max(8).optional(), title: z.string().max(8).optional(), name: z.string().trim().min(1).optional(), revision: z.number().int().positive().optional() });
+  describe('schema rejection: size bounds', () => {
+    const schema = z.object({ notes: z.array(z.string()).max(8).optional(), title: z.string().max(8).optional(), name: z.string().min(1).optional(), revision: z.number().int().positive().optional() });
     it('a string sent for a bounded array is a type fault, an independent text limit a size fault', () => {
-      expect(faults(zodRejection(schema, { notes: 'Ignore logging-related objects', title: 'nine char' }))).toEqual([['notes', 'type'], ['title', 'size']]);
+      expect(faults(schemaRejection(schema, { notes: 'Ignore logging-related objects', title: 'nine char' }))).toEqual([['notes', 'type'], ['title', 'size']]);
     });
-    it('array, blank-string and exclusive numeric bounds are size faults', () => {
-      expect(faults(zodRejection(schema, { notes: Array.from({ length: 9 }, () => 'n'), name: '   ', revision: 0 }))).toEqual([['notes', 'size'], ['name', 'size'], ['revision', 'size']]);
+    it('array, empty-string and exclusive numeric bounds are size faults', () => {
+      expect(faults(schemaRejection(schema, { notes: Array.from({ length: 9 }, () => 'n'), name: '', revision: 0 }))).toEqual([['notes', 'size'], ['name', 'size'], ['revision', 'size']]);
     });
   });
 
@@ -255,7 +265,7 @@ describe("tool-error-envelope", () => {
     const ref = z.object({ node: z.string(), col: z.string(), note: z.string().optional() }).strict();
     const entry = z.object({ out_col: z.string(), out_node: z.string().optional(), upstream_columns: z.array(ref) }).strict();
     const ok = { out_col: 'a', upstream_columns: [] };
-    const rejection = zodRejection(z.object({ column_flow: z.array(entry) }).strict(), { column_flow: [ok, ok, ok, ok, { ...ok, note: 'misplaced' }] });
+    const rejection = schemaRejection(z.object({ column_flow: z.array(entry) }).strict(), { column_flow: [ok, ok, ok, ok, { ...ok, note: 'misplaced' }] });
     expect(rejection.errors).toEqual([{ path: 'column_flow.4.note', code: 'unknown_key', values: ['out_col', 'out_node', 'upstream_columns'] }]);
   });
 });

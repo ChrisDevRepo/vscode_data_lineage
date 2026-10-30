@@ -78,6 +78,7 @@ import {
 import {
   AgentState,
   EntryDetectionSchema,
+  entryRouteFaults,
   GateReplySchema,
   type AgentErrorCode,
   type AgentStateType,
@@ -534,6 +535,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
         signal: deps.signal,
       }), () => { callsBefore = deps.model.modelCalls; });
       if (!detected.ok) return { ...failProvider(detected, 'Entry detection failed'), ctx, messages };
+      const faults = entryRouteFaults(detected.value);
+      if (faults.length) throw new StructuredOutputError('entry and targetColumns disagree', REJECTION_CODES.invalidStructuredOutput, faults);
       entry = detected.value;
     } catch (error) {
       if (!(error instanceof StructuredOutputError)) throw error;

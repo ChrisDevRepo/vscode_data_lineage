@@ -550,7 +550,7 @@ export class AiSession {
     if (!this.classification) {
       throw new Error('AiSession: active exploration requires a locked classification.');
     }
-    return ClassificationSchema.parse(this.classification);
+    return this.classification;
   }
 
   /** Shows the pending proposal on a new card: mints a random identity that no earlier card carries, even one VS Code restores after a host reload, so every earlier card retires; enters `awaiting_gate`. */
@@ -620,12 +620,11 @@ export class AiSession {
     if ('code' in built) return { kind: 'rejected', reason: built.code };
     const priorMemory = this.memory.toJSON();
     try {
-      const classification = ClassificationSchema.parse(proposal.classification);
       built.publishMemoryTo(this.memory);
       this.stateMachine = built;
       this.explorationCounter += 1;
       this.explorationRunId = `${this.id}:e${this.explorationCounter}`;
-      this.classification = classification;
+      this.classification = proposal.classification;
       this.pendingExploration = null;
       this.enterExploring(token);
       return { kind: 'accepted', engine: built };
