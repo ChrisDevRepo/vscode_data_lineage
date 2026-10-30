@@ -26,7 +26,6 @@ import type {
 } from '../model/modelPort';
 import {
   buildToolExecutionError,
-  CLARIFICATION_WINDOW_MS,
   ISSUES,
   type ToolProblem,
   type FeedbackStage,
@@ -869,152 +868,142 @@ async function executeToolGenerationAttempt(
   if ((input.priorState?.rejections.length ?? 0) > 0 && !pendingClarification) {
     input.sink.status('tool', 'Checking and correcting the analysis…');
   }
-  let slowProgressShown = false;
-  const pendingTimer = pendingClarification ? setTimeout(() => {
-    if (input.signal?.aborted) return;
-    slowProgressShown = true;
-    input.sink.status('tool', 'Checking the requested details…');
-  }, Math.max(0, CLARIFICATION_WINDOW_MS - (Date.now() - feedbackAtMs))) : undefined;
-  try {
-    const generated = await model.generateToolTurn({
-      messages: input.messages,
-      system: input.system,
-      tools: input.tools,
-      toolChoice: input.toolChoice,
-      signal: input.signal,
-      phase: input.phase,
-      instructionContext: input.instructionContext,
-      ...(streamText ? { onTextDelta: (text: string) => input.sink.stream(text) } : {}),
-    });
+  const generated = await model.generateToolTurn({
+    messages: input.messages,
+    system: input.system,
+    tools: input.tools,
+    toolChoice: input.toolChoice,
+    signal: input.signal,
+    phase: input.phase,
+    instructionContext: input.instructionContext,
+    ...(streamText ? { onTextDelta: (text: string) => input.sink.stream(text) } : {}),
+  });
 
-    const providerCalls = model.modelCalls - beforeCalls;
-    if (providerCalls > 1) {
-      throw new InternalInvariantError(`Single-generation model-port contract violated: ${providerCalls} provider calls in one graph attempt.`);
-    }
-    if (generated.status === 'cancelled') {
-      return { stop: 'cancelled', providerCalls, calls: [], observations: [], rejections: [], messages: [], text: '' };
-    }
-    if (generated.status === 'error') {
-      return {
-        stop: 'error',
-        providerCalls,
-        calls: [],
-        observations: [],
-        rejections: [],
-        messages: [],
-        text: '',
-        error: generated.error,
-        providerError: generated.providerError,
-      };
-    }
-    if (providerCalls !== 1) {
-      throw new InternalInvariantError(`Single-generation model-port contract violated: completed generation recorded ${providerCalls} provider calls.`);
-    }
-
-    const missingRequiredTool = input.requiredTerminalTool !== undefined
-      && generated.toolCalls.length === 0;
-    if (!streamText && generated.toolCalls.length === 0 && generated.text && !missingRequiredTool) {
-      input.sink.stream(generated.text);
-    }
-
-    const reusableObservations = new Map<string, ToolAttemptObservation>();
-    const priorObservationKeys = new Set<string>();
-    const deliveredCallIds = new Set(input.messages.flatMap(message => message instanceof ToolMessage ? [message.tool_call_id] : []));
-    let heldObservationBytes = 0;
-    for (const observation of input.priorState?.observations ?? []) {
-      heldObservationBytes += Buffer.byteLength(observation.result);
-      const key = observation.acceptedCallKey;
-      if (key === undefined || reusableObservations.has(key)) continue;
-      reusableObservations.set(key, observation);
-      if (deliveredCallIds.has(observation.callId)) priorObservationKeys.add(key);
-    }
-
-    const batch = await dispatchToolCallBatch({
-      model,
-      input,
-      toolCalls: generated.toolCalls,
-      reusableObservations,
-      priorObservationKeys,
-      heldObservationBytes,
-    });
-    const { calls, observations, gate, reroute, refusal, phaseComplete, cancelled, toolMessages } = batch;
-    const rejections = batch.rejections;
-    if (pendingClarification && pending && !cancelled) {
-      const reply = generated.toolCalls.length === 1 ? generated.toolCalls[0] : undefined;
-      const returned = reply?.valid && reply.input && typeof reply.input === 'object' && !Array.isArray(reply.input)
-        ? Object.entries(reply.input).flatMap(([field, value]) => field === 'focus_node_id' ? []
-          : field === 'sections' && value && typeof value === 'object' && !Array.isArray(value)
-            ? Object.keys(value).map(angle => `sections.${angle}`) : [field]) : [];
-      const narrow = returned.length > 0 && returned.every(field => pending.missingParts!.some(part => field === part || field.startsWith(`${part}.`)));
-      const elapsedMs = Math.max(0, Date.now() - feedbackAtMs);
-      const normal = elapsedMs <= CLARIFICATION_WINDOW_MS && narrow && generated.text.trim().length === 0
-        && reply?.toolName === pending.toolName && batch.calls.some(call => call.callId === reply.callId && call.status === 'executed')
-        && batch.rejections.length === 0;
-      if (!normal && !slowProgressShown) input.sink.status('tool', 'Checking and correcting the analysis…');
-      input.debugLog?.(`[Exchange] classification=${normal ? 'clarification' : 'retry'} durationMs=${elapsedMs} requestedParts=${pending.missingParts!.length} returnedParts=${returned.length}`);
-    }
-    const messages: ModelMessage[] = [];
-    if (generated.toolCalls.length > 0 && !cancelled) {
-      messages.push(generated.message, ...toolMessages);
-    }
-
-    if (generated.toolCalls.length === 0 && input.requiredTerminalTool) {
-      const synthesized = emitSynthesizedRejection(input, rejections, {
-        toolName: input.requiredTerminalTool,
-        emptyGeneration: generated.text.trim().length === 0,
-        emptyCode: REJECTION_CODES.emptyGeneration,
-        nonEmptyCode: REJECTION_CODES.missingRequiredToolCall,
-        emptyReason: `The provider returned an empty response instead of calling ${input.requiredTerminalTool}.`,
-        nonEmptyReason: 'No tool call was received; the reply\'s text was not delivered.',
-        errors: at('no_tool_call', [''], [input.requiredTerminalTool]),
-        attempted: generated.message,
-      });
-      messages.push(...synthesized);
-    }
-
-    const emptyOptionalGeneration = !input.requiredTerminalTool
-      && generated.toolCalls.length === 0
-      && generated.text.trim().length === 0;
-    if (emptyOptionalGeneration) {
-      // `lineage_answer` is unregistered, so its rejection counts for escalation like any commit (an unregistered tool is not a read).
-      const synthesized = emitSynthesizedRejection(input, rejections, {
-        toolName: 'lineage_answer',
-        emptyGeneration: true,
-        emptyCode: REJECTION_CODES.emptyGeneration,
-        nonEmptyCode: REJECTION_CODES.emptyGeneration,
-        emptyReason: 'The provider returned an empty response with neither an answer nor a tool call.',
-        nonEmptyReason: 'The provider returned an empty response with neither an answer nor a tool call.',
-        errors: at('empty_reply'),
-        attempted: generated.message,
-      });
-      messages.push(...synthesized);
-    }
-
-    const stop = cancelled
-      ? 'cancelled'
-      : gate
-      ? 'gate'
-      : refusal !== null
-      ? 'refused'
-      : reroute
-        ? 'reroute'
-        : phaseComplete
-          ? 'phase_complete'
-          : generated.toolCalls.length === 0 && !input.requiredTerminalTool && !emptyOptionalGeneration
-            ? 'final'
-            : 'continue';
-
-    return {
-      stop,
-      providerCalls,
-      calls,
-      observations,
-      rejections,
-      messages,
-      text: generated.text,
-      ...(refusal !== null ? { refusal } : {}),
-    };
-  } finally {
-    if (pendingTimer !== undefined) clearTimeout(pendingTimer);
+  const providerCalls = model.modelCalls - beforeCalls;
+  if (providerCalls > 1) {
+    throw new InternalInvariantError(`Single-generation model-port contract violated: ${providerCalls} provider calls in one graph attempt.`);
   }
+  if (generated.status === 'cancelled') {
+    return { stop: 'cancelled', providerCalls, calls: [], observations: [], rejections: [], messages: [], text: '' };
+  }
+  if (generated.status === 'error') {
+    return {
+      stop: 'error',
+      providerCalls,
+      calls: [],
+      observations: [],
+      rejections: [],
+      messages: [],
+      text: '',
+      error: generated.error,
+      providerError: generated.providerError,
+    };
+  }
+  if (providerCalls !== 1) {
+    throw new InternalInvariantError(`Single-generation model-port contract violated: completed generation recorded ${providerCalls} provider calls.`);
+  }
+
+  const missingRequiredTool = input.requiredTerminalTool !== undefined
+    && generated.toolCalls.length === 0;
+  if (!streamText && generated.toolCalls.length === 0 && generated.text && !missingRequiredTool) {
+    input.sink.stream(generated.text);
+  }
+
+  const reusableObservations = new Map<string, ToolAttemptObservation>();
+  const priorObservationKeys = new Set<string>();
+  const deliveredCallIds = new Set(input.messages.flatMap(message => message instanceof ToolMessage ? [message.tool_call_id] : []));
+  let heldObservationBytes = 0;
+  for (const observation of input.priorState?.observations ?? []) {
+    heldObservationBytes += Buffer.byteLength(observation.result);
+    const key = observation.acceptedCallKey;
+    if (key === undefined || reusableObservations.has(key)) continue;
+    reusableObservations.set(key, observation);
+    if (deliveredCallIds.has(observation.callId)) priorObservationKeys.add(key);
+  }
+
+  const batch = await dispatchToolCallBatch({
+    model,
+    input,
+    toolCalls: generated.toolCalls,
+    reusableObservations,
+    priorObservationKeys,
+    heldObservationBytes,
+  });
+  const { calls, observations, gate, reroute, refusal, phaseComplete, cancelled, toolMessages } = batch;
+  const rejections = batch.rejections;
+  if (pendingClarification && pending && !cancelled) {
+    const reply = generated.toolCalls.length === 1 ? generated.toolCalls[0] : undefined;
+    const returned = reply?.valid && reply.input && typeof reply.input === 'object' && !Array.isArray(reply.input)
+      ? Object.entries(reply.input).flatMap(([field, value]) => field === 'focus_node_id' ? []
+        : field === 'sections' && value && typeof value === 'object' && !Array.isArray(value)
+          ? Object.keys(value).map(angle => `sections.${angle}`) : [field]) : [];
+    const narrow = returned.length > 0 && returned.every(field => pending.missingParts!.some(part => field === part || field.startsWith(`${part}.`)));
+    const elapsedMs = Math.max(0, Date.now() - feedbackAtMs);
+    const normal = narrow && generated.text.trim().length === 0
+      && reply?.toolName === pending.toolName && batch.calls.some(call => call.callId === reply.callId && call.status === 'executed')
+      && batch.rejections.length === 0;
+    if (!normal) input.sink.status('tool', 'Checking and correcting the analysis…');
+    input.debugLog?.(`[Exchange] classification=${normal ? 'clarification' : 'retry'} durationMs=${elapsedMs} requestedParts=${pending.missingParts!.length} returnedParts=${returned.length}`);
+  }
+  const messages: ModelMessage[] = [];
+  if (generated.toolCalls.length > 0 && !cancelled) {
+    messages.push(generated.message, ...toolMessages);
+  }
+
+  if (generated.toolCalls.length === 0 && input.requiredTerminalTool) {
+    const synthesized = emitSynthesizedRejection(input, rejections, {
+      toolName: input.requiredTerminalTool,
+      emptyGeneration: generated.text.trim().length === 0,
+      emptyCode: REJECTION_CODES.emptyGeneration,
+      nonEmptyCode: REJECTION_CODES.missingRequiredToolCall,
+      emptyReason: `The provider returned an empty response instead of calling ${input.requiredTerminalTool}.`,
+      nonEmptyReason: 'No tool call was received; the reply\'s text was not delivered.',
+      errors: at('no_tool_call', [''], [input.requiredTerminalTool]),
+      attempted: generated.message,
+    });
+    messages.push(...synthesized);
+  }
+
+  const emptyOptionalGeneration = !input.requiredTerminalTool
+    && generated.toolCalls.length === 0
+    && generated.text.trim().length === 0;
+  if (emptyOptionalGeneration) {
+    // `lineage_answer` is unregistered, so its rejection counts for escalation like any commit (an unregistered tool is not a read).
+    const synthesized = emitSynthesizedRejection(input, rejections, {
+      toolName: 'lineage_answer',
+      emptyGeneration: true,
+      emptyCode: REJECTION_CODES.emptyGeneration,
+      nonEmptyCode: REJECTION_CODES.emptyGeneration,
+      emptyReason: 'The provider returned an empty response with neither an answer nor a tool call.',
+      nonEmptyReason: 'The provider returned an empty response with neither an answer nor a tool call.',
+      errors: at('empty_reply'),
+      attempted: generated.message,
+    });
+    messages.push(...synthesized);
+  }
+
+  const stop = cancelled
+    ? 'cancelled'
+    : gate
+    ? 'gate'
+    : refusal !== null
+    ? 'refused'
+    : reroute
+      ? 'reroute'
+      : phaseComplete
+        ? 'phase_complete'
+        : generated.toolCalls.length === 0 && !input.requiredTerminalTool && !emptyOptionalGeneration
+          ? 'final'
+          : 'continue';
+
+  return {
+    stop,
+    providerCalls,
+    calls,
+    observations,
+    rejections,
+    messages,
+    text: generated.text,
+    ...(refusal !== null ? { refusal } : {}),
+  };
 }

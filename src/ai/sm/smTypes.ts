@@ -769,8 +769,6 @@ export interface HeldSubmissionParts {
   readonly summary: boolean;
   /** Names of the other held fields (`badge_label`, `prune_neighbors`, `questions`, `column_flow`). */
   readonly fields: readonly string[];
-  /** Faulty or missing required parts, excluding alternative outcome fields. */
-  readonly failed?: readonly string[];
-  /** Required corrections and alternative outcome fields the rejection permits resending. */
+  /** Faulty parts the draft's faults name and required parts it lacks; the rejection itself also lists alternative outcome fields. */
   readonly resend: readonly string[];
 }

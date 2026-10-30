@@ -15,7 +15,7 @@ import type { TurnEventSink } from './turnEventSink';
 import type { GateDecision } from '../agent/state';
 import type { TurnOutcome } from '../core/agentCore';
 import type { ToolRejection } from '../support/toolErrorEnvelope';
-import { CLARIFICATION_WINDOW_MS, readToolError, isAdmissionRefusal, isConsentGateRejection } from '../support/toolErrorEnvelope';
+import { readToolError, isAdmissionRefusal, isConsentGateRejection } from '../support/toolErrorEnvelope';
 import type { SyntheticRejectionTrace } from '../agent/toolAttempt';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 
@@ -158,7 +158,6 @@ export class LineageRuntime {
             toolName: rejection.toolName,
             status: rejection.status,
             rejectionCode: rejection.code,
-            clarificationWindowMs: CLARIFICATION_WINDOW_MS,
             ...(rejection.issuePaths?.length ? { issuePaths: rejection.issuePaths } : {}),
             durationMs: 0,
           }).catch(() => {});
@@ -282,7 +281,7 @@ function instrumentRegistry(
             ? 'accepted'
             : isConsentGateRejection(rejection.code) ? 'gate'
               : isAdmissionRefusal(rejection.code) ? 'refused' : 'rejected',
-          ...(rejection && !isConsentGateRejection(rejection.code) ? { rejectionCode: rejection.code, clarificationWindowMs: CLARIFICATION_WINDOW_MS } : {}),
+          ...(rejection && !isConsentGateRejection(rejection.code) ? { rejectionCode: rejection.code } : {}),
           ...(issuePaths.length > 0 ? { issuePaths } : {}),
           ...(rejection?.missingParts?.length ? { missingParts: rejection.missingParts, feedbackAt: rejection.feedbackAt } : {}),
           durationMs: elapsedMs(startedAt),

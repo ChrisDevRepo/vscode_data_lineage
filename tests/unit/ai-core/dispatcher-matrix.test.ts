@@ -22,7 +22,7 @@ import {
 import { TurnEventSink } from '../../../src/ai/runtime/turnEventSink';
 import { ToolRegistry, type IToolRegistry } from '../../../src/ai/tools/registry';
 import { classifyRejectionCode } from '../../../src/ai/tools/toolProvider';
-import { CLARIFICATION_WINDOW_MS, ISSUES, LAST_CORRECTION, at, makeRejection, type IssueCode, type ToolProblem } from '../../../src/ai/support/toolErrorEnvelope';
+import { ISSUES, LAST_CORRECTION, at, makeRejection, type IssueCode, type ToolProblem } from '../../../src/ai/support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../../../src/ai/support/rejectionCodes';
 import { buildRouteValidationRejection } from '../../../src/ai/sm/smRouteValidation';
 import { createTurnTokenBudget } from '../../../src/ai/support/tokenBudget';
@@ -1285,34 +1285,6 @@ describe('missing-content exchange progress', () => {
     await executeToolAttempt(model.port, { ...plan, input: { ...plan.input, sink: new TurnEventSink(event => events.push(event)) } }, { priorState: state });
     expect(events.some(event => (event as { type: string }).type === 'status')).toBe(true);
   });
-
-  it.each(['slow', 'backend_slow', 'cancelled', 'error'] as const)('cleans the pending timer when a completion is %s', async outcome => {
-    vi.useFakeTimers();
-    try {
-      const events: unknown[] = [];
-      const controller = new AbortController();
-      let release!: () => void;
-      const paused = new Promise<void>(resolve => { release = resolve; });
-      const { plan, state, reply } = held(async () => {
-        if (outcome === 'backend_slow') await paused;
-      });
-      const model = nativePort(() => []);
-      model.sendRequest.mockImplementation(async () => ({ stream: { async *[Symbol.asyncIterator]() {
-        if (outcome !== 'backend_slow') await paused;
-        if (outcome === 'error') throw new Error('Synthetic provider failure.');
-        yield call('reply', reply, 'lineage_submit_findings');
-      } } }));
-      const running = executeToolAttempt(model.port, { ...plan, input: { ...plan.input, signal: controller.signal,
-        sink: new TurnEventSink(event => events.push(event)) } }, { priorState: state });
-      await vi.advanceTimersByTimeAsync(0);
-      if (outcome === 'cancelled') controller.abort();
-      if (outcome === 'slow' || outcome === 'backend_slow') await vi.advanceTimersByTimeAsync(CLARIFICATION_WINDOW_MS + 1);
-      release();
-      await running;
-      expect(events.some(event => (event as { type: string }).type === 'status')).toBe(outcome === 'slow' || outcome === 'backend_slow');
-      expect(vi.getTimerCount()).toBe(0);
-    } finally { vi.useRealTimers(); }
-  });
 });
 
 describe('submit_findings rejection form', () => {
@@ -1624,7 +1596,7 @@ describe('submit_findings rejection form', () => {
     expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
     expect(engine.toJSON().agenda).toEqual(before.agenda);
     expect(engine.getDetailSlots()).toEqual([]);
-    expect(engine.heldPartsOfCurrentFocus()).toMatchObject({ summary: true, sections: ['technical'], resend: ['questions', 'prune_neighbors', 'column_flow'] });
+    expect(engine.heldPartsOfCurrentFocus()).toMatchObject({ summary: true, sections: ['technical'], resend: [] });
     const patch = outcome === 'map' ? { column_flow: [...flow, { out_col: 'Other', upstream_columns: [{ node: other, col: 'Value' }] }] }
       : outcome === 'prune' ? { prune_neighbors: [{ id: other, reason: 'No value contribution.' }] }
       : { questions: [{ nodeId: other, question: 'Explain the neighboring SQL.' }] };

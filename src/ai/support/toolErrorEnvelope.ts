@@ -2,9 +2,6 @@
 import { z } from 'zod';
 import { REJECTION_CODES } from './rejectionCodes';
 
-/** Product limit for a quick missing-content exchange; it does not change validation or reply budgets. */
-export const CLARIFICATION_WINDOW_MS = 5000;
-
 type IssueCategory = 'shape' | 'required' | 'reference' | 'value' | 'protocol' | 'stage';
 
 /** The top-level `notice` at feedback 3. */

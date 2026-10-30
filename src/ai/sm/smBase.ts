@@ -331,7 +331,6 @@ export class NavigationEngine implements IHopStateMachine {
 
   /** One wire-shaped draft: representation adaptation happens only after full-schema validation. */
   private readonly heldFindingDraft = new ToolDraft<Record<string, unknown>>();
-  private heldFindingParts: { failed: string[]; alternatives: readonly string[] } = { failed: [], alternatives: [] };
 
   /** Exploration direction set by `init`; consulted by `enqueueHop` when contracting reference nodes. */
   protected _direction: 'upstream' | 'downstream' | 'bidirectional' = 'bidirectional';
@@ -510,21 +509,15 @@ export class NavigationEngine implements IHopStateMachine {
     ];
   }
 
-
-  private heldParts(held: HopFindingKept, failed: readonly string[], alternatives: readonly string[] = []): HeldSubmissionParts {
-    return {
+  /** Read-only held-part metadata for this focus/hop/mode, all derived from its `ToolDraft`; owed parts are the declared parts the draft's faults name plus the required parts it lacks. `null` when no safe draft is held. */
+  public heldPartsOfCurrentFocus(): HeldSubmissionParts | null {
+    const held = this.heldDraftOfCurrentFocus();
+    return held ? {
       sections: held.sections.map(angleKey),
       summary: held.summary.trim().length > 0,
       fields: HELD_FIELDS.filter((field): field is Exclude<HeldField, 'summary'> => field !== 'summary' && held[field] !== undefined),
-      failed: [...failed],
-      resend: [...new Set([...failed, ...alternatives])],
-    };
-  }
-
-  /** Read-only held-part metadata for this focus/hop/mode; `null` when no safe draft is held. */
-  public heldPartsOfCurrentFocus(): HeldSubmissionParts | null {
-    const held = this.heldDraftOfCurrentFocus();
-    return held ? this.heldParts(held, this.heldFindingParts.failed, this.heldFindingParts.alternatives) : null;
+      resend: [...new Set([...this.failedParts(this.heldFindingDraft.faultPaths), ...this.missingRequiredParts(held)])],
+    } : null;
   }
 
   /** Projection of unresolved scope-boundary leads; feeds the follow-up suggestions after synthesis. */
@@ -1838,15 +1831,14 @@ export class NavigationEngine implements IHopStateMachine {
     const bound = raw.focus_node_id === undefined || raw.focus_node_id === currentFocusId;
     const authored = input && typeof input === 'object' && !Array.isArray(input) ? { ...raw, ...(raw.focus_node_id === undefined ? { focus_node_id: currentFocusId } : {}) } : input;
     const hadHeld = this.heldFindingFocus !== null;
-    const owedBefore = this.heldFindingParts.failed;
+    const owedBefore = this.heldFindingDraft.matches(this.findingContext()) ? this.failedParts(this.heldFindingDraft.faultPaths) : [];
     let alternatives: readonly string[] = [];
     return ingestToolInput<typeof schema, SubmitResult>({ input: authored, schema, facts: admission.facts, context: this.findingContext(), draft: bound ? this.heldFindingDraft : undefined,
       log: line => this.log('debug', line), committed: result => 'ok' in result,
       rejected: bound ? (problem, view) => {
         const failed = this.failedParts([...problem.errors.map(error => error.path), ...view.holdPaths]);
         const held = this.heldDraftOfCurrentFocus();
-        this.heldFindingParts = { failed: [...new Set([...failed, ...(held ? this.missingRequiredParts(held) : [])])], alternatives };
-        problem.resend = [...(this.heldPartsOfCurrentFocus()?.resend ?? failed)];
+        problem.resend = [...new Set([...failed, ...(held ? [...this.missingRequiredParts(held), ...alternatives] : [])])];
         const parts = !view.parsed.success ? view.parsed.rejection.errors.map(error => ({ path: error.path.split('.') })) : [];
         if (held && parts.length && parts.every(issue => ['sections', 'summary'].includes(String(issue.path[0])) && issue.path.length === 1
           && view.value(String(issue.path[0])) === undefined)) {
@@ -3003,8 +2995,7 @@ export class NavigationEngine implements IHopStateMachine {
       pruneBallots: [...this.pruneBallots].map(([nodeId, votes]) => ({ nodeId, votes: [...votes].map(([senderId, vote]) => ({ senderId, vote })) })),
       heldFinding: this.heldFindingFocus !== null ? {
         focusId: this.currentFocusNodeId!, hop: this.hopCount, mode: this.currentHopAnalysisMode,
-        failed: [...this.heldFindingParts.failed], alternatives: [...this.heldFindingParts.alternatives],
-        finding: structuredClone(this.heldDraftOfCurrentFocus()!),
+        failed: [...this.heldPartsOfCurrentFocus()!.resend], finding: structuredClone(this.heldDraftOfCurrentFocus()!),
       } : null,
     };
   }

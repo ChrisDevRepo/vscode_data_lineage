@@ -104,11 +104,10 @@ function ctWorld(options: { deferred?: boolean; scalar?: boolean; caseSensitive?
   return { session, model, graph, registry, engine };
 }
 
-/** Drives a correction that follows the feedback: the focus plus the owed parts only (D-097); the full schema still validates it (D-098). */
-function findingRepair(engine: NavigationEngine, input: object): object {
-  const fields = engine.heldPartsOfCurrentFocus()?.resend;
-  if (!fields) return input;
-  const owed = ['focus_node_id', ...fields];
+/** Drives a correction that follows the feedback: the focus plus the parts the rejection asks to resend (D-097); the full schema still validates it (D-098). */
+function findingRepair(engine: NavigationEngine, input: object, rejection: { resend?: readonly string[] }): object {
+  if (!engine.heldPartsOfCurrentFocus()) return input;
+  const owed = ['focus_node_id', ...rejection.resend ?? []];
   const select = (value: unknown, prefix: string): unknown => value && typeof value === 'object' && !Array.isArray(value)
     ? Object.fromEntries(Object.entries(value).flatMap(([key, child]) => {
       const path = prefix ? `${prefix}.${key}` : key;
@@ -419,6 +418,16 @@ describe('large findings repairs', () => {
     expect(engine.heldPartsOfCurrentFocus()).toBeNull();
     expect(JSON.parse(executeSubmitFindings({ focus_node_id: ORIGIN }, services))).toHaveProperty('code');
   });
+  it('owes a faulty field only while its ToolDraft holds the hop: the next hop owes nothing (D-126 one hold owner)', () => {
+    const { engine, session, model, graph } = ctWorld({ mode: 'bb' });
+    const { services } = stubToolServices({ session, model, graph });
+    const finding = { summary: 'Origin reads Branch.', sections: { technical: 'SELECT Value FROM Branch.' } };
+    expect(JSON.parse(executeSubmitFindings({ ...finding, questions: [{ nodeId: BRANCH, question: 'Establish Value.' }], badge_label: 42 }, services)))
+      .toMatchObject({ code: 'invalid_input', issuePaths: ['badge_label'] });
+    expect(engine.toJSON().engineInternals.heldFinding).toMatchObject({ failed: ['badge_label'] });
+    expect(JSON.parse(executeSubmitFindings({}, services))).toMatchObject({ ok: true, next_focus: BRANCH, withdrawn: ['badge_label'] });
+    expect(JSON.parse(executeSubmitFindings(finding, services))).toSatisfy((ack: object) => 'ok' in ack && !('withdrawn' in ack));
+  });
   it('does not provisionally retain a missing-focus payload before a hop is dispatched', () => {
     const { engine, session, model, graph } = ctWorld();
     expect(engine.init({ origin: ORIGIN, question: 'Trace Value.', analysisMode: 'ct', targetColumns: ['Value'], direction: 'upstream',
@@ -619,7 +628,7 @@ describe('large findings repairs', () => {
     const schema = submitFindingsSchemaForMode('ct', 'technical', false, engine.hopSubmitColumns, engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false);
     expect(schema.safeParse(correction).success).toBe(true);
     expect(new Ajv({ strict: false }).compile(toModelJsonSchema(schema))(correction)).toBe(true);
-    expect(JSON.parse(executeSubmitFindings(findingRepair(engine, correction), services))).toHaveProperty('ok', true);
+    expect(JSON.parse(executeSubmitFindings(findingRepair(engine, correction, rejected), services))).toHaveProperty('ok', true);
     expect(engine.columnAspect!.edges).toEqual([expect.objectContaining({ from_node: BRANCH, from_col: 'Value', note: 'Keep this mapping.' })]);
     expect(engine.toJSON().memory.detailSlots[ORIGIN]).toMatchObject({ summary: 'Value comes from Branch.',
       sections: [{ angle: 'technical', text: 'Retain the original SQL findings.' }] });
@@ -647,11 +656,11 @@ describe('large findings repairs', () => {
     const correction = { focus_node_id: ORIGIN, column_flow: [
       { out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }, { out_col: 'Value', upstream_columns: [] },
     ], prune_neighbors: [], questions: [{ nodeId: BRANCH, question: 'Establish Value.' }] };
-    const repaired = JSON.parse(executeSubmitFindings(findingRepair(engine, correction), services));
+    const repaired = JSON.parse(executeSubmitFindings(findingRepair(engine, correction, rejected), services));
     if (!validDestination) {
       expect(repaired.detail).toContainEqual(expect.objectContaining({ kind: 'prune_unsupported', id: BRANCH }));
       expect(engine.getDetailSlots()).toEqual([]);
-      expect(JSON.parse(executeSubmitFindings(findingRepair(engine, correction), services))).toHaveProperty('ok', true);
+      expect(JSON.parse(executeSubmitFindings(findingRepair(engine, correction, repaired), services))).toHaveProperty('ok', true);
     } else expect(repaired).toHaveProperty('ok', true);
     expect(engine.columnAspect!.edges).toHaveLength(1);
   });
@@ -699,13 +708,14 @@ describe('large findings repairs', () => {
     const { engine, session, model, graph } = ctWorld({ sibling: true });
     const { services } = stubToolServices({ session, model, graph });
     const originalMessage = buildActiveHopInstruction(session, engine, ORIGIN).message;
-    executeSubmitFindings({ summary: 'Authored evidence.', sections: { technical: 'Keep these source facts.' },
+    const rejected = JSON.parse(executeSubmitFindings({ summary: 'Authored evidence.', sections: { technical: 'Keep these source facts.' },
       column_flow: kind === 'flowfault' ? 42 : [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }] }],
       ...(kind === 'mixed' ? { badge_label: 'x'.repeat(51) } : {}),
-    }, services);
+    }, services));
     const required = kind === 'flowfault' ? ['column_flow'] : kind === 'mixed' ? ['badge_label'] : [];
     const alternatives = kind === 'flowfault' ? [] : ['questions', 'prune_neighbors', 'column_flow'];
-    expect(engine.heldPartsOfCurrentFocus()).toMatchObject({ failed: required, resend: [...new Set([...required, ...alternatives])] });
+    expect(engine.heldPartsOfCurrentFocus()).toMatchObject({ resend: required });
+    expect(rejected.resend).toEqual([...new Set([...required, ...alternatives])]);
     const message = buildActiveHopInstruction(session, engine, ORIGIN).message;
     expect(message).not.toContain('Fields to correct:');
     expect(message).toBe(originalMessage);
@@ -763,11 +773,11 @@ describe('large findings repairs', () => {
     expect(engine.toJSON().agenda).toEqual(before.agenda);
     const correction = { column_flow: [],
       prune_neighbors: [{ id: '[hop].[extra]', reason: 'No required contribution.' }] };
-    const repaired = JSON.parse(executeSubmitFindings(findingRepair(engine, correction), services));
+    const repaired = JSON.parse(executeSubmitFindings(findingRepair(engine, correction, result), services));
     if (kind !== 'known') {
       expect(repaired.detail).toContainEqual(expect.objectContaining({ kind: 'neighbor_outcome_missing', id: '[hop].[extra]' }));
       expect(engine.getDetailSlots()).toEqual([]);
-      expect(JSON.parse(executeSubmitFindings(findingRepair(engine, correction), services))).toHaveProperty('ok', true);
+      expect(JSON.parse(executeSubmitFindings(findingRepair(engine, correction, repaired), services))).toHaveProperty('ok', true);
     } else expect(repaired).toHaveProperty('ok', true);
     expect(engine.getDetailSlots()).toEqual(expect.arrayContaining([expect.objectContaining({ summary: 'Known reference facts.' })]));
   });
@@ -809,7 +819,7 @@ describe('large findings repairs', () => {
     const schema = submitFindingsSchemaForMode('ct', 'technical', false, engine.hopSubmitColumns, engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false);
     expect(schema.safeParse(correction).success).toBe(true);
     expect(new Ajv({ strict: false }).compile(toModelJsonSchema(schema))(correction)).toBe(true);
-    expect(JSON.parse(executeSubmitFindings(findingRepair(engine, correction), services))).toHaveProperty('ok', true);
+    expect(JSON.parse(executeSubmitFindings(findingRepair(engine, correction, rejected), services))).toHaveProperty('ok', true);
     expect(engine.columnAspect!.edges).toHaveLength(3);
     expect(engine.columnAspect!.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({ from_col: 'Value', to_col: 'Other', note: sibling.note }),
@@ -1189,7 +1199,7 @@ describe('lineage_submit_findings boundary', () => {
       const correction = heldCase === 'none' ? valid : existing
         ? { focus_node_id: ORIGIN, summary: valid.summary }
         : { focus_node_id: ORIGIN, column_flow: valid.column_flow };
-      expect(JSON.parse(executeSubmitFindings(findingRepair(engine, correction), services))).toHaveProperty('ok', true);
+      expect(JSON.parse(executeSubmitFindings(findingRepair(engine, correction, result), services))).toHaveProperty('ok', true);
       expect(engine.toJSON().memory.detailSlots[ORIGIN]).toMatchObject({
         summary: valid.summary, sections: [{ angle: 'technical', text: valid.sections.technical }],
       });
@@ -1215,10 +1225,10 @@ describe('lineage_submit_findings boundary', () => {
       expect(after[key]).toEqual(before[key]);
     const correction = { focus_node_id: ORIGIN, prune_neighbors: [], column_flow: input.column_flow,
       questions: [{ nodeId: BRANCH, question: 'Establish Value provenance.' }] };
-    const corrected = JSON.parse(executeSubmitFindings(findingRepair(engine, correction), services));
+    const corrected = JSON.parse(executeSubmitFindings(findingRepair(engine, correction, result), services));
     if (unavailable === 'column_flow') {
       expect(corrected.detail).toContainEqual(expect.objectContaining({ kind: 'prune_unsupported', id: BRANCH }));
-      expect(JSON.parse(executeSubmitFindings(findingRepair(engine, correction), services))).toHaveProperty('ok', true);
+      expect(JSON.parse(executeSubmitFindings(findingRepair(engine, correction, corrected), services))).toHaveProperty('ok', true);
     } else expect(corrected, JSON.stringify(corrected)).toHaveProperty('ok', true);
     expect(engine.toJSON().memory.detailSlots[ORIGIN]).toMatchObject({ summary: input.summary,
       sections: [{ angle: 'technical', text: input.sections.technical }] });
@@ -1278,12 +1288,12 @@ describe('lineage_submit_findings boundary', () => {
       ...(schemaPath === 'prune_neighbors' ? { prune_neighbors: [] } : {}),
       ...(schemaPath === 'questions' || schemaPath === 'prune_neighbors' || (mode === 'bb' && schemaPath.startsWith('sections')) ? { questions: complete.questions } : {}),
     };
-    const accepted = JSON.parse(executeSubmitFindings(findingRepair(engine, correction), services));
+    const accepted = JSON.parse(executeSubmitFindings(findingRepair(engine, correction, result), services));
     if (mode === 'bb' && schemaPath === 'prune_neighbors') {
       expect(accepted.errors).toContainEqual(expect.objectContaining({ code: 'neighbor_undecided' }));
       expect(accepted.resend).toEqual(expect.arrayContaining(['questions']));
       expect(engine.getDetailSlots()).toEqual([]);
-      expect(JSON.parse(executeSubmitFindings(findingRepair(engine, correction), services))).toMatchObject({ ok: true, next_focus: BRANCH });
+      expect(JSON.parse(executeSubmitFindings(findingRepair(engine, correction, accepted), services))).toMatchObject({ ok: true, next_focus: BRANCH });
     } else expect(accepted).toMatchObject({ ok: true, next_focus: BRANCH });
     expect(engine.toJSON().visited.filter(id => id === ORIGIN)).toHaveLength(1);
   });
@@ -1415,7 +1425,7 @@ it.each([{ unsupported: 'column_flow', missingTechnical: false }, { unsupported:
   expect(engine.getDetailSlots()).toEqual([]);
   const corrected = missingTechnical ? { sections: { technical: 'Keep these authored findings.' } }
     : unsupported === 'questions.0.extra' ? { questions: [{ nodeId: BRANCH, question: 'Explain this source.' }] } : {};
-  expect(JSON.parse(executeSubmitFindings(findingRepair(engine, corrected), services))).toHaveProperty('ok', true);
+  expect(JSON.parse(executeSubmitFindings(findingRepair(engine, corrected, rejected), services))).toHaveProperty('ok', true);
   expect(engine.getDetailSlots()).toContainEqual(expect.objectContaining({ nodeId: ORIGIN,
     summary: 'Keep this authored summary.', sections: [{ angle: 'technical', text: 'Keep these authored findings.' }] }));
 });
@@ -1443,10 +1453,10 @@ it.each([
   const held = engine.toJSON().engineInternals.heldFinding?.finding;
   expect(held?.summary).toBe('Keep this summary.');
   expect(held?.sections).toEqual(row.retained ? [{ angle: row.retained, text }] : []);
-  if (row.retained) expect(rejected.resend).toEqual([]);
-  else expect(JSON.parse(executeSubmitFindings({}, services))).toMatchObject({ code: 'invalid_input', resend: expect.arrayContaining([`sections.${row.classification}`]) });
+  const last = row.retained ? rejected : JSON.parse(executeSubmitFindings({}, services));
+  expect(last).toMatchObject(row.retained ? { resend: [] } : { code: 'invalid_input', resend: expect.arrayContaining([`sections.${row.classification}`]) });
   const correction = row.retained ? {} : { sections: { [row.classification]: 'Corrected canonical body.' } };
-  expect(JSON.parse(executeSubmitFindings(findingRepair(engine, correction), services))).toHaveProperty('ok', true);
+  expect(JSON.parse(executeSubmitFindings(findingRepair(engine, correction, last), services))).toHaveProperty('ok', true);
   expect(engine.getDetailSlots()).toContainEqual(expect.objectContaining({ nodeId: ORIGIN,
     summary: 'Keep this summary.', sections: [{ angle: row.classification, text: row.retained ? text : 'Corrected canonical body.' }] }));
 });
