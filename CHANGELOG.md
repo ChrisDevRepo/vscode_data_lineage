@@ -17,6 +17,7 @@ The newest version heading collects changes until that version ships.
 - The SQL Server (mssql) extension integration and the `dataLineageViz.database.connectionProvider` setting; databases connect through built-in connections only. Projects saved with an mssql connection keep it without the password; set the password with **Update Database Password**.
 
 ### Fixed
+- Clearer AI correction guidance preserves an empty mapping list when removing out-of-scope column sources.
 - AI analysis reports independent scope and input faults together, with clear repair choices, and keeps valid text and column mappings while a repair is pending.
 - SQL evidence preserves stored text, including whitespace in literals; replacing a loaded project retires its previous exploration and approval card.
 - Updating a legacy bookmark keeps current selections; SQL identifiers with equivalent quoting, casing or Unicode format characters bind to the right objects.

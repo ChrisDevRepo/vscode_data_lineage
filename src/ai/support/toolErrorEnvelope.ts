@@ -107,7 +107,7 @@ export const ISSUES = {
     category: 'reference',
     label: 'column outside the approved scope',
     correction:
-      "Remove the outside column; if it is the entry's only supplier or its out_node, omit the column_flow entry, never empty upstream_columns. Ask the outside object a follow-up in questions and record the fact in sections.",
+      'Remove the outside column or its entry if it is the sole supplier or out_node; use column_flow: [] if none remain, never upstream_columns: []. Ask the outside object in questions and record the fact in sections.',
     fallback:
       'If no in-scope supplier can express the fact, write it in sections instead, highlighted with a callout naming the unresolved supplier and columns.',
   },
