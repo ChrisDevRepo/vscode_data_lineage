@@ -117,7 +117,7 @@ function buildActivePhasePrompt(analysisMode: 'bb' | 'ct'): string {
     '',
     'Complete this hop with one available hop-completion command: for a kept hop, use `lineage_submit_findings` (`summary`, `sections` keyed by angle, and `column_flow` when the current task names columns); for an irrelevant SQL carrier, use `lineage_prune_current`.' +
       (analysisMode === 'ct'
-        ? ' `questions` and `prune_neighbors` are optional; mapped neighbors continue automatically.'
+        ? ' The object graph answers the user question; its column trace starts at the same object and may end earlier on a branch.'
         : ''),
     analysisMode === 'ct'
       ? 'After a rejection, saved content stays held; send only the requested fields using the repair schema.'

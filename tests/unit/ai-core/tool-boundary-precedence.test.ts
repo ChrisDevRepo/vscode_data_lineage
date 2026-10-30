@@ -93,6 +93,7 @@ import {
   withSchemaFaults,
   stubToolServices,
 } from './helpers/toolServices';
+import { hopDraft, servedTools } from './helpers/modelRequests';
 
 vi.mock('../../../src/ai/tools/normalizeModelInput', async (importOriginal) => {
   const actual =
@@ -846,9 +847,9 @@ describe('missing neighbor outcomes beside an invalid column_flow', () => {
     }
   });
 
-  it('accepts a filter-only supplier as an indirect edge and maps its neighbor', () => {
-    const { submit } = setup();
-    const accepted = submit([
+  it('Approved05/07: served CT inputs map direct and indirect neighbors without separate questions or prunes', () => {
+    const world = setup();
+    const flow = [
       {
         out_col: 'Value',
         upstream_columns: [
@@ -856,9 +857,23 @@ describe('missing neighbor outcomes beside an invalid column_flow', () => {
           { node: OTHER, col: 'Value', transforms: ['filter'] },
         ],
       },
+    ];
+    const schema = servedTools(world, hopDraft(world)).find(
+      (tool) => tool.name === 'lineage_submit_findings',
+    )!.inputSchema;
+    expect(
+      new Ajv({ strict: false }).compile(schema)({
+        focus_node_id: ORIGIN,
+        summary: 'Value provenance.',
+        sections: { technical: 'Authored evidence.' },
+        column_flow: flow,
+      }),
+    ).toBe(true);
+    expect(world.submit(flow)).toHaveProperty('ok', true);
+    expect(world.engine.columnAspect?.edges).toEqual([
+      expect.objectContaining({ from_node: BRANCH, transforms: ['compute'] }),
+      expect.objectContaining({ from_node: OTHER, transforms: ['filter'] }),
     ]);
-    expect(accepted.code).not.toBe('invalid_input');
-    expect(missingIds(accepted)).toEqual([]);
   });
 
   it.each([
