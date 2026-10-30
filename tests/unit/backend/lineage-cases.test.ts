@@ -1349,7 +1349,7 @@ describe('current task completeness before advancement', () => {
   });
   it('never merges a resent flow back by out_col and keeps held content through a malformed retry', () => {
     const engine = world();
-    const invalid = { out_col: 'Value', upstream_columns: [{ node: neighbor, col: 'Absent', note: 'x'.repeat(2000) }] };
+    const invalid = { out_col: 'Value', upstream_columns: [{ node: neighbor, col: 'Absent', note: 'x'.repeat(200) }] };
     const rejected = engine.submitFindings({ ...finding, column_flow: [invalid, terminal('Other')],
       questions: [{ nodeId: neighbor, question: 'Explain Source Value.' }],
     });
@@ -1365,12 +1365,12 @@ describe('current task completeness before advancement', () => {
     expect([...held!.resend].sort(), 'the malformed prune and the flow the draft still lacks are owed').toEqual(['column_flow', 'prune_neighbors']);
     const afterMalformed = engine.toJSON();
     expectUnchangedRouting(afterMalformed, beforeMalformed);
-    const corrected = { ...invalid, upstream_columns: [{ node: neighbor, col: 'Value', note: 'x'.repeat(2000) }] };
+    const corrected = { ...invalid, upstream_columns: [{ node: neighbor, col: 'Value', note: 'x'.repeat(200) }] };
     const retry = (column_flow: unknown[]) => toHopFinding(schema.parse({ focus_node_id: root, column_flow, prune_neighbors: [] }));
     expect(engine.submitFindings(retry([corrected])), 'the Other entry of the rejected call is not restored')
       .toMatchObject({ ok: true, ended_columns: [`${root}.Other`] });
     expect(engine.getDetailSlots()).toContainEqual(expect.objectContaining({ summary: finding.summary, sections: finding.sections }));
-    expect(engine.columnAspect?.edges).toEqual([expect.objectContaining({ from_node: neighbor, from_col: 'Value', to_node: root, to_col: 'Value', note: 'x'.repeat(2000) })]);
+    expect(engine.columnAspect?.edges).toEqual([expect.objectContaining({ from_node: neighbor, from_col: 'Value', to_node: root, to_col: 'Value', note: 'x'.repeat(200) })]);
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: neighbor }, analysis_mode: 'ct' });
     expect(engine.getCurrentTasks()).toContainEqual(expect.objectContaining({ question: 'Explain Source Value.' }));
   });
@@ -1406,10 +1406,11 @@ describe('current task completeness before advancement', () => {
     expectUnchangedRouting(engine.toJSON(), before);
     expect(engine.heldPartsOfCurrentFocus()).toMatchObject({ summary: true, resend: ['column_flow'] });
   });
-  it('preserves long column evidence while rejecting only an overlong rendered node badge', () => {
+  it('preserves long detail memory and a bounded column note while rejecting only an overlong rendered node badge', () => {
     const engine = world();
-    const note = 'The source value and its SQL explanation. '.repeat(100);
-    const input = { ...finding, sections: { technical: finding.sections[0].text }, badge_label: 'x'.repeat(51),
+    const note = 'x'.repeat(200);
+    const section = 'The source value and its SQL explanation. '.repeat(100);
+    const input = { ...finding, sections: { technical: section }, badge_label: 'x'.repeat(51),
       column_flow: [{ out_col: 'Value', upstream_columns: [{ node: neighbor, col: 'Value', note }] }, terminal('Other')],
       questions: [{ nodeId: neighbor, question: 'Explain Source Value.' }],
     };
@@ -1422,6 +1423,7 @@ describe('current task completeness before advancement', () => {
     const schema = submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns, engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false);
     expect(engine.submitFindings(toHopFinding(schema.parse({ focus_node_id: root, badge_label: 'Source contribution' })))).toHaveProperty('ok', true);
     expect(engine.columnAspect?.edges.find(edge => edge.from_node === neighbor)?.note).toBe(note);
+    expect(engine.getDetailSlots()[0].sections[0].text).toBe(section);
   });
   it('merges the valid fields of a rejected retry into the held draft and owes only the still-failing field', () => {
     const engine = world();
