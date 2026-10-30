@@ -204,7 +204,7 @@ describe('neighbor-specific function caller context', () => {
     expect(missing).toMatchObject({ code: 'route_validation_failed', detail: [expect.objectContaining({ kind: 'neighbor_outcome_missing', id: reader })] });
     const shown = JSON.parse(renderProblem(missing as ToolRejection, 1)) as { errors: Array<{ path: string; code: string; allowed?: string[] }> };
     expect(shown.errors).toEqual([expect.objectContaining({ path: '', code: 'neighbor_undecided', allowed: [reader] })]);
-    expect(engine.heldPartsOfCurrentFocus()?.resend).toEqual(['questions']);
+    expect((missing as ToolRejection).resend).toEqual(['questions']);
     expect(engine.columnAspect?.edges ?? []).toEqual([]);
     expect(engine.toJSON().visited).toEqual(before.visited);
     expect(engine.submitFindings({ focus_node_id: fn, summary: '', sections: [], questions: [{ nodeId: reader, question: 'Explain how reader uses the function.' }], prune_neighbors: [] })).toHaveProperty('ok', true);

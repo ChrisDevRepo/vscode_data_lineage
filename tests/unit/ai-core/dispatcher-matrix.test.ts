@@ -1624,7 +1624,7 @@ describe('submit_findings rejection form', () => {
     expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
     expect(engine.toJSON().agenda).toEqual(before.agenda);
     expect(engine.getDetailSlots()).toEqual([]);
-    expect(engine.heldPartsOfCurrentFocus()).toMatchObject({ summary: true, sections: ['technical'], resend: ['questions', 'prune_neighbors', 'column_flow'] });
+    expect(engine.heldPartsOfCurrentFocus()).toMatchObject({ summary: true, sections: ['technical'], resend: [] });
     const patch = outcome === 'map' ? { column_flow: [...flow, { out_col: 'Other', upstream_columns: [{ node: other, col: 'Value' }] }] }
       : outcome === 'prune' ? { prune_neighbors: [{ id: other, reason: 'No value contribution.' }] }
       : { questions: [{ nodeId: other, question: 'Explain the neighboring SQL.' }] };

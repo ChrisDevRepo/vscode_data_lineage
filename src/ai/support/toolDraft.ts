@@ -37,6 +37,8 @@ export class ToolDraft<T extends object> {
   public get(): Partial<T> | null { return this.value && Object.keys(this.value).length ? this.value as Partial<T> : null; }
   public matches(context: string): boolean { return this.context === context; }
   public get unchanged(): boolean { return this._unchanged; }
+  /** Paths the last rejection named; cleared with the draft. */
+  public get faultPaths(): readonly string[] { return this.faults; }
 
   /** Compose a candidate without validating it; its handler owns the one full-schema check. */
   public apply(context: string, input: unknown, schema: z.ZodType): unknown {
