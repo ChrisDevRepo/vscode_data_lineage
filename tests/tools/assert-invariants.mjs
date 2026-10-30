@@ -76,8 +76,17 @@ export function findSites(file, text) {
   // Scanner tokens preserve literal contents and identifier boundaries while discarding layout trivia.
   const tokens = value => {
     const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, value);
+    const trailingCallCommas = new Set();
+    const syntax = ts.createSourceFile('allowlist.ts', value, ts.ScriptTarget.Latest, true);
+    const collect = node => {
+      if (ts.isCallExpression(node) && node.arguments.hasTrailingComma && value[node.arguments.end - 1] === ',') trailingCallCommas.add(node.arguments.end - 1);
+      ts.forEachChild(node, collect);
+    };
+    collect(syntax);
     const parts = [];
-    for (let kind = scanner.scan(); kind !== ts.SyntaxKind.EndOfFileToken; kind = scanner.scan()) parts.push(scanner.getTokenText());
+    for (let kind = scanner.scan(); kind !== ts.SyntaxKind.EndOfFileToken; kind = scanner.scan()) {
+      if (!trailingCallCommas.has(scanner.getTokenPos())) parts.push(scanner.getTokenText());
+    }
     return parts.join('\0');
   };
   const visit = node => {
