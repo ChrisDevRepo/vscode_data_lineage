@@ -1,88 +1,11 @@
-/** Single owner of every top-level rejection code; an emit site never writes a code literal. */
+/** Single owner of every top-level rejection code (D-126); issue codes classify each fault, and an emit site never writes a code literal. */
 export const REJECTION_CODES = {
-  /** Tool called outside the current phase's `toolPolicy` allow-list. */
-  offPolicy: 'off_policy',
-  /** `start_exploration` while the session's exploration is already live (one-shot per turn). */
-  alreadyStarted: 'already_started',
-  /** Provider returned neither a tool call nor any text under `toolChoice: 'required'` — a transport artifact outside the chat retry groups; the reply stores nothing, so it counts toward the reply limit. */
-  emptyGeneration: 'empty_generation',
-  /** A read call identical (after key canonicalization) to one accepted in an earlier attempt of the same phase; its result is already in the observations. Never charged. */
-  duplicateRead: 'duplicate_read',
-  /** `lineage_get_screen_state` recall query while no AI run is stored for the applied view. */
-  noRunMemory: 'no_run_memory',
-  /** A session write arrived after the turn lease moved on, so nothing was stored, rendered or committed. */
-  staleTurn: 'stale_turn',
-  /** Tool input failed its schema or the engine's argument contract; the hint names the offending field. */
+  /** Every fault a model reply can correct; its issue codes name what to change. */
   invalidInput: 'invalid_input',
-  /** A node id, origin or detail lookup resolved to nothing in the loaded model. */
-  notFound: 'not_found',
-  /** A regex search/grep pattern failed to compile or exceeded the length/complexity budget. */
-  invalidRegex: 'invalid_regex',
-  /** A discovery-phase scope-expanding catalog request exceeded the turn's node/token budget. */
-  overDiscoveryBudget: 'over_discovery_budget',
-  /** A proposal or scope change exceeded `ai.maxRounds` or `ai.maxTraceColumns` at admission; no approval card is opened. */
-  overActiveScopeBudget: 'over_active_scope_budget',
   /** Consent-gate marker sharing the rejection envelope without being a rejection (`isConsentGateRejection`). */
   actionRequired: 'action_required',
-  /** A required field was omitted from the call entirely, distinguished from a present-but-invalid value. */
-  missingField: 'missing_field',
-  /** `targetColumns` supplied while the effective `start_exploration`/refine mode is BB, which accepts no CT-only field. */
-  ctFieldForbiddenInBb: 'ct_field_forbidden_in_bb',
-  /** A tool requiring a live exploration session (`stateMachine`) was called with none active. */
-  noActiveSession: 'no_active_session',
-  /** A tool ran with no model/graph loaded — the panel closed mid-turn, or no project was ever opened. A backend fault: the run ends; a caller without a chat turn is told to open the project. */
-  noProjectLoaded: 'no_project_loaded',
-  /** `proposalRevision` no longer matches the pending approval gate under refine; the next call copies the revision the gate shows, never a resend. */
-  staleProposalRevision: 'stale_proposal_revision',
-  /** Prune/column/question structural fault whose kind carries no specific code, or ≥2 distinct kinds in one submission (`ROUTE_REJECTION_CODE` fallback, `smRouteValidation.ts`). */
-  routeValidationFailed: 'route_validation_failed',
-  /** `column_flow[].out_col` names a column this focus node does not carry (`bad_out_col` kind, `smRouteValidation.ts`). */
-  outColNotOnNode: 'out_col_not_on_node',
-  /** `upstream_columns[].col` names a column the contributor node does not itself read (`bad_contributor_col` kind, `smRouteValidation.ts`). */
-  contributorColNotOnSource: 'contributor_col_not_on_source',
-  /** An `upstream_columns` entry names the same node.col as its own entry's destination (`self_loop_column` kind, `smRouteValidation.ts`). */
-  columnSelfLoop: 'column_self_loop',
-  /** An `upstream_columns` entry names a node already pruned earlier this run (`smRouteValidation.ts`, `columnTracer.ts`). */
-  prunedContributor: 'pruned_contributor',
-  /** The provider emitted the synthetic structured-output/terminal tool call with empty required arguments (`structuredOutput.ts`, `vscodeModelPort.ts`, `graph.ts`). */
-  emptyStructuredOutput: 'empty_structured_output',
-  /** The provider generated text or nothing instead of the phase's required terminal tool call (`toolAttempt.ts`). */
-  missingRequiredToolCall: 'missing_required_tool_call',
-  /** A registered tool handler threw during dispatch; a backend fault that ends the run (`toolErrorEnvelope.ts`, `lineageRuntime.ts` instrumentation label). */
-  toolExecutionError: 'tool_execution_error',
-  /** A tool handler caught an unexpected exception; a backend fault that ends the run (`toolProvider.ts`). */
-  internalError: 'internal_error',
-  /** The exploration engine threw while applying findings and entered its error status; a backend fault that ends the run (`smBase.ts`). */
-  engineCrash: 'engine_crash',
-  /** A `lineage_present_result` call failed an engine-state or content rule its served schema cannot express (`presentResult.ts`, `handlers/presentResult.ts`). */
-  validation: 'validation',
-  /** `submit_findings` reached an engine in a status other than `awaiting_findings` and not `complete` (`smBase.ts`). */
-  invalidStatus: 'invalid_status',
-  /** `submit_findings` reached an engine whose exploration is already `complete` (`smBase.ts`); the next call is `lineage_present_result`, never a resend. */
-  explorationComplete: 'exploration_complete',
-  /** `submit_findings.focus_node_id` is a real node other than the current hop focus (`smBase.ts`). */
-  focusNodeIdMismatch: 'focus_node_id_mismatch',
-  /** A provider tool call failed its tool's input schema before dispatch; raised by a model port that validates arguments itself (`modelPort.ts`, `toolAttempt.ts`). */
-  invalidToolInput: 'invalid_tool_input',
-  /** A text value of a provider tool call carries tool-call notation (`toolCallNotation.ts`, `toolAttempt.ts`). */
-  toolCallNotation: 'tool_call_notation',
-  /** A provider tool call named a tool the phase does not expose (`vscodeModelPort.ts`, `toolAttempt.ts`). */
-  unknownTool: 'unknown_tool',
-  /** The synthetic structured-output call was missing, duplicated or schema-invalid (`structuredOutput.ts`, `vscodeModelPort.ts`). */
-  invalidStructuredOutput: 'invalid_structured_output',
-  parallelCallForbidden: 'parallel_call_forbidden', // A second `start_exploration` call in the same reply.
-  unknownColumns: 'unknown_columns', // CT `targetColumns` that are not declared columns of the origin.
-  unknownNodeIds: 'unknown_node_ids', // `excludeNodeIds`/`passNodeIds` entries that resolve to no loaded object.
-  originNotFound: 'origin_not_found', // A start origin that resolves to no loaded object.
-  asymmetricDepthBothZero: 'asymmetric_depth_both_zero', // A depth with both sides at level 0, which would seed an empty scope.
-  missingResultGraph: 'missing_result_graph', // `lineage_present_result` with no result graph to present.
-  resultTooLarge: 'result_too_large', // A tool result above the per-result size budget.
-  phaseClosed: 'phase_closed', // A call after an accepted terminal call closed the phase; not evaluated.
-  extraCallNotEvaluated: 'extra_call_not_evaluated', // An extra call in a reply whose terminal call was rejected; not evaluated.
-  outOfScopeOrNotNeighbor: 'out_of_scope_or_not_neighbor', // A screen-state or detail lookup outside the run's scope or neighbors.
-  previewSourceUnavailable: 'preview_source_unavailable', // A preview whose source graph is no longer available.
-  freshProposalRequired: 'fresh_proposal_required', // `start_exploration` with a legacy `supplement` after a completed answer.
-  noOpRefine: 'no_op_refine', // A refine that changes nothing in the pending proposal.
-  queryTooShort: 'query_too_short', // A search query below the minimum length.
-  queryNotAName: 'query_not_a_name', // A substring search query of punctuation only.
+  /** A proposal or scope change exceeded `ai.maxRounds` or `ai.maxTraceColumns` at admission; no approval card is opened. */
+  overActiveScopeBudget: 'over_active_scope_budget',
+  /** No model reply can repair it (a handler or the engine failed, the turn lease moved on, no session or project is loaded); the run ends. */
+  backendFault: 'backend_fault',
 } as const;

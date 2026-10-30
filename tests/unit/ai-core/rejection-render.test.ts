@@ -2,14 +2,16 @@
 import { ISSUES, LAST_CORRECTION, makeRejection, renderProblem, type FeedbackStage, type IssueCode, type ToolProblem, type ToolRejection } from '../../../src/ai/support/toolErrorEnvelope';
 import { buildRouteValidationRejection } from '../../../src/ai/sm/smRouteValidation';
 import { describe, expect, it } from 'vitest';
+import type { ToolDefinition } from '../../../src/ai/tools/registry';
 import { inspectTargetColumns } from '../../../src/ai/interaction/rules/startExplorationRules';
+import { makeNode } from '../helpers/modelFixtures';
 
 type Rendered = ToolProblem;
 
 const SENTINEL = 'zz_SUBMITTED_SENTINEL_zz';
 const fallbackOf = (code: IssueCode): string | undefined => (ISSUES[code] as { fallback?: string }).fallback;
-const render = (rejection: ToolRejection, stage: FeedbackStage, input?: unknown): Rendered =>
-  JSON.parse(renderProblem(rejection, stage, input));
+const render = (rejection: ToolRejection, stage: FeedbackStage, input?: unknown, effect?: ToolDefinition['effect']): Rendered =>
+  JSON.parse(renderProblem(rejection, stage, input, effect));
 
 /** D-103: every error owns its path, code and table message; D-105 adds eligible fallback only at feedback 3. */
 function assertStructural(rendered: Rendered): void {
@@ -41,10 +43,10 @@ describe('flat rejection renderer contract (D-103)', () => {
     const report = makeRejection({ code: 'invalid_input', resend: ['column_flow'], errors: [
       { path: 'column_flow.0.out_col', code: 'unknown_column', values: ['Known'] },
     ] });
-    const start = inspectTargetColumns('[dbo].[Source]', ['Known'], ['Missing']).rejection!;
+    const start = inspectTargetColumns(makeNode({ id: '[dbo].[Source]', schema: 'dbo', name: 'Source', type: 'view' }), ['Known'], ['Missing']).rejection!;
     const fallback = fallbackOf('unknown_column')!;
     for (const stage of [1, 2, 3] as const) {
-      const shownReport = render(report, stage), shownStart = render(start, stage);
+      const shownReport = render(report, stage, undefined, 'hop_commit'), shownStart = render(start, stage, undefined, 'session_start');
       assertStructural(shownReport); assertStructural(shownStart);
       expect(shownReport.errors[0].message.includes(fallback)).toBe(stage === 3);
       expect(shownReport.resend).toEqual(stage === 3 ? ['column_flow', 'sections'] : ['column_flow']);
@@ -71,7 +73,7 @@ describe('flat rejection renderer contract (D-103)', () => {
 
   it('renders only issue-table messages and the stage notice, never a submitted value', () => {
     for (const stage of [1, 2, 3] as const) {
-      const rendered = render(r1(), stage, { column_flow: [{ upstream_columns: [{ node: SENTINEL }] }] });
+      const rendered = render(r1(), stage, { column_flow: [{ upstream_columns: [{ node: SENTINEL }] }] }, 'hop_commit');
       assertStructural(rendered);
       expect(rendered.notice !== undefined).toBe(stage === 3);
     }
@@ -79,7 +81,7 @@ describe('flat rejection renderer contract (D-103)', () => {
 
   it('adds the complete empty allowed set at feedback 2 and the fallback only with feedback 3 (D-105)', () => {
     for (const stage of [1, 2, 3] as const) {
-      const rendered = render(r1(), stage);
+      const rendered = render(r1(), stage, undefined, 'hop_commit');
       assertStructural(rendered);
       expect(rendered.errors).toEqual([expect.objectContaining({ path: 'column_flow.0.upstream_columns.0.node', code: 'column_out_of_scope' })]);
       expect(rendered.errors[0].allowed).toEqual(stage === 1 ? undefined : []);
@@ -100,10 +102,10 @@ describe('flat rejection renderer contract (D-103)', () => {
     const rejection = makeRejection({ code: 'invalid_input', errors: [
       { path: 'sections.0.node_ids.0', code: 'not_in_result', values: [] },
       { path: 'sections.0.node_ids.1', code: 'result_out_of_scope', values: ['[dbo].[a]'] },
-      { path: 'add_node_ids.0', code: 'out_of_scope', values: [] },
+      { path: 'add_node_ids.0', code: 'out_of_scope', category: 'value', values: [] },
     ] });
     for (const stage of [1, 2, 3] as const) {
-      const rendered = render(rejection, stage);
+      const rendered = render(rejection, stage, undefined, 'presentation_commit');
       assertStructural(rendered);
       for (const code of ['not_in_result', 'result_out_of_scope'] as const) expect(rendered.errors.find(error => error.code === code)?.message.includes(fallbackOf(code)!)).toBe(stage === 3);
       expect(rendered.errors.find(error => error.code === 'out_of_scope')?.message).not.toContain(fallbackOf('not_in_result')!);

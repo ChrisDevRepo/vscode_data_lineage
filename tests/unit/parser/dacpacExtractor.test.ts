@@ -26,13 +26,13 @@ async function makeExternalRefDacpac(): Promise<Uint8Array> {
 }
 
 
-/** The DACPAC name in DacMetadata.xml is the current database; without a readable name there is none. */
+/** Package metadata does not establish a deployment database identity. */
 async function testDacpacDatabaseName() {
-  for (const [metadata, name] of [[SELF_DB_METADATA, 'SelfDb'], [undefined, undefined], ['<DacType><Name>', undefined], ['<DacType><Version>1.0</Version></DacType>', undefined]] as const) {
+  for (const metadata of [SELF_DB_METADATA, undefined, '<DacType><Name>', '<DacType><Version>1.0</Version></DacType>'] as const) {
     const buffer = await buildThreePartDacpac(metadata);
-    expect((await extractSchemaPreview(buffer)).databaseName).toBe(name);
+    expect(await extractSchemaPreview(buffer)).not.toHaveProperty('databaseName');
     const model = await extractDacpac(buffer, undefined, undefined, { externalRefsEnabled: true });
-    expect(model.nodes.some(node => node.id === '[selfdb].[dbo].[x]')).toBe(name === undefined);
+    expect(model.nodes.some(node => node.id === '[selfdb].[dbo].[x]')).toBe(false);
   }
 }
 
@@ -332,7 +332,7 @@ async function testPkOrdinalInModel() {
 async function testPhase1Phase2Bridge() {
 
   const buf = readFileSync(testPath('AdventureWorks2025_AI.dacpac'));
-  const { preview, elements, dspName, databaseName } = await extractSchemaPreview(buf);
+  const { preview, elements, dspName } = await extractSchemaPreview(buf);
 
   expect(preview.schemas.length > 0, 'Phase 1: schemas list populated').toBe(true);
   expect(preview.totalObjects > 0, 'Phase 1: totalObjects > 0').toBe(true);
@@ -341,7 +341,7 @@ async function testPhase1Phase2Bridge() {
   expect(Array.isArray(elements) && elements.length > 0, 'Phase 1: elements array non-empty (bridge cache)').toBe(true);
 
   const allSchemas = new Set(preview.schemas.map(s => s.name));
-  const phase2Model = extractDacpacFiltered(elements, allSchemas, dspName, undefined, undefined, { databaseName });
+  const phase2Model = extractDacpacFiltered(elements, allSchemas, dspName, undefined, undefined);
   const fullModel = await loadAdventureWorksModel();
 
   expect(phase2Model.nodes.length,
@@ -351,7 +351,7 @@ async function testPhase1Phase2Bridge() {
   expect(phase2Model.dbPlatform,
     'Phase 2: dbPlatform matches full extract').toBe(fullModel.dbPlatform);
 
-  const hrOnly = extractDacpacFiltered(elements, new Set(['HumanResources']), dspName, undefined, undefined, { databaseName });
+  const hrOnly = extractDacpacFiltered(elements, new Set(['HumanResources']), dspName, undefined, undefined);
   expect(hrOnly.nodes.length < fullModel.nodes.length,
     'Phase 2 schema subset: fewer nodes than full model').toBe(true);
   expect(hrOnly.nodes.every(n => n.schema === 'HumanResources' || n.externalType !== undefined),
@@ -592,7 +592,18 @@ async function testComputedColumnTypeBorrowing() {
   it('bridges phase-one and phase-two extraction', testPhase1Phase2Bridge);
   it('retains the cross-schema catalog under filtering', testCrossSchemaCatalogUnderFilter);
   it('honors DACPAC extraction options', testDacpacExtractionOptions);
-  it('reads the DACPAC name as the current database', testDacpacDatabaseName);
+  it('does not infer deployment database identity from package provenance', testDacpacDatabaseName);
+  it('uses explicit database identity for the original same-name mixed read and write oracle', async () => {
+    const buffer = await buildThreePartDacpac(SELF_DB_METADATA);
+    const preview = await extractSchemaPreview(buffer);
+    const options = { externalRefsEnabled: true, databaseName: 'SelfDb' };
+    const models = [await extractDacpac(buffer, undefined, undefined, options),
+      extractDacpacFiltered(preview.elements, new Set(['dbo']), preview.dspName, undefined, undefined, options)];
+    for (const model of models) expect(model.edges.map(edge => `${edge.source} -> ${edge.target}`).sort()).toEqual([
+      '[dbo].[t] -> [dbo].[usp_sync]', '[dbo].[usp_sync] -> [dbo].[x]',
+      '[dbo].[usp_sync] -> [otherdb].[dbo].[t]', '[otherdb].[dbo].[x] -> [dbo].[usp_sync]',
+    ]);
+  });
   it('decodes entity-encoded names and keeps (max) and CLR type names', testNamesAndTypesRoundTrip);
 
   it('extracts from a byte view at a nonzero offset', async () => {

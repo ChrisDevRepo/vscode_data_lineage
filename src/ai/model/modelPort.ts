@@ -6,8 +6,7 @@ import {
   type MessageContent,
 } from '@langchain/core/messages';
 import type { ZodType } from 'zod';
-import { REJECTION_CODES } from '../support/rejectionCodes';
-import { at } from '../support/toolErrorEnvelope';
+import { at, type IssueCode } from '../support/toolErrorEnvelope';
 import { validateToolCandidate } from '../support/toolValidation';
 import { normalizeModelInput } from '../tools/normalizeModelInput';
 import { toolCallNotationFault } from '../support/toolCallNotation';
@@ -17,6 +16,7 @@ import {
   type ProviderErrorDiagnostic,
 } from '../support/text';
 import type { TurnTokenBudget } from '../support/tokenBudget';
+import { safeIdentifier } from '../support/logIdentifier';
 
 /** LangChain's provider-neutral message hierarchy is the graph's sole history type. */
 export type ModelMessage = BaseMessage;
@@ -202,10 +202,10 @@ export interface ToolGenerationInput {
   readonly onTextDelta?: (text: string) => void;
 }
 
-/** Reason of the `invalid_tool_input` rejection for a call whose arguments were not a JSON object, shared by every model port so both lanes state the same fault and the same next action. */
+/** Reason of the `type` fault for a call whose arguments were not a JSON object, shared by every model port so both lanes state the same fault and the same next action. */
 export const TOOL_ARGUMENTS_NOT_OBJECT_REASON = 'Tool arguments were not a JSON object; send the required fields as one JSON object.';
 
-/** Reason of the `invalid_tool_input` rejection for a call whose arguments were empty text. */
+/** Reason of the `type` fault for a call whose arguments were empty text. */
 export const TOOL_ARGUMENTS_EMPTY_REASON = 'Tool arguments were empty; send the required fields as a JSON object.';
 
 /** A registered native tool call ready for argument validation at its execution boundary. */
@@ -230,11 +230,8 @@ export interface InvalidGeneratedToolCall {
   readonly toolName: string;
   /** The rejected payload exactly as the provider sent it. Kept so retry-budget guards can compare a follow-up call against the prior rejected one (by fingerprint, never by retaining it) and distinguish a genuine repair attempt from an unproductive resend; without it every reject of the same tool would be indistinguishable. Never dispatched, replayed, or logged raw. */
   readonly input?: unknown;
-  /** Rejection category — schema-invalid input, tool-call notation in a text value, or unknown tool. */
-  readonly code:
-    | typeof REJECTION_CODES.invalidToolInput
-    | typeof REJECTION_CODES.toolCallNotation
-    | typeof REJECTION_CODES.unknownTool;
+  /** Issue code of the rejection — arguments that are no JSON object, tool-call notation in a text value, or a tool the phase does not offer. */
+  readonly code: Extract<IssueCode, 'type' | 'tool_call_notation' | 'off_policy'>;
   /** Human-readable rejection prose returned to the model for repair. */
   readonly reason: string;
   /** Paths of the input values that rejected the call, when the producer names them. */
@@ -258,9 +255,9 @@ export function classifyToolCall(
   const reject = (code: InvalidGeneratedToolCall['code'], reason: string) => ({ replayInput,
     call: { valid: false as const, callId, toolName, input: 'args' in emitted ? emitted.args : emitted.malformedArgs, code, reason } });
   const definition = definitions.get(toolName);
-  if (!definition) return reject(REJECTION_CODES.unknownTool, 'Tool is not available in this phase.');
+  if (!definition) return reject('off_policy', 'Tool is not available in this phase.');
   if ('malformedArgs' in emitted) {
-    return reject(REJECTION_CODES.invalidToolInput, emitted.malformedArgs.trim() ? TOOL_ARGUMENTS_NOT_OBJECT_REASON : TOOL_ARGUMENTS_EMPTY_REASON);
+    return reject('type', emitted.malformedArgs.trim() ? TOOL_ARGUMENTS_NOT_OBJECT_REASON : TOOL_ARGUMENTS_EMPTY_REASON);
   }
   const normalized = normalizeModelInput(definition.inputSchema, emitted.args);
   logFixes(toolName, normalized.fixes, debugLog);
@@ -275,30 +272,31 @@ export function finishStructured<T>(
 ): T {
   const calls = emitted.flatMap((call) => ('args' in call ? [call.args] : []));
   if (emitted.some((call) => call.toolName !== STRUCTURED_OUTPUT_TOOL) || (calls.length > 0 && calls.length < emitted.length)) {
-    throw new StructuredOutputError(`unexpected tool call alongside ${STRUCTURED_OUTPUT_TOOL}`, REJECTION_CODES.invalidStructuredOutput, at('one_call'));
+    throw new StructuredOutputError(`unexpected tool call alongside ${STRUCTURED_OUTPUT_TOOL}`, at('one_call'));
   }
-  const empty = (): StructuredOutputError => new StructuredOutputError(`${STRUCTURED_OUTPUT_TOOL} arguments were empty`, REJECTION_CODES.emptyStructuredOutput, at('missing'));
+  const empty = (): StructuredOutputError => new StructuredOutputError(`${STRUCTURED_OUTPUT_TOOL} arguments were empty`, at('missing'));
   const [first] = emitted;
   if (calls.length === 0 && first && 'malformedArgs' in first) {
     if (emitted.length === 1 && !first.malformedArgs.trim()) throw empty();
-    throw new StructuredOutputError(`${STRUCTURED_OUTPUT_TOOL} arguments were not a JSON object`, REJECTION_CODES.invalidStructuredOutput, at('type', [''], ['object']));
+    throw new StructuredOutputError(`${STRUCTURED_OUTPUT_TOOL} arguments were not a JSON object`, at('type', [''], ['object']));
   }
   const normalized = calls.length === 1 ? normalizeModelInput(schema, calls[0]) : undefined;
   logFixes(STRUCTURED_OUTPUT_TOOL, normalized?.fixes ?? [], debugLog);
   const payload = normalized?.input;
   const notation = toolCallNotationFault(payload);
-  if (notation) throw new StructuredOutputError(notation.reason, REJECTION_CODES.invalidStructuredOutput, at('tool_call_notation', notation.issuePaths));
+  if (notation) throw new StructuredOutputError(notation.reason, at('tool_call_notation', notation.issuePaths));
   const admitted = calls.length === 1 ? validateToolCandidate(schema, payload) : undefined;
   if (admitted?.success) return admitted.data;
   if (calls.length === 1 && Object.keys(calls[0]).length === 0) throw empty();
-  if (calls.length > 1) throw new StructuredOutputError(`multiple ${STRUCTURED_OUTPUT_TOOL} tool calls`, REJECTION_CODES.invalidStructuredOutput, at('one_call'));
-  if (!admitted) throw new StructuredOutputError(`missing ${STRUCTURED_OUTPUT_TOOL} tool call`, REJECTION_CODES.invalidStructuredOutput, at('no_tool_call', [''], [STRUCTURED_OUTPUT_TOOL]));
+  if (calls.length > 1) throw new StructuredOutputError(`multiple ${STRUCTURED_OUTPUT_TOOL} tool calls`, at('one_call'));
+  if (!admitted) throw new StructuredOutputError(`missing ${STRUCTURED_OUTPUT_TOOL} tool call`, at('no_tool_call', [''], [STRUCTURED_OUTPUT_TOOL]));
   const { errors } = admitted.rejection;
-  throw new StructuredOutputError(`invalid ${STRUCTURED_OUTPUT_TOOL} fields: ${errors.map(error => `${error.path}: ${error.code}`).join(', ')}`, REJECTION_CODES.invalidStructuredOutput, errors);
+  throw new StructuredOutputError(`invalid ${STRUCTURED_OUTPUT_TOOL} fields: ${errors.map(error => `${error.path}: ${error.code}`).join(', ')}`, errors);
 }
 
-function logFixes(toolName: string, fixes: readonly { path: string; before: unknown }[], debugLog?: (message: string) => void): void {
-  for (const fix of fixes) debugLog?.(`[Normalize] tool=${toolName} path=${fix.path} before=${JSON.stringify(fix.before)}`);
+function logFixes(toolName: string, fixes: readonly { path: string; before: string }[], debugLog?: (message: string) => void): void {
+  const identifiers = { extraChars: '.:-[]', replacement: '_', maxLength: 128, fallback: 'root' };
+  for (const fix of fixes) debugLog?.(`[Normalize] tool=${safeIdentifier(toolName, identifiers)} path=${safeIdentifier(fix.path, identifiers)} beforeBytes=${Buffer.byteLength(fix.before)}`);
 }
 
 /** Validation result for a provider-emitted tool call. */

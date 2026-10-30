@@ -59,18 +59,18 @@ const toolCases: ReadonlyArray<readonly [string, readonly Recorded[], unknown]> 
   }],
   ['an unknown tool', [{ id: 'c1', name: 'lineage_missing', arguments: '{"query":"x"}' }], {
     status: 'completed',
-    toolCalls: [{ valid: false, callId: 'c1', toolName: 'lineage_missing', input: { query: 'x' }, code: 'unknown_tool', reason: 'Tool is not available in this phase.' }],
+    toolCalls: [{ valid: false, callId: 'c1', toolName: 'lineage_missing', input: { query: 'x' }, code: 'off_policy', reason: 'Tool is not available in this phase.' }],
     replayed: [{ id: 'c1', name: 'lineage_missing', args: { query: 'x' } }],
   }],
   ['arguments that are no object', [{ id: 'c1', name: 'lineage_levels', arguments: '"x"' }], {
     status: 'completed',
-    toolCalls: [{ valid: false, callId: 'c1', toolName: 'lineage_levels', input: '"x"', code: 'invalid_tool_input',
+    toolCalls: [{ valid: false, callId: 'c1', toolName: 'lineage_levels', input: '"x"', code: 'type',
       reason: 'Tool arguments were not a JSON object; send the required fields as one JSON object.' }],
     replayed: [{ id: 'c1', name: 'lineage_levels', args: {} }],
   }],
   ['an unknown tool whose arguments are no object', [{ id: 'c1', name: 'lineage_missing', arguments: '"x"' }], {
     status: 'completed',
-    toolCalls: [{ valid: false, callId: 'c1', toolName: 'lineage_missing', input: '"x"', code: 'unknown_tool', reason: 'Tool is not available in this phase.' }],
+    toolCalls: [{ valid: false, callId: 'c1', toolName: 'lineage_missing', input: '"x"', code: 'off_policy', reason: 'Tool is not available in this phase.' }],
     replayed: [{ id: 'c1', name: 'lineage_missing', args: {} }],
   }],
 ];
@@ -87,17 +87,17 @@ const structuredCall = (args: string, id = 's1'): Recorded => ({ id, name: STRUC
 const structuredCases: ReadonlyArray<readonly [string, readonly Recorded[], unknown]> = [
   ['a payload that parses as sent', [structuredCall('{"query":"x","levels":2}')], { value: { query: 'x', levels: 2 } }],
   ['a payload that parses after normalization', [structuredCall('{"query":"x","levels":"2"}')], { value: { query: 'x', levels: 2 } }],
-  ['an empty payload', [structuredCall('{}')], { code: 'empty_structured_output', reason: `${STRUCTURED_OUTPUT_TOOL} arguments were empty` }],
-  ['arguments that are no object', [structuredCall('"x"')], { code: 'invalid_structured_output', reason: `${STRUCTURED_OUTPUT_TOOL} arguments were not a JSON object` }],
+  ['an empty payload', [structuredCall('{}')], { code: 'invalid_input', reason: `${STRUCTURED_OUTPUT_TOOL} arguments were empty` }],
+  ['arguments that are no object', [structuredCall('"x"')], { code: 'invalid_input', reason: `${STRUCTURED_OUTPUT_TOOL} arguments were not a JSON object` }],
   ['two payloads', [structuredCall('{"query":"x"}', 's1'), structuredCall('{"query":"y"}', 's2')],
-    { code: 'invalid_structured_output', reason: `multiple ${STRUCTURED_OUTPUT_TOOL} tool calls` }],
+    { code: 'invalid_input', reason: `multiple ${STRUCTURED_OUTPUT_TOOL} tool calls` }],
   ['a foreign tool call beside the payload', [{ id: 'f1', name: 'lineage_levels', arguments: '{"query":"x"}' }, structuredCall('{"query":"x","levels":2}')],
-    { code: 'invalid_structured_output', reason: `unexpected tool call alongside ${STRUCTURED_OUTPUT_TOOL}` }],
+    { code: 'invalid_input', reason: `unexpected tool call alongside ${STRUCTURED_OUTPUT_TOOL}` }],
   ['a payload beside one whose arguments are no object', [structuredCall('{"query":"x","levels":2}', 's1'), structuredCall('"x"', 's2')],
-    { code: 'invalid_structured_output', reason: `unexpected tool call alongside ${STRUCTURED_OUTPUT_TOOL}` }],
+    { code: 'invalid_input', reason: `unexpected tool call alongside ${STRUCTURED_OUTPUT_TOOL}` }],
   ['two payloads whose arguments are no object', [structuredCall('"x"', 's1'), structuredCall('"y"', 's2')],
-    { code: 'invalid_structured_output', reason: `${STRUCTURED_OUTPUT_TOOL} arguments were not a JSON object` }],
-  ['a payload carrying tool-call notation', [structuredCall('{"query":"x</parameter>","levels":2}')], { code: 'invalid_structured_output',
+    { code: 'invalid_input', reason: `${STRUCTURED_OUTPUT_TOOL} arguments were not a JSON object` }],
+  ['a payload carrying tool-call notation', [structuredCall('{"query":"x</parameter>","levels":2}')], { code: 'invalid_input',
     reason: 'query: contains tool-call notation (`<parameter name=…>`, `</parameter>`, `<invoke name=…>`, `</invoke>`); a field holds its own value only.',
     notation: [{ path: 'query', code: 'tool_call_notation' }] }],
 ];
@@ -114,7 +114,7 @@ describe('the served JSON Schema alone admits a structured payload (D-126)', () 
   const generate = (port: ModelPort, schema: z.ZodType) => port.generateStructured({ messages: [modelUserMessage('q')], schema, phase: 'eq' });
   it.each(ports)('rejects a value Zod would coerce and keeps every sent property (%s)', async (_name, make) => {
     await expect(generate(make([structuredCall('{"query":5}')]), z.object({ query: z.coerce.string() }).strict()))
-      .rejects.toMatchObject({ code: 'invalid_structured_output', errors: [{ path: 'query', code: 'type', values: ['string'] }] });
+      .rejects.toMatchObject({ code: 'invalid_input', errors: [{ path: 'query', code: 'type', values: ['string'] }] });
     await expect(generate(make([structuredCall('{"query":"x","extra":1}')]), z.object({ query: z.string() }))).resolves.toEqual({ query: 'x', extra: 1 });
   });
 });
@@ -122,9 +122,9 @@ describe('the served JSON Schema alone admits a structured payload (D-126)', () 
 describe('blank arguments, which only the HTTP wire can carry', () => {
   it('charges a blank tool call to the call and a blank structured payload as empty', async () => {
     expect(await toolTurn(harnessPort([{ id: 'c1', name: 'lineage_levels', arguments: ' ' }]))).toMatchObject({
-      toolCalls: [{ valid: false, input: ' ', code: 'invalid_tool_input', reason: 'Tool arguments were empty; send the required fields as a JSON object.' }],
+      toolCalls: [{ valid: false, input: ' ', code: 'type', reason: 'Tool arguments were empty; send the required fields as a JSON object.' }],
       replayed: [{ id: 'c1', args: {} }],
     });
-    expect(await structured(harnessPort([structuredCall('')]))).toEqual({ code: 'empty_structured_output', reason: `${STRUCTURED_OUTPUT_TOOL} arguments were empty` });
+    expect(await structured(harnessPort([structuredCall('')]))).toEqual({ code: 'invalid_input', reason: `${STRUCTURED_OUTPUT_TOOL} arguments were empty` });
   });
 });

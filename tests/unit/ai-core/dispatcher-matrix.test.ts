@@ -17,11 +17,9 @@ import {
   recordToolAttempt,
   renderToolAttemptContext,
   type ToolAttemptObservation,
-  type ToolPhaseAttemptState,
 } from '../../../src/ai/agent/toolAttempt';
 import { TurnEventSink } from '../../../src/ai/runtime/turnEventSink';
 import { ToolRegistry, type IToolRegistry } from '../../../src/ai/tools/registry';
-import { classifyRejectionCode } from '../../../src/ai/tools/toolProvider';
 import { ISSUES, LAST_CORRECTION, at, makeRejection, type IssueCode, type ToolProblem } from '../../../src/ai/support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../../../src/ai/support/rejectionCodes';
 import { buildRouteValidationRejection } from '../../../src/ai/sm/smRouteValidation';
@@ -30,7 +28,6 @@ import { GetContextInputSchema, PruneCurrentInputSchema, StartExplorationFreshPr
 import { AiSession } from '../../../src/ai/session/session';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { executeSubmitFindings } from '../../../src/ai/tools/handlers/submitFindings';
-import type { ToolServices } from '../../../src/ai/tools/handlers/toolServices';
 import { makeGraph, makeIndexedModel, makeNode } from '../helpers/modelFixtures';
 import { stubToolServices } from './helpers/toolServices';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
@@ -430,7 +427,7 @@ it.each(reportScenarios)('report independent rule: $name ($phase, retainable=$re
   const session = new AiSession();
   session.model = makeIndexedModel(nodes, [[source, origin]]); session.graph = makeGraph(nodes, [[source, origin]]);
   const epoch = session.beginTurn();
-  session.setClassification('technical');
+  session.classification = 'technical';
   const sections = [{ label: 'Flow', node_ids: [origin, source], text: 'Keep this exact authored report body.' }];
   const report = { name: 'Held report', summary: 'Source supplies Report.', title: 'Held title sentinel', sections,
     highlight_groups: [{ label: 'Origin', color: 'target', node_ids: [origin] }] };
@@ -576,7 +573,7 @@ describe('optional table-arrival prune command delivery', () => {
     { mode: 'bb', accepted: false }, { mode: 'ct', accepted: false },
   ] as const)('serves conditional self-prune and evaluates one commit in $mode (accepted=$accepted)', async ({ mode, accepted }) => {
     const registry = new ToolRegistry<string>();
-    const prune = vi.fn(() => JSON.stringify(accepted ? { ok: true } : makeRejection({ code: REJECTION_CODES.offPolicy, reason: 'Removal no longer admitted.', errors: at('off_policy') })));
+    const prune = vi.fn(() => JSON.stringify(accepted ? { ok: true } : makeRejection({ code: REJECTION_CODES.invalidInput, reason: 'Removal no longer admitted.', errors: at('off_policy') })));
     registry.register({ name: 'lineage_submit_findings', inputSchema: z.object({}), effect: 'hop_commit', execute: () => '{}' });
     registry.register({ name: 'lineage_prune_current', inputSchema: PruneCurrentInputSchema, effect: 'hop_commit', execute: prune });
     const draft = {
@@ -605,7 +602,7 @@ describe('optional table-arrival prune command delivery', () => {
     expect(prune).toHaveBeenCalledExactlyOnceWith(input);
     const messages = result.messages.filter(item => item instanceof ToolMessage) as ToolMessage[];
     expect(messages[0].status).toBe(accepted ? 'success' : 'error');
-    expect(messages[1].artifact).toMatchObject({ code: accepted ? 'phase_closed' : 'extra_call_not_evaluated' });
+    expect(messages[1].artifact).toMatchObject({ code: 'invalid_input', errors: [{ path: '', code: 'one_call' }] });
     const outcomes = lines.filter(line => line.startsWith('[ToolOutcome]'));
     expect(outcomes).toHaveLength(2);
     expect(outcomes[0]).toContain(`callId=prune status=${accepted ? 'accepted' : 'rejected'}`);
@@ -615,7 +612,7 @@ describe('optional table-arrival prune command delivery', () => {
 });
 
 describe('per-reply progress accounting', () => {
-  const refused = JSON.stringify(makeRejection({ code: 'result_too_large', errors: at('result_too_large') }));
+  const refused = JSON.stringify(makeRejection({ code: 'invalid_input', errors: at('result_too_large') }));
   const observation = (index: number, extra: Partial<ToolAttemptObservation> = {}): ToolAttemptObservation =>
     ({ callId: `c${index}`, toolName: 'lineage_get_scope_bundle', result: refused, input: { origin: `o${index}` }, ...extra });
   const reply = (observations: ToolAttemptObservation[]) => ({ stop: 'continue' as const, providerCalls: 1, observations, rejections: [], messages: [] });
@@ -638,35 +635,19 @@ describe('per-reply progress accounting', () => {
     expect(state).toMatchObject({ noProgressCalls: 1, stopReason: null });
   });
 
-  it('an empty reply counts toward the limit even though its code is outside the chat groups', () => {
-    const rejected = { callId: '', toolName: 'lineage_answer', code: REJECTION_CODES.emptyGeneration, reason: 'empty' };
+  it('an empty reply counts toward the limit', () => {
+    const rejected = { callId: '', toolName: 'lineage_answer', code: REJECTION_CODES.invalidInput, reason: 'empty' };
     let state = initialToolPhaseAttemptState('discover');
     for (let index = 0; index < MAX_TOOL_PROVIDER_CALLS; index++) {
       state = recordToolAttempt(state, { stop: 'continue', providerCalls: 1, observations: [], rejections: [rejected], messages: [] }, registry);
     }
     expect(state.stopReason).toBe('no_progress');
-    expect(classifyRejectionCode(REJECTION_CODES.emptyGeneration)).toBe('correction');
   });
 });
 
-describe('rejection classification', () => {
-  it.each([
-    [REJECTION_CODES.invalidInput, 'answer_format'],
-    [REJECTION_CODES.missingField, 'answer_format'],
-    [REJECTION_CODES.routeValidationFailed, 'source_selection'],
-    [REJECTION_CODES.noProjectLoaded, 'backend_fault'],
-    [REJECTION_CODES.internalError, 'backend_fault'],
-    [REJECTION_CODES.toolExecutionError, 'backend_fault'],
-    [REJECTION_CODES.staleTurn, 'backend_fault'],
-    [REJECTION_CODES.explorationComplete, 'correction'],
-    [REJECTION_CODES.staleProposalRevision, 'correction'],
-    ['a_code_no_one_mapped', 'correction'],
-  ])('%s is %s', (code, group) => {
-    expect(classifyRejectionCode(code)).toBe(group);
-  });
-
+describe('backend-fault rejection', () => {
   it('a no-project result inside a reply ends the run and executes no later sibling', async () => {
-    const { registry, invoke } = registryWith(() => JSON.stringify(makeRejection({ code: REJECTION_CODES.noProjectLoaded, errors: at('no_project') })));
+    const { registry, invoke } = registryWith(() => JSON.stringify(makeRejection({ code: REJECTION_CODES.backendFault, errors: at('no_project') })));
     const model = nativePort(() => [call('first', { query: 'Orders' }), call('second', { query: 'Sales' })]);
     const attempt = await executeToolAttempt(model.port, discoveryPlan(registry));
     expect(invoke).toHaveBeenCalledTimes(1);
@@ -692,7 +673,7 @@ describe('a tool call whose arguments are not a JSON object', () => {
     const model = nativePort(() => [call('unavailable', input, 'unavailable_tool')]);
     const attempt = await executeToolAttempt(model.port, discoveryPlan(registry));
     expect(attempt.rejections).toEqual([expect.objectContaining({
-      callId: 'unavailable', code: REJECTION_CODES.unknownTool,
+      callId: 'unavailable', code: REJECTION_CODES.invalidInput,
     })]);
     expect(invoke).not.toHaveBeenCalled();
     expect(toolMessage(attempt.messages).status).toBe('error');
@@ -710,7 +691,7 @@ describe('a tool call whose arguments are not a JSON object', () => {
     expect(result.status).toBe('completed');
     if (result.status !== 'completed') return;
     expect(result.toolCalls).toEqual([
-      { valid: false, callId: 'bad', toolName: 'lineage_search_objects', input: JSON.stringify(input), code: REJECTION_CODES.invalidToolInput, reason: TOOL_ARGUMENTS_NOT_OBJECT_REASON },
+      { valid: false, callId: 'bad', toolName: 'lineage_search_objects', input: JSON.stringify(input), code: 'type', reason: TOOL_ARGUMENTS_NOT_OBJECT_REASON },
       { valid: true, callId: 'good', toolName: 'lineage_search_objects', input: { query: 'Orders' } },
     ]);
     // The replayed assistant turn carries an object for every call id, so the tool results pair.
@@ -727,12 +708,12 @@ describe('a tool call whose arguments are not a JSON object', () => {
     expect(results.map(item => item.status)).toEqual(['error', 'success']);
     // D-103: the call-level fault is the root error; its message comes from the port's reason.
     // Without step state the rejection renders at feedback 2, so the accepted JSON type is stated.
-    expect(problemOf(String(results[0].content))).toMatchObject({ code: REJECTION_CODES.invalidToolInput, attempt: '2/3', resend: [] });
+    expect(problemOf(String(results[0].content))).toMatchObject({ code: REJECTION_CODES.invalidInput, attempt: '2/3', resend: [] });
     expect(shown(String(results[0].content))).toEqual([{ ...fault('type'), allowed: ['object'] }]);
     expect(invoke).toHaveBeenCalledTimes(1);
-    expect(attempt.rejections).toEqual([expect.objectContaining({ callId: 'bad', code: REJECTION_CODES.invalidToolInput })]);
+    expect(attempt.rejections).toEqual([expect.objectContaining({ callId: 'bad', code: REJECTION_CODES.invalidInput })]);
     expect(lines.filter(line => line.startsWith('[ToolOutcome]'))).toEqual([
-      expect.stringContaining('callId=bad status=rejected code=invalid_tool_input'),
+      expect.stringContaining('callId=bad status=rejected code=invalid_input'),
       expect.stringContaining('callId=good status=accepted'),
     ]);
   });
@@ -758,7 +739,7 @@ describe('a tool call whose arguments are not a JSON object', () => {
     expect(result.toolCalls).toEqual([
       expect.objectContaining({
         valid: false, callId: 'missing', toolName: 'lineage_get_context',
-        code: REJECTION_CODES.invalidToolInput, reason: TOOL_ARGUMENTS_NOT_OBJECT_REASON,
+        code: 'type', reason: TOOL_ARGUMENTS_NOT_OBJECT_REASON,
       }),
       { valid: true, callId: 'sent', toolName: 'lineage_get_context', input: {} },
     ]);
@@ -774,7 +755,7 @@ describe('a tool call whose arguments are not a JSON object', () => {
       messages: [new HumanMessage('q')],
       schema,
       phase: 'test',
-    })).rejects.toMatchObject({ code: REJECTION_CODES.invalidStructuredOutput });
+    })).rejects.toMatchObject({ code: REJECTION_CODES.invalidInput });
   });
 
   it('rejects structured output when another call has non-object arguments', async () => {
@@ -787,7 +768,7 @@ describe('a tool call whose arguments are not a JSON object', () => {
       messages: [new HumanMessage('q')],
       schema,
       phase: 'test',
-    })).rejects.toMatchObject({ code: REJECTION_CODES.invalidStructuredOutput });
+    })).rejects.toMatchObject({ code: REJECTION_CODES.invalidInput });
   });
 });
 
@@ -801,7 +782,7 @@ describe('model-facing rejection text', () => {
     const session = new AiSession();
     session.model = indexed;
     session.graph = graph;
-    session.setClassification('technical');
+    session.classification = 'technical';
     session.beginTurn();
     const engine = new NavigationEngine(indexed, graph, () => {}, { memory: session.memory });
     engine.classification = 'technical';
@@ -838,7 +819,7 @@ describe('model-facing rejection text', () => {
     assertToolPairingWellFormed(state.messages);
     // Inspect the actual consumed content, never the local artifact.
     const { content, feedback } = consumedRejection(model, 'facts');
-    expect(feedback).toMatchObject({ code: REJECTION_CODES.routeValidationFailed });
+    expect(feedback).toMatchObject({ code: REJECTION_CODES.invalidInput });
     expect([...feedback.resend].sort()).toEqual(['column_flow', 'prune_neighbors', 'questions']);
     for (const absent of ['replies_remaining', 'reason', 'hint', 'detail']) expect(feedback).not.toHaveProperty(absent);
     expect(shown(feedback).map(error => error.path)).toEqual(expect.arrayContaining(['questions.0.nodeId', 'questions.1.nodeId', 'prune_neighbors.0.id']));
@@ -905,7 +886,7 @@ describe('model-facing rejection text', () => {
   it('preserves owner facts without inventing a domain alternative or a countdown', async () => {
     const registry = new ToolRegistry<string>();
     registry.register({ name: 'lineage_submit_findings', inputSchema: z.object({ focus_node_id: z.string() }), effect: 'hop_commit',
-      execute: () => JSON.stringify(makeRejection({ code: REJECTION_CODES.routeValidationFailed,
+      execute: () => JSON.stringify(makeRejection({ code: REJECTION_CODES.invalidInput,
         reason: 'An eligible kept neighbor needs an investigation-purpose question.', errors: at('neighbor_undecided', ['questions']) })) });
     const plan = compileInstructionPlan({ kind: 'converse', stage: { kind: 'active', mode: 'sm_ct' }, registry,
       messages: [new HumanMessage('Inspect the current object.')], sink: new TurnEventSink(() => {}),
@@ -917,7 +898,7 @@ describe('model-facing rejection text', () => {
       const model = nativePort(() => [call(`finding-${index}`, { focus_node_id: 'focus' }, 'lineage_submit_findings')]);
       const attempt = await executeToolAttempt(model.port, plan, { priorState: state });
       expect(JSON.stringify(model.sendRequest.mock.calls)).not.toContain(alternative);
-      expect(problemOf(String(toolMessage(attempt.messages).content)).code).toBe(REJECTION_CODES.routeValidationFailed);
+      expect(problemOf(String(toolMessage(attempt.messages).content)).code).toBe(REJECTION_CODES.invalidInput);
       expect(shown(String(toolMessage(attempt.messages).content))).toContainEqual(fault('neighbor_undecided', 'questions'));
       expect(String(toolMessage(attempt.messages).content)).not.toContain('replies_remaining');
       state = recordToolAttempt(state, attempt, registry);
@@ -1020,7 +1001,7 @@ describe('model-facing rejection text', () => {
     const code: IssueCode = kind === 'enum' ? 'enum' : kind === 'column' ? 'unknown_column' : 'not_neighbor';
     const invalidEnum = validateToolCandidate(z.object({ query: z.enum(columns as [string, ...string[]]) }), { query: 'Missing' });
     if (invalidEnum.success) throw new Error('Expected invalid enum');
-    const rejection = kind === 'enum' ? { ...invalidEnum.rejection, code: 'invalid_tool_input' }
+    const rejection = kind === 'enum' ? { ...invalidEnum.rejection, code: 'invalid_input' }
       : buildRouteValidationRejection([{ kind: kind === 'column' ? 'bad_contributor_col' : 'question_not_neighbor', id: 'Source', path,
         reason: 'The supplied value is not allowed here.',
         allowed_values: columns, ...(kind === 'column' ? { when: { node: 'Source' } } : {}) }]);
@@ -1074,13 +1055,13 @@ describe('model-facing rejection text', () => {
       allowed_values: columns,
       when: { node: '[ai].[salesstaging]' },
     }]);
-    expect(rejection.code).toBe(REJECTION_CODES.contributorColNotOnSource);
+    expect(rejection.code).toBe(REJECTION_CODES.invalidInput);
     const { registry } = registryWith(() => JSON.stringify(rejection));
     const plan = discoveryPlan(registry);
     let state = initialToolPhaseAttemptState('discover');
     const first = await executeToolAttempt(nativePort(() => [call('first', { query: 'OrderAmount' })]).port, plan, { priorState: state });
     const firstFeedback = JSON.parse(String(toolMessage(first.messages).content));
-    expect(firstFeedback.code).toBe(REJECTION_CODES.contributorColNotOnSource);
+    expect(firstFeedback.code).toBe(REJECTION_CODES.invalidInput);
     expect(shown(firstFeedback)).toEqual([fault('unknown_column', 'column_flow.0.upstream_columns.0.col')]);
     for (const absent of ['replies_remaining', 'detail', 'reason', 'hint']) expect(firstFeedback).not.toHaveProperty(absent);
     expect(toolMessage(first.messages).artifact).toMatchObject({ detail: expect.arrayContaining([expect.objectContaining({
@@ -1154,7 +1135,7 @@ describe('model-facing rejection text', () => {
     const state = recordToolAttempt(initialToolPhaseAttemptState('discover'), first, registry);
     const second = await executeToolAttempt(model.port, plan, { priorState: state });
     expect(invoke).toHaveBeenCalledTimes(1);
-    expect(toolMessage(second.messages).artifact).toMatchObject({ code: REJECTION_CODES.duplicateRead, detail: { acceptedCallId: 'again' } });
+    expect(toolMessage(second.messages).artifact).toMatchObject({ code: REJECTION_CODES.invalidInput, detail: { acceptedCallId: 'again' } });
     expect(recordToolAttempt(state, second, registry).noProgressCalls).toBe(1);
   });
 
@@ -1182,108 +1163,13 @@ describe('model-facing rejection text', () => {
       const results = attempt.messages.filter(message => message instanceof ToolMessage) as ToolMessage[];
       expect(results).toHaveLength(index === 0 ? 2 : 1);
       for (const result of results) {
-        expect(result).toMatchObject({ status: 'error', artifact: { code: 'result_too_large' } });
+        expect(result).toMatchObject({ status: 'error', artifact: { code: 'invalid_input', errors: [{ path: '', code: 'result_too_large' }] } });
         expect(String(result.content)).toContain(ISSUES.result_too_large.correction);
       }
       state = { ...recordToolAttempt(state, attempt, registry), ...(trimmed ? { messages: [] } : {}) };
     }
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(state).toMatchObject({ noProgressCalls: MAX_TOOL_PROVIDER_CALLS, stopReason: 'no_progress' });
-  });
-});
-
-
-describe('missing-content exchange progress', () => {
-  const held = (beforeReply: () => void | Promise<void> = () => {}) => {
-    const node = makeNode({ id: '[dbo].[Report]', schema: 'dbo', name: 'Report', type: 'view', bodyScript: 'SELECT 1 AS Value;' });
-    const model = makeIndexedModel([node], []);
-    const session = new AiSession();
-    const epoch = session.beginTurn();
-    session.model = model;
-    session.classification = 'technical';
-    const engine = new NavigationEngine(model, makeGraph([node], []), () => {}, { memory: session.memory });
-    session.stateMachine = engine;
-    expect(engine.init({ origin: node.id, question: 'Explain Report.', direction: 'upstream', analysisMode: 'bb', depthIntent: { upstream: { levels: 1, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } })).toHaveProperty('ok', true);
-    engine.classification = 'technical';
-    engine.getHopContext();
-    const services = { getSession: () => session, turnEpoch: () => epoch, requireModel: () => model,
-      logger: { debug() {}, info() {}, warn() {}, error() {} },
-      logAndReturn: (_name: string, data: object) => JSON.stringify(data),
-      toolError: (_name: string, error: unknown) => { throw error; },
-    } as unknown as ToolServices;
-    const initialInput = { focus_node_id: node.id, summary: 'Report returns a constant Value.' };
-    const rejected = executeSubmitFindings(initialInput, services);
-    const feedback = JSON.parse(rejected);
-    expect(feedback.missingParts).toEqual(['sections']);
-    expect(engine.heldFindingFocus).toBe(node.id);
-    const registry = new ToolRegistry<string>();
-    const schema = submitFindingsSchemaForMode('bb', 'technical', false, undefined, false);
-    const invoke = vi.fn(async (input: unknown) => {
-      await beforeReply();
-      return executeSubmitFindings(input, services);
-    });
-    registry.register({ name: 'lineage_submit_findings', inputSchema: schema, effect: 'hop_commit', execute: invoke });
-    let completed = false;
-    const plan = compileInstructionPlan({ kind: 'converse', stage: { kind: 'active', mode: 'sm_bb' }, registry,
-      messages: [new HumanMessage('Explain Report.')], sink: new TurnEventSink(() => {}),
-      facts: explorationFacts('bb', [], { classification: 'technical', memorySections: [] }),
-      hopColumns: () => engine.hopSubmitColumns,
-      requiredTerminalTool: 'lineage_submit_findings', toolChoice: 'required',
-      onToolResult: (_name, _input, isError) => { if (!isError) completed = true; }, isPhaseComplete: () => completed,
-    });
-    const state = { ...initialToolPhaseAttemptState('active'), providerCalls: 1, noProgressCalls: 1,
-      rejections: [{ callId: 'missing', toolName: 'lineage_submit_findings', ...feedback }],
-      messages: [new AIMessage({ content: '', tool_calls: [{ id: 'missing', name: 'lineage_submit_findings', args: initialInput }] }),
-        new ToolMessage({ content: rejected, tool_call_id: 'missing', name: 'lineage_submit_findings', status: 'error', artifact: feedback })],
-    };
-    return { state, plan, invoke, engine, session, schema, reply: { focus_node_id: node.id, sections: { technical: 'Value is the SQL literal 1.' } } };
-  };
-
-  it.each([false, true])('keeps a narrow completion hidden and preserves the draft through a malformed broad repair (broad=%s)', async broad => {
-    const events: unknown[] = [];
-    const { plan, state, invoke, reply, engine, session, schema } = held();
-    const before = engine.toJSON();
-    let attemptState: ToolPhaseAttemptState = state;
-    const observedPlan = { ...plan, input: { ...plan.input, sink: new TurnEventSink(event => events.push(event)) } };
-    const log: string[] = [];
-    if (broad) {
-      const malformedArgs = { focus_node_id: reply.focus_node_id, sections: '{"technical":"unterminated' };
-      expect(schema.safeParse(malformedArgs).success).toBe(false);
-      const malformed = await executeToolAttempt(nativePort(() => [call('malformed-section', malformedArgs, 'lineage_submit_findings')]).port,
-        observedPlan, { priorState: attemptState, debugLog: line => log.push(line) });
-      expect(malformed.rejections).toEqual([expect.objectContaining({ code: REJECTION_CODES.invalidInput, issuePaths: ['sections'] })]);
-      expect(toolMessage(malformed.messages)).toMatchObject({ status: 'error', tool_call_id: 'malformed-section' });
-      expect(engine.toJSON()).toMatchObject({ visited: before.visited, agenda: before.agenda,
-        engineInternals: { heldFinding: { finding: { summary: 'Report returns a constant Value.' } } } });
-      expect(session.memory.getShortTermMemory()).toEqual([]);
-      attemptState = recordToolAttempt(state, malformed, plan.input.registry);
-      expect(attemptState).toMatchObject({ providerCalls: 2, stopReason: null });
-      assertToolPairingWellFormed(attemptState.messages);
-    }
-    const args = reply;
-    expect(schema.safeParse(args).success).toBe(true);
-    const model = nativePort(() => [call('reply', args, 'lineage_submit_findings')]);
-    const result = await executeToolAttempt(model.port, observedPlan, { priorState: attemptState, debugLog: line => log.push(line) });
-    expect(invoke).toHaveBeenCalledTimes(broad ? 2 : 1);
-    expect(invoke).toHaveBeenLastCalledWith(args);
-    expect(result.rejections).toEqual([]);
-    expect(toolMessage(result.messages)).toMatchObject({ status: 'success', tool_call_id: 'reply' });
-    expect(session.memory.getShortTermMemory()).toEqual([expect.objectContaining({
-      summary: 'Report returns a constant Value.',
-    })]);
-    expect(events.some(event => (event as { type: string }).type === 'status')).toBe(broad);
-    expect(log).toEqual(expect.arrayContaining([expect.stringContaining(`classification=${broad ? 'retry' : 'clarification'}`)]));
-    expect(state.noProgressCalls).toBe(1);
-  });
-
-  it('does not hide an exchange with an intervening read as a narrow first clarification', async () => {
-    const events: unknown[] = [];
-    const { plan, state, reply } = held();
-    state.messages.push(new AIMessage({ content: '', tool_calls: [{ id: 'intervening', name: 'lineage_search_objects', args: { query: 'Other' } }] }),
-      new ToolMessage({ content: '{}', tool_call_id: 'intervening', name: 'lineage_search_objects' }));
-    const model = nativePort(() => [call('reply', reply, 'lineage_submit_findings')]);
-    await executeToolAttempt(model.port, { ...plan, input: { ...plan.input, sink: new TurnEventSink(event => events.push(event)) } }, { priorState: state });
-    expect(events.some(event => (event as { type: string }).type === 'status')).toBe(true);
   });
 });
 
@@ -1305,7 +1191,7 @@ describe('submit_findings rejection form', () => {
     const session = new AiSession();
     session.model = indexed;
     session.graph = graph;
-    session.setClassification(classification);
+    session.classification = classification;
     session.beginTurn();
     const engine = new NavigationEngine(indexed, graph, () => {}, { memory: session.memory });
     engine.classification = classification;
@@ -1360,10 +1246,10 @@ describe('submit_findings rejection form', () => {
     { name: 'sections missing', patch: { sections: undefined }, path: 'sections', code: 'missing' },
     { name: 'sections type', patch: { sections: 42 }, path: 'sections', code: 'type' },
     { name: 'business missing', patch: { sections: { technical: bothSections.technical } }, path: 'sections.business', code: 'missing' },
-    { name: 'business type', patch: { sections: { ...bothSections, business: 42 } }, path: 'sections.business', code: 'type', also: ['missing'] },
+    { name: 'business type', patch: { sections: { ...bothSections, business: 42 } }, path: 'sections.business', code: 'type' },
     { name: 'business blank', patch: { sections: { ...bothSections, business: '' } }, path: 'sections.business', code: 'invalid' },
     { name: 'technical missing', patch: { sections: { business: bothSections.business } }, path: 'sections.technical', code: 'missing' },
-    { name: 'technical type', patch: { sections: { ...bothSections, technical: 42 } }, path: 'sections.technical', code: 'type', also: ['missing'] },
+    { name: 'technical type', patch: { sections: { ...bothSections, technical: 42 } }, path: 'sections.technical', code: 'type' },
     { name: 'technical blank', patch: { sections: { ...bothSections, technical: '' } }, path: 'sections.technical', code: 'invalid' },
     { name: 'sections strict keys', patch: { sections: { ...bothSections, __unsupported__: true } }, path: 'sections.__unsupported__', code: 'unknown_key' },
     { name: 'flow missing', patch: { column_flow: undefined }, path: 'column_flow', code: 'missing' },
@@ -1488,7 +1374,7 @@ describe('submit_findings rejection form', () => {
     const steps = [initial, { badge_label: 'Source role', summary: 42 },
       ...(arm === 'repair' ? [{ badge_label: 'Source role' }]
         : [{ sections: { technical: 42 } }, { sections: { technical: 43 } }])];
-    const expectedPaths = [['badge_label'], ['summary', 'summary'], ...(arm === 'repair' ? [[]] : [['sections.technical', 'sections', 'sections'], ['sections.technical', 'sections', 'sections']])];
+    const expectedPaths = [['badge_label'], ['summary', 'summary'], ...(arm === 'repair' ? [[]] : [['sections.technical', 'sections'], ['sections.technical', 'sections.technical']])];
     for (const [index, input] of steps.entries()) {
       const result = await send(input);
       expect(result.rejection ? paths(result.rejection).sort() : []).toEqual([...expectedPaths[index]].sort());
@@ -1500,7 +1386,7 @@ describe('submit_findings rejection form', () => {
         declaredFaults: ['badge bound', 'new summary type', ...(arm === 'continued_wrong' ? ['new section type'] : [])],
         modelVisibleFeedback: result.content, resendFields: result.rejection?.resend ?? [],
         faults: result.rejection?.errors ?? [], submittedFields: Object.keys(input),
-        heldSentinels: engine.toJSON().engineInternals.heldFinding?.finding ?? null,
+        deliveredFindings: engine.getDetailSlots(),
         outcome: state().stopReason ?? result.attempt.stop, providerCalls: state().providerCalls,
       }) + '\n');
     }
@@ -1547,9 +1433,6 @@ describe('submit_findings rejection form', () => {
     expect(first.rejection.resend.sort()).toEqual(['badge_label', 'summary']);
     expect(first.rejection.errors).toEqual(expect.arrayContaining([fault('type', 'summary'), fault('type', 'badge_label')]));
     for (const error of first.rejection.errors) expect(Object.keys(error).sort()).toEqual(['code', 'message', 'path']);
-    const held = engine.toJSON().engineInternals.heldFinding?.finding;
-    expect(held?.column_flow).toEqual(flow);
-    expect(held?.sections).toEqual([{ angle: 'technical', text: base.sections.technical }]);
     expect(engine.getDetailSlots()).toEqual([]);
     const correction = { summary: 'Corrected authored summary.', badge_label: 'Source role' };
     const second = await send(correction);
@@ -1706,13 +1589,12 @@ describe('submit_findings rejection form', () => {
     const exit = { prune_neighbors: [] };
     const schema = submitFindingsSchemaForMode('ct', 'technical', false, engine.hopSubmitColumns, engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false);
     expect(schema.safeParse({ focus_node_id: root, ...exit }).success).toBe(true);
-    const held = structuredClone(engine.toJSON().engineInternals.heldFinding?.finding);
     const fourth = await send({ focus_node_id: root, ...exit });
     expect(fourth.attempt.stop).toBe('phase_complete');
     expect(engine.columnAspect?.edges).toHaveLength(2);
     expect(engine.columnAspect?.edges).toEqual(expect.arrayContaining(flow.map(entry =>
       expect.objectContaining({ from_node: entry.upstream_columns[0].node, from_col: entry.upstream_columns[0].col, to_node: root, to_col: entry.out_col }))));
-    expect(engine.getDetailSlots()).toEqual(expect.arrayContaining([expect.objectContaining({ sections: held?.sections })]));
+    expect(engine.getDetailSlots()).toEqual(expect.arrayContaining([expect.objectContaining({ sections: [{ angle: 'technical', text: base.sections.technical }] })]));
   });
   it('withdraws an omitted failing optional field and names it in the acknowledgement', async () => {
     const { engine, send } = hop();
@@ -1737,7 +1619,6 @@ describe('submit_findings rejection form', () => {
     expect(paths(second.rejection).sort()).toEqual(['', 'prune_neighbors', 'prune_neighbors.0.id']);
     expect(second.rejection.errors).toContainEqual({ ...fault('neighbor_undecided'), allowed: [other] });
     expect(second.rejection.resend).toEqual(['prune_neighbors', 'column_flow', 'questions']);
-    expect(engine.toJSON().engineInternals.heldFinding?.finding.prune_neighbors).toEqual(held);
     const third = await send({ focus_node_id: root, column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'C0' }] }, terminals[1]] });
     expect(third.attempt.stop).toBe('phase_complete');
     expect(engine.toJSON().removedSet).toEqual([other]);
@@ -1754,7 +1635,7 @@ describe('tools are told apart by their registry effect, never by name', () => {
     const attempt = await executeToolAttempt(nativePort(() => [call('first', {}, 'lineage_present_result'), call('second', {}, 'lineage_present_result')]).port, plan);
     expect(invoke).toHaveBeenCalledOnce();
     expect(attempt.calls.map(item => item.status)).toEqual(['rejected', 'phase_closed']);
-    expect((attempt.messages.filter(item => item instanceof ToolMessage) as ToolMessage[])[1].artifact).toMatchObject({ code: REJECTION_CODES.extraCallNotEvaluated });
+    expect((attempt.messages.filter(item => item instanceof ToolMessage) as ToolMessage[])[1].artifact).toMatchObject({ code: REJECTION_CODES.invalidInput });
     expect(attempt.rejections).toHaveLength(1);
   });
 
@@ -1789,7 +1670,7 @@ describe('tool-call notation inside a text argument', () => {
     const attempt = await send(registry, input);
     const message = toolMessage(attempt.messages);
     expect(invoke).not.toHaveBeenCalled();
-    expect(message).toMatchObject({ status: 'error', artifact: { code: 'tool_call_notation', issuePaths: paths } });
+    expect(message).toMatchObject({ status: 'error', artifact: { code: 'invalid_input', issuePaths: paths } });
     expect(shown(String(message.content))).toEqual(paths.map(path => expect.objectContaining({ path, code: 'tool_call_notation' })));
     expect(recordToolAttempt(initialToolPhaseAttemptState('discover'), attempt, registry)).toMatchObject({ noProgressCalls: 1, rejectedTerminalCalls: 0 });
   });

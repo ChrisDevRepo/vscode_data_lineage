@@ -1,7 +1,7 @@
 import { z, type ZodType } from 'zod';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveModelNodeId } from '../support/modelReferences';
-import { splitSqlName, stripBrackets } from '../../utils/sql';
+import { splitSqlName, stripBrackets, normalizeColName } from '../../utils/sql';
 import { validateToolCandidate } from '../support/toolValidation';
 
 /** Admission by the served JSON Schema decides every normalization step (D-126). */
@@ -19,6 +19,7 @@ const objectIdFields = new WeakMap<object, ObjectIdField>();
 
 interface ObjectIdField {
   readonly ids: Map<string, unknown>;
+  readonly kind?: 'column';
   readonly identifierCaseSensitive: boolean;
 }
 
@@ -28,6 +29,11 @@ const idFormSearchInputs = new WeakSet<object>();
 /** Marks a string schema as an object-id field admitting `ids`. */
 export function markObjectIdField(schema: ZodType, ids: Map<string, unknown>, identifierCaseSensitive: boolean): void {
   objectIdFields.set(schema._zod.def, { ids, identifierCaseSensitive });
+}
+
+/** SQL column spellings use the same boundary marker as object ids. */
+export function markColumnField(schema: ZodType, values: readonly string[], identifierCaseSensitive: boolean): void {
+  objectIdFields.set(schema._zod.def, { ids: new Map(values.map(value => [value, true])), identifierCaseSensitive, kind: 'column' });
 }
 
 /** Marks a search input whose `query` may be written as an object id. */
@@ -71,6 +77,11 @@ function normalizeJsonStringValues(text: string): string {
     result += char;
     if (!quoted || char !== '\\' || index + 1 === text.length) continue;
     const next = text[++index];
+    if (next.charCodeAt(0) < 0x20) {
+      result += '\\' + JSON.stringify(next).slice(1, -1);
+      valueSyntaxChanged = true;
+      continue;
+    }
     if (next.charCodeAt(0) >= 0x20 && !'"\\/bfnrtu'.includes(next)) { result += '\\'; valueSyntaxChanged = true; }
     result += next;
   }
@@ -199,6 +210,10 @@ function objectIdEntry(schema: ZodType): ObjectIdField | undefined {
 /** The one admitted id an equivalent spelling names, or `undefined` when it is already exact, unknown or ambiguous. Invisible format characters around the spelling are ignored; inside an identifier they stay part of it. */
 function respellId(raw: string, field: ObjectIdField): string | undefined {
   if (field.ids.has(raw)) return undefined;
+  if (field.kind === 'column') {
+    const matches = [...field.ids.keys()].filter(value => normalizeColName(value, field.identifierCaseSensitive) === normalizeColName(raw, field.identifierCaseSensitive));
+    return matches.length === 1 ? matches[0] : undefined;
+  }
   return resolveModelNodeId(raw.replace(/^\p{Cf}+|\p{Cf}+$/gu, ''), field.ids, field.identifierCaseSensitive) ?? undefined;
 }
 
@@ -222,7 +237,8 @@ function respellSearch(record: Record<string, unknown>, path: PropertyKey[], fix
 
 /** Decodes values through the schema; union branches must agree on one valid result. */
 function decodeText(schema: ZodType, input: unknown, path: PropertyKey[] = [], rounds = MAX_ROUNDS): { readonly input: unknown; readonly fixes: ModelInputFix[] } {
-  if (admits(schema, input) || rounds === 0) return { input, fixes: [] };
+  const admitted = validateToolCandidate(schema, input);
+  if (admitted.success || rounds === 0) return { input, fixes: [] };
   if (schema instanceof z.ZodOptional || schema instanceof z.ZodNullable || schema instanceof z.ZodDefault
     || schema instanceof z.ZodPrefault || schema instanceof z.ZodCatch || schema instanceof z.ZodReadonly
     || schema instanceof z.ZodNonOptional) return decodeText(schema.unwrap() as ZodType, input, path, rounds);
@@ -271,7 +287,6 @@ function decodeText(schema: ZodType, input: unknown, path: PropertyKey[] = [], r
     }
   } else {
     // Other schema compositions decode at the paths of the served schema's type faults.
-    const admitted = validateToolCandidate(schema, input);
     if (!admitted.success) for (const error of admitted.errors) {
       const steps = error.instancePath.split('/').slice(1).map(part => part.replace(/~1/g, '/').replace(/~0/g, '~'));
       const key = steps.pop();
@@ -279,7 +294,7 @@ function decodeText(schema: ZodType, input: unknown, path: PropertyKey[] = [], r
       const value = (steps.reduce<unknown>((node, step) => (node as Record<string, unknown> | undefined)?.[step], input) as Record<string, unknown> | undefined)?.[key];
       const expected = [error.params.type].flat().find(type => type !== 'null');
       const after = typeof value === 'string' ? decodeExact(value, expected === 'integer' ? 'number' : expected) : undefined;
-      if (after === undefined) continue;
+      if (after === undefined || (expected === 'integer' && !Number.isInteger(after))) continue;
       if (fixes.length === 0) current = structuredClone(input);
       (steps.reduce<unknown>((node, step) => (node as Record<string, unknown>)[step], current) as Record<string, unknown>)[key] = after;
       fixes.push({ path: [...path, ...steps, key].join('.'), before: value as string, after });

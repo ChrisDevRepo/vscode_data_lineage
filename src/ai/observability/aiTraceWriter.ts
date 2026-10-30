@@ -75,8 +75,6 @@ export type RuntimeLifecycleRecord =
       readonly rejectionCode?: string;
       /** Dotted field paths the rejection blamed, when it reported any. */
       readonly issuePaths?: readonly string[];
-      readonly missingParts?: readonly string[];
-      readonly feedbackAt?: string;
       readonly durationMs: number;
     };
 

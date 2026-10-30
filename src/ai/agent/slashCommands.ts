@@ -1,5 +1,7 @@
 /** Deterministic slash-command routing for the entry detector. */
 import type { AgentEntryRoute, AgentExecutionTrigger } from './state';
+import { SQL_IDENTIFIER_PART } from '../../engine/shared/sqlIdentifier';
+import { splitSqlName, stripBrackets } from '../../utils/sql';
 
 /** A pinned entry route for a recognized deterministic command/intent. */
 interface SlashRoute {
@@ -12,9 +14,8 @@ interface SlashRoute {
 }
 
 const SLASH_RE = /^\s*\/(trace|search)\b[ \t]*/i;
-const BRACKET_TOKEN_RE = /\[([^\]]+)\]/g;
 /** One contiguous dot-joined bracket chain of 3+ parts, e.g. `[schema].[table].[column]`. */
-const BRACKET_CHAIN_RE = /(?:\[[^\]]+\]\.){2,}\[[^\]]+\]/g;
+const BRACKET_CHAIN_RE = new RegExp(String.raw`(?=\[)${SQL_IDENTIFIER_PART}(?:\.(?=\[)${SQL_IDENTIFIER_PART}){2,}`, 'gu');
 
 /** Pins an entry route for a leading `/trace` or `/search` command, skipping the entry-detector model call. */
 export function detectSlashRoute(prompt: string): SlashRoute | null {
@@ -30,8 +31,8 @@ export function detectSlashRoute(prompt: string): SlashRoute | null {
 /** Extracts column names from `/trace` text: each contiguous dot-joined bracket chain of 3+ parts (e.g. `[schema].[table].[column]`) contributes its last token as the column. A 2-part `[schema].[object]` is a node id, and a bare `[X]` is an object — neither is a column, and two such ids named separately in the same sentence never combine into a fabricated chain. */
 function parseTraceColumns(text: string): string[] | null {
   const columns = [...text.matchAll(BRACKET_CHAIN_RE)].map((chainMatch) => {
-    const tokens = [...chainMatch[0].matchAll(BRACKET_TOKEN_RE)].map(m => m[1].trim());
-    return tokens[tokens.length - 1];
+    const tokens = splitSqlName(chainMatch[0]);
+    return stripBrackets(tokens[tokens.length - 1]).trim();
   });
   return columns.length > 0 ? columns : null;
 }

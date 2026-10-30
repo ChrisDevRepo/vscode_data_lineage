@@ -58,7 +58,7 @@ function services(session: AiSession, epoch: number): ToolServices {
     requireGraph: () => { throw new Error('requireGraph is not part of the present_result path'); },
     logAndReturn: (_toolName: string, data: object) => JSON.stringify(data),
     buildActiveFilter: () => { throw new Error('buildActiveFilter is not part of the present_result path'); },
-    toolError: (toolName: string, err: unknown) => JSON.stringify({ code: 'internal_error', reason: String(err), detail: { tool: toolName } }),
+    toolError: (toolName: string, err: unknown) => JSON.stringify({ code: 'backend_fault', reason: String(err), detail: { tool: toolName } }),
   } as unknown as ToolServices;
 }
 
@@ -116,7 +116,7 @@ describe('presentation SQL-reference fence boundary', () => {
     const epoch = session.beginTurn();
     const input = basePayload({ sections: [{ label: 'Source', node_ids: [ORIGIN], text: malformed }] });
     const result = JSON.parse(await executePresentResult(input, services(session, epoch)));
-    expect(result.code).toBe('validation');
+    expect(result.code).toBe('invalid_input');
     expect(result.errors).toEqual([{ path: 'sections.0.text', code: 'unclosed_fence' }]);
     expect(result).toMatchObject({ resend: ['sections'] });
     expect(session.presentationArtifact).toBeFalsy();
@@ -133,7 +133,7 @@ describe('presentation SQL-reference fence boundary', () => {
       { label: 'Meaning', node_ids: [ORIGIN], text: keptText },
     ] });
     const failed = JSON.parse(await executePresentResult(input, services(session, epoch)));
-    expect(failed.code).toBe('validation');
+    expect(failed.code).toBe('invalid_input');
     const repaired = JSON.parse(await executePresentResult({ sections: [
       { label: 'Source', node_ids: [ORIGIN], text: 'Source rule.\n```sql S1\n```\nLater business meaning.' },
       { label: 'Meaning', node_ids: [ORIGIN], text: keptText },
@@ -161,7 +161,7 @@ describe('presentation SQL-reference fence boundary', () => {
     if (field.startsWith('sections.')) (input.sections as Array<{ text: string }>)[0].text = malformed;
     else input[field] = malformed;
     const failed = JSON.parse(await executePresentResult(input, services(session, epoch)));
-    expect(failed.code).toBe('validation');
+    expect(failed.code).toBe('invalid_input');
     expect(failed.issuePaths).toEqual([field]);
     expect(session.presentationArtifact).toBeFalsy();
     const corrected = 'Before.\n```sql S1\n```\nAfter.';
@@ -187,7 +187,7 @@ describe('presentation SQL-reference fence boundary', () => {
     await executePresentResult(basePayload({ intro: '```sql S1\nUnclosed.' }), services(session, epoch));
     session.beginTurn();
     const rejected = JSON.parse(await executePresentResult({ intro: '```sql S1\n```' }, services(session, epoch)));
-    expect(rejected.code).toBe('stale_turn');
+    expect(rejected.code).toBe('backend_fault');
     expect(session.presentationArtifact).toBeFalsy();
   });
 
@@ -200,7 +200,7 @@ describe('presentation SQL-reference fence boundary', () => {
   it.each(['``` sql S2', '```\tjson'])('does not treat a horizontally spaced language opener as a close: %s', async next => {
     const session = seedSession();
     const text = `First rule.\n\`\`\`sql S1\nBusiness prose.\n${next}\nLater prose.`;
-    expect((await run(session, basePayload({ intro: text }))).code).toBe('validation');
+    expect((await run(session, basePayload({ intro: text }))).code).toBe('invalid_input');
     expect(session.presentationArtifact).toBeFalsy();
   });
 
@@ -229,7 +229,7 @@ describe('presentation SQL-reference fence boundary', () => {
 
   it('rejects a closed unknown reference and leaves non-SQL markdown prose untouched', async () => {
     const session = seedSession();
-    expect((await run(session, basePayload({intro:'```sql S9\n```'}))).code).toBe('validation');
+    expect((await run(session, basePayload({intro:'```sql S9\n```'}))).code).toBe('invalid_input');
     const text = 'Ordinary S1 reference and ```json\n{"value":"S1"}\n```.';
     expect(expandEvidenceRefs(text, new Map()).text).toBe(text);
   });

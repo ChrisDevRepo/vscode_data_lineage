@@ -17,10 +17,11 @@ The newest version heading collects changes until that version ships.
 - The SQL Server (mssql) extension integration and the `dataLineageViz.database.connectionProvider` setting; databases connect through built-in connections only. Projects saved with an mssql connection keep it without the password; set the password with **Update Database Password**.
 
 ### Fixed
-- AI analysis rejects malformed reports, labels and tool calls with clear repair choices, and keeps valid text and column mappings while a repair is pending.
+- AI analysis reports independent scope and input faults together, with clear repair choices, and keeps valid text and column mappings while a repair is pending.
+- SQL evidence preserves stored text, including whitespace in literals; replacing a loaded project retires its previous exploration and approval card.
 - Updating a legacy bookmark keeps current selections; SQL identifiers with equivalent quoting, casing or Unicode format characters bind to the right objects.
 - Functions without declared columns now get column-trace edges; exploration depth is strict only when the user states a level count or complete chain, otherwise it starts at about 3 levels.
-- A DACPAC three-part name to another database no longer resolves to a local object, and reconnecting by server matches a saved connection written with a `tcp:` prefix.
+- DACPAC references keep local objects local when database identity is known or unambiguous; references to another database remain external. Reconnecting by server matches a saved connection written with a `tcp:` prefix.
 
 ### Dependencies
 - Security updates: DOMPurify, @azure/identity (msal-node).

@@ -1,17 +1,13 @@
 /** Composes the discovery-to-exploration handoff memo — the one-shot, no-tool LM round that turns the user's discovery Q/A into the `<discovery_summary>` stable-prefix field every later hop and synthesis prompt reads as established fact. */
-import { z } from 'zod';
 import type { ModelPort } from '../../model/modelPort';
 import { modelUserMessage } from '../../model/modelPort';
 import { compileInstructionPlan, executeInstructionPlan, explorationFacts } from '../../agent/instructionPlan';
-import { buildDiscoverySummaryComposePrompt, DISCOVERY_SUMMARY_COMPOSE_SYSTEM_PROMPT } from '../../prompting/prompts';
+import { buildDiscoverySummaryComposePrompt, DISCOVERY_SUMMARY_COMPOSE_SYSTEM_PROMPT, DISCOVERY_SUMMARY_EMPTY_REASON } from '../../prompting/prompts';
 import type { NavigationEngine } from '../../sm/smBase';
 import type { ClassificationValue } from '../../session/classification';
 import { sanitizeForLog, type Logger } from '../../../utils/log';
 
-/** Validated boundary for the optional one-shot discovery-to-exploration memo. */
-const DiscoverySummarySchema = z.string().trim().min(1);
-
-/** One mechanical re-ask on a rejected compose reply, the reject-with-hint convention every Zod boundary here follows. */
+/** One mechanical re-ask when composition returns no text. */
 const DISCOVERY_SUMMARY_COMPOSE_ATTEMPTS = 2;
 
 /** Composes the memo, or returns `undefined` on an ordinary degrade (rejected output after retry, or a non-abort provider failure) — the caller shows the approval card without a memo rather than blocking or failing an otherwise valid proposal. */
@@ -41,7 +37,7 @@ export async function composeDiscoverySummaryText(
       `- passNodeIds: ${filters.passNodeIds.length ? filters.passNodeIds.join(', ') : '(none)'}`,
       `- classification: ${classification}`,
     ].join('\n');
-    let parsed: z.ZodSafeParseResult<string> | undefined;
+    let summary = '';
     let rejectReason = '';
     for (let attempt = 1; attempt <= DISCOVERY_SUMMARY_COMPOSE_ATTEMPTS; attempt++) {
       const prompt = buildDiscoverySummaryComposePrompt(
@@ -61,17 +57,17 @@ export async function composeDiscoverySummaryText(
         messages: [modelUserMessage(prompt)],
         signal,
       }));
-      parsed = DiscoverySummarySchema.safeParse(composed);
-      if (parsed.success) break;
-      rejectReason = parsed.error.issues.map((issue: z.core.$ZodIssue) => issue.message).join('; ');
+      summary = composed.trim();
+      if (summary) break;
+      rejectReason = DISCOVERY_SUMMARY_EMPTY_REASON;
       logger?.debug(`[AI] [DiscoveryHandoff] attempt=${attempt} rejected reason=${sanitizeForLog(rejectReason)}`);
     }
-    if (!parsed?.success) {
+    if (!summary) {
       logger?.debug('[AI] [DiscoveryHandoff] status=degraded reason=invalid_summary_after_retry');
       return undefined;
     }
-    logger?.debug(`[AI] [DiscoveryHandoff] status=composed chars=${parsed.data.length}`);
-    return parsed.data;
+    logger?.debug(`[AI] [DiscoveryHandoff] status=composed chars=${summary.length}`);
+    return summary;
   } catch (err) {
     if (signal?.aborted) throw err;
     logger?.error('[AI] [DiscoveryHandoff] compose failed unexpectedly', err);

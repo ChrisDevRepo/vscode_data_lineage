@@ -1,5 +1,5 @@
-/** Deterministic production tool-error-envelope contract: the one rejection record, the Zod issue mapping and the one renderer (D-103, D-105). Tests assert paths, issue codes, backend values and the stage; every rendered sentence is a table string (see rejection-render.test.ts). */
-import { ISSUES, readToolError, readToolErrorText, isConsentGateRejection, makeRejection, renderProblem, type FeedbackStage, type ToolProblem, type ToolRejection } from '../../../src/ai/support/toolErrorEnvelope';
+/** Deterministic production tool-error-envelope contract: the one rejection record, native Ajv issue mapping and the one renderer (D-103, D-105). Tests assert paths, issue codes, backend values and the stage; every rendered sentence is a table string (see rejection-render.test.ts). */
+import { ISSUES, readToolError, readToolErrorText, isConsentGateRejection, makeRejection, combineToolRejections, renderProblem, type FeedbackStage, type ToolProblem, type ToolRejection } from '../../../src/ai/support/toolErrorEnvelope';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { makeGraph, makeIndexedModel, makeModel, makeNode } from '../helpers/modelFixtures';
 import { draftWorld } from '../helpers/presentWorld';
@@ -11,11 +11,12 @@ import { buildModel } from '../../../src/engine/modelBuilder';
 import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import type { ToolDefinition } from '../../../src/ai/tools/registry';
 import { validateToolCandidate } from '../../../src/ai/support/toolValidation';
 
 type Shown = ToolProblem['errors'][number];
 type Problem = ToolProblem;
-const render = (rejection: ToolRejection, stage: FeedbackStage, input?: unknown): Problem => JSON.parse(renderProblem(rejection, stage, input));
+const render = (rejection: ToolRejection, stage: FeedbackStage, input?: unknown, effect?: ToolDefinition['effect']): Problem => JSON.parse(renderProblem(rejection, stage, input, effect));
 const schemaRejection = (schema: z.ZodType, input: unknown) => {
   const admitted = validateToolCandidate(schema, input);
   if (admitted.success) throw new Error('Expected schema faults');
@@ -26,6 +27,20 @@ const at = (problem: Problem, path: string) => shown(problem).find(error => erro
 const faults = (rejection: ToolRejection) => rejection.errors.map(error => [error.path, error.code]);
 
 describe("tool-error-envelope", () => {
+  // Approved08: backend invariant faults stop immediately, even beside independently decidable input faults.
+  it.each([false, true])('a backend fault dominates input faults without losing their fields (reversed=%s)', reversed => {
+    const problems = [
+      makeRejection({ code: 'invalid_input', errors: [{ path: 'summary', code: 'type' }], resend: ['summary'] }),
+      makeRejection({ code: 'backend_fault', errors: [{ path: '', code: 'backend_fault' }] }),
+    ];
+    const result = combineToolRejections(reversed ? problems.reverse() : problems);
+    expect(result).toMatchObject({ code: 'backend_fault', issuePaths: ['summary'], resend: ['summary'] });
+    expect(result.errors).toHaveLength(2);
+    expect(result.errors).toEqual(expect.arrayContaining([
+      { path: 'summary', code: 'type' }, { path: '', code: 'backend_fault' },
+    ]));
+  });
+
   it('retains resend fields through JSON and the renderer (D-103)', () => {
     const rejection = makeRejection({ code: 'invalid_regex', errors: [{ path: 'query', code: 'invalid_regex' }], resend: ['sections'] });
     expect(readToolError(JSON.parse(JSON.stringify(rejection)))).toEqual(rejection);
@@ -33,7 +48,7 @@ describe("tool-error-envelope", () => {
   });
 
   it('keeps the fault at its path from feedback 1, its allowed values from feedback 2, and the record unchanged', () => {
-    const rejection = makeRejection({ code: 'contributor_col_not_on_source', reason: 'Column does not exist on the contributor.',
+    const rejection = makeRejection({ code: 'invalid_input', reason: 'Column does not exist on the contributor.',
       errors: [{ path: 'column_flow.0.upstream_columns.1.col', code: 'unknown_column', values: ['Rate', 'Amount'] }] });
     const original = structuredClone(rejection);
     expect(at(render(rejection, 1), 'column_flow.0.upstream_columns.1.col')).toEqual({ path: 'column_flow.0.upstream_columns.1.col', code: 'unknown_column', message: expect.stringContaining(ISSUES.unknown_column.correction) });
@@ -52,7 +67,7 @@ describe("tool-error-envelope", () => {
   });
 
 
-  it('derives errors from Zod issues with schema values, never the submitted value (D-102)', () => {
+  it('derives errors from native schema issues with schema values, never the submitted value (D-102)', () => {
     const schema = z.object({ mode: z.enum(['a', 'b']), items: z.array(z.object({ name: z.string() }).strict()), count: z.number() }).strict();
     const input = { mode: 'zzz-sent', items: [{ name: 'ok', extra: 1 }], count: 'x'.repeat(200) };
     const rejection = schemaRejection(schema, input);
@@ -91,19 +106,26 @@ describe("tool-error-envelope", () => {
     expect(faults(rejection)).toEqual([['items.0.id', 'never']]);
   });
 
-  it('maps a validator keyword through params.issue and its allowed values', () => {
-    const schema = z.object({ col: z.string().meta({ toolIdentifier: { kind: 'column', values: ['A'], caseSensitive: false, issue: 'unknown_column' } }), free: z.string().regex(/^B$/) });
-    expect(schemaRejection(schema, { col: 'x', free: 'z' }).errors).toEqual([{ path: 'col', code: 'unknown_column', values: ['A'] }, { path: 'free', code: 'invalid' }]);
+  it('classifies the native served identifier enum and retains its independent sibling schema fault (D-126)', () => {
+    const schema = z.object({ col: z.string().meta({ enum: ['A'], toolIdentifier: { issue: 'unknown_column' } }), free: z.string().regex(/^B$/) });
+    const result = validateToolCandidate(schema, { col: 'x', free: 'z' });
+    expect(result.success).toBe(false);
+    if (result.success) throw new Error('Expected both native faults');
+    expect(result.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ instancePath: '/col', keyword: 'enum', params: { allowedValues: ['A'] } }),
+      expect.objectContaining({ instancePath: '/free', keyword: 'pattern' }),
+    ]));
+    expect(result.rejection.errors).toEqual([{ path: 'col', code: 'unknown_column', values: ['A'] }, { path: 'free', code: 'invalid' }]);
   });
 
-  describe('D-105 fallback: per issue code, only with the third rejection, never early', () => {
+  describe('D-105 fallback: contextual reference and typed effect, only with the third rejection', () => {
     const fallbacks = Object.values(ISSUES).flatMap(issue => 'fallback' in issue ? [issue.fallback] : []);
     const hasFallback = (problem: Problem) => problem.errors.some(error => fallbacks.some(fallback => error.message.includes(fallback)));
-    it.each([['column_out_of_scope', 'column_flow.0.out_node'], ['column_out_of_scope', 'column_flow.0.upstream_columns.0.node'], ['result_out_of_scope', 'sections.0.node_ids.3'], ['unknown_column', 'column_flow.0.upstream_columns.0.col']] as const)('%s at %s', (code, path) => {
+    it.each([['column_out_of_scope', 'column_flow.0.out_node', 'hop_commit'], ['column_out_of_scope', 'column_flow.0.upstream_columns.0.node', 'hop_commit'], ['result_out_of_scope', 'sections.0.node_ids.3', 'presentation_commit'], ['unknown_column', 'column_flow.0.upstream_columns.0.col', 'hop_commit']] as const)('%s at %s', (code, path, effect) => {
       for (const values of [[], ['x']]) {
         const rejection = makeRejection({ code: 'invalid_input', errors: [{ path, code, values }] });
-        for (const stage of [1, 2] as const) expect(hasFallback(render(rejection, stage))).toBe(false);
-        const third = render(rejection, 3);
+        for (const stage of [1, 2] as const) expect(hasFallback(render(rejection, stage, undefined, effect))).toBe(false);
+        const third = render(rejection, 3, undefined, effect);
         expect(at(third, path)?.message).toContain((ISSUES[code] as { fallback?: string }).fallback);
         expect(third.resend).toContain('sections');
       }
@@ -115,10 +137,16 @@ describe("tool-error-envelope", () => {
       unknown_target_column: 'targetColumns.0', missing: 'summary' };
     it.each((Object.keys(ISSUES) as Array<keyof typeof ISSUES>).filter(code => !reportReferenceCodes.has(code)))('%s: no fallback at any feedback (Approved08 D-105)', code => {
       const path = negativePaths[code] ?? 'field';
+      const effect = path === 'origin' || path.startsWith('targetColumns.') ? 'session_start'
+        : path.startsWith('add_node_ids.') ? 'presentation_commit' : 'hop_commit';
       for (const values of [[], ['AllowedValue']]) for (const stage of [1, 2, 3] as const) {
-        const problem = render(makeRejection({ code: 'invalid_input', errors: [{ path, code, values }], resend: ['field'] }), stage);
-        expect(hasFallback(problem)).toBe(false);
-        expect(problem.resend).not.toContain('sections');
+        const rejection = makeRejection({ code: 'invalid_input', errors: [{ path, code, values,
+          ...(path.startsWith('add_node_ids.') ? { category: 'value' as const } : {}) }], resend: ['field'] });
+        for (const owner of [effect, 'read'] as const) {
+          const problem = render(rejection, stage, undefined, owner);
+          expect(hasFallback(problem)).toBe(false);
+          expect(problem.resend).not.toContain('sections');
+        }
       }
     });
   });
@@ -166,6 +194,35 @@ describe("tool-error-envelope", () => {
     expect(renderProblem(rejection, 3)).not.toContain('[dbo].[S]');
   });
 
+  it.each([
+    { name: 'invalid first caption', notes: [{ node_id: 'source', caption: ' ' }, { node_id: 'source', caption: 'First.' }, { node_id: 'source', caption: 'Second.' }], native: ['notes.0.caption'], conflicts: ['notes.2.caption'] },
+    { name: 'invalid middle caption', notes: [{ node_id: 'source', caption: 'First.' }, { node_id: 'source', caption: ' ' }, { node_id: 'source', caption: 'First.' }], native: ['notes.1.caption'], conflicts: [] },
+    { name: 'invalid node identities', notes: [{ node_id: ' ', caption: 'First.' }, { node_id: ' ', caption: 'Second.' }], native: ['notes.0.node_id', 'notes.1.node_id'], conflicts: [] },
+  ])('uses validated note paths while retaining independent faults: $name', ({ notes, native, conflicts }) => {
+    const input = { name: 'Reports', summary: 42, highlight_groups: [{ label: 'Out', color: 'target', node_ids: ['source'] }],
+      sections: [{ label: 'Source', node_ids: ['source'], text: 'First body.' }, { label: ' source ', node_ids: ['source'], text: 'Second body.' }], notes };
+    const before = structuredClone(input);
+    const admitted = validateToolCandidate(presentResultSchemaForPhase('completed'), input);
+    if (admitted.success) throw new Error('Malformed report admitted');
+    expect(admitted.errors.map(error => error.instancePath).sort()).toEqual([...native.map(path => '/' + path.replaceAll('.', '/')), '/summary'].sort());
+    expect(admitted.rejection.errors.map(error => error.path).sort()).toEqual([...native, ...conflicts, 'summary', 'sections.1.label'].sort());
+    expect(input).toEqual(before);
+  });
+
+  it('does not compare invalid section labels while retaining a valid sibling conflict', () => {
+    const admitted = validateToolCandidate(presentResultSchemaForPhase('completed'), { name: 'Report', summary: 'Authored summary.',
+      highlight_groups: [{ label: 'Out', color: 'target', node_ids: ['source'] }],
+      sections: [' ', ' ', 'Source', ' source '].map(label => ({ label, node_ids: ['source'], text: 'Authored body.' })) });
+    if (admitted.success) throw new Error('Malformed section labels admitted');
+    expect(faults(admitted.rejection)).toEqual([['sections.0.label', 'invalid'], ['sections.1.label', 'invalid'], ['sections.3.label', 'duplicate']]);
+  });
+
+  it('reports a malformed finding body and independent blank summary without inventing an absent sections fault', () => {
+    const admitted = validateToolCandidate(submitFindingsSchemaForMode('bb', 'technical', true), { summary: ' ', sections: { technical: 42 } });
+    if (admitted.success) throw new Error('Malformed finding admitted');
+    expect(faults(admitted.rejection)).toEqual([['sections.technical', 'type'], ['summary', 'missing']]);
+  });
+
   it('renders only the problem shape: reason and detail never reach the model', () => {
     const rejection = makeRejection({ code: 'invalid_input', reason: 'REASON_SENTINEL', errors: [{ path: 'sections.0.label', code: 'missing' }],
       detail: [{ input: 'RAW_INPUT_SENTINEL', held_draft: { sections: [{ text: 'HELD_BODY_SENTINEL' }] } }] });
@@ -176,10 +233,10 @@ describe("tool-error-envelope", () => {
     }
   });
 
-  it('readToolError: the rejection round-trips; reason falls back to the code', () => {
-    const made = makeRejection({ code: 'focus_node_id_mismatch', errors: [{ path: 'focus_node_id', code: 'not_current_object', values: ['a'] }], detail: { expected: 'a' } });
+  it('readToolError: the rejection round-trips; reason falls back to the issue codes', () => {
+    const made = makeRejection({ code: 'invalid_input', errors: [{ path: 'focus_node_id', code: 'not_current_object', values: ['a'] }], detail: { expected: 'a' } });
     expect(readToolError(JSON.parse(JSON.stringify(made)))).toEqual(made);
-    expect(made.reason).toBe('focus_node_id_mismatch');
+    expect(made.reason).toBe('not_current_object');
   });
 
   it('readToolError: unknown keys, issue codes outside the table, an empty error list and retired shapes are not rejections', () => {
@@ -192,16 +249,16 @@ describe("tool-error-envelope", () => {
     for (const value of [{ ok: true, nodes: [] }, {}, null, 'a string']) expect(readToolError(value)).toBeNull();
   });
 
-  it('makeRejection: requires an error, moves a path outside the grammar to the call, adds unstated missing parts', () => {
+  it('makeRejection: requires an error and moves a path outside the grammar to the call', () => {
     expect(() => makeRejection({ code: 'x', errors: [] })).toThrow();
-    const made = makeRejection({ code: 'validation', errors: [{ path: 'not a path!', code: 'invalid' }, { path: 'sections.0.text', code: 'missing' }], missingParts: ['sections.0.text', 'summary'] });
-    expect(faults(made)).toEqual([['', 'invalid'], ['sections.0.text', 'missing'], ['summary', 'missing']]);
-    expect(made.issuePaths).toEqual(['sections.0.text', 'summary']);
+    const made = makeRejection({ code: 'invalid_input', errors: [{ path: 'not a path!', code: 'invalid' }, { path: 'sections.0.text', code: 'missing' }] });
+    expect(faults(made)).toEqual([['', 'invalid'], ['sections.0.text', 'missing']]);
+    expect(made.issuePaths).toEqual(['sections.0.text']);
   });
 
   it('the consent gate is separable from a real rejection', () => {
     expect(isConsentGateRejection(makeRejection({ code: 'action_required', errors: [{ path: '', code: 'awaiting_approval' }] }).code)).toBe(true);
-    expect(isConsentGateRejection(makeRejection({ code: 'validation', errors: [{ path: '', code: 'invalid' }] }).code)).toBe(false);
+    expect(isConsentGateRejection(makeRejection({ code: 'invalid_input', errors: [{ path: '', code: 'invalid' }] }).code)).toBe(false);
   });
 
   describe('schema rejection: a union', () => {
@@ -303,7 +360,7 @@ describe('renderProblem over a real present_result rejection: an unknown section
     }
     return rejected;
   }
-  const problem = async (stage: FeedbackStage) => render(await rejectR3(), stage);
+  const problem = async (stage: FeedbackStage) => render(await rejectR3(), stage, undefined, 'presentation_commit');
 
   it('states each fault at its element path with its code and never echoes the sent id or label', async () => {
     const rejection = await rejectR3();
@@ -340,7 +397,7 @@ describe('renderProblem over a real submit_findings rejection: a supplier beyond
     const model = makeIndexedModel(nodes, pairs);
     const graph = makeGraph(nodes, pairs);
     const session = new AiSession();
-    session.model = model; session.graph = graph; session.setClassification('technical'); session.beginTurn();
+    session.model = model; session.graph = graph; session.classification = 'technical'; session.beginTurn();
     const engine = new NavigationEngine(model, graph, () => {}, {});
     engine.classification = 'technical';
     expect(engine.init({ origin: id('report'), question: 'Trace.', analysisMode: 'ct', targetColumns: ['Discount'], direction: 'upstream',
@@ -371,8 +428,8 @@ describe('renderProblem over a real submit_findings rejection: a supplier beyond
       summary: 'Loads staging from raw.', sections: { technical: 'Copies raw into staging.' }, column_flow: [flow('Amount')],
     })));
     if (!rejection) throw new Error('Expected outside supplier rejection');
-    expect(render(rejection, 1).resend.sort()).toEqual(['column_flow', 'questions', 'sections']);
-    const first = at(render(rejection, 1), 'column_flow.0.upstream_columns.0.node');
+    expect(render(rejection, 1, undefined, 'hop_commit').resend.sort()).toEqual(['column_flow', 'questions', 'sections']);
+    const first = at(render(rejection, 1, undefined, 'hop_commit'), 'column_flow.0.upstream_columns.0.node');
     expect(first?.allowed).toBeUndefined();
     expect(rejection.errors).toContainEqual(expect.objectContaining({ path: 'column_flow.0.upstream_columns.0.node', code: 'column_out_of_scope' }));
     const repaired = JSON.parse(String(await registry.invoke('lineage_submit_findings', {
@@ -389,14 +446,14 @@ describe('renderProblem over a real submit_findings rejection: a supplier beyond
       column_flow: [{ out_node: id('archive'), out_col: 'Amount', upstream_columns: [{ node: id('staging'), col: 'Region' }] }],
     })));
     if (!rejection) throw new Error('Expected an out-of-scope write rejection');
-    expect(render(rejection, 1).resend.sort()).toEqual(['column_flow', 'questions', 'sections']);
+    expect(render(rejection, 1, undefined, 'hop_commit').resend.sort()).toEqual(['column_flow', 'questions', 'sections']);
     expect(rejection.errors).toEqual(expect.arrayContaining([expect.objectContaining({ path: 'column_flow.0.out_node' })]));
     const writePath = 'column_flow.0.out_node';
-    for (const stage of [1, 2] as const) expect(at(render(rejection, stage), writePath)?.message).not.toContain(ISSUES.column_out_of_scope.fallback);
-    expect(at(render(rejection, 3), writePath)).toMatchObject({ code: 'column_out_of_scope', message: expect.stringContaining(ISSUES.column_out_of_scope.fallback) });
-    expect(render(rejection, 3).resend).toContain('sections');
-    const control = makeRejection({ code: 'invalid_input', errors: [{ path: 'add_node_ids.0', code: 'out_of_scope' }] });
-    expect(render(control, 3).errors.some(error => error.message.includes(ISSUES.column_out_of_scope.fallback))).toBe(false);
+    for (const stage of [1, 2] as const) expect(at(render(rejection, stage, undefined, 'hop_commit'), writePath)?.message).not.toContain(ISSUES.column_out_of_scope.fallback);
+    expect(at(render(rejection, 3, undefined, 'hop_commit'), writePath)).toMatchObject({ code: 'column_out_of_scope', message: expect.stringContaining(ISSUES.column_out_of_scope.fallback) });
+    expect(render(rejection, 3, undefined, 'hop_commit').resend).toContain('sections');
+    const control = makeRejection({ code: 'invalid_input', errors: [{ path: 'add_node_ids.0', code: 'out_of_scope', category: 'value' }] });
+    expect(render(control, 3, undefined, 'presentation_commit').errors.some(error => error.message.includes(ISSUES.column_out_of_scope.fallback))).toBe(false);
     const repaired = JSON.parse(String(await registry.invoke('lineage_submit_findings', {
       column_flow: [],
       questions: [{ nodeId: id('archive'), question: 'What receives the outside write?' }],
@@ -413,12 +470,12 @@ describe('renderProblem over a real submit_findings rejection: a supplier beyond
     expect(rejection.errors.filter(error => error.path === 'column_flow.0.upstream_columns.0.node')).toEqual([
       { path: 'column_flow.0.upstream_columns.0.node', code: 'column_out_of_scope', values: [id('loader'), id('staging')] }]);
     // Object choices stay metadata-complete; the existing tracer checks identical column endpoints.
-    expect(at(render(rejection, 1), 'column_flow.0.upstream_columns.0.node')).not.toHaveProperty('allowed');
-    expect(at(render(rejection, 2), 'column_flow.0.upstream_columns.0.node')?.allowed).toEqual([id('loader'), id('staging')]);
-    expect(render(rejection, 2).errors.some(error => error.message.includes(ISSUES.column_out_of_scope.fallback))).toBe(false);
-    expect(at(render(rejection, 3), 'column_flow.0.upstream_columns.0.node')?.message).toContain(ISSUES.column_out_of_scope.fallback);
+    expect(at(render(rejection, 1, undefined, 'hop_commit'), 'column_flow.0.upstream_columns.0.node')).not.toHaveProperty('allowed');
+    expect(at(render(rejection, 2, undefined, 'hop_commit'), 'column_flow.0.upstream_columns.0.node')?.allowed).toEqual([id('loader'), id('staging')]);
+    expect(render(rejection, 2, undefined, 'hop_commit').errors.some(error => error.message.includes(ISSUES.column_out_of_scope.fallback))).toBe(false);
+    expect(at(render(rejection, 3, undefined, 'hop_commit'), 'column_flow.0.upstream_columns.0.node')?.message).toContain(ISSUES.column_out_of_scope.fallback);
     // Region and Amount are distinct endpoints on the same table; metadata, not SQL inference, decides eligibility.
-    expect(at(render(rejection, 2), 'column_flow.1.upstream_columns.0.node')?.allowed).toEqual([id('loader'), id('staging')]);
+    expect(at(render(rejection, 2, undefined, 'hop_commit'), 'column_flow.1.upstream_columns.0.node')?.allowed).toEqual([id('loader'), id('staging')]);
     const repaired = JSON.parse(String(await registry.invoke('lineage_submit_findings', { focus_node_id: id('loader'),
       column_flow: [{ out_node: id('staging'), out_col: 'Amount', upstream_columns: [{ node: id('staging'), col: 'Region' }] }] })));
     expect(repaired).toHaveProperty('ok', true);

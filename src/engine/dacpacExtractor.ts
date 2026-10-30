@@ -35,7 +35,7 @@ interface DacpacExtractionOptions {
   externalRefsEnabled?: boolean;
   /** Checked metadata returned by this extractor's schema preview; absent preserves CI. */
   identifierCaseSensitive?: boolean;
-  /** The DACPAC name returned by this extractor's schema preview; the current database for three-part names. */
+  /** Explicit current-database identity supplied by the caller; package names are not database identity. */
   databaseName?: string;
 }
 
@@ -55,14 +55,14 @@ export async function extractDacpac(
   onInfoLog?: (msg: string) => void,
   options: DacpacExtractionOptions = {},
 ): Promise<DatabaseModel> {
-  const { xml, databaseName } = await readArchive(buffer);
+  const { xml } = await readArchive(buffer);
   if (onDebugLog) onDebugLog(`Dacpac: ZIP loaded — model.xml=${xml.length} chars`);
 
   const { elements, dspName, identifierCaseSensitive } = parseElements(xml);
   if (onDebugLog) onDebugLog(`Dacpac: model.xml parsed — ${elements.length} elements (dsp=${dspName || 'unspecified'})`);
 
   const emptyWarning = elements.length === 0 ? 'This dacpac appears to be empty.' : 'No tables, views, or stored procedures found in this file.';
-  return buildDacpacModel(elements, elements, dspName, { ...options, identifierCaseSensitive, databaseName }, emptyWarning, onDebugLog, onInfoLog);
+  return buildDacpacModel(elements, elements, dspName, { ...options, identifierCaseSensitive }, emptyWarning, onDebugLog, onInfoLog);
 }
 
 /** Extracts a lightweight preview of the database schemas from a .dacpac file buffer. This Phase 1 extraction counts schemas and object types without parsing body scripts, columns, or deep dependencies. */
@@ -71,12 +71,11 @@ export async function extractSchemaPreview(buffer: Uint8Array | ArrayBuffer): Pr
   elements: XmlElement[];
   dspName: string;
   identifierCaseSensitive: boolean;
-  databaseName?: string;
 }> {
-  const { xml, databaseName } = await readArchive(buffer);
+  const { xml } = await readArchive(buffer);
   const { elements, dspName, identifierCaseSensitive } = parseElements(xml);
   const preview = computeSchemaPreviewFromElements(elements, identifierCaseSensitive);
-  return { preview, elements, dspName, identifierCaseSensitive, databaseName };
+  return { preview, elements, dspName, identifierCaseSensitive };
 }
 
 /** Performs a Phase 2 full extraction filtered to a specific set of schemas. Uses pre-parsed XML elements from Phase 1 to significantly improve performance. */
@@ -193,8 +192,8 @@ function extractObjectsLightweight(elements: XmlElement[], identifierCaseSensiti
   return objects;
 }
 
-/** Loads the dacpac buffer into JSZip and retrieves the `model.xml` content and the DACPAC name. */
-async function readArchive(buffer: Uint8Array | ArrayBuffer): Promise<{ xml: string; databaseName?: string }> {
+/** Loads the dacpac buffer into JSZip and retrieves its model; package metadata is not deployment identity. */
+async function readArchive(buffer: Uint8Array | ArrayBuffer): Promise<{ xml: string }> {
   let zip: JSZip;
   try {
     zip = await JSZip.loadAsync(buffer);
@@ -208,18 +207,7 @@ async function readArchive(buffer: Uint8Array | ArrayBuffer): Promise<{ xml: str
   }
   const modelFile = zip.file('model.xml');
   if (!modelFile) throw new Error('model.xml not found in .dacpac');
-  const metadata = await zip.file('DacMetadata.xml')?.async('string');
-  return { xml: await modelFile.async('string'), databaseName: metadata === undefined ? undefined : readDacName(metadata) };
-}
-
-/** Reads the DACPAC name from `DacMetadata.xml`; an unreadable or empty name is unknown, never an error. */
-function readDacName(metadata: string): string | undefined {
-  try {
-    const name = new XMLParser({ processEntities: false, parseTagValue: false }).parse(metadata, true)?.DacType?.Name;
-    return typeof name === 'string' && name.trim() ? decodeXmlText(name.trim()) : undefined;
-  } catch {
-    return undefined;
-  }
+  return { xml: await modelFile.async('string') };
 }
 
 /** Parses the raw XML string into a structured object using `fast-xml-parser`. */

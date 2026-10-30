@@ -9,17 +9,13 @@ export const STRUCTURED_OUTPUT_TOOL = 'structured_output';
 export const STRUCTURED_OUTPUT_TOOL_DESCRIPTION =
   'Return the structured result. Call this tool exactly once with the required fields.';
 
-/** Stable structured-output rejection classifications used by graph recovery policy. */
-type StructuredOutputErrorCode =
-  | typeof REJECTION_CODES.invalidStructuredOutput
-  | typeof REJECTION_CODES.emptyStructuredOutput;
-
 /** Bounded semantic failure returned to LangGraph without retaining raw provider output. */
 export class StructuredOutputError extends Error {
+  /** Every structured-output fault is a correctable input fault; its issue codes classify it. */
+  public readonly code = REJECTION_CODES.invalidInput;
+
   constructor(
     public readonly reason: string,
-    /** Stable classification used by graph retry policy. */
-    public readonly code: StructuredOutputErrorCode = REJECTION_CODES.invalidStructuredOutput,
     /** The faults the correction renders, by path and issue code. */
     public readonly errors: readonly ToolError[] = at('invalid'),
   ) {

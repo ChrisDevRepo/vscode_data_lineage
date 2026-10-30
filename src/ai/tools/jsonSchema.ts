@@ -16,7 +16,7 @@ export function toModelJsonSchema(schema: z.ZodType): JsonSchemaNode {
   const project = (node: unknown): void => {
     if (!node || typeof node !== 'object') return;
     if ('toolDisplay' in node) { Object.assign(node, node.toolDisplay); delete node.toolDisplay; }
-    for (const key of ['toolAdmission', 'toolIdentifier', 'toolUniqueLabels', 'toolNoteCaptions', 'toolFindingShape', 'toolStringFact', 'toolArrayFact', 'toolObjectFact', 'toolGroups', 'toolValidated', 'toolDepthOpen', 'toolIssue']) delete (node as Record<string, unknown>)[key];
+    for (const key of ['toolAdmission', 'toolIdentifier', 'toolChoice', 'toolUniqueLabels', 'toolNoteCaptions', 'toolFindingShape', 'toolStringFact', 'toolArrayFact', 'toolObjectFact', 'toolGroups', 'toolValidated', 'toolDepthOpen', 'toolIssue']) delete (node as Record<string, unknown>)[key];
     Object.values(node).forEach(project);
   };
   project(fragment);

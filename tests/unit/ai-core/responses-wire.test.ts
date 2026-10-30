@@ -128,7 +128,7 @@ describe('responses wire decode (D-106)', () => {
   it.each(['{"query":', '', '[1]'])('keeps malformed arguments %j as evidence', async args => {
     const { port, records } = responses({ status: 'completed', output: [call(args)] });
     const result = completed(await port.generateToolTurn(turn([modelUserMessage('q')])));
-    expect(result.toolCalls[0]).toMatchObject({ valid: false, code: 'invalid_tool_input', input: args });
+    expect(result.toolCalls[0]).toMatchObject({ valid: false, code: 'type', input: args });
     expect(records.find(r => r.type === 'wire-response')).toMatchObject({ toolCalls: [{ input: args }] });
   });
 });

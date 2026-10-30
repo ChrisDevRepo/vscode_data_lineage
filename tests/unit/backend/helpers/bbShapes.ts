@@ -81,7 +81,7 @@ export function drain(engine: NavigationEngine, graph: BbWorld['graph'], script:
     const before = decision.rejectPrune ? engine.toJSON() : undefined;
     let result = submit(engine, focus, { ...decision, ask });
     if (before) {
-      expect(result).toMatchObject({ code: 'route_validation_failed', reason: expect.stringContaining('prune_neighbors.0.id'),
+      expect(result).toMatchObject({ code: 'invalid_input', reason: expect.stringContaining('prune_neighbors.0.id'),
         detail: expect.arrayContaining([expect.objectContaining({ path: 'prune_neighbors.0.id', kind: expect.stringMatching(/^prune_(noop_visited|unsupported)$/) })]),
         errors: expect.arrayContaining([expect.objectContaining({ path: 'prune_neighbors.0.id', code: 'prune_target' })]) });
       const after = engine.toJSON();

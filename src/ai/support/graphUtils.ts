@@ -6,7 +6,6 @@ import type {
   LineageNode,
   ObjectType,
 } from '../../engine/types';
-import { normalizeBodyScript } from '../../utils/sql';
 
 /** The two high-fidelity reads these accessors take from the engine's column store. */
 interface NodeSnapshotStore {
@@ -57,13 +56,13 @@ export function getNodeColumns(
   return store?.getColumns(nodeId) ?? nodeMap.get(nodeId)?.columns;
 }
 
-/** Retrieves the stored DDL for a specific node (blank lines dropped, tabs expanded). */
+/** Retrieves unmodified stored DDL, preferring the column store; an empty string remains unavailable. */
 export function getNodeDdl(
   nodeId: string, nodeMap: Map<string, LineageNode>,
   store?: NodeSnapshotStore,
 ): string | undefined {
   const raw = store?.getDdl(nodeId) ?? nodeMap.get(nodeId)?.bodyScript;
-  return raw ? normalizeBodyScript(raw) : undefined;
+  return raw || undefined;
 }
 
 /** Object types whose body is the source of lineage information — view / procedure / function. */

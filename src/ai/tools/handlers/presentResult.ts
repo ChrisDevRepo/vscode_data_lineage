@@ -96,7 +96,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       const attemptWrite = sess.beginPresentResultAttempt(turnEpoch);
       if (attemptWrite.kind !== 'accepted') {
         return s.logAndReturn('lineage_present_result', makeRejection({
-          code: REJECTION_CODES.staleTurn,
+          code: REJECTION_CODES.backendFault,
           reason: 'The turn no longer owns this session; the result was not rendered.',
           errors: at('backend_fault'),
         }), rawInput);
@@ -162,11 +162,11 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       if (isVisualPreview) {
         const scope = sess.discoveryScopeArtifact?.turnEpoch === turnEpoch ? sess.discoveryScopeArtifact : null;
         if (!previewNarrative?.summary || !scope) {
-          view.add(makeRejection({ code: REJECTION_CODES.previewSourceUnavailable, errors: at('no_result_source') })); return undefined;
+          view.add(makeRejection({ code: REJECTION_CODES.invalidInput, errors: at('no_result_source') })); return undefined;
         }
         fields.summary = previewNarrative.summary; fields.title = previewNarrative.title;
         const partition = findStartOrderIssues(starts);
-        if (partition.length) rejections.push(makeRejection({ code: REJECTION_CODES.validation, reason: START_ORDER_FAULT,
+        if (partition.length) rejections.push(makeRejection({ code: REJECTION_CODES.invalidInput, reason: START_ORDER_FAULT,
           errors: at('start_order', partition.map(index => `sections.${index}.start`)), resend: ['sections'] }));
       }
       const graphEditable = presentResultStage === 'completed';
@@ -176,7 +176,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         nodeIds: [...previewScope.nodeIds], edges: [...previewScope.edges], source: 'discovery_preview', originNodeId: previewScope.origin,
       } : null;
       const resultGraph = previewGraph ?? sess.resultGraph;
-      if (!resultGraph) { view.add(makeRejection({ code: REJECTION_CODES.missingResultGraph, errors: at('no_result_source') })); return undefined; }
+      if (!resultGraph) { view.add(makeRejection({ code: REJECTION_CODES.invalidInput, errors: at('no_result_source') })); return undefined; }
       let resolvedNodeIds = [...resultGraph.nodeIds];
       let resolvedEdges: [string, string, string][] = [...resultGraph.edges];
       const graphSource = resultGraph.source;
@@ -190,7 +190,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         const issue: IssueCode | undefined = !modelNodeMap.has(id) ? 'not_found'
           : key === 'add_node_ids' && scope && !resolvedNodeIds.includes(id) && !scope.scopeNodeIds.includes(id) ? 'out_of_scope' : undefined;
         if (issue) {
-          rejections.push(makeRejection({ code: REJECTION_CODES.validation, errors: at(issue, [path]), resend: [key] })); viewKnown = false;
+          rejections.push(makeRejection({ code: REJECTION_CODES.invalidInput, errors: [{ path, code: issue, category: 'value' }], resend: [key] })); viewKnown = false;
         } else if (key === 'prune_node_ids') toPrune.push(id);
         else if (!resolvedNodeIds.includes(id)) toAdd.push(id);
       }
@@ -207,11 +207,11 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       }
       if (resultGraph.originNodeId) {
         if ((viewKnown && !resolvedNodeIds.includes(resultGraph.originNodeId)) || (!viewKnown && toPrune.includes(resultGraph.originNodeId))) {
-          rejections.push(makeRejection({ code: REJECTION_CODES.validation, reason: 'The view must keep the origin node, and prune_node_ids prunes it.', errors: at('prunes_origin', ['prune_node_ids']) }));
+          rejections.push(makeRejection({ code: REJECTION_CODES.invalidInput, reason: 'The view must keep the origin node, and prune_node_ids prunes it.', errors: at('prunes_origin', ['prune_node_ids']) }));
         }
         if (viewKnown) {
           const disconnected = findDisconnectedViewNodes(resolvedNodeIds, resolvedEdges, resultGraph.originNodeId);
-          if (disconnected.length) rejections.push(makeRejection({ code: REJECTION_CODES.validation, reason: `${disconnected.length} view node(s) would be disconnected from the origin node.`, errors: at('disconnects_view') }));
+          if (disconnected.length) rejections.push(makeRejection({ code: REJECTION_CODES.invalidInput, reason: `${disconnected.length} view node(s) would be disconnected from the origin node.`, errors: at('disconnects_view') }));
         }
       }
       const rendered = new Set(resolvedNodeIds);
@@ -226,7 +226,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         for (const [index, label] of source ? source.map((row, index) => [index, row.label] as const) : labels) {
           const path = `sections.${index}.node_ids`;
           const kept = retainableSections.find(section => normalizePresentSectionLabel(section.label) === normalizePresentSectionLabel(label));
-          if (!kept?.text && sectionKeys.get(index)?.has('text') === false) rejections.push(makeRejection({ code: REJECTION_CODES.validation,
+          if (!kept?.text && sectionKeys.get(index)?.has('text') === false) rejections.push(makeRejection({ code: REJECTION_CODES.invalidInput,
             errors: at('uncommitted_label', [`sections.${index}.label`], retainableSections.map(section => section.label)), resend: ['sections'] }));
           if (source || sectionKeys.get(index)?.has('node_ids') === false) {
             if (kept) {
@@ -386,7 +386,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       const successWrite = sess.commitPresentResultSuccess(turnEpoch, artifact, autoDispatched);
       if (successWrite.kind !== 'accepted') {
         return s.logAndReturn('lineage_present_result', makeRejection({
-          code: REJECTION_CODES.staleTurn,
+          code: REJECTION_CODES.backendFault,
           reason: 'The turn no longer owns this session; the result was not committed.',
           errors: at('backend_fault'),
         }), rawInput);

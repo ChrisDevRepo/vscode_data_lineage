@@ -71,7 +71,7 @@ it.each([false, true])('stages accepted node choices and keeps the held report (
     { label: 'Unknown', node_ids: ['dbo.missing'], text: 'A rejected link.' },
   ] };
   const rejected = JSON.parse(await executePresentResult(input, services));
-  expect(rejected.code).toBe('validation');
+  expect(rejected.code).toBe('invalid_input');
   const first = renderProblem(rejected, 1);
   expect(first, 'D-102: the sent id is not echoed').not.toContain('dbo.missing');
   expect(shownErrors(first)).toContainEqual(expect.objectContaining({ path: 'sections.1.node_ids.0' }));
@@ -80,7 +80,7 @@ it.each([false, true])('stages accepted node choices and keeps the held report (
   expect(first).not.toContain(source);
   expect(first).not.toContain(sibling);
   const repeated = repeatFault ? JSON.parse(await executePresentResult({ sections: input.sections }, services)) : rejected;
-  expect(repeated.code).toBe('validation');
+  expect(repeated.code).toBe('invalid_input');
   expect(shownErrors(renderProblem(repeated, 2))).toContainEqual(expect.objectContaining({ path: 'sections.1.node_ids.0', allowed: [origin, sibling, source].sort() }));
   expect(deliverPreview).not.toHaveBeenCalled();
   expect(session.presentResultRepairDraft.get()?.sections).toBeUndefined();
@@ -95,7 +95,7 @@ it.each([false, true])('accepts a section correction with held presentation fiel
     { label: 'Known', node_ids: [origin, source, sibling], text: 'Held known body.' },
     { label: 'Unknown', node_ids: ['dbo.missing'], text: 'Held rejected-link body.' },
   ] };
-  expect(JSON.parse(await executePresentResult(original, services)).code).toBe('validation');
+  expect(JSON.parse(await executePresentResult(original, services)).code).toBe('invalid_input');
   const correction = { sections: original.sections.map(section => section.label === 'Unknown' ? { ...section, node_ids: [] } : section) };
   const resent = repeatFull ? { summary: original.summary, title: original.title, name: original.name, is_update: true } : {};
   expect(JSON.parse(await executePresentResult({ ...correction, ...resent }, services)).success).toBe(true);
@@ -160,7 +160,7 @@ it('states each out-of-order preview start at its own start path without echoing
       { label: 'GammaSentinel', node_ids: [origin], start: 'B2' }, { label: 'DeltaSentinel', node_ids: [source], start: 'B2' }] }, services));
   expect(deliverPreview).not.toHaveBeenCalled();
   for (const stage of [1, 2, 3] as const) {
-    const shown = renderProblem(rejected, stage);
+    const shown = renderProblem(rejected, stage, undefined, 'presentation_commit');
     expect(shownErrors(shown).filter(error => error.path !== '').map(error => error.path)).toEqual(['sections.2.start', 'sections.3.start']);
     expect(shown, 'D-102: no echoed label').not.toContain('Sentinel');
     expect(shown, 'D-102: no echoed start').not.toMatch(/\bB[23]\b/);
@@ -209,7 +209,7 @@ describe.each([false, true])('result origin closure (CS=%s)', cs => {
     const result = JSON.parse(await executePresentResult({ name: 'Report lineage', summary: 'Report sources.', is_update: true,
       prune_node_ids: [source], sections: [{ label: 'Sources', node_ids: [origin, sibling], text: 'Recorded report sources.' }], highlight_groups: [{ label: 'Origin', color: 'target', node_ids: [origin] }],
       }, services));
-    expect(result).toMatchObject({ code: 'validation' });
+    expect(result).toMatchObject({ code: 'invalid_input' });
     expect(result.reason).toContain('disconnected');
     expect(result.reason, 'D-102: no echoed id').not.toContain(sibling);
     expect(session.resultGraph).toEqual(before);
@@ -223,7 +223,7 @@ describe.each([false, true])('result origin closure (CS=%s)', cs => {
       prune_node_ids: selection === 'all' ? [origin, source, sibling] : [origin],
       sections: [{ label: 'Sources', node_ids: selection === 'all' ? [] : [source, sibling], text: 'Recorded report sources.' }], highlight_groups: [{ label: 'Origin', color: 'target', node_ids: [origin] }],
     }, services));
-    expect(result).toMatchObject({ code: 'validation' });
+    expect(result).toMatchObject({ code: 'invalid_input' });
     expect(result.reason).toContain('must keep the origin node');
     expect(result.reason, 'D-102: no echoed id').not.toContain(origin);
     expect(session.resultGraph).toEqual(before);
@@ -299,7 +299,7 @@ describe('CT chain-coverage rejection', () => {
   it('names sections and notes as the repair fields, never highlight_groups', async () => {
     const { services, origin, source } = ctWorld();
     const result = JSON.parse(await executePresentResult(firstCall(origin), services));
-    expect(result).toMatchObject({ code: 'validation' });
+    expect(result).toMatchObject({ code: 'invalid_input' });
     expect(result).not.toHaveProperty('missingParts');
     expect(result.errors).toContainEqual({ path: 'sections.*.node_ids', code: 'node_unexplained', values: [source] });
     expect(result.resend).toEqual(['sections', 'notes']);

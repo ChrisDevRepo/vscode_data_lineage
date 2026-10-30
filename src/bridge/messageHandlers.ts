@@ -39,6 +39,7 @@ import {
 import { buildBareGraph } from '../ai/support/graphUtils';
 import { buildStoredRun, clearStoredRun, writeStoredRun } from '../ai/session/runStore';
 import { populateColumnStore } from '../engine/modelBuilder';
+import { ColumnStore } from '../engine/columnStore';
 import { summarizeModelConnectivity, formatModelConnectivity } from '../engine/schemaAdjacency';
 import { formatRenderConnectivity } from '../engine/renderConnectivity';
 import { formatScreenStateSections } from './debugDumpScreenState';
@@ -180,12 +181,10 @@ export function applyModelToSession(
   project?: { id: string; name: string } | null,
   store?: ProjectStore | null,
 ): void {
-  sess.columnStore.clear();
-  sess.clearDiscoveryTranscript(); // a new model invalidates prior-turn chat memory
-  populateColumnStore(model, sess.columnStore);
-  sess.model = model;
-  sess.graph = buildBareGraph(model);
-  sess.isDbSession = isDb;
+  const columnStore = new ColumnStore();
+  populateColumnStore(model, columnStore);
+  const graph = buildBareGraph(model);
+  sess.replaceModel(model, graph, columnStore, isDb);
   if (project) {
     sess.currentProjectId = project.id;
     sess.projectName = project.name;
@@ -238,7 +237,6 @@ export function createMessageHandlers(
     const model = extractDacpacFiltered(dacpac.elements, new Set(schemas), dacpac.dspName, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
       externalRefsEnabled: config.externalRefs.enabled,
       identifierCaseSensitive: dacpac.identifierCaseSensitive,
-      databaseName: dacpac.databaseName,
     });
     if (isModelOverLimit(model, config.maxNodes, logger, host)) return false;
     logger.info(`Dacpac filtered — ${model.nodes.length} nodes, ${model.edges.length} edges`);

@@ -64,13 +64,13 @@ export async function openFixtureWalk(): Promise<FixtureWalk> {
 export const promptContext = (walk: FixtureWalk) => deriveStagePromptContext(walk.session.model, walk.session.filter, walk.session.uiState);
 
 /** Starts the approved exploration as the graph's approval node does. */
-export function startWalk(walk: FixtureWalk, init: NavigationInitParams, classification: ClassificationValue, discoverySummary?: string): NavigationEngine {
+export function startWalk(walk: FixtureWalk, init: NavigationInitParams, classification: ClassificationValue, discoverySummary?: string, log: ConstructorParameters<typeof NavigationEngine>[2] = () => {}): NavigationEngine {
   const { session } = walk;
   const epoch = session.beginTurn();
-  const engine = new NavigationEngine(session.model!, session.graph!, () => {}, {}, session.columnStore);
+  const engine = new NavigationEngine(session.model!, session.graph!, log, {}, session.columnStore);
   engine.classification = classification;
   if (!('ok' in engine.init(init))) throw new Error('The scripted exploration was refused at init.');
-  session.setClassification(classification);
+  session.classification = classification;
   engine.publishMemoryTo(session.memory);
   if (discoverySummary) engine.setDiscoverySummary(discoverySummary);
   session.stateMachine = engine;

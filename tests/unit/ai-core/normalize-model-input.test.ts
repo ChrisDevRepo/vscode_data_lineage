@@ -1,9 +1,11 @@
 /** Format-only normalization at the model boundary: decode once, log, then the normal checks. */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import * as vscode from 'vscode';
 import { HumanMessage } from '@langchain/core/messages';
 import { VscodeModelPort } from '../../../src/ai/model/vscodeModelPort';
+import { classifyToolCall } from '../../../src/ai/model/modelPort';
+import * as toolValidation from '../../../src/ai/support/toolValidation';
 import { markObjectIdField, normalizeModelInput } from '../../../src/ai/tools/normalizeModelInput';
 import { ExplorationDepthSelectionSchema } from '../../../src/engine/shared/explorationDepthContract';
 import { GetScopeBundleInputSchema, SearchObjectsInputSchema, StartExplorationFreshProviderInputSchema } from '../../../src/ai/tools/toolSchemas';
@@ -15,6 +17,36 @@ const schema = z.object({
 }).strict();
 
 describe('normalizeModelInput', () => {
+  it('keeps normalization payloads in replay evidence while host logs contain bounded metadata only', () => {
+    const key = `rows\n${'x'.repeat(1024)}`, sentinel = 'NormalizationPayloadSentinel';
+    const raw = JSON.stringify([`${sentinel}${'y'.repeat(4096)}`]);
+    const input = { [key]: raw }, logs: string[] = [];
+    const result = classifyToolCall({ callId: 'normalize', toolName: 'lineage_example', args: input }, new Map([
+      ['lineage_example', { name: 'lineage_example', description: 'Example.', inputSchema: z.object({ [key]: z.array(z.string()) }) }],
+    ]), message => logs.push(message));
+    expect(result.call.valid).toBe(true);
+    expect(result.replayInput).toBe(input);
+    expect(input[key]).toBe(raw);
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).not.toContain(sentinel);
+    expect(logs[0]).not.toMatch(/[\n\r\t]/);
+    expect(logs[0].length).toBeLessThan(512);
+    expect(logs[0]).toContain(`beforeBytes=${Buffer.byteLength(raw)}`);
+  });
+
+  it.each([
+    { owner: z.record(z.string(), z.number().int()), input: { n: '1.5' } },
+    { owner: z.tuple([z.number().int()]), input: ['1.5'] },
+  ])('preserves fractional numeric text at a record or tuple integer boundary', ({ owner, input }) => {
+    expect(normalizeModelInput(owner, input)).toEqual({ input, fixes: [] });
+  });
+  it.each([
+    { owner: z.record(z.string(), z.number().int()), input: { n: '2' }, output: { n: 2 }, path: 'n' },
+    { owner: z.tuple([z.number().int()]), input: ['2'], output: [2], path: '0' },
+  ])('normalizes exact integer text at the same record or tuple boundary', ({ owner, input, output, path }) => {
+    expect(normalizeModelInput(owner, input)).toEqual({ input: output, fixes: [{ path, before: '2', after: 2 }] });
+  });
+
   it.each([z.literal(1), z.literal([1, 2, 3]), z.enum({ one: 1, two: 2, three: 3 })])(
     'normalizes an exact numeric member of a literal or enum without guessing another member', owner => {
       expect(normalizeModelInput(owner, '1')).toEqual({ input: 1, fixes: [{ path: '', before: '1', after: 1 }] });
@@ -68,6 +100,22 @@ describe('normalizeModelInput', () => {
     expect(normalizeModelInput(ambiguous, raw)).toEqual({ input: raw, fixes: [] });
   });
 
+  it('preserves literal backslashes followed by raw C0 values without repairing keys or native strings', () => {
+    const target = z.object({ label: z.string() }).strict();
+    for (let code = 0; code < 0x20; code++) {
+      const value = `before\\${String.fromCharCode(code)}after`;
+      const input = `{"label":"${value}"}`;
+      const result = normalizeModelInput(target, input);
+      expect(result.input, `C0 ${code}`).toEqual({ label: value });
+      expect(result.fixes).toEqual([{ path: '', before: input, after: { label: value } }]);
+      const nested = { rows: [], meta: input, name: 'n' };
+      expect(normalizeModelInput(schema, nested).input).toEqual({ ...nested, meta: { label: value } });
+      expect(normalizeModelInput(z.string(), input)).toEqual({ input, fixes: [] });
+      const key = `{"${value}":"text"}`;
+      expect(normalizeModelInput(z.record(z.string(), z.string()), key)).toEqual({ input: key, fixes: [] });
+    }
+  });
+
   it.each([' ', 'q', 'x', '(', 'α'])('preserves a non-JSON escape as literal backslash plus %s in structured text', suffix => {
     const meta = `{"label":"before\\${suffix}after"}`;
     const input = { rows: [], meta, name: 'n' };
@@ -109,7 +157,7 @@ describe('normalizeModelInput', () => {
     String.raw`{"label":"cut off\ q`, String.raw`{"label":"complete\ q"`,
     String.raw`{"label":"bad\u12G4\ q"}`, String.raw`{"label":"bad\u123\ q"}`,
     String.raw`{"label":"unescaped "quote"\ q"}`, String.raw`{"label":"a\ q",}`,
-    '{"label":"raw\nnewline', '{"label":"backslash\\\nnewline"}',
+    '{"label":"raw\nnewline',
     '{"label":"raw\nnewline","n":9007199254740993}', '{"label":"raw\nnewline","other":"bad\\u12"}',
     String.raw`{"label":"a\ q","n":9007199254740993}`,
   ])('does not complete or guess other malformed structured text: %s', meta => {
@@ -225,7 +273,7 @@ describe('normalizeModelInput strict union decoding', () => {
       ...input, depth: { ...input.depth, upstream: { levels: 2, exactness: 'exact' } },
     } }]);
     expect(logs.filter(line => line.startsWith('[Normalize]'))).toEqual([
-      '[Normalize] tool=lineage_start_exploration path=depth.upstream.levels before="2"',
+      '[Normalize] tool=lineage_start_exploration path=depth.upstream.levels beforeBytes=1',
     ]);
     expect(input.depth.upstream.levels).toBe('2');
   });
@@ -390,4 +438,18 @@ it('retains issue-path decoding for records and tuples', () => {
 it.each(['0.0000001', '001.2300', '-0', '1' + '0'.repeat(21)])('decodes an exact finite numeric spelling %s', text => {
   const schema = z.object({ n: z.number() });
   expect(normalizeModelInput(schema, { n: text }).input).toEqual({ n: Number(text) });
+});
+
+
+it.each([
+  { schema: z.record(z.string(), z.number()), input: { count: '2' }, expected: { count: 2 } },
+  { schema: z.tuple([z.number()]), input: ['2'], expected: [2] },
+])('reuses unchanged admission errors for record/tuple decoding ($schema.type)', ({ schema, input, expected }) => {
+  const validate = vi.spyOn(toolValidation, 'validateToolCandidate');
+  try {
+    expect(normalizeModelInput(schema, input).input).toEqual(expected);
+    expect(validate.mock.calls.filter(([checkedSchema, checkedInput]) => checkedSchema === schema && checkedInput === input)).toHaveLength(1);
+  } finally {
+    validate.mockRestore();
+  }
 });

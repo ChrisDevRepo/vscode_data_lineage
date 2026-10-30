@@ -31,7 +31,7 @@ describe('Approved08 full-schema report draft boundary', () => {
       expect.objectContaining({ path: 'prune_node_ids.0', code: 'not_found' }),
       expect.objectContaining({ path: 'notes.0.node_id', code: 'result_out_of_scope' }),
     ]));
-    const final = JSON.parse(renderProblem(rejected, 3));
+    const final = JSON.parse(renderProblem(rejected, 3, undefined, 'presentation_commit'));
     for (const path of ['add_node_ids.0', 'prune_node_ids.0']) expect(final.errors).toContainEqual(expect.objectContaining({
       path, code: 'not_found', message: `${ISSUES.not_found.label}. ${ISSUES.not_found.correction}`,
     }));
@@ -79,7 +79,7 @@ describe('Approved08 full-schema report draft boundary', () => {
     const { session, ids, report, send } = draftWorld();
     const rejected = await send({ ...report, notes: [{ node_id: ids[2], caption: 'Outside source is unresolved.' }] });
     expect(rejected.errors).toContainEqual(expect.objectContaining({ path: 'notes.0.node_id', code: 'result_out_of_scope' }));
-    expect(JSON.parse(renderProblem(rejected, 3)).resend).toEqual(expect.arrayContaining(['notes', 'sections']));
+    expect(JSON.parse(renderProblem(rejected, 3, undefined, 'presentation_commit')).resend).toEqual(expect.arrayContaining(['notes', 'sections']));
     const sections = [{ ...report.sections[0], text: 'Source feeds the Result. ⚠️ Outside source remains unresolved.' }];
     expect(await send({ notes: [], sections, name: report.name, title: report.title })).toHaveProperty('success', true);
     expect(session.presentationArtifact?.aiMetadata.description).toContain(sections[0].text);
@@ -102,7 +102,7 @@ describe('Approved08 full-schema report draft boundary', () => {
     expect(session.presentationArtifact).toBeNull();
     const issue = ISSUES[code];
     for (const stage of [1, 2, 3] as const) {
-      const shown = JSON.parse(renderProblem(rejected, stage));
+      const shown = JSON.parse(renderProblem(rejected, stage, undefined, 'presentation_commit'));
       expect(shown.errors).toHaveLength(1);
       expect(shown.errors[0]).toMatchObject({ path, code,
         message: `${issue.label}. ${issue.correction}${stage === 3 ? ` ${issue.fallback}` : ''}` });
@@ -130,7 +130,7 @@ describe('Approved08 full-schema report draft boundary', () => {
     await send({ ...report, summary: 42 });
     const rejected = await send({ summary: report.summary, title: ['new invalid title sentinel'] });
     expect(rejected.errors).toContainEqual(expect.objectContaining({ path: 'title', code: 'not_overwritten' }));
-    const shown = renderProblem(rejected, 1);
+    const shown = renderProblem(rejected, 1, undefined, 'presentation_commit');
     expect(shown).not.toContain(report.title);
     expect(shown).not.toContain('new invalid title sentinel');
     expect(await send({ summary: report.summary })).toHaveProperty('success', true);
@@ -162,7 +162,7 @@ it('keeps large section bodies byte-equivalent when only another field needs a c
   const text = 'SQL-supported explanation. '.repeat(5000);
   const sections = [{ ...report.sections[0], text }];
   const rejected = await send({ ...report, sections, title: 42 });
-  expect(renderProblem(rejected, 1)).not.toContain(text);
+  expect(renderProblem(rejected, 1, undefined, 'presentation_commit')).not.toContain(text);
   expect(await send({ title: 'Corrected title' })).toHaveProperty('success', true);
   expect(session.presentationArtifact?.aiMetadata.description).toContain(text);
 });

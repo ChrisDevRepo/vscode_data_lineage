@@ -241,6 +241,19 @@ describe('virtual-node suppression', () => {
     expect(built.nodes).toHaveLength(2);
   });
 
+  // Core lineage: disabling external nodes must preserve a reference to the known current database.
+  it('keeps a local three-part read when external references are disabled', () => {
+    const built = buildModel(
+      [table('[dbo].[T]'), procedure('[dbo].[P]', 'CREATE PROCEDURE [dbo].[P] AS SELECT * FROM [Main].[dbo].[T]')],
+      [{ sourceName: '[dbo].[P]', targetName: '[Main].[dbo].[T]' }],
+      undefined,
+      'Main',
+      false,
+    );
+    expect(built.edges).toContainEqual({ source: '[dbo].[t]', target: '[dbo].[p]', type: 'body' });
+    expect(built.nodes.filter(node => node.type === 'external')).toEqual([]);
+  });
+
 });
 
 
@@ -327,7 +340,7 @@ describe('three-part self-reference in the current database', () => {
   });
 });
 
-describe('three-part references resolve locally only in the current database', () => {
+describe('three-part references resolve by current database or an unnamed local catalog', () => {
   const load = [procedure('[dbo].[spLoad]', 'CREATE PROCEDURE [dbo].[spLoad] AS SELECT * FROM MyDB.dbo.Sales'), table('[dbo].[Sales]')];
   const sync = [procedure('[dbo].[pSync]', `CREATE PROCEDURE [dbo].[pSync] AS
     INSERT INTO OtherDb.dbo.T (a) SELECT a FROM OtherDb.dbo.X;
@@ -336,9 +349,9 @@ describe('three-part references resolve locally only in the current database', (
 
   it.each([
     ['resolves a same-database reference locally when the current database is known', load, 'MyDB', ['[dbo].[sales] -> [dbo].[spload]']],
-    ['keeps a three-part reference external when no current database is known', load, undefined, ['[dbo].[sales] -> [dbo].[spload]', '[mydb].[dbo].[sales] -> [dbo].[spload]']],
+    ['resolves a known local object when no current database is known', load, undefined, ['[dbo].[sales] -> [dbo].[spload]']],
     ['keeps another database external despite a same-named local object (known current database)', sync, 'LocalDb', syncEdges],
-    ['keeps another database external despite a same-named local object (no current database)', sync, undefined, syncEdges],
+    ['resolves unnamed catalog reads and writes to their known local objects', sync, undefined, ['[dbo].[psync] -> [dbo].[t]', '[dbo].[t] -> [dbo].[psync]', '[dbo].[x] -> [dbo].[psync]']],
   ] as const)('%s', (_label, objects, currentDatabase, expected) => {
     const deps = [{ sourceName: objects[0].fullName, targetName: objects[1].fullName }];
     expect(buildModel([...objects], deps, undefined, currentDatabase).edges.map(edge => `${edge.source} -> ${edge.target}`).sort()).toEqual(expected);

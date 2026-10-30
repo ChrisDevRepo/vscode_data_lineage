@@ -210,9 +210,9 @@ export async function runHarnessTurn(options: HarnessTurnOptions): Promise<Harne
       },
     ),
     // Without this the graph's `deps.logger` is undefined, so every debugLog in
-    // toolAttempt.ts is optional-chained away and four rejection codes
-    // (invalid_tool_input, missing_required_tool_call, duplicate_read,
-    // empty_generation) are counted in run.json but never written to host.log.
+    // toolAttempt.ts is optional-chained away and synthesized rejections
+    // (bad arguments, a missing required call, a duplicate read, an empty
+    // reply) are counted in run.json but never written to host.log.
     // The product wires the same logger at extensionRuntime.ts; only the harness
     // omitted it, which made those rejections diagnosable solely from the NDJSON
     // trace. Observability only — no tool, score, or answer path is affected.

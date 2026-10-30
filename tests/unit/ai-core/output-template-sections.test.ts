@@ -86,7 +86,7 @@ describe('section labels: one home per recipe', () => {
     const ctx = deriveStagePromptContext(null, null);
     const build = (classification: 'business' | 'technical') => {
       const session = new AiSession(builtInTemplates, withTechnicalOnlyLabel);
-      session.setClassification(classification);
+      session.classification = classification;
       return buildSynthesisInstruction(session, ctx).system;
     };
     expect(labelList(build('technical'))).toContain('**Operational checks**');

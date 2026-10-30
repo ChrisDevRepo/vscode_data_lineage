@@ -136,6 +136,10 @@ export async function buildSyntheticDacpac(params: SyntheticDacpacParams): Promi
 export async function buildThreePartDacpac(
   dacMetadata: string | undefined,
   body = 'INSERT INTO SelfDb.dbo.X (a) SELECT a FROM OtherDb.dbo.X; INSERT INTO OtherDb.dbo.T (a) SELECT a FROM dbo.T;',
+  dependencies: ReadonlyArray<{ name: string; externalSource?: string }> = [
+    { name: '[dbo].[T]' },
+    { name: '[$(OtherDb)]|[dbo].[X]', externalSource: 'OtherDb.dacpac' },
+  ],
 ): Promise<Uint8Array> {
   const zip = new JSZip();
   zip.file('model.xml', `<?xml version="1.0"?>
@@ -146,8 +150,7 @@ export async function buildThreePartDacpac(
         <Element Type="SqlProcedure" Name="[dbo].[usp_Sync]">
           <Property Name="BodyScript" Value="${body}" />
           <Relationship Name="BodyDependencies">
-            <Entry><References Name="[dbo].[T]" /></Entry>
-            <Entry><References ExternalSource="OtherDb.dacpac" Name="[$(OtherDb)]|[dbo].[X]" /></Entry>
+            ${dependencies.map(reference => `<Entry><References Name="${xmlEscape(reference.name)}"${reference.externalSource ? ` ExternalSource="${xmlEscape(reference.externalSource)}"` : ''} /></Entry>`).join('\n')}
           </Relationship>
         </Element>
       </Model>

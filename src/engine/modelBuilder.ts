@@ -170,7 +170,7 @@ function isSystemRef(name: string, ctx?: EdgeContext): boolean {
   return SYSTEM_SCHEMAS.has(schema);
 }
 
-/** A three-part name is local only in the current database; without one, every database part is external. */
+/** Compares a three-part reference database with known current-database metadata. */
 function isCurrentDatabase(db: string, currentDatabase: string | undefined): boolean {
   return !!currentDatabase && stripBrackets(db).toLowerCase() === stripBrackets(currentDatabase).toLowerCase();
 }
@@ -610,9 +610,7 @@ function buildNodesAndEdges(
     onDebugLog!(`Parse trace sample limit reached (${traceStartBudget} bodies) — see [Parse] aggregate stats for full counts`);
   }
 
-  if (externalRefsEnabled) {
-    createVirtualNodes(nodes, nodeIds, edges, edgeKeys, crossDbRegexRefs, grouped.crossDbMetaDeps, ctx.mutationsByNode, currentDatabase, identifierCaseSensitive, ctx.allNodeIds);
-  }
+  resolveFileAndDatabaseReferences(nodes, nodeIds, edges, edgeKeys, crossDbRegexRefs, grouped.crossDbMetaDeps, ctx.mutationsByNode, externalRefsEnabled, currentDatabase, identifierCaseSensitive, ctx.allNodeIds);
 
   const typeById = new Map(nodes.map(n => [n.id, n.type]));
   const sanitized: LineageEdge[] = [];
@@ -634,8 +632,8 @@ function lastUrlSegment(url: string, maxLen = 40): string {
   return last.length > maxLen ? last.slice(-maxLen) : last;
 }
 
-/** Creates virtual nodes for external systems like cloud files or remote databases. */
-function createVirtualNodes(
+/** Binds local database references and optionally emits virtual nodes for files and remote databases. */
+function resolveFileAndDatabaseReferences(
   nodes: LineageNode[],
   nodeIds: Set<string>,
   edges: LineageEdge[],
@@ -643,27 +641,36 @@ function createVirtualNodes(
   crossDbRegexRefs: Map<string, { sources: string[]; targets: string[] }>,
   crossDbMetaDeps: Map<string, string[]>,
   mutationsByNode: EdgeContext['mutationsByNode'],
+  externalRefsEnabled: boolean,
   currentDatabase?: string,
   identifierCaseSensitive = false,
   catalogNodeIds: ReadonlySet<string> = nodeIds,
 ): void {
   const nodeMap = new Map(nodes.map(n => [n.id, n]));
+  const addVirtualEdge = (node: LineageNode, source: string, target: string, deleteOnly = false): void => {
+    if (externalRefsEnabled) {
+      if (!nodeIds.has(node.id)) {
+        nodeIds.add(node.id);
+        nodes.push(node);
+      }
+      addEdge(edges, edgeKeys, source, target, 'body', deleteOnly);
+    }
+  };
 
   const fileRefs = nodes.filter(node => node.bodyScript).map(node => ({ node, refs: extractExternalRefs(node.bodyScript!) }));
   const fileNodeMap = allocateExternalFileIds(fileRefs.flatMap(entry => entry.refs.map(ref => ref.url)), new Set([...catalogNodeIds, ...nodeIds]));
   for (const { node, refs } of fileRefs) {
     for (const ref of refs) {
       const virtualId = fileNodeMap.get(ref.url)!;
-      if (!nodeIds.has(virtualId)) {
-        nodeIds.add(virtualId);
-        nodes.push({
-          id: virtualId, schema: '', name: lastUrlSegment(ref.url),
-          fullName: virtualId, type: 'external', externalType: 'file', externalUrl: ref.url,
-        });
-      }
-      addEdge(edges, edgeKeys, virtualId, node.id, 'body');
+      addVirtualEdge({
+        id: virtualId, schema: '', name: lastUrlSegment(ref.url),
+        fullName: virtualId, type: 'external', externalType: 'file', externalUrl: ref.url,
+      }, virtualId, node.id);
     }
   }
+
+  const isLocalRef = (db: string, localId: string): boolean =>
+    isCurrentDatabase(db, currentDatabase) || (!currentDatabase && nodeIds.has(normalizeName(localId, identifierCaseSensitive)));
 
   const addLocalEdge = (sourceId: string, localId: string, isWrite: boolean, deleteOnly = false): void => {
     const resolved = normalizeName(localId, identifierCaseSensitive);
@@ -672,14 +679,12 @@ function createVirtualNodes(
     else addEdge(edges, edgeKeys, resolved, sourceId, 'body');
   };
 
-  const ensureCrossDbNode = (db: string, schema: string, object: string, crossDbId: string): void => {
-    if (nodeIds.has(crossDbId)) return;
-    nodeIds.add(crossDbId);
-    nodes.push({
+  const addCrossDbEdge = (db: string, schema: string, object: string, crossDbId: string, sourceId: string, isWrite = false, deleteOnly = false): void => {
+    addVirtualEdge({
       id: crossDbId, schema: '', name: `${schema}.${object}`,
       fullName: crossDbId, type: 'external', externalType: 'db',
       externalDatabase: db,
-    });
+    }, isWrite ? sourceId : crossDbId, isWrite ? crossDbId : sourceId, deleteOnly);
   };
 
   for (const [nodeId, { sources, targets }] of crossDbRegexRefs) {
@@ -689,12 +694,11 @@ function createVirtualNodes(
       const [db, schema, object] = parts;
       const localId = `${quoteIdentifier(schema)}.${quoteIdentifier(object)}`;
       const crossDbId = normalizeName([db, schema, object].map(quoteIdentifier).join('.'), identifierCaseSensitive);
-      if (isCurrentDatabase(db, currentDatabase)) {
+      if (isLocalRef(db, localId)) {
         addLocalEdge(nodeId, localId, false);
         continue;
       }
-      ensureCrossDbNode(db, schema, object, crossDbId);
-      addEdge(edges, edgeKeys, crossDbId, nodeId, 'body');
+      addCrossDbEdge(db, schema, object, crossDbId, nodeId);
     }
     const node = nodeMap.get(nodeId);
     const canWrite = node?.type === 'procedure';
@@ -705,12 +709,11 @@ function createVirtualNodes(
         const [db, schema, object] = parts;
         const localId = `${quoteIdentifier(schema)}.${quoteIdentifier(object)}`;
         const crossDbId = normalizeName([db, schema, object].map(quoteIdentifier).join('.'), identifierCaseSensitive);
-        if (isCurrentDatabase(db, currentDatabase)) {
+        if (isLocalRef(db, localId)) {
           addLocalEdge(nodeId, localId, true);
           continue;
         }
-        ensureCrossDbNode(db, schema, object, crossDbId);
-        addEdge(edges, edgeKeys, nodeId, crossDbId, 'body');
+        addCrossDbEdge(db, schema, object, crossDbId, nodeId, true);
       }
     }
   }
@@ -730,13 +733,11 @@ function createVirtualNodes(
       const mutation = sourceNode?.type === 'procedure'
         ? classifyMutation(mutationsByNode.get(sourceId) ?? [], isCurrentDatabase(db, currentDatabase) ? [schema, object] : parts, currentDatabase, identifierCaseSensitive) : 'read';
       const isWrite = mutation !== 'read';
-      if (isCurrentDatabase(db, currentDatabase)) {
+      if (isLocalRef(db, localId)) {
         addLocalEdge(sourceId, localId, isWrite, mutation === 'delete');
         continue;
       }
-      ensureCrossDbNode(db, schema, object, crossDbId);
-      if (isWrite) addEdge(edges, edgeKeys, sourceId, crossDbId, 'body', mutation === 'delete');
-      else         addEdge(edges, edgeKeys, crossDbId, sourceId, 'body');
+      addCrossDbEdge(db, schema, object, crossDbId, sourceId, isWrite, mutation === 'delete');
     }
   }
 }

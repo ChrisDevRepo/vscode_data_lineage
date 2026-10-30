@@ -76,7 +76,7 @@ describe('BB lineage: a prune inside a cycle through the origin', () => {
     expect(w.engine.getHopContext()).toMatchObject({ focus_node: { id: 'j' } });
     const before = w.engine.toJSON();
     expect(submit(w.engine, 'j', { prune: ['d'], ask: ['x'] })).toMatchObject({
-      code: 'route_validation_failed', issuePaths: ['prune_neighbors.0.id'],
+      code: 'invalid_input', issuePaths: ['prune_neighbors.0.id'],
       detail: [expect.objectContaining({ kind: 'prune_unsupported', id: 'd', path: 'prune_neighbors.0.id' }),
         expect.objectContaining({ kind: 'neighbor_outcome_missing', id: 'd' })],
       errors: [{ path: 'prune_neighbors.0.id', code: 'prune_target', values: [] }, { path: '', code: 'neighbor_undecided', values: ['d'] }],

@@ -163,23 +163,65 @@ describe('fresh kept required-field projection', () => {
       { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: raw, col: 'Value' }] }] },
     ]) {
       const input = { focus_node_id: 'focus', column_flow: [], ...part };
-      const parsed = validateToolCandidate(submitFindingsSchemaForMode('ct', undefined, false, hop), input);
+      const schema = submitFindingsSchemaForMode('ct', undefined, false, hop);
+      const before = structuredClone(input);
+      const normalized = normalizeModelInput(schema, input);
+      const parsed = validateToolCandidate(schema, normalized.input);
       expect(parsed.success).toBe(accepted);
-      if (parsed.success) expect(parsed.data).toEqual(input);
+      expect(new Ajv({ strict: false }).compile(toModelJsonSchema(schema))(normalized.input)).toBe(accepted);
+      if (parsed.success) expect(parsed.data).toEqual(normalized.input);
+      expect(input).toEqual(before);
     }
     const input = { focus_node_id: 'focus', column_flow: [{ out_col: 'Value', upstream_columns: [], returns_to: { node: raw, col: 'Value' } }] };
-    const scalar = validateToolCandidate(submitFindingsSchemaForMode('ct', undefined, false, { ...hop, returnTargets: [{ node: canonical, col: 'Value' }] }), input);
+    const schema = submitFindingsSchemaForMode('ct', undefined, false, { ...hop, returnTargets: [{ node: canonical, col: 'Value' }] });
+    const before = structuredClone(input);
+    const normalized = normalizeModelInput(schema, input);
+    const scalar = validateToolCandidate(schema, normalized.input);
     expect(scalar.success).toBe(accepted);
-    if (scalar.success) expect(scalar.data).toEqual(input);
+    expect(new Ajv({ strict: false }).compile(toModelJsonSchema(schema))(normalized.input)).toBe(accepted);
+    if (scalar.success) expect(scalar.data).toEqual(normalized.input);
+    expect(input).toEqual(before);
   });
 
-  it.each(['bb', 'ct'] as const)('serves an empty neighbor choice set safely in %s', mode => {
-    const schema = submitFindingsSchemaForMode(mode, undefined, false, { outCols: null, outNode: false, neighbors: [] });
-    const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
+  it.each([{ mode: 'bb' as const }, { mode: 'ct' as const }, { mode: 'ct' as const, callerContextNodeIds: [] }])('serves an empty neighbor choice set safely: %j', row => {
+    const { mode, ...callerContext } = row;
+    const schema = submitFindingsSchemaForMode(mode, undefined, false, { outCols: null, outNode: false, neighbors: [], ...callerContext });
+    const projected = toModelJsonSchema(schema) as { properties: { questions: { maxItems?: number } } };
+    const wire = new Ajv({ strict: false }).compile(projected);
     const input = { focus_node_id: 'focus', ...(mode === 'ct' ? { column_flow: [] } : {}), questions: [], prune_neighbors: [] };
     expect(validateToolCandidate(schema, input).success).toBe(true);
     expect(wire(input)).toBe(true);
     expect(wire({ ...input, questions: [{ nodeId: 'unknown', question: 'Check it.' }] })).toBe(false);
+    expect(projected.properties.questions.maxItems).toBe(0);
+  });
+
+  it.each(['bb', 'ct'] as const)('keeps generic question fields available when neighbor facts are unknown in %s', mode => {
+    for (const hop of [undefined, { outCols: null, outNode: false }, { outCols: null, outNode: false, callerContextNodeIds: [] }]) {
+      const schema = submitFindingsSchemaForMode(mode, undefined, false, hop);
+      const input = { focus_node_id: 'focus', ...(mode === 'ct' ? { column_flow: [] } : {}), questions: [{ nodeId: 'unbound', question: 'Explain this object.' }] };
+      expect(validateToolCandidate(schema, input).success).toBe(true);
+      expect(new Ajv({ strict: false }).compile(toModelJsonSchema(schema))(input)).toBe(true);
+    }
+  });
+
+  it.each([{ mode: 'bb' as const, withCallerContext: false }, { mode: 'ct' as const, withCallerContext: false }, { mode: 'ct' as const, withCallerContext: true }])('keeps native closed and unknown question references rejected before engine classification: %j', row => {
+    const mode = row.mode;
+    const open = '[dbo].[Open]', closed = '[dbo].[Visited]';
+    const schema = submitFindingsSchemaForMode(mode, undefined, false, { outCols: null, outNode: false,
+      neighbors: [{ id: open, can_question: true, can_prune: true }, { id: closed, can_question: false, can_prune: false }],
+      ...(row.withCallerContext ? { callerContextNodeIds: [open] } : {}) });
+    const projected = toModelJsonSchema(schema) as { properties: { questions: { items: { properties: { nodeId: { enum: string[] } } } } } };
+    expect(projected.properties.questions.items.properties.nodeId.enum).toEqual([open]);
+    for (const raw of [closed, 'dbo.visited', '[DBO].[VISITED]', '[dbo].[Distant]']) {
+      const input = { focus_node_id: 'focus', ...(mode === 'ct' ? { column_flow: [] } : {}), questions: [{ nodeId: raw, question: 'Explain this object.' }] };
+      const normalized = normalizeModelInput(schema, input);
+      const parsed = validateToolCandidate(schema, normalized.input);
+      expect(parsed.success, raw).toBe(false);
+      if (!parsed.success) expect(parsed.errors).toContainEqual(expect.objectContaining({ instancePath: '/questions/0/nodeId', keyword: 'enum', params: { allowedValues: [open] } }));
+      expect(new Ajv({ strict: false }).compile(projected)(normalized.input)).toBe(false);
+    }
+    const openInput = { focus_node_id: 'focus', ...(mode === 'ct' ? { column_flow: [] } : {}), questions: [{ nodeId: 'dbo.open', question: 'Explain this object.' }] };
+    expect(validateToolCandidate(schema, normalizeModelInput(schema, openInput).input).success).toBe(true);
   });
 
   it.each(['bb', 'ct'] as const)('uses the same hop neighbor choices for model and runtime in %s', mode => {
@@ -217,9 +259,11 @@ describe('fresh kept required-field projection', () => {
       const input = { focus_node_id: 'focus', column_flow: [{ out_col: name, upstream_columns: [],
         ...(scalar ? { returns_to: { node: 'caller', col: name } } : {}) }] };
       const before = structuredClone(input);
-      const parsed = validateToolCandidate(schema, input);
+      const normalized = normalizeModelInput(schema, input);
+      const parsed = validateToolCandidate(schema, normalized.input);
       expect(parsed.success).toBe(accepted);
-      if (parsed.success) expect(parsed.data).toEqual(before);
+      expect(new Ajv({ strict: false }).compile(toModelJsonSchema(schema))(normalized.input)).toBe(accepted);
+      if (parsed.success) expect(parsed.data).toEqual(normalized.input);
       expect(input).toEqual(before);
     }
   });

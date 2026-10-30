@@ -16,7 +16,7 @@ import type { IHopStateMachine } from '../sm/smBase';
 import type { HopLogEntry, NavigationInitParams, ScopeSummary, SmResult } from '../sm/smTypes';
 import type { SessionPhase, ToolControlSignal } from '../session/sessionPhase';
 import { InternalInvariantError } from '../support/internalInvariant';
-import { ClassificationSchema, type ClassificationValue } from '../session/classification';
+import type { ClassificationValue } from '../session/classification';
 import { contextBlockBytes, storedEvidenceKindBytes, type TurnTokenBudget } from '../support/tokenBudget';
 import { readToolError, type ToolRejection } from '../support/toolErrorEnvelope';
 import { sanitizeForLog, trunc } from '../../utils/log';
@@ -300,7 +300,7 @@ export class AiSession {
   /** Current finite-state-machine phase. Persists across VS Code chat turns. */
   public phase: SessionPhase = { kind: 'idle' };
 
-  /** Monotonic turn-ownership epoch. Bumped once per turn by {@link beginTurn} and captured by that turn's runtime; every guarded phase/result write carries the captured value so a superseded "zombie" turn cannot mutate the session a newer turn now owns. */
+  /** Monotonic ownership epoch, advanced when a turn starts or its loaded model is replaced. Guarded writes carry the captured value so a superseded turn cannot mutate the current session. */
   private _turnEpoch = 0;
 
   /** The live turn-ownership epoch (see {@link beginTurn}); always valid for the current turn's own writes. */
@@ -350,6 +350,21 @@ export class AiSession {
     this._presentResultFailureCountThisTurn = 0;
     this.presentResultRepairDraft.clear();
     this._synthesisRenderDegradedReason = null;
+  }
+
+  /** Publishes prepared model data atomically, retiring prior approvals, exploration state and turn leases. */
+  public replaceModel(model: DatabaseModel, graph: Graph, columnStore: ColumnStore, isDb: boolean): void {
+    this.beginTurn();
+    this.resetExploration();
+    this.beginTurnState();
+    this.clearDiscoveryTranscript();
+    this.activeLmStage = null;
+    this.controlSignal = null;
+    this.currentTurnPrompt = null;
+    this.columnStore = columnStore;
+    this.model = model;
+    this.graph = graph;
+    this.isDbSession = isDb;
   }
 
   /** Clears all exploration-specific state while preserving environment metadata. */
@@ -538,11 +553,6 @@ export class AiSession {
   private renderDiscoveryEvidence(): string {
     if (this.discoveryEvidence.length === 0) return '';
     return JSON.stringify({ kind: 'accepted_discovery_evidence', observations: this.discoveryEvidence });
-  }
-
-  /** Stores the mission-type classification inferred at end of discovery. */
-  public setClassification(value: ClassificationValue): void {
-    this.classification = ClassificationSchema.parse(value);
   }
 
   /** Returns the gate-locked classification required by active and synthesis model calls. */

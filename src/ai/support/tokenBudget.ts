@@ -88,6 +88,9 @@ export function createTurnTokenBudget(settings: {
 export const DEFAULT_TURN_TOKEN_BUDGET: TurnTokenBudget = createTurnTokenBudget();
 
 
+/** The `reason` every discovery over-budget refusal carries, and that `lineage_search_ddl`'s partial reply shows. */
+export const OVER_DISCOVERY_BUDGET = 'over_discovery_budget';
+
 /** Discovery scope budget check — fires per scope-expanding catalog request. */
 export function checkScopeBudget(
   budget: TurnTokenBudget,
@@ -97,7 +100,7 @@ export function checkScopeBudget(
   const tokens = estimateTokens(requestedDdlBytes);
   if (!exceedsPhaseBudget(budget.discovery, requestedNodes, tokens)) return null;
   return {
-    ...makeRejection({ code: REJECTION_CODES.overDiscoveryBudget, errors: at('over_budget') }),
+    ...makeRejection({ code: REJECTION_CODES.invalidInput, reason: OVER_DISCOVERY_BUDGET, errors: at('over_budget') }),
     detail: {
       counts: { nodes: requestedNodes, ddl_bytes: requestedDdlBytes },
       limits: { node_cap: budget.discovery.nodeCap, token_budget: budget.discovery.tokenBudget },

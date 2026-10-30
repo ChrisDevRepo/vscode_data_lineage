@@ -38,7 +38,6 @@ import { buildChatAnswer } from '../support/chatAnswer';
 import { extractShortTermMemory } from '../support/smMemoryCore';
 import { toEngineLog } from '../support/engineLog';
 import { REJECTION_CODES } from '../support/rejectionCodes';
-import { classifyRejectionCode } from '../tools/toolProvider';
 import { detectSlashRoute } from './slashCommands';
 import { selectInitialAgentStage } from './entryRouting';
 import { captureDiscoveryWalkFromObservations, detectOverBudgetFromResult, queueDiscoveryBudgetNotice } from './discoveryCapture';
@@ -227,7 +226,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     return { ...fail(message), activeStop: 'provider_error' };
   };
 
-  /** Logs the ordered rejection groups and final disposition of a repaired active hop. */
+  /** Logs the ordered rejection codes and final disposition of a repaired active hop. */
   const emitHopRepairSummary = (
     hop: number,
     focusId: string,
@@ -235,9 +234,8 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     outcome: 'committed' | 'failed',
   ): void => {
     if (attempt.rejections.length === 0) return;
-    const classes = attempt.rejections.map(rejection => classifyRejectionCode(rejection.code));
     logGraphDebug(deps,
-      `[Repair] hop=${hop} focus=${focusId} rejections=${attempt.rejections.length} classes=${classes.join('→')}`
+      `[Repair] hop=${hop} focus=${focusId} rejections=${attempt.rejections.length} codes=${attempt.rejections.map(rejection => rejection.code).join('→')}`
       + ` providerCalls=${attempt.providerCalls} outcome=${outcome}`,
     );
   };
@@ -350,7 +348,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
   ): { reason: 'no_progress' | 'backend_fault'; message: string } | null => {
     const reason = nextAttempt.stopReason;
     if (!reason) return null;
-    const fault = [...nextAttempt.rejections].reverse().find(rejection => classifyRejectionCode(rejection.code) === 'backend_fault')?.code ?? 'unknown';
+    const fault = [...nextAttempt.rejections].reverse().find(rejection => rejection.code === REJECTION_CODES.backendFault)?.errors?.[0]?.code ?? 'unknown';
     logGraphDebug(deps,
       `[AI] [Breaker] phase=${nextAttempt.phase} reason=${reason} noProgressCalls=${nextAttempt.noProgressCalls}`
       + (reason === 'backend_fault' ? ` code=${fault}` : ''),
@@ -536,7 +534,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       }), () => { callsBefore = deps.model.modelCalls; });
       if (!detected.ok) return { ...failProvider(detected, 'Entry detection failed'), ctx, messages };
       const faults = entryRouteFaults(detected.value);
-      if (faults.length) throw new StructuredOutputError('entry and targetColumns disagree', REJECTION_CODES.invalidStructuredOutput, faults);
+      if (faults.length) throw new StructuredOutputError('entry and targetColumns disagree', faults);
       entry = detected.value;
     } catch (error) {
       if (!(error instanceof StructuredOutputError)) throw error;
@@ -565,7 +563,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       const stopped = attemptStop(nextAttempt, 'Entry detection', 'without a valid route');
       if (stopped) {
         const emptyStructuredOnly = nextAttempt.rejections.length > 0
-          && nextAttempt.rejections.every(rejection => rejection.code === REJECTION_CODES.emptyStructuredOutput);
+          && nextAttempt.rejections.every(rejection => rejection.errors?.every(error => error.code === 'missing' && !error.path));
         if (emptyStructuredOnly) {
           return {
             ...failStopped({
@@ -1382,7 +1380,7 @@ function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
 /** User-facing text for a run ended by a backend fault: where it stopped, the cause, and that nothing was shown or changed. A missing project names the user's action instead of an internal error. */
 function backendFaultStopText(subject: string, code: string, at?: { readonly object: string; readonly completedHops: number }): string {
   const where = at ? `The analysis stopped at \`${at.object}\`` : `${subject} stopped`;
-  const noProject = code === REJECTION_CODES.noProjectLoaded;
+  const noProject = code === 'no_project';
   return `${where}: ${noProject ? 'no project is loaded in the Data Lineage panel' : `an internal error occurred (${code})`}. `
     + 'The run is incomplete, so no result is shown and the graph was not changed. '
     + (noProject ? 'Open the project and ask again.' : 'Details are in the debug log. Ask again.');

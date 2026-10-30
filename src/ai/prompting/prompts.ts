@@ -316,6 +316,9 @@ export const DISCOVERY_SUMMARY_COMPOSE_SYSTEM_PROMPT = [
   'Plain prose only: no headings, bullets, or diagrams.',
 ].join('\n');
 
+/** Existing empty-memo correction shared by the composer and its retry prompt. */
+export const DISCOVERY_SUMMARY_EMPTY_REASON = 'Too small: expected string to have >=1 characters';
+
 /** Builds the one-shot prompt for the proposal-build discovery-summary composition round (fires once per shown SM proposal). */
 export function buildDiscoverySummaryComposePrompt(
   question: string,

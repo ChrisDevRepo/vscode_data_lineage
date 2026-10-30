@@ -57,7 +57,7 @@ describe('neighbor-specific function caller context', () => {
     const before = engine.toJSON();
     const refused = engine.submitFindings({ ...finding, sections: [{ angle: 'technical' as const, text: finding.sections.technical }],
       questions: [{ nodeId: fn, question: 'Determine the output.', caller_context: { node: caller, col: 'Missing' } }, { nodeId: source, question: 'Explain the source rows.' }] });
-    expect(refused).toMatchObject({ code: 'route_validation_failed', issuePaths: expect.arrayContaining(['questions.0.caller_context']) });
+    expect(refused).toMatchObject({ code: 'invalid_input', issuePaths: expect.arrayContaining(['questions.0.caller_context']) });
     expect(refused).toMatchObject({ detail: expect.arrayContaining([expect.objectContaining({
       path: 'questions.0.caller_context', allowed_values: ['Value'], when: { node: caller },
     })]) });
@@ -85,7 +85,7 @@ describe('neighbor-specific function caller context', () => {
       sections: [{ angle: 'technical', text: 'The supplied function multiplies the bound Amount by two.' }],
       column_flow: [{ out_col: 'Value', returns_to: { node: caller, col: 'Missing' }, upstream_columns: [{ node: source, col: 'Amount' }] }],
     });
-    expect(rejected).toMatchObject({ code: 'route_validation_failed', issuePaths: expect.arrayContaining(['column_flow.0.returns_to']) });
+    expect(rejected).toMatchObject({ code: 'invalid_input', issuePaths: expect.arrayContaining(['column_flow.0.returns_to']) });
     expect(engine.peekHopContext()).toEqual(contextBeforeRetry);
     expect(engine.getCurrentTasks()).toEqual(tasksBeforeRetry);
     expect(engine.columnAspect!.edges).toEqual([]);
@@ -201,7 +201,7 @@ describe('neighbor-specific function caller context', () => {
     expect(validateToolCandidate(schema, flow(caller, 'Value')).success).toBe(true);
     const before = engine.toJSON();
     const missing = engine.submitFindings({ ...toHopFinding(admit(schema, flow(caller, 'Value'))), questions: [], prune_neighbors: [] });
-    expect(missing).toMatchObject({ code: 'route_validation_failed', detail: [expect.objectContaining({ kind: 'neighbor_outcome_missing', id: reader })] });
+    expect(missing).toMatchObject({ code: 'invalid_input', detail: [expect.objectContaining({ kind: 'neighbor_outcome_missing', id: reader })] });
     const shown = JSON.parse(renderProblem(missing as ToolRejection, 1)) as { errors: Array<{ path: string; code: string; allowed?: string[] }> };
     expect(shown.errors).toEqual([expect.objectContaining({ path: '', code: 'neighbor_undecided', allowed: [reader] })]);
     expect((missing as ToolRejection).resend).toEqual(['questions']);

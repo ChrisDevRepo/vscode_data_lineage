@@ -207,6 +207,14 @@ describe('architecture rule gates', () => {
     expect(offenders).toEqual([]);
   });
 
+  it('runs domain rules as plain functions after schema validation, never as Ajv keyword code (D-126)', () => {
+    const offenders = sourceFiles(srcRoot).filter((file) =>
+      /\baddKeyword\s*\(|ajv\/dist\/compile\b/.test(stripComments(readFileSync(file, 'utf8'))),
+    );
+
+    expect(offenders.map((file) => posixRelative(srcRoot, file))).toEqual([]);
+  });
+
   it('adds no engine import outside src/engine/shared', () => {
     const introduced = engineLayeringViolations().filter(
       (entry) => !GRANDFATHERED_ENGINE_IMPORTS.includes(entry),
@@ -230,23 +238,18 @@ describe('architecture rule gates', () => {
   });
 });
 
-/** Codes with more than one emission site; every site must interpolate `REJECTION_CODES` (`src/ai/support/rejectionCodes.ts`) rather than hand-typing the literal, so a rename cannot drift between the emitting guard, the prompt that teaches the recovery, and the schema that types the envelope. */
-const MULTI_SITE_REJECTION_CODES = [
-  REJECTION_CODES.staleTurn,
-  REJECTION_CODES.invalidInput,
-  REJECTION_CODES.notFound,
-  REJECTION_CODES.invalidRegex,
-] as const;
+/** The only top-level rejection codes (D-126); every site interpolates `REJECTION_CODES` (`src/ai/support/rejectionCodes.ts`) rather than hand-typing the literal. */
+const TOP_LEVEL_REJECTION_CODES = Object.values(REJECTION_CODES);
 
-describe('rejection codes — one home per multi-site code', () => {
-  it('leaves no hand-typed literal for a multi-site code anywhere in src/ai', () => {
+describe('rejection codes — one home per top-level code', () => {
+  it('leaves no hand-typed literal for a top-level code anywhere in src/ai', () => {
     const REJECTION_CODES_OWNER = join(aiRoot, 'support', 'rejectionCodes.ts');
     const offenders: string[] = [];
     for (const file of sourceFiles(aiRoot)) {
       if (file === REJECTION_CODES_OWNER) continue;
       const lines = readFileSync(file, 'utf8').split('\n');
       lines.forEach((line, index) => {
-        for (const code of MULTI_SITE_REJECTION_CODES) {
+        for (const code of TOP_LEVEL_REJECTION_CODES) {
           if (line.includes(`code: '${code}'`) || line.includes(`code: "${code}"`)) {
             offenders.push(`${posixRelative(aiRoot, file)}:${index + 1} ${code}`);
           }
@@ -256,12 +259,7 @@ describe('rejection codes — one home per multi-site code', () => {
     expect(offenders, 'every emission site interpolates REJECTION_CODES').toEqual([]);
   });
 
-  it('keeps the live multi-site codes exported with their wire values unchanged', () => {
-    expect(MULTI_SITE_REJECTION_CODES).toEqual([
-      'stale_turn',
-      'invalid_input',
-      'not_found',
-      'invalid_regex',
-    ]);
+  it('keeps top-level codes for invalid input, the consent gate, the admission refusal and a backend fault only; issue codes classify the rest (D-126)', () => {
+    expect([...TOP_LEVEL_REJECTION_CODES].sort()).toEqual(['action_required', 'backend_fault', 'invalid_input', 'over_active_scope_budget']);
   });
 });

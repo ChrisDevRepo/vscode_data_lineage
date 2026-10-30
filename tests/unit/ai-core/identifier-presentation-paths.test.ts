@@ -63,7 +63,7 @@ describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs =>
   it.each([['[Other].[Orders]'], ['[Sales].[Missing]']] as const)('rejects unresolved or out-of-scope neighbor %s without returning columns', async (raw) => {
     const { registry } = neighborWorld(cs);
     const result = JSON.parse(String(await registry.invoke('lineage_get_neighbor_columns', { ids: [raw] })));
-    expect(result).toMatchObject({ code: 'out_of_scope_or_not_neighbor' });
+    expect(result).toMatchObject({ code: 'invalid_input' });
     expect(result).not.toHaveProperty('results');
     expect(result.issuePaths).toEqual(['ids.0']);
     expect(result.errors).toEqual([{ path: 'ids.0', code: 'not_neighbor', values: expect.any(Array) }]);
@@ -73,7 +73,7 @@ describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs =>
     const { registry } = neighborWorld(cs);
     const raw = 'SALES.MISSING';
     const result = JSON.parse(String(await registry.invoke('lineage_get_neighbor_columns', { ids: [raw] })));
-    expect(result).toMatchObject({ code: 'out_of_scope_or_not_neighbor', issuePaths: ['ids.0'],
+    expect(result).toMatchObject({ code: 'invalid_input', issuePaths: ['ids.0'],
       errors: [{ path: 'ids.0', code: 'not_neighbor', values: expect.any(Array) }] });
   });
 
@@ -154,7 +154,7 @@ describe.each([false, true])('canonical presentation identifiers (CS=%s)', cs =>
     }, services));
     // The accepted canonical ids are the allowed values of the unresolved reference; the sent spelling is never echoed (D-102).
     expect(rejection.errors).toContainEqual({ path: 'sections.0.node_ids.0', code: 'report_not_found', values: [canonical] });
-    for (const stage of [1, 2, 3] as const) expect(renderProblem(rejection, stage), 'D-102: no echoed id').not.toContain(sent);
+    for (const stage of [1, 2, 3] as const) expect(renderProblem(rejection, stage, undefined, 'presentation_commit'), 'D-102: no echoed id').not.toContain(sent);
   });
 });
 
@@ -201,6 +201,23 @@ it('gives one repair per id: a highlighted id an unplaced detail slot already ow
 });
 
 describe('present_result id rejection route', () => {
+  it('keeps an out-of-scope add control in its value category without a report-reference fallback', async () => {
+    const { session, ids, report, send } = draftWorld({ inScope: true });
+    const engine = session.stateMachine as NavigationEngine;
+    expect(engine.init({ origin: ids[0], question: 'Explain Result.', analysisMode: 'bb', direction: 'upstream', excludeNodeIds: [ids[2]],
+      depthIntent: { upstream: { levels: 'all', exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } })).toHaveProperty('ok', true);
+    const before = session.resultGraph;
+    const rejection = await send({ ...report, add_node_ids: [ids[2]] });
+    expect(rejection.errors).toEqual([{ path: 'add_node_ids.0', code: 'out_of_scope', category: 'value' }]);
+    for (const stage of [1, 2, 3] as const) {
+      const shown = JSON.parse(renderProblem(rejection, stage, undefined, 'presentation_commit'));
+      expect(shown.errors).toEqual([{ path: 'add_node_ids.0', code: 'out_of_scope', message: `${ISSUES.out_of_scope.label}. ${ISSUES.out_of_scope.correction}` }]);
+      expect(shown.resend).toEqual(['add_node_ids']);
+      expect(JSON.stringify(shown)).not.toContain(ids[2]);
+    }
+    expect(session.resultGraph).toBe(before);
+  });
+
   const call = async (inScope: boolean) => {
     const { ids, report, send } = draftWorld({ inScope });
     return { ids, rejection: await send({ ...report, sections: [{ ...report.sections[0], node_ids: ids }] }) };
@@ -210,7 +227,7 @@ describe('present_result id rejection route', () => {
     const { ids, rejection } = await call(false);
     expect(rejection.errors).toEqual([{ path: 'sections.0.node_ids.2', code: 'result_out_of_scope', values: ids.slice(0, 2) }]);
     for (const stage of [1, 2, 3] as const) {
-      const text = renderProblem(rejection, stage);
+      const text = renderProblem(rejection, stage, undefined, 'presentation_commit');
       expect(text).not.toContain('add_node_ids');
       expect(text, 'D-102: no echoed id').not.toContain(ids[2]);
       expect(text).not.toMatch(/\b(drop|omit|remove|withdraw)\b/i);

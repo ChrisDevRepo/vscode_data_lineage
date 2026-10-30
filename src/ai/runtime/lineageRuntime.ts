@@ -283,7 +283,6 @@ function instrumentRegistry(
               : isAdmissionRefusal(rejection.code) ? 'refused' : 'rejected',
           ...(rejection && !isConsentGateRejection(rejection.code) ? { rejectionCode: rejection.code } : {}),
           ...(issuePaths.length > 0 ? { issuePaths } : {}),
-          ...(rejection?.missingParts?.length ? { missingParts: rejection.missingParts, feedbackAt: rejection.feedbackAt } : {}),
           durationMs: elapsedMs(startedAt),
         }).catch(() => {});
         return result;
@@ -291,7 +290,7 @@ function instrumentRegistry(
         void instrumentation.writer.write({
           ...base,
           status: 'dispatch_error',
-          rejectionCode: REJECTION_CODES.toolExecutionError,
+          rejectionCode: REJECTION_CODES.backendFault,
           durationMs: elapsedMs(startedAt),
         }).catch(() => {});
         throw error;

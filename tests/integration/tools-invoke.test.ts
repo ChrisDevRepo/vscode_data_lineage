@@ -84,7 +84,7 @@ suite('Tool surface — invokeTool, no model, no CDP', () => {
         await assert.rejects(async () => invoke(name, inputs[name]), (error: unknown) => {
           assert.ok(error instanceof Error);
           const problem = JSON.parse(error.message) as { code: string; errors: unknown[]; resend: string[] };
-          assert.strictEqual(problem.code, 'no_active_session');
+          assert.strictEqual(problem.code, 'backend_fault');
           assert.ok(problem.errors.length > 0);
           assert.deepStrictEqual(problem.resend, []);
           return true;

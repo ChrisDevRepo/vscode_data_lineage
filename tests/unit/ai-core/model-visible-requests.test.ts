@@ -122,7 +122,7 @@ function renderAll(): Map<string, string> {
 
   json('issues', ISSUES);
   const { input, rejection } = ctRun.hops[0].refusal!;
-  json('rejection-problem', { lastCorrection: LAST_CORRECTION, stages: ([1, 2, 3] as const).map(stage => JSON.parse(renderProblem(rejection, stage, input))) });
+  json('rejection-problem', { lastCorrection: LAST_CORRECTION, stages: ([1, 2, 3] as const).map(stage => JSON.parse(renderProblem(rejection, stage, input, 'hop_commit'))) });
 
   const { outputTemplates: templates, outputSections: sections } = ct.session;
   const stages = (label: string, rows: ReadonlyArray<readonly [string, string]>) => text(`templates/${label}`, rows.map(([name, prompt]) => `=== ${name} ===\n${prompt}`).join('\n\n'));

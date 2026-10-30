@@ -635,7 +635,7 @@ export function inspectPresentResult(
     const resendList = [...repairFields];
     const repairInstructed = allRepairable && resendList.length > 0;
     return makeRejection({
-      code: REJECTION_CODES.validation,
+      code: REJECTION_CODES.invalidInput,
       reason: faults.map(fault => `${fault.path}: ${fault.code}`).join('\n'),
       issuePaths: [...issuePaths],
       errors: faults,

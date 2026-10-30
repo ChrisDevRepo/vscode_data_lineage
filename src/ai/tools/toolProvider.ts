@@ -1,4 +1,4 @@
-import type { ToolFactContext } from '../support/toolValidation';
+import { captureToolFact, type ToolFactContext } from '../support/toolValidation';
 /** Canonical AI tool registry, handlers, and the surfaces for callers without a chat turn. */
 import * as vscode from 'vscode';
 import { redactMissionBriefForLog } from '../support/missionBriefDiagnostics';
@@ -11,7 +11,7 @@ import { type AiSession } from '../session/session';
 import { Logger, trunc, LOG_TRUNC_JSON } from '../../utils/log';
 import {
   getContext, searchObjects, executeObjectDetail, prepareModelObject, type ModelObjectPlan,
-  runAnalysis, searchDdl, executeScopeBundle,
+  runAnalysis, searchDdl, prepareScopeBundle, executeScopeBundle,
   getNeighborColumns,
 } from '../tools/tools';
 import {
@@ -61,37 +61,6 @@ function modelObjectAdmission(model: DatabaseModel): ToolFactContext & { plan?: 
     receipt.plan = plan;
   }]]) };
   return receipt;
-}
-
-/** Diagnostic group shared by rejection logging and backend-fault policy. */
-type RejectionChatGroup = 'column_mapping' | 'source_selection' | 'answer_format' | 'backend_fault' | 'correction';
-
-/** Explicit membership for the non-fallback groups. Every rejection code NOT listed here — including any future or renamed code — resolves through {@link classifyRejectionCode} to the `correction` fallback, so diagnostic grouping remains defined for future codes. */
-const REJECTION_GROUPS: Readonly<Record<string, Exclude<RejectionChatGroup, 'correction'>>> = {
-  [REJECTION_CODES.outColNotOnNode]: 'column_mapping',
-  [REJECTION_CODES.contributorColNotOnSource]: 'column_mapping',
-  [REJECTION_CODES.columnSelfLoop]: 'column_mapping',
-  [REJECTION_CODES.prunedContributor]: 'column_mapping',
-  [REJECTION_CODES.routeValidationFailed]: 'source_selection',
-  [REJECTION_CODES.validation]: 'answer_format',
-  [REJECTION_CODES.invalidInput]: 'answer_format',
-  [REJECTION_CODES.ctFieldForbiddenInBb]: 'answer_format',
-  [REJECTION_CODES.missingField]: 'answer_format',
-  [REJECTION_CODES.emptyStructuredOutput]: 'answer_format',
-  [REJECTION_CODES.missingRequiredToolCall]: 'answer_format',
-  [REJECTION_CODES.toolCallNotation]: 'answer_format',
-  [REJECTION_CODES.engineCrash]: 'backend_fault',
-  [REJECTION_CODES.internalError]: 'backend_fault',
-  [REJECTION_CODES.invalidStatus]: 'backend_fault',
-  [REJECTION_CODES.noActiveSession]: 'backend_fault',
-  [REJECTION_CODES.staleTurn]: 'backend_fault',
-  [REJECTION_CODES.toolExecutionError]: 'backend_fault',
-  [REJECTION_CODES.noProjectLoaded]: 'backend_fault',
-};
-
-/** Resolves a rejection code to its diagnostic group, defaulting an unmapped code to the `correction` fallback. See {@link REJECTION_GROUPS} for the membership this implements and why a "scope limit" group is intentionally absent. */
-export function classifyRejectionCode(code: string): RejectionChatGroup {
-  return REJECTION_GROUPS[code] ?? 'correction';
 }
 
 /** Reveals the result panel and posts one preview, naming the outcome. */
@@ -159,10 +128,8 @@ class ToolHandler implements ToolServices {
     const rejection = readToolError(data);
     if (rejection) {
       const paths = rejection.issuePaths ?? [];
-      const isGate = isConsentGateRejection(rejection.code);
-      const label = isGate ? '[Gate]' : '[Reject]';
-      const groupPart = isGate ? '' : ` group=${classifyRejectionCode(rejection.code)}`;
-      this.logger.debug(`${label} tool=${toolName}${groupPart} code=${rejection.code} issueCount=${paths.length} resultChars=${chars}`);
+      const label = isConsentGateRejection(rejection.code) ? '[Gate]' : '[Reject]';
+      this.logger.debug(`${label} tool=${toolName} code=${rejection.code} issueCount=${paths.length} resultChars=${chars}`);
     } else {
       this.logger.debug(`${toolName} resultChars=${chars}`);
     }
@@ -192,7 +159,7 @@ class ToolHandler implements ToolServices {
     }
     this.logger.error(`Tool ${toolName} failed unexpectedly`, err);
     return JSON.stringify(makeRejection({
-      code: REJECTION_CODES.internalError,
+      code: REJECTION_CODES.backendFault,
       reason: msg || `Unexpected internal error running ${toolName}.`,
       errors: at('backend_fault'),
       detail: { tool: toolName },
@@ -292,11 +259,16 @@ class ToolHandler implements ToolServices {
   public getScopeBundle(input: unknown) {
     try {
       const model = this.requireModel(), facts = modelObjectAdmission(model);
+      let parameters: z.output<typeof GetScopeBundleInputSchema> | undefined;
+      facts.validated = new Map([['scope.parameters', captureToolFact(GetScopeBundleInputSchema, value => { parameters = value; })]]);
       const outcome = ingestToolInput({ input, schema: GetScopeBundleInputSchema, context: '', facts, inspect: view => {
         const parsed = view.parsed, plan = facts.plan;
-        return parsed.success && plan ? () => {
+        if (!parameters || !plan) return undefined;
+        const scope = prepareScopeBundle(this.requireGraph(), parameters, this.budget, plan);
+        if ('code' in scope) { view.add(scope); return undefined; }
+        return parsed.success ? () => {
       const sess = this.getSession();
-      const bundle = executeScopeBundle(model, this.requireGraph(), parsed.data, this.budget, plan, sess.columnStore) as Record<string, unknown>;
+      const bundle = executeScopeBundle(model, parsed.data, this.budget, plan, scope, sess.columnStore) as Record<string, unknown>;
       if (parsed.data.include_ddl === undefined && bundle.include_ddl === true) {
         this.logger.debug(`get_scope_bundle include_ddl omitted — auto-attached (origin=${trunc(String(bundle.origin), LOG_TRUNC_JSON)})`);
       }
@@ -323,7 +295,7 @@ class ToolHandler implements ToolServices {
         edges,
       }, this.turnEpoch(sess));
       if (stored.kind !== 'accepted') {
-        return this.logAndReturn('lineage_get_scope_bundle', makeRejection({ code: REJECTION_CODES.staleTurn, reason: 'The turn no longer owns this session; the scope was not stored.', errors: at('backend_fault') }), input);
+        return this.logAndReturn('lineage_get_scope_bundle', makeRejection({ code: REJECTION_CODES.backendFault, reason: 'The turn no longer owns this session; the scope was not stored.', errors: at('backend_fault') }), input);
       }
       return this.logAndReturn('lineage_get_scope_bundle', bundle, input);
         } : undefined;
@@ -396,7 +368,7 @@ class ToolHandler implements ToolServices {
       const engine = sess.stateMachine as NavigationEngine | null;
       if (!engine) {
         return this.logAndReturn('lineage_get_neighbor_columns', makeRejection({
-          code: REJECTION_CODES.noActiveSession,
+          code: REJECTION_CODES.backendFault,
           reason: 'No exploration is active.',
           errors: at('no_session'),
         }), input);
@@ -410,7 +382,7 @@ class ToolHandler implements ToolServices {
       const invalidIds = engine.validateNeighborIds(ids);
       if (invalidIds.length > 0) {
         return this.logAndReturn('lineage_get_neighbor_columns', makeRejection({
-          code: REJECTION_CODES.outOfScopeOrNotNeighbor,
+          code: REJECTION_CODES.invalidInput,
           reason: 'Not a direct neighbor of the current object, or outside the scope.',
           errors: at('not_neighbor', ids.flatMap((id, index) => invalidIds.includes(id) ? [`ids.${index}`] : []), engine.neighborColumnIds),
         }), input);

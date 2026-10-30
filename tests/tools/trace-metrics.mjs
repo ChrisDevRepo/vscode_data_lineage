@@ -220,7 +220,7 @@ function feedbackFor(request, rejection) {
     }
     return null;
   }
-  if (rejection.code === 'missing_required_tool_call') {
+  if (rejection.code === 'missing_required_tool_call' || rejection.code === 'invalid_input') {
     const matches = (request.messages ?? []).flatMap(textParts).filter(text => text.startsWith(`Correction for ${rejection.tool}:`));
     return matches.length === 1 ? matches[0] : null;
   }
@@ -322,7 +322,8 @@ function measureRetryEpisodes(records, { trace = null, epoch = null, requestCase
       const possible = pool.filter(item => item.call.name === record.toolName
         && (record.callId ? item.call.callId === record.callId : item.response === latest)
         && (record.generation === undefined || item.response.record.generation === record.generation));
-      const synthetic = record.rejectionCode === 'missing_required_tool_call';
+      // A synthesized no-call rejection has no call id; older traces name it by its former code.
+      const synthetic = record.rejectionCode === 'missing_required_tool_call' || (record.status === 'rejected' && !record.callId);
       const allowParallelSuccess = !record.callId && Boolean(latest?.parallelSuccessTools?.has(record.toolName));
       const aggregateSuccess = !synthetic && allowParallelSuccess && possible.length > 0;
       const matched = !synthetic && !aggregateSuccess && possible.length === 1 ? possible[0] : null;

@@ -24,9 +24,16 @@ import { parseServerInput, runAddConnectionFlow } from './db/connectionCommands'
 import { builtInTarget, type ConnectionErrorHooks } from './db/connectionErrors';
 import { errorMessage } from '../utils/errorMessage';
 
+const DmvQuerySchema = z.object({
+  name: z.string().min(1),
+  description: z.string().optional(),
+  sql: z.string().min(1),
+  phase: z.number().optional(),
+}).passthrough();
+
 const DmvQueriesConfigSchema = z.object({
   version: z.coerce.number().optional(),
-  queries: z.array(z.record(z.string(), z.any())).optional()
+  queries: z.array(z.unknown()).optional()
 }).passthrough();
 
 /** Represents a Dynamic Management View (DMV) query used to extract metadata from SQL Server. */
@@ -39,11 +46,6 @@ export interface DmvQuery {
   sql: string;
   /** The execution phase of the query. `1`: Preliminary phase (unfiltered). `2`: Main extraction phase (typically filters by schema). */
   phase?: number;
-}
-
-/** Validates the fields required by the import path; other {@link DmvQuery} fields degrade gracefully. */
-function hasRequiredQueryFields(q: Record<string, any>): q is DmvQuery {
-  return Boolean(q.name) && Boolean(q.sql);
 }
 
 /** Root configuration structure for DMV query definition files. */
@@ -91,16 +93,14 @@ export async function loadDmvQueries(
           return builtInConfig.queries;
         }
 
-        if (parsed?.queries && Array.isArray(parsed.queries)) {
-          const skipped: string[] = [];
-          const valid = parsed.queries.filter((q, i): q is DmvQuery => {
-            if (!hasRequiredQueryFields(q)) {
-              const label = q?.name || `query[${i}]`;
-              logger.debug(`Skipped DMV query '${label}': missing ${!q?.name ? "'name'" : "'sql'"} field`);
-              skipped.push(label);
-              return false;
-            }
-            return true;
+        if (parsed.queries?.length) {
+          let skipped = 0;
+          const valid = parsed.queries.flatMap((query, index) => {
+            const checked = DmvQuerySchema.safeParse(query);
+            if (checked.success) return [checked.data];
+            skipped++;
+            logger.debug(`Skipped DMV query[${index}]: invalid ${checked.error.issues.map(issue => issue.path.join('.') || 'query').join(', ')}`);
+            return [];
           });
           if (valid.length > 0) {
             const KNOWN_NAMES = ['schema-preview', 'nodes', 'columns', 'dependencies'];
@@ -115,7 +115,7 @@ export async function loadDmvQueries(
               );
             }
             await persistAbsolutePath('dmvQueriesFile', customPath, resolved);
-            logger.info(`Applied DMV queries: ${valid.length} loaded from custom, ${skipped.length} skipped`);
+            logger.info(`Applied DMV queries: ${valid.length} loaded from custom, ${skipped} skipped`);
             return valid;
           }
         }
@@ -213,18 +213,13 @@ async function loadBuiltInDmvConfig(
   const parsed = DmvQueriesConfigSchema.parse(rawParsed);
 
   const { version, queries } = parsed;
-  if (!queries || !Array.isArray(queries)) {
+  if (!queries) {
     throw new Error('Built-in dmvQueries.yaml is invalid — missing "queries" array');
   }
   if (version === undefined) {
     throw new Error('Built-in dmvQueries.yaml is invalid — missing "version"');
   }
-  const validQueries = queries.filter(hasRequiredQueryFields);
-  if (validQueries.length !== queries.length) {
-    throw new Error('Built-in dmvQueries.yaml is invalid — a query is missing "name" or "sql"');
-  }
-
-  return { version, queries: validQueries };
+  return { version, queries: z.array(DmvQuerySchema).parse(queries) };
 }
 
 /** Selects credential-free, schema-declared fields for legacy connection migration. */

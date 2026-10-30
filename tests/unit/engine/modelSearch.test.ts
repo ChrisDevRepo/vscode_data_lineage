@@ -708,7 +708,7 @@ describe('object search typed correction alternatives', () => {
     expect(rejection.resend).toEqual(['mode']);
     expect(await searchObjects(model, 'Order[', undefined, ['ai'], 'substring')).not.toHaveProperty('code');
     const tooLong = await searchObjects(model, 'a'.repeat(REGEX_MAX_LENGTH + 1), undefined, ['ai'], 'regex');
-    expect(tooLong).toHaveProperty('code', 'invalid_regex');
+    expect(tooLong).toMatchObject({ code: 'invalid_input', errors: [{ path: 'query', code: 'invalid_regex' }] });
     expect(tooLong).not.toHaveProperty('resend');
   });
 });

@@ -14,6 +14,7 @@ import { ingestToolInput, toolInputReceipt } from '../../support/toolIngestion';
 import {
   inspectTargetColumns,
   inspectStartReferences,
+  evaluateStartTargetColumnsRule,
   evaluateAlreadyStartedRule,
   evaluateParallelStartRule,
   resolveCanonicalQuestion,
@@ -54,13 +55,13 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       const supplied = (field: string) => raw !== undefined && Object.prototype.hasOwnProperty.call(raw, field);
       const annotations = admission.annotations;
       view.add(evaluateAlreadyStartedRule(preCheckLive, preCheckPrior?.sessionId === sess.id, isRefining));
-      if (supplied('supplement')) view.add(makeRejection({ code: REJECTION_CODES.freshProposalRequired,
+      if (supplied('supplement')) view.add(makeRejection({ code: REJECTION_CODES.invalidInput,
         reason: 'Additional SQL requires a new exploration with its own approval card: a fresh proposal with origin and scope.', errors: at('fresh_proposal', ['supplement']) }));
       if (!isRefining) view.add(evaluateParallelStartRule(sess.startExplorationRoundId, sess.currentRoundId));
       if (raw && (!supplied('proposalRevision') || annotations.proposalRevision !== undefined)
         && ((!isRefining && annotations.proposalRevision !== undefined)
           || (isRefining && annotations.proposalRevision !== sess.pendingExploration!.revision))) {
-        view.add(makeRejection({ code: REJECTION_CODES.staleProposalRevision,
+        view.add(makeRejection({ code: REJECTION_CODES.invalidInput,
           errors: at('stale_revision', ['proposalRevision'], isRefining ? [String(sess.pendingExploration!.revision)] : undefined) }));
       }
       const activeFilter = isRefining ? structuredClone(sess.pendingExploration!.activeFilter) : s.buildActiveFilter(sess);
@@ -79,9 +80,11 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       const references = inspectStartReferences(referenceInput, value => resolveModelNodeId(value, nodes, m.identifierCaseSensitive));
       view.add(references.rejection);
       const mode = annotations.analysisMode ?? (!supplied('analysisMode') && isRefining ? pendingInit?.analysisMode : undefined);
+      const targetColumns = annotations.targetColumns ?? (!supplied('targetColumns') && mode === 'ct' ? pendingInit?.targetColumns : undefined);
+      if (!supplied('targetColumns') || annotations.targetColumns !== undefined) view.add(evaluateStartTargetColumnsRule(mode, targetColumns));
       const columns = references.originId && mode === 'ct'
-        ? inspectTargetColumns(references.originId, (getNodeColumns(references.originId, nodes, sess.columnStore) ?? []).map(column => column.name),
-          supplied('targetColumns') ? admission.targets : (pendingInit?.targetColumns ?? []), m.identifierCaseSensitive)
+        ? inspectTargetColumns(nodes.get(references.originId)!, (getNodeColumns(references.originId, nodes, sess.columnStore) ?? []).map(column => column.name),
+          supplied('targetColumns') ? admission.targets : (targetColumns ?? []), m.identifierCaseSensitive)
         : undefined;
       view.add(columns?.rejection);
       const scope = admission.scope();
@@ -110,11 +113,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         s.logger.debug('[AI] [StartExploration] model question discarded — a higher-priority question source is in force (refine)');
       }
       const refineQuestion = canonicalRefineQuestion ?? DEFAULT_EXPLORATION_QUESTION;
-      const refineAnalysisMode = data.analysisMode ?? pendingInit?.analysisMode;
-      const refineTargetColumns = refineAnalysisMode === 'ct'
-        ? (data.targetColumns ?? (isRefining ? pendingInit?.targetColumns : undefined))
-        : undefined;
-      if (refineAnalysisMode === 'bb' && isRefining && pendingInit?.targetColumns?.length) {
+      if (mode === 'bb' && isRefining && pendingInit?.targetColumns?.length) {
         s.logger.debug(`[AI] [StartExploration] refine to BB drops proposal targetColumns cols=[${trunc(pendingInit.targetColumns.join(','), 120)}] origin=${sanitizeForLog(refineOrigin)}`);
       }
       const sameStringSet = (a?: string[], b?: string[]): boolean => {
@@ -127,8 +126,8 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         !!a && !!b && !depthSidesDiffer(a.upstream, b.upstream) && !depthSidesDiffer(a.downstream, b.downstream);
       const refineScopeChanged = isRefining && (
         identifierKey(refineOrigin) !== identifierKey(pendingInit?.origin ?? '')
-        || refineAnalysisMode !== pendingInit?.analysisMode
-        || !sameStringSet(refineTargetColumns, pendingInit?.targetColumns)
+        || mode !== pendingInit?.analysisMode
+        || !sameStringSet(targetColumns, pendingInit?.targetColumns)
         || !sameDepthIntent(depthIntent, pendingInit?.depthIntent)
       );
       const missionBriefClearedOnScopeChange = isRefining
@@ -148,8 +147,8 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       const proposalInit = {
         question: refineQuestion,
         origin: refineOrigin,
-        analysisMode: refineAnalysisMode,
-        targetColumns: refineTargetColumns,
+        analysisMode: mode,
+        targetColumns,
         direction: refineDirection,
         depthIntent,
         excludeTypes,
@@ -188,12 +187,12 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       };
       if (isRefining && sess.pendingExploration && sameExplorationProposal(nextProposal, sess.pendingExploration)) {
         s.logger.debug(`[AI] [Proposal] no-op refine rejected revision=${sess.pendingExploration.revision}`);
-        view.add(makeRejection({ code: REJECTION_CODES.noOpRefine, errors: at('no_op_refine') }));
+        view.add(makeRejection({ code: REJECTION_CODES.invalidInput, errors: at('no_op_refine') }));
       }
       return async () => {
       const stored = sess.storePendingExploration(nextProposal, s.turnEpoch(sess));
       if (stored.kind !== 'accepted') {
-        return s.logAndReturn('lineage_start_exploration', makeRejection({ code: REJECTION_CODES.staleTurn, reason: 'The turn no longer owns this session; the proposal was not stored.', errors: at('backend_fault') }), loggedInput);
+        return s.logAndReturn('lineage_start_exploration', makeRejection({ code: REJECTION_CODES.backendFault, reason: 'The turn no longer owns this session; the proposal was not stored.', errors: at('backend_fault') }), loggedInput);
       }
       sess.startExplorationRoundId = sess.currentRoundId;
       let proposal = sess.pendingExploration!;

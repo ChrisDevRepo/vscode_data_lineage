@@ -4,7 +4,7 @@ import { ingestToolInput } from '../support/toolIngestion';
 export { normalizePresentSectionLabel } from '../support/toolValidation';
 import { findingShapeIssues } from '../support/findingShape';
 import { captureToolFact, type ToolFactContext } from '../support/toolValidation';
-import { markIdFormSearch, markObjectIdField } from './normalizeModelInput';
+import { markIdFormSearch, markObjectIdField, markColumnField } from './normalizeModelInput';
 import { MAX_ID_LIST_LENGTH, SCREEN_STATE_MAX_IDS, ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
 import {
   ExplorationDepthSelectionSchema,
@@ -48,11 +48,6 @@ const StartDepthSchema = ExplorationDepthSelectionSchema.nullish().describe(DEPT
 const ANALYSIS_MODE_DESCRIPTION =
   'Required for fresh exploration: "bb" traces whole objects; "ct" traces named columns. Default to "bb" when unclear.';
 
-/** Issue text when a start_exploration call carries neither an origin nor a proposal revision. */
-
-/** The fault of named columns under blackboard analysis: the schema issue and the refine and engine refusals are this one string. */
-export const BB_TARGET_COLUMNS_FAULT = 'analysisMode "bb" is whole-object lineage and does not accept targetColumns.';
-
 /** `targetColumns` on every exploration phase: column trace names the columns; blackboard forbids the property. */
 const TARGET_COLUMNS_PHASE_DESCRIPTION =
   'CT only: name each column to trace. When the user asked for every column, read them with lineage_get_object_detail and send each one. BB forbids this property.';
@@ -65,11 +60,7 @@ const StartPassNodeIdsSchema = z.array(z.string().meta({ toolValidated: 'start.r
 const START_SCOPE_FIELDS = { origin: true, analysisMode: true, targetColumns: true, depth: true, excludeTypes: true, excludeSchemas: true, excludeNodeIds: true, passNodeIds: true } as const;
 
 const FreshScopeAdmission = { required: ['origin', 'analysisMode', 'depth'], properties: { depth: { not: { type: 'null' }, toolIssue: 'missing' } } };
-const TargetScopeAdmission = [
-  { if: { required: ['analysisMode'], properties: { analysisMode: { const: 'ct' } }, anyOf: [{ required: ['origin'] }, { required: ['targetColumns'] }] }, then: { required: ['targetColumns'], properties: { targetColumns: { minItems: 1 } } } },
-  { if: { required: ['analysisMode'], properties: { analysisMode: { const: 'bb' } } }, then: { properties: { targetColumns: { maxItems: 0, toolIssue: 'never' } } } },
-];
-const startScopeAdmission = (fresh: object) => [{ name: 'start.scope', fields: Object.keys(START_SCOPE_FIELDS), assertions: { allOf: [fresh, ...TargetScopeAdmission] } }];
+const startScopeAdmission = (fresh: object) => [{ name: 'start.scope', fields: Object.keys(START_SCOPE_FIELDS), assertions: { allOf: [fresh] } }];
 
 /** Strict domain boundary for fresh, refine, and completed-session exploration requests. */
 export const StartExplorationInputSchema = z.object({
@@ -79,16 +70,16 @@ export const StartExplorationInputSchema = z.object({
   analysisMode: z.enum(['bb', 'ct']).optional().meta({ toolValidated: 'start.analysisMode' }).describe(
     ANALYSIS_MODE_DESCRIPTION,
   ),
-  targetColumns: z.array(ColumnIdentifierSchema.meta({ toolValidated: 'start.target' })).optional().meta({ toolArrayFact: 'start.targets' }).describe(
+  targetColumns: z.array(ColumnIdentifierSchema.meta({ toolValidated: 'start.target' })).optional().meta({ toolValidated: 'start.targetColumns' }).describe(
     TARGET_COLUMNS_PHASE_DESCRIPTION,
   ),
   depth: StartDepthSchema,
   excludeTypes: StartExcludeTypesSchema,
   /** Schemas to drop from the BFS scope under the source comparison policy. Honored at scope-build time — any candidate node whose schema matches is excluded. REPLACE semantics: each call wipes prior filter state on the engine; accumulate across refine rounds by re-sending every prior exclusion plus the new one. */
   excludeSchemas: StartExcludeSchemasSchema,
-  /** Specific node ids to drop from the BFS scope under the source comparison policy. Cuts the node and its subtree reachable only through it. Use only when the user explicitly says remove / drop / prune / cut. REPLACE semantics — see {@link excludeSchemas}. Every id must already be resolved via `lineage_search_objects` — unknown ids cause the call to reject with `unknown_node_ids`. */
+  /** Specific node ids to drop from the BFS scope under the source comparison policy. Cuts the node and its subtree reachable only through it. Use only when the user explicitly says remove / drop / prune / cut. REPLACE semantics — see {@link excludeSchemas}. Every id must already be resolved via `lineage_search_objects` — unknown ids cause the call to reject with issue `not_found`. */
   excludeNodeIds: StartExcludeNodeIdsSchema,
-  /** Specific node ids the engine keeps in scope but auto-passes (no analysis written, topology preserved so descendants stay reachable). Default interpretation when the user says ignore / skip / don't analyze. REPLACE semantics — see {@link excludeSchemas}. Every id must already be resolved via `lineage_search_objects` — unknown ids cause the call to reject with `unknown_node_ids`. */
+  /** Specific node ids the engine keeps in scope but auto-passes (no analysis written, topology preserved so descendants stay reachable). Default interpretation when the user says ignore / skip / don't analyze. REPLACE semantics — see {@link excludeSchemas}. Every id must already be resolved via `lineage_search_objects` — unknown ids cause the call to reject with issue `not_found`. */
   passNodeIds: StartPassNodeIdsSchema,
   scopeNotes: ScopeNotesValueSchema.optional().meta({ toolValidated: 'start.scopeNotes' }),
   mission_brief: MissionBriefValueSchema.optional().meta({ toolValidated: 'start.mission_brief' }),
@@ -106,14 +97,14 @@ const StartScopeFactSchema = StartExplorationInputSchema.pick(START_SCOPE_FIELDS
 /** Collects native-valid start scope and annotations without selecting missing scope values. */
 export function startAdmissionFacts() {
   let scope: z.output<typeof StartScopeFactSchema> | undefined, input: Record<string, unknown> | undefined;
-  const annotations: Partial<Pick<z.output<typeof StartExplorationInputSchema>, 'question' | 'scopeNotes' | 'mission_brief' | 'classification' | 'proposalRevision' | 'analysisMode' | 'origin'>> = {};
+  const annotations: Partial<Pick<z.output<typeof StartExplorationInputSchema>, 'question' | 'scopeNotes' | 'mission_brief' | 'classification' | 'proposalRevision' | 'analysisMode' | 'targetColumns' | 'origin'>> = {};
   const references = new Map<string, string>(), targets = new Map<number, string>();
   const fields = StartExplorationInputSchema.shape;
   const facts: ToolFactContext = { objects: new Map([['start.input', value => { input = value; }]]), validated: new Map([
     ['start.scope', captureToolFact(StartScopeFactSchema, value => { scope = value; })],
     ['start.reference', captureToolFact(z.string(), (value, path) => { references.set(path, value); })],
     ['start.target', captureToolFact(ColumnIdentifierSchema, (value, path) => { targets.set(Number(path.split('/')[2]), value); })],
-    ...(['question', 'scopeNotes', 'mission_brief', 'classification', 'proposalRevision', 'analysisMode', 'origin'] as const).map(field =>
+    ...(['question', 'scopeNotes', 'mission_brief', 'classification', 'proposalRevision', 'analysisMode', 'targetColumns', 'origin'] as const).map(field =>
       [`start.${field}`, captureToolFact(fields[field], value => { Object.assign(annotations, { [field]: value }); })] as const),
   ]) };
   return { facts, references, targets, annotations, scope: () => scope, input: () => input };
@@ -209,7 +200,7 @@ export const GetScopeBundleInputSchema = z.object({
   upstream_depth: ScopeDepthSchema.optional().describe('Optional upstream hop depth for an asymmetric bidirectional scope.'),
   downstream_depth: ScopeDepthSchema.optional().describe('Optional downstream hop depth for an asymmetric bidirectional scope.'),
   include_ddl: ScopeIncludeDdlSchema,
- }).strict().meta({ toolAdmission: { allOf: [
+ }).strict().meta({ toolGroups: [{ name: 'scope.parameters', fields: ['origin', 'direction', 'depth', 'upstream_depth', 'downstream_depth'] }], toolAdmission: { allOf: [
   { if: { anyOf: [{ not: { required: ['direction'] } }, { properties: { direction: { const: 'bidirectional' } }, required: ['direction'] }] },
     then: { allOf: [
       { if: { required: ['depth'], anyOf: [{ required: ['upstream_depth'] }, { required: ['downstream_depth'] }] }, then: { properties: { depth: false } } },
@@ -297,7 +288,7 @@ const ColumnRefSchema = z.object({
 
 const ColumnFlowReturnsToObject = z.object({
   node: stringFact(z.string(), 'flowReference').describe('Object id from <hop_context>.'),
-  col: z.string().describe('Column name on that object.'),
+  col: stringFact(z.string(), 'returnColumn').describe('Column name on that object.'),
 }).strict();
 
 /** One closed `column_flow` entry; provider projection and runtime parsing reject surplus keys. */
@@ -309,7 +300,7 @@ const UPSTREAM_DESCRIPTION = 'Neighbor columns that feed out_col: value sources 
 const PROCEDURE_UPSTREAM_DESCRIPTION = `${UPSTREAM_DESCRIPTION} A value this procedure creates lists this procedure with the column its task names, else out_col; [] records no pair.`;
 
 const ColumnFlowEntrySchema = z.object({
-  out_col: z.string().describe(OUT_COL_DESCRIPTION),
+  out_col: stringFact(z.string(), 'flowOutColumn').describe(OUT_COL_DESCRIPTION),
   out_node: stringFact(z.string(), 'flowReference').optional().describe(OUT_NODE_DESCRIPTION),
   returns_to: ColumnFlowReturnsToObject.optional().meta({ toolValidated: 'returnTarget' }).describe('Real caller output supplied in caller_output_targets for this scalar-return task; never a table write.'),
   upstream_columns: z.array(ColumnRefSchema).meta({ toolArrayFact: 'suppliers' }).describe(`${UPSTREAM_DESCRIPTION} [] means the value originates here.`),
@@ -378,7 +369,7 @@ export function findingAdmissionFacts(schema: z.ZodType) {
   const fields: Partial<Pick<HopFindingKept, typeof FINDING_DECISION_FIELDS[number]>> = {};
   const valid = new Set<string>();
   const headers = new Map<string, Pick<ColumnFlowEntry, 'out_col' | 'out_node' | 'returns_to'>>();
-  const columns = new Map<string, string>();
+  const columns = new Map<string, string>(), outColumns = new Map<string, string>(), returnColumns = new Map<string, string>();
   const suppliers = new Map<string, ColumnFlowEntry['upstream_columns'][number]>();
   const destinations = new Map<string, { node: string; col: string } | null | undefined>();
   const references = new Map<string, string>(), identities = new Map<string, string>(), arrays = new Map<string, number>(), rows = new Map<string, ReadonlySet<string>>();
@@ -386,7 +377,7 @@ export function findingAdmissionFacts(schema: z.ZodType) {
   const facts: ToolFactContext = {
     objects: new Map([['findingPresence', value => { supplied = value; }], ['flowPresence', (value, context) => { rows.set(context.instancePath, new Set(Object.keys(value))); }]]),
     arrays: new Map(['column_flow', 'suppliers', 'questions', 'prune_neighbors'].map(name => [name, (value, context) => { arrays.set(context.instancePath, value.length); }])),
-    strings: new Map([['flowReference', (value, context) => { references.set(context.instancePath, value); }], ['supplierColumn', (value, context) => { columns.set(context.instancePath, value); }],
+    strings: new Map([['returnColumn', (value, context) => { returnColumns.set(context.instancePath, value); }], ['flowOutColumn', (value, context) => { outColumns.set(context.instancePath, value); }], ['flowReference', (value, context) => { references.set(context.instancePath, value); }], ['supplierColumn', (value, context) => { columns.set(context.instancePath, value); }],
       ...['questionIdentity', 'pruneIdentity'].map(name => [name, (value: string, context: { instancePath: string }) => { identities.set(context.instancePath, value); }] as const)]),
     validated: new Map([
       ['flowHeader', captureToolFact(ColumnFlowEntrySchema.omit({ upstream_columns: true }), (value, path) => { headers.set(path, value); })],
@@ -397,7 +388,7 @@ export function findingAdmissionFacts(schema: z.ZodType) {
       ['column_flow', captureToolFact(ColumnFlowSchema, value => { fields.column_flow = value; valid.add('column_flow'); })],
     ]),
   };
-  return { facts, fields, headers, columns, suppliers, destinations, references, identities, arrays, rows, unavailable: () => new Set<keyof HopFindingKept>(FINDING_DECISION_FIELDS.filter(field =>
+  return { facts, fields, headers, columns, outColumns, returnColumns, suppliers, destinations, references, identities, arrays, rows, unavailable: () => new Set<keyof HopFindingKept>(FINDING_DECISION_FIELDS.filter(field =>
     Object.prototype.hasOwnProperty.call(schema.shape, field) && (!supplied || (!valid.has(field)
       && (Object.prototype.hasOwnProperty.call(supplied, field) || !schema.shape[field].isOptional()))))) };
 }
@@ -501,24 +492,23 @@ export interface SubmitFindingsHopColumns {
   readonly columnSourceNodeIds?: readonly string[];
 }
 
-/** Advertises canonical column names while accepting their shared SQL comparison form without rewriting input. The provider enum and rejection choices share the same values; parsing preserves input. */
+/** The served and canonical enums share declared names; ModelPort normalizes equivalent SQL spellings first. */
 function suppliedValueSchema(values: readonly string[], identifierCaseSensitive = false) {
   if (values.length === 0) return z.never();
-  return z.string().meta({ enum: [...values], toolIdentifier: { kind: 'column', values: [...values], caseSensitive: identifierCaseSensitive, issue: 'unknown_column' } });
+  const field = z.string().meta({ enum: [...values], toolIdentifier: { issue: 'unknown_column' } });
+  markColumnField(field, values, identifierCaseSensitive);
+  return field;
 }
 
 /** Offers canonical IDs while admitting only equivalent, unambiguous metadata spellings. */
-function objectIdSchema(ids: readonly string[], identifierCaseSensitive = false, issue?: 'not_neighbor' | 'prune_target') {
-  if (ids.length === 0) return z.never().meta({ toolAdmission: { toolIssue: issue ?? 'never' } });
-  const known = new Map(ids.map(id => [id, true]));
-  const field = z.string().meta({ enum: [...ids], toolIdentifier: { kind: 'object', values: [...ids], caseSensitive: identifierCaseSensitive, issue: issue ?? 'not_neighbor' } });
+function objectIdSchema(ids: readonly string[], identifierCaseSensitive = false, issue?: 'not_neighbor' | 'prune_target', closedIds: readonly string[] = []) {
+  if (ids.length === 0 && closedIds.length === 0) return z.never().meta({ toolAdmission: { toolIssue: issue ?? 'never' } });
+  const known = new Map([...ids, ...closedIds].map(id => [id, true]));
+  const field = z.string().meta({ ...(ids.length ? { enum: [...ids] } : {}), toolIdentifier: { kind: 'object', values: [...ids], ...(closedIds.length ? { closedValues: [...closedIds] } : {}), caseSensitive: identifierCaseSensitive, issue: issue ?? 'not_neighbor' } });
   markObjectIdField(field, known, identifierCaseSensitive);
   return field;
 }
 
-/** One relational choice descriptor serves native admission and the model's enum projection. */
-const sqlChoice = (values: readonly string[], kind: 'object' | 'column', caseSensitive = false, issue = kind === 'object' ? 'not_neighbor' : 'unknown_column') =>
-  ({ enum: [...values], toolIdentifier: { kind, values: [...values], caseSensitive, issue } });
 function spellingField(ids: readonly string[], identifierCaseSensitive = false) {
   const field = z.string().meta({ toolDisplay: { enum: [...ids] } });
   markObjectIdField(field, new Map(ids.map(id => [id, true])), identifierCaseSensitive);
@@ -535,6 +525,7 @@ function columnRefSchemaForHop(hop: SubmitFindingsHopColumns) {
 
 /** Projects {@link ColumnFlowSchema} onto one hop: declared output columns and the permitted pair endpoints. */
 function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
+  const outNodes = hop.columnSourceNodeIds?.filter(id => id !== hop.focusNodeId);
   const outCol = !hop.outCols?.length
     ? ColumnFlowEntrySchema.shape.out_col
     : suppliedValueSchema(hop.outCols, hop.identifierCaseSensitive).describe(OUT_COL_DESCRIPTION);
@@ -543,23 +534,20 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
     : ColumnFlowEntrySchema.shape.upstream_columns
   ).describe(hop.outNode ? PROCEDURE_UPSTREAM_DESCRIPTION : ColumnFlowEntrySchema.shape.upstream_columns.description ?? '');
   const shape = {
-    out_col: outCol,
+    out_col: stringFact(outCol, 'flowOutColumn'),
     upstream_columns: upstreamColumns,
     // Required at a procedure focus: omission would attribute the pair to the procedure node.
     out_node: (hop.columnSourceNodeIds
-      ? stringFact(objectIdSchema(hop.columnSourceNodeIds.filter(id => id !== hop.focusNodeId), hop.identifierCaseSensitive), 'flowReference')
+      ? stringFact(objectIdSchema(outNodes!, hop.identifierCaseSensitive), 'flowReference')
       : stringFact(z.string(), 'flowReference')
     ).describe(OUT_NODE_DESCRIPTION),
   };
   if (hop.returnTargets?.length) {
     const ids = [...new Set(hop.returnTargets.map(target => target.node))], cols = [...new Set(hop.returnTargets.map(target => target.col))];
-    const assertions = { anyOf: hop.returnTargets.map(target => ({ properties: {
-      out_col: sqlChoice([target.col], 'column', hop.identifierCaseSensitive),
-      returns_to: { properties: { node: sqlChoice([target.node], 'object', hop.identifierCaseSensitive), col: sqlChoice([target.col], 'column', hop.identifierCaseSensitive) } },
-    } })) };
+    const assertions = { anyOf: hop.returnTargets.map(target => ({ properties: { out_col: { enum: [target.col] }, returns_to: { properties: { node: { enum: [target.node] }, col: { enum: [target.col] } } } } })) };
     const entry = z.object({
-      out_col: z.string().meta({ toolDisplay: { enum: cols } }),
-      returns_to: z.object({ node: stringFact(spellingField(ids, hop.identifierCaseSensitive), 'flowReference'), col: z.string().meta({ toolDisplay: { enum: cols } }) }).strict().meta({ toolValidated: 'returnTarget' }),
+      out_col: stringFact(suppliedValueSchema(cols, hop.identifierCaseSensitive), 'flowOutColumn'),
+      returns_to: z.object({ node: stringFact(spellingField(ids, hop.identifierCaseSensitive), 'flowReference'), col: stringFact(suppliedValueSchema(cols, hop.identifierCaseSensitive), 'returnColumn') }).strict().meta({ toolValidated: 'returnTarget' }),
       upstream_columns: shape.upstream_columns,
     }).strict().meta({ toolObjectFact: 'flowPresence', toolGroups: [{ name: 'flowHeader', fields: ['out_col', 'returns_to'], assertions }], toolDisplay: { allOf: [assertions] } });
     return z.array(entry).describe('One mapping per entry in caller_output_targets, with matching returns_to. Identify dependencies from the supplied caller SQL and function body. List supported in-scope suppliers, or upstream_columns: [] when none can be recorded; retain known outside dependencies and unresolved evidence in sections.');
@@ -569,7 +557,7 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
     : z.object({ out_col: shape.out_col, upstream_columns: shape.upstream_columns })
   ).strict().meta(FLOW_HEADER_FACT);
   const flow = z.array(entry).describe(COLUMN_FLOW_DESCRIPTION);
-  return hop.outCols?.length === 0 ? flow.max(0) : flow;
+  return hop.outCols?.length === 0 || (hop.outNode && outNodes?.length === 0) ? flow.max(0) : flow;
 }
 
 /** Shared full-field finding schema. Wire updates may omit held content; composed admission enforces fresh requirements. */
@@ -596,8 +584,10 @@ export function submitFindingsSchemaForMode(
     markObjectIdField(focusField, new Map([[hop.focusNodeId, true]]), hop.identifierCaseSensitive ?? false);
     narrowed = narrowed.extend({ focus_node_id: focusField }).strict() as typeof HopFindingCtBaseSchema;
   }
+  const questionIds = hop?.neighbors?.filter(neighbor => neighbor.can_question).map(neighbor => neighbor.id) ?? [];
+  const closedQuestionIds = hop?.neighbors?.filter(neighbor => !neighbor.can_question).map(neighbor => neighbor.id) ?? [];
   const baseQuestion = hop?.neighbors
-    ? NeighborQuestionSchema.extend({ nodeId: stringFact(objectIdSchema(hop.neighbors.filter(n => n.can_question).map(n => n.id), hop.identifierCaseSensitive), 'questionIdentity') })
+    ? NeighborQuestionSchema.extend({ nodeId: stringFact(objectIdSchema(questionIds, hop.identifierCaseSensitive, 'not_neighbor', closedQuestionIds), 'questionIdentity') })
     : NeighborQuestionSchema;
   if (mode === 'ct' && hop) narrowed = narrowed.extend({ column_flow: columnFlowSchemaForHop(hop) }).strict() as typeof HopFindingCtBaseSchema;
   const prunableIds = hop?.neighbors?.filter(n => n.can_prune).map(n => n.id) ?? [];
@@ -605,7 +595,7 @@ export function submitFindingsSchemaForMode(
     prune_neighbors: (prunableIds.length
       ? z.array(PruneNeighborSchema.extend({ id: stringFact(objectIdSchema(prunableIds, hop.identifierCaseSensitive, 'prune_target'), 'pruneIdentity') })).max(MAX_ID_LIST_LENGTH)
       : z.array(PruneNeighborSchema).max(0)).optional().describe(mode === 'bb' ? BB_PRUNE_NEIGHBORS_DESCRIPTION : PRUNE_NEIGHBORS_DESCRIPTION),
-    questions: z.array(baseQuestion).max(MAX_ID_LIST_LENGTH).optional().describe(mode === 'bb' ? BB_QUESTIONS_DESCRIPTION : QUESTIONS_DESCRIPTION),
+    questions: z.array(baseQuestion).max(questionIds.length ? MAX_ID_LIST_LENGTH : 0).optional().describe(mode === 'bb' ? BB_QUESTIONS_DESCRIPTION : QUESTIONS_DESCRIPTION),
   }).strict() as typeof HopFindingCtBaseSchema;
   if (mode === 'ct' && hop?.callerContextNodeIds) {
     const [first, ...rest] = hop.callerContextNodeIds;
@@ -613,17 +603,14 @@ export function submitFindingsSchemaForMode(
     const callerNode = z.string().min(1);
     if (hop.focusNodeId) markObjectIdField(callerNode, new Map([[hop.focusNodeId, true]]), hop.identifierCaseSensitive ?? false);
     const callerIds = first === undefined ? [] : [first, ...rest];
-    const neighborIds = hop.neighbors?.filter(neighbor => neighbor.can_question).map(neighbor => neighbor.id) ?? [];
+    const neighborIds = questionIds;
     const nodeIds = [...new Set([...neighborIds, ...callerIds])];
-    const assertions = { anyOf: [
-      { properties: { nodeId: sqlChoice(neighborIds, 'object', hop.identifierCaseSensitive), question: {} }, additionalProperties: false },
-      { properties: { nodeId: sqlChoice(callerIds, 'object', hop.identifierCaseSensitive) } },
-    ] };
+    const assertions = { anyOf: [{ properties: { nodeId: { enum: neighborIds }, question: {} }, additionalProperties: false }, { properties: { nodeId: { enum: callerIds } } }] };
     const question = first === undefined ? baseQuestion : CtNeighborQuestionSchema.extend({
       nodeId: stringFact(spellingField(nodeIds, hop.identifierCaseSensitive), 'questionIdentity').describe(NeighborQuestionSchema.shape.nodeId.description ?? ''),
       caller_context: z.object({ node: callerNode, col: z.string().min(1) }).strict().optional().describe(CtNeighborQuestionSchema.shape.caller_context.description ?? ''),
-    }).strict().meta({ toolGroups: [{ name: 'questionCore', fields: ['nodeId', 'question', 'caller_context'], assertions }], toolDisplay: { allOf: [assertions] } });
-    narrowed = narrowed.extend({ questions: z.array(question).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION) }).strict() as typeof HopFindingCtBaseSchema;
+    }).strict().meta({ toolDisplay: { allOf: [assertions] } });
+    narrowed = narrowed.extend({ questions: z.array(question).max(hop.neighbors && !nodeIds.length ? 0 : MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION) }).strict() as typeof HopFindingCtBaseSchema;
   }
   if (mode === 'ct' && heldColumnFlow) {
     // Wire omission retains a held flow; full composed admission requires a flow for every CT finding.

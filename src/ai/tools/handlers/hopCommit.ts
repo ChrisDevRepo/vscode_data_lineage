@@ -11,7 +11,7 @@ type HopCommitTool = 'lineage_submit_findings' | 'lineage_prune_current';
 /** Resolves the active engine, or answers that no exploration is active, before schema validation. */
 export function activeHopEngine(tool: HopCommitTool, input: unknown, s: ToolServices): NavigationEngine | string {
   const engine = s.getSession().stateMachine as NavigationEngine | null;
-  return engine ?? s.logAndReturn(tool, makeRejection({ code: REJECTION_CODES.noActiveSession, reason: 'No exploration is active.', errors: at('no_session') }), input);
+  return engine ?? s.logAndReturn(tool, makeRejection({ code: REJECTION_CODES.backendFault, reason: 'No exploration is active.', errors: at('no_session') }), input);
 }
 
 /** Advances one committed hop and returns the shared acknowledgement or synthesis handoff. */

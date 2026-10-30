@@ -1,7 +1,7 @@
 /** Deferred host boundaries exercise cancellation and panel ownership without database services. */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
-import { ColumnStore } from '../../../src/engine/columnStore';
+import { AiSession } from '../../../src/ai/session/session';
 import type { BridgeHost } from '../../../src/bridge/host';
 import type { DbSession } from '../../../src/engine/db/dbSession';
 import type { DatabaseModel } from '../../../src/engine/types';
@@ -62,7 +62,7 @@ function dbSession() {
   };
   return session;
 }
-function arrange(store: ProjectStore = { schemaVersion: 1, lastOpenedId: null, projects: [] }, session = { model: null as DatabaseModel | null, uiState: {}, renderState: null, columnStore: new ColumnStore(), clearDiscoveryTranscript: vi.fn() }, loadDemoFlag = false) {
+function arrange(store: ProjectStore = { schemaVersion: 1, lastOpenedId: null, projects: [] }, session = new AiSession(), loadDemoFlag = false) {
   const progressTokens: vscode.CancellationTokenSource[] = [];
   const host = {
     postMessage: vi.fn(async () => true), log: vi.fn(), getExtensionUri: () => '/ext',

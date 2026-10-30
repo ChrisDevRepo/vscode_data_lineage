@@ -386,7 +386,7 @@ export function presentRunRecall(input: RunRecallInput): Record<string, unknown>
   const run = resolveAppliedRun(input);
   if (!run) {
     return rejectionWithEstimate(makeRejection({
-      code: REJECTION_CODES.noRunMemory,
+      code: REJECTION_CODES.invalidInput,
       reason: input.hasPendingProposal ? 'No AI run stored; the proposal awaits approval.' : 'No AI run stored for the applied view.',
       errors: at(input.hasPendingProposal ? 'awaiting_approval' : 'no_run_memory'),
     }));

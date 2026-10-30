@@ -2,7 +2,7 @@
 import { z } from 'zod';
 import type { ToolAttemptObservation } from './toolAttempt';
 import type { AiSession } from '../session/session';
-import { REJECTION_CODES } from '../support/rejectionCodes';
+import { OVER_DISCOVERY_BUDGET } from '../support/tokenBudget';
 import { readToolError } from '../support/toolErrorEnvelope';
 
 /** The captured walk used to seed the SM-offer pill / `lineage_start_exploration`. */
@@ -22,14 +22,16 @@ const SCOPE_BUNDLE_TOOL = 'lineage_get_scope_bundle';
 
 const NodeCountsView = z.object({ nodes: z.number() }).loose();
 
-/** The over-budget refusal as any catalog tool serves it: the rejection (`detail.counts`, `detail.scope_proposal`) or `lineage_search_ddl`'s partial reply (top-level `counts`) — both carry the budget code as `reason`. */
-const OverBudgetResultView = z.object({
-  reason: z.literal(REJECTION_CODES.overDiscoveryBudget),
+const BudgetDetailView = z.object({
   counts: NodeCountsView.optional(),
-  detail: z.object({
-    counts: NodeCountsView.optional(),
-    scope_proposal: z.object({ origin: z.string().trim().min(1) }).loose().optional(),
-  }).loose().optional(),
+  scope_proposal: z.object({ origin: z.string().trim().min(1) }).loose().optional(),
+}).loose();
+
+/** Catalog refusals carry a canonical detail list or legacy detail object; partial DDL replies carry top-level counts. */
+const OverBudgetResultView = z.object({
+  reason: z.literal(OVER_DISCOVERY_BUDGET),
+  counts: NodeCountsView.optional(),
+  detail: z.union([BudgetDetailView, z.array(BudgetDetailView)]).transform(value => [value].flat()).optional(),
 }).loose();
 
 const ObjectDetailIdView = z.object({ id: z.string().trim().min(1) }).loose();
@@ -91,7 +93,7 @@ function readOverBudgetNotice(toolName: string, resultText: string): OverBudgetN
   }
   const view = OverBudgetResultView.safeParse(raw);
   if (!view.success) return null;
-  return { toolName, nodes: (view.data.detail?.counts ?? view.data.counts)?.nodes ?? null };
+  return { toolName, nodes: (view.data.detail?.find(detail => detail.counts)?.counts ?? view.data.counts)?.nodes ?? null };
 }
 
 /** Queues the user-visible discovery-budget notice for the turn's closing markdown, once per turn. */

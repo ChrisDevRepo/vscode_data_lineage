@@ -1,9 +1,9 @@
-/** Pins that reopening a saved project whose source grew past `dataLineageViz.maxNodes` loads nothing and reports the one object-limit message — for a DACPAC project and for a database project alike — and that every DACPAC load path resolves three-part names against the DACPAC name and logs a construct that is not fully supported as a warning. */
+/** Pins that reopening a saved project whose source grew past `dataLineageViz.maxNodes` loads nothing and reports the one object-limit message — for a DACPAC project and for a database project alike — and that DACPAC load paths preserve unknown-database compatibility and unambiguous external references, and report unsupported constructs as warnings. */
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { BridgeHost } from '../../../src/bridge/host';
 import type { ProjectStore } from '../../../src/engine/projectStore';
 import type { DbCellValue, SimpleExecuteResult } from '../../../src/types/database';
-import { ColumnStore } from '../../../src/engine/columnStore';
+import { AiSession } from '../../../src/ai/session/session';
 import { formatObjectLimitMessage } from '../../../src/engine/modelFilters';
 import { buildSyntheticDacpac, buildThreePartDacpac, SELF_DB_METADATA } from '../helpers/syntheticDacpac';
 import { loadParseRules } from '../helpers/testUtils';
@@ -82,7 +82,7 @@ function arrange(host: BridgeHost, connection: Record<string, unknown>) {
     schemaVersion: 1,
     projects: [{ id: 'p1', name: 'Sales', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', connection }],
   } as unknown as ProjectStore;
-  const session = { model: null, uiState: {}, renderState: null, isDbSession: false, columnStore: new ColumnStore(), clearDiscoveryTranscript: vi.fn() };
+  const session = new AiSession();
   const output = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn(), appendLine: vi.fn() };
   const { handlers } = createMessageHandlers(
     host,
@@ -216,11 +216,14 @@ describe('refreshing a project against current saved data', () => {
 describe('DACPAC load paths and three-part names', () => {
   beforeAll(() => { loadParseRules(); });
 
-  const expected = [
-    '[dbo].[t] -> [dbo].[usp_sync]',
-    '[dbo].[usp_sync] -> [dbo].[x]',
-    '[dbo].[usp_sync] -> [otherdb].[dbo].[t]',
-    '[otherdb].[dbo].[x] -> [dbo].[usp_sync]',
+  // Compatibility only: without deployment identity, local suffix binding is not SQL truth.
+  const cases = [
+    { name: 'retains local-suffix compatibility when deployment identity is unknown', body: undefined, dependencies: undefined,
+      expected: ['[dbo].[t] -> [dbo].[usp_sync]', '[dbo].[usp_sync] -> [dbo].[t]', '[dbo].[usp_sync] -> [dbo].[x]', '[dbo].[x] -> [dbo].[usp_sync]'] },
+    { name: 'keeps foreign reads and writes whose qualified objects are absent locally',
+      body: 'INSERT INTO dbo.X (a) SELECT a FROM OtherDb.dbo.RemoteX; INSERT INTO OtherDb.dbo.RemoteT (a) SELECT a FROM dbo.T;',
+      dependencies: [{ name: '[dbo].[T]' }, { name: '[OtherDb].[dbo].[RemoteX]', externalSource: 'OtherDb.dacpac' }],
+      expected: ['[dbo].[t] -> [dbo].[usp_sync]', '[dbo].[usp_sync] -> [dbo].[x]', '[dbo].[usp_sync] -> [otherdb].[dbo].[remotet]', '[otherdb].[dbo].[remotex] -> [dbo].[usp_sync]'] },
   ];
   const modelEdges = (host: BridgeHost) => {
     const frame = vi.mocked(host.postMessage).mock.calls.map(([message]) => message).find(message => message.type === 'dacpac-model');
@@ -228,8 +231,8 @@ describe('DACPAC load paths and three-part names', () => {
     return frame.model.edges.map(edge => `${edge.source} -> ${edge.target}`).sort();
   };
 
-  it('a saved DACPAC project keeps the DACPAC database local', async () => {
-    const host = fakeHost(1000, await buildThreePartDacpac(SELF_DB_METADATA));
+  it.each(cases)('saved DACPAC project $name', async ({ body, dependencies, expected }) => {
+    const host = fakeHost(1000, await buildThreePartDacpac(SELF_DB_METADATA, body, dependencies));
     await arrange(host, { type: 'dacpac', path: '/tmp/self.dacpac', displayName: 'Self', schemas: ['dbo'] }).handlers['load-project']({ type: 'load-project', id: 'p1' });
     expect(modelEdges(host)).toEqual(expected);
   });
@@ -243,8 +246,8 @@ describe('DACPAC load paths and three-part names', () => {
     expect(output.debug).toHaveBeenCalledWith('[Parse] Cursor not fully supported — loaded with the references the parser captures: [dbo].[usp_Sync]');
   });
 
-  it('an opened DACPAC keeps the DACPAC database local after schema selection', async () => {
-    const host = fakeHost(1000, await buildThreePartDacpac(SELF_DB_METADATA));
+  it.each(cases)('opened DACPAC after schema selection $name', async ({ body, dependencies, expected }) => {
+    const host = fakeHost(1000, await buildThreePartDacpac(SELF_DB_METADATA, body, dependencies));
     vi.mocked(host.showOpenDialog).mockResolvedValue([{ fsPath: '/tmp/self.dacpac' }] as never);
     const { handlers } = arrange(host, { type: 'dacpac', path: '/tmp/self.dacpac', displayName: 'Self' });
     await handlers['open-dacpac']({ type: 'open-dacpac' } as never);

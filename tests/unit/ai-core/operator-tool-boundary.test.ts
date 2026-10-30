@@ -420,7 +420,7 @@ describe('operator secret boundary', () => {
       expect(call.valid).toBe(false);
       expect(call.input).toBe(raw);
       if (call.valid) throw new Error('Malformed input accepted');
-      expect(call.code).toBe('invalid_tool_input');
+      expect(call.code).toBe('type');
       expect(call.reason).toBe('Tool arguments were not a JSON object; send the required fields as one JSON object.');
       if (diagnostic) expect(diagnostics.some(line => line.includes(diagnostic))).toBe(true);
       expect(diagnostics.filter(line => line.startsWith('[AI] tool-arguments')).join(' ')).not.toContain(secret);
@@ -444,7 +444,7 @@ describe('operator secret boundary', () => {
     if (outcome.status !== 'completed') throw new Error('Unexpected transport failure');
     expect(outcome.toolCalls).toEqual([{ valid: true, callId: 'encoded', toolName: 'synthetic_tool', input: { values: ['a', 'b'], n: 2 } }]);
     expect(diagnostics.filter(line => line.startsWith('[Normalize]'))).toEqual([
-      '[Normalize] tool=synthetic_tool path=values before="[\\"a\\",\\"b\\"]"', '[Normalize] tool=synthetic_tool path=n before="2"',
+      '[Normalize] tool=synthetic_tool path=values beforeBytes=9', '[Normalize] tool=synthetic_tool path=n beforeBytes=1',
     ]);
   });
 

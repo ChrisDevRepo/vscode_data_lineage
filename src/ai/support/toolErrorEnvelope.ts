@@ -1,5 +1,6 @@
 /** Single typed channel for tool-result rejections, and the one renderer of the problem the model reads (D-103, D-105). */
 import { z } from 'zod';
+import type { ToolDefinition } from '../tools/registry';
 import { REJECTION_CODES } from './rejectionCodes';
 
 type IssueCategory = 'shape' | 'required' | 'reference' | 'value' | 'protocol' | 'stage';
@@ -13,9 +14,10 @@ const FALLBACK_FIELD = 'sections';
 /** Column identity text is shared; report references alone offer the final fallback. */
 const COLUMN_IDENTITY_ISSUE = { category: 'reference', label: 'not a declared column of that object', correction: 'Name a column declared on that object.' } as const;
 const REPORT_REFERENCE_FALLBACK = { fallback: 'If you cannot correct it, write that information in the detail memory instead, highlighted with a callout naming the unresolved issue.' } as const;
+const COLUMN_REFERENCE_FALLBACK = `If you cannot correct it, write that information in ${FALLBACK_FIELD} instead, highlighted with a callout naming the unresolved issue.`;
 const OBJECT_IDENTITY_ISSUE = { category: 'reference', label: 'not an object in the loaded model', correction: 'Name an object of the loaded model by its id.' } as const;
 
-/** Every issue code: its category, a fixed fault label without values, the one positive correction for that fault and, only where a required fact has no structured field that can hold it, the prose `fallback` sent with the third, last rejection (D-105). */
+/** Every issue code's fixed category and verbatim fault/correction text. Fallback wording remains here; contextual category and typed tool effect determine eligibility (D-126/D-136). */
 export const ISSUES = {
   type: { category: 'shape', label: 'wrong JSON type', correction: 'Send the value as the JSON type the schema defines for this field.' },
   json_text: { category: 'shape', label: 'text instead of a JSON object', correction: 'Send the value as a JSON object or array, not as a string that holds JSON.' },
@@ -91,6 +93,8 @@ const ISSUE_CODES = Object.keys(ISSUES) as [IssueCode, ...IssueCode[]];
 export interface ToolError {
   path: string;
   code: IssueCode;
+  /** Domain classification of this particular fault; its fixed issue text stays unchanged. */
+  category?: IssueCategory;
   values?: readonly string[];
 }
 
@@ -106,10 +110,6 @@ export interface ToolRejection {
   errors: ToolError[];
   /** Dotted paths of the offending fields for held-draft bookkeeping and observability; defaults to the error paths. */
   issuePaths?: string[];
-  /** Owner-verified missing authored content held safely for a narrow completion; absent on invalid values or identities. */
-  missingParts?: readonly string[];
-  /** When the backend owner created this missing-content request; separate from its later delivery to the model. */
-  feedbackAt?: string;
   /** Top-level fields the model resends; every other field stays held. */
   resend?: string[];
 }
@@ -132,16 +132,14 @@ const RejectionShape = z.object({
   code: z.string(),
   reason: z.string().trim().min(1),
   detail: z.unknown().optional(),
-  errors: z.array(z.object({ path: z.string(), code: z.enum(ISSUE_CODES), values: z.array(z.string()).optional() }).strict()).min(1),
+  errors: z.array(z.object({ path: z.string(), code: z.enum(ISSUE_CODES), category: z.enum(['shape', 'required', 'reference', 'value', 'protocol', 'stage']).optional(), values: z.array(z.string()).optional() }).strict()).min(1),
   issuePaths: z.array(z.string()).optional(),
-  missingParts: z.array(z.string().min(1)).min(1).optional(),
-  feedbackAt: z.string().datetime().optional(),
   resend: z.array(z.string()).optional(),
 }).strict();
 
 /** Write-side builder for the one tool-execution failure envelope both LM lanes record when a handler throws; the run ends on it. */
 export function buildToolExecutionError(toolName: string): string {
-  return JSON.stringify(makeRejection({ code: REJECTION_CODES.toolExecutionError, reason: `${toolName} failed inside the extension.`, errors: at('backend_fault') }));
+  return JSON.stringify(makeRejection({ code: REJECTION_CODES.backendFault, reason: `${toolName} failed inside the extension.`, errors: at('backend_fault') }));
 }
 
 /** Stable message shared by {@link NoProjectLoadedError} and a caller without a chat turn. */
@@ -158,7 +156,7 @@ export class NoProjectLoadedError extends Error {
 
 /** Rejection for a tool call dispatched with no project loaded. */
 export function buildNoProjectLoadedError(): string {
-  return JSON.stringify(makeRejection({ code: REJECTION_CODES.noProjectLoaded, reason: NO_PROJECT_LOADED_MESSAGE, errors: at('no_project') }));
+  return JSON.stringify(makeRejection({ code: REJECTION_CODES.backendFault, reason: NO_PROJECT_LOADED_MESSAGE, errors: at('no_project') }));
 }
 
 /** Reader: the typed {@link ToolRejection} a tool result carries, or `null` when the payload is not a refusal. */
@@ -178,7 +176,7 @@ export function readToolErrorText(text: string): ToolRejection | null {
   }
 }
 
-/** Feedback stage of one hop (D-105): 1 states every fault, 2 adds the allowed values, 3 adds the per-code fallbacks and the last-correction notice. */
+/** Feedback stage of one hop (D-105): 1 states every fault, 2 adds the allowed values, 3 adds eligible reference fallbacks and the last-correction notice. */
 export type FeedbackStage = 1 | 2 | 3;
 
 /** The model-visible rejection: one flat list of coded faults with table-owned messages and staged metadata. */
@@ -207,21 +205,29 @@ function valueAt(input: unknown, path: string): unknown {
   return (path ? path.split('.') : []).reduce<unknown>((value, key) => (value !== null && typeof value === 'object' ? (value as Record<string, unknown>)[key] : undefined), input);
 }
 
-/** Renders every independent fault once. Required subjects appear immediately, allowed values from feedback 2, and report-reference fallbacks only at feedback 3; submitted values are never echoed. */
-export function renderProblem(rejection: ToolRejection, stage: FeedbackStage, input?: unknown): string {
+/** Required values name distinct raw faults; display aggregation lists all subjects in one path/code message. */
+function mergeToolErrors(errors: readonly ToolError[], preserveSubjects = true): ToolError[] {
   const merged = new Map<string, ToolError>();
-  for (const error of rejection.errors) {
-    const key = `${error.path}|${error.code}`, known = merged.get(key);
+  for (const error of errors) {
+    const subjects = preserveSubjects && (error.category ?? ISSUES[error.code].category) === 'required' ? [...new Set(error.values ?? [])].sort() : undefined;
+    const key = JSON.stringify([error.path, error.code, subjects]), known = merged.get(key);
     const values = known?.values || error.values ? [...new Set([...(known?.values ?? []), ...(error.values ?? [])])] : undefined;
-    merged.set(key, { path: error.path, code: error.code, ...(values ? { values } : {}) });
+    merged.set(key, { ...known, ...error, ...(values ? { values } : {}) });
   }
+  return [...merged.values()];
+}
+
+/** Renders every independent fault once. Required subjects appear immediately, allowed values from feedback 2, and report-reference fallbacks only at feedback 3; submitted values are never echoed. */
+export function renderProblem(rejection: ToolRejection, stage: FeedbackStage, input?: unknown, effect?: ToolDefinition['effect']): string {
+  const merged = mergeToolErrors(rejection.errors, false);
   // An absent parent covers its descendants; children under a present or mistyped parent still explain the expected structure.
-  const missingParents = [...merged.values()].filter(error => error.path && error.code === 'missing' && valueAt(input, error.path) == null).map(error => `${error.path}.`);
+  const missingParents = merged.filter(error => error.path && error.code === 'missing' && valueAt(input, error.path) == null).map(error => `${error.path}.`);
   let fallbackShown = false;
-  const errors = [...merged.values()].filter(error => !missingParents.some(prefix => error.path.startsWith(prefix)))
+  const errors = merged.filter(error => !missingParents.some(prefix => error.path.startsWith(prefix)))
     .sort((a, b) => a.path.localeCompare(b.path) || a.code.localeCompare(b.code)).map(error => {
       const issue = ISSUES[error.code];
-      const fallback = stage === 3 && 'fallback' in issue ? issue.fallback : '';
+      const reference = (error.category ?? issue.category) === 'reference' && (effect === 'presentation_commit' || (effect === 'hop_commit' && /^column_flow(?:\.|$)/.test(error.path)));
+      const fallback = stage === 3 && reference ? ('fallback' in issue ? issue.fallback : effect === 'hop_commit' ? COLUMN_REFERENCE_FALLBACK : REPORT_REFERENCE_FALLBACK.fallback) : '';
       if (fallback) fallbackShown = true;
       const message = `${issue.label}. ${issue.correction}${fallback ? ` ${fallback}` : ''}`;
       const sent = valueAt(input, error.path);
@@ -239,13 +245,14 @@ export function at(code: IssueCode, paths: readonly string[] = [''], values?: re
   return paths.map(path => ({ path, code, ...(values ? { values } : {}) }));
 }
 
-/** Union independently assessed refusals without interpreting rejected arguments. */
+/** Unions independently assessed faults; a backend invariant fault always owns the outcome code. */
 export function combineToolRejections(rejections: readonly ToolRejection[]): ToolRejection {
   if (rejections.length === 0) throw new Error('Cannot combine an empty rejection set.');
   const details = rejections.flatMap(rejection => rejection.detail === undefined ? []
     : Array.isArray(rejection.detail) ? rejection.detail : [rejection.detail]);
   return makeRejection({
-    code: rejections.some(rejection => rejection.code === REJECTION_CODES.invalidInput) ? REJECTION_CODES.invalidInput : rejections[0].code,
+    code: rejections.some(rejection => rejection.code === REJECTION_CODES.backendFault) ? REJECTION_CODES.backendFault
+      : rejections.some(rejection => rejection.code === REJECTION_CODES.invalidInput) ? REJECTION_CODES.invalidInput : rejections[0].code,
     reason: [...new Set(rejections.map(rejection => rejection.reason))].join('\n'),
     issuePaths: rejections.flatMap(rejection => rejection.issuePaths ?? rejection.errors.map(error => error.path)),
     ...(details.length ? { detail: [...new Map(details.map(detail => [JSON.stringify(detail), detail])).values()] } : {}),
@@ -261,19 +268,17 @@ const PATH_SEGMENT = `(?:[A-Za-z_][A-Za-z0-9_-]{0,${MAX_PATH_SEGMENT_CHARS - 1}}
 /** Dotted identifier grammar every recorded path must match: safe to log and to show where prose is not allowed. */
 const ISSUE_PATH_GRAMMAR = new RegExp(`^${PATH_SEGMENT}(?:\\.${PATH_SEGMENT})*$`);
 
-/** The one producer of a {@link ToolRejection}. At least one error is required; an error path outside the dotted grammar is stated at its call. `reason` (default: the code) is for logs. Missing parts the errors do not already state are added as `missing`. */
+/** The one producer of a {@link ToolRejection}. At least one error is required; an error path outside the dotted grammar is stated at its call. `reason` defaults to the issue codes and serves diagnostics and control outcomes. */
 export function makeRejection(input: {
   code: string;
   errors: readonly ToolError[];
   reason?: string;
   detail?: unknown;
   issuePaths?: readonly string[];
-  missingParts?: readonly string[];
   resend?: readonly string[];
 }): ToolRejection {
-  const reason = (input.reason ?? input.code).trim() || input.code;
-  const errors = input.errors.map(error => (error.path === '' || ISSUE_PATH_GRAMMAR.test(error.path) ? error : { ...error, path: '' }));
-  for (const part of input.missingParts ?? []) if (!errors.some(error => error.path === part)) errors.push({ path: part, code: 'missing' });
+  const reason = input.reason?.trim() || [...new Set(input.errors.map(error => error.code))].join(', ') || input.code;
+  const errors = mergeToolErrors(input.errors.map(error => (error.path === '' || ISSUE_PATH_GRAMMAR.test(error.path) ? error : { ...error, path: '' })));
   if (!errors.length) throw new Error('makeRejection: a rejection states at least one error');
   const issuePaths = [...new Set(input.issuePaths ?? errors.map(error => error.path))].filter(path => ISSUE_PATH_GRAMMAR.test(path));
   return {
@@ -282,7 +287,6 @@ export function makeRejection(input: {
     ...(input.detail !== undefined ? { detail: input.detail } : {}),
     errors,
     ...(issuePaths.length > 0 ? { issuePaths } : {}),
-    ...(input.missingParts?.length ? { missingParts: [...input.missingParts], feedbackAt: new Date().toISOString() } : {}),
     ...(input.resend !== undefined ? { resend: [...input.resend] } : {}),
   };
 }

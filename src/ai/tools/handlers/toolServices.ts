@@ -45,7 +45,7 @@ export interface ToolServices {
   logAndReturn(toolName: ToolName, data: object, input?: unknown): string;
   /** Materializes the session's partial filter into a fully-defaulted filter for engine construction. */
   buildActiveFilter(sess: AiSession): SerializedFilterState;
-  /** Wraps a thrown error as an `internal_error` result; the `present_result` branch bumps failure counters. */
+  /** Wraps a thrown error as a `backend_fault` result; the `present_result` branch bumps failure counters. */
   toolError(toolName: string, err: unknown): string;
 }
 

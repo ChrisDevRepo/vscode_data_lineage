@@ -1,6 +1,16 @@
 /** Identifier-normalization tests for `src/utils/sql.ts`: the delimiter strip and the qualified-name split must agree with T-SQL, where `]]` inside a bracketed name is one literal `]`. */
 import { describe, expect, it } from 'vitest';
 import { splitSqlName, stripBrackets } from '../../../src/utils/sql';
+import { sqlIdentifierComparisonKey } from '../../../src/engine/shared/sqlIdentifier';
+
+describe('sqlIdentifierComparisonKey', () => {
+  it.each(['[]', '""', '[].x', 'x.[]', '"".x', 'x.""', '[a]..[b]'])('rejects empty qualified identifier parts: %s', input => {
+    expect(sqlIdentifierComparisonKey(input)).toBeNull();
+  });
+  it.each(['[a]]b]', '"a""b"', '[]]]', '""""'])('accepts escaped delimiters as identifier content: %s', input => {
+    expect(sqlIdentifierComparisonKey(input)).not.toBeNull();
+  });
+});
 
 describe('stripBrackets', () => {
   it('unwraps a plain bracketed identifier', () => {

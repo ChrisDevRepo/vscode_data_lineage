@@ -219,8 +219,8 @@ describe('D-103: every rejecting path renders the one problem shape', () => {
     registry.register({ name: 'lineage_search_objects', inputSchema: Schema, effect: 'read', modelDescription: 'Search.',
       execute: (value: unknown) => {
         const admitted = validateToolCandidate(Schema, value);
-        if (!admitted.success) return JSON.stringify({ ...admitted.rejection, code: REJECTION_CODES.invalidToolInput });
-        return JSON.stringify(makeRejection({ code: 'out_of_scope_or_not_neighbor', errors: errorsAt('not_neighbor', ['query']) }));
+        if (!admitted.success) return JSON.stringify({ ...admitted.rejection, code: REJECTION_CODES.invalidInput });
+        return JSON.stringify(makeRejection({ code: 'invalid_input', errors: errorsAt('not_neighbor', ['query']) }));
       } });
     const plan = compileInstructionPlan({ kind: 'converse', stage: { kind: 'discover' }, registry,
       messages: [new HumanMessage('Find Orders.')], sink: new TurnEventSink(() => {}), facts: { memorySections: [] }, toolChoice: 'auto' });
@@ -345,7 +345,7 @@ describe('D-105: a sibling closed by its reply renders that reply\'s stage, like
     registry.register({ name: 'lineage_search_objects', inputSchema: Schema, effect: 'read', modelDescription: 'Search.',
       execute: (value: unknown) => {
         const admitted = validateToolCandidate(Schema, value);
-        return admitted.success ? '{"results":[]}' : JSON.stringify({ ...admitted.rejection, code: REJECTION_CODES.invalidToolInput });
+        return admitted.success ? '{"results":[]}' : JSON.stringify({ ...admitted.rejection, code: REJECTION_CODES.invalidInput });
       } });
     const plan = compileInstructionPlan({ kind: 'converse', stage: { kind: 'discover' }, registry, requiredTerminalTool: 'lineage_search_objects',
       messages: [new HumanMessage('Find Orders.')], sink: new TurnEventSink(() => {}), facts: { memorySections: [] }, toolChoice: 'required' });
@@ -355,6 +355,6 @@ describe('D-105: a sibling closed by its reply renders that reply\'s stage, like
     const closing = await executeToolAttempt(nativePort(() => [call('terminal', 'Orders'), call('sibling', 'Sales')]), plan, { priorState: state });
     const sibling = closing.messages.find(item => item instanceof ToolMessage && item.tool_call_id === 'sibling') as ToolMessage;
     expect(closing.calls.map(item => item.status)).toEqual(['executed', 'phase_closed']);
-    expect(JSON.parse(String(sibling.content))).toMatchObject({ code: REJECTION_CODES.phaseClosed, attempt: `${rejected + 1}/3` });
+    expect(JSON.parse(String(sibling.content))).toMatchObject({ code: REJECTION_CODES.invalidInput, attempt: `${rejected + 1}/3` });
   });
 });

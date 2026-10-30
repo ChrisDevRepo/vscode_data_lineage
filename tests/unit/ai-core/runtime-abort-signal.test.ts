@@ -28,7 +28,7 @@ describe('AgentRuntime — cancel rides the LangGraph run config', () => {
     );
     const { registry } = scriptedRegistry([{ name: 'lineage_present_result', result: '{"ok":true}' }]);
     const script = Array.from({ length: MAX_TOOL_PROVIDER_CALLS }, (_, i) => ({
-      toolCalls: [invalidCall(`present-${i}`, 'lineage_present_result', 'invalid_tool_input', 'sections.0.text: Required', ['sections.0.text'])],
+      toolCalls: [invalidCall(`present-${i}`, 'lineage_present_result', 'type', 'sections.0.text: Required', ['sections.0.text'])],
     }));
     const scripted = new ScriptedModelPort(script);
     const controller = new AbortController();

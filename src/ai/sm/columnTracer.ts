@@ -47,16 +47,11 @@ export class ColumnTracer {
   }
 
   /**
-   * The aspect a complete exploration delivers: the edges in the closure of the tracked roots in the approved
-   * direction. A procedure origin's root column is the column it writes under that name, so a pair its own hop
-   * stores into another object's same-named column is a root too (D-130 adds no writer pair). A stored pair outside
-   * the closure (one that reaches no requested output) is withheld and named in one `log` line; no edge is added or rewritten.
+   * The aspect a complete exploration delivers: authored edges attached to the tracked roots in the approved
+   * direction by the same owner as hop-time carry. Detached claims are withheld and logged; no edge is added or rewritten.
    */
   deliveredState(roots: readonly { node: string; col: string }[], direction: 'upstream' | 'downstream' | 'both', log?: TracerLogFn): ColumnAspect {
-    const written = this.aspect.edges.filter(edge => edge.to_node !== edge.hop_node
-      && roots.some(root => root.node === edge.hop_node && this.columnKey(root.col) === this.columnKey(edge.to_col)));
-    const closure = columnAttachment([...roots, ...written.map(edge => ({ node: edge.to_node, col: edge.to_col }))], this.aspect.edges, direction,
-      columnEndpointKeyFactory(new Map(), this.identifierCaseSensitive));
+    const closure = columnAttachment(roots, this.aspect.edges, direction, columnEndpointKeyFactory(new Map(), this.identifierCaseSensitive));
     const delivered = this.aspect.edges.filter(edge => closure.attaches(edge));
     if (delivered.length === this.aspect.edges.length) return this.aspect;
     const detached = this.aspect.edges.filter(edge => !delivered.includes(edge)).map(e => `${e.from_node}.${e.from_col} -> ${e.to_node}.${e.to_col}`);
@@ -352,14 +347,17 @@ interface ColumnAttachment {
   attaches(edge: ColumnClosureEdge): boolean;
 }
 
-/** Computes which column endpoints and edges attach to the requested origin outputs (`roots`). */
+/** Computes attachment for carry and delivery. A trusted procedure-origin output binds to its own authored write
+ * under that name (D-026/D-130); the local root link routes that explicit reference and is never a stored lineage pair. */
 export function columnAttachment(
   roots: readonly { node: string; col: string }[],
-  edges: ReadonlyArray<ColumnClosureEdge>,
+  storedEdges: ReadonlyArray<ColumnClosureEdge>,
   direction: 'upstream' | 'downstream' | 'both',
   endpointKey: (node: string, col: string) => string,
 ): ColumnAttachment {
   const rootKeys = new Set(roots.map(root => endpointKey(root.node, root.col)));
+  const edges = [...storedEdges, ...storedEdges.flatMap(edge => edge.to_node !== edge.hop_node && rootKeys.has(endpointKey(edge.hop_node, edge.to_col))
+    ? [{ hop_node: edge.hop_node, from_node: edge.hop_node, from_col: edge.to_col, to_node: edge.to_node, to_col: edge.to_col }] : [])];
   const links = edges.map(edge => ({ from: endpointKey(edge.from_node, edge.from_col), to: endpointKey(edge.to_node, edge.to_col) }));
   const endpoints = new Set(rootKeys);
   if (direction !== 'downstream') for (const key of reachableColumnEndpoints(rootKeys, links, 'upstream')) endpoints.add(key);

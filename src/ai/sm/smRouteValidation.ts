@@ -27,20 +27,10 @@ const ROUTE_ISSUE = {
   neighbor_outcome_missing: 'neighbor_undecided',
 } as const satisfies Record<InvalidRouteKind, IssueCode>;
 
-/** Machine error code per validation kind; unlisted kinds fall back to routeValidationFailed. */
-const ROUTE_REJECTION_CODE: Partial<Record<InvalidRouteKind, string>> = {
-  bad_out_col: REJECTION_CODES.outColNotOnNode,
-  bad_contributor_col: REJECTION_CODES.contributorColNotOnSource,
-  self_loop_column: REJECTION_CODES.columnSelfLoop,
-  pruned_contributor: REJECTION_CODES.prunedContributor,
-};
-
 /** Builds the atomic content/action rejection envelope. */
 export function buildRouteValidationRejection(errors: InvalidRoute[]): ToolRejection {
-  const distinctKinds = [...new Set(errors.map(e => e.kind))];
-  const code = distinctKinds.length === 1 ? (ROUTE_REJECTION_CODE[distinctKinds[0]] ?? REJECTION_CODES.routeValidationFailed) : REJECTION_CODES.routeValidationFailed;
   return makeRejection({
-    code,
+    code: REJECTION_CODES.invalidInput,
     reason: routeRejectionReason(errors),
     detail: routeRejectionDetail(errors),
     issuePaths: errors.flatMap(e => (e.path ? [e.path] : [])),

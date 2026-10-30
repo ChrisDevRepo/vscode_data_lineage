@@ -100,7 +100,7 @@ function projectMessage(
       role: 'assistant',
       // Tool-only turns send `null`: some servers reject `''` there. An empty turn with no
       // tool_calls must send a string — Azure 400s `expected a string, got null` on
-      // `messages[n].content` otherwise (an empty_generation retry).
+      // `messages[n].content` otherwise (an empty-reply retry).
       content: text || (calls.length > 0 ? null : ''),
       ...(calls.length > 0 ? { tool_calls: calls } : {}),
       ...(reasoning ? { reasoning_content: reasoning } : {}),
@@ -215,7 +215,7 @@ function safeJson(serialized: string): unknown {
   try {
     return JSON.parse(serialized);
   } catch {
-    // The unparsable string IS the evidence on this lane — see the port's `invalid_tool_input`
+    // The unparsable string IS the evidence on this lane — see the port's `type` fault
     // divergence — so the capture keeps it rather than reporting an empty object.
     return serialized;
   }

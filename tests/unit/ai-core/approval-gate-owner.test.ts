@@ -4,14 +4,22 @@
  * card never approves." The session is the one owner of the card: each shown card carries a
  * proposal identity that is never reused, and only the card the session still holds can approve.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { AgentRuntime } from '../../../src/ai/host/agentRuntime';
 import { TurnEventSink, type TurnEvent } from '../../../src/ai/runtime/turnEventSink';
 import { AiSession } from '../../../src/ai/session/session';
+import { NavigationEngine } from '../../../src/ai/sm/smBase';
+import { assertActiveTurnLease } from '../../../src/ai/session/turnLease';
+import { applyModelToSession } from '../../../src/bridge/messageHandlers';
 import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
 import type { IToolRegistry } from '../../../src/ai/tools/registry';
 import { ScriptedModelPort, validCall } from '../../harness/scriptedModelPort';
 import { makeGraph, makeIndexedModel, makeNode } from '../helpers/modelFixtures';
+
+vi.mock('vscode', async (importOriginal) => ({
+  ...await importOriginal<object>(),
+  commands: { executeCommand: vi.fn(async () => undefined) },
+}));
 
 const ORIGIN = '[hop].[origin]';
 const BRANCH = '[hop].[branch]';
@@ -62,6 +70,48 @@ function approve(session: AiSession, id: string): boolean {
 const holds = (session: AiSession, id: string): boolean => session.holdsProposal(id);
 
 describe('approval card — the session owns the proposal', () => {
+  it.each(['pending', 'active', 'completed'] as const)('loading another model retires the prior approval card and active turn lease (stage=%s)', async stage => {
+    const w = world();
+    const shown = await propose(w);
+    const lease = { sessionId: w.session.id, epoch: w.session.turnEpoch, signal: new AbortController().signal };
+    if (stage !== 'pending') {
+      const engine = new NavigationEngine(w.session.model!, w.session.graph!, () => {}, {});
+      expect(w.session.activatePendingExploration(shown, lease.epoch, proposal => {
+        const initialized = engine.init(proposal.init);
+        return 'code' in initialized ? initialized : engine;
+      }).kind).toBe('accepted');
+      if (stage === 'completed') {
+        engine.classification = 'technical';
+        expect(engine.getHopContext().focus_node?.id).toBe(ORIGIN);
+        expect(engine.submitFindings({ focus_node_id: ORIGIN, summary: 'Origin reads branch.',
+          sections: [{ angle: 'technical', text: 'Value comes from branch.' }],
+          questions: [{ nodeId: BRANCH, question: 'Explain Value.' }] })).toHaveProperty('ok', true);
+        expect(engine.getHopContext().focus_node?.id).toBe(BRANCH);
+        expect(engine.submitFindings({ focus_node_id: BRANCH, summary: 'Branch supplies Value.',
+          sections: [{ angle: 'technical', text: 'Value is the literal 1.' }] })).toHaveProperty('ok', true);
+        engine.getHopContext();
+        expect(engine.status).toBe('complete');
+        w.session.storeSmResult(engine.getResult(), lease.epoch);
+        w.session.enterCompleted(lease.epoch);
+        expect(w.session.resultGraph).not.toBeNull();
+      }
+    }
+    // The identity survives the reload, but the SQL and approved dependency scope change.
+    const replacement = makeIndexedModel([
+      makeNode({ id: ORIGIN, schema: 'hop', name: 'origin', type: 'view', bodyScript: 'SELECT 2 AS Value;' }),
+    ], []);
+
+    applyModelToSession(w.session, replacement, false);
+
+    expect.soft(holds(w.session, shown)).toBe(false);
+    expect.soft(approve(w.session, shown)).toBe(false);
+    expect.soft(() => assertActiveTurnLease(lease, w.session.turnEpoch)).toThrow();
+    expect(w.session.stateMachine).toBeNull();
+    expect(w.session.resultGraph).toBeNull();
+    expect(w.session.phase.kind).toBe('idle');
+    expect(w.session.model).toBe(replacement);
+  });
+
   it('a card left over from a cancelled proposal never approves the next proposal', async () => {
     const w = world();
     const cancelled = await propose(w);

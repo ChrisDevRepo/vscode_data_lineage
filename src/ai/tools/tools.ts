@@ -173,10 +173,10 @@ const WILDCARD_ALL_TOKENS = new Set(['*', '.*', '%']);
 function validateQuery(query: string): ToolRejection | null {
   const trimmed = query.trim();
   if (trimmed.length < 1) {
-    return makeRejection({ code: REJECTION_CODES.queryTooShort, errors: at('query_too_short', ['query']) });
+    return makeRejection({ code: REJECTION_CODES.invalidInput, errors: at('query_too_short', ['query']) });
   }
   if (/^["'`.*?+^$]+$/.test(trimmed)) {
-    return makeRejection({ code: REJECTION_CODES.queryNotAName, errors: at('query_not_a_name', ['query']) });
+    return makeRejection({ code: REJECTION_CODES.invalidInput, errors: at('query_not_a_name', ['query']) });
   }
   return null;
 }
@@ -199,14 +199,14 @@ export async function searchObjects(
     && WILDCARD_ALL_TOKENS.has(query);
 
   if (!isWildcardAllQuery && query.length > REGEX_MAX_LENGTH) {
-    return makeRejection({ code: REJECTION_CODES.invalidRegex, errors: at('invalid_regex', ['query']), reason: `Longer than ${REGEX_MAX_LENGTH} characters.` });
+    return makeRejection({ code: REJECTION_CODES.invalidInput, errors: at('invalid_regex', ['query']), reason: `Longer than ${REGEX_MAX_LENGTH} characters.` });
   }
 
   const effectiveQuery = isWildcardAllQuery ? '' : query;
   if (isRegex && !isWildcardAllQuery) {
     const compiled = compileSearchRegex(effectiveQuery);
     if (!compiled.ok) {
-      return makeRejection({ code: REJECTION_CODES.invalidRegex, errors: at('invalid_regex', ['query']), resend: ['mode'], reason: regexRejectHint(effectiveQuery, compiled) });
+      return makeRejection({ code: REJECTION_CODES.invalidInput, errors: at('invalid_regex', ['query']), resend: ['mode'], reason: regexRejectHint(effectiveQuery, compiled) });
     }
   }
   const listAllInSchemas = isWildcardAllQuery || (!isRegex && effectiveQuery.length === 0 && (appliedSchemaFilter?.length ?? 0) > 0);
@@ -234,7 +234,7 @@ export async function searchObjects(
       return model.nodes.filter(node => hits.has(node.id));
     } catch (error: unknown) {
       if (error instanceof RegexSearchExecutionError && error.reason === 'deadline') {
-        return makeRejection({ code: REJECTION_CODES.invalidRegex, reason: REGEX_DEADLINE_REASON, errors: at('invalid_regex', ['query']) });
+        return makeRejection({ code: REJECTION_CODES.invalidInput, reason: REGEX_DEADLINE_REASON, errors: at('invalid_regex', ['query']) });
       }
       throw error;
     }
@@ -359,7 +359,7 @@ export function prepareModelObject(model: DatabaseModel, raw: string, field: str
   const nodeMap = getModelNodeMap(model);
   const id = resolveModelNodeId(raw, nodeMap, model.identifierCaseSensitive) ?? '';
   const node = nodeMap.get(id);
-  return node ? { id, node, nodeMap } : makeRejection({ code: REJECTION_CODES.notFound, errors: at('not_found', [field]), detail: { [field]: raw } });
+  return node ? { id, node, nodeMap } : makeRejection({ code: REJECTION_CODES.invalidInput, errors: at('not_found', [field]), detail: { [field]: raw } });
 }
 
 /** Reads metadata from the same object plan admitted by the caller. */
@@ -417,18 +417,17 @@ export function executeObjectDetail(model: DatabaseModel, prepared: ModelObjectP
   return { ...base, ddl, unresolved_refs };
 }
 
-/** Retrieves a bounded BFS scope in one call, optionally including all DDL, from its already admitted origin plan. */
-export function executeScopeBundle(model: DatabaseModel, graph: Graph, input: GetScopeBundleInput, budget: TurnTokenBudget, prepared: ModelObjectPlan, store?: ColumnStore): object {
-  const { nodeMap, node: originNode, id: origin } = prepared;
+/** Measures the requested graph scope and its node budget without reading SQL or publishing evidence. */
+export function prepareScopeBundle(graph: Graph, input: GetScopeBundleInput, budget: TurnTokenBudget, prepared: ModelObjectPlan) {
+  const { node: originNode, id: origin } = prepared;
   const direction = input.direction ?? 'bidirectional';
-  const includeDdl = input.include_ddl;
   const symmetricDepth = input.depth ?? 3;
   const upstreamDepth = direction === 'bidirectional' ? (input.upstream_depth ?? symmetricDepth) : undefined;
   const downstreamDepth = direction === 'bidirectional' ? (input.downstream_depth ?? symmetricDepth) : undefined;
   const singleDepth = input.depth ?? 3;
 
   if (direction === 'bidirectional' && upstreamDepth === 0 && downstreamDepth === 0) {
-    return makeRejection({ code: REJECTION_CODES.asymmetricDepthBothZero, errors: at('depth_zero', ['upstream_depth', 'downstream_depth']) });
+    return makeRejection({ code: REJECTION_CODES.invalidInput, errors: at('depth_zero', ['upstream_depth', 'downstream_depth']) });
   }
 
   const scopeIds = new Set<string>([origin]);
@@ -480,6 +479,14 @@ export function executeScopeBundle(model: DatabaseModel, graph: Graph, input: Ge
     if (admission) return overBudgetScopeReply(admission);
   }
 
+  return { scopeIds, upstreamDistance, downstreamDistance, direction, singleDepth, upstreamDepth, downstreamDepth, overBudgetScopeReply };
+}
+
+/** Renders one admitted scope; SQL bodies are read only after canonical admission. */
+export function executeScopeBundle(model: DatabaseModel, input: GetScopeBundleInput, budget: TurnTokenBudget, prepared: ModelObjectPlan, scope: Exclude<ReturnType<typeof prepareScopeBundle>, ToolRejection>, store?: ColumnStore): object {
+  const { nodeMap, node: originNode, id: origin } = prepared;
+  const { scopeIds, upstreamDistance, downstreamDistance, direction, singleDepth, upstreamDepth, downstreamDepth, overBudgetScopeReply } = scope;
+  const includeDdl = input.include_ddl;
   let ddlChars = 0;
   for (const id of scopeIds) {
     const ddl = getNodeDdl(id, nodeMap, store);
@@ -649,12 +656,12 @@ export async function searchDdl(
   signal?: AbortSignal,
 ): Promise<object> {
   if (query.length > REGEX_MAX_LENGTH) {
-    return makeRejection({ code: REJECTION_CODES.invalidRegex, errors: at('invalid_regex', ['query']), reason: `Longer than ${REGEX_MAX_LENGTH} characters.` });
+    return makeRejection({ code: REJECTION_CODES.invalidInput, errors: at('invalid_regex', ['query']), reason: `Longer than ${REGEX_MAX_LENGTH} characters.` });
   }
 
   const compiled = compileSearchRegex(query);
   if (!compiled.ok) {
-    return makeRejection({ code: REJECTION_CODES.invalidRegex, errors: at('invalid_regex', ['query']), reason: regexRejectHint(query, compiled) });
+    return makeRejection({ code: REJECTION_CODES.invalidInput, errors: at('invalid_regex', ['query']), reason: regexRejectHint(query, compiled) });
   }
 
   const ddlTypes: ObjectType[] = types
@@ -682,7 +689,7 @@ export async function searchDdl(
     };
   } catch (error: unknown) {
     if (error instanceof RegexSearchExecutionError && error.reason === 'deadline') {
-      return makeRejection({ code: REJECTION_CODES.invalidRegex, reason: REGEX_DEADLINE_REASON, errors: at('invalid_regex', ['query']) });
+      return makeRejection({ code: REJECTION_CODES.invalidInput, reason: REGEX_DEADLINE_REASON, errors: at('invalid_regex', ['query']) });
     }
     throw error;
   }

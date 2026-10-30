@@ -28,7 +28,7 @@ describe('submit_findings repair keeps resent saved fields (D-098)', () => {
     const summary = 'Report returns a constant Value.';
     if (seedSummary) {
       const first = JSON.parse(executeSubmitFindings({ focus_node_id: node.id, summary }, services));
-      expect(first.missingParts).toEqual(['sections']);
+      expect(first.errors).toEqual([{ path: 'sections', code: 'missing' }]);
       expect(engine.heldPartsOfCurrentFocus()?.resend).not.toContain('summary');
     }
     return { node, engine, services, summary, logs, session };
@@ -57,7 +57,7 @@ describe('submit_findings repair keeps resent saved fields (D-098)', () => {
     expect(JSON.stringify(result)).not.toContain('Unrecognized key');
     expect(engine.heldPartsOfCurrentFocus()).toMatchObject({ summary: true });
     expect(result.errors).toContainEqual({ path: 'summary', code: 'not_overwritten' });
-    expect(JSON.stringify(engine.toJSON())).toContain(summary);
+    expect(engine.getDetailSlots()).toEqual([]);
     expect(JSON.parse(executeSubmitFindings({ sections: { technical: 'Corrected section.' } }, services))).toHaveProperty('ok', true);
     expect(engine.getDetailSlots()).toContainEqual(expect.objectContaining({ summary }));
   });
@@ -71,8 +71,6 @@ describe('submit_findings repair keeps resent saved fields (D-098)', () => {
     expect(rejected.errors).toEqual(expect.arrayContaining([
       { path: 'summary', code: 'type', values: ['string'] }, { path: 'summary', code: 'not_overwritten' },
     ]));
-    expect(engine.toJSON().engineInternals.heldFinding?.finding).toMatchObject({ summary });
-    expect(engine.toJSON().engineInternals.heldFinding?.finding).not.toHaveProperty('badge_label');
     expect(JSON.parse(executeSubmitFindings({}, services))).toHaveProperty('ok', true);
     expect(engine.getDetailSlots()).toContainEqual(expect.objectContaining({ summary,
       sections: [{ angle: 'technical', text: 'Value is the literal 1.' }] }));
@@ -105,11 +103,15 @@ describe('submit_findings repair keeps resent saved fields (D-098)', () => {
     expect(rejected).toHaveProperty('code', 'invalid_input');
     expect(rejected.errors).toContainEqual({ path: 'sections', code: 'not_overwritten' });
     expect(rejected.errors).toContainEqual(expect.objectContaining({ path: 'sections.business', code: 'missing' }));
-    expect(engine.toJSON().engineInternals.heldFinding?.finding.sections).toEqual([
+    expect(JSON.parse(executeSubmitFindings({}, services))).toHaveProperty('ok', true);
+    expect(engine.getDetailSlots()[0]?.sections).toEqual([
       { angle: 'business', text: sections.business }, { angle: 'technical', text: sections.technical },
     ]);
-    expect(JSON.parse(executeSubmitFindings({ sections: { business: 'New business.', technical: 'New technical.' } }, services))).toHaveProperty('ok', true);
-    expect(engine.getDetailSlots()).toContainEqual(expect.objectContaining({ sections: [
+    const replacement = held('both');
+    expect(JSON.parse(executeSubmitFindings({ sections, badge_label: 'x'.repeat(51) }, replacement.services))).toHaveProperty('code', 'invalid_input');
+    expect(JSON.parse(executeSubmitFindings({ sections: { technical: 'Changed technical.' }, badge_label: 'Short' }, replacement.services))).toHaveProperty('code', 'invalid_input');
+    expect(JSON.parse(executeSubmitFindings({ badge_label: 'Short', sections: { business: 'New business.', technical: 'New technical.' } }, replacement.services))).toHaveProperty('ok', true);
+    expect(replacement.engine.getDetailSlots()).toContainEqual(expect.objectContaining({ sections: [
       { angle: 'business', text: 'New business.' }, { angle: 'technical', text: 'New technical.' },
     ] }));
   });
