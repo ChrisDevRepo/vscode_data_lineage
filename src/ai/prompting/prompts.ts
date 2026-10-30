@@ -123,7 +123,7 @@ function buildPresentationDetailContract(mode: PresentationStage, evidence?: str
         headingRule,
       ]
       : [
-        '- `sections[].text` carries, for each linked node, its rules, predicates, formulas, dataset effects and ⚠️ callouts at the captured depth, and the role each captured input plays (value, filter-only or display-only); it follows the asked output\'s calculation chain across nodes, including intermediate CTE and derived-column results. Preserve evidence-supported facts once, merging equivalent business and technical captures without repeated wording; correct or omit captured claims contradicted by supplied SQL or metadata, and do not strengthen at-most-one behavior into exactly-one guarantees. Preserve captured dataset effects even when no column-value edge represents them. A short SQL witness may accompany its explanation.',
+        '- `sections[].text` carries, for each linked node, its rules, predicates, formulas and ⚠️ callouts at the captured depth. Preserve evidence-supported facts once, merging equivalent business and technical captures without repeated wording; correct or omit captured claims contradicted by supplied SQL or metadata, and do not strengthen at-most-one behavior into exactly-one guarantees. A short SQL witness may accompany its explanation.',
         '- Preserve captured evidence-supported warnings; do not create new ⚠️ callouts from defaults, normal behavior, unresolved gaps or SQL comments during synthesis.',
         '- Describe declared SQL behavior; do not infer runtime execution counts or execution order without matching runtime evidence.',
         '- Resolve node-local gaps against the completed archive: a fact established by another analyzed node is no longer an unresolved gap in the final report.',
@@ -456,7 +456,7 @@ export function buildCurrentTaskBlock(
     if (assigned.length) lines.push(
       nonBodied
         ? `  <assigned_endpoints>${endpoints(assigned)}: these are stored endpoints. The engine carries them to connected SQL objects in the approved direction without inventing value edges; those SQL objects resolve whether and how the values continue.</assigned_endpoints>`
-        : `  <assigned_endpoints>${endpoints(assigned)}: Record the SQL-established relations for these columns, retaining known facts beyond the requested trace limit and unresolved evidence in sections.</assigned_endpoints>`,
+        : `  <assigned_endpoints>${endpoints(assigned)}: Record the SQL-established relations for these columns.</assigned_endpoints>`,
     );
     if (external.length) lines.push(
       `  <neighbor_columns>${endpoints(external)}: Candidate neighbor columns, not assigned endpoints. Map one only when this object's SQL establishes the relation (a written table column goes in out_node and out_col); otherwise leave it out of column_flow.</neighbor_columns>`,
