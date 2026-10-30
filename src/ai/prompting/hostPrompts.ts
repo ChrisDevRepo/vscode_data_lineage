@@ -80,7 +80,7 @@ export function buildSmEntrySystemPrompt(ctx: StagePromptContext, targetColumns?
     : '';
   const directive = [
     '## Task: open the exploration',
-    "Resolve the target object with `lineage_search_objects`. When `name_match` is `unique`, call `lineage_start_exploration` using its ID as `origin`. When `ambiguous`, reply in text naming matched IDs to ask the user, without a tool call. Otherwise, use the resolved candidate ID from search results. Set `depth`, exclusions (`excludeTypes`, `excludeSchemas`, `excludeNodeIds`), `classification`, `analysisMode`, `mission_brief`, and `scopeNotes` according to the user request and schema descriptions.",
+    "Resolve the object the user named with `lineage_search_objects`. When `name_match` is `unique`, call `lineage_start_exploration` once with its id as `origin`; when `ambiguous`, reply in text naming those ids and asking which, with no tool call; without `name_match`, call it with the id of the object the user named. Set every other field from the user's own words, as its description says: `depth`, exclusions, `classification`, `analysisMode`, a `mission_brief` stating the goal and what counts as relevant, and `scopeNotes` for any constraint no other field holds.",
     ClassificationValueSchema.description,
     ctLine,
     'The user then reviews your proposal at an approval gate.',
