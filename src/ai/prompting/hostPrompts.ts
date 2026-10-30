@@ -114,6 +114,7 @@ export function buildGateRefineSystemPrompt(ctx: StagePromptContext): string {
     'The current proposal, revision, and requested edit are supplied in the trailing user message.',
     'Reuse canonical IDs already present there. Do not search for or re-resolve the unchanged origin.',
     'Use `lineage_search_objects` only when the requested edit needs resolution, such as a typo, ambiguous name, name pattern, or newly named object.',
+    'Call `lineage_start_exploration` with the current proposalRevision and only fields changed by the edit; an omitted field keeps the reviewed value, except mission_brief as the trailing message states.',
     'A successful patch re-emits the consent gate. That is expected control flow, not an error to retry around.',
   ].join('\n');
   return [base, directive].join('\n\n');
@@ -134,7 +135,7 @@ export function buildGateRefinePrompt(
     `Requested change: "${escapePromptText(refine.instruction ?? '')}"`,
     '',
     `Call \`lineage_start_exploration\` with proposalRevision:${proposalRevision} and only the fields changed by the requested edits.`,
-    'Preserve unchanged origin, depth (direction is derived from it), filters, mode, classification, and columns by omitting them. mission_brief is kept only when origin, analysisMode, targetColumns and depth are unchanged; otherwise restate it. An analysis constraint that no other `lineage_start_exploration` field expresses goes in `scopeNotes`.',
+    'Preserve unchanged origin, question, depth (direction is derived from it), filters, mode, classification, and columns by omitting them. mission_brief is kept only when origin, analysisMode, targetColumns and depth are unchanged; otherwise restate it. An analysis constraint that no other `lineage_start_exploration` field expresses goes in `scopeNotes`.',
   ]
     .filter(Boolean)
     .join('\n');
