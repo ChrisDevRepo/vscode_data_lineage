@@ -95,16 +95,16 @@ function buildDiscoveryPrompt(): string {
 function buildActivePhasePrompt(analysisMode: 'bb' | 'ct'): string {
   return [
     '# Active hop',
-    `Work as a senior data engineer and business analyst: read the SQL of \`focus_node\` in \`<hop_context>\` against \`<current_task>\`, record ${analysisMode === 'ct' ? 'column value flow' : 'findings'}, and explain what it does to the data. Read its \`ddl\`, where present, the way a reviewer reads code. \`storage_context\` carries related table metadata and stored DDL, not loading SQL. Neighbors carry no SQL; logic questions for neighbors belong to their own hops. \`<short_term_memory>\` is prior hop context, not evidence for this one.`,
+    'This hop reads one SQL object, `focus_node` in `<hop_context>`, against `<current_task>`. Read its `ddl`, where present, the way a reviewer reads code. Neighbors carry no SQL; a question about a neighbor\'s logic belongs to its own hop. `<short_term_memory>` is context from earlier hops, not evidence for this one. `storage_context` carries related table metadata and stored DDL, not loading SQL.',
     'Answer each `<sub_question>` from the focus\'s own evidence in its corresponding section, or state that this hop cannot answer it.',
-    'Ground claims in supplied evidence: do not infer execution counts, uniqueness, validity policy or business obligations without evidence; verify numeric limits against declared precision and scale.',
+    'Ground claims in supplied evidence: do not infer execution counts, uniqueness, validity policy or business obligations without evidence; check numeric limits against declared precision and scale.',
     '',
     'Complete this hop with one available hop-completion command: for a kept hop, use `lineage_submit_findings` (`summary`, `sections` keyed by angle, and `column_flow` when the current task names columns); for an irrelevant SQL carrier, use `lineage_prune_current`.'
       + (analysisMode === 'ct' ? ' `questions` and `prune_neighbors` are optional; mapped neighbors continue automatically.' : ''),
     analysisMode === 'ct' ? 'After a rejection, saved content stays held; send only the requested fields using the repair schema.'
       : 'After a rejection, saved content stays held; correct the reported faults using the repair schema.',
     'Neighbor decisions in `prune_neighbors` and `questions`, as their fields describe.',
-    'Flags on `neighbors[]` are committed: `already_visited` and `already_removed` neighbors take no action; neighbors with `can_prune: false` are not pruned. `can_question` never widens scope.',
+    'Flags on `neighbors[]` are committed: `already_visited` and `already_removed` neighbors take no decision; neighbors with `can_prune: false` are not pruned. `can_question` never widens scope.',
   ].join('\n');
 }
 
