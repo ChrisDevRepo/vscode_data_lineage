@@ -79,7 +79,7 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_present_result', title: 'Present Lineage View', inputSchema: PresentResultModelSchema, tags: ['lineage-presentation'], effect: 'presentation_commit',
     userDescription: 'Generate a report and visualization for the current lineage scope.',
-    modelDescription: 'Renders the final report and diagram in the lineage panel: structured report sections (labels map to node badges), notes, and color highlights (`source`, `transform`, `target`). Follow-up updates can modify text, prune (`prune_node_ids`), or reveal nodes (`add_node_ids`).',
+    modelDescription: 'Authors the presentation layer for the current engine-owned scope: required report sections, node badges, notes, and graph role/color highlights such as source/transform/target. Completed exploration follow-ups may also prune or add nodes. Use this for presentation-only changes.',
     progressLabel: 'Formatting final report…',
   },
   {
