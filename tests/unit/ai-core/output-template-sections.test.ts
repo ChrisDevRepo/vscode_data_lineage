@@ -13,7 +13,7 @@ const builtInTemplates: AiOutputTemplates = { ...EMPTY_AI_TEMPLATES };
 for (const key of REQUIRED_AI_TEMPLATE_KEYS) builtInTemplates[key] = (parsed[key]?.instruction ?? '').trim();
 const builtInSections = readAiOutputSections(parsed).sections;
 
-const BUILT_IN_SENTENCE = 'use only these bold labels, in this order when applicable: **Purpose**, **Transformations**, **Grain**, **Operations**. Embed';
+const BUILT_IN_SENTENCE = 'use only these bold labels, in this order when applicable: **Purpose**, **Rules and branches**, **Grain**, **Column mapping**, **Steps**, **Loading**, **Error handling**, **Gaps**. Embed';
 
 /** Section-structure sentence a synthesis render serves, cut at the label list. */
 function labelList(prompt: string): string {
@@ -32,7 +32,7 @@ const withTechnicalOnlyLabel: AiOutputSections = {
 
 describe('section labels: one home per recipe', () => {
   it('built-in file declares the labels on both capture recipes and the placeholder once in general', () => {
-    expect(builtInSections.business).toHaveLength(4);
+    expect(builtInSections.business).toHaveLength(8);
     expect(builtInSections.technical).toEqual(builtInSections.business);
     expect(builtInTemplates.general.split(SECTIONS_PLACEHOLDER)).toHaveLength(2);
     expect(builtInTemplates.general).not.toContain('**Purpose**');
