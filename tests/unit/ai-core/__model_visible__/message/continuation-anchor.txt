@@ -1,1 +1,0 @@
-Analyze `<current_task>` on the next agenda node.

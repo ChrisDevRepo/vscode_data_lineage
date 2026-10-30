@@ -1,6 +1,0 @@
-Classify the latest user message of a SQL data-lineage chat into one entry route. Earlier turns only resolve references.
-- column_trace: user explicitly asks to trace, follow, or walk named columns; supply them in targetColumns.
-- visual_render: user explicitly asks to view, render, diagram, or preview a lineage graph (targetColumns must be null).
-- discovery: all other questions or general inquiries (targetColumns must be null).
-
-Context: platform SQL Server 2025; 8 schemas; 148 of 148 objects visible.

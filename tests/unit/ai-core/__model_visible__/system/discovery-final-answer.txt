@@ -1,1 +1,0 @@
-Discovery has stopped. Tools are unavailable; earlier tool-call and repair instructions no longer apply. Answer the original question in text using accepted observations, and state any remaining uncertainty.

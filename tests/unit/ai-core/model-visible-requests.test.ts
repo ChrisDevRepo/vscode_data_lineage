@@ -1,7 +1,8 @@
 // Owner: src/ai/agent/stagePrompts.ts, instructionPlan.ts, src/ai/prompting, src/ai/tools/toolSchemas.ts and toolErrorEnvelope.ts; what the backend puts in front of the model.
-/** Real requests of the AdventureWorks AI fixture, driven without a model. Every rendered model-visible text is stored under `__model_visible__/`: the first group fails until the stored text is regenerated in the same commit as the change (`node tests/tools/run-vitest.mjs run tests/unit/ai-core/model-visible-requests.test.ts -u`), which marks that commit as a prompt change. The second group proves request-assembly clauses of spec 06 (pruning), 07 (adding) and 04 (routing) against the same requests. */
-import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+/** Real requests of the AdventureWorks AI fixture, driven without a model. The SHA-256 of every rendered model-visible text is committed in `model-visible.manifest.json` and the full texts are written to untracked `test-results/model-visible/` for BASE/FIX diffs: the first group fails until the manifest is regenerated in the same commit as the change (`node tests/tools/run-vitest.mjs run tests/unit/ai-core/model-visible-requests.test.ts -u`), which marks that commit as a prompt change. The second group proves request-assembly clauses of spec 06 (pruning), 07 (adding) and 04 (routing) against the same requests. */
+import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { EntryDetectionSchema, GateReplySchema } from '../../../src/ai/agent/state';
@@ -22,7 +23,9 @@ import { StartExplorationFreshProviderInputSchema, StartExplorationRefineProvide
 import { ISSUES, LAST_CORRECTION, renderProblem } from '../../../src/ai/support/toolErrorEnvelope';
 import { driveWalk, openFixtureWalk, promptContext, servedTools, type HopRecord, type ScriptedHop } from './helpers/modelRequests';
 
-const STORED = join(dirname(fileURLToPath(import.meta.url)), '__model_visible__');
+const HERE = dirname(fileURLToPath(import.meta.url));
+const MANIFEST = join(HERE, 'model-visible.manifest.json');
+const FULL_TEXTS = join(HERE, '..', '..', '..', 'test-results', 'model-visible');
 const CLASSIFICATIONS = ['business', 'technical', 'both'] as const;
 const upstreamOnly = (levels: number | 'all') => ({ upstream: { levels, exactness: 'exact' as const }, downstream: { levels: 0, exactness: 'exact' as const } });
 
@@ -134,23 +137,21 @@ function renderAll(): Map<string, string> {
 }
 
 const rendered = renderAll();
+const sha = (text: string) => createHash('sha256').update(text).digest('hex');
 const updating = () => (expect.getState() as { snapshotState?: { snapshotUpdateState?: string } }).snapshotState?.snapshotUpdateState === 'all';
-const storedFiles = (dir = STORED): string[] => (existsSync(dir) ? readdirSync(dir).flatMap(name =>
-  statSync(join(dir, name)).isDirectory() ? storedFiles(join(dir, name)) : [relative(STORED, join(dir, name)).replaceAll('\\', '/')]) : []);
+const manifest: Record<string, string> = (() => { try { return JSON.parse(readFileSync(MANIFEST, 'utf8')); } catch { return {}; } })();
+rmSync(FULL_TEXTS, { recursive: true, force: true });
+for (const [name, text] of rendered) { mkdirSync(dirname(join(FULL_TEXTS, name)), { recursive: true }); writeFileSync(join(FULL_TEXTS, name), text); }
 
-describe('stored model-visible text', () => {
-  it.each([...rendered])('%s', async (name, text) => {
-    const file = join(STORED, name);
-    // A first render is a prompt change as well: it fails until the stored text is committed.
-    if (!existsSync(file) && !updating()) throw new Error(`${name} has no stored text; regenerate it with -u and commit it.`);
-    await expect(text).toMatchFileSnapshot(file);
+describe('model-visible text manifest', () => {
+  it.each([...rendered])('%s', (name, text) => {
+    // A first render is a prompt change as well: it fails until its hash is committed.
+    if (!updating()) expect(sha(text), `${name} differs from the manifest; compare test-results/model-visible/${name}, then regenerate with -u and commit.`).toBe(manifest[name]);
   });
 
-  it('holds no text the backend no longer renders', () => {
-    const obsolete = storedFiles().filter(name => !rendered.has(name));
-    if (updating()) for (const name of obsolete) rmSync(join(STORED, name));
-    else expect(obsolete).toEqual([]);
-    mkdirSync(STORED, { recursive: true });
+  it('holds no entry the backend no longer renders', () => {
+    if (updating()) writeFileSync(MANIFEST, `${JSON.stringify(Object.fromEntries([...rendered].map(([name, text]) => [name, sha(text)]).sort(([a], [b]) => (a < b ? -1 : 1))), null, 2)}\n`);
+    else expect(Object.keys(manifest).filter(name => !rendered.has(name))).toEqual([]);
   });
 });
 

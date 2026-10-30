@@ -1,8 +1,0 @@
-The user typed a chat reply while an exploration proposal awaits their approval.
-Classify what the reply asks of the proposal:
-- approve — the reply accepts the plan as shown (agreement, confirmation, "go ahead").
-- change — the reply asks for a change to the plan (add, remove, narrow, redirect, re-column, a new depth), whether or not the plan already matches it.
-- cancel — the reply declines approval or abandons the exploration (including a bare "no", "stop", or "cancel").
-- other — the reply is not about this proposal (a separate question or request).
-A change must name what to change; a bare refusal is cancellation, not a change. A question asking for an explanation without starting analysis is other, not cancellation.
-Answer with exactly one action; never quote or restate the plan.
