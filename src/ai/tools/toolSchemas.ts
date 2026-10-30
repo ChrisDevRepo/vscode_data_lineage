@@ -257,7 +257,7 @@ const QUESTIONS_DESCRIPTION =
   + 'A question to an out-of-scope neighbor becomes a follow-up offer. No questions to visited or pruned neighbors.';
 
 const BB_PRUNE_NEIGHBORS_DESCRIPTION = 'Name each `can_prune: true` neighbor this node\'s SQL shows is off the path; that neighbor and whatever only it leads to are removed. The focus stays on the graph, including when every neighbor is named (a dead end). A neighbor named here gets no questions entry.';
-const BB_QUESTIONS_DESCRIPTION = 'Ask each relevant neighbor what its own SQL must establish for the question. A question to an out-of-scope neighbor becomes a follow-up offer. No questions to visited or pruned neighbors.';
+const BB_QUESTIONS_DESCRIPTION = 'Provide a self-contained subquestion for each eligible in-scope neighbor kept for analysis or passthrough, tied to the user question. For an eligible out-of-scope neighbor, optionally propose a relevant follow-up; it is deferred until scope approval. No questions to visited or pruned neighbors.';
 
 /** One `questions[]` entry, attached to that neighbour's queued hop. */
 const NeighborQuestionSchema = z.object({
@@ -282,10 +282,13 @@ const ColumnRefSchema = z.object({
   node: stringFact(z.string(), 'flowReference').describe('Node id of the source column.'),
   col: stringFact(z.string(), 'supplierColumn').describe('Source column name on that node.'),
   transforms: z.array(ColumnTransformClassSchema).optional().describe(
-    'Role of this source column: pass_through (unchanged), compute (expression or CASE operand), aggregate (aggregate argument) — its value lands in out_col; ' +
-    'combine (join, group, partition or order key) or filter (row predicate) — it only shapes which rows reach out_col. Grouping, partition and ordering keys are not aggregate value inputs; display-only sorting contributes no role. Omit when the SQL does not show the role.',
+    'Classify this source column’s own role end to end; omit when SQL does not determine it. ' +
+    'pass_through: unchanged value. compute: expression input, including a CASE condition operand. aggregate: value summarised by an aggregate. ' +
+    'combine: join, grouping, partition or ordering key. filter: predicate ' +
+    'selecting contributing rows. Grouping, partition and ordering keys are not aggregate value inputs; ' +
+    'display-only sorting contributes no role.',
   ),
-  note: z.string().max(200).optional().describe('At most 12 words: the deciding expression, e.g. "Qty * Price".'),
+  note: z.string().max(200).optional().describe('The deciding expression, at most ~12 words.'),
 }).strict().meta(SUPPLIER_FACT).describe('One source column entry inside upstream_columns: fields node, col, transforms, note.');
 
 /** One closed `column_flow` entry; provider projection and runtime parsing reject surplus keys. */
@@ -582,13 +585,13 @@ export function submitFindingsSchemaForMode(
   const questionIds = hop?.neighbors?.filter(neighbor => neighbor.can_question).map(neighbor => neighbor.id) ?? [];
   const closedQuestionIds = hop?.neighbors?.filter(neighbor => !neighbor.can_question).map(neighbor => neighbor.id) ?? [];
   const baseQuestion = hop?.neighbors
-    ? NeighborQuestionSchema.extend({ nodeId: stringFact(objectIdSchema(questionIds, hop.identifierCaseSensitive, 'not_neighbor', closedQuestionIds), 'questionIdentity') })
+    ? NeighborQuestionSchema.extend({ nodeId: stringFact(objectIdSchema(questionIds, hop.identifierCaseSensitive, 'not_neighbor', closedQuestionIds), 'questionIdentity').describe(NeighborQuestionSchema.shape.nodeId.description ?? '') })
     : NeighborQuestionSchema;
   if (mode === 'ct' && hop) narrowed = narrowed.extend({ column_flow: columnFlowSchemaForHop(hop) }).strict() as typeof HopFindingCtBaseSchema;
   const prunableIds = hop?.neighbors?.filter(n => n.can_prune).map(n => n.id) ?? [];
   if (hop?.neighbors) narrowed = narrowed.extend({
     prune_neighbors: (prunableIds.length
-      ? z.array(PruneNeighborSchema.extend({ id: stringFact(objectIdSchema(prunableIds, hop.identifierCaseSensitive, 'prune_target'), 'pruneIdentity') })).max(MAX_ID_LIST_LENGTH)
+      ? z.array(PruneNeighborSchema.extend({ id: stringFact(objectIdSchema(prunableIds, hop.identifierCaseSensitive, 'prune_target'), 'pruneIdentity').describe(PruneNeighborSchema.shape.id.description ?? '') })).max(MAX_ID_LIST_LENGTH)
       : z.array(PruneNeighborSchema).max(0)).optional().describe(mode === 'bb' ? BB_PRUNE_NEIGHBORS_DESCRIPTION : PRUNE_NEIGHBORS_DESCRIPTION),
     questions: z.array(baseQuestion).max(questionIds.length ? MAX_ID_LIST_LENGTH : 0).optional().describe(mode === 'bb' ? BB_QUESTIONS_DESCRIPTION : QUESTIONS_DESCRIPTION),
   }).strict() as typeof HopFindingCtBaseSchema;
@@ -748,7 +751,7 @@ const NotesModelSchema = notesListSchema(NoteSchema);
 
 /** Schema for a visual highlight group, grouping nodes by a shared role or status. */
 const HighlightGroupSchema = z.object({
-  label: z.string().regex(/\S/, 'Must contain non-whitespace text.').min(1, 'Group label is required').max(60).describe('Legend label describing the shared graph role or status; presentation style: see the `highlights` output template.'),
+  label: z.string().regex(/\S/, 'Must contain non-whitespace text.').min(1, 'Group label is required').max(60).describe('Short legend label describing the shared graph role or status; length target: see the `highlights` output template.'),
   color: HighlightSchemeSchema.describe('Flow role or status. `source`: the deepest origins whose data feeds the answer. `target`: where the data lands — the queried object in an upstream trace. `transform`: nodes that create or change the answer\'s values. `good` / `warn` / `fail`: diagnostic status. One scheme per result.'),
   node_ids: z.array(NodeIdSchema).describe('Node IDs that share this graph role or status.'),
 }).strict();
@@ -807,7 +810,7 @@ function previewSchemas(blockCount: number) {
 
 /** Schema defining the shape of the final generated presentation result. */
 export const PresentResultModelSchema = z.object({
-  name: z.string().regex(/\S/, 'Name must not be blank.').min(1, 'name is required').max(90).describe('Name for the generated lineage view.'),
+  name: z.string().regex(/\S/, 'Name must not be blank.').min(1, 'name is required').max(90).describe('Short name for the generated lineage view — aim for ~60 chars.'),
   summary: z.string().regex(/\S/, 'Must contain non-whitespace text.').min(1, 'summary is required — one-line graph purpose (~120 chars)').describe('One-line summary shown with the generated view.'),
   title: z.string().max(120).optional().describe('Optional report heading.'),
   intro: z.string().optional().describe('Optional grounded introduction to the final report.'),
