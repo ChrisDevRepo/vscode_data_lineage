@@ -331,7 +331,7 @@ export function buildDiscoverySummaryComposePrompt(
 ): string {
   return [
     'Compose a 2–4 sentence discovery summary for this pending SM exploration proposal; it will ride in every hop\'s stable prefix as `<discovery_summary>`.',
-    'Reply with text only this turn: the memo as a single paragraph.',
+    'Reply with text only this turn. Output the memo as a single paragraph, 2–4 sentences total.',
     '',
     '## Composition contract',
     '',
