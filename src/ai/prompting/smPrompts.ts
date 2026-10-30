@@ -218,7 +218,7 @@ function buildPassthroughFlowFacts(result: SmResult, identifierCaseSensitive = f
     ...dispositioned.map(renderLine),
     ...(undispositioned.length > 0
       ? [
-        'In scope but never dispositioned (no hop analyzed, routed to or pruned them) — `notes[]` alone is their surface, not a section or a highlight group:',
+        'In scope without a detail slot — describe indirect-only suppliers through their recorded dashed edges; give each a section link or a note:',
         ...undispositioned.map(renderLine),
       ]
       : []),
