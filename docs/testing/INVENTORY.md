@@ -34,11 +34,9 @@ Public basic demo test cases live in `tests/cases/lineage-cases.yaml` with runne
 
 List available rows without calling a provider using `npm run test:ai:headless -- --list`. Select a row with `npm run test:ai:headless -- --case headless-summary`.
 
-Pair saved runs per case with `npm run test:ai:headless -- --all --baselines path/to/baselines.json`, or use `--case ID --baselines FILE` for one row. The JSON shape is `{ "cases": { "ID": { "main": { "runDir": "saved/main-case", "turns": [1] }, "previous": { "runDir": "saved/previous-case", "turns": [1] } } } }`; either arm is optional. Paths are repository-relative or absolute; turn indices are one-based and ordered. Missing pair/identity stays unpaired/unverified. Do not compare a many-case catalog positionally to a single baseline directory.
-
 Explicit all mode executes the existing focused runner serially with separate captures and scores. Its ignored `test-results/headless/all-UUID/inventory.json` records every planned identity/turn, completed/error execution, capture gaps, comparisons and unreviewed content. A completed provider run is not a SQL review. `--all --list` remains provider-free.
 
-A focused question uses `npm run test:ai:headless -- --dacpac assets/demo.dacpac --prompt "QUESTION"`. Preserve the exact question and fixture when comparing runs. Full-catalog execution is explicit baseline work, not a retry strategy for one failing question.
+A focused question uses `npm run test:ai:headless -- --dacpac assets/demo.dacpac --prompt "QUESTION"`. Preserve the exact question and fixture when comparing runs. A full-catalog run is not a retry strategy for one failing question.
 
 ## Native UI cases
 
