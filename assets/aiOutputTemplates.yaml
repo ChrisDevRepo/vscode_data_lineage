@@ -63,7 +63,7 @@ title:
   stages: [synthesis]
   instruction: >
     Optional, ≤80 chars: "[Subject] — [key computation, pattern or finding]",
-    ending on the final target object when applicable.
+    ending on the final output object where it fits.
   example: ""
 
 intro:
