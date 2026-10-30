@@ -35,7 +35,7 @@ Package with `npm run package` and inspect the VSIX before install. Data boundar
 - For product behavior, code, prompt or contract recommendations and changes, **MUST** apply the AI/backend ownership decision and review gate: AI owns semantic decisions and content; technical checks and structural rendering cannot infer, select, add or silently repair meaning. Only lossless normalization and explicit index/reference expansion transform supplied content.
 - Follow strict TypeScript and layering standards for public API and installed-library reuse; a different agent reviews every code, prompt and test change (added, changed or removed) against applicable rules before integration.
 - Leave `package.json` and the lockfile versions unchanged unless the user asks.
-- Record changes in `CHANGELOG.md` under the version in `package.json`; that version is the unreleased one. Add no `[Unreleased]` heading.
+- `CHANGELOG.md` is the release record: keep shipped sections unchanged and list under the version in `package.json` (the unreleased one; add no `[Unreleased]` heading) only user-visible differences from public `main`, in generic words, never tests, harness, review process or internal mechanics.
 - Add a permanent test only for parsing, lineage, an AI middleware contract, or a security boundary. Use the AdventureWorks demo or synthetic SQL. Leave customer database content out of the repository.
 - When you change behavior that a markdown file describes, update that file so it stays true.
 - Leave credentials, customer database content, raw conversations, and generated run output out of tracked files.

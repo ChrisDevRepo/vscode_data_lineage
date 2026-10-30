@@ -9,10 +9,8 @@ The newest version heading collects changes until that version ships.
 - The output log warns when a module uses a cursor or dynamic SQL, which are not fully supported, with the module count; the references the parser captures still load.
 
 ### Changed
-- AI analysis checks every tool reply together and asks for corrections only to the faulty fields; valid fields are kept. Feedback adds the allowed choices on the second rejection and fallback guidance on the third.
-- Column traces record every SQL-proved output of the arriving columns, including downstream fanout. Columns used only to join, filter, group or order rows stay indirect lineage, shown as dashed edges. Procedure writes keep their source-to-target pairs, and asked columns always get a graph row and a Column Chain row.
-- Every open neighbor needs a column mapping, a question or a prune. An arriving column without a mapping ends at that hop; `focus_node_id` is optional on hop commands.
-- The AI selects report SQL and formulas; after four unsuccessful synthesis replies, chat shows the latest report text with a preview-failure notice.
+- Column traces record every SQL-proved output of the arriving columns, including downstream fanout. Procedure writes keep their source-to-target pairs, and asked columns always get a graph row and a Column Chain row.
+- The AI selects report SQL and formulas; if a report cannot be built after repeated attempts, chat shows the latest report text with a preview-failure notice.
 - The exploration plan card accepts Approve, Cancel and Change scope only while it is on display; an outdated card, including one restored after a window reload, never approves.
 
 ### Removed
@@ -21,13 +19,11 @@ The newest version heading collects changes until that version ships.
 ### Fixed
 - AI analysis rejects malformed reports, labels and tool calls with clear repair choices, and keeps valid text and column mappings while a repair is pending.
 - Updating a legacy bookmark keeps current selections; SQL identifiers with equivalent quoting, casing or Unicode format characters bind to the right objects.
-- Tables and pass-through objects reached by several paths forward their question once, so shared chains no longer multiply the queued work. Investigation ids no longer collide.
 - Functions without declared columns now get column-trace edges; exploration depth is strict only when the user states a level count or complete chain, otherwise it starts at about 3 levels.
-- The headless test harness and diagnostics no longer record the provider endpoint, tokens, API keys or passwords in logs or uploaded evidence.
-- Database query timeouts, live import metadata and saved-project timestamps. A DACPAC three-part name to another database no longer resolves to a local object, and reconnecting by server matches a saved connection written with a `tcp:` prefix.
+- A DACPAC three-part name to another database no longer resolves to a local object, and reconnecting by server matches a saved connection written with a `tcp:` prefix.
 
 ### Dependencies
-- Security updates: DOMPurify.
+- Security updates: DOMPurify, @azure/identity (msal-node).
 
 ## [1.2.5] - 2026-10-07
 
@@ -196,6 +192,7 @@ The newest version heading collects changes until that version ships.
 
 ### Removed
 - **Inline mode** — superseded by the chat-vs-walkthrough split.
+
 
 ## [0.9.x] - 2026-02 to 2026-04
 
