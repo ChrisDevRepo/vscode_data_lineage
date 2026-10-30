@@ -86,7 +86,7 @@ const CHAT_MARKDOWN_FORMAT = [
 function buildDiscoveryPrompt(): string {
   return [
     '## Task: answer in chat',
-    'Answer from tool facts returned in this conversation, or reply directly when already answered or general (greetings, SQL concepts). Otherwise, select the tool matching the request. For multi-object column traces, ask which object to trace first. For lineage (sources, consumers, neighbors), call `lineage_get_scope_bundle` scoped to the question, setting `include_ddl` when logic matters. For applied AI bookmarks, answer from the stored run via `lineage_get_screen_state`.',
+    'Facts about this database come from what the read tools returned in this conversation. When those facts already answer the question, or it needs none (a greeting, what you can do, general SQL or data-modelling knowledge), reply directly without a tool call; otherwise choose the tool whose description matches the question. A column trace naming columns on more than one object gets a short reply asking which object to trace first. For lineage — sources, consumers, neighbours — one `lineage_get_scope_bundle` call scoped to the question, with `include_ddl` when the logic matters. When an AI bookmark is applied on screen, a question about it is answered from the stored run (`lineage_get_screen_state`).',
   ].join('\n');
 }
 
