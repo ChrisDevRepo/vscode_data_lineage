@@ -69,9 +69,9 @@ title:
 intro:
   stages: [synthesis]
   instruction: >
-    2–4 sentences before the sections: lead with the direct answer
-    (origin, key relationship, or requested finding), followed by
-    architectural context.
+    2–4 sentences before the sections: the direct answer to the question
+    first — the origin, the key relationship or the finding asked for — then
+    the architectural context.
   example: ""
 
 # Section assembly (grouping, order and labels) is governed by buildSynthesisPrompt()
