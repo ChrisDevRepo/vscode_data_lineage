@@ -242,7 +242,8 @@ type CapturedSectionsWire = z.infer<typeof CapturedSectionsSchema>;
 /** Single source for the `prune_neighbors` field describe text, shared by the strict per-mode schemas and the permissive participant union so the two cannot drift. */
 const PRUNE_NEIGHBORS_DESCRIPTION =
   'Optional. A neighbor is either mapped or questioned (kept) or pruned, never both. '
-  + 'Name each `can_prune: true` neighbor that supplies neither a value nor a join, filter, group or order column to an output column. A neighbor that does is mapped.';
+  + 'Name each `can_prune: true` neighbor that supplies neither a value nor a join, filter, group or order column to an output column. A neighbor that does is mapped. '
+  + 'That neighbor and whatever only it leads to are removed. The focus stays on the graph, including when every neighbor is named (a dead end).';
 
 /** One `prune_neighbors[]` entry: the neighbour and why this node's SQL shows it is off the answer. */
 const PruneNeighborSchema = z.object({
@@ -255,7 +256,7 @@ const QUESTIONS_DESCRIPTION =
   'Optional. Ask a kept neighbor what its own SQL must answer for the arriving columns: its rules, calculations and thresholds, not only which columns feed this object. Column continuation to mapped neighbors is automatic. '
   + 'A question to an out-of-scope neighbor becomes a follow-up offer. No questions to visited or pruned neighbors.';
 
-const BB_PRUNE_NEIGHBORS_DESCRIPTION = 'Prune eligible neighbors that do not contribute to answering the user\'s question.';
+const BB_PRUNE_NEIGHBORS_DESCRIPTION = 'Name each `can_prune: true` neighbor this node\'s SQL shows is off the path; that neighbor and whatever only it leads to are removed. The focus stays on the graph, including when every neighbor is named (a dead end). A neighbor named here gets no questions entry.';
 const BB_QUESTIONS_DESCRIPTION = 'Ask each relevant neighbor what its own SQL must establish for the question. A question to an out-of-scope neighbor becomes a follow-up offer. No questions to visited or pruned neighbors.';
 
 /** One `questions[]` entry, attached to that neighbour's queued hop. */
@@ -282,9 +283,9 @@ const ColumnRefSchema = z.object({
   col: stringFact(z.string(), 'supplierColumn').describe('Source column name on that node.'),
   transforms: z.array(ColumnTransformClassSchema).optional().describe(
     'Role of this source column: pass_through (unchanged), compute (expression or CASE operand), aggregate (aggregate argument) — its value lands in out_col; ' +
-    'combine (join, group, partition or order key) or filter (row predicate) — it only shapes which rows reach out_col. Omit when the SQL does not show the role.',
+    'combine (join, group, partition or order key) or filter (row predicate) — it only shapes which rows reach out_col. Grouping, partition and ordering keys are not aggregate value inputs; display-only sorting contributes no role. Omit when the SQL does not show the role.',
   ),
-  note: z.string().optional().describe('At most 12 words: the deciding expression, e.g. "Qty * Price".'),
+  note: z.string().max(200).optional().describe('At most 12 words: the deciding expression, e.g. "Qty * Price".'),
 }).strict().meta(SUPPLIER_FACT).describe('One source column entry inside upstream_columns: fields node, col, transforms, note.');
 
 /** One closed `column_flow` entry; provider projection and runtime parsing reject surplus keys. */

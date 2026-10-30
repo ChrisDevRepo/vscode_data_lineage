@@ -465,3 +465,12 @@ it('retains no Ajv cache entry per hop and bounds the per-hop findings schemas',
     expect(build(0), 'schemas of earlier hops are not kept forever').not.toBe(first);
   } finally { compile.mockRestore(); }
 });
+
+// Column-source notes use the same native bound for fresh and held corrections.
+it('rejects a column-source note over 200 characters and accepts the repaired note', () => {
+  for (const schema of [submitFindingsSchemaForMode('ct', 'business'), submitFindingsSchemaForMode('ct', 'business', false, undefined, true)]) {
+    const value = (length: number) => ({ column_flow: [{ out_col: 'Value', upstream_columns: [{ node: '[dbo].[Source]', col: 'Value', note: 'x'.repeat(length) }] }] });
+    expect(validateToolCandidate(schema, value(201)).success).toBe(false);
+    expect(validateToolCandidate(schema, value(200)).success).toBe(true);
+  }
+});
