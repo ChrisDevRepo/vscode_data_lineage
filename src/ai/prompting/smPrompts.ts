@@ -185,7 +185,7 @@ function computeNodeFlowFacts(edges: ReadonlyArray<[string, string, string]>, id
   return facts;
 }
 
-/** Renders one node's flow facts as the shared `inputs: …; outputs: …` fragment: data flows from each input into the node and from the node into each output, whatever the object types (a procedure's inputs are what it reads, its outputs what it writes). An absent entry or empty list renders `(none)` — the byte-exact form the analyzed-node and passthrough digests share. */
+/** Renders one node's flow facts as the shared `inputs: …; outputs: …` fragment: data flows from each input into the node and from the node into each output, whatever the object types (a procedure's inputs are what it reads, its outputs what it writes). An absent entry or empty list renders `(none)` with labels selected by the analyzed-node or storage digest. */
 function renderFlowFactsFragment(facts: NodeFlowFacts | undefined, labels: readonly [string, string] = ['inputs:', 'outputs:']): string {
   const list = (arr: string[] | undefined): string => (arr && arr.length > 0 ? arr.join(', ') : '(none)');
   return `${labels[0]} ${list(facts?.writtenBy)}; ${labels[1]} ${list(facts?.readBy)}`;
