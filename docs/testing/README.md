@@ -165,33 +165,3 @@ Before export, runners freeze allowlisted, redacted source bytes in a write-once
 ## Packaging
 
 `npm run package` creates `data-lineage-viz-<version>.vsix` without publishing it; install it in a separate VS Code profile to inspect it.
-
-## When a live run is worth its cost
-
-A live model run spends the external API provider's tokens. Deterministic `npm test` and `npm run gate` come first and do not call a provider. Keep that external test profile's provider, model, and reasoning effort. The coding agent reviewing the repository is a separate model.
-
-- Debugging one issue: run the one live case that shows that issue. A headless question is `npm run test:ai:headless -- --prompt "QUESTION"`. A native check uses the one label that renders the defect.
-- A new baseline: one full comparable run, after the previous baseline no longer matches because the question set, fixture, or settings changed, or because a broad behavior change invalidated the stored answers. Later work reuses that baseline.
-- A prompt comparison: the frozen question once before the change, when no matching baseline exists, and once after it. Add one held-out question only to check that unchanged behavior still holds.
-- Run a case again only when the code, question, fixture, or settings changed. A full catalog run is a new baseline, not a way to obtain a passing prompt. Leave another full run unstarted while known failures from the last baseline remain.
-
-Generated run output stays untracked.
-
-## Before-deployment baseline review
-
-Follow [When a live run is worth its cost](#when-a-live-run-is-worth-its-cost). For a prompt or model-visible behavior change, compare one frozen question on the public demo (`assets/demo.dacpac` unless `--dacpac FILE` is given):
-
-`npm run test:ai:headless -- --prompt "QUESTION"`
-
-Reuse a baseline whose question, fixture, and settings still match when measuring equivalent work. Run the candidate once after the change. The run captures the applicable evidence sources above. Set `AI_TEST_PREVIOUS_RUN` and `AI_TEST_MAIN_RUN` to those existing run directories so the harness writes the comparison beside the new run. Baseline question history, fixture, provider, model, actual reasoning settings and approved workload are informational comparison facts: differences do not deny approval or fail the candidate run. Reports retain raw measurements and label the workload aligned, different, or unknown; incomplete evidence stays unknown. Depth workload equality uses the engine’s resolved execution border; different declarations with the same border remain visible as informational differences. The case’s YAML `gate` policy controls simulated consent. An approve row may declare `expect: classification~business` and `onMismatch` using the existing refinement payload. An aligned proposal approves immediately; a mismatch requests Change once, rechecks the revised proposal, then approves while recording any remaining mismatch. Original and revised proposals, the correction and its provider cost remain captured; baseline differences never trigger Change. Production consent remains bound to the proposal the user reviews. Historical headless evidence without manifest gate decisions can establish approval through one turn and gate, a uniquely timestamp-matched host approval, and subsequent active work; ambiguous evidence remains unknown. Intentional prompt or source changes remain recorded comparison context.
-
-Review both answers against the SQL and graph: requested facts, formulas, filters, joins, grain, row rules, scope, output instructions, and unsupported claims. Record the SQL evidence for any accepted difference.
-
-Two review helpers read existing captures; they do not justify another model run and remain outside the deterministic gate.
-
-- **Countable facts (tracked):** `node tests/tools/lineage-score.mjs CANDIDATE_RUN_DIR --previous PREVIOUS_RUN_DIR --main MAIN_RUN_DIR --out DIR`; use its `--trace` mode for trace analysis (`--latest`, `--case-manifest`, `--output` remain available). It compares tokens, durations, raw feedback/clarification/retry counts, preview/chat characters, SQL fences/formulas, visit sets/order, column pairs and prune/supplement counts; communication comparisons include backend request and AI reply sizes, measured timing and deduplicated generation usage, with scope and unknowns retained. Differences use `differs`: **Unresolved differences — review required**; a match means **No measured difference; content unverified**. Different question/fixture identities are not comparable. Diagnostic arrays are not SQL correctness verdicts.
-- **Content quality:** review separately whether the core question is answered and whether individual claims are supported by source SQL, false, unsupported or ambiguous. Explain each issue’s impact on the requested answer; incidental scope, correct extras, callouts and formatting carry less weight unless requested or meaning-changing. Keep structural graph defects and runtime/render/performance results separate; countable comparisons alone do not grade prose.
-
-The score helper must correlate applicable NDJSON, Langfuse trace/span data, VS Code debug log and state-machine evidence; missing sources stay explicit, and a receipt alone does not establish span coverage. Helpers can hydrate durable evidence and report unverified correlation explicitly; permanent local payloads are not required. A recorded no-hop turn has no applicable state-machine dump; opened-but-missing state is missing, uncertain state remains unknown. SQL-fence/formula counts do not establish the truth of SQL or formulas.
-
-
