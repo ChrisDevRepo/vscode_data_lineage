@@ -1245,7 +1245,7 @@ describe('lineage_submit_findings boundary', () => {
     expect(control.detail, `the same typed CT fault is independently observable when narrative is valid: ${JSON.stringify(control)}`)
       .toEqual(expect.arrayContaining([expect.objectContaining({ kind, path })]));
     const repaired = JSON.parse(executeSubmitFindings({
-      column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Value' }], ...(selfLoop ? { out_node: BRANCH } : {}) }] }, services));
+      column_flow: [{ out_col: 'Value', upstream_columns: selfLoop ? [] : [{ node: BRANCH, col: 'Value' }], ...(selfLoop ? { out_node: BRANCH } : {}) }] }, services));
     expect(repaired, JSON.stringify(repaired)).toHaveProperty('ok', true);
   });
 

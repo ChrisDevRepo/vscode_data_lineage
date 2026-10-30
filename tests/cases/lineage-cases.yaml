@@ -749,7 +749,7 @@ cases:
       column_edges: [[P, Amount, V, Amount]]
 
   - id: walk-ct-delete-only-writer-adds-no-edge
-    story: A writer that only deletes from the stored table maps nothing; the loading procedure's pair is the only column edge.
+    story: A writer that only deletes from the stored table maps nothing; its stored column as its own source is refused (a column cannot be its own upstream source), and the loading procedure's pair is the only column edge.
     runners: [scripted]
     contract: walk
     mode: ct
@@ -761,7 +761,10 @@ cases:
       edges: [[Owed, Root], [ArchiveWriter, Owed], [Owed, ArchiveWriter], [ArchiveWriter, Other], [Source, Producer], [Producer, Owed]]
     hops:
       - { at: Root, decide: { map: [{ col: Amount, from: [{ node: Owed, col: Amount }] }] } }
-      - { at: ArchiveWriter, arrives: [{ node: Owed, col: Amount, side: upstream }], decide: { map: [] } }
+      - at: ArchiveWriter
+        arrives: [{ node: Owed, col: Amount, side: upstream }]
+        refuse: { map: [{ col: Amount, to: Owed, from: [{ node: Owed, col: Amount }] }], kind: column_self_loop, field: column_flow.0.upstream_columns.0, issue: self_loop }
+        decide: { map: [] }
       - { at: Producer, arrives: [{ node: Owed, col: Amount, side: upstream }], decide: { map: [{ col: Amount, to: Owed, from: [{ node: Source, col: Amount }] }] } }
     expect:
       nodes: [Root, Owed, ArchiveWriter, Producer, Source]

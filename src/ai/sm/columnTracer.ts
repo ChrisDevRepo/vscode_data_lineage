@@ -148,7 +148,7 @@ export class ColumnTracer {
     return { node };
   }
 
-  /** Stores one direct pair per verified supplier into the entry's destination, `out_node.out_col` or the focus column, after the same endpoint check; the backend adds no pair of its own (D-130). */
+  /** Stores one direct pair per verified supplier into the entry's destination, `out_node.out_col` or the focus column, after the same endpoint check; a supplier identical to that destination is refused (topology: a column cannot be its own upstream source); the backend adds no pair of its own (D-130). */
   prepareColumnEntry(
     focusId: string, entry: ColumnFlowHeader, suppliers: readonly VerifiedColumnSupplier[], path: string,
     nodeMap: Map<string, LineageNode>, model: DatabaseModel, store: ColumnStore | null, log: TracerLogFn | undefined,
@@ -189,6 +189,11 @@ export class ColumnTracer {
           : callerTargets.some(caller => edge.target === caller.node)))
         && edgeApiType(edge.type, neighbor.type) === 'read')) {
         invalidRoutes.push({ kind: 'absent_contributor', id: neighbor.id, path: `${refPath}.node`, reason: 'A caller-context investigation accepts real read contributors of the function or its declared callers, not unrelated loaded objects.' });
+        continue;
+      }
+      if (neighbor.id === target.attributionTo && this.columnKey(cont.col) === this.columnKey(target.attributionCol)) {
+        invalidRoutes.push({ kind: 'self_loop_column', id: neighbor.id, path: refPath,
+          reason: `upstream_columns entry "${neighbor.id}.${cont.col}" is identical to its own out_node target "${target.attributionTo}.${target.attributionCol}" - a column cannot be its own upstream source.` });
         continue;
       }
       stagedEdges.push({

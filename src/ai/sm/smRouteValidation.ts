@@ -9,6 +9,7 @@ const ROUTE_ISSUE = {
   absent_contributor: 'not_neighbor',
   bad_out_col: 'unknown_column',
   bad_contributor_col: 'unknown_column',
+  self_loop_column: 'self_loop',
   bad_return_target: 'bad_caller_output',
   bad_caller_context: 'bad_caller_output',
   pruned_contributor: 'closed_neighbor',
@@ -30,6 +31,7 @@ const ROUTE_ISSUE = {
 const ROUTE_REJECTION_CODE: Partial<Record<InvalidRouteKind, string>> = {
   bad_out_col: REJECTION_CODES.outColNotOnNode,
   bad_contributor_col: REJECTION_CODES.contributorColNotOnSource,
+  self_loop_column: REJECTION_CODES.columnSelfLoop,
   pruned_contributor: REJECTION_CODES.prunedContributor,
 };
 

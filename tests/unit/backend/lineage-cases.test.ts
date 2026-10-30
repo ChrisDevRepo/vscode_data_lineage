@@ -288,26 +288,6 @@ describe('declared contributor identities', () => {
     expect(result.invalidRoutes).toEqual([]);
     expect(result.stagedEdges.map(edge => edge.from_col)).toEqual([output]);
   });
-  it('stores a supplied pair whose endpoints share one object column as one direct pair (D-130)', () => {
-    const columns = ['OrderAmount', 'RegionCode', 'Discount'];
-    const nodes = [
-      makeNode({ id: 'writer', name: 'writer', schema: 'dbo', type: 'procedure', bodyScript: 'INSERT INTO staging SELECT * FROM staging;' }),
-      makeNode({ id: 'staging', name: 'staging', schema: 'dbo', type: 'table', columns: columns.map(column) }),
-    ];
-    const result = new ColumnTracer(['OrderAmount']).validateColumnFlow('writer',
-      { column_flow: [{
-        out_node: 'staging',
-        out_col: 'OrderAmount',
-        upstream_columns: [{ node: 'staging', col: 'OrderAmount' }],
-      }] },
-      new Map(nodes.map(node => [node.id, node])),
-      makeIndexedModel(nodes, [['writer', 'staging'], ['staging', 'writer']]),
-      null, undefined, undefined, 'upstream', undefined, [], [], [], [{ node: 'staging', col: 'OrderAmount' }],
-    );
-    expect(result.invalidRoutes).toEqual([]);
-    expect(result.stagedEdges).toMatchObject([{ from_node: 'staging', from_col: 'OrderAmount', to_node: 'staging', to_col: 'OrderAmount' }]);
-  });
-
   describe.each(['table', 'view'] as const)('a procedure output bound to a %s destination (out_node)', type => {
     const source = makeNode({ id: 'source', name: 'source', schema: 'dbo', type: 'table', columns: [column('Amount')] });
     const writer = makeNode({ id: 'writer', name: 'writer', schema: 'dbo', type: 'procedure', bodyScript: 'INSERT dbo.owed SELECT Amount FROM dbo.source;' });
@@ -336,10 +316,10 @@ describe('declared contributor identities', () => {
     });
   });
 
-  it.each(['upstream', 'downstream'] as const)('commits an accepted same-column self pair, ends the hop and adds no agenda work (%s, D-130)', direction => {
+  it.each(['upstream', 'downstream'] as const)('rejects a same-column self pair as its own upstream source and accepts the [] correction (%s)', direction => {
     const producer = '[d].[Producer]', stored = '[d].[Stored]';
     const nodes = [
-      makeNode({ id: producer, schema: 'd', name: 'Producer', type: 'procedure', columns: [], bodyScript: 'UPDATE d.Stored SET X = X + 0;' }),
+      makeNode({ id: producer, schema: 'd', name: 'Producer', type: 'procedure', columns: [], bodyScript: 'DELETE FROM d.Stored WHERE X < 0;' }),
       makeNode({ id: stored, schema: 'd', name: 'Stored', type: 'table', columns: [column('X')] }),
     ];
     const engine = navigationFor(nodes, [[stored, producer], [producer, stored]]);
@@ -347,12 +327,17 @@ describe('declared contributor identities', () => {
       depthIntent: { upstream: { levels: direction === 'upstream' ? 'all' : 0, exactness: 'exact' }, downstream: { levels: direction === 'downstream' ? 'all' : 0, exactness: 'exact' } },
     })).toHaveProperty('ok', true);
     engine.getHopContext();
-    expect(engine.submitFindings({ focus_node_id: producer, summary: 'Rewrites X in place.', sections: [{ angle: 'technical', text: 'UPDATE d.Stored SET X = X + 0.' }],
-      column_flow: [{ out_node: stored, out_col: 'X', upstream_columns: [{ node: stored, col: 'X' }] }] })).toEqual({ ok: true });
-    expect(engine.columnAspect!.edges.map(edge => [edge.from_node, edge.from_col, edge.to_node, edge.to_col])).toEqual([[stored, 'X', stored, 'X']]);
+    const finding = { focus_node_id: producer, summary: 'Deletes rows of Stored.', sections: [{ angle: 'technical' as const, text: 'DELETE FROM d.Stored WHERE X < 0.' }] };
+    const before = engine.toJSON();
+    const rejected = engine.submitFindings({ ...finding, column_flow: [{ out_node: stored, out_col: 'X', upstream_columns: [{ node: stored, col: 'X' }] }] });
+    expect(rejected).toMatchObject({ code: 'column_self_loop', errors: [{ path: 'column_flow.0.upstream_columns.0', code: 'self_loop' }],
+      reason: `column_flow.0.upstream_columns.0: upstream_columns entry "${stored}.X" is identical to its own out_node target "${stored}.X" - a column cannot be its own upstream source.` });
+    expect(shownMessages(rejected)).toContain('identical to its own out_node target - a column cannot be its own upstream source. Remove the upstream_columns entry identical to its output destination');
+    expect(shownMessages(rejected), 'D-102: no echoed id').not.toContain(stored);
+    expect(engine.toJSON().columnAspect).toEqual(before.columnAspect);
+    expect(engine.submitFindings({ ...finding, column_flow: [{ out_node: stored, out_col: 'X', upstream_columns: [] }] })).toEqual({ ok: true });
+    expect(engine.columnAspect!.edges).toEqual([]);
     expect(engine.getHopContext()).toEqual({ done: true });
-    expect(engine.toJSON().agenda).toEqual([]);
-    expect(engine.toJSON().engineInternals.investigationTasks.filter(task => task.status !== 'resolved')).toEqual([]);
   });
 });
 

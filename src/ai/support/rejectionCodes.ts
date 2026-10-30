@@ -40,6 +40,8 @@ export const REJECTION_CODES = {
   outColNotOnNode: 'out_col_not_on_node',
   /** `upstream_columns[].col` names a column the contributor node does not itself read (`bad_contributor_col` kind, `smRouteValidation.ts`). */
   contributorColNotOnSource: 'contributor_col_not_on_source',
+  /** An `upstream_columns` entry names the same node.col as its own entry's destination (`self_loop_column` kind, `smRouteValidation.ts`). */
+  columnSelfLoop: 'column_self_loop',
   /** An `upstream_columns` entry names a node already pruned earlier this run (`smRouteValidation.ts`, `columnTracer.ts`). */
   prunedContributor: 'pruned_contributor',
   /** The provider emitted the synthetic structured-output/terminal tool call with empty required arguments (`structuredOutput.ts`, `vscodeModelPort.ts`, `graph.ts`). */

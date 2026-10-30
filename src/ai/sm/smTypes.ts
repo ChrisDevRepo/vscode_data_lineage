@@ -726,6 +726,7 @@ export interface HopLogEntry {
 export type InvalidRouteKind = | 'absent_contributor'
       | 'bad_out_col'
       | 'bad_contributor_col'
+      | 'self_loop_column'
       | 'bad_return_target'
       | 'bad_caller_context'
       | 'pruned_contributor'

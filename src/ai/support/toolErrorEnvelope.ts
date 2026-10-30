@@ -41,6 +41,7 @@ export const ISSUES = {
   unknown_target_column: COLUMN_IDENTITY_ISSUE,
   unknown_column: { ...COLUMN_IDENTITY_ISSUE, ...REPORT_REFERENCE_FALLBACK },
   closed_neighbor: { category: 'reference', label: 'neighbor already pruned or visited', correction: 'Name a neighbor that is still open; a pruned or visited neighbor takes no further decision.' },
+  self_loop: { category: 'reference', label: 'identical to its own out_node target - a column cannot be its own upstream source', correction: 'Remove the upstream_columns entry identical to its output destination; keep a SQL-proved out_node unchanged and explain any existing-destination read in sections.' },
   bad_caller_output: { category: 'reference', label: 'not an active output of the caller', correction: 'Name an active output of the caller that reads this function.' },
   not_current_object: { category: 'reference', label: 'not the current object', correction: 'Use the id of the current object.' },
   not_in_result: { ...REPORT_REFERENCE_FALLBACK, category: 'reference', label: 'not in the result graph, which is fixed at this stage', correction: 'Name a node id of the result graph.' },

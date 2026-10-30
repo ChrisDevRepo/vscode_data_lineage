@@ -98,6 +98,11 @@
     "label": "neighbor already pruned or visited",
     "correction": "Name a neighbor that is still open; a pruned or visited neighbor takes no further decision."
   },
+  "self_loop": {
+    "category": "reference",
+    "label": "identical to its own out_node target - a column cannot be its own upstream source",
+    "correction": "Remove the upstream_columns entry identical to its output destination; keep a SQL-proved out_node unchanged and explain any existing-destination read in sections."
+  },
   "bad_caller_output": {
     "category": "reference",
     "label": "not an active output of the caller",
