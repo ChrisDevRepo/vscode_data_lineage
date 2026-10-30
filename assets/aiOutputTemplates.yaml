@@ -81,9 +81,9 @@ intro:
 closing:
   stages: [synthesis]
   instruction: >
-    One paragraph after the sections synthesizing the overall answer in the
-    requested lens. For a business mission, state impact and scope, leaving
-    mechanisms to the sections.
+    One paragraph after the sections with the overall answer in the lens the
+    user asked for; a business mission states impact and scope and leaves
+    the mechanism to the sections.
   example: ""
 
 # `description` is engine output (built by orderAndAssemble in src/ai/tools/presentResult.ts
