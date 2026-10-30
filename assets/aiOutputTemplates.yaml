@@ -56,7 +56,7 @@ summary:
   stages: [synthesis]
   instruction: >
     One line for the info card, ~120 chars: the subject of the analysis and
-    where its data originates or lands.
+    where its data lands.
   example: ""
 
 title:
