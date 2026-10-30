@@ -51,13 +51,13 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_search_objects', title: 'Search Objects', inputSchema: SearchObjectsInputSchema, tags: ['lineage', 'lineage-research'], effect: 'read',
     userDescription: 'Search for database objects by name or column.',
-    modelDescription: 'Search database objects by name or column (substring or regex). Returns object IDs, metadata, `by_type` counts, `in_user_filter`, and `name_match` (`unique` or `ambiguous` IDs, in-filter first). If an in-filter search returns no matches, widen `schemas` on subsequent calls. Use `lineage_search_ddl` to search SQL text.',
+    modelDescription: 'Search database objects by name or column (substring or regex). Returns object IDs, metadata, per-kind `by_type` counts, `in_user_filter`, and `name_match` (`unique` or `ambiguous` ids for an exact name, in-filter first). When an in-filter search is empty but out-of-filter hits exist, widen `schemas` on the next call. Use lineage_search_ddl to grep SQL bodies.',
     progressLabel: 'Searching database objects…',
   },
   {
     name: 'lineage_get_scope_bundle', title: 'Get Lineage Scope', inputSchema: GetScopeBundleModelSchema, tags: ['lineage', 'lineage-research'], effect: 'scope_store',
     userDescription: 'Get a bounded BFS scope in one call, with optional DDL for all nodes in scope.',
-    modelDescription: 'Retrieves bounded graph scope for multi-object lineage inquiries. In `nodes[]`, the origin separates neighbors into `in` (upstream, writes into origin) and `out` (downstream, reads from origin); each node specifies `uh` and `dh` distances from the origin (0 for origin itself). `edges` lists [source, target, type] tuples. Set `include_ddl` to include object definitions. Use `lineage_get_object_detail` for single-object queries.',
+    modelDescription: 'Graph-scope retrieval for multi-object lineage questions. In `nodes[]`, the origin carries `in` (writes INTO it) and `out` (reads FROM it); every node carries `uh`/`dh`, its hop distance upstream/downstream from the origin on the side(s) it was reached (the origin is 0 on both; a node reached on both sides carries both) — read this instead of re-deriving reach from edge order. `edges` are positional [source, target, type]. Set include_ddl=true when the user wants scope logic. Keep lineage_get_object_detail for one object.',
     progressLabel: 'Gathering object dependencies…',
   },
   {
@@ -85,7 +85,7 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_get_object_detail', title: 'Get Object Detail', inputSchema: GetObjectDetailInputSchema, tags: ['lineage', 'lineage-research'], effect: 'read',
     userDescription: 'Get full details for a specific database object.',
-    modelDescription: 'Fetches full definition, column metadata, and direct neighbors for a single object. For multi-object inquiries, use `lineage_get_scope_bundle`.',
+    modelDescription: 'Primary single-object lookup. Use this when the user asks about one specific object (DDL, columns, direct neighbors). For graph-scope lineage questions, prefer lineage_get_scope_bundle instead of chaining repeated per-node detail calls.',
     progressLabel: 'Fetching object details…',
   },
   {
@@ -97,7 +97,7 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_search_ddl', title: 'Search DDL', inputSchema: SearchDdlInputSchema, tags: ['lineage', 'lineage-research'], effect: 'read',
     userDescription: 'Search SQL body scripts for a text pattern.',
-    modelDescription: 'Searches view, procedure, and function bodies via regex. Returns matching lines with object ID, line number, matched text, surrounding context, `commented` (when inside SQL comment), and `enclosing_predicate` (when governed by IF/WHILE). `by_object` summarizes counts. Use `lineage_search_objects` for object names.',
+    modelDescription: 'Grep view, procedure and function bodies. Each hit has object, line, matched line, context, `commented: true` when the match sits in a SQL comment, and `enclosing_predicate` with the governing IF/WHILE condition when the match is inside one. `by_object` is the per-object hit count. No matches is `total: 0`; a bad pattern is `invalid_regex` with the repair. Use lineage_search_objects for names.',
     progressLabel: 'Searching SQL bodies…',
   },
   {
