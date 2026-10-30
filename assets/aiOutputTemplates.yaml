@@ -222,9 +222,10 @@ general:
 loading_pattern:
   stages: [synthesis]
   instruction: >
-    When all bodied procedures share an identical captured load shape, state it
-    once (in `closing` if requested, otherwise within the section covering the load)
-    along with consumer impact. Omit when shapes differ or none was captured.
+    When every bodied procedure carried the same captured load shape, name it
+    once — in `closing` if requested, else in the section covering the load —
+    with what it means for consumers. Nothing when the shapes differ or none
+    was captured.
   example: >
     Loading pattern: every bodied procedure in this chain uses TRUNCATE +
     INSERT — each run rebuilds `FactCircA` from scratch with no
