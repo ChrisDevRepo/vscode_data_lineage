@@ -175,7 +175,8 @@ function rejection(errors: readonly ErrorObject[]): ToolRejection {
   const faults: ToolError[] = [];
   for (const error of errors) {
     const { keyword, params, parentSchema } = error;
-    if (['anyOf', 'oneOf', 'if'].includes(keyword)) continue;
+    // A value outside an enum or const is one fault; the wrong JSON type of the same node restates it.
+    if (['anyOf', 'oneOf', 'if'].includes(keyword) || (keyword === 'type' && (Array.isArray(parentSchema?.enum) || 'const' in (parentSchema ?? {})))) continue;
     const path = toolErrorPath(error);
     let code: IssueCode = 'invalid', values: string[] | undefined;
     if (parentSchema?.toolIssue && parentSchema.toolIssue in ISSUES) code = parentSchema.toolIssue as IssueCode;
@@ -193,9 +194,7 @@ function rejection(errors: readonly ErrorObject[]): ToolRejection {
     if (previous) { if (values) previous.values = [...new Set([...(previous.values ?? []), ...values])]; }
     else faults.push({ path, code, ...(values?.length ? { values } : {}) });
   }
-  // A value outside an enum or const is one fault; its wrong JSON type restates it.
-  const distinct = faults.filter(fault => fault.code !== 'type' || !faults.some(other => other.path === fault.path && other.code === 'enum'));
-  return makeRejection({ code: REJECTION_CODES.invalidInput, errors: distinct.length ? distinct : at('invalid') });
+  return makeRejection({ code: REJECTION_CODES.invalidInput, errors: faults.length ? faults : at('invalid') });
 }
 
 /** The schema object is the cache identity; parsed data is typed only after native admission succeeds. */

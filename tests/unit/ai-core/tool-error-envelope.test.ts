@@ -226,6 +226,11 @@ describe("tool-error-envelope", () => {
     });
   });
 
+  it.each(['abc', true])('a number-or-literal union given %s keeps the number type fault beside the literal', depth => {
+    const schema = z.object({ depth: z.union([z.number().int().min(0), z.literal('all')]) }).strict();
+    expect(schemaRejection(schema, { depth }).errors).toEqual([{ path: 'depth', code: 'type', values: ['integer'] }, { path: 'depth', code: 'enum', values: ['all'] }]);
+  });
+
   it('a wrong-typed enum value is one enum fault; JSON text where a list or object belongs is json_text without values', () => {
     const schema = z.object({ action: z.enum(['approve', 'cancel']), mode: z.literal('bb'), list: z.array(z.string()).nullable(), node: z.object({ id: z.string() }) }).strict();
     expect(schemaRejection(schema, { action: 1, mode: null, list: '["a"', node: '{"id":' }).errors).toEqual([

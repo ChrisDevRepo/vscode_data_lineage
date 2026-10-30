@@ -170,14 +170,7 @@ const StartRefineProviderSchema = z.object({
   targetColumns: z.array(ColumnIdentifierSchema).optional().describe(
     TARGET_COLUMNS_PHASE_DESCRIPTION,
   ),
-}).strict().superRefine((data, ctx) => {
-  if (data.analysisMode === 'bb' && data.targetColumns && data.targetColumns.length > 0) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targetColumns'], message: 'BB refinement cannot name target columns.', params: { issue: 'never' } });
-  }
-  if (data.analysisMode === 'ct' && (!data.targetColumns || data.targetColumns.length === 0)) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targetColumns'], message: 'A BB-to-CT refinement requires named target columns.', params: { issue: 'missing' } });
-  }
-});
+}).strict();
 
 /** Fresh-entry model contract selected for `sm_entry` before the first approval gate. */
 export const StartExplorationFreshProviderInputSchema = z.object({
