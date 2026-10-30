@@ -100,6 +100,7 @@ These constructs can lose references in SQL-body parsing, or are left unresolved
 | `OPENDATASOURCE(...)...` | Nothing is captured, including the four-part table name. | Where the SQL dialect supports this syntax |
 | `ALTER TABLE dbo.A SWITCH PARTITION n TO dbo.B` | Neither table is captured. | Partition switching is DDL, not DML; no edge is modelled either way |
 | ANSI-89 comma list whose member is followed by `TABLESAMPLE`, or that continues with a comma after a `JOIN ... ON` condition or an `APPLY` | The list ends at that member, so tables after it are lost (table-variable members are not tables). | Legacy bodies on any platform |
+| `DELETE T FROM dbo.T AS T` with an ambiguous alias, or a `DELETE` whose target is only a CTE | The alias stays unresolved; the CTE is not traced to invent a mutation target. | Any platform |
 | `DELETE` / `TRUNCATE TABLE` | No target edge comes from the shipped regex rules alone. Metadata-backed table dependencies use the mutation classification above; a qualified table after `FROM` can also be captured as a read. | Deletes remove rows rather than supply column values |
 | `WITH d AS (SELECT ... FROM dbo.T) DELETE FROM d` | `dbo.T` is read as a source; the delete-only write is not marked because the statement names only the CTE. | Any platform with CTEs |
 | Schema-less `EXEC uspA`, `FROM T`, `db..T` | Not captured; only schema-qualified names resolve. | By design: the parser does not choose a schema |

@@ -48,6 +48,6 @@ Your file must declare the same `schemaVersion` as [`assets/aiOutputTemplates.ya
 
 Templates: `assets/aiOutputTemplates.yaml`. Stage prompts: `src/ai/prompting/`, assembled in `src/ai/agent/`. Tools, schemas and phase policy: `src/ai/tools/`. Change the owner of the behavior: stage prompts state the task, tool schemas own field contracts and templates own presentation.
 
-After changing a tool description or schema, run `npm run generate:tool-manifest` so `package.json` matches the catalog. For a breaking removal, rename or field-type change, update `schemaVersion` in the YAML and in `src/ai/session/types.ts` together. Run `npm run test:runtime` and `npm run gate`; the gate fails until the model-visible manifest is regenerated for a changed prompt text.
+After changing a tool description or schema, run `npm run generate:tool-manifest` so `package.json` matches the catalog. For a breaking removal, rename or field-type change, update `schemaVersion` in the YAML and in `src/ai/session/types.ts` together. Run `npm run test:runtime` and `npm run gate`; the gate fails until the model-visible manifest is regenerated for changed prompt text (`node tests/tools/run-vitest.mjs run tests/unit/ai-core/model-visible-requests.test.ts -u`).
 
 Static SQL can suggest a performance pattern, but cannot establish actual index benefit, join strategy, parameter sniffing or statistics freshness; custom templates cannot give the assistant evidence absent from the loaded model.

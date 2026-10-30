@@ -22,9 +22,7 @@ A free helper extension under the MIT license, shared as-is. This page lists wha
 ## Local files
 
 - Logs stay local, and secrets are redacted.
-- These files are written to the first workspace folder, only when you run their command:
-  - AI traces (`tmp/lm-trace/`) and state dumps (`tmp/sm-dumps/`);
-  - **Copy Debug Info** output.
-- They can contain database names, SQL and prompts. Review them before sharing, and keep them out of version control.
+- AI traces (`tmp/lm-trace/`) and state dumps (`tmp/sm-dumps/`) are written to the first workspace folder, only when you run their command. **Copy Debug Info** goes to the clipboard.
+- They can contain database names, SQL and prompts. Review them before sharing, and keep AI traces and state dumps out of version control.
 - Custom YAML files (parse rules, DMV queries, AI templates) are trusted configuration. In Restricted Mode, workspace values for them are ignored.
 - The webview runs under a strict Content Security Policy.

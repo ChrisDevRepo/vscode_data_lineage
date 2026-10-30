@@ -91,7 +91,7 @@ Parse rules, DMV queries and AI output templates are YAML you can override: **Da
 
 ## Security and privacy
 
-DACPAC files are parsed locally. Database import and table statistics run only read-only queries you start; `@lineage` sends your question and the SQL or metadata it reads to the chat model you selected, and cannot run SQL. Nothing goes to the author. Details: [`SECURITY.md`](SECURITY.md).
+DACPAC files are parsed locally. Database import and table statistics run the built-in read-only queries when you start them (custom DMV files run as written); `@lineage` sends your question, recent chat and the SQL or metadata it reads to the chat model you selected, and cannot run SQL. Nothing goes to the author. Details: [`SECURITY.md`](SECURITY.md).
 
 ## Limitations
 

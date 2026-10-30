@@ -89,7 +89,7 @@ Every message crossing the boundary is parsed with the Zod schemas in [`src/engi
 ### Layering
 
 - `src/engine/` never imports `src/components/` (a gate step checks this) or uses the browser `window` global.
-- `src/ai/` reaches the engine only through `src/engine/shared/`.
+- `src/ai/` reaches the engine through `src/engine/shared/`; older imports are listed in [`tests/unit/ai-core/rule-gates.test.ts`](../tests/unit/ai-core/rule-gates.test.ts) and the list may only shrink.
 - Log through [`src/utils/log.ts`](../src/utils/log.ts); user-facing errors go through [`src/utils/notifications.ts`](../src/utils/notifications.ts), which removes credentials.
 
 ## AI runtime

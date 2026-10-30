@@ -219,7 +219,7 @@ Table-level CHECK constraints (`parent_column_id = 0`) are not returned, even wh
 
 The built-in query keeps the optional columns with left joins, so object-level rows are preserved. A custom query that omits them keeps object-level lineage and loses column bindings.
 
-`referencing_column` binds a referenced object, such as a scalar function, to the output column that calls it. A row with `referencing_minor_id = 0` does not say which output column calls the function, so no binding is made. A binding declares a dependency, not which values contribute to the column; column-level answers come only from the optional AI column trace, which reviews the SQL. Which column dependencies SQL Server records also differs for schema-bound and non-schema-bound objects; see [`sys.sql_expression_dependencies`](https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-sql-expression-dependencies-transact-sql).
+`referencing_column` binds a referenced object, such as a scalar function, to the output column that calls it. A row with `referencing_minor_id = 0` does not say which output column calls the function, so no binding is made; a binding is made only when `referencing_column` matches a loaded column. A binding declares a dependency, not which values contribute to the column; column-level answers come only from the optional AI column trace, which reviews the SQL. Which column dependencies SQL Server records also differs for schema-bound and non-schema-bound objects; see [`sys.sql_expression_dependencies`](https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-sql-expression-dependencies-transact-sql).
 
 ## Known limitations
 

@@ -10,7 +10,7 @@ What a machine needs for each test tier. Commands are the same on every OS and a
 | Database smoke | `npm run test:db:smoke` | Local SQL Server with disposable fixture data and `DB_TEST_AUTH_TYPE=sqlLogin`; set `DB_TEST_SERVER`, `DB_TEST_PORT`, `DB_TEST_DATABASE`, `DB_TEST_USER` and `DB_TEST_PASSWORD`. Azure SQL requires an explicitly selected manual profile when available. |
 | AI trace capture | Headless, native chat UI and provider API smoke | `LANGFUSE_*` settings and access to that endpoint. All runs keep local captures and export Langfuse traces; file attachments upload only with `--attach`. Exported data can contain SQL and model/tool content. |
 
-Settings come from the process environment or an untracked local environment file copied from [`.env.example`](../../.env.example). A non-empty process value wins. Behind an HTTP proxy on Node 24, set `NODE_USE_ENV_PROXY=1` before launching the test process so fetch-based trace exports use it; setting it later through `.env` is too late. Keep credentials in that file, not command arguments.
+Settings come from the process environment or an untracked local environment file copied from [`.env.example`](../../.env.example). A non-empty process value wins. Behind an HTTP proxy on Node 22.21+ or 24, set `NODE_USE_ENV_PROXY=1` before launching the test process so fetch-based trace exports use it; setting it later through `.env` is too late. Keep credentials in that file, not command arguments.
 
 Database checks use a local SQL Server installation; keep TLS verification enabled. For a manual Azure SQL check, `DB_TEST_AUTH_TYPE=entraId` can use an existing token or signed-in Azure CLI; the runner never starts interactive login.
 
