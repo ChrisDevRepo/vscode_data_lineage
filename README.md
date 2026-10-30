@@ -91,13 +91,7 @@ Parse rules, DMV queries and AI output templates are YAML you can override: **Da
 
 ## Security and privacy
 
-- **DACPAC:** parsed locally; loading it makes no database connection. If you use AI afterward, relevant definitions and metadata can be sent to the selected model.
-- **Database import:** runs the built-in read-only catalog queries in [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md) when you start an import.
-- **Table statistics:** runs row-count and aggregate queries on a table when you request them (`dataLineageViz.tableStatistics.enabled`).
-- **`@lineage` (optional):** sends the question, recent chat and the SQL or metadata it reads to the chat model selected in VS Code. It cannot run SQL (`dataLineageViz.ai.enabled`).
-- Logs are local.
-
-Details: [`SECURITY.md`](SECURITY.md).
+DACPAC files are parsed locally. Database import and table statistics run only read-only queries you start; `@lineage` sends your question and the SQL or metadata it reads to the chat model you selected, and cannot run SQL. Nothing goes to the author. Details: [`SECURITY.md`](SECURITY.md).
 
 ## Limitations
 
@@ -123,9 +117,6 @@ No, you can connect to a database. To make one, extract it with Visual Studio, S
 **Why are some dependencies missing?**
 Only dependencies visible in compiled metadata or parseable SQL bodies are detected; dynamic SQL cannot be analysed statically. See [Limitations](#limitations) and [Troubleshooting](docs/TROUBLESHOOTING.md).
 
-**Why are unqualified references unreliable?**
-An unqualified name depends on the caller's default schema and context. Schema-qualified names are the only reliable source for static lineage.
-
 ## Documentation
 
 - [`docs/FEATURES.md`](docs/FEATURES.md): full feature catalogue and settings.
@@ -134,7 +125,7 @@ An unqualified name depends on the caller's default schema and context. Schema-q
 - [`docs/PROFILING_PATTERNS.md`](docs/PROFILING_PATTERNS.md): SQL generated for table profiling.
 - [`docs/PARSE_RULES.md`](docs/PARSE_RULES.md): YAML reference for the SQL parse rules.
 - [`docs/AI_PROMPTS.md`](docs/AI_PROMPTS.md): `@lineage` prompt architecture and output-template YAML.
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): lineage engine, data access, `@lineage` exploration modes and memory model.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): components, data access and the optional `@lineage` helper.
 - [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md): build from source and code layout.
 - [`CHANGELOG.md`](CHANGELOG.md): release history.
 

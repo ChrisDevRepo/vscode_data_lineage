@@ -54,52 +54,7 @@ A small question is answered in chat; a larger one becomes a plan you approve, c
 
 ### Exploration
 
-Each SQL step is a **hop**: the AI reads the current object's definition, records findings and states a mapping, question or prune for every open neighbor. A missing outcome is rejected; valid fields stay held for an action-only correction. The engine continues mapped neighbors and answers ACK or REJECT before committing. The AI does not classify the current object as analyze or passthrough. These checks establish mechanical validity, not correct SQL interpretation. The backend owns routing and visit-once scheduling. One neighbor projection supplies action capabilities to context, schemas, routing and rejection choices. A hop can change only its current findings and propose actions for its eligible unvisited neighbors; a distant object is not a valid neighbor prune target. Visited neighbors remain available as evidence but receive no new work or changes to their committed findings.
-
-The backend manages pruning and connectivity while preserving committed mappings and the origin path. Identifier normalization preserves authored spelling. The AI selects report content; captured-SQL coverage is logged without rejecting omissions or adding excerpts. Explicit SQL references expand from captured blocks; invalid references and missing object sections request a focused repair while valid content stays held.
-
-The engine retains tables and external storage objects in the result and forwards their incoming questions automatically to eligible neighbors in the approved direction. The same route handles a table named by an approved follow-up. Qualified column endpoints travel as unconfirmed candidates, without invented value edges: each receiving SQL object establishes which values it writes or uses. Unused candidates end independently at that object, preserving table evidence and sibling branches. Stored DDL and column expressions remain available as metadata; a procedure, view or function with unavailable SQL still needs an explicit uncertainty finding.
-
-A SQL hop reached only through storage forwarding receives the optional `lineage_prune_current` command when no committed column mapping protects it. It can remove an irrelevant object and its exclusive unvisited continuation; shared branches survive. Direct/root work receives no self-prune option. Neighbor pruning and self-pruning use the existing graph protection and hop-completion path. Kept findings preserve accepted mappings and legitimate final endpoints; later object-only work cannot restart ended column tasks.
-
-An exploration can carry object-level or column-level work:
-
-- **BB** (object lineage) follows whole objects: which procedures and views feed a table, and what they do.
-- **CT** (column trace) carries the columns relevant to the question: the AI reads each object's SQL and reports column contributions with their transforms. The engine records every valid neighbor-and-column pair (many-to-many): the object is an in-scope neighbour and the column exists where metadata is present; a source identical to its own destination column is refused, since a column cannot be its own upstream source. `out_col` is limited to the columns that arrived at an upstream hop; a procedure keeps a free name (extra upstream sources of an arriving column stay allowed). Attachment to the requested chain selects which columns carry into the next hop; extra valid pairs are not rejected. The engine does not derive or reclassify the column links itself. Check the AI’s column links against the SQL.
-
-### Routing order
-
-The engine keeps open work as a list of hops, one per object, each holding its merged tasks. The order is not the list order: on every dispatch the engine computes the next ready hop from the live graph. A hop is ready when no unfinished object that can still reach it remains; objects in a cycle are scheduled as one unit. Ties go to column work, then origin and follow-up requests, then distance from the origin. Scope, prunes and routes change after every hop, so the schedule is recomputed rather than precomputed.
-
-### Large graphs and memory
-
-Discovery catalog requests limit the graph material returned to the AI using `dataLineageViz.ai.discoveryNodeCap` and `dataLineageViz.ai.discoveryTokenBudget`; exploration admission is limited by `dataLineageViz.ai.maxRounds` hops and `dataLineageViz.ai.maxTraceColumns` starting columns.
-
-Each hop uses sliding memory: the question and approved scope, the current object, its neighbors' columns, and short summaries of the last three hops (storage objects traversed without a model call do not displace hop summaries). After each committed hop, the conversation restarts with continuation context rather than replaying every prior tool exchange. Prompt size still varies with SQL, scope and task context. The findings are kept by the engine and read once at the end to write the answer.
-
-### Model messages and commit boundaries
-
-```mermaid
-flowchart TD
-    PLAN[LangGraph phase and instruction plan] --> MODEL[LangChain bridge to selected VS Code model]
-    MODEL --> CORRELATE[Model port: complete, unique call IDs]
-    CORRELATE --> NORMALIZE[Model port: lossless normalization once]
-    NORMALIZE --> DISPATCH[Ordered phase-filtered dispatcher]
-    DISPATCH --> INGEST[Shared ingestion: context-scoped candidate]
-    INGEST --> SCHEMA[Canonical Ajv admission and native field facts]
-    SCHEMA --> ENGINE[Existing domain owners: topology, scope and references]
-    ENGINE --> DECIDE{Any issues?}
-    DECIDE -->|No| COMMIT[Publish prepared result and fan out tasks]
-    DECIDE -->|Yes| REPAIR[Retain valid fields; render one correction]
-    REPAIR --> BUDGET[Append feedback; bounded corrections]
-    BUDGET --> MODEL
-    COMMIT --> AGENDA[Merge by object; dispatch when structurally ready]
-    AGENDA --> PLAN
-```
-
-Tool batches execute in provider order with unique call IDs. Missing or repeated call IDs fail the model response before tool execution. A successful gate, route change or phase completion closes the active batch.
-
-The initial reply allows three corrections, four replies total. Feedback 1 names every fault; feedback 2 adds allowed values; feedback 3 offers the detail-memory fallback for report references only. Corrections append feedback to the original request. A still-invalid hop terminates without a partial commit. LangChain translates messages, Zod validates non-tool contracts, the engine enforces graph integrity and LangGraph manages phases.
+A deep analysis walks the approved scope one SQL object at a time (a **hop**): the AI reads the object's definition and records findings, and the engine validates each reply, routes the next objects and rejects invalid replies with a specific correction. Tables and external storage objects are passed through without a model call. These checks establish mechanical validity, not correct SQL interpretation. An exploration follows whole objects (**BB**, object lineage) or the columns relevant to the question (**CT**, column trace); the engine does not derive column links itself, so check them against the SQL. Limits: `dataLineageViz.ai.maxRounds`, `dataLineageViz.ai.maxTraceColumns`, `dataLineageViz.ai.discoveryNodeCap` and `dataLineageViz.ai.discoveryTokenBudget`.
 
 ## Design boundaries
 

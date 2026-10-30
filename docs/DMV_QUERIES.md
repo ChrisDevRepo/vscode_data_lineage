@@ -219,9 +219,7 @@ Table-level CHECK constraints (`parent_column_id = 0`) are not returned, even wh
 
 The built-in query keeps the optional columns with left joins, so object-level rows are preserved. A custom query that omits them keeps object-level lineage and loses column bindings.
 
-`referencing_column` binds a referenced object, such as a scalar function, to the output column that calls it. SQL Server can report a reference with `referencing_minor_id = 0`; such a row does not say which output column calls the function, so no column binding is made. A binding is made only when `referencing_column` matches a loaded column; it keeps server, database, schema, object and column qualification with SQL identifier quoting. A binding declares a dependency, not which values contribute to the column; column-level answers come only from the optional AI column trace, which reviews the SQL. Which column dependencies SQL Server records also differs for schema-bound and non-schema-bound objects; see [`sys.sql_expression_dependencies`](https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-sql-expression-dependencies-transact-sql).
-
-When catalog output bindings are absent, the optional AI [column-tracing workflow](ARCHITECTURE.md) can investigate a loaded neighboring function using the caller SQL and a real loaded caller output. This does not populate column bindings from object-level rows or authorize guessed column edges. Live imports and DACPACs can supply different declaration coverage; checking object and column identities does not prove that AI contributor mappings are complete or semantically correct.
+`referencing_column` binds a referenced object, such as a scalar function, to the output column that calls it. A row with `referencing_minor_id = 0` does not say which output column calls the function, so no binding is made. A binding declares a dependency, not which values contribute to the column; column-level answers come only from the optional AI column trace, which reviews the SQL. Which column dependencies SQL Server records also differs for schema-bound and non-schema-bound objects; see [`sys.sql_expression_dependencies`](https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-sql-expression-dependencies-transact-sql).
 
 ## Known limitations
 
@@ -230,8 +228,6 @@ When catalog output bindings are absent, the optional AI [column-tracing workflo
 | Dynamic SQL dependencies not captured | `sys.sql_expression_dependencies` only tracks static references. |
 | Remote database internals not introspected | Three- or four-part references can surface as virtual cross-database nodes when metadata exposes database/schema/object names, but DMV import remains scoped to the connected database. |
 | Unqualified / unresolved references may be excluded | Built-in dependency SQL filters unresolved rows; parser fallback can recover some schema-qualified references from SQL bodies, but default-schema ambiguity is not reliable. |
-
-These are metadata-source limits rather than UI-only gaps.
 
 ## Custom queries
 

@@ -27,4 +27,3 @@ None of these need a database, model provider or credentials. Test tiers are in 
 - Change behavior in the layer that owns it and add a focused test when the contract changes.
 - Keep the `.md` files true for what you changed.
 - Run `npm run gate` before you treat a code change as ready. It does not call a model provider.
-- Entries in `package.json` `overrides` are deliberate security pins plus the `langsmith` stub in `stubs/langsmith/`.
