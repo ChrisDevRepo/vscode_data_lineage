@@ -584,7 +584,7 @@ const ColumnRefSchema = z
         'Classify this source column’s own role end to end; omit when SQL does not determine it. ' +
           'pass_through: unchanged value. compute: expression input, including a CASE condition operand. aggregate: value summarised by an aggregate. ' +
           'combine: join, grouping, partition or ordering key. filter: predicate ' +
-          'selecting contributing rows. Grouping, partition and ordering keys are not aggregate value inputs; ' +
+          'selecting contributing, updated or deleted rows. Grouping, partition and ordering keys are not aggregate value inputs; ' +
           'display-only sorting contributes no role.',
       ),
     note: z
@@ -658,7 +658,7 @@ export const PruneCurrentInputSchema = z
 
 const COLUMN_FLOW_DESCRIPTION =
   'SQL-proved outputs related to the arriving columns in <current_task>, with their contributing neighbor columns. ' +
-  'Reference only neighbors in <hop_context>. Not sources: row operations (TRUNCATE, DELETE); describe them in sections. [] when nothing feeds the arriving columns.';
+  'Reference only neighbors in <hop_context>. [] when nothing feeds the arriving columns.';
 
 /** Base flow grammar before hop-specific metadata admission; diagnostics reuse its structural certainty. */
 export const ColumnFlowSchema = z
