@@ -294,8 +294,8 @@ const ColumnRefSchema = z.object({
 /** One closed `column_flow` entry; provider projection and runtime parsing reject surplus keys. */
 const OUT_COL_DESCRIPTION = "Output column resolved from this hop\'s column task; for a procedure, the column it writes to out_node.";
 const OUT_NODE_DESCRIPTION = 'Table from <hop_context> that this procedure writes out_col to. For a write to an object not listed, omit the entry and name the write in sections.';
-const UPSTREAM_DESCRIPTION = 'Neighbor columns that feed out_col: value sources (expression operands, aggregate arguments, each UNION branch column, caller-bound inputs) and columns that only join, filter, group or order its rows. ' +
-  'Exclude the entry’s own out_node column, unused expressions and columns only copied alongside out_col (SELECT *, the rest of a column list). Resolve parameters and aliases to source columns.';
+const UPSTREAM_DESCRIPTION = 'At a bodied focus, record the real source columns whose value flows into out_col: operands of its expression, an aggregate’s argument, each set-operation branch’s column at that position, caller-bound value inputs. Columns used only to join, filter, group, partition or order its rows are recorded with their indirect roles. ' +
+  'Exclude the entry’s own out_node column, unused expressions and columns only copied alongside out_col (SELECT *, the rest of a column list). Resolve parameters and computed aliases to their source columns.';
 /** At a procedure, a created value is the pair procedure.col -> out_node.out_col (D-130). */
 const PROCEDURE_UPSTREAM_DESCRIPTION = `${UPSTREAM_DESCRIPTION} A value this procedure creates lists this procedure with the column its task names, else out_col; [] records no pair.`;
 
@@ -315,7 +315,7 @@ export const PruneCurrentInputSchema = z.object({
   reason: z.string().min(1).regex(/\S/).describe('Why the whole current node is irrelevant to this investigation.'),
 }).strict();
 
-const COLUMN_FLOW_DESCRIPTION = 'One entry per SQL-proved output related to the arriving columns in <current_task>, with its contributing neighbor columns. '
+const COLUMN_FLOW_DESCRIPTION = 'SQL-proved outputs related to the arriving columns in <current_task>, with their contributing neighbor columns. '
   + 'Reference only neighbors in <hop_context>. Not sources: row operations (TRUNCATE, DELETE); describe them in sections. [] when nothing feeds the arriving columns.';
 
 /** Base flow grammar before hop-specific metadata admission; diagnostics reuse its structural certainty. */
