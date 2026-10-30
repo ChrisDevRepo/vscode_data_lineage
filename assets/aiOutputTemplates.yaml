@@ -176,10 +176,7 @@ structural_callouts:
 structural_summary:
   stages: [active]
   instruction: >
-    Non-bodied focus; each `sections` value follows this structure: **Purpose**,
-    the node's role from its id and type; **Upstream sources**, one line per `in[]`
-    writer and its role; **Downstream consumers**, one line per `out[]` reader
-    and its role. State "none in the graph" for empty lists.
+    This focus has no SQL body, so each `sections` value follows this instead of the recipe: **Purpose**, the node's role from its id and type; **Upstream sources**, one line per `in[]` writer and its role; **Downstream consumers**, one line per `out[]` reader and its role. An empty list reads "none in the graph".
 
 # ── Column Trace capture (active phase, CT mode only) ────────────────────────
 # Fires additively alongside business_capture / technical_capture on a hop that
