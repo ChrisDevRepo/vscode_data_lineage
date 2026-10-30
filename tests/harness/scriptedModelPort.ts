@@ -24,7 +24,11 @@ import {
   estimateTokens,
   type TurnTokenBudget,
 } from '../../src/ai/support/tokenBudget';
-import { finishStructured, messageContentToText, modelToolCallMessage } from '../../src/ai/model/modelPort';
+import {
+  finishStructured,
+  messageContentToText,
+  modelToolCallMessage,
+} from '../../src/ai/model/modelPort';
 import type { MessageContent } from '@langchain/core/messages';
 
 /** One queued provider generation replayed by {@link ScriptedModelPort} in script order. */
@@ -100,30 +104,49 @@ export class ScriptedModelPort implements SingleGenerationModelPort {
     const reply = this.textScript[this.textCalls];
     this.textCalls += 1;
     if (reply === undefined) {
-      throw new Error(`ScriptedModelPort: no completeText reply scripted for call #${this.textCalls}`);
+      throw new Error(
+        `ScriptedModelPort: no completeText reply scripted for call #${this.textCalls}`,
+      );
     }
     return reply;
   }
 
   /** Finishes the next scripted structured reply through the product path, as one structured-output call. */
-  public async generateStructured<T>(input: { schema: z.ZodType<T> }): Promise<T> {
+  public async generateStructured<T>(input: {
+    schema: z.ZodType<T>;
+  }): Promise<T> {
     const reply = this.structuredScript[this.structuredCalls];
     this.structuredCalls += 1;
     if (reply === undefined) {
-      throw new Error(`ScriptedModelPort: no structured reply scripted for call #${this.structuredCalls}`);
+      throw new Error(
+        `ScriptedModelPort: no structured reply scripted for call #${this.structuredCalls}`,
+      );
     }
     // A scripted Error is thrown as the model port would: the provider failed instead of answering.
     if (reply instanceof Error) throw reply;
-    return finishStructured([{ callId: `structured-${this.structuredCalls}`, toolName: STRUCTURED_OUTPUT_TOOL, args: reply as Record<string, unknown> }], input.schema);
+    return finishStructured(
+      [
+        {
+          callId: `structured-${this.structuredCalls}`,
+          toolName: STRUCTURED_OUTPUT_TOOL,
+          args: reply as Record<string, unknown>,
+        },
+      ],
+      input.schema,
+    );
   }
 
   /** Replays the next queued generation, incrementing the physical-call counter exactly once. */
-  public async generateToolTurn(input: ToolGenerationInput): Promise<ToolGenerationResult> {
+  public async generateToolTurn(
+    input: ToolGenerationInput,
+  ): Promise<ToolGenerationResult> {
     const step = this.script[this.calls];
     this.calls += 1;
     this.requests.push(input);
     if (!step) {
-      throw new Error(`ScriptedModelPort: no generation scripted for provider call #${this.calls}`);
+      throw new Error(
+        `ScriptedModelPort: no generation scripted for provider call #${this.calls}`,
+      );
     }
     if (input.onTextDelta) {
       for (const delta of step.textDeltas ?? []) input.onTextDelta(delta);
@@ -153,7 +176,12 @@ export class ScriptedModelPort implements SingleGenerationModelPort {
         toolCalls.map((call) => ({
           callId: call.callId,
           toolName: call.toolName,
-          input: call.input !== null && typeof call.input === 'object' && !Array.isArray(call.input) ? call.input : {},
+          input:
+            call.input !== null &&
+            typeof call.input === 'object' &&
+            !Array.isArray(call.input)
+              ? call.input
+              : {},
         })),
         text,
         step.providerParts,
@@ -161,13 +189,18 @@ export class ScriptedModelPort implements SingleGenerationModelPort {
       content: [],
       text,
       toolCalls,
-      finishReason: step.finishReason ?? (toolCalls.length > 0 ? 'tool-calls' : 'stop'),
+      finishReason:
+        step.finishReason ?? (toolCalls.length > 0 ? 'tool-calls' : 'stop'),
     };
   }
 }
 
 /** Builds a schema-valid provider tool call that reaches registry dispatch. */
-export function validCall(callId: string, toolName: string, input: unknown): ValidGeneratedToolCall {
+export function validCall(
+  callId: string,
+  toolName: string,
+  input: unknown,
+): ValidGeneratedToolCall {
   return { valid: true, callId, toolName, input };
 }
 
@@ -214,7 +247,9 @@ export function scriptedRegistry(tools: readonly ScriptedTool[]): {
 } {
   const registry = new ToolRegistry<string>();
   const invocations: RecordedInvocation[] = [];
-  const productionEffects = new Map<string, RegisteredTool<string>['effect']>(TOOL_DEFS.map(def => [def.name, def.effect]));
+  const productionEffects = new Map<string, RegisteredTool<string>['effect']>(
+    TOOL_DEFS.map((def) => [def.name, def.effect]),
+  );
   for (const tool of tools) {
     const effect = tool.effect ?? productionEffects.get(tool.name);
     const registered: RegisteredTool<string> = {
@@ -226,7 +261,9 @@ export function scriptedRegistry(tools: readonly ScriptedTool[]): {
       execute: (input: unknown): string => {
         invocations.push({ toolName: tool.name, input });
         if (tool.thrown !== undefined) throw tool.thrown;
-        return typeof tool.result === 'function' ? tool.result(input) : tool.result;
+        return typeof tool.result === 'function'
+          ? tool.result(input)
+          : tool.result;
       },
     };
     registry.register(registered);
@@ -237,19 +274,32 @@ export function scriptedRegistry(tools: readonly ScriptedTool[]): {
 /** Scripted start result that opens a gate as the real handler does: the typed signal on the session plus the envelope text.
  * @public
  */
-export function scriptedGate(getSession: () => Pick<AiSession, 'signalControl'>): () => string {
+export function scriptedGate(
+  getSession: () => Pick<AiSession, 'signalControl'>,
+): () => string {
   return () => {
     getSession().signalControl({ kind: 'gate' });
-    return JSON.stringify({ code: 'action_required', reason: 'review revision 1', errors: [{ path: '', code: 'awaiting_approval' }] });
+    return JSON.stringify({
+      code: 'action_required',
+      reason: 'review revision 1',
+      errors: [{ path: '', code: 'awaiting_approval' }],
+    });
   };
 }
 
 /** Scripted start result that refuses the request as the real handler does: the typed signal on the session plus the envelope text.
  * @public
  */
-export function scriptedRefusal(getSession: () => Pick<AiSession, 'signalControl'>, reason: string): () => string {
+export function scriptedRefusal(
+  getSession: () => Pick<AiSession, 'signalControl'>,
+  reason: string,
+): () => string {
   return () => {
     getSession().signalControl({ kind: 'refused', reason });
-    return JSON.stringify({ code: 'over_active_scope_budget', reason, errors: [{ path: '', code: 'over_budget' }] });
+    return JSON.stringify({
+      code: 'over_active_scope_budget',
+      reason,
+      errors: [{ path: '', code: 'over_budget' }],
+    });
   };
 }

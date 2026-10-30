@@ -8,7 +8,10 @@ let runtime: ExtensionRuntime | undefined;
 /** VS Code extension entry point. */
 export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
-    vscode.window.registerTreeDataProvider('dataLineageViz.quickActions', new SidebarProvider()),
+    vscode.window.registerTreeDataProvider(
+      'dataLineageViz.quickActions',
+      new SidebarProvider(),
+    ),
   );
 
   try {

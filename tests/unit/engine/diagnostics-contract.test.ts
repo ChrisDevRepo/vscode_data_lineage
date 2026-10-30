@@ -9,12 +9,20 @@ describe('detail-panel diagnostics contract', () => {
   it.each([
     { type: 'error', error: 'render failed', source: 'error-boundary' },
     { type: 'show-warning', text: 'profiling is unavailable' },
-  ])('accepts $type messages handled by the shared diagnostic funnel', (message) => {
-    expect(DetailPanelToExtensionMsgSchema.safeParse(message).success).toBe(true);
-  });
+  ])(
+    'accepts $type messages handled by the shared diagnostic funnel',
+    (message) => {
+      expect(DetailPanelToExtensionMsgSchema.safeParse(message).success).toBe(
+        true,
+      );
+    },
+  );
 
   it('still rejects unknown detail-panel messages', () => {
-    expect(DetailPanelToExtensionMsgSchema.safeParse({ type: 'log', text: 'raw' }).success).toBe(false);
+    expect(
+      DetailPanelToExtensionMsgSchema.safeParse({ type: 'log', text: 'raw' })
+        .success,
+    ).toBe(false);
   });
 });
 
@@ -52,8 +60,17 @@ function uiState(): Record<string, unknown> {
     filteredCount: 12,
     renderLimitHit: 0,
     screenState: {
-      analytics: { type: 'islands', activeGroupId: 'g1', groups: [{ id: 'g1', label: 'Island 1', nodeIds: ['dbo.a'] }] },
-      bookmark: { id: 'b1', name: 'Sales', source: 'ai', allowlistNodeIds: ['dbo.a'] },
+      analytics: {
+        type: 'islands',
+        activeGroupId: 'g1',
+        groups: [{ id: 'g1', label: 'Island 1', nodeIds: ['dbo.a'] }],
+      },
+      bookmark: {
+        id: 'b1',
+        name: 'Sales',
+        source: 'ai',
+        allowlistNodeIds: ['dbo.a'],
+      },
       detailOpen: true,
     },
   };
@@ -65,7 +82,12 @@ function renderState(): Record<string, unknown> {
     sourceName: 'demo',
     graphMode: 'full',
     renderedNodeCount: 3,
-    connectivity: { nodeCount: 3, edgeCount: 2, componentCount: 1, isolatedNodes: [] },
+    connectivity: {
+      nodeCount: 3,
+      edgeCount: 2,
+      componentCount: 1,
+      isolatedNodes: [],
+    },
     highlightedNodeId: 'dbo.a',
     affordances: { nodeId: 'dbo.a', in: side, out: side },
     traceScope: {
@@ -86,7 +108,9 @@ describe('main-panel screen-state contract', () => {
       uiState: { ...uiState(), futureField: { nested: 1 } },
     });
     expect(parsed.success).toBe(true);
-    expect(parsed.data).toMatchObject({ uiState: { futureField: { nested: 1 }, graphMode: 'full' } });
+    expect(parsed.data).toMatchObject({
+      uiState: { futureField: { nested: 1 }, graphMode: 'full' },
+    });
   });
 
   it('accepts the render-state the webview posts and keeps unknown fields literally', () => {
@@ -95,28 +119,95 @@ describe('main-panel screen-state contract', () => {
       renderState: { ...renderState(), futureField: 'x' },
     });
     expect(parsed.success).toBe(true);
-    expect(parsed.data).toMatchObject({ renderState: { futureField: 'x', projectId: 'p1' } });
+    expect(parsed.data).toMatchObject({
+      renderState: { futureField: 'x', projectId: 'p1' },
+    });
   });
 
   it.each([
     ['a non-object ui-state', () => 'broken'],
     ['a missing ui-state', () => undefined],
-    ['a filter that is not a filter record', () => ({ ...uiState(), filter: 'dbo' })],
+    [
+      'a filter that is not a filter record',
+      () => ({ ...uiState(), filter: 'dbo' }),
+    ],
     ['an unknown graph mode', () => ({ ...uiState(), graphMode: 'sideways' })],
-    ['a non-numeric filtered count', () => ({ ...uiState(), filteredCount: '12' })],
-    ['analytics groups that are not a list', () => ({ ...uiState(), screenState: { analytics: { type: 'islands', activeGroupId: null, groups: 'g1' } } })],
-    ['a bookmark allowlist that is not a list', () => ({ ...uiState(), screenState: { bookmark: { id: 'b', name: 'n', source: null, allowlistNodeIds: 'dbo.a' } } })],
+    [
+      'a non-numeric filtered count',
+      () => ({ ...uiState(), filteredCount: '12' }),
+    ],
+    [
+      'analytics groups that are not a list',
+      () => ({
+        ...uiState(),
+        screenState: {
+          analytics: { type: 'islands', activeGroupId: null, groups: 'g1' },
+        },
+      }),
+    ],
+    [
+      'a bookmark allowlist that is not a list',
+      () => ({
+        ...uiState(),
+        screenState: {
+          bookmark: {
+            id: 'b',
+            name: 'n',
+            source: null,
+            allowlistNodeIds: 'dbo.a',
+          },
+        },
+      }),
+    ],
   ])('rejects filter-changed carrying %s', (_label, build) => {
-    expect(MainPanelToExtensionMsgSchema.safeParse({ type: 'filter-changed', uiState: build() }).success).toBe(false);
+    expect(
+      MainPanelToExtensionMsgSchema.safeParse({
+        type: 'filter-changed',
+        uiState: build(),
+      }).success,
+    ).toBe(false);
   });
 
   it.each([
     ['a non-object render-state', () => 42],
-    ['traced ids that are not a list', () => ({ ...renderState(), traceScope: { ...(renderState().traceScope as object), tracedNodeIds: 'dbo.a' } })],
-    ['a trace scope missing its id lists', () => ({ ...renderState(), traceScope: { mode: 'applied', origin: null } })],
-    ['affordances whose add list is a string', () => ({ ...renderState(), affordances: { nodeId: 'dbo.a', in: { ...side, add: 'dbo.a' }, out: side } })],
-    ['connectivity without its counts', () => ({ ...renderState(), connectivity: { nodeCount: 1 } })],
+    [
+      'traced ids that are not a list',
+      () => ({
+        ...renderState(),
+        traceScope: {
+          ...(renderState().traceScope as object),
+          tracedNodeIds: 'dbo.a',
+        },
+      }),
+    ],
+    [
+      'a trace scope missing its id lists',
+      () => ({
+        ...renderState(),
+        traceScope: { mode: 'applied', origin: null },
+      }),
+    ],
+    [
+      'affordances whose add list is a string',
+      () => ({
+        ...renderState(),
+        affordances: {
+          nodeId: 'dbo.a',
+          in: { ...side, add: 'dbo.a' },
+          out: side,
+        },
+      }),
+    ],
+    [
+      'connectivity without its counts',
+      () => ({ ...renderState(), connectivity: { nodeCount: 1 } }),
+    ],
   ])('rejects render-state carrying %s', (_label, build) => {
-    expect(MainPanelToExtensionMsgSchema.safeParse({ type: 'render-state', renderState: build() }).success).toBe(false);
+    expect(
+      MainPanelToExtensionMsgSchema.safeParse({
+        type: 'render-state',
+        renderState: build(),
+      }).success,
+    ).toBe(false);
   });
 });

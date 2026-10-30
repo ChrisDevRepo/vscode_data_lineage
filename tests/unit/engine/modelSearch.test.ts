@@ -38,7 +38,11 @@ const nodes: SearchableNode[] = [
     name: 'OrderHeader',
     schema: 'Sales',
     type: 'table',
-    columns: [column('OrderID'), column('CustomerID'), column('OrderDate', 'datetime')],
+    columns: [
+      column('OrderID'),
+      column('CustomerID'),
+      column('OrderDate', 'datetime'),
+    ],
   },
   {
     id: 'sales.orderdetail',
@@ -70,7 +74,8 @@ const nodes: SearchableNode[] = [
     name: 'ActiveCustomersView',
     schema: 'dbo',
     type: 'view',
-    bodyScript: "CREATE VIEW dbo.ActiveCustomersView AS\nSELECT CustomerID FROM Customer WHERE Status = 'Active'",
+    bodyScript:
+      "CREATE VIEW dbo.ActiveCustomersView AS\nSELECT CustomerID FROM Customer WHERE Status = 'Active'",
   },
   {
     id: 'hr.employee',
@@ -120,10 +125,19 @@ describe('model search', () => {
     const scoped = compileSearchRegex('(?i:foo)');
 
     if (MODIFIER_GROUPS_SUPPORTED) {
-      expect(scoped.ok, 'this engine supports modifier groups, so the untouched pattern compiles').toBe(true);
-      expect(scoped.ok && scoped.regex.source, 'the pattern reaches the engine byte-for-byte').toBe('(?i:foo)');
+      expect(
+        scoped.ok,
+        'this engine supports modifier groups, so the untouched pattern compiles',
+      ).toBe(true);
+      expect(
+        scoped.ok && scoped.regex.source,
+        'the pattern reaches the engine byte-for-byte',
+      ).toBe('(?i:foo)');
     } else {
-      expect(scoped.ok, 'this engine has no modifier groups, so the untouched pattern is refused').toBe(false);
+      expect(
+        scoped.ok,
+        'this engine has no modifier groups, so the untouched pattern is refused',
+      ).toBe(false);
       expect(scoped.ok === false && scoped.reason).toBe('syntax');
     }
   });
@@ -138,12 +152,15 @@ describe('model search', () => {
     const pattern = '(?i)raworderimport';
     const result = compileSearchRegex(pattern);
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(regexRejectHint(pattern, result)).toContain('Remove the inline flag group');
+    if (!result.ok)
+      expect(regexRejectHint(pattern, result)).toContain(
+        'Remove the inline flag group',
+      );
   });
 
   it('searches and ranks catalog names case-insensitively', () => {
     const results = searchCatalog(nodes, 'ORDER');
-    expect(results.map(node => node.id)).toEqual([
+    expect(results.map((node) => node.id)).toEqual([
       'sales.orderdetail',
       'sales.orderheader',
       'dbo.getorderssummary',
@@ -154,19 +171,23 @@ describe('model search', () => {
 
   it('applies catalog type, schema, regex, and result limits', () => {
     expect(
-      searchCatalog(nodes, 'Order', new Set(['table'] as const))
-        .every(node => node.type === 'table'),
+      searchCatalog(nodes, 'Order', new Set(['table'] as const)).every(
+        (node) => node.type === 'table',
+      ),
     ).toBe(true);
     expect(
-      searchCatalog(nodes, 'Order', undefined, new Set(['Sales']))
-        .map(node => node.id),
+      searchCatalog(nodes, 'Order', undefined, new Set(['Sales'])).map(
+        (node) => node.id,
+      ),
     ).toEqual(['sales.orderdetail', 'sales.orderheader']);
     expect(
-      searchCatalog(nodes, '^Order', undefined, undefined, 20, 'regex')
-        .every(node => node.name.startsWith('Order')),
+      searchCatalog(nodes, '^Order', undefined, undefined, 20, 'regex').every(
+        (node) => node.name.startsWith('Order'),
+      ),
     ).toBe(true);
-    expect(searchCatalog(nodes, '[invalid(', undefined, undefined, 20, 'regex'))
-      .toEqual([]);
+    expect(
+      searchCatalog(nodes, '[invalid(', undefined, undefined, 20, 'regex'),
+    ).toEqual([]);
     expect(searchCatalog(nodes, 'e', undefined, undefined, 2)).toHaveLength(2);
   });
 
@@ -183,12 +204,16 @@ describe('model search', () => {
   });
 
   it('matches a compiled regex against bodies — the lineage_search_ddl contract', () => {
-    for (const pattern of ['totalquantity', 'total.*quantity', 'TOTALQUANTITY']) {
+    for (const pattern of [
+      'totalquantity',
+      'total.*quantity',
+      'TOTALQUANTITY',
+    ]) {
       const compiled = compileSearchRegex(pattern);
       expect(compiled.ok).toBe(true);
       if (!compiled.ok) return;
       const hits = searchBodyScripts(nodes, compiled.regex);
-      expect(hits.map(h => h.node.id)).toEqual(['dbo.getorderssummary']);
+      expect(hits.map((h) => h.node.id)).toEqual(['dbo.getorderssummary']);
       expect(hits[0].snippet).toContain('TotalQuantity');
     }
     const none = compileSearchRegex('no.such.token');
@@ -198,22 +223,46 @@ describe('model search', () => {
   it('reports every match in a body with its 1-based line and matched line text', () => {
     const compiled = compileSearchRegex('OrderID');
     if (!compiled.ok) throw new Error('OrderID must compile');
-    const hits = searchBodyScripts(nodes, compiled.regex, new Set(['procedure'] as const));
-    expect(hits.map(h => h.line), 'line 3 once, line 5 twice').toEqual([3, 5, 5]);
-    expect(hits[0].text).toBe('SELECT o.OrderID, SUM(d.Quantity) AS TotalQuantity');
-    expect(hits[2].text).toBe('JOIN Sales.OrderDetail d ON o.OrderID = d.OrderID');
+    const hits = searchBodyScripts(
+      nodes,
+      compiled.regex,
+      new Set(['procedure'] as const),
+    );
+    expect(
+      hits.map((h) => h.line),
+      'line 3 once, line 5 twice',
+    ).toEqual([3, 5, 5]);
+    expect(hits[0].text).toBe(
+      'SELECT o.OrderID, SUM(d.Quantity) AS TotalQuantity',
+    );
+    expect(hits[2].text).toBe(
+      'JOIN Sales.OrderDetail d ON o.OrderID = d.OrderID',
+    );
   });
 
   it('scans once: full rows while the count is admitted, only counts once it is not', () => {
     const compiled = compileSearchRegex('OrderID|Customer');
     if (!compiled.ok) throw new Error('the pattern must compile');
     const all = scanBodyMatches(nodes, compiled.regex, undefined, () => true);
-    expect(all.matches, 'an admitted count builds exactly what searchBodyScripts builds')
-      .toEqual(searchBodyScripts(nodes, compiled.regex));
-    expect([all.total, all.objects], '3 OrderID hits in the procedure, 3 Customer hits in the view').toEqual([6, 2]);
+    expect(
+      all.matches,
+      'an admitted count builds exactly what searchBodyScripts builds',
+    ).toEqual(searchBodyScripts(nodes, compiled.regex));
+    expect(
+      [all.total, all.objects],
+      '3 OrderID hits in the procedure, 3 Customer hits in the view',
+    ).toEqual([6, 2]);
 
-    const capped = scanBodyMatches(nodes, compiled.regex, undefined, count => count <= 2);
-    expect([capped.total, capped.objects], 'counts cover every match past the ceiling').toEqual([6, 2]);
+    const capped = scanBodyMatches(
+      nodes,
+      compiled.regex,
+      undefined,
+      (count) => count <= 2,
+    );
+    expect(
+      [capped.total, capped.objects],
+      'counts cover every match past the ceiling',
+    ).toEqual([6, 2]);
     expect(capped.matches, 'no row is built past the ceiling').toHaveLength(2);
   });
 
@@ -221,7 +270,11 @@ describe('model search', () => {
     const count = (pattern: string): number => {
       const compiled = compileSearchRegex(pattern);
       if (!compiled.ok) throw new Error(`${pattern} must compile`);
-      return searchBodyScripts(nodes, compiled.regex, new Set(['procedure'] as const)).length;
+      return searchBodyScripts(
+        nodes,
+        compiled.regex,
+        new Set(['procedure'] as const),
+      ).length;
     };
     expect(count('^CREATE'), '^ matches the first line start').toBe(1);
     expect(count('^SELECT'), '^ matches a line start inside the body').toBe(1);
@@ -232,31 +285,49 @@ describe('model search', () => {
   });
 
   it('does not skip a body whose first match is empty', () => {
-    const body: SearchableNode[] = [{
-      id: 'dbo.vwx', name: 'vwX', schema: 'dbo', type: 'view',
-      bodyScript: 'SELECT ColA\nFROM dbo.xTable',
-    }];
+    const body: SearchableNode[] = [
+      {
+        id: 'dbo.vwx',
+        name: 'vwX',
+        schema: 'dbo',
+        type: 'view',
+        bodyScript: 'SELECT ColA\nFROM dbo.xTable',
+      },
+    ];
     const compiled = compileSearchRegex('x*');
     if (!compiled.ok) throw new Error('x* must compile');
     const hits = searchBodyScripts(body, compiled.regex);
     expect(hits.length, 'the node is scanned, not skipped').toBeGreaterThan(0);
-    expect(hits.some(h => h.text.includes('xTable')), 'the real match is reported').toBe(true);
+    expect(
+      hits.some((h) => h.text.includes('xTable')),
+      'the real match is reported',
+    ).toBe(true);
   });
 
   it('never windows a regex match line, and still windows the sidebar substring line', () => {
     const wide = 'x'.repeat(120);
-    const body: SearchableNode[] = [{
-      id: 'dbo.vwwide', name: 'vwWide', schema: 'dbo', type: 'view',
-      bodyScript: `SELECT ${wide} AS TotalQuantity FROM dbo.T`,
-    }];
+    const body: SearchableNode[] = [
+      {
+        id: 'dbo.vwwide',
+        name: 'vwWide',
+        schema: 'dbo',
+        type: 'view',
+        bodyScript: `SELECT ${wide} AS TotalQuantity FROM dbo.T`,
+      },
+    ];
     const compiled = compileSearchRegex('TotalQuantity');
     if (!compiled.ok) throw new Error('TotalQuantity must compile');
     const [regexHit] = searchBodyScripts(body, compiled.regex);
-    expect(regexHit.snippet, 'a tool result is never elided').not.toContain('\u2026');
+    expect(regexHit.snippet, 'a tool result is never elided').not.toContain(
+      '\u2026',
+    );
     expect(regexHit.snippet).toContain(wide);
 
     const [stringHit] = searchBodyScripts(body, 'TotalQuantity');
-    expect(stringHit.snippet, 'the sidebar still windows to its panel width').toContain('\u2026');
+    expect(
+      stringHit.snippet,
+      'the sidebar still windows to its panel width',
+    ).toContain('\u2026');
   });
 
   it('applies body type, context, and result limits', () => {
@@ -274,21 +345,26 @@ describe('model search', () => {
 
   it('searches columns while excluding non-column object types', () => {
     const results = searchColumns(nodes, 'orderid');
-    expect(results.map(result => result.node.id)).toEqual([
+    expect(results.map((result) => result.node.id)).toEqual([
       'sales.orderheader',
       'sales.orderdetail',
     ]);
     expect(results[0].snippet).toContain('OrderID');
-    expect(results.some(result =>
-      result.node.type === 'procedure' || result.node.type === 'view')).toBe(false);
+    expect(
+      results.some(
+        (result) =>
+          result.node.type === 'procedure' || result.node.type === 'view',
+      ),
+    ).toBe(false);
     expect(searchColumns(nodes, 'I')).toEqual([]);
   });
 
   it('includes external columns and enforces result/snippet limits', () => {
     expect(searchColumns(nodes, 'RefID')[0].node.id).toBe('__ext__.abc123');
     expect(searchColumns(nodes, 'ID', 1)).toHaveLength(1);
-    const detail = searchColumns(nodes, 'ID', 100)
-      .find(result => result.node.id === 'sales.orderdetail');
+    const detail = searchColumns(nodes, 'ID', 100).find(
+      (result) => result.node.id === 'sales.orderdetail',
+    );
     expect(detail?.snippet.split(', ')).toHaveLength(3);
   });
 });
@@ -299,98 +375,192 @@ describe('model search — commented matches', () => {
   function hits(bodyScript: string, pattern: string): [number, boolean][] {
     const compiled = compileSearchRegex(pattern);
     if (!compiled.ok) throw new Error(`${pattern} must compile`);
-    const body: SearchableNode[] = [{
-      id: 'dbo.p', name: 'p', schema: 'dbo', type: 'procedure', bodyScript,
-    }];
-    return searchBodyScripts(body, compiled.regex).map(h => [h.line, h.commented === true]);
+    const body: SearchableNode[] = [
+      {
+        id: 'dbo.p',
+        name: 'p',
+        schema: 'dbo',
+        type: 'procedure',
+        bodyScript,
+      },
+    ];
+    return searchBodyScripts(body, compiled.regex).map((h) => [
+      h.line,
+      h.commented === true,
+    ]);
   }
 
   it('marks a hit inside a block comment and leaves a live hit unmarked', () => {
-    const hit = hits([
-      'SELECT SUM(RawAmount) FROM #RawBatch',   // 1 — live
-      '/* RECONCILIATION QUERY',                // 2
-      '   deferred, kept for reference',        // 3
-      '   more prose',                          // 4
-      '   and more prose',                      // 5
-      '   still more prose',                    // 6
-      '   SELECT SUM(RawAmount) FROM ai.Raw',   // 7 — 5 lines below the opener
-      '*/',                                     // 8
-    ].join('\n'), 'SUM\\(RawAmount\\)');
-    expect(hit, 'the live hit is unmarked, the one inside the block is marked')
-      .toEqual([[1, false], [7, true]]);
+    const hit = hits(
+      [
+        'SELECT SUM(RawAmount) FROM #RawBatch', // 1 — live
+        '/* RECONCILIATION QUERY', // 2
+        '   deferred, kept for reference', // 3
+        '   more prose', // 4
+        '   and more prose', // 5
+        '   still more prose', // 6
+        '   SELECT SUM(RawAmount) FROM ai.Raw', // 7 — 5 lines below the opener
+        '*/', // 8
+      ].join('\n'),
+      'SUM\\(RawAmount\\)',
+    );
+    expect(
+      hit,
+      'the live hit is unmarked, the one inside the block is marked',
+    ).toEqual([
+      [1, false],
+      [7, true],
+    ]);
   });
 
   it('marks a hit the 3-line context window cannot explain', () => {
     const compiled = compileSearchRegex('DELETE');
     if (!compiled.ok) throw new Error('DELETE must compile');
-    const lines = ['/* OLD DEDUP APPROACH (pre v2.0)', 'a', 'b', 'c', 'd', 'e', 'DELETE d1', 'f', '*/'];
+    const lines = [
+      '/* OLD DEDUP APPROACH (pre v2.0)',
+      'a',
+      'b',
+      'c',
+      'd',
+      'e',
+      'DELETE d1',
+      'f',
+      '*/',
+    ];
     const [match] = searchBodyScripts(
-      [{ id: 'dbo.p', name: 'p', schema: 'dbo', type: 'procedure', bodyScript: lines.join('\n') }],
+      [
+        {
+          id: 'dbo.p',
+          name: 'p',
+          schema: 'dbo',
+          type: 'procedure',
+          bodyScript: lines.join('\n'),
+        },
+      ],
       compiled.regex,
     );
-    expect(match.snippet, 'no delimiter is visible in the reported context').not.toContain('/*');
+    expect(
+      match.snippet,
+      'no delimiter is visible in the reported context',
+    ).not.toContain('/*');
     expect(match.commented, 'and the marker says so anyway').toBe(true);
   });
 
   it('tracks nested block comments and clears the marker after the outer close', () => {
-    expect(hits([
-      'SELECT 1 AS Target',            // 1 — live, before
-      '/* outer',                      // 2
-      '  /* inner Target */',          // 3 — inner close does not end the outer block
-      '  Target inside outer',         // 4
-      '*/',                            // 5
-      'SELECT 2 AS Target',            // 6 — live again
-    ].join('\n'), 'Target'))
-      .toEqual([[1, false], [3, true], [4, true], [6, false]]);
+    expect(
+      hits(
+        [
+          'SELECT 1 AS Target', // 1 — live, before
+          '/* outer', // 2
+          '  /* inner Target */', // 3 — inner close does not end the outer block
+          '  Target inside outer', // 4
+          '*/', // 5
+          'SELECT 2 AS Target', // 6 — live again
+        ].join('\n'),
+        'Target',
+      ),
+    ).toEqual([
+      [1, false],
+      [3, true],
+      [4, true],
+      [6, false],
+    ]);
   });
 
   it('marks a line comment to end of line only, leaving live code on that line unmarked', () => {
-    expect(hits([
-      'SELECT Target FROM t -- Target was renamed',  // 1 — live match, then commented match
-      '-- Target',                                   // 2
-      'SELECT Target',                               // 3 — the line comment does not carry over
-    ].join('\n'), 'Target'))
-      .toEqual([[1, false], [1, true], [2, true], [3, false]]);
+    expect(
+      hits(
+        [
+          'SELECT Target FROM t -- Target was renamed', // 1 — live match, then commented match
+          '-- Target', // 2
+          'SELECT Target', // 3 — the line comment does not carry over
+        ].join('\n'),
+        'Target',
+      ),
+    ).toEqual([
+      [1, false],
+      [1, true],
+      [2, true],
+      [3, false],
+    ]);
   });
 
   it('is not fooled by a comment delimiter inside a string literal or a bracketed identifier', () => {
-    expect(hits([
-      "SELECT 'no /* Target here' AS a",   // 1 — the literal opens no block
-      'SELECT Target FROM t',              // 2 — so this is live
-      "SELECT '-- Target' AS b",           // 3 — nor does the literal start a line comment
-      'SELECT Target FROM u',              // 4
-      'SELECT [Target -- col] FROM v',     // 5 — a bracketed identifier hides "--" too
-      'SELECT Target FROM w',              // 6
-    ].join('\n'), 'Target'))
-      .toEqual([[1, false], [2, false], [3, false], [4, false], [5, false], [6, false]]);
+    expect(
+      hits(
+        [
+          "SELECT 'no /* Target here' AS a", // 1 — the literal opens no block
+          'SELECT Target FROM t', // 2 — so this is live
+          "SELECT '-- Target' AS b", // 3 — nor does the literal start a line comment
+          'SELECT Target FROM u', // 4
+          'SELECT [Target -- col] FROM v', // 5 — a bracketed identifier hides "--" too
+          'SELECT Target FROM w', // 6
+        ].join('\n'),
+        'Target',
+      ),
+    ).toEqual([
+      [1, false],
+      [2, false],
+      [3, false],
+      [4, false],
+      [5, false],
+      [6, false],
+    ]);
   });
 
   it("closes a literal on a doubled '' escape without swallowing the rest of the body", () => {
-    expect(hits([
-      "SELECT 'it''s fine' AS a",   // 1 — '' is a close and a reopen, net state unchanged
-      '/* Target */',               // 2 — so this block is still seen
-      'SELECT Target',              // 3
-    ].join('\n'), 'Target'))
-      .toEqual([[2, true], [3, false]]);
+    expect(
+      hits(
+        [
+          "SELECT 'it''s fine' AS a", // 1 — '' is a close and a reopen, net state unchanged
+          '/* Target */', // 2 — so this block is still seen
+          'SELECT Target', // 3
+        ].join('\n'),
+        'Target',
+      ),
+    ).toEqual([
+      [2, true],
+      [3, false],
+    ]);
   });
 
   it('reads a double-quoted identifier the way the parser does', () => {
-    expect(hits([
-      'SELECT "odd /* name" AS a',   // 1 — the quoted identifier opens no block
-      'SELECT Target FROM t',        // 2 — so this is live
-      'SELECT "x -- y", Target',     // 3 — nor does it start a line comment
-    ].join('\n'), 'Target'))
-      .toEqual([[2, false], [3, false]]);
+    expect(
+      hits(
+        [
+          'SELECT "odd /* name" AS a', // 1 — the quoted identifier opens no block
+          'SELECT Target FROM t', // 2 — so this is live
+          'SELECT "x -- y", Target', // 3 — nor does it start a line comment
+        ].join('\n'),
+        'Target',
+      ),
+    ).toEqual([
+      [2, false],
+      [3, false],
+    ]);
   });
 
   it('leaves a live match byte-identical to the shape before the marker existed', () => {
     const compiled = compileSearchRegex('Target');
     if (!compiled.ok) throw new Error('Target must compile');
     const [live] = searchBodyScripts(
-      [{ id: 'dbo.p', name: 'p', schema: 'dbo', type: 'procedure', bodyScript: 'SELECT Target' }],
+      [
+        {
+          id: 'dbo.p',
+          name: 'p',
+          schema: 'dbo',
+          type: 'procedure',
+          bodyScript: 'SELECT Target',
+        },
+      ],
       compiled.regex,
     );
-    expect(Object.keys(live), 'no key is added to a live hit').toEqual(['node', 'line', 'text', 'snippet']);
+    expect(Object.keys(live), 'no key is added to a live hit').toEqual([
+      'node',
+      'line',
+      'text',
+      'snippet',
+    ]);
     expect('commented' in live, 'the field is omitted, not false').toBe(false);
   });
 });
@@ -398,42 +568,60 @@ describe('model search — commented matches', () => {
 /** The innermost `IF`/`WHILE` predicate governing a hit is reported. */
 describe('model search — enclosing predicate', () => {
   /** Runs `pattern` over one body and returns `[line, enclosingPredicate]` for every hit, in order. */
-  function hits(bodyScript: string, pattern: string): [number, string | undefined][] {
+  function hits(
+    bodyScript: string,
+    pattern: string,
+  ): [number, string | undefined][] {
     const compiled = compileSearchRegex(pattern);
     if (!compiled.ok) throw new Error(`${pattern} must compile`);
-    const body: SearchableNode[] = [{
-      id: 'dbo.p', name: 'p', schema: 'dbo', type: 'procedure', bodyScript,
-    }];
-    return searchBodyScripts(body, compiled.regex).map(h => [h.line, h.enclosingPredicate]);
+    const body: SearchableNode[] = [
+      {
+        id: 'dbo.p',
+        name: 'p',
+        schema: 'dbo',
+        type: 'procedure',
+        bodyScript,
+      },
+    ];
+    return searchBodyScripts(body, compiled.regex).map((h) => [
+      h.line,
+      h.enclosingPredicate,
+    ]);
   }
 
   it('ignores block keywords inside string literals', () => {
-    const hit = hits([
-      'CREATE PROCEDURE dbo.p',                    // 1
-      'AS',                                        // 2
-      'IF @Debug = 1',                             // 3
-      'BEGIN',                                     // 4
-      "    PRINT 'Begin step'",                    // 5
-      'END',                                       // 6
-      'DELETE FROM dbo.Target',                    // 7
-    ].join('\n'), 'DELETE FROM');
+    const hit = hits(
+      [
+        'CREATE PROCEDURE dbo.p', // 1
+        'AS', // 2
+        'IF @Debug = 1', // 3
+        'BEGIN', // 4
+        "    PRINT 'Begin step'", // 5
+        'END', // 6
+        'DELETE FROM dbo.Target', // 7
+      ].join('\n'),
+      'DELETE FROM',
+    );
     expect(hit).toEqual([[7, undefined]]);
   });
 
   it('reports the IF predicate for a hit several lines inside its BEGIN…END block', () => {
-    const hit = hits([
-      'CREATE PROCEDURE dbo.p',                    // 1
-      'AS',                                        // 2
-      'BEGIN',                                     // 3
-      '    IF @ForceReimport = 0',                 // 4
-      '    BEGIN',                                 // 5
-      '        -- dedup pass',                     // 6
-      '        DELETE rb FROM #RawBatch rb',       // 7
-      '        INNER JOIN Target t',                // 8
-      '            ON t.OrderDate = rb.OrderDate',  // 9 — 5 lines below the opener
-      '    END',                                   // 10
-      'END',                                       // 11
-    ].join('\n'), 'ON t\\.OrderDate');
+    const hit = hits(
+      [
+        'CREATE PROCEDURE dbo.p', // 1
+        'AS', // 2
+        'BEGIN', // 3
+        '    IF @ForceReimport = 0', // 4
+        '    BEGIN', // 5
+        '        -- dedup pass', // 6
+        '        DELETE rb FROM #RawBatch rb', // 7
+        '        INNER JOIN Target t', // 8
+        '            ON t.OrderDate = rb.OrderDate', // 9 — 5 lines below the opener
+        '    END', // 10
+        'END', // 11
+      ].join('\n'),
+      'ON t\\.OrderDate',
+    );
     expect(hit).toEqual([[9, 'IF @ForceReimport = 0']]);
   });
 
@@ -441,129 +629,203 @@ describe('model search — enclosing predicate', () => {
     { predicate: "IF @Status = N'Approved'", inlineBegin: false },
     { predicate: 'IF [Ready] = 1', inlineBegin: false },
     { predicate: "IF [Status] = N'BEGIN'", inlineBegin: true },
-  ])('preserves literal and identifier text in $predicate', ({ predicate, inlineBegin }) => {
-    const body = [
-      `${predicate}${inlineBegin ? ' BEGIN -- inline block opener' : ''}`,
-      ...(inlineBegin ? [] : ['BEGIN']),
-      '    SELECT Target',
-      'END',
-    ].join('\n');
-    expect(hits(body, 'Target')).toEqual([[inlineBegin ? 2 : 3, predicate]]);
-  });
+  ])(
+    'preserves literal and identifier text in $predicate',
+    ({ predicate, inlineBegin }) => {
+      const body = [
+        `${predicate}${inlineBegin ? ' BEGIN -- inline block opener' : ''}`,
+        ...(inlineBegin ? [] : ['BEGIN']),
+        '    SELECT Target',
+        'END',
+      ].join('\n');
+      expect(hits(body, 'Target')).toEqual([[inlineBegin ? 2 : 3, predicate]]);
+    },
+  );
 
   it('does not open a frame for BEGIN TRAN, so the IF block closes on its own END', () => {
-    const hit = hits([
-      'BEGIN',                                     // 1
-      '    IF @Apply = 1',                         // 2
-      '    BEGIN',                                 // 3
-      '        BEGIN TRANSACTION',                 // 4
-      '        UPDATE Target SET x = 1',           // 5
-      '        COMMIT',                            // 6
-      '    END',                                   // 7
-      '    DELETE FROM Target',                    // 8 — after the IF block
-      'END',                                       // 9
-    ].join('\n'), 'Target');
-    expect(hit).toEqual([[5, 'IF @Apply = 1'], [8, undefined]]);
+    const hit = hits(
+      [
+        'BEGIN', // 1
+        '    IF @Apply = 1', // 2
+        '    BEGIN', // 3
+        '        BEGIN TRANSACTION', // 4
+        '        UPDATE Target SET x = 1', // 5
+        '        COMMIT', // 6
+        '    END', // 7
+        '    DELETE FROM Target', // 8 — after the IF block
+        'END', // 9
+      ].join('\n'),
+      'Target',
+    );
+    expect(hit).toEqual([
+      [5, 'IF @Apply = 1'],
+      [8, undefined],
+    ]);
   });
 
   it('reports the innermost predicate when IF blocks nest', () => {
-    const hit = hits([
-      'BEGIN',                                     // 1
-      '    IF @Outer = 1',                         // 2
-      '    BEGIN',                                 // 3
-      '        IF @Inner = 1',                     // 4
-      '        BEGIN',                             // 5
-      '            SELECT Target',                 // 6
-      '        END',                               // 7
-      '    END',                                   // 8
-      'END',                                       // 9
-    ].join('\n'), 'Target');
+    const hit = hits(
+      [
+        'BEGIN', // 1
+        '    IF @Outer = 1', // 2
+        '    BEGIN', // 3
+        '        IF @Inner = 1', // 4
+        '        BEGIN', // 5
+        '            SELECT Target', // 6
+        '        END', // 7
+        '    END', // 8
+        'END', // 9
+      ].join('\n'),
+      'Target',
+    );
     expect(hit).toEqual([[6, 'IF @Inner = 1']]);
   });
 
   it('reports nothing for a hit outside any IF/WHILE block', () => {
-    const hit = hits([
-      'CREATE PROCEDURE dbo.p',    // 1
-      'AS',                        // 2
-      'BEGIN',                     // 3
-      '    SELECT Target',         // 4
-      'END',                       // 5
-    ].join('\n'), 'Target');
+    const hit = hits(
+      [
+        'CREATE PROCEDURE dbo.p', // 1
+        'AS', // 2
+        'BEGIN', // 3
+        '    SELECT Target', // 4
+        'END', // 5
+      ].join('\n'),
+      'Target',
+    );
     expect(hit).toEqual([[4, undefined]]);
   });
 
   it('leaves a hit before the governing IF unmarked — a statement that precedes its condition', () => {
-    const hit = hits([
-      'BEGIN',                                          // 1
-      '    SELECT @VerifyCount = COUNT(*)',              // 2
-      '    FROM Target',                                 // 3
-      '    IF @VerifyCount <> @ProcessedRows AND @DryRun = 0', // 4
-      '    BEGIN',                                       // 5
-      '        PRINT ' + "'mismatch'",                   // 6
-      '    END',                                         // 7
-      'END',                                              // 8
-    ].join('\n'), 'FROM Target');
+    const hit = hits(
+      [
+        'BEGIN', // 1
+        '    SELECT @VerifyCount = COUNT(*)', // 2
+        '    FROM Target', // 3
+        '    IF @VerifyCount <> @ProcessedRows AND @DryRun = 0', // 4
+        '    BEGIN', // 5
+        '        PRINT ' + "'mismatch'", // 6
+        '    END', // 7
+        'END', // 8
+      ].join('\n'),
+      'FROM Target',
+    );
     expect(hit).toEqual([[3, undefined]]);
   });
 
   it('governs exactly the next live line for an IF written without BEGIN…END', () => {
-    const hit = hits([
-      'BEGIN',                    // 1
-      '    IF @Flag = 1',         // 2
-      '        SELECT Target',    // 3 — single statement, no BEGIN
-      '    SELECT Target',        // 4 — back outside the IF
-      'END',                      // 5
-    ].join('\n'), 'Target');
-    expect(hit).toEqual([[3, 'IF @Flag = 1'], [4, undefined]]);
+    const hit = hits(
+      [
+        'BEGIN', // 1
+        '    IF @Flag = 1', // 2
+        '        SELECT Target', // 3 — single statement, no BEGIN
+        '    SELECT Target', // 4 — back outside the IF
+        'END', // 5
+      ].join('\n'),
+      'Target',
+    );
+    expect(hit).toEqual([
+      [3, 'IF @Flag = 1'],
+      [4, undefined],
+    ]);
   });
 
   it('reports WHILE the same as IF', () => {
-    const hit = hits([
-      'BEGIN',                       // 1
-      '    WHILE @i < 10',           // 2
-      '    BEGIN',                   // 3
-      '        SELECT Target',       // 4
-      '    END',                     // 5
-      'END',                         // 6
-    ].join('\n'), 'Target');
+    const hit = hits(
+      [
+        'BEGIN', // 1
+        '    WHILE @i < 10', // 2
+        '    BEGIN', // 3
+        '        SELECT Target', // 4
+        '    END', // 5
+        'END', // 6
+      ].join('\n'),
+      'Target',
+    );
     expect(hit).toEqual([[4, 'WHILE @i < 10']]);
   });
 
   it('does not mistake a CASE…END expression for closing an outer BEGIN', () => {
-    const hit = hits([
-      'BEGIN',                                           // 1
-      '    IF @Flag = 1',                                 // 2
-      '    BEGIN',                                        // 3
-      "        SELECT CASE WHEN x = 1 THEN 'a' ELSE 'b' END AS Col", // 4 — CASE...END on one line
-      '        SELECT Target',                            // 5 — still inside the IF block
-      '    END',                                          // 6
-      'END',                                               // 7
-    ].join('\n'), 'Target');
+    const hit = hits(
+      [
+        'BEGIN', // 1
+        '    IF @Flag = 1', // 2
+        '    BEGIN', // 3
+        "        SELECT CASE WHEN x = 1 THEN 'a' ELSE 'b' END AS Col", // 4 — CASE...END on one line
+        '        SELECT Target', // 5 — still inside the IF block
+        '    END', // 6
+        'END', // 7
+      ].join('\n'),
+      'Target',
+    );
     expect(hit).toEqual([[5, 'IF @Flag = 1']]);
   });
-
 });
 
 describe('search regex compilation and worker deadline', () => {
-
   it('terminates exponential patterns on actual input without hanging the host', async () => {
     for (const pattern of ['(a+)+x', '(\\d+)+x', '(\\s+)+x']) {
       const start = performance.now();
-      const unit = pattern.includes('d+') ? '1' : pattern.includes('s+') ? ' ' : 'a';
-      await expect(executeIsolatedRegexSearch({ kind: 'catalog', pattern, nodes: [{ id: 'x', name: unit.repeat(50_000), schema: 'dbo', type: 'table' }], limit: 20 })).rejects.toMatchObject({ reason: 'deadline' });
-      expect(performance.now() - start, `${pattern} is terminated promptly`).toBeLessThan(2_000);
+      const unit = pattern.includes('d+')
+        ? '1'
+        : pattern.includes('s+')
+          ? ' '
+          : 'a';
+      await expect(
+        executeIsolatedRegexSearch({
+          kind: 'catalog',
+          pattern,
+          nodes: [
+            {
+              id: 'x',
+              name: unit.repeat(50_000),
+              schema: 'dbo',
+              type: 'table',
+            },
+          ],
+          limit: 20,
+        }),
+      ).rejects.toMatchObject({ reason: 'deadline' });
+      expect(
+        performance.now() - start,
+        `${pattern} is terminated promptly`,
+      ).toBeLessThan(2_000);
     }
   });
 
   it('terminates exponential patterns over comment-banner characters', async () => {
     for (const pattern of ['(-+)+x', '(=+)+x', '(\\*+)+x', '(_+)+x']) {
-      const unit = pattern.includes('-') ? '-' : pattern.includes('=') ? '=' : pattern.includes('*') ? '*' : '_';
-      await expect(executeIsolatedRegexSearch({ kind: 'catalog', pattern, nodes: [{ id: 'x', name: unit.repeat(50_000), schema: 'dbo', type: 'table' }], limit: 20 })).rejects.toMatchObject({ reason: 'deadline' });
+      const unit = pattern.includes('-')
+        ? '-'
+        : pattern.includes('=')
+          ? '='
+          : pattern.includes('*')
+            ? '*'
+            : '_';
+      await expect(
+        executeIsolatedRegexSearch({
+          kind: 'catalog',
+          pattern,
+          nodes: [
+            {
+              id: 'x',
+              name: unit.repeat(50_000),
+              schema: 'dbo',
+              type: 'table',
+            },
+          ],
+          limit: 20,
+        }),
+      ).rejects.toMatchObject({ reason: 'deadline' });
     }
   });
 
   it('accepts ordinary search patterns', () => {
-    for (const pattern of ['total.*quantity', 'ON t\\.OrderDate', '\\bINSERT\\s+INTO\\b', '\\d{4}-\\d{2}']) {
+    for (const pattern of [
+      'total.*quantity',
+      'ON t\\.OrderDate',
+      '\\bINSERT\\s+INTO\\b',
+      '\\d{4}-\\d{2}',
+    ]) {
       expect(compileSearchRegex(pattern).ok, pattern).toBe(true);
     }
   });
@@ -579,40 +841,98 @@ describe('model search — per-line matching', () => {
 
   it('never lets a pattern match across a line break', () => {
     const procedure = new Set(['procedure'] as const);
-    expect(searchBodyScripts(nodes, regexFor('AS\\s+SELECT'), procedure), '\\s never consumes a newline').toEqual([]);
-    expect(scanBodyMatches(nodes, regexFor('AS[^x]*SELECT'), procedure, () => true).total, 'a negated class never spans lines').toBe(0);
+    expect(
+      searchBodyScripts(nodes, regexFor('AS\\s+SELECT'), procedure),
+      '\\s never consumes a newline',
+    ).toEqual([]);
+    expect(
+      scanBodyMatches(nodes, regexFor('AS[^x]*SELECT'), procedure, () => true)
+        .total,
+      'a negated class never spans lines',
+    ).toBe(0);
   });
 
   it('locates a matching over-long line instead of serving a cut excerpt', () => {
     const longLine = `SELECT ${'c,'.repeat(SEARCH_LINE_MAX_CHARS)} TailToken FROM dbo.T`;
     const body: SearchableNode = {
-      id: 'dbo.vwlong', name: 'vwLong', schema: 'dbo', type: 'view',
-      bodyScript: ['CREATE VIEW dbo.vwLong AS', longLine, 'WHERE HeadToken = 1'].join('\n'),
+      id: 'dbo.vwlong',
+      name: 'vwLong',
+      schema: 'dbo',
+      type: 'view',
+      bodyScript: [
+        'CREATE VIEW dbo.vwLong AS',
+        longLine,
+        'WHERE HeadToken = 1',
+      ].join('\n'),
     };
-    const head = scanBodyMatches([body], regexFor('SELECT|HeadToken'), undefined, () => true);
-    expect(head.matches.map(m => m.line), 'ordinary lines keep their rows; the long line adds none').toEqual([3]);
-    expect(head.oversized, 'the long line is located with its length and match offset').toEqual([
-      { node: body, lines: [{ line: 2, length: longLine.length, match_offset: 0 }] },
+    const head = scanBodyMatches(
+      [body],
+      regexFor('SELECT|HeadToken'),
+      undefined,
+      () => true,
+    );
+    expect(
+      head.matches.map((m) => m.line),
+      'ordinary lines keep their rows; the long line adds none',
+    ).toEqual([3]);
+    expect(
+      head.oversized,
+      'the long line is located with its length and match offset',
+    ).toEqual([
+      {
+        node: body,
+        lines: [{ line: 2, length: longLine.length, match_offset: 0 }],
+      },
     ]);
 
-    const tail = scanBodyMatches([body], regexFor('TailToken'), undefined, () => true);
-    expect(tail.total, 'the match past the old cap is found on the full line').toBe(0);
+    const tail = scanBodyMatches(
+      [body],
+      regexFor('TailToken'),
+      undefined,
+      () => true,
+    );
+    expect(
+      tail.total,
+      'the match past the old cap is found on the full line',
+    ).toBe(0);
     expect(tail.oversized, 'and located at its real offset').toEqual([
-      { node: body, lines: [{ line: 2, length: longLine.length, match_offset: longLine.indexOf('TailToken') }] },
+      {
+        node: body,
+        lines: [
+          {
+            line: 2,
+            length: longLine.length,
+            match_offset: longLine.indexOf('TailToken'),
+          },
+        ],
+      },
     ]);
   });
 
   it('reports no locator when no matching line is over the limit', () => {
     const body: SearchableNode = {
-      id: 'dbo.vwwide', name: 'vwWide', schema: 'dbo', type: 'view',
+      id: 'dbo.vwwide',
+      name: 'vwWide',
+      schema: 'dbo',
+      type: 'view',
       bodyScript: 'a '.repeat(3_000),
     };
-    expect(scanBodyMatches([body], /zzz/im, undefined, () => true).oversized).toEqual([]);
+    expect(
+      scanBodyMatches([body], /zzz/im, undefined, () => true).oversized,
+    ).toEqual([]);
   });
 
   it('leaves ordinary results unchanged and reports no truncation', () => {
-    const scanned = scanBodyMatches(nodes, regexFor('OrderID|Customer'), undefined, () => true);
-    expect(scanned.matches.map(m => [m.node.id, m.line]), 'every ordinary hit keeps its object and line').toEqual([
+    const scanned = scanBodyMatches(
+      nodes,
+      regexFor('OrderID|Customer'),
+      undefined,
+      () => true,
+    );
+    expect(
+      scanned.matches.map((m) => [m.node.id, m.line]),
+      'every ordinary hit keeps its object and line',
+    ).toEqual([
       ['dbo.getorderssummary', 3],
       ['dbo.getorderssummary', 5],
       ['dbo.getorderssummary', 5],
@@ -679,36 +999,60 @@ describe('regexRejectHint', () => {
   it('names the trailing backslash', () => {
     expect(hintFor('foo\\')).toContain('trailing "\\"');
   });
-
 });
 
 describe('column search covers view columns', () => {
   it('the extracted view node carries its columns', async () => {
     const model = await loadAdventureWorksModel();
-    const view = model.nodes.find(n => n.id === '[ai].[vwpricelist]');
+    const view = model.nodes.find((n) => n.id === '[ai].[vwpricelist]');
     expect(view?.type).toBe('view');
-    expect(view?.columns?.map(c => c.name)).toContain('UnitPrice');
+    expect(view?.columns?.map((c) => c.name)).toContain('UnitPrice');
   });
 
   it('returns a view as a column match in lineage_search_objects', async () => {
     const model = await loadAdventureWorksModel();
-    const out = await searchObjects(model, 'UnitPrice', undefined, ['ai']) as { results: Array<Record<string, unknown>> };
-    expect(out.results).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: '[ai].[vwpricelist]', t: 'view', match: 'column', matched_columns: expect.stringContaining('UnitPrice') }),
-    ]));
+    const out = (await searchObjects(model, 'UnitPrice', undefined, [
+      'ai',
+    ])) as { results: Array<Record<string, unknown>> };
+    expect(out.results).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: '[ai].[vwpricelist]',
+          t: 'view',
+          match: 'column',
+          matched_columns: expect.stringContaining('UnitPrice'),
+        }),
+      ]),
+    );
   });
 });
-
 
 describe('object search typed correction alternatives', () => {
   it('permits literal mode as a syntax correction but not as a length correction', async () => {
     const model = await loadAdventureWorksModel();
-    const rejection = await searchObjects(model, 'Order[', undefined, ['ai'], 'regex') as { issuePaths: string[]; resend?: string[] };
+    const rejection = (await searchObjects(
+      model,
+      'Order[',
+      undefined,
+      ['ai'],
+      'regex',
+    )) as { issuePaths: string[]; resend?: string[] };
     expect(rejection.issuePaths).toEqual(['query']);
     expect(rejection.resend).toEqual(['mode']);
-    expect(await searchObjects(model, 'Order[', undefined, ['ai'], 'substring')).not.toHaveProperty('code');
-    const tooLong = await searchObjects(model, 'a'.repeat(REGEX_MAX_LENGTH + 1), undefined, ['ai'], 'regex');
-    expect(tooLong).toMatchObject({ code: 'invalid_input', errors: [{ path: 'query', code: 'invalid_regex' }] });
+    expect(
+      await searchObjects(model, 'Order[', undefined, ['ai'], 'substring'),
+    ).not.toHaveProperty('code');
+    const tooLong = await searchObjects(
+      model,
+      'a'.repeat(REGEX_MAX_LENGTH + 1),
+      undefined,
+      ['ai'],
+      'regex',
+    );
+    expect(tooLong).toMatchObject({
+      code: 'invalid_input',
+      errors: [{ path: 'query', code: 'invalid_regex' }],
+    });
     expect(tooLong).not.toHaveProperty('resend');
   });
 });

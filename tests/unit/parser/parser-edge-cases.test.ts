@@ -1,13 +1,18 @@
 /** Comprehensive syntactic edge-case tests for the SQL body parser. */
 
 import { beforeAll, describe, expect, it } from 'vitest';
-import { extractExternalRefs, parseSqlBody } from '../../../src/engine/sqlBodyParser';
+import {
+  extractExternalRefs,
+  parseSqlBody,
+} from '../../../src/engine/sqlBodyParser';
 import { hasName, loadParseRules } from '../helpers/testUtils';
 
-beforeAll(() => { loadParseRules(); });
+beforeAll(() => {
+  loadParseRules();
+});
 
 const mentions = (list: string[], needle: string) =>
-  list.some(entry => entry.toLowerCase().includes(needle.toLowerCase()));
+  list.some((entry) => entry.toLowerCase().includes(needle.toLowerCase()));
 
 /** One parser expectation. */
 type ParseCase = {
@@ -25,31 +30,36 @@ function check(testCase: ParseCase): void {
   const result = parseSqlBody(testCase.sql);
 
   for (const name of testCase.noSources ?? []) {
-    expect(mentions(result.sources, name), `${name} must not be a source`).toBe(false);
+    expect(mentions(result.sources, name), `${name} must not be a source`).toBe(
+      false,
+    );
   }
   for (const name of testCase.targets ?? []) {
     expect(hasName(result.targets, name), `target ${name}`).toBe(true);
   }
   for (const name of testCase.noTargets ?? []) {
-    expect(mentions(result.targets, name), `${name} must not be a target`).toBe(false);
+    expect(mentions(result.targets, name), `${name} must not be a target`).toBe(
+      false,
+    );
   }
   for (const name of testCase.crossDbSources ?? []) {
-    expect(result.crossDbSources.map(entry => entry.toLowerCase())).toContain(name);
+    expect(result.crossDbSources.map((entry) => entry.toLowerCase())).toContain(
+      name,
+    );
   }
 }
 
 const table = (cases: ParseCase[]) => it.each(cases)('$name', check);
 
-
 describe('procedure calls', () => {
-
   it('preserves a dot inside a bracketed procedure name as part of the identifier', () => {
-    expect(parseSqlBody('EXEC [dbo].[spLoad_Case4.5]').execCalls
-      .map(entry => entry.toLowerCase())).toContain('[dbo].[spload_case4.5]');
+    expect(
+      parseSqlBody('EXEC [dbo].[spLoad_Case4.5]').execCalls.map((entry) =>
+        entry.toLowerCase(),
+      ),
+    ).toContain('[dbo].[spload_case4.5]');
   });
-
 });
-
 
 describe('CTE exclusion', () => {
   it('excludes every CTE name when several are declared', () => {
@@ -57,14 +67,15 @@ describe('CTE exclusion', () => {
       'WITH A AS (SELECT 1), B AS (SELECT 2) SELECT * FROM A JOIN B ON 1=1 JOIN [dbo].[T1] ON 1=1',
     );
     expect(hasName(result.sources, 'T1')).toBe(true);
-    expect(result.sources.filter(entry => ['a', 'b'].includes(entry.replace(/\[|\]/g, '').toLowerCase())))
-      .toEqual([]);
+    expect(
+      result.sources.filter((entry) =>
+        ['a', 'b'].includes(entry.replace(/\[|\]/g, '').toLowerCase()),
+      ),
+    ).toEqual([]);
   });
 });
 
-
 describe('extraction boundaries', () => {
-
   it.each([
     ['an empty body', ''],
     ['a whitespace-only body', '   \n\t  '],
@@ -75,7 +86,6 @@ describe('extraction boundaries', () => {
     expect(result.execCalls).toEqual([]);
   });
 });
-
 
 describe('cross-database references', () => {
   table([
@@ -91,22 +101,29 @@ describe('cross-database references', () => {
       crossDbSources: ['salesdb.dbo.factsales', 'productdb.catalog.dimproduct'],
     },
   ]);
-
 });
 
-
 describe('CLR method calls are not cross-database references', () => {
-
   it.each([
-    ['mixed-bracket GetAncestor',
-      'INNER JOIN [EMP_cte] ON [EMP_cte].[OrganizationNode].GetAncestor(1) = e.OrganizationNode', ['getancestor']],
-    ['XML nodes() and value()', `
+    [
+      'mixed-bracket GetAncestor',
+      'INNER JOIN [EMP_cte] ON [EMP_cte].[OrganizationNode].GetAncestor(1) = e.OrganizationNode',
+      ['getancestor'],
+    ],
+    [
+      'XML nodes() and value()',
+      `
       SELECT x.n.value('text()[1]', 'nvarchar(100)') AS Val
-      FROM dbo.XmlTable CROSS APPLY xmlcol.nodes('/root/item') x(n)`, ['value', 'nodes']],
+      FROM dbo.XmlTable CROSS APPLY xmlcol.nodes('/root/item') x(n)`,
+      ['value', 'nodes'],
+    ],
   ])('%s produces no cross-database source', (_label, sql, fragments) => {
     const { crossDbSources } = parseSqlBody(sql);
     for (const fragment of fragments as string[]) {
-      expect(mentions(crossDbSources, fragment), `${fragment} must not be a cross-DB source`).toBe(false);
+      expect(
+        mentions(crossDbSources, fragment),
+        `${fragment} must not be a cross-DB source`,
+      ).toBe(false);
     }
   });
 
@@ -120,16 +137,21 @@ describe('CLR method calls are not cross-database references', () => {
   });
 });
 
-
 describe('extractExternalRefs', () => {
-  const REFS: Array<{ name: string; sql: string; count: number; kind?: string }> = [
+  const REFS: Array<{
+    name: string;
+    sql: string;
+    count: number;
+    kind?: string;
+  }> = [
     {
       name: 'COPY INTO ... FROM',
       sql: `
         COPY INTO dbo.TargetTable FROM 'https://storage.blob.core.windows.net/data/input.csv'
         WITH (FILE_TYPE = 'CSV')
       `,
-      count: 1, kind: 'copy_from',
+      count: 1,
+      kind: 'copy_from',
     },
     {
       name: 'BULK INSERT ... FROM',
@@ -137,7 +159,8 @@ describe('extractExternalRefs', () => {
         BULK INSERT dbo.TargetTable FROM 'C:\\Data\\import.csv'
         WITH (FIELDTERMINATOR = ',')
       `,
-      count: 1, kind: 'bulk_from',
+      count: 1,
+      kind: 'bulk_from',
     },
     {
       name: 'an OPENROWSET with a wildcard path',
@@ -150,7 +173,8 @@ describe('extractExternalRefs', () => {
           SalesKey INT, OrderDate DATE, Amount DECIMAL(18,2)
         ) AS r
       `,
-      count: 1, kind: 'openrowset',
+      count: 1,
+      kind: 'openrowset',
     },
     {
       name: 'COPY INTO carrying a SAS credential',
@@ -162,7 +186,8 @@ describe('extractExternalRefs', () => {
           CREDENTIAL = (IDENTITY = 'Shared Access Signature', SECRET = 'sv=2020-08-04&ss=b')
         )
       `,
-      count: 1, kind: 'copy_from',
+      count: 1,
+      kind: 'copy_from',
     },
     {
       name: 'BULK INSERT from a UNC path',
@@ -171,7 +196,8 @@ describe('extractExternalRefs', () => {
         FROM '\\\\fileserver\\data\\export_20240101.csv'
         WITH (FIELDTERMINATOR = '|', ROWTERMINATOR = '\\n', FIRSTROW = 2)
       `,
-      count: 1, kind: 'bulk_from',
+      count: 1,
+      kind: 'bulk_from',
     },
     {
       name: 'ordinary SQL with no external reference',
@@ -187,22 +213,35 @@ describe('extractExternalRefs', () => {
   });
 
   it.each([
-    ['bracketed', "[OPENROWSET(BULK '/phantom-open')]", "[COPY INTO dbo.T FROM '/phantom-copy']", "[BULK INSERT dbo.T FROM '/phantom-bulk']"],
-    ['double-quoted', '"OPENROWSET(BULK \'/phantom-open\')"', '"COPY INTO dbo.T FROM \'/phantom-copy\'"', '"BULK INSERT dbo.T FROM \'/phantom-bulk\'"'],
-  ])('ignores external syntax inside %s identifiers while retaining real quoted paths', (_name, openIdentifier, copyIdentifier, bulkIdentifier) => {
-    const sql = `
+    [
+      'bracketed',
+      "[OPENROWSET(BULK '/phantom-open')]",
+      "[COPY INTO dbo.T FROM '/phantom-copy']",
+      "[BULK INSERT dbo.T FROM '/phantom-bulk']",
+    ],
+    [
+      'double-quoted',
+      '"OPENROWSET(BULK \'/phantom-open\')"',
+      '"COPY INTO dbo.T FROM \'/phantom-copy\'"',
+      '"BULK INSERT dbo.T FROM \'/phantom-bulk\'"',
+    ],
+  ])(
+    'ignores external syntax inside %s identifiers while retaining real quoted paths',
+    (_name, openIdentifier, copyIdentifier, bulkIdentifier) => {
+      const sql = `
       SELECT ${openIdentifier}, ${copyIdentifier}, ${bulkIdentifier} FROM dbo.Real;
       SELECT * FROM OPENROWSET(BULK 'https://real.example/a/*b--c.csv', SINGLE_CLOB) AS r;
       COPY INTO dbo.Target FROM 'https://real.example/copy.csv';
       BULK INSERT dbo.Target FROM 'C:\\Data\\bulk.csv';
     `;
 
-    expect(extractExternalRefs(sql)).toEqual([
-      { url: 'https://real.example/a/*b--c.csv', kind: 'openrowset' },
-      { url: 'https://real.example/copy.csv', kind: 'copy_from' },
-      { url: 'C:\\Data\\bulk.csv', kind: 'bulk_from' },
-    ]);
-  });
+      expect(extractExternalRefs(sql)).toEqual([
+        { url: 'https://real.example/a/*b--c.csv', kind: 'openrowset' },
+        { url: 'https://real.example/copy.csv', kind: 'copy_from' },
+        { url: 'C:\\Data\\bulk.csv', kind: 'bulk_from' },
+      ]);
+    },
+  );
 
   it('finds both an external file and a cross-database reference in one body', () => {
     const body = `
@@ -218,7 +257,6 @@ describe('extractExternalRefs', () => {
 });
 
 describe('OPENXML', () => {
-
   it('OPENXML and its preparedocument handle produce no source, target, or exec call', () => {
     const result = parseSqlBody(`
       EXEC sp_xml_preparedocument @hdoc OUTPUT, @xml
@@ -239,7 +277,6 @@ describe('a bracketed identifier is not a string literal', () => {
       noSources: ['GhostTable'],
     },
   ]);
-
 });
 
 describe('CTAS carries its distribution clause', () => {
@@ -255,7 +292,10 @@ describe('CTAS carries its distribution clause', () => {
 
 describe('complete dependency extraction', () => {
   it('collects every reference in a body with more than ten thousand matches', () => {
-    const selects = Array.from({ length: 10_001 }, (_, i) => `SELECT * FROM [dbo].[T${i}]`).join('\n');
+    const selects = Array.from(
+      { length: 10_001 },
+      (_, i) => `SELECT * FROM [dbo].[T${i}]`,
+    ).join('\n');
     const parsed = parseSqlBody(selects);
     expect(parsed.sources).toHaveLength(10_001);
     expect(parsed.sources.at(-1)).toBe('[dbo].[t10000]');

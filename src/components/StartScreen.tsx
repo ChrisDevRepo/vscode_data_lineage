@@ -22,7 +22,6 @@ interface StartScreenProps {
   onWizardViewChange?: (view: 'main' | 'projects') => void;
 }
 
-
 function schemaLine(schemas: string[]): string {
   if (schemas.length === 0) return '';
   if (schemas.length <= 3) return `Schemas: ${schemas.join(', ')}`;
@@ -46,9 +45,9 @@ function truncatePath(path: string, maxLen = 45): string {
 function bookmarkSummary(profiles: FilterProfile[] | undefined): string | null {
   if (!profiles?.length) return null;
   const total = profiles.length;
-  const aiCount = profiles.filter(p => p.source === 'ai').length;
-  const traceCount = profiles.filter(p => p.source === 'trace').length;
-  const analysisCount = profiles.filter(p => p.source === 'analysis').length;
+  const aiCount = profiles.filter((p) => p.source === 'ai').length;
+  const traceCount = profiles.filter((p) => p.source === 'trace').length;
+  const analysisCount = profiles.filter((p) => p.source === 'analysis').length;
   const extras: string[] = [];
   if (aiCount) extras.push(`${aiCount} AI`);
   if (traceCount) extras.push(`${traceCount} trace`);
@@ -62,7 +61,8 @@ function sourceLabel(project: Project): string {
 }
 
 function smartDetail(project: Project): string {
-  if (project.connection.type === 'dacpac') return truncatePath(project.connection.path);
+  if (project.connection.type === 'dacpac')
+    return truncatePath(project.connection.path);
   const ci = project.connection.connectionInfo;
   return `${ci.database} on ${ci.server}`;
 }
@@ -70,24 +70,41 @@ function smartDetail(project: Project): string {
 function projectTooltip(project: Project): ReactNode {
   const schemas = schemaLine(project.connection.schemas);
   const bm = bookmarkSummary(project.filterProfiles);
-  const detail = project.connection.type === 'dacpac'
-    ? project.connection.path
-    : `${project.connection.connectionInfo.database} on ${project.connection.connectionInfo.server}`;
+  const detail =
+    project.connection.type === 'dacpac'
+      ? project.connection.path
+      : `${project.connection.connectionInfo.database} on ${project.connection.connectionInfo.server}`;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '2px 0' }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+        padding: '2px 0',
+      }}
+    >
       <div style={{ fontWeight: 600, fontSize: 12 }}>{project.name}</div>
-      <div style={{ borderTop: '1px solid var(--ln-wizard-border)', margin: '0 -4px' }} />
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
-        <span style={{
-          background: 'var(--ln-wizard-btn-bg)',
-          borderRadius: 3,
-          padding: '1px 5px',
-          fontSize: 10,
-          textTransform: 'uppercase',
-          letterSpacing: '0.5px',
-          flexShrink: 0,
-        }}>
+      <div
+        style={{
+          borderTop: '1px solid var(--ln-wizard-border)',
+          margin: '0 -4px',
+        }}
+      />
+      <div
+        style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}
+      >
+        <span
+          style={{
+            background: 'var(--ln-wizard-btn-bg)',
+            borderRadius: 3,
+            padding: '1px 5px',
+            fontSize: 10,
+            textTransform: 'uppercase',
+            letterSpacing: '0.5px',
+            flexShrink: 0,
+          }}
+        >
           {sourceLabel(project)}
         </span>
         <span style={{ opacity: 0.7 }}>{detail}</span>
@@ -125,8 +142,12 @@ export const StartScreen = memo(function StartScreen({
     onWizardViewChange?.(to);
   };
 
-  const sorted = [...projects].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  const latestProject = lastOpenedId ? sorted.find(p => p.id === lastOpenedId) : undefined;
+  const sorted = [...projects].sort((a, b) =>
+    b.updatedAt.localeCompare(a.updatedAt),
+  );
+  const latestProject = lastOpenedId
+    ? sorted.find((p) => p.id === lastOpenedId)
+    : undefined;
 
   const footer = (
     <div className="text-center">
@@ -148,15 +169,31 @@ export const StartScreen = memo(function StartScreen({
             <button
               aria-label="Back"
               className="ln-list-item rounded-sm p-1 shrink-0"
-              onClick={() => { switchView('main'); setConfirmDeleteId(null); }}
+              onClick={() => {
+                switchView('main');
+                setConfirmDeleteId(null);
+              }}
             >
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
-            </svg>
-          </button>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                strokeWidth={1.5}
+                stroke="currentColor"
+                className="w-4 h-4"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M15.75 19.5 8.25 12l7.5-7.5"
+                />
+              </svg>
+            </button>
           </Tooltip>
           <span className="text-sm font-medium flex-1">Saved Projects</span>
-          <span className="text-xs mr-2" style={{ opacity: 0.45 }}>{sorted.length}</span>
+          <span className="text-xs mr-2" style={{ opacity: 0.45 }}>
+            {sorted.length}
+          </span>
           {sorted.length > 1 && !confirmDeleteAll && (
             <button
               ref={deleteAllFocus.triggerRef('all')}
@@ -171,13 +208,19 @@ export const StartScreen = memo(function StartScreen({
             <div className="flex items-center gap-1.5">
               <button
                 className="text-xs px-2 py-0.5 rounded-sm ln-wizard-error-btn"
-                onClick={() => { onDeleteAllProjects(); setConfirmDeleteAll(false); }}
+                onClick={() => {
+                  onDeleteAllProjects();
+                  setConfirmDeleteAll(false);
+                }}
               >
                 Confirm
               </button>
               <button
                 className="text-xs ln-text-muted hover:underline"
-                onClick={() => { setConfirmDeleteAll(false); deleteAllFocus.returnFocus('all'); }}
+                onClick={() => {
+                  setConfirmDeleteAll(false);
+                  deleteAllFocus.returnFocus('all');
+                }}
                 autoFocus
               >
                 Cancel
@@ -186,7 +229,10 @@ export const StartScreen = memo(function StartScreen({
           )}
         </div>
 
-        <div className="space-y-2 overflow-y-auto" style={{ maxHeight: '18rem' }}>
+        <div
+          className="space-y-2 overflow-y-auto"
+          style={{ maxHeight: '18rem' }}
+        >
           {sorted.map((project) => {
             const isLoading = loadingProjectId === project.id;
             const isConfirming = confirmDeleteId === project.id;
@@ -196,18 +242,35 @@ export const StartScreen = memo(function StartScreen({
 
             if (isConfirming) {
               return (
-                <div key={project.id} className="flex items-center justify-between gap-2 px-3 py-2 rounded-sm ln-file-picker">
-                  <span className="text-sm truncate">Delete &ldquo;{project.name}&rdquo;?</span>
+                <div
+                  key={project.id}
+                  className="flex items-center justify-between gap-2 px-3 py-2 rounded-sm ln-file-picker"
+                >
+                  <span className="text-sm truncate">
+                    Delete &ldquo;{project.name}&rdquo;?
+                  </span>
                   <div className="flex items-center gap-2 shrink-0">
                     <button
                       className="text-xs px-2 py-1 rounded-sm ln-list-item ln-wizard-text-error"
-                      onClick={(e) => { e.stopPropagation(); onDeleteProject(project.id); setConfirmDeleteId(null); }}
-                    >Delete</button>
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteProject(project.id);
+                        setConfirmDeleteId(null);
+                      }}
+                    >
+                      Delete
+                    </button>
                     <button
                       className="text-xs px-2 py-1 rounded-sm ln-list-item"
-                      onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(null); deleteFocus.returnFocus(project.id); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setConfirmDeleteId(null);
+                        deleteFocus.returnFocus(project.id);
+                      }}
                       autoFocus
-                    >Cancel</button>
+                    >
+                      Cancel
+                    </button>
                   </div>
                 </div>
               );
@@ -218,37 +281,65 @@ export const StartScreen = memo(function StartScreen({
                 key={project.id}
                 className="flex items-center pr-3 rounded-sm ln-file-picker ln-list-item"
               >
-                <Tooltip content={projectTooltip(project)} maxWidth={320} className="ln-tooltip--wizard" asChild>
-                <button
-                  type="button"
-                  className="flex items-center gap-3 flex-1 min-w-0 pl-3 py-2 text-left cursor-pointer"
-                  onClick={() => onOpenProject(project.id)}
-                  disabled={isLoading}
-                  aria-busy={isLoading}
+                <Tooltip
+                  content={projectTooltip(project)}
+                  maxWidth={320}
+                  className="ln-tooltip--wizard"
+                  asChild
                 >
-                {isLoading && <Spinner className="w-4 h-4 shrink-0" />}
-                <span className="block flex-1 min-w-0">
-                  <span className="flex items-center gap-2 min-w-0">
-                    <span className="text-sm font-medium truncate">{project.name}</span>
-                  </span>
-                  <span className="block text-xs truncate" style={{ opacity: 0.55 }}>{detail}</span>
-                  {schemas && (
-                    <span className="block text-xs truncate" style={{ opacity: 0.55 }}>{schemas}</span>
-                  )}
-                  {bm && (
-                    <span className="block text-xs truncate" style={{ opacity: 0.55 }}>{bm}</span>
-                  )}
-                </span>
-                </button>
+                  <button
+                    type="button"
+                    className="flex items-center gap-3 flex-1 min-w-0 pl-3 py-2 text-left cursor-pointer"
+                    onClick={() => onOpenProject(project.id)}
+                    disabled={isLoading}
+                    aria-busy={isLoading}
+                  >
+                    {isLoading && <Spinner className="w-4 h-4 shrink-0" />}
+                    <span className="block flex-1 min-w-0">
+                      <span className="flex items-center gap-2 min-w-0">
+                        <span className="text-sm font-medium truncate">
+                          {project.name}
+                        </span>
+                      </span>
+                      <span
+                        className="block text-xs truncate"
+                        style={{ opacity: 0.55 }}
+                      >
+                        {detail}
+                      </span>
+                      {schemas && (
+                        <span
+                          className="block text-xs truncate"
+                          style={{ opacity: 0.55 }}
+                        >
+                          {schemas}
+                        </span>
+                      )}
+                      {bm && (
+                        <span
+                          className="block text-xs truncate"
+                          style={{ opacity: 0.55 }}
+                        >
+                          {bm}
+                        </span>
+                      )}
+                    </span>
+                  </button>
                 </Tooltip>
                 {!isLoading && (
-                  <Tooltip content={`Delete "${project.name}"`} className="ln-tooltip--wizard">
+                  <Tooltip
+                    content={`Delete "${project.name}"`}
+                    className="ln-tooltip--wizard"
+                  >
                     <Button
                       ref={deleteFocus.triggerRef(project.id)}
                       aria-label={`Delete ${project.name}`}
                       variant="icon"
                       style={{ width: 28, height: 28 }}
-                      onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(project.id); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setConfirmDeleteId(project.id);
+                      }}
                     >
                       <IconClose />
                     </Button>
@@ -264,9 +355,7 @@ export const StartScreen = memo(function StartScreen({
 
   return (
     <WizardPanel footer={footer}>
-      {startMessage && (
-        <StatusMessage text={startMessage} type="error" />
-      )}
+      {startMessage && <StatusMessage text={startMessage} type="error" />}
 
       <Button variant="primary" className="w-full" onClick={onCreateNew}>
         + Create New Project
@@ -274,7 +363,9 @@ export const StartScreen = memo(function StartScreen({
 
       {/* Latest quick-action — always visible, grayed when no recent project */}
       <Tooltip
-        content={latestProject ? projectTooltip(latestProject) : 'No recent project'}
+        content={
+          latestProject ? projectTooltip(latestProject) : 'No recent project'
+        }
         maxWidth={320}
         className="ln-tooltip--wizard"
         asChild
@@ -285,14 +376,27 @@ export const StartScreen = memo(function StartScreen({
           disabled={!latestProject || !!loadingProjectId}
           style={{ opacity: latestProject ? 1 : 0.45 }}
         >
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 shrink-0">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-        </svg>
-        <span className="truncate flex-1">
-          {latestProject ? latestProject.name : 'No recent project'}
-        </span>
-        {loadingProjectId === latestProject?.id && <Spinner className="w-4 h-4 ml-auto shrink-0" />}
-      </button>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth={1.5}
+            stroke="currentColor"
+            className="w-4 h-4 shrink-0"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+            />
+          </svg>
+          <span className="truncate flex-1">
+            {latestProject ? latestProject.name : 'No recent project'}
+          </span>
+          {loadingProjectId === latestProject?.id && (
+            <Spinner className="w-4 h-4 ml-auto shrink-0" />
+          )}
+        </button>
       </Tooltip>
 
       {/* Load Projects button — only shown when projects exist */}
@@ -302,8 +406,19 @@ export const StartScreen = memo(function StartScreen({
           onClick={() => switchView('projects')}
         >
           <div className="flex items-center gap-3">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 shrink-0">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v8.25m19.5 0A2.25 2.25 0 0 1 19.5 16.5h-15a2.25 2.25 0 0 1-2.25-2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 16.91a2.25 2.25 0 0 1-1.07-1.916V14.25" />
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.5}
+              stroke="currentColor"
+              className="w-4 h-4 shrink-0"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v8.25m19.5 0A2.25 2.25 0 0 1 19.5 16.5h-15a2.25 2.25 0 0 1-2.25-2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 16.91a2.25 2.25 0 0 1-1.07-1.916V14.25"
+              />
             </svg>
             <span>Load Projects</span>
           </div>
@@ -321,8 +436,19 @@ export const StartScreen = memo(function StartScreen({
 
 function IconClose() {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+      strokeWidth={1.5}
+      stroke="currentColor"
+      className="w-4 h-4"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M6 18 18 6M6 6l12 12"
+      />
     </svg>
   );
 }

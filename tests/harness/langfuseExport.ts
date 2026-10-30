@@ -3,7 +3,13 @@ import { z } from 'zod';
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { joinTurns, type GenerationEntry, type JoinedTurn, type ParsedRun, type ToolEntry } from './traceModel';
+import {
+  joinTurns,
+  type GenerationEntry,
+  type JoinedTurn,
+  type ParsedRun,
+  type ToolEntry,
+} from './traceModel';
 import { describeError, redactSecret, verboseContent } from './exportShared';
 
 /** Resolved connection for one export call. */
@@ -40,7 +46,16 @@ export interface LangfuseAttachment {
   readonly content: string;
 }
 
-type AttachmentReferences = Record<string, string | { empty: true; contentLength: 0; sha256Hash: string; contentType: LangfuseAttachment['contentType'] }>;
+type AttachmentReferences = Record<
+  string,
+  | string
+  | {
+      empty: true;
+      contentLength: 0;
+      sha256Hash: string;
+      contentType: LangfuseAttachment['contentType'];
+    }
+>;
 
 /** Evidence files to upload with the export; explicit opt-in because they can hold prompts and database metadata. */
 export interface LangfuseAttachments {
@@ -52,19 +67,32 @@ export interface LangfuseAttachments {
   readonly redact?: readonly string[];
 }
 
-const evidenceFileSchema = z.object({
-  name: z.enum(['event-trace', 'debug-log', 'answer', 'hop-log', 'state-dump', 'result', 'identity', 'final-snapshot']),
-  contentType: z.enum(['text/plain', 'application/json', 'text/markdown']),
-  content: z.string(),
-  contentLength: z.number().int().nonnegative(),
-  sha256: z.string().regex(/^[a-f0-9]{64}$/),
-}).strict();
-const evidenceSchema = z.object({
-  version: z.literal(1),
-  isBaseline: z.boolean(),
-  run: z.array(evidenceFileSchema),
-  turns: z.array(z.array(evidenceFileSchema)),
-}).strict();
+const evidenceFileSchema = z
+  .object({
+    name: z.enum([
+      'event-trace',
+      'debug-log',
+      'answer',
+      'hop-log',
+      'state-dump',
+      'result',
+      'identity',
+      'final-snapshot',
+    ]),
+    contentType: z.enum(['text/plain', 'application/json', 'text/markdown']),
+    content: z.string(),
+    contentLength: z.number().int().nonnegative(),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+const evidenceSchema = z
+  .object({
+    version: z.literal(1),
+    isBaseline: z.boolean(),
+    run: z.array(evidenceFileSchema),
+    turns: z.array(z.array(evidenceFileSchema)),
+  })
+  .strict();
 
 /** Branch name accepted for a baseline (D-107): a plain name such as main or testing01. */
 export const BASELINE_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -83,39 +111,72 @@ export interface FrozenRunEvidence {
 function validateFrozenRunEvidence(value: unknown): FrozenRunEvidence {
   const saved = evidenceSchema.parse(value);
   for (const files of [saved.run, ...saved.turns]) {
-    if (new Set(files.map(file => file.name)).size !== files.length) throw new Error('Frozen evidence has duplicate attachment names.');
+    if (new Set(files.map((file) => file.name)).size !== files.length)
+      throw new Error('Frozen evidence has duplicate attachment names.');
     for (const file of files) {
-      if (Buffer.byteLength(file.content, 'utf8') !== file.contentLength
-        || createHash('sha256').update(file.content, 'utf8').digest('hex') !== file.sha256) {
+      if (
+        Buffer.byteLength(file.content, 'utf8') !== file.contentLength ||
+        createHash('sha256').update(file.content, 'utf8').digest('hex') !==
+          file.sha256
+      ) {
         throw new Error('Frozen evidence content hash mismatch.');
       }
       Object.freeze(file);
     }
     Object.freeze(files);
   }
-  if (saved.run.filter(file => file.name === 'event-trace').length !== 1) throw new Error('Frozen evidence requires one event trace.');
-  return Object.freeze({ isBaseline: saved.isBaseline,
-    attachments: Object.freeze({ run: saved.run, turns: Object.freeze(saved.turns) }) });
+  if (saved.run.filter((file) => file.name === 'event-trace').length !== 1)
+    throw new Error('Frozen evidence requires one event trace.');
+  return Object.freeze({
+    isBaseline: saved.isBaseline,
+    attachments: Object.freeze({
+      run: saved.run,
+      turns: Object.freeze(saved.turns),
+    }),
+  });
 }
 
 /** Reads the saved snapshot for a retry/reexport, rejecting malformed or changed bytes. */
 export function readFrozenRunEvidence(directory: string): FrozenRunEvidence {
-  return validateFrozenRunEvidence(JSON.parse(readFileSync(join(directory, 'evidence-snapshot.json'), 'utf8')));
+  return validateFrozenRunEvidence(
+    JSON.parse(readFileSync(join(directory, 'evidence-snapshot.json'), 'utf8')),
+  );
 }
 
 /** Freezes allowlisted, redacted bytes before export. Existing snapshots are never overwritten. */
-export function freezeRunEvidence(directory: string, attachments: LangfuseAttachments,
-  isBaseline: boolean, secrets: readonly string[] = []): FrozenRunEvidence {
+export function freezeRunEvidence(
+  directory: string,
+  attachments: LangfuseAttachments,
+  isBaseline: boolean,
+  secrets: readonly string[] = [],
+): FrozenRunEvidence {
   const redact = [...secrets, ...(attachments.redact ?? [])].filter(Boolean);
-  const files = (rows: readonly LangfuseAttachment[] = []) => rows.map(file => {
-    const content = redact.reduce((text, secret) => redactSecret(text, secret), file.content);
-    return { name: file.name, contentType: file.contentType, content,
-      contentLength: Buffer.byteLength(content, 'utf8'), sha256: createHash('sha256').update(content, 'utf8').digest('hex') };
+  const files = (rows: readonly LangfuseAttachment[] = []) =>
+    rows.map((file) => {
+      const content = redact.reduce(
+        (text, secret) => redactSecret(text, secret),
+        file.content,
+      );
+      return {
+        name: file.name,
+        contentType: file.contentType,
+        content,
+        contentLength: Buffer.byteLength(content, 'utf8'),
+        sha256: createHash('sha256').update(content, 'utf8').digest('hex'),
+      };
+    });
+  const snapshot = evidenceSchema.parse({
+    version: 1,
+    isBaseline,
+    run: files(attachments.run),
+    turns: (attachments.turns ?? []).map(files),
   });
-  const snapshot = evidenceSchema.parse({ version: 1, isBaseline,
-    run: files(attachments.run), turns: (attachments.turns ?? []).map(files) });
   const frozen = validateFrozenRunEvidence(snapshot);
-  writeFileSync(join(directory, 'evidence-snapshot.json'), JSON.stringify(snapshot) + '\n', { flag: 'wx', mode: 0o600 });
+  writeFileSync(
+    join(directory, 'evidence-snapshot.json'),
+    JSON.stringify(snapshot) + '\n',
+    { flag: 'wx', mode: 0o600 },
+  );
   return frozen;
 }
 
@@ -133,12 +194,21 @@ const OTEL_TRACES_PATH = '/api/public/otel/v1/traces';
 const MEDIA_PATH = '/api/public/media';
 const mediaResponseSchema = z.object({
   mediaId: z.string().regex(/^[A-Za-z0-9_-]+$/),
-  uploadUrl: z.string().refine(value => {
-    try {
-      const url = new URL(value);
-      return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password;
-    } catch { return false; }
-  }).nullish(),
+  uploadUrl: z
+    .string()
+    .refine((value) => {
+      try {
+        const url = new URL(value);
+        return (
+          ['http:', 'https:'].includes(url.protocol) &&
+          !url.username &&
+          !url.password
+        );
+      } catch {
+        return false;
+      }
+    })
+    .nullish(),
 });
 /** Larger evidence files are skipped, not truncated: a partial trace would mislead. */
 const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
@@ -184,14 +254,20 @@ export function limitIntervalMs(requestsPerMinute: number): number {
   return Math.ceil(60_000 / requestsPerMinute);
 }
 
-const limitRate = (bucket: LimitBucket): number => LANGFUSE_FREE_PLAN[
-  bucket === 'ingestion' ? 'ingestionRequestsPerMinute' : 'generalApiRequestsPerMinute'
-];
+const limitRate = (bucket: LimitBucket): number =>
+  LANGFUSE_FREE_PLAN[
+    bucket === 'ingestion'
+      ? 'ingestionRequestsPerMinute'
+      : 'generalApiRequestsPerMinute'
+  ];
 
 /** Waits until the next call in `bucket` is inside the free-plan rate. The first call in a bucket does not wait. */
 export function createLimitPacer(
   now: () => number = Date.now,
-  wait: (ms: number) => Promise<void> = (ms) => new Promise(resolve => { setTimeout(resolve, ms); }),
+  wait: (ms: number) => Promise<void> = (ms) =>
+    new Promise((resolve) => {
+      setTimeout(resolve, ms);
+    }),
 ): (bucket: LimitBucket) => Promise<void> {
   const nextAt: Partial<Record<LimitBucket, number>> = {};
   return async (bucket) => {
@@ -206,9 +282,12 @@ export function createLimitPacer(
 export function exportBudgetMs(attachmentCount: number): number {
   const count = Math.max(0, attachmentCount);
   const generalCalls = count * 2;
-  return generalCalls * limitIntervalMs(LANGFUSE_FREE_PLAN.generalApiRequestsPerMinute)
-    + limitIntervalMs(LANGFUSE_FREE_PLAN.ingestionRequestsPerMinute)
-    + Math.max(count, 1) * EXPORT_NETWORK_SLACK_MS;
+  return (
+    generalCalls *
+      limitIntervalMs(LANGFUSE_FREE_PLAN.generalApiRequestsPerMinute) +
+    limitIntervalMs(LANGFUSE_FREE_PLAN.ingestionRequestsPerMinute) +
+    Math.max(count, 1) * EXPORT_NETWORK_SLACK_MS
+  );
 }
 const INGESTION_VERSION = '4';
 const INSTRUMENTATION_SCOPE = 'data-lineage-viz-harness';
@@ -278,23 +357,37 @@ export async function exportRunToLangfuse(
   if (config.attachments) {
     const turnTraceIds = joinTurns(run).map(turnTraceId);
     for (const [index, traceId] of turnTraceIds.entries()) {
-      const files = [...(config.attachments.run ?? []), ...(config.attachments.turns?.[index] ?? [])];
-      const { tokens, errors } = await uploadAttachments(config, fetchImpl, pace, traceId, files);
+      const files = [
+        ...(config.attachments.run ?? []),
+        ...(config.attachments.turns?.[index] ?? []),
+      ];
+      const { tokens, errors } = await uploadAttachments(
+        config,
+        fetchImpl,
+        pace,
+        traceId,
+        files,
+      );
       if (Object.keys(tokens).length) attachmentTokens.set(traceId, tokens);
       attachmentErrors.push(...errors);
     }
   }
   const spans = buildSpans(run, config.runMetadata, attachmentTokens);
-  if (spans.length === 0) return { exported: 0, errors: attachmentErrors, traceIds: [] };
+  if (spans.length === 0)
+    return { exported: 0, errors: attachmentErrors, traceIds: [] };
   const traceIds = [...new Set(spans.map((span) => span.traceId))];
 
   const url = `${config.baseUrl.replace(/\/+$/, '')}${OTEL_TRACES_PATH}`;
   const authorization = `Basic ${Buffer.from(`${config.publicKey}:${config.secretKey}`, 'utf8').toString('base64')}`;
   const payload: OtelExportPayload = {
-    resourceSpans: [{
-      resource: { attributes: [stringAttr('service.name', INSTRUMENTATION_SCOPE)] },
-      scopeSpans: [{ scope: { name: INSTRUMENTATION_SCOPE }, spans }],
-    }],
+    resourceSpans: [
+      {
+        resource: {
+          attributes: [stringAttr('service.name', INSTRUMENTATION_SCOPE)],
+        },
+        scopeSpans: [{ scope: { name: INSTRUMENTATION_SCOPE }, spans }],
+      },
+    ],
   };
   const body = JSON.stringify(payload);
   config.onPayload?.(body);
@@ -311,31 +404,67 @@ export async function exportRunToLangfuse(
       body,
     });
   } catch (error) {
-    return { exported: 0, errors: [...attachmentErrors, redactSecret(`Langfuse OTLP request failed: ${describeError(error)}`, config.secretKey)], traceIds };
+    return {
+      exported: 0,
+      errors: [
+        ...attachmentErrors,
+        redactSecret(
+          `Langfuse OTLP request failed: ${describeError(error)}`,
+          config.secretKey,
+        ),
+      ],
+      traceIds,
+    };
   }
 
   const rawBody = await readResponseBody(response);
   const parsedBody = parseJsonBody(rawBody);
 
   if (!response.ok) {
-    const detail = parsedBody !== undefined
-      ? summarizeUnknownBody(parsedBody)
-      : (rawBody.trim() ? rawBody.slice(0, 200) : describeError(new Error('empty body')));
+    const detail =
+      parsedBody !== undefined
+        ? summarizeUnknownBody(parsedBody)
+        : rawBody.trim()
+          ? rawBody.slice(0, 200)
+          : describeError(new Error('empty body'));
     return {
       exported: 0,
-      errors: [...attachmentErrors, redactSecret(`Langfuse OTLP failed: HTTP ${response.status} ${detail}`, config.secretKey)],
+      errors: [
+        ...attachmentErrors,
+        redactSecret(
+          `Langfuse OTLP failed: HTTP ${response.status} ${detail}`,
+          config.secretKey,
+        ),
+      ],
       traceIds,
     };
   }
 
   if (parsedBody === undefined && rawBody.trim() !== '') {
-    return { exported: 0, errors: [...attachmentErrors, redactSecret(`Langfuse OTLP response was not JSON: ${rawBody.slice(0, 200)}`, config.secretKey)], traceIds };
+    return {
+      exported: 0,
+      errors: [
+        ...attachmentErrors,
+        redactSecret(
+          `Langfuse OTLP response was not JSON: ${rawBody.slice(0, 200)}`,
+          config.secretKey,
+        ),
+      ],
+      traceIds,
+    };
   }
 
   const { rejected, message } = parsePartialSuccess(parsedBody);
   const exported = Math.max(0, spans.length - rejected);
-  const diagnostic = message ?? (rejected > 0 ? `partialSuccess rejectedSpans=${rejected}: server rejected spans without an error message` : undefined);
-  const errors = [...attachmentErrors, ...(diagnostic ? [redactSecret(diagnostic, config.secretKey)] : [])];
+  const diagnostic =
+    message ??
+    (rejected > 0
+      ? `partialSuccess rejectedSpans=${rejected}: server rejected spans without an error message`
+      : undefined);
+  const errors = [
+    ...attachmentErrors,
+    ...(diagnostic ? [redactSecret(diagnostic, config.secretKey)] : []),
+  ];
   return { exported, errors, traceIds };
 }
 
@@ -348,24 +477,49 @@ function buildSpans(
   const spans: OtelSpan[] = [];
   for (const turn of joinTurns(run)) {
     // Wire records have no fingerprint: source position binds them to the owning turn.
-    const previousTerminal = run.turns.filter(entry => entry.type === 'turn-terminal'
-      && entry.requestId === turn.requestId && entry.lineIndex < (turn.terminal?.lineIndex ?? Infinity)).at(-1);
-    const start = turn.start?.lineIndex ?? (previousTerminal ? previousTerminal.lineIndex + 1 : 0);
-    const nextStart = run.turns.find(entry => entry.type === 'turn-start'
-      && entry.requestId === turn.requestId && entry.runFingerprint !== turn.runFingerprint && entry.lineIndex > start)?.lineIndex ?? Infinity;
+    const previousTerminal = run.turns
+      .filter(
+        (entry) =>
+          entry.type === 'turn-terminal' &&
+          entry.requestId === turn.requestId &&
+          entry.lineIndex < (turn.terminal?.lineIndex ?? Infinity),
+      )
+      .at(-1);
+    const start =
+      turn.start?.lineIndex ??
+      (previousTerminal ? previousTerminal.lineIndex + 1 : 0);
+    const nextStart =
+      run.turns.find(
+        (entry) =>
+          entry.type === 'turn-start' &&
+          entry.requestId === turn.requestId &&
+          entry.runFingerprint !== turn.runFingerprint &&
+          entry.lineIndex > start,
+      )?.lineIndex ?? Infinity;
     const end = turn.terminal?.lineIndex ?? nextStart - 1;
     const inTurn = (entry: { requestId: string; lineIndex: number }) =>
-      entry.requestId === turn.requestId && entry.lineIndex >= start && entry.lineIndex <= end;
+      entry.requestId === turn.requestId &&
+      entry.lineIndex >= start &&
+      entry.lineIndex <= end;
     const scopedRun: ParsedRun = { ...run, wire: run.wire.filter(inTurn) };
     const generations = run.generations.filter(inTurn);
     const tools = run.tools.filter(inTurn);
     const identity = turnIdentity(turn);
     const traceId = otelTraceId(identity);
     const rootSpanId = otelSpanId(`${identity}:root`);
-    const name = [runMetadata?.lane, runMetadata?.promptId].filter(Boolean).join('/') || turn.requestId;
+    const name =
+      [runMetadata?.lane, runMetadata?.promptId].filter(Boolean).join('/') ||
+      turn.requestId;
     const { startIso, endIso } = turnBounds(turn, generations);
     const { input, output } = rootIo(scopedRun, generations);
-    const shared = traceAttributes(turn, generations, tools, runMetadata, name, attachmentTokens.get(traceId));
+    const shared = traceAttributes(
+      turn,
+      generations,
+      tools,
+      runMetadata,
+      name,
+      attachmentTokens.get(traceId),
+    );
 
     spans.push({
       traceId,
@@ -377,15 +531,24 @@ function buildSpans(
       attributes: [
         ...shared,
         stringAttr('langfuse.observation.type', 'span'),
-        ...(input !== undefined ? [stringAttr('langfuse.observation.input', stringifyIo(input))] : []),
-        ...(output !== undefined ? [stringAttr('langfuse.observation.output', stringifyIo(output))] : []),
+        ...(input !== undefined
+          ? [stringAttr('langfuse.observation.input', stringifyIo(input))]
+          : []),
+        ...(output !== undefined
+          ? [stringAttr('langfuse.observation.output', stringifyIo(output))]
+          : []),
       ],
       status: turnStatus(turn),
     });
 
     for (const generation of generations) {
-      const { input: genInput, output: genOutput } = verboseContent(scopedRun, generation);
-      const startTime = new Date(new Date(generation.at).getTime() - generation.latencyMs).toISOString();
+      const { input: genInput, output: genOutput } = verboseContent(
+        scopedRun,
+        generation,
+      );
+      const startTime = new Date(
+        new Date(generation.at).getTime() - generation.latencyMs,
+      ).toISOString();
       spans.push({
         traceId,
         spanId: otelSpanId(`${identity}:gen:${generation.generation}`),
@@ -397,20 +560,59 @@ function buildSpans(
         attributes: [
           ...shared,
           stringAttr('langfuse.observation.type', 'generation'),
-          ...(generation.modelId ? [stringAttr('langfuse.observation.model.name', generation.modelId)] : []),
-          ...(generation.usage
-            ? [stringAttr('langfuse.observation.usage_details', JSON.stringify({
-                input: generation.usage.inputTokens,
-                output: generation.usage.outputTokens,
-                total: generation.usage.totalTokens,
-                ...(generation.usage.reasoningTokens !== undefined ? { reasoning: generation.usage.reasoningTokens } : {}),
-                ...(generation.usage.cachedTokens !== undefined ? { cached: generation.usage.cachedTokens } : {}),
-              }))]
+          ...(generation.modelId
+            ? [
+                stringAttr(
+                  'langfuse.observation.model.name',
+                  generation.modelId,
+                ),
+              ]
             : []),
-          ...(generation.finishReason ? [stringAttr('langfuse.observation.metadata.finishReason', generation.finishReason)] : []),
-          ...(generation.phase ? [stringAttr('langfuse.observation.metadata.phase', generation.phase)] : []),
-          ...(genInput !== undefined ? [stringAttr('langfuse.observation.input', stringifyIo(genInput))] : []),
-          ...(genOutput !== undefined ? [stringAttr('langfuse.observation.output', stringifyIo(genOutput))] : []),
+          ...(generation.usage
+            ? [
+                stringAttr(
+                  'langfuse.observation.usage_details',
+                  JSON.stringify({
+                    input: generation.usage.inputTokens,
+                    output: generation.usage.outputTokens,
+                    total: generation.usage.totalTokens,
+                    ...(generation.usage.reasoningTokens !== undefined
+                      ? { reasoning: generation.usage.reasoningTokens }
+                      : {}),
+                    ...(generation.usage.cachedTokens !== undefined
+                      ? { cached: generation.usage.cachedTokens }
+                      : {}),
+                  }),
+                ),
+              ]
+            : []),
+          ...(generation.finishReason
+            ? [
+                stringAttr(
+                  'langfuse.observation.metadata.finishReason',
+                  generation.finishReason,
+                ),
+              ]
+            : []),
+          ...(generation.phase
+            ? [
+                stringAttr(
+                  'langfuse.observation.metadata.phase',
+                  generation.phase,
+                ),
+              ]
+            : []),
+          ...(genInput !== undefined
+            ? [stringAttr('langfuse.observation.input', stringifyIo(genInput))]
+            : []),
+          ...(genOutput !== undefined
+            ? [
+                stringAttr(
+                  'langfuse.observation.output',
+                  stringifyIo(genOutput),
+                ),
+              ]
+            : []),
         ],
         status: { code: 0 },
       });
@@ -421,13 +623,20 @@ function buildSpans(
     }
 
     for (const failure of scopedRun.wire) {
-      if (failure.type !== 'wire-error' || failure.requestId !== turn.requestId) continue;
-      const request = scopedRun.wire.find((entry) => entry.type === 'wire-request'
-        && entry.requestId === failure.requestId && entry.generation === failure.generation);
+      if (failure.type !== 'wire-error' || failure.requestId !== turn.requestId)
+        continue;
+      const request = scopedRun.wire.find(
+        (entry) =>
+          entry.type === 'wire-request' &&
+          entry.requestId === failure.requestId &&
+          entry.generation === failure.generation,
+      );
       const { input: failedInput } = verboseContent(scopedRun, failure);
       spans.push({
         traceId,
-        spanId: otelSpanId(`${identity}:error:${failure.generation}:${failure.lineIndex}`),
+        spanId: otelSpanId(
+          `${identity}:error:${failure.generation}:${failure.lineIndex}`,
+        ),
         parentSpanId: rootSpanId,
         name: failure.phase ?? 'generation',
         kind: 1,
@@ -437,8 +646,17 @@ function buildSpans(
           ...shared,
           stringAttr('langfuse.observation.type', 'generation'),
           stringAttr('langfuse.observation.level', 'ERROR'),
-          ...(failure.phase ? [stringAttr('langfuse.observation.metadata.phase', failure.phase)] : []),
-          ...(failedInput !== undefined ? [stringAttr('langfuse.observation.input', stringifyIo(failedInput))] : []),
+          ...(failure.phase
+            ? [stringAttr('langfuse.observation.metadata.phase', failure.phase)]
+            : []),
+          ...(failedInput !== undefined
+            ? [
+                stringAttr(
+                  'langfuse.observation.input',
+                  stringifyIo(failedInput),
+                ),
+              ]
+            : []),
         ],
         status: { code: 2, message: JSON.stringify(failure.diagnostic) },
       });
@@ -455,8 +673,15 @@ function toolSpan(
   identity: string,
   shared: readonly OtelAttribute[],
 ): OtelSpan {
-  const level = tool.status === 'rejected' ? 'WARNING' : tool.status === 'dispatch_error' ? 'ERROR' : 'DEFAULT';
-  const startTime = new Date(new Date(tool.at).getTime() - tool.durationMs).toISOString();
+  const level =
+    tool.status === 'rejected'
+      ? 'WARNING'
+      : tool.status === 'dispatch_error'
+        ? 'ERROR'
+        : 'DEFAULT';
+  const startTime = new Date(
+    new Date(tool.at).getTime() - tool.durationMs,
+  ).toISOString();
   return {
     traceId,
     spanId: otelSpanId(`${identity}:tool:${tool.seq}:${tool.lineIndex}`),
@@ -472,10 +697,27 @@ function toolSpan(
       stringAttr('langfuse.observation.metadata.status', tool.status),
       stringAttr('langfuse.observation.metadata.phase', tool.phase),
       stringAttr('langfuse.observation.metadata.seq', String(tool.seq)),
-      ...(tool.rejectionCode ? [stringAttr('langfuse.observation.metadata.rejectionCode', tool.rejectionCode)] : []),
-      ...(tool.issuePaths?.length ? [stringAttr('langfuse.observation.metadata.issuePaths', tool.issuePaths.join(','))] : []),
+      ...(tool.rejectionCode
+        ? [
+            stringAttr(
+              'langfuse.observation.metadata.rejectionCode',
+              tool.rejectionCode,
+            ),
+          ]
+        : []),
+      ...(tool.issuePaths?.length
+        ? [
+            stringAttr(
+              'langfuse.observation.metadata.issuePaths',
+              tool.issuePaths.join(','),
+            ),
+          ]
+        : []),
     ],
-    status: tool.status === 'dispatch_error' ? { code: 2, message: 'dispatch_error' } : { code: 1 },
+    status:
+      tool.status === 'dispatch_error'
+        ? { code: 2, message: 'dispatch_error' }
+        : { code: 1 },
   };
 }
 
@@ -491,70 +733,147 @@ function traceAttributes(
     stringAttr('langfuse.trace.name', name),
     stringAttr('langfuse.trace.metadata.requestId', turn.requestId),
   ];
-  if (runMetadata?.sessionId) attrs.push(stringAttr('langfuse.session.id', runMetadata.sessionId));
-  if (runMetadata?.isBaseline !== undefined) attrs.push(
-    { key: 'langfuse.trace.metadata.isBaseline', value: { boolValue: runMetadata.isBaseline } },
-    { key: 'langfuse.observation.metadata.isBaseline', value: { boolValue: runMetadata.isBaseline } },
-  );
+  if (runMetadata?.sessionId)
+    attrs.push(stringAttr('langfuse.session.id', runMetadata.sessionId));
+  if (runMetadata?.isBaseline !== undefined)
+    attrs.push(
+      {
+        key: 'langfuse.trace.metadata.isBaseline',
+        value: { boolValue: runMetadata.isBaseline },
+      },
+      {
+        key: 'langfuse.observation.metadata.isBaseline',
+        value: { boolValue: runMetadata.isBaseline },
+      },
+    );
   if (runMetadata?.tags?.length) {
-    attrs.push({ key: 'langfuse.trace.tags', value: { arrayValue: { values: runMetadata.tags.map(tag => ({ stringValue: tag })) } } });
+    attrs.push({
+      key: 'langfuse.trace.tags',
+      value: {
+        arrayValue: {
+          values: runMetadata.tags.map((tag) => ({ stringValue: tag })),
+        },
+      },
+    });
   }
   // Top-level scalar keys only: Langfuse filters on top-level metadata keys.
-  const byStatus = (status: ToolEntry['status']) => tools.filter(tool => tool.status === status).length;
+  const byStatus = (status: ToolEntry['status']) =>
+    tools.filter((tool) => tool.status === status).length;
   const codes = new Map<string, number>();
-  for (const tool of tools) if (tool.rejectionCode && tool.status === 'rejected') codes.set(tool.rejectionCode, (codes.get(tool.rejectionCode) ?? 0) + 1);
+  for (const tool of tools)
+    if (tool.rejectionCode && tool.status === 'rejected')
+      codes.set(tool.rejectionCode, (codes.get(tool.rejectionCode) ?? 0) + 1);
   attrs.push(
     stringAttr('langfuse.trace.metadata.toolCalls', String(tools.length)),
-    stringAttr('langfuse.trace.metadata.rejections', String(byStatus('rejected'))),
+    stringAttr(
+      'langfuse.trace.metadata.rejections',
+      String(byStatus('rejected')),
+    ),
     stringAttr('langfuse.trace.metadata.gates', String(byStatus('gate'))),
     stringAttr('langfuse.trace.metadata.refusals', String(byStatus('refused'))),
-    stringAttr('langfuse.trace.metadata.notEvaluated', String(byStatus('not_evaluated'))),
-    stringAttr('langfuse.trace.metadata.dispatchErrors', String(byStatus('dispatch_error'))),
+    stringAttr(
+      'langfuse.trace.metadata.notEvaluated',
+      String(byStatus('not_evaluated')),
+    ),
+    stringAttr(
+      'langfuse.trace.metadata.dispatchErrors',
+      String(byStatus('dispatch_error')),
+    ),
   );
-  if (attachments) attrs.push(stringAttr('langfuse.trace.metadata.attachments', JSON.stringify(attachments)));
-  if (codes.size) attrs.push(stringAttr('langfuse.trace.metadata.rejectionCodes', JSON.stringify(Object.fromEntries(codes))));
-  if (runMetadata?.lane) attrs.push(stringAttr('langfuse.trace.metadata.lane', runMetadata.lane));
-  if (runMetadata?.promptId) attrs.push(stringAttr('langfuse.trace.metadata.promptId', runMetadata.promptId));
+  if (attachments)
+    attrs.push(
+      stringAttr(
+        'langfuse.trace.metadata.attachments',
+        JSON.stringify(attachments),
+      ),
+    );
+  if (codes.size)
+    attrs.push(
+      stringAttr(
+        'langfuse.trace.metadata.rejectionCodes',
+        JSON.stringify(Object.fromEntries(codes)),
+      ),
+    );
+  if (runMetadata?.lane)
+    attrs.push(stringAttr('langfuse.trace.metadata.lane', runMetadata.lane));
+  if (runMetadata?.promptId)
+    attrs.push(
+      stringAttr('langfuse.trace.metadata.promptId', runMetadata.promptId),
+    );
   const modelId = generations[0]?.modelId;
-  if (modelId) attrs.push(stringAttr('langfuse.trace.metadata.modelId', modelId));
+  if (modelId)
+    attrs.push(stringAttr('langfuse.trace.metadata.modelId', modelId));
   const outcome = turn.terminal?.status;
-  if (outcome) attrs.push(stringAttr('langfuse.trace.metadata.outcome', outcome));
+  if (outcome)
+    attrs.push(stringAttr('langfuse.trace.metadata.outcome', outcome));
   if (turn.terminal?.modelCalls !== undefined) {
-    attrs.push(stringAttr('langfuse.trace.metadata.modelCalls', String(turn.terminal.modelCalls)));
+    attrs.push(
+      stringAttr(
+        'langfuse.trace.metadata.modelCalls',
+        String(turn.terminal.modelCalls),
+      ),
+    );
   }
   return attrs;
 }
 
 /** The root span's input and output: the first captured request and the last response. A turn whose generations all failed has no response, so its input comes from the first captured request and its output is the last provider failure. */
-function rootIo(run: ParsedRun, generations: readonly GenerationEntry[]): { input?: unknown; output?: unknown } {
+function rootIo(
+  run: ParsedRun,
+  generations: readonly GenerationEntry[],
+): { input?: unknown; output?: unknown } {
   let input: unknown;
   let output: unknown;
   for (const generation of generations) {
     const content = verboseContent(run, generation);
-    if (content.input !== undefined && input === undefined) input = content.input;
+    if (content.input !== undefined && input === undefined)
+      input = content.input;
     if (content.output !== undefined) output = content.output;
   }
   if (input === undefined) {
-    const request = run.wire.find(entry => entry.type === 'wire-request' && entry.system !== undefined);
-    if (request?.type === 'wire-request') input = verboseContent(run, request).input;
+    const request = run.wire.find(
+      (entry) => entry.type === 'wire-request' && entry.system !== undefined,
+    );
+    if (request?.type === 'wire-request')
+      input = verboseContent(run, request).input;
   }
   if (output === undefined) {
-    const failure = run.wire.filter(entry => entry.type === 'wire-error').at(-1);
+    const failure = run.wire
+      .filter((entry) => entry.type === 'wire-error')
+      .at(-1);
     if (failure?.type === 'wire-error') output = { error: failure.diagnostic };
   }
   return { input, output };
 }
 
-function turnBounds(turn: JoinedTurn, generations: readonly GenerationEntry[]): { startIso: string; endIso: string } {
-  const genStarts = generations.map((generation) => new Date(new Date(generation.at).getTime() - generation.latencyMs).toISOString());
-  const startIso = turn.start?.at ?? genStarts[0] ?? generations[0]?.at ?? new Date().toISOString();
-  const endIso = turn.terminal?.at ?? generations[generations.length - 1]?.at ?? startIso;
+function turnBounds(
+  turn: JoinedTurn,
+  generations: readonly GenerationEntry[],
+): { startIso: string; endIso: string } {
+  const genStarts = generations.map((generation) =>
+    new Date(
+      new Date(generation.at).getTime() - generation.latencyMs,
+    ).toISOString(),
+  );
+  const startIso =
+    turn.start?.at ??
+    genStarts[0] ??
+    generations[0]?.at ??
+    new Date().toISOString();
+  const endIso =
+    turn.terminal?.at ?? generations[generations.length - 1]?.at ?? startIso;
   return { startIso, endIso };
 }
 
-function turnStatus(turn: JoinedTurn): { readonly code: number; readonly message?: string } {
+function turnStatus(turn: JoinedTurn): {
+  readonly code: number;
+  readonly message?: string;
+} {
   if (turn.terminal?.status === 'error') {
-    return { code: 2, message: turn.terminal.errorCode ?? turn.terminal.reason ?? 'error' };
+    return {
+      code: 2,
+      message: turn.terminal.errorCode ?? turn.terminal.reason ?? 'error',
+    };
   }
   return { code: 1 };
 }
@@ -579,8 +898,13 @@ async function pacedFetch(
   const response = await fetchImpl(url, init);
   if (response.status !== 429) return response;
   const header = Number(response.headers.get('retry-after'));
-  const waitMs = Number.isFinite(header) && header >= 0 ? Math.min(header * 1000, RETRY_CAP_MS) : limitIntervalMs(limitRate(bucket));
-  await new Promise(resolve => { setTimeout(resolve, waitMs); });
+  const waitMs =
+    Number.isFinite(header) && header >= 0
+      ? Math.min(header * 1000, RETRY_CAP_MS)
+      : limitIntervalMs(limitRate(bucket));
+  await new Promise((resolve) => {
+    setTimeout(resolve, waitMs);
+  });
   return fetchImpl(url, init);
 }
 
@@ -594,35 +918,67 @@ async function uploadAttachments(
   const tokens: AttachmentReferences = {};
   const errors: string[] = [];
   const base = config.baseUrl.replace(/\/+$/, '');
-  const secrets = [config.secretKey, ...(config.attachments?.redact ?? [])].filter(Boolean);
+  const secrets = [
+    config.secretKey,
+    ...(config.attachments?.redact ?? []),
+  ].filter(Boolean);
   const headers = {
     'content-type': 'application/json',
     authorization: `Basic ${Buffer.from(`${config.publicKey}:${config.secretKey}`, 'utf8').toString('base64')}`,
   };
   for (const file of files) {
     try {
-      const bytes = Buffer.from(secrets.reduce((text, secret) => redactSecret(text, secret), file.content), 'utf8');
+      const bytes = Buffer.from(
+        secrets.reduce(
+          (text, secret) => redactSecret(text, secret),
+          file.content,
+        ),
+        'utf8',
+      );
       if (bytes.length > MAX_ATTACHMENT_BYTES) {
-        errors.push(`Attachment ${file.name} skipped: ${bytes.length} bytes exceeds ${MAX_ATTACHMENT_BYTES}.`);
+        errors.push(
+          `Attachment ${file.name} skipped: ${bytes.length} bytes exceeds ${MAX_ATTACHMENT_BYTES}.`,
+        );
         continue;
       }
       const sha256 = createHash('sha256').update(bytes).digest('base64');
       if (bytes.length === 0) {
-        tokens[file.name] = { empty: true, contentLength: 0, sha256Hash: sha256, contentType: file.contentType };
+        tokens[file.name] = {
+          empty: true,
+          contentLength: 0,
+          sha256Hash: sha256,
+          contentType: file.contentType,
+        };
         continue;
       }
-      const created = await pacedFetch(pace, 'general', fetchImpl, `${base}${MEDIA_PATH}`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ traceId, field: 'metadata', contentType: file.contentType, contentLength: bytes.length, sha256Hash: sha256 }),
-      });
+      const created = await pacedFetch(
+        pace,
+        'general',
+        fetchImpl,
+        `${base}${MEDIA_PATH}`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            traceId,
+            field: 'metadata',
+            contentType: file.contentType,
+            contentLength: bytes.length,
+            sha256Hash: sha256,
+          }),
+        },
+      );
       if (!created.ok) {
-        errors.push(`Attachment ${file.name} not stored: media request HTTP ${created.status}.`);
+        errors.push(
+          `Attachment ${file.name} not stored: media request HTTP ${created.status}.`,
+        );
         continue;
       }
       const parsed = mediaResponseSchema.safeParse(await created.json());
       if (!parsed.success) {
-        errors.push(`Attachment ${file.name} not stored: invalid media response.`);
+        errors.push(
+          `Attachment ${file.name} not stored: invalid media response.`,
+        );
         continue;
       }
       const { mediaId, uploadUrl } = parsed.data;
@@ -630,26 +986,49 @@ async function uploadAttachments(
         const started = Date.now();
         const uploaded = await fetchImpl(uploadUrl, {
           method: 'PUT',
-          headers: { 'content-type': file.contentType, 'x-amz-checksum-sha256': sha256 },
+          headers: {
+            'content-type': file.contentType,
+            'x-amz-checksum-sha256': sha256,
+          },
           body: bytes,
         });
-        const confirmed = await pacedFetch(pace, 'general', fetchImpl, `${base}${MEDIA_PATH}/${mediaId}`, {
-          method: 'PATCH',
-          headers,
-          body: JSON.stringify({ uploadedAt: new Date().toISOString(), uploadHttpStatus: uploaded.status, uploadTimeMs: Date.now() - started }),
-        });
+        const confirmed = await pacedFetch(
+          pace,
+          'general',
+          fetchImpl,
+          `${base}${MEDIA_PATH}/${mediaId}`,
+          {
+            method: 'PATCH',
+            headers,
+            body: JSON.stringify({
+              uploadedAt: new Date().toISOString(),
+              uploadHttpStatus: uploaded.status,
+              uploadTimeMs: Date.now() - started,
+            }),
+          },
+        );
         if (!confirmed.ok) {
-          errors.push(`Attachment ${file.name} not stored: confirmation HTTP ${confirmed.status}.`);
+          errors.push(
+            `Attachment ${file.name} not stored: confirmation HTTP ${confirmed.status}.`,
+          );
           continue;
         }
         if (!uploaded.ok) {
-          errors.push(`Attachment ${file.name} not stored: upload HTTP ${uploaded.status}.`);
+          errors.push(
+            `Attachment ${file.name} not stored: upload HTTP ${uploaded.status}.`,
+          );
           continue;
         }
       }
-      tokens[file.name] = `@@@langfuseMedia:type=${file.contentType}|id=${mediaId}|source=bytes@@@`;
+      tokens[file.name] =
+        `@@@langfuseMedia:type=${file.contentType}|id=${mediaId}|source=bytes@@@`;
     } catch (error) {
-      errors.push(secrets.reduce((message, secret) => redactSecret(message, secret), `Attachment ${file.name} failed: ${describeError(error)}`));
+      errors.push(
+        secrets.reduce(
+          (message, secret) => redactSecret(message, secret),
+          `Attachment ${file.name} failed: ${describeError(error)}`,
+        ),
+      );
     }
   }
   return { tokens, errors };
@@ -658,11 +1037,17 @@ async function uploadAttachments(
 function otelTraceId(requestId: string): string {
   const compact = requestId.replace(/-/g, '').toLowerCase();
   if (UUID_HEX.test(compact)) return compact;
-  return createHash('sha256').update(`langfuse-trace:${requestId}`).digest('hex').slice(0, 32);
+  return createHash('sha256')
+    .update(`langfuse-trace:${requestId}`)
+    .digest('hex')
+    .slice(0, 32);
 }
 
 function otelSpanId(seed: string): string {
-  return createHash('sha256').update(`langfuse-span:${seed}`).digest('hex').slice(0, 16);
+  return createHash('sha256')
+    .update(`langfuse-span:${seed}`)
+    .digest('hex')
+    .slice(0, 16);
 }
 
 function toUnixNano(iso: string): string {
@@ -697,14 +1082,18 @@ function parseJsonBody(raw: string): unknown {
   }
 }
 
-function parsePartialSuccess(body: unknown): { rejected: number; message: string | undefined } {
+function parsePartialSuccess(body: unknown): {
+  rejected: number;
+  message: string | undefined;
+} {
   const shape = (body ?? {}) as OtelExportResponseShape;
   const partial = shape.partialSuccess;
   if (!partial) return { rejected: 0, message: undefined };
   const rejected = Number(partial.rejectedSpans ?? 0);
-  const message = typeof partial.errorMessage === 'string' && partial.errorMessage
-    ? `partialSuccess rejectedSpans=${Number.isFinite(rejected) ? rejected : 0}: ${partial.errorMessage}`
-    : undefined;
+  const message =
+    typeof partial.errorMessage === 'string' && partial.errorMessage
+      ? `partialSuccess rejectedSpans=${Number.isFinite(rejected) ? rejected : 0}: ${partial.errorMessage}`
+      : undefined;
   return { rejected: Number.isFinite(rejected) ? rejected : 0, message };
 }
 

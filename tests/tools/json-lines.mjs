@@ -6,7 +6,8 @@ export function readJsonLines(text) {
     if (!line.trim()) continue;
     try {
       const value = JSON.parse(line);
-      if (value && typeof value === 'object' && !Array.isArray(value)) records.push(value);
+      if (value && typeof value === 'object' && !Array.isArray(value))
+        records.push(value);
       else skipped += 1;
     } catch {
       skipped += 1;

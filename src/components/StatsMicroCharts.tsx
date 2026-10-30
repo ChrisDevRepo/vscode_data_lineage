@@ -39,7 +39,7 @@ export function TypeBadge({ typeStr }: { typeStr: string }) {
 /** Determines a semantic color based on a quality/completeness ratio. */
 function qualityColor(value: number): string {
   if (value >= 0.95) return 'var(--ln-analysis-icon)';
-  if (value >= 0.80) return 'var(--ln-warning-fg)';
+  if (value >= 0.8) return 'var(--ln-warning-fg)';
   return 'var(--ln-validation-error-border)';
 }
 
@@ -48,14 +48,34 @@ export function CompletenessBar({ value }: { value: number }) {
   const pct = Math.round(value * 100);
   return (
     <svg width="100%" height="4" style={{ display: 'block' }}>
-      <rect x="0" y="0" width="100%" height="4" rx="2" fill="var(--ln-border-light)" />
-      <rect x="0" y="0" width={`${pct}%`} height="4" rx="2" fill={qualityColor(value)} />
+      <rect
+        x="0"
+        y="0"
+        width="100%"
+        height="4"
+        rx="2"
+        fill="var(--ln-border-light)"
+      />
+      <rect
+        x="0"
+        y="0"
+        width={`${pct}%`}
+        height="4"
+        rx="2"
+        fill={qualityColor(value)}
+      />
     </svg>
   );
 }
 
 /** Classifies a uniqueness ratio as constant, high, medium, or low. */
-export function UniquenessIndicator({ value, distinctCount }: { value: number; distinctCount: number }) {
+export function UniquenessIndicator({
+  value,
+  distinctCount,
+}: {
+  value: number;
+  distinctCount: number;
+}) {
   let label: string;
   let color: string;
 

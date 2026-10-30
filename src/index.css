@@ -21,8 +21,14 @@
   --ln-toolbar-bg: var(--vscode-editorGroupHeader-tabsBackground, #f8f8f8);
   --ln-widget-bg: var(--vscode-editorWidget-background, #ffffff);
   --ln-widget-border: var(--vscode-editorWidget-border, #c8c8c8);
-  --ln-sidebar-header-bg: var(--vscode-sideBarSectionHeader-background, #e8e8e8);
-  --ln-sidebar-header-fg: var(--vscode-sideBarSectionHeader-foreground, #1f2937);
+  --ln-sidebar-header-bg: var(
+    --vscode-sideBarSectionHeader-background,
+    #e8e8e8
+  );
+  --ln-sidebar-header-fg: var(
+    --vscode-sideBarSectionHeader-foreground,
+    #1f2937
+  );
 
   /* Foreground colors */
   --ln-fg: var(--vscode-editor-foreground, #1f2937);
@@ -50,7 +56,10 @@
   --ln-button-hover-bg: var(--vscode-button-hoverBackground, #1d4ed8);
   --ln-button-secondary-bg: var(--vscode-button-secondaryBackground, #f3f4f6);
   --ln-button-secondary-fg: var(--vscode-button-secondaryForeground, #374151);
-  --ln-button-secondary-hover-bg: var(--vscode-button-secondaryHoverBackground, #e5e7eb);
+  --ln-button-secondary-hover-bg: var(
+    --vscode-button-secondaryHoverBackground,
+    #e5e7eb
+  );
 
   /* Interactive colors */
   --ln-focus-border: var(--vscode-focusBorder, #2563eb);
@@ -58,12 +67,18 @@
   --ln-selection-bg: var(--vscode-list-activeSelectionBackground, #2563eb);
 
   /* Warning colors */
-  --ln-warning-bg: var(--vscode-editorWarning-background, rgba(255, 200, 0, 0.1));
+  --ln-warning-bg: var(
+    --vscode-editorWarning-background,
+    rgba(255, 200, 0, 0.1)
+  );
   --ln-warning-border: var(--vscode-editorWarning-border, #cca700);
   --ln-warning-fg: var(--vscode-editorWarning-foreground, #cca700);
 
   /* Analysis colors */
-  --ln-analysis-bg: var(--vscode-editorInfo-background, rgba(0, 120, 215, 0.08));
+  --ln-analysis-bg: var(
+    --vscode-editorInfo-background,
+    rgba(0, 120, 215, 0.08)
+  );
   --ln-analysis-border: var(--vscode-editorInfo-border, #3794ff);
   --ln-analysis-icon: var(--vscode-editorInfo-foreground, #3794ff);
 
@@ -73,15 +88,36 @@
   --ln-ai-icon: #8847ff;
 
   /* Error foreground (inline text errors, delete confirmations) */
-  --ln-error-fg: var(--vscode-editorError-foreground, var(--vscode-inputValidation-errorBorder, #be1100));
+  --ln-error-fg: var(
+    --vscode-editorError-foreground,
+    var(--vscode-inputValidation-errorBorder, #be1100)
+  );
 
   /* Validation colors */
-  --ln-validation-error-bg: var(--vscode-inputValidation-errorBackground, rgba(255, 0, 0, 0.1));
-  --ln-validation-error-border: var(--vscode-inputValidation-errorBorder, #be1100);
-  --ln-validation-warning-bg: var(--vscode-inputValidation-warningBackground, rgba(255, 200, 0, 0.1));
-  --ln-validation-warning-border: var(--vscode-inputValidation-warningBorder, #c8a000);
-  --ln-validation-info-bg: var(--vscode-inputValidation-infoBackground, rgba(0, 120, 255, 0.08));
-  --ln-validation-info-border: var(--vscode-inputValidation-infoBorder, #007acc);
+  --ln-validation-error-bg: var(
+    --vscode-inputValidation-errorBackground,
+    rgba(255, 0, 0, 0.1)
+  );
+  --ln-validation-error-border: var(
+    --vscode-inputValidation-errorBorder,
+    #be1100
+  );
+  --ln-validation-warning-bg: var(
+    --vscode-inputValidation-warningBackground,
+    rgba(255, 200, 0, 0.1)
+  );
+  --ln-validation-warning-border: var(
+    --vscode-inputValidation-warningBorder,
+    #c8a000
+  );
+  --ln-validation-info-bg: var(
+    --vscode-inputValidation-infoBackground,
+    rgba(0, 120, 255, 0.08)
+  );
+  --ln-validation-info-border: var(
+    --vscode-inputValidation-infoBorder,
+    #007acc
+  );
 
   /* Node colors */
   --ln-node-bg: rgba(255, 255, 255, 0.95);
@@ -107,7 +143,8 @@
   --ln-node-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
   --ln-node-shadow-dimmed: 0 1px 2px rgba(0, 0, 0, 0.05);
   --ln-node-shadow-elevated: 0 4px 12px rgba(0, 0, 0, 0.18);
-  --ln-dropdown-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+  --ln-dropdown-shadow:
+    0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
 
   /* Selection dim (object view) — read by the `.ln-has-selection` / `.ln-lit` rules in the React
      Flow Overrides region below; see `SELECTION_ACTIVE_CLASS_NAME` in GraphCanvas.tsx and
@@ -131,19 +168,27 @@
   --ln-wizard-hover-bg: rgba(255, 255, 255, 0.06);
   --ln-wizard-link: #60a5fa;
   --ln-wizard-fg-dim: rgba(255, 255, 255, 0.55);
-  --ln-wizard-fg-muted: rgba(255, 255, 255, 0.7); /* muted text that must meet AA on black */
-  --ln-wizard-error: #f87171;   /* red-400 — legible on black, no theme fallback needed */
+  --ln-wizard-fg-muted: rgba(
+    255,
+    255,
+    255,
+    0.7
+  ); /* muted text that must meet AA on black */
+  --ln-wizard-error: #f87171; /* red-400 — legible on black, no theme fallback needed */
   --ln-wizard-warning: #fbbf24; /* amber-400 */
   --ln-wizard-success: #34d399; /* emerald-400 */
-  --ln-wizard-info: #94a3b8;    /* slate-400 */
+  --ln-wizard-info: #94a3b8; /* slate-400 */
 
   /* Toolbar active */
-  --ln-toolbar-active-bg: var(--vscode-toolbar-activeBackground, rgba(0, 0, 0, 0.1));
+  --ln-toolbar-active-bg: var(
+    --vscode-toolbar-activeBackground,
+    rgba(0, 0, 0, 0.1)
+  );
 
   /* AI highlight/badge colors — two-letter codes, themed via --vscode-charts-* tokens */
-  --ln-ai-bu: var(--vscode-charts-blue,   var(--ln-analysis-border));
-  --ln-ai-gn: var(--vscode-charts-green,  #22c55e);
-  --ln-ai-rd: var(--vscode-charts-red,    var(--ln-validation-error-border));
+  --ln-ai-bu: var(--vscode-charts-blue, var(--ln-analysis-border));
+  --ln-ai-gn: var(--vscode-charts-green, #22c55e);
+  --ln-ai-rd: var(--vscode-charts-red, var(--ln-validation-error-border));
   --ln-ai-ye: var(--vscode-charts-yellow, var(--ln-warning-border));
   --ln-ai-or: var(--vscode-charts-orange, #f97316);
   --ln-ai-gy: var(--ln-fg-muted);
@@ -171,14 +216,15 @@
 }
 
 /* Dark Theme Overrides */
-body[data-vscode-theme-kind="vscode-dark"] {
+body[data-vscode-theme-kind='vscode-dark'] {
   --ln-edge-min-strength: 0.5;
   --ln-node-bg: rgba(30, 30, 30, 0.95);
   --ln-node-border: rgba(255, 255, 255, 0.2);
   --ln-node-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
   --ln-node-shadow-dimmed: 0 1px 2px rgba(0, 0, 0, 0.15);
   --ln-node-shadow-elevated: 0 4px 14px rgba(0, 0, 0, 0.55);
-  --ln-dropdown-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -4px rgba(0, 0, 0, 0.4);
+  --ln-dropdown-shadow:
+    0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -4px rgba(0, 0, 0, 0.4);
   --ln-hover-bg: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.08));
   --ln-highlight-yellow: #b25000;
   --ln-highlight-yellow-glow: rgba(178, 80, 0, 0.5);
@@ -203,7 +249,7 @@ body[data-vscode-theme-kind="vscode-dark"] {
 }
 
 /* High Contrast Theme Overrides */
-body[data-vscode-theme-kind="vscode-high-contrast"] {
+body[data-vscode-theme-kind='vscode-high-contrast'] {
   --ln-edge-min-strength: 1;
   --ln-edge-min-width-scale: 1;
   --ln-node-bg: var(--vscode-editor-background, #000000);
@@ -236,7 +282,7 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   --ln-minimap-mask-stroke-width: 2;
   --ln-minimap-cluster-stroke: var(--vscode-contrastBorder);
 }
-body[data-vscode-theme-kind="vscode-high-contrast-light"] {
+body[data-vscode-theme-kind='vscode-high-contrast-light'] {
   --ln-edge-min-strength: 1;
   --ln-edge-min-width-scale: 1;
   --ln-node-bg: var(--vscode-editor-background, #ffffff);
@@ -278,7 +324,9 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] {
   box-sizing: border-box;
 }
 
-html, body, #root {
+html,
+body,
+#root {
   margin: 0;
   padding: 0;
   width: 100%;
@@ -286,7 +334,14 @@ html, body, #root {
 }
 
 body {
-  font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+  font-family: var(
+    --vscode-font-family,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    sans-serif
+  );
 }
 
 /* `workbench.reduceMotion` — VS Code sets this class on the body. Transitions here are
@@ -335,7 +390,9 @@ body.vscode-reduce-motion *::after {
 .ln-ai-badge-lit {
   background: var(--ln-ai-bg);
   border-color: var(--ln-ai-border);
-  box-shadow: 0 0 0 1px var(--ln-ai-border), var(--ln-node-shadow);
+  box-shadow:
+    0 0 0 1px var(--ln-ai-border),
+    var(--ln-node-shadow);
 }
 
 .ln-ai-badge-dim {
@@ -635,7 +692,8 @@ body.vscode-reduce-motion *::after {
   display: flex;
   gap: 4px;
   padding: 6px 10px;
-  border-bottom: 1px solid var(--vscode-panel-border, var(--vscode-widget-border, #444));
+  border-bottom: 1px solid
+    var(--vscode-panel-border, var(--vscode-widget-border, #444));
   background: var(--vscode-editor-background);
 }
 .ln-detail-tab-button {
@@ -735,9 +793,15 @@ body.vscode-reduce-motion *::after {
   font-weight: 600;
   color: var(--ln-fg);
 }
-.ln-ai-description-md h1 { font-size: var(--ln-ai-description-h1-font-size, 16px); }
-.ln-ai-description-md h2 { font-size: var(--ln-ai-description-h2-font-size, 14px); }
-.ln-ai-description-md h3 { font-size: var(--ln-ai-description-h3-font-size, 13px); }
+.ln-ai-description-md h1 {
+  font-size: var(--ln-ai-description-h1-font-size, 16px);
+}
+.ln-ai-description-md h2 {
+  font-size: var(--ln-ai-description-h2-font-size, 14px);
+}
+.ln-ai-description-md h3 {
+  font-size: var(--ln-ai-description-h3-font-size, 13px);
+}
 .ln-ai-description-md p {
   margin: 6px 0;
 }
@@ -804,8 +868,9 @@ body.vscode-reduce-motion *::after {
   color: var(--ln-fg-muted);
 }
 
-body[data-vscode-theme-kind="vscode-high-contrast"] .ln-ai-description-overlay,
-body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-ai-description-overlay {
+body[data-vscode-theme-kind='vscode-high-contrast'] .ln-ai-description-overlay,
+body[data-vscode-theme-kind='vscode-high-contrast-light']
+  .ln-ai-description-overlay {
   border-color: var(--vscode-contrastBorder);
 }
 
@@ -845,37 +910,61 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-ai-description-ove
 /* `:not(:hover)` so the `.ln-node-card:hover` rule earlier in this file still wins on hover without
    a specificity fight — this selector is more specific and would otherwise always win regardless of
    source order. */
-.react-flow.ln-has-selection .react-flow__node:not(.ln-lit) .ln-node-card:not(:hover) {
+.react-flow.ln-has-selection
+  .react-flow__node:not(.ln-lit)
+  .ln-node-card:not(:hover) {
   opacity: var(--ln-dim-node-opacity) !important;
 }
 
 /* Edge density: `--ln-edge-density` (0 sparse … 1 dense) on the canvas root fades the edge color —
    paths, arrowheads and labels alike — and thins every object-view stroke down to the theme floors. */
 .react-flow.ln-edge-density {
-  --ln-edge-strength: calc(1 - var(--ln-edge-density, 0) * (1 - var(--ln-edge-min-strength)));
-  --ln-edge-width-scale: calc(1 - var(--ln-edge-density, 0) * (1 - var(--ln-edge-min-width-scale)));
-  --ln-edge-color: color-mix(in srgb, var(--ln-edge-color-base) calc(var(--ln-edge-strength) * 100%), transparent);
+  --ln-edge-strength: calc(
+    1 - var(--ln-edge-density, 0) * (1 - var(--ln-edge-min-strength))
+  );
+  --ln-edge-width-scale: calc(
+    1 - var(--ln-edge-density, 0) * (1 - var(--ln-edge-min-width-scale))
+  );
+  --ln-edge-color: color-mix(
+    in srgb,
+    var(--ln-edge-color-base) calc(var(--ln-edge-strength) * 100%),
+    transparent
+  );
 }
 
 .react-flow.ln-edge-density .react-flow__edge-path {
-  stroke-width: calc(var(--ln-edge-w, 1.2) * var(--ln-edge-width-scale)) !important;
+  stroke-width: calc(
+    var(--ln-edge-w, 1.2) * var(--ln-edge-width-scale)
+  ) !important;
 }
 
-.react-flow.ln-has-selection .react-flow__edge:not(.ln-lit) .react-flow__edge-path {
+.react-flow.ln-has-selection
+  .react-flow__edge:not(.ln-lit)
+  .react-flow__edge-path {
   opacity: var(--ln-dim-edge-opacity) !important;
-  stroke-width: calc(var(--ln-edge-w, 1.2) * var(--ln-dim-edge-width-scale) * var(--ln-edge-width-scale, 1)) !important;
+  stroke-width: calc(
+    var(--ln-edge-w, 1.2) * var(--ln-dim-edge-width-scale) *
+      var(--ln-edge-width-scale, 1)
+  ) !important;
 }
 
 .react-flow.ln-has-selection .react-flow__edge.ln-lit .react-flow__edge-path {
   stroke: var(--ln-focus-border) !important;
-  stroke-width: max(calc(var(--ln-edge-w, 1.2) + var(--ln-lit-edge-width-boost)), var(--ln-lit-edge-min-width)) !important;
+  stroke-width: max(
+    calc(var(--ln-edge-w, 1.2) + var(--ln-lit-edge-width-boost)),
+    var(--ln-lit-edge-min-width)
+  ) !important;
 }
 
 .react-flow__minimap {
   border-radius: 8px;
   border: 1px solid color-mix(in srgb, var(--ln-border) 60%, transparent);
   /* !important: overrides @xyflow/react default (#fff) regardless of CSS chunk order */
-  background: color-mix(in srgb, var(--ln-bg-secondary) 75%, transparent) !important;
+  background: color-mix(
+    in srgb,
+    var(--ln-bg-secondary) 75%,
+    transparent
+  ) !important;
 }
 
 .react-flow__minimap-mask {
@@ -884,8 +973,8 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-ai-description-ove
   stroke-width: var(--ln-minimap-mask-stroke-width) !important;
 }
 
-body[data-vscode-theme-kind="vscode-high-contrast"] .react-flow__minimap,
-body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
+body[data-vscode-theme-kind='vscode-high-contrast'] .react-flow__minimap,
+body[data-vscode-theme-kind='vscode-high-contrast-light'] .react-flow__minimap {
   border: 2px solid var(--vscode-contrastBorder);
 }
 
@@ -924,7 +1013,9 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
   border: 1px solid var(--ln-border-light);
   cursor: pointer;
   opacity: 0.6;
-  transition: opacity 0.15s, color 0.15s;
+  transition:
+    opacity 0.15s,
+    color 0.15s;
 }
 .ln-node-remove-btn:hover {
   opacity: 1;
@@ -978,8 +1069,13 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
   justify-content: center;
   cursor: pointer;
   z-index: 12;
-  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.26), 0 0 0 2px var(--ln-node-bg);
-  transition: box-shadow 0.15s, filter 0.15s, transform 0.15s;
+  box-shadow:
+    0 6px 14px rgba(0, 0, 0, 0.26),
+    0 0 0 2px var(--ln-node-bg);
+  transition:
+    box-shadow 0.15s,
+    filter 0.15s,
+    transform 0.15s;
 }
 .ln-trace-node-action__icon {
   width: 8px;
@@ -992,7 +1088,9 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
 .ln-trace-node-action:hover:not(.ln-trace-node-action--disabled) {
   transform: scale(1.08);
   filter: brightness(1.08);
-  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.34), 0 0 0 2px var(--ln-node-bg);
+  box-shadow:
+    0 8px 18px rgba(0, 0, 0, 0.34),
+    0 0 0 2px var(--ln-node-bg);
 }
 /* Grayed, non-interactive state — shown (not hidden) so the tooltip can explain why. */
 .ln-trace-node-action--disabled {
@@ -1000,7 +1098,9 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
   border-color: var(--vscode-contrastBorder, rgba(255, 255, 255, 0.4));
   opacity: 0.55;
   cursor: not-allowed;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18), 0 0 0 2px var(--ln-node-bg);
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.18),
+    0 0 0 2px var(--ln-node-bg);
 }
 .ln-trace-node-action:focus-visible {
   outline: 2px solid var(--ln-focus-border);
@@ -1115,8 +1215,8 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .react-flow__minimap {
   z-index: 9999;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
 }
-body[data-vscode-theme-kind="vscode-high-contrast"] .ln-tooltip,
-body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-tooltip {
+body[data-vscode-theme-kind='vscode-high-contrast'] .ln-tooltip,
+body[data-vscode-theme-kind='vscode-high-contrast-light'] .ln-tooltip {
   border-color: var(--vscode-contrastBorder);
 }
 /* Wizard tooltip — forced dark (FloatingPortal escapes wizard DOM) */
@@ -1134,11 +1234,17 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-tooltip {
   border: 1px solid var(--ln-border);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
 }
-.ln-popover .ln-text { color: var(--ln-fg); }
-.ln-popover .ln-text-dim { color: var(--ln-fg-dim); }
-.ln-popover .ln-border { border-color: var(--ln-border); }
-body[data-vscode-theme-kind="vscode-high-contrast"] .ln-popover,
-body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-popover {
+.ln-popover .ln-text {
+  color: var(--ln-fg);
+}
+.ln-popover .ln-text-dim {
+  color: var(--ln-fg-dim);
+}
+.ln-popover .ln-border {
+  border-color: var(--ln-border);
+}
+body[data-vscode-theme-kind='vscode-high-contrast'] .ln-popover,
+body[data-vscode-theme-kind='vscode-high-contrast-light'] .ln-popover {
   border-color: var(--vscode-contrastBorder);
 }
 
@@ -1152,18 +1258,39 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-popover {
   scrollbar-width: thin;
   scrollbar-color: var(--ln-border) transparent;
 }
-.ln-toolbar::-webkit-scrollbar { height: 3px; }
-.ln-toolbar::-webkit-scrollbar-track { background: transparent; }
-.ln-toolbar::-webkit-scrollbar-thumb { background: var(--ln-border); border-radius: 2px; }
+.ln-toolbar::-webkit-scrollbar {
+  height: 3px;
+}
+.ln-toolbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.ln-toolbar::-webkit-scrollbar-thumb {
+  background: var(--ln-border);
+  border-radius: 2px;
+}
 
 /* Text utilities */
-.ln-text { color: var(--ln-fg); }
-.ln-text-muted { color: var(--ln-fg-muted); }
-.ln-text-dim { color: var(--ln-fg-dim); }
-.ln-text-link { color: var(--ln-text-link); }
-.ln-text-placeholder { color: var(--ln-input-placeholder); }
-.ln-text-warning { color: var(--ln-warning-fg); }
-.ln-text-error   { color: var(--ln-error-fg); }
+.ln-text {
+  color: var(--ln-fg);
+}
+.ln-text-muted {
+  color: var(--ln-fg-muted);
+}
+.ln-text-dim {
+  color: var(--ln-fg-dim);
+}
+.ln-text-link {
+  color: var(--ln-text-link);
+}
+.ln-text-placeholder {
+  color: var(--ln-input-placeholder);
+}
+.ln-text-warning {
+  color: var(--ln-warning-fg);
+}
+.ln-text-error {
+  color: var(--ln-error-fg);
+}
 
 /* Input fields */
 .ln-input {
@@ -1281,9 +1408,9 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-popover {
 
 /* Section label (column table, FK, stats headers) */
 .ln-section-label {
-  font-size: 0.75rem;           /* text-xs */
-  font-weight: 600;             /* font-semibold */
-  letter-spacing: 0.08em;       /* tracking-wider */
+  font-size: 0.75rem; /* text-xs */
+  font-weight: 600; /* font-semibold */
+  letter-spacing: 0.08em; /* tracking-wider */
   color: var(--ln-fg-muted);
 }
 
@@ -1305,8 +1432,8 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-popover {
   color: var(--ln-fg);
   border: 1px solid var(--ln-widget-border);
 }
-body[data-vscode-theme-kind="vscode-high-contrast"] .ln-dropdown,
-body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-dropdown {
+body[data-vscode-theme-kind='vscode-high-contrast'] .ln-dropdown,
+body[data-vscode-theme-kind='vscode-high-contrast-light'] .ln-dropdown {
   border-color: var(--vscode-contrastBorder);
 }
 
@@ -1421,15 +1548,19 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-dropdown {
 }
 
 /* HelpModal — header/footer separators */
-.ln-help-sep-bottom { border-bottom: 1px solid var(--ln-wizard-border); }
-.ln-help-sep-top    { border-top:    1px solid var(--ln-wizard-border); }
+.ln-help-sep-bottom {
+  border-bottom: 1px solid var(--ln-wizard-border);
+}
+.ln-help-sep-top {
+  border-top: 1px solid var(--ln-wizard-border);
+}
 
 /* HelpModal — "NEW" feature badge */
 .ln-help-badge {
   background: var(--ln-wizard-btn-bg);
   color: var(--ln-wizard-link, #60a5fa);
   border: 1px solid var(--ln-wizard-border);
-  letter-spacing: .05em;
+  letter-spacing: 0.05em;
 }
 
 /* Panel (card-like container) */
@@ -1464,18 +1595,81 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-dropdown {
 }
 
 /* ─── Generic Mode Banner ──────────────────────────────────────────────── */
-.ln-mode-banner { background: var(--ln-bg-secondary); border-bottom: 1px solid var(--ln-border); border-left: 3px solid transparent; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--ln-border) transparent; }
-.ln-mode-banner--trace    { background: var(--ln-warning-bg);  border-left-color: var(--ln-warning-fg);  border-bottom-color: var(--ln-warning-border); }
-.ln-mode-banner--analysis { background: var(--ln-analysis-bg); border-left-color: var(--ln-analysis-icon); border-bottom-color: var(--ln-analysis-border); }
-.ln-mode-banner--ai       { background: var(--ln-ai-bg);       border-left-color: var(--ln-ai-icon);     border-bottom-color: var(--ln-ai-border); }
-.ln-mode-banner--trace    .ln-mode-banner__icon { color: var(--ln-warning-fg); }
-.ln-mode-banner--analysis .ln-mode-banner__icon { color: var(--ln-analysis-icon); }
-.ln-mode-banner--ai       .ln-mode-banner__icon { color: var(--ln-ai-icon); }
-.ln-mode-banner__link { background: none; border: none; color: var(--ln-fg-muted); font-size: 0.75rem; cursor: pointer; text-decoration: none; padding: 0; }
-.ln-mode-banner__link:hover { text-decoration: underline; color: var(--ln-fg); }
-.ln-mode-banner__close { display: flex; align-items: center; justify-content: center; width: 1.5rem; height: 1.5rem; background: none; border: none; border-radius: 0.25rem; color: var(--ln-fg-muted); cursor: pointer; padding: 0; transition: background-color 150ms, color 150ms; }
-.ln-mode-banner__close:hover { background: var(--ln-hover-bg); color: var(--ln-fg); }
-.ln-mode-banner__btn-sm { height: 1.75rem; padding: 0 0.5rem; font-size: 0.75rem; border-radius: 0.25rem; font-weight: 500; transition: background-color 150ms, color 150ms; }
+.ln-mode-banner {
+  background: var(--ln-bg-secondary);
+  border-bottom: 1px solid var(--ln-border);
+  border-left: 3px solid transparent;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ln-border) transparent;
+}
+.ln-mode-banner--trace {
+  background: var(--ln-warning-bg);
+  border-left-color: var(--ln-warning-fg);
+  border-bottom-color: var(--ln-warning-border);
+}
+.ln-mode-banner--analysis {
+  background: var(--ln-analysis-bg);
+  border-left-color: var(--ln-analysis-icon);
+  border-bottom-color: var(--ln-analysis-border);
+}
+.ln-mode-banner--ai {
+  background: var(--ln-ai-bg);
+  border-left-color: var(--ln-ai-icon);
+  border-bottom-color: var(--ln-ai-border);
+}
+.ln-mode-banner--trace .ln-mode-banner__icon {
+  color: var(--ln-warning-fg);
+}
+.ln-mode-banner--analysis .ln-mode-banner__icon {
+  color: var(--ln-analysis-icon);
+}
+.ln-mode-banner--ai .ln-mode-banner__icon {
+  color: var(--ln-ai-icon);
+}
+.ln-mode-banner__link {
+  background: none;
+  border: none;
+  color: var(--ln-fg-muted);
+  font-size: 0.75rem;
+  cursor: pointer;
+  text-decoration: none;
+  padding: 0;
+}
+.ln-mode-banner__link:hover {
+  text-decoration: underline;
+  color: var(--ln-fg);
+}
+.ln-mode-banner__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  background: none;
+  border: none;
+  border-radius: 0.25rem;
+  color: var(--ln-fg-muted);
+  cursor: pointer;
+  padding: 0;
+  transition:
+    background-color 150ms,
+    color 150ms;
+}
+.ln-mode-banner__close:hover {
+  background: var(--ln-hover-bg);
+  color: var(--ln-fg);
+}
+.ln-mode-banner__btn-sm {
+  height: 1.75rem;
+  padding: 0 0.5rem;
+  font-size: 0.75rem;
+  border-radius: 0.25rem;
+  font-weight: 500;
+  transition:
+    background-color 150ms,
+    color 150ms;
+}
 
 /* Trace config bar */
 .ln-trace-config {
@@ -1641,8 +1835,13 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-dropdown {
   color: inherit;
 }
 /* Wizard error — always-dark-palette red, use instead of --vscode-editorError-foreground in start screen */
-.ln-wizard-text-error  { color: var(--ln-wizard-error); }
-.ln-wizard-error-btn   { color: var(--ln-wizard-error); border: 1px solid var(--ln-wizard-error); }
+.ln-wizard-text-error {
+  color: var(--ln-wizard-error);
+}
+.ln-wizard-error-btn {
+  color: var(--ln-wizard-error);
+  border: 1px solid var(--ln-wizard-error);
+}
 
 .ln-file-picker {
   background: var(--ln-input-bg);
@@ -1666,8 +1865,8 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-dropdown {
   color-scheme: light;
 }
 
-body[data-vscode-theme-kind="vscode-dark"],
-body[data-vscode-theme-kind="vscode-high-contrast"] {
+body[data-vscode-theme-kind='vscode-dark'],
+body[data-vscode-theme-kind='vscode-high-contrast'] {
   color-scheme: dark;
 }
 
@@ -1816,7 +2015,7 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   white-space: nowrap;
 }
 .ln-trace-tree-recenter:focus-visible,
-.ln-trace-tree-body [role="treeitem"]:focus-visible,
+.ln-trace-tree-body [role='treeitem']:focus-visible,
 .ln-tree-row .ln-checkbox:focus-visible {
   outline: 2px solid var(--ln-focus-border);
   outline-offset: -2px;
@@ -1859,7 +2058,7 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   padding-right: 6px;
 }
 /** Side sections read as the analysis section labels and never collapse. */
-.ln-tree-row[data-trace-tree-kind="side"] {
+.ln-tree-row[data-trace-tree-kind='side'] {
   padding-left: 10px;
   background: var(--ln-bg-secondary);
   border-bottom: 1px solid var(--ln-border-light);
@@ -1905,7 +2104,7 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   user-select: none;
 }
 /** Leaf type symbol in the schema color, the canvas border and legend rule. */
-.ln-tree-row[data-trace-tree-kind="leaf"] .ln-tree-type {
+.ln-tree-row[data-trace-tree-kind='leaf'] .ln-tree-type {
   color: var(--ln-tree-schema, var(--ln-fg-muted));
   opacity: 1;
 }
@@ -1924,7 +2123,7 @@ body[data-vscode-theme-kind="vscode-high-contrast"] {
   max-width: 100%;
   font-size: 12px;
 }
-.ln-tree-row[data-trace-tree-kind="level"] .ln-tree-name {
+.ln-tree-row[data-trace-tree-kind='level'] .ln-tree-name {
   font-weight: 600;
 }
 .ln-tree-detail {

@@ -2,7 +2,11 @@ import Graph from 'graphology';
 import { OBJECT_TYPES, type ObjectType } from './types';
 
 const OBJECT_TYPE_SET: ReadonlySet<string> = new Set(OBJECT_TYPES);
-import { addRawSchemaEdge, collapseRawSchemaEdges, type CollapsedSchemaEdge } from './schemaEdgeHelpers';
+import {
+  addRawSchemaEdge,
+  collapseRawSchemaEdges,
+  type CollapsedSchemaEdge,
+} from './schemaEdgeHelpers';
 
 /** Sets of node IDs rendered individually or as collapsed schema clusters. */
 export interface ExpandedSchemaViewResult {
@@ -71,15 +75,23 @@ function schemaOf(graph: Graph, id: string): string {
 
 function typeOf(graph: Graph, id: string): ObjectType | null {
   const type = graph.getNodeAttribute(id, 'type');
-  return typeof type === 'string' && OBJECT_TYPE_SET.has(type) ? type as ObjectType : null;
+  return typeof type === 'string' && OBJECT_TYPE_SET.has(type)
+    ? (type as ObjectType)
+    : null;
 }
 
-function hasIncludedNode(id: string, includedIds?: ReadonlySet<string>): boolean {
+function hasIncludedNode(
+  id: string,
+  includedIds?: ReadonlySet<string>,
+): boolean {
   return !includedIds || includedIds.has(id);
 }
 
 /** Partitions graph nodes into expanded-object and collapsed-schema sets. */
-export function partitionBySchema(graph: Graph, expandedSchemas: ReadonlySet<string>): ExpandedSchemaViewResult {
+export function partitionBySchema(
+  graph: Graph,
+  expandedSchemas: ReadonlySet<string>,
+): ExpandedSchemaViewResult {
   const individual = new Set<string>();
   const collapsed = new Set<string>();
 
@@ -92,7 +104,10 @@ export function partitionBySchema(graph: Graph, expandedSchemas: ReadonlySet<str
 }
 
 /** Projects object-level lineage into a schema-level quotient graph. */
-export function projectSchemaQuotient(graph: Graph, includedIds?: ReadonlySet<string>): SchemaProjection {
+export function projectSchemaQuotient(
+  graph: Graph,
+  includedIds?: ReadonlySet<string>,
+): SchemaProjection {
   const nodes = new Map<string, SchemaProjectionNode>();
   const rawEdges = new Map<string, number>();
 
@@ -112,7 +127,11 @@ export function projectSchemaQuotient(graph: Graph, includedIds?: ReadonlySet<st
   }
 
   graph.forEachEdge((_edge, _attrs, source, target) => {
-    if (!hasIncludedNode(source, includedIds) || !hasIncludedNode(target, includedIds)) return;
+    if (
+      !hasIncludedNode(source, includedIds) ||
+      !hasIncludedNode(target, includedIds)
+    )
+      return;
     const sourceSchema = schemaOf(graph, source);
     const targetSchema = schemaOf(graph, target);
     if (!sourceSchema || !targetSchema || sourceSchema === targetSchema) return;
@@ -131,7 +150,8 @@ export function projectExpandedSchemaView(
   expandedSchemas: ReadonlySet<string>,
   options: ExpandedSchemaViewRenderOptions = {},
 ): ExpandedSchemaProjection {
-  const includeCollapsedSchemaClusters = options.includeCollapsedSchemaClusters !== false;
+  const includeCollapsedSchemaClusters =
+    options.includeCollapsedSchemaClusters !== false;
   const { individual, collapsed } = partitionBySchema(graph, expandedSchemas);
   const collapsedProjection = includeCollapsedSchemaClusters
     ? projectSchemaQuotient(graph, collapsed)
@@ -148,7 +168,11 @@ export function projectExpandedSchemaView(
       return;
     }
 
-    if (!includeCollapsedSchemaClusters || (!sourceIsIndividual && !targetIsIndividual)) return;
+    if (
+      !includeCollapsedSchemaClusters ||
+      (!sourceIsIndividual && !targetIsIndividual)
+    )
+      return;
 
     const collapsedId = sourceIsIndividual ? target : source;
     const nearId = sourceIsIndividual ? source : target;

@@ -1,4 +1,11 @@
-import { memo, useState, useRef, useEffect, type ReactNode, type ReactElement } from 'react';
+import {
+  memo,
+  useState,
+  useRef,
+  useEffect,
+  type ReactNode,
+  type ReactElement,
+} from 'react';
 import { Tooltip } from './ui/Tooltip';
 
 /** Supported visual variants for the {@link ModeBanner}. Each variant applies specific styling and icon colors. */
@@ -56,7 +63,9 @@ export const ModeBanner = memo(function ModeBanner({
   }
 
   return (
-    <div className={`ln-mode-banner ${VARIANT_CLASS[variant]} px-3 py-1.5 flex items-center gap-3`}>
+    <div
+      className={`ln-mode-banner ${VARIANT_CLASS[variant]} px-3 py-1.5 flex items-center gap-3`}
+    >
       <svg
         className="ln-mode-banner__icon w-5 h-5 shrink-0"
         fill="none"
@@ -67,7 +76,9 @@ export const ModeBanner = memo(function ModeBanner({
         <path strokeLinecap="round" strokeLinejoin="round" d={icon} />
       </svg>
 
-      <span className="text-xs font-semibold ln-text whitespace-nowrap">{title}</span>
+      <span className="text-xs font-semibold ln-text whitespace-nowrap">
+        {title}
+      </span>
       <span className="text-xs ln-text-muted">·</span>
       <span className="text-xs ln-text-muted truncate">{subtitle}</span>
 
@@ -92,8 +103,8 @@ export const ModeBanner = memo(function ModeBanner({
               ref={inputRef}
               type="text"
               value={saveName}
-              onChange={e => setSaveName(e.target.value)}
-              onKeyDown={e => {
+              onChange={(e) => setSaveName(e.target.value)}
+              onKeyDown={(e) => {
                 if (e.key === 'Enter') handleConfirmSave();
                 if (e.key === 'Escape') {
                   e.stopPropagation();
@@ -112,7 +123,10 @@ export const ModeBanner = memo(function ModeBanner({
               Save
             </button>
             <button
-              onClick={() => { setSaving(false); setSaveName(''); }}
+              onClick={() => {
+                setSaving(false);
+                setSaveName('');
+              }}
               className="ln-mode-banner__btn-sm ln-btn-secondary"
             >
               Cancel
@@ -120,9 +134,23 @@ export const ModeBanner = memo(function ModeBanner({
           </div>
         )}
         <Tooltip content="Close">
-          <button onClick={() => onClose()} className="ln-mode-banner__close" aria-label="Close">
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+          <button
+            onClick={() => onClose()}
+            className="ln-mode-banner__close"
+            aria-label="Close"
+          >
+            <svg
+              className="w-4 h-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={1.5}
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M6 18 18 6M6 6l12 12"
+              />
             </svg>
           </button>
         </Tooltip>

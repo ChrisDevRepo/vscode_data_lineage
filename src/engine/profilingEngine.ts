@@ -69,26 +69,59 @@ export interface TableStats {
 export type StatsMode = 'quick' | 'standard';
 
 /** Internal classification for determining applicable aggregations. */
-type ColCategory = 'integer' | 'decimal' | 'string' | 'datetime' | 'boolean' | 'uuid' | 'skip';
+type ColCategory =
+  | 'integer'
+  | 'decimal'
+  | 'string'
+  | 'datetime'
+  | 'boolean'
+  | 'uuid'
+  | 'skip';
 
 /** Mapping of SQL Server base types to profiling categories. */
 const TYPE_CATEGORIES: Record<string, ColCategory> = {
-  int: 'integer', bigint: 'integer', smallint: 'integer', tinyint: 'integer',
-  decimal: 'decimal', numeric: 'decimal', float: 'decimal', real: 'decimal',
-  money: 'decimal', smallmoney: 'decimal',
-  varchar: 'string', nvarchar: 'string', char: 'string', nchar: 'string',
-  date: 'datetime', datetime: 'datetime', datetime2: 'datetime',
-  smalldatetime: 'datetime', datetimeoffset: 'datetime', time: 'datetime',
+  int: 'integer',
+  bigint: 'integer',
+  smallint: 'integer',
+  tinyint: 'integer',
+  decimal: 'decimal',
+  numeric: 'decimal',
+  float: 'decimal',
+  real: 'decimal',
+  money: 'decimal',
+  smallmoney: 'decimal',
+  varchar: 'string',
+  nvarchar: 'string',
+  char: 'string',
+  nchar: 'string',
+  date: 'datetime',
+  datetime: 'datetime',
+  datetime2: 'datetime',
+  smalldatetime: 'datetime',
+  datetimeoffset: 'datetime',
+  time: 'datetime',
   bit: 'boolean',
   uniqueidentifier: 'uuid',
-  binary: 'skip', varbinary: 'skip', image: 'skip',
-  text: 'skip', ntext: 'skip', xml: 'skip',
-  geography: 'skip', geometry: 'skip', hierarchyid: 'skip',
-  sql_variant: 'skip', timestamp: 'skip', rowversion: 'skip', sysname: 'skip',
+  binary: 'skip',
+  varbinary: 'skip',
+  image: 'skip',
+  text: 'skip',
+  ntext: 'skip',
+  xml: 'skip',
+  geography: 'skip',
+  geometry: 'skip',
+  hierarchyid: 'skip',
+  sql_variant: 'skip',
+  timestamp: 'skip',
+  rowversion: 'skip',
+  sysname: 'skip',
 };
 
 /** String types whose `= ''` comparison also matches whitespace-only values, so emptiness is measured by byte length instead. */
-const VARIABLE_LENGTH_STRINGS: ReadonlySet<string> = new Set(['varchar', 'nvarchar']);
+const VARIABLE_LENGTH_STRINGS: ReadonlySet<string> = new Set([
+  'varchar',
+  'nvarchar',
+]);
 
 /** Extracts the base type name from a complex type string (e.g., 'varchar(max)' -> 'varchar'). */
 export function extractBaseType(typeStr: string): string {
@@ -113,7 +146,11 @@ function aggregateAlias(index: number, suffix: string): string {
 const FLOAT_MOMENT_LIMIT = '1E+150';
 
 /** Builds a mean or standard-deviation aggregate over a float column that cannot raise an arithmetic overflow: values beyond {@link FLOAT_MOMENT_LIMIT} are left out of the aggregate and their presence turns the statistic into NULL, which the reader reports as absent. */
-function floatMomentFragment(aggregate: 'AVG' | 'STDEV', qn: string, alias: string): string {
+function floatMomentFragment(
+  aggregate: 'AVG' | 'STDEV',
+  qn: string,
+  alias: string,
+): string {
   const inRange = `CASE WHEN ABS(${qn}) <= ${FLOAT_MOMENT_LIMIT} THEN ${qn} END`;
   return `CASE WHEN MAX(ABS(${qn})) > ${FLOAT_MOMENT_LIMIT} THEN NULL ELSE ${aggregate}(${inRange}) END AS ${alias}`;
 }
@@ -157,7 +194,9 @@ export function buildColumnAggregations(
 
     const isNullable = col.nullable === 'NULL';
     if (isNullable) {
-      fragments.push(`SUM(CASE WHEN ${qn} IS NULL THEN 1 ELSE 0 END) AS ${alias('n')}`);
+      fragments.push(
+        `SUM(CASE WHEN ${qn} IS NULL THEN 1 ELSE 0 END) AS ${alias('n')}`,
+      );
     }
 
     if (mode === 'standard') {
@@ -172,7 +211,9 @@ export function buildColumnAggregations(
           fragments.push(`STDEV(CAST(${qn} AS float)) AS ${alias('sd')}`);
         }
         if (isNullable) {
-          fragments.push(`SUM(CASE WHEN ${qn} = 0 THEN 1 ELSE 0 END) AS ${alias('z')}`);
+          fragments.push(
+            `SUM(CASE WHEN ${qn} = 0 THEN 1 ELSE 0 END) AS ${alias('z')}`,
+          );
         }
       } else if (cat === 'datetime') {
         fragments.push(`MIN(${qn}) AS ${alias('min')}`);
@@ -180,8 +221,12 @@ export function buildColumnAggregations(
       } else if (cat === 'string') {
         fragments.push(`MIN(LEN(${qn})) AS ${alias('minl')}`);
         fragments.push(`MAX(LEN(${qn})) AS ${alias('maxl')}`);
-        const isEmpty = VARIABLE_LENGTH_STRINGS.has(extractBaseType(col.type)) ? `DATALENGTH(${qn}) = 0` : `${qn} = ''`;
-        fragments.push(`SUM(CASE WHEN ${isEmpty} THEN 1 ELSE 0 END) AS ${alias('e')}`);
+        const isEmpty = VARIABLE_LENGTH_STRINGS.has(extractBaseType(col.type))
+          ? `DATALENGTH(${qn}) = 0`
+          : `${qn} = ''`;
+        fragments.push(
+          `SUM(CASE WHEN ${isEmpty} THEN 1 ELSE 0 END) AS ${alias('e')}`,
+        );
       }
     }
 
@@ -204,7 +249,7 @@ export function buildProfilingQuery(
   sampleThreshold: number,
   sampleSize: number,
 ): string {
-  const allFragments = aggregations.flatMap(a => a.fragments);
+  const allFragments = aggregations.flatMap((a) => a.fragments);
   if (allFragments.length === 0) return '';
 
   const columnsAgg = allFragments.join(',\n  ');
@@ -222,7 +267,9 @@ export function buildProfilingQuery(
       tablesampleClause = ` TABLESAMPLE(${pct} PERCENT)`;
     }
   }
-  const sampleRowsAgg = tablesampleClause ? `COUNT_BIG(*) AS ${qi(SAMPLE_ROWS_ALIAS)},\n  ` : '';
+  const sampleRowsAgg = tablesampleClause
+    ? `COUNT_BIG(*) AS ${qi(SAMPLE_ROWS_ALIAS)},\n  `
+    : '';
 
   return `SELECT ${topClause}${sampleRowsAgg}${columnsAgg}\nFROM ${fullTable}${tablesampleClause}`;
 }
@@ -241,7 +288,10 @@ WHERE p.object_id = OBJECT_ID(N'${qiStr(schema)}.${qiStr(tableName)}')
 }
 
 /** Calculates the required sampling percentage for `TABLESAMPLE`. */
-export function computeSamplePercent(sampleSize: number, rowCount: number): number {
+export function computeSamplePercent(
+  sampleSize: number,
+  rowCount: number,
+): number {
   if (rowCount <= 0) return 100;
   return Math.min(100, Math.ceil((sampleSize / rowCount) * 100));
 }
@@ -253,11 +303,18 @@ export function compactDate(raw: string): string {
 
   if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
 
-  const match = trimmed.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?/);
+  const match = trimmed.match(
+    /^(\d{4}-\d{2}-\d{2})\s+(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?/,
+  );
   if (!match) return trimmed;
 
   const [, datePart, hh, mm, ss, ms] = match;
-  if (hh === '00' && mm === '00' && (!ss || ss === '00') && (!ms || /^0+$/.test(ms))) {
+  if (
+    hh === '00' &&
+    mm === '00' &&
+    (!ss || ss === '00') &&
+    (!ms || /^0+$/.test(ms))
+  ) {
     return datePart;
   }
   return `${datePart} ${hh}:${mm}`;
@@ -265,19 +322,41 @@ export function compactDate(raw: string): string {
 
 /** Short UI labels for base SQL types. */
 const TYPE_BADGE_LABELS: Record<string, string> = {
-  int: 'INT', bigint: 'INT', smallint: 'INT', tinyint: 'INT',
-  decimal: 'DEC', numeric: 'DEC', float: 'DEC', real: 'DEC',
-  money: 'DEC', smallmoney: 'DEC',
-  varchar: 'STR', nvarchar: 'STR', char: 'STR', nchar: 'STR',
-  date: 'DATE', datetime: 'DATE', datetime2: 'DATE',
-  smalldatetime: 'DATE', datetimeoffset: 'DATE', time: 'TIME',
+  int: 'INT',
+  bigint: 'INT',
+  smallint: 'INT',
+  tinyint: 'INT',
+  decimal: 'DEC',
+  numeric: 'DEC',
+  float: 'DEC',
+  real: 'DEC',
+  money: 'DEC',
+  smallmoney: 'DEC',
+  varchar: 'STR',
+  nvarchar: 'STR',
+  char: 'STR',
+  nchar: 'STR',
+  date: 'DATE',
+  datetime: 'DATE',
+  datetime2: 'DATE',
+  smalldatetime: 'DATE',
+  datetimeoffset: 'DATE',
+  time: 'TIME',
   bit: 'BIT',
   uniqueidentifier: 'UUID',
-  binary: 'BIN', varbinary: 'BIN', image: 'BIN',
-  text: 'TXT', ntext: 'TXT',
+  binary: 'BIN',
+  varbinary: 'BIN',
+  image: 'BIN',
+  text: 'TXT',
+  ntext: 'TXT',
   xml: 'XML',
-  geography: 'GEO', geometry: 'GEO', hierarchyid: 'HIER',
-  sql_variant: 'VAR', timestamp: 'TS', rowversion: 'TS', sysname: 'STR',
+  geography: 'GEO',
+  geometry: 'GEO',
+  hierarchyid: 'HIER',
+  sql_variant: 'VAR',
+  timestamp: 'TS',
+  rowversion: 'TS',
+  sysname: 'STR',
 };
 
 /** Returns a 3-4 letter badge label for a SQL type. */
@@ -307,7 +386,10 @@ export function parseProfilingResult(
     return n;
   }
 
-  const sampleRows = sampled && row[SAMPLE_ROWS_ALIAS] !== undefined ? safeInt(row[SAMPLE_ROWS_ALIAS], 'sample rows') : 0;
+  const sampleRows =
+    sampled && row[SAMPLE_ROWS_ALIAS] !== undefined
+      ? safeInt(row[SAMPLE_ROWS_ALIAS], 'sample rows')
+      : 0;
   const denominator = sampleRows > 0 ? sampleRows : rowCount;
 
   for (const [index, col] of cols.entries()) {
@@ -328,11 +410,21 @@ export function parseProfilingResult(
       continue;
     }
 
-    const distinctCount = safeInt(row[aggregateAlias(index, 'd')], `${col.name} distinct`);
-    const nullCount = isNullable ? safeInt(row[aggregateAlias(index, 'n')], `${col.name} nulls`) : null;
-    const nullPercent = nullCount !== null && denominator > 0 ? (nullCount / denominator) * 100 : null;
-    const completeness = nullCount !== null && denominator > 0 ? 1 - (nullCount / denominator) : 1;
-    const uniqueness = denominator > 0 ? Math.min(distinctCount / denominator, 1) : 0;
+    const distinctCount = safeInt(
+      row[aggregateAlias(index, 'd')],
+      `${col.name} distinct`,
+    );
+    const nullCount = isNullable
+      ? safeInt(row[aggregateAlias(index, 'n')], `${col.name} nulls`)
+      : null;
+    const nullPercent =
+      nullCount !== null && denominator > 0
+        ? (nullCount / denominator) * 100
+        : null;
+    const completeness =
+      nullCount !== null && denominator > 0 ? 1 - nullCount / denominator : 1;
+    const uniqueness =
+      denominator > 0 ? Math.min(distinctCount / denominator, 1) : 0;
 
     const entry: ColumnStats = {
       name: col.name,
@@ -347,8 +439,10 @@ export function parseProfilingResult(
     const minRaw = row[aggregateAlias(index, 'min')];
     const maxRaw = row[aggregateAlias(index, 'max')];
     const isDatetime = cat === 'datetime';
-    if (minRaw !== undefined) entry.min = isDatetime ? compactDate(minRaw) : minRaw;
-    if (maxRaw !== undefined) entry.max = isDatetime ? compactDate(maxRaw) : maxRaw;
+    if (minRaw !== undefined)
+      entry.min = isDatetime ? compactDate(minRaw) : minRaw;
+    if (maxRaw !== undefined)
+      entry.max = isDatetime ? compactDate(maxRaw) : maxRaw;
 
     const avgRaw = row[aggregateAlias(index, 'avg')];
     const sdRaw = row[aggregateAlias(index, 'sd')];
@@ -357,23 +451,35 @@ export function parseProfilingResult(
 
     const minlRaw = row[aggregateAlias(index, 'minl')];
     const maxlRaw = row[aggregateAlias(index, 'maxl')];
-    if (minlRaw !== undefined) entry.minLength = safeInt(minlRaw, `${col.name} minLen`);
-    if (maxlRaw !== undefined) entry.maxLength = safeInt(maxlRaw, `${col.name} maxLen`);
+    if (minlRaw !== undefined)
+      entry.minLength = safeInt(minlRaw, `${col.name} minLen`);
+    if (maxlRaw !== undefined)
+      entry.maxLength = safeInt(maxlRaw, `${col.name} maxLen`);
 
     const zRaw = row[aggregateAlias(index, 'z')];
-    if (zRaw !== undefined) entry.zeroCount = safeInt(zRaw, `${col.name} zeroCount`);
+    if (zRaw !== undefined)
+      entry.zeroCount = safeInt(zRaw, `${col.name} zeroCount`);
 
     const eRaw = row[aggregateAlias(index, 'e')];
-    if (eRaw !== undefined) entry.emptyCount = safeInt(eRaw, `${col.name} emptyCount`);
+    if (eRaw !== undefined)
+      entry.emptyCount = safeInt(eRaw, `${col.name} emptyCount`);
 
     columns.push(entry);
   }
 
-  return { rowCount, columns, sampled, samplePercent, warnings: warnings.length > 0 ? warnings : undefined };
+  return {
+    rowCount,
+    columns,
+    sampled,
+    samplePercent,
+    warnings: warnings.length > 0 ? warnings : undefined,
+  };
 }
 
 /** Turns the single row of a profiling query into the name → value map {@link parseProfilingResult} reads. A NULL cell is left out, so an aggregate over no values (MIN of an all-NULL column) is absent rather than the text `NULL`. */
-export function profilingRowFromResult(result: SimpleExecuteResult): Record<string, string> {
+export function profilingRowFromResult(
+  result: SimpleExecuteResult,
+): Record<string, string> {
   const row: Record<string, string> = {};
   const cells = result.rows[0] ?? [];
   result.columnInfo.forEach((column, i) => {

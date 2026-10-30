@@ -1,4 +1,7 @@
-import { captureToolFact, type ToolFactContext } from '../support/toolValidation';
+import {
+  captureToolFact,
+  type ToolFactContext,
+} from '../support/toolValidation';
 /** Canonical AI tool registry, handlers, and the surfaces for callers without a chat turn. */
 import * as vscode from 'vscode';
 import { redactMissionBriefForLog } from '../support/missionBriefDiagnostics';
@@ -10,8 +13,15 @@ import { NavigationEngine } from '../sm/smBase';
 import { type AiSession } from '../session/session';
 import { Logger, trunc, LOG_TRUNC_JSON } from '../../utils/log';
 import {
-  getContext, searchObjects, executeObjectDetail, prepareModelObject, type ModelObjectPlan,
-  runAnalysis, searchDdl, prepareScopeBundle, executeScopeBundle,
+  getContext,
+  searchObjects,
+  executeObjectDetail,
+  prepareModelObject,
+  type ModelObjectPlan,
+  runAnalysis,
+  searchDdl,
+  prepareScopeBundle,
+  executeScopeBundle,
   getNeighborColumns,
 } from '../tools/tools';
 import {
@@ -28,20 +38,46 @@ import {
 import { DEFAULT_CONFIG, type DatabaseModel } from '../../engine/types';
 import { readDeclaredNumericSetting } from '../../configCore';
 import { type SerializedFilterState } from '../../engine/projectStore';
-import { getAllowedLmToolNames, activeModeOf, EXTERNAL_TOOL_NAMES, type LmStage } from '../tools/toolPolicy';
+import {
+  getAllowedLmToolNames,
+  activeModeOf,
+  EXTERNAL_TOOL_NAMES,
+  type LmStage,
+} from '../tools/toolPolicy';
 import { ToolRegistry } from '../tools/registry';
-import { TOOL_DEFS, EXTERNAL_TOOL_DEFS, type ToolContract, type ToolName } from '../tools/toolDefs';
+import {
+  TOOL_DEFS,
+  EXTERNAL_TOOL_DEFS,
+  type ToolContract,
+  type ToolName,
+} from '../tools/toolDefs';
 import { getToolInvocationLabel } from '../tools/toolLabels';
-import { at, readToolError, readToolErrorText, isConsentGateRejection, makeRejection, renderProblem, NoProjectLoadedError, buildNoProjectLoadedError } from '../support/toolErrorEnvelope';
+import {
+  at,
+  readToolError,
+  readToolErrorText,
+  isConsentGateRejection,
+  makeRejection,
+  renderProblem,
+  NoProjectLoadedError,
+  buildNoProjectLoadedError,
+} from '../support/toolErrorEnvelope';
 import { evaluateToolPhaseRule } from '../interaction/rules/toolPhaseRules';
 import { assertActiveTurnLease, type TurnLease } from '../session/turnLease';
-import { DEFAULT_TURN_TOKEN_BUDGET, type TurnTokenBudget } from '../support/tokenBudget';
+import {
+  DEFAULT_TURN_TOKEN_BUDGET,
+  type TurnTokenBudget,
+} from '../support/tokenBudget';
 import { buildLiveRun, type StoredRunReader } from '../session/runStore';
 import { presentRunRecall, presentScreenState } from './screenStatePresenter';
 import { postToWebview } from '../../bridge/host';
 import { createSavedReferenceResolver } from '../../engine/shared/nodeIdResolution';
 import { cursorOffset } from '../support/text';
-import { type AiViewPreviewMessage, type ToolCaller, type ToolServices } from './handlers/toolServices';
+import {
+  type AiViewPreviewMessage,
+  type ToolCaller,
+  type ToolServices,
+} from './handlers/toolServices';
 import type { PreviewDelivery } from '../support/chatAnswer';
 import { executeStartExploration } from './handlers/startExploration';
 import { executeSubmitFindings } from './handlers/submitFindings';
@@ -54,12 +90,25 @@ import { REJECTION_CODES } from '../support/rejectionCodes';
 import { errorMessage } from '../../utils/errorMessage';
 
 /** Metadata lookup is receipt-scoped; cached native validators retain no session facts. */
-function modelObjectAdmission(model: DatabaseModel): ToolFactContext & { plan?: ModelObjectPlan } {
-  const receipt: ToolFactContext & { plan?: ModelObjectPlan } = { strings: new Map([['modelObject', (value, context) => {
-    const plan = prepareModelObject(model, value, context.instancePath.slice(1));
-    if ('code' in plan) return plan;
-    receipt.plan = plan;
-  }]]) };
+function modelObjectAdmission(
+  model: DatabaseModel,
+): ToolFactContext & { plan?: ModelObjectPlan } {
+  const receipt: ToolFactContext & { plan?: ModelObjectPlan } = {
+    strings: new Map([
+      [
+        'modelObject',
+        (value, context) => {
+          const plan = prepareModelObject(
+            model,
+            value,
+            context.instancePath.slice(1),
+          );
+          if ('code' in plan) return plan;
+          receipt.plan = plan;
+        },
+      ],
+    ]),
+  };
   return receipt;
 }
 
@@ -71,7 +120,9 @@ async function deliverToPanel(
 ): Promise<PreviewDelivery> {
   if (!panel) return 'no_panel';
   panel.reveal();
-  return (await postToWebview(panel, message, logger, false)) ? 'delivered' : 'post_failed';
+  return (await postToWebview(panel, message, logger, false))
+    ? 'delivered'
+    : 'post_failed';
 }
 
 /** Private handler for AI tool execution. */
@@ -84,7 +135,10 @@ class ToolHandler implements ToolServices {
     private readonly getPanel: () => vscode.WebviewPanel | undefined,
     private readonly turnLease?: TurnLease,
     public readonly getStoredRun?: StoredRunReader,
-    public readonly textModel?: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'>,
+    public readonly textModel?: Pick<
+      ModelPort,
+      'generateStructured' | 'completeText' | 'getNumTokens'
+    >,
     public readonly signal?: AbortSignal,
     public readonly budget: TurnTokenBudget = DEFAULT_TURN_TOKEN_BUDGET,
     public readonly caller: ToolCaller = 'turn',
@@ -96,7 +150,9 @@ class ToolHandler implements ToolServices {
     return this.turnLease?.epoch ?? sess.turnEpoch;
   }
 
-  public deliverPreview(message: AiViewPreviewMessage): Promise<PreviewDelivery> {
+  public deliverPreview(
+    message: AiViewPreviewMessage,
+  ): Promise<PreviewDelivery> {
     return deliverToPanel(this.getPanel(), message, this.logger);
   }
 
@@ -112,7 +168,11 @@ class ToolHandler implements ToolServices {
     return g;
   }
 
-  public logAndReturn(toolName: ToolName, data: object, input?: unknown): string {
+  public logAndReturn(
+    toolName: ToolName,
+    data: object,
+    input?: unknown,
+  ): string {
     input = toolInputReceipt.getStore()?.input ?? input;
     const sess = this.getSession();
     if (this.turnLease) assertActiveTurnLease(this.turnLease, sess.turnEpoch);
@@ -121,15 +181,27 @@ class ToolHandler implements ToolServices {
     if (input !== undefined) {
       // One call site for every caller: a caller without a chat turn (`vscode.lm`) is marked, nothing else differs.
       const callerPart = this.caller === 'external' ? ' [external]' : '';
-      this.logger.debug(`Invoking ${toolName}${callerPart} inputChars=${JSON.stringify(input)?.length ?? 0}`);
+      this.logger.debug(
+        `Invoking ${toolName}${callerPart} inputChars=${JSON.stringify(input)?.length ?? 0}`,
+      );
     }
 
-    if (this.caller === 'turn') sess.hopLog.push({ tool: toolName, input: input, output: data, timestamp: new Date().toISOString() });
+    if (this.caller === 'turn')
+      sess.hopLog.push({
+        tool: toolName,
+        input: input,
+        output: data,
+        timestamp: new Date().toISOString(),
+      });
     const rejection = readToolError(data);
     if (rejection) {
       const paths = rejection.issuePaths ?? [];
-      const label = isConsentGateRejection(rejection.code) ? '[Gate]' : '[Reject]';
-      this.logger.debug(`${label} tool=${toolName} code=${rejection.code} issueCount=${paths.length} resultChars=${chars}`);
+      const label = isConsentGateRejection(rejection.code)
+        ? '[Gate]'
+        : '[Reject]';
+      this.logger.debug(
+        `${label} tool=${toolName} code=${rejection.code} issueCount=${paths.length} resultChars=${chars}`,
+      );
     } else {
       this.logger.debug(`${toolName} resultChars=${chars}`);
     }
@@ -158,12 +230,14 @@ class ToolHandler implements ToolServices {
       return buildNoProjectLoadedError();
     }
     this.logger.error(`Tool ${toolName} failed unexpectedly`, err);
-    return JSON.stringify(makeRejection({
-      code: REJECTION_CODES.backendFault,
-      reason: msg || `Unexpected internal error running ${toolName}.`,
-      errors: at('backend_fault'),
-      detail: { tool: toolName },
-    }));
+    return JSON.stringify(
+      makeRejection({
+        code: REJECTION_CODES.backendFault,
+        reason: msg || `Unexpected internal error running ${toolName}.`,
+        errors: at('backend_fault'),
+        detail: { tool: toolName },
+      }),
+    );
   }
 
   /** Mechanical phase guard — enforces the per-phase tool policy at the shared registry execution boundary beyond the LM `tools[]` parameter. */
@@ -192,42 +266,69 @@ class ToolHandler implements ToolServices {
   public getContext(input: unknown) {
     try {
       const parsed = parseToolInput(GetContextInputSchema, input);
-      if (!parsed.ok) return this.logAndReturn('lineage_get_context', parsed.error, input);
+      if (!parsed.ok)
+        return this.logAndReturn('lineage_get_context', parsed.error, input);
       const sess = this.getSession();
-      const ctx = getContext(this.requireModel(), sess.filter, sess.projectName);
+      const ctx = getContext(
+        this.requireModel(),
+        sess.filter,
+        sess.projectName,
+      );
       return this.logAndReturn('lineage_get_context', ctx, input);
-    } catch (err) { return this.toolError('get_context', err); }
+    } catch (err) {
+      return this.toolError('get_context', err);
+    }
   }
 
   public getScreenState(input: unknown) {
     try {
       const parsed = parseToolInput(GetScreenStateInputSchema, input);
-      if (!parsed.ok) return this.logAndReturn('lineage_get_screen_state', parsed.error, input);
+      if (!parsed.ok)
+        return this.logAndReturn(
+          'lineage_get_screen_state',
+          parsed.error,
+          input,
+        );
       const sess = this.getSession();
       const model = this.requireModel();
       // Built on first saved-id lookup only: each resolver indexes every node and its legacy aliases.
-      let legacyIds: ReturnType<typeof createSavedReferenceResolver> | undefined;
-      let currentIds: ReturnType<typeof createSavedReferenceResolver> | undefined;
-      const savedId = (id: string, version?: 2) => (version === 2
-        ? currentIds ??= createSavedReferenceResolver(model, 2)
-        : legacyIds ??= createSavedReferenceResolver(model)).nodeId(id);
+      let legacyIds:
+        | ReturnType<typeof createSavedReferenceResolver>
+        | undefined;
+      let currentIds:
+        | ReturnType<typeof createSavedReferenceResolver>
+        | undefined;
+      const savedId = (id: string, version?: 2) =>
+        (version === 2
+          ? (currentIds ??= createSavedReferenceResolver(model, 2))
+          : (legacyIds ??= createSavedReferenceResolver(model))
+        ).nodeId(id);
       const getDdl = (id: string, version?: 2) => {
         const resolved = savedId(id, version);
-        return resolved === null ? undefined : sess.columnStore.getDdl(resolved);
+        return resolved === null
+          ? undefined
+          : sess.columnStore.getDdl(resolved);
       };
       const { ids, filter, cursor } = parsed.data;
       if (ids || filter) {
-        return this.logAndReturn('lineage_get_screen_state', presentRunRecall({
-          uiState: sess.uiState,
-          getStoredRun: this.getStoredRun,
-          liveRun: sess.phase.kind === 'completed' ? buildLiveRun(sess.presentationArtifact) : undefined,
-          budget: this.budget,
-          ids,
-          filter,
-          getDdl,
-          isInModel: (id, version) => savedId(id, version) !== null,
-          hasPendingProposal: sess.pendingExploration !== null,
-        }), input);
+        return this.logAndReturn(
+          'lineage_get_screen_state',
+          presentRunRecall({
+            uiState: sess.uiState,
+            getStoredRun: this.getStoredRun,
+            liveRun:
+              sess.phase.kind === 'completed'
+                ? buildLiveRun(sess.presentationArtifact)
+                : undefined,
+            budget: this.budget,
+            ids,
+            filter,
+            getDdl,
+            isInModel: (id, version) => savedId(id, version) !== null,
+            hasPendingProposal: sess.pendingExploration !== null,
+          }),
+          input,
+        );
       }
       const screen = presentScreenState({
         uiState: sess.uiState,
@@ -240,74 +341,167 @@ class ToolHandler implements ToolServices {
         offset: cursorOffset(cursor),
       });
       return this.logAndReturn('lineage_get_screen_state', screen, input);
-    } catch (err) { return this.toolError('get_screen_state', err); }
+    } catch (err) {
+      return this.toolError('get_screen_state', err);
+    }
   }
 
   public async searchObjects(input: unknown) {
     try {
       const parsed = parseToolInput(SearchObjectsInputSchema, input);
-      if (!parsed.ok) return this.logAndReturn('lineage_search_objects', parsed.error, input);
+      if (!parsed.ok)
+        return this.logAndReturn('lineage_search_objects', parsed.error, input);
       const { query, types, schemas, mode, cursor } = parsed.data;
-      return this.logAndReturn('lineage_search_objects', await searchObjects(this.requireModel(), query, types, schemas, mode ?? 'substring', this.getSession().filter, cursor, this.signal), input);
+      return this.logAndReturn(
+        'lineage_search_objects',
+        await searchObjects(
+          this.requireModel(),
+          query,
+          types,
+          schemas,
+          mode ?? 'substring',
+          this.getSession().filter,
+          cursor,
+          this.signal,
+        ),
+        input,
+      );
     } catch (err) {
-      if ((err instanceof RegexSearchExecutionError && err.reason === 'cancelled') || this.turnLease?.signal.aborted || this.signal?.aborted) throw err;
-      if (this.turnLease) assertActiveTurnLease(this.turnLease, this.getSession().turnEpoch);
+      if (
+        (err instanceof RegexSearchExecutionError &&
+          err.reason === 'cancelled') ||
+        this.turnLease?.signal.aborted ||
+        this.signal?.aborted
+      )
+        throw err;
+      if (this.turnLease)
+        assertActiveTurnLease(this.turnLease, this.getSession().turnEpoch);
       return this.toolError('search_objects', err);
     }
   }
 
   public getScopeBundle(input: unknown) {
     try {
-      const model = this.requireModel(), facts = modelObjectAdmission(model);
+      const model = this.requireModel(),
+        facts = modelObjectAdmission(model);
       let parameters: z.output<typeof GetScopeBundleInputSchema> | undefined;
-      facts.validated = new Map([['scope.parameters', captureToolFact(GetScopeBundleInputSchema, value => { parameters = value; })]]);
-      const outcome = ingestToolInput({ input, schema: GetScopeBundleInputSchema, context: '', facts, inspect: view => {
-        const parsed = view.parsed, plan = facts.plan;
-        if (!parameters || !plan) return undefined;
-        const scope = prepareScopeBundle(this.requireGraph(), parameters, this.budget, plan);
-        if ('code' in scope) { view.add(scope); return undefined; }
-        return parsed.success ? () => {
-      const sess = this.getSession();
-      const bundle = executeScopeBundle(model, parsed.data, this.budget, plan, scope, sess.columnStore) as Record<string, unknown>;
-      if (parsed.data.include_ddl === undefined && bundle.include_ddl === true) {
-        this.logger.debug(`get_scope_bundle include_ddl omitted — auto-attached (origin=${trunc(String(bundle.origin), LOG_TRUNC_JSON)})`);
-      }
-      const stage = this.deriveLmStage(sess).kind;
-      if (
-        !Array.isArray(bundle.nodes) || !Array.isArray(bundle.edges) || typeof bundle.origin !== 'string'
-        || stage !== 'discover'
-      ) {
-        return this.logAndReturn('lineage_get_scope_bundle', bundle, input);
-      }
-      const nodeIds = bundle.nodes.flatMap((node) => {
-        if (!node || typeof node !== 'object') return [];
-        const id = (node as { id?: unknown }).id;
-        return typeof id === 'string' ? [id] : [];
+      facts.validated = new Map([
+        [
+          'scope.parameters',
+          captureToolFact(GetScopeBundleInputSchema, (value) => {
+            parameters = value;
+          }),
+        ],
+      ]);
+      const outcome = ingestToolInput({
+        input,
+        schema: GetScopeBundleInputSchema,
+        context: '',
+        facts,
+        inspect: (view) => {
+          const parsed = view.parsed,
+            plan = facts.plan;
+          if (!parameters || !plan) return undefined;
+          const scope = prepareScopeBundle(
+            this.requireGraph(),
+            parameters,
+            this.budget,
+            plan,
+          );
+          if ('code' in scope) {
+            view.add(scope);
+            return undefined;
+          }
+          return parsed.success
+            ? () => {
+                const sess = this.getSession();
+                const bundle = executeScopeBundle(
+                  model,
+                  parsed.data,
+                  this.budget,
+                  plan,
+                  scope,
+                  sess.columnStore,
+                ) as Record<string, unknown>;
+                if (
+                  parsed.data.include_ddl === undefined &&
+                  bundle.include_ddl === true
+                ) {
+                  this.logger.debug(
+                    `get_scope_bundle include_ddl omitted — auto-attached (origin=${trunc(String(bundle.origin), LOG_TRUNC_JSON)})`,
+                  );
+                }
+                const stage = this.deriveLmStage(sess).kind;
+                if (
+                  !Array.isArray(bundle.nodes) ||
+                  !Array.isArray(bundle.edges) ||
+                  typeof bundle.origin !== 'string' ||
+                  stage !== 'discover'
+                ) {
+                  return this.logAndReturn(
+                    'lineage_get_scope_bundle',
+                    bundle,
+                    input,
+                  );
+                }
+                const nodeIds = bundle.nodes.flatMap((node) => {
+                  if (!node || typeof node !== 'object') return [];
+                  const id = (node as { id?: unknown }).id;
+                  return typeof id === 'string' ? [id] : [];
+                });
+                const edges = bundle.edges.filter(
+                  (edge): edge is [string, string, string] =>
+                    Array.isArray(edge) &&
+                    edge.length === 3 &&
+                    edge.every((value) => typeof value === 'string'),
+                );
+                const direction =
+                  (bundle.direction as
+                    | 'upstream'
+                    | 'downstream'
+                    | 'bidirectional') ?? 'bidirectional';
+                const stored = sess.storeDiscoveryScope(
+                  {
+                    turnEpoch: this.turnEpoch(sess),
+                    origin: bundle.origin,
+                    direction,
+                    nodeIds,
+                    edges,
+                  },
+                  this.turnEpoch(sess),
+                );
+                if (stored.kind !== 'accepted') {
+                  return this.logAndReturn(
+                    'lineage_get_scope_bundle',
+                    makeRejection({
+                      code: REJECTION_CODES.backendFault,
+                      reason:
+                        'The turn no longer owns this session; the scope was not stored.',
+                      errors: at('backend_fault'),
+                    }),
+                    input,
+                  );
+                }
+                return this.logAndReturn(
+                  'lineage_get_scope_bundle',
+                  bundle,
+                  input,
+                );
+              }
+            : undefined;
+        },
       });
-      const edges = bundle.edges.filter((edge): edge is [string, string, string] =>
-        Array.isArray(edge) && edge.length === 3 && edge.every(value => typeof value === 'string'));
-      const direction = (bundle.direction as 'upstream' | 'downstream' | 'bidirectional') ?? 'bidirectional';
-      const stored = sess.storeDiscoveryScope({
-        turnEpoch: this.turnEpoch(sess),
-        origin: bundle.origin,
-        direction,
-        nodeIds,
-        edges,
-      }, this.turnEpoch(sess));
-      if (stored.kind !== 'accepted') {
-        return this.logAndReturn('lineage_get_scope_bundle', makeRejection({ code: REJECTION_CODES.backendFault, reason: 'The turn no longer owns this session; the scope was not stored.', errors: at('backend_fault') }), input);
-      }
-      return this.logAndReturn('lineage_get_scope_bundle', bundle, input);
-        } : undefined;
-      } });
-      return typeof outcome === 'string' ? outcome : this.logAndReturn('lineage_get_scope_bundle', outcome, input);
-    } catch (err) { return this.toolError('get_scope_bundle', err); }
+      return typeof outcome === 'string'
+        ? outcome
+        : this.logAndReturn('lineage_get_scope_bundle', outcome, input);
+    } catch (err) {
+      return this.toolError('get_scope_bundle', err);
+    }
   }
 
   public startExploration(input: unknown) {
     return executeStartExploration(input, this);
   }
-
 
   public submitFindings(input: unknown) {
     return executeSubmitFindings(input, this);
@@ -325,38 +519,115 @@ class ToolHandler implements ToolServices {
   public getObjectDetail(input: unknown) {
     try {
       const sess = this.getSession();
-      const model = this.requireModel(), facts = modelObjectAdmission(model);
-      const outcome = ingestToolInput({ input, schema: GetObjectDetailInputSchema, context: '', facts, inspect: view => {
-        const parsed = view.parsed, plan = facts.plan;
-        return parsed.success && plan ? () => this.logAndReturn('lineage_get_object_detail',
-          executeObjectDetail(model, plan, sess.columnStore, parsed.data.cursor), input) : undefined;
-      } });
-      return typeof outcome === 'string' ? outcome : this.logAndReturn('lineage_get_object_detail', outcome, input);
-    } catch (err) { return this.toolError('get_object_detail', err); }
+      const model = this.requireModel(),
+        facts = modelObjectAdmission(model);
+      const outcome = ingestToolInput({
+        input,
+        schema: GetObjectDetailInputSchema,
+        context: '',
+        facts,
+        inspect: (view) => {
+          const parsed = view.parsed,
+            plan = facts.plan;
+          return parsed.success && plan
+            ? () =>
+                this.logAndReturn(
+                  'lineage_get_object_detail',
+                  executeObjectDetail(
+                    model,
+                    plan,
+                    sess.columnStore,
+                    parsed.data.cursor,
+                  ),
+                  input,
+                )
+            : undefined;
+        },
+      });
+      return typeof outcome === 'string'
+        ? outcome
+        : this.logAndReturn('lineage_get_object_detail', outcome, input);
+    } catch (err) {
+      return this.toolError('get_object_detail', err);
+    }
   }
 
   public runAnalysis(input: unknown) {
     try {
       const parsed = parseToolInput(DetectGraphPatternsInputSchema, input);
-      if (!parsed.ok) return this.logAndReturn('lineage_detect_graph_patterns', parsed.error, input);
+      if (!parsed.ok)
+        return this.logAndReturn(
+          'lineage_detect_graph_patterns',
+          parsed.error,
+          input,
+        );
       const { type, min_degree, max_size } = parsed.data;
       const anaCfg = vscode.workspace.getConfiguration('dataLineageViz');
-      const resolvedMinDegree = min_degree ?? readDeclaredNumericSetting(anaCfg, 'analysis.hubMinDegree', DEFAULT_CONFIG.analysis.hubMinDegree);
-      const resolvedMaxSize   = max_size   ?? readDeclaredNumericSetting(anaCfg, 'analysis.islandMaxSize', DEFAULT_CONFIG.analysis.islandMaxSize);
-      const resolvedLongestPath = readDeclaredNumericSetting(anaCfg, 'analysis.longestPathMinNodes', DEFAULT_CONFIG.analysis.longestPathMinNodes);
-      return this.logAndReturn('lineage_detect_graph_patterns', runAnalysis(this.requireGraph(), type, this.budget, resolvedMinDegree, resolvedMaxSize, resolvedLongestPath), input);
-    } catch (err) { return this.toolError('detect_graph_patterns', err); }
+      const resolvedMinDegree =
+        min_degree ??
+        readDeclaredNumericSetting(
+          anaCfg,
+          'analysis.hubMinDegree',
+          DEFAULT_CONFIG.analysis.hubMinDegree,
+        );
+      const resolvedMaxSize =
+        max_size ??
+        readDeclaredNumericSetting(
+          anaCfg,
+          'analysis.islandMaxSize',
+          DEFAULT_CONFIG.analysis.islandMaxSize,
+        );
+      const resolvedLongestPath = readDeclaredNumericSetting(
+        anaCfg,
+        'analysis.longestPathMinNodes',
+        DEFAULT_CONFIG.analysis.longestPathMinNodes,
+      );
+      return this.logAndReturn(
+        'lineage_detect_graph_patterns',
+        runAnalysis(
+          this.requireGraph(),
+          type,
+          this.budget,
+          resolvedMinDegree,
+          resolvedMaxSize,
+          resolvedLongestPath,
+        ),
+        input,
+      );
+    } catch (err) {
+      return this.toolError('detect_graph_patterns', err);
+    }
   }
 
   public async searchDdl(input: unknown) {
     try {
       const parsed = parseToolInput(SearchDdlInputSchema, input);
-      if (!parsed.ok) return this.logAndReturn('lineage_search_ddl', parsed.error, input);
+      if (!parsed.ok)
+        return this.logAndReturn('lineage_search_ddl', parsed.error, input);
       const { query, types } = parsed.data;
-      return this.logAndReturn('lineage_search_ddl', await searchDdl(this.requireModel(), query, this.budget, types, this.getSession().columnStore, msg => this.logger.debug(msg), this.signal), input);
+      return this.logAndReturn(
+        'lineage_search_ddl',
+        await searchDdl(
+          this.requireModel(),
+          query,
+          this.budget,
+          types,
+          this.getSession().columnStore,
+          (msg) => this.logger.debug(msg),
+          this.signal,
+        ),
+        input,
+      );
     } catch (err) {
-      if ((err instanceof RegexSearchExecutionError && err.reason === 'cancelled') || this.turnLease?.signal.aborted || this.signal?.aborted) throw err;
-      if (this.turnLease) assertActiveTurnLease(this.turnLease, this.getSession().turnEpoch);
+      if (
+        (err instanceof RegexSearchExecutionError &&
+          err.reason === 'cancelled') ||
+        this.turnLease?.signal.aborted ||
+        this.signal?.aborted
+      )
+        throw err;
+      if (this.turnLease)
+        assertActiveTurnLease(this.turnLease, this.getSession().turnEpoch);
       return this.toolError('search_ddl', err);
     }
   }
@@ -367,38 +638,65 @@ class ToolHandler implements ToolServices {
       const sess = this.getSession();
       const engine = sess.stateMachine as NavigationEngine | null;
       if (!engine) {
-        return this.logAndReturn('lineage_get_neighbor_columns', makeRejection({
-          code: REJECTION_CODES.backendFault,
-          reason: 'No exploration is active.',
-          errors: at('no_session'),
-        }), input);
+        return this.logAndReturn(
+          'lineage_get_neighbor_columns',
+          makeRejection({
+            code: REJECTION_CODES.backendFault,
+            reason: 'No exploration is active.',
+            errors: at('no_session'),
+          }),
+          input,
+        );
       }
 
       const parsed = parseToolInput(GetNeighborColumnsInputSchema, input);
-      if (!parsed.ok) return this.logAndReturn('lineage_get_neighbor_columns', parsed.error, input);
+      if (!parsed.ok)
+        return this.logAndReturn(
+          'lineage_get_neighbor_columns',
+          parsed.error,
+          input,
+        );
 
       const model = this.requireModel();
       const ids = parsed.data.ids;
       const invalidIds = engine.validateNeighborIds(ids);
       if (invalidIds.length > 0) {
-        return this.logAndReturn('lineage_get_neighbor_columns', makeRejection({
-          code: REJECTION_CODES.invalidInput,
-          reason: 'Not a direct neighbor of the current object, or outside the scope.',
-          errors: at('not_neighbor', ids.flatMap((id, index) => invalidIds.includes(id) ? [`ids.${index}`] : []), engine.neighborColumnIds),
-        }), input);
+        return this.logAndReturn(
+          'lineage_get_neighbor_columns',
+          makeRejection({
+            code: REJECTION_CODES.invalidInput,
+            reason:
+              'Not a direct neighbor of the current object, or outside the scope.',
+            errors: at(
+              'not_neighbor',
+              ids.flatMap((id, index) =>
+                invalidIds.includes(id) ? [`ids.${index}`] : [],
+              ),
+              engine.neighborColumnIds,
+            ),
+          }),
+          input,
+        );
       }
 
-      return this.logAndReturn('lineage_get_neighbor_columns', getNeighborColumns(model, ids, sess.columnStore), input);
-    } catch (err) { return this.toolError('get_neighbor_columns', err); }
+      return this.logAndReturn(
+        'lineage_get_neighbor_columns',
+        getNeighborColumns(model, ids, sess.columnStore),
+        input,
+      );
+    } catch (err) {
+      return this.toolError('get_neighbor_columns', err);
+    }
   }
-
 }
 
 /** Provider-neutral JSON text returned by every canonical lineage tool. */
 type LineageToolOutput = string;
 
 /** Executes one catalog tool from its raw model payload. */
-type ToolExecutor = (input: unknown) => LineageToolOutput | Promise<LineageToolOutput>;
+type ToolExecutor = (
+  input: unknown,
+) => LineageToolOutput | Promise<LineageToolOutput>;
 
 /** Runs state-changing dispatches one at a time, in arrival order. */
 type EffectSerializer = <T>(run: () => Promise<T>) => Promise<T>;
@@ -409,7 +707,9 @@ export function createEffectSerializer(): EffectSerializer {
   return async <T>(run: () => Promise<T>): Promise<T> => {
     let release!: () => void;
     const previous = queue;
-    queue = new Promise<void>((resolve) => { release = resolve; });
+    queue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     await previous;
     try {
       return await run();
@@ -424,7 +724,11 @@ interface AiToolHost {
   /** Resolves the AI run behind an applied bookmark. */
   readonly getStoredRun?: StoredRunReader;
   /** Request-selected model for completion and physical generation ownership. */
-  readonly model?: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'> & Partial<Pick<ModelPort, 'modelCalls'>>;
+  readonly model?: Pick<
+    ModelPort,
+    'generateStructured' | 'completeText' | 'getNumTokens'
+  > &
+    Partial<Pick<ModelPort, 'modelCalls'>>;
   /** Cooperative cancellation of the dispatch. */
   readonly signal?: AbortSignal;
   /** Caps of the owning turn, so a superseded turn's dispatch keeps measuring against its own model. */
@@ -443,7 +747,17 @@ export function buildAiToolRegistry(
   turnLease?: TurnLease,
   host?: AiToolHost,
 ): ToolRegistry<LineageToolOutput> {
-  const handler = new ToolHandler(getSession, outputChannel, getPanel, turnLease, host?.getStoredRun, host?.model, host?.signal ?? turnLease?.signal, host?.budget, host?.caller);
+  const handler = new ToolHandler(
+    getSession,
+    outputChannel,
+    getPanel,
+    turnLease,
+    host?.getStoredRun,
+    host?.model,
+    host?.signal ?? turnLease?.signal,
+    host?.budget,
+    host?.caller,
+  );
 
   const dispatch = {
     lineage_get_context: (input) => handler.getContext(input),
@@ -466,25 +780,57 @@ export function buildAiToolRegistry(
     const execute = dispatch[def.name];
     let owner: z.ZodType = def.inputSchema;
     let group = { context: '', generation: -1, calls: 0 };
-    const project = (schema: z.ZodType) => { owner = schema; return ['session_start', 'presentation_commit'].includes(def.effect) ? modelUpdateSchema(schema) : schema; };
+    const project = (schema: z.ZodType) => {
+      owner = schema;
+      return ['session_start', 'presentation_commit'].includes(def.effect)
+        ? modelUpdateSchema(schema)
+        : schema;
+    };
     registry.register({
       ...def,
-      get inputSchema() { return project(owner); },
+      get inputSchema() {
+        return project(owner);
+      },
       inputRepairSchema: project,
       execute: async (input: unknown) => {
         handler.signal?.throwIfAborted();
         const sess = getSession();
-        const receipt = { input: redactMissionBriefForLog(input), generation: handler.caller === 'external' ? undefined : host?.model?.modelCalls, signal: handler.signal,
-          context: JSON.stringify([sess.turnEpoch, sess.phase.kind, sess.activeLmStage, sess.stateMachine?.currentFocus, sess.pendingExploration?.revision]), group };
-        if (group.context !== receipt.context || group.generation !== receipt.generation) group = { context: receipt.context, generation: receipt.generation ?? -1, calls: 0 };
-        receipt.group = group; group.calls++;
+        const receipt = {
+          input: redactMissionBriefForLog(input),
+          generation:
+            handler.caller === 'external' ? undefined : host?.model?.modelCalls,
+          signal: handler.signal,
+          context: JSON.stringify([
+            sess.turnEpoch,
+            sess.phase.kind,
+            sess.activeLmStage,
+            sess.stateMachine?.currentFocus,
+            sess.pendingExploration?.revision,
+          ]),
+          group,
+        };
+        if (
+          group.context !== receipt.context ||
+          group.generation !== receipt.generation
+        )
+          group = {
+            context: receipt.context,
+            generation: receipt.generation ?? -1,
+            calls: 0,
+          };
+        receipt.group = group;
+        group.calls++;
         const invoke = async (): Promise<LineageToolOutput> => {
           handler.signal?.throwIfAborted();
-          if (turnLease) assertActiveTurnLease(turnLease, getSession().turnEpoch);
+          if (turnLease)
+            assertActiveTurnLease(turnLease, getSession().turnEpoch);
           const offPolicy = handler.authorizeTool(def.name, input);
           if (offPolicy) return offPolicy;
-          const result = await toolInputReceipt.run(receipt, () => execute(input));
-          if (turnLease) assertActiveTurnLease(turnLease, getSession().turnEpoch);
+          const result = await toolInputReceipt.run(receipt, () =>
+            execute(input),
+          );
+          if (turnLease)
+            assertActiveTurnLease(turnLease, getSession().turnEpoch);
           return result;
         };
         return def.effect === 'read' ? invoke() : serialize(invoke);
@@ -512,27 +858,48 @@ export function createExternalToolSource(
   return {
     tools: EXTERNAL_TOOL_DEFS,
     invoke: async (name, input, signal) => {
-      if (!EXTERNAL_TOOL_NAMES.has(name)) throw new Error(`No external lineage tool "${name}"`);
-      const registry = buildAiToolRegistry(getSession, outputChannel, getPanel, undefined, {
-        getStoredRun: host?.getStoredRun, signal, caller: 'external',
-      });
+      if (!EXTERNAL_TOOL_NAMES.has(name))
+        throw new Error(`No external lineage tool "${name}"`);
+      const registry = buildAiToolRegistry(
+        getSession,
+        outputChannel,
+        getPanel,
+        undefined,
+        {
+          getStoredRun: host?.getStoredRun,
+          signal,
+          caller: 'external',
+        },
+      );
       return registry.invoke(name, input);
     },
   };
 }
 
 /** Registers the external lineage tools with `vscode.lm` for other VS Code agents. */
-export function registerAiTools(source: ExternalToolSource): vscode.Disposable[] {
+export function registerAiTools(
+  source: ExternalToolSource,
+): vscode.Disposable[] {
   return source.tools.map((tool) =>
     vscode.lm.registerTool(tool.name, {
-      prepareInvocation(options, _token) { return { invocationMessage: getToolInvocationLabel(tool.name, options.input) }; },
+      prepareInvocation(options, _token) {
+        return {
+          invocationMessage: getToolInvocationLabel(tool.name, options.input),
+        };
+      },
       async invoke(options, token) {
         const abort = tokenToAbortSignal(token);
         try {
-          const text = await source.invoke(tool.name, options.input, abort.signal);
+          const text = await source.invoke(
+            tool.name,
+            options.input,
+            abort.signal,
+          );
           const rejection = readToolErrorText(text);
           if (rejection) throw new Error(renderProblem(rejection, 2));
-          return new vscode.LanguageModelToolResult([new vscode.LanguageModelTextPart(text)]);
+          return new vscode.LanguageModelToolResult([
+            new vscode.LanguageModelTextPart(text),
+          ]);
         } finally {
           abort.dispose();
         }

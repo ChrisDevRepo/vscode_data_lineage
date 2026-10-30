@@ -21,42 +21,72 @@ export function passwordSecretKey(id: string): string {
 }
 
 /** The identity a saved password was entered for. */
-type PasswordBinding = Pick<BuiltInConnection, 'id' | 'server' | 'port' | 'user'>;
+type PasswordBinding = Pick<
+  BuiltInConnection,
+  'id' | 'server' | 'port' | 'user'
+>;
 
 const SavedPasswordSchema = z.object({
-  server: z.string(), port: z.number().optional(), user: z.string(), password: z.string(),
+  server: z.string(),
+  port: z.number().optional(),
+  user: z.string(),
+  password: z.string(),
 });
 
-function bindingOf(connection: PasswordBinding): { server: string; port?: number; user: string } {
-  return { server: dropTcpPrefix(connection.server).toLowerCase(), port: connection.port, user: connection.user ?? '' };
+function bindingOf(connection: PasswordBinding): {
+  server: string;
+  port?: number;
+  user: string;
+} {
+  return {
+    server: dropTcpPrefix(connection.server).toLowerCase(),
+    port: connection.port,
+    user: connection.user ?? '',
+  };
 }
 
 /** Secret-store value for a password, bound to the server, port and user it was entered for.
  * @public
  */
-export function encodeSavedPassword(connection: PasswordBinding, password: string): string {
+export function encodeSavedPassword(
+  connection: PasswordBinding,
+  password: string,
+): string {
   return JSON.stringify({ ...bindingOf(connection), password });
 }
 
 /** Stores the SQL login password of a connection, bound to its server, port and user. */
 export async function savePassword(
-  secrets: Pick<vscode.SecretStorage, 'store'>, connection: PasswordBinding, password: string,
+  secrets: Pick<vscode.SecretStorage, 'store'>,
+  connection: PasswordBinding,
+  password: string,
 ): Promise<void> {
-  await secrets.store(passwordSecretKey(connection.id), encodeSavedPassword(connection, password));
+  await secrets.store(
+    passwordSecretKey(connection.id),
+    encodeSavedPassword(connection, password),
+  );
 }
 
 /** Reads the saved SQL login password of a connection. */
 export async function readSavedPassword(
-  secrets: Pick<vscode.SecretStorage, 'get'>, connection: PasswordBinding,
+  secrets: Pick<vscode.SecretStorage, 'get'>,
+  connection: PasswordBinding,
 ): Promise<string | undefined> {
   const raw = await secrets.get(passwordSecretKey(connection.id));
   if (raw === undefined) return undefined;
   let parsed: unknown;
-  try { parsed = JSON.parse(raw); } catch { return undefined; }
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
   const saved = SavedPasswordSchema.safeParse(parsed);
   if (!saved.success) return undefined;
   const expected = bindingOf(connection);
-  const matches = saved.data.server === expected.server && saved.data.port === expected.port && saved.data.user === expected.user;
+  const matches =
+    saved.data.server === expected.server &&
+    saved.data.port === expected.port &&
+    saved.data.user === expected.user;
   return matches ? saved.data.password : undefined;
 }
 
@@ -69,7 +99,9 @@ export const MAX_SYSNAME_LENGTH = 128;
 const MAX_PASSWORD_LENGTH = 128;
 /** Input-box validation message for a password SQL Server cannot accept, or `undefined`. */
 export function passwordTooLong(value: string): string | undefined {
-  return value.length > MAX_PASSWORD_LENGTH ? `A password has at most ${MAX_PASSWORD_LENGTH} characters.` : undefined;
+  return value.length > MAX_PASSWORD_LENGTH
+    ? `A password has at most ${MAX_PASSWORD_LENGTH} characters.`
+    : undefined;
 }
 
 /** A DNS name (253) plus a `tcp:` prefix, a `\\instance` name and a `,port` suffix. */
@@ -78,8 +110,14 @@ export const MAX_SERVER_LENGTH = 512;
 export const MAX_NAME_LENGTH = 1024;
 
 /** Input-box validation message for a value longer than `max`, or `undefined`. */
-export function tooLong(value: string, max: number, what: string): string | undefined {
-  return value.trim().length > max ? `A ${what} has at most ${max} characters.` : undefined;
+export function tooLong(
+  value: string,
+  max: number,
+  what: string,
+): string | undefined {
+  return value.trim().length > max
+    ? `A ${what} has at most ${max} characters.`
+    : undefined;
 }
 /** A tenant is a GUID or a verified domain name. */
 const MAX_TENANT_LENGTH = 253;
@@ -98,7 +136,10 @@ export function dropTcpPrefix(server: string): string {
 }
 
 /** Splits a server address using SqlClient address syntax. */
-export function resolveServerAddress(server: string): { host: string; instanceName?: string } {
+export function resolveServerAddress(server: string): {
+  host: string;
+  instanceName?: string;
+} {
   const address = dropTcpPrefix(server);
   const at = address.indexOf(INSTANCE_SEPARATOR);
   const host = unbracket(at < 0 ? address : address.slice(0, at));
@@ -121,10 +162,16 @@ const connectionFields = {
 };
 
 /** A built-in connection as stored in settings. */
-export const BuiltInConnectionSchema = z.object({ id: z.string().min(1).max(MAX_SYSNAME_LENGTH), ...connectionFields });
+export const BuiltInConnectionSchema = z.object({
+  id: z.string().min(1).max(MAX_SYSNAME_LENGTH),
+  ...connectionFields,
+});
 
 /** {@link BuiltInConnectionSchema} with the id optional, for callers that let the extension assign one. */
-const BuiltInConnectionInputSchema = z.object({ id: z.string().min(1).max(MAX_SYSNAME_LENGTH).optional(), ...connectionFields });
+const BuiltInConnectionInputSchema = z.object({
+  id: z.string().min(1).max(MAX_SYSNAME_LENGTH).optional(),
+  ...connectionFields,
+});
 
 /** A validated built-in connection. */
 export type BuiltInConnection = z.infer<typeof BuiltInConnectionSchema>;
@@ -136,20 +183,31 @@ export const AddConnectionArgsSchema = z.object({
 });
 
 /** Reads the saved built-in connections. */
-export function readBuiltInConnections(logger?: Pick<Logger, 'debug'>): BuiltInConnection[] {
-  const raw = vscode.workspace.getConfiguration(DATABASE_CONFIG_SECTION).get<unknown>(CONNECTIONS_SETTING);
+export function readBuiltInConnections(
+  logger?: Pick<Logger, 'debug'>,
+): BuiltInConnection[] {
+  const raw = vscode.workspace
+    .getConfiguration(DATABASE_CONFIG_SECTION)
+    .get<unknown>(CONNECTIONS_SETTING);
   if (!Array.isArray(raw)) return [];
   const connections: BuiltInConnection[] = [];
   raw.forEach((entry, index) => {
     const parsed = BuiltInConnectionSchema.safeParse(entry);
     if (!parsed.success) {
-      const fields = [...new Set(parsed.error.issues.map((i) => i.path.join('.') || 'entry'))].join(', ');
-      logger?.debug(`Skipped built-in connection #${index + 1}: invalid ${fields}`);
+      const fields = [
+        ...new Set(parsed.error.issues.map((i) => i.path.join('.') || 'entry')),
+      ].join(', ');
+      logger?.debug(
+        `Skipped built-in connection #${index + 1}: invalid ${fields}`,
+      );
       return;
     }
     if (entry && typeof entry === 'object') {
       const ignored = Object.keys(entry).filter((k) => !(k in parsed.data));
-      if (ignored.length > 0) logger?.debug(`Built-in connection "${parsed.data.name}": ignored properties ${ignored.join(', ')}`);
+      if (ignored.length > 0)
+        logger?.debug(
+          `Built-in connection "${parsed.data.name}": ignored properties ${ignored.join(', ')}`,
+        );
     }
     connections.push(parsed.data);
   });
@@ -158,22 +216,33 @@ export function readBuiltInConnections(logger?: Pick<Logger, 'debug'>): BuiltInC
 
 /** A copy of the raw setting value, as the user's settings.json holds it. */
 function readRawConnections(): unknown[] {
-  const raw = vscode.workspace.getConfiguration(DATABASE_CONFIG_SECTION).get<unknown>(CONNECTIONS_SETTING);
+  const raw = vscode.workspace
+    .getConfiguration(DATABASE_CONFIG_SECTION)
+    .get<unknown>(CONNECTIONS_SETTING);
   return Array.isArray(raw) ? [...raw] : [];
 }
 
 function rawId(entry: unknown): unknown {
-  return entry && typeof entry === 'object' ? (entry as { id?: unknown }).id : undefined;
+  return entry && typeof entry === 'object'
+    ? (entry as { id?: unknown }).id
+    : undefined;
 }
 
 /** Tail of the connection-list rewrites; each read-modify-write starts after the previous one settles. */
 let rewriteTail: Promise<unknown> = Promise.resolve();
 
 /** Rewrites the connection list in the user (global) settings, one rewrite at a time. */
-function rewriteConnections(change: (entries: unknown[]) => unknown[]): Promise<void> {
+function rewriteConnections(
+  change: (entries: unknown[]) => unknown[],
+): Promise<void> {
   const run = async (): Promise<void> => {
-    await vscode.workspace.getConfiguration(DATABASE_CONFIG_SECTION)
-      .update(CONNECTIONS_SETTING, change(readRawConnections()), vscode.ConfigurationTarget.Global);
+    await vscode.workspace
+      .getConfiguration(DATABASE_CONFIG_SECTION)
+      .update(
+        CONNECTIONS_SETTING,
+        change(readRawConnections()),
+        vscode.ConfigurationTarget.Global,
+      );
   };
   const result = rewriteTail.then(run, run);
   rewriteTail = result.catch(() => undefined);
@@ -181,7 +250,9 @@ function rewriteConnections(change: (entries: unknown[]) => unknown[]): Promise<
 }
 
 /** Adds a connection, or replaces the saved one with the same id. */
-export function upsertBuiltInConnection(connection: BuiltInConnection): Promise<void> {
+export function upsertBuiltInConnection(
+  connection: BuiltInConnection,
+): Promise<void> {
   return rewriteConnections((entries) => {
     const at = entries.findIndex((entry) => rawId(entry) === connection.id);
     if (at >= 0) entries[at] = connection;
@@ -192,11 +263,17 @@ export function upsertBuiltInConnection(connection: BuiltInConnection): Promise<
 
 /** Removes the saved connection with the given id; every other entry is written back as stored. Serialized with {@link upsertBuiltInConnection}. */
 export function deleteBuiltInConnection(id: string): Promise<void> {
-  return rewriteConnections((entries) => entries.filter((entry) => rawId(entry) !== id));
+  return rewriteConnections((entries) =>
+    entries.filter((entry) => rawId(entry) !== id),
+  );
 }
 
 /** Human-readable `server / database` label. */
-export function describeConnection(connection: Pick<BuiltInConnection, 'server' | 'database' | 'port'>): string {
-  const host = connection.port ? `${connection.server},${connection.port}` : connection.server;
+export function describeConnection(
+  connection: Pick<BuiltInConnection, 'server' | 'database' | 'port'>,
+): string {
+  const host = connection.port
+    ? `${connection.server},${connection.port}`
+    : connection.server;
   return connection.database ? `${host} / ${connection.database}` : host;
 }

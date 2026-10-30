@@ -14,7 +14,12 @@ export interface ToolDefinition {
   /** Detailed model-facing selection guidance. */
   readonly modelDescription?: string;
   /** Whether invoking the tool reads state or commits a lifecycle transition. Anything except `'read'` executes through the write-serializing effect queue — `'scope_store'` exists because the scope-bundle lookup also stores the discovery-scope artifact, so it must serialize with the other session writers even though the model perceives it as a read. */
-  readonly effect?: 'read' | 'scope_store' | 'session_start' | 'hop_commit' | 'presentation_commit';
+  readonly effect?:
+    | 'read'
+    | 'scope_store'
+    | 'session_start'
+    | 'hop_commit'
+    | 'presentation_commit';
   /** Short, user-friendly label shown in the UI while the tool executes (e.g. "Searching database objects…"). A registered tool that omits it emits no status update — the previous status remains visible; only unregistered tools fall back to a generic running label. */
   readonly progressLabel?: string;
 }
@@ -48,15 +53,22 @@ export class ToolRegistry<O = unknown> implements IToolRegistry<O> {
   /** {@inheritDoc IToolRegistry.register} */
   public register(tool: RegisteredTool<O>): void {
     if (this.tools.has(tool.name)) {
-      throw new Error(`ToolRegistry: duplicate tool registration for "${tool.name}"`);
+      throw new Error(
+        `ToolRegistry: duplicate tool registration for "${tool.name}"`,
+      );
     }
     this.tools.set(tool.name, tool);
   }
 
   /** {@inheritDoc IToolRegistry.invoke} */
-  public invoke(name: string, input: unknown, _callId?: string): O | Promise<O> {
+  public invoke(
+    name: string,
+    input: unknown,
+    _callId?: string,
+  ): O | Promise<O> {
     const tool = this.tools.get(name);
-    if (!tool) throw new Error(`ToolRegistry: no tool registered under "${name}"`);
+    if (!tool)
+      throw new Error(`ToolRegistry: no tool registered under "${name}"`);
     return tool.execute(input);
   }
 
@@ -74,17 +86,25 @@ export class ToolRegistry<O = unknown> implements IToolRegistry<O> {
   public has(name: string): boolean {
     return this.tools.has(name);
   }
-
 }
 
 /** A read-only view of a registry restricted to an allowed tool-name set. */
-export function filterRegistry<O>(reg: IToolRegistry<O>, allowed: ReadonlySet<string>): IToolRegistry<O> {
+export function filterRegistry<O>(
+  reg: IToolRegistry<O>,
+  allowed: ReadonlySet<string>,
+): IToolRegistry<O> {
   const ensure = (name: string): void => {
-    if (!allowed.has(name)) throw new Error(`ToolRegistry: no tool registered under "${name}"`);
+    if (!allowed.has(name))
+      throw new Error(`ToolRegistry: no tool registered under "${name}"`);
   };
   return {
-    register: () => { throw new Error('filterRegistry: view is read-only'); },
-    invoke: (name, input, callId) => { ensure(name); return reg.invoke(name, input, callId); },
+    register: () => {
+      throw new Error('filterRegistry: view is read-only');
+    },
+    invoke: (name, input, callId) => {
+      ensure(name);
+      return reg.invoke(name, input, callId);
+    },
     getTools: () => reg.getTools().filter((t) => allowed.has(t.name)),
     get: (name) => (allowed.has(name) ? reg.get(name) : undefined),
     has: (name) => allowed.has(name) && reg.has(name),
@@ -100,7 +120,9 @@ interface TrackedRegistry<O> {
 }
 
 /** Wraps a registry so the host turn boundary can await in-flight dispatch before it finalizes. */
-export function trackInFlightDispatch<O>(reg: IToolRegistry<O>): TrackedRegistry<O> {
+export function trackInFlightDispatch<O>(
+  reg: IToolRegistry<O>,
+): TrackedRegistry<O> {
   const inFlight = new Set<Promise<unknown>>();
   const registry: IToolRegistry<O> = {
     register: (tool) => reg.register(tool),
@@ -116,7 +138,9 @@ export function trackInFlightDispatch<O>(reg: IToolRegistry<O>): TrackedRegistry
   };
   return {
     registry,
-    settled: async () => { await Promise.allSettled([...inFlight]); },
+    settled: async () => {
+      await Promise.allSettled([...inFlight]);
+    },
   };
 }
 
@@ -141,11 +165,16 @@ export function resolveRegistrySchemas<O>(
     if (!resolve) return tool;
     return {
       ...tool,
-      get inputSchema(): z.ZodType { const owner = resolve(); return tool.inputRepairSchema?.(owner) ?? owner; },
+      get inputSchema(): z.ZodType {
+        const owner = resolve();
+        return tool.inputRepairSchema?.(owner) ?? owner;
+      },
     };
   };
   return {
-    register: () => { throw new Error('resolveRegistrySchemas: view is read-only'); },
+    register: () => {
+      throw new Error('resolveRegistrySchemas: view is read-only');
+    },
     invoke: (name, input, callId) => reg.invoke(name, input, callId),
     getTools: () => reg.getTools().map(projected),
     get: (name) => {

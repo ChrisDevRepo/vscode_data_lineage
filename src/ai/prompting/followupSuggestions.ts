@@ -8,7 +8,7 @@ export function expandNextQuestionSuggestions(session: AiSession): string {
     'Do not start or supplement an exploration or change the analysis. Author the suggestions yourself; inherited routing notes are internal context.',
     `Original user question: ${JSON.stringify(session.memory.getUserQuestion() ?? session.lastDiscoveryQuestion)}.`,
     `Finding: ${JSON.stringify(session.lastPresentResultSummary)}.`,
-    `Analyzed objects: ${JSON.stringify(session.memory.getResult().detail_slots.map(slot => ({ nodeId: slot.nodeId, summary: slot.summary })))}.`,
+    `Analyzed objects: ${JSON.stringify(session.memory.getResult().detail_slots.map((slot) => ({ nodeId: slot.nodeId, summary: slot.summary })))}.`,
     `Deferred follow-up questions: ${JSON.stringify(session.stateMachine?.deferredQuestions ?? [])}.`,
     `Pruned branches: ${JSON.stringify(session.stateMachine?.prunedBranches ?? [])}.`,
   ].join('\n');

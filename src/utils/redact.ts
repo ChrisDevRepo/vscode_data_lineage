@@ -15,16 +15,31 @@ const MAX_BRACED_VALUE_LENGTH = 1024;
 /** A connection-string value: quoted (doubled quote escapes), braced, or bare up to `;` or whitespace. An opening quote or brace without its closer takes the rest of the line up to `;`. */
 const SECRET_VALUE = String.raw`(?:"(?:[^"]|"")*"|'(?:[^']|'')*'|\{(?:[^}]|\}\}){0,${MAX_BRACED_VALUE_LENGTH}}\}|["'{][^;\r\n]*|[^;\s]+)`;
 /** Compiled once: {@link redactSecrets} runs on every bridge log line. */
-const KEY_EQUALS_VALUE = new RegExp(String.raw`\b(${SECRET_KEY})\s*=\s*${NOT_REDACTED_YET}${SECRET_VALUE}`, 'gi');
-const QUOTED_KEY_VALUE = new RegExp(String.raw`(["'])(${SECRET_KEY})\1(\s*:\s*)(["'])(?:(?!\4)[^\\]|\\.)*\4`, 'gi');
-const KEY_COLON_VALUE = new RegExp(String.raw`\b(${SECRET_KEY})\s*:\s*${NOT_REDACTED_YET}(?:"[^"\r\n]*"|'[^'\r\n]*'|${NOT_CLOSING_PUNCTUATION}[^;,\s]+)`, 'gi');
+const KEY_EQUALS_VALUE = new RegExp(
+  String.raw`\b(${SECRET_KEY})\s*=\s*${NOT_REDACTED_YET}${SECRET_VALUE}`,
+  'gi',
+);
+const QUOTED_KEY_VALUE = new RegExp(
+  String.raw`(["'])(${SECRET_KEY})\1(\s*:\s*)(["'])(?:(?!\4)[^\\]|\\.)*\4`,
+  'gi',
+);
+const KEY_COLON_VALUE = new RegExp(
+  String.raw`\b(${SECRET_KEY})\s*:\s*${NOT_REDACTED_YET}(?:"[^"\r\n]*"|'[^'\r\n]*'|${NOT_CLOSING_PUNCTUATION}[^;,\s]+)`,
+  'gi',
+);
 
 /** Removes credential-shaped text from a driver message. */
 export function redactSecrets(text: string): string {
   return text
-    .replace(/(?<![\w-])(?=[\w-]*eyJ[\w-]{8})[\w-]+\.[\w-]{8,}\.[\w-]*/g, '[token removed]')
+    .replace(
+      /(?<![\w-])(?=[\w-]*eyJ[\w-]{8})[\w-]+\.[\w-]{8,}\.[\w-]*/g,
+      '[token removed]',
+    )
     .replace(/\bBearer\s+[\w.~+/=-]{8,}/gi, 'Bearer [token removed]')
-    .replace(/(\bAuthorization\s*:\s*Basic\s+)[\w+/=-]{8,}/gi, '$1[token removed]')
+    .replace(
+      /(\bAuthorization\s*:\s*Basic\s+)[\w+/=-]{8,}/gi,
+      '$1[token removed]',
+    )
     .replace(/(:\/\/)[^/?#\s@]+@/g, '$1[removed]@')
     .replace(KEY_EQUALS_VALUE, '$1=[removed]')
     .replace(/(\bsig=)[^&#;\s]+/gi, '$1[removed]')

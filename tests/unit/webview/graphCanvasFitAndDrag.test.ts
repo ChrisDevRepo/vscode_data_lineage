@@ -1,6 +1,10 @@
 /** Pins the GraphCanvas camera and drag contracts the mount-level fix can't exercise without a full React Flow harness: a pending fit no-ops once a later user gesture bumps the fit generation, the canvas min zoom lets a fit contain every laid-out node, and a rebuild landing mid-drag preserves the dragged node's position until drag stop. Each helper here is the exact function `GraphCanvas.tsx` wires up, not a stand-in reimplementing its call sites. */
 import { describe, expect, it, vi } from 'vitest';
-import { getNodesBounds, getViewportForBounds, type Node as FlowNode } from '@xyflow/react';
+import {
+  getNodesBounds,
+  getViewportForBounds,
+  type Node as FlowNode,
+} from '@xyflow/react';
 import {
   applyPendingViewport,
   graphReadyForFit,
@@ -17,7 +21,10 @@ describe('scheduleFit — generation-guarded camera fit', () => {
     const generationRef = { current: 0 };
     const fire = vi.fn();
     const scheduledHolder: { run: (() => void) | null } = { run: null };
-    const schedule = vi.fn((run: () => void) => { scheduledHolder.run = run; return 1; });
+    const schedule = vi.fn((run: () => void) => {
+      scheduledHolder.run = run;
+      return 1;
+    });
     const clear = vi.fn();
 
     scheduleFit(generationRef, fire, schedule, clear);
@@ -30,7 +37,10 @@ describe('scheduleFit — generation-guarded camera fit', () => {
     const generationRef = { current: 0 };
     const fire = vi.fn();
     const scheduledHolder: { run: (() => void) | null } = { run: null };
-    const schedule = vi.fn((run: () => void) => { scheduledHolder.run = run; return 1; });
+    const schedule = vi.fn((run: () => void) => {
+      scheduledHolder.run = run;
+      return 1;
+    });
     const clear = vi.fn();
 
     scheduleFit(generationRef, fire, schedule, clear);
@@ -52,12 +62,15 @@ describe('scheduleFit — generation-guarded camera fit', () => {
     expect(clear).toHaveBeenCalledWith(42);
   });
 
-  it('a later fit\'s generation supersedes an earlier still-pending one', () => {
+  it("a later fit's generation supersedes an earlier still-pending one", () => {
     const generationRef = { current: 0 };
     const earlierFire = vi.fn();
     const laterFire = vi.fn();
     const runs: Array<() => void> = [];
-    const schedule = vi.fn((run: () => void) => { runs.push(run); return runs.length; });
+    const schedule = vi.fn((run: () => void) => {
+      runs.push(run);
+      return runs.length;
+    });
     const clear = vi.fn();
 
     scheduleFit(generationRef, earlierFire, schedule, clear);
@@ -72,10 +85,18 @@ describe('scheduleFit — generation-guarded camera fit', () => {
 describe('applyPendingViewport — a stored viewport never overrides a newer camera change', () => {
   it('applies when the fit generation is unchanged since the viewport was armed', () => {
     const setViewport = vi.fn();
-    const applied = applyPendingViewport({ x: 1, y: 2, zoom: 1 }, 3, 3, setViewport);
+    const applied = applyPendingViewport(
+      { x: 1, y: 2, zoom: 1 },
+      3,
+      3,
+      setViewport,
+    );
 
     expect(applied).toBe(true);
-    expect(setViewport).toHaveBeenCalledWith({ x: 1, y: 2, zoom: 1 }, { duration: 0 });
+    expect(setViewport).toHaveBeenCalledWith(
+      { x: 1, y: 2, zoom: 1 },
+      { duration: 0 },
+    );
   });
 
   it('no-ops once a user pan/zoom bumps the fit generation in the gap before the graph data catches up', () => {
@@ -83,7 +104,12 @@ describe('applyPendingViewport — a stored viewport never overrides a newer cam
     // startTransition); the user pans the still-displayed graph before flowNodes updates, bumping
     // fitGenerationRef to 4 the same way a real onMoveStart gesture would.
     const setViewport = vi.fn();
-    const applied = applyPendingViewport({ x: 1, y: 2, zoom: 1 }, 4, 3, setViewport);
+    const applied = applyPendingViewport(
+      { x: 1, y: 2, zoom: 1 },
+      4,
+      3,
+      setViewport,
+    );
 
     expect(applied).toBe(false);
     expect(setViewport).not.toHaveBeenCalled();
@@ -115,7 +141,11 @@ describe('mergeIncomingNodesPreservingDrag — a rebuild mid-drag keeps the drag
       flowNode('b', 100, 100, 'B-stale'),
     ];
 
-    const merged = mergeIncomingNodesPreservingDrag(incoming, current, new Set(['a']));
+    const merged = mergeIncomingNodesPreservingDrag(
+      incoming,
+      current,
+      new Set(['a']),
+    );
 
     const a = merged.find((n) => n.id === 'a')!;
     expect(a.position).toEqual({ x: 999, y: 999 });
@@ -128,9 +158,16 @@ describe('mergeIncomingNodesPreservingDrag — a rebuild mid-drag keeps the drag
 
   it('drops a dragged node that no longer exists in the incoming set rather than inventing one', () => {
     const incoming = [flowNode('b', 100, 100, 'B-rebuilt')];
-    const current = [flowNode('a', 999, 999, 'A-stale'), flowNode('b', 5, 5, 'B-stale')];
+    const current = [
+      flowNode('a', 999, 999, 'A-stale'),
+      flowNode('b', 5, 5, 'B-stale'),
+    ];
 
-    const merged = mergeIncomingNodesPreservingDrag(incoming, current, new Set(['a', 'b']));
+    const merged = mergeIncomingNodesPreservingDrag(
+      incoming,
+      current,
+      new Set(['a', 'b']),
+    );
 
     expect(merged.map((n) => n.id)).toEqual(['b']);
     expect(merged[0].position).toEqual({ x: 5, y: 5 });
@@ -151,7 +188,11 @@ describe('canvasMinZoom — a fit is never clamped short of the laid-out graph',
   const NODE_HEIGHT = 80;
 
   /** A Dagre-LR-shaped layout: `ranks` columns, the widest holding `widestRank` stacked nodes. */
-  function rankedLayout(ranks: number, widestRank: number, measured: boolean): FlowNode[] {
+  function rankedLayout(
+    ranks: number,
+    widestRank: number,
+    measured: boolean,
+  ): FlowNode[] {
     const nodes: FlowNode[] = [];
     for (let rank = 0; rank < ranks; rank++) {
       const count = rank === Math.floor(ranks / 2) ? widestRank : 4;
@@ -160,7 +201,9 @@ describe('canvasMinZoom — a fit is never clamped short of the laid-out graph',
           id: `n${rank}_${i}`,
           position: { x: rank * (NODE_WIDTH + 120), y: i * (NODE_HEIGHT + 30) },
           data: {},
-          ...(measured ? { measured: { width: NODE_WIDTH, height: NODE_HEIGHT } } : {}),
+          ...(measured
+            ? { measured: { width: NODE_WIDTH, height: NODE_HEIGHT } }
+            : {}),
         });
       }
     }
@@ -169,13 +212,32 @@ describe('canvasMinZoom — a fit is never clamped short of the laid-out graph',
 
   /** Nodes of `nodes` whose real box falls outside the pane once React Flow fits them at `minZoom`. */
   function outsideAfterFit(nodes: FlowNode[], minZoom: number): string[] {
-    const fitted = nodes.filter(n => !n.hidden).map(n => ({ ...n, measured: { width: NODE_WIDTH, height: NODE_HEIGHT } }));
-    const { x, y, zoom } = getViewportForBounds(getNodesBounds(fitted), PANE_WIDTH, PANE_HEIGHT, minZoom, 2, PADDING);
-    return fitted.filter((n) => {
-      const left = n.position.x * zoom + x;
-      const top = n.position.y * zoom + y;
-      return left < 0 || top < 0 || left + NODE_WIDTH * zoom > PANE_WIDTH || top + NODE_HEIGHT * zoom > PANE_HEIGHT;
-    }).map(n => n.id);
+    const fitted = nodes
+      .filter((n) => !n.hidden)
+      .map((n) => ({
+        ...n,
+        measured: { width: NODE_WIDTH, height: NODE_HEIGHT },
+      }));
+    const { x, y, zoom } = getViewportForBounds(
+      getNodesBounds(fitted),
+      PANE_WIDTH,
+      PANE_HEIGHT,
+      minZoom,
+      2,
+      PADDING,
+    );
+    return fitted
+      .filter((n) => {
+        const left = n.position.x * zoom + x;
+        const top = n.position.y * zoom + y;
+        return (
+          left < 0 ||
+          top < 0 ||
+          left + NODE_WIDTH * zoom > PANE_WIDTH ||
+          top + NODE_HEIGHT * zoom > PANE_HEIGHT
+        );
+      })
+      .map((n) => n.id);
   }
 
   it('lowers the min zoom far enough that a fit of a tall ranked layout keeps every node inside the pane', () => {
@@ -187,37 +249,61 @@ describe('canvasMinZoom — a fit is never clamped short of the laid-out graph',
 
   it('counts a node not yet measured by its layout position', () => {
     const nodes = rankedLayout(70, 800, false);
-    expect(outsideAfterFit(nodes, canvasMinZoom(nodes, PANE_WIDTH, PANE_HEIGHT, PADDING))).toEqual([]);
+    expect(
+      outsideAfterFit(
+        nodes,
+        canvasMinZoom(nodes, PANE_WIDTH, PANE_HEIGHT, PADDING),
+      ),
+    ).toEqual([]);
   });
 
   it('keeps the default floor for a graph a fit contains above it', () => {
-    expect(canvasMinZoom(rankedLayout(5, 10, true), PANE_WIDTH, PANE_HEIGHT, PADDING)).toBe(MIN_CANVAS_ZOOM);
+    expect(
+      canvasMinZoom(
+        rankedLayout(5, 10, true),
+        PANE_WIDTH,
+        PANE_HEIGHT,
+        PADDING,
+      ),
+    ).toBe(MIN_CANVAS_ZOOM);
   });
 
   it('ignores a hidden node, which no fit frames', () => {
     const nodes = [
       ...rankedLayout(5, 10, true),
-      { id: 'hidden', position: { x: 0, y: 1_000_000 }, data: {}, hidden: true, measured: { width: NODE_WIDTH, height: NODE_HEIGHT } },
+      {
+        id: 'hidden',
+        position: { x: 0, y: 1_000_000 },
+        data: {},
+        hidden: true,
+        measured: { width: NODE_WIDTH, height: NODE_HEIGHT },
+      },
     ];
-    expect(canvasMinZoom(nodes, PANE_WIDTH, PANE_HEIGHT, PADDING)).toBe(MIN_CANVAS_ZOOM);
+    expect(canvasMinZoom(nodes, PANE_WIDTH, PANE_HEIGHT, PADDING)).toBe(
+      MIN_CANVAS_ZOOM,
+    );
   });
 
   it('keeps the default floor before the pane has a size', () => {
-    expect(canvasMinZoom(rankedLayout(70, 800, true), 0, 0, PADDING)).toBe(MIN_CANVAS_ZOOM);
+    expect(canvasMinZoom(rankedLayout(70, 800, true), 0, 0, PADDING)).toBe(
+      MIN_CANVAS_ZOOM,
+    );
   });
 });
 
-
 describe('shown graph fitting waits for the requested layout', () => {
   const expected = [{ id: 'a', position: { x: 200, y: 300 }, data: {} }];
-  const measured = () => expected.map(node => ({ ...node, measured: { width: 220, height: 80 } }));
+  const measured = () =>
+    expected.map((node) => ({ ...node, measured: { width: 220, height: 80 } }));
   it('graph arrival waits beyond the first frame, then fits exactly once', () => {
     const generation = { current: 0 };
     const frames: Array<() => void> = [];
     const fire = vi.fn();
     let rendered = [{ ...expected[0], position: { x: 0, y: 0 } }];
     const schedule = (run: () => void) => frames.push(run);
-    scheduleFit(generation, fire, schedule, vi.fn(), () => graphReadyForFit(expected, [], rendered, []));
+    scheduleFit(generation, fire, schedule, vi.fn(), () =>
+      graphReadyForFit(expected, [], rendered, []),
+    );
     frames.shift()!();
     expect(fire).not.toHaveBeenCalled();
     rendered = expected;
@@ -230,76 +316,171 @@ describe('shown graph fitting waits for the requested layout', () => {
   });
   it('empty and fully hidden graphs need no node measurements', () => {
     expect(graphReadyForFit([], [], [], [])).toBe(true);
-    expect(graphReadyForFit(expected.map(node => ({ ...node, hidden: true })), [], [], [])).toBe(true);
+    expect(
+      graphReadyForFit(
+        expected.map((node) => ({ ...node, hidden: true })),
+        [],
+        [],
+        [],
+      ),
+    ).toBe(true);
     expect(graphReadyForFit([], [], measured(), [])).toBe(false);
   });
   it('same node membership does not make the old layout ready', () => {
-    const old = measured().map(node => ({ ...node, position: { x: 0, y: 0 } }));
+    const old = measured().map((node) => ({
+      ...node,
+      position: { x: 0, y: 0 },
+    }));
     expect(graphReadyForFit(expected, [], old, [])).toBe(false);
     expect(graphReadyForFit(expected, [], measured(), [])).toBe(true);
   });
   it('waits for edges from the same graph, including changed directed endpoints', () => {
     const edges = [{ id: 'e', source: 'a', target: 'b' }];
     expect(graphReadyForFit(expected, edges, measured(), [])).toBe(false);
-    expect(graphReadyForFit(expected, edges, measured(), [{ ...edges[0], source: 'b', target: 'a' }])).toBe(false);
+    expect(
+      graphReadyForFit(expected, edges, measured(), [
+        { ...edges[0], source: 'b', target: 'a' },
+      ]),
+    ).toBe(false);
     expect(graphReadyForFit(expected, edges, measured(), edges)).toBe(true);
   });
   it('a user gesture while waiting wins even when measurements arrive later', () => {
-    const generation = { current: 0 }; const frames: Array<() => void> = []; const fire = vi.fn();
+    const generation = { current: 0 };
+    const frames: Array<() => void> = [];
+    const fire = vi.fn();
     let ready = false;
-    scheduleFit(generation, fire, run => frames.push(run), vi.fn(), () => ready);
-    frames.shift()!(); generation.current++; ready = true; frames.shift()!();
-    expect(fire).not.toHaveBeenCalled(); expect(frames).toHaveLength(0);
+    scheduleFit(
+      generation,
+      fire,
+      (run) => frames.push(run),
+      vi.fn(),
+      () => ready,
+    );
+    frames.shift()!();
+    generation.current++;
+    ready = true;
+    frames.shift()!();
+    expect(fire).not.toHaveBeenCalled();
+    expect(frames).toHaveLength(0);
   });
   it('cleanup cancels the latest readiness frame and stale callbacks cannot re-arm it', () => {
-    const frames: Array<() => void> = []; const clear = vi.fn(); const fire = vi.fn();
-    const cancel = scheduleFit({ current: 0 }, fire, run => frames.push(run), clear, () => false);
-    frames.shift()!(); const waiting = frames.shift()!; cancel(); waiting();
-    expect(clear).toHaveBeenCalled(); expect(fire).not.toHaveBeenCalled(); expect(frames).toHaveLength(0);
+    const frames: Array<() => void> = [];
+    const clear = vi.fn();
+    const fire = vi.fn();
+    const cancel = scheduleFit(
+      { current: 0 },
+      fire,
+      (run) => frames.push(run),
+      clear,
+      () => false,
+    );
+    frames.shift()!();
+    const waiting = frames.shift()!;
+    cancel();
+    waiting();
+    expect(clear).toHaveBeenCalled();
+    expect(fire).not.toHaveBeenCalled();
+    expect(frames).toHaveLength(0);
   });
   it('a repeated display supersedes an earlier pending fit for identical membership', () => {
-    const frames: Array<() => void> = []; const generation = { current: 0 }; const first = vi.fn(); const second = vi.fn();
+    const frames: Array<() => void> = [];
+    const generation = { current: 0 };
+    const first = vi.fn();
+    const second = vi.fn();
     const schedule = (run: () => void) => frames.push(run);
     scheduleFit(generation, first, schedule, vi.fn(), () => false);
     frames.shift()!();
     scheduleFit(generation, second, schedule, vi.fn(), () => true);
-    frames.splice(0).forEach(run => run());
-    expect(first).not.toHaveBeenCalled(); expect(second).toHaveBeenCalledTimes(1);
+    frames.splice(0).forEach((run) => run());
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledTimes(1);
   });
 });
 
-
 describe('pending saved camera survives metadata before deferred graph arrival', () => {
   it('AI preview clearing leaves the preservation token armed until actual node data changes', () => {
-    const consumed = { current: 0 }; const generation = { current: 7 };
-    const setViewport = vi.fn(); const fit = vi.fn();
+    const consumed = { current: 0 };
+    const generation = { current: 7 };
+    const setViewport = vi.fn();
+    const fit = vi.fn();
     // restoreViewSnapshot clears aiPreview and arms a saved viewport before its transition lands.
-    if (!skipFitForPendingViewport(1, consumed, false)) scheduleFit(generation, fit, run => { run(); return 1; }, vi.fn());
-    expect(consumed.current).toBe(0); expect(generation.current).toBe(7); expect(fit).not.toHaveBeenCalled();
+    if (!skipFitForPendingViewport(1, consumed, false))
+      scheduleFit(
+        generation,
+        fit,
+        (run) => {
+          run();
+          return 1;
+        },
+        vi.fn(),
+      );
+    expect(consumed.current).toBe(0);
+    expect(generation.current).toBe(7);
+    expect(fit).not.toHaveBeenCalled();
     // The rebuilt flowNodes arrive later. This update consumes the skip, not a metadata render.
     expect(skipFitForPendingViewport(1, consumed, true)).toBe(true);
     expect(consumed.current).toBe(1);
-    expect(applyPendingViewport({ x: 350, y: -90, zoom: 0.4 }, generation.current, 7, setViewport)).toBe(true);
-    expect(setViewport).toHaveBeenCalledWith({ x: 350, y: -90, zoom: 0.4 }, { duration: 0 });
+    expect(
+      applyPendingViewport(
+        { x: 350, y: -90, zoom: 0.4 },
+        generation.current,
+        7,
+        setViewport,
+      ),
+    ).toBe(true);
+    expect(setViewport).toHaveBeenCalledWith(
+      { x: 350, y: -90, zoom: 0.4 },
+      { duration: 0 },
+    );
     expect(skipFitForPendingViewport(1, consumed, true)).toBe(false);
   });
 });
 
 describe('a deferred graph rebuild reconciles an intentional drag before any later show fit', () => {
   it('cancels pending rebuild fitting on drag stop and later frames the actual merged positions', () => {
-    const incoming = [flowNode('a', 0, 0, 'rebuilt'), flowNode('b', 100, 100, 'other')];
-    const dragged = [flowNode('a', 999, 888, 'old'), flowNode('b', 5, 5, 'old')];
-    const merged = mergeIncomingNodesPreservingDrag(incoming, dragged, new Set(['a']));
-    const measured = merged.map(node => ({ ...node, measured: { width: 220, height: 80 } }));
-    const generation = { current: 1 }; const frames: Array<() => void> = []; const fire = vi.fn();
-    scheduleFit(generation, fire, run => frames.push(run), vi.fn(), () => graphReadyForFit(incoming, [], measured, []));
+    const incoming = [
+      flowNode('a', 0, 0, 'rebuilt'),
+      flowNode('b', 100, 100, 'other'),
+    ];
+    const dragged = [
+      flowNode('a', 999, 888, 'old'),
+      flowNode('b', 5, 5, 'old'),
+    ];
+    const merged = mergeIncomingNodesPreservingDrag(
+      incoming,
+      dragged,
+      new Set(['a']),
+    );
+    const measured = merged.map((node) => ({
+      ...node,
+      measured: { width: 220, height: 80 },
+    }));
+    const generation = { current: 1 };
+    const frames: Array<() => void> = [];
+    const fire = vi.fn();
+    scheduleFit(
+      generation,
+      fire,
+      (run) => frames.push(run),
+      vi.fn(),
+      () => graphReadyForFit(incoming, [], measured, []),
+    );
     frames.shift()!(); // incoming layout and the intentional drag differ; the fit is still waiting
     generation.current++; // actual drag-stop handler cancels the pending rebuild fit
-    frames.shift()!(); expect(fire).not.toHaveBeenCalled(); expect(frames).toHaveLength(0);
+    frames.shift()!();
+    expect(fire).not.toHaveBeenCalled();
+    expect(frames).toHaveLength(0);
     // A later explicit view show uses the merged displayed layout, never the discarded Dagre position.
     expect(graphReadyForFit(merged, [], measured, [])).toBe(true);
-    scheduleFit(generation, fire, run => frames.push(run), vi.fn(), () => graphReadyForFit(merged, [], measured, []));
-    frames.shift()!(); expect(fire).toHaveBeenCalledTimes(1);
+    scheduleFit(
+      generation,
+      fire,
+      (run) => frames.push(run),
+      vi.fn(),
+      () => graphReadyForFit(merged, [], measured, []),
+    );
+    frames.shift()!();
+    expect(fire).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -308,8 +489,18 @@ describe('scheduleFit — bounded readiness wait', () => {
     const generationRef = { current: 0 };
     const fire = vi.fn();
     const queue: Array<() => void> = [];
-    const schedule = vi.fn((run: () => void) => { queue.push(run); return queue.length; });
-    scheduleFit(generationRef, fire, schedule, () => {}, () => false, 3);
+    const schedule = vi.fn((run: () => void) => {
+      queue.push(run);
+      return queue.length;
+    });
+    scheduleFit(
+      generationRef,
+      fire,
+      schedule,
+      () => {},
+      () => false,
+      3,
+    );
     for (let i = 0; i < 10 && queue.length; i++) queue.shift()!();
     expect(fire).not.toHaveBeenCalled();
     expect(schedule).toHaveBeenCalledTimes(4);
@@ -318,7 +509,17 @@ describe('scheduleFit — bounded readiness wait', () => {
     const fire = vi.fn();
     const queue: Array<() => void> = [];
     let ready = false;
-    const cancel = scheduleFit({ current: 0 }, fire, run => { queue.push(run); return 1; }, () => {}, () => ready, 5);
+    const cancel = scheduleFit(
+      { current: 0 },
+      fire,
+      (run) => {
+        queue.push(run);
+        return 1;
+      },
+      () => {},
+      () => ready,
+      5,
+    );
     queue.shift()!();
     cancel();
     ready = true;

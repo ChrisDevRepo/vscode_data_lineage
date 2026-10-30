@@ -21,10 +21,22 @@ export async function persistAbsolutePath(
   if (!inspection) return;
 
   if (inspection.workspaceFolderValue !== undefined) {
-    await cfg.update(settingKey, resolvedAbsolute, vscode.ConfigurationTarget.WorkspaceFolder);
+    await cfg.update(
+      settingKey,
+      resolvedAbsolute,
+      vscode.ConfigurationTarget.WorkspaceFolder,
+    );
   } else if (inspection.workspaceValue !== undefined) {
-    await cfg.update(settingKey, resolvedAbsolute, vscode.ConfigurationTarget.Workspace);
+    await cfg.update(
+      settingKey,
+      resolvedAbsolute,
+      vscode.ConfigurationTarget.Workspace,
+    );
   } else if (inspection.globalValue !== undefined) {
-    await cfg.update(settingKey, resolvedAbsolute, vscode.ConfigurationTarget.Global);
+    await cfg.update(
+      settingKey,
+      resolvedAbsolute,
+      vscode.ConfigurationTarget.Global,
+    );
   }
 }

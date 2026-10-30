@@ -20,8 +20,12 @@ function sameIdSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
 }
 
 /** Detects (does not apply) an in-place trace-scope edit on top of the same original BFS scope. */
-export function isManualTraceScopeEdit(previous: TraceState, next: TraceState): boolean {
-  if (!isEditableTraceMode(previous.mode) || !isEditableTraceMode(next.mode)) return false;
+export function isManualTraceScopeEdit(
+  previous: TraceState,
+  next: TraceState,
+): boolean {
+  if (!isEditableTraceMode(previous.mode) || !isEditableTraceMode(next.mode))
+    return false;
   if (previous.selectedNodeId !== next.selectedNodeId) return false;
   if (previous.targetNodeId !== next.targetNodeId) return false;
   if (previous.upstreamLevels !== next.upstreamLevels) return false;
@@ -30,8 +34,10 @@ export function isManualTraceScopeEdit(previous: TraceState, next: TraceState): 
   if (!sameIdSet(previous.baseNodeIds, next.baseNodeIds)) return false;
   if (!sameIdSet(previous.baseEdgeIds, next.baseEdgeIds)) return false;
 
-  return !sameIdSet(previous.manualAddedNodeIds, next.manualAddedNodeIds)
-    || !sameIdSet(previous.manualPrunedNodeIds, next.manualPrunedNodeIds);
+  return (
+    !sameIdSet(previous.manualAddedNodeIds, next.manualAddedNodeIds) ||
+    !sameIdSet(previous.manualPrunedNodeIds, next.manualPrunedNodeIds)
+  );
 }
 
 /** Result of validating whether a visible trace node can be pruned. */
@@ -76,11 +82,16 @@ export function buildVisibleTraceScope(
 }
 
 /** Builds the traversal graph for a trace scope from the full model. */
-export function buildTraceScopeGraph(model: DatabaseModel, nodeIds: ReadonlySet<string>): Graph {
+export function buildTraceScopeGraph(
+  model: DatabaseModel,
+  nodeIds: ReadonlySet<string>,
+): Graph {
   return buildGraphologyGraph({
     ...model,
     nodes: model.nodes.filter((n) => nodeIds.has(n.id)),
-    edges: model.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target)),
+    edges: model.edges.filter(
+      (e) => nodeIds.has(e.source) && nodeIds.has(e.target),
+    ),
   });
 }
 
@@ -96,7 +107,9 @@ export function unionConnectingPaths(
   for (const targetId of targetIds) {
     if (targetId === originId) continue;
     if (!graph.hasNode(targetId)) return null;
-    const route = pathsBetween(graph, originId, targetId) ?? pathsBetween(graph, targetId, originId);
+    const route =
+      pathsBetween(graph, originId, targetId) ??
+      pathsBetween(graph, targetId, originId);
     if (!route) return null;
     for (const id of route.nodeIds) nodeIds.add(id);
     for (const id of route.edgeIds) edgeIds.add(id);
@@ -104,7 +117,11 @@ export function unionConnectingPaths(
   return { nodeIds, edgeIds };
 }
 
-function pathsBetween(graph: Graph, sourceId: string, sinkId: string): { nodeIds: Set<string>; edgeIds: Set<string> } | null {
+function pathsBetween(
+  graph: Graph,
+  sourceId: string,
+  sinkId: string,
+): { nodeIds: Set<string>; edgeIds: Set<string> } | null {
   const fromSource = reachable(graph, sourceId, 'outbound', sinkId);
   if (!fromSource.has(sinkId)) return null;
   const toSink = reachable(graph, sinkId, 'inbound', sourceId);
@@ -120,17 +137,30 @@ function pathsBetween(graph: Graph, sourceId: string, sinkId: string): { nodeIds
 }
 
 /** Nodes reachable from `startId` in `mode`, never expanding past `stopId`. */
-function reachable(graph: Graph, startId: string, mode: 'inbound' | 'outbound', stopId: string): Set<string> {
+function reachable(
+  graph: Graph,
+  startId: string,
+  mode: 'inbound' | 'outbound',
+  stopId: string,
+): Set<string> {
   const seen = new Set<string>();
-  bfsFromNode(graph, startId, (id) => {
-    seen.add(id);
-    return id === stopId;
-  }, { mode });
+  bfsFromNode(
+    graph,
+    startId,
+    (id) => {
+      seen.add(id);
+      return id === stopId;
+    },
+    { mode },
+  );
   return seen;
 }
 
 /** Gets the fixed pruning legs from the trace's effective open levels. */
-export function traceRemovalSides(upstreamLevels: number, downstreamLevels: number): RemovalSide[] {
+export function traceRemovalSides(
+  upstreamLevels: number,
+  downstreamLevels: number,
+): RemovalSide[] {
   const sides: RemovalSide[] = [];
   if (upstreamLevels > 0) sides.push('upstream');
   if (downstreamLevels > 0) sides.push('downstream');
@@ -145,17 +175,43 @@ export function canPruneTraceNode(
   candidateNodeId: string,
   sides: ReadonlyArray<RemovalSide>,
 ): TracePruneCheck {
-  if (!originNodeId || candidateNodeId === originNodeId) return { safe: false, reason: 'origin' };
-  if (!visibleNodeIds.has(candidateNodeId) || !graph.hasNode(candidateNodeId)) return { safe: false, reason: 'not-visible' };
-  if (!visibleNodeIds.has(originNodeId) || !graph.hasNode(originNodeId)) return { safe: false, reason: 'origin' };
+  if (!originNodeId || candidateNodeId === originNodeId)
+    return { safe: false, reason: 'origin' };
+  if (!visibleNodeIds.has(candidateNodeId) || !graph.hasNode(candidateNodeId))
+    return { safe: false, reason: 'not-visible' };
+  if (!visibleNodeIds.has(originNodeId) || !graph.hasNode(originNodeId))
+    return { safe: false, reason: 'origin' };
   const analysis = analyzeRemoval(graph, {
-    originId: originNodeId, scope: visibleNodeIds, removedBefore: new Set(),
-    removedAfter: new Set([candidateNodeId]), currentNodeId: candidateNodeId, visited: new Set(), sides,
+    originId: originNodeId,
+    scope: visibleNodeIds,
+    removedBefore: new Set(),
+    removedAfter: new Set([candidateNodeId]),
+    currentNodeId: candidateNodeId,
+    visited: new Set(),
+    sides,
   });
-  if (analysis.rejection) return { safe: false, reason: analysis.rejection === 'origin' ? 'origin' : 'not-visible' };
+  if (analysis.rejection)
+    return {
+      safe: false,
+      reason: analysis.rejection === 'origin' ? 'origin' : 'not-visible',
+    };
   const leaving = new Set([candidateNodeId, ...analysis.cutIds]);
-  const linkedBefore = bfsReachable(graph, originNodeId, new Set(), undefined, visibleNodeIds);
-  const linkedAfter = bfsReachable(graph, originNodeId, leaving, undefined, visibleNodeIds);
-  const stranded = [...linkedBefore].filter(id => !leaving.has(id) && !linkedAfter.has(id));
+  const linkedBefore = bfsReachable(
+    graph,
+    originNodeId,
+    new Set(),
+    undefined,
+    visibleNodeIds,
+  );
+  const linkedAfter = bfsReachable(
+    graph,
+    originNodeId,
+    leaving,
+    undefined,
+    visibleNodeIds,
+  );
+  const stranded = [...linkedBefore].filter(
+    (id) => !leaving.has(id) && !linkedAfter.has(id),
+  );
   return { safe: true, cutNodeIds: [...analysis.cutIds, ...stranded] };
 }

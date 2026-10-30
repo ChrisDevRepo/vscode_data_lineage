@@ -1,9 +1,19 @@
 import type Graph from 'graphology';
-import { OBJECT_TYPES, type ExtensionConfig, type FilterState, type GraphMode } from './types';
+import {
+  OBJECT_TYPES,
+  type ExtensionConfig,
+  type FilterState,
+  type GraphMode,
+} from './types';
 import { traceNodeIdsWithLevels } from './graphBuilder';
 
 /** Which graph surface the canvas renders. */
-type GraphDisplayMode = 'full' | 'schemaOverview' | 'schemaExpanded' | 'scoped' | 'renderLimit';
+type GraphDisplayMode =
+  | 'full'
+  | 'schemaOverview'
+  | 'schemaExpanded'
+  | 'scoped'
+  | 'renderLimit';
 
 interface GraphModeInput {
   filteredCount: number;
@@ -31,12 +41,20 @@ interface GraphDisplayModeInput {
 }
 
 /** Seeds the user-owned graph view mode when a model is first loaded or Refresh View runs. */
-export function deriveInitialGraphMode({ filteredCount, config }: GraphModeInput): GraphMode {
-  return config.overview.enabled && filteredCount > effectiveOverviewThreshold(config) ? 'overview' : 'full';
+export function deriveInitialGraphMode({
+  filteredCount,
+  config,
+}: GraphModeInput): GraphMode {
+  return config.overview.enabled &&
+    filteredCount > effectiveOverviewThreshold(config)
+    ? 'overview'
+    : 'full';
 }
 
 /** The object count above which Schema View applies: the configured `overview.threshold` capped at `renderLimit`, as the setting's description promises — one value for the initial mode, the toggle's soft-disabled state and the toolbar tooltip. */
-export function effectiveOverviewThreshold(config: Pick<ExtensionConfig, 'overview' | 'renderLimit'>): number {
+export function effectiveOverviewThreshold(
+  config: Pick<ExtensionConfig, 'overview' | 'renderLimit'>,
+): number {
   return Math.min(config.overview.threshold, config.renderLimit);
 }
 
@@ -54,20 +72,32 @@ export function deriveGraphDisplayMode({
 }: GraphDisplayModeInput): GraphDisplayState {
   const renderedCount =
     graphMode === 'overview'
-      ? (expandedSchemaCount > 0
-          ? (expandedSchemaViewRenderedCount ?? filteredCount)
-          : schemaOverviewRenderedCount)
-      : (renderLimitHit > 0 ? renderLimitHit : filteredCount);
+      ? expandedSchemaCount > 0
+        ? (expandedSchemaViewRenderedCount ?? filteredCount)
+        : schemaOverviewRenderedCount
+      : renderLimitHit > 0
+        ? renderLimitHit
+        : filteredCount;
   if (scopedModeActive) {
-    if (scopedRenderedCount !== undefined && scopedRenderedCount > config.renderLimit) {
+    if (
+      scopedRenderedCount !== undefined &&
+      scopedRenderedCount > config.renderLimit
+    ) {
       return { mode: 'renderLimit', renderedCount: scopedRenderedCount };
     }
-    return { mode: 'scoped', renderedCount: scopedRenderedCount ?? renderedCount };
+    return {
+      mode: 'scoped',
+      renderedCount: scopedRenderedCount ?? renderedCount,
+    };
   }
 
-  if (renderedCount > config.renderLimit) return { mode: 'renderLimit', renderedCount };
+  if (renderedCount > config.renderLimit)
+    return { mode: 'renderLimit', renderedCount };
   if (graphMode === 'overview') {
-    return { mode: expandedSchemaCount > 0 ? 'schemaExpanded' : 'schemaOverview', renderedCount };
+    return {
+      mode: expandedSchemaCount > 0 ? 'schemaExpanded' : 'schemaOverview',
+      renderedCount,
+    };
   }
   return { mode: 'full', renderedCount };
 }
@@ -133,12 +163,18 @@ export function filterAfterAiPreviewDiscard(filter: FilterState): FilterState {
 }
 
 /** The filter the extension host treats as the user's selection. */
-export function userFilterForHost(filter: FilterState, aiPreviewActive: boolean, snapshot: ViewSnapshot | null): FilterState {
+export function userFilterForHost(
+  filter: FilterState,
+  aiPreviewActive: boolean,
+  snapshot: ViewSnapshot | null,
+): FilterState {
   return aiPreviewActive && snapshot ? snapshot.filter : filter;
 }
 
 /** Drops the most recently expanded schema, one Esc press at a time. */
-export function collapseLastExpandedSchema(expandedSchemas: ReadonlySet<string>): Set<string> | null {
+export function collapseLastExpandedSchema(
+  expandedSchemas: ReadonlySet<string>,
+): Set<string> | null {
   const ordered = Array.from(expandedSchemas);
   ordered.pop();
   return ordered.length > 0 ? new Set(ordered) : null;
@@ -149,12 +185,16 @@ export function retainExistingSchemas(
   expandedSchemas: ReadonlySet<string>,
   existingSchemas: ReadonlySet<string>,
 ): Set<string> | null {
-  const kept = Array.from(expandedSchemas).filter((schema) => existingSchemas.has(schema));
+  const kept = Array.from(expandedSchemas).filter((schema) =>
+    existingSchemas.has(schema),
+  );
   return kept.length > 0 ? new Set(kept) : null;
 }
 
 /** Deterministic, sorted serialization of an expanded-schema set — the one function every persisted or posted record listing expanded schemas reuses. */
-export function serializeExpandedSchemas(expandedSchemas: ReadonlySet<string> | undefined): string[] {
+export function serializeExpandedSchemas(
+  expandedSchemas: ReadonlySet<string> | undefined,
+): string[] {
   return expandedSchemas ? Array.from(expandedSchemas).sort() : [];
 }
 
@@ -179,5 +219,6 @@ export function traceSizeByDepth(
   upstreamLevels: number,
   downstreamLevels: number,
 ): number {
-  return traceNodeIdsWithLevels(graph, nodeId, upstreamLevels, downstreamLevels).size;
+  return traceNodeIdsWithLevels(graph, nodeId, upstreamLevels, downstreamLevels)
+    .size;
 }

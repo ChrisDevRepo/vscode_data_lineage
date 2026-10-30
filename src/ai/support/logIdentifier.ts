@@ -13,8 +13,14 @@ interface SafeIdentifierOptions {
 }
 
 /** Bounds a provider-controlled identifier for safe embedding in a single-line log or trace attribute: replaces (or strips) disallowed characters, then hard-slices to `maxLength`. */
-export function safeIdentifier(value: string, options: SafeIdentifierOptions): string {
+export function safeIdentifier(
+  value: string,
+  options: SafeIdentifierOptions,
+): string {
   const extras = options.extraChars.replace(/[\\\]^-]/g, '\\$&');
   const pattern = new RegExp(`[^A-Za-z0-9_${extras}]`, 'g');
-  return value.replace(pattern, options.replacement).slice(0, options.maxLength) || options.fallback;
+  return (
+    value.replace(pattern, options.replacement).slice(0, options.maxLength) ||
+    options.fallback
+  );
 }

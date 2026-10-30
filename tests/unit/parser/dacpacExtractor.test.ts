@@ -2,379 +2,677 @@
 
 import { readFileSync } from 'fs';
 import { describe, expect, it } from 'vitest';
-import { extractDacpac, extractSchemaPreview, extractDacpacFiltered, parseDspPlatform } from '../../../src/engine/dacpacExtractor';
-import { loadParseRules, testPath, loadAdventureWorksModel } from '../helpers/testUtils';
-import { buildThreePartDacpac, SELF_DB_METADATA } from '../helpers/syntheticDacpac';
+import {
+  extractDacpac,
+  extractSchemaPreview,
+  extractDacpacFiltered,
+  parseDspPlatform,
+} from '../../../src/engine/dacpacExtractor';
+import {
+  loadParseRules,
+  testPath,
+  loadAdventureWorksModel,
+} from '../helpers/testUtils';
+import {
+  buildThreePartDacpac,
+  SELF_DB_METADATA,
+} from '../helpers/syntheticDacpac';
 
 describe('DACPAC Extractor', () => {
   loadParseRules();
 
-/** Builds a minimal in-memory dacpac with a single procedure referencing an external file (OPENROWSET). */
-async function makeExternalRefDacpac(): Promise<Uint8Array> {
-  const JSZip = (await import('jszip')).default;
-  const zip = new JSZip();
-  zip.file('model.xml', `<?xml version="1.0"?>
+  /** Builds a minimal in-memory dacpac with a single procedure referencing an external file (OPENROWSET). */
+  async function makeExternalRefDacpac(): Promise<Uint8Array> {
+    const JSZip = (await import('jszip')).default;
+    const zip = new JSZip();
+    zip.file(
+      'model.xml',
+      `<?xml version="1.0"?>
     <DataSchemaModel DspName="Microsoft.Data.Tools.Schema.Sql.Sql160DatabaseSchemaProvider">
       <Model>
         <Element Type="SqlProcedure" Name="[dbo].[LoadExternal]">
           <Property Name="BodyScript" Value="SELECT * FROM OPENROWSET(BULK 'https://storage.example/orders.csv', FORMAT='CSV') AS rows" />
         </Element>
       </Model>
-    </DataSchemaModel>`);
-  const bytes = await zip.generateAsync({ type: 'uint8array' });
-  return bytes;
-}
-
-
-/** Package metadata does not establish a deployment database identity. */
-async function testDacpacDatabaseName() {
-  for (const metadata of [SELF_DB_METADATA, undefined, '<DacType><Name>', '<DacType><Version>1.0</Version></DacType>'] as const) {
-    const buffer = await buildThreePartDacpac(metadata);
-    expect(await extractSchemaPreview(buffer)).not.toHaveProperty('databaseName');
-    const model = await extractDacpac(buffer, undefined, undefined, { externalRefsEnabled: true });
-    expect(model.nodes.some(node => node.id === '[selfdb].[dbo].[x]')).toBe(false);
-  }
-}
-
-/** A DACPAC foreign key keeps its ON DELETE action and a view column keeps a dotted bracketed name. */
-async function testFkDeleteActionAndDottedColumns() {
-  const model = await loadAdventureWorksModel();
-  const detail = model.nodes.find(n => n.id === '[sales].[salesorderdetail]');
-  const fk = detail?.fks?.find(f => f.name === 'FK_SalesOrderDetail_SalesOrderHeader_SalesOrderID');
-  expect(fk?.onDelete, 'OnDeleteAction=1 maps to CASCADE').toBe('CASCADE');
-  const noAction = model.nodes.flatMap(n => n.fks ?? []).find(f => f.name === 'FK_SalesOrderDetail_SpecialOfferProduct_SpecialOfferIDProductID');
-  expect(noAction?.onDelete, 'no OnDeleteAction property stays NO ACTION').toBe('NO ACTION');
-
-  const candidate = model.nodes.find(n => n.id === '[humanresources].[vjobcandidate]');
-  const names = candidate?.columns?.map(c => c.name) ?? [];
-  expect(names, 'dotted column name is kept whole').toContain('Name.Prefix');
-  expect(names, 'dotted column name is not cut at the dot').not.toContain('Prefix');
-}
-
-
-async function testExtraction() {
-  const model = await loadAdventureWorksModel();
-
-  expect(model.nodes.length > 0, `Extracted ${model.nodes.length} nodes`).toBe(true);
-  expect(model.edges.length > 0, `Extracted ${model.edges.length} edges`).toBe(true);
-  expect(model.schemas.length > 0, `Found ${model.schemas.length} schemas`).toBe(true);
-
-  expect(model.edges.length, 'Edge count fell below the AdventureWorks floor').toBeGreaterThanOrEqual(169);
-
-  for (const type of ['table', 'view', 'procedure', 'function'] as const) {
-    expect(model.nodes.some(n => n.type === type), `Has ${type} nodes`).toBe(true);
+    </DataSchemaModel>`,
+    );
+    const bytes = await zip.generateAsync({ type: 'uint8array' });
+    return bytes;
   }
 
-  expect(Object.keys(model.catalog).length >= model.nodes.length, 'Catalog populated').toBe(true);
-  expect(Object.keys(model.neighborIndex).length > 0, 'NeighborIndex populated').toBe(true);
-
-  return model;
-}
-
-
-/** Pins the exact edge set the SQL-body parser derives for two AdventureWorks procedures. */
-async function testNamedProcedureEdges() {
-  const model = await loadAdventureWorksModel();
-
-  const edgesFor = (procId: string): string[] =>
-    model.edges
-      .filter(e => e.source === procId || e.target === procId)
-      .map(e => `${e.source}|${e.type}|${e.target}`)
-      .sort();
-
-  expect(edgesFor('[ai].[spcleanorders]')).toEqual([
-    '[ai].[cleanedorders]|body|[ai].[spcleanorders]',
-    '[ai].[customermaster]|body|[ai].[spcleanorders]',
-    '[ai].[raworderimport]|body|[ai].[spcleanorders]',
-    '[ai].[spcleanorders]|body|[ai].[cleanedorders]',
-    '[ai].[spcleanorders]|body|[ai].[errorlog]',
-    '[ai].[spcleanorders]|exec|[ai].[splogaudit]',
-  ]);
-
-  expect(edgesFor('[humanresources].[uspupdateemployeehireinfo]')).toEqual([
-    '[humanresources].[uspupdateemployeehireinfo]|body|[humanresources].[employee]',
-    '[humanresources].[uspupdateemployeehireinfo]|body|[humanresources].[employeepayhistory]',
-    '[humanresources].[uspupdateemployeehireinfo]|exec|[dbo].[usplogerror]',
-  ]);
-}
-
-
-function testEdgeIntegrity(model: Awaited<ReturnType<typeof extractDacpac>>) {
-
-  const nodeIds = new Set(model.nodes.map(n => n.id));
-
-  const danglingEdges = model.edges.filter(e => !nodeIds.has(e.source) || !nodeIds.has(e.target));
-  expect(danglingEdges.length === 0, `No dangling edges (found ${danglingEdges.length})`).toBe(true);
-
-  const selfLoops = model.edges.filter(e => e.source === e.target);
-  expect(selfLoops.length === 0, `No self-loops (found ${selfLoops.length})`).toBe(true);
-
-  const edgeKeys = model.edges.map(e => `${e.source}→${e.target}`);
-  const uniqueEdges = new Set(edgeKeys);
-  expect(uniqueEdges.size === edgeKeys.length, `No duplicate edges (${edgeKeys.length} total, ${uniqueEdges.size} unique)`).toBe(true);
-}
-
-
-async function testFabricDacpac() {
-  const fabricPath = testPath('AdventureWorks_sdk-style.dacpac');
-  const buffer = readFileSync(fabricPath);
-  const model = await extractDacpac(buffer);
-
-  const views = model.nodes.filter(n => n.type === 'view');
-  const tables = model.nodes.filter(n => n.type === 'table');
-  const procs = model.nodes.filter(n => n.type === 'procedure');
-  const funcs = model.nodes.filter(n => n.type === 'function');
-
-  expect(views.length > 0, `Found ${views.length} views`).toBe(true);
-  expect(tables.length > 0, `Found ${tables.length} tables`).toBe(true);
-  expect(procs.length > 0, `Found ${procs.length} procedures`).toBe(true);
-  expect(funcs.length > 0, `Found ${funcs.length} functions`).toBe(true);
-
-  const viewIds = new Set(views.map(n => n.id));
-  const viewEdges = model.edges.filter(e => viewIds.has(e.target));
-  expect(viewEdges.length > 0, `Views have ${viewEdges.length} incoming edges (QueryDependencies works)`).toBe(true);
-
-  const viewsWithEdges = new Set(viewEdges.map(e => e.target));
-  const noTableViews = new Set(['[legacy].[vw_deprecated_report]']);
-  const viewsMissing = views.filter(v => !viewsWithEdges.has(v.id) && !noTableViews.has(v.fullName));
-  expect(viewsMissing.length === 0, viewsMissing.length === 0
-    ? 'All views with table refs are connected'
-    : `Disconnected views: ${viewsMissing.map(v => v.fullName).join(', ')}`).toBe(true);
-
-  const procIds = new Set(procs.map(n => n.id));
-  const procEdges = model.edges.filter(e => procIds.has(e.target));
-  expect(procEdges.length > 0, `Procedures have ${procEdges.length} incoming edges (BodyDependencies works)`).toBe(true);
-
-  const nodeIds = new Set(model.nodes.map(n => n.id));
-  const dangling = model.edges.filter(e => !nodeIds.has(e.source) || !nodeIds.has(e.target));
-  expect(dangling.length === 0, `No dangling edges (found ${dangling.length})`).toBe(true);
-}
-
-
-async function testImportErrorHandling() {
-  const JSZip = (await import('jszip')).default;
-
-  try {
-    await extractDacpac(new TextEncoder().encode('this is not a zip file'));
-    expect(false, 'Non-ZIP should throw').toBe(true);
-  } catch (err: unknown) {
-    const msg = (err as Error).message;
-    expect(msg.includes('Not a valid .dacpac file'), `Non-ZIP error is user-friendly: "${msg}"`).toBe(true);
-    expect(!msg.includes('https://'), 'No raw URL in error message').toBe(true);
+  /** Package metadata does not establish a deployment database identity. */
+  async function testDacpacDatabaseName() {
+    for (const metadata of [
+      SELF_DB_METADATA,
+      undefined,
+      '<DacType><Name>',
+      '<DacType><Version>1.0</Version></DacType>',
+    ] as const) {
+      const buffer = await buildThreePartDacpac(metadata);
+      expect(await extractSchemaPreview(buffer)).not.toHaveProperty(
+        'databaseName',
+      );
+      const model = await extractDacpac(buffer, undefined, undefined, {
+        externalRefsEnabled: true,
+      });
+      expect(model.nodes.some((node) => node.id === '[selfdb].[dbo].[x]')).toBe(
+        false,
+      );
+    }
   }
 
-  try {
-    await extractDacpac(new ArrayBuffer(0));
-    expect(false, 'Empty file should throw').toBe(true);
-  } catch (err: unknown) {
-    const msg = (err as Error).message;
-    expect(msg.includes('corrupted or truncated') || msg.includes('Not a valid'), `Empty file error is user-friendly: "${msg}"`).toBe(true);
+  /** A DACPAC foreign key keeps its ON DELETE action and a view column keeps a dotted bracketed name. */
+  async function testFkDeleteActionAndDottedColumns() {
+    const model = await loadAdventureWorksModel();
+    const detail = model.nodes.find(
+      (n) => n.id === '[sales].[salesorderdetail]',
+    );
+    const fk = detail?.fks?.find(
+      (f) => f.name === 'FK_SalesOrderDetail_SalesOrderHeader_SalesOrderID',
+    );
+    expect(fk?.onDelete, 'OnDeleteAction=1 maps to CASCADE').toBe('CASCADE');
+    const noAction = model.nodes
+      .flatMap((n) => n.fks ?? [])
+      .find(
+        (f) =>
+          f.name ===
+          'FK_SalesOrderDetail_SpecialOfferProduct_SpecialOfferIDProductID',
+      );
+    expect(
+      noAction?.onDelete,
+      'no OnDeleteAction property stays NO ACTION',
+    ).toBe('NO ACTION');
+
+    const candidate = model.nodes.find(
+      (n) => n.id === '[humanresources].[vjobcandidate]',
+    );
+    const names = candidate?.columns?.map((c) => c.name) ?? [];
+    expect(names, 'dotted column name is kept whole').toContain('Name.Prefix');
+    expect(names, 'dotted column name is not cut at the dot').not.toContain(
+      'Prefix',
+    );
   }
 
-  const zip = new JSZip();
-  zip.file('other.xml', '<root/>');
-  const noModelBuf = await zip.generateAsync({ type: 'arraybuffer' });
-  try {
-    await extractDacpac(noModelBuf);
-    expect(false, 'ZIP without model.xml should throw').toBe(true);
-  } catch (err: unknown) {
-    const msg = (err as Error).message;
-    expect(msg.includes('model.xml not found'), `Missing model.xml error: "${msg}"`).toBe(true);
+  async function testExtraction() {
+    const model = await loadAdventureWorksModel();
+
+    expect(
+      model.nodes.length > 0,
+      `Extracted ${model.nodes.length} nodes`,
+    ).toBe(true);
+    expect(
+      model.edges.length > 0,
+      `Extracted ${model.edges.length} edges`,
+    ).toBe(true);
+    expect(
+      model.schemas.length > 0,
+      `Found ${model.schemas.length} schemas`,
+    ).toBe(true);
+
+    expect(
+      model.edges.length,
+      'Edge count fell below the AdventureWorks floor',
+    ).toBeGreaterThanOrEqual(169);
+
+    for (const type of ['table', 'view', 'procedure', 'function'] as const) {
+      expect(
+        model.nodes.some((n) => n.type === type),
+        `Has ${type} nodes`,
+      ).toBe(true);
+    }
+
+    expect(
+      Object.keys(model.catalog).length >= model.nodes.length,
+      'Catalog populated',
+    ).toBe(true);
+    expect(
+      Object.keys(model.neighborIndex).length > 0,
+      'NeighborIndex populated',
+    ).toBe(true);
+
+    return model;
   }
 
-  const emptyZip = new JSZip();
-  emptyZip.file('model.xml', `<?xml version="1.0"?>
+  /** Pins the exact edge set the SQL-body parser derives for two AdventureWorks procedures. */
+  async function testNamedProcedureEdges() {
+    const model = await loadAdventureWorksModel();
+
+    const edgesFor = (procId: string): string[] =>
+      model.edges
+        .filter((e) => e.source === procId || e.target === procId)
+        .map((e) => `${e.source}|${e.type}|${e.target}`)
+        .sort();
+
+    expect(edgesFor('[ai].[spcleanorders]')).toEqual([
+      '[ai].[cleanedorders]|body|[ai].[spcleanorders]',
+      '[ai].[customermaster]|body|[ai].[spcleanorders]',
+      '[ai].[raworderimport]|body|[ai].[spcleanorders]',
+      '[ai].[spcleanorders]|body|[ai].[cleanedorders]',
+      '[ai].[spcleanorders]|body|[ai].[errorlog]',
+      '[ai].[spcleanorders]|exec|[ai].[splogaudit]',
+    ]);
+
+    expect(edgesFor('[humanresources].[uspupdateemployeehireinfo]')).toEqual([
+      '[humanresources].[uspupdateemployeehireinfo]|body|[humanresources].[employee]',
+      '[humanresources].[uspupdateemployeehireinfo]|body|[humanresources].[employeepayhistory]',
+      '[humanresources].[uspupdateemployeehireinfo]|exec|[dbo].[usplogerror]',
+    ]);
+  }
+
+  function testEdgeIntegrity(model: Awaited<ReturnType<typeof extractDacpac>>) {
+    const nodeIds = new Set(model.nodes.map((n) => n.id));
+
+    const danglingEdges = model.edges.filter(
+      (e) => !nodeIds.has(e.source) || !nodeIds.has(e.target),
+    );
+    expect(
+      danglingEdges.length === 0,
+      `No dangling edges (found ${danglingEdges.length})`,
+    ).toBe(true);
+
+    const selfLoops = model.edges.filter((e) => e.source === e.target);
+    expect(
+      selfLoops.length === 0,
+      `No self-loops (found ${selfLoops.length})`,
+    ).toBe(true);
+
+    const edgeKeys = model.edges.map((e) => `${e.source}→${e.target}`);
+    const uniqueEdges = new Set(edgeKeys);
+    expect(
+      uniqueEdges.size === edgeKeys.length,
+      `No duplicate edges (${edgeKeys.length} total, ${uniqueEdges.size} unique)`,
+    ).toBe(true);
+  }
+
+  async function testFabricDacpac() {
+    const fabricPath = testPath('AdventureWorks_sdk-style.dacpac');
+    const buffer = readFileSync(fabricPath);
+    const model = await extractDacpac(buffer);
+
+    const views = model.nodes.filter((n) => n.type === 'view');
+    const tables = model.nodes.filter((n) => n.type === 'table');
+    const procs = model.nodes.filter((n) => n.type === 'procedure');
+    const funcs = model.nodes.filter((n) => n.type === 'function');
+
+    expect(views.length > 0, `Found ${views.length} views`).toBe(true);
+    expect(tables.length > 0, `Found ${tables.length} tables`).toBe(true);
+    expect(procs.length > 0, `Found ${procs.length} procedures`).toBe(true);
+    expect(funcs.length > 0, `Found ${funcs.length} functions`).toBe(true);
+
+    const viewIds = new Set(views.map((n) => n.id));
+    const viewEdges = model.edges.filter((e) => viewIds.has(e.target));
+    expect(
+      viewEdges.length > 0,
+      `Views have ${viewEdges.length} incoming edges (QueryDependencies works)`,
+    ).toBe(true);
+
+    const viewsWithEdges = new Set(viewEdges.map((e) => e.target));
+    const noTableViews = new Set(['[legacy].[vw_deprecated_report]']);
+    const viewsMissing = views.filter(
+      (v) => !viewsWithEdges.has(v.id) && !noTableViews.has(v.fullName),
+    );
+    expect(
+      viewsMissing.length === 0,
+      viewsMissing.length === 0
+        ? 'All views with table refs are connected'
+        : `Disconnected views: ${viewsMissing.map((v) => v.fullName).join(', ')}`,
+    ).toBe(true);
+
+    const procIds = new Set(procs.map((n) => n.id));
+    const procEdges = model.edges.filter((e) => procIds.has(e.target));
+    expect(
+      procEdges.length > 0,
+      `Procedures have ${procEdges.length} incoming edges (BodyDependencies works)`,
+    ).toBe(true);
+
+    const nodeIds = new Set(model.nodes.map((n) => n.id));
+    const dangling = model.edges.filter(
+      (e) => !nodeIds.has(e.source) || !nodeIds.has(e.target),
+    );
+    expect(
+      dangling.length === 0,
+      `No dangling edges (found ${dangling.length})`,
+    ).toBe(true);
+  }
+
+  async function testImportErrorHandling() {
+    const JSZip = (await import('jszip')).default;
+
+    try {
+      await extractDacpac(new TextEncoder().encode('this is not a zip file'));
+      expect(false, 'Non-ZIP should throw').toBe(true);
+    } catch (err: unknown) {
+      const msg = (err as Error).message;
+      expect(
+        msg.includes('Not a valid .dacpac file'),
+        `Non-ZIP error is user-friendly: "${msg}"`,
+      ).toBe(true);
+      expect(!msg.includes('https://'), 'No raw URL in error message').toBe(
+        true,
+      );
+    }
+
+    try {
+      await extractDacpac(new ArrayBuffer(0));
+      expect(false, 'Empty file should throw').toBe(true);
+    } catch (err: unknown) {
+      const msg = (err as Error).message;
+      expect(
+        msg.includes('corrupted or truncated') || msg.includes('Not a valid'),
+        `Empty file error is user-friendly: "${msg}"`,
+      ).toBe(true);
+    }
+
+    const zip = new JSZip();
+    zip.file('other.xml', '<root/>');
+    const noModelBuf = await zip.generateAsync({ type: 'arraybuffer' });
+    try {
+      await extractDacpac(noModelBuf);
+      expect(false, 'ZIP without model.xml should throw').toBe(true);
+    } catch (err: unknown) {
+      const msg = (err as Error).message;
+      expect(
+        msg.includes('model.xml not found'),
+        `Missing model.xml error: "${msg}"`,
+      ).toBe(true);
+    }
+
+    const emptyZip = new JSZip();
+    emptyZip.file(
+      'model.xml',
+      `<?xml version="1.0"?>
     <DataSchemaModel>
       <Model>
         <Element Type="SqlDatabaseOptions" Name="Options"/>
       </Model>
-    </DataSchemaModel>`);
-  const emptyBuf = await emptyZip.generateAsync({ type: 'arraybuffer' });
-  const emptyModel = await extractDacpac(emptyBuf);
-  expect(emptyModel.nodes.length === 0, 'Empty dacpac has 0 nodes').toBe(true);
-  expect(emptyModel.warnings !== undefined && emptyModel.warnings.length > 0, 'Empty dacpac has warnings').toBe(true);
-  expect(emptyModel.warnings![0].includes('No tables, views, or stored procedures'), `Warning explains why: "${emptyModel.warnings![0]}"`).toBe(true);
+    </DataSchemaModel>`,
+    );
+    const emptyBuf = await emptyZip.generateAsync({ type: 'arraybuffer' });
+    const emptyModel = await extractDacpac(emptyBuf);
+    expect(emptyModel.nodes.length === 0, 'Empty dacpac has 0 nodes').toBe(
+      true,
+    );
+    expect(
+      emptyModel.warnings !== undefined && emptyModel.warnings.length > 0,
+      'Empty dacpac has warnings',
+    ).toBe(true);
+    expect(
+      emptyModel.warnings![0].includes(
+        'No tables, views, or stored procedures',
+      ),
+      `Warning explains why: "${emptyModel.warnings![0]}"`,
+    ).toBe(true);
 
-  const model = await loadAdventureWorksModel();
-  expect(model.warnings === undefined, 'Successful extraction has no warnings').toBe(true);
-}
-
-
-async function testConstraints() {
-  const model = await loadAdventureWorksModel();
-
-  const employee = model.nodes.find(n => n.schema === 'HumanResources' && n.name === 'Employee');
-  expect(!!employee, 'HumanResources.Employee node found').toBe(true);
-  expect((employee?.fks?.length ?? 0) > 0, 'Employee has FK constraints').toBe(true);
-  expect(employee!.fks!.some(fk => fk.name === 'FK_Employee_Person_BusinessEntityID'), 'Employee has FK_Employee_Person_BusinessEntityID').toBe(true);
-  expect(employee!.fks!.some(fk => fk.refTable === 'Person'), 'FK references Person table').toBe(true);
-  expect(employee!.columns!.some(c => c.check !== undefined && c.check !== ''), 'Employee has CK flag on a column').toBe(true);
-
-  const document = model.nodes.find(n => n.schema === 'Production' && n.name === 'Document');
-  expect(!!document, 'Production.Document node found').toBe(true);
-  expect(document!.columns!.some(c => c.unique !== undefined && c.unique !== ''), 'Document has UQ flag on a column').toBe(true);
-
-  const noFkTable = model.nodes.find(n => n.type === 'table' && n.fks !== undefined && n.fks.length === 0);
-  expect(!!noFkTable, 'Table with no FKs has empty fks array').toBe(true);
-
-  const buffer2 = readFileSync(testPath('AdventureWorks2025_AI.dacpac'));
-  const { elements } = await extractSchemaPreview(buffer2);
-  const filteredModel = extractDacpacFiltered(elements, new Set(['HumanResources', 'Person']));
-  const empFiltered = filteredModel.nodes.find(n => n.schema === 'HumanResources' && n.name === 'Employee');
-  expect(!!empFiltered, 'Phase 2: HumanResources.Employee found after schema filter').toBe(true);
-  expect((empFiltered?.fks?.length ?? 0) > 0, 'Phase 2: Employee has FK constraints (not dropped by filter)').toBe(true);
-  const addrFiltered = filteredModel.nodes.find(n => n.schema === 'Person' && n.name === 'Address');
-  expect(!!addrFiltered, 'Phase 2: Person.Address found after schema filter').toBe(true);
-  expect((addrFiltered?.fks?.length ?? 0) > 0, 'Phase 2: Person.Address has FK constraints (not dropped by filter)').toBe(true);
-
-  const fabricPath = testPath('AdventureWorks_sdk-style.dacpac');
-  const fabricBuf = readFileSync(fabricPath);
-  const fabricModel = await extractDacpac(fabricBuf);
-  const fabricTable = fabricModel.nodes.find(n => n.type === 'table');
-  expect(!!fabricTable, 'SDK-style dacpac has at least one table').toBe(true);
-  expect(fabricTable?.columns !== undefined, 'SDK-style table has columns').toBe(true);
-}
-
-
-function testParseDspPlatform() {
-
-  expect(parseDspPlatform(''), 'Empty string returns empty').toBe('');
-
-  expect(parseDspPlatform('Microsoft.Data.Tools.Schema.Sql.SqlDwUnifiedDatabaseSchemaProvider'), 'SqlDwUnified → Fabric Data Warehouse').toBe('Fabric Data Warehouse');
-  expect(parseDspPlatform('Microsoft.Data.Tools.Schema.Sql.SqlDbFabricDatabaseSchemaProvider'), 'SqlDbFabric → SQL Database in Fabric').toBe('SQL Database in Fabric');
-  expect(parseDspPlatform('Microsoft.Data.Tools.Schema.Sql.SqlDwDatabaseSchemaProvider'), 'SqlDwDatabase → Synapse Dedicated Pool').toBe('Synapse Dedicated Pool');
-  expect(parseDspPlatform('Microsoft.Data.Tools.Schema.Sql.SqlManagedInstanceDatabaseSchemaProvider'), 'SqlManagedInstance → Azure SQL Managed Instance').toBe('Azure SQL Managed Instance');
-  expect(parseDspPlatform('Microsoft.Data.Tools.Schema.Sql.SqlHyperscaleDatabaseSchemaProvider'), 'SqlHyperscale → Azure SQL Hyperscale').toBe('Azure SQL Hyperscale');
-  expect(parseDspPlatform('Microsoft.Data.Tools.Schema.Sql.SqlAzureV12DatabaseSchemaProvider'), 'SqlAzureV12 → Azure SQL Database').toBe('Azure SQL Database');
-
-  const onPremCases: [string, string][] = [
-    ['Microsoft.Data.Tools.Schema.Sql.Sql170DatabaseSchemaProvider', 'SQL Server 2025'],
-    ['Microsoft.Data.Tools.Schema.Sql.Sql130DatabaseSchemaProvider', 'SQL Server 2016'],
-    ['Microsoft.Data.Tools.Schema.Sql.Sql80DatabaseSchemaProvider',  'SQL Server 2000'],
-  ];
-  for (const [dsp, expected] of onPremCases) {
-    expect(parseDspPlatform(dsp), `${dsp.split('.').pop()} → ${expected}`).toBe(expected);
+    const model = await loadAdventureWorksModel();
+    expect(
+      model.warnings === undefined,
+      'Successful extraction has no warnings',
+    ).toBe(true);
   }
 
-  expect(parseDspPlatform('SqlAzureV12DatabaseSchemaProvider'), 'Bare SqlAzureV12 still matches').toBe('Azure SQL Database');
+  async function testConstraints() {
+    const model = await loadAdventureWorksModel();
 
-  expect(parseDspPlatform('Vendor.MyTool.Schema.SqlFutureDatabaseSchemaProvider'), 'Unknown provider: extract readable part before DatabaseSchemaProvider').toBe('SqlFuture');
+    const employee = model.nodes.find(
+      (n) => n.schema === 'HumanResources' && n.name === 'Employee',
+    );
+    expect(!!employee, 'HumanResources.Employee node found').toBe(true);
+    expect(
+      (employee?.fks?.length ?? 0) > 0,
+      'Employee has FK constraints',
+    ).toBe(true);
+    expect(
+      employee!.fks!.some(
+        (fk) => fk.name === 'FK_Employee_Person_BusinessEntityID',
+      ),
+      'Employee has FK_Employee_Person_BusinessEntityID',
+    ).toBe(true);
+    expect(
+      employee!.fks!.some((fk) => fk.refTable === 'Person'),
+      'FK references Person table',
+    ).toBe(true);
+    expect(
+      employee!.columns!.some((c) => c.check !== undefined && c.check !== ''),
+      'Employee has CK flag on a column',
+    ).toBe(true);
 
-  expect(parseDspPlatform('some-unknown-provider'), 'Completely unknown: return raw string').toBe('some-unknown-provider');
-}
+    const document = model.nodes.find(
+      (n) => n.schema === 'Production' && n.name === 'Document',
+    );
+    expect(!!document, 'Production.Document node found').toBe(true);
+    expect(
+      document!.columns!.some((c) => c.unique !== undefined && c.unique !== ''),
+      'Document has UQ flag on a column',
+    ).toBe(true);
 
+    const noFkTable = model.nodes.find(
+      (n) => n.type === 'table' && n.fks !== undefined && n.fks.length === 0,
+    );
+    expect(!!noFkTable, 'Table with no FKs has empty fks array').toBe(true);
 
-async function testDbPlatformInModel() {
+    const buffer2 = readFileSync(testPath('AdventureWorks2025_AI.dacpac'));
+    const { elements } = await extractSchemaPreview(buffer2);
+    const filteredModel = extractDacpacFiltered(
+      elements,
+      new Set(['HumanResources', 'Person']),
+    );
+    const empFiltered = filteredModel.nodes.find(
+      (n) => n.schema === 'HumanResources' && n.name === 'Employee',
+    );
+    expect(
+      !!empFiltered,
+      'Phase 2: HumanResources.Employee found after schema filter',
+    ).toBe(true);
+    expect(
+      (empFiltered?.fks?.length ?? 0) > 0,
+      'Phase 2: Employee has FK constraints (not dropped by filter)',
+    ).toBe(true);
+    const addrFiltered = filteredModel.nodes.find(
+      (n) => n.schema === 'Person' && n.name === 'Address',
+    );
+    expect(
+      !!addrFiltered,
+      'Phase 2: Person.Address found after schema filter',
+    ).toBe(true);
+    expect(
+      (addrFiltered?.fks?.length ?? 0) > 0,
+      'Phase 2: Person.Address has FK constraints (not dropped by filter)',
+    ).toBe(true);
 
-  const awModel = await loadAdventureWorksModel();
-  expect(awModel.dbPlatform, 'AdventureWorks dacpac: dbPlatform = SQL Server 2025').toBe('SQL Server 2025');
-
-  const fabricBuf = readFileSync(testPath('AdventureWorks_sdk-style.dacpac'));
-  const fabricModel = await extractDacpac(fabricBuf);
-  expect(fabricModel.dbPlatform, 'SDK-style dacpac: dbPlatform = Fabric Data Warehouse').toBe('Fabric Data Warehouse');
-
-  const awBuf = readFileSync(testPath('AdventureWorks2025_AI.dacpac'));
-  const { elements, dspName } = await extractSchemaPreview(awBuf);
-  expect(dspName.includes('Sql170'), `Phase 1 dspName contains Sql170 (got: "${dspName}")`).toBe(true);
-  const filteredModel = extractDacpacFiltered(elements, new Set(['HumanResources', 'Person']), dspName);
-  expect(filteredModel.dbPlatform, 'Phase 2 filtered model: dbPlatform preserved from dspName').toBe('SQL Server 2025');
-
-  const filteredNoPlat = extractDacpacFiltered(elements, new Set(['HumanResources']));
-  expect(filteredNoPlat.dbPlatform === undefined || filteredNoPlat.dbPlatform === '',
-    'Phase 2 without dspName: dbPlatform absent').toBe(true);
-
-  expect(awModel.source, 'Full dacpac extract: source = dacpac').toBe('dacpac');
-  expect(fabricModel.source, 'SDK-style dacpac: source = dacpac').toBe('dacpac');
-  expect(filteredModel.source, 'Phase 2 filtered dacpac: source = dacpac').toBe('dacpac');
-  expect(filteredNoPlat.source,
-    'Phase 2 dacpac without platform: source still dacpac, not inferred from dbPlatform').toBe('dacpac');
-}
-
-
-async function testPkOrdinalInModel() {
-  const model = await loadAdventureWorksModel();
-
-  const employee = model.nodes.find(n => n.schema === 'HumanResources' && n.name === 'Employee');
-  expect(employee !== undefined, 'HumanResources.Employee found').toBe(true);
-  const beid = employee!.columns?.find(c => c.name === 'BusinessEntityID');
-  expect(beid !== undefined, 'BusinessEntityID column found').toBe(true);
-  expect(beid!.pkOrdinal, 'BusinessEntityID: pkOrdinal = 1 (single PK)').toBe(1);
-
-  const natId = employee!.columns?.find(c => c.name === 'NationalIDNumber');
-  expect(natId !== undefined, 'NationalIDNumber column found').toBe(true);
-  expect(natId!.pkOrdinal === undefined, 'NationalIDNumber: no pkOrdinal (not a PK column)').toBe(true);
-
-  const compositePkTable = model.nodes.find(n =>
-    n.type === 'table' &&
-    n.columns !== undefined &&
-    n.columns.filter(c => c.pkOrdinal !== undefined).length >= 2,
-  );
-  expect(compositePkTable !== undefined, 'At least one table with composite PK found').toBe(true);
-  const pkCols = compositePkTable!.columns!.filter(c => c.pkOrdinal !== undefined);
-  const ordinals = pkCols.map(c => c.pkOrdinal!).sort((a, b) => a - b);
-  expect(ordinals[0], `Composite PK: first ordinal is 1 (table: ${compositePkTable!.name})`).toBe(1);
-  expect(ordinals[1], `Composite PK: second ordinal is 2 (table: ${compositePkTable!.name})`).toBe(2);
-  expect(ordinals.every((v, i) => v === i + 1), 'Composite PK: ordinals are 1-based and sequential').toBe(true);
-
-  const anyView = model.nodes.find(n => n.type === 'view' && n.columns !== undefined);
-  if (anyView) {
-    const viewPkCols = anyView.columns!.filter(c => c.pkOrdinal !== undefined);
-    expect(viewPkCols.length, `View ${anyView.name}: no pkOrdinal columns (views have no PK)`).toBe(0);
+    const fabricPath = testPath('AdventureWorks_sdk-style.dacpac');
+    const fabricBuf = readFileSync(fabricPath);
+    const fabricModel = await extractDacpac(fabricBuf);
+    const fabricTable = fabricModel.nodes.find((n) => n.type === 'table');
+    expect(!!fabricTable, 'SDK-style dacpac has at least one table').toBe(true);
+    expect(
+      fabricTable?.columns !== undefined,
+      'SDK-style table has columns',
+    ).toBe(true);
   }
 
-  const anyProc = model.nodes.find(n => n.type === 'procedure');
-  expect(anyProc !== undefined, 'At least one procedure found').toBe(true);
-  const procPkCols = anyProc!.columns?.filter(c => c.pkOrdinal !== undefined) ?? [];
-  expect(procPkCols.length, 'Procedure: no pkOrdinal columns').toBe(0);
-}
+  function testParseDspPlatform() {
+    expect(parseDspPlatform(''), 'Empty string returns empty').toBe('');
 
+    expect(
+      parseDspPlatform(
+        'Microsoft.Data.Tools.Schema.Sql.SqlDwUnifiedDatabaseSchemaProvider',
+      ),
+      'SqlDwUnified → Fabric Data Warehouse',
+    ).toBe('Fabric Data Warehouse');
+    expect(
+      parseDspPlatform(
+        'Microsoft.Data.Tools.Schema.Sql.SqlDbFabricDatabaseSchemaProvider',
+      ),
+      'SqlDbFabric → SQL Database in Fabric',
+    ).toBe('SQL Database in Fabric');
+    expect(
+      parseDspPlatform(
+        'Microsoft.Data.Tools.Schema.Sql.SqlDwDatabaseSchemaProvider',
+      ),
+      'SqlDwDatabase → Synapse Dedicated Pool',
+    ).toBe('Synapse Dedicated Pool');
+    expect(
+      parseDspPlatform(
+        'Microsoft.Data.Tools.Schema.Sql.SqlManagedInstanceDatabaseSchemaProvider',
+      ),
+      'SqlManagedInstance → Azure SQL Managed Instance',
+    ).toBe('Azure SQL Managed Instance');
+    expect(
+      parseDspPlatform(
+        'Microsoft.Data.Tools.Schema.Sql.SqlHyperscaleDatabaseSchemaProvider',
+      ),
+      'SqlHyperscale → Azure SQL Hyperscale',
+    ).toBe('Azure SQL Hyperscale');
+    expect(
+      parseDspPlatform(
+        'Microsoft.Data.Tools.Schema.Sql.SqlAzureV12DatabaseSchemaProvider',
+      ),
+      'SqlAzureV12 → Azure SQL Database',
+    ).toBe('Azure SQL Database');
 
-async function testPhase1Phase2Bridge() {
+    const onPremCases: [string, string][] = [
+      [
+        'Microsoft.Data.Tools.Schema.Sql.Sql170DatabaseSchemaProvider',
+        'SQL Server 2025',
+      ],
+      [
+        'Microsoft.Data.Tools.Schema.Sql.Sql130DatabaseSchemaProvider',
+        'SQL Server 2016',
+      ],
+      [
+        'Microsoft.Data.Tools.Schema.Sql.Sql80DatabaseSchemaProvider',
+        'SQL Server 2000',
+      ],
+    ];
+    for (const [dsp, expected] of onPremCases) {
+      expect(
+        parseDspPlatform(dsp),
+        `${dsp.split('.').pop()} → ${expected}`,
+      ).toBe(expected);
+    }
 
-  const buf = readFileSync(testPath('AdventureWorks2025_AI.dacpac'));
-  const { preview, elements, dspName } = await extractSchemaPreview(buf);
+    expect(
+      parseDspPlatform('SqlAzureV12DatabaseSchemaProvider'),
+      'Bare SqlAzureV12 still matches',
+    ).toBe('Azure SQL Database');
 
-  expect(preview.schemas.length > 0, 'Phase 1: schemas list populated').toBe(true);
-  expect(preview.totalObjects > 0, 'Phase 1: totalObjects > 0').toBe(true);
-  expect(typeof dspName === 'string' && dspName.length > 0, 'Phase 1: dspName is non-empty string').toBe(true);
+    expect(
+      parseDspPlatform('Vendor.MyTool.Schema.SqlFutureDatabaseSchemaProvider'),
+      'Unknown provider: extract readable part before DatabaseSchemaProvider',
+    ).toBe('SqlFuture');
 
-  expect(Array.isArray(elements) && elements.length > 0, 'Phase 1: elements array non-empty (bridge cache)').toBe(true);
+    expect(
+      parseDspPlatform('some-unknown-provider'),
+      'Completely unknown: return raw string',
+    ).toBe('some-unknown-provider');
+  }
 
-  const allSchemas = new Set(preview.schemas.map(s => s.name));
-  const phase2Model = extractDacpacFiltered(elements, allSchemas, dspName, undefined, undefined);
-  const fullModel = await loadAdventureWorksModel();
+  async function testDbPlatformInModel() {
+    const awModel = await loadAdventureWorksModel();
+    expect(
+      awModel.dbPlatform,
+      'AdventureWorks dacpac: dbPlatform = SQL Server 2025',
+    ).toBe('SQL Server 2025');
 
-  expect(phase2Model.nodes.length,
-    `Phase 2 with all schemas: same node count as full extract (${fullModel.nodes.length})`).toBe(fullModel.nodes.length);
-  expect(phase2Model.edges.length,
-    `Phase 2 with all schemas: same edge count as full extract (${fullModel.edges.length})`).toBe(fullModel.edges.length);
-  expect(phase2Model.dbPlatform,
-    'Phase 2: dbPlatform matches full extract').toBe(fullModel.dbPlatform);
+    const fabricBuf = readFileSync(testPath('AdventureWorks_sdk-style.dacpac'));
+    const fabricModel = await extractDacpac(fabricBuf);
+    expect(
+      fabricModel.dbPlatform,
+      'SDK-style dacpac: dbPlatform = Fabric Data Warehouse',
+    ).toBe('Fabric Data Warehouse');
 
-  const hrOnly = extractDacpacFiltered(elements, new Set(['HumanResources']), dspName, undefined, undefined);
-  expect(hrOnly.nodes.length < fullModel.nodes.length,
-    'Phase 2 schema subset: fewer nodes than full model').toBe(true);
-  expect(hrOnly.nodes.every(n => n.schema === 'HumanResources' || n.externalType !== undefined),
-    'Phase 2 schema subset: only HumanResources nodes (+ virtual externals)').toBe(true);
-  expect(hrOnly.dbPlatform,
-    'Phase 2 schema subset: dbPlatform still set from dspName').toBe('SQL Server 2025');
+    const awBuf = readFileSync(testPath('AdventureWorks2025_AI.dacpac'));
+    const { elements, dspName } = await extractSchemaPreview(awBuf);
+    expect(
+      dspName.includes('Sql170'),
+      `Phase 1 dspName contains Sql170 (got: "${dspName}")`,
+    ).toBe(true);
+    const filteredModel = extractDacpacFiltered(
+      elements,
+      new Set(['HumanResources', 'Person']),
+      dspName,
+    );
+    expect(
+      filteredModel.dbPlatform,
+      'Phase 2 filtered model: dbPlatform preserved from dspName',
+    ).toBe('SQL Server 2025');
 
-  const emptyModel = extractDacpacFiltered(elements, new Set(), dspName);
-  expect(emptyModel.nodes.length, 'Phase 2 empty schema set: 0 nodes (no crash)').toBe(0);
-}
+    const filteredNoPlat = extractDacpacFiltered(
+      elements,
+      new Set(['HumanResources']),
+    );
+    expect(
+      filteredNoPlat.dbPlatform === undefined ||
+        filteredNoPlat.dbPlatform === '',
+      'Phase 2 without dspName: dbPlatform absent',
+    ).toBe(true);
 
+    expect(awModel.source, 'Full dacpac extract: source = dacpac').toBe(
+      'dacpac',
+    );
+    expect(fabricModel.source, 'SDK-style dacpac: source = dacpac').toBe(
+      'dacpac',
+    );
+    expect(
+      filteredModel.source,
+      'Phase 2 filtered dacpac: source = dacpac',
+    ).toBe('dacpac');
+    expect(
+      filteredNoPlat.source,
+      'Phase 2 dacpac without platform: source still dacpac, not inferred from dbPlatform',
+    ).toBe('dacpac');
+  }
 
-/** Builds an in-memory dacpac whose single table exercises entity-encoded names, `IsMax` types and a `sys`-qualified CLR type. */
-async function makeNameAndTypeDacpac(): Promise<Uint8Array> {
-  const JSZip = (await import('jszip')).default;
-  const zip = new JSZip();
-  const column = (name: string, type: string, props = '') => `
+  async function testPkOrdinalInModel() {
+    const model = await loadAdventureWorksModel();
+
+    const employee = model.nodes.find(
+      (n) => n.schema === 'HumanResources' && n.name === 'Employee',
+    );
+    expect(employee !== undefined, 'HumanResources.Employee found').toBe(true);
+    const beid = employee!.columns?.find((c) => c.name === 'BusinessEntityID');
+    expect(beid !== undefined, 'BusinessEntityID column found').toBe(true);
+    expect(beid!.pkOrdinal, 'BusinessEntityID: pkOrdinal = 1 (single PK)').toBe(
+      1,
+    );
+
+    const natId = employee!.columns?.find((c) => c.name === 'NationalIDNumber');
+    expect(natId !== undefined, 'NationalIDNumber column found').toBe(true);
+    expect(
+      natId!.pkOrdinal === undefined,
+      'NationalIDNumber: no pkOrdinal (not a PK column)',
+    ).toBe(true);
+
+    const compositePkTable = model.nodes.find(
+      (n) =>
+        n.type === 'table' &&
+        n.columns !== undefined &&
+        n.columns.filter((c) => c.pkOrdinal !== undefined).length >= 2,
+    );
+    expect(
+      compositePkTable !== undefined,
+      'At least one table with composite PK found',
+    ).toBe(true);
+    const pkCols = compositePkTable!.columns!.filter(
+      (c) => c.pkOrdinal !== undefined,
+    );
+    const ordinals = pkCols.map((c) => c.pkOrdinal!).sort((a, b) => a - b);
+    expect(
+      ordinals[0],
+      `Composite PK: first ordinal is 1 (table: ${compositePkTable!.name})`,
+    ).toBe(1);
+    expect(
+      ordinals[1],
+      `Composite PK: second ordinal is 2 (table: ${compositePkTable!.name})`,
+    ).toBe(2);
+    expect(
+      ordinals.every((v, i) => v === i + 1),
+      'Composite PK: ordinals are 1-based and sequential',
+    ).toBe(true);
+
+    const anyView = model.nodes.find(
+      (n) => n.type === 'view' && n.columns !== undefined,
+    );
+    if (anyView) {
+      const viewPkCols = anyView.columns!.filter(
+        (c) => c.pkOrdinal !== undefined,
+      );
+      expect(
+        viewPkCols.length,
+        `View ${anyView.name}: no pkOrdinal columns (views have no PK)`,
+      ).toBe(0);
+    }
+
+    const anyProc = model.nodes.find((n) => n.type === 'procedure');
+    expect(anyProc !== undefined, 'At least one procedure found').toBe(true);
+    const procPkCols =
+      anyProc!.columns?.filter((c) => c.pkOrdinal !== undefined) ?? [];
+    expect(procPkCols.length, 'Procedure: no pkOrdinal columns').toBe(0);
+  }
+
+  async function testPhase1Phase2Bridge() {
+    const buf = readFileSync(testPath('AdventureWorks2025_AI.dacpac'));
+    const { preview, elements, dspName } = await extractSchemaPreview(buf);
+
+    expect(preview.schemas.length > 0, 'Phase 1: schemas list populated').toBe(
+      true,
+    );
+    expect(preview.totalObjects > 0, 'Phase 1: totalObjects > 0').toBe(true);
+    expect(
+      typeof dspName === 'string' && dspName.length > 0,
+      'Phase 1: dspName is non-empty string',
+    ).toBe(true);
+
+    expect(
+      Array.isArray(elements) && elements.length > 0,
+      'Phase 1: elements array non-empty (bridge cache)',
+    ).toBe(true);
+
+    const allSchemas = new Set(preview.schemas.map((s) => s.name));
+    const phase2Model = extractDacpacFiltered(
+      elements,
+      allSchemas,
+      dspName,
+      undefined,
+      undefined,
+    );
+    const fullModel = await loadAdventureWorksModel();
+
+    expect(
+      phase2Model.nodes.length,
+      `Phase 2 with all schemas: same node count as full extract (${fullModel.nodes.length})`,
+    ).toBe(fullModel.nodes.length);
+    expect(
+      phase2Model.edges.length,
+      `Phase 2 with all schemas: same edge count as full extract (${fullModel.edges.length})`,
+    ).toBe(fullModel.edges.length);
+    expect(
+      phase2Model.dbPlatform,
+      'Phase 2: dbPlatform matches full extract',
+    ).toBe(fullModel.dbPlatform);
+
+    const hrOnly = extractDacpacFiltered(
+      elements,
+      new Set(['HumanResources']),
+      dspName,
+      undefined,
+      undefined,
+    );
+    expect(
+      hrOnly.nodes.length < fullModel.nodes.length,
+      'Phase 2 schema subset: fewer nodes than full model',
+    ).toBe(true);
+    expect(
+      hrOnly.nodes.every(
+        (n) => n.schema === 'HumanResources' || n.externalType !== undefined,
+      ),
+      'Phase 2 schema subset: only HumanResources nodes (+ virtual externals)',
+    ).toBe(true);
+    expect(
+      hrOnly.dbPlatform,
+      'Phase 2 schema subset: dbPlatform still set from dspName',
+    ).toBe('SQL Server 2025');
+
+    const emptyModel = extractDacpacFiltered(elements, new Set(), dspName);
+    expect(
+      emptyModel.nodes.length,
+      'Phase 2 empty schema set: 0 nodes (no crash)',
+    ).toBe(0);
+  }
+
+  /** Builds an in-memory dacpac whose single table exercises entity-encoded names, `IsMax` types and a `sys`-qualified CLR type. */
+  async function makeNameAndTypeDacpac(): Promise<Uint8Array> {
+    const JSZip = (await import('jszip')).default;
+    const zip = new JSZip();
+    const column = (name: string, type: string, props = '') => `
         <Entry><Element Type="SqlSimpleColumn" Name="[my schema].[r&amp;d &lt;t&gt;].[${name}]">
           <Relationship Name="TypeSpecifier"><Entry><Element Type="SqlTypeSpecifier">${props}
             <Relationship Name="Type"><Entry><References ExternalSource="BuiltIns" Name="${type}" /></Entry></Relationship>
           </Element></Entry></Relationship>
         </Element></Entry>`;
-  zip.file('model.xml', `<?xml version="1.0"?>
+    zip.file(
+      'model.xml',
+      `<?xml version="1.0"?>
     <DataSchemaModel DspName="Microsoft.Data.Tools.Schema.Sql.Sql160DatabaseSchemaProvider">
       <Model>
         <Element Type="SqlTable" Name="[my schema].[r&amp;d &lt;t&gt;]">
@@ -382,98 +680,173 @@ async function makeNameAndTypeDacpac(): Promise<Uint8Array> {
           </Relationship>
         </Element>
       </Model>
-    </DataSchemaModel>`);
-  return zip.generateAsync({ type: 'uint8array' });
-}
+    </DataSchemaModel>`,
+    );
+    return zip.generateAsync({ type: 'uint8array' });
+  }
 
-async function testNamesAndTypesRoundTrip() {
-  const model = await extractDacpac(await makeNameAndTypeDacpac());
-  const table = model.nodes.find(n => n.type === 'table');
-  expect(table?.name, 'XML entities in an object name are decoded').toBe('r&d <t>');
-  expect(table?.schema).toBe('my schema');
-  const byName = new Map((table?.columns ?? []).map(c => [c.name, c.type]));
-  expect([...byName.keys()], 'XML entities in a column name are decoded').toContain('say "hi"');
-  expect(byName.get('vc'), 'IsMax keeps (max) on varchar').toBe('varchar(max)');
-  expect(byName.get('nv'), 'IsMax keeps (max) on nvarchar').toBe('nvarchar(max)');
-  expect(byName.get('vb'), 'IsMax keeps (max) on varbinary').toBe('varbinary(max)');
-  expect(byName.get('n50'), 'a declared length is untouched').toBe('nvarchar(50)');
-  expect(byName.get('g'), 'a sys-qualified CLR type reads as its bare name').toBe('geography');
-  expect([...byName.keys()], 'a forbidden or out-of-range code point decodes to U+FFFD, never a RangeError')
-    .toContain('bad\uFFFDx\uFFFDy\uFFFDz\uFFFD');
-}
+  async function testNamesAndTypesRoundTrip() {
+    const model = await extractDacpac(await makeNameAndTypeDacpac());
+    const table = model.nodes.find((n) => n.type === 'table');
+    expect(table?.name, 'XML entities in an object name are decoded').toBe(
+      'r&d <t>',
+    );
+    expect(table?.schema).toBe('my schema');
+    const byName = new Map((table?.columns ?? []).map((c) => [c.name, c.type]));
+    expect(
+      [...byName.keys()],
+      'XML entities in a column name are decoded',
+    ).toContain('say "hi"');
+    expect(byName.get('vc'), 'IsMax keeps (max) on varchar').toBe(
+      'varchar(max)',
+    );
+    expect(byName.get('nv'), 'IsMax keeps (max) on nvarchar').toBe(
+      'nvarchar(max)',
+    );
+    expect(byName.get('vb'), 'IsMax keeps (max) on varbinary').toBe(
+      'varbinary(max)',
+    );
+    expect(byName.get('n50'), 'a declared length is untouched').toBe(
+      'nvarchar(50)',
+    );
+    expect(
+      byName.get('g'),
+      'a sys-qualified CLR type reads as its bare name',
+    ).toBe('geography');
+    expect(
+      [...byName.keys()],
+      'a forbidden or out-of-range code point decodes to U+FFFD, never a RangeError',
+    ).toContain('bad\uFFFDx\uFFFDy\uFFFDz\uFFFD');
+  }
 
+  async function testDacpacExtractionOptions() {
+    const buffer = await makeExternalRefDacpac();
 
-async function testDacpacExtractionOptions() {
-  const buffer = await makeExternalRefDacpac();
+    const enabled = await extractDacpac(buffer, undefined, undefined, {
+      externalRefsEnabled: true,
+    });
+    expect(
+      enabled.nodes.some(
+        (n) => n.type === 'external' && n.externalType === 'file',
+      ),
+      'Full extract: externalRefsEnabled=true creates virtual file node',
+    ).toBe(true);
 
-  const enabled = await extractDacpac(buffer, undefined, undefined, { externalRefsEnabled: true });
-  expect(enabled.nodes.some(n => n.type === 'external' && n.externalType === 'file'),
-    'Full extract: externalRefsEnabled=true creates virtual file node').toBe(true);
+    const disabled = await extractDacpac(buffer, undefined, undefined, {
+      externalRefsEnabled: false,
+    });
+    expect(
+      !disabled.nodes.some(
+        (n) => n.type === 'external' && n.externalType === 'file',
+      ),
+      'Full extract: externalRefsEnabled=false suppresses virtual file node',
+    ).toBe(true);
 
-  const disabled = await extractDacpac(buffer, undefined, undefined, { externalRefsEnabled: false });
-  expect(!disabled.nodes.some(n => n.type === 'external' && n.externalType === 'file'),
-    'Full extract: externalRefsEnabled=false suppresses virtual file node').toBe(true);
+    const { elements, dspName } = await extractSchemaPreview(buffer);
+    const filteredEnabled = extractDacpacFiltered(
+      elements,
+      new Set(['dbo']),
+      dspName,
+      undefined,
+      undefined,
+      {
+        externalRefsEnabled: true,
+      },
+    );
+    expect(
+      filteredEnabled.nodes.some(
+        (n) => n.type === 'external' && n.externalType === 'file',
+      ),
+      'Filtered extract: externalRefsEnabled=true creates virtual file node',
+    ).toBe(true);
 
-  const { elements, dspName } = await extractSchemaPreview(buffer);
-  const filteredEnabled = extractDacpacFiltered(elements, new Set(['dbo']), dspName, undefined, undefined, {
-    externalRefsEnabled: true,
-  });
-  expect(filteredEnabled.nodes.some(n => n.type === 'external' && n.externalType === 'file'),
-    'Filtered extract: externalRefsEnabled=true creates virtual file node').toBe(true);
+    const filteredDisabled = extractDacpacFiltered(
+      elements,
+      new Set(['dbo']),
+      dspName,
+      undefined,
+      undefined,
+      {
+        externalRefsEnabled: false,
+      },
+    );
+    expect(
+      !filteredDisabled.nodes.some(
+        (n) => n.type === 'external' && n.externalType === 'file',
+      ),
+      'Filtered extract: externalRefsEnabled=false suppresses virtual file node',
+    ).toBe(true);
+  }
 
-  const filteredDisabled = extractDacpacFiltered(elements, new Set(['dbo']), dspName, undefined, undefined, {
-    externalRefsEnabled: false,
-  });
-  expect(!filteredDisabled.nodes.some(n => n.type === 'external' && n.externalType === 'file'),
-    'Filtered extract: externalRefsEnabled=false suppresses virtual file node').toBe(true);
-}
+  /** Covers the `allObjects`-defined branch of `buildModel` — `buildCatalog(allObjects ?? objects)` and `buildFullCatalog(allObjects)`. */
+  async function testCrossSchemaCatalogUnderFilter() {
+    const buf = readFileSync(testPath('AdventureWorks2025_AI.dacpac'));
+    const { elements } = await extractSchemaPreview(buf);
+    const model = extractDacpacFiltered(elements, new Set(['HumanResources']));
 
+    expect(model.nodes.length > 0, 'Filtered model has nodes').toBe(true);
+    expect(
+      model.nodes.every((n) => n.schema === 'HumanResources'),
+      'Only HumanResources nodes rendered',
+    ).toBe(true);
 
-/** Covers the `allObjects`-defined branch of `buildModel` — `buildCatalog(allObjects ?? objects)` and `buildFullCatalog(allObjects)`. */
-async function testCrossSchemaCatalogUnderFilter() {
+    const renderedIds = new Set(model.nodes.map((n) => n.id));
+    const outOfFilter = Object.entries(model.catalog).filter(
+      ([id]) => !renderedIds.has(id),
+    );
+    expect(
+      outOfFilter.length > 0,
+      `Catalog retains objects outside the filter (got ${outOfFilter.length})`,
+    ).toBe(true);
 
-  const buf = readFileSync(testPath('AdventureWorks2025_AI.dacpac'));
-  const { elements } = await extractSchemaPreview(buf);
-  const model = extractDacpacFiltered(elements, new Set(['HumanResources']));
+    const [, sampleEntry] = outOfFilter[0];
+    expect(
+      typeof sampleEntry.schema === 'string' && sampleEntry.schema.length > 0,
+      `Out-of-filter catalog entry has a schema (got: ${JSON.stringify(sampleEntry.schema)})`,
+    ).toBe(true);
+    expect(
+      typeof sampleEntry.name === 'string' && sampleEntry.name.length > 0,
+      `Out-of-filter catalog entry has a name (got: ${JSON.stringify(sampleEntry.name)})`,
+    ).toBe(true);
+    expect(
+      ['table', 'view', 'procedure', 'function', 'external'].includes(
+        sampleEntry.type,
+      ),
+      `Out-of-filter catalog entry has a valid type (got: ${sampleEntry.type})`,
+    ).toBe(true);
+    expect(
+      outOfFilter.some(([, e]) => e.schema !== e.schema.toLowerCase()),
+      'At least one out-of-filter entry preserves mixed-case schema/name from the catalog',
+    ).toBe(true);
 
-  expect(model.nodes.length > 0, 'Filtered model has nodes').toBe(true);
-  expect(model.nodes.every(n => n.schema === 'HumanResources'),
-    'Only HumanResources nodes rendered').toBe(true);
+    const crossRefs = Object.entries(model.neighborIndex)
+      .filter(([id]) => renderedIds.has(id))
+      .flatMap(([id, nb]) =>
+        nb.out.filter((t) => !renderedIds.has(t)).map((t) => [id, t] as const),
+      );
+    expect(
+      crossRefs.length > 0,
+      `Rendered nodes keep out-edges to out-of-filter objects (got ${crossRefs.length})`,
+    ).toBe(true);
 
-  const renderedIds = new Set(model.nodes.map(n => n.id));
-  const outOfFilter = Object.entries(model.catalog).filter(([id]) => !renderedIds.has(id));
-  expect(outOfFilter.length > 0,
-    `Catalog retains objects outside the filter (got ${outOfFilter.length})`).toBe(true);
+    const [sourceId, targetId] = crossRefs[0];
+    expect(
+      model.catalog[targetId] !== undefined,
+      `Out-of-filter neighbor ${targetId} is resolvable in the catalog`,
+    ).toBe(true);
+    expect(
+      model.neighborIndex[targetId]?.in.includes(sourceId),
+      `Reverse neighbor entry: ${targetId}.in includes ${sourceId}`,
+    ).toBe(true);
+  }
 
-  const [, sampleEntry] = outOfFilter[0];
-  expect(typeof sampleEntry.schema === 'string' && sampleEntry.schema.length > 0,
-    `Out-of-filter catalog entry has a schema (got: ${JSON.stringify(sampleEntry.schema)})`).toBe(true);
-  expect(typeof sampleEntry.name === 'string' && sampleEntry.name.length > 0,
-    `Out-of-filter catalog entry has a name (got: ${JSON.stringify(sampleEntry.name)})`).toBe(true);
-  expect(['table', 'view', 'procedure', 'function', 'external'].includes(sampleEntry.type),
-    `Out-of-filter catalog entry has a valid type (got: ${sampleEntry.type})`).toBe(true);
-  expect(outOfFilter.some(([, e]) => e.schema !== e.schema.toLowerCase()),
-    'At least one out-of-filter entry preserves mixed-case schema/name from the catalog').toBe(true);
-
-  const crossRefs = Object.entries(model.neighborIndex)
-    .filter(([id]) => renderedIds.has(id))
-    .flatMap(([id, nb]) => nb.out.filter(t => !renderedIds.has(t)).map(t => [id, t] as const));
-  expect(crossRefs.length > 0,
-    `Rendered nodes keep out-edges to out-of-filter objects (got ${crossRefs.length})`).toBe(true);
-
-  const [sourceId, targetId] = crossRefs[0];
-  expect(model.catalog[targetId] !== undefined,
-    `Out-of-filter neighbor ${targetId} is resolvable in the catalog`).toBe(true);
-  expect(model.neighborIndex[targetId]?.in.includes(sourceId),
-    `Reverse neighbor entry: ${targetId}.in includes ${sourceId}`).toBe(true);
-}
-
-
-/** Builds a dacpac whose property values carry the five predefined XML entities, a numeric character reference, and a double-escaped `&amp;lt;`, plus a CDATA body whose literal entity-like text must be served verbatim. */
-async function makeEntityDacpac(): Promise<Uint8Array> {
-  const JSZip = (await import('jszip')).default;
-  const zip = new JSZip();
-  zip.file('model.xml', `<?xml version="1.0"?>
+  /** Builds a dacpac whose property values carry the five predefined XML entities, a numeric character reference, and a double-escaped `&amp;lt;`, plus a CDATA body whose literal entity-like text must be served verbatim. */
+  async function makeEntityDacpac(): Promise<Uint8Array> {
+    const JSZip = (await import('jszip')).default;
+    const zip = new JSZip();
+    zip.file(
+      'model.xml',
+      `<?xml version="1.0"?>
     <DataSchemaModel DspName="Microsoft.Data.Tools.Schema.Sql.Sql160DatabaseSchemaProvider">
       <Model>
         <Element Type="SqlProcedure" Name="[dbo].[spHeader]">
@@ -490,49 +863,70 @@ async function makeEntityDacpac(): Promise<Uint8Array> {
           </Property>
         </Element>
       </Model>
-    </DataSchemaModel>`);
-  return zip.generateAsync({ type: 'uint8array' });
-}
+    </DataSchemaModel>`,
+    );
+    return zip.generateAsync({ type: 'uint8array' });
+  }
 
-async function testPredefinedEntityDecoding() {
-  const model = await extractDacpac(await makeEntityDacpac());
-  const proc = model.nodes.find(n => n.name === 'spHeader');
-  const view = model.nodes.find(n => n.name === 'vText');
-  expect(proc?.bodyScript).toBeDefined();
-  expect(proc!.bodyScript!.startsWith(
-    `-- age < 7 days && qty > 0, "q" 'a'\n-- literal &lt;tag&gt; A &lt;\nBEGIN`,
-  ), 'HeaderContents attribute value is XML-decoded once').toBe(true);
-  expect(proc!.bodyScript!.includes(`SELECT '&lt;kept&gt; &#x41;' AS Raw`),
-    'CDATA body is served verbatim, never entity-decoded').toBe(true);
-  expect(view?.bodyScript?.includes(`WHERE 2 > 1 AND 'x' <> 'y'`),
-    'Element text value is XML-decoded').toBe(true);
-}
+  async function testPredefinedEntityDecoding() {
+    const model = await extractDacpac(await makeEntityDacpac());
+    const proc = model.nodes.find((n) => n.name === 'spHeader');
+    const view = model.nodes.find((n) => n.name === 'vText');
+    expect(proc?.bodyScript).toBeDefined();
+    expect(
+      proc!.bodyScript!.startsWith(
+        `-- age < 7 days && qty > 0, "q" 'a'\n-- literal &lt;tag&gt; A &lt;\nBEGIN`,
+      ),
+      'HeaderContents attribute value is XML-decoded once',
+    ).toBe(true);
+    expect(
+      proc!.bodyScript!.includes(`SELECT '&lt;kept&gt; &#x41;' AS Raw`),
+      'CDATA body is served verbatim, never entity-decoded',
+    ).toBe(true);
+    expect(
+      view?.bodyScript?.includes(`WHERE 2 > 1 AND 'x' <> 'y'`),
+      'Element text value is XML-decoded',
+    ).toBe(true);
+  }
 
-
-/** A declared-type column element for the computed-column fixture. */
-function simpleColumnXml(owner: string, name: string, type: string): string {
-  return `<Entry><Element Type="SqlSimpleColumn" Name="${owner}.[${name}]">
+  /** A declared-type column element for the computed-column fixture. */
+  function simpleColumnXml(owner: string, name: string, type: string): string {
+    return `<Entry><Element Type="SqlSimpleColumn" Name="${owner}.[${name}]">
     <Relationship Name="TypeSpecifier"><Entry><Element Type="SqlTypeSpecifier">
       <Relationship Name="Type"><Entry><References ExternalSource="BuiltIns" Name="[${type}]" /></Entry></Relationship>
     </Element></Entry></Relationship>
   </Element></Entry>`;
-}
+  }
 
-/** A computed column element with an optional ExpressionScript and its ExpressionDependencies. */
-function computedColumnXml(owner: string, name: string, script: string | undefined, deps: string[]): string {
-  const scriptXml = script === undefined ? '' : `<Property Name="ExpressionScript"><Value><![CDATA[${script}]]></Value></Property>`;
-  const depsXml = deps.length === 0 ? '' : `<Relationship Name="ExpressionDependencies">${
-    deps.map(d => `<Entry><References Name="${d}" /></Entry>`).join('')}</Relationship>`;
-  return `<Entry><Element Type="SqlComputedColumn" Name="${owner}.[${name}]">${scriptXml}${depsXml}</Element></Entry>`;
-}
+  /** A computed column element with an optional ExpressionScript and its ExpressionDependencies. */
+  function computedColumnXml(
+    owner: string,
+    name: string,
+    script: string | undefined,
+    deps: string[],
+  ): string {
+    const scriptXml =
+      script === undefined
+        ? ''
+        : `<Property Name="ExpressionScript"><Value><![CDATA[${script}]]></Value></Property>`;
+    const depsXml =
+      deps.length === 0
+        ? ''
+        : `<Relationship Name="ExpressionDependencies">${deps
+            .map((d) => `<Entry><References Name="${d}" /></Entry>`)
+            .join('')}</Relationship>`;
+    return `<Entry><Element Type="SqlComputedColumn" Name="${owner}.[${name}]">${scriptXml}${depsXml}</Element></Entry>`;
+  }
 
-/** Builds a dacpac with a table whose computed columns are bare references or expressions, and a view whose columns (no ExpressionScript, as DacFx emits them) each read one table column. */
-async function makeComputedColumnDacpac(): Promise<Uint8Array> {
-  const JSZip = (await import('jszip')).default;
-  const zip = new JSZip();
-  const t = '[dbo].[OrderLine]';
-  const v = '[dbo].[vOrderLine]';
-  zip.file('model.xml', `<?xml version="1.0"?>
+  /** Builds a dacpac with a table whose computed columns are bare references or expressions, and a view whose columns (no ExpressionScript, as DacFx emits them) each read one table column. */
+  async function makeComputedColumnDacpac(): Promise<Uint8Array> {
+    const JSZip = (await import('jszip')).default;
+    const zip = new JSZip();
+    const t = '[dbo].[OrderLine]';
+    const v = '[dbo].[vOrderLine]';
+    zip.file(
+      'model.xml',
+      `<?xml version="1.0"?>
     <DataSchemaModel DspName="Microsoft.Data.Tools.Schema.Sql.Sql160DatabaseSchemaProvider">
       <Model>
         <Element Type="SqlTable" Name="${t}">
@@ -555,26 +949,58 @@ async function makeComputedColumnDacpac(): Promise<Uint8Array> {
           </Relationship>
         </Element>
       </Model>
-    </DataSchemaModel>`);
-  return zip.generateAsync({ type: 'uint8array' });
-}
+    </DataSchemaModel>`,
+    );
+    return zip.generateAsync({ type: 'uint8array' });
+  }
 
-async function testComputedColumnTypeBorrowing() {
-  const model = await extractDacpac(await makeComputedColumnDacpac());
-  const typeOf = (node: string, column: string) =>
-    model.nodes.find(n => n.name === node)?.columns?.find(c => c.name === column)?.type;
-  expect(typeOf('OrderLine', 'QtyBracketed'), 'bracketed bare reference borrows').toBe('int');
-  expect(typeOf('OrderLine', 'QtyBare'), 'unbracketed bare reference borrows').toBe('int');
-  expect(typeOf('OrderLine', 'QtyNested'), 'bare reference under nested parentheses borrows').toBe('money');
-  expect(typeOf('OrderLine', 'QtyDoubled'), 'arithmetic on one column does not borrow').toBe('—');
-  expect(typeOf('OrderLine', 'QtyText'), 'CONVERT of one column does not borrow').toBe('—');
-  expect(typeOf('OrderLine', 'LineTotal'), 'expression over two columns does not borrow').toBe('—');
-  expect(typeOf('vOrderLine', 'Qty'), 'view column with no ExpressionScript does not borrow').toBe('—');
-  expect(typeOf('vOrderLine', 'PriceText'), 'view expression column does not borrow').toBe('—');
-}
+  async function testComputedColumnTypeBorrowing() {
+    const model = await extractDacpac(await makeComputedColumnDacpac());
+    const typeOf = (node: string, column: string) =>
+      model.nodes
+        .find((n) => n.name === node)
+        ?.columns?.find((c) => c.name === column)?.type;
+    expect(
+      typeOf('OrderLine', 'QtyBracketed'),
+      'bracketed bare reference borrows',
+    ).toBe('int');
+    expect(
+      typeOf('OrderLine', 'QtyBare'),
+      'unbracketed bare reference borrows',
+    ).toBe('int');
+    expect(
+      typeOf('OrderLine', 'QtyNested'),
+      'bare reference under nested parentheses borrows',
+    ).toBe('money');
+    expect(
+      typeOf('OrderLine', 'QtyDoubled'),
+      'arithmetic on one column does not borrow',
+    ).toBe('—');
+    expect(
+      typeOf('OrderLine', 'QtyText'),
+      'CONVERT of one column does not borrow',
+    ).toBe('—');
+    expect(
+      typeOf('OrderLine', 'LineTotal'),
+      'expression over two columns does not borrow',
+    ).toBe('—');
+    expect(
+      typeOf('vOrderLine', 'Qty'),
+      'view column with no ExpressionScript does not borrow',
+    ).toBe('—');
+    expect(
+      typeOf('vOrderLine', 'PriceText'),
+      'view expression column does not borrow',
+    ).toBe('—');
+  }
 
-  it('extracts the AdventureWorks model', async () => { await testExtraction(); });
-  it('gives a computed column a type only when its expression is a bare column reference', testComputedColumnTypeBorrowing);
+  it('extracts the AdventureWorks model', async () => {
+    await testExtraction();
+  });
+  it(
+    'gives a computed column a type only when its expression is a bare column reference',
+    testComputedColumnTypeBorrowing,
+  );
   it('derives the expected edges for named AdventureWorks procedures', async () => {
     await testNamedProcedureEdges();
   });
@@ -582,35 +1008,67 @@ async function testComputedColumnTypeBorrowing() {
     await testEdgeIntegrity(await loadAdventureWorksModel());
   });
   it('extracts Fabric DACPACs', testFabricDacpac);
-  it('decodes predefined XML entities in served text, never inside CDATA', testPredefinedEntityDecoding);
+  it(
+    'decodes predefined XML entities in served text, never inside CDATA',
+    testPredefinedEntityDecoding,
+  );
   it('reports import errors', testImportErrorHandling);
   it('extracts constraints', testConstraints);
-  it('keeps the FK delete action and dotted column names', testFkDeleteActionAndDottedColumns);
+  it(
+    'keeps the FK delete action and dotted column names',
+    testFkDeleteActionAndDottedColumns,
+  );
   it('maps DSP platforms', testParseDspPlatform);
   it('records database platforms in the model', testDbPlatformInModel);
   it('records primary-key ordinals', testPkOrdinalInModel);
   it('bridges phase-one and phase-two extraction', testPhase1Phase2Bridge);
-  it('retains the cross-schema catalog under filtering', testCrossSchemaCatalogUnderFilter);
+  it(
+    'retains the cross-schema catalog under filtering',
+    testCrossSchemaCatalogUnderFilter,
+  );
   it('honors DACPAC extraction options', testDacpacExtractionOptions);
-  it('does not infer deployment database identity from package provenance', testDacpacDatabaseName);
+  it(
+    'does not infer deployment database identity from package provenance',
+    testDacpacDatabaseName,
+  );
   it('uses explicit database identity for the original same-name mixed read and write oracle', async () => {
     const buffer = await buildThreePartDacpac(SELF_DB_METADATA);
     const preview = await extractSchemaPreview(buffer);
     const options = { externalRefsEnabled: true, databaseName: 'SelfDb' };
-    const models = [await extractDacpac(buffer, undefined, undefined, options),
-      extractDacpacFiltered(preview.elements, new Set(['dbo']), preview.dspName, undefined, undefined, options)];
-    for (const model of models) expect(model.edges.map(edge => `${edge.source} -> ${edge.target}`).sort()).toEqual([
-      '[dbo].[t] -> [dbo].[usp_sync]', '[dbo].[usp_sync] -> [dbo].[x]',
-      '[dbo].[usp_sync] -> [otherdb].[dbo].[t]', '[otherdb].[dbo].[x] -> [dbo].[usp_sync]',
-    ]);
+    const models = [
+      await extractDacpac(buffer, undefined, undefined, options),
+      extractDacpacFiltered(
+        preview.elements,
+        new Set(['dbo']),
+        preview.dspName,
+        undefined,
+        undefined,
+        options,
+      ),
+    ];
+    for (const model of models)
+      expect(
+        model.edges.map((edge) => `${edge.source} -> ${edge.target}`).sort(),
+      ).toEqual([
+        '[dbo].[t] -> [dbo].[usp_sync]',
+        '[dbo].[usp_sync] -> [dbo].[x]',
+        '[dbo].[usp_sync] -> [otherdb].[dbo].[t]',
+        '[otherdb].[dbo].[x] -> [dbo].[usp_sync]',
+      ]);
   });
-  it('decodes entity-encoded names and keeps (max) and CLR type names', testNamesAndTypesRoundTrip);
+  it(
+    'decodes entity-encoded names and keeps (max) and CLR type names',
+    testNamesAndTypesRoundTrip,
+  );
 
   it('extracts from a byte view at a nonzero offset', async () => {
     const file = readFileSync(testPath('AdventureWorks_sdk-style.dacpac'));
     const padded = new Uint8Array(64 * 1024);
     padded.set(file, 104);
     const model = await extractDacpac(padded.subarray(104, 104 + file.length));
-    expect(model.nodes.length > 0, `Offset view extracts ${model.nodes.length} nodes`).toBe(true);
+    expect(
+      model.nodes.length > 0,
+      `Offset view extracts ${model.nodes.length} nodes`,
+    ).toBe(true);
   });
 });

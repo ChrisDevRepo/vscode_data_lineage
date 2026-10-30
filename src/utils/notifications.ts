@@ -16,13 +16,22 @@ const MAX_NOTIFICATION_CONTEXT = LOG_TRUNC_JSON * 4;
 function renderContextValue(value: unknown): string {
   try {
     if (Array.isArray(value)) {
-      return trunc(value.map((item) => (
-        item && typeof item === 'object'
-          ? safeStringifyForLog(item)
-          : sanitizeForLog(redactSecrets(String(item)))
-      )).join(', '), LOG_TRUNC_JSON);
+      return trunc(
+        value
+          .map((item) =>
+            item && typeof item === 'object'
+              ? safeStringifyForLog(item)
+              : sanitizeForLog(redactSecrets(String(item))),
+          )
+          .join(', '),
+        LOG_TRUNC_JSON,
+      );
     }
-    if (value instanceof Error) return trunc(sanitizeForLog(redactSecrets(value.message)), LOG_TRUNC_JSON);
+    if (value instanceof Error)
+      return trunc(
+        sanitizeForLog(redactSecrets(value.message)),
+        LOG_TRUNC_JSON,
+      );
     if (value && typeof value === 'object') return safeStringifyForLog(value);
     return trunc(sanitizeForLog(String(value)), LOG_TRUNC_JSON);
   } catch {
@@ -37,7 +46,9 @@ function formatContext(context?: NotifyContext): string {
     const parts = Object.entries(context)
       .filter(([, value]) => value !== undefined)
       .map(([key, value]) => {
-        const rendered = renderContextValue(typeof value === 'string' ? redactSecrets(value) : value);
+        const rendered = renderContextValue(
+          typeof value === 'string' ? redactSecrets(value) : value,
+        );
         return redactSecrets(`${sanitizeForLog(key)}=${rendered}`);
       });
     return parts.length > 0
@@ -55,7 +66,8 @@ export function notifyError(
   userMessage: string,
   error?: unknown,
   context?: NotifyContext,
-  showErrorMessage: (message: string) => unknown = vscode.window.showErrorMessage,
+  showErrorMessage: (message: string) => unknown = vscode.window
+    .showErrorMessage,
 ): void {
   const safeMessage = redactSecrets(userMessage);
   const detail = `notification="${safeMessage}"${formatContext(context)}`;
@@ -69,10 +81,13 @@ export function notifyInfo(
   operation: string,
   userMessage: string,
   context?: NotifyContext,
-  showInformationMessage: (message: string) => unknown = vscode.window.showInformationMessage,
+  showInformationMessage: (message: string) => unknown = vscode.window
+    .showInformationMessage,
 ): void {
   const safeMessage = redactSecrets(userMessage);
-  logger.info(`${operation} — notification="${safeMessage}"${formatContext(context)}`);
+  logger.info(
+    `${operation} — notification="${safeMessage}"${formatContext(context)}`,
+  );
   showInformationMessage(safeMessage);
 }
 
@@ -82,9 +97,12 @@ export function notifyWarning(
   operation: string,
   userMessage: string,
   context?: NotifyContext,
-  showWarningMessage: (message: string) => unknown = vscode.window.showWarningMessage,
+  showWarningMessage: (message: string) => unknown = vscode.window
+    .showWarningMessage,
 ): void {
   const safeMessage = redactSecrets(userMessage);
-  logger.warn(`${operation} — notification="${safeMessage}"${formatContext(context)}`);
+  logger.warn(
+    `${operation} — notification="${safeMessage}"${formatContext(context)}`,
+  );
   showWarningMessage(safeMessage);
 }

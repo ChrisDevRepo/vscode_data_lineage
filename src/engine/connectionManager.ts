@@ -13,28 +13,49 @@ import * as yaml from 'js-yaml';
 import { z } from 'zod';
 import type { SimpleExecuteResult } from '../types/database';
 import { resolveWorkspacePath, persistAbsolutePath } from '../utils/paths';
-import { expandSchemaPlaceholder, validateSchemaPlaceholder } from '../utils/sql';
+import {
+  expandSchemaPlaceholder,
+  validateSchemaPlaceholder,
+} from '../utils/sql';
 import { Logger, trunc, sanitizeForLog } from '../utils/log';
 import { notifyWarning } from '../utils/notifications';
-import { StoredConnectionInfoSchema, type StoredConnectionInfo } from './shared/bridgeContract';
+import {
+  StoredConnectionInfoSchema,
+  type StoredConnectionInfo,
+} from './shared/bridgeContract';
 import { DbConnectionError, type DbSession } from './db/dbSession';
 import { openBuiltInSession, type BuiltInEnv } from './db/builtInProvider';
-import { describeConnection, dropTcpPrefix, readBuiltInConnections, type BuiltInConnection } from './db/connectionSettings';
-import { parseServerInput, runAddConnectionFlow } from './db/connectionCommands';
-import { builtInTarget, type ConnectionErrorHooks } from './db/connectionErrors';
+import {
+  describeConnection,
+  dropTcpPrefix,
+  readBuiltInConnections,
+  type BuiltInConnection,
+} from './db/connectionSettings';
+import {
+  parseServerInput,
+  runAddConnectionFlow,
+} from './db/connectionCommands';
+import {
+  builtInTarget,
+  type ConnectionErrorHooks,
+} from './db/connectionErrors';
 import { errorMessage } from '../utils/errorMessage';
 
-const DmvQuerySchema = z.object({
-  name: z.string().min(1),
-  description: z.string().optional(),
-  sql: z.string().min(1),
-  phase: z.number().optional(),
-}).passthrough();
+const DmvQuerySchema = z
+  .object({
+    name: z.string().min(1),
+    description: z.string().optional(),
+    sql: z.string().min(1),
+    phase: z.number().optional(),
+  })
+  .passthrough();
 
-const DmvQueriesConfigSchema = z.object({
-  version: z.coerce.number().optional(),
-  queries: z.array(z.unknown()).optional()
-}).passthrough();
+const DmvQueriesConfigSchema = z
+  .object({
+    version: z.coerce.number().optional(),
+    queries: z.array(z.unknown()).optional(),
+  })
+  .passthrough();
 
 /** Represents a Dynamic Management View (DMV) query used to extract metadata from SQL Server. */
 export interface DmvQuery {
@@ -70,18 +91,23 @@ export async function loadDmvQueries(
     if (resolved) {
       logger.debug(`Reading DMV queries custom: ${resolved}`);
       try {
-        const data = await vscode.workspace.fs.readFile(vscode.Uri.file(resolved));
+        const data = await vscode.workspace.fs.readFile(
+          vscode.Uri.file(resolved),
+        );
         const rawParsed = yaml.load(new TextDecoder().decode(data));
         const parsed = DmvQueriesConfigSchema.parse(rawParsed);
 
-        const builtInConfig = await loadBuiltInDmvConfig(outputChannel, extensionUri);
+        const builtInConfig = await loadBuiltInDmvConfig(
+          outputChannel,
+          extensionUri,
+        );
         if (parsed.version !== builtInConfig.version) {
           notifyWarning(
             logger,
             'Load custom DMV queries',
             `Custom DMV queries declare version ${String(parsed.version ?? 'missing')} but this release ships ` +
-            `version ${builtInConfig.version} — the query contract changed. Re-scaffold via ` +
-            `"Data Lineage: Create DMV Queries" and re-apply your edits; using built-in defaults until then.`,
+              `version ${builtInConfig.version} — the query contract changed. Re-scaffold via ` +
+              `"Data Lineage: Create DMV Queries" and re-apply your edits; using built-in defaults until then.`,
             {
               customVersion: parsed.version ?? null,
               expectedVersion: builtInConfig.version,
@@ -99,13 +125,20 @@ export async function loadDmvQueries(
             const checked = DmvQuerySchema.safeParse(query);
             if (checked.success) return [checked.data];
             skipped++;
-            logger.debug(`Skipped DMV query[${index}]: invalid ${checked.error.issues.map(issue => issue.path.join('.') || 'query').join(', ')}`);
+            logger.debug(
+              `Skipped DMV query[${index}]: invalid ${checked.error.issues.map((issue) => issue.path.join('.') || 'query').join(', ')}`,
+            );
             return [];
           });
           if (valid.length > 0) {
-            const KNOWN_NAMES = ['schema-preview', 'nodes', 'columns', 'dependencies'];
-            const loadedNames = new Set(valid.map(q => q.name));
-            const missingNames = KNOWN_NAMES.filter(n => !loadedNames.has(n));
+            const KNOWN_NAMES = [
+              'schema-preview',
+              'nodes',
+              'columns',
+              'dependencies',
+            ];
+            const loadedNames = new Set(valid.map((q) => q.name));
+            const missingNames = KNOWN_NAMES.filter((n) => !loadedNames.has(n));
             if (missingNames.length > 0) {
               notifyWarning(
                 logger,
@@ -115,7 +148,9 @@ export async function loadDmvQueries(
               );
             }
             await persistAbsolutePath('dmvQueriesFile', customPath, resolved);
-            logger.info(`Applied DMV queries: ${valid.length} loaded from custom, ${skipped} skipped`);
+            logger.info(
+              `Applied DMV queries: ${valid.length} loaded from custom, ${skipped} skipped`,
+            );
             return valid;
           }
         }
@@ -123,14 +158,24 @@ export async function loadDmvQueries(
           logger,
           'Load custom DMV queries',
           'Custom DMV queries invalid — using built-in defaults.',
-          { reason: 'missing or invalid queries array', path: resolved, setting: 'dmvQueriesFile', fallback: 'built-in defaults' },
+          {
+            reason: 'missing or invalid queries array',
+            path: resolved,
+            setting: 'dmvQueriesFile',
+            fallback: 'built-in defaults',
+          },
         );
       } catch (err) {
         notifyWarning(
           logger,
           'Load custom DMV queries',
           'Failed to load custom DMV queries — using built-in defaults. Check Output channel.',
-          { reason: errorMessage(err), path: resolved, setting: 'dmvQueriesFile', fallback: 'built-in defaults' },
+          {
+            reason: errorMessage(err),
+            path: resolved,
+            setting: 'dmvQueriesFile',
+            fallback: 'built-in defaults',
+          },
         );
       }
     } else {
@@ -138,7 +183,12 @@ export async function loadDmvQueries(
         logger,
         'Load custom DMV queries',
         `Cannot resolve DMV queries path "${customPath}" — using built-in defaults.`,
-        { reason: 'cannot resolve path', path: customPath, setting: 'dmvQueriesFile', fallback: 'built-in defaults' },
+        {
+          reason: 'cannot resolve path',
+          path: customPath,
+          setting: 'dmvQueriesFile',
+          fallback: 'built-in defaults',
+        },
       );
     }
   }
@@ -151,8 +201,10 @@ const DMV_QUERIES_FILE_SETTING = 'dataLineageViz.dmvQueriesFile';
 
 /** The file `dataLineageViz.dmvQueriesFile` currently resolves to, or `''` for the built-in queries. */
 function configuredDmvQueriesFile(): string {
-  const value = vscode.workspace.getConfiguration('dataLineageViz').get<string>('dmvQueriesFile', '');
-  return value ? resolveWorkspacePath(value) ?? value : '';
+  const value = vscode.workspace
+    .getConfiguration('dataLineageViz')
+    .get<string>('dmvQueriesFile', '');
+  return value ? (resolveWorkspacePath(value) ?? value) : '';
 }
 
 /** DMV queries kept between reads until the configured YAML file changes. */
@@ -164,18 +216,26 @@ export interface DmvQueryCache extends vscode.Disposable {
 }
 
 /** Creates a DMV queries cache that reloads when `dataLineageViz.dmvQueriesFile` names another file. */
-export function createDmvQueryCache(load: () => Promise<DmvQuery[]>): DmvQueryCache {
+export function createDmvQueryCache(
+  load: () => Promise<DmvQuery[]>,
+): DmvQueryCache {
   let cached: Promise<DmvQuery[]> | undefined;
   let loadedFile: string | undefined;
   let subscription: vscode.Disposable | undefined;
   const reload = (): Promise<DmvQuery[]> => {
     subscription ??= vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration(DMV_QUERIES_FILE_SETTING) && configuredDmvQueriesFile() !== loadedFile) cached = undefined;
+      if (
+        e.affectsConfiguration(DMV_QUERIES_FILE_SETTING) &&
+        configuredDmvQueriesFile() !== loadedFile
+      )
+        cached = undefined;
     });
     loadedFile = configuredDmvQueriesFile();
     const loading = load();
     cached = loading;
-    loading.catch(() => { if (cached === loading) cached = undefined; });
+    loading.catch(() => {
+      if (cached === loading) cached = undefined;
+    });
     return loading;
   };
   return {
@@ -195,8 +255,9 @@ async function loadBuiltInDmvQueries(
   extensionUri: vscode.Uri,
 ): Promise<DmvQuery[]> {
   const parsed = await loadBuiltInDmvConfig(outputChannel, extensionUri);
-  Logger.create(outputChannel, 'Config')
-    .info(`Applied DMV queries: ${parsed.queries.length} loaded from built-in, 0 skipped`);
+  Logger.create(outputChannel, 'Config').info(
+    `Applied DMV queries: ${parsed.queries.length} loaded from built-in, 0 skipped`,
+  );
   return parsed.queries;
 }
 
@@ -206,7 +267,11 @@ async function loadBuiltInDmvConfig(
   extensionUri: vscode.Uri,
 ): Promise<DmvQueriesConfig> {
   const logger = Logger.create(outputChannel, 'Config');
-  const yamlUri = vscode.Uri.joinPath(extensionUri, 'assets', 'dmvQueries.yaml');
+  const yamlUri = vscode.Uri.joinPath(
+    extensionUri,
+    'assets',
+    'dmvQueries.yaml',
+  );
   logger.debug(`Reading DMV queries built-in: ${yamlUri.fsPath}`);
   const data = await vscode.workspace.fs.readFile(yamlUri);
   const rawParsed = yaml.load(new TextDecoder().decode(data));
@@ -214,7 +279,9 @@ async function loadBuiltInDmvConfig(
 
   const { version, queries } = parsed;
   if (!queries) {
-    throw new Error('Built-in dmvQueries.yaml is invalid — missing "queries" array');
+    throw new Error(
+      'Built-in dmvQueries.yaml is invalid — missing "queries" array',
+    );
   }
   if (version === undefined) {
     throw new Error('Built-in dmvQueries.yaml is invalid — missing "version"');
@@ -223,7 +290,9 @@ async function loadBuiltInDmvConfig(
 }
 
 /** Selects credential-free, schema-declared fields for legacy connection migration. */
-export function stripSensitiveFields(source: Record<string, unknown>): StoredConnectionInfo {
+export function stripSensitiveFields(
+  source: Record<string, unknown>,
+): StoredConnectionInfo {
   const persistable: Record<string, unknown> = {};
   for (const key of Object.keys(StoredConnectionInfoSchema.shape)) {
     if (source[key] !== undefined) persistable[key] = source[key];
@@ -235,38 +304,68 @@ export function stripSensitiveFields(source: Record<string, unknown>): StoredCon
 export type DbConnectEnv = BuiltInEnv;
 
 /** Built-in sign-in type a stored record's `authenticationType` names; legacy and built-in spellings both read. */
-function storedAuthKind(authenticationType: string | undefined): BuiltInConnection['authenticationType'] | undefined {
+function storedAuthKind(
+  authenticationType: string | undefined,
+): BuiltInConnection['authenticationType'] | undefined {
   if (!authenticationType) return undefined;
   const value = authenticationType.toLowerCase();
   if (value === 'sqllogin') return 'sqlLogin';
-  if (value === 'entraid' || value.startsWith('azure') || value.startsWith('activedirectory')) return 'entraId';
+  if (
+    value === 'entraid' ||
+    value.startsWith('azure') ||
+    value.startsWith('activedirectory')
+  )
+    return 'entraId';
   return undefined;
 }
 
 /** Finds the saved built-in connection that reopens a stored project. */
-function findBuiltInMatch(connections: BuiltInConnection[], stored: StoredConnectionInfo): BuiltInConnection | undefined {
-  const byId = stored.connectionId ? connections.find((c) => c.id === stored.connectionId) : undefined;
+function findBuiltInMatch(
+  connections: BuiltInConnection[],
+  stored: StoredConnectionInfo,
+): BuiltInConnection | undefined {
+  const byId = stored.connectionId
+    ? connections.find((c) => c.id === stored.connectionId)
+    : undefined;
   if (byId) return byId;
-  const same = (a?: string, b?: string) => !a || !b || a.toLowerCase() === b.toLowerCase();
+  const same = (a?: string, b?: string) =>
+    !a || !b || a.toLowerCase() === b.toLowerCase();
   const kind = storedAuthKind(stored.authenticationType);
   const host = parseServerInput(stored.server) ?? { server: stored.server };
   const defaultPort = host.server.includes('\\') ? undefined : 1433;
   const port = stored.port ?? host.port ?? defaultPort;
-  const matches = connections.filter((c) => dropTcpPrefix(c.server).toLowerCase() === host.server.toLowerCase()
-    && (c.port ?? defaultPort) === port
-    && (!kind || c.authenticationType === kind)
-    && same(c.user, stored.user));
-  return matches.find((c) => same(c.database, stored.database) && !!c.database) ?? matches[0];
+  const matches = connections.filter(
+    (c) =>
+      dropTcpPrefix(c.server).toLowerCase() === host.server.toLowerCase() &&
+      (c.port ?? defaultPort) === port &&
+      (!kind || c.authenticationType === kind) &&
+      same(c.user, stored.user),
+  );
+  return (
+    matches.find((c) => same(c.database, stored.database) && !!c.database) ??
+    matches[0]
+  );
 }
 
 function authDetail(connection: BuiltInConnection): string {
-  return connection.authenticationType === 'entraId' ? 'Microsoft Entra ID' : `SQL Login (${connection.user ?? 'no user'})`;
+  return connection.authenticationType === 'entraId'
+    ? 'Microsoft Entra ID'
+    : `SQL Login (${connection.user ?? 'no user'})`;
 }
 
 const MANAGE_ITEMS = [
-  { label: '$(edit) Edit Connection…', command: 'dataLineageViz.editDatabaseConnection' },
-  { label: '$(key) Update Password…', command: 'dataLineageViz.updateDatabasePassword' },
-  { label: '$(trash) Remove Connection…', command: 'dataLineageViz.removeDatabaseConnection' },
+  {
+    label: '$(edit) Edit Connection…',
+    command: 'dataLineageViz.editDatabaseConnection',
+  },
+  {
+    label: '$(key) Update Password…',
+    command: 'dataLineageViz.updateDatabasePassword',
+  },
+  {
+    label: '$(trash) Remove Connection…',
+    command: 'dataLineageViz.removeDatabaseConnection',
+  },
 ] as const;
 
 /** Shows the saved built-in connections, an add item and the manage commands; returns the chosen or newly added connection. A manage item runs its command and shows the list again. The add flow starts from the server, port, user and database of `stored` when there is one. */
@@ -277,27 +376,51 @@ async function pickBuiltInConnection(
 ): Promise<BuiltInConnection | undefined> {
   let current = connections;
   for (;;) {
-    const picked = await vscode.window.showQuickPick<vscode.QuickPickItem & { connection?: BuiltInConnection; command?: string }>(
+    const picked = await vscode.window.showQuickPick<
+      vscode.QuickPickItem & {
+        connection?: BuiltInConnection;
+        command?: string;
+      }
+    >(
       [
         ...current.map((connection) => ({
-          label: connection.name, description: describeConnection(connection), detail: authDetail(connection), connection,
+          label: connection.name,
+          description: describeConnection(connection),
+          detail: authDetail(connection),
+          connection,
         })),
-        { label: '$(add) Add Connection…', description: 'Save a new SQL login or Microsoft Entra ID connection' },
+        {
+          label: '$(add) Add Connection…',
+          description: 'Save a new SQL login or Microsoft Entra ID connection',
+        },
         ...(current.length > 0
-          ? [{ label: 'Manage', kind: vscode.QuickPickItemKind.Separator }, ...MANAGE_ITEMS.map((item) => ({ ...item }))]
+          ? [
+              { label: 'Manage', kind: vscode.QuickPickItemKind.Separator },
+              ...MANAGE_ITEMS.map((item) => ({ ...item })),
+            ]
           : []),
       ],
       {
         placeHolder: 'Select a database connection',
-        ignoreFocusOut: true, matchOnDescription: true,
+        ignoreFocusOut: true,
+        matchOnDescription: true,
       },
     );
     if (!picked) return undefined;
     if (picked.connection) return picked.connection;
     if (!picked.command) {
-      return runAddConnectionFlow(env, undefined, stored
-        ? { server: stored.server, port: stored.port, user: stored.user, database: stored.database }
-        : undefined);
+      return runAddConnectionFlow(
+        env,
+        undefined,
+        stored
+          ? {
+              server: stored.server,
+              port: stored.port,
+              user: stored.user,
+              database: stored.database,
+            }
+          : undefined,
+      );
     }
     await vscode.commands.executeCommand(picked.command);
     current = readBuiltInConnections();
@@ -305,20 +428,32 @@ async function pickBuiltInConnection(
 }
 
 /** Asks for the database of a connection saved without one. */
-async function pickDatabase(connection: BuiltInConnection): Promise<string | undefined> {
-  const typed = await vscode.window.showInputBox({ prompt: `Database on ${connection.server}`, placeHolder: 'Database name', ignoreFocusOut: true });
+async function pickDatabase(
+  connection: BuiltInConnection,
+): Promise<string | undefined> {
+  const typed = await vscode.window.showInputBox({
+    prompt: `Database on ${connection.server}`,
+    placeHolder: 'Database name',
+    ignoreFocusOut: true,
+  });
   return typed?.trim() || undefined;
 }
 
 /** Opens a built-in connection for one operation. */
-export async function connectDatabase(env: DbConnectEnv, stored?: StoredConnectionInfo, token?: vscode.CancellationToken): Promise<DbSession | undefined> {
+export async function connectDatabase(
+  env: DbConnectEnv,
+  stored?: StoredConnectionInfo,
+  token?: vscode.CancellationToken,
+): Promise<DbSession | undefined> {
   const logger = Logger.create(env.outputChannel, 'DB');
   const connections = readBuiltInConnections(logger);
   let connection: BuiltInConnection | undefined;
   if (stored) {
     connection = findBuiltInMatch(connections, stored);
     if (!connection) {
-      logger.warn('Direct reconnect: no matching saved built-in connection — falling back to picker');
+      logger.warn(
+        'Direct reconnect: no matching saved built-in connection — falling back to picker',
+      );
       logger.debug(`Unmatched reconnect server: ${stored.server}`);
     }
   }
@@ -327,7 +462,8 @@ export async function connectDatabase(env: DbConnectEnv, stored?: StoredConnecti
     logger.info('User cancelled connection picker');
     return undefined;
   }
-  const database = stored?.database || connection.database || await pickDatabase(connection);
+  const database =
+    stored?.database || connection.database || (await pickDatabase(connection));
   if (!database) {
     logger.info('User cancelled database selection');
     return undefined;
@@ -349,7 +485,9 @@ export function connectionErrorHooks(
     retry,
     showLog: () => env.outputChannel.show(true),
     chooseDatabase: async () => {
-      const connection = readBuiltInConnections().find((c) => c.id === connectionId);
+      const connection = readBuiltInConnections().find(
+        (c) => c.id === connectionId,
+      );
       return connection ? pickDatabase(connection) : undefined;
     },
   };
@@ -367,7 +505,9 @@ async function runTimed(
   timeoutMs: number | undefined,
   timeoutMessage: string,
 ): Promise<SimpleExecuteResult> {
-  return timeoutMs ? session.executeSimpleQuery(sql, { timeoutMs, timeoutMessage }) : session.executeSimpleQuery(sql);
+  return timeoutMs
+    ? session.executeSimpleQuery(sql, { timeoutMs, timeoutMessage })
+    : session.executeSimpleQuery(sql);
 }
 
 /** Executes a batch of DMV queries sequentially. */
@@ -388,13 +528,22 @@ export async function executeDmvQueries(
     const step = i + 1;
 
     onProgress?.(step, total, query.name);
-    logger.debug(`Executing ${query.name} (${step}/${total}) — SQL: ${trunc(sanitizeForLog(query.sql), 300)}`);
+    logger.debug(
+      `Executing ${query.name} (${step}/${total}) — SQL: ${trunc(sanitizeForLog(query.sql), 300)}`,
+    );
 
     const start = Date.now();
-    const result = await runTimed(session, query.sql, queryTimeoutMs, dmvTimeoutMessage(query.name, queryTimeoutMs ?? 0));
+    const result = await runTimed(
+      session,
+      query.sql,
+      queryTimeoutMs,
+      dmvTimeoutMessage(query.name, queryTimeoutMs ?? 0),
+    );
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
 
-    logger.debug(`Query '${query.name}' — ${result.rowCount} rows (${elapsed}s)`);
+    logger.debug(
+      `Query '${query.name}' — ${result.rowCount} rows (${elapsed}s)`,
+    );
     results.set(query.name, result);
   }
 
@@ -422,8 +571,17 @@ export async function executeDmvQueriesFiltered(
     if (warning) logger.warn(warning);
   }
 
-  const expanded = phase2Queries.map(query => ({ ...query, sql: expandSchemaPlaceholder(query.sql, schemas) }));
-  return executeDmvQueries(session, expanded, outputChannel, onProgress, queryTimeoutMs);
+  const expanded = phase2Queries.map((query) => ({
+    ...query,
+    sql: expandSchemaPlaceholder(query.sql, schemas),
+  }));
+  return executeDmvQueries(
+    session,
+    expanded,
+    outputChannel,
+    onProgress,
+    queryTimeoutMs,
+  );
 }
 
 /** Executes a single SQL command without batching or placeholders. */
@@ -434,9 +592,18 @@ export async function executeSimpleQuery(
   timeout?: { ms: number; message: string },
 ): Promise<SimpleExecuteResult> {
   const logger = Logger.create(outputChannel, 'DB');
-  logger.debug(`Executing simple query — SQL: ${trunc(sanitizeForLog(sql), 300)}`);
+  logger.debug(
+    `Executing simple query — SQL: ${trunc(sanitizeForLog(sql), 300)}`,
+  );
   const start = Date.now();
-  const result = await runTimed(session, sql, timeout?.ms, timeout?.message ?? '');
-  logger.debug(`Simple query — ${result.rowCount} rows (${((Date.now() - start) / 1000).toFixed(1)}s)`);
+  const result = await runTimed(
+    session,
+    sql,
+    timeout?.ms,
+    timeout?.message ?? '',
+  );
+  logger.debug(
+    `Simple query — ${result.rowCount} rows (${((Date.now() - start) / 1000).toFixed(1)}s)`,
+  );
   return result;
 }

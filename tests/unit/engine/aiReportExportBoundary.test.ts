@@ -16,7 +16,8 @@ const createWebviewPanel = vi.fn();
 const windowShowErrorMessage = vi.fn();
 const closeTab = vi.fn();
 /** Tabs the fake workbench reports as open; a test pushes a preview tab to simulate an open preview. */
-const openTabs: Array<{ input: unknown; label: string; isActive: boolean }> = [];
+const openTabs: Array<{ input: unknown; label: string; isActive: boolean }> =
+  [];
 
 vi.mock('vscode', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
@@ -29,7 +30,11 @@ vi.mock('vscode', async (importOriginal) => {
     ) {}
   }
   class WorkspaceEdit {
-    readonly replacements: Array<{ uri: unknown; range: unknown; text: string }> = [];
+    readonly replacements: Array<{
+      uri: unknown;
+      range: unknown;
+      text: string;
+    }> = [];
     replace(uri: unknown, range: unknown, text: string): void {
       this.replacements.push({ uri, range, text });
     }
@@ -41,7 +46,10 @@ vi.mock('vscode', async (importOriginal) => {
     ...actual,
     Uri: {
       file: (fsPath: string) => ({ scheme: 'file', fsPath, path: fsPath }),
-      joinPath: (base: { path: string }, ...parts: string[]) => ({ scheme: 'file', path: [base.path, ...parts].join('/') }),
+      joinPath: (base: { path: string }, ...parts: string[]) => ({
+        scheme: 'file',
+        path: [base.path, ...parts].join('/'),
+      }),
     },
     ViewColumn: { Beside: -2, One: 1 },
     Range,
@@ -51,26 +59,42 @@ vi.mock('vscode', async (importOriginal) => {
       openTextDocument: (...args: unknown[]) => openTextDocument(...args),
       applyEdit: (...args: unknown[]) => applyEdit(...args),
       onDidChangeConfiguration: () => ({ dispose() {} }),
-      getConfiguration: () => ({ get: (_key: string, fallback: unknown) => fallback }),
+      getConfiguration: () => ({
+        get: (_key: string, fallback: unknown) => fallback,
+      }),
     },
-    commands: { executeCommand: (...args: unknown[]) => executeCommand(...args) },
-    extensions: { onDidChange: () => ({ dispose() {} }), getExtension: () => undefined },
+    commands: {
+      executeCommand: (...args: unknown[]) => executeCommand(...args),
+    },
+    extensions: {
+      onDidChange: () => ({ dispose() {} }),
+      getExtension: () => undefined,
+    },
     window: {
       createWebviewPanel: () => createWebviewPanel(),
       showTextDocument: (...args: unknown[]) => showTextDocument(...args),
       showErrorMessage: (...args: unknown[]) => windowShowErrorMessage(...args),
       showWarningMessage: (...args: unknown[]) => showWarningMessage(...args),
-      tabGroups: { get all() { return [{ tabs: openTabs }]; }, close: (...args: unknown[]) => closeTab(...args) },
+      tabGroups: {
+        get all() {
+          return [{ tabs: openTabs }];
+        },
+        close: (...args: unknown[]) => closeTab(...args),
+      },
     },
   };
 });
 
 const vscodeFake = (await import('vscode')) as unknown as {
   TabInputWebview: new (viewType: string) => unknown;
-  WorkspaceEdit: { prototype: { replacements: Array<{ uri: unknown; text: string }> } };
+  WorkspaceEdit: {
+    prototype: { replacements: Array<{ uri: unknown; text: string }> };
+  };
 };
 
-const { createMessageHandlers } = await import('../../../src/bridge/messageHandlers');
+const { createMessageHandlers } = await import(
+  '../../../src/bridge/messageHandlers'
+);
 const { openPanel } = await import('../../../src/panelProvider');
 
 function fakeHost(overrides: Partial<BridgeHost> = {}): BridgeHost {
@@ -92,7 +116,15 @@ function fakeHost(overrides: Partial<BridgeHost> = {}): BridgeHost {
   } as BridgeHost;
 }
 
-function buildHandlers(host: BridgeHost, outputChannel: unknown = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() }) {
+function buildHandlers(
+  host: BridgeHost,
+  outputChannel: unknown = {
+    info: vi.fn(),
+    debug: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+) {
   const { handlers } = createMessageHandlers(
     host,
     { globalState: { get: vi.fn(), update: vi.fn() } } as never,
@@ -109,12 +141,18 @@ function buildHandlers(host: BridgeHost, outputChannel: unknown = { info: vi.fn(
 
 describe('ai-open-in-editor payload bound', () => {
   it('accepts a report exactly at the contract ceiling', () => {
-    const message = { type: 'ai-open-in-editor', markdown: 'x'.repeat(AI_REPORT_MARKDOWN_MAX_CHARS) };
+    const message = {
+      type: 'ai-open-in-editor',
+      markdown: 'x'.repeat(AI_REPORT_MARKDOWN_MAX_CHARS),
+    };
     expect(MainPanelToExtensionMsgSchema.safeParse(message).success).toBe(true);
   });
 
   it('rejects one character past it, so an unbounded payload never reaches the editor', () => {
-    const message = { type: 'ai-open-in-editor', markdown: 'x'.repeat(AI_REPORT_MARKDOWN_MAX_CHARS + 1) };
+    const message = {
+      type: 'ai-open-in-editor',
+      markdown: 'x'.repeat(AI_REPORT_MARKDOWN_MAX_CHARS + 1),
+    };
     const parsed = MainPanelToExtensionMsgSchema.safeParse(message);
     expect(parsed.success).toBe(false);
     expect(parsed.error?.issues[0].path).toEqual(['markdown']);
@@ -123,7 +161,9 @@ describe('ai-open-in-editor payload bound', () => {
 
 describe('ai-open-in-editor handler', () => {
   it('previews the stripped report beside the panel when the preview command is available', async () => {
-    openTextDocument.mockReset().mockResolvedValue({ uri: { scheme: 'untitled', path: 'Untitled-1' } });
+    openTextDocument
+      .mockReset()
+      .mockResolvedValue({ uri: { scheme: 'untitled', path: 'Untitled-1' } });
     executeCommand.mockReset().mockResolvedValue(undefined);
     showTextDocument.mockReset();
     showWarningMessage.mockReset();
@@ -138,31 +178,47 @@ describe('ai-open-in-editor handler', () => {
       content: 'See dbo.Orders.',
       language: 'markdown',
     });
-    expect(executeCommand).toHaveBeenCalledWith('markdown.showPreviewToSide', { scheme: 'untitled', path: 'Untitled-1' });
-    expect(showTextDocument, 'the preview is the whole action when it works').not.toHaveBeenCalled();
+    expect(executeCommand).toHaveBeenCalledWith('markdown.showPreviewToSide', {
+      scheme: 'untitled',
+      path: 'Untitled-1',
+    });
+    expect(
+      showTextDocument,
+      'the preview is the whole action when it works',
+    ).not.toHaveBeenCalled();
     expect(showWarningMessage).not.toHaveBeenCalled();
   });
 
   it('shows the document itself and warns — never errors — when the preview command is missing', async () => {
     const doc = { uri: { scheme: 'untitled', path: 'Untitled-1' } };
     openTextDocument.mockReset().mockResolvedValue(doc);
-    executeCommand.mockReset().mockRejectedValue(new Error("command 'markdown.showPreviewToSide' not found"));
+    executeCommand
+      .mockReset()
+      .mockRejectedValue(
+        new Error("command 'markdown.showPreviewToSide' not found"),
+      );
     showTextDocument.mockReset().mockResolvedValue(undefined);
     showWarningMessage.mockReset();
 
     const host = fakeHost();
     const handlers = buildHandlers(host);
     await expect(
-      handlers['ai-open-in-editor']({ type: 'ai-open-in-editor', markdown: 'Report body.' }),
+      handlers['ai-open-in-editor']({
+        type: 'ai-open-in-editor',
+        markdown: 'Report body.',
+      }),
     ).resolves.toBeUndefined();
 
-    expect(showTextDocument, 'the document the user asked for is still opened').toHaveBeenCalledWith(
-      doc,
-      { viewColumn: -2 },
-    );
+    expect(
+      showTextDocument,
+      'the document the user asked for is still opened',
+    ).toHaveBeenCalledWith(doc, { viewColumn: -2 });
     expect(showWarningMessage).toHaveBeenCalledTimes(1);
     expect(String(showWarningMessage.mock.calls[0][0])).toContain('Markdown');
-    expect(host.showErrorMessage, 'a missing optional preview is not a failed action').not.toHaveBeenCalled();
+    expect(
+      host.showErrorMessage,
+      'a missing optional preview is not a failed action',
+    ).not.toHaveBeenCalled();
   });
 });
 
@@ -172,7 +228,9 @@ function fakeDocument(name: string) {
     uri: { scheme: 'untitled', path: name },
     isClosed: false,
     text: '',
-    get lineCount() { return doc.text.split('\n').length; },
+    get lineCount() {
+      return doc.text.split('\n').length;
+    },
     getText: () => doc.text,
     validateRange: (range: unknown) => range,
   };
@@ -180,30 +238,44 @@ function fakeDocument(name: string) {
 }
 
 function previewTabFor(name: string, isActive = true) {
-  return { input: new vscodeFake.TabInputWebview('mainThreadWebview-markdown.preview'), label: `Preview ${name}`, isActive };
+  return {
+    input: new vscodeFake.TabInputWebview('mainThreadWebview-markdown.preview'),
+    label: `Preview ${name}`,
+    isActive,
+  };
 }
 
 describe('ai-open-in-editor handler: one report document and preview', () => {
   function arrange() {
     let created = 0;
     const docs: ReturnType<typeof fakeDocument>[] = [];
-    openTextDocument.mockReset().mockImplementation(async (opts: { content: string }) => {
-      const doc = fakeDocument(`Untitled-${++created}`);
-      doc.text = opts.content;
-      docs.push(doc);
-      return doc;
-    });
-    applyEdit.mockReset().mockImplementation(async (edit: { replacements: Array<{ uri: unknown; text: string }> }) => {
-      for (const r of edit.replacements) docs.find((d) => d.uri === r.uri)!.text = r.text;
-      return true;
-    });
+    openTextDocument
+      .mockReset()
+      .mockImplementation(async (opts: { content: string }) => {
+        const doc = fakeDocument(`Untitled-${++created}`);
+        doc.text = opts.content;
+        docs.push(doc);
+        return doc;
+      });
+    applyEdit
+      .mockReset()
+      .mockImplementation(
+        async (edit: {
+          replacements: Array<{ uri: unknown; text: string }>;
+        }) => {
+          for (const r of edit.replacements)
+            docs.find((d) => d.uri === r.uri)!.text = r.text;
+          return true;
+        },
+      );
     executeCommand.mockReset().mockResolvedValue(undefined);
     showTextDocument.mockReset().mockResolvedValue(undefined);
     showWarningMessage.mockReset();
     openTabs.length = 0;
     closeTab.mockReset().mockResolvedValue(true);
     const handlers = buildHandlers(fakeHost());
-    const click = (markdown: string) => handlers['ai-open-in-editor']({ type: 'ai-open-in-editor', markdown });
+    const click = (markdown: string) =>
+      handlers['ai-open-in-editor']({ type: 'ai-open-in-editor', markdown });
     return { docs, click };
   }
 
@@ -215,8 +287,11 @@ describe('ai-open-in-editor handler: one report document and preview', () => {
 
     expect(docs, 'repeated clicks never accumulate documents').toHaveLength(1);
     expect(docs[0].text, 'the report shows the latest content').toBe('# B');
-    expect(executeCommand.mock.calls.map((c) => c[0])).toEqual(Array(3).fill('markdown.showPreviewToSide'));
-    for (const call of executeCommand.mock.calls) expect(call[1]).toBe(docs[0].uri);
+    expect(executeCommand.mock.calls.map((c) => c[0])).toEqual(
+      Array(3).fill('markdown.showPreviewToSide'),
+    );
+    for (const call of executeCommand.mock.calls)
+      expect(call[1]).toBe(docs[0].uri);
   });
 
   it('keeps one document when a second click arrives before the first document exists', async () => {
@@ -234,7 +309,10 @@ describe('ai-open-in-editor handler: one report document and preview', () => {
     await click('# B');
     await click('# C');
 
-    expect(executeCommand, 'the open preview follows the document; no new preview is requested').toHaveBeenCalledTimes(1);
+    expect(
+      executeCommand,
+      'the open preview follows the document; no new preview is requested',
+    ).toHaveBeenCalledTimes(1);
     expect(docs).toHaveLength(1);
     expect(docs[0].text).toBe('# C');
   });
@@ -251,8 +329,13 @@ describe('ai-open-in-editor handler: one report document and preview', () => {
     expect(closeTab).toHaveBeenCalledTimes(1);
     expect(closeTab).toHaveBeenCalledWith(hidden);
     expect(executeCommand).toHaveBeenCalledTimes(1);
-    expect(executeCommand).toHaveBeenCalledWith('markdown.showPreviewToSide', docs[0].uri);
-    expect(closeTab.mock.invocationCallOrder[0]).toBeLessThan(executeCommand.mock.invocationCallOrder[0]);
+    expect(executeCommand).toHaveBeenCalledWith(
+      'markdown.showPreviewToSide',
+      docs[0].uri,
+    );
+    expect(closeTab.mock.invocationCallOrder[0]).toBeLessThan(
+      executeCommand.mock.invocationCallOrder[0],
+    );
   });
 
   it('closes nothing and asks for nothing when the report preview is visible', async () => {
@@ -278,18 +361,24 @@ describe('ai-open-in-editor handler: one report document and preview', () => {
   it.each([
     ['returns false', () => closeTab.mockResolvedValue(false)],
     ['rejects', () => closeTab.mockRejectedValue(new Error('close refused'))],
-  ])('still asks for the preview, without throwing, when closing the hidden tab %s', async (_name, setup) => {
-    const { docs, click } = arrange();
-    await click('# A');
-    openTabs.push(previewTabFor('Untitled-1', false));
-    setup();
-    executeCommand.mockClear();
+  ])(
+    'still asks for the preview, without throwing, when closing the hidden tab %s',
+    async (_name, setup) => {
+      const { docs, click } = arrange();
+      await click('# A');
+      openTabs.push(previewTabFor('Untitled-1', false));
+      setup();
+      executeCommand.mockClear();
 
-    await expect(click('# B')).resolves.toBeUndefined();
-    expect(closeTab).toHaveBeenCalledTimes(1);
-    expect(executeCommand).toHaveBeenCalledTimes(1);
-    expect(executeCommand).toHaveBeenCalledWith('markdown.showPreviewToSide', docs[0].uri);
-  });
+      await expect(click('# B')).resolves.toBeUndefined();
+      expect(closeTab).toHaveBeenCalledTimes(1);
+      expect(executeCommand).toHaveBeenCalledTimes(1);
+      expect(executeCommand).toHaveBeenCalledWith(
+        'markdown.showPreviewToSide',
+        docs[0].uri,
+      );
+    },
+  );
 
   it('does not take a preview of a document whose name merely ends with the report name for the report preview', async () => {
     const { click } = arrange();
@@ -300,14 +389,26 @@ describe('ai-open-in-editor handler: one report document and preview', () => {
     executeCommand.mockClear();
     await click('# B');
 
-    expect(closeTab, 'another document\'s preview is never closed').not.toHaveBeenCalled();
-    expect(executeCommand, 'no report preview is open, so one is requested').toHaveBeenCalledTimes(1);
+    expect(
+      closeTab,
+      "another document's preview is never closed",
+    ).not.toHaveBeenCalled();
+    expect(
+      executeCommand,
+      'no report preview is open, so one is requested',
+    ).toHaveBeenCalledTimes(1);
   });
 
   it('recognizes the locked preview label form of the report', async () => {
     const { click } = arrange();
     await click('# A');
-    openTabs.push({ input: new vscodeFake.TabInputWebview('mainThreadWebview-markdown.preview'), label: '[Preview] Untitled-1', isActive: true });
+    openTabs.push({
+      input: new vscodeFake.TabInputWebview(
+        'mainThreadWebview-markdown.preview',
+      ),
+      label: '[Preview] Untitled-1',
+      isActive: true,
+    });
     executeCommand.mockClear();
     await click('# B');
 
@@ -352,14 +453,21 @@ describe('ai-open-in-editor handler: one report document and preview', () => {
 
     applyEdit.mockResolvedValueOnce(false);
     await click('# C');
-    expect(docs, 'a rejected edit falls back to a fresh document, never to a stale report').toHaveLength(3);
+    expect(
+      docs,
+      'a rejected edit falls back to a fresh document, never to a stale report',
+    ).toHaveLength(3);
     expect(docs[2].text).toBe('# C');
   });
 
   it('still shows the document and warns on a later click when the preview command is missing', async () => {
     const { docs, click } = arrange();
     await click('# A');
-    executeCommand.mockReset().mockRejectedValue(new Error("command 'markdown.showPreviewToSide' not found"));
+    executeCommand
+      .mockReset()
+      .mockRejectedValue(
+        new Error("command 'markdown.showPreviewToSide' not found"),
+      );
     await expect(click('# B')).resolves.toBeUndefined();
 
     expect(docs).toHaveLength(1);
@@ -379,7 +487,10 @@ function openMainPanel(): void {
     graph: null,
   };
   openPanel(
-    { extensionUri: { scheme: 'file', path: '/ext' }, globalState: { get: vi.fn(), update: vi.fn() } } as never,
+    {
+      extensionUri: { scheme: 'file', path: '/ext' },
+      globalState: { get: vi.fn(), update: vi.fn() },
+    } as never,
     'Data Lineage',
     () => session as never,
     { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() } as never,
@@ -399,11 +510,19 @@ function fakeWebviewPanel() {
       cspSource: 'csp',
       asWebviewUri: (uri: unknown) => uri,
       postMessage: () => Promise.resolve(true),
-      onDidReceiveMessage: (listener: (msg: unknown) => Promise<void>) => { messageListener = listener; return { dispose() {} }; },
+      onDidReceiveMessage: (listener: (msg: unknown) => Promise<void>) => {
+        messageListener = listener;
+        return { dispose() {} };
+      },
     },
-    onDidDispose: (listener: () => void) => { disposeListeners.push(listener); return { dispose() {} }; },
+    onDidDispose: (listener: () => void) => {
+      disposeListeners.push(listener);
+      return { dispose() {} };
+    },
     reveal: vi.fn(),
-    dispose: () => { for (const l of disposeListeners) l(); },
+    dispose: () => {
+      for (const l of disposeListeners) l();
+    },
   };
   return { panel, send: (msg: unknown) => messageListener!(msg) };
 }
@@ -430,17 +549,26 @@ describe('ai-open-in-editor across a closed and reopened panel', () => {
   function arrangeDocuments() {
     let created = 0;
     const docs: ReturnType<typeof fakeDocument>[] = [];
-    openTextDocument.mockReset().mockImplementation(async (opts: { content: string }) => {
-      const doc = fakeDocument(`Untitled-${++created}`);
-      doc.text = opts.content;
-      docs.push(doc);
-      leftoverDocs.push(doc);
-      return doc;
-    });
-    applyEdit.mockReset().mockImplementation(async (edit: { replacements: Array<{ uri: unknown; text: string }> }) => {
-      for (const r of edit.replacements) docs.find((d) => d.uri === r.uri)!.text = r.text;
-      return true;
-    });
+    openTextDocument
+      .mockReset()
+      .mockImplementation(async (opts: { content: string }) => {
+        const doc = fakeDocument(`Untitled-${++created}`);
+        doc.text = opts.content;
+        docs.push(doc);
+        leftoverDocs.push(doc);
+        return doc;
+      });
+    applyEdit
+      .mockReset()
+      .mockImplementation(
+        async (edit: {
+          replacements: Array<{ uri: unknown; text: string }>;
+        }) => {
+          for (const r of edit.replacements)
+            docs.find((d) => d.uri === r.uri)!.text = r.text;
+          return true;
+        },
+      );
     executeCommand.mockReset().mockResolvedValue(undefined);
     showTextDocument.mockReset().mockResolvedValue(undefined);
     openTabs.length = 0;
@@ -488,11 +616,17 @@ describe('inbound bridge protocol version', () => {
     openTextDocument.mockReset().mockResolvedValue(fakeDocument('Untitled-1'));
     windowShowErrorMessage.mockReset();
 
-    await main.send({ type: 'ai-open-in-editor', markdown: '# A', protocolVersion: stale });
+    await main.send({
+      type: 'ai-open-in-editor',
+      markdown: '# A',
+      protocolVersion: stale,
+    });
 
     expect(openTextDocument).not.toHaveBeenCalled();
     expect(windowShowErrorMessage).toHaveBeenCalledTimes(1);
-    expect(windowShowErrorMessage.mock.calls[0][0]).toContain(`bridge protocol v${stale}`);
+    expect(windowShowErrorMessage.mock.calls[0][0]).toContain(
+      `bridge protocol v${stale}`,
+    );
     main.panel.dispose();
   });
 
@@ -500,7 +634,10 @@ describe('inbound bridge protocol version', () => {
     const main = fakeWebviewPanel();
     const detail = fakeWebviewPanel();
     const disposeDetail = vi.spyOn(detail.panel, 'dispose');
-    createWebviewPanel.mockReset().mockReturnValueOnce(main.panel).mockReturnValueOnce(detail.panel);
+    createWebviewPanel
+      .mockReset()
+      .mockReturnValueOnce(main.panel)
+      .mockReturnValueOnce(detail.panel);
     openMainPanel();
     await main.send({ type: 'show-detail' });
     windowShowErrorMessage.mockReset();
@@ -510,7 +647,10 @@ describe('inbound bridge protocol version', () => {
     expect(windowShowErrorMessage).toHaveBeenCalledTimes(1);
     expect(windowShowErrorMessage.mock.calls[0][0]).toContain('detail panel');
 
-    await detail.send({ type: 'close-detail', protocolVersion: BRIDGE_PROTOCOL_VERSION });
+    await detail.send({
+      type: 'close-detail',
+      protocolVersion: BRIDGE_PROTOCOL_VERSION,
+    });
     expect(disposeDetail).toHaveBeenCalledTimes(1);
     main.panel.dispose();
   });
@@ -521,15 +661,22 @@ describe('export-file handler', () => {
     ['../../../etc/passwd', 'passwd'],
     ['sub/dir/orders_lineage.drawio', 'orders_lineage.drawio'],
     ['orders_lineage.drawio', 'orders_lineage.drawio'],
-  ])('pre-fills the save dialog with the base name of %s', async (defaultName, expected) => {
-    const showSaveDialog = vi.fn().mockResolvedValue(undefined);
-    const handlers = buildHandlers(fakeHost({ showSaveDialog }));
+  ])(
+    'pre-fills the save dialog with the base name of %s',
+    async (defaultName, expected) => {
+      const showSaveDialog = vi.fn().mockResolvedValue(undefined);
+      const handlers = buildHandlers(fakeHost({ showSaveDialog }));
 
-    await handlers['export-file']({ type: 'export-file', defaultName, data: '<mxfile/>' });
+      await handlers['export-file']({
+        type: 'export-file',
+        defaultName,
+        data: '<mxfile/>',
+      });
 
-    expect(showSaveDialog).toHaveBeenCalledTimes(1);
-    expect(showSaveDialog.mock.calls[0][0].defaultUri.fsPath).toBe(expected);
-  });
+      expect(showSaveDialog).toHaveBeenCalledTimes(1);
+      expect(showSaveDialog.mock.calls[0][0].defaultUri.fsPath).toBe(expected);
+    },
+  );
 
   it('writes the export only once the dialog returns a destination the user chose', async () => {
     const chosen = { scheme: 'file', fsPath: '/home/user/picked.drawio' };
@@ -537,7 +684,11 @@ describe('export-file handler', () => {
     const writeFile = vi.fn().mockResolvedValue(undefined);
     const executeHostCommand = vi.fn();
     const handlers = buildHandlers(
-      fakeHost({ showSaveDialog, writeFile, executeCommand: executeHostCommand }),
+      fakeHost({
+        showSaveDialog,
+        writeFile,
+        executeCommand: executeHostCommand,
+      }),
     );
 
     await handlers['export-file']({
@@ -546,25 +697,44 @@ describe('export-file handler', () => {
       data: '<mxfile/>',
     });
 
-    expect(writeFile).toHaveBeenCalledWith(chosen, Buffer.from('<mxfile/>', 'utf-8'));
+    expect(writeFile).toHaveBeenCalledWith(
+      chosen,
+      Buffer.from('<mxfile/>', 'utf-8'),
+    );
     expect(executeHostCommand).toHaveBeenCalledWith('revealFileInOS', chosen);
   });
 });
 
 describe('webview error handler: logging goes through the redacting host.log', () => {
-  const secretStack = 'Error: boom Password=hunter2\n    at render (webview.js:1:1)';
+  const secretStack =
+    'Error: boom Password=hunter2\n    at render (webview.js:1:1)';
 
   it('writes the error to host.log at error level and never to the output channel directly', () => {
-    const channel = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const channel = {
+      info: vi.fn(),
+      debug: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
     const host = fakeHost();
     const handlers = buildHandlers(host, channel);
 
-    handlers['error']({ type: 'error', error: 'render failed Password=hunter2', stack: secretStack, source: 'error-boundary', context: { note: 'x' } });
+    handlers['error']({
+      type: 'error',
+      error: 'render failed Password=hunter2',
+      stack: secretStack,
+      source: 'error-boundary',
+      context: { note: 'x' },
+    });
 
-    expect(channel.error, 'a direct channel write bypasses redaction').not.toHaveBeenCalled();
+    expect(
+      channel.error,
+      'a direct channel write bypasses redaction',
+    ).not.toHaveBeenCalled();
     expect(channel.warn).not.toHaveBeenCalled();
     expect(host.log).toHaveBeenCalledTimes(1);
-    const [level, category, text, err] = (host.log as ReturnType<typeof vi.fn>).mock.calls[0];
+    const [level, category, text, err] = (host.log as ReturnType<typeof vi.fn>)
+      .mock.calls[0];
     expect(level).toBe('error');
     expect(category).toBe('Bridge');
     expect(text).toContain('Webview error-boundary');
@@ -575,8 +745,14 @@ describe('webview error handler: logging goes through the redacting host.log', (
 
   it('still shows the error toast', () => {
     const host = fakeHost();
-    buildHandlers(host)['error']({ type: 'error', error: 'x', source: 'window-error' });
+    buildHandlers(host)['error']({
+      type: 'error',
+      error: 'x',
+      source: 'window-error',
+    });
     expect(host.showErrorMessage).toHaveBeenCalledTimes(1);
-    expect((host.showErrorMessage as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain('Output channel');
+    expect(
+      (host.showErrorMessage as ReturnType<typeof vi.fn>).mock.calls[0][0],
+    ).toContain('Output channel');
   });
 });

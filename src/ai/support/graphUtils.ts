@@ -50,7 +50,8 @@ export function buildNodeMap(model: DatabaseModel): Map<string, LineageNode> {
 
 /** Retrieves the column definitions for a specific node, preferring the ColumnStore if available. */
 export function getNodeColumns(
-  nodeId: string, nodeMap: Map<string, LineageNode>,
+  nodeId: string,
+  nodeMap: Map<string, LineageNode>,
   store?: NodeSnapshotStore,
 ): ColumnDef[] | undefined {
   return store?.getColumns(nodeId) ?? nodeMap.get(nodeId)?.columns;
@@ -58,7 +59,8 @@ export function getNodeColumns(
 
 /** Retrieves unmodified stored DDL, preferring the column store; an empty string remains unavailable. */
 export function getNodeDdl(
-  nodeId: string, nodeMap: Map<string, LineageNode>,
+  nodeId: string,
+  nodeMap: Map<string, LineageNode>,
   store?: NodeSnapshotStore,
 ): string | undefined {
   const raw = store?.getDdl(nodeId) ?? nodeMap.get(nodeId)?.bodyScript;
@@ -66,4 +68,8 @@ export function getNodeDdl(
 }
 
 /** Object types whose body is the source of lineage information — view / procedure / function. */
-export const SCRIPT_TYPES: Set<ObjectType> = new Set(['view', 'procedure', 'function']);
+export const SCRIPT_TYPES: Set<ObjectType> = new Set([
+  'view',
+  'procedure',
+  'function',
+]);

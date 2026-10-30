@@ -27,10 +27,12 @@ export function rootPath(...segments: string[]): string {
 
 /** Reads a required SQL scenario from the shared parser catalog so engine tests use the same body. */
 export function parserCaseSql(id: string): string {
-  const catalog = yaml.load(readFileSync(rootPath('tests/cases/parser/exact-edges.yaml'), 'utf8')) as {
+  const catalog = yaml.load(
+    readFileSync(rootPath('tests/cases/parser/exact-edges.yaml'), 'utf8'),
+  ) as {
     cases: Array<{ id: string; sql: string }>;
   };
-  const row = catalog.cases.find(testCase => testCase.id === id);
+  const row = catalog.cases.find((testCase) => testCase.id === id);
   if (!row) throw new Error(`Parser case not found: ${id}`);
   return row.sql;
 }
@@ -48,7 +50,10 @@ export async function loadAdventureWorksModel(): Promise<DatabaseModel> {
 
 /** Load parse rules from assets/defaultParseRules.yaml (single source of truth) */
 export function loadParseRules() {
-  const rulesYaml = readFileSync(rootPath('assets/defaultParseRules.yaml'), 'utf-8');
+  const rulesYaml = readFileSync(
+    rootPath('assets/defaultParseRules.yaml'),
+    'utf-8',
+  );
   loadRules(yaml.load(rulesYaml) as RawParseRulesConfig);
 }
 
@@ -57,7 +62,7 @@ export function loadParseRules() {
 /** Check that a list contains a value (case-insensitive partial match on the last part) */
 export function hasName(list: string[], name: string): boolean {
   const lower = name.toLowerCase();
-  return list.some(s => {
+  return list.some((s) => {
     const norm = s.replace(/\[|\]/g, '').toLowerCase();
     if (norm === lower) return true;
     const parts = norm.split('.');
@@ -71,14 +76,21 @@ export function detailPanelStub(
   post: (message: unknown) => void = () => {},
 ) {
   return {
-    title: '', reveal: () => {}, onDidDispose: () => ({ dispose: () => {} }),
+    title: '',
+    reveal: () => {},
+    onDidDispose: () => ({ dispose: () => {} }),
     webview: {
-      html: '', cspSource: 'vscode-resource:', asWebviewUri: (uri: unknown) => uri,
+      html: '',
+      cspSource: 'vscode-resource:',
+      asWebviewUri: (uri: unknown) => uri,
       onDidReceiveMessage: (listener: (message: unknown) => Promise<void>) => {
         receive(listener);
         return { dispose: () => {} };
       },
-      postMessage: async (message: unknown) => { post(message); return true; },
+      postMessage: async (message: unknown) => {
+        post(message);
+        return true;
+      },
     },
   };
 }
@@ -86,23 +98,50 @@ export function detailPanelStub(
 /** Builds the standard detail-handler host while leaving connection behavior to each test. */
 export function detailHandlers(
   create: typeof import('../../../src/bridge/messageHandlers').createMessageHandlers,
-  { isDbSession = true, settings = {}, outputChannel = { info: () => {}, debug: () => {}, warn: () => {}, error: () => {}, trace: () => {} }, extensionUri = 'ext', log = () => {} }: {
+  {
+    isDbSession = true,
+    settings = {},
+    outputChannel = {
+      info: () => {},
+      debug: () => {},
+      warn: () => {},
+      error: () => {},
+      trace: () => {},
+    },
+    extensionUri = 'ext',
+    log = () => {},
+  }: {
     isDbSession?: boolean;
     settings?: Record<string, unknown>;
-    outputChannel?: Pick<Parameters<typeof create>[3], 'info' | 'debug' | 'warn' | 'error' | 'trace'>;
+    outputChannel?: Pick<
+      Parameters<typeof create>[3],
+      'info' | 'debug' | 'warn' | 'error' | 'trace'
+    >;
     extensionUri?: unknown;
     log?: Parameters<typeof create>[0]['log'];
   } = {},
 ) {
   return create(
     {
-      postMessage: async () => true, log, getExtensionUri: () => extensionUri,
-      getConfiguration: () => ({ get: (key: string, fallback: unknown) => key in settings ? settings[key] : fallback }),
+      postMessage: async () => true,
+      log,
+      getExtensionUri: () => extensionUri,
+      getConfiguration: () => ({
+        get: (key: string, fallback: unknown) =>
+          key in settings ? settings[key] : fallback,
+      }),
     } as unknown as Parameters<typeof create>[0],
-    { globalState: { get: () => undefined, update: () => undefined }, secrets: {}, extensionUri } as never,
+    {
+      globalState: { get: () => undefined, update: () => undefined },
+      secrets: {},
+      extensionUri,
+    } as never,
     () => ({ isDbSession }) as never,
     outputChannel as never,
     () => ({ schemaVersion: 1, lastOpenedId: null, projects: [] }) as never,
-    async () => {}, async () => {}, false, () => {},
+    async () => {},
+    async () => {},
+    false,
+    () => {},
   );
 }

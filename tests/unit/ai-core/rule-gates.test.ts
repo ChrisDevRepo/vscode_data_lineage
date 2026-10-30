@@ -22,7 +22,9 @@ function sourceFiles(root: string): string[] {
     const path = join(root, name);
     return statSync(path).isDirectory()
       ? sourceFiles(path)
-      : path.endsWith('.ts') || path.endsWith('.tsx') ? [path] : [];
+      : path.endsWith('.ts') || path.endsWith('.tsx')
+        ? [path]
+        : [];
   });
 }
 
@@ -61,7 +63,10 @@ function stripComments(source: string): string {
     }
     if (char === '/' && next === '*') {
       index += 2;
-      while (index < source.length && !(source[index] === '*' && source[index + 1] === '/')) {
+      while (
+        index < source.length &&
+        !(source[index] === '*' && source[index + 1] === '/')
+      ) {
         index += 1;
       }
       index += 2;
@@ -99,7 +104,8 @@ function callArguments(source: string, from: number): string {
 }
 
 /** Direct user-notification and console calls banned inside `src/ai/**`. */
-const NOTIFICATION_PATTERN = /\b(showErrorMessage|showWarningMessage|console\.[A-Za-z]+)\s*\(/g;
+const NOTIFICATION_PATTERN =
+  /\b(showErrorMessage|showWarningMessage|console\.[A-Za-z]+)\s*\(/g;
 
 /** The consent-dialog escape hatch: a *modal* warning is a deliberate user prompt, not logging. */
 const MODAL_ARGUMENT = /\bmodal\s*:\s*true\b/;
@@ -111,7 +117,10 @@ function forbiddenNotificationCalls(source: string): string[] {
   for (const match of stripped.matchAll(NOTIFICATION_PATTERN)) {
     const callee = match[1];
     const argumentsEnd = (match.index ?? 0) + match[0].length - 1;
-    if (callee === 'showWarningMessage' && MODAL_ARGUMENT.test(callArguments(stripped, argumentsEnd))) {
+    if (
+      callee === 'showWarningMessage' &&
+      MODAL_ARGUMENT.test(callArguments(stripped, argumentsEnd))
+    ) {
       continue;
     }
     found.push(callee);
@@ -120,7 +129,8 @@ function forbiddenNotificationCalls(source: string): string[] {
 }
 
 /** Static imports, re-exports, dynamic imports and requires alike. */
-const MODULE_SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)['"]([^'"]+)['"]/g;
+const MODULE_SPECIFIER =
+  /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)['"]([^'"]+)['"]/g;
 
 /** Resolves every relative module specifier of a file to a `src`-relative module path. */
 function importedModules(file: string, source: string): string[] {
@@ -128,7 +138,9 @@ function importedModules(file: string, source: string): string[] {
   return [...stripped.matchAll(MODULE_SPECIFIER)]
     .map((match) => match[1])
     .filter((specifier) => specifier.startsWith('.'))
-    .map((specifier) => posixRelative(srcRoot, resolve(dirname(file), specifier)));
+    .map((specifier) =>
+      posixRelative(srcRoot, resolve(dirname(file), specifier)),
+    );
 }
 
 /** Engine imports in `src/ai/**` that bypass `src/engine/shared/*`. */
@@ -165,7 +177,8 @@ function engineLayeringViolations(): string[] {
   const found = new Set<string>();
   for (const file of sourceFiles(aiRoot)) {
     for (const module of importedModules(file, readFileSync(file, 'utf8'))) {
-      if (!module.startsWith('engine/') || module.startsWith('engine/shared/')) continue;
+      if (!module.startsWith('engine/') || module.startsWith('engine/shared/'))
+        continue;
       found.add(`${posixRelative(aiRoot, file)} -> ${module}`);
     }
   }
@@ -177,14 +190,20 @@ describe('architecture rule gates', () => {
     const src = sourceFiles(srcRoot);
     const ai = sourceFiles(aiRoot);
 
-    expect(src.length, 'the src scan resolved too few files to prove absence').toBeGreaterThanOrEqual(
-      MIN_SCANNED_SOURCES,
+    expect(
+      src.length,
+      'the src scan resolved too few files to prove absence',
+    ).toBeGreaterThanOrEqual(MIN_SCANNED_SOURCES);
+    expect(
+      ai.length,
+      'the src/ai scan resolved too few files to prove absence',
+    ).toBeGreaterThanOrEqual(MIN_SCANNED_AI_SOURCES);
+    expect(src.map((path) => readFileSync(path, 'utf8')).join('\n')).toContain(
+      SRC_POSITIVE_CONTROL,
     );
-    expect(ai.length, 'the src/ai scan resolved too few files to prove absence').toBeGreaterThanOrEqual(
-      MIN_SCANNED_AI_SOURCES,
+    expect(ai.map((path) => readFileSync(path, 'utf8')).join('\n')).toContain(
+      AI_POSITIVE_CONTROL,
     );
-    expect(src.map((path) => readFileSync(path, 'utf8')).join('\n')).toContain(SRC_POSITIVE_CONTROL);
-    expect(ai.map((path) => readFileSync(path, 'utf8')).join('\n')).toContain(AI_POSITIVE_CONTROL);
   });
 
   it('never routes a production call through vscode.lm.invokeTool', () => {
@@ -209,7 +228,9 @@ describe('architecture rule gates', () => {
 
   it('runs domain rules as plain functions after schema validation, never as Ajv keyword code (D-126)', () => {
     const offenders = sourceFiles(srcRoot).filter((file) =>
-      /\baddKeyword\s*\(|ajv\/dist\/compile\b/.test(stripComments(readFileSync(file, 'utf8'))),
+      /\baddKeyword\s*\(|ajv\/dist\/compile\b/.test(
+        stripComments(readFileSync(file, 'utf8')),
+      ),
     );
 
     expect(offenders.map((file) => posixRelative(srcRoot, file))).toEqual([]);
@@ -228,7 +249,9 @@ describe('architecture rule gates', () => {
 
   it('keeps the grandfathered engine-import list free of entries that no longer exist', () => {
     const current = engineLayeringViolations();
-    const stale = GRANDFATHERED_ENGINE_IMPORTS.filter((entry) => !current.includes(entry));
+    const stale = GRANDFATHERED_ENGINE_IMPORTS.filter(
+      (entry) => !current.includes(entry),
+    );
 
     expect(
       stale,
@@ -250,16 +273,29 @@ describe('rejection codes — one home per top-level code', () => {
       const lines = readFileSync(file, 'utf8').split('\n');
       lines.forEach((line, index) => {
         for (const code of TOP_LEVEL_REJECTION_CODES) {
-          if (line.includes(`code: '${code}'`) || line.includes(`code: "${code}"`)) {
-            offenders.push(`${posixRelative(aiRoot, file)}:${index + 1} ${code}`);
+          if (
+            line.includes(`code: '${code}'`) ||
+            line.includes(`code: "${code}"`)
+          ) {
+            offenders.push(
+              `${posixRelative(aiRoot, file)}:${index + 1} ${code}`,
+            );
           }
         }
       });
     }
-    expect(offenders, 'every emission site interpolates REJECTION_CODES').toEqual([]);
+    expect(
+      offenders,
+      'every emission site interpolates REJECTION_CODES',
+    ).toEqual([]);
   });
 
   it('keeps top-level codes for invalid input, the consent gate, the admission refusal and a backend fault only; issue codes classify the rest (D-126)', () => {
-    expect([...TOP_LEVEL_REJECTION_CODES].sort()).toEqual(['action_required', 'backend_fault', 'invalid_input', 'over_active_scope_budget']);
+    expect([...TOP_LEVEL_REJECTION_CODES].sort()).toEqual([
+      'action_required',
+      'backend_fault',
+      'invalid_input',
+      'over_active_scope_budget',
+    ]);
   });
 });

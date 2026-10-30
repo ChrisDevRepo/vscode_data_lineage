@@ -25,8 +25,12 @@ function registeredCommandIds(): Set<string> {
   const ids = new Set<string>();
   for (const file of sourceFiles(rootPath('src'))) {
     const source = readFileSync(file, 'utf-8');
-    for (const [, id] of source.matchAll(/registerCommand\(\s*'([^']+)'/g)) ids.add(id);
-    for (const [, id] of source.matchAll(/^const\s+\w*COMMAND\w*\s*=\s*'(dataLineageViz\.[^']+)'/gm)) ids.add(id);
+    for (const [, id] of source.matchAll(/registerCommand\(\s*'([^']+)'/g))
+      ids.add(id);
+    for (const [, id] of source.matchAll(
+      /^const\s+\w*COMMAND\w*\s*=\s*'(dataLineageViz\.[^']+)'/gm,
+    ))
+      ids.add(id);
   }
   return ids;
 }
@@ -42,15 +46,23 @@ describe('VS Code commands manifest consistency', () => {
   it('every contributed command has a runtime registration', () => {
     const registered = registeredCommandIds();
     const missing = contributedCommandIds().filter((id) => !registered.has(id));
-    expect(missing, 'palette commands with no registerCommand call').toEqual([]);
+    expect(missing, 'palette commands with no registerCommand call').toEqual(
+      [],
+    );
   });
 
   it('every registered command is contributed or explicitly exempt', () => {
     const contributed = new Set(contributedCommandIds());
     const undeclared = [...registeredCommandIds()]
       .filter((id) => id.startsWith('dataLineageViz.'))
-      .filter((id) => !contributed.has(id) && !INTENTIONALLY_UNCONTRIBUTED.includes(id))
+      .filter(
+        (id) =>
+          !contributed.has(id) && !INTENTIONALLY_UNCONTRIBUTED.includes(id),
+      )
       .sort();
-    expect(undeclared, 'commands registered but not reachable from the palette').toEqual([]);
+    expect(
+      undeclared,
+      'commands registered but not reachable from the palette',
+    ).toEqual([]);
   });
 });

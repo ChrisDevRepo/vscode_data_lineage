@@ -9,9 +9,24 @@ import type { ToolServices } from './toolServices';
 type HopCommitTool = 'lineage_submit_findings' | 'lineage_prune_current';
 
 /** Resolves the active engine, or answers that no exploration is active, before schema validation. */
-export function activeHopEngine(tool: HopCommitTool, input: unknown, s: ToolServices): NavigationEngine | string {
+export function activeHopEngine(
+  tool: HopCommitTool,
+  input: unknown,
+  s: ToolServices,
+): NavigationEngine | string {
   const engine = s.getSession().stateMachine as NavigationEngine | null;
-  return engine ?? s.logAndReturn(tool, makeRejection({ code: REJECTION_CODES.backendFault, reason: 'No exploration is active.', errors: at('no_session') }), input);
+  return (
+    engine ??
+    s.logAndReturn(
+      tool,
+      makeRejection({
+        code: REJECTION_CODES.backendFault,
+        reason: 'No exploration is active.',
+        errors: at('no_session'),
+      }),
+      input,
+    )
+  );
 }
 
 /** Advances one committed hop and returns the shared acknowledgement or synthesis handoff. */
@@ -23,19 +38,28 @@ export function acknowledgeCommittedHop(
 ): object {
   const nextHop = engine.getHopContext();
   const ack = { ...result, ...engine.commitRemovals };
-  if (!nextHop.done) return {
-    ...ack,
-    done: false,
-    accepted_focus: focusNodeId,
-    hop: nextHop.hop,
-    next_focus: nextHop.focus_node?.id,
-  };
+  if (!nextHop.done)
+    return {
+      ...ack,
+      done: false,
+      accepted_focus: focusNodeId,
+      hop: nextHop.hop,
+      next_focus: nextHop.focus_node?.id,
+    };
   const sess = s.getSession();
   const finalResult = engine.getResult();
   sess.storeSmResult(finalResult, s.turnEpoch(sess));
-  if (!sess.classification) throw new Error('classification missing at synthesis handoff — start_exploration contract violated');
+  if (!sess.classification)
+    throw new Error(
+      'classification missing at synthesis handoff — start_exploration contract violated',
+    );
   return {
     ...ack,
-    ...buildSmCompletionEnvelope(finalResult, sess.memory.getUserQuestion(), s.requireModel().identifierCaseSensitive, engine.deferredQuestions),
+    ...buildSmCompletionEnvelope(
+      finalResult,
+      sess.memory.getUserQuestion(),
+      s.requireModel().identifierCaseSensitive,
+      engine.deferredQuestions,
+    ),
   };
 }

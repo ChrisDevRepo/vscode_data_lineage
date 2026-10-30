@@ -2,16 +2,23 @@
 
 import { buildColumnAspectPrompt } from './prompts';
 import { escapePromptText } from '../support/text';
-import { assignEvidenceIds, requiredCtChainNodeIds, requiredDetailSlotIds } from '../tools/presentResult';
+import {
+  assignEvidenceIds,
+  requiredCtChainNodeIds,
+  requiredDetailSlotIds,
+} from '../tools/presentResult';
 import type { ColumnEdge, DeferredQuestion, SmResult } from '../sm/smTypes';
 import { schemaKey } from '../../utils/sql';
 
 /** Builds the static active-phase SM protocol block: the column aspect of the hop, rendered only when the hop carries tracked columns. */
-export function buildSmProtocol({ targetColumns }: { targetColumns?: string[] }): string {
+export function buildSmProtocol({
+  targetColumns,
+}: {
+  targetColumns?: string[];
+}): string {
   if (!targetColumns || targetColumns.length === 0) return '';
   return buildColumnAspectPrompt(targetColumns);
 }
-
 
 /** Builds the synthesis reminder appended as the last key of the completion tool_result JSON. */
 function buildSynthesisReminder(question: string): string {
@@ -21,7 +28,6 @@ function buildSynthesisReminder(question: string): string {
     'Length follows the captured evidence, not the question: every kept node keeps its rules, predicates and formulas. Sections run in graph order — terminal sources, then each transform, then the origin and what reads it.',
   ].join('\n');
 }
-
 
 /** Source/transform/target highlight buckets derived from graph position. */
 interface FlowRoleGroups {
@@ -39,13 +45,19 @@ function computeFlowRoleGroups(
   edges: ReadonlyArray<{ from: string; to: string }>,
   hopNodes?: ReadonlySet<string>,
 ): FlowRoleGroups {
-  const toNodes = new Set(edges.map(e => e.to));
+  const toNodes = new Set(edges.map((e) => e.to));
   const reached = new Set<string>([originNodeId]);
-  for (const e of edges) { reached.add(e.from); reached.add(e.to); }
-  const source = [...new Set(edges.map(e => e.from))]
-    .filter(n => n !== originNodeId && !toNodes.has(n) && !hopNodes?.has(n));
+  for (const e of edges) {
+    reached.add(e.from);
+    reached.add(e.to);
+  }
+  const source = [...new Set(edges.map((e) => e.from))].filter(
+    (n) => n !== originNodeId && !toNodes.has(n) && !hopNodes?.has(n),
+  );
   const sourceSet = new Set(source);
-  const transform = [...reached].filter(n => n !== originNodeId && !sourceSet.has(n));
+  const transform = [...reached].filter(
+    (n) => n !== originNodeId && !sourceSet.has(n),
+  );
   return { source, target: [originNodeId], transform };
 }
 
@@ -68,7 +80,10 @@ function computeDirectionGroups(
     const stack = [originNodeId];
     while (stack.length > 0) {
       for (const next of adjacency.get(stack.pop()!) ?? []) {
-        if (!seen.has(next)) { seen.add(next); stack.push(next); }
+        if (!seen.has(next)) {
+          seen.add(next);
+          stack.push(next);
+        }
       }
     }
     seen.delete(originNodeId);
@@ -76,9 +91,14 @@ function computeDirectionGroups(
   };
   const downstream = walk(forward);
   const upstream = walk(backward);
-  const sideBranch = [...reached]
-    .filter(n => n !== originNodeId && !upstream.has(n) && !downstream.has(n));
-  return { upstream: [...upstream].sort(), downstream: [...downstream].sort(), sideBranch: sideBranch.sort() };
+  const sideBranch = [...reached].filter(
+    (n) => n !== originNodeId && !upstream.has(n) && !downstream.has(n),
+  );
+  return {
+    upstream: [...upstream].sort(),
+    downstream: [...downstream].sort(),
+    sideBranch: sideBranch.sort(),
+  };
 }
 
 /** Renders the shared edge-direction lines from computed {@link computeDirectionGroups} buckets. */
@@ -95,8 +115,12 @@ function buildDirectionLines(
 }
 
 /** Renders the shared `highlight_groups` guidance lines from computed {@link FlowRoleGroups}. */
-function buildFlowRoleHighlightLines(groups: FlowRoleGroups, presented: ReadonlySet<string>): string[] {
-  const linkable = (ids: readonly string[]): string[] => ids.filter(id => presented.has(id));
+function buildFlowRoleHighlightLines(
+  groups: FlowRoleGroups,
+  presented: ReadonlySet<string>,
+): string[] {
+  const linkable = (ids: readonly string[]): string[] =>
+    ids.filter((id) => presented.has(id));
   return [
     `- highlight_groups entry with color "target" (the queried object): ${linkable(groups.target).join(', ')}`,
     `- highlight_groups entry with color "source", candidates (upstream endpoints reached within this trace; use retained SQL findings to describe their dependencies): ${linkable(groups.source).join(', ') || '(none)'}`,
@@ -104,7 +128,9 @@ function buildFlowRoleHighlightLines(groups: FlowRoleGroups, presented: Readonly
 }
 
 /** Projects node-level `[from, to, kind]` edges to the `{from, to}` flow the shared buckets read. */
-function asFlowEdges(edges: ReadonlyArray<[string, string, string]>): Array<{ from: string; to: string }> {
+function asFlowEdges(
+  edges: ReadonlyArray<[string, string, string]>,
+): Array<{ from: string; to: string }> {
   return edges.map(([from, to]) => ({ from, to }));
 }
 
@@ -117,9 +143,15 @@ function buildBbSynthesisBlock(
   const flowEdges = asFlowEdges(edges);
   return [
     '## Flow roles',
-    ...buildFlowRoleHighlightLines(computeFlowRoleGroups(originNodeId, flowEdges), presentedNodeIds),
+    ...buildFlowRoleHighlightLines(
+      computeFlowRoleGroups(originNodeId, flowEdges),
+      presentedNodeIds,
+    ),
     '',
-    ...buildDirectionLines(originNodeId, computeDirectionGroups(originNodeId, flowEdges)),
+    ...buildDirectionLines(
+      originNodeId,
+      computeDirectionGroups(originNodeId, flowEdges),
+    ),
   ].join('\n');
 }
 
@@ -133,21 +165,31 @@ function buildCtSynthesisBlock(
   const lines = ['## Column Trace Chain'];
   for (const e of edges) {
     const metadata = [
-      ...(e.transforms?.length ? [`transforms: ${e.transforms.join(', ')}`] : []),
+      ...(e.transforms?.length
+        ? [`transforms: ${e.transforms.join(', ')}`]
+        : []),
       ...(e.note ? [`expression: ${escapePromptText(e.note)}`] : []),
     ];
-    lines.push(`  ${e.from_node}.${e.from_col} → ${e.to_node}.${e.to_col} (hop ${e.hop})${metadata.length ? ` — ${metadata.join('; ')}` : ''}`);
+    lines.push(
+      `  ${e.from_node}.${e.from_col} → ${e.to_node}.${e.to_col} (hop ${e.hop})${metadata.length ? ` — ${metadata.join('; ')}` : ''}`,
+    );
   }
   lines.push('');
-  const directionEdges = nodeEdges.length > 0
-    ? asFlowEdges(nodeEdges)
-    : edges.map(e => ({ from: e.from_node, to: e.to_node }));
+  const directionEdges =
+    nodeEdges.length > 0
+      ? asFlowEdges(nodeEdges)
+      : edges.map((e) => ({ from: e.from_node, to: e.to_node }));
   const direction = computeDirectionGroups(originNodeId, directionEdges);
   lines.push(...buildDirectionLines(originNodeId, direction));
-  const groups = computeFlowRoleGroups(originNodeId, directionEdges,
-    nodeEdges.length > 0 ? undefined : new Set(edges.map(e => e.hop_node)));
+  const groups = computeFlowRoleGroups(
+    originNodeId,
+    directionEdges,
+    nodeEdges.length > 0 ? undefined : new Set(edges.map((e) => e.hop_node)),
+  );
   lines.push('');
-  lines.push('A chain node that does not carry, persist or terminate the traced column gets one line on what it does to the rows: join, filter, predicate or set operation.');
+  lines.push(
+    'A chain node that does not carry, persist or terminate the traced column gets one line on what it does to the rows: join, filter, predicate or set operation.',
+  );
   lines.push('');
   lines.push('## Flow roles');
   lines.push(...buildFlowRoleHighlightLines(groups, presentedNodeIds));
@@ -163,11 +205,21 @@ interface NodeFlowFacts {
 }
 
 /** The single producer of per-node writer/reader flow facts for synthesis grounding ({@link buildAnalyzedFlowFacts} and {@link buildPassthroughFlowFacts}) so every caller reads byte-identical, deterministically-sorted facts (no per-caller re-derivation). */
-function computeNodeFlowFacts(edges: ReadonlyArray<[string, string, string]>, identifierCaseSensitive = false): Map<string, NodeFlowFacts> {
+function computeNodeFlowFacts(
+  edges: ReadonlyArray<[string, string, string]>,
+  identifierCaseSensitive = false,
+): Map<string, NodeFlowFacts> {
   const lc = (s: string): string => schemaKey(s, identifierCaseSensitive);
-  const addNeighbor = (m: Map<string, Set<string>>, key: string, value: string): void => {
+  const addNeighbor = (
+    m: Map<string, Set<string>>,
+    key: string,
+    value: string,
+  ): void => {
     let set = m.get(key);
-    if (!set) { set = new Set<string>(); m.set(key, set); }
+    if (!set) {
+      set = new Set<string>();
+      m.set(key, set);
+    }
     set.add(value);
   };
   const writers = new Map<string, Set<string>>();
@@ -180,51 +232,68 @@ function computeNodeFlowFacts(edges: ReadonlyArray<[string, string, string]>, id
     set ? [...set].sort((a, b) => a.localeCompare(b)) : [];
   const facts = new Map<string, NodeFlowFacts>();
   for (const id of new Set<string>([...writers.keys(), ...readers.keys()])) {
-    facts.set(id, { writtenBy: sortList(writers.get(id)), readBy: sortList(readers.get(id)) });
+    facts.set(id, {
+      writtenBy: sortList(writers.get(id)),
+      readBy: sortList(readers.get(id)),
+    });
   }
   return facts;
 }
 
 /** Renders one node's flow facts as the shared `inputs: …; outputs: …` fragment: data flows from each input into the node and from the node into each output, whatever the object types (a procedure's inputs are what it reads, its outputs what it writes). An absent entry or empty list renders `(none)` with labels selected by the analyzed-node or storage digest. */
-function renderFlowFactsFragment(facts: NodeFlowFacts | undefined, labels: readonly [string, string] = ['inputs:', 'outputs:']): string {
-  const list = (arr: string[] | undefined): string => (arr && arr.length > 0 ? arr.join(', ') : '(none)');
+function renderFlowFactsFragment(
+  facts: NodeFlowFacts | undefined,
+  labels: readonly [string, string] = ['inputs:', 'outputs:'],
+): string {
+  const list = (arr: string[] | undefined): string =>
+    arr && arr.length > 0 ? arr.join(', ') : '(none)';
   return `${labels[0]} ${list(facts?.writtenBy)}; ${labels[1]} ${list(facts?.readBy)}`;
 }
 
 /** Renders engine flow facts for KEPT (non-pruned) nodes that received no detail slot — the envelope carries no other entry for them, so without grounded graph facts the model has nothing to state about them and drops them from sections/highlights/notes. */
-function buildPassthroughFlowFacts(result: SmResult, identifierCaseSensitive = false): string {
+function buildPassthroughFlowFacts(
+  result: SmResult,
+  identifierCaseSensitive = false,
+): string {
   const lc = (s: string): string => schemaKey(s, identifierCaseSensitive);
-  const slottedIds = new Set(result.detail_slots.map(s => lc(s.nodeId)));
-  const prunedIds = new Set(result.node_states.filter(s => s.action === 'prune').map(s => lc(s.nodeId)));
-  const actionById = new Map(result.node_states.map(s => [lc(s.nodeId), s.action]));
+  const slottedIds = new Set(result.detail_slots.map((s) => lc(s.nodeId)));
+  const prunedIds = new Set(
+    result.node_states
+      .filter((s) => s.action === 'prune')
+      .map((s) => lc(s.nodeId)),
+  );
+  const actionById = new Map(
+    result.node_states.map((s) => [lc(s.nodeId), s.action]),
+  );
   const flowFacts = computeNodeFlowFacts(result.edges, identifierCaseSensitive);
 
   const qualifying = result.fullNodes
-    .map(n => ({ id: lc(n.id), type: n.t }))
-    .filter(n => !slottedIds.has(n.id) && !prunedIds.has(n.id))
+    .map((n) => ({ id: lc(n.id), type: n.t }))
+    .filter((n) => !slottedIds.has(n.id) && !prunedIds.has(n.id))
     .sort((a, b) => a.id.localeCompare(b.id));
   if (qualifying.length === 0) return '';
 
   const renderLine = (n: { id: string; type: string }): string => {
-    const descriptor = [n.type, actionById.get(n.id)].filter(Boolean).join(', ');
+    const descriptor = [n.type, actionById.get(n.id)]
+      .filter(Boolean)
+      .join(', ');
     const prefix = descriptor ? ` — ${descriptor}` : '';
     return `- ${n.id}${prefix}: ${renderFlowFactsFragment(flowFacts.get(n.id), ['written by', 'read by'])}`;
   };
-  const dispositioned = qualifying.filter(n => actionById.has(n.id));
-  const undispositioned = qualifying.filter(n => !actionById.has(n.id));
+  const dispositioned = qualifying.filter((n) => actionById.has(n.id));
+  const undispositioned = qualifying.filter((n) => !actionById.has(n.id));
 
   return [
-    'Kept nodes without a detail slot (engine flow facts). Document each in the section of its writer or reader — what it holds for this flow, the predicate it is read or written under, the row grain it lands at, from that writer\'s or reader\'s captured SQL — and give it a `sections[].node_ids` or `notes[].node_id` entry:',
+    "Kept nodes without a detail slot (engine flow facts). Document each in the section of its writer or reader — what it holds for this flow, the predicate it is read or written under, the row grain it lands at, from that writer's or reader's captured SQL — and give it a `sections[].node_ids` or `notes[].node_id` entry:",
     ...dispositioned.map(renderLine),
     ...(undispositioned.length > 0
       ? [
-        'In scope without a detail slot — describe indirect-only suppliers through their recorded dashed edges; give each a section link or a note:',
-        ...undispositioned.map(renderLine),
-      ]
+          'In scope without a detail slot — describe indirect-only suppliers through their recorded dashed edges; give each a section link or a note:',
+          ...undispositioned.map(renderLine),
+        ]
       : []),
   ].join('\n');
 }
-
 
 /**
  * One captured artifact in a detail slot: a `$$ … $$` block, a fenced block, or an inline
@@ -232,17 +301,18 @@ function buildPassthroughFlowFacts(result: SmResult, identifierCaseSensitive = f
  * that outer artifact and never a second entry. Group order is the render order: math, fence,
  * inline; whichever group matched names the form the hop captured.
  */
-const CAPTURED_ARTIFACT = /\$\$([\s\S]*?)\$\$|```[^\n`]*\n?([\s\S]*?)```|`([^`\n]+)`/g;
+const CAPTURED_ARTIFACT =
+  /\$\$([\s\S]*?)\$\$|```[^\n`]*\n?([\s\S]*?)```|`([^`\n]+)`/g;
 
 /** An identifier immediately followed by `(` — the lexical mark of a call, hence of a computed value. */
 const CALL_TOKEN = /\w\(/;
 
 /** A whole DML/DDL statement: it performs an action, whatever it calls along the way. */
-const STATEMENT_START = /^(?:insert|update|delete|merge|truncate|exec|execute|create|alter|drop|declare|select|with|if|begin|end)\b/i;
+const STATEMENT_START =
+  /^(?:insert|update|delete|merge|truncate|exec|execute|create|alter|drop|declare|select|with|if|begin|end)\b/i;
 
 /** The opening word of a filter condition — it decides which rows survive, whatever it is nested in. */
 const PREDICATE_START = /^(?:where|on|having|and|or|join)\b/i;
-
 
 /**
  * Enumerates the value computations and filter conditions the hops captured — `$$ … $$` blocks plus
@@ -262,12 +332,17 @@ const PREDICATE_START = /^(?:where|on|having|and|or|join)\b/i;
  * @param result - Completed SM result; `detail_slots[].sections[].text` is the captured archive.
  * @returns A markdown checklist, or an empty string when no hop captured a formula.
  */
-function buildCapturedFormulaFacts(result: SmResult, identifierCaseSensitive = false): string {
+function buildCapturedFormulaFacts(
+  result: SmResult,
+  identifierCaseSensitive = false,
+): string {
   const seen = new Set<string>();
   const lines: string[] = [];
-  const collapse = (text: string): string => text.split(/\s+/).filter(Boolean).join(' ');
+  const collapse = (text: string): string =>
+    text.split(/\s+/).filter(Boolean).join(' ');
   const isEnumerable = (artifact: string): boolean =>
-    (CALL_TOKEN.test(artifact) || PREDICATE_START.test(artifact)) && !STATEMENT_START.test(artifact);
+    (CALL_TOKEN.test(artifact) || PREDICATE_START.test(artifact)) &&
+    !STATEMENT_START.test(artifact);
   for (const slot of result.detail_slots) {
     const nodeId = schemaKey(slot.nodeId, identifierCaseSensitive);
     const push = (formula: string, rendered: string): void => {
@@ -287,7 +362,8 @@ function buildCapturedFormulaFacts(result: SmResult, identifierCaseSensitive = f
         if (fenced !== undefined) {
           for (const line of fenced.split('\n')) {
             const formula = collapse(line);
-            if (isEnumerable(formula)) push(formula, `\`\`\` ${formula} \`\`\``);
+            if (isEnumerable(formula))
+              push(formula, `\`\`\` ${formula} \`\`\``);
           }
           continue;
         }
@@ -304,13 +380,22 @@ function buildCapturedFormulaFacts(result: SmResult, identifierCaseSensitive = f
 }
 
 /** Renders engine flow facts for every analyzed node the render keeps, so synthesis reads the directed edges between hops instead of inferring them from slot prose. */
-function buildAnalyzedFlowFacts(result: SmResult, presented: ReadonlySet<string>, identifierCaseSensitive = false): string {
+function buildAnalyzedFlowFacts(
+  result: SmResult,
+  presented: ReadonlySet<string>,
+  identifierCaseSensitive = false,
+): string {
   const lc = (s: string): string => schemaKey(s, identifierCaseSensitive);
   const flowFacts = computeNodeFlowFacts(result.edges, identifierCaseSensitive);
   const lines = result.detail_slots
-    .filter(slot => presented.has(slot.nodeId))
-    .map(slot => `- ${lc(slot.nodeId)} — ${slot.type}: ${renderFlowFactsFragment(flowFacts.get(lc(slot.nodeId)))}`);
-  return lines.length > 0 ? ['Analyzed nodes (engine flow facts):', ...lines].join('\n') : '';
+    .filter((slot) => presented.has(slot.nodeId))
+    .map(
+      (slot) =>
+        `- ${lc(slot.nodeId)} — ${slot.type}: ${renderFlowFactsFragment(flowFacts.get(lc(slot.nodeId)))}`,
+    );
+  return lines.length > 0
+    ? ['Analyzed nodes (engine flow facts):', ...lines].join('\n')
+    : '';
 }
 
 /** The tool-result envelope delivered to synthesis when SM exploration completes — "the last tool result" the synthesis system prompt reads. */
@@ -319,8 +404,15 @@ interface SmCompletionEnvelope {
   readonly done: true;
   readonly result: {
     readonly originNodeId: string;
-    readonly scope: { readonly nodes: number; readonly edges: number; readonly node_ids: readonly string[] };
-    readonly suggested_sections: ReadonlyArray<{ label: string; node_ids: string[] }>;
+    readonly scope: {
+      readonly nodes: number;
+      readonly edges: number;
+      readonly node_ids: readonly string[];
+    };
+    readonly suggested_sections: ReadonlyArray<{
+      label: string;
+      node_ids: string[];
+    }>;
     readonly node_states: SmResult['node_states'];
     readonly detail_slots: SmResult['detail_slots'];
     readonly deferred_questions?: readonly DeferredQuestion[];
@@ -349,8 +441,12 @@ function buildSuggestedSections(
   }
   const sections: Array<{ label: string; node_ids: string[] }> = [];
   for (let level = 0; level <= Math.max(...depth.values()); level++) {
-    const ids = presentedNodeIds.filter(id => depth.get(id) === level);
-    if (ids.length > 0) sections.push({ label: level === 0 ? 'Origin' : `Stage ${level}`, node_ids: ids });
+    const ids = presentedNodeIds.filter((id) => depth.get(id) === level);
+    if (ids.length > 0)
+      sections.push({
+        label: level === 0 ? 'Origin' : `Stage ${level}`,
+        node_ids: ids,
+      });
   }
   return sections;
 }
@@ -362,38 +458,86 @@ export function buildSmCompletionEnvelope(
   identifierCaseSensitive = false,
   deferredQuestions: readonly DeferredQuestion[] = [],
 ): SmCompletionEnvelope {
-  const presentedNodeIds = result.fullNodes.map(node => node.id);
+  const presentedNodeIds = result.fullNodes.map((node) => node.id);
   const presented = new Set(presentedNodeIds);
-  const flowBlock = result.columnAspect && result.columnAspect.edges.length > 0
-    ? '\n' + buildCtSynthesisBlock(result.originNodeId, result.columnAspect.edges, result.edges, presented)
-    : result.edges.length > 0
-      ? '\n' + buildBbSynthesisBlock(result.originNodeId, result.edges, presented)
-      : '';
-  const analyzedFacts = buildAnalyzedFlowFacts(result, presented, identifierCaseSensitive);
-  const analyzedBlock = analyzedFacts ? '\n' + analyzedFacts : '';
-  const passthroughFacts = buildPassthroughFlowFacts(result, identifierCaseSensitive);
-  const passthroughBlock = passthroughFacts ? '\n' + passthroughFacts : '';
-  const formulaFacts = buildCapturedFormulaFacts(result, identifierCaseSensitive);
-  const formulaBlock = formulaFacts ? '\n' + formulaFacts : '';
-  const mustLink = requiredDetailSlotIds(result.detail_slots.map(slot => slot.nodeId), presented);
-  const mustLinkBlock = mustLink.length > 0 ? `\nLink in \`sections[].node_ids\`: ${mustLink.join(', ')}` : '';
-  const mustCover = requiredCtChainNodeIds(
-    result.columnAspect?.edges ?? [], presentedNodeIds,
-    [...result.detail_slots.map(slot => slot.nodeId), ...result.node_states.filter(state => state.action === 'prune').map(state => state.nodeId)],
-    id => schemaKey(id, identifierCaseSensitive),
+  const flowBlock =
+    result.columnAspect && result.columnAspect.edges.length > 0
+      ? '\n' +
+        buildCtSynthesisBlock(
+          result.originNodeId,
+          result.columnAspect.edges,
+          result.edges,
+          presented,
+        )
+      : result.edges.length > 0
+        ? '\n' +
+          buildBbSynthesisBlock(result.originNodeId, result.edges, presented)
+        : '';
+  const analyzedFacts = buildAnalyzedFlowFacts(
+    result,
+    presented,
+    identifierCaseSensitive,
   );
-  const mustCoverBlock = mustCover.length > 0 ? `\nLink in \`sections[].node_ids\` or caption in \`notes[]\`: ${mustCover.join(', ')}` : '';
+  const analyzedBlock = analyzedFacts ? '\n' + analyzedFacts : '';
+  const passthroughFacts = buildPassthroughFlowFacts(
+    result,
+    identifierCaseSensitive,
+  );
+  const passthroughBlock = passthroughFacts ? '\n' + passthroughFacts : '';
+  const formulaFacts = buildCapturedFormulaFacts(
+    result,
+    identifierCaseSensitive,
+  );
+  const formulaBlock = formulaFacts ? '\n' + formulaFacts : '';
+  const mustLink = requiredDetailSlotIds(
+    result.detail_slots.map((slot) => slot.nodeId),
+    presented,
+  );
+  const mustLinkBlock =
+    mustLink.length > 0
+      ? `\nLink in \`sections[].node_ids\`: ${mustLink.join(', ')}`
+      : '';
+  const mustCover = requiredCtChainNodeIds(
+    result.columnAspect?.edges ?? [],
+    presentedNodeIds,
+    [
+      ...result.detail_slots.map((slot) => slot.nodeId),
+      ...result.node_states
+        .filter((state) => state.action === 'prune')
+        .map((state) => state.nodeId),
+    ],
+    (id) => schemaKey(id, identifierCaseSensitive),
+  );
+  const mustCoverBlock =
+    mustCover.length > 0
+      ? `\nLink in \`sections[].node_ids\` or caption in \`notes[]\`: ${mustCover.join(', ')}`
+      : '';
   return {
     ok: true,
     done: true,
     result: {
       originNodeId: result.originNodeId,
-      scope: { nodes: presentedNodeIds.length, edges: result.edges.length, node_ids: presentedNodeIds },
+      scope: {
+        nodes: presentedNodeIds.length,
+        edges: result.edges.length,
+        node_ids: presentedNodeIds,
+      },
       suggested_sections: buildSuggestedSections(result, presentedNodeIds),
-      node_states: result.node_states.filter(state => presented.has(state.nodeId)),
+      node_states: result.node_states.filter((state) =>
+        presented.has(state.nodeId),
+      ),
       detail_slots: assignEvidenceIds(result.detail_slots).slots,
-      ...(deferredQuestions.length ? { deferred_questions: deferredQuestions } : {}),
+      ...(deferredQuestions.length
+        ? { deferred_questions: deferredQuestions }
+        : {}),
     },
-    synthesis_reminder: buildSynthesisReminder(userQuestion) + flowBlock + analyzedBlock + passthroughBlock + formulaBlock + mustLinkBlock + mustCoverBlock,
+    synthesis_reminder:
+      buildSynthesisReminder(userQuestion) +
+      flowBlock +
+      analyzedBlock +
+      passthroughBlock +
+      formulaBlock +
+      mustLinkBlock +
+      mustCoverBlock,
   };
 }

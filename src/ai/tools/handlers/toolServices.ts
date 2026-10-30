@@ -12,7 +12,10 @@ import type { ToolName } from '../toolDefs';
 import type { PreviewDelivery } from '../../support/chatAnswer';
 
 /** The one webview message a tool handler may hand to the host for delivery. */
-export type AiViewPreviewMessage = Extract<ExtensionToWebviewMsg, { type: 'ai-view-preview' }>;
+export type AiViewPreviewMessage = Extract<
+  ExtensionToWebviewMsg,
+  { type: 'ai-view-preview' }
+>;
 
 /** Who dispatches a tool call: an `@lineage` chat turn, or a caller without one (`vscode.lm`). */
 export type ToolCaller = 'turn' | 'external';
@@ -28,7 +31,10 @@ export interface ToolServices {
   /** Category-scoped logger shared by every handler so log provenance stays uniform. */
   readonly logger: Logger;
   /** Turn-neutral text-completion capability; absent for callers without a chat turn. */
-  readonly textModel?: Pick<ModelPort, 'generateStructured' | 'completeText' | 'getNumTokens'>;
+  readonly textModel?: Pick<
+    ModelPort,
+    'generateStructured' | 'completeText' | 'getNumTokens'
+  >;
   /** Cooperative host cancellation, mirrored from the owning turn's lease. */
   readonly signal?: AbortSignal;
   /** Token budget of the turn that owns this registry. */
@@ -50,13 +56,18 @@ export interface ToolServices {
 }
 
 /** Per-model id→node lookup, memoized across the mutating handlers that all rebuild it. */
-const modelNodeMapCache = new WeakMap<DatabaseModel, Map<string, LineageNode>>();
+const modelNodeMapCache = new WeakMap<
+  DatabaseModel,
+  Map<string, LineageNode>
+>();
 
 /** Returns the memoized id→node map for `model`, building it once per model instance. */
-export function getModelNodeMap(model: DatabaseModel): Map<string, LineageNode> {
+export function getModelNodeMap(
+  model: DatabaseModel,
+): Map<string, LineageNode> {
   const cached = modelNodeMapCache.get(model);
   if (cached) return cached;
-  const map = new Map(model.nodes.map(n => [n.id, n]));
+  const map = new Map(model.nodes.map((n) => [n.id, n]));
   modelNodeMapCache.set(model, map);
   return map;
 }

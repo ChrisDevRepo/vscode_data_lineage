@@ -13,28 +13,38 @@ import {
 
 describe('shouldVirtualizeCanvas', () => {
   it('stays off at and below the threshold', () => {
-    expect(shouldVirtualizeCanvas(VIRTUALIZATION_NODE_THRESHOLD - 1)).toBe(false);
+    expect(shouldVirtualizeCanvas(VIRTUALIZATION_NODE_THRESHOLD - 1)).toBe(
+      false,
+    );
     expect(shouldVirtualizeCanvas(VIRTUALIZATION_NODE_THRESHOLD)).toBe(false);
   });
 
   it('turns on one node past the threshold', () => {
-    expect(shouldVirtualizeCanvas(VIRTUALIZATION_NODE_THRESHOLD + 1)).toBe(true);
+    expect(shouldVirtualizeCanvas(VIRTUALIZATION_NODE_THRESHOLD + 1)).toBe(
+      true,
+    );
   });
 });
 
 describe('shouldAnimateEdges', () => {
   it('respects config off regardless of edge count', () => {
     expect(shouldAnimateEdges(1, false)).toBe(false);
-    expect(shouldAnimateEdges(EDGE_ANIMATION_COUNT_THRESHOLD - 1, false)).toBe(false);
+    expect(shouldAnimateEdges(EDGE_ANIMATION_COUNT_THRESHOLD - 1, false)).toBe(
+      false,
+    );
   });
 
   it('animates at and below the threshold when config allows it', () => {
-    expect(shouldAnimateEdges(EDGE_ANIMATION_COUNT_THRESHOLD - 1, true)).toBe(true);
+    expect(shouldAnimateEdges(EDGE_ANIMATION_COUNT_THRESHOLD - 1, true)).toBe(
+      true,
+    );
     expect(shouldAnimateEdges(EDGE_ANIMATION_COUNT_THRESHOLD, true)).toBe(true);
   });
 
   it('turns off one edge past the threshold even when config allows it', () => {
-    expect(shouldAnimateEdges(EDGE_ANIMATION_COUNT_THRESHOLD + 1, true)).toBe(false);
+    expect(shouldAnimateEdges(EDGE_ANIMATION_COUNT_THRESHOLD + 1, true)).toBe(
+      false,
+    );
   });
 });
 

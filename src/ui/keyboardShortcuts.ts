@@ -44,18 +44,31 @@ export const SHORTCUT_DESCRIPTIONS: Record<AppShortcutId, string> = {
 
 /** A checkbox or radio is a choice, not a place the user is typing. */
 function isChoiceInput(target: EventTarget): boolean {
-  return target instanceof HTMLInputElement && (target.type === 'checkbox' || target.type === 'radio');
+  return (
+    target instanceof HTMLInputElement &&
+    (target.type === 'checkbox' || target.type === 'radio')
+  );
 }
 
 /** Reports whether an event target is a text-entry surface (`input`, `textarea`, or any `contenteditable` element). */
 export function isTextEntryTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement) || isChoiceInput(target)) return false;
-  return target.isContentEditable || target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
+  return (
+    target.isContentEditable ||
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement
+  );
 }
 
 /** Reports whether an event target is a text-entry surface that currently holds content. */
-export function isTextEntryTargetWithContent(target: EventTarget | null): boolean {
+export function isTextEntryTargetWithContent(
+  target: EventTarget | null,
+): boolean {
   if (!(target instanceof HTMLElement) || isChoiceInput(target)) return false;
-  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return target.value.length > 0;
+  if (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement
+  )
+    return target.value.length > 0;
   return target.isContentEditable && (target.textContent?.length ?? 0) > 0;
 }

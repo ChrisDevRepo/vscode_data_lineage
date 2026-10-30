@@ -8,7 +8,9 @@ export function prunePreserveOnly(
 ): { nodeIds: string[]; edges: [string, string, string][] } {
   const pruneSet = new Set(pruneIds);
   return {
-    nodeIds: nodeIds.filter(id => !pruneSet.has(id)),
-    edges: edges.filter(([src, tgt]) => !pruneSet.has(src) && !pruneSet.has(tgt)),
+    nodeIds: nodeIds.filter((id) => !pruneSet.has(id)),
+    edges: edges.filter(
+      ([src, tgt]) => !pruneSet.has(src) && !pruneSet.has(tgt),
+    ),
   };
 }

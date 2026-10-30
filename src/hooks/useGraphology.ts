@@ -1,20 +1,49 @@
 import { useState, useCallback } from 'react';
 import Graph from 'graphology';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
-import { DatabaseModel, FilterState, ExtensionConfig, DEFAULT_CONFIG, type CustomNodeData } from '../engine/types';
-import { buildGraph, buildGraphNoLayout, getGraphMetrics, hasCachedLayout, layoutCacheKey, objectLayoutInputForGraph, seedLayoutCache } from '../engine/graphBuilder';
+import {
+  DatabaseModel,
+  FilterState,
+  ExtensionConfig,
+  DEFAULT_CONFIG,
+  type CustomNodeData,
+} from '../engine/types';
+import {
+  buildGraph,
+  buildGraphNoLayout,
+  getGraphMetrics,
+  hasCachedLayout,
+  layoutCacheKey,
+  objectLayoutInputForGraph,
+  seedLayoutCache,
+} from '../engine/graphBuilder';
 import { refuseOverObjectLimit } from '../utils/objectLimitGuard';
-import { filterBySchemas, applyExclusionFilter, applyIsolationFilter, applyAllowlistFilter } from '../engine/modelFilters';
-import { createSchemaColorMap, getSchemaColorFromMap } from '../utils/schemaColors';
+import {
+  filterBySchemas,
+  applyExclusionFilter,
+  applyIsolationFilter,
+  applyAllowlistFilter,
+} from '../engine/modelFilters';
+import {
+  createSchemaColorMap,
+  getSchemaColorFromMap,
+} from '../utils/schemaColors';
 import { createLayoutWorkerClient } from '../utils/layoutWorkerClient';
 import LayoutWorker from '../utils/layout.worker?worker&inline';
 import { errorMessage } from '../utils/errorMessage';
 
 const logPrewarmSkipped = (reason: string): void => {
-  window.vscode?.postMessage({ type: 'log', text: `[Filter] Layout prewarm skipped (${reason})`, level: 'debug' });
+  window.vscode?.postMessage({
+    type: 'log',
+    text: `[Filter] Layout prewarm skipped (${reason})`,
+    level: 'debug',
+  });
 };
 
-const layoutWorker = createLayoutWorkerClient(() => new LayoutWorker(), logPrewarmSkipped);
+const layoutWorker = createLayoutWorkerClient(
+  () => new LayoutWorker(),
+  logPrewarmSkipped,
+);
 
 /** Lays out the Object View graph in a worker and seeds the layout cache, so the later Schema View → Object View switch finds its positions without running Dagre on the UI thread. Without a usable worker the switch falls back to layout on the main thread. */
 function prewarmObjectLayout(graph: Graph, config: ExtensionConfig): void {
@@ -24,7 +53,8 @@ function prewarmObjectLayout(graph: Graph, config: ExtensionConfig): void {
   if (hasCachedLayout(input, key)) return;
   layoutWorker.runDagre(input)?.then(
     (positions) => {
-      if (!seedLayoutCache(input, positions, key)) logPrewarmSkipped('incomplete layout');
+      if (!seedLayoutCache(input, positions, key))
+        logPrewarmSkipped('incomplete layout');
     },
     (e: unknown) => logPrewarmSkipped(errorMessage(e)),
   );
@@ -47,9 +77,19 @@ interface UseGraphologyReturn {
   /** Unique schema names found in the filtered node set, used for the legend. */
   renderedSchemas: string[];
   /** Rebuilds the graph from the database model based on the current filter and configuration. */
-  buildFromModel: (model: DatabaseModel, filter: FilterState, config?: ExtensionConfig, skipLayout?: boolean, annotatedNodeIds?: readonly string[]) => number;
+  buildFromModel: (
+    model: DatabaseModel,
+    filter: FilterState,
+    config?: ExtensionConfig,
+    skipLayout?: boolean,
+    annotatedNodeIds?: readonly string[],
+  ) => number;
   /** Runs the same maxNodes admission check `buildFromModel` starts with, without building. Returns `true` and posts the refusal warning when the build would be refused, so a caller that defers the build into a transition, or vets a candidate schema selection, learns about the refusal synchronously. Only the filter's schema selection decides admission. */
-  refusesBuild: (model: DatabaseModel, filter: Pick<FilterState, 'schemas'>, config?: ExtensionConfig) => boolean;
+  refusesBuild: (
+    model: DatabaseModel,
+    filter: Pick<FilterState, 'schemas'>,
+    config?: ExtensionConfig,
+  ) => boolean;
 }
 
 /** Manages graph filtering, render limits, layout, and React Flow projection. */
@@ -57,108 +97,179 @@ export function useGraphology(): UseGraphologyReturn {
   const [flowNodes, setFlowNodes] = useState<FlowNode<CustomNodeData>[]>([]);
   const [flowEdges, setFlowEdges] = useState<FlowEdge[]>([]);
   const [graph, setGraph] = useState<Graph | null>(null);
-  const [metrics, setMetrics] = useState<ReturnType<typeof getGraphMetrics> | null>(null);
+  const [metrics, setMetrics] = useState<ReturnType<
+    typeof getGraphMetrics
+  > | null>(null);
   const [renderLimitHit, setRenderLimitHit] = useState(0);
   const [filteredCount, setFilteredCount] = useState(0);
   const [renderedSchemas, setRenderedSchemas] = useState<string[]>([]);
 
-  const refusesBuild = useCallback((model: DatabaseModel, filter: Pick<FilterState, 'schemas'>, config: ExtensionConfig = DEFAULT_CONFIG): boolean =>
-    refuseOverObjectLimit(filterBySchemas(model, filter.schemas), config.maxNodes, 'Filter') !== null, []);
+  const refusesBuild = useCallback(
+    (
+      model: DatabaseModel,
+      filter: Pick<FilterState, 'schemas'>,
+      config: ExtensionConfig = DEFAULT_CONFIG,
+    ): boolean =>
+      refuseOverObjectLimit(
+        filterBySchemas(model, filter.schemas),
+        config.maxNodes,
+        'Filter',
+      ) !== null,
+    [],
+  );
 
-  const buildFromModel = useCallback((model: DatabaseModel, filter: FilterState, config: ExtensionConfig = DEFAULT_CONFIG, skipLayout = false, annotatedNodeIds?: readonly string[]): number => {
-    const log = (text: string, level: 'info' | 'debug' = 'debug') => window.vscode?.postMessage({ type: 'log', text, level });
-    const filtered = filterBySchemas(model, filter.schemas);
-    if (refuseOverObjectLimit(filtered, config.maxNodes, 'Filter') !== null) return -1;
+  const buildFromModel = useCallback(
+    (
+      model: DatabaseModel,
+      filter: FilterState,
+      config: ExtensionConfig = DEFAULT_CONFIG,
+      skipLayout = false,
+      annotatedNodeIds?: readonly string[],
+    ): number => {
+      const log = (text: string, level: 'info' | 'debug' = 'debug') =>
+        window.vscode?.postMessage({ type: 'log', text, level });
+      const filtered = filterBySchemas(model, filter.schemas);
+      if (refuseOverObjectLimit(filtered, config.maxNodes, 'Filter') !== null)
+        return -1;
 
-    const isVirtual = (n: { externalType?: string }) =>
-      n.externalType === 'file' || n.externalType === 'db';
-    const allExtRefsVisible = filter.showExternalRefs && filter.externalRefTypes.has('file') && filter.externalRefTypes.has('db');
+      const isVirtual = (n: { externalType?: string }) =>
+        n.externalType === 'file' || n.externalType === 'db';
+      const allExtRefsVisible =
+        filter.showExternalRefs &&
+        filter.externalRefTypes.has('file') &&
+        filter.externalRefTypes.has('db');
 
-    const fusedNodes = filtered.nodes.filter((n) => {
-      if (!filter.types.has(n.type)) return false;
-      if (allExtRefsVisible || !isVirtual(n)) return true;
-      if (!filter.showExternalRefs) return false;
-      return filter.externalRefTypes.has(n.externalType as 'file' | 'db');
-    });
-    const fusedNodeIds = new Set(fusedNodes.map((n) => n.id));
-    const fusedEdges = filtered.edges.filter((e) => fusedNodeIds.has(e.source) && fusedNodeIds.has(e.target));
+      const fusedNodes = filtered.nodes.filter((n) => {
+        if (!filter.types.has(n.type)) return false;
+        if (allExtRefsVisible || !isVirtual(n)) return true;
+        if (!filter.showExternalRefs) return false;
+        return filter.externalRefTypes.has(n.externalType as 'file' | 'db');
+      });
+      const fusedNodeIds = new Set(fusedNodes.map((n) => n.id));
+      const fusedEdges = filtered.edges.filter(
+        (e) => fusedNodeIds.has(e.source) && fusedNodeIds.has(e.target),
+      );
 
-    const exclusionFiltered = applyExclusionFilter(
-      { ...filtered, nodes: fusedNodes, edges: fusedEdges },
-      filter.exclusionPatterns,
-      (pattern, err) => log(`[Filter] Skipping invalid exclusion pattern "${pattern}": ${errorMessage(err)}`, 'debug'),
-    );
-    const isolationFiltered = applyIsolationFilter(exclusionFiltered, filter.hideIsolated);
-    const allowlistFiltered = applyAllowlistFilter(isolationFiltered, filter.allowlistNodeIds);
+      const exclusionFiltered = applyExclusionFilter(
+        { ...filtered, nodes: fusedNodes, edges: fusedEdges },
+        filter.exclusionPatterns,
+        (pattern, err) =>
+          log(
+            `[Filter] Skipping invalid exclusion pattern "${pattern}": ${errorMessage(err)}`,
+            'debug',
+          ),
+      );
+      const isolationFiltered = applyIsolationFilter(
+        exclusionFiltered,
+        filter.hideIsolated,
+      );
+      const allowlistFiltered = applyAllowlistFilter(
+        isolationFiltered,
+        filter.allowlistNodeIds,
+      );
 
-    const count = allowlistFiltered.nodes.length;
-    setFilteredCount(count);
+      const count = allowlistFiltered.nodes.length;
+      setFilteredCount(count);
 
-    const schemas = [...new Set(
-      allowlistFiltered.nodes.map(n => n.schema)
-    )].filter(s => !!s && s.trim().length > 0).sort();
-    const schemaColorMap = createSchemaColorMap(schemas, undefined, model.identifierCaseSensitive);
-    setRenderedSchemas(schemas);
+      const schemas = [...new Set(allowlistFiltered.nodes.map((n) => n.schema))]
+        .filter((s) => !!s && s.trim().length > 0)
+        .sort();
+      const schemaColorMap = createSchemaColorMap(
+        schemas,
+        undefined,
+        model.identifierCaseSensitive,
+      );
+      setRenderedSchemas(schemas);
 
-    /** Publishes a built graph, its schema-coloured React Flow projection and its metrics. */
-    const publish = (result: ReturnType<typeof buildGraph>): void => {
-      setFlowNodes((result.flowNodes as FlowNode<CustomNodeData>[]).map((node) => {
-        if (node.data.objectType === 'external') return node;
-        return {
-          ...node,
-          data: {
-            ...node.data,
-            schemaColor: getSchemaColorFromMap(node.data.schema, schemaColorMap, model.identifierCaseSensitive),
-          },
-        };
-      }));
-      setFlowEdges(result.flowEdges);
-      setGraph(result.graph);
-      setMetrics(getGraphMetrics(result.graph));
-    };
+      /** Publishes a built graph, its schema-coloured React Flow projection and its metrics. */
+      const publish = (result: ReturnType<typeof buildGraph>): void => {
+        setFlowNodes(
+          (result.flowNodes as FlowNode<CustomNodeData>[]).map((node) => {
+            if (node.data.objectType === 'external') return node;
+            return {
+              ...node,
+              data: {
+                ...node.data,
+                schemaColor: getSchemaColorFromMap(
+                  node.data.schema,
+                  schemaColorMap,
+                  model.identifierCaseSensitive,
+                ),
+              },
+            };
+          }),
+        );
+        setFlowEdges(result.flowEdges);
+        setGraph(result.graph);
+        setMetrics(getGraphMetrics(result.graph));
+      };
 
-    if (count > config.renderLimit) {
-      log(`[Filter] Graph too large to display (${count} objects exceed render limit of ${config.renderLimit})`, 'info');
-      publish(buildGraphNoLayout(allowlistFiltered, config));
-      setRenderLimitHit(count);
-      return count;
-    }
-
-    setRenderLimitHit(0);
-
-    if (skipLayout) {
-      const result = buildGraphNoLayout(allowlistFiltered, config);
-      publish(result);
-      log(`[Filter] Schema View - ${count} nodes (layout skipped)`, 'info');
-      prewarmObjectLayout(result.graph, config);
-      return count;
-    }
-
-    const t0 = performance.now();
-    let result: ReturnType<typeof buildGraph>;
-    let layoutFailed = false;
-    try {
-      result = buildGraph(allowlistFiltered, config, annotatedNodeIds);
-    } catch (e) {
-      layoutFailed = true;
-      log(`[Filter] Layout failed (${errorMessage(e)}) — rendering without positions`, 'info');
-      try {
-        result = buildGraphNoLayout(allowlistFiltered, config);
-      } catch (e2) {
-        log(`[Filter] Graph build completely failed — ${errorMessage(e2)}`, 'info');
-        setFlowNodes([]);
-        setFlowEdges([]);
-        setGraph(null);
-        setMetrics(null);
+      if (count > config.renderLimit) {
+        log(
+          `[Filter] Graph too large to display (${count} objects exceed render limit of ${config.renderLimit})`,
+          'info',
+        );
+        publish(buildGraphNoLayout(allowlistFiltered, config));
+        setRenderLimitHit(count);
         return count;
       }
-    }
-    publish(result);
-    if (!layoutFailed) {
-      log(`[Filter] Graph built — ${count} nodes (${Math.round(performance.now() - t0)}ms)`, 'info');
-    }
-    return count;
-  }, []);
 
-  return { flowNodes, flowEdges, graph, metrics, renderLimitHit, filteredCount, renderedSchemas, buildFromModel, refusesBuild };
+      setRenderLimitHit(0);
+
+      if (skipLayout) {
+        const result = buildGraphNoLayout(allowlistFiltered, config);
+        publish(result);
+        log(`[Filter] Schema View - ${count} nodes (layout skipped)`, 'info');
+        prewarmObjectLayout(result.graph, config);
+        return count;
+      }
+
+      const t0 = performance.now();
+      let result: ReturnType<typeof buildGraph>;
+      let layoutFailed = false;
+      try {
+        result = buildGraph(allowlistFiltered, config, annotatedNodeIds);
+      } catch (e) {
+        layoutFailed = true;
+        log(
+          `[Filter] Layout failed (${errorMessage(e)}) — rendering without positions`,
+          'info',
+        );
+        try {
+          result = buildGraphNoLayout(allowlistFiltered, config);
+        } catch (e2) {
+          log(
+            `[Filter] Graph build completely failed — ${errorMessage(e2)}`,
+            'info',
+          );
+          setFlowNodes([]);
+          setFlowEdges([]);
+          setGraph(null);
+          setMetrics(null);
+          return count;
+        }
+      }
+      publish(result);
+      if (!layoutFailed) {
+        log(
+          `[Filter] Graph built — ${count} nodes (${Math.round(performance.now() - t0)}ms)`,
+          'info',
+        );
+      }
+      return count;
+    },
+    [],
+  );
+
+  return {
+    flowNodes,
+    flowEdges,
+    graph,
+    metrics,
+    renderLimitHit,
+    filteredCount,
+    renderedSchemas,
+    buildFromModel,
+    refusesBuild,
+  };
 }

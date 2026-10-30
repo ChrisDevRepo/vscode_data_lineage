@@ -1,6 +1,10 @@
 import { memo, useCallback } from 'react';
 import type Graph from 'graphology';
-import type { AnalysisMode, AnalysisType, AnalysisGroup } from '../engine/types';
+import type {
+  AnalysisMode,
+  AnalysisType,
+  AnalysisGroup,
+} from '../engine/types';
 import { SidePanel } from './SidePanel';
 import { Tooltip } from './ui/Tooltip';
 import { ANALYSIS_TYPE_INFO, ALL_ANALYSIS_TYPES } from '../utils/analysisInfo';
@@ -41,11 +45,19 @@ export const AnalysisSidebar = memo(function AnalysisSidebar({
         onSelectGroup(groupId);
       }
     },
-    [activeGroupId, onSelectGroup, onClearGroup]
+    [activeGroupId, onSelectGroup, onClearGroup],
   );
 
   const icon = (
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4" style={{ color: 'var(--ln-sidebar-header-fg)' }}>
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+      strokeWidth={1.5}
+      stroke="currentColor"
+      className="w-4 h-4"
+      style={{ color: 'var(--ln-sidebar-header-fg)' }}
+    >
       <path strokeLinecap="round" strokeLinejoin="round" d={info.icon} />
     </svg>
   );
@@ -57,14 +69,25 @@ export const AnalysisSidebar = memo(function AnalysisSidebar({
       const kind = String(group.meta?.kind ?? '');
       if (kind !== lastKind) {
         lastKind = kind;
-        const sectionCount = result.groups.filter(g => g.meta?.kind === kind).length;
-        const sectionLabel = kind === 'file'
-          ? `File Sources (${sectionCount})`
-          : `Cross-Database (${sectionCount})`;
+        const sectionCount = result.groups.filter(
+          (g) => g.meta?.kind === kind,
+        ).length;
+        const sectionLabel =
+          kind === 'file'
+            ? `File Sources (${sectionCount})`
+            : `Cross-Database (${sectionCount})`;
         groupElements.push(
-          <div key={`section-${kind}`} className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide" style={{ color: 'var(--ln-fg-muted)', borderBottom: '1px solid var(--ln-border-light)', background: 'var(--ln-bg-secondary)' }}>
+          <div
+            key={`section-${kind}`}
+            className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide"
+            style={{
+              color: 'var(--ln-fg-muted)',
+              borderBottom: '1px solid var(--ln-border-light)',
+              background: 'var(--ln-bg-secondary)',
+            }}
+          >
             {sectionLabel}
-          </div>
+          </div>,
         );
       }
       groupElements.push(
@@ -75,7 +98,7 @@ export const AnalysisSidebar = memo(function AnalysisSidebar({
           isActive={activeGroupId === group.id}
           onClick={() => handleGroupClick(group.id)}
           graph={graph}
-        />
+        />,
       );
     }
   } else {
@@ -88,7 +111,7 @@ export const AnalysisSidebar = memo(function AnalysisSidebar({
           isActive={activeGroupId === group.id}
           onClick={() => handleGroupClick(group.id)}
           graph={graph}
-        />
+        />,
       );
     }
   }
@@ -96,8 +119,11 @@ export const AnalysisSidebar = memo(function AnalysisSidebar({
   return (
     <SidePanel title={info.title} icon={icon} onClose={onClose}>
       {onSwitchAnalysis && (
-        <div className="flex items-center gap-0.5 px-2 py-1.5" style={{ borderBottom: '1px solid var(--ln-border-light)' }}>
-          {ALL_ANALYSIS_TYPES.map(type => {
+        <div
+          className="flex items-center gap-0.5 px-2 py-1.5"
+          style={{ borderBottom: '1px solid var(--ln-border-light)' }}
+        >
+          {ALL_ANALYSIS_TYPES.map((type) => {
             const typeInfo = ANALYSIS_TYPE_INFO[type];
             const isActive = analysis.type === type;
             return (
@@ -108,32 +134,63 @@ export const AnalysisSidebar = memo(function AnalysisSidebar({
                   aria-pressed={isActive}
                   className={`w-7 h-7 flex items-center justify-center rounded-sm ln-btn-icon${isActive ? ' ln-btn-icon-active' : ''}`}
                 >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
-                  <path strokeLinecap="round" strokeLinejoin="round" d={typeInfo.icon} />
-                </svg>
-              </button>
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    strokeWidth={1.5}
+                    stroke="currentColor"
+                    className="w-4 h-4"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d={typeInfo.icon}
+                    />
+                  </svg>
+                </button>
               </Tooltip>
             );
           })}
         </div>
       )}
 
-      <div className="px-3 py-2 text-[11px]" style={{ color: 'var(--ln-fg-muted)', borderBottom: '1px solid var(--ln-border-light)' }}>
+      <div
+        className="px-3 py-2 text-[11px]"
+        style={{
+          color: 'var(--ln-fg-muted)',
+          borderBottom: '1px solid var(--ln-border-light)',
+        }}
+      >
         {info.description}
       </div>
 
-      <div className="px-3 py-2" style={{ borderBottom: '1px solid var(--ln-border-light)' }}>
+      <div
+        className="px-3 py-2"
+        style={{ borderBottom: '1px solid var(--ln-border-light)' }}
+      >
         {analysis.type === 'orphans' && result.groups.length > 0 ? (
           <>
-            <div className="text-sm font-semibold" style={{ color: 'var(--ln-fg)' }}>
-              {result.groups.reduce((s, g) => s + g.nodeIds.length, 0)} orphan nodes
+            <div
+              className="text-sm font-semibold"
+              style={{ color: 'var(--ln-fg)' }}
+            >
+              {result.groups.reduce((s, g) => s + g.nodeIds.length, 0)} orphan
+              nodes
             </div>
-            <div className="text-[11px] mt-0.5" style={{ color: 'var(--ln-fg-muted)' }}>
-              in {result.groups.length} group{result.groups.length !== 1 ? 's' : ''} by schema / type
+            <div
+              className="text-[11px] mt-0.5"
+              style={{ color: 'var(--ln-fg-muted)' }}
+            >
+              in {result.groups.length} group
+              {result.groups.length !== 1 ? 's' : ''} by schema / type
             </div>
           </>
         ) : (
-          <div className="text-xs font-medium" style={{ color: 'var(--ln-fg)' }}>
+          <div
+            className="text-xs font-medium"
+            style={{ color: 'var(--ln-fg)' }}
+          >
             {result.summary}
           </div>
         )}
@@ -141,7 +198,10 @@ export const AnalysisSidebar = memo(function AnalysisSidebar({
 
       <div className="ln-analysis-groups">
         {result.groups.length === 0 ? (
-          <div className="px-3 py-4 text-xs text-center" style={{ color: 'var(--ln-fg-muted)' }}>
+          <div
+            className="px-3 py-4 text-xs text-center"
+            style={{ color: 'var(--ln-fg-muted)' }}
+          >
             None found.
           </div>
         ) : (
@@ -150,7 +210,13 @@ export const AnalysisSidebar = memo(function AnalysisSidebar({
       </div>
 
       {activeGroupId && (
-        <div className="px-3 py-2 text-[11px] border-t flex items-center justify-between" style={{ color: 'var(--ln-fg-muted)', borderColor: 'var(--ln-border-light)' }}>
+        <div
+          className="px-3 py-2 text-[11px] border-t flex items-center justify-between"
+          style={{
+            color: 'var(--ln-fg-muted)',
+            borderColor: 'var(--ln-border-light)',
+          }}
+        >
           <span>Viewing subset</span>
           <button
             onClick={onClearGroup}
@@ -164,7 +230,6 @@ export const AnalysisSidebar = memo(function AnalysisSidebar({
     </SidePanel>
   );
 });
-
 
 interface AnalysisGroupItemProps {
   /** The analysis group data to render. */
@@ -193,20 +258,34 @@ const AnalysisGroupItem = memo(function AnalysisGroupItem({
       tabIndex={0}
       className={`ln-analysis-group-item ${isActive ? 'ln-analysis-group-active' : ''}`}
       onClick={onClick}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onClick();
+        }
+      }}
     >
       <div className="flex items-center justify-between">
-        <span className="text-xs font-medium truncate" style={{ color: 'var(--ln-fg)' }}>
+        <span
+          className="text-xs font-medium truncate"
+          style={{ color: 'var(--ln-fg)' }}
+        >
           {group.label}
         </span>
         {analysisType !== 'hubs' && (
-          <span className="text-[11px] ml-2 shrink-0" style={{ color: 'var(--ln-fg-muted)' }}>
+          <span
+            className="text-[11px] ml-2 shrink-0"
+            style={{ color: 'var(--ln-fg-muted)' }}
+          >
             {group.nodeIds.length} node{group.nodeIds.length !== 1 ? 's' : ''}
           </span>
         )}
       </div>
       {group.meta && (
-        <div className="text-[11px] mt-0.5" style={{ color: 'var(--ln-fg-muted)' }}>
+        <div
+          className="text-[11px] mt-0.5"
+          style={{ color: 'var(--ln-fg-muted)' }}
+        >
           {renderMeta(group.meta, analysisType, group.nodeIds, graph)}
         </div>
       )}
@@ -219,7 +298,7 @@ function renderMeta(
   meta: Record<string, string | number>,
   type: AnalysisType,
   nodeIds: string[],
-  graph?: Graph | null
+  graph?: Graph | null,
 ): string {
   switch (type) {
     case 'islands':
@@ -231,7 +310,7 @@ function renderMeta(
         const neighbors = graph.neighbors(id);
         const preview = neighbors
           .slice(0, 3)
-          .map(n => graph.getNodeAttribute(n, 'name') as string)
+          .map((n) => graph.getNodeAttribute(n, 'name') as string)
           .join(', ');
         const more = neighbors.length > 3 ? ` +${neighbors.length - 3}` : '';
         return `${meta.type} · ${deg} connections — ${preview}${more}`;

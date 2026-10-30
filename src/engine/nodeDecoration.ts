@@ -1,6 +1,13 @@
 import type { Node as FlowNode } from '@xyflow/react';
 import type { ColumnTraceViewNode } from './columnTraceView';
-import type { AiBadge, ColumnTraceNodeData, CustomNodeData, GraphMode, TraceNodeControls, TraceState } from './types';
+import type {
+  AiBadge,
+  ColumnTraceNodeData,
+  CustomNodeData,
+  GraphMode,
+  TraceNodeControls,
+  TraceState,
+} from './types';
 
 /** Per-node display state that depends on the current selection, trace, and AI overlay rather than on where the node sits on the canvas. */
 export interface NodeDecorationInputs {
@@ -27,7 +34,10 @@ export interface NodeDecorationInputs {
   /** Interactive trace controls, populated for the highlighted node only. */
   traceControlsByNode: ReadonlyMap<string, TraceNodeControls>;
   /** AI-authored highlight styling by node id. */
-  aiHighlightMap: ReadonlyMap<string, { color: string; glow: string; shadow: string }>;
+  aiHighlightMap: ReadonlyMap<
+    string,
+    { color: string; glow: string; shadow: string }
+  >;
   /** AI-authored badges by node id. */
   aiBadgeMap: ReadonlyMap<string, AiBadge>;
   /** AI-authored notes by node id. */
@@ -68,8 +78,13 @@ export function shouldVirtualizeCanvas(renderedNodeCount: number): boolean {
 }
 
 /** Whether a connected edge should animate: the config toggle, gated off past {@link EDGE_ANIMATION_COUNT_THRESHOLD}. */
-export function shouldAnimateEdges(renderedEdgeCount: number, configAllowsAnimation: boolean): boolean {
-  return configAllowsAnimation && renderedEdgeCount <= EDGE_ANIMATION_COUNT_THRESHOLD;
+export function shouldAnimateEdges(
+  renderedEdgeCount: number,
+  configAllowsAnimation: boolean,
+): boolean {
+  return (
+    configAllowsAnimation && renderedEdgeCount <= EDGE_ANIMATION_COUNT_THRESHOLD
+  );
 }
 
 /** Zoom below which `CustomNode` drops its label, badges and trace-control decorations for a plain box — only once the 11px label renders under ~2px and no one can read it. Labels stay at every readable zoom; legibility, not repaint cost, decides. */
@@ -88,14 +103,20 @@ export function sameKey(a: readonly unknown[], b: readonly unknown[]): boolean {
 }
 
 /** Drops cache entries for ids no longer present in the current render pass. */
-export function pruneStaleEntries<K, V>(cache: Map<K, V>, present: ReadonlySet<K>): void {
+export function pruneStaleEntries<K, V>(
+  cache: Map<K, V>,
+  present: ReadonlySet<K>,
+): void {
   for (const id of [...cache.keys()]) {
     if (!present.has(id)) cache.delete(id);
   }
 }
 
 /** Decoration inputs a single node reads; the Schema View callbacks and graph mode are cluster-only. */
-export type NodeSelectionInputs = Omit<NodeDecorationInputs, 'graphMode' | 'onExpandSchema' | 'onMakeSchemaCenter'>;
+export type NodeSelectionInputs = Omit<
+  NodeDecorationInputs,
+  'graphMode' | 'onExpandSchema' | 'onMakeSchemaCenter'
+>;
 
 /** Selection, trace, and AI state derived for one non-schema node. */
 export interface NodeDecoration {
@@ -120,7 +141,10 @@ export interface NodeDecoration {
 }
 
 /** Schema-cluster callbacks, which are attached only while Schema View is on stage. */
-function schemaCallbacks(inputs: NodeDecorationInputs): { onExpandSchema?: (schemaName: string) => void; onMakeSchemaCenter?: (schemaName: string) => void } {
+function schemaCallbacks(inputs: NodeDecorationInputs): {
+  onExpandSchema?: (schemaName: string) => void;
+  onMakeSchemaCenter?: (schemaName: string) => void;
+} {
   const schemaView = inputs.graphMode === 'overview';
   return {
     onExpandSchema: schemaView ? inputs.onExpandSchema : undefined,
@@ -145,8 +169,11 @@ function isTraceOriginNode(
   nodeId: string,
   inputs: Pick<NodeDecorationInputs, 'traceSelectedNodeId' | 'traceMode'>,
 ): boolean {
-  return nodeId === inputs.traceSelectedNodeId && (
-    inputs.traceMode === 'applied' || inputs.traceMode === 'filtered' || inputs.traceMode === 'path-applied'
+  return (
+    nodeId === inputs.traceSelectedNodeId &&
+    (inputs.traceMode === 'applied' ||
+      inputs.traceMode === 'filtered' ||
+      inputs.traceMode === 'path-applied')
   );
 }
 
@@ -156,7 +183,15 @@ export function computeNodeDecoration(
   ownHighlight: boolean | 'yellow' | undefined,
   inputs: NodeSelectionInputs,
 ): NodeDecoration {
-  const { highlighted: isHighlighted, isNeighbor, dimmed: baseDimmed } = resolveBaseSelectionState(nodeId, inputs.highlightedNodeId, inputs.level1Neighbors);
+  const {
+    highlighted: isHighlighted,
+    isNeighbor,
+    dimmed: baseDimmed,
+  } = resolveBaseSelectionState(
+    nodeId,
+    inputs.highlightedNodeId,
+    inputs.level1Neighbors,
+  );
   const isTraceOrigin = isTraceOriginNode(nodeId, inputs);
   const override = inputs.litOverride?.size ? inputs.litOverride : undefined;
   const lit = override
@@ -187,7 +222,11 @@ function reuseOrBuild(
   if (cached && sameKey(cached.key, key)) {
     if (cached.source === node) return cached.result;
     if (cached.source.data === node.data) {
-      const moved = { ...node, className: cached.result.className, data: cached.result.data };
+      const moved = {
+        ...node,
+        className: cached.result.className,
+        data: cached.result.data,
+      };
       cache.set(node.id, { source: node, key, result: moved });
       return moved;
     }
@@ -233,10 +272,23 @@ export function decorateFlowNodes(
         () => ({ ...node, data: { ...node.data, ...callbacks } }),
       );
     }
-    const decoration = computeNodeDecoration(node.id, (node.data as CustomNodeData).highlighted, inputs);
+    const decoration = computeNodeDecoration(
+      node.id,
+      (node.data as CustomNodeData).highlighted,
+      inputs,
+    );
     return reuseOrBuild(
       node,
-      [decoration.lit, decoration.highlighted, decoration.removable, decoration.onRemoveFromView, decoration.traceControls, decoration.aiHighlight, decoration.aiBadge, decoration.aiNote],
+      [
+        decoration.lit,
+        decoration.highlighted,
+        decoration.removable,
+        decoration.onRemoveFromView,
+        decoration.traceControls,
+        decoration.aiHighlight,
+        decoration.aiBadge,
+        decoration.aiNote,
+      ],
       cache,
       () => applyDecoration(node, decoration),
     );
@@ -276,7 +328,12 @@ export function projectColumnNodes(
     present.add(view.id);
     const position = positions[view.id] ?? view.position;
     const cached = cache.get(view.id);
-    if (cached && cached.data === data && cached.x === position.x && cached.y === position.y) {
+    if (
+      cached &&
+      cached.data === data &&
+      cached.x === position.x &&
+      cached.y === position.y
+    ) {
       projected.push(cached.result);
       continue;
     }

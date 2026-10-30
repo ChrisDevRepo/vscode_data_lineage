@@ -18,7 +18,10 @@ export const CLASSIFICATION_LABEL: Record<ClassificationValue, string> = {
 };
 
 /** Capture angle(s) a locked classification keeps in `submit_findings.sections`. */
-export const CLASSIFICATION_KEPT_ANGLES: Record<ClassificationValue, readonly ('business' | 'technical')[]> = {
+export const CLASSIFICATION_KEPT_ANGLES: Record<
+  ClassificationValue,
+  readonly ('business' | 'technical')[]
+> = {
   business: ['business'],
   technical: ['technical'],
   both: ['business', 'technical'],

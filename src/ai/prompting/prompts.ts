@@ -5,7 +5,12 @@ import { ADD_NODE_IDS_REVEALS } from '../tools/presentResult';
 import type { InvestigationTask, ScalarReturnTarget } from '../sm/smTypes';
 
 /** Phase key used by the TS prompt protocol builders. */
-export type PromptPhase = 'discover' | 'visual_preview' | 'active' | 'synthesis' | 'completed';
+export type PromptPhase =
+  | 'discover'
+  | 'visual_preview'
+  | 'active'
+  | 'synthesis'
+  | 'completed';
 
 /** The three stages that author a `lineage_present_result` payload, as seen by {@link buildPresentationDetailContract}. */
 type PresentationStage = 'preview' | 'synthesis' | 'completed';
@@ -30,8 +35,16 @@ export interface GeneralPromptContext {
 
 /** Constructs the base system prompt used to govern AI behavior across all phases. */
 export function buildGeneralSystemPrompt(ctx: GeneralPromptContext): string {
-  const { dbPlatform, filterSchemas, totalSchemaCount, visibleNodes, totalNodes, screen } = ctx;
-  const isFiltered = filterSchemas.length > 0 && filterSchemas.length < totalSchemaCount;
+  const {
+    dbPlatform,
+    filterSchemas,
+    totalSchemaCount,
+    visibleNodes,
+    totalNodes,
+    screen,
+  } = ctx;
+  const isFiltered =
+    filterSchemas.length > 0 && filterSchemas.length < totalSchemaCount;
   const schemasLine = isFiltered
     ? `- Schemas: ${filterSchemas.join(', ')} (${filterSchemas.length} of ${totalSchemaCount} schemas)`
     : `- Schemas: All (${totalSchemaCount} schemas)`;
@@ -45,7 +58,11 @@ export function buildGeneralSystemPrompt(ctx: GeneralPromptContext): string {
     '',
     '## Context',
     `- Platform: ${dbPlatform}`,
-    ...(ctx.identifierCaseSensitive ? ['- Identifiers are case-sensitive. Use the exact object IDs and column names supplied by tools; case-only variants identify different objects or columns.'] : []),
+    ...(ctx.identifierCaseSensitive
+      ? [
+          '- Identifiers are case-sensitive. Use the exact object IDs and column names supplied by tools; case-only variants identify different objects or columns.',
+        ]
+      : []),
     schemasLine,
     `- Visible objects: ${visibleNodes} of ${totalNodes}`,
     ...(screen ? buildScreenStateSlot(screen) : []),
@@ -90,45 +107,50 @@ function buildDiscoveryPrompt(): string {
   ].join('\n');
 }
 
-
 /** The active hop's task and deliverable, the same with or without tracked columns; field meanings — `prune_neighbors`, `questions` and the CT carry — live in the `submit_findings` schema, their one home. */
 function buildActivePhasePrompt(analysisMode: 'bb' | 'ct'): string {
   return [
     '# Active hop',
-    'This hop reads one SQL object, `focus_node` in `<hop_context>`, against `<current_task>`. Read its `ddl`, where present, the way a reviewer reads code. Neighbors carry no SQL; a question about a neighbor\'s logic belongs to its own hop. `<short_term_memory>` is context from earlier hops, not evidence for this one. `storage_context` carries related table metadata and stored DDL, not loading SQL.',
-    'Answer each `<sub_question>` from the focus\'s own evidence in its corresponding section, or state that this hop cannot answer it.',
+    "This hop reads one SQL object, `focus_node` in `<hop_context>`, against `<current_task>`. Read its `ddl`, where present, the way a reviewer reads code. Neighbors carry no SQL; a question about a neighbor's logic belongs to its own hop. `<short_term_memory>` is context from earlier hops, not evidence for this one. `storage_context` carries related table metadata and stored DDL, not loading SQL.",
+    "Answer each `<sub_question>` from the focus's own evidence in its corresponding section, or state that this hop cannot answer it.",
     'Ground claims in supplied evidence: do not infer execution counts, uniqueness, validity policy or business obligations without evidence; check numeric limits against declared precision and scale.',
     '',
-    'Complete this hop with one available hop-completion command: for a kept hop, use `lineage_submit_findings` (`summary`, `sections` keyed by angle, and `column_flow` when the current task names columns); for an irrelevant SQL carrier, use `lineage_prune_current`.'
-      + (analysisMode === 'ct' ? ' `questions` and `prune_neighbors` are optional; mapped neighbors continue automatically.' : ''),
-    analysisMode === 'ct' ? 'After a rejection, saved content stays held; send only the requested fields using the repair schema.'
+    'Complete this hop with one available hop-completion command: for a kept hop, use `lineage_submit_findings` (`summary`, `sections` keyed by angle, and `column_flow` when the current task names columns); for an irrelevant SQL carrier, use `lineage_prune_current`.' +
+      (analysisMode === 'ct'
+        ? ' `questions` and `prune_neighbors` are optional; mapped neighbors continue automatically.'
+        : ''),
+    analysisMode === 'ct'
+      ? 'After a rejection, saved content stays held; send only the requested fields using the repair schema.'
       : 'After a rejection, saved content stays held; correct the reported faults using the repair schema.',
     'Neighbor decisions in `prune_neighbors` and `questions`, as their fields describe.',
     'Flags on `neighbors[]` are committed: `already_visited` and `already_removed` neighbors take no decision; neighbors with `can_prune: false` are not pruned. `can_question` never widens scope.',
   ].join('\n');
 }
 
-
 /** Builds the presentation contract shared by every stage that authors a `present_result` payload. */
-function buildPresentationDetailContract(mode: PresentationStage, evidence?: string): string {
+function buildPresentationDetailContract(
+  mode: PresentationStage,
+  evidence?: string,
+): string {
   const headingRule =
     '- Inside a section body use bold labels, never `#` headings; the engine owns the title, the section headings and the object headers.';
-  const depthRules = mode === 'preview'
-    ? [
-      '- Depth is fixed by the supplied answer; you choose only where its blocks are cut into sections.',
-    ]
-    : mode === 'completed'
+  const depthRules =
+    mode === 'preview'
       ? [
-        '- Depth is the follow-up ask, not an archive lift. Keep exact node IDs, parameter names, and formulas intact in text you do author.',
-        headingRule,
-      ]
-      : [
-        '- `sections[].text` carries, for each linked node, its rules, predicates, formulas and ⚠️ callouts at the captured depth. Preserve evidence-supported facts once, merging equivalent business and technical captures without repeated wording; correct or omit captured claims contradicted by supplied SQL or metadata, and do not strengthen at-most-one behavior into exactly-one guarantees. A short SQL witness may accompany its explanation.',
-        '- Preserve captured evidence-supported warnings; do not create new ⚠️ callouts from defaults, normal behavior, unresolved gaps or SQL comments during synthesis.',
-        '- Describe declared SQL behavior; do not infer runtime execution counts or execution order without matching runtime evidence.',
-        '- Resolve node-local gaps against the completed archive: a fact established by another analyzed node is no longer an unresolved gap in the final report.',
-        headingRule,
-      ];
+          '- Depth is fixed by the supplied answer; you choose only where its blocks are cut into sections.',
+        ]
+      : mode === 'completed'
+        ? [
+            '- Depth is the follow-up ask, not an archive lift. Keep exact node IDs, parameter names, and formulas intact in text you do author.',
+            headingRule,
+          ]
+        : [
+            '- `sections[].text` carries, for each linked node, its rules, predicates, formulas and ⚠️ callouts at the captured depth. Preserve evidence-supported facts once, merging equivalent business and technical captures without repeated wording; correct or omit captured claims contradicted by supplied SQL or metadata, and do not strengthen at-most-one behavior into exactly-one guarantees. A short SQL witness may accompany its explanation.',
+            '- Preserve captured evidence-supported warnings; do not create new ⚠️ callouts from defaults, normal behavior, unresolved gaps or SQL comments during synthesis.',
+            '- Describe declared SQL behavior; do not infer runtime execution counts or execution order without matching runtime evidence.',
+            '- Resolve node-local gaps against the completed archive: a fact established by another analyzed node is no longer an unresolved gap in the final report.',
+            headingRule,
+          ];
   return [
     '## Presentation contract',
     ...(evidence ? [`- ${evidence}`] : []),
@@ -143,12 +165,14 @@ function buildVisualPreviewPrompt(): string {
     '## Structure the cached discovery answer',
     'Call `lineage_present_result` once. Do not call discovery or scope tools; the supplied answer and scope are authoritative.',
     'Divide `answer_blocks` into consecutive sections: each `sections[]` entry gives a label, its canonical `node_ids`, and the `start` block it begins at; a section runs to the block before the next start, the last to the end, and starts ascend from B1.',
-    'Choose cut points so each section answers one part of the user\'s question.',
+    "Choose cut points so each section answers one part of the user's question.",
     '',
-    buildPresentationDetailContract('preview', 'The detailed walkthrough is the supplied `answer_blocks`, presented whole through the section starts.'),
+    buildPresentationDetailContract(
+      'preview',
+      'The detailed walkthrough is the supplied `answer_blocks`, presented whole through the section starts.',
+    ),
   ].join('\n');
 }
-
 
 /** Ends discovery's tool phase with one answer from the accepted observations. */
 export function buildDiscoveryFinalAnswerTask(): string {
@@ -159,7 +183,7 @@ export function buildDiscoveryFinalAnswerTask(): string {
 function buildSynthesisPrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
   const isCt = analysisMode === 'ct';
   const evidence =
-    'Evidence, in the last tool result: `detail_slots[]` — what each analyzed node does; `node_states[]` — each node\'s action and why; `synthesis_reminder` — engine facts: flow roles, edge direction, kept nodes without a detail slot and captured formulas' +
+    "Evidence, in the last tool result: `detail_slots[]` — what each analyzed node does; `node_states[]` — each node's action and why; `synthesis_reminder` — engine facts: flow roles, edge direction, kept nodes without a detail slot and captured formulas" +
     (isCt ? ', plus the Column Trace Chain.' : '.');
   return [
     '## Task: write the report beside the graph',
@@ -172,10 +196,12 @@ function buildSynthesisPrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
     '- Every node with a `detail_slots[]` entry appears in a section (`sections[].node_ids`); a highlight group or a note does not cover it.',
     ...(isCt
       ? [
-        '- In a column trace, every Column Trace Chain node in `result.scope.node_ids` without a captured detail slot appears in a section or a note.',
-        '- The backend inserts the Column Chain from validated column-flow edges after the intro and owns column-lineage tables and inventories. Do not add a Column mapping table, exhaustive lineage list or separate trace block; explain bindings, each captured calculation and intermediate result, predicates and relevant conversions in detailed Steps instead.',
-      ]
-      : ['- Keep the explanation concise while preserving important formulas, rules and supported warnings.']),
+          '- In a column trace, every Column Trace Chain node in `result.scope.node_ids` without a captured detail slot appears in a section or a note.',
+          '- The backend inserts the Column Chain from validated column-flow edges after the intro and owns column-lineage tables and inventories. Do not add a Column mapping table, exhaustive lineage list or separate trace block; explain bindings, each captured calculation and intermediate result, predicates and relevant conversions in detailed Steps instead.',
+        ]
+      : [
+          '- Keep the explanation concise while preserving important formulas, rules and supported warnings.',
+        ]),
     '- Id fields take only ids from `result.scope.node_ids`, except an existing held entry named only for deletion; name other objects in section text.',
     '- When business and technical were both captured, state each fact once, under the angle whose question it answers.',
     '- DDL and DML establish definitions and SQL behavior, not observed statistics, row counts, elapsed time or performance. Explain a calculation only from its supplied defining expression; do not turn its formula or captured prose into a measured result without matching data or runtime evidence.',
@@ -186,7 +212,6 @@ function buildSynthesisPrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
     buildPresentationDetailContract('synthesis'),
   ].join('\n');
 }
-
 
 /** Constructs the prompt for the Follow-Up phase (post-synthesis refinement). */
 function buildFollowUpPrompt(): string {
@@ -215,7 +240,7 @@ function buildFollowUpPrompt(): string {
     '- Prune nodes from the current graph: use `prune_node_ids` in',
     '  `lineage_present_result`.',
     '- Suggest what to explore next when the user asks what to investigate or add: list the',
-    '  candidates in chat — the run\'s open leads from `lineage_get_screen_state` with',
+    "  candidates in chat — the run's open leads from `lineage_get_screen_state` with",
     '  `filter:"open_leads"` first — each with one line on why, marking an `on_graph` lead as a deeper',
     '  look at an object already shown, and end by asking which to add.',
     '  The graph stays as it is until the user picks; the pick returns to discovery for a new approval proposal.',
@@ -233,7 +258,6 @@ function buildFollowUpPrompt(): string {
   ].join('\n');
 }
 
-
 /** Sentinel prompt carried by the post-discovery "deeper analysis" follow-up pill. */
 export const RUN_TRACE_TRIGGER = 'Run trace';
 
@@ -241,7 +265,8 @@ export const RUN_TRACE_TRIGGER = 'Run trace';
 export const SHOW_GRAPH_PREVIEW_TRIGGER = 'Show graph preview';
 
 /** Reply to a card button whose card the session no longer holds. */
-export const STALE_GATE_TRIGGER_REPLY = 'That plan is no longer pending — use the buttons on the latest plan, or ask again.';
+export const STALE_GATE_TRIGGER_REPLY =
+  'That plan is no longer pending — use the buttons on the latest plan, or ask again.';
 
 /** System prompt for the structured reading of one typed reply at a pending approval gate. */
 export function buildGateReplySystemPrompt(): string {
@@ -258,18 +283,22 @@ export function buildGateReplySystemPrompt(): string {
 }
 
 /** User message for the typed-reply classification: the reviewed plan, then the verbatim reply. */
-export function buildGateReplyUserPrompt(scopeMd: string, reply: string): string {
+export function buildGateReplyUserPrompt(
+  scopeMd: string,
+  reply: string,
+): string {
   return [
     '## Proposal awaiting approval',
     scopeMd,
     '',
-    '## The user\'s typed reply',
+    "## The user's typed reply",
     reply,
   ].join('\n');
 }
 
 /** Stable host-owned marker that keeps the explicit preview action on the lightweight route. */
-export const PREVIEW_REQUEST_MARKER = 'The user clicked the post-discovery "Show graph preview" link.';
+export const PREVIEW_REQUEST_MARKER =
+  'The user clicked the post-discovery "Show graph preview" link.';
 
 /** Sentinel prompt fired by the "Show full description" follow-up pill. */
 export const SHOW_FULL_DESCRIPTION_TRIGGER = 'Show the full description';
@@ -278,7 +307,8 @@ export const SHOW_FULL_DESCRIPTION_TRIGGER = 'Show the full description';
 export const SHOW_FULL_PLAN_TRIGGER = 'Show the full exploration plan';
 
 /** Stable first line of the seeded trace envelope, matched by the graph to route straight to SM. */
-export const TRACE_REQUEST_MARKER = 'The user clicked the post-discovery "Run trace" link.';
+export const TRACE_REQUEST_MARKER =
+  'The user clicked the post-discovery "Run trace" link.';
 
 /** The captured discovery context the pill expansion reads. */
 interface DiscoveryPillContext {
@@ -291,7 +321,10 @@ interface DiscoveryPillContext {
 }
 
 /** Expands the preview badge into an explicit visual request grounded in the captured BFS question. */
-export function expandShowGraphPreviewPrompt(prompt: string, ctx: DiscoveryPillContext): string {
+export function expandShowGraphPreviewPrompt(
+  prompt: string,
+  ctx: DiscoveryPillContext,
+): string {
   if (prompt !== SHOW_GRAPH_PREVIEW_TRIGGER) return prompt;
   if (!ctx.lastDiscoveryOrigin || !ctx.lastDiscoveryQuestion) return prompt;
   return [
@@ -302,26 +335,33 @@ export function expandShowGraphPreviewPrompt(prompt: string, ctx: DiscoveryPillC
 }
 
 /** Expands the SM-offer pill sentinel into the seeded trace prompt from captured discovery context. */
-export function expandRunTracePrompt(prompt: string, ctx: DiscoveryPillContext): string {
+export function expandRunTracePrompt(
+  prompt: string,
+  ctx: DiscoveryPillContext,
+): string {
   if (prompt !== RUN_TRACE_TRIGGER) return prompt;
-  if (ctx.lastDiscoveryOrigin && ctx.lastDiscoveryQuestion && ctx.lastDiscoveryAnswer) {
-    return buildRunTraceTriggerPrompt(ctx.lastDiscoveryQuestion, ctx.lastDiscoveryAnswer);
+  if (
+    ctx.lastDiscoveryOrigin &&
+    ctx.lastDiscoveryQuestion &&
+    ctx.lastDiscoveryAnswer
+  ) {
+    return buildRunTraceTriggerPrompt(
+      ctx.lastDiscoveryQuestion,
+      ctx.lastDiscoveryAnswer,
+    );
   }
   return prompt;
 }
 
 /** Builds the User-message envelope that asks the SM-entry turn for a `lineage_start_exploration` call. */
-function buildRunTraceTriggerPrompt(
-  question: string,
-  answer: string,
-): string {
+function buildRunTraceTriggerPrompt(question: string, answer: string): string {
   return [
     TRACE_REQUEST_MARKER,
     'Call `lineage_start_exploration` once this turn — the tool call is the only valid action; no prose, no other tools.',
     '',
     '## Inputs to lineage_start_exploration',
     '',
-    '- Every field, including **origin** and **mission_brief**: derive from <original_question> and <discovery_answer>, as each field\'s description says.',
+    "- Every field, including **origin** and **mission_brief**: derive from <original_question> and <discovery_answer>, as each field's description says.",
     '',
     '## Discovery context',
     '',
@@ -341,7 +381,8 @@ export const DISCOVERY_SUMMARY_COMPOSE_SYSTEM_PROMPT = [
 ].join('\n');
 
 /** Existing empty-memo correction shared by the composer and its retry prompt. */
-export const DISCOVERY_SUMMARY_EMPTY_REASON = 'Too small: expected string to have >=1 characters';
+export const DISCOVERY_SUMMARY_EMPTY_REASON =
+  'Too small: expected string to have >=1 characters';
 
 /** Builds the one-shot prompt for the proposal-build discovery-summary composition round (fires once per shown SM proposal). */
 export function buildDiscoverySummaryComposePrompt(
@@ -351,12 +392,12 @@ export function buildDiscoverySummaryComposePrompt(
   rejectReason?: string,
 ): string {
   return [
-    'Compose a 2–4 sentence discovery summary for this pending SM exploration proposal; it will ride in every hop\'s stable prefix as `<discovery_summary>`.',
+    "Compose a 2–4 sentence discovery summary for this pending SM exploration proposal; it will ride in every hop's stable prefix as `<discovery_summary>`.",
     'Reply with text only this turn. Output the memo as a single paragraph, 2–4 sentences total.',
     '',
     '## Composition contract',
     '',
-    'Include: (1) the user\'s original question, close to verbatim; (2) the headline finding from the discovery answer; (3) any user-stated semantic constraint the structural fields cannot capture.',
+    "Include: (1) the user's original question, close to verbatim; (2) the headline finding from the discovery answer; (3) any user-stated semantic constraint the structural fields cannot capture.",
     '',
     '## Pending SM contract (do not re-state)',
     '',
@@ -370,7 +411,12 @@ export function buildDiscoverySummaryComposePrompt(
     escapePromptText(answer),
     '</discovery_answer>',
     ...(rejectReason
-      ? ['', '## Retry — previous reply rejected', '', `Reason: ${rejectReason}`]
+      ? [
+          '',
+          '## Retry — previous reply rejected',
+          '',
+          `Reason: ${rejectReason}`,
+        ]
       : []),
   ].join('\n');
 }
@@ -406,21 +452,27 @@ export function buildColumnAspectPrompt(targetColumns: string[]): string {
   ].join('\n');
 }
 
-
-
 /** Renders the `<mission_brief>` XML block — **session-stable** content. */
-export function buildMissionBriefBlock(brief: string, question: string, scopeNotes: readonly string[] = []): string {
+export function buildMissionBriefBlock(
+  brief: string,
+  question: string,
+  scopeNotes: readonly string[] = [],
+): string {
   const missionText = brief || question;
   if (!missionText && scopeNotes.length === 0) return '';
   const lines = ['## Mission Context'];
   if (missionText) {
-    lines.push('<mission_brief>', escapePromptText(missionText), '</mission_brief>');
+    lines.push(
+      '<mission_brief>',
+      escapePromptText(missionText),
+      '</mission_brief>',
+    );
   }
   if (scopeNotes.length > 0) {
     lines.push(
       '<user_constraints>',
       'Stated by the user and approved for this run. Apply them on every hop.',
-      ...scopeNotes.map(note => `- ${escapePromptText(note)}`),
+      ...scopeNotes.map((note) => `- ${escapePromptText(note)}`),
       '</user_constraints>',
     );
   }
@@ -429,20 +481,46 @@ export function buildMissionBriefBlock(brief: string, question: string, scopeNot
 
 /** Renders the original per-hop task and its supplied reference context. */
 export function buildCurrentTaskBlock(
-  currentTasks: ReadonlyArray<Pick<InvestigationTask, 'kind' | 'question' | 'traversalSide' | 'callerContext' | 'passthroughFromNodeId'> & {
-    /** The engine's qualified endpoints for this task, split by owning object. */
-    readonly endpoints?: { readonly assigned: readonly ScalarReturnTarget[]; readonly external: readonly ScalarReturnTarget[] };
-  }>,
+  currentTasks: ReadonlyArray<
+    Pick<
+      InvestigationTask,
+      | 'kind'
+      | 'question'
+      | 'traversalSide'
+      | 'callerContext'
+      | 'passthroughFromNodeId'
+    > & {
+      /** The engine's qualified endpoints for this task, split by owning object. */
+      readonly endpoints?: {
+        readonly assigned: readonly ScalarReturnTarget[];
+        readonly external: readonly ScalarReturnTarget[];
+      };
+    }
+  >,
   columnTraceColumns?: string[],
   columnLineageQuestions?: string[],
   nonBodied = false,
-  context?: { readonly analysisMode: 'bb' | 'ct'; readonly originNodeId: string | null },
+  context?: {
+    readonly analysisMode: 'bb' | 'ct';
+    readonly originNodeId: string | null;
+  },
 ): string {
   if (currentTasks.length === 0) return '';
   const lines = ['<current_task>'];
-  const inherited = context?.analysisMode === 'bb' ? currentTasks.filter(task => task.kind !== 'root'
-    && task.passthroughFromNodeId && task.passthroughFromNodeId !== context.originNodeId && task.question.trim()) : [];
-  if (inherited.length) lines.push('  Establish this focus\'s relevance to the user\'s question from its own SQL. Inherited questions are reference context about the traversed object. If relevant, capture the rules, calculations, and thresholds it uses to produce these values, not only which columns feed the downstream node.');
+  const inherited =
+    context?.analysisMode === 'bb'
+      ? currentTasks.filter(
+          (task) =>
+            task.kind !== 'root' &&
+            task.passthroughFromNodeId &&
+            task.passthroughFromNodeId !== context.originNodeId &&
+            task.question.trim(),
+        )
+      : [];
+  if (inherited.length)
+    lines.push(
+      "  Establish this focus's relevance to the user's question from its own SQL. Inherited questions are reference context about the traversed object. If relevant, capture the rules, calculations, and thresholds it uses to produce these values, not only which columns feed the downstream node.",
+    );
   for (const task of currentTasks) {
     if (inherited.includes(task)) continue;
     const question = task.question.trim();
@@ -452,15 +530,20 @@ export function buildCurrentTaskBlock(
     // Caller-output investigations retain their specialized binding context in the hop envelope.
     if (task.kind !== 'column_lineage' || task.callerContext) continue;
     const { assigned = [], external = [] } = task.endpoints ?? {};
-    const endpoints = (values: readonly ScalarReturnTarget[]) => values.map(ref => escapePromptText(`${ref.node}.${ref.col}`)).join(', ');
-    if (assigned.length) lines.push(
-      nonBodied
-        ? `  <assigned_endpoints>${endpoints(assigned)}: these are stored endpoints. The engine carries them to connected SQL objects in the approved direction without inventing value edges; those SQL objects resolve whether and how the values continue.</assigned_endpoints>`
-        : `  <assigned_endpoints>${endpoints(assigned)}: Record the SQL-established relations for these columns.</assigned_endpoints>`,
-    );
-    if (external.length) lines.push(
-      `  <neighbor_columns>${endpoints(external)}: Candidate neighbor columns, not assigned endpoints. Map one only when this object's SQL establishes the relation (a written table column goes in out_node and out_col); otherwise leave it out of column_flow.</neighbor_columns>`,
-    );
+    const endpoints = (values: readonly ScalarReturnTarget[]) =>
+      values
+        .map((ref) => escapePromptText(`${ref.node}.${ref.col}`))
+        .join(', ');
+    if (assigned.length)
+      lines.push(
+        nonBodied
+          ? `  <assigned_endpoints>${endpoints(assigned)}: these are stored endpoints. The engine carries them to connected SQL objects in the approved direction without inventing value edges; those SQL objects resolve whether and how the values continue.</assigned_endpoints>`
+          : `  <assigned_endpoints>${endpoints(assigned)}: Record the SQL-established relations for these columns.</assigned_endpoints>`,
+      );
+    if (external.length)
+      lines.push(
+        `  <neighbor_columns>${endpoints(external)}: Candidate neighbor columns, not assigned endpoints. Map one only when this object's SQL establishes the relation (a written table column goes in out_node and out_col); otherwise leave it out of column_flow.</neighbor_columns>`,
+      );
   }
   if (columnTraceColumns && columnTraceColumns.length > 0) {
     lines.push(
@@ -474,35 +557,50 @@ export function buildCurrentTaskBlock(
     lines.push(
       `  <lineage_questions>`,
       `    Column-chain continuations opened on an earlier hop for this focus. Address them:`,
-      ...columnLineageQuestions.map(q => `    - ${escapePromptText(q)}`),
+      ...columnLineageQuestions.map((q) => `    - ${escapePromptText(q)}`),
       `  </lineage_questions>`,
     );
   }
   if (lines.length === 1) return '';
   lines.push('</current_task>');
-  if (inherited.length) lines.push('<analysis_context>', ...inherited.map(task =>
-    `  Inherited through ${escapePromptText(task.passthroughFromNodeId!)}: ${escapePromptText(task.question)}`), '</analysis_context>');
+  if (inherited.length)
+    lines.push(
+      '<analysis_context>',
+      ...inherited.map(
+        (task) =>
+          `  Inherited through ${escapePromptText(task.passthroughFromNodeId!)}: ${escapePromptText(task.question)}`,
+      ),
+      '</analysis_context>',
+    );
   return lines.join('\n');
 }
-
 
 /** Renders the `<short_term_memory>` block (last 3 node summaries) plus, when present, a `<recent_rejections>` block (the engine's rejection ring) for SM active hops. */
 export function buildMemoryBlock(
   stm: Array<{ nodeId: string; summary: string }>,
-  recentRejections: Array<{ nodeId: string; reason: string; atHop: number }> = [],
+  recentRejections: Array<{
+    nodeId: string;
+    reason: string;
+    atHop: number;
+  }> = [],
 ): string {
-  const stmText = stm.length > 0
-    ? stm.map(s => `- ${escapePromptText(s.nodeId)}: ${escapePromptText(s.summary)}`).join('\n')
-    : 'No nodes visited yet.';
-  const blocks = [
-    '<short_term_memory>',
-    stmText,
-    '</short_term_memory>',
-  ];
+  const stmText =
+    stm.length > 0
+      ? stm
+          .map(
+            (s) =>
+              `- ${escapePromptText(s.nodeId)}: ${escapePromptText(s.summary)}`,
+          )
+          .join('\n')
+      : 'No nodes visited yet.';
+  const blocks = ['<short_term_memory>', stmText, '</short_term_memory>'];
   if (recentRejections.length > 0) {
     blocks.push(
       '<recent_rejections>',
-      ...recentRejections.map(r => `- ${escapePromptText(r.nodeId)} (hop ${r.atHop}): ${escapePromptText(r.reason)}`),
+      ...recentRejections.map(
+        (r) =>
+          `- ${escapePromptText(r.nodeId)} (hop ${r.atHop}): ${escapePromptText(r.reason)}`,
+      ),
       '</recent_rejections>',
     );
   }

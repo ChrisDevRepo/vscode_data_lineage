@@ -22,7 +22,10 @@ export interface PresentationArtifact {
   /** Canonical node ids rendered in the view. */
   readonly nodeIds: readonly string[];
   /** Validated AI view metadata; `summary` and `description` are always present. */
-  readonly aiMetadata: AIViewMetadata & { readonly summary: string; readonly description: string };
+  readonly aiMetadata: AIViewMetadata & {
+    readonly summary: string;
+    readonly description: string;
+  };
   /** Identifier of the run that authored this presentation. */
   readonly runId?: string;
   /** Serialized engine state captured at present time; absent when no exploration engine was live. */
@@ -60,7 +63,10 @@ export interface ResultGraph {
   /** The `explorationRunId` that authored {@link sections} — distinguishes sections a later render may retain from ones left over from a previous run. */
   sectionsRunId?: string;
   /** Column lineage chain from a CT session. */
-  columnAspect?: { edges: ColumnEdge[]; requested?: { node: string; columns: string[] } };
+  columnAspect?: {
+    edges: ColumnEdge[];
+    requested?: { node: string; columns: string[] };
+  };
 }
 
 /** Schema version of the AI output-templates contract (the `aiOutputTemplates.yaml` structure). */
@@ -104,13 +110,17 @@ export interface AiOutputTemplates {
 export type AiSectionAngle = 'business' | 'technical';
 
 /** Template key whose recipe declares the section labels of each {@link AiSectionAngle}. */
-export const AI_SECTION_KEY_BY_ANGLE: Readonly<Record<AiSectionAngle, 'business_capture' | 'technical_capture'>> = {
+export const AI_SECTION_KEY_BY_ANGLE: Readonly<
+  Record<AiSectionAngle, 'business_capture' | 'technical_capture'>
+> = {
   business: 'business_capture',
   technical: 'technical_capture',
 };
 
 /** Ordered section labels per capture angle, read from the optional `sections` field of the capture recipes. */
-export type AiOutputSections = Readonly<Partial<Record<AiSectionAngle, readonly string[]>>>;
+export type AiOutputSections = Readonly<
+  Partial<Record<AiSectionAngle, readonly string[]>>
+>;
 
 /** No declared section labels: a synthesis template carrying the placeholder gets an empty list. */
 export const EMPTY_AI_SECTIONS: AiOutputSections = {};

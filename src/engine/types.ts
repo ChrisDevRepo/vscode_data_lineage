@@ -1,12 +1,17 @@
-
 import type { ColumnLineState, ColumnTraceViewNode } from './columnTraceView';
 import { schemaKey } from '../utils/sql';
 
 /** Canonical list of supported lineage object kinds. Single source of truth — the {@link ObjectType} union is derived from it, and the bridge contract's `ObjectTypeSchema` reuses it so the runtime schema can never drift from the type. */
-export const OBJECT_TYPES = ['table', 'view', 'procedure', 'function', 'external'] as const;
+export const OBJECT_TYPES = [
+  'table',
+  'view',
+  'procedure',
+  'function',
+  'external',
+] as const;
 
 /** Supported lineage object kinds. */
-export type ObjectType = typeof OBJECT_TYPES[number];
+export type ObjectType = (typeof OBJECT_TYPES)[number];
 
 /** Represents a single node in the lineage graph. */
 export interface LineageNode {
@@ -105,7 +110,7 @@ export type CatalogEntry = {
   /** Object classification. */
   type: ObjectType;
   /** External classification if applicable. */
-  externalType?: 'et' | 'file' | 'db'
+  externalType?: 'et' | 'file' | 'db';
 };
 
 /** O(1) adjacency list for graph navigation. */
@@ -152,7 +157,6 @@ export interface SchemaPreview {
   /** Warnings generated during the preview extraction. */
   warnings?: string[];
 }
-
 
 /** Represents a generic XML element in a DACPAC model file. Used during Phase 1 (preview) and Phase 2 (full extraction) to traverse the SQL model hierarchy. */
 export interface XmlElement {
@@ -216,7 +220,6 @@ interface XmlReference {
   '@_ExternalSource'?: string;
 }
 
-
 /** Maps DACPAC element types to lineage object kinds, including PolyBase external tables. */
 export const ELEMENT_TYPE_MAP: Record<string, ObjectType> = {
   SqlTable: 'table',
@@ -231,7 +234,6 @@ export const ELEMENT_TYPE_MAP: Record<string, ObjectType> = {
 
 /** DACPAC element types that should produce lineage nodes. */
 export const TRACKED_ELEMENT_TYPES = new Set(Object.keys(ELEMENT_TYPE_MAP));
-
 
 /** Technical definition of a database column. Used for rendering the "Column Mode" detail view and schema exploration. */
 export interface ColumnDef {
@@ -279,26 +281,57 @@ export interface ForeignKeyInfo {
   onDelete: string;
 }
 
-
 /** Format a SQL type name with length/precision/scale modifiers. Handles nvarchar/nchar byte→char conversion and fixed-type detection. */
 export function formatColumnType(
-  typeName: string, maxLength: string, precision: string, scale: string, lengthInChars = false
+  typeName: string,
+  maxLength: string,
+  precision: string,
+  scale: string,
+  lengthInChars = false,
 ): string {
   const t = typeName.toLowerCase();
 
-  if (['int', 'bigint', 'smallint', 'tinyint', 'bit', 'float', 'real',
-    'money', 'smallmoney', 'date', 'datetime', 'datetime2', 'smalldatetime',
-    'datetimeoffset', 'time', 'timestamp', 'uniqueidentifier', 'xml',
-    'text', 'ntext', 'image', 'sql_variant', 'geography', 'geometry',
-    'hierarchyid', 'sysname'].includes(t)) {
+  if (
+    [
+      'int',
+      'bigint',
+      'smallint',
+      'tinyint',
+      'bit',
+      'float',
+      'real',
+      'money',
+      'smallmoney',
+      'date',
+      'datetime',
+      'datetime2',
+      'smalldatetime',
+      'datetimeoffset',
+      'time',
+      'timestamp',
+      'uniqueidentifier',
+      'xml',
+      'text',
+      'ntext',
+      'image',
+      'sql_variant',
+      'geography',
+      'geometry',
+      'hierarchyid',
+      'sysname',
+    ].includes(t)
+  ) {
     return typeName;
   }
 
-  if (['varchar', 'nvarchar', 'char', 'nchar', 'varbinary', 'binary'].includes(t)) {
+  if (
+    ['varchar', 'nvarchar', 'char', 'nchar', 'varbinary', 'binary'].includes(t)
+  ) {
     if (maxLength === '-1') return `${typeName}(max)`;
-    const len = (t.startsWith('n') && maxLength && !lengthInChars)
-      ? String(Math.floor(parseInt(maxLength, 10) / 2))
-      : maxLength;
+    const len =
+      t.startsWith('n') && maxLength && !lengthInChars
+        ? String(Math.floor(parseInt(maxLength, 10) / 2))
+        : maxLength;
     return len ? `${typeName}(${len})` : typeName;
   }
 
@@ -329,13 +362,26 @@ export function buildColumnDef(
   return {
     name,
     type: isComputed
-      ? (typeName !== '?' ? formatColumnType(typeName, maxLength ?? '', precision ?? '', scale ?? '', lengthInChars) : UNRESOLVED_COLUMN_TYPE)
-      : formatColumnType(typeName, maxLength ?? '', precision ?? '', scale ?? '', lengthInChars),
+      ? typeName !== '?'
+        ? formatColumnType(
+            typeName,
+            maxLength ?? '',
+            precision ?? '',
+            scale ?? '',
+            lengthInChars,
+          )
+        : UNRESOLVED_COLUMN_TYPE
+      : formatColumnType(
+          typeName,
+          maxLength ?? '',
+          precision ?? '',
+          scale ?? '',
+          lengthInChars,
+        ),
     nullable: nullable ? 'NULL' : 'NOT NULL',
     extra: isIdentity ? 'IDENTITY' : isComputed ? 'COMPUTED' : '',
   };
 }
-
 
 /** Constraint lookups keyed by normalized table and column identifiers. */
 export interface ConstraintMaps {
@@ -351,13 +397,19 @@ export interface ConstraintMaps {
 
 /** Enrich columns with UQ/CK/PK flags and return FK list for a table. */
 export function enrichColumnsWithConstraints(
-  columns: ColumnDef[], tableKey: string, maps: ConstraintMaps, identifierCaseSensitive = false
+  columns: ColumnDef[],
+  tableKey: string,
+  maps: ConstraintMaps,
+  identifierCaseSensitive = false,
 ): ForeignKeyInfo[] {
   for (const col of columns) {
-    const colKey = schemaKey(`${tableKey}.${col.name}`, identifierCaseSensitive);
-    col.unique    = maps.uqColMap.get(colKey) ?? '';
-    col.check     = maps.ckColMap.get(colKey) ?? '';
-    const pk      = maps.pkOrdinalMap.get(colKey);
+    const colKey = schemaKey(
+      `${tableKey}.${col.name}`,
+      identifierCaseSensitive,
+    );
+    col.unique = maps.uqColMap.get(colKey) ?? '';
+    col.check = maps.ckColMap.get(colKey) ?? '';
+    const pk = maps.pkOrdinalMap.get(colKey);
     if (pk !== undefined) col.pkOrdinal = pk;
   }
   return maps.fkMap.get(tableKey) ?? [];
@@ -365,7 +417,11 @@ export function enrichColumnsWithConstraints(
 
 /** Factory for empty SchemaInfo — single source of truth for the zero-count init. */
 export function createEmptySchemaInfo(name: string): SchemaInfo {
-  return { name, nodeCount: 0, types: { table: 0, view: 0, procedure: 0, function: 0, external: 0 } };
+  return {
+    name,
+    nodeCount: 0,
+    types: { table: 0, view: 0, procedure: 0, function: 0, external: 0 },
+  };
 }
 
 /** Represents a database object extracted during Phase 2. Includes structural metadata like columns and foreign keys. */
@@ -400,16 +456,15 @@ export interface ExternalRef {
   kind: string;
 }
 
-
 /** Maps SQL Server DMV object codes to lineage object kinds, including PolyBase external tables. */
 export const DMV_TYPE_MAP: Record<string, ObjectType> = {
-  'U':  'table',
-  'V':  'view',
-  'P':  'procedure',
-  'FN': 'function',
-  'IF': 'function',
-  'TF': 'function',
-  'ET': 'external',
+  U: 'table',
+  V: 'view',
+  P: 'procedure',
+  FN: 'function',
+  IF: 'function',
+  TF: 'function',
+  ET: 'external',
 };
 
 /** Configuration for graph layout algorithms (dagre). */
@@ -518,16 +573,36 @@ export const ENGINE_EDITION_FABRIC = 11;
 export const DEFAULT_CONFIG = {
   excludePatterns: [],
   maxNodes: 2000,
-  layout: { direction: 'LR' as const, rankSeparation: 120, nodeSeparation: 30, edgeAnimation: true, highlightAnimation: false, minimapEnabled: true, edgeStyle: 'default' as const },
+  layout: {
+    direction: 'LR' as const,
+    rankSeparation: 120,
+    nodeSeparation: 30,
+    edgeAnimation: true,
+    highlightAnimation: false,
+    minimapEnabled: true,
+    edgeStyle: 'default' as const,
+  },
   trace: { defaultUpstreamLevels: 3, defaultDownstreamLevels: 3 },
   analysis: { hubMinDegree: 8, islandMaxSize: 500, longestPathMinNodes: 5 },
-  tableStatistics: { enabled: true, standardModeEnabled: true, excludeExternalTables: true, maxColumns: 50, sampleThreshold: 100000, sampleSize: 10000, useApproxDistinct: true, queryTimeout: 60 },
+  tableStatistics: {
+    enabled: true,
+    standardModeEnabled: true,
+    excludeExternalTables: true,
+    maxColumns: 50,
+    sampleThreshold: 100000,
+    sampleSize: 10000,
+    useApproxDistinct: true,
+    queryTimeout: 60,
+  },
   dmvQueryTimeout: 120,
   externalRefs: { enabled: true },
-  overview: { enabled: true, threshold: 150, schemaDoubleClickBehavior: 'expandOnly' },
+  overview: {
+    enabled: true,
+    threshold: 150,
+    schemaDoubleClickBehavior: 'expandOnly',
+  },
   renderLimit: 750,
 } satisfies ExtensionConfig;
-
 
 /** Supported top-level graph display modes for Object View and Schema View. */
 export type GraphMode = 'full' | 'overview';
@@ -693,7 +768,14 @@ export interface FilterState {
 /** Interactive trace state for the current graph session. */
 export interface TraceState {
   /** Current trace mode. */
-  mode: 'none' | 'configuring' | 'applied' | 'filtered' | 'pathfinding' | 'path-applied' | 'analysis';
+  mode:
+    | 'none'
+    | 'configuring'
+    | 'applied'
+    | 'filtered'
+    | 'pathfinding'
+    | 'path-applied'
+    | 'analysis';
   /** Analysis type when the trace is in analysis mode. */
   analysisType?: AnalysisType;
   /** Origin node ID for the trace. */
@@ -746,9 +828,14 @@ export interface TraceAffordanceSnapshot {
   out: TraceAffordanceSideSnapshot;
 }
 
-
 /** Supported graph analysis modes. */
-export type AnalysisType = 'islands' | 'hubs' | 'orphans' | 'longest-path' | 'cycles' | 'external-refs';
+export type AnalysisType =
+  | 'islands'
+  | 'hubs'
+  | 'orphans'
+  | 'longest-path'
+  | 'cycles'
+  | 'external-refs';
 
 /** Grouped analysis result for a related set of nodes. */
 export interface AnalysisGroup {

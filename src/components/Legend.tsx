@@ -1,5 +1,9 @@
 import { memo, useEffect, useState } from 'react';
-import { createSchemaColorMap, getSchemaColorFromMap, type SchemaColorMap } from '../utils/schemaColors';
+import {
+  createSchemaColorMap,
+  getSchemaColorFromMap,
+  type SchemaColorMap,
+} from '../utils/schemaColors';
 import { schemaKey } from '../utils/sql';
 import { TRACE_NAVIGATOR_WIDTH } from './TraceTreePanel';
 
@@ -19,7 +23,10 @@ interface LegendProps {
 }
 
 /** Left offset per inset: clear of an open sidebar or navigator card, or of the 28px reopen rail, at the 15px panel margin. */
-const INSET_LEFT: Record<'none' | 'sidebar' | 'navigator' | 'rail', number | string> = {
+const INSET_LEFT: Record<
+  'none' | 'sidebar' | 'navigator' | 'rail',
+  number | string
+> = {
   none: 16,
   sidebar: 'min(380px, calc(100vw - 120px))',
   navigator: TRACE_NAVIGATOR_WIDTH + 24,
@@ -43,7 +50,9 @@ export const Legend = memo(function Legend({
 }: LegendProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  const [, setThemeKind] = useState(() => document.body.getAttribute('data-vscode-theme-kind') ?? '');
+  const [, setThemeKind] = useState(
+    () => document.body.getAttribute('data-vscode-theme-kind') ?? '',
+  );
 
   useEffect(() => {
     const observer = new MutationObserver(() => {
@@ -56,8 +65,14 @@ export const Legend = memo(function Legend({
     return () => observer.disconnect();
   }, []);
 
-  const colors = schemaColorMap ?? createSchemaColorMap(schemas, undefined, identifierCaseSensitive);
-  const expandedSchemaKeys = new Set(Array.from(expandedSchemas ?? [], name => schemaKey(name, identifierCaseSensitive)));
+  const colors =
+    schemaColorMap ??
+    createSchemaColorMap(schemas, undefined, identifierCaseSensitive);
+  const expandedSchemaKeys = new Set(
+    Array.from(expandedSchemas ?? [], (name) =>
+      schemaKey(name, identifierCaseSensitive),
+    ),
+  );
 
   return (
     <div
@@ -70,24 +85,42 @@ export const Legend = memo(function Legend({
         aria-label="Toggle legend"
         className="w-full flex items-center justify-between px-3 py-2 transition-colors text-left ln-legend-header"
       >
-        <span className="text-[10px] font-normal uppercase tracking-wider">LEGEND</span>
-        <span className="text-[10px] opacity-70 ml-1.5">{collapsed ? '▼' : '▲'}</span>
+        <span className="text-[10px] font-normal uppercase tracking-wider">
+          LEGEND
+        </span>
+        <span className="text-[10px] opacity-70 ml-1.5">
+          {collapsed ? '▼' : '▲'}
+        </span>
       </button>
 
       {!collapsed && (
         <div className="px-3 py-2.5">
           <div
-            className={expanded ? 'nowheel overflow-y-auto overscroll-contain pr-1' : undefined}
+            className={
+              expanded
+                ? 'nowheel overflow-y-auto overscroll-contain pr-1'
+                : undefined
+            }
             style={expanded ? { maxHeight: LEGEND_LIST_MAX_HEIGHT } : undefined}
             data-testid="legend-schema-list"
           >
             <div className="space-y-1.5">
               {(expanded ? schemas : schemas.slice(0, SCHEMA_DISPLAY_LIMIT))
-                .filter(s => !!s && s.trim().length > 0)
+                .filter((s) => !!s && s.trim().length > 0)
                 .map((schema) => {
-                  const color = getSchemaColorFromMap(schema, colors, identifierCaseSensitive);
-                  const isCollapsedSchemaCluster = isExpandedSchemaViewActive && !expandedSchemaKeys.has(schemaKey(schema, identifierCaseSensitive));
-                  const schemaStateLabel = isCollapsedSchemaCluster ? 'Collapsed schema cluster' : 'Expanded schema';
+                  const color = getSchemaColorFromMap(
+                    schema,
+                    colors,
+                    identifierCaseSensitive,
+                  );
+                  const isCollapsedSchemaCluster =
+                    isExpandedSchemaViewActive &&
+                    !expandedSchemaKeys.has(
+                      schemaKey(schema, identifierCaseSensitive),
+                    );
+                  const schemaStateLabel = isCollapsedSchemaCluster
+                    ? 'Collapsed schema cluster'
+                    : 'Expanded schema';
                   return (
                     <div key={schema} className="flex items-center gap-2">
                       <div
@@ -96,9 +129,23 @@ export const Legend = memo(function Legend({
                       />
                       <span
                         className="text-[11px] ln-text"
-                        style={isCollapsedSchemaCluster ? { opacity: 0.4 } : undefined}
-                        title={isExpandedSchemaViewActive ? schemaStateLabel : undefined}
-                        data-schema-state={isExpandedSchemaViewActive ? (isCollapsedSchemaCluster ? 'collapsed' : 'expanded') : undefined}
+                        style={
+                          isCollapsedSchemaCluster
+                            ? { opacity: 0.4 }
+                            : undefined
+                        }
+                        title={
+                          isExpandedSchemaViewActive
+                            ? schemaStateLabel
+                            : undefined
+                        }
+                        data-schema-state={
+                          isExpandedSchemaViewActive
+                            ? isCollapsedSchemaCluster
+                              ? 'collapsed'
+                              : 'expanded'
+                            : undefined
+                        }
                       >
                         {schema}
                       </span>
@@ -114,7 +161,9 @@ export const Legend = memo(function Legend({
               aria-expanded={expanded}
               className="text-[11px] ln-text-link mt-2 hover:underline cursor-pointer bg-transparent border-none p-0"
             >
-              {expanded ? 'Show less' : `+${schemas.length - SCHEMA_DISPLAY_LIMIT} more…`}
+              {expanded
+                ? 'Show less'
+                : `+${schemas.length - SCHEMA_DISPLAY_LIMIT} more…`}
             </button>
           )}
         </div>

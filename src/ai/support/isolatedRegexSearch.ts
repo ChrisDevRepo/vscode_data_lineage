@@ -4,9 +4,13 @@ import type { RegexSearchJob, RegexSearchReply } from './regexSearch.worker';
 
 /** Failure of actual isolated execution, distinct from a syntax or result-admission refusal. */
 export class RegexSearchExecutionError extends Error {
-  constructor(public readonly reason: 'deadline' | 'cancelled' | 'worker', message: string) {
+  constructor(
+    public readonly reason: 'deadline' | 'cancelled' | 'worker',
+    message: string,
+  ) {
     super(message);
-    this.name = reason === 'cancelled' ? 'AbortError' : 'RegexSearchExecutionError';
+    this.name =
+      reason === 'cancelled' ? 'AbortError' : 'RegexSearchExecutionError';
   }
 }
 
@@ -17,38 +21,90 @@ const SEARCH_EXECUTION_DEADLINE_MS = 1000;
 const SEARCH_WORKER_STARTUP_TIMEOUT_MS = 5000;
 
 /** Executes one complete native-regexp search outside the extension host thread. */
-export function executeIsolatedRegexSearch(job: RegexSearchJob, signal?: AbortSignal): Promise<RegexSearchReply> {
-  if (signal?.aborted) return Promise.reject(new RegexSearchExecutionError('cancelled', 'Search cancelled.'));
+export function executeIsolatedRegexSearch(
+  job: RegexSearchJob,
+  signal?: AbortSignal,
+): Promise<RegexSearchReply> {
+  if (signal?.aborted)
+    return Promise.reject(
+      new RegexSearchExecutionError('cancelled', 'Search cancelled.'),
+    );
   return new Promise((resolve, reject) => {
     let worker: Worker;
     try {
-      worker = new Worker(join(__dirname, 'regexSearch.worker.js'), { workerData: job });
+      worker = new Worker(join(__dirname, 'regexSearch.worker.js'), {
+        workerData: job,
+      });
     } catch (error: unknown) {
-      reject(new RegexSearchExecutionError('worker', error instanceof Error ? error.message : 'Search worker could not start.'));
+      reject(
+        new RegexSearchExecutionError(
+          'worker',
+          error instanceof Error
+            ? error.message
+            : 'Search worker could not start.',
+        ),
+      );
       return;
     }
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const startupTimer = setTimeout(() => finish(new RegexSearchExecutionError('worker', 'Search worker did not start in time.')), SEARCH_WORKER_STARTUP_TIMEOUT_MS);
-    const finish = (error?: RegexSearchExecutionError, reply?: RegexSearchReply): void => {
+    const startupTimer = setTimeout(
+      () =>
+        finish(
+          new RegexSearchExecutionError(
+            'worker',
+            'Search worker did not start in time.',
+          ),
+        ),
+      SEARCH_WORKER_STARTUP_TIMEOUT_MS,
+    );
+    const finish = (
+      error?: RegexSearchExecutionError,
+      reply?: RegexSearchReply,
+    ): void => {
       if (settled) return;
       settled = true;
       clearTimeout(startupTimer);
       clearTimeout(timer);
       signal?.removeEventListener('abort', abort);
       void worker.terminate().catch(() => {});
-      if (error) reject(error); else resolve(reply!);
+      if (error) reject(error);
+      else resolve(reply!);
     };
-    const abort = (): void => finish(new RegexSearchExecutionError('cancelled', 'Search cancelled.'));
+    const abort = (): void =>
+      finish(new RegexSearchExecutionError('cancelled', 'Search cancelled.'));
     signal?.addEventListener('abort', abort, { once: true });
-    if (signal?.aborted) { abort(); return; }
+    if (signal?.aborted) {
+      abort();
+      return;
+    }
     worker.once('online', () => {
       clearTimeout(startupTimer);
       if (settled) return;
-      timer = setTimeout(() => finish(new RegexSearchExecutionError('deadline', 'Regular expression search exceeded its execution deadline.')), SEARCH_EXECUTION_DEADLINE_MS);
+      timer = setTimeout(
+        () =>
+          finish(
+            new RegexSearchExecutionError(
+              'deadline',
+              'Regular expression search exceeded its execution deadline.',
+            ),
+          ),
+        SEARCH_EXECUTION_DEADLINE_MS,
+      );
     });
-    worker.once('message', (reply: RegexSearchReply) => finish(undefined, reply));
-    worker.once('error', error => finish(new RegexSearchExecutionError('worker', error.message)));
-    worker.once('exit', code => finish(new RegexSearchExecutionError('worker', `Search worker exited before producing a result (code ${code}).`)));
+    worker.once('message', (reply: RegexSearchReply) =>
+      finish(undefined, reply),
+    );
+    worker.once('error', (error) =>
+      finish(new RegexSearchExecutionError('worker', error.message)),
+    );
+    worker.once('exit', (code) =>
+      finish(
+        new RegexSearchExecutionError(
+          'worker',
+          `Search worker exited before producing a result (code ${code}).`,
+        ),
+      ),
+    );
   });
 }

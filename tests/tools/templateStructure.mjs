@@ -20,12 +20,17 @@ export function templateStructure(text) {
   for (const key of Object.keys(doc).sort()) {
     if (key === VERSION_KEY) continue;
     const template = doc[key];
-    if (template === null || typeof template !== 'object' || Array.isArray(template)) {
+    if (
+      template === null ||
+      typeof template !== 'object' ||
+      Array.isArray(template)
+    ) {
       structure[key] = { '': valueType(template) };
       continue;
     }
     const fields = {};
-    for (const field of Object.keys(template).sort()) fields[field] = valueType(template[field]);
+    for (const field of Object.keys(template).sort())
+      fields[field] = valueType(template[field]);
     structure[key] = fields;
   }
   return structure;
@@ -34,15 +39,26 @@ export function templateStructure(text) {
 /** Human-readable list of structural differences, one line per changed template or field. */
 export function structureDiff(before, after) {
   const lines = [];
-  for (const key of new Set([...Object.keys(before), ...Object.keys(after)].sort())) {
-    if (!(key in before)) { lines.push(`+ ${key} (new template)`); continue; }
-    if (!(key in after)) { lines.push(`- ${key} (template removed)`); continue; }
+  for (const key of new Set(
+    [...Object.keys(before), ...Object.keys(after)].sort(),
+  )) {
+    if (!(key in before)) {
+      lines.push(`+ ${key} (new template)`);
+      continue;
+    }
+    if (!(key in after)) {
+      lines.push(`- ${key} (template removed)`);
+      continue;
+    }
     const b = before[key];
     const a = after[key];
-    for (const field of new Set([...Object.keys(b), ...Object.keys(a)].sort())) {
+    for (const field of new Set(
+      [...Object.keys(b), ...Object.keys(a)].sort(),
+    )) {
       if (!(field in b)) lines.push(`+ ${key}.${field}: ${a[field]}`);
       else if (!(field in a)) lines.push(`- ${key}.${field}: ${b[field]}`);
-      else if (b[field] !== a[field]) lines.push(`~ ${key}.${field}: ${b[field]} → ${a[field]}`);
+      else if (b[field] !== a[field])
+        lines.push(`~ ${key}.${field}: ${b[field]} → ${a[field]}`);
     }
   }
   return lines;

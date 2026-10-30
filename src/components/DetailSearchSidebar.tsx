@@ -90,7 +90,9 @@ function highlightSnippet(snippet: string, term: string): React.ReactNode[] {
   let key = 0;
   while (idx >= 0) {
     if (idx > lastIdx) parts.push(snippet.slice(lastIdx, idx));
-    parts.push(<mark key={key++}>{snippet.slice(idx, idx + term.length)}</mark>);
+    parts.push(
+      <mark key={key++}>{snippet.slice(idx, idx + term.length)}</mark>,
+    );
     lastIdx = idx + term.length;
     idx = lower.indexOf(termLower, lastIdx);
   }
@@ -99,7 +101,13 @@ function highlightSnippet(snippet: string, term: string): React.ReactNode[] {
 }
 
 /** Single Detail Search result row. */
-function ResultRow({ result, term, onResultClick, dimmed = false, clustered = false }: ResultRowProps) {
+function ResultRow({
+  result,
+  term,
+  onResultClick,
+  dimmed = false,
+  clustered = false,
+}: ResultRowProps) {
   return (
     <div
       className="ln-detail-search-result"
@@ -146,13 +154,24 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
 
   const results = useMemo<SearchResult[]>(() => {
     const q = term;
-    const bodyResults = searchBodyScripts(allNodes, q, BODY_TYPES, undefined, BODY_RESULT_LIMIT);
+    const bodyResults = searchBodyScripts(
+      allNodes,
+      q,
+      BODY_TYPES,
+      undefined,
+      BODY_RESULT_LIMIT,
+    );
     const colResults = searchColumns(allNodes, q);
     return [...bodyResults, ...colResults];
   }, [term, allNodes]);
 
   const { visible, clustered, outOfScope } = useMemo(() => {
-    if (!visibleNodeIds) return { visible: results, clustered: [] as SearchResult[], outOfScope: [] as SearchResult[] };
+    if (!visibleNodeIds)
+      return {
+        visible: results,
+        clustered: [] as SearchResult[],
+        outOfScope: [] as SearchResult[],
+      };
     const visible: SearchResult[] = [];
     const clustered: SearchResult[] = [];
     const outOfScope: SearchResult[] = [];
@@ -164,7 +183,7 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
     return { visible, clustered, outOfScope };
   }, [results, visibleNodeIds, collapsedSchemaNodeIds]);
 
-  const groupedVisible  = useMemo(() => groupByType(visible),    [visible]);
+  const groupedVisible = useMemo(() => groupByType(visible), [visible]);
   const groupedClustered = useMemo(() => groupByType(clustered), [clustered]);
   const groupedOutScope = useMemo(() => groupByType(outOfScope), [outOfScope]);
 
@@ -174,7 +193,7 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
         <input
           type="text"
           value={input}
-          onChange={e => setInput(e.target.value)}
+          onChange={(e) => setInput(e.target.value)}
           placeholder="Search SQL bodies..."
           autoFocus
           className="w-full h-7 px-2 text-xs rounded-sm ln-input"
@@ -184,27 +203,39 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
       {term.length >= 2 && (
         <>
           {results.length === 0 ? (
-            <div className="px-3 py-4 text-xs text-center" style={{ color: 'var(--ln-fg-muted)' }}>
+            <div
+              className="px-3 py-4 text-xs text-center"
+              style={{ color: 'var(--ln-fg-muted)' }}
+            >
               No results found. Ensure a graph is loaded.
             </div>
           ) : (
             <>
               <div className="px-3 pb-1">
-                {visible.length > 0 && (clustered.length > 0 || outOfScope.length > 0) && (
-                  <div className="px-2 py-1 text-[10px] uppercase tracking-wide ln-text-muted">
-                    Visible
-                  </div>
-                )}
+                {visible.length > 0 &&
+                  (clustered.length > 0 || outOfScope.length > 0) && (
+                    <div className="px-2 py-1 text-[10px] uppercase tracking-wide ln-text-muted">
+                      Visible
+                    </div>
+                  )}
                 {[...groupedVisible.entries()].map(([label, items]) => (
                   <div key={label} className="mb-2">
                     <div
                       className="text-[10px] font-semibold uppercase tracking-wide py-1.5 mb-1"
-                      style={{ color: 'var(--ln-fg-muted)', borderBottom: '1px solid var(--ln-border-light)' }}
+                      style={{
+                        color: 'var(--ln-fg-muted)',
+                        borderBottom: '1px solid var(--ln-border-light)',
+                      }}
                     >
                       {label} ({items.length})
                     </div>
-                    {items.map(r => (
-                      <ResultRow key={r.node.id} result={r} term={term} onResultClick={onResultClick} />
+                    {items.map((r) => (
+                      <ResultRow
+                        key={r.node.id}
+                        result={r}
+                        term={term}
+                        onResultClick={onResultClick}
+                      />
                     ))}
                   </div>
                 ))}
@@ -213,7 +244,9 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
                   <>
                     <div
                       className="px-2 py-1 text-[10px] uppercase tracking-wide border-t ln-text-muted ln-border"
-                      style={{ marginTop: groupedVisible.size > 0 ? '4px' : undefined }}
+                      style={{
+                        marginTop: groupedVisible.size > 0 ? '4px' : undefined,
+                      }}
                     >
                       In Schema Cluster {'⊞'}
                     </div>
@@ -221,12 +254,21 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
                       <div key={label} className="mb-2">
                         <div
                           className="text-[10px] font-semibold uppercase tracking-wide py-1.5 mb-1"
-                          style={{ color: 'var(--ln-fg-muted)', borderBottom: '1px solid var(--ln-border-light)' }}
+                          style={{
+                            color: 'var(--ln-fg-muted)',
+                            borderBottom: '1px solid var(--ln-border-light)',
+                          }}
                         >
                           {label} ({items.length})
                         </div>
-                        {items.map(r => (
-                          <ResultRow key={r.node.id} result={r} term={term} onResultClick={onResultClick} clustered />
+                        {items.map((r) => (
+                          <ResultRow
+                            key={r.node.id}
+                            result={r}
+                            term={term}
+                            onResultClick={onResultClick}
+                            clustered
+                          />
                         ))}
                       </div>
                     ))}
@@ -237,7 +279,12 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
                   <>
                     <div
                       className="px-2 py-1 text-[10px] uppercase tracking-wide border-t ln-text-muted ln-border"
-                      style={{ marginTop: (groupedVisible.size > 0 || groupedClustered.size > 0) ? '4px' : undefined }}
+                      style={{
+                        marginTop:
+                          groupedVisible.size > 0 || groupedClustered.size > 0
+                            ? '4px'
+                            : undefined,
+                      }}
                     >
                       Not in Current Filter {'⊘'}
                     </div>
@@ -245,12 +292,22 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
                       <div key={label} className="mb-2">
                         <div
                           className="text-[10px] font-semibold uppercase tracking-wide py-1.5 mb-1"
-                          style={{ color: 'var(--ln-fg-muted)', borderBottom: '1px solid var(--ln-border-light)', opacity: 0.5 }}
+                          style={{
+                            color: 'var(--ln-fg-muted)',
+                            borderBottom: '1px solid var(--ln-border-light)',
+                            opacity: 0.5,
+                          }}
                         >
                           {label} ({items.length})
                         </div>
-                        {items.map(r => (
-                          <ResultRow key={r.node.id} result={r} term={term} onResultClick={onResultClick} dimmed />
+                        {items.map((r) => (
+                          <ResultRow
+                            key={r.node.id}
+                            result={r}
+                            term={term}
+                            onResultClick={onResultClick}
+                            dimmed
+                          />
                         ))}
                       </div>
                     ))}
@@ -260,7 +317,10 @@ export const DetailSearchSidebar = memo(function DetailSearchSidebar({
 
               <div
                 className="px-3 py-2 text-[11px] border-t"
-                style={{ color: 'var(--ln-fg-muted)', borderColor: 'var(--ln-border-light)' }}
+                style={{
+                  color: 'var(--ln-fg-muted)',
+                  borderColor: 'var(--ln-border-light)',
+                }}
               >
                 {results.length} result{results.length !== 1 ? 's' : ''}
               </div>

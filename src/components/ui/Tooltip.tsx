@@ -1,4 +1,11 @@
-import { memo, useState, isValidElement, cloneElement, type ReactNode, type ReactElement } from 'react';
+import {
+  memo,
+  useState,
+  isValidElement,
+  cloneElement,
+  type ReactNode,
+  type ReactElement,
+} from 'react';
 import {
   useFloating,
   useInteractions,
@@ -47,29 +54,37 @@ export const Tooltip = memo(function Tooltip({
     onOpenChange: setIsOpen,
     placement,
     whileElementsMounted: autoUpdate,
-    middleware: [
-      offset(6),
-      flip({ padding: 8 }),
-      shift({ padding: 8 }),
-    ],
+    middleware: [offset(6), flip({ padding: 8 }), shift({ padding: 8 })],
   });
 
-  const hover = useHover(context, { delay: { open: delay, close: 0 }, move: false });
+  const hover = useHover(context, {
+    delay: { open: delay, close: 0 },
+    move: false,
+  });
   const focus = useFocus(context);
   const dismiss = useDismiss(context);
 
-  const { getReferenceProps, getFloatingProps } = useInteractions([hover, focus, dismiss]);
+  const { getReferenceProps, getFloatingProps } = useInteractions([
+    hover,
+    focus,
+    dismiss,
+  ]);
 
-  const trigger = asChild && isValidElement(children)
-    ? (() => {
+  const trigger =
+    asChild && isValidElement(children) ? (
+      (() => {
         const child = children as ReactElement<Record<string, unknown>>;
         return cloneElement(child, {
           ...getReferenceProps(child.props),
           ref: refs.setReference,
         });
       })()
-    : (
-      <span ref={refs.setReference} {...getReferenceProps()} style={{ display: 'inline-flex', alignItems: 'center' }}>
+    ) : (
+      <span
+        ref={refs.setReference}
+        {...getReferenceProps()}
+        style={{ display: 'inline-flex', alignItems: 'center' }}
+      >
         {children}
       </span>
     );
@@ -86,7 +101,12 @@ export const Tooltip = memo(function Tooltip({
               ...(typeof content !== 'string'
                 ? { whiteSpace: 'normal', overflowWrap: 'break-word', maxWidth }
                 : multiline
-                  ? { whiteSpace: 'pre-wrap', overflowWrap: 'break-word', maxWidth, minWidth: Math.min(200, maxWidth) }
+                  ? {
+                      whiteSpace: 'pre-wrap',
+                      overflowWrap: 'break-word',
+                      maxWidth,
+                      minWidth: Math.min(200, maxWidth),
+                    }
                   : {}),
             }}
             className={`ln-tooltip${extraClass ? ` ${extraClass}` : ''}`}

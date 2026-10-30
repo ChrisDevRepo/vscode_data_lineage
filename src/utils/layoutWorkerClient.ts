@@ -53,7 +53,10 @@ export function createLayoutWorkerClient(
       if (!remote) return undefined;
       return new Promise<LayoutPositions>((resolve, reject) => {
         inFlight.add(reject);
-        remote.runDagre(input).then(resolve, reject).finally(() => inFlight.delete(reject));
+        remote
+          .runDagre(input)
+          .then(resolve, reject)
+          .finally(() => inFlight.delete(reject));
       });
     },
   };

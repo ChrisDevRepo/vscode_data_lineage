@@ -18,9 +18,17 @@ import {
 } from '../../../src/engine/graphBuilder';
 import { buildWebviewCsp } from '../../../src/utils/cspBuilder';
 import { buildModel } from '../../../src/engine/modelBuilder';
-import { buildColumnTraceView, columnRowKey, type ColumnTraceRelation } from '../../../src/engine/columnTraceView';
+import {
+  buildColumnTraceView,
+  columnRowKey,
+  type ColumnTraceRelation,
+} from '../../../src/engine/columnTraceView';
 import { normalizeColName, schemaKey } from '../../../src/utils/sql';
-import { DEFAULT_CONFIG, type DatabaseModel, type ExtractedObject } from '../../../src/engine/types';
+import {
+  DEFAULT_CONFIG,
+  type DatabaseModel,
+  type ExtractedObject,
+} from '../../../src/engine/types';
 import { loadAdventureWorksModel, loadParseRules } from '../helpers/testUtils';
 import { makeGraph } from '../helpers/modelFixtures';
 
@@ -28,79 +36,197 @@ import { makeGraph } from '../helpers/modelFixtures';
 function chain() {
   return makeGraph(
     [{ id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'D' }, { id: 'Z' }],
-    [['A', 'B'], ['B', 'C'], ['D', 'C']],
+    [
+      ['A', 'B'],
+      ['B', 'C'],
+      ['D', 'C'],
+    ],
   );
 }
 
 describe('schema palette source identity', () => {
-  it.each([false, true])('carries dirty SQL and metadata identity from parsing through object and column views (CS=%s)', cs => {
-    loadParseRules();
-    const columns = (cs ? ['Value', 'value'] : ['Value']).map((name, index) => ({
-      name, type: index === 0 ? 'int' : 'money', nullable: 'No', extra: '',
-    }));
-    const objects: ExtractedObject[] = [
-      { fullName: '[Sales].[Source]', type: 'table', columns },
-      { fullName: '[sales].[Source]', type: 'table', columns },
-      { fullName: '[Sales].[Report]', type: 'view', columns,
-        bodyScript: 'cReAtE ViEw Sales.Report AS SELECT * FROM "Sales"."Source" /* source */ UNION ALL SELECT * FROM [sales].[Source];' },
-      { fullName: '[Sales].[report]', type: 'view', columns,
-        bodyScript: 'CREATE VIEW Sales.report AS SELECT * FROM Sales.Source;' },
-      { fullName: '[Sales].[WrongCase]', type: 'view', columns,
-        bodyScript: 'CREATE VIEW Sales.WrongCase AS SELECT * FROM [SALES].[SOURCE];' },
-    ];
-    const model = buildModel(objects, [], objects, undefined, true, undefined, cs);
-    const { graph, flowNodes } = buildGraphNoLayout(model);
-    expect(model.nodes).toHaveLength(cs ? 5 : 3);
-    expect(buildSchemaGraph(graph).nodes).toHaveLength(cs ? 2 : 1);
-    expect(graph.size).toBe(cs ? 3 : 2);
-    expect(flowNodes.map(node => node.data.label)).toEqual(cs
-      ? ['Source', 'Source', 'Report', 'report', 'WrongCase'] : ['Source', 'Report', 'WrongCase']);
-    const source = model.nodes.find(node => node.schema === 'Sales' && node.name === 'Source')!;
-    const target = model.nodes.find(node => node.name === 'Report')!;
-    const relations: ColumnTraceRelation[] = (cs ? ['[Value]', '"value"'] : ['[VALUE]']).map(column => ({
-      hopNode: target.id, fromNode: source.id, fromCol: column, toNode: target.id, toCol: column,
-    }));
-    if (cs) {
-      const twinSource = model.nodes.find(node => node.schema === 'sales')!;
-      relations.push({ hopNode: target.id, fromNode: twinSource.id, fromCol: 'Value', toNode: target.id, toCol: 'Value' });
-    }
-    const view = buildColumnTraceView({
-      identifierCaseSensitive: model.identifierCaseSensitive, relations, config: DEFAULT_CONFIG,
-      objects: new Map(model.nodes.map(node => [schemaKey(node.id, cs), {
-        id: node.id, label: node.name, schema: node.schema, objectType: node.type,
-        columnNames: new Map(node.columns!.map(column => [normalizeColName(column.name, cs), column.name])),
-        columnTypes: new Map(node.columns!.map(column => [normalizeColName(column.name, cs), column.type])),
-      }])),
-    });
-    expect(view.nodes.find(node => node.id === source.id)?.rows.map(row => [row.name, row.dataType]))
-      .toEqual(cs ? [['Value', 'int'], ['value', 'money']] : [['Value', 'int']]);
-    expect(view.edges.map(edge => [edge.sourceColumn, edge.targetColumn]))
-      .toEqual(cs ? [['Value', 'Value'], ['value', 'value'], ['Value', 'Value']] : [['Value', 'Value']]);
-    expect(new Set(view.nodes.flatMap(node => node.rows.map(row => columnRowKey(node.id, row.name, cs)))).size)
-      .toBe(cs ? 5 : 2);
-  });
+  it.each([false, true])(
+    'carries dirty SQL and metadata identity from parsing through object and column views (CS=%s)',
+    (cs) => {
+      loadParseRules();
+      const columns = (cs ? ['Value', 'value'] : ['Value']).map(
+        (name, index) => ({
+          name,
+          type: index === 0 ? 'int' : 'money',
+          nullable: 'No',
+          extra: '',
+        }),
+      );
+      const objects: ExtractedObject[] = [
+        { fullName: '[Sales].[Source]', type: 'table', columns },
+        { fullName: '[sales].[Source]', type: 'table', columns },
+        {
+          fullName: '[Sales].[Report]',
+          type: 'view',
+          columns,
+          bodyScript:
+            'cReAtE ViEw Sales.Report AS SELECT * FROM "Sales"."Source" /* source */ UNION ALL SELECT * FROM [sales].[Source];',
+        },
+        {
+          fullName: '[Sales].[report]',
+          type: 'view',
+          columns,
+          bodyScript: 'CREATE VIEW Sales.report AS SELECT * FROM Sales.Source;',
+        },
+        {
+          fullName: '[Sales].[WrongCase]',
+          type: 'view',
+          columns,
+          bodyScript:
+            'CREATE VIEW Sales.WrongCase AS SELECT * FROM [SALES].[SOURCE];',
+        },
+      ];
+      const model = buildModel(
+        objects,
+        [],
+        objects,
+        undefined,
+        true,
+        undefined,
+        cs,
+      );
+      const { graph, flowNodes } = buildGraphNoLayout(model);
+      expect(model.nodes).toHaveLength(cs ? 5 : 3);
+      expect(buildSchemaGraph(graph).nodes).toHaveLength(cs ? 2 : 1);
+      expect(graph.size).toBe(cs ? 3 : 2);
+      expect(flowNodes.map((node) => node.data.label)).toEqual(
+        cs
+          ? ['Source', 'Source', 'Report', 'report', 'WrongCase']
+          : ['Source', 'Report', 'WrongCase'],
+      );
+      const source = model.nodes.find(
+        (node) => node.schema === 'Sales' && node.name === 'Source',
+      )!;
+      const target = model.nodes.find((node) => node.name === 'Report')!;
+      const relations: ColumnTraceRelation[] = (
+        cs ? ['[Value]', '"value"'] : ['[VALUE]']
+      ).map((column) => ({
+        hopNode: target.id,
+        fromNode: source.id,
+        fromCol: column,
+        toNode: target.id,
+        toCol: column,
+      }));
+      if (cs) {
+        const twinSource = model.nodes.find((node) => node.schema === 'sales')!;
+        relations.push({
+          hopNode: target.id,
+          fromNode: twinSource.id,
+          fromCol: 'Value',
+          toNode: target.id,
+          toCol: 'Value',
+        });
+      }
+      const view = buildColumnTraceView({
+        identifierCaseSensitive: model.identifierCaseSensitive,
+        relations,
+        config: DEFAULT_CONFIG,
+        objects: new Map(
+          model.nodes.map((node) => [
+            schemaKey(node.id, cs),
+            {
+              id: node.id,
+              label: node.name,
+              schema: node.schema,
+              objectType: node.type,
+              columnNames: new Map(
+                node.columns!.map((column) => [
+                  normalizeColName(column.name, cs),
+                  column.name,
+                ]),
+              ),
+              columnTypes: new Map(
+                node.columns!.map((column) => [
+                  normalizeColName(column.name, cs),
+                  column.type,
+                ]),
+              ),
+            },
+          ]),
+        ),
+      });
+      expect(
+        view.nodes
+          .find((node) => node.id === source.id)
+          ?.rows.map((row) => [row.name, row.dataType]),
+      ).toEqual(
+        cs
+          ? [
+              ['Value', 'int'],
+              ['value', 'money'],
+            ]
+          : [['Value', 'int']],
+      );
+      expect(
+        view.edges.map((edge) => [edge.sourceColumn, edge.targetColumn]),
+      ).toEqual(
+        cs
+          ? [
+              ['Value', 'Value'],
+              ['value', 'value'],
+              ['Value', 'Value'],
+            ]
+          : [['Value', 'Value']],
+      );
+      expect(
+        new Set(
+          view.nodes.flatMap((node) =>
+            node.rows.map((row) => columnRowKey(node.id, row.name, cs)),
+          ),
+        ).size,
+      ).toBe(cs ? 5 : 2);
+    },
+  );
 
-  it.each([false, true])('preserves the model comparison policy across schema views (CS=%s)', cs => {
-    const model: DatabaseModel = {
-      identifierCaseSensitive: cs,
-      nodes: ['Sales', 'sales'].map(schema => ({
-        id: `[${schema}].[Orders]`, schema, name: 'Orders', type: 'table', fullName: `${schema}.Orders`,
-      })),
-      edges: [], schemas: [], catalog: {}, neighborIndex: {},
-    };
-    const graph = buildGraphologyGraph(model);
-    expect(graph.getAttribute('identifierCaseSensitive')).toBe(cs);
-    const overview = buildSchemaGraph(graph);
-    const colors = overview.nodes.map(node => node.data.color);
-    expect(colors[0] === colors[1]).toBe(!cs);
-    const expanded = buildExpandedSchemaViewGraph(graph, new Set(['Sales']), null);
-    const object = expanded.flowNodes.find(node => node.type !== 'schemaNode')!;
-    const cluster = expanded.flowNodes.find(node => node.type === 'schemaNode')!;
-    expect(object.data.schemaColor).toBe(overview.nodes.find(node => node.data.schemaName === 'Sales')?.data.color);
-    expect(cluster.data.color).toBe(overview.nodes.find(node => node.data.schemaName === 'sales')?.data.color);
-  });
+  it.each([false, true])(
+    'preserves the model comparison policy across schema views (CS=%s)',
+    (cs) => {
+      const model: DatabaseModel = {
+        identifierCaseSensitive: cs,
+        nodes: ['Sales', 'sales'].map((schema) => ({
+          id: `[${schema}].[Orders]`,
+          schema,
+          name: 'Orders',
+          type: 'table',
+          fullName: `${schema}.Orders`,
+        })),
+        edges: [],
+        schemas: [],
+        catalog: {},
+        neighborIndex: {},
+      };
+      const graph = buildGraphologyGraph(model);
+      expect(graph.getAttribute('identifierCaseSensitive')).toBe(cs);
+      const overview = buildSchemaGraph(graph);
+      const colors = overview.nodes.map((node) => node.data.color);
+      expect(colors[0] === colors[1]).toBe(!cs);
+      const expanded = buildExpandedSchemaViewGraph(
+        graph,
+        new Set(['Sales']),
+        null,
+      );
+      const object = expanded.flowNodes.find(
+        (node) => node.type !== 'schemaNode',
+      )!;
+      const cluster = expanded.flowNodes.find(
+        (node) => node.type === 'schemaNode',
+      )!;
+      expect(object.data.schemaColor).toBe(
+        overview.nodes.find((node) => node.data.schemaName === 'Sales')?.data
+          .color,
+      );
+      expect(cluster.data.color).toBe(
+        overview.nodes.find((node) => node.data.schemaName === 'sales')?.data
+          .color,
+      );
+    },
+  );
 });
-
 
 describe('computeShortestPath', () => {
   it('returns every node and edge along a directed path', () => {
@@ -129,7 +255,6 @@ describe('computeShortestPath', () => {
   });
 });
 
-
 describe('getGraphMetrics', () => {
   it('counts roots by in-degree and leaves by out-degree', () => {
     expect(getGraphMetrics(chain())).toEqual({
@@ -142,17 +267,28 @@ describe('getGraphMetrics', () => {
 
   it('reports an empty graph as all zeroes', () => {
     expect(getGraphMetrics(makeGraph([], []))).toEqual({
-      totalNodes: 0, totalEdges: 0, rootNodes: 0, leafNodes: 0,
+      totalNodes: 0,
+      totalEdges: 0,
+      rootNodes: 0,
+      leafNodes: 0,
     });
   });
 });
 
-
 describe('layout cache seeding (worker prewarm)', () => {
   it('serves buildGraph from positions computed outside the cache', async () => {
     const model = await loadAdventureWorksModel();
-    const config = { ...DEFAULT_CONFIG, layout: { ...DEFAULT_CONFIG.layout, nodeSeparation: DEFAULT_CONFIG.layout.nodeSeparation + 7 } };
-    const input = objectLayoutInputForGraph(buildGraphologyGraph(model), config);
+    const config = {
+      ...DEFAULT_CONFIG,
+      layout: {
+        ...DEFAULT_CONFIG.layout,
+        nodeSeparation: DEFAULT_CONFIG.layout.nodeSeparation + 7,
+      },
+    };
+    const input = objectLayoutInputForGraph(
+      buildGraphologyGraph(model),
+      config,
+    );
     expect(hasCachedLayout(input)).toBe(false);
     const computed = runDagre(structuredClone(input));
     for (const pos of computed.values()) pos.x += 100_000;
@@ -175,8 +311,14 @@ describe('layout cache seeding (worker prewarm)', () => {
       [{ sourceName: '[cache].[B]', targetName: '[cache].[A]' }],
     );
     const built = buildGraph(model);
-    expect(built.flowNodes.map(node => node.id).sort()).toEqual(['[cache].[a]', '[cache].[b]', '[cache].[lonely]']);
-    const cached = dagreLayout(objectLayoutInputForGraph(buildGraphologyGraph(model)));
+    expect(built.flowNodes.map((node) => node.id).sort()).toEqual([
+      '[cache].[a]',
+      '[cache].[b]',
+      '[cache].[lonely]',
+    ]);
+    const cached = dagreLayout(
+      objectLayoutInputForGraph(buildGraphologyGraph(model)),
+    );
     expect([...cached.keys()].sort()).toEqual(['[cache].[a]', '[cache].[b]']);
   });
 
@@ -187,20 +329,27 @@ describe('layout cache seeding (worker prewarm)', () => {
       config: DEFAULT_CONFIG,
     };
     expect(seedLayoutCache(input, new Map())).toBe(false);
-    expect(seedLayoutCache(input, new Map([['Seed.A', { x: 0, y: 0 }]]))).toBe(false);
+    expect(seedLayoutCache(input, new Map([['Seed.A', { x: 0, y: 0 }]]))).toBe(
+      false,
+    );
     expect(hasCachedLayout(input)).toBe(false);
     expect([...dagreLayout(input).keys()].sort()).toEqual(['Seed.A', 'Seed.B']);
   });
 
   it('allows the inline layout worker in the webview CSP', () => {
-    expect(buildWebviewCsp({ nonce: 'n', cspSource: 'vscode-resource:' })).toContain('worker-src blob:');
+    expect(
+      buildWebviewCsp({ nonce: 'n', cspSource: 'vscode-resource:' }),
+    ).toContain('worker-src blob:');
   });
 });
 
 describe('dagreLayout', () => {
   const input = () => ({
     nodeIds: ['A', 'B', 'C'],
-    edges: [{ source: 'A', target: 'B' }, { source: 'B', target: 'C' }],
+    edges: [
+      { source: 'A', target: 'B' },
+      { source: 'B', target: 'C' },
+    ],
     config: DEFAULT_CONFIG,
   });
 
@@ -218,22 +367,37 @@ describe('dagreLayout', () => {
   });
 
   it('treats different node sizes as a different layout — sizeOf is part of the cache key', () => {
-    const narrow = dagreLayout({ ...input(), sizeOf: () => ({ width: 10, height: 10 }) });
-    const wide = dagreLayout({ ...input(), sizeOf: () => ({ width: 400, height: 90 }) });
+    const narrow = dagreLayout({
+      ...input(),
+      sizeOf: () => ({ width: 10, height: 10 }),
+    });
+    const wide = dagreLayout({
+      ...input(),
+      sizeOf: () => ({ width: 400, height: 90 }),
+    });
     expect(wide).not.toBe(narrow);
-    const moved = ['A', 'B', 'C'].some(id => wide.get(id)!.x !== narrow.get(id)!.x || wide.get(id)!.y !== narrow.get(id)!.y);
+    const moved = ['A', 'B', 'C'].some(
+      (id) =>
+        wide.get(id)!.x !== narrow.get(id)!.x ||
+        wide.get(id)!.y !== narrow.get(id)!.y,
+    );
     expect(moved).toBe(true);
   });
 
   it('returns an empty map for no nodes instead of throwing', () => {
-    expect(dagreLayout({ nodeIds: [], edges: [], config: DEFAULT_CONFIG }).size).toBe(0);
+    expect(
+      dagreLayout({ nodeIds: [], edges: [], config: DEFAULT_CONFIG }).size,
+    ).toBe(0);
   });
 
   it('serves the same cached layout regardless of node/edge array order', () => {
     const first = dagreLayout(input());
     const reordered = dagreLayout({
       nodeIds: ['C', 'A', 'B'],
-      edges: [{ source: 'B', target: 'C' }, { source: 'A', target: 'B' }],
+      edges: [
+        { source: 'B', target: 'C' },
+        { source: 'A', target: 'B' },
+      ],
       config: DEFAULT_CONFIG,
     });
     expect(reordered).toBe(first);
@@ -243,13 +407,16 @@ describe('dagreLayout', () => {
     const first = dagreLayout(input());
     const extraEdge = dagreLayout({
       nodeIds: ['A', 'B', 'C'],
-      edges: [{ source: 'A', target: 'B' }, { source: 'B', target: 'C' }, { source: 'A', target: 'C' }],
+      edges: [
+        { source: 'A', target: 'B' },
+        { source: 'B', target: 'C' },
+        { source: 'A', target: 'C' },
+      ],
       config: DEFAULT_CONFIG,
     });
     expect(extraEdge).not.toBe(first);
   });
 });
-
 
 describe('buildGraphNoLayout', () => {
   it('builds the full node and edge set with positions left at the origin', async () => {
@@ -264,7 +431,6 @@ describe('buildGraphNoLayout', () => {
   });
 });
 
-
 describe('layoutCacheKey', () => {
   const input = {
     nodeIds: ['B', 'A'],
@@ -276,7 +442,9 @@ describe('layoutCacheKey', () => {
     const key = layoutCacheKey(input);
     expect(layoutCacheKey({ ...input, nodeIds: ['A', 'B'] })).toBe(key);
     expect(layoutCacheKey({ ...input, direction: 'TB' })).not.toBe(key);
-    expect(layoutCacheKey({ ...input, sizeOf: () => ({ width: 10, height: 10 }) })).not.toBe(key);
+    expect(
+      layoutCacheKey({ ...input, sizeOf: () => ({ width: 10, height: 10 }) }),
+    ).not.toBe(key);
   });
 });
 
@@ -285,6 +453,8 @@ describe('objectLayoutInputForGraph', () => {
     const input = objectLayoutInputForGraph(chain(), DEFAULT_CONFIG);
     expect(input.nodeIds).toEqual(expect.arrayContaining(['A', 'B', 'C', 'D']));
     expect(input.nodeIds).not.toContain('Z');
-    expect(input.edges).toEqual(expect.arrayContaining([{ source: 'A', target: 'B' }]));
+    expect(input.edges).toEqual(
+      expect.arrayContaining([{ source: 'A', target: 'B' }]),
+    );
   });
 });

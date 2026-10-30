@@ -7,14 +7,17 @@ function toProviderMessages(messages) {
     const calls = [];
     const results = [];
     for (const part of message.content) {
-      if (part.type === 'text' && typeof part.value === 'string') text.push(part.value);
+      if (part.type === 'text' && typeof part.value === 'string')
+        text.push(part.value);
       if (part.type === 'tool-call') {
         calls.push({
           id: requiredString(part.callId, 'tool call id'),
           type: 'function',
           function: {
             name: requiredString(part.name, 'tool call name'),
-            arguments: JSON.stringify(requiredObject(part.input, 'tool call input')),
+            arguments: JSON.stringify(
+              requiredObject(part.input, 'tool call input'),
+            ),
           },
         });
       }
@@ -39,42 +42,72 @@ function toProviderMessages(messages) {
 }
 
 function buildProviderRequest(request, config) {
-  const provider = requiredString(config.provider, 'provider').trim().toLowerCase();
+  const provider = requiredString(config.provider, 'provider')
+    .trim()
+    .toLowerCase();
   const model = requiredString(config.model, 'model');
   const apiKey = requiredString(config.apiKey, 'API key');
   const tools = request.tools.map((tool) => ({
     type: 'function',
     function: {
       name: requiredString(tool.name, 'tool name'),
-      description: requiredString(tool.description, `description for ${tool.name || 'tool'}`),
-      parameters: requiredObject(tool.schema, `schema for ${tool.name || 'tool'}`),
+      description: requiredString(
+        tool.description,
+        `description for ${tool.name || 'tool'}`,
+      ),
+      parameters: requiredObject(
+        tool.schema,
+        `schema for ${tool.name || 'tool'}`,
+      ),
     },
   }));
   if (request.toolMode === 'required' && tools.length === 0) {
-    throw new Error('AI provider request cannot require a tool when no tools are available.');
+    throw new Error(
+      'AI provider request cannot require a tool when no tools are available.',
+    );
   }
   return {
-    url: providerEndpoint(requiredString(config.endpoint, 'endpoint'), provider, model),
-    headers: provider === 'azure'
-      ? { 'content-type': 'application/json', 'api-key': apiKey }
-      : { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+    url: providerEndpoint(
+      requiredString(config.endpoint, 'endpoint'),
+      provider,
+      model,
+    ),
+    headers:
+      provider === 'azure'
+        ? { 'content-type': 'application/json', 'api-key': apiKey }
+        : {
+            'content-type': 'application/json',
+            authorization: `Bearer ${apiKey}`,
+          },
     body: {
       model,
       messages: toProviderMessages(request.messages),
-      ...(tools.length > 0 ? {
-        tools,
-        tool_choice: request.toolMode === 'required' ? 'required' : 'auto',
-      } : {}),
-      ...(config.reasoningEffort ? { reasoning_effort: config.reasoningEffort } : {}),
-      ...(config.temperature !== undefined ? {temperature:config.temperature} : {}),
+      ...(tools.length > 0
+        ? {
+            tools,
+            tool_choice: request.toolMode === 'required' ? 'required' : 'auto',
+          }
+        : {}),
+      ...(config.reasoningEffort
+        ? { reasoning_effort: config.reasoningEffort }
+        : {}),
+      ...(config.temperature !== undefined
+        ? { temperature: config.temperature }
+        : {}),
     },
   };
 }
 
 /** Non-streaming test transport with explicit header/body deadlines and caller cancellation. */
 function createProviderFetch(timeoutMs, { captureTiming = false } = {}) {
-  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2_147_423_647) {
-    throw new Error('AI provider request timeout must be a positive supported millisecond budget.');
+  if (
+    !Number.isInteger(timeoutMs) ||
+    timeoutMs < 1 ||
+    timeoutMs > 2_147_423_647
+  ) {
+    throw new Error(
+      'AI provider request timeout must be a positive supported millisecond budget.',
+    );
   }
   // Use request rather than global fetch so its hidden header deadline cannot cap slow models.
   const { EnvHttpProxyAgent, request, interceptors } = require('undici');
@@ -91,9 +124,11 @@ function createProviderFetch(timeoutMs, { captureTiming = false } = {}) {
         requestTls: { timeout: connectTimeout },
         proxyTls: { timeout: connectTimeout },
       }).compose(
-        dispatch => (options, handler) => {
+        (dispatch) => (options, handler) => {
           if (new URL(options.origin).origin !== allowedOrigin) {
-            throw new Error('Cross-origin provider redirects are not allowed. Configure the final provider endpoint.');
+            throw new Error(
+              'Cross-origin provider redirects are not allowed. Configure the final provider endpoint.',
+            );
           }
           return dispatch(options, handler);
         },
@@ -102,20 +137,27 @@ function createProviderFetch(timeoutMs, { captureTiming = false } = {}) {
       );
       dispatchers.set(allowedOrigin, dispatcher);
     }
-    const timing = captureTiming ? { requestStartedAt: new Date().toISOString(), responseEndedAt: null } : null;
-    const invoke = () => request(url, {
-      ...init,
-      dispatcher,
-      throwOnMaxRedirect: true,
-      headersTimeout: timeoutMs,
-      bodyTimeout: timeoutMs,
-    });
+    const timing = captureTiming
+      ? { requestStartedAt: new Date().toISOString(), responseEndedAt: null }
+      : null;
+    const invoke = () =>
+      request(url, {
+        ...init,
+        dispatcher,
+        throwOnMaxRedirect: true,
+        headersTimeout: timeoutMs,
+        bodyTimeout: timeoutMs,
+      });
     const response = await invoke();
     const raw = await response.body.text();
     if (timing) timing.responseEndedAt = new Date().toISOString();
     const headers = new Headers();
     for (const [name, value] of Object.entries(response.headers)) {
-      if (value !== undefined) headers.set(name, Array.isArray(value) ? value.join(', ') : String(value));
+      if (value !== undefined)
+        headers.set(
+          name,
+          Array.isArray(value) ? value.join(', ') : String(value),
+        );
     }
     return {
       ok: response.statusCode >= 200 && response.statusCode < 300,
@@ -128,7 +170,9 @@ function createProviderFetch(timeoutMs, { captureTiming = false } = {}) {
     };
   };
   fetchProvider.close = () => {
-    closing ??= Promise.all([...dispatchers.values()].map(dispatcher => dispatcher.close())).then(() => undefined);
+    closing ??= Promise.all(
+      [...dispatchers.values()].map((dispatcher) => dispatcher.close()),
+    ).then(() => undefined);
     return closing;
   };
   return fetchProvider;
@@ -142,11 +186,17 @@ async function sendProviderRequest(request, config, fetchImpl, signal) {
     body: JSON.stringify(wire.body),
     signal,
   });
-  if (!response || typeof response.ok !== 'boolean' || typeof response.json !== 'function') {
+  if (
+    !response ||
+    typeof response.ok !== 'boolean' ||
+    typeof response.json !== 'function'
+  ) {
     throw new Error('AI provider returned an invalid HTTP response.');
   }
   if (!response.ok) {
-    throw new Error(`AI provider returned HTTP ${response.status}; check its endpoint, credentials, model and API compatibility.`);
+    throw new Error(
+      `AI provider returned HTTP ${response.status}; check its endpoint, credentials, model and API compatibility.`,
+    );
   }
   let payload;
   try {
@@ -154,7 +204,10 @@ async function sendProviderRequest(request, config, fetchImpl, signal) {
   } catch {
     throw new Error('AI provider response was not valid JSON.');
   }
-  return { ...parseProviderResponse(payload), ...(response.timing ? { timing: response.timing } : {}) };
+  return {
+    ...parseProviderResponse(payload),
+    ...(response.timing ? { timing: response.timing } : {}),
+  };
 }
 
 function parseProviderResponse(payload) {
@@ -167,24 +220,43 @@ function parseProviderResponse(payload) {
   }
   const toolCalls = (message.tool_calls ?? []).map((call) => {
     const id = requiredString(call?.id, 'provider tool call id');
-    const name = requiredString(call?.function?.name, 'provider tool call name');
+    const name = requiredString(
+      call?.function?.name,
+      'provider tool call name',
+    );
     const rawArguments = call?.function?.arguments;
     if (typeof rawArguments !== 'string') {
-      throw new Error(`AI provider tool call ${name} did not contain string arguments.`);
+      throw new Error(
+        `AI provider tool call ${name} did not contain string arguments.`,
+      );
     }
     let input;
     try {
       input = JSON.parse(rawArguments || '{}');
     } catch {
-      throw new Error(`AI provider tool call ${name} contained invalid JSON arguments.`);
+      throw new Error(
+        `AI provider tool call ${name} contained invalid JSON arguments.`,
+      );
     }
-    return { id, name, input: requiredObject(input, `arguments for provider tool call ${name}`) };
+    return {
+      id,
+      name,
+      input: requiredObject(input, `arguments for provider tool call ${name}`),
+    };
   });
   const text = providerText(message.content);
   if (toolCalls.length === 0 && text.length === 0) {
-    throw new Error('AI provider response contained neither text nor tool calls.');
+    throw new Error(
+      'AI provider response contained neither text nor tool calls.',
+    );
   }
-  return { toolCalls, text, ...(payload.usage && typeof payload.usage === 'object' ? { usage: payload.usage } : {}) };
+  return {
+    toolCalls,
+    text,
+    ...(payload.usage && typeof payload.usage === 'object'
+      ? { usage: payload.usage }
+      : {}),
+  };
 }
 
 /** Whether a complete request URL names the OpenAI Responses wire (path ends in `/responses`). */
@@ -203,7 +275,11 @@ function providerEndpoint(value, provider, model) {
     throw new Error('AI provider endpoint must use HTTP or HTTPS.');
   }
   endpoint.pathname = endpoint.pathname.replace(/\/+$/u, '');
-  if (endpoint.pathname.endsWith('/chat/completions') || isResponsesEndpoint(endpoint.toString())) return endpoint.toString();
+  if (
+    endpoint.pathname.endsWith('/chat/completions') ||
+    isResponsesEndpoint(endpoint.toString())
+  )
+    return endpoint.toString();
   if (provider === 'azure') {
     if (endpoint.pathname.endsWith('/openai/v1')) {
       endpoint.pathname = `${endpoint.pathname}/chat/completions`;
@@ -211,11 +287,13 @@ function providerEndpoint(value, provider, model) {
     }
     if (endpoint.pathname.includes('/openai/deployments/')) {
       endpoint.pathname = `${endpoint.pathname.replace(/\/$/u, '')}/chat/completions`;
-      if (!endpoint.searchParams.has('api-version')) endpoint.searchParams.set('api-version', '2024-10-21');
+      if (!endpoint.searchParams.has('api-version'))
+        endpoint.searchParams.set('api-version', '2024-10-21');
       return endpoint.toString();
     }
     endpoint.pathname = `${endpoint.pathname.replace(/\/$/u, '')}/openai/deployments/${encodeURIComponent(model)}/chat/completions`;
-    if (!endpoint.searchParams.has('api-version')) endpoint.searchParams.set('api-version', '2024-10-21');
+    if (!endpoint.searchParams.has('api-version'))
+      endpoint.searchParams.set('api-version', '2024-10-21');
     return endpoint.toString();
   }
   endpoint.pathname = `${endpoint.pathname.replace(/\/$/u, '')}/chat/completions`;
@@ -223,7 +301,8 @@ function providerEndpoint(value, provider, model) {
 }
 
 function toolResultText(content) {
-  if (!Array.isArray(content)) throw new Error('Tool result content must be an array.');
+  if (!Array.isArray(content))
+    throw new Error('Tool result content must be an array.');
   return content
     .filter((part) => part.type === 'text' && typeof part.value === 'string')
     .map((part) => part.value)
@@ -233,9 +312,15 @@ function toolResultText(content) {
 function providerText(content) {
   if (content === null || content === undefined) return '';
   if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) throw new Error('AI provider response content must be text, an array or null.');
+  if (!Array.isArray(content))
+    throw new Error(
+      'AI provider response content must be text, an array or null.',
+    );
   return content
-    .filter((part) => part && typeof part === 'object' && typeof part.text === 'string')
+    .filter(
+      (part) =>
+        part && typeof part === 'object' && typeof part.text === 'string',
+    )
     .map((part) => part.text)
     .join('');
 }
@@ -254,4 +339,12 @@ function requiredObject(value, label) {
   return value;
 }
 
-module.exports = { createProviderFetch, buildProviderRequest, parseProviderResponse, providerEndpoint, isResponsesEndpoint, sendProviderRequest, toProviderMessages };
+module.exports = {
+  createProviderFetch,
+  buildProviderRequest,
+  parseProviderResponse,
+  providerEndpoint,
+  isResponsesEndpoint,
+  sendProviderRequest,
+  toProviderMessages,
+};

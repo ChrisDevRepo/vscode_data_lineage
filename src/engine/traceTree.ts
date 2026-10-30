@@ -57,24 +57,41 @@ export interface TraceTreeInput {
 }
 
 /** Shapes a trace scope into an L0-anchored tree. */
-export function buildTraceTree(input: TraceTreeInput, graph: Graph | null): TraceTree | null {
+export function buildTraceTree(
+  input: TraceTreeInput,
+  graph: Graph | null,
+): TraceTree | null {
   const { originId, visibleNodeIds, prunedNodeIds } = input;
-  if (!originId || !graph || !graph.hasNode(originId) || !visibleNodeIds.has(originId)) {
+  if (
+    !originId ||
+    !graph ||
+    !graph.hasNode(originId) ||
+    !visibleNodeIds.has(originId)
+  ) {
     return null;
   }
   const scope = { graph, visibleNodeIds, prunedNodeIds };
   const upstream = walkSide(scope, originId, 'up');
   const downstream = walkSide(scope, originId, 'down');
   const placed = new Set<string>([originId]);
-  for (const level of [...upstream, ...downstream]) level.nodeIds.forEach(id => placed.add(id));
-  const unplaced = [...visibleNodeIds].filter(id => !placed.has(id) && graph.hasNode(id));
+  for (const level of [...upstream, ...downstream])
+    level.nodeIds.forEach((id) => placed.add(id));
+  const unplaced = [...visibleNodeIds].filter(
+    (id) => !placed.has(id) && graph.hasNode(id),
+  );
   return {
     originId,
     upstream,
     downstream,
     connected: unplaced.length > 0 ? group(scope, 'connected', unplaced) : null,
-    totalUpstream: upstream.reduce((sum, level) => sum + level.nodeIds.length, 0),
-    totalDownstream: downstream.reduce((sum, level) => sum + level.nodeIds.length, 0),
+    totalUpstream: upstream.reduce(
+      (sum, level) => sum + level.nodeIds.length,
+      0,
+    ),
+    totalDownstream: downstream.reduce(
+      (sum, level) => sum + level.nodeIds.length,
+      0,
+    ),
     nextUpstream: nextLevel(scope, originId, 'up', upstream),
     nextDownstream: nextLevel(scope, originId, 'down', downstream),
   };
@@ -92,31 +109,58 @@ function neighborsOf(graph: Graph, id: string, side: TraceTreeSide): string[] {
   return graph.neighbors(id);
 }
 
-function group(scope: Scope, side: TraceTreeSide, nodeIds: string[]): TraceTreeGroup {
+function group(
+  scope: Scope,
+  side: TraceTreeSide,
+  nodeIds: string[],
+): TraceTreeGroup {
   const grow = new Map<string, string[]>();
   for (const id of nodeIds) {
-    grow.set(id, neighborsOf(scope.graph, id, side).filter(
-      neighbor => !scope.visibleNodeIds.has(neighbor) && !scope.prunedNodeIds.has(neighbor),
-    ));
+    grow.set(
+      id,
+      neighborsOf(scope.graph, id, side).filter(
+        (neighbor) =>
+          !scope.visibleNodeIds.has(neighbor) &&
+          !scope.prunedNodeIds.has(neighbor),
+      ),
+    );
   }
   return { side, nodeIds, grow };
 }
 
 /** De-duplicated grow candidates of a side, origin included, in first-seen order. */
-function nextLevel(scope: Scope, originId: string, side: 'up' | 'down', levels: TraceTreeLevel[]): string[] {
+function nextLevel(
+  scope: Scope,
+  originId: string,
+  side: 'up' | 'down',
+  levels: TraceTreeLevel[],
+): string[] {
   const next = new Set(group(scope, side, [originId]).grow.get(originId));
-  for (const level of levels) for (const ids of level.grow.values()) ids.forEach(id => next.add(id));
+  for (const level of levels)
+    for (const ids of level.grow.values()) ids.forEach((id) => next.add(id));
   return [...next];
 }
 
 /** Hop levels of one side: the trace's own breadth-first walk (`bfsFromNode`, inbound for `up`, outbound for `down`), restricted to the visible scope and grouped by depth. */
-function walkSide(scope: Scope, originId: string, side: 'up' | 'down'): TraceTreeLevel[] {
+function walkSide(
+  scope: Scope,
+  originId: string,
+  side: 'up' | 'down',
+): TraceTreeLevel[] {
   const byDepth: string[][] = [];
-  bfsFromNode(scope.graph, originId, (id, _attrs, depth) => {
-    if (depth === 0) return false;
-    if (!scope.visibleNodeIds.has(id)) return true;
-    (byDepth[depth - 1] ??= []).push(id);
-    return false;
-  }, { mode: side === 'up' ? 'inbound' : 'outbound' });
-  return byDepth.map((nodeIds, index) => ({ ...group(scope, side, nodeIds), depth: index + 1 }));
+  bfsFromNode(
+    scope.graph,
+    originId,
+    (id, _attrs, depth) => {
+      if (depth === 0) return false;
+      if (!scope.visibleNodeIds.has(id)) return true;
+      (byDepth[depth - 1] ??= []).push(id);
+      return false;
+    },
+    { mode: side === 'up' ? 'inbound' : 'outbound' },
+  );
+  return byDepth.map((nodeIds, index) => ({
+    ...group(scope, side, nodeIds),
+    depth: index + 1,
+  }));
 }

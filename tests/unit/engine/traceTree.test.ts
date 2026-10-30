@@ -23,26 +23,75 @@ describe('buildTraceTree', () => {
   it('anchors at L0 with upstream and downstream levels outward', () => {
     // The d→b cycle makes d (and through it, c) upstream-reachable too;
     // a node reachable from both directions appears on both sides.
-    const tree = buildTraceTree({ originId: 'origin', visibleNodeIds: allVisible, prunedNodeIds: nonePruned }, fixture());
+    const tree = buildTraceTree(
+      {
+        originId: 'origin',
+        visibleNodeIds: allVisible,
+        prunedNodeIds: nonePruned,
+      },
+      fixture(),
+    );
     expect(tree?.originId).toBe('origin');
-    expect(tree?.upstream.map(level => level.nodeIds)).toEqual([['b'], ['a', 'd'], ['c']]);
-    expect(tree?.downstream.map(level => level.nodeIds)).toEqual([['c', 'e'], ['d'], ['b']]);
+    expect(tree?.upstream.map((level) => level.nodeIds)).toEqual([
+      ['b'],
+      ['a', 'd'],
+      ['c'],
+    ]);
+    expect(tree?.downstream.map((level) => level.nodeIds)).toEqual([
+      ['c', 'e'],
+      ['d'],
+      ['b'],
+    ]);
     expect(tree?.totalUpstream).toBe(4);
     expect(tree?.totalDownstream).toBe(4);
   });
 
   it('restricts levels to the visible scope', () => {
     const visible = new Set(['origin', 'c']);
-    const tree = buildTraceTree({ originId: 'origin', visibleNodeIds: visible, prunedNodeIds: nonePruned }, fixture());
-    expect(tree?.downstream.map(level => level.nodeIds)).toEqual([['c']]);
+    const tree = buildTraceTree(
+      {
+        originId: 'origin',
+        visibleNodeIds: visible,
+        prunedNodeIds: nonePruned,
+      },
+      fixture(),
+    );
+    expect(tree?.downstream.map((level) => level.nodeIds)).toEqual([['c']]);
     expect(tree?.upstream).toEqual([]);
   });
 
   it('returns null without an origin or when the origin is not visible', () => {
     const graph = fixture();
-    expect(buildTraceTree({ originId: null, visibleNodeIds: allVisible, prunedNodeIds: nonePruned }, graph)).toBeNull();
-    expect(buildTraceTree({ originId: 'origin', visibleNodeIds: new Set(['a']), prunedNodeIds: nonePruned }, graph)).toBeNull();
-    expect(buildTraceTree({ originId: 'origin', visibleNodeIds: allVisible, prunedNodeIds: nonePruned }, null)).toBeNull();
+    expect(
+      buildTraceTree(
+        {
+          originId: null,
+          visibleNodeIds: allVisible,
+          prunedNodeIds: nonePruned,
+        },
+        graph,
+      ),
+    ).toBeNull();
+    expect(
+      buildTraceTree(
+        {
+          originId: 'origin',
+          visibleNodeIds: new Set(['a']),
+          prunedNodeIds: nonePruned,
+        },
+        graph,
+      ),
+    ).toBeNull();
+    expect(
+      buildTraceTree(
+        {
+          originId: 'origin',
+          visibleNodeIds: allVisible,
+          prunedNodeIds: nonePruned,
+        },
+        null,
+      ),
+    ).toBeNull();
   });
 
   it('offers out-of-scope neighbors in the level direction and hides pruned ones', () => {
@@ -51,9 +100,23 @@ describe('buildTraceTree', () => {
     graph.addEdgeWithKey('e→f', 'e', 'f', {});
     graph.addNode('g', {});
     graph.addEdgeWithKey('g→e', 'g', 'e', {});
-    const pruned = buildTraceTree({ originId: 'origin', visibleNodeIds: allVisible, prunedNodeIds: new Set(['f']) }, graph);
+    const pruned = buildTraceTree(
+      {
+        originId: 'origin',
+        visibleNodeIds: allVisible,
+        prunedNodeIds: new Set(['f']),
+      },
+      graph,
+    );
     expect(pruned?.downstream[0].grow.get('e')).toEqual([]);
-    const tree = buildTraceTree({ originId: 'origin', visibleNodeIds: allVisible, prunedNodeIds: nonePruned }, graph);
+    const tree = buildTraceTree(
+      {
+        originId: 'origin',
+        visibleNodeIds: allVisible,
+        prunedNodeIds: nonePruned,
+      },
+      graph,
+    );
     // e is downstream: its outbound f grows, its inbound g (a sibling feed) does not.
     expect(tree?.downstream[0].grow.get('e')).toEqual(['f']);
     expect(tree?.downstream[1].grow.get('d')).toEqual([]);
@@ -67,7 +130,14 @@ describe('buildTraceTree', () => {
     graph.addEdgeWithKey('d→f', 'd', 'f', {});
     graph.addEdgeWithKey('h→a', 'h', 'a', {});
     graph.addEdgeWithKey('p→origin', 'p', 'origin', {});
-    const tree = buildTraceTree({ originId: 'origin', visibleNodeIds: allVisible, prunedNodeIds: new Set(['p']) }, graph);
+    const tree = buildTraceTree(
+      {
+        originId: 'origin',
+        visibleNodeIds: allVisible,
+        prunedNodeIds: new Set(['p']),
+      },
+      graph,
+    );
     expect(tree?.nextDownstream.sort()).toEqual(['f', 'g']);
     expect(tree?.nextUpstream).toEqual(['h']);
   });
@@ -77,19 +147,34 @@ describe('buildTraceTree', () => {
     graph.addNode('s', {});
     graph.addEdgeWithKey('s→c', 's', 'c', {});
     const visible = new Set(['origin', 'c', 's']);
-    const tree = buildTraceTree({ originId: 'origin', visibleNodeIds: visible, prunedNodeIds: nonePruned }, graph);
+    const tree = buildTraceTree(
+      {
+        originId: 'origin',
+        visibleNodeIds: visible,
+        prunedNodeIds: nonePruned,
+      },
+      graph,
+    );
     expect(tree?.connected?.nodeIds).toEqual(['s']);
     const listed = new Set([
       tree!.originId,
-      ...[...tree!.upstream, ...tree!.downstream].flatMap(level => level.nodeIds),
+      ...[...tree!.upstream, ...tree!.downstream].flatMap(
+        (level) => level.nodeIds,
+      ),
       ...(tree!.connected?.nodeIds ?? []),
     ]);
     expect(listed).toEqual(visible);
   });
 
   it('omits the Connected group when every visible node is placed', () => {
-    const tree = buildTraceTree({ originId: 'origin', visibleNodeIds: allVisible, prunedNodeIds: nonePruned }, fixture());
+    const tree = buildTraceTree(
+      {
+        originId: 'origin',
+        visibleNodeIds: allVisible,
+        prunedNodeIds: nonePruned,
+      },
+      fixture(),
+    );
     expect(tree?.connected).toBeNull();
   });
 });
-

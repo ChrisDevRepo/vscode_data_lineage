@@ -15,10 +15,15 @@ export function useReturnFocus<K>(): {
     triggers.current.get(key)?.focus();
   });
 
-  const triggerRef = useCallback((key: K) => (element: HTMLElement | null) => {
-    if (element) triggers.current.set(key, element);
-    else triggers.current.delete(key);
+  const triggerRef = useCallback(
+    (key: K) => (element: HTMLElement | null) => {
+      if (element) triggers.current.set(key, element);
+      else triggers.current.delete(key);
+    },
+    [],
+  );
+  const returnFocus = useCallback((key: K) => {
+    pending.current = { key };
   }, []);
-  const returnFocus = useCallback((key: K) => { pending.current = { key }; }, []);
   return { triggerRef, returnFocus };
 }

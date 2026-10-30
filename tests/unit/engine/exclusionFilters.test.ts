@@ -1,16 +1,37 @@
 /** Exclusion-filter equivalence guard. */
 
 import { describe, it, expect } from 'vitest';
-import { applyExclusionFilter, applyExclusionPatterns, scopeModelForVisualize } from '../../../src/engine/modelFilters';
-import type { DatabaseModel, LineageNode, LineageEdge, ParseStats } from '../../../src/engine/types';
+import {
+  applyExclusionFilter,
+  applyExclusionPatterns,
+  scopeModelForVisualize,
+} from '../../../src/engine/modelFilters';
+import type {
+  DatabaseModel,
+  LineageNode,
+  LineageEdge,
+  ParseStats,
+} from '../../../src/engine/types';
 
-const node = (schema: string, name: string): LineageNode =>
-  ({ id: `${schema}.${name}`.toLowerCase(), schema, name, fullName: `[${schema}].[${name}]`, type: 'table' });
+const node = (schema: string, name: string): LineageNode => ({
+  id: `${schema}.${name}`.toLowerCase(),
+  schema,
+  name,
+  fullName: `[${schema}].[${name}]`,
+  type: 'table',
+});
 
-const edge = (source: string, target: string): LineageEdge =>
-  ({ source, target, type: 'body' });
+const edge = (source: string, target: string): LineageEdge => ({
+  source,
+  target,
+  type: 'body',
+});
 
-function model(nodes: LineageNode[], edges: LineageEdge[], parseStats?: ParseStats): DatabaseModel {
+function model(
+  nodes: LineageNode[],
+  edges: LineageEdge[],
+  parseStats?: ParseStats,
+): DatabaseModel {
   const counts = new Map<string, number>();
   for (const n of nodes) counts.set(n.schema, (counts.get(n.schema) ?? 0) + 1);
   const schemas = [...counts].map(([name, nodeCount]) => ({ name, nodeCount }));
@@ -19,7 +40,12 @@ function model(nodes: LineageNode[], edges: LineageEdge[], parseStats?: ParseSta
 
 const sample = () =>
   model(
-    [node('dbo', 'Orders'), node('dbo', 'Customers'), node('staging', 'Orders_TEST'), node('staging', 'Raw')],
+    [
+      node('dbo', 'Orders'),
+      node('dbo', 'Customers'),
+      node('staging', 'Orders_TEST'),
+      node('staging', 'Raw'),
+    ],
     [
       edge('dbo.orders', 'dbo.customers'),
       edge('staging.orders_test', 'dbo.orders'),
@@ -31,14 +57,21 @@ describe('exclusion filters', () => {
   it('removes matching nodes and every edge touching them', () => {
     const filtered = applyExclusionFilter(sample(), ['_TEST$']);
 
-    expect(filtered.nodes.map((n) => n.id)).toEqual(['dbo.orders', 'dbo.customers', 'staging.raw']);
+    expect(filtered.nodes.map((n) => n.id)).toEqual([
+      'dbo.orders',
+      'dbo.customers',
+      'staging.raw',
+    ]);
     expect(filtered.edges).toEqual([edge('dbo.orders', 'dbo.customers')]);
   });
 
   it('matches against fullName as well as schema.name', () => {
     const filtered = applyExclusionFilter(sample(), ['^\\[staging\\]']);
 
-    expect(filtered.nodes.map((n) => n.id)).toEqual(['dbo.orders', 'dbo.customers']);
+    expect(filtered.nodes.map((n) => n.id)).toEqual([
+      'dbo.orders',
+      'dbo.customers',
+    ]);
   });
 
   it('returns the input model unchanged for an empty pattern list', () => {
@@ -53,8 +86,14 @@ describe('exclusion filters', () => {
     const invalidFilter: string[] = [];
     const invalidPatterns: string[] = [];
 
-    expect(applyExclusionFilter(input, ['[', '('], (p) => invalidFilter.push(p))).toBe(input);
-    expect(applyExclusionPatterns(input, ['[', '('], (msg) => invalidPatterns.push(msg))).toBe(input);
+    expect(
+      applyExclusionFilter(input, ['[', '('], (p) => invalidFilter.push(p)),
+    ).toBe(input);
+    expect(
+      applyExclusionPatterns(input, ['[', '('], (msg) =>
+        invalidPatterns.push(msg),
+      ),
+    ).toBe(input);
 
     expect(invalidFilter).toEqual(['[', '(']);
     expect(invalidPatterns).toHaveLength(2);
@@ -63,18 +102,32 @@ describe('exclusion filters', () => {
 
   it('skips only the invalid pattern and still applies the valid ones', () => {
     const warnings: string[] = [];
-    const filtered = applyExclusionPatterns(sample(), ['[', '_TEST$'], (msg) => warnings.push(msg));
+    const filtered = applyExclusionPatterns(sample(), ['[', '_TEST$'], (msg) =>
+      warnings.push(msg),
+    );
 
     expect(warnings).toHaveLength(1);
-    expect(filtered.nodes.map((n) => n.id)).toEqual(['dbo.orders', 'dbo.customers', 'staging.raw']);
+    expect(filtered.nodes.map((n) => n.id)).toEqual([
+      'dbo.orders',
+      'dbo.customers',
+      'staging.raw',
+    ]);
   });
 
   it('excludes the same nodes and edges on both the load-time and graph-time paths', () => {
-    for (const patterns of [['_TEST$'], ['^staging\\.'], ['^\\[staging\\]'], ['dbo\\.Orders$'], ['nomatch']]) {
+    for (const patterns of [
+      ['_TEST$'],
+      ['^staging\\.'],
+      ['^\\[staging\\]'],
+      ['dbo\\.Orders$'],
+      ['nomatch'],
+    ]) {
       const viaFilter = applyExclusionFilter(sample(), patterns);
       const viaPatterns = applyExclusionPatterns(sample(), patterns);
 
-      expect(viaPatterns.nodes.map((n) => n.id)).toEqual(viaFilter.nodes.map((n) => n.id));
+      expect(viaPatterns.nodes.map((n) => n.id)).toEqual(
+        viaFilter.nodes.map((n) => n.id),
+      );
       expect(viaPatterns.edges).toEqual(viaFilter.edges);
     }
   });
@@ -84,7 +137,9 @@ describe('exclusion filters', () => {
       parsedRefs: 2,
       resolvedEdges: 2,
       droppedRefs: [],
-      spDetails: [{ name: 'dbo.Orders', inCount: 1, outCount: 1, unrelated: [] }],
+      spDetails: [
+        { name: 'dbo.Orders', inCount: 1, outCount: 1, unrelated: [] },
+      ],
     };
     const input = model(
       [node('dbo', 'Orders'), node('staging', 'Raw_TEST')],
@@ -94,17 +149,28 @@ describe('exclusion filters', () => {
 
     const filtered = applyExclusionPatterns(input, ['_TEST$']);
 
-    expect(filtered.parseStats?.spDetails[0].excluded).toEqual(['staging.Raw_TEST']);
+    expect(filtered.parseStats?.spDetails[0].excluded).toEqual([
+      'staging.Raw_TEST',
+    ]);
     expect(stats.spDetails[0].excluded).toBeUndefined();
   });
 
   it('recounts Visualize schemas with the model case rule', () => {
     const scoped = scopeModelForVisualize(
-      { ...model([node('Sales', 'A'), node('sales', 'B'), node('Sales', 'C_TEST')], []), identifierCaseSensitive: true },
+      {
+        ...model(
+          [node('Sales', 'A'), node('sales', 'B'), node('Sales', 'C_TEST')],
+          [],
+        ),
+        identifierCaseSensitive: true,
+      },
       new Set(['Sales', 'sales']),
       ['_TEST$'],
     );
-    expect(scoped.schemas.map(s => [s.name, s.nodeCount]).sort()).toEqual([['Sales', 1], ['sales', 1]]);
+    expect(scoped.schemas.map((s) => [s.name, s.nodeCount]).sort()).toEqual([
+      ['Sales', 1],
+      ['sales', 1],
+    ]);
   });
 
   it('leaves parse stats untouched when no node is excluded', () => {
@@ -112,7 +178,9 @@ describe('exclusion filters', () => {
       parsedRefs: 1,
       resolvedEdges: 1,
       droppedRefs: [],
-      spDetails: [{ name: 'dbo.Orders', inCount: 1, outCount: 0, unrelated: [] }],
+      spDetails: [
+        { name: 'dbo.Orders', inCount: 1, outCount: 0, unrelated: [] },
+      ],
     };
     const input = model([node('dbo', 'Orders')], [], stats);
 

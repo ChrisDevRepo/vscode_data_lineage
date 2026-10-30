@@ -2,7 +2,10 @@
 
 import type { ScopeExclusionGroup, ScopeSummary } from '../sm/smTypes';
 import type { PendingExplorationProposal } from '../session/session';
-import { CLASSIFICATION_LABEL, type ClassificationValue } from '../session/classification';
+import {
+  CLASSIFICATION_LABEL,
+  type ClassificationValue,
+} from '../session/classification';
 import { escapeMarkdownText, pluralize } from '../support/text';
 import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
 import { normalizeName } from '../../engine/shared/sqlIdentifier';
@@ -24,12 +27,17 @@ function plural(n: number, noun: string): string {
 
 /** Capitalizes and pluralizes an object-type label for display in the scope tree. */
 function typeLabel(type: string, count: number): string {
-  const capitalized = type.charAt(0).toUpperCase() + type.slice(1).toLowerCase();
+  const capitalized =
+    type.charAt(0).toUpperCase() + type.slice(1).toLowerCase();
   return count === 1 ? capitalized : `${capitalized}s`;
 }
 
 /** Renders the depth line for one side of the ask. */
-function depthLine(levels: number | 'all', side: string, exact: boolean): string {
+function depthLine(
+  levels: number | 'all',
+  side: string,
+  exact: boolean,
+): string {
   return `- Depth: ${depthValue(levels, exact)} ${side}`;
 }
 
@@ -41,30 +49,53 @@ function depthValue(levels: number | 'all', exact: boolean): string {
 
 /** Wraps a raw name as an inline code span. Code spans render their content literally, so the name must not be Markdown-escaped first; a fence one backtick longer than the name's longest backtick run keeps a backtick inside the name from closing the span. */
 function code(value: string): string {
-  const longestRun = Math.max(0, ...(value.match(/`+/g) ?? []).map(run => run.length));
+  const longestRun = Math.max(
+    0,
+    ...(value.match(/`+/g) ?? []).map((run) => run.length),
+  );
   const fence = '`'.repeat(longestRun + 1);
   const pad = longestRun > 0 ? ' ' : '';
   return `${fence}${pad}${value}${pad}${fence}`;
 }
 
 /** Lists the first `cap` names as code spans and folds the rest into `+N more`. */
-function cappedNames(names: readonly string[], cap: number, alreadyOmitted = 0): string {
+function cappedNames(
+  names: readonly string[],
+  cap: number,
+  alreadyOmitted = 0,
+): string {
   const more = Math.max(0, names.length - cap) + alreadyOmitted;
   const shown = names.slice(0, cap).map(code).join(', ');
   return more > 0 ? `${shown} _+${more} more_` : shown;
 }
 
 /** An object's name as the card shows it: schema-qualified when the loaded model holds more than one object of that type by that name ({@link ScopeSummary.ambiguousObjectNames}), bare otherwise. */
-function objectDisplayName(summary: ScopeSummary, type: string, schema: string, name: string): string {
-  return summary.ambiguousObjectNames?.[type]?.includes(schemaKey(name, summary.identifierCaseSensitive)) ? `${schema}.${name}` : name;
+function objectDisplayName(
+  summary: ScopeSummary,
+  type: string,
+  schema: string,
+  name: string,
+): string {
+  return summary.ambiguousObjectNames?.[type]?.includes(
+    schemaKey(name, summary.identifierCaseSensitive),
+  )
+    ? `${schema}.${name}`
+    : name;
 }
 
 /** One `Types (N): names` line per object type of an excluded group, largest type first. */
-function exclusionTypeLines(summary: ScopeSummary, group: ScopeExclusionGroup, cap: number, indent: string): string[] {
+function exclusionTypeLines(
+  summary: ScopeSummary,
+  group: ScopeExclusionGroup,
+  cap: number,
+  indent: string,
+): string[] {
   return Object.entries(group.byType)
     .sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))
     .map(([type, objects]) => {
-      const names = objects.map(object => objectDisplayName(summary, type, object.schema, object.name));
+      const names = objects.map((object) =>
+        objectDisplayName(summary, type, object.schema, object.name),
+      );
       return `${indent}- ${typeLabel(type, objects.length)} (${objects.length}): ${cappedNames(names, cap)}`;
     });
 }
@@ -75,7 +106,9 @@ function oneParagraph(text: string): string {
 }
 
 /** Schemas in plan order: most hops first, then most nodes, then name. */
-function schemasInPlanOrder(summary: ScopeSummary): Array<[string, ScopeSummary['bySchema'][string]]> {
+function schemasInPlanOrder(
+  summary: ScopeSummary,
+): Array<[string, ScopeSummary['bySchema'][string]]> {
   return Object.entries(summary.bySchema).sort((a, b) => {
     const hopDifference = b[1].hops - a[1].hops;
     if (hopDifference !== 0) return hopDifference;
@@ -85,13 +118,19 @@ function schemasInPlanOrder(summary: ScopeSummary): Array<[string, ScopeSummary[
 }
 
 /** States the schema selection from its shorter side: `All` when nothing is excluded, `All except x, y` when fewer schemas are excluded than selected, otherwise the selected list. The two sides are {@link ScopeSummary.selectedSchemas} and `activeFilters.schemas`. */
-function schemasLine(summary: ScopeSummary, nameCap = Number.POSITIVE_INFINITY): string {
-  const selected = summary.selectedSchemas ?? schemasInPlanOrder(summary).map(([schema]) => schema);
+function schemasLine(
+  summary: ScopeSummary,
+  nameCap = Number.POSITIVE_INFINITY,
+): string {
+  const selected =
+    summary.selectedSchemas ??
+    schemasInPlanOrder(summary).map(([schema]) => schema);
   const excluded = summary.activeFilters.schemas;
   if (excluded.length === 0) return 'All';
   const exceptExcluded = excluded.length < selected.length;
   const names = exceptExcluded ? excluded : selected;
-  if (names.length > nameCap) return `${selected.length} of ${selected.length + excluded.length} selected`;
+  if (names.length > nameCap)
+    return `${selected.length} of ${selected.length + excluded.length} selected`;
   return `${exceptExcluded ? 'All except ' : ''}${names.map(code).join(', ')}`;
 }
 
@@ -108,8 +147,15 @@ function objectsByType(summary: ScopeSummary): CardObjectGroup[] {
   const groups = new Map<string, CardObjectGroup>();
   for (const [schema, schemaEntry] of Object.entries(summary.bySchema)) {
     for (const [type, leaf] of Object.entries(schemaEntry.byType)) {
-      const group = groups.get(type) ?? { type, scope: 0, names: [], omitted: 0 };
-      const names = leaf.nodeNames.map(name => objectDisplayName(summary, type, schema, name));
+      const group = groups.get(type) ?? {
+        type,
+        scope: 0,
+        names: [],
+        omitted: 0,
+      };
+      const names = leaf.nodeNames.map((name) =>
+        objectDisplayName(summary, type, schema, name),
+      );
       groups.set(type, {
         type,
         scope: group.scope + leaf.scope,
@@ -118,12 +164,16 @@ function objectsByType(summary: ScopeSummary): CardObjectGroup[] {
       });
     }
   }
-  return [...groups.values()].sort((a, b) => b.scope - a.scope || a.type.localeCompare(b.type));
+  return [...groups.values()].sort(
+    (a, b) => b.scope - a.scope || a.type.localeCompare(b.type),
+  );
 }
 
 /** The plan's heading, stamped with the revision from the second round on. */
 function planHeading(revision?: number): string {
-  return revision && revision > 1 ? `### Exploration plan · revision ${revision}` : '### Exploration plan';
+  return revision && revision > 1
+    ? `### Exploration plan · revision ${revision}`
+    : '### Exploration plan';
 }
 
 /** Renders a self-contained main-equivalent approval summary for native chat. */
@@ -135,10 +185,14 @@ export function renderScopeSummaryMd(
   const readAs: string[] = [];
   const filters = summary.activeFilters;
   if (filters.nodeIds.length > 0) {
-    readAs.push(`- Exclude: ${filters.nodeIds.map(code).join(', ')} — removed from the graph`);
+    readAs.push(
+      `- Exclude: ${filters.nodeIds.map(code).join(', ')} — removed from the graph`,
+    );
   }
   if (filters.passNodeIds.length > 0) {
-    readAs.push(`- Keep but skip: ${filters.passNodeIds.map(code).join(', ')} — stays in the graph, not analysed`);
+    readAs.push(
+      `- Keep but skip: ${filters.passNodeIds.map(code).join(', ')} — stays in the graph, not analysed`,
+    );
   }
   if (filters.schemas.length > 0) {
     readAs.push(`- Schemas excluded: ${filters.schemas.map(code).join(', ')}`);
@@ -156,18 +210,35 @@ function fullPlanReadAs(summary: ScopeSummary): string[] {
   const exclusions = summary.exclusions;
   if (exclusions) {
     for (const rule of exclusions.rules) {
-      readAs.push(`- Excluded by rule ${code(rule.pattern)} — ${plural(rule.count, 'object')}`);
-      readAs.push(...exclusionTypeLines(summary, rule, PLAN_NAMES_PER_TYPE, '  '));
+      readAs.push(
+        `- Excluded by rule ${code(rule.pattern)} — ${plural(rule.count, 'object')}`,
+      );
+      readAs.push(
+        ...exclusionTypeLines(summary, rule, PLAN_NAMES_PER_TYPE, '  '),
+      );
     }
     if (exclusions.named.count > 0) {
-      readAs.push(`- Excluded by name — ${plural(exclusions.named.count, 'object')}`);
-      readAs.push(...exclusionTypeLines(summary, exclusions.named, PLAN_NAMES_PER_TYPE, '  '));
+      readAs.push(
+        `- Excluded by name — ${plural(exclusions.named.count, 'object')}`,
+      );
+      readAs.push(
+        ...exclusionTypeLines(
+          summary,
+          exclusions.named,
+          PLAN_NAMES_PER_TYPE,
+          '  ',
+        ),
+      );
     }
   } else if (filters.nodeIds.length > 0) {
-    readAs.push(`- Exclude: ${cappedNames(filters.nodeIds, PLAN_NAMES_PER_TYPE)} — removed from the graph`);
+    readAs.push(
+      `- Exclude: ${cappedNames(filters.nodeIds, PLAN_NAMES_PER_TYPE)} — removed from the graph`,
+    );
   }
   if (filters.passNodeIds.length > 0) {
-    readAs.push(`- Keep but skip: ${filters.passNodeIds.map(code).join(', ')} — stays in the graph, not analysed`);
+    readAs.push(
+      `- Keep but skip: ${filters.passNodeIds.map(code).join(', ')} — stays in the graph, not analysed`,
+    );
   }
   if (filters.types.length > 0) {
     readAs.push(`- Types excluded: ${filters.types.map(code).join(', ')}`);
@@ -184,24 +255,33 @@ function renderPlanMd(
   namesPerType = Number.POSITIVE_INFINITY,
 ): string {
   const lines: string[] = [];
-  const direction = summary.direction === 'bidirectional' ? 'bidirectional' : summary.direction;
+  const direction =
+    summary.direction === 'bidirectional' ? 'bidirectional' : summary.direction;
   const columns = summary.targetColumns?.length
     ? ` — columns: [${summary.targetColumns.join(', ')}]`
     : '';
-  const tracing = summary.analysisMode === 'ct' ? `Column-Trace${columns}` : 'Blackboard';
+  const tracing =
+    summary.analysisMode === 'ct' ? `Column-Trace${columns}` : 'Blackboard';
 
   const intent = summary.depthIntent;
   const stated: string[] = [];
   const chosen: string[] = [];
-  const sidesEqual = intent.upstream.levels === intent.downstream.levels && intent.upstream.exactness === intent.downstream.exactness;
+  const sidesEqual =
+    intent.upstream.levels === intent.downstream.levels &&
+    intent.upstream.exactness === intent.downstream.exactness;
   if (direction === 'bidirectional' && sidesEqual) {
     const { levels, exactness } = intent.upstream;
-    (exactness === 'exact' ? stated : chosen).push(depthLine(levels, 'each way', exactness === 'exact'));
+    (exactness === 'exact' ? stated : chosen).push(
+      depthLine(levels, 'each way', exactness === 'exact'),
+    );
   } else {
-    const sides: Array<'upstream' | 'downstream'> = direction === 'bidirectional' ? ['upstream', 'downstream'] : [direction];
+    const sides: Array<'upstream' | 'downstream'> =
+      direction === 'bidirectional' ? ['upstream', 'downstream'] : [direction];
     for (const side of sides) {
       const { levels, exactness } = intent[side];
-      (exactness === 'exact' ? stated : chosen).push(depthLine(levels, side, exactness === 'exact'));
+      (exactness === 'exact' ? stated : chosen).push(
+        depthLine(levels, side, exactness === 'exact'),
+      );
     }
   }
 
@@ -227,30 +307,65 @@ function renderPlanMd(
   }
   lines.push('**Plan**');
   lines.push(...chosen);
-  lines.push(`- **${plural(summary.hopCount, 'hop')}** · **${plural(summary.scopeCount, 'node')} in scope** · ${direction}`);
+  lines.push(
+    `- **${plural(summary.hopCount, 'hop')}** · **${plural(summary.scopeCount, 'node')} in scope** · ${direction}`,
+  );
   lines.push(`- **Tracing:** ${tracing}`);
-  if (classification) lines.push(`- **Analysis:** ${CLASSIFICATION_LABEL[classification]}`);
+  if (classification)
+    lines.push(`- **Analysis:** ${CLASSIFICATION_LABEL[classification]}`);
   lines.push('');
 
-  const sourceNodeId = (schema: string, name: string) => normalizeName(`${quoteIdentifier(schema)}.${quoteIdentifier(name)}`, summary.identifierCaseSensitive);
-  const sourceNodes = new Map(schemasInPlanOrder(summary).flatMap(([schema, entry]) =>
-    Object.values(entry.byType).flatMap(leaf => leaf.nodeNames.map(name =>
-      [sourceNodeId(schema, name), true] as const))));
-  const passNodes = new Set(summary.activeFilters.passNodeIds.map(nodeId =>
-    resolveModelNodeId(nodeId, sourceNodes, summary.identifierCaseSensitive)).filter(id => id !== null));
+  const sourceNodeId = (schema: string, name: string) =>
+    normalizeName(
+      `${quoteIdentifier(schema)}.${quoteIdentifier(name)}`,
+      summary.identifierCaseSensitive,
+    );
+  const sourceNodes = new Map(
+    schemasInPlanOrder(summary).flatMap(([schema, entry]) =>
+      Object.values(entry.byType).flatMap((leaf) =>
+        leaf.nodeNames.map(
+          (name) => [sourceNodeId(schema, name), true] as const,
+        ),
+      ),
+    ),
+  );
+  const passNodes = new Set(
+    summary.activeFilters.passNodeIds
+      .map((nodeId) =>
+        resolveModelNodeId(
+          nodeId,
+          sourceNodes,
+          summary.identifierCaseSensitive,
+        ),
+      )
+      .filter((id) => id !== null),
+  );
   for (const [schema, schemaEntry] of schemasInPlanOrder(summary)) {
-    lines.push(`- **${escapeMarkdownText(schema)}** — ${plural(schemaEntry.scope, 'node')}`);
-    const types = Object.entries(schemaEntry.byType).sort((a, b) =>
-      b[1].hops - a[1].hops || b[1].scope - a[1].scope || a[0].localeCompare(b[0]),
+    lines.push(
+      `- **${escapeMarkdownText(schema)}** — ${plural(schemaEntry.scope, 'node')}`,
+    );
+    const types = Object.entries(schemaEntry.byType).sort(
+      (a, b) =>
+        b[1].hops - a[1].hops ||
+        b[1].scope - a[1].scope ||
+        a[0].localeCompare(b[0]),
     );
     for (const [type, leaf] of types) {
-      const names = leaf.nodeNames.slice(0, namesPerType).map(name => {
-        const fq = sourceNodeId(schema, name);
-        return passNodes.has(fq) ? `${escapeMarkdownText(name)} _(pass)_` : escapeMarkdownText(name);
-      }).join(', ');
-      const more = leaf.omitted + Math.max(0, leaf.nodeNames.length - namesPerType);
+      const names = leaf.nodeNames
+        .slice(0, namesPerType)
+        .map((name) => {
+          const fq = sourceNodeId(schema, name);
+          return passNodes.has(fq)
+            ? `${escapeMarkdownText(name)} _(pass)_`
+            : escapeMarkdownText(name);
+        })
+        .join(', ');
+      const more =
+        leaf.omitted + Math.max(0, leaf.nodeNames.length - namesPerType);
       const omitted = more > 0 ? ` _(+${more} more)_` : '';
-      lines.push(`  - ${typeLabel(type, leaf.scope)} (${plural(leaf.scope, 'node')}): ${names}${omitted}`);
+      lines.push(
+        `  - ${typeLabel(type, leaf.scope)} (${plural(leaf.scope, 'node')}): ${names}${omitted}`,
+      );
     }
   }
 
@@ -258,63 +373,123 @@ function renderPlanMd(
 }
 
 /** The proposal text the model reads at the gate: the scope summary, then the discovery handoff memo when one is attached. */
-export function renderProposalDetailMd(proposal: PendingExplorationProposal): string {
-  const base = renderScopeSummaryMd(proposal.summary, proposal.revision, proposal.classification);
-  return proposal.discoverySummary ? `${base}\n\n${proposal.discoverySummary}` : base;
+export function renderProposalDetailMd(
+  proposal: PendingExplorationProposal,
+): string {
+  const base = renderScopeSummaryMd(
+    proposal.summary,
+    proposal.revision,
+    proposal.classification,
+  );
+  return proposal.discoverySummary
+    ? `${base}\n\n${proposal.discoverySummary}`
+    : base;
 }
 
 /** Renders the compact approval card: fact lines only, with a **Show full plan** follow-up carrying the model-authored prose (goal, discovery summary, noted constraints) and every in-scope object. */
 export function renderScopeCardMd(
-  proposal: Pick<PendingExplorationProposal, 'revision' | 'init' | 'classification' | 'summary'>,
+  proposal: Pick<
+    PendingExplorationProposal,
+    'revision' | 'init' | 'classification' | 'summary'
+  >,
 ): string {
   const { summary } = proposal;
-  const lines: string[] = [planHeading(proposal.revision), '', `- **Origin:** ${code(summary.origin)}`];
+  const lines: string[] = [
+    planHeading(proposal.revision),
+    '',
+    `- **Origin:** ${code(summary.origin)}`,
+  ];
 
   const { upstream, downstream } = summary.depthIntent;
-  const sides = summary.direction === 'bidirectional' ? ['upstream', 'downstream'] as const : [summary.direction];
-  const sidesEqual = upstream.levels === downstream.levels && upstream.exactness === downstream.exactness;
-  const depth = summary.direction === 'bidirectional' && sidesEqual
-    ? `${depthValue(upstream.levels, upstream.exactness === 'exact')} each way`
-    : sides
-      .map(side => `${depthValue(summary.depthIntent[side].levels, summary.depthIntent[side].exactness === 'exact')} ${side}`)
-      .join(' · ');
-  const approximate = sides.some(side => summary.depthIntent[side].exactness === 'approximate' && summary.depthIntent[side].levels !== 'all' && summary.depthIntent[side].levels !== 0);
-  lines.push(`- **Depth:** ${depth}${approximate ? ' (≈ is not a limit)' : ''}`);
-  lines.push(`- **Scope:** ≈${plural(summary.hopCount, 'hop')} · ≈${plural(summary.scopeCount, 'node')}`);
+  const sides =
+    summary.direction === 'bidirectional'
+      ? (['upstream', 'downstream'] as const)
+      : [summary.direction];
+  const sidesEqual =
+    upstream.levels === downstream.levels &&
+    upstream.exactness === downstream.exactness;
+  const depth =
+    summary.direction === 'bidirectional' && sidesEqual
+      ? `${depthValue(upstream.levels, upstream.exactness === 'exact')} each way`
+      : sides
+          .map(
+            (side) =>
+              `${depthValue(summary.depthIntent[side].levels, summary.depthIntent[side].exactness === 'exact')} ${side}`,
+          )
+          .join(' · ');
+  const approximate = sides.some(
+    (side) =>
+      summary.depthIntent[side].exactness === 'approximate' &&
+      summary.depthIntent[side].levels !== 'all' &&
+      summary.depthIntent[side].levels !== 0,
+  );
+  lines.push(
+    `- **Depth:** ${depth}${approximate ? ' (≈ is not a limit)' : ''}`,
+  );
+  lines.push(
+    `- **Scope:** ≈${plural(summary.hopCount, 'hop')} · ≈${plural(summary.scopeCount, 'node')}`,
+  );
   lines.push(`- **Schemas:** ${schemasLine(summary, CARD_SCHEMA_NAMES)}`);
-  const columns = summary.analysisMode === 'ct' && summary.targetColumns?.length
-    ? ` — columns: ${summary.targetColumns.map(code).join(', ')}`
-    : '';
-  lines.push(`- **Tracing:** ${summary.analysisMode === 'ct' ? 'Column-Trace' : 'Blackboard'}${columns}`);
-  lines.push(`- **Analysis:** ${CLASSIFICATION_LABEL[proposal.classification]}`);
+  const columns =
+    summary.analysisMode === 'ct' && summary.targetColumns?.length
+      ? ` — columns: ${summary.targetColumns.map(code).join(', ')}`
+      : '';
+  lines.push(
+    `- **Tracing:** ${summary.analysisMode === 'ct' ? 'Column-Trace' : 'Blackboard'}${columns}`,
+  );
+  lines.push(
+    `- **Analysis:** ${CLASSIFICATION_LABEL[proposal.classification]}`,
+  );
 
   const objectGroups = objectsByType(summary);
   if (objectGroups.length > 0) {
     lines.push('- **Objects:**');
     for (const group of objectGroups) {
-      lines.push(`  - ${typeLabel(group.type, group.scope)} (${group.scope}): ${cappedNames(group.names, NAMES_PER_TYPE, group.omitted)}`);
+      lines.push(
+        `  - ${typeLabel(group.type, group.scope)} (${group.scope}): ${cappedNames(group.names, NAMES_PER_TYPE, group.omitted)}`,
+      );
     }
   }
 
   const filters = summary.activeFilters;
   const exclusions = summary.exclusions;
-  const namedExcluded = exclusions ? exclusions.named.count : filters.nodeIds.length;
+  const namedExcluded = exclusions
+    ? exclusions.named.count
+    : filters.nodeIds.length;
   const excluded = [
-    exclusions && exclusions.rules.length > 0 ? plural(exclusions.rules.length, 'filter rule') : '',
-    filters.types.length > 0 ? `types ${filters.types.map(code).join(', ')}` : '',
+    exclusions && exclusions.rules.length > 0
+      ? plural(exclusions.rules.length, 'filter rule')
+      : '',
+    filters.types.length > 0
+      ? `types ${filters.types.map(code).join(', ')}`
+      : '',
     namedExcluded > 0 ? `${plural(namedExcluded, 'object')} by name` : '',
   ].filter(Boolean);
   if (excluded.length > 0) lines.push(`- **Excluded:** ${excluded.join('; ')}`);
-  if (filters.passNodeIds.length > 0) lines.push(`- **Keep but skip:** ${filters.passNodeIds.map(code).join(', ')}`);
+  if (filters.passNodeIds.length > 0)
+    lines.push(
+      `- **Keep but skip:** ${filters.passNodeIds.map(code).join(', ')}`,
+    );
   return lines.join('\n');
 }
 
 /** Renders the **Show full plan** reply: the discovery summary (when the proposal has one) ahead of the plan, every in-scope object the stored proposal carries, and the excluded objects grouped by cause ({@link fullPlanReadAs}). */
 export function renderFullPlanMd(
-  proposal: Pick<PendingExplorationProposal, 'revision' | 'init' | 'classification' | 'summary' | 'discoverySummary'>,
+  proposal: Pick<
+    PendingExplorationProposal,
+    'revision' | 'init' | 'classification' | 'summary' | 'discoverySummary'
+  >,
 ): string {
-  const plan = renderPlanMd(proposal.summary, fullPlanReadAs(proposal.summary), proposal.revision, proposal.classification, PLAN_NAMES_PER_TYPE);
-  return proposal.discoverySummary ? `${proposal.discoverySummary}\n\n${plan}` : plan;
+  const plan = renderPlanMd(
+    proposal.summary,
+    fullPlanReadAs(proposal.summary),
+    proposal.revision,
+    proposal.classification,
+    PLAN_NAMES_PER_TYPE,
+  );
+  return proposal.discoverySummary
+    ? `${proposal.discoverySummary}\n\n${plan}`
+    : plan;
 }
 
 /** Interactive frame the native chat host renders around {@link renderScopeCardMd}'s output. */

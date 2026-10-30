@@ -16,7 +16,9 @@ export interface ModelConnectivity {
 }
 
 /** Computes the schema-level connectivity of the entire model. */
-export function summarizeModelConnectivity(model: DatabaseModel): ModelConnectivity {
+export function summarizeModelConnectivity(
+  model: DatabaseModel,
+): ModelConnectivity {
   const schemaUniverse = new Set<string>();
   const nodeSchema = new Map<string, string>();
 
@@ -35,8 +37,11 @@ export function summarizeModelConnectivity(model: DatabaseModel): ModelConnectiv
     if (src && tgt && src !== tgt) schemaLinks.push([src, tgt]);
   }
 
-  const components: SchemaComponent[] = groupByWeaklyConnected([...schemaUniverse], schemaLinks, (schema) => schema)
-    .map((schemas) => ({ schemas }));
+  const components: SchemaComponent[] = groupByWeaklyConnected(
+    [...schemaUniverse],
+    schemaLinks,
+    (schema) => schema,
+  ).map((schemas) => ({ schemas }));
   const isolatedSchemas = components
     .filter((c) => c.schemas.length === 1)
     .map((c) => c.schemas[0])
@@ -57,7 +62,9 @@ export function formatModelConnectivity(conn: ModelConnectivity): string {
   if (conn.isolatedSchemas.length > 0) {
     const shown = conn.isolatedSchemas.slice(0, ISOLATED_SCHEMA_NAME_CAP);
     const extra = conn.isolatedSchemas.length - shown.length;
-    lines.push(`  Isolated: ${shown.join(', ')}${extra > 0 ? ` … +${extra} more` : ''}`);
+    lines.push(
+      `  Isolated: ${shown.join(', ')}${extra > 0 ? ` … +${extra} more` : ''}`,
+    );
   }
   return lines.join('\n');
 }

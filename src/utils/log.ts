@@ -54,7 +54,7 @@ export class Logger {
   /** Creates a new Logger instance. */
   constructor(
     private readonly ch: LogOutputChannel,
-    private readonly cat: LogCategory
+    private readonly cat: LogCategory,
   ) {}
 
   /** Factory method to create a new Logger. */
@@ -63,13 +63,21 @@ export class Logger {
   }
 
   /** Logs an info-level message. */
-  info(msg: string): void { logInfo(this.ch, this.cat, msg); }
+  info(msg: string): void {
+    logInfo(this.ch, this.cat, msg);
+  }
   /** Logs a debug-level message. */
-  debug(msg: string): void { logDebug(this.ch, this.cat, msg); }
+  debug(msg: string): void {
+    logDebug(this.ch, this.cat, msg);
+  }
   /** Logs a warning-level message. */
-  warn(msg: string): void { logWarn(this.ch, this.cat, msg); }
+  warn(msg: string): void {
+    logWarn(this.ch, this.cat, msg);
+  }
   /** Logs an error-level message with full stack detail. */
-  error(op: string, err: unknown): void { logError(this.ch, this.cat, op, err); }
+  error(op: string, err: unknown): void {
+    logError(this.ch, this.cat, op, err);
+  }
 }
 
 /** Truncation cap for content text (prompts, questions, reasoning, SQL previews) — logging.md truncation table. */
@@ -85,13 +93,19 @@ export const LOG_TRUNC_LIST = 10;
 export const LOG_TRUNC_REJECTION = 1_000;
 
 /** Serializes an arbitrary value into a bounded, single-line diagnostic preview. */
-export function safeStringifyForLog(value: unknown, max = LOG_TRUNC_JSON): string {
+export function safeStringifyForLog(
+  value: unknown,
+  max = LOG_TRUNC_JSON,
+): string {
   try {
     const seen = new WeakSet();
     const serialized = JSON.stringify(value, (_key, candidate: unknown) => {
       if (typeof candidate === 'bigint') return `${candidate.toString()}n`;
       if (typeof candidate === 'string') {
-        return trunc(redactSecrets(candidate), Math.max(32, Math.floor(max / 2)));
+        return trunc(
+          redactSecrets(candidate),
+          Math.max(32, Math.floor(max / 2)),
+        );
       }
       if (candidate && typeof candidate === 'object') {
         if (seen.has(candidate)) return '[Circular]';
@@ -99,9 +113,9 @@ export function safeStringifyForLog(value: unknown, max = LOG_TRUNC_JSON): strin
       }
       return candidate;
     });
-    if (serialized !== undefined) return trunc(normalizeLogMessage(serialized), max);
-  } catch {
-  }
+    if (serialized !== undefined)
+      return trunc(normalizeLogMessage(serialized), max);
+  } catch {}
 
   try {
     return trunc(normalizeLogMessage(String(value)), max);
@@ -116,7 +130,9 @@ export function trunc(val: string | unknown[], max: number): string {
     if (val.length <= max) return val.join(', ');
     return `${val.slice(0, max).join(', ')} \u2026 [+${val.length - max} more]`;
   }
-  return val.length <= max ? val : `${val.slice(0, max)}\u2026 [+${val.length - max} chars]`;
+  return val.length <= max
+    ? val
+    : `${val.slice(0, max)}\u2026 [+${val.length - max} chars]`;
 }
 
 /** Normalizes a string for single-line display in the Output Channel. */
@@ -129,7 +145,12 @@ export function sanitizeForLog(s: string): string {
 }
 
 /** Logs a critical failure or unhandled exception. */
-function logError(ch: LogOutputChannel, cat: LogCategory, op: string, err: unknown): void {
+function logError(
+  ch: LogOutputChannel,
+  cat: LogCategory,
+  op: string,
+  err: unknown,
+): void {
   const detail = normalizeLogMessage(errorMessage(err));
   const msg = `FAILED: ${normalizeCategorizedLogMessage(cat, op)} — ${detail}`;
   ch.error(`[${cat}] ${msg}`);

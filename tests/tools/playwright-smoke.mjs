@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { chromium } from 'playwright-core';
-import { isIsolatedWorkbenchPage, validateGuiSession } from './gui-test-host.mjs';
+import {
+  isIsolatedWorkbenchPage,
+  validateGuiSession,
+} from './gui-test-host.mjs';
 import { loadTestEnv } from './load-test-env.mjs';
 import { loadCases } from '../cases/loadCases.cjs';
 
@@ -12,7 +15,9 @@ let session;
 try {
   session = validateGuiSession(JSON.parse(readFileSync(sessionFile, 'utf8')));
 } catch (error) {
-  throw new Error(`Start npm run test:gui:host first; its active session marker is required. ${error.message}`);
+  throw new Error(
+    `Start npm run test:gui:host first; its active session marker is required. ${error.message}`,
+  );
 }
 if (process.env.PLAYWRIGHT_CDP_URL) {
   assert.equal(
@@ -24,33 +29,57 @@ if (process.env.PLAYWRIGHT_CDP_URL) {
 try {
   process.kill(session.pid, 0);
 } catch {
-  throw new Error('The isolated GUI test host recorded in the session marker is no longer running.');
+  throw new Error(
+    'The isolated GUI test host recorded in the session marker is no longer running.',
+  );
 }
 
-const browser = await chromium.connectOverCDP(session.endpoint, { timeout: 10_000 });
+const browser = await chromium.connectOverCDP(session.endpoint, {
+  timeout: 10_000,
+});
 try {
   let workbench;
   const workbenchDeadline = Date.now() + 15_000;
   while (!workbench && Date.now() < workbenchDeadline) {
-    for (const page of browser.contexts().flatMap((context) => context.pages())) {
+    for (const page of browser
+      .contexts()
+      .flatMap((context) => context.pages())) {
       const title = await page.title().catch(() => '');
-      if (isIsolatedWorkbenchPage({ title, url: page.url() }, session, resolve('.vscode-test'))) {
+      if (
+        isIsolatedWorkbenchPage(
+          { title, url: page.url() },
+          session,
+          resolve('.vscode-test'),
+        )
+      ) {
         workbench = page;
         break;
       }
     }
-    if (!workbench) await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+    if (!workbench)
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
   }
   assert.ok(
     workbench,
     `The CDP endpoint did not expose the isolated ${session.workspaceName} VS Code workbench.`,
   );
-  await workbench.locator('.monaco-workbench').waitFor({ state: 'visible', timeout: 15_000 });
-  await workbench.getByRole('tab', { name: 'Data Lineage', exact: true }).waitFor({ state: 'visible', timeout: 15_000 });
+  await workbench
+    .locator('.monaco-workbench')
+    .waitFor({ state: 'visible', timeout: 15_000 });
+  await workbench
+    .getByRole('tab', { name: 'Data Lineage', exact: true })
+    .waitFor({ state: 'visible', timeout: 15_000 });
   const rows = loadCases('playwright');
-  assert.ok(rows.length > 0, 'tests/cases/lineage-cases.yaml has no playwright row.');
+  assert.ok(
+    rows.length > 0,
+    'tests/cases/lineage-cases.yaml has no playwright row.',
+  );
   for (const row of rows) {
-    assert.equal(row.expect?.graph, true, `${row.id} expects a rendered graph.`);
+    assert.equal(
+      row.expect?.graph,
+      true,
+      `${row.id} expects a rendered graph.`,
+    );
     const command = row.command;
     assert.equal(typeof command, 'string', `${row.id} needs a command.`);
     const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
@@ -73,14 +102,23 @@ try {
     let graphVisible = false;
     while (Date.now() < deadline && !graphVisible) {
       for (const frame of workbench.frames()) {
-        if (await frame.locator('.react-flow__viewport').isVisible().catch(() => false)) {
+        if (
+          await frame
+            .locator('.react-flow__viewport')
+            .isVisible()
+            .catch(() => false)
+        ) {
           graphVisible = true;
           break;
         }
       }
-      if (!graphVisible) await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+      if (!graphVisible)
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
     }
-    assert.ok(graphVisible, `${row.id}: the command must render a React Flow graph.`);
+    assert.ok(
+      graphVisible,
+      `${row.id}: the command must render a React Flow graph.`,
+    );
     console.log(`PASS: ${row.id}`);
   }
 } finally {

@@ -4,19 +4,30 @@ import { defineConfig } from 'vitest/config';
 
 // `vscode` only exists in the extension host; alias it to a stub so source files
 // that import it resolve under unit tests.
-const vscodeStub = fileURLToPath(new URL('./tests/stubs/vscode.ts', import.meta.url));
+const vscodeStub = fileURLToPath(
+  new URL('./tests/stubs/vscode.ts', import.meta.url),
+);
 // Its CommonJS build requires `vscode` directly, past the alias above.
-const vscodeAzureAuthStub = fileURLToPath(new URL('./tests/stubs/vscodeAzureAuth.ts', import.meta.url));
+const vscodeAzureAuthStub = fileURLToPath(
+  new URL('./tests/stubs/vscodeAzureAuth.ts', import.meta.url),
+);
 
 export default defineConfig({
   plugins: [react()],
-  resolve: { alias: { vscode: vscodeStub, '@microsoft/vscode-azext-azureauth': vscodeAzureAuthStub } },
+  resolve: {
+    alias: {
+      vscode: vscodeStub,
+      '@microsoft/vscode-azext-azureauth': vscodeAzureAuthStub,
+    },
+  },
   define: {
     __APP_VERSION__: JSON.stringify('test'),
   },
   test: {
     globals: true,
-    setupFiles: [fileURLToPath(new URL('./tests/stubs/regexWorker.ts', import.meta.url))],
+    setupFiles: [
+      fileURLToPath(new URL('./tests/stubs/regexWorker.ts', import.meta.url)),
+    ],
     environment: 'node',
     testTimeout: 10_000,
     // The default is availableParallelism - 1 (17 workers on the development host). Parallel
@@ -47,11 +58,36 @@ export default defineConfig({
       // catch. `graphBuilder.ts` sits far below its siblings — that floor records the gap
       // rather than excusing it, and exists to stop it widening.
       thresholds: {
-        '**/src/engine/graphAnalysis.ts': { statements: 98, branches: 88, functions: 100, lines: 100 },
-        '**/src/engine/sqlBodyParser.ts': { statements: 88, branches: 81, functions: 100, lines: 94 },
-        '**/src/engine/graphBuilder.ts': { statements: 84, branches: 70, functions: 85, lines: 87 },
-        '**/src/engine/shared/sqlRegex.ts': { statements: 100, branches: 100, functions: 100, lines: 100 },
-        '**/src/engine/shared/nodeIdResolution.ts': { statements: 92, branches: 75, functions: 100, lines: 100 },
+        '**/src/engine/graphAnalysis.ts': {
+          statements: 98,
+          branches: 88,
+          functions: 100,
+          lines: 100,
+        },
+        '**/src/engine/sqlBodyParser.ts': {
+          statements: 88,
+          branches: 81,
+          functions: 100,
+          lines: 94,
+        },
+        '**/src/engine/graphBuilder.ts': {
+          statements: 84,
+          branches: 70,
+          functions: 85,
+          lines: 87,
+        },
+        '**/src/engine/shared/sqlRegex.ts': {
+          statements: 100,
+          branches: 100,
+          functions: 100,
+          lines: 100,
+        },
+        '**/src/engine/shared/nodeIdResolution.ts': {
+          statements: 92,
+          branches: 75,
+          functions: 100,
+          lines: 100,
+        },
       },
     },
   },

@@ -8,7 +8,6 @@ import { ColumnTable } from './ColumnTable';
 import { ForeignKeysSection } from './ForeignKeysSection';
 import { StatsSection } from './StatsSection';
 
-
 /** Represents the lifecycle and data state of table statistics profiling. */
 export type TableStatsState =
   | { phase: 'idle' }
@@ -69,12 +68,18 @@ export const TableDetailPanel = memo(function TableDetailPanel({
   compactColumns,
 }: TableDetailPanelProps) {
   const typeIcon = TYPE_COLORS[objectType as ObjectType]?.icon ?? '■';
-  const typeLabel = externalType === 'file' ? 'FILE SOURCE'
-    : externalType === 'db' ? 'CROSS-DATABASE'
-    : objectType === 'external' ? 'EXTERNAL TABLE'
-    : objectType === 'view' ? 'VIEW'
-    : objectType === 'function' ? 'FUNCTION'
-    : 'TABLE';
+  const typeLabel =
+    externalType === 'file'
+      ? 'FILE SOURCE'
+      : externalType === 'db'
+        ? 'CROSS-DATABASE'
+        : objectType === 'external'
+          ? 'EXTERNAL TABLE'
+          : objectType === 'view'
+            ? 'VIEW'
+            : objectType === 'function'
+              ? 'FUNCTION'
+              : 'TABLE';
   const isVirtualExt = externalType === 'file' || externalType === 'db';
 
   return (
@@ -90,7 +95,15 @@ export const TableDetailPanel = memo(function TableDetailPanel({
         position: 'relative',
       }}
     >
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+      <div
+        style={{
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          minWidth: 0,
+        }}
+      >
         <div
           style={{
             display: 'flex',
@@ -102,15 +115,36 @@ export const TableDetailPanel = memo(function TableDetailPanel({
             flexShrink: 0,
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
-            <span style={{ color: 'var(--ln-fg-muted)', fontSize: 12 }}>{typeIcon}</span>
-            <Tooltip content={schema ? `[${schema}].[${objectName}]` : objectName} asChild>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              overflow: 'hidden',
+            }}
+          >
+            <span style={{ color: 'var(--ln-fg-muted)', fontSize: 12 }}>
+              {typeIcon}
+            </span>
+            <Tooltip
+              content={schema ? `[${schema}].[${objectName}]` : objectName}
+              asChild
+            >
               <span
                 className="font-mono text-xs truncate"
-                style={{ color: 'var(--ln-sidebar-header-fg)', fontWeight: 600 }}
+                style={{
+                  color: 'var(--ln-sidebar-header-fg)',
+                  fontWeight: 600,
+                }}
               >
-              {schema ? <>[{schema}].[{objectName}]</> : objectName}
-            </span>
+                {schema ? (
+                  <>
+                    [{schema}].[{objectName}]
+                  </>
+                ) : (
+                  objectName
+                )}
+              </span>
             </Tooltip>
           </div>
           <Tooltip content="Close">
@@ -118,29 +152,51 @@ export const TableDetailPanel = memo(function TableDetailPanel({
               onClick={onClose}
               aria-label="Close detail panel"
               className="opacity-60 hover:opacity-100 cursor-pointer shrink-0 ml-2"
-              style={{ color: 'var(--ln-fg)', background: 'none', border: 'none', padding: 0 }}
+              style={{
+                color: 'var(--ln-fg)',
+                background: 'none',
+                border: 'none',
+                padding: 0,
+              }}
             >
-            <CloseIcon className="w-3.5 h-3.5" />
-          </button>
+              <CloseIcon className="w-3.5 h-3.5" />
+            </button>
           </Tooltip>
         </div>
 
-        <div style={{ flex: 1, overflow: 'auto', padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div className="ln-section-label">
-            {typeLabel}
-          </div>
+        <div
+          style={{
+            flex: 1,
+            overflow: 'auto',
+            padding: '8px 12px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 12,
+          }}
+        >
+          <div className="ln-section-label">{typeLabel}</div>
 
-          <ColumnTable columns={columns} isVirtualExt={isVirtualExt} findQuery={findQuery} compact={compactColumns} />
+          <ColumnTable
+            columns={columns}
+            isVirtualExt={isVirtualExt}
+            findQuery={findQuery}
+            compact={compactColumns}
+          />
 
-          {fks.length > 0 && <ForeignKeysSection fks={fks} findQuery={findQuery} />}
-
-          {isDbMode && statsEnabled && !isVirtualExt && !(excludeExternalTables && objectType === 'external') && (
-            <StatsSection
-              statsState={statsState}
-              onRequestStats={onRequestStats}
-              standardModeEnabled={standardModeEnabled}
-            />
+          {fks.length > 0 && (
+            <ForeignKeysSection fks={fks} findQuery={findQuery} />
           )}
+
+          {isDbMode &&
+            statsEnabled &&
+            !isVirtualExt &&
+            !(excludeExternalTables && objectType === 'external') && (
+              <StatsSection
+                statsState={statsState}
+                onRequestStats={onRequestStats}
+                standardModeEnabled={standardModeEnabled}
+              />
+            )}
         </div>
       </div>
     </div>

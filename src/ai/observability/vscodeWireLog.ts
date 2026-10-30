@@ -3,7 +3,9 @@ import * as vscode from 'vscode';
 import { safeTraceStringify, type WireMessage, type WirePart } from './wireLog';
 
 /** Normalizes one converted message, preserving the role integer verbatim. */
-export function toWireMessage(message: vscode.LanguageModelChatMessage): WireMessage {
+export function toWireMessage(
+  message: vscode.LanguageModelChatMessage,
+): WireMessage {
   return { role: message.role, parts: message.content.map(toWirePart) };
 }
 
@@ -13,10 +15,19 @@ export function toWirePart(part: unknown): WirePart {
     return { type: 'text', value: part.value };
   }
   if (part instanceof vscode.LanguageModelToolCallPart) {
-    return { type: 'tool-call', callId: part.callId, name: part.name, input: part.input };
+    return {
+      type: 'tool-call',
+      callId: part.callId,
+      name: part.name,
+      input: part.input,
+    };
   }
   if (part instanceof vscode.LanguageModelToolResultPart) {
-    return { type: 'tool-result', callId: part.callId, content: part.content.map(toWirePart) };
+    return {
+      type: 'tool-result',
+      callId: part.callId,
+      content: part.content.map(toWirePart),
+    };
   }
   return { type: 'other', json: safeTraceStringify(part) };
 }

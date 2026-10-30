@@ -5,7 +5,13 @@
  */
 
 import * as vscode from 'vscode';
-import { getConfiguredAuthProviderId, getConfiguredAzureEnv, getSessionFromVSCode, VSCodeAzureSubscriptionProvider, type AzureTenant } from '@microsoft/vscode-azext-azureauth';
+import {
+  getConfiguredAuthProviderId,
+  getConfiguredAzureEnv,
+  getSessionFromVSCode,
+  VSCodeAzureSubscriptionProvider,
+  type AzureTenant,
+} from '@microsoft/vscode-azext-azureauth';
 import type { Logger } from '../../utils/log';
 import { MicrosoftSignInError } from './dbSession';
 import { errorMessage } from '../../utils/errorMessage';
@@ -15,7 +21,10 @@ const PUBLIC_SQL_RESOURCE = 'https://database.windows.net/';
 
 /** Azure SQL resource of the Microsoft cloud VS Code signs in to; the library requests its `.default` scope. */
 function sqlResource(): string {
-  const suffix = getConfiguredAzureEnv().sqlServerHostnameSuffix?.replace(/^\./, '');
+  const suffix = getConfiguredAzureEnv().sqlServerHostnameSuffix?.replace(
+    /^\./,
+    '',
+  );
   return suffix ? `https://${suffix}/` : PUBLIC_SQL_RESOURCE;
 }
 
@@ -42,30 +51,49 @@ export async function signInForSql(
   } catch (err) {
     throw new MicrosoftSignInError(errorMessage(err));
   }
-  if (!session) throw new MicrosoftSignInError('no Microsoft account was signed in');
+  if (!session)
+    throw new MicrosoftSignInError('no Microsoft account was signed in');
   return session;
 }
 
 /** Lets the user choose the Microsoft account in VS Code's own account picker, which also offers signing in to another account. */
 export async function pickAccount(): Promise<vscode.AuthenticationSessionAccountInformation> {
-  return (await signInForSql(undefined, { createIfNone: true, clearSessionPreference: true })).account;
+  return (
+    await signInForSql(undefined, {
+      createIfNone: true,
+      clearSessionPreference: true,
+    })
+  ).account;
 }
 
-async function savedAccount(accountId: string): Promise<vscode.AuthenticationSessionAccountInformation> {
-  const accounts = await vscode.authentication.getAccounts(getConfiguredAuthProviderId());
+async function savedAccount(
+  accountId: string,
+): Promise<vscode.AuthenticationSessionAccountInformation> {
+  const accounts = await vscode.authentication.getAccounts(
+    getConfiguredAuthProviderId(),
+  );
   const account = accounts.find((a) => a.id === accountId);
-  if (!account) throw new MicrosoftSignInError('the Microsoft account saved with this connection is not signed in to VS Code');
+  if (!account)
+    throw new MicrosoftSignInError(
+      'the Microsoft account saved with this connection is not signed in to VS Code',
+    );
   return account;
 }
 
 /** Lists the directories an account can use, sorted by name. */
-export async function listTenants(account: vscode.AuthenticationSessionAccountInformation): Promise<EntraTenant[]> {
+export async function listTenants(
+  account: vscode.AuthenticationSessionAccountInformation,
+): Promise<EntraTenant[]> {
   try {
     provider ??= new VSCodeAzureSubscriptionProvider();
     const tenants: AzureTenant[] = await provider.getTenants(account);
     return tenants
       .filter((t): t is AzureTenant & { tenantId: string } => !!t.tenantId)
-      .map((t) => ({ tenantId: t.tenantId, displayName: t.displayName || t.tenantId, ...(t.defaultDomain ? { defaultDomain: t.defaultDomain } : {}) }))
+      .map((t) => ({
+        tenantId: t.tenantId,
+        displayName: t.displayName || t.tenantId,
+        ...(t.defaultDomain ? { defaultDomain: t.defaultDomain } : {}),
+      }))
       .sort((a, b) => a.displayName.localeCompare(b.displayName));
   } catch {
     return [];
@@ -73,9 +101,14 @@ export async function listTenants(account: vscode.AuthenticationSessionAccountIn
 }
 
 /** Picks the home directory: the account's home directory when it is listed, otherwise the first listed one. */
-export function defaultTenantId(account: vscode.AuthenticationSessionAccountInformation, tenants: readonly EntraTenant[]): string | undefined {
+export function defaultTenantId(
+  account: vscode.AuthenticationSessionAccountInformation,
+  tenants: readonly EntraTenant[],
+): string | undefined {
   const home = account.id.includes('.') ? account.id.split('.')[1] : undefined;
-  return tenants.find((t) => t.tenantId === home)?.tenantId ?? tenants[0]?.tenantId;
+  return (
+    tenants.find((t) => t.tenantId === home)?.tenantId ?? tenants[0]?.tenantId
+  );
 }
 
 /** Gets an Azure SQL access token for a connection. */
@@ -84,12 +117,21 @@ export async function acquireSqlToken(
   logger: Pick<Logger, 'info' | 'debug'>,
 ): Promise<string> {
   const { tenantId } = connection;
-  const account = connection.accountId ? await savedAccount(connection.accountId) : undefined;
-  let session = await signInForSql(tenantId, { createIfNone: true, ...(account ? { account } : {}) });
+  const account = connection.accountId
+    ? await savedAccount(connection.accountId)
+    : undefined;
+  let session = await signInForSql(tenantId, {
+    createIfNone: true,
+    ...(account ? { account } : {}),
+  });
   let used = tenantId;
   if (!tenantId) {
     used = defaultTenantId(session.account, await listTenants(session.account));
-    if (used) session = await signInForSql(used, { createIfNone: true, account: session.account });
+    if (used)
+      session = await signInForSql(used, {
+        createIfNone: true,
+        account: session.account,
+      });
   }
   logger.info('Entra sign-in completed');
   logger.debug(`Entra sign-in: tenant=${used ?? 'account default'}`);

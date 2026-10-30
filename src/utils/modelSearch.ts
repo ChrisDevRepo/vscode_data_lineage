@@ -1,5 +1,9 @@
 import type { ObjectType, ColumnDef } from '../engine/types';
-import { SQL_CODE, SQL_LITERAL, sqlCommentMask } from '../engine/shared/sqlSpans';
+import {
+  SQL_CODE,
+  SQL_LITERAL,
+  sqlCommentMask,
+} from '../engine/shared/sqlSpans';
 
 /** Node fields required by catalog, DDL, and column search. */
 export interface SearchableNode {
@@ -80,13 +84,20 @@ export function compileSearchRegex(pattern: string): SearchRegexResult {
   try {
     regex = new RegExp(pattern, SEARCH_REGEX_FLAGS);
   } catch (err) {
-    return { ok: false, reason: 'syntax', error: err instanceof SyntaxError ? err : new SyntaxError(String(err)) };
+    return {
+      ok: false,
+      reason: 'syntax',
+      error: err instanceof SyntaxError ? err : new SyntaxError(String(err)),
+    };
   }
   return { ok: true, regex };
 }
 
 /** Names the edit that fixes a pattern {@link compileSearchRegex} refused. */
-export function regexRejectHint(pattern: string, rejection: SearchRegexRejection): string {
+export function regexRejectHint(
+  pattern: string,
+  rejection: SearchRegexRejection,
+): string {
   const message = rejection.error.message;
   if (/\(\?P</.test(pattern) && message.includes('Invalid group')) {
     return 'Rename the named group from "(?P<name>...)" to "(?<name>...)" — that is the JavaScript syntax.';
@@ -138,32 +149,40 @@ export function searchCatalog(
 ): SearchableNode[] {
   if (query.length < 1) return [];
   let filtered = nodes;
-  if (types && types.size > 0) filtered = filtered.filter(n => types.has(n.type));
-  if (schemas && schemas.size > 0) filtered = filtered.filter(n => schemas.has(n.schema));
+  if (types && types.size > 0)
+    filtered = filtered.filter((n) => types.has(n.type));
+  if (schemas && schemas.size > 0)
+    filtered = filtered.filter((n) => schemas.has(n.schema));
 
   if (mode === 'regex') {
     const compiled = compileSearchRegex(query);
     if (!compiled.ok) return [];
     const re = compiled.regex;
     return filtered
-      .filter(n => re.test(n.name) || re.test(`${n.schema}.${n.name}`))
+      .filter((n) => re.test(n.name) || re.test(`${n.schema}.${n.name}`))
       .slice(0, limit);
   }
 
   const lower = query.toLowerCase();
   const matches = filtered
-    .map(n => ({ node: n, nameLower: n.name.toLowerCase(), idLower: n.id.toLowerCase() }))
-    .filter(m => m.nameLower.includes(lower) || m.idLower.includes(lower));
+    .map((n) => ({
+      node: n,
+      nameLower: n.name.toLowerCase(),
+      idLower: n.id.toLowerCase(),
+    }))
+    .filter((m) => m.nameLower.includes(lower) || m.idLower.includes(lower));
 
   matches.sort((a, b) => {
-    const aStarts = a.nameLower.startsWith(lower) || a.idLower.startsWith(lower);
-    const bStarts = b.nameLower.startsWith(lower) || b.idLower.startsWith(lower);
+    const aStarts =
+      a.nameLower.startsWith(lower) || a.idLower.startsWith(lower);
+    const bStarts =
+      b.nameLower.startsWith(lower) || b.idLower.startsWith(lower);
     if (aStarts && !bStarts) return -1;
     if (!aStarts && bStarts) return 1;
     return a.node.name.localeCompare(b.node.name);
   });
 
-  return matches.slice(0, limit).map(m => m.node);
+  return matches.slice(0, limit).map((m) => m.node);
 }
 
 /** Searches the SQL DDL body scripts for a specific term. */
@@ -180,7 +199,8 @@ export function searchBodyScripts(
   const lineCap = regex === null ? SIDEBAR_LINE_CAP : Number.POSITIVE_INFINITY;
   const cap = limit ?? Number.POSITIVE_INFINITY;
   let filtered = nodes;
-  if (types && types.size > 0) filtered = filtered.filter(n => n.bodyScript && types.has(n.type));
+  if (types && types.size > 0)
+    filtered = filtered.filter((n) => n.bodyScript && types.has(n.type));
 
   const scanner = regex === null ? null : globalScanner(regex);
 
@@ -233,14 +253,24 @@ export function scanBodyMatches(
   for (const node of nodes) {
     const body = node.bodyScript;
     if (!body || (types && types.size > 0 && !types.has(node.type))) continue;
-    const matchAt = bodyMatcher(node, body, DEFAULT_SNIPPET_CONTEXT_LINES, Number.POSITIVE_INFINITY);
+    const matchAt = bodyMatcher(
+      node,
+      body,
+      DEFAULT_SNIPPET_CONTEXT_LINES,
+      Number.POSITIVE_INFINITY,
+    );
     const before = total;
     const longLines: OversizedLineHit[] = [];
-    forEachLineMatch(scanner, body, (index, text) => {
-      total++;
-      building &&= admits(total);
-      if (building) matches.push(matchAt(index, text));
-    }, hit => longLines.push(hit));
+    forEachLineMatch(
+      scanner,
+      body,
+      (index, text) => {
+        total++;
+        building &&= admits(total);
+        if (building) matches.push(matchAt(index, text));
+      },
+      (hit) => longLines.push(hit),
+    );
     if (total > before) objects++;
     if (longLines.length > 0) oversized.push({ node, lines: longLines });
   }
@@ -265,9 +295,24 @@ function bodyMatcher(
       lineStarts = buildLineStarts(lines);
       commentMask = sqlCommentMask(body);
       deadMask = markDeadLines(lines, lineStarts, commentMask);
-      predicateMask = deriveEnclosingPredicates(lines, lineStarts, sqlCommentMask(body, { markLiterals: true }));
+      predicateMask = deriveEnclosingPredicates(
+        lines,
+        lineStarts,
+        sqlCommentMask(body, { markLiterals: true }),
+      );
     }
-    return makeMatch(node, lines, lineStarts, index, matchText, contextLines, lineCap, commentMask, deadMask, predicateMask);
+    return makeMatch(
+      node,
+      lines,
+      lineStarts,
+      index,
+      matchText,
+      contextLines,
+      lineCap,
+      commentMask,
+      deadMask,
+      predicateMask,
+    );
   };
 }
 
@@ -293,7 +338,10 @@ function forEachLineMatch(
     scanner.lastIndex = 0;
     let hit: RegExpExecArray | null;
     while ((hit = scanner.exec(segment)) !== null) {
-      if (hit[0].length === 0) { scanner.lastIndex++; continue; }
+      if (hit[0].length === 0) {
+        scanner.lastIndex++;
+        continue;
+      }
       if (oversized) {
         onOversized?.({ line, length, match_offset: hit.index });
         break;
@@ -322,7 +370,8 @@ function lineIndexAt(lineStarts: number[], index: number): number {
   let high = lineStarts.length - 1;
   while (low < high) {
     const mid = (low + high + 1) >> 1;
-    if (lineStarts[mid] <= index) low = mid; else high = mid - 1;
+    if (lineStarts[mid] <= index) low = mid;
+    else high = mid - 1;
   }
   return low;
 }
@@ -343,9 +392,16 @@ function makeMatch(
   const matchLine = lineIndexAt(lineStarts, index);
   const match: BodyMatch = {
     node,
-    line:    matchLine + 1,
-    text:    lines[matchLine].trimEnd(),
-    snippet: buildSnippet(lines, matchLine, matchText, contextLines, lineCap, deadLine),
+    line: matchLine + 1,
+    text: lines[matchLine].trimEnd(),
+    snippet: buildSnippet(
+      lines,
+      matchLine,
+      matchText,
+      contextLines,
+      lineCap,
+      deadLine,
+    ),
   };
   if (commentMask[index] !== SQL_CODE) match.commented = true;
   const predicate = predicateAt[matchLine];
@@ -357,7 +413,8 @@ function makeMatch(
 const IF_WHILE_LINE_RE = /^(IF|WHILE)\b(.*)$/i;
 
 /** Every block-opening `BEGIN`, block-closing `END` or `CASE` keyword on a line, live-code only — see {@link deriveEnclosingPredicates}. `BEGIN TRAN[SACTION]`, `BEGIN DISTRIBUTED TRANSACTION` and `BEGIN DIALOG`/`CONVERSATION` start statements no `END` closes, and `END CONVERSATION` closes no block, so none of them moves the frame stack. */
-const BLOCK_KEYWORD_RE = /\b(BEGIN(?!\s+(?:TRAN|TRANSACTION|DISTRIBUTED|DIALOG|CONVERSATION)\b)|END(?!\s+CONVERSATION\b)|CASE)\b/gi;
+const BLOCK_KEYWORD_RE =
+  /\b(BEGIN(?!\s+(?:TRAN|TRANSACTION|DISTRIBUTED|DIALOG|CONVERSATION)\b)|END(?!\s+CONVERSATION\b)|CASE)\b/gi;
 
 /** Derives, per line, the innermost `IF`/`WHILE` condition governing that line. */
 function deriveEnclosingPredicates(
@@ -375,7 +432,8 @@ function deriveEnclosingPredicates(
     const line = lines[i];
     const base = lineStarts[i];
     let live = '';
-    for (let c = 0; c < line.length; c++) live += commentMask[base + c] !== SQL_CODE ? ' ' : line[c];
+    for (let c = 0; c < line.length; c++)
+      live += commentMask[base + c] !== SQL_CODE ? ' ' : line[c];
     const trimmed = live.trim();
     const isLive = trimmed.length > 0;
 
@@ -386,7 +444,8 @@ function deriveEnclosingPredicates(
       let sourcePredicate = '';
       for (let c = 0; c < end; c++) {
         const span = commentMask[base + c];
-        sourcePredicate += span === SQL_CODE || span === SQL_LITERAL ? line[c] : ' ';
+        sourcePredicate +=
+          span === SQL_CODE || span === SQL_LITERAL ? line[c] : ' ';
       }
       ownPredicate = sourcePredicate.trim();
     }
@@ -400,16 +459,26 @@ function deriveEnclosingPredicates(
       if (keyword === 'CASE') {
         stack.push(undefined);
       } else if (keyword === 'BEGIN') {
-        if (ownPredicate !== undefined && !ownConsumed) { stack.push(ownPredicate); ownConsumed = true; }
-        else if (pending !== undefined && !pendingConsumed) { stack.push(pending); pendingConsumed = true; }
-        else stack.push(undefined);
+        if (ownPredicate !== undefined && !ownConsumed) {
+          stack.push(ownPredicate);
+          ownConsumed = true;
+        } else if (pending !== undefined && !pendingConsumed) {
+          stack.push(pending);
+          pendingConsumed = true;
+        } else stack.push(undefined);
       } else if (stack.length > 0) {
         stack.pop();
       }
     }
 
     let applicable = stack.length > 0 ? stack[stack.length - 1] : undefined;
-    if (applicable === undefined && !ownPredicate && pending !== undefined && !pendingConsumed && isLive) {
+    if (
+      applicable === undefined &&
+      !ownPredicate &&
+      pending !== undefined &&
+      !pendingConsumed &&
+      isLive
+    ) {
       applicable = pending;
     }
     result[i] = applicable;
@@ -426,9 +495,17 @@ function deriveEnclosingPredicates(
 }
 
 /** Storage objects whose columns the Detail Search sidebar groups (views are found there by body search). */
-const STORAGE_COLUMN_OWNERS: ReadonlySet<ObjectType> = new Set<ObjectType>(['table', 'external']);
+const STORAGE_COLUMN_OWNERS: ReadonlySet<ObjectType> = new Set<ObjectType>([
+  'table',
+  'external',
+]);
 /** Every object type that owns columns in metadata: storage objects, views and table functions. */
-export const ALL_COLUMN_OWNERS: ReadonlySet<ObjectType> = new Set<ObjectType>(['table', 'external', 'view', 'function']);
+export const ALL_COLUMN_OWNERS: ReadonlySet<ObjectType> = new Set<ObjectType>([
+  'table',
+  'external',
+  'view',
+  'function',
+]);
 
 /** Searches for nodes by matching column names. */
 export function searchColumns(
@@ -443,9 +520,14 @@ export function searchColumns(
   for (const node of nodes) {
     if (!ownerTypes.has(node.type)) continue;
     if (!node.columns?.length) continue;
-    const matching = node.columns.filter(c => c.name.toLowerCase().includes(lower));
+    const matching = node.columns.filter((c) =>
+      c.name.toLowerCase().includes(lower),
+    );
     if (matching.length === 0) continue;
-    const snippet = matching.slice(0, 3).map(c => `${c.name} (${c.type})`).join(', ');
+    const snippet = matching
+      .slice(0, 3)
+      .map((c) => `${c.name} (${c.type})`)
+      .join(', ');
     matches.push({ node, snippet });
     if (matches.length >= limit) break;
   }
@@ -469,22 +551,33 @@ function buildSnippet(
   const termLower = matchText.toLowerCase();
   const mark = (lineIndex: number, rendered: string): string =>
     deadLine[lineIndex] === 1 ? `${DEAD_LINE_PREFIX}${rendered}` : rendered;
-  return lines.slice(start, end).map((l, offset) => {
-    const lineIndex = start + offset;
-    const trimmed = l.trimEnd();
-    if (trimmed.length <= lineCap) return mark(lineIndex, trimmed);
-    const matchPos = termLower.length > 0 ? trimmed.toLowerCase().indexOf(termLower) : -1;
-    if (matchPos < 0) return mark(lineIndex, trimmed);
-    const windowStart = Math.max(0, matchPos - SIDEBAR_WINDOW_LEAD);
-    const windowEnd = Math.min(trimmed.length, windowStart + lineCap);
-    return mark(lineIndex, (windowStart > 0 ? '\u2026' : '') +
-      trimmed.slice(windowStart, windowEnd) +
-      (windowEnd < trimmed.length ? '\u2026' : ''));
-  }).join('\n');
+  return lines
+    .slice(start, end)
+    .map((l, offset) => {
+      const lineIndex = start + offset;
+      const trimmed = l.trimEnd();
+      if (trimmed.length <= lineCap) return mark(lineIndex, trimmed);
+      const matchPos =
+        termLower.length > 0 ? trimmed.toLowerCase().indexOf(termLower) : -1;
+      if (matchPos < 0) return mark(lineIndex, trimmed);
+      const windowStart = Math.max(0, matchPos - SIDEBAR_WINDOW_LEAD);
+      const windowEnd = Math.min(trimmed.length, windowStart + lineCap);
+      return mark(
+        lineIndex,
+        (windowStart > 0 ? '\u2026' : '') +
+          trimmed.slice(windowStart, windowEnd) +
+          (windowEnd < trimmed.length ? '\u2026' : ''),
+      );
+    })
+    .join('\n');
 }
 
 /** Projects the per-character comment mask onto whole lines. */
-function markDeadLines(lines: string[], lineStarts: number[], commentMask: Uint8Array): Uint8Array {
+function markDeadLines(
+  lines: string[],
+  lineStarts: number[],
+  commentMask: Uint8Array,
+): Uint8Array {
   const dead = new Uint8Array(lines.length);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -495,7 +588,10 @@ function markDeadLines(lines: string[], lineStarts: number[], commentMask: Uint8
       const ch = line.charCodeAt(c);
       if (ch === 32 || ch === 9 || ch === 13) continue;
       content = true;
-      if (commentMask[base + c] === SQL_CODE) { allInComment = false; break; }
+      if (commentMask[base + c] === SQL_CODE) {
+        allInComment = false;
+        break;
+      }
     }
     dead[i] = content && allInComment ? 1 : 0;
   }

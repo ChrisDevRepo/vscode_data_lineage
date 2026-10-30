@@ -18,33 +18,57 @@ export async function migrateFromWorkspaceState(
   onProjectsDropped?: (report: ProjectStoreDropReport) => void,
 ): Promise<void> {
   const logger = Logger.create(outputChannel, 'Project');
-  const sourceType = context.workspaceState.get<'dacpac' | 'database'>('lastSourceType');
+  const sourceType = context.workspaceState.get<'dacpac' | 'database'>(
+    'lastSourceType',
+  );
   if (!sourceType) return;
 
   type LegacyConnection =
     | { type: 'dacpac'; path: string; displayName: string; schemas: string[] }
-    | { type: 'database'; connectionInfo: ReturnType<typeof stripSensitiveFields>; sourceName: string; schemas: string[] };
+    | {
+        type: 'database';
+        connectionInfo: ReturnType<typeof stripSensitiveFields>;
+        sourceName: string;
+        schemas: string[];
+      };
   let connection: LegacyConnection | undefined;
 
   if (sourceType === 'dacpac') {
     const dacpacPath = context.workspaceState.get<string>('lastDacpacPath');
     const dacpacName = context.workspaceState.get<string>('lastDacpacName');
     if (dacpacPath && dacpacName) {
-      connection = { type: 'dacpac', path: dacpacPath, displayName: dacpacName, schemas: [] };
+      connection = {
+        type: 'dacpac',
+        path: dacpacPath,
+        displayName: dacpacName,
+        schemas: [],
+      };
     }
   } else if (sourceType === 'database') {
     const sourceName = context.workspaceState.get<string>('lastDbSourceName');
-    const connectionInfo = context.workspaceState.get<Record<string, unknown>>('lastDbConnectionInfo');
+    const connectionInfo = context.workspaceState.get<Record<string, unknown>>(
+      'lastDbConnectionInfo',
+    );
     if (sourceName && connectionInfo) {
       try {
-        connection = { type: 'database', connectionInfo: stripSensitiveFields(connectionInfo), sourceName, schemas: [] };
+        connection = {
+          type: 'database',
+          connectionInfo: stripSensitiveFields(connectionInfo),
+          sourceName,
+          schemas: [],
+        };
       } catch (err) {
-        logger.warn(`Legacy connection "${sourceName}" failed validation and was not migrated: ${errorMessage(err)}`);
+        logger.warn(
+          `Legacy connection "${sourceName}" failed validation and was not migrated: ${errorMessage(err)}`,
+        );
       }
     }
   }
 
-  const clearLegacyKeys = () => Promise.all(LEGACY_KEYS.map(key => context.workspaceState.update(key, undefined)));
+  const clearLegacyKeys = () =>
+    Promise.all(
+      LEGACY_KEYS.map((key) => context.workspaceState.update(key, undefined)),
+    );
   if (!connection) {
     logger.warn(`Removed unmigratable legacy ${sourceType} state.`);
     await clearLegacyKeys();
@@ -67,4 +91,11 @@ export async function migrateFromWorkspaceState(
 }
 
 /** Workspace-state keys written by builds before the project store. */
-const LEGACY_KEYS = ['lastSourceType', 'lastDacpacPath', 'lastDacpacName', 'lastDeselectedSchemas', 'lastDbConnectionInfo', 'lastDbSourceName'] as const;
+const LEGACY_KEYS = [
+  'lastSourceType',
+  'lastDacpacPath',
+  'lastDacpacName',
+  'lastDeselectedSchemas',
+  'lastDbConnectionInfo',
+  'lastDbSourceName',
+] as const;

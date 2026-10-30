@@ -22,17 +22,27 @@ const SCOPE_BUNDLE_TOOL = 'lineage_get_scope_bundle';
 
 const NodeCountsView = z.object({ nodes: z.number() }).loose();
 
-const BudgetDetailView = z.object({
-  counts: NodeCountsView.optional(),
-  scope_proposal: z.object({ origin: z.string().trim().min(1) }).loose().optional(),
-}).loose();
+const BudgetDetailView = z
+  .object({
+    counts: NodeCountsView.optional(),
+    scope_proposal: z
+      .object({ origin: z.string().trim().min(1) })
+      .loose()
+      .optional(),
+  })
+  .loose();
 
 /** Catalog refusals carry a canonical detail list or legacy detail object; partial DDL replies carry top-level counts. */
-const OverBudgetResultView = z.object({
-  reason: z.literal(OVER_DISCOVERY_BUDGET),
-  counts: NodeCountsView.optional(),
-  detail: z.union([BudgetDetailView, z.array(BudgetDetailView)]).transform(value => [value].flat()).optional(),
-}).loose();
+const OverBudgetResultView = z
+  .object({
+    reason: z.literal(OVER_DISCOVERY_BUDGET),
+    counts: NodeCountsView.optional(),
+    detail: z
+      .union([BudgetDetailView, z.array(BudgetDetailView)])
+      .transform((value) => [value].flat())
+      .optional(),
+  })
+  .loose();
 
 const ObjectDetailIdView = z.object({ id: z.string().trim().min(1) }).loose();
 
@@ -66,7 +76,10 @@ export function captureDiscoveryWalkFromObservations(
 }
 
 /** Whether one tool result means "this scope is too large to answer inline — reroute to SM". */
-export function detectOverBudgetFromResult(toolName: string, resultText: string): boolean {
+export function detectOverBudgetFromResult(
+  toolName: string,
+  resultText: string,
+): boolean {
   if (toolName !== SCOPE_BUNDLE_TOOL) return false;
   try {
     return OverBudgetResultView.safeParse(JSON.parse(resultText)).success;
@@ -84,7 +97,10 @@ interface OverBudgetNotice {
 }
 
 /** Reads an `over_discovery_budget` rejection from any tool result. */
-function readOverBudgetNotice(toolName: string, resultText: string): OverBudgetNotice | null {
+function readOverBudgetNotice(
+  toolName: string,
+  resultText: string,
+): OverBudgetNotice | null {
   let raw: unknown;
   try {
     raw = JSON.parse(resultText);
@@ -93,15 +109,29 @@ function readOverBudgetNotice(toolName: string, resultText: string): OverBudgetN
   }
   const view = OverBudgetResultView.safeParse(raw);
   if (!view.success) return null;
-  return { toolName, nodes: (view.data.detail?.find(detail => detail.counts)?.counts ?? view.data.counts)?.nodes ?? null };
+  return {
+    toolName,
+    nodes:
+      (
+        view.data.detail?.find((detail) => detail.counts)?.counts ??
+        view.data.counts
+      )?.nodes ?? null,
+  };
 }
 
 /** Queues the user-visible discovery-budget notice for the turn's closing markdown, once per turn. */
-export function queueDiscoveryBudgetNotice(session: Pick<AiSession, 'queueClosingNotice'>, toolName: string, resultText: string): void {
+export function queueDiscoveryBudgetNotice(
+  session: Pick<AiSession, 'queueClosingNotice'>,
+  toolName: string,
+  resultText: string,
+): void {
   if (toolName === SCOPE_BUNDLE_TOOL) return;
   const notice = readOverBudgetNotice(toolName, resultText);
   if (!notice) return;
-  const scope = notice.nodes !== null && notice.nodes > 0 ? ` (${notice.nodes} projected nodes)` : '';
+  const scope =
+    notice.nodes !== null && notice.nodes > 0
+      ? ` (${notice.nodes} projected nodes)`
+      : '';
   session.queueClosingNotice(
     'discovery_budget',
     `**Discovery budget reached** — \`${notice.toolName}\` was rejected${scope}: the requested scope is more than a quick answer loads (\`dataLineageViz.ai.discoveryNodeCap\`, \`dataLineageViz.ai.discoveryTokenBudget\`). Ask for a detailed analysis to cover it.`,

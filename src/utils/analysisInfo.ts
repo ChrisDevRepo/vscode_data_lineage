@@ -30,7 +30,8 @@ export const ANALYSIS_TYPE_INFO: Record<AnalysisType, AnalysisTypeInfo> = {
   'longest-path': {
     title: 'Longest Path',
     icon: 'M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3',
-    description: 'Deepest dependency chains — the longest paths from source to sink.',
+    description:
+      'Deepest dependency chains — the longest paths from source to sink.',
   },
   cycles: {
     title: 'Cycles',
@@ -40,7 +41,8 @@ export const ANALYSIS_TYPE_INFO: Record<AnalysisType, AnalysisTypeInfo> = {
   'external-refs': {
     title: 'External Refs',
     icon: 'M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25',
-    description: 'File sources and cross-database references — virtual nodes with no local metadata.',
+    description:
+      'File sources and cross-database references — virtual nodes with no local metadata.',
   },
 };
 
@@ -55,4 +57,11 @@ export const ANALYSIS_TYPE_LABELS: Record<AnalysisType, string> = {
 };
 
 /** Array of all supported analysis types, used for iteration and validation. */
-export const ALL_ANALYSIS_TYPES: AnalysisType[] = ['islands', 'hubs', 'orphans', 'longest-path', 'cycles', 'external-refs'];
+export const ALL_ANALYSIS_TYPES: AnalysisType[] = [
+  'islands',
+  'hubs',
+  'orphans',
+  'longest-path',
+  'cycles',
+  'external-refs',
+];

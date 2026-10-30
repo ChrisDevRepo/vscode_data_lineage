@@ -39,12 +39,20 @@ export function ToolbarDropdown({
   disabledReason,
   children,
 }: ToolbarDropdownProps) {
-  const { isOpen, toggle, refs, floatingStyles, context, getFloatingProps } = useDropdown();
-  const trigger = disabledControl(toggle, disabled, disabledReason, tooltipContent);
+  const { isOpen, toggle, refs, floatingStyles, context, getFloatingProps } =
+    useDropdown();
+  const trigger = disabledControl(
+    toggle,
+    disabled,
+    disabledReason,
+    tooltipContent,
+  );
 
   return (
     <>
-      <div className={`relative inline-flex${isNarrowed ? ' ln-filter-dot' : ''}`}>
+      <div
+        className={`relative inline-flex${isNarrowed ? ' ln-filter-dot' : ''}`}
+      >
         <Tooltip content={trigger.tooltip}>
           <Button
             ref={refs.setReference}
@@ -54,7 +62,9 @@ export function ToolbarDropdown({
             aria-label={ariaLabel}
             aria-expanded={isOpen}
             aria-haspopup="dialog"
-            style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
+            style={
+              isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined
+            }
           >
             {icon}
           </Button>
@@ -66,7 +76,10 @@ export function ToolbarDropdown({
           <FloatingFocusManager context={context} modal={false}>
             <div
               ref={refs.setFloating}
-              style={{ ...floatingStyles, boxShadow: 'var(--ln-dropdown-shadow)' }}
+              style={{
+                ...floatingStyles,
+                boxShadow: 'var(--ln-dropdown-shadow)',
+              }}
               className={`${panelWidth} rounded-md shadow-lg z-50 p-2 ln-dropdown${panelClassName ? ` ${panelClassName}` : ''}`}
               role="dialog"
               aria-label={ariaLabel}

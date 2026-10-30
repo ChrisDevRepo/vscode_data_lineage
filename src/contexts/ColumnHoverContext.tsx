@@ -20,8 +20,16 @@ const ColumnHoverContext = createContext<ColumnHoverState>({
 });
 
 /** Publishes the column-view thread to the node renderers below it. */
-export const ColumnHoverProvider = ({ value, children }: { value: ColumnHoverState; children: ReactNode }) => (
-  <ColumnHoverContext.Provider value={value}>{children}</ColumnHoverContext.Provider>
+export const ColumnHoverProvider = ({
+  value,
+  children,
+}: {
+  value: ColumnHoverState;
+  children: ReactNode;
+}) => (
+  <ColumnHoverContext.Provider value={value}>
+    {children}
+  </ColumnHoverContext.Provider>
 );
 
 /** Reads the column-view thread. */

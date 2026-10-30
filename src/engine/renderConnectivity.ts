@@ -47,7 +47,11 @@ export function summarizeRenderedConnectivity(
     degree.set(edge.target, (degree.get(edge.target) ?? 0) + 1);
   }
 
-  const componentCount = groupByWeaklyConnected(nodes, knownEdges, (n) => n.id).length;
+  const componentCount = groupByWeaklyConnected(
+    nodes,
+    knownEdges,
+    (n) => n.id,
+  ).length;
 
   const isolatedNodes = nodes
     .filter((n) => (degree.get(n.id) ?? 0) === 0)

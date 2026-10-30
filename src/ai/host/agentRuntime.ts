@@ -8,7 +8,10 @@ import {
   type ModelPort,
 } from '../model/modelPort';
 import { isCancellationOutcome } from '../support/cancellation';
-import { INTERNAL_INVARIANT_STOP_TEXT, InternalInvariantError } from '../support/internalInvariant';
+import {
+  INTERNAL_INVARIANT_STOP_TEXT,
+  InternalInvariantError,
+} from '../support/internalInvariant';
 import { trackInFlightDispatch, type IToolRegistry } from '../tools/registry';
 import type { Logger } from '../../utils/log';
 import type { TurnEventSink } from '../runtime/turnEventSink';
@@ -16,8 +19,15 @@ import type { TurnOutcome } from '../core/agentCore';
 import type { AiSession } from '../session/session';
 import { buildAgentGraph, turnRecursionLimit } from '../agent/graph';
 import type { SyntheticRejectionTrace } from '../agent/toolAttempt';
-import { PREVIEW_REQUEST_MARKER, TRACE_REQUEST_MARKER } from '../prompting/prompts';
-import type { AgentStateUpdate, AgentErrorCode, GateDecision } from '../agent/state';
+import {
+  PREVIEW_REQUEST_MARKER,
+  TRACE_REQUEST_MARKER,
+} from '../prompting/prompts';
+import type {
+  AgentStateUpdate,
+  AgentErrorCode,
+  GateDecision,
+} from '../agent/state';
 import { errorMessage } from '../../utils/errorMessage';
 
 /** Diagnostic detail behind a non-`ok` {@link TurnOutcome}. */
@@ -123,21 +133,35 @@ export class AgentRuntime {
   }
 
   /** Runs one user prompt through the graph; `gateDecision` is the card click this turn answers. */
-  public async run(prompt: string, gateDecision?: GateDecision): Promise<TurnOutcome> {
+  public async run(
+    prompt: string,
+    gateDecision?: GateDecision,
+  ): Promise<TurnOutcome> {
     const session = this.getSession();
     session.currentRoundId += 1;
-    session.currentTurnPrompt = prompt.startsWith(PREVIEW_REQUEST_MARKER) || prompt.startsWith(TRACE_REQUEST_MARKER)
-      ? null
-      : prompt;
+    session.currentTurnPrompt =
+      prompt.startsWith(PREVIEW_REQUEST_MARKER) ||
+      prompt.startsWith(TRACE_REQUEST_MARKER)
+        ? null
+        : prompt;
     try {
       const input: AgentStateUpdate = {
         prompt,
-        ...(this.priorMessages.length > 0 ? { messages: [...this.priorMessages, modelUserMessage(prompt)] } : {}),
+        ...(this.priorMessages.length > 0
+          ? { messages: [...this.priorMessages, modelUserMessage(prompt)] }
+          : {}),
         ...(gateDecision ? { gateDecision } : {}),
       };
       assertExternalTracingDisabled();
-      const recursionLimit = turnRecursionLimit(this.maxRounds, session.stateMachine?.scopeSize ?? 0);
-      const result = await this.graph.invoke(input as never, { callbacks: [], signal: this.signal, recursionLimit });
+      const recursionLimit = turnRecursionLimit(
+        this.maxRounds,
+        session.stateMachine?.scopeSize ?? 0,
+      );
+      const result = await this.graph.invoke(input as never, {
+        callbacks: [],
+        signal: this.signal,
+        recursionLimit,
+      });
       if (this.signal?.aborted) {
         await this.dispatchSettled();
         return this.close('cancelled');
@@ -149,8 +173,12 @@ export class AgentRuntime {
         errorCode?: AgentErrorCode | null;
         activeStop?: string | null;
       };
-      const outcome: TurnOutcome = state.outcome ?? (state.error ? 'error' : 'ok');
-      return this.close(outcome, state.error ?? undefined, { code: state.errorCode ?? undefined, stop: state.activeStop ?? undefined });
+      const outcome: TurnOutcome =
+        state.outcome ?? (state.error ? 'error' : 'ok');
+      return this.close(outcome, state.error ?? undefined, {
+        code: state.errorCode ?? undefined,
+        stop: state.activeStop ?? undefined,
+      });
     } catch (err) {
       if (isCancellationOutcome(err, this.signal) || isPortCancellation(err)) {
         this.logger?.debug('[AI] turn aborted — closed as cancelled');
@@ -159,37 +187,53 @@ export class AgentRuntime {
       }
       this.logger?.error('[AI] LangGraph turn', err);
       if (err instanceof GraphRecursionError) {
-        return this.close('error', 'Analysis stopped: internal step limit reached. The run is incomplete, so no result is shown and the graph was not changed. This is a defect — please report it.');
+        return this.close(
+          'error',
+          'Analysis stopped: internal step limit reached. The run is incomplete, so no result is shown and the graph was not changed. This is a defect — please report it.',
+        );
       }
       // The message of a broken runtime invariant is written for the log, which already has it.
-      if (err instanceof InternalInvariantError) return this.close('error', INTERNAL_INVARIANT_STOP_TEXT);
+      if (err instanceof InternalInvariantError)
+        return this.close('error', INTERNAL_INVARIANT_STOP_TEXT);
       const msg = errorMessage(err);
       return this.close('error', msg);
     }
   }
 
-  private close(status: TurnOutcome, error?: string, detail?: { readonly code?: AgentErrorCode; readonly stop?: string }): TurnOutcome {
+  private close(
+    status: TurnOutcome,
+    error?: string,
+    detail?: { readonly code?: AgentErrorCode; readonly stop?: string },
+  ): TurnOutcome {
     let claimed: boolean;
     let sinkFailure: { readonly cause: unknown } | undefined;
     try {
-      claimed = status === 'error' && error
-        ? this.sink.fail(error)
-        : this.sink.result(status, error);
+      claimed =
+        status === 'error' && error
+          ? this.sink.fail(error)
+          : this.sink.result(status, error);
     } catch (cause) {
       claimed = true;
       sinkFailure = { cause };
     }
     if (!claimed) return this.sink.terminalStatus ?? status;
 
-    this.lastFailureDetail = status !== 'ok' && error ? { message: error, code: detail?.code, stop: detail?.stop } : undefined;
+    this.lastFailureDetail =
+      status !== 'ok' && error
+        ? { message: error, code: detail?.code, stop: detail?.stop }
+        : undefined;
     if (status === 'cancelled' || status === 'error') {
       const sess = this.getSession();
       // A proposal no card shows (a stopped scope change already replaced the plan) is not left for anyone to approve.
-      const unshownProposal = sess.phase.kind === 'awaiting_gate' && sess.pendingExploration?.proposalId === undefined;
+      const unshownProposal =
+        sess.phase.kind === 'awaiting_gate' &&
+        sess.pendingExploration?.proposalId === undefined;
       if (sess.phase.kind === 'exploring' || unshownProposal) {
         const outcome = sess.cancelPendingExploration(this.turnEpoch);
         if (outcome.kind === 'dropped_stale_turn') {
-          this.logger?.debug(`[AI] stale-turn write dropped — op=${outcome.op} captured=${outcome.captured} current=${outcome.current}`);
+          this.logger?.debug(
+            `[AI] stale-turn write dropped — op=${outcome.op} captured=${outcome.captured} current=${outcome.current}`,
+          );
         }
       }
     }

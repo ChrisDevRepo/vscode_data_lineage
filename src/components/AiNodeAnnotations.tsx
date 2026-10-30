@@ -35,7 +35,13 @@ export function AiBadgeToolbar({ text, emphasis }: AiBadge) {
 export function AiNoteToolbar({ text }: { text: string }) {
   return (
     <div style={noteStyle}>
-      <Tooltip content={text} placement="bottom" multiline maxWidth={400} delay={300}>
+      <Tooltip
+        content={text}
+        placement="bottom"
+        multiline
+        maxWidth={400}
+        delay={300}
+      >
         <div className="ln-ai-note-label">{text.split('\n')[0]}</div>
       </Tooltip>
     </div>

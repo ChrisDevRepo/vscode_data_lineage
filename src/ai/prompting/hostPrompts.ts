@@ -25,13 +25,21 @@ export function deriveStagePromptContext(
 ): StagePromptContext {
   const screen = describeScreen(uiState);
   if (!model) {
-    return { dbPlatform: UNKNOWN_DB_PLATFORM, filterSchemas: [], totalSchemaCount: 0, visibleNodes: 0, totalNodes: 0, ...(screen ? { screen } : {}) };
+    return {
+      dbPlatform: UNKNOWN_DB_PLATFORM,
+      filterSchemas: [],
+      totalSchemaCount: 0,
+      visibleNodes: 0,
+      totalNodes: 0,
+      ...(screen ? { screen } : {}),
+    };
   }
   const filterSchemas = filter?.schemas ?? [];
   const totalNodes = model.nodes.length;
-  const visibleNodes = filterSchemas.length > 0
-    ? model.nodes.filter((n) => filterSchemas.includes(n.schema)).length
-    : totalNodes;
+  const visibleNodes =
+    filterSchemas.length > 0
+      ? model.nodes.filter((n) => filterSchemas.includes(n.schema)).length
+      : totalNodes;
   return {
     dbPlatform: model.dbPlatform?.trim() || UNKNOWN_DB_PLATFORM,
     filterSchemas,
@@ -55,7 +63,9 @@ export function buildHostStageSystemPrompt(
 }
 
 /** System prompt for the code-driven **entry detector** (one structured pre-loop call). */
-export function buildEntryDetectorSystemPrompt(ctx: StagePromptContext): string {
+export function buildEntryDetectorSystemPrompt(
+  ctx: StagePromptContext,
+): string {
   return [
     'Classify the latest user message of a SQL data-lineage chat into one entry route. Earlier turns only resolve what it refers to.',
     '- column_trace: the user explicitly asks to trace, follow or walk one or more named columns as a new lineage request; put those names in targetColumns.',
@@ -68,12 +78,17 @@ export function buildEntryDetectorSystemPrompt(ctx: StagePromptContext): string 
 }
 
 /** System prompt for one bounded discovery preview call. */
-export function buildVisualPreviewSystemPrompt(ctx: StagePromptContext): string {
+export function buildVisualPreviewSystemPrompt(
+  ctx: StagePromptContext,
+): string {
   return buildHostStageSystemPrompt('visual_preview', ctx);
 }
 
 /** Directive system prompt for the restricted **SM-entry** turn. */
-export function buildSmEntrySystemPrompt(ctx: StagePromptContext, targetColumns?: string[]): string {
+export function buildSmEntrySystemPrompt(
+  ctx: StagePromptContext,
+  targetColumns?: string[],
+): string {
   const base = buildGeneralSystemPrompt(ctx);
   const ctLine = targetColumns?.length
     ? `Column trace: analysisMode "ct", targetColumns [${targetColumns.map((c) => `"${escapePromptText(c)}"`).join(', ')}].`
@@ -84,7 +99,9 @@ export function buildSmEntrySystemPrompt(ctx: StagePromptContext, targetColumns?
     ClassificationValueSchema.description,
     ctLine,
     'The user then reviews your proposal at an approval gate.',
-  ].filter(Boolean).join('\n');
+  ]
+    .filter(Boolean)
+    .join('\n');
   return [base, directive].join('\n\n');
 }
 
@@ -118,7 +135,9 @@ export function buildGateRefinePrompt(
     '',
     `Call \`lineage_start_exploration\` with proposalRevision:${proposalRevision} and only the fields changed by the requested edits.`,
     'Preserve unchanged origin, depth (direction is derived from it), filters, mode, classification, and columns by omitting them. mission_brief is kept only when origin, analysisMode, targetColumns and depth are unchanged; otherwise restate it. An analysis constraint that no other `lineage_start_exploration` field expresses goes in `scopeNotes`.',
-  ].filter(Boolean).join('\n');
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 /** The leading user anchor the active-phase thread is reseeded to at approval and after every committed hop. */

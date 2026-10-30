@@ -19,8 +19,16 @@ import {
 } from '../prompting/prompts';
 import { TurnEventSink, type TurnEvent } from '../runtime/turnEventSink';
 import type { AiSession } from '../session/session';
-import { renderFullPlanMd, renderScopeCardMd, GATE_CARD_HEADER, HOLD_GATE_NOTICE } from '../prompting/scopeSummaryRenderer';
-import { sanitizeDescriptionForChat, sanitizeProviderError } from '../support/text';
+import {
+  renderFullPlanMd,
+  renderScopeCardMd,
+  GATE_CARD_HEADER,
+  HOLD_GATE_NOTICE,
+} from '../prompting/scopeSummaryRenderer';
+import {
+  sanitizeDescriptionForChat,
+  sanitizeProviderError,
+} from '../support/text';
 import { turnTokenBudgetFromSettings } from '../support/tokenBudget';
 import {
   applyNativeChatBoundary,
@@ -74,9 +82,10 @@ export class LineageParticipant {
       this.handleChatRequest.bind(this),
     );
     participant.onDidReceiveFeedback((feedback: vscode.ChatResultFeedback) => {
-      const kind = feedback.kind === vscode.ChatResultFeedbackKind.Helpful
-        ? 'helpful'
-        : 'unhelpful';
+      const kind =
+        feedback.kind === vscode.ChatResultFeedbackKind.Helpful
+          ? 'helpful'
+          : 'unhelpful';
       this.logger.debug(`Feedback: ${kind}`);
     });
     participant.followupProvider = {
@@ -87,21 +96,34 @@ export class LineageParticipant {
       participant,
       vscode.commands.registerCommand(
         'dataLineageViz.aiResumeNativeGate',
-        async (
-          proposalId: string,
-          action: NativeGateAction,
-        ) => {
-          if (!['approve', 'change', 'cancel'].includes(action) || this.gateCommandBusy) return;
+        async (proposalId: string, action: NativeGateAction) => {
+          if (
+            !['approve', 'change', 'cancel'].includes(action) ||
+            this.gateCommandBusy
+          )
+            return;
           if (!this.requireHeldCard(proposalId, action)) return;
-          const submitted: GateButtonRequest | null = action === 'change' ? null
-            : { proposalId, action, label: action === 'approve' ? 'Approve & Proceed' : 'Cancel' };
+          const submitted: GateButtonRequest | null =
+            action === 'change'
+              ? null
+              : {
+                  proposalId,
+                  action,
+                  label: action === 'approve' ? 'Approve & Proceed' : 'Cancel',
+                };
           this.buttonRequest = submitted;
           this.gateCommandBusy = true;
           try {
             this.traceGateResolution(proposalId, action, 'no_owning_turn');
-            await vscode.commands.executeCommand('workbench.action.chat.open', action === 'change'
-              ? { query: PARTICIPANT_MENTION, isPartialQuery: true }
-              : { query: `${PARTICIPANT_MENTION}${submitted!.label}`, blockOnResponse: true });
+            await vscode.commands.executeCommand(
+              'workbench.action.chat.open',
+              action === 'change'
+                ? { query: PARTICIPANT_MENTION, isPartialQuery: true }
+                : {
+                    query: `${PARTICIPANT_MENTION}${submitted!.label}`,
+                    blockOnResponse: true,
+                  },
+            );
           } finally {
             if (this.buttonRequest === submitted) this.buttonRequest = null;
             this.gateCommandBusy = false;
@@ -112,19 +134,35 @@ export class LineageParticipant {
   }
 
   /** Whether the session still holds the clicked card; logs why a stale or replaced card's button was ignored. */
-  private requireHeldCard(proposalId: string, action: NativeGateAction): boolean {
+  private requireHeldCard(
+    proposalId: string,
+    action: NativeGateAction,
+  ): boolean {
     const session = this.getSession();
     if (session.holdsProposal(proposalId)) return true;
-    const heldId = session.phase.kind === 'awaiting_gate' ? session.pendingExploration?.proposalId : undefined;
-    this.traceGateResolution(proposalId, action, 'refused', heldId !== undefined ? 'gate_id_mismatch' : 'no_pending_gate');
-    this.logger.debug(`[Gate] superseded button ignored — action=${action} requestedCard=${proposalId} heldCard=${heldId ?? 'none'}`);
+    const heldId =
+      session.phase.kind === 'awaiting_gate'
+        ? session.pendingExploration?.proposalId
+        : undefined;
+    this.traceGateResolution(
+      proposalId,
+      action,
+      'refused',
+      heldId !== undefined ? 'gate_id_mismatch' : 'no_pending_gate',
+    );
+    this.logger.debug(
+      `[Gate] superseded button ignored — action=${action} requestedCard=${proposalId} heldCard=${heldId ?? 'none'}`,
+    );
     return false;
   }
 
   /** Whether the session still holds a proposal awaiting the user's decision. */
   private sessionHoldsGateProposal(): boolean {
     const session = this.getSession();
-    return session.phase.kind === 'awaiting_gate' && session.pendingExploration != null;
+    return (
+      session.phase.kind === 'awaiting_gate' &&
+      session.pendingExploration != null
+    );
   }
 
   /** Records the outcome of one native gate action in the diagnostic trace. */
@@ -134,15 +172,17 @@ export class LineageParticipant {
     outcome: 'refused' | 'no_owning_turn',
     refusedBy?: 'gate_id_mismatch' | 'no_pending_gate',
   ): void {
-    void this.traceWriter?.write({
-      type: 'gate-resolution',
-      requestId: this.cardRequestId ?? 'unknown',
-      gateId: proposalId,
-      gate: this.cardRequestId ? 'confirm_sm_start' : 'none',
-      action,
-      outcome,
-      ...(refusedBy ? { refusedBy } : {}),
-    }).catch(() => {});
+    void this.traceWriter
+      ?.write({
+        type: 'gate-resolution',
+        requestId: this.cardRequestId ?? 'unknown',
+        gateId: proposalId,
+        gate: this.cardRequestId ? 'confirm_sm_start' : 'none',
+        action,
+        outcome,
+        ...(refusedBy ? { refusedBy } : {}),
+      })
+      .catch(() => {});
   }
 
   /** Handles one native chat request with the exact model selected by VS Code. */
@@ -154,19 +194,26 @@ export class LineageParticipant {
   ): Promise<vscode.ChatResult> {
     const session = this.getSession();
     if (!session.model) {
-      this.write(stream, token, (out) => out.markdown(
-        'No lineage data loaded. Open a `.dacpac` file or connect to a database first.',
-      ));
+      this.write(stream, token, (out) =>
+        out.markdown(
+          'No lineage data loaded. Open a `.dacpac` file or connect to a database first.',
+        ),
+      );
       return {};
     }
 
     // The badge exists only below a completed answer, so the same words in an empty chat are a
     // new-chat request and still pass the boundary reset.
-    const suggestionFollowup = chatContext.history.length > 0
-      && session.phase.kind === 'completed'
-      && normalizeFollowupTrigger(request.prompt) === normalizeFollowupTrigger(NEXT_QUESTIONS_TRIGGER);
+    const suggestionFollowup =
+      chatContext.history.length > 0 &&
+      session.phase.kind === 'completed' &&
+      normalizeFollowupTrigger(request.prompt) ===
+        normalizeFollowupTrigger(NEXT_QUESTIONS_TRIGGER);
 
-    if (!suggestionFollowup && applyNativeChatBoundary(chatContext.history, session)) {
+    if (
+      !suggestionFollowup &&
+      applyNativeChatBoundary(chatContext.history, session)
+    ) {
       this.cardRequestId = null;
       this.logger.info(
         `[${session.id}] New chat session detected — prior exploration state cleared`,
@@ -176,48 +223,62 @@ export class LineageParticipant {
     // The visible label carries no routing data. Only its request-owned button action can
     // bypass AI classification; a user typing the same words takes the normal typed-reply path.
     const submitted = this.buttonRequest;
-    let gateDecision: { kind: 'approve' | 'cancel'; proposalId: string } | undefined;
+    let gateDecision:
+      | { kind: 'approve' | 'cancel'; proposalId: string }
+      | undefined;
     if (submitted && request.prompt.trim() === submitted.label) {
       this.buttonRequest = null;
       if (!session.holdsProposal(submitted.proposalId)) {
-        this.write(stream, token, out => out.markdown(STALE_GATE_TRIGGER_REPLY));
+        this.write(stream, token, (out) =>
+          out.markdown(STALE_GATE_TRIGGER_REPLY),
+        );
         return {};
       }
-      gateDecision = { kind: submitted.action, proposalId: submitted.proposalId };
+      gateDecision = {
+        kind: submitted.action,
+        proposalId: submitted.proposalId,
+      };
     }
 
     if (request.prompt.trim().length === 0 && this.sessionHoldsGateProposal()) {
-      this.write(stream, token, (out) => out.markdown(
-        '_Use **Approve & Proceed**, **Change scope**, or **Cancel** on the proposal above, or reply in chat._',
-      ));
+      this.write(stream, token, (out) =>
+        out.markdown(
+          '_Use **Approve & Proceed**, **Change scope**, or **Cancel** on the proposal above, or reply in chat._',
+        ),
+      );
       return {};
     }
 
     if (
-      normalizeFollowupTrigger(request.prompt)
-      === normalizeFollowupTrigger(SHOW_FULL_PLAN_TRIGGER)
+      normalizeFollowupTrigger(request.prompt) ===
+      normalizeFollowupTrigger(SHOW_FULL_PLAN_TRIGGER)
     ) {
-      const proposal = this.sessionHoldsGateProposal() ? session.pendingExploration : null;
+      const proposal = this.sessionHoldsGateProposal()
+        ? session.pendingExploration
+        : null;
       this.write(stream, token, (out) => {
         if (!proposal) {
           out.markdown('_No exploration plan is waiting for approval._');
           return;
         }
         out.markdown(`${renderFullPlanMd(proposal)}\n\n`);
-        if (proposal.proposalId !== undefined) this.writeGateButtons(out, proposal.proposalId);
+        if (proposal.proposalId !== undefined)
+          this.writeGateButtons(out, proposal.proposalId);
       });
       return { metadata: { [FULL_PLAN_SHOWN]: true } };
     }
 
     if (
-      normalizeFollowupTrigger(request.prompt)
-      === normalizeFollowupTrigger(SHOW_FULL_DESCRIPTION_TRIGGER)
+      normalizeFollowupTrigger(request.prompt) ===
+      normalizeFollowupTrigger(SHOW_FULL_DESCRIPTION_TRIGGER)
     ) {
-      this.write(stream, token, (out) => out.markdown(
-        session.lastPresentResultDescription
-          ? sanitizeDescriptionForChat(session.lastPresentResultDescription)
-          : '_No AI preview description is currently cached for this session._',
-      ));
+      this.write(stream, token, (out) =>
+        out.markdown(
+          session.lastPresentResultDescription
+            ? sanitizeDescriptionForChat(session.lastPresentResultDescription)
+            : '_No AI preview description is currently cached for this session._',
+        ),
+      );
       return {};
     }
 
@@ -229,40 +290,63 @@ export class LineageParticipant {
     const requestId = randomUUID();
     const turnStartedAt = Date.now();
     const cancellation = tokenToAbortSignal(token);
-    const traceWriter = this.traceWriter?.isEnabled() ? this.traceWriter : undefined;
+    const traceWriter = this.traceWriter?.isEnabled()
+      ? this.traceWriter
+      : undefined;
     const model = new VscodeModelPort(request.model, {
       debugLog: (message) => this.logger.debug(message),
       requestId,
-      wireLog: traceWriter && ((record) => {
-        void traceWriter.write(record).catch(() => {});
-      }),
+      wireLog:
+        traceWriter &&
+        ((record) => {
+          void traceWriter.write(record).catch(() => {});
+        }),
       traceVerbose: traceWriter?.isVerbose(),
       budget: turnBudget,
     });
-    const command = request.command
-      ?? (session.phase.kind === 'idle' ? continuedSlashCommand(chatContext.history) : undefined);
+    const command =
+      request.command ??
+      (session.phase.kind === 'idle'
+        ? continuedSlashCommand(chatContext.history)
+        : undefined);
     const prompt = command
       ? `/${command} ${request.prompt}`.trimEnd()
-      : gateDecision ? request.prompt : (suggestionFollowup
-        ? expandNextQuestionSuggestions(session)
-        : expandRunTracePrompt(expandShowGraphPreviewPrompt(request.prompt, session), session));
-    const sink = new TurnEventSink(
-      (event) => {
-        if (suggestionFollowup && event.type === 'terminal') return;
-        this.write(stream, token, (out) => this.writeEvent(event, out, request.prompt, requestId));
-      },
-    );
+      : gateDecision
+        ? request.prompt
+        : suggestionFollowup
+          ? expandNextQuestionSuggestions(session)
+          : expandRunTracePrompt(
+              expandShowGraphPreviewPrompt(request.prompt, session),
+              session,
+            );
+    const sink = new TurnEventSink((event) => {
+      if (suggestionFollowup && event.type === 'terminal') return;
+      this.write(stream, token, (out) =>
+        this.writeEvent(event, out, request.prompt, requestId),
+      );
+    });
     this.logger.info(
       `[${session.id}] native turn start request=${requestId} model=${request.model.id} command=${command ?? 'none'} history=${chatContext.history.length}`,
     );
-    const priorMessages = suggestionFollowup ? [] : chatHistoryToModelMessages(chatContext.history, turnBudget, (msg) => this.logger.debug(msg));
+    const priorMessages = suggestionFollowup
+      ? []
+      : chatHistoryToModelMessages(chatContext.history, turnBudget, (msg) =>
+          this.logger.debug(msg),
+        );
 
     this.statusBarStart('working…');
     try {
-      const run = suggestionFollowup ? this.runtime.runSuggestions.bind(this.runtime) : this.runtime.run.bind(this.runtime);
+      const run = suggestionFollowup
+        ? this.runtime.runSuggestions.bind(this.runtime)
+        : this.runtime.run.bind(this.runtime);
       const result = await run({
         model,
-        request: { id: requestId, prompt, priorMessages, ...(gateDecision ? { gateDecision } : {}) },
+        request: {
+          id: requestId,
+          prompt,
+          priorMessages,
+          ...(gateDecision ? { gateDecision } : {}),
+        },
         sink,
         signal: cancellation.signal,
       });
@@ -270,7 +354,9 @@ export class LineageParticipant {
         requestId,
         status: result.outcome,
         modelCalls: result.modelCalls,
-        ...(this.cardRequestId === requestId ? { [GATE_SHOWN_METADATA]: true } : {}),
+        ...(this.cardRequestId === requestId
+          ? { [GATE_SHOWN_METADATA]: true }
+          : {}),
       };
       if (result.outcome !== 'error') {
         this.logger.info(
@@ -279,15 +365,18 @@ export class LineageParticipant {
         return { metadata };
       }
 
-      const message = sanitizeProviderError(result.failure?.message ?? '')
-        || 'Data Lineage could not complete this request.';
+      const message =
+        sanitizeProviderError(result.failure?.message ?? '') ||
+        'Data Lineage could not complete this request.';
       // Provider text can echo prompt content, so error level carries enumerated fields only.
       this.logger.error(
-        `[${session.id}] native turn terminal request=${requestId} status=error stop=${result.failure?.stop ?? 'none'}`
-        + ` modelCalls=${result.modelCalls} elapsedMs=${Date.now() - turnStartedAt}`,
+        `[${session.id}] native turn terminal request=${requestId} status=error stop=${result.failure?.stop ?? 'none'}` +
+          ` modelCalls=${result.modelCalls} elapsedMs=${Date.now() - turnStartedAt}`,
         `code=${result.failure?.code ?? 'none'}`,
       );
-      this.logger.debug(`[${session.id}] native turn failure message: ${message}`);
+      this.logger.debug(
+        `[${session.id}] native turn failure message: ${message}`,
+      );
       return { metadata, errorDetails: { message } };
     } finally {
       this.statusBarStop();
@@ -301,7 +390,10 @@ export class LineageParticipant {
 
   private statusBarStart(label: string): void {
     if (!this.statusBarItem) {
-      this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+      this.statusBarItem = vscode.window.createStatusBarItem(
+        vscode.StatusBarAlignment.Left,
+        100,
+      );
       this.statusBarItem.name = 'Lineage AI';
       this.statusBarItem.tooltip = 'Data Lineage AI is processing a request';
       this.context.subscriptions.push(this.statusBarItem);
@@ -312,7 +404,8 @@ export class LineageParticipant {
   }
 
   private statusBarUpdate(label: string): void {
-    if (this.statusBarItem) this.statusBarItem.text = `$(sync~spin) Lineage AI: ${label}`;
+    if (this.statusBarItem)
+      this.statusBarItem.text = `$(sync~spin) Lineage AI: ${label}`;
   }
 
   private statusBarStop(): void {
@@ -330,8 +423,11 @@ export class LineageParticipant {
     try {
       write(stream);
     } catch (error) {
-      if (!token.isCancellationRequested && !isStreamClosedError(error)) throw error;
-      this.logger.debug('chat stream write skipped — stream closed or turn cancelled');
+      if (!token.isCancellationRequested && !isStreamClosedError(error))
+        throw error;
+      this.logger.debug(
+        'chat stream write skipped — stream closed or turn cancelled',
+      );
     }
   }
 
@@ -350,28 +446,37 @@ export class LineageParticipant {
         stream.markdown(event.delta);
         return;
       case 'error':
-        if (event.recoverable !== false) stream.markdown(`\n\n${event.message}`);
+        if (event.recoverable !== false)
+          stream.markdown(`\n\n${event.message}`);
         return;
       case 'gate': {
         const proposal = this.getSession().pendingExploration;
         if (!proposal) return;
         this.cardRequestId = requestId;
-        stream.markdown(`${GATE_CARD_HEADER}${renderScopeCardMd(proposal)}${HOLD_GATE_NOTICE}\n\n`);
+        stream.markdown(
+          `${GATE_CARD_HEADER}${renderScopeCardMd(proposal)}${HOLD_GATE_NOTICE}\n\n`,
+        );
         this.writeGateButtons(stream, event.proposalId);
         return;
       }
       case 'terminal': {
         const session = this.getSession();
         // Native chat may collapse older responses. Keep a held plan actionable on this answer.
-        const heldId = this.sessionHoldsGateProposal() ? session.pendingExploration?.proposalId : undefined;
-        if (event.status === 'ok' && heldId !== undefined && this.cardRequestId !== requestId) {
+        const heldId = this.sessionHoldsGateProposal()
+          ? session.pendingExploration?.proposalId
+          : undefined;
+        if (
+          event.status === 'ok' &&
+          heldId !== undefined &&
+          this.cardRequestId !== requestId
+        ) {
           this.writeGateButtons(stream, heldId);
         }
         if (
-          event.status === 'ok'
-          && session.presentResultCalledThisTurn
-          && !session.presentResultAutoDispatched
-          && session.resultGraph
+          event.status === 'ok' &&
+          session.presentResultCalledThisTurn &&
+          !session.presentResultAutoDispatched &&
+          session.resultGraph
         ) {
           stream.button({
             command: 'dataLineageViz.aiCreateView',
@@ -394,7 +499,10 @@ export class LineageParticipant {
   }
 
   /** The approval card's three buttons, bound to the card they resolve. */
-  private writeGateButtons(stream: vscode.ChatResponseStream, proposalId: string): void {
+  private writeGateButtons(
+    stream: vscode.ChatResponseStream,
+    proposalId: string,
+  ): void {
     stream.button({
       command: 'dataLineageViz.aiResumeNativeGate',
       title: '$(check) Approve & Proceed',
@@ -417,7 +525,12 @@ export class LineageParticipant {
     if (this.sessionHoldsGateProposal()) {
       return result?.metadata?.[FULL_PLAN_SHOWN] === true
         ? []
-        : [{ prompt: SHOW_FULL_PLAN_TRIGGER, label: vscode.l10n.t('Show full plan') }];
+        : [
+            {
+              prompt: SHOW_FULL_PLAN_TRIGGER,
+              label: vscode.l10n.t('Show full plan'),
+            },
+          ];
     }
     const followups: vscode.ChatFollowup[] = [];
     if (session.phase.kind === 'completed') {
@@ -450,7 +563,10 @@ export class LineageParticipant {
 
 /** VS Code throws this when a `ChatResponseStream` is written after it has been torn down. */
 function isStreamClosedError(error: unknown): boolean {
-  return error instanceof Error && /stream.*closed|closed.*stream/i.test(error.message);
+  return (
+    error instanceof Error &&
+    /stream.*closed|closed.*stream/i.test(error.message)
+  );
 }
 
 function normalizeFollowupTrigger(value: string): string {

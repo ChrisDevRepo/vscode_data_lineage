@@ -36,12 +36,12 @@ describe('AgentRuntime LangSmith egress boundary', () => {
       throw new Error('unexpected fetch');
     });
     vi.stubGlobal('fetch', fetchSpy);
-    const httpSpy = vi.spyOn(http, 'request').mockImplementation((() => {
+    const httpSpy = vi.spyOn(http, 'request').mockImplementation(() => {
       throw new Error('unexpected HTTP request');
-    }));
-    const httpsSpy = vi.spyOn(https, 'request').mockImplementation((() => {
+    });
+    const httpsSpy = vi.spyOn(https, 'request').mockImplementation(() => {
       throw new Error('unexpected HTTPS request');
-    }));
+    });
 
     const session = {
       currentRoundId: 0,
@@ -58,16 +58,27 @@ describe('AgentRuntime LangSmith egress boundary', () => {
       turnEpoch: 1,
     });
 
-    await expect(runtime.run('SECRET-PROMPT-MUST-STAY-LOCAL')).resolves.toBe('error');
+    await expect(runtime.run('SECRET-PROMPT-MUST-STAY-LOCAL')).resolves.toBe(
+      'error',
+    );
     expect(runtime.lastFailureDetail?.message).toContain(
       'External LangChain tracing is not supported by @lineage',
     );
     await new Promise((resolve) => setTimeout(resolve, 25));
 
     expect(graph.invoke).not.toHaveBeenCalled();
-    expect(fetchSpy, 'LangSmith fetch must stay disabled').not.toHaveBeenCalled();
-    expect(httpSpy, 'LangSmith HTTP transport must stay disabled').not.toHaveBeenCalled();
-    expect(httpsSpy, 'LangSmith HTTPS transport must stay disabled').not.toHaveBeenCalled();
+    expect(
+      fetchSpy,
+      'LangSmith fetch must stay disabled',
+    ).not.toHaveBeenCalled();
+    expect(
+      httpSpy,
+      'LangSmith HTTP transport must stay disabled',
+    ).not.toHaveBeenCalled();
+    expect(
+      httpsSpy,
+      'LangSmith HTTPS transport must stay disabled',
+    ).not.toHaveBeenCalled();
   });
 });
 
@@ -101,7 +112,10 @@ describe('AgentRuntime cancellation truth', () => {
       controller.abort();
       return { outcome: 'ok' };
     });
-    await expect(makeRuntime(controller.signal).run('q'), "Stop wins over the graph's carried outcome").resolves.toBe('cancelled');
+    await expect(
+      makeRuntime(controller.signal).run('q'),
+      "Stop wins over the graph's carried outcome",
+    ).resolves.toBe('cancelled');
   });
 
   it('classifies a thrown cancellation as cancelled, never as a turn error', async () => {
@@ -112,16 +126,40 @@ describe('AgentRuntime cancellation truth', () => {
     });
     const runtime = makeRuntime(controller.signal);
     await expect(runtime.run('q')).resolves.toBe('cancelled');
-    expect(runtime.lastFailureDetail, 'a clean cancel records no failure detail').toBeUndefined();
+    expect(
+      runtime.lastFailureDetail,
+      'a clean cancel records no failure detail',
+    ).toBeUndefined();
   });
 
   it.each([
-    ['a port cancellation', () => new ModelPortError('cancelled', 'Language model request was cancelled.')],
-    ['an AbortError-named throw', () => Object.assign(new Error('This operation was aborted'), { name: 'AbortError' })],
-  ])('classifies %s as cancelled even when the runtime signal never fired', async (_title, makeError) => {
-    graph.invoke.mockImplementation(async () => { throw makeError(); });
-    const runtime = makeRuntime(new AbortController().signal);
-    await expect(runtime.run('q')).resolves.toBe('cancelled');
-    expect(runtime.lastFailureDetail, 'a clean cancel records no failure detail').toBeUndefined();
-  });
+    [
+      'a port cancellation',
+      () =>
+        new ModelPortError(
+          'cancelled',
+          'Language model request was cancelled.',
+        ),
+    ],
+    [
+      'an AbortError-named throw',
+      () =>
+        Object.assign(new Error('This operation was aborted'), {
+          name: 'AbortError',
+        }),
+    ],
+  ])(
+    'classifies %s as cancelled even when the runtime signal never fired',
+    async (_title, makeError) => {
+      graph.invoke.mockImplementation(async () => {
+        throw makeError();
+      });
+      const runtime = makeRuntime(new AbortController().signal);
+      await expect(runtime.run('q')).resolves.toBe('cancelled');
+      expect(
+        runtime.lastFailureDetail,
+        'a clean cancel records no failure detail',
+      ).toBeUndefined();
+    },
+  );
 });

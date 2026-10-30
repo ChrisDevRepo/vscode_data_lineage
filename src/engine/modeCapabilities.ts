@@ -31,20 +31,30 @@ export interface ModeCapabilities {
 }
 
 /** Derives graph UI capabilities from the currently active scoped mode. */
-export function deriveModeCapabilities(input: ModeCapabilityInput): ModeCapabilities {
-  const isTraceView = input.traceMode === 'applied' || input.traceMode === 'filtered';
+export function deriveModeCapabilities(
+  input: ModeCapabilityInput,
+): ModeCapabilities {
+  const isTraceView =
+    input.traceMode === 'applied' || input.traceMode === 'filtered';
   const isPathView = input.traceMode === 'path-applied';
-  const hasTraceMode = isTraceView || isPathView || input.traceMode === 'configuring' || input.traceMode === 'pathfinding';
+  const hasTraceMode =
+    isTraceView ||
+    isPathView ||
+    input.traceMode === 'configuring' ||
+    input.traceMode === 'pathfinding';
   const isCuratedView = input.hasAiPreview || input.hasAdvancedView;
-  const isTraceActive = isTraceView || isPathView || input.traceMode === 'analysis';
+  const isTraceActive =
+    isTraceView || isPathView || input.traceMode === 'analysis';
 
-  const hasScopedView = hasTraceMode || input.hasAnalysisMode || input.hasAdvancedView;
+  const hasScopedView =
+    hasTraceMode || input.hasAnalysisMode || input.hasAdvancedView;
 
   return {
     isModeLocked: hasScopedView,
     isTraceActive,
     canExcludeHighlightedNode: !hasScopedView && !input.hasAiPreview,
-    canRemoveNodeFromScopedView: isCuratedView && !input.hasAnalysisMode && !hasTraceMode,
+    canRemoveNodeFromScopedView:
+      isCuratedView && !input.hasAnalysisMode && !hasTraceMode,
     canEditTraceScope: isTraceView,
     canStartNewScopedMode: !hasScopedView && !input.hasAiPreview,
     canSwitchGraphMode: !hasScopedView && !input.hasAiPreview,
@@ -60,15 +70,27 @@ export type RemoveAction =
 
 /** Decides what "remove from what is on screen" does for the highlighted node, from the same {@link ModeCapabilities} every other control reads — one dispatcher, one source of truth, instead of each caller (keyboard shortcut, context menu item, node button) re-deriving its own notion of what Delete means in the current mode. */
 export function resolveRemoveAction(
-  capabilities: Pick<ModeCapabilities, 'isModeLocked' | 'canEditTraceScope' | 'canRemoveNodeFromScopedView'>,
+  capabilities: Pick<
+    ModeCapabilities,
+    'isModeLocked' | 'canEditTraceScope' | 'canRemoveNodeFromScopedView'
+  >,
   context: { hasAnalysisMode: boolean; isTraceOrigin: boolean },
 ): RemoveAction {
   if (capabilities.canEditTraceScope) {
-    if (context.isTraceOrigin) return { kind: 'refuse', reason: 'This is the trace source — it cannot be removed' };
+    if (context.isTraceOrigin)
+      return {
+        kind: 'refuse',
+        reason: 'This is the trace source — it cannot be removed',
+      };
     return { kind: 'trace-prune' };
   }
-  if (capabilities.canRemoveNodeFromScopedView) return { kind: 'curated-remove' };
+  if (capabilities.canRemoveNodeFromScopedView)
+    return { kind: 'curated-remove' };
   if (!capabilities.isModeLocked) return { kind: 'exclude' };
-  if (context.hasAnalysisMode) return { kind: 'refuse', reason: 'Exit analysis to remove nodes from the view' };
+  if (context.hasAnalysisMode)
+    return {
+      kind: 'refuse',
+      reason: 'Exit analysis to remove nodes from the view',
+    };
   return { kind: 'refuse', reason: 'Nothing can be removed from this view' };
 }

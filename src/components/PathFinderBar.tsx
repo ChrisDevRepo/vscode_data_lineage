@@ -1,5 +1,13 @@
 import { memo, useState, useEffect, useCallback } from 'react';
-import { FloatingPortal, useFloating, offset, flip, shift, size, autoUpdate } from '@floating-ui/react';
+import {
+  FloatingPortal,
+  useFloating,
+  offset,
+  flip,
+  shift,
+  size,
+  autoUpdate,
+} from '@floating-ui/react';
 import type { ObjectType } from '../engine/types';
 import { filterSuggestions } from '../utils/autocomplete';
 import { useAutocomplete } from '../hooks/useAutocomplete';
@@ -11,7 +19,12 @@ interface PathFinderBarProps {
   /** The name of the node where the path search begins. */
   sourceNodeName: string;
   /** Flattened list of all nodes in the graph for target autocomplete. */
-  allNodes: Array<{ id: string; name: string; schema: string; type: ObjectType }>;
+  allNodes: Array<{
+    id: string;
+    name: string;
+    schema: string;
+    type: ObjectType;
+  }>;
   /** The result of the last path-finding operation, if any. */
   pathResult: { found: boolean; nodeCount: number; edgeCount: number } | null;
   /** Callback to execute the path search; returns whether a path was found. */
@@ -53,34 +66,45 @@ export const PathFinderBar = memo(function PathFinderBar({
       shift({ padding: 8 }),
       size({
         apply({ rects, elements }) {
-          Object.assign(elements.floating.style, { minWidth: `${rects.reference.width}px`, width: '288px' });
+          Object.assign(elements.floating.style, {
+            minWidth: `${rects.reference.width}px`,
+            width: '288px',
+          });
         },
       }),
     ],
   });
 
-  const mergedDropdownRef = useCallback((node: HTMLDivElement | null) => {
-    dropdownRef.current = node;
-    refs.setFloating(node);
-  }, [dropdownRef, refs]);
+  const mergedDropdownRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      dropdownRef.current = node;
+      refs.setFloating(node);
+    },
+    [dropdownRef, refs],
+  );
 
   useEffect(() => {
     inputRef.current?.focus();
   }, [inputRef]);
 
-  const handleSelect = useCallback((nodeId: string) => {
-    const found = onFindPath(nodeId);
-    setNoConnection(!found);
-    setInput('');
-    setIsOpen(false);
-  }, [onFindPath, setIsOpen]);
+  const handleSelect = useCallback(
+    (nodeId: string) => {
+      const found = onFindPath(nodeId);
+      setNoConnection(!found);
+      setInput('');
+      setIsOpen(false);
+    },
+    [onFindPath, setIsOpen],
+  );
 
   return (
     <div className="ln-trace-config flex items-center justify-between gap-4 px-4 py-2.5">
       <div className="flex items-center gap-3 flex-1 min-w-0">
         <div className="flex items-center gap-2 shrink-0">
           <span className="text-sm font-medium ln-text">From:</span>
-          <span className="text-sm font-semibold ln-text-link">{sourceNodeName}</span>
+          <span className="text-sm font-semibold ln-text-link">
+            {sourceNodeName}
+          </span>
         </div>
 
         <span className="text-sm ln-text-muted shrink-0">&rarr;</span>
@@ -90,7 +114,10 @@ export const PathFinderBar = memo(function PathFinderBar({
             ref={inputRef}
             type="text"
             value={input}
-            onChange={(e) => { setInput(e.target.value); setNoConnection(false); }}
+            onChange={(e) => {
+              setInput(e.target.value);
+              setNoConnection(false);
+            }}
             onKeyDown={(e) => {
               handleArrowKeys(e);
               if (e.key === 'Enter') {
@@ -129,7 +156,9 @@ export const PathFinderBar = memo(function PathFinderBar({
 
         {pathResult && pathResult.found && (
           <span className="text-xs ln-text-muted shrink-0">
-            <span className="font-bold">{pathResult.nodeCount} nodes · {pathResult.edgeCount} edges</span>
+            <span className="font-bold">
+              {pathResult.nodeCount} nodes · {pathResult.edgeCount} edges
+            </span>
           </span>
         )}
         {noConnection && (

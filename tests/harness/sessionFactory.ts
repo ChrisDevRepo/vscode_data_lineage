@@ -1,14 +1,26 @@
 /** Loads public DACPAC data and production parse rules/templates into a headless runtime session. */
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { parseAiOutputTemplatesYaml, parseParseRulesYaml, readAiOutputSections, REQUIRED_AI_TEMPLATE_KEYS } from '../../src/configCore';
+import {
+  parseAiOutputTemplatesYaml,
+  parseParseRulesYaml,
+  readAiOutputSections,
+  REQUIRED_AI_TEMPLATE_KEYS,
+} from '../../src/configCore';
 import { extractDacpac } from '../../src/engine/dacpacExtractor';
 import { populateColumnStore } from '../../src/engine/modelBuilder';
 import { loadRules } from '../../src/engine/sqlBodyParser';
 import { buildBareGraph } from '../../src/ai/support/graphUtils';
 import { AiSession } from '../../src/ai/session/session';
-import { EMPTY_AI_TEMPLATES, type AiOutputTemplates, type AiOutputTemplateSet } from '../../src/ai/session/types';
-import { turnTokenBudgetFromSettings, type TurnTokenBudget } from '../../src/ai/support/tokenBudget';
+import {
+  EMPTY_AI_TEMPLATES,
+  type AiOutputTemplates,
+  type AiOutputTemplateSet,
+} from '../../src/ai/session/types';
+import {
+  turnTokenBudgetFromSettings,
+  type TurnTokenBudget,
+} from '../../src/ai/support/tokenBudget';
 
 /** Repository root: launchers run with the repository as their working directory. */
 export function repoPath(...segments: string[]): string {
@@ -25,7 +37,10 @@ export interface HarnessSessionOptions {
   /** The lane model's input window, in tokens. */
   readonly contextWindow: number;
   /** Injection-probe payloads: appended to the stored DDL of the named node after {@link populateColumnStore} runs, so the hop loop's `store.getDdl` read (`src/ai/sm/smBase.ts`) returns the tampered body — the same channel `<hop_context>` carries to the model, behind the untrusted-content banner in `src/ai/agent/stagePrompts.ts`. */
-  readonly ddlOverrides?: ReadonlyArray<{ readonly nodeId: string; readonly appendComment: string }>;
+  readonly ddlOverrides?: ReadonlyArray<{
+    readonly nodeId: string;
+    readonly appendComment: string;
+  }>;
 }
 
 /** Loads the tracked output templates exactly as activation does. */
@@ -34,7 +49,8 @@ async function loadOutputTemplates(path: string): Promise<AiOutputTemplateSet> {
   const parsed = parseAiOutputTemplatesYaml(await readFile(path, 'utf8'));
   for (const key of REQUIRED_AI_TEMPLATE_KEYS) {
     const instruction = parsed?.[key]?.instruction;
-    if (typeof instruction === 'string' && instruction) templates[key] = instruction.trim();
+    if (typeof instruction === 'string' && instruction)
+      templates[key] = instruction.trim();
   }
   return { templates, sections: readAiOutputSections(parsed).sections };
 }
@@ -48,15 +64,21 @@ export interface HarnessSession {
 }
 
 /** Loads production parser rules before either database or DACPAC model construction. */
-export async function loadHarnessParseRules(path = repoPath('assets', 'defaultParseRules.yaml')): Promise<void> {
+export async function loadHarnessParseRules(
+  path = repoPath('assets', 'defaultParseRules.yaml'),
+): Promise<void> {
   loadRules(parseParseRulesYaml(await readFile(path, 'utf8')));
 }
 
 /** Builds one fully loaded session: parse rules, dacpac model, column store, bare graph, templates. */
-export async function createHarnessSession(options: HarnessSessionOptions): Promise<HarnessSession> {
-  const parseRulesPath = options.parseRulesPath ?? repoPath('assets', 'defaultParseRules.yaml');
+export async function createHarnessSession(
+  options: HarnessSessionOptions,
+): Promise<HarnessSession> {
+  const parseRulesPath =
+    options.parseRulesPath ?? repoPath('assets', 'defaultParseRules.yaml');
   const dacpacPath = options.dacpacPath ?? repoPath('assets', 'demo.dacpac');
-  const templatesPath = options.outputTemplatesPath ?? repoPath('assets', 'aiOutputTemplates.yaml');
+  const templatesPath =
+    options.outputTemplatesPath ?? repoPath('assets', 'aiOutputTemplates.yaml');
 
   // Rules FIRST: `parseSqlBody` recovers far fewer dependencies without them, so a graph built
   // before this call is merely smaller rather than wrong — the hardest kind of defect to notice.
@@ -68,16 +90,23 @@ export async function createHarnessSession(options: HarnessSessionOptions): Prom
   const session = new AiSession(loaded.templates, loaded.sections);
   populateColumnStore(model, session.columnStore);
   for (const override of options.ddlOverrides ?? []) {
-    const existing = session.columnStore.getDdl(override.nodeId)
-      ?? model.nodes.find(n => n.id === override.nodeId)?.bodyScript;
+    const existing =
+      session.columnStore.getDdl(override.nodeId) ??
+      model.nodes.find((n) => n.id === override.nodeId)?.bodyScript;
     if (existing === undefined) {
       throw new Error(`ddlOverrides: unknown node id "${override.nodeId}"`);
     }
-    session.columnStore.setDdl(override.nodeId, `${existing}\n${override.appendComment}\n`);
+    session.columnStore.setDdl(
+      override.nodeId,
+      `${existing}\n${override.appendComment}\n`,
+    );
   }
   session.model = model;
   session.graph = buildBareGraph(model);
   // The shim answers every setting with its shipped default, so only the window varies per lane.
-  const budget = turnTokenBudgetFromSettings({ get: () => undefined }, options.contextWindow);
+  const budget = turnTokenBudgetFromSettings(
+    { get: () => undefined },
+    options.contextWindow,
+  );
   return { session, budget };
 }

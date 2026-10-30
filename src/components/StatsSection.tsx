@@ -1,37 +1,64 @@
 import { Fragment, useState, useCallback, useMemo } from 'react';
-import type { TableStats, ColumnStats, StatsMode } from '../engine/profilingEngine';
+import type {
+  TableStats,
+  ColumnStats,
+  StatsMode,
+} from '../engine/profilingEngine';
 import type { TableStatsState } from './TableDetailPanel';
 import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
 import { Spinner } from './ui/Spinner';
-import { CompletenessBar, UniquenessIndicator, TypeBadge } from './StatsMicroCharts';
-
-
+import {
+  CompletenessBar,
+  UniquenessIndicator,
+  TypeBadge,
+} from './StatsMicroCharts';
 
 function SortArrow({ dir }: { dir: 'asc' | 'desc' }) {
-  return <span style={{ fontSize: '0.6rem', marginLeft: 2 }}>{dir === 'asc' ? '▲' : '▼'}</span>;
+  return (
+    <span style={{ fontSize: '0.6rem', marginLeft: 2 }}>
+      {dir === 'asc' ? '▲' : '▼'}
+    </span>
+  );
 }
-
 
 function ChevronIcon({ expanded }: { expanded: boolean }) {
   return (
-    <svg width="8" height="8" viewBox="0 0 10 10" style={{ transition: 'transform 0.15s', transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
-      <path d="M3 1L7 5L3 9" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    <svg
+      width="8"
+      height="8"
+      viewBox="0 0 10 10"
+      style={{
+        transition: 'transform 0.15s',
+        transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
+      }}
+    >
+      <path
+        d="M3 1L7 5L3 9"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
 
-
 /** Format a number with thousands separators and 1 decimal place. */
 function formatDecimal(n: number): string {
   if (Number.isInteger(n)) return n.toLocaleString();
-  return n.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  return n.toLocaleString(undefined, {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
 }
 
 /** Format a count with percentage of total rows. */
 function formatCount(count: number, rowCount: number): string {
   const formatted = count.toLocaleString();
-  if (rowCount > 0) return `${formatted} (${((count / rowCount) * 100).toFixed(1)}%)`;
+  if (rowCount > 0)
+    return `${formatted} (${((count / rowCount) * 100).toFixed(1)}%)`;
   return formatted;
 }
 
@@ -41,7 +68,6 @@ function nullQualityColor(pct: number): string {
   if (pct >= 5) return 'var(--ln-warning-fg)';
   return 'var(--ln-fg)';
 }
-
 
 /** Check whether a column has any standard-mode detail to show. */
 function hasDetail(col: ColumnStats): boolean {
@@ -56,9 +82,13 @@ function DetailGrid({ col, rowCount }: { col: ColumnStats; rowCount: number }) {
     // SQL extrema may exceed JavaScript numeric precision; keep their source strings exact.
     pairs.push({ label: 'Range', value: `${col.min} – ${col.max ?? '–'}` });
     pairs.push({ label: 'Mean', value: formatDecimal(col.mean) });
-    if (col.stdDev !== undefined) pairs.push({ label: 'Std Dev', value: formatDecimal(col.stdDev) });
+    if (col.stdDev !== undefined)
+      pairs.push({ label: 'Std Dev', value: formatDecimal(col.stdDev) });
     if (col.zeroCount !== undefined && col.zeroCount > 0) {
-      pairs.push({ label: 'Zeros', value: formatCount(col.zeroCount, rowCount) });
+      pairs.push({
+        label: 'Zeros',
+        value: formatCount(col.zeroCount, rowCount),
+      });
     }
   } else if (col.min !== undefined) {
     pairs.push({ label: 'Earliest', value: col.min });
@@ -66,34 +96,49 @@ function DetailGrid({ col, rowCount }: { col: ColumnStats; rowCount: number }) {
   }
 
   if (col.minLength !== undefined) {
-    const lenVal = col.minLength === col.maxLength
-      ? `${col.minLength}` : `${col.minLength} – ${col.maxLength}`;
+    const lenVal =
+      col.minLength === col.maxLength
+        ? `${col.minLength}`
+        : `${col.minLength} – ${col.maxLength}`;
     pairs.push({ label: 'Length', value: lenVal });
     if (col.emptyCount !== undefined && col.emptyCount > 0) {
-      pairs.push({ label: 'Empty', value: formatCount(col.emptyCount, rowCount) });
+      pairs.push({
+        label: 'Empty',
+        value: formatCount(col.emptyCount, rowCount),
+      });
     }
   }
 
   if (pairs.length === 0) return null;
 
   return (
-    <div style={{
-      display: 'grid',
-      gridTemplateColumns: pairs.length <= 1 ? 'auto 1fr' : 'auto 1fr auto 1fr',
-      gap: '1px 10px',
-      padding: '2px 0 4px 14px',
-    }}>
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns:
+          pairs.length <= 1 ? 'auto 1fr' : 'auto 1fr auto 1fr',
+        gap: '1px 10px',
+        padding: '2px 0 4px 14px',
+      }}
+    >
       {pairs.map((p, i) => (
         <Fragment key={i}>
-          <span className="text-xs"
-            style={{ color: 'var(--ln-fg-dim)', whiteSpace: 'nowrap' }}>
+          <span
+            className="text-xs"
+            style={{ color: 'var(--ln-fg-dim)', whiteSpace: 'nowrap' }}
+          >
             {p.label}
           </span>
           <Tooltip content={p.value} asChild>
-            <span className="font-mono text-xs" style={{
-              color: 'var(--ln-fg)',
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            }}>
+            <span
+              className="font-mono text-xs"
+              style={{
+                color: 'var(--ln-fg)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
               {p.value}
             </span>
           </Tooltip>
@@ -103,31 +148,36 @@ function DetailGrid({ col, rowCount }: { col: ColumnStats; rowCount: number }) {
   );
 }
 
-
 type SortKey = 'ordinal' | 'name' | 'null' | 'distinct';
 
 /** Column statistics paired with original index to restore ordinal sort. */
 type IndexedCol = ColumnStats & { _idx: number };
 
-function sortColumns(cols: IndexedCol[], key: SortKey, dir: 'asc' | 'desc'): IndexedCol[] {
+function sortColumns(
+  cols: IndexedCol[],
+  key: SortKey,
+  dir: 'asc' | 'desc',
+): IndexedCol[] {
   if (key === 'ordinal') return dir === 'asc' ? cols : [...cols].reverse();
   const sorted = [...cols];
   const mult = dir === 'asc' ? 1 : -1;
   sorted.sort((a, b) => {
     switch (key) {
-      case 'name': return mult * a.name.localeCompare(b.name);
+      case 'name':
+        return mult * a.name.localeCompare(b.name);
       case 'null': {
         const aN = a.nullPercent ?? -1;
         const bN = b.nullPercent ?? -1;
         return mult * (aN - bN);
       }
-      case 'distinct': return mult * (a.distinctCount - b.distinctCount);
-      default: return 0;
+      case 'distinct':
+        return mult * (a.distinctCount - b.distinctCount);
+      default:
+        return 0;
     }
   });
   return sorted;
 }
-
 
 const GRID_COLS = 'minmax(60px, 1fr) 38px 46px minmax(70px, auto)';
 
@@ -137,32 +187,33 @@ const cellClip: React.CSSProperties = {
   whiteSpace: 'nowrap',
 };
 
-
-function StatsResults({ stats, mode }: {
-  stats: TableStats;
-  mode: StatsMode;
-}) {
-  const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'ordinal', dir: 'asc' });
+function StatsResults({ stats, mode }: { stats: TableStats; mode: StatsMode }) {
+  const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({
+    key: 'ordinal',
+    dir: 'asc',
+  });
   const [expandedAll, setExpandedAll] = useState(false);
   const [expandedCols, setExpandedCols] = useState<Set<string>>(new Set());
 
   const toggleSort = useCallback((key: SortKey) => {
-    setSort(prev => prev.key === key
-      ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
-      : { key, dir: (key === 'name' || key === 'ordinal') ? 'asc' : 'desc' }
+    setSort((prev) =>
+      prev.key === key
+        ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
+        : { key, dir: key === 'name' || key === 'ordinal' ? 'asc' : 'desc' },
     );
   }, []);
 
   const toggleCol = useCallback((name: string) => {
-    setExpandedCols(prev => {
+    setExpandedCols((prev) => {
       const next = new Set(prev);
-      if (next.has(name)) next.delete(name); else next.add(name);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
       return next;
     });
   }, []);
 
   const toggleAll = useCallback(() => {
-    setExpandedAll(prev => {
+    setExpandedAll((prev) => {
       if (!prev) setExpandedCols(new Set());
       return !prev;
     });
@@ -178,9 +229,16 @@ function StatsResults({ stats, mode }: {
     return { profiled: p, skipped: s };
   }, [stats.columns]);
 
-  const sortedProfiled = useMemo(() => sortColumns(profiled, sort.key, sort.dir), [profiled, sort]);
+  const sortedProfiled = useMemo(
+    () => sortColumns(profiled, sort.key, sort.dir),
+    [profiled, sort],
+  );
   const isStandard = mode === 'standard';
-  const hdrStyle: React.CSSProperties = { color: 'var(--ln-fg-muted)', cursor: 'pointer', userSelect: 'none' };
+  const hdrStyle: React.CSSProperties = {
+    color: 'var(--ln-fg-muted)',
+    cursor: 'pointer',
+    userSelect: 'none',
+  };
 
   const isDetailVisible = (colName: string) => {
     if (expandedAll) return !expandedCols.has(colName);
@@ -189,12 +247,20 @@ function StatsResults({ stats, mode }: {
 
   return (
     <div className="text-xs" style={{ color: 'var(--ln-fg)' }}>
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 mb-2" style={{ color: 'var(--ln-fg-muted)' }}>
-        <span className="font-mono" style={{ color: 'var(--ln-fg)', fontWeight: 600, fontSize: '0.8rem' }}>
+      <div
+        className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 mb-2"
+        style={{ color: 'var(--ln-fg-muted)' }}
+      >
+        <span
+          className="font-mono"
+          style={{ color: 'var(--ln-fg)', fontWeight: 600, fontSize: '0.8rem' }}
+        >
           {stats.rowCount.toLocaleString()} rows
         </span>
         <span>·</span>
-        <span>{profiled.length} of {stats.columns.length} profiled</span>
+        <span>
+          {profiled.length} of {stats.columns.length} profiled
+        </span>
         <span>·</span>
         {stats.sampled && stats.samplePercent !== undefined ? (
           <span style={{ color: 'var(--ln-warning-fg)', fontWeight: 500 }}>
@@ -207,11 +273,20 @@ function StatsResults({ stats, mode }: {
           <>
             <span>·</span>
             <span
-              style={{ color: 'var(--ln-text-link)', cursor: 'pointer', userSelect: 'none' }}
+              style={{
+                color: 'var(--ln-text-link)',
+                cursor: 'pointer',
+                userSelect: 'none',
+              }}
               onClick={toggleAll}
               role="button"
               tabIndex={0}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleAll(); } }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  toggleAll();
+                }
+              }}
             >
               {expandedAll ? 'Collapse all' : 'Expand all'}
             </span>
@@ -221,30 +296,52 @@ function StatsResults({ stats, mode }: {
 
       <div
         className="font-medium pb-1"
-        style={{ display: 'grid', gridTemplateColumns: GRID_COLS, gap: '0 6px', borderBottom: '1px solid var(--ln-border)' }}
+        style={{
+          display: 'grid',
+          gridTemplateColumns: GRID_COLS,
+          gap: '0 6px',
+          borderBottom: '1px solid var(--ln-border)',
+        }}
       >
-        <div style={hdrStyle} onClick={() => {
-          if (sort.key === 'ordinal') toggleSort('name');
-          else if (sort.key === 'name') toggleSort('ordinal');
-          else toggleSort('ordinal');
-        }}>
+        <div
+          style={hdrStyle}
+          onClick={() => {
+            if (sort.key === 'ordinal') toggleSort('name');
+            else if (sort.key === 'name') toggleSort('ordinal');
+            else toggleSort('ordinal');
+          }}
+        >
           Column{sort.key === 'name' && <SortArrow dir={sort.dir} />}
-          {sort.key === 'ordinal' && <span style={{ fontSize: '0.55rem', marginLeft: 2, opacity: 0.7 }}>#</span>}
+          {sort.key === 'ordinal' && (
+            <span style={{ fontSize: '0.55rem', marginLeft: 2, opacity: 0.7 }}>
+              #
+            </span>
+          )}
         </div>
         <div style={{ color: 'var(--ln-fg-muted)' }}>Type</div>
-        <div style={{ ...hdrStyle, textAlign: 'right' }} onClick={() => toggleSort('null')}>
+        <div
+          style={{ ...hdrStyle, textAlign: 'right' }}
+          onClick={() => toggleSort('null')}
+        >
           Null%{sort.key === 'null' && <SortArrow dir={sort.dir} />}
         </div>
-        <div style={{ ...hdrStyle, textAlign: 'right' }} onClick={() => toggleSort('distinct')}>
+        <div
+          style={{ ...hdrStyle, textAlign: 'right' }}
+          onClick={() => toggleSort('distinct')}
+        >
           Distinct{sort.key === 'distinct' && <SortArrow dir={sort.dir} />}
         </div>
       </div>
 
-      {sortedProfiled.map(col => {
-        const showDetail = isStandard && hasDetail(col) && isDetailVisible(col.name);
+      {sortedProfiled.map((col) => {
+        const showDetail =
+          isStandard && hasDetail(col) && isDetailVisible(col.name);
         const canExpand = isStandard && hasDetail(col);
         return (
-          <div key={col.name} style={{ borderBottom: '1px solid var(--ln-border-light)' }}>
+          <div
+            key={col.name}
+            style={{ borderBottom: '1px solid var(--ln-border-light)' }}
+          >
             <div
               className="py-1"
               style={{
@@ -257,28 +354,62 @@ function StatsResults({ stats, mode }: {
               onClick={canExpand ? () => toggleCol(col.name) : undefined}
               role={canExpand ? 'button' : undefined}
               tabIndex={canExpand ? 0 : undefined}
-              onKeyDown={canExpand ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleCol(col.name); } } : undefined}
+              onKeyDown={
+                canExpand
+                  ? (e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        toggleCol(col.name);
+                      }
+                    }
+                  : undefined
+              }
             >
               <Tooltip content={col.name} asChild>
-              <div className="font-mono flex items-center gap-1" style={{ ...cellClip, minWidth: 0 }}>
-                <span style={{ flexShrink: 0, color: 'var(--ln-fg-dim)', visibility: canExpand ? 'visible' : 'hidden' }}>
-                  <ChevronIcon expanded={showDetail} />
-                </span>
-                <span style={cellClip}>{col.name}</span>
-              </div>
+                <div
+                  className="font-mono flex items-center gap-1"
+                  style={{ ...cellClip, minWidth: 0 }}
+                >
+                  <span
+                    style={{
+                      flexShrink: 0,
+                      color: 'var(--ln-fg-dim)',
+                      visibility: canExpand ? 'visible' : 'hidden',
+                    }}
+                  >
+                    <ChevronIcon expanded={showDetail} />
+                  </span>
+                  <span style={cellClip}>{col.name}</span>
+                </div>
               </Tooltip>
-              <div style={{ textAlign: 'center' }}><TypeBadge typeStr={col.type} /></div>
-              <div className="font-mono" style={{
-                ...cellClip,
-                textAlign: 'right',
-                color: col.nullPercent !== null ? nullQualityColor(col.nullPercent) : 'var(--ln-fg-dim)',
-                fontSize: col.nullPercent === null ? '0.65rem' : undefined,
-              }}>
-                {col.nullPercent === null ? 'NN' : `${col.nullPercent.toFixed(1)}%`}
+              <div style={{ textAlign: 'center' }}>
+                <TypeBadge typeStr={col.type} />
               </div>
-              <div className="font-mono" style={{ ...cellClip, textAlign: 'right' }}>
+              <div
+                className="font-mono"
+                style={{
+                  ...cellClip,
+                  textAlign: 'right',
+                  color:
+                    col.nullPercent !== null
+                      ? nullQualityColor(col.nullPercent)
+                      : 'var(--ln-fg-dim)',
+                  fontSize: col.nullPercent === null ? '0.65rem' : undefined,
+                }}
+              >
+                {col.nullPercent === null
+                  ? 'NN'
+                  : `${col.nullPercent.toFixed(1)}%`}
+              </div>
+              <div
+                className="font-mono"
+                style={{ ...cellClip, textAlign: 'right' }}
+              >
                 {col.distinctCount.toLocaleString()}
-                <UniquenessIndicator value={col.uniqueness} distinctCount={col.distinctCount} />
+                <UniquenessIndicator
+                  value={col.uniqueness}
+                  distinctCount={col.distinctCount}
+                />
               </div>
             </div>
 
@@ -288,12 +419,24 @@ function StatsResults({ stats, mode }: {
             {/* Completeness bar — only shown when column has actual nulls */}
             {col.completeness < 1.0 && (
               <div className="flex items-center" style={{ paddingBottom: 3 }}>
-                <Tooltip content={`${Math.round(col.completeness * 100)}% of rows have a non-null value`} asChild>
+                <Tooltip
+                  content={`${Math.round(col.completeness * 100)}% of rows have a non-null value`}
+                  asChild
+                >
                   <div style={{ flex: 1 }}>
                     <CompletenessBar value={col.completeness} />
                   </div>
                 </Tooltip>
-                <span className="font-mono" style={{ width: 42, textAlign: 'right', fontSize: '0.6rem', color: 'var(--ln-fg-dim)', flexShrink: 0 }}>
+                <span
+                  className="font-mono"
+                  style={{
+                    width: 42,
+                    textAlign: 'right',
+                    fontSize: '0.6rem',
+                    color: 'var(--ln-fg-dim)',
+                    flexShrink: 0,
+                  }}
+                >
                   {Math.round(col.completeness * 100)}% fill
                 </span>
               </div>
@@ -304,19 +447,29 @@ function StatsResults({ stats, mode }: {
 
       {skipped.length > 0 && (
         <div style={{ marginTop: 8 }}>
-          <div className="text-xs" style={{
-            color: 'var(--ln-fg-dim)',
-            borderBottom: '1px solid var(--ln-border-light)',
-            paddingBottom: 2,
-            marginBottom: 4,
-            letterSpacing: '0.05em',
-          }}>
+          <div
+            className="text-xs"
+            style={{
+              color: 'var(--ln-fg-dim)',
+              borderBottom: '1px solid var(--ln-border-light)',
+              paddingBottom: 2,
+              marginBottom: 4,
+              letterSpacing: '0.05em',
+            }}
+          >
             Not profiled ({skipped.length})
           </div>
-          {skipped.map(col => (
-            <div key={col.name} className="flex items-center gap-2 py-0.5" style={{ color: 'var(--ln-fg-dim)' }}>
+          {skipped.map((col) => (
+            <div
+              key={col.name}
+              className="flex items-center gap-2 py-0.5"
+              style={{ color: 'var(--ln-fg-dim)' }}
+            >
               <Tooltip content={col.name} asChild>
-                <span className="font-mono truncate" style={{ flex: 1, minWidth: 0 }}>
+                <span
+                  className="font-mono truncate"
+                  style={{ flex: 1, minWidth: 0 }}
+                >
                   {col.name}
                 </span>
               </Tooltip>
@@ -329,7 +482,6 @@ function StatsResults({ stats, mode }: {
   );
 }
 
-
 interface StatsSectionProps {
   /** The current state of table statistics (loading, error, or result). */
   statsState: TableStatsState;
@@ -340,7 +492,11 @@ interface StatsSectionProps {
 }
 
 /** Requests and displays quick or standard column-level profiling metrics. */
-export function StatsSection({ statsState, onRequestStats, standardModeEnabled }: StatsSectionProps) {
+export function StatsSection({
+  statsState,
+  onRequestStats,
+  standardModeEnabled,
+}: StatsSectionProps) {
   const isLoading = statsState.phase === 'loading';
 
   return (
@@ -348,11 +504,20 @@ export function StatsSection({ statsState, onRequestStats, standardModeEnabled }
       <div className="flex items-center justify-between mb-2">
         <div className="ln-section-label flex items-center gap-2">
           <span>STATISTICS</span>
-          {isLoading && <Spinner className="h-4 w-4 inline-block" style={{ color: 'var(--ln-fg-muted)' }} />}
+          {isLoading && (
+            <Spinner
+              className="h-4 w-4 inline-block"
+              style={{ color: 'var(--ln-fg-muted)' }}
+            />
+          )}
         </div>
         <div className="flex gap-1">
           <Button
-            variant={statsState.phase === 'result' && statsState.mode === 'quick' ? 'primary' : 'ghost'}
+            variant={
+              statsState.phase === 'result' && statsState.mode === 'quick'
+                ? 'primary'
+                : 'ghost'
+            }
             className="text-xs px-2 py-0.5"
             disabled={isLoading}
             onClick={() => onRequestStats('quick')}
@@ -361,7 +526,11 @@ export function StatsSection({ statsState, onRequestStats, standardModeEnabled }
           </Button>
           {standardModeEnabled && (
             <Button
-              variant={statsState.phase === 'result' && statsState.mode === 'standard' ? 'primary' : 'ghost'}
+              variant={
+                statsState.phase === 'result' && statsState.mode === 'standard'
+                  ? 'primary'
+                  : 'ghost'
+              }
               className="text-xs px-2 py-0.5"
               disabled={isLoading}
               onClick={() => onRequestStats('standard')}
@@ -378,12 +547,14 @@ export function StatsSection({ statsState, onRequestStats, standardModeEnabled }
         </div>
       )}
       {statsState.phase === 'error' && (
-        <div className="text-xs px-2 py-1.5 rounded-sm"
+        <div
+          className="text-xs px-2 py-1.5 rounded-sm"
           style={{
             background: 'var(--ln-validation-error-bg)',
             border: '1px solid var(--ln-validation-error-border)',
             color: 'var(--ln-fg)',
-          }}>
+          }}
+        >
           {statsState.message}
         </div>
       )}

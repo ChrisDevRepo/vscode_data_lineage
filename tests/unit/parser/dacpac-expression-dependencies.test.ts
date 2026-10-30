@@ -7,7 +7,9 @@ loadParseRules();
 
 async function extract(references: string) {
   const zip = new JSZip();
-  zip.file('model.xml', `<DataSchemaModel><Model>
+  zip.file(
+    'model.xml',
+    `<DataSchemaModel><Model>
     <Element Type="SqlScalarFunction" Name="[demo].[Scalar]" />
     <Element Type="SqlInlineTableValuedFunction" Name="[demo].[Rows]" />
     <Element Type="SqlTable" Name="[demo].[Source]"><Relationship Name="Columns"><Entry>
@@ -21,9 +23,12 @@ async function extract(references: string) {
       </Element></Entry></Relationship>
       <Relationship Name="BodyDependencies"><Entry><References Name="[demo].[Unrelated]" /></Entry></Relationship>
     </Element>
-  </Model></DataSchemaModel>`);
-  const model = await extractDacpac(await zip.generateAsync({ type: 'uint8array' }));
-  return model.nodes.find(n => n.name === 'Projected')!.columns![0];
+  </Model></DataSchemaModel>`,
+  );
+  const model = await extractDacpac(
+    await zip.generateAsync({ type: 'uint8array' }),
+  );
+  return model.nodes.find((n) => n.name === 'Projected')!.columns![0];
 }
 
 it('retains exact scalar, table-valued, unknown and external declaration identities in source order', async () => {
@@ -32,27 +37,49 @@ it('retains exact scalar, table-valued, unknown and external declaration identit
     <References Name="[demo].[Source].[Known]" />
     <References Name="[demo].[Source].[Input]" />
     <References Name="[demo].[Scalar]" ExternalSource="OtherDatabase" />`);
-  expect(column).toMatchObject({ expressionDependencies: [
-    { reference: '[demo].[Scalar]', sourceElementType: 'SqlScalarFunction' },
-    { reference: '[demo].[Rows]', sourceElementType: 'SqlInlineTableValuedFunction' },
-    { reference: '[demo].[Source].[Known]', sourceElementType: 'SqlSimpleColumn' },
-    { reference: '[demo].[Source].[Input]' },
-    { reference: '[demo].[Scalar]', externalSource: 'OtherDatabase' },
-  ] });
+  expect(column).toMatchObject({
+    expressionDependencies: [
+      { reference: '[demo].[Scalar]', sourceElementType: 'SqlScalarFunction' },
+      {
+        reference: '[demo].[Rows]',
+        sourceElementType: 'SqlInlineTableValuedFunction',
+      },
+      {
+        reference: '[demo].[Source].[Known]',
+        sourceElementType: 'SqlSimpleColumn',
+      },
+      { reference: '[demo].[Source].[Input]' },
+      { reference: '[demo].[Scalar]', externalSource: 'OtherDatabase' },
+    ],
+  });
   expect(JSON.stringify(column)).not.toContain('Unrelated');
 });
 
 it('resolves complete qualified identities without collapsing different databases', async () => {
-  expect(await extract(`<References Name="[server].[first].[demo].[Shared]" />
+  expect(
+    await extract(`<References Name="[server].[first].[demo].[Shared]" />
     <References Name="[server].[second].[demo].[Shared]" />
-    <References Name="[server].[unknown].[demo].[Shared]" />`)).toMatchObject({ expressionDependencies: [
-    { reference: '[server].[first].[demo].[Shared]', sourceElementType: 'SqlScalarFunction' },
-    { reference: '[server].[second].[demo].[Shared]', sourceElementType: 'SqlInlineTableValuedFunction' },
-    { reference: '[server].[unknown].[demo].[Shared]' },
-  ] });
+    <References Name="[server].[unknown].[demo].[Shared]" />`),
+  ).toMatchObject({
+    expressionDependencies: [
+      {
+        reference: '[server].[first].[demo].[Shared]',
+        sourceElementType: 'SqlScalarFunction',
+      },
+      {
+        reference: '[server].[second].[demo].[Shared]',
+        sourceElementType: 'SqlInlineTableValuedFunction',
+      },
+      { reference: '[server].[unknown].[demo].[Shared]' },
+    ],
+  });
 });
 
 it('keeps old payload shape when declarations are absent or malformed', async () => {
-  expect(await extract('<References /><References Name="" /><References Name="   " />')).not.toHaveProperty('expressionDependencies');
+  expect(
+    await extract(
+      '<References /><References Name="" /><References Name="   " />',
+    ),
+  ).not.toHaveProperty('expressionDependencies');
   expect(await extract('')).not.toHaveProperty('expressionDependencies');
 });

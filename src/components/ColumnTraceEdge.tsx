@@ -6,7 +6,10 @@ import {
   type EdgeProps,
 } from '@xyflow/react';
 import { Tooltip } from './ui/Tooltip';
-import { isIndirectOnly, type ColumnTransformClass } from '../engine/shared/bridgeContract';
+import {
+  isIndirectOnly,
+  type ColumnTransformClass,
+} from '../engine/shared/bridgeContract';
 import { COLUMN_EDGE_DIM_OPACITY } from '../engine/columnTraceView';
 import type { ColumnLineState } from '../engine/columnTraceView';
 
@@ -49,7 +52,9 @@ export interface ColumnTraceEdgeData extends Record<string, unknown> {
 }
 
 /** Display name of one transform class, as the tooltip's first line spells it. */
-const COLUMN_TRANSFORM_CLASS_LABELS: Readonly<Record<ColumnTransformClass, string>> = {
+const COLUMN_TRANSFORM_CLASS_LABELS: Readonly<
+  Record<ColumnTransformClass, string>
+> = {
   pass_through: 'Pass through',
   compute: 'Compute',
   aggregate: 'Aggregate',
@@ -58,23 +63,40 @@ const COLUMN_TRANSFORM_CLASS_LABELS: Readonly<Record<ColumnTransformClass, strin
 };
 
 /** The distinct non-identity classes an edge marks — one glyph and one label per class. */
-function markedTransformClasses(transforms: readonly ColumnTransformClass[] | undefined): ColumnTransformClass[] {
-  return [...new Set(transforms ?? [])].filter(c => c !== 'pass_through');
+function markedTransformClasses(
+  transforms: readonly ColumnTransformClass[] | undefined,
+): ColumnTransformClass[] {
+  return [...new Set(transforms ?? [])].filter((c) => c !== 'pass_through');
 }
 
 /** Builds the marker chip's tooltip text: the class names first, then the model's own one-clause note when it offered one, else the structural description of the line. */
-function describeColumnEdge(data: Pick<ColumnTraceEdgeData, 'sourceColumn' | 'targetColumn' | 'transforms' | 'note'>): string {
+function describeColumnEdge(
+  data: Pick<
+    ColumnTraceEdgeData,
+    'sourceColumn' | 'targetColumn' | 'transforms' | 'note'
+  >,
+): string {
   const classes = markedTransformClasses(data.transforms);
   if (classes.length === 0) {
-    return data.note ?? `${data.sourceColumn} → ${data.targetColumn} — the value changes here.`;
+    return (
+      data.note ??
+      `${data.sourceColumn} → ${data.targetColumn} — the value changes here.`
+    );
   }
   const indirectOnly = isIndirectOnly(classes);
-  const detail = data.note
-    ?? `${data.sourceColumn} → ${data.targetColumn} — ${indirectOnly ? 'shapes which rows reach here.' : 'the value changes here.'}`;
-  return `${classes.map(c => COLUMN_TRANSFORM_CLASS_LABELS[c]).join(' + ')}:\n${detail}`;
+  const detail =
+    data.note ??
+    `${data.sourceColumn} → ${data.targetColumn} — ${indirectOnly ? 'shapes which rows reach here.' : 'the value changes here.'}`;
+  return `${classes.map((c) => COLUMN_TRANSFORM_CLASS_LABELS[c]).join(' + ')}:\n${detail}`;
 }
 
-function GlyphSvg({ transformClass, children }: { transformClass: ColumnTransformClass; children: ReactNode }) {
+function GlyphSvg({
+  transformClass,
+  children,
+}: {
+  transformClass: ColumnTransformClass;
+  children: ReactNode;
+}) {
   return (
     <svg
       width={CHIP_GLYPH_SIZE}
@@ -94,7 +116,11 @@ function GlyphSvg({ transformClass, children }: { transformClass: ColumnTransfor
 }
 
 /** The mark drawn for one transform class. */
-function TransformClassGlyph({ transformClass }: { transformClass: ColumnTransformClass }) {
+function TransformClassGlyph({
+  transformClass,
+}: {
+  transformClass: ColumnTransformClass;
+}) {
   switch (transformClass) {
     case 'pass_through':
       return (
@@ -172,7 +198,16 @@ export const ColumnTraceEdge = memo(function ColumnTraceEdge({
   markerEnd,
   data,
 }: EdgeProps) {
-  const { state, lit, focused, sourceColumn, targetColumn, transforms, note, objectLevel } = (data ?? {}) as ColumnTraceEdgeData;
+  const {
+    state,
+    lit,
+    focused,
+    sourceColumn,
+    targetColumn,
+    transforms,
+    note,
+    objectLevel,
+  } = (data ?? {}) as ColumnTraceEdgeData;
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
@@ -185,11 +220,16 @@ export const ColumnTraceEdge = memo(function ColumnTraceEdge({
   const classes = markedTransformClasses(transforms);
   const identityOnly = (transforms?.length ?? 0) > 0 && classes.length === 0;
   const indirect = !!objectLevel || isIndirectOnly(classes);
-  const showChip = !objectLevel && !identityOnly && (state === 'transformation' || classes.length > 0 || !!note);
+  const showChip =
+    !objectLevel &&
+    !identityOnly &&
+    (state === 'transformation' || classes.length > 0 || !!note);
   const shown = classes.slice(0, CHIP_MAX_GLYPHS);
   const overflow = classes.length - shown.length;
   const stroke = lit ? 'var(--ln-focus-border)' : 'var(--ln-edge-color)';
-  const description = showChip ? describeColumnEdge({ sourceColumn, targetColumn, transforms, note }) : '';
+  const description = showChip
+    ? describeColumnEdge({ sourceColumn, targetColumn, transforms, note })
+    : '';
 
   return (
     <>
@@ -228,11 +268,18 @@ export const ColumnTraceEdge = memo(function ColumnTraceEdge({
                 pointerEvents: 'all',
               }}
             >
-              {shown.length > 0
-                ? shown.map(c => <TransformClassGlyph key={c} transformClass={c} />)
-                : <ColumnTransformGlyph />}
+              {shown.length > 0 ? (
+                shown.map((c) => (
+                  <TransformClassGlyph key={c} transformClass={c} />
+                ))
+              ) : (
+                <ColumnTransformGlyph />
+              )}
               {overflow > 0 && (
-                <span aria-hidden="true" style={{ fontSize: 10, fontWeight: 700, lineHeight: 1 }}>
+                <span
+                  aria-hidden="true"
+                  style={{ fontSize: 10, fontWeight: 700, lineHeight: 1 }}
+                >
                   +{overflow}
                 </span>
               )}

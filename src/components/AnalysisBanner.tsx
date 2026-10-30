@@ -1,6 +1,9 @@
 import { memo } from 'react';
 import type { AnalysisMode } from '../engine/types';
-import { ANALYSIS_TYPE_INFO, ANALYSIS_TYPE_LABELS } from '../utils/analysisInfo';
+import {
+  ANALYSIS_TYPE_INFO,
+  ANALYSIS_TYPE_LABELS,
+} from '../utils/analysisInfo';
 import { ModeBanner } from './ModeBanner';
 
 interface AnalysisBannerProps {
@@ -20,13 +23,14 @@ export const AnalysisBanner = memo(function AnalysisBanner({
 }: AnalysisBannerProps) {
   const { type, result, activeGroupId } = analysis;
   const activeGroup = activeGroupId
-    ? result.groups.find(g => g.id === activeGroupId)
+    ? result.groups.find((g) => g.id === activeGroupId)
     : null;
 
   const subtitle = activeGroup ? (
     <>
-      Viewing <span className="font-bold">{activeGroup.label}</span>
-      {' '}({activeGroup.nodeIds.length} node{activeGroup.nodeIds.length !== 1 ? 's' : ''})
+      Viewing <span className="font-bold">{activeGroup.label}</span> (
+      {activeGroup.nodeIds.length} node
+      {activeGroup.nodeIds.length !== 1 ? 's' : ''})
     </>
   ) : (
     result.summary

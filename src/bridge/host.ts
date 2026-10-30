@@ -15,7 +15,12 @@ export interface BridgeHost {
   /** Sends a type-safe message from the extension host to the webview. */
   postMessage(msg: ExtensionToWebviewMsg): Thenable<boolean>;
   /** Records a log entry with a specific severity level and category. */
-  log(level: 'info' | 'debug' | 'warn' | 'error', cat: LogCategory, text: string, err?: unknown): void;
+  log(
+    level: 'info' | 'debug' | 'warn' | 'error',
+    cat: LogCategory,
+    text: string,
+    err?: unknown,
+  ): void;
   /** Displays a VS Code error notification to the user. */
   showErrorMessage(msg: string): void;
   /** Executes a VS Code command with optional arguments. */
@@ -23,15 +28,25 @@ export interface BridgeHost {
   /** Opens a URL in the user's default external browser. */
   openExternal(url: string): Thenable<boolean>;
   /** Displays the standard VS Code file open dialog. */
-  showOpenDialog(options: vscode.OpenDialogOptions): Thenable<vscode.Uri[] | undefined>;
+  showOpenDialog(
+    options: vscode.OpenDialogOptions,
+  ): Thenable<vscode.Uri[] | undefined>;
   /** Displays the standard VS Code file save dialog. */
-  showSaveDialog(options: vscode.SaveDialogOptions): Thenable<vscode.Uri | undefined>;
+  showSaveDialog(
+    options: vscode.SaveDialogOptions,
+  ): Thenable<vscode.Uri | undefined>;
   /** Reads the contents of a file from the local file system. */
   readFile(uri: vscode.Uri): Thenable<Uint8Array>;
   /** Writes data to a file in the local file system. */
   writeFile(uri: vscode.Uri, content: Uint8Array): Thenable<void>;
   /** Displays a progress notification while executing an asynchronous task. */
-  withProgress<R>(options: vscode.ProgressOptions, task: (progress: vscode.Progress<{ message?: string; increment?: number }>, token: vscode.CancellationToken) => Thenable<R>): Thenable<R>;
+  withProgress<R>(
+    options: vscode.ProgressOptions,
+    task: (
+      progress: vscode.Progress<{ message?: string; increment?: number }>,
+      token: vscode.CancellationToken,
+    ) => Thenable<R>,
+  ): Thenable<R>;
   /** Retrieves the extension's workspace configuration. */
   getConfiguration(): vscode.WorkspaceConfiguration;
   /** Returns the base URI where the extension is installed. */
@@ -113,7 +128,11 @@ export function postToDetail(
 }
 
 /** Creates a concrete {@link BridgeHost} implementation tied to a specific WebviewPanel. */
-export function createBridgeHost(panel: vscode.WebviewPanel, context: vscode.ExtensionContext, outputChannel: vscode.LogOutputChannel): BridgeHost {
+export function createBridgeHost(
+  panel: vscode.WebviewPanel,
+  context: vscode.ExtensionContext,
+  outputChannel: vscode.LogOutputChannel,
+): BridgeHost {
   const bridgeLogger = Logger.create(outputChannel, 'Bridge');
   return {
     postMessage: (msg) => postToWebview(panel, msg, bridgeLogger),
@@ -124,8 +143,11 @@ export function createBridgeHost(panel: vscode.WebviewPanel, context: vscode.Ext
       else if (level === 'error') logger.error(text, err);
       else logger.debug(text);
     },
-    showErrorMessage: (msg) => { void vscode.window.showErrorMessage(msg); },
-    executeCommand: (cmd, ...args) => vscode.commands.executeCommand(cmd, ...args),
+    showErrorMessage: (msg) => {
+      void vscode.window.showErrorMessage(msg);
+    },
+    executeCommand: (cmd, ...args) =>
+      vscode.commands.executeCommand(cmd, ...args),
     openExternal: (url) => vscode.env.openExternal(vscode.Uri.parse(url)),
     showOpenDialog: (opts) => vscode.window.showOpenDialog(opts),
     showSaveDialog: (opts) => vscode.window.showSaveDialog(opts),
@@ -140,6 +162,8 @@ export function createBridgeHost(panel: vscode.WebviewPanel, context: vscode.Ext
 
 /** Transforms a detailed ZodError into a concise, human-readable summary. */
 export function summarizeZodError(err: z.ZodError): string {
-  const issues = err.issues.map(i => `${i.path.join('.') || '(root)'}: ${i.message}`);
+  const issues = err.issues.map(
+    (i) => `${i.path.join('.') || '(root)'}: ${i.message}`,
+  );
   return `${issues.length} validation issues: ${issues.join(', ')}`;
 }

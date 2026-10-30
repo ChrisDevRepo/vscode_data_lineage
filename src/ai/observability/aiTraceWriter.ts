@@ -70,7 +70,13 @@ export type RuntimeLifecycleRecord =
       readonly callId?: string;
       readonly toolName: string;
       /** Dispatch outcome. */
-      readonly status: 'accepted' | 'rejected' | 'gate' | 'refused' | 'not_evaluated' | 'dispatch_error';
+      readonly status:
+        | 'accepted'
+        | 'rejected'
+        | 'gate'
+        | 'refused'
+        | 'not_evaluated'
+        | 'dispatch_error';
       /** The rejection's code; absent on `accepted` and `gate`. */
       readonly rejectionCode?: string;
       /** Dotted field paths the rejection blamed, when it reported any. */
@@ -93,7 +99,10 @@ interface AiTraceOptions {
 }
 
 /** Called for append failures after tracing has been enabled successfully. */
-type AiTraceWriteFailureHandler = (error: unknown, firstFailure: boolean) => void;
+type AiTraceWriteFailureHandler = (
+  error: unknown,
+  firstFailure: boolean,
+) => void;
 
 /** Single NDJSON sink for AI diagnostics. */
 export class AiTraceWriter {
@@ -106,10 +115,15 @@ export class AiTraceWriter {
   private verbose = false;
   private origin: TraceOrigin = 'extension-host';
 
-  public constructor(private readonly onWriteFailure?: AiTraceWriteFailureHandler) {}
+  public constructor(
+    private readonly onWriteFailure?: AiTraceWriteFailureHandler,
+  ) {}
 
   /** Enables tracing for the current extension-host session. */
-  public async enable(logRoot: string, options: AiTraceOptions = {}): Promise<string> {
+  public async enable(
+    logRoot: string,
+    options: AiTraceOptions = {},
+  ): Promise<string> {
     if (this.closed) {
       throw new Error('AiTraceWriter: writer is closed.');
     }
@@ -144,7 +158,10 @@ export class AiTraceWriter {
   }
 
   /** Serializes one record onto the append chain. */
-  private enqueue(record: AiTraceRecord, consumeOneShot: boolean): Promise<void> {
+  private enqueue(
+    record: AiTraceRecord,
+    consumeOneShot: boolean,
+  ): Promise<void> {
     const line = `${serializeRecord(record)}\n`;
     const write = this.pending.then(async () => {
       const handle = await this.openHandle();
@@ -236,7 +253,10 @@ export class AiTraceWriter {
     }
     this.filePath = filePath;
     this.handle = Promise.resolve(handle);
-    void this.enqueue({ type: 'trace-open', origin: this.origin, verbose: this.verbose }, false).catch(() => {});
+    void this.enqueue(
+      { type: 'trace-open', origin: this.origin, verbose: this.verbose },
+      false,
+    ).catch(() => {});
     return filePath;
   }
 
@@ -245,8 +265,7 @@ export class AiTraceWriter {
     if (consumeOneShot) this.reportedWriteFailure = true;
     try {
       this.onWriteFailure?.(error, firstFailure);
-    } catch {
-    }
+    } catch {}
   }
 }
 

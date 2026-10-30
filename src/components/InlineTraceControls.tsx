@@ -87,10 +87,17 @@ export const InlineTraceControls = memo(function InlineTraceControls({
     () => estimateCount?.(effectiveUpstream, effectiveDownstream),
     [estimateCount, effectiveUpstream, effectiveDownstream],
   );
-  const overLimit = previewCount !== undefined && renderLimit !== undefined && previewCount > renderLimit;
+  const overLimit =
+    previewCount !== undefined &&
+    renderLimit !== undefined &&
+    previewCount > renderLimit;
 
   const handleApply = () => {
-    onApply({ startNodeId, upstreamLevels: effectiveUpstream, downstreamLevels: effectiveDownstream });
+    onApply({
+      startNodeId,
+      upstreamLevels: effectiveUpstream,
+      downstreamLevels: effectiveDownstream,
+    });
   };
 
   return (
@@ -98,14 +105,19 @@ export const InlineTraceControls = memo(function InlineTraceControls({
       <div className="flex items-center gap-4 shrink-0">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium ln-text">From:</span>
-          <span className="text-sm font-semibold ln-text-link">{startNodeName}</span>
+          <span className="text-sm font-semibold ln-text-link">
+            {startNodeName}
+          </span>
         </div>
 
         <DepthInput
           label="Upstream"
           value={upstream}
           isAll={isUpstreamAll}
-          onChange={(value) => { setUpstream(value); setIsUpstreamAll(false); }}
+          onChange={(value) => {
+            setUpstream(value);
+            setIsUpstreamAll(false);
+          }}
           onToggleAll={() => setIsUpstreamAll(!isUpstreamAll)}
         />
 
@@ -113,15 +125,21 @@ export const InlineTraceControls = memo(function InlineTraceControls({
           label="Downstream"
           value={downstream}
           isAll={isDownstreamAll}
-          onChange={(value) => { setDownstream(value); setIsDownstreamAll(false); }}
+          onChange={(value) => {
+            setDownstream(value);
+            setIsDownstreamAll(false);
+          }}
           onToggleAll={() => setIsDownstreamAll(!isDownstreamAll)}
         />
       </div>
 
       <div className="flex items-center gap-2 shrink-0">
         {previewCount !== undefined && (
-          <span className={`text-xs whitespace-nowrap ${overLimit ? 'ln-text-warning' : 'ln-text-muted'}`}>
-            {previewCount.toLocaleString()} objects{overLimit ? ' — over limit' : ''}
+          <span
+            className={`text-xs whitespace-nowrap ${overLimit ? 'ln-text-warning' : 'ln-text-muted'}`}
+          >
+            {previewCount.toLocaleString()} objects
+            {overLimit ? ' — over limit' : ''}
           </span>
         )}
         <button

@@ -33,10 +33,19 @@ function formatArgument(value: unknown): string {
 }
 
 /** Creates a channel that appends every level to `logFilePath`. */
-export function createHeadlessLogger(name: string, logFilePath: string): HeadlessLogChannel {
+export function createHeadlessLogger(
+  name: string,
+  logFilePath: string,
+): HeadlessLogChannel {
   mkdirSync(dirname(logFilePath), { recursive: true });
-  const write = (level: string, message: unknown, args: readonly unknown[]): void => {
-    const parts = [formatArgument(message), ...args.map(formatArgument)].filter(Boolean);
+  const write = (
+    level: string,
+    message: unknown,
+    args: readonly unknown[],
+  ): void => {
+    const parts = [formatArgument(message), ...args.map(formatArgument)].filter(
+      Boolean,
+    );
     appendFileSync(
       logFilePath,
       `${new Date().toISOString()} ${level.padEnd(5)} [${name}] ${parts.join(' ')}\n`,
@@ -45,20 +54,39 @@ export function createHeadlessLogger(name: string, logFilePath: string): Headles
   };
   return {
     name,
-    redirect: path => { mkdirSync(dirname(path), { recursive: true }); logFilePath = path; },
+    redirect: (path) => {
+      mkdirSync(dirname(path), { recursive: true });
+      logFilePath = path;
+    },
     // `append` is line-oriented here: the production logger only ever appends whole lines, and
     // reconstructing partial writes would reorder them against the timestamps that make the file useful.
-    append: (value) => { write('info', value, []); },
-    appendLine: (value) => { write('info', value, []); },
-    replace: (value) => { write('info', value, []); },
+    append: (value) => {
+      write('info', value, []);
+    },
+    appendLine: (value) => {
+      write('info', value, []);
+    },
+    replace: (value) => {
+      write('info', value, []);
+    },
     clear: () => {},
     show: () => {},
     hide: () => {},
     dispose: () => {},
-    trace: (message, ...args) => { write('trace', message, args); },
-    debug: (message, ...args) => { write('debug', message, args); },
-    info: (message, ...args) => { write('info', message, args); },
-    warn: (message, ...args) => { write('warn', message, args); },
-    error: (message, ...args) => { write('error', message, args); },
+    trace: (message, ...args) => {
+      write('trace', message, args);
+    },
+    debug: (message, ...args) => {
+      write('debug', message, args);
+    },
+    info: (message, ...args) => {
+      write('info', message, args);
+    },
+    warn: (message, ...args) => {
+      write('warn', message, args);
+    },
+    error: (message, ...args) => {
+      write('error', message, args);
+    },
   };
 }

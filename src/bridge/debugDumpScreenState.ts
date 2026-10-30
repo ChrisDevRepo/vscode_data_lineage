@@ -1,5 +1,11 @@
-import { type DatabaseModel, type TraceAffordanceSideSnapshot } from '../engine/types';
-import { type RenderStateSnapshot, type ScreenStateExtras } from '../engine/shared/bridgeContract';
+import {
+  type DatabaseModel,
+  type TraceAffordanceSideSnapshot,
+} from '../engine/types';
+import {
+  type RenderStateSnapshot,
+  type ScreenStateExtras,
+} from '../engine/shared/bridgeContract';
 import { directNeighborIds } from '../engine/graphGuards';
 import { trunc } from '../utils/log';
 
@@ -13,17 +19,27 @@ function formatIdList(ids: readonly string[], cap = 40): string {
 }
 
 /** Tags neighbors in-trace or off-trace and caps the line. */
-function formatTaggedNeighbors(ids: readonly string[], traced: ReadonlySet<string>): string {
-  return formatIdList(ids.map(id => `${id} ${traced.has(id) ? '[in-trace]' : '[off-trace]'}`));
+function formatTaggedNeighbors(
+  ids: readonly string[],
+  traced: ReadonlySet<string>,
+): string {
+  return formatIdList(
+    ids.map((id) => `${id} ${traced.has(id) ? '[in-trace]' : '[off-trace]'}`),
+  );
 }
 
 /** Formats one lineage side's add/prune affordances, surfacing the grayed-control reason. */
-function formatAffordanceSide(label: string, side: TraceAffordanceSideSnapshot): string {
+function formatAffordanceSide(
+  label: string,
+  side: TraceAffordanceSideSnapshot,
+): string {
   const parts = [
     `  ${label}: +add [${side.add.join(', ') || '—'}]  −prune [${side.prune.join(', ') || '—'}]  (neighbors=${side.neighborCount}, in-trace=${side.visibleNeighborCount})`,
   ];
-  if (side.add.length === 0 && side.neighborCount > 0) parts.push(`             add grayed: ${side.addDisabledReason}`);
-  if (side.prune.length === 0 && side.visibleNeighborCount > 0) parts.push(`             prune grayed: ${side.pruneDisabledReason}`);
+  if (side.add.length === 0 && side.neighborCount > 0)
+    parts.push(`             add grayed: ${side.addDisabledReason}`);
+  if (side.prune.length === 0 && side.visibleNeighborCount > 0)
+    parts.push(`             prune grayed: ${side.pruneDisabledReason}`);
   return parts.join('\n');
 }
 
@@ -41,7 +57,9 @@ export function formatScreenStateSections(
   out.push(`  Highlighted node: ${hn ?? '(none)'}`);
   const aff = renderState?.affordances ?? null;
   if (!aff) {
-    out.push('  Affordances:      (none — add/prune controls render only on the highlighted node in an editable trace)');
+    out.push(
+      '  Affordances:      (none — add/prune controls render only on the highlighted node in an editable trace)',
+    );
   } else {
     out.push(formatAffordanceSide('Inbound ', aff.in));
     out.push(formatAffordanceSide('Outbound', aff.out));
@@ -52,10 +70,18 @@ export function formatScreenStateSections(
   if (ts) {
     out.push('TRACE SCOPE');
     out.push(`  Mode: ${ts.mode}    Origin: ${ts.origin ?? '(none)'}`);
-    out.push(`  Traced (${ts.tracedNodeIds.length}):          ${formatIdList(ts.tracedNodeIds)}`);
-    out.push(`  Base (${ts.baseNodeIds.length}):            ${formatIdList(ts.baseNodeIds)}`);
-    out.push(`  Manually added (${ts.manualAddedNodeIds.length}):  ${formatIdList(ts.manualAddedNodeIds)}`);
-    out.push(`  Manually pruned (${ts.manualPrunedNodeIds.length}): ${formatIdList(ts.manualPrunedNodeIds)}`);
+    out.push(
+      `  Traced (${ts.tracedNodeIds.length}):          ${formatIdList(ts.tracedNodeIds)}`,
+    );
+    out.push(
+      `  Base (${ts.baseNodeIds.length}):            ${formatIdList(ts.baseNodeIds)}`,
+    );
+    out.push(
+      `  Manually added (${ts.manualAddedNodeIds.length}):  ${formatIdList(ts.manualAddedNodeIds)}`,
+    );
+    out.push(
+      `  Manually pruned (${ts.manualPrunedNodeIds.length}): ${formatIdList(ts.manualPrunedNodeIds)}`,
+    );
     out.push('');
   }
 
@@ -63,7 +89,9 @@ export function formatScreenStateSections(
     const ins = directNeighborIds(model, hn, 'in');
     const outs = directNeighborIds(model, hn, 'out');
     out.push('DETAIL PANEL (selected node — neighbors vs. trace scope)');
-    out.push(`  Node: ${hn}${screenState?.detailOpen ? '  (detail panel open)' : ''}`);
+    out.push(
+      `  Node: ${hn}${screenState?.detailOpen ? '  (detail panel open)' : ''}`,
+    );
     out.push(`  IN  (${ins.length}): ${formatTaggedNeighbors(ins, traced)}`);
     out.push(`  OUT (${outs.length}): ${formatTaggedNeighbors(outs, traced)}`);
     out.push('');
@@ -72,15 +100,21 @@ export function formatScreenStateSections(
   const analytics = screenState?.analytics ?? null;
   if (analytics) {
     out.push('ANALYTICS');
-    out.push(`  Type: ${analytics.type}    Active group: ${analytics.activeGroupId ?? '(all)'}`);
+    out.push(
+      `  Type: ${analytics.type}    Active group: ${analytics.activeGroupId ?? '(all)'}`,
+    );
     const activeFirst = [
-      ...analytics.groups.filter(g => g.id === analytics.activeGroupId),
-      ...analytics.groups.filter(g => g.id !== analytics.activeGroupId),
+      ...analytics.groups.filter((g) => g.id === analytics.activeGroupId),
+      ...analytics.groups.filter((g) => g.id !== analytics.activeGroupId),
     ];
     for (const g of activeFirst.slice(0, ANALYTICS_GROUP_CAP)) {
-      out.push(`    ${g.id === analytics.activeGroupId ? '▶ ' : '  '}${g.label} (${g.nodeIds.length}): ${formatIdList(g.nodeIds, 20)}`);
+      out.push(
+        `    ${g.id === analytics.activeGroupId ? '▶ ' : '  '}${g.label} (${g.nodeIds.length}): ${formatIdList(g.nodeIds, 20)}`,
+      );
     }
-    const hiddenGroups = analytics.groups.length - Math.min(analytics.groups.length, ANALYTICS_GROUP_CAP);
+    const hiddenGroups =
+      analytics.groups.length -
+      Math.min(analytics.groups.length, ANALYTICS_GROUP_CAP);
     if (hiddenGroups > 0) out.push(`    … +${hiddenGroups} more group(s)`);
     out.push('');
   }
@@ -88,7 +122,9 @@ export function formatScreenStateSections(
   const bm = screenState?.bookmark ?? null;
   if (bm) {
     out.push('BOOKMARK (active advanced view)');
-    out.push(`  ${bm.name}${bm.source ? ` [${bm.source}]` : ''} — allowlist ${bm.allowlistNodeIds.length} node(s)`);
+    out.push(
+      `  ${bm.name}${bm.source ? ` [${bm.source}]` : ''} — allowlist ${bm.allowlistNodeIds.length} node(s)`,
+    );
     out.push(`  Nodes: ${formatIdList(bm.allowlistNodeIds)}`);
     out.push('');
   }

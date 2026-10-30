@@ -17,9 +17,15 @@ class InactiveTurnError extends Error {
 }
 
 /** Rejects work that no longer belongs to the active session epoch. */
-export function assertActiveTurnLease(lease: TurnLease, currentEpoch: number): void {
-  if (lease.signal.aborted) throw new InactiveTurnError('AI turn was cancelled.');
+export function assertActiveTurnLease(
+  lease: TurnLease,
+  currentEpoch: number,
+): void {
+  if (lease.signal.aborted)
+    throw new InactiveTurnError('AI turn was cancelled.');
   if (lease.epoch !== currentEpoch) {
-    throw new InactiveTurnError(`AI turn was superseded (captured=${lease.epoch}, current=${currentEpoch}).`);
+    throw new InactiveTurnError(
+      `AI turn was superseded (captured=${lease.epoch}, current=${currentEpoch}).`,
+    );
   }
 }

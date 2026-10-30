@@ -57,7 +57,9 @@ function SuggestionRow({
       </Tooltip>
       {dimmed && (
         <Tooltip content="Not in Current Filter">
-          <span className="text-[10px] ln-text-dim select-none shrink-0">{'\u2298'}</span>
+          <span className="text-[10px] ln-text-dim select-none shrink-0">
+            {'\u2298'}
+          </span>
         </Tooltip>
       )}
       {renderAction?.(node)}
@@ -77,9 +79,12 @@ export function SuggestionList({
   otherSuggestions = [],
   collapsedSuggestions = [],
 }: SuggestionListProps) {
-  const total = suggestions.length + collapsedSuggestions.length + otherSuggestions.length;
+  const total =
+    suggestions.length + collapsedSuggestions.length + otherSuggestions.length;
   if (total === 0) return null;
-  const showVisibleHeader = suggestions.length > 0 && (collapsedSuggestions.length > 0 || otherSuggestions.length > 0);
+  const showVisibleHeader =
+    suggestions.length > 0 &&
+    (collapsedSuggestions.length > 0 || otherSuggestions.length > 0);
 
   return (
     <div
@@ -119,7 +124,9 @@ export function SuggestionList({
               onHover={onHover}
               renderAction={() => (
                 <Tooltip content={`Expand schema ${node.schema} to view`}>
-                  <span className="text-[10px] ln-text-link select-none shrink-0">{'\u229e'}</span>
+                  <span className="text-[10px] ln-text-link select-none shrink-0">
+                    {'\u229e'}
+                  </span>
                 </Tooltip>
               )}
             />

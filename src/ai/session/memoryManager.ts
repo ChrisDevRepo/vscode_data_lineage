@@ -8,7 +8,6 @@ const RECENT_SUMMARY_WINDOW = 3;
 /** Depth of the recent-rejection ring replayed to the active worker. */
 const MAX_RECENT_REJECTIONS = 5;
 
-
 /** Angle of a captured section — drives YAML render-rule selection at synthesis. */
 type CaptureAngle = 'business' | 'technical';
 
@@ -45,12 +44,16 @@ export interface DetailSlot {
 }
 
 /** Canonical summary string assigned to storage tables traversed automatically without a model call. */
-export const STORAGE_TRAVERSED_PLACEHOLDER_SUMMARY = 'Storage object traversed without inferring a column mapping.';
+export const STORAGE_TRAVERSED_PLACEHOLDER_SUMMARY =
+  'Storage object traversed without inferring a column mapping.';
 
 /** Reports whether a detail slot represents an automatic placeholder rather than an authored hop finding. */
 function isPlaceholderDetailSlot(slot: DetailSlot): boolean {
-  return slot.is_placeholder ?? ((slot.type === 'table' || slot.type === 'external')
-    && slot.summary === STORAGE_TRAVERSED_PLACEHOLDER_SUMMARY);
+  return (
+    slot.is_placeholder ??
+    ((slot.type === 'table' || slot.type === 'external') &&
+      slot.summary === STORAGE_TRAVERSED_PLACEHOLDER_SUMMARY)
+  );
 }
 
 /** One sub-question a hop was dispatched with. */
@@ -62,8 +65,12 @@ export interface IncomingQuestion {
 }
 
 /** Appends `incoming` questions not already present by exact sender and trimmed text. */
-function appendUniqueQuestions(earlier: readonly IncomingQuestion[], incoming: readonly IncomingQuestion[]): IncomingQuestion[] {
-  const key = (q: IncomingQuestion): string => JSON.stringify([q.from_node ?? '', q.question.trim()]);
+function appendUniqueQuestions(
+  earlier: readonly IncomingQuestion[],
+  incoming: readonly IncomingQuestion[],
+): IncomingQuestion[] {
+  const key = (q: IncomingQuestion): string =>
+    JSON.stringify([q.from_node ?? '', q.question.trim()]);
   const seen = new Set(earlier.map(key));
   const merged = [...earlier];
   for (const q of incoming) {
@@ -73,7 +80,6 @@ function appendUniqueQuestions(earlier: readonly IncomingQuestion[], incoming: r
   }
   return merged;
 }
-
 
 /** Snapshot of the memory state delivered to the model at every navigation hop. */
 export interface WorkingMemory {
@@ -103,7 +109,6 @@ export interface WorkingMemory {
   active_schemas: string[];
 }
 
-
 /** Frozen snapshot of an `AiMemoryManager`. Returned by `toJSON()` and embedded in `SmState.memory` for the SM-state debug dump and eval extraction. */
 export interface MemoryStateSnapshot {
   /** The user's original question, captured at session start. */
@@ -122,7 +127,6 @@ export interface MemoryStateSnapshot {
   recentRejections: Array<{ nodeId: string; reason: string; atHop: number }>;
 }
 
-
 /** Appends `incoming` sections that the archived `earlier` ones do not already carry verbatim. */
 function appendUniqueSections(
   earlier: readonly CapturedSection[],
@@ -131,7 +135,7 @@ function appendUniqueSections(
   debugLog?: (message: string) => void,
 ): CapturedSection[] {
   if (earlier.length === 0) return [...incoming];
-  const seenTexts = new Set(earlier.map(s => s.text.trim()));
+  const seenTexts = new Set(earlier.map((s) => s.text.trim()));
   const merged = [...earlier];
   let droppedCount = 0;
   for (const section of incoming) {
@@ -143,7 +147,9 @@ function appendUniqueSections(
     merged.push(section);
   }
   if (droppedCount > 0) {
-    debugLog?.(`[Memory] duplicate section(s) dropped on revisit — node=${nodeId ?? '(unknown)'} count=${droppedCount}`);
+    debugLog?.(
+      `[Memory] duplicate section(s) dropped on revisit — node=${nodeId ?? '(unknown)'} count=${droppedCount}`,
+    );
   }
   return merged;
 }
@@ -155,7 +161,11 @@ export class AiMemoryManager {
   private missionBrief = '';
   private scopeNotes: string[] = [];
   private verdictCounts = { analyze: 0, passthrough: 0, prune: 0 };
-  private recentRejections: Array<{ nodeId: string; reason: string; atHop: number }> = [];
+  private recentRejections: Array<{
+    nodeId: string;
+    reason: string;
+    atHop: number;
+  }> = [];
 
   /** Clears every field so the manager can be reused across sessions. */
   public reset(): void {
@@ -175,7 +185,8 @@ export class AiMemoryManager {
   /** Appends a route rejection to the ring buffer surfaced back to the model via working memory. */
   public recordRejection(nodeId: string, reason: string, atHop: number): void {
     this.recentRejections.push({ nodeId, reason, atHop });
-    if (this.recentRejections.length > MAX_RECENT_REJECTIONS) this.recentRejections.shift();
+    if (this.recentRejections.length > MAX_RECENT_REJECTIONS)
+      this.recentRejections.shift();
   }
 
   /** Records the user's original question so it can be echoed in every working-memory snapshot. */
@@ -223,15 +234,24 @@ export class AiMemoryManager {
     const previous = this.detailSlots.get(node.id);
     const earlier = previous?.sections ?? [];
     if (previous) {
-      const replaced = ([
-        ['summary', previous.summary, summary],
-        ['badge_label', previous.badge_label, meta?.badge_label],
-      ] as const).filter(([, before, after]) => before !== after).map(([field]) => field);
+      const replaced = (
+        [
+          ['summary', previous.summary, summary],
+          ['badge_label', previous.badge_label, meta?.badge_label],
+        ] as const
+      )
+        .filter(([, before, after]) => before !== after)
+        .map(([field]) => field);
       if (replaced.length > 0) {
-        debugLog?.(`[Memory] revisit replaced ${replaced.join(',')} — node=${node.id}`);
+        debugLog?.(
+          `[Memory] revisit replaced ${replaced.join(',')} — node=${node.id}`,
+        );
       }
     }
-    const questions = appendUniqueQuestions(previous?.incoming_questions ?? [], meta?.incoming_questions ?? []);
+    const questions = appendUniqueQuestions(
+      previous?.incoming_questions ?? [],
+      meta?.incoming_questions ?? [],
+    );
     this.detailSlots.set(node.id, {
       nodeId: node.id,
       schema: node.schema,
@@ -248,7 +268,11 @@ export class AiMemoryManager {
   /** Capture angles already archived for `nodeId` from an earlier visit, read before this submission's own sections are merged in by {@link storeDetail}. */
   public getArchivedAngles(nodeId: string): Set<CaptureAngle> {
     const slot = this.detailSlots.get(nodeId);
-    return new Set(slot && !isPlaceholderDetailSlot(slot) ? slot.sections.map(s => s.angle) : []);
+    return new Set(
+      slot && !isPlaceholderDetailSlot(slot)
+        ? slot.sections.map((s) => s.angle)
+        : [],
+    );
   }
 
   /** Produces the working-memory snapshot delivered to the model this hop. */
@@ -262,7 +286,8 @@ export class AiMemoryManager {
     } = { rounds_used: hopCount, scope_growth: 0, active_schemas: [] },
   ): WorkingMemory {
     const noted = this.notedNodeIds.length;
-    const coveragePct = scopeSize > 0 ? Math.round((noted / scopeSize) * 100) : 0;
+    const coveragePct =
+      scopeSize > 0 ? Math.round((noted / scopeSize) * 100) : 0;
 
     const memory: WorkingMemory = {
       user_question: this.userQuestion,
@@ -283,7 +308,11 @@ export class AiMemoryManager {
 
   /** Returns the authored detail archive for the synthesis phase, excluding automatic storage placeholders. */
   public getResult(): { detail_slots: DetailSlot[] } {
-    return { detail_slots: Array.from(this.detailSlots.values()).filter(s => !isPlaceholderDetailSlot(s)) };
+    return {
+      detail_slots: Array.from(this.detailSlots.values()).filter(
+        (s) => !isPlaceholderDetailSlot(s),
+      ),
+    };
   }
 
   /** JSON snapshot embedded in the engine checkpoint (state dump and saved run). */
@@ -308,8 +337,9 @@ export class AiMemoryManager {
     m.missionBrief = snapshot.missionBrief;
     m.scopeNotes = [...snapshot.scopeNotes];
     m.verdictCounts = { ...snapshot.verdictCounts };
-    m.recentRejections = snapshot.recentRejections.map(r => ({ ...r }));
-    for (const [id, slot] of Object.entries(snapshot.detailSlots)) m.detailSlots.set(id, slot);
+    m.recentRejections = snapshot.recentRejections.map((r) => ({ ...r }));
+    for (const [id, slot] of Object.entries(snapshot.detailSlots))
+      m.detailSlots.set(id, slot);
     return m;
   }
 
@@ -331,24 +361,34 @@ export class AiMemoryManager {
 
   /** Node IDs of every authored detail slot, excluding automatic storage placeholders. */
   public get notedNodeIds(): string[] {
-    return Array.from(this.detailSlots.values()).filter(s => !isPlaceholderDetailSlot(s)).map(s => s.nodeId);
+    return Array.from(this.detailSlots.values())
+      .filter((s) => !isPlaceholderDetailSlot(s))
+      .map((s) => s.nodeId);
   }
 
   /** Cloned A/P/prune verdict tally for diagnostics / logging. */
-  public getVerdictCounts(): { analyze: number; passthrough: number; prune: number } {
+  public getVerdictCounts(): {
+    analyze: number;
+    passthrough: number;
+    prune: number;
+  } {
     return { ...this.verdictCounts };
   }
 
   /** Returns the last {@link RECENT_SUMMARY_WINDOW} authored hop summaries, excluding automatic storage placeholders. */
   public getShortTermMemory(): Array<{ nodeId: string; summary: string }> {
     return Array.from(this.detailSlots.values())
-      .filter(s => !isPlaceholderDetailSlot(s))
+      .filter((s) => !isPlaceholderDetailSlot(s))
       .slice(-RECENT_SUMMARY_WINDOW)
-      .map(s => ({ nodeId: s.nodeId, summary: s.summary }));
+      .map((s) => ({ nodeId: s.nodeId, summary: s.summary }));
   }
 
   /** Returns the recent-rejection ring (max {@link MAX_RECENT_REJECTIONS}) for injection into the active worker prompt so the model can self-correct from prior rejected hops. */
-  public getRecentRejections(): Array<{ nodeId: string; reason: string; atHop: number }> {
+  public getRecentRejections(): Array<{
+    nodeId: string;
+    reason: string;
+    atHop: number;
+  }> {
     return this.recentRejections.slice();
   }
 }

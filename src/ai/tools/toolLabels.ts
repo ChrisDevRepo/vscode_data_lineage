@@ -10,7 +10,8 @@ export function getToolInvocationLabel(name: string, input: unknown): string {
         return `Recalling ${recalled.length} object${recalled.length === 1 ? '' : 's'} from the stored run…`;
       }
       const listed = inp?.filter;
-      if (typeof listed === 'string') return `Listing ${listed.replace(/_/g, ' ')} from the stored run…`;
+      if (typeof listed === 'string')
+        return `Listing ${listed.replace(/_/g, ' ')} from the stored run…`;
       return 'Reading screen state…';
     }
     case 'lineage_search_objects':
@@ -36,11 +37,19 @@ export function getToolInvocationLabel(name: string, input: unknown): string {
       if (Array.isArray(input)) {
         return `Analyzing batch of ${input.length} objects…`;
       }
-      const focus = (inp?.focus_node_id as string | undefined)?.split('.').pop()?.replace(/[\[\]]/g, '') ?? 'node';
+      const focus =
+        (inp?.focus_node_id as string | undefined)
+          ?.split('.')
+          .pop()
+          ?.replace(/[\[\]]/g, '') ?? 'node';
       return `Analyzing ${focus}…`;
     }
     case 'lineage_prune_current': {
-      const focus = (inp?.focus_node_id as string | undefined)?.split('.').pop()?.replace(/[\[\]]/g, '') ?? 'node';
+      const focus =
+        (inp?.focus_node_id as string | undefined)
+          ?.split('.')
+          .pop()
+          ?.replace(/[\[\]]/g, '') ?? 'node';
       return `Removing irrelevant candidate ${focus}…`;
     }
     default:

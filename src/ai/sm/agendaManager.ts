@@ -22,15 +22,30 @@ export interface AgendaEntry {
 }
 
 /** Unions column demands; a row-only arrival cannot erase an existing demand. */
-function mergeColumnCarry(existing: ColumnCarry | undefined, incoming: ColumnCarry | undefined, identifierCaseSensitive = false): ColumnCarry | undefined {
+function mergeColumnCarry(
+  existing: ColumnCarry | undefined,
+  incoming: ColumnCarry | undefined,
+  identifierCaseSensitive = false,
+): ColumnCarry | undefined {
   if (existing?.kind === 'carry' || incoming?.kind === 'carry') {
-    return { kind: 'carry', columns: mergeUnique(existing?.kind === 'carry' ? existing.columns : undefined, incoming?.kind === 'carry' ? incoming.columns : [], column => normalizeColName(column, identifierCaseSensitive)) };
+    return {
+      kind: 'carry',
+      columns: mergeUnique(
+        existing?.kind === 'carry' ? existing.columns : undefined,
+        incoming?.kind === 'carry' ? incoming.columns : [],
+        (column) => normalizeColName(column, identifierCaseSensitive),
+      ),
+    };
   }
   return incoming ?? existing;
 }
 
 /** Unions `incoming` into `existing` (order-preserving on first occurrence), deduplicated. */
-function mergeUnique(existing: readonly string[] | undefined, incoming: readonly string[], keyOf: (value: string) => string): string[] {
+function mergeUnique(
+  existing: readonly string[] | undefined,
+  incoming: readonly string[],
+  keyOf: (value: string) => string,
+): string[] {
   const merged: string[] = [];
   const seen = new Set<string>();
   for (const value of [...(existing ?? []), ...incoming]) {
@@ -62,9 +77,21 @@ interface WorklistRank {
 }
 
 /** The dispatch key of one agenda entry under `view`. */
-function worklistRank(entry: AgendaEntry, view: WorklistView, prerequisites: ReadonlySet<string>): WorklistRank {
-  return { columnTier: hasColumnWork(entry) ? 0 : prerequisites.has(entry.nodeId) ? 1 : 2,
-    tier: entry.priority === 3 ? 0 : 1, distance: view.distance(entry), nodeId: entry.nodeId };
+function worklistRank(
+  entry: AgendaEntry,
+  view: WorklistView,
+  prerequisites: ReadonlySet<string>,
+): WorklistRank {
+  return {
+    columnTier: hasColumnWork(entry)
+      ? 0
+      : prerequisites.has(entry.nodeId)
+        ? 1
+        : 2,
+    tier: entry.priority === 3 ? 0 : 1,
+    distance: view.distance(entry),
+    nodeId: entry.nodeId,
+  };
 }
 
 /** Only this arrival's persisted demand selects CT; global provenance never selects a queue tier. */
@@ -82,19 +109,34 @@ function compareWorklistRank(a: WorklistRank, b: WorklistRank): number {
 }
 
 /** Readiness of the queued node ids — Kahn readiness over the live note graph, with every strongly connected component treated as one unit — plus the queued predecessors pending CT work waits on. */
-function analyzeWorklist(queued: readonly string[], successors: (nodeId: string) => Iterable<string>, columnNodes: readonly string[]): {
-  ready: string[]; prerequisites: ReadonlySet<string>;
+function analyzeWorklist(
+  queued: readonly string[],
+  successors: (nodeId: string) => Iterable<string>,
+  columnNodes: readonly string[],
+): {
+  ready: string[];
+  prerequisites: ReadonlySet<string>;
 } {
-  const live = new Graph({ type: 'directed', allowSelfLoops: false, multi: false });
+  const live = new Graph({
+    type: 'directed',
+    allowSelfLoops: false,
+    multi: false,
+  });
   const frontier: string[] = [];
   for (const id of queued) {
-    if (!live.hasNode(id)) { live.addNode(id); frontier.push(id); }
+    if (!live.hasNode(id)) {
+      live.addNode(id);
+      frontier.push(id);
+    }
   }
   for (let i = 0; i < frontier.length; i++) {
     const from = frontier[i];
     for (const to of successors(from)) {
       if (to === from) continue;
-      if (!live.hasNode(to)) { live.addNode(to); frontier.push(to); }
+      if (!live.hasNode(to)) {
+        live.addNode(to);
+        frontier.push(to);
+      }
       if (!live.hasDirectedEdge(from, to)) live.addDirectedEdge(from, to);
     }
   }
@@ -115,7 +157,7 @@ function analyzeWorklist(queued: readonly string[], successors: (nodeId: string)
     }
   });
   const needed = new Set<number>();
-  const frontierComponents = columnNodes.map(id => componentOf.get(id)!);
+  const frontierComponents = columnNodes.map((id) => componentOf.get(id)!);
   for (let i = 0; i < frontierComponents.length; i++) {
     const component = frontierComponents[i];
     if (needed.has(component)) continue;
@@ -123,8 +165,10 @@ function analyzeWorklist(queued: readonly string[], successors: (nodeId: string)
     frontierComponents.push(...(predecessors.get(component) ?? []));
   }
   return {
-    ready: queued.filter(id => !blocked.has(componentOf.get(id)!)),
-    prerequisites: new Set(queued.filter(id => needed.has(componentOf.get(id)!))),
+    ready: queued.filter((id) => !blocked.has(componentOf.get(id)!)),
+    prerequisites: new Set(
+      queued.filter((id) => needed.has(componentOf.get(id)!)),
+    ),
   };
 }
 
@@ -162,15 +206,27 @@ export class AgendaManager {
       for (const taskId of entry.taskIds) {
         if (!existing.taskIds.includes(taskId)) existing.taskIds.push(taskId);
       }
-      const carry = mergeColumnCarry(existing.columnCarry, entry.columnCarry, this.identifierCaseSensitive);
+      const carry = mergeColumnCarry(
+        existing.columnCarry,
+        entry.columnCarry,
+        this.identifierCaseSensitive,
+      );
       if (carry) existing.columnCarry = carry;
       if (carry?.kind === 'row_role_only') {
         existing.activeColumns = [];
       } else if (entry.activeColumns) {
-        existing.activeColumns = mergeUnique(existing.activeColumns, entry.activeColumns, column => normalizeColName(column, this.identifierCaseSensitive));
+        existing.activeColumns = mergeUnique(
+          existing.activeColumns,
+          entry.activeColumns,
+          (column) => normalizeColName(column, this.identifierCaseSensitive),
+        );
       }
       if (entry.lineageQuestions) {
-        existing.lineageQuestions = mergeUnique(existing.lineageQuestions, entry.lineageQuestions, question => question);
+        existing.lineageQuestions = mergeUnique(
+          existing.lineageQuestions,
+          entry.lineageQuestions,
+          (question) => question,
+        );
       }
       existing.priority = Math.max(existing.priority, entry.priority);
       existing.depth = Math.min(existing.depth, entry.depth);
@@ -183,17 +239,26 @@ export class AgendaManager {
   /** Removes and returns the next entry in worklist order. */
   public dequeue(view: WorklistView): AgendaEntry | undefined {
     if (this._entries.length === 0) return undefined;
-    const analysis = analyzeWorklist(this._entries.map(entry => entry.nodeId), id => view.successors(id),
-      this._entries.filter(hasColumnWork).map(entry => entry.nodeId));
+    const analysis = analyzeWorklist(
+      this._entries.map((entry) => entry.nodeId),
+      (id) => view.successors(id),
+      this._entries.filter(hasColumnWork).map((entry) => entry.nodeId),
+    );
     const ready = new Set(analysis.ready);
     let nextIdx = -1;
     let best: WorklistRank | undefined;
     this._entries.forEach((entry, index) => {
       if (!ready.has(entry.nodeId)) return;
       const rank = worklistRank(entry, view, analysis.prerequisites);
-      if (!best || compareWorklistRank(rank, best) < 0) { best = rank; nextIdx = index; }
+      if (!best || compareWorklistRank(rank, best) < 0) {
+        best = rank;
+        nextIdx = index;
+      }
     });
-    if (nextIdx < 0) throw new Error(`agenda has ${this._entries.length} entries and no ready node`);
+    if (nextIdx < 0)
+      throw new Error(
+        `agenda has ${this._entries.length} entries and no ready node`,
+      );
     const entry = this._entries.splice(nextIdx, 1)[0];
     this._byId.delete(entry.nodeId);
     return entry;

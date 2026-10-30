@@ -19,11 +19,13 @@ export function useDropdown(placement: Placement = 'bottom-start') {
   const idRef = useRef<symbol>(Symbol());
 
   const close = useCallback(() => setIsOpen(false), []);
-  const toggle = useCallback(() => setIsOpen(prev => !prev), []);
+  const toggle = useCallback(() => setIsOpen((prev) => !prev), []);
 
   useEffect(() => {
     if (isOpen) {
-      window.dispatchEvent(new CustomEvent(DROPDOWN_OPEN_EVENT, { detail: idRef.current }));
+      window.dispatchEvent(
+        new CustomEvent(DROPDOWN_OPEN_EVENT, { detail: idRef.current }),
+      );
     }
   }, [isOpen]);
 
@@ -40,11 +42,7 @@ export function useDropdown(placement: Placement = 'bottom-start') {
     onOpenChange: setIsOpen,
     placement,
     whileElementsMounted: autoUpdate,
-    middleware: [
-      offset(8),
-      flip({ padding: 8 }),
-      shift({ padding: 8 }),
-    ],
+    middleware: [offset(8), flip({ padding: 8 }), shift({ padding: 8 })],
   });
 
   const dismiss = useDismiss(context);

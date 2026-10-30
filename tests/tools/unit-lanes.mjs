@@ -3,7 +3,11 @@ import { readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const repoRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+);
 
 /** Fixed aggregate recipes: filters or disabling flags would silently narrow a gate lane. */
 const laneScriptCommands = {
@@ -22,7 +26,13 @@ export function laneScriptProblems(scripts = {}) {
   return Object.entries(laneScriptCommands).flatMap(([script, expected]) => {
     const command = scripts[script];
     if (!command) return [`package.json has no "${script}" script.`];
-    if (typeof command !== 'string' || command.trim().split(/[ \t]+/u).join(' ') !== expected) {
+    if (
+      typeof command !== 'string' ||
+      command
+        .trim()
+        .split(/[ \t]+/u)
+        .join(' ') !== expected
+    ) {
       return [`"${script}" must run ${expected}. It is: ${command}`];
     }
     return [];
@@ -32,7 +42,8 @@ export function laneScriptProblems(scripts = {}) {
 /** Repo-relative POSIX path.
  * @public
  */
-export const rel = (absolute) => path.relative(repoRoot, absolute).replaceAll('\\', '/');
+export const rel = (absolute) =>
+  path.relative(repoRoot, absolute).replaceAll('\\', '/');
 
 /** Lineage and graph facts. Distinct expected graphs stay here. */
 const lineageEngineTests = [
@@ -145,11 +156,18 @@ const supportDirectories = [
 ];
 
 /** Every `*.test.ts` / `*.test.tsx` under `tests/unit`. */
-export function unitTestFiles(dir = path.join(repoRoot, 'tests', 'unit'), found = []) {
+export function unitTestFiles(
+  dir = path.join(repoRoot, 'tests', 'unit'),
+  found = [],
+) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) unitTestFiles(full, found);
-    else if (entry.name.endsWith('.test.ts') || entry.name.endsWith('.test.tsx')) found.push(rel(full));
+    else if (
+      entry.name.endsWith('.test.ts') ||
+      entry.name.endsWith('.test.tsx')
+    )
+      found.push(rel(full));
   }
   return found;
 }
@@ -173,40 +191,54 @@ export function classifyUnitTests(allFiles = unitTestFiles().sort()) {
   const problems = [];
   const claim = (file, lane, claimed) => {
     const previous = claimed.get(file);
-    if (previous) problems.push(`${file} is claimed more than once (${previous}, ${lane}).`);
+    if (previous)
+      problems.push(
+        `${file} is claimed more than once (${previous}, ${lane}).`,
+      );
     claimed.set(file, lane);
   };
   const claimed = new Map();
   for (const entry of corePaths) {
     const selected = expandPath(entry, allFiles);
-    if (selected === null) problems.push(`core lane names ${entry}, which does not exist.`);
-    else if (selected.length === 0) problems.push(`core lane names ${entry}, which selects no test file.`);
+    if (selected === null)
+      problems.push(`core lane names ${entry}, which does not exist.`);
+    else if (selected.length === 0)
+      problems.push(`core lane names ${entry}, which selects no test file.`);
     else for (const file of selected) claim(file, 'core', claimed);
   }
   for (const file of runtimeContractTests) {
-    if (!allFiles.includes(file)) problems.push(`runtime lane names ${file}, which is not a unit test file.`);
+    if (!allFiles.includes(file))
+      problems.push(
+        `runtime lane names ${file}, which is not a unit test file.`,
+      );
     else claim(file, 'runtime', claimed);
   }
   for (const file of engineSupportTests) {
-    if (!allFiles.includes(file)) problems.push(`support lane names ${file}, which is not a unit test file.`);
+    if (!allFiles.includes(file))
+      problems.push(
+        `support lane names ${file}, which is not a unit test file.`,
+      );
     else claim(file, 'support', claimed);
   }
   for (const entry of supportDirectories) {
     const selected = expandPath(entry, allFiles);
-    if (selected === null) problems.push(`support lane names ${entry}, which does not exist.`);
-    else for (const file of selected) {
-      if (!claimed.has(file)) claim(file, 'support', claimed);
-    }
+    if (selected === null)
+      problems.push(`support lane names ${entry}, which does not exist.`);
+    else
+      for (const file of selected) {
+        if (!claimed.has(file)) claim(file, 'support', claimed);
+      }
   }
   for (const file of allFiles) {
     if (!claimed.has(file)) {
       problems.push(
-        `${file} is not in a lane. Add a parser file under tests/unit/parser, a lineage file to `
-        + 'lineageEngineTests, or an engine support file to engineSupportTests in tests/tools/unit-lanes.mjs.',
+        `${file} is not in a lane. Add a parser file under tests/unit/parser, a lineage file to ` +
+          'lineageEngineTests, or an engine support file to engineSupportTests in tests/tools/unit-lanes.mjs.',
       );
     }
   }
-  const filesIn = (lane) => allFiles.filter((file) => claimed.get(file) === lane);
+  const filesIn = (lane) =>
+    allFiles.filter((file) => claimed.get(file) === lane);
   return {
     problems,
     core: filesIn('core'),

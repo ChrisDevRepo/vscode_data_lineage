@@ -1,15 +1,24 @@
 /** Projects internal lineage models into compact model-facing payloads. */
-import type { LineageNode, ColumnDef, SchemaInfo, NeighborIndex, ForeignKeyInfo } from '../../engine/types';
+import type {
+  LineageNode,
+  ColumnDef,
+  SchemaInfo,
+  NeighborIndex,
+  ForeignKeyInfo,
+} from '../../engine/types';
 import type { SerializedFilterState } from '../../engine/projectStore';
-
 
 /** Prunes null, undefined, false, empty strings, and empty arrays from a record. */
 export function strip<T extends Record<string, unknown>>(obj: T): Partial<T> {
   return Object.fromEntries(
-    Object.entries(obj).filter(([, v]) =>
-      v !== null && v !== undefined && v !== false && v !== '' &&
-      !(Array.isArray(v) && v.length === 0)
-    )
+    Object.entries(obj).filter(
+      ([, v]) =>
+        v !== null &&
+        v !== undefined &&
+        v !== false &&
+        v !== '' &&
+        !(Array.isArray(v) && v.length === 0),
+    ),
   ) as Partial<T>;
 }
 
@@ -22,11 +31,10 @@ export function edgeApiType(type: string, sourceNodeType: string): string {
   return EDGE_TYPE_MAP[type] ?? 'read';
 }
 
-
 /** A minimal representation of a database node, used for cross-layer presentation. */
 type PresentableNode = Pick<LineageNode, 'id' | 'schema' | 'name' | 'type'> & {
   /** Optional metadata for external/linked resources. */
-  externalType?: string
+  externalType?: string;
 };
 
 /** Optional context that enables {@link presentNode} to serve a node's `in`/`out` neighbor split in the same shape `buildHopFocusNode` uses for the hop_context route, instead of only the scalar `deg`. */
@@ -44,22 +52,39 @@ export function presentNode(
   splitContext?: NodeNeighborSplitContext,
 ): Record<string, unknown> {
   const entry = neighborIndex?.[node.id];
-  const deg = entry !== undefined
-    ? entry.in.length + entry.out.length
-    : undefined;
-  const inSplit = entry && splitContext
-    ? entry.in.map(nid => presentNeighbor(nid, node.id, splitContext.nodeMap, splitContext.edgeTypeMap, true))
-    : undefined;
-  const outSplit = entry && splitContext
-    ? entry.out.map(nid => presentNeighbor(nid, node.id, splitContext.nodeMap, splitContext.edgeTypeMap, false))
-    : undefined;
+  const deg =
+    entry !== undefined ? entry.in.length + entry.out.length : undefined;
+  const inSplit =
+    entry && splitContext
+      ? entry.in.map((nid) =>
+          presentNeighbor(
+            nid,
+            node.id,
+            splitContext.nodeMap,
+            splitContext.edgeTypeMap,
+            true,
+          ),
+        )
+      : undefined;
+  const outSplit =
+    entry && splitContext
+      ? entry.out.map((nid) =>
+          presentNeighbor(
+            nid,
+            node.id,
+            splitContext.nodeMap,
+            splitContext.edgeTypeMap,
+            false,
+          ),
+        )
+      : undefined;
   return strip({
-    id:  node.id,
-    s:   node.schema,
-    n:   node.name,
-    t:   node.type,
+    id: node.id,
+    s: node.schema,
+    n: node.name,
+    t: node.type,
     deg,
-    in:  inSplit,
+    in: inSplit,
     out: outSplit,
     ext: node.externalType || undefined,
   });
@@ -68,12 +93,12 @@ export function presentNode(
 /** Transforms a column definition into a compact, token-optimized JSON representation. */
 export function presentColumn(col: ColumnDef): Record<string, unknown> {
   return strip({
-    n:  col.name,
-    t:  col.type,
-    nl: col.nullable  || undefined,
+    n: col.name,
+    t: col.type,
+    nl: col.nullable || undefined,
     pk: col.pkOrdinal ?? undefined,
-    uq: col.unique    || undefined,
-    ck: col.check     || undefined,
+    uq: col.unique || undefined,
+    ck: col.check || undefined,
   });
 }
 
@@ -93,7 +118,11 @@ export function presentColumnCompact(col: ColumnDef): string {
 }
 
 /** Summarizes a Foreign Key relationship in a compact "pointer" format. */
-export function presentFkCompact(fk: { columns: string[]; refSchema: string; refTable: string }): string {
+export function presentFkCompact(fk: {
+  columns: string[];
+  refSchema: string;
+  refTable: string;
+}): string {
   return `${fk.columns.join(', ')} → ${fk.refSchema}.${fk.refTable}`;
 }
 
@@ -101,7 +130,7 @@ export function presentFkCompact(fk: { columns: string[]; refSchema: string; ref
 export function presentForeignKeys(
   fks: ForeignKeyInfo[] | undefined,
 ): Array<Record<string, unknown>> | undefined {
-  return fks?.map(fk => ({
+  return fks?.map((fk) => ({
     name: fk.name,
     columns: fk.columns,
     ref_schema: fk.refSchema,
@@ -115,12 +144,12 @@ export function presentForeignKeys(
 export function presentSchema(schema: SchemaInfo): Record<string, unknown> {
   return strip({
     name: schema.name,
-    n:    schema.nodeCount,
-    t:    schema.types['table']     || undefined,
-    v:    schema.types['view']      || undefined,
-    p:    schema.types['procedure'] || undefined,
-    f:    schema.types['function']  || undefined,
-    ext:  schema.types['external']  || undefined,
+    n: schema.nodeCount,
+    t: schema.types['table'] || undefined,
+    v: schema.types['view'] || undefined,
+    p: schema.types['procedure'] || undefined,
+    f: schema.types['function'] || undefined,
+    ext: schema.types['external'] || undefined,
   });
 }
 
@@ -136,25 +165,32 @@ export function presentNeighbor(
   const edgeKey = isUpstream ? `${nid}→${originId}` : `${originId}→${nid}`;
   return strip({
     id: nid,
-    s:  n?.schema || undefined,
-    n:  n?.name   ?? nid,
-    t:  n?.type   || undefined,
-    e:  edgeMap.get(edgeKey) ?? 'read',
+    s: n?.schema || undefined,
+    n: n?.name ?? nid,
+    t: n?.type || undefined,
+    e: edgeMap.get(edgeKey) ?? 'read',
   });
 }
 
 /** Compresses the current UI filter state for AI consumption. */
-export function presentFilter(filter: SerializedFilterState): Record<string, unknown> {
+export function presentFilter(
+  filter: SerializedFilterState,
+): Record<string, unknown> {
   const bookmarkCount = filter.allowlistNodeIds?.length;
   return strip({
-    schemas:           filter.schemas.length > 0 ? filter.schemas : undefined,
-    types:             filter.types.length > 0 ? filter.types : undefined,
-    searchTerm:        filter.searchTerm        || undefined,
-    hideIsolated:      filter.hideIsolated       || undefined,
-    focusSchemas:      filter.focusSchemas?.length > 0 ? filter.focusSchemas : undefined,
-    showExternalRefs:  filter.showExternalRefs   || undefined,
-    externalRefTypes:  filter.externalRefTypes?.length > 0 ? filter.externalRefTypes : undefined,
-    exclusionPatterns: filter.exclusionPatterns?.length ? filter.exclusionPatterns : undefined,
-    bookmark_nodes:    bookmarkCount && bookmarkCount > 0 ? bookmarkCount : undefined,
+    schemas: filter.schemas.length > 0 ? filter.schemas : undefined,
+    types: filter.types.length > 0 ? filter.types : undefined,
+    searchTerm: filter.searchTerm || undefined,
+    hideIsolated: filter.hideIsolated || undefined,
+    focusSchemas:
+      filter.focusSchemas?.length > 0 ? filter.focusSchemas : undefined,
+    showExternalRefs: filter.showExternalRefs || undefined,
+    externalRefTypes:
+      filter.externalRefTypes?.length > 0 ? filter.externalRefTypes : undefined,
+    exclusionPatterns: filter.exclusionPatterns?.length
+      ? filter.exclusionPatterns
+      : undefined,
+    bookmark_nodes:
+      bookmarkCount && bookmarkCount > 0 ? bookmarkCount : undefined,
   });
 }

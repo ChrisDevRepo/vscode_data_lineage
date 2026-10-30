@@ -3,11 +3,11 @@ import { schemaKey } from './sql';
 
 /** Visual markers (icons) associated with different SQL object types. Used for consistent identification in UI lists and labels. */
 export const TYPE_COLORS: Record<ObjectType, { icon: string }> = {
-  table:     { icon: '■' },
-  view:      { icon: '●' },
+  table: { icon: '■' },
+  view: { icon: '●' },
   procedure: { icon: '▲' },
-  function:  { icon: '◆' },
-  external:  { icon: '⬡' },
+  function: { icon: '◆' },
+  external: { icon: '⬡' },
 };
 
 /** Human-readable display labels for SQL object types. */
@@ -78,28 +78,51 @@ function hashString(str: string): number {
 }
 
 function shiftL(hex: string, delta: number): string {
-  const r = parseInt(hex.slice(1,3),16)/255, g = parseInt(hex.slice(3,5),16)/255, b = parseInt(hex.slice(5,7),16)/255;
-  const max = Math.max(r,g,b), min = Math.min(r,g,b);
-  let h = 0, s = 0; const l = (max+min)/2;
+  const r = parseInt(hex.slice(1, 3), 16) / 255,
+    g = parseInt(hex.slice(3, 5), 16) / 255,
+    b = parseInt(hex.slice(5, 7), 16) / 255;
+  const max = Math.max(r, g, b),
+    min = Math.min(r, g, b);
+  let h = 0,
+    s = 0;
+  const l = (max + min) / 2;
   if (max !== min) {
-    const d = max-min; s = l>0.5 ? d/(2-max-min) : d/(max+min);
-    if (max===r) h=((g-b)/d+(g<b?6:0))/6;
-    else if (max===g) h=((b-r)/d+2)/6;
-    else h=((r-g)/d+4)/6;
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+    else if (max === g) h = ((b - r) / d + 2) / 6;
+    else h = ((r - g) / d + 4) / 6;
   }
-  const nl = Math.max(0.08, Math.min(0.92, l+delta/100));
-  const q = nl<0.5 ? nl*(1+s) : nl+s-nl*s, p = 2*nl-q;
-  const c = (t: number) => { if(t<0)t+=1; if(t>1)t-=1; if(t<1/6)return p+(q-p)*6*t; if(t<1/2)return q; if(t<2/3)return p+(q-p)*(2/3-t)*6; return p; };
-  return '#'+[h+1/3,h,h-1/3].map(t=>Math.round(c(t)*255).toString(16).padStart(2,'0')).join('');
+  const nl = Math.max(0.08, Math.min(0.92, l + delta / 100));
+  const q = nl < 0.5 ? nl * (1 + s) : nl + s - nl * s,
+    p = 2 * nl - q;
+  const c = (t: number) => {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  };
+  return (
+    '#' +
+    [h + 1 / 3, h, h - 1 / 3]
+      .map((t) =>
+        Math.round(c(t) * 255)
+          .toString(16)
+          .padStart(2, '0'),
+      )
+      .join('')
+  );
 }
 
 const SCHEMA_COLORS_LIGHT_EXT = [
   ...SCHEMA_COLORS_LIGHT,
-  ...SCHEMA_COLORS_LIGHT.map(c => shiftL(c, 14)),
+  ...SCHEMA_COLORS_LIGHT.map((c) => shiftL(c, 14)),
 ];
 const SCHEMA_COLORS_DARK_EXT = [
   ...SCHEMA_COLORS_DARK,
-  ...SCHEMA_COLORS_DARK.map(c => shiftL(c, -12)),
+  ...SCHEMA_COLORS_DARK.map((c) => shiftL(c, -12)),
 ];
 
 /** Resolved schema-color assignments keyed by schema name under the source comparison policy. */
@@ -114,7 +137,9 @@ function requireSchemaName(schema: string): string {
 }
 
 function getSchemaPalette(forceLight?: boolean): string[] {
-  return (!forceLight && isDarkTheme()) ? SCHEMA_COLORS_DARK_EXT : SCHEMA_COLORS_LIGHT_EXT;
+  return !forceLight && isDarkTheme()
+    ? SCHEMA_COLORS_DARK_EXT
+    : SCHEMA_COLORS_LIGHT_EXT;
 }
 
 function mix32(hash: number): number {
@@ -127,21 +152,47 @@ function mix32(hash: number): number {
 }
 
 /** Retrieves a deterministic theme-aware color for a given SQL schema. Hashes the schema name (FNV-1a) into a 30-slot palette — the base 15 colors plus 15 lightness-shifted variants. The same schema name always produces the same color regardless of how many other schemas are loaded. */
-export function getSchemaColor(schema: string, forceLight?: boolean, identifierCaseSensitive = false): string {
+export function getSchemaColor(
+  schema: string,
+  forceLight?: boolean,
+  identifierCaseSensitive = false,
+): string {
   const palette = getSchemaPalette(forceLight);
-  return palette[getSchemaColorIndex(schema, palette.length, identifierCaseSensitive)];
+  return palette[
+    getSchemaColorIndex(schema, palette.length, identifierCaseSensitive)
+  ];
 }
 
 /** Computes the stable preferred palette slot for a schema. The final avalanche improves distribution before reducing to the small palette. */
-function getSchemaColorIndex(schema: string, paletteSize: number, identifierCaseSensitive: boolean): number {
-  return hashString(schemaKey(requireSchemaName(schema), identifierCaseSensitive)) % paletteSize;
+function getSchemaColorIndex(
+  schema: string,
+  paletteSize: number,
+  identifierCaseSensitive: boolean,
+): number {
+  return (
+    hashString(schemaKey(requireSchemaName(schema), identifierCaseSensitive)) %
+    paletteSize
+  );
 }
 
 /** Builds a deterministic loaded-set color map keyed by normalized schema name. Collisions are spread across free palette slots before any color is reused. */
-export function createSchemaColorMap(schemas: readonly string[], forceLight?: boolean, identifierCaseSensitive = false): SchemaColorMap {
+export function createSchemaColorMap(
+  schemas: readonly string[],
+  forceLight?: boolean,
+  identifierCaseSensitive = false,
+): SchemaColorMap {
   const palette = getSchemaPalette(forceLight);
-  const schemaKeys = Array.from(new Set(schemas.map(s => schemaKey(requireSchemaName(s), identifierCaseSensitive)))).sort();
-  const slotCount = schemaKeys.length <= SCHEMA_COLORS_LIGHT.length ? SCHEMA_COLORS_LIGHT.length : palette.length;
+  const schemaKeys = Array.from(
+    new Set(
+      schemas.map((s) =>
+        schemaKey(requireSchemaName(s), identifierCaseSensitive),
+      ),
+    ),
+  ).sort();
+  const slotCount =
+    schemaKeys.length <= SCHEMA_COLORS_LIGHT.length
+      ? SCHEMA_COLORS_LIGHT.length
+      : palette.length;
   const slotUse = new Array<number>(slotCount).fill(0);
   const map: SchemaColorMap = new Map();
 
@@ -170,7 +221,11 @@ export function createSchemaColorMap(schemas: readonly string[], forceLight?: bo
 }
 
 /** Resolves the display color for a schema from a precomputed color map. */
-export function getSchemaColorFromMap(schema: string, colorMap: SchemaColorMap, identifierCaseSensitive = false): string {
+export function getSchemaColorFromMap(
+  schema: string,
+  colorMap: SchemaColorMap,
+  identifierCaseSensitive = false,
+): string {
   const key = schemaKey(requireSchemaName(schema), identifierCaseSensitive);
   const color = colorMap.get(key);
   if (!color) {
@@ -180,13 +235,15 @@ export function getSchemaColorFromMap(schema: string, colorMap: SchemaColorMap, 
 }
 
 /** Returns true when a schema/type aggregate represents only external objects. */
-export function isExternalOnlyTypeBreakdown(typeBreakdown: Partial<Record<ObjectType, number>> | undefined): boolean {
+export function isExternalOnlyTypeBreakdown(
+  typeBreakdown: Partial<Record<ObjectType, number>> | undefined,
+): boolean {
   if (!typeBreakdown) return false;
   const externalCount = typeBreakdown.external ?? 0;
   if (externalCount <= 0) return false;
   return (Object.keys(TYPE_LABELS) as ObjectType[])
-    .filter(type => type !== 'external')
-    .every(type => (typeBreakdown[type] ?? 0) === 0);
+    .filter((type) => type !== 'external')
+    .every((type) => (typeBreakdown[type] ?? 0) === 0);
 }
 
 /** Resolves the display color for a rendered schema-like node. */
@@ -210,7 +267,9 @@ function relativeLuminance(hex: string): number {
 }
 
 /** Picks black or white text for a `#rrggbb` background, whichever has the higher WCAG 2 contrast ratio against it. */
-export function getReadableTextColor(background: string): '#000000' | '#ffffff' {
+export function getReadableTextColor(
+  background: string,
+): '#000000' | '#ffffff' {
   const l = relativeLuminance(background);
   return (l + 0.05) / 0.05 >= 1.05 / (l + 0.05) ? '#000000' : '#ffffff';
 }
@@ -218,7 +277,7 @@ export function getReadableTextColor(background: string): '#000000' | '#ffffff' 
 /** Fixed color for external nodes in light theme — applies to all `type === 'external'` (catalog ET, file, cross-DB). */
 const EXTERNAL_NODE_COLOR_LIGHT = '#6B7A8D';
 /** Fixed color for external nodes in dark theme — applies to all `type === 'external'` (catalog ET, file, cross-DB). */
-const EXTERNAL_NODE_COLOR_DARK  = '#94A3B8';
+const EXTERNAL_NODE_COLOR_DARK = '#94A3B8';
 
 /** Returns the theme-aware fixed color for external nodes. All externals (catalog `et`, virtual `file`, virtual `db`) share this steel-gray to keep the "external system" category visually distinct from real schemas in both light and dark themes. */
 export function getExternalNodeColor(): string {
@@ -237,8 +296,12 @@ export const AI_COLOR_HEX: Record<string, string> = {
 
 /** Maps semantic AI roles to their corresponding two-letter color codes. */
 const AI_ROLE_TO_COLOR: Record<string, string> = {
-  source: 'bu', transform: 'or', target: 'gn',
-  good: 'gn', warn: 'ye', fail: 'rd',
+  source: 'bu',
+  transform: 'or',
+  target: 'gn',
+  good: 'gn',
+  warn: 'ye',
+  fail: 'rd',
   gy: 'gy',
 };
 

@@ -6,10 +6,21 @@ import {
   buildGraphologyGraph,
   traceNodeWithLevels,
 } from '../../../src/engine/graphBuilder';
-import { deriveGraphDisplayMode, deriveInitialGraphMode, traceSizeByDepth } from '../../../src/engine/graphDisplayMode';
+import {
+  deriveGraphDisplayMode,
+  deriveInitialGraphMode,
+  traceSizeByDepth,
+} from '../../../src/engine/graphDisplayMode';
 import { filterBySchemas } from '../../../src/engine/modelFilters';
-import { checkObjectLimit, formatObjectLimitMessage } from '../../../src/engine/modelFilters';
-import { DEFAULT_CONFIG, type DatabaseModel, type ExtensionConfig } from '../../../src/engine/types';
+import {
+  checkObjectLimit,
+  formatObjectLimitMessage,
+} from '../../../src/engine/modelFilters';
+import {
+  DEFAULT_CONFIG,
+  type DatabaseModel,
+  type ExtensionConfig,
+} from '../../../src/engine/types';
 import { TRACE_ALL_LEVELS } from '../../../src/engine/shared/bridgeContract';
 import { filterSuggestions } from '../../../src/utils/autocomplete';
 import { buildLargeModel } from '../helpers/largeGraphFixture';
@@ -48,12 +59,12 @@ describe('graph build above the tracked fixture size', () => {
 
   it('never trims — filterBySchemas keeps every selected object, checkObjectLimit refuses over the cap', () => {
     const model = buildLargeModel(2000);
-    const schemas = new Set(model.schemas.map(s => s.name));
+    const schemas = new Set(model.schemas.map((s) => s.name));
 
     const filtered = filterBySchemas(model, schemas);
     expect(filtered.nodes).toHaveLength(2000);
 
-    const ids = new Set(filtered.nodes.map(n => n.id));
+    const ids = new Set(filtered.nodes.map((n) => n.id));
     for (const edge of filtered.edges) {
       expect(ids.has(edge.source) && ids.has(edge.target)).toBe(true);
     }
@@ -68,18 +79,28 @@ describe('graph build above the tracked fixture size', () => {
 
 describe('render-limit boundary at scale', () => {
   it('starts a 1000-object model in Schema View', () => {
-    expect(deriveInitialGraphMode({ filteredCount: 1000, config: DEFAULT_CONFIG })).toBe('overview');
+    expect(
+      deriveInitialGraphMode({ filteredCount: 1000, config: DEFAULT_CONFIG }),
+    ).toBe('overview');
   });
 
   it('blocks the object surface exactly at the configured limit', () => {
     const config = configWith({ renderLimit: 750 });
     const at = deriveGraphDisplayMode({
-      graphMode: 'full', filteredCount: 750, config, renderLimitHit: 0,
-      expandedSchemaCount: 0, schemaOverviewRenderedCount: 12,
+      graphMode: 'full',
+      filteredCount: 750,
+      config,
+      renderLimitHit: 0,
+      expandedSchemaCount: 0,
+      schemaOverviewRenderedCount: 12,
     });
     const over = deriveGraphDisplayMode({
-      graphMode: 'full', filteredCount: 751, config, renderLimitHit: 751,
-      expandedSchemaCount: 0, schemaOverviewRenderedCount: 12,
+      graphMode: 'full',
+      filteredCount: 751,
+      config,
+      renderLimitHit: 751,
+      expandedSchemaCount: 0,
+      schemaOverviewRenderedCount: 12,
     });
 
     expect(at.mode).toBe('full');
@@ -90,8 +111,12 @@ describe('render-limit boundary at scale', () => {
   it('keeps Schema View available for a model the object surface refuses', () => {
     const config = configWith({ renderLimit: 750 });
     const state = deriveGraphDisplayMode({
-      graphMode: 'overview', filteredCount: 1000, config, renderLimitHit: 1000,
-      expandedSchemaCount: 0, schemaOverviewRenderedCount: 12,
+      graphMode: 'overview',
+      filteredCount: 1000,
+      config,
+      renderLimitHit: 1000,
+      expandedSchemaCount: 0,
+      schemaOverviewRenderedCount: 12,
     });
 
     expect(state.mode).toBe('schemaOverview');
@@ -105,8 +130,15 @@ describe('scoped surface ceiling', () => {
     const graph = buildGraphologyGraph(model);
     const origin = model.nodes[500].id;
 
-    const traced = traceNodeWithLevels(graph, origin, TRACE_ALL_LEVELS, TRACE_ALL_LEVELS);
-    console.log(`all-levels trace from ${origin}: ${traced.nodeIds.size} of ${model.nodes.length} nodes`);
+    const traced = traceNodeWithLevels(
+      graph,
+      origin,
+      TRACE_ALL_LEVELS,
+      TRACE_ALL_LEVELS,
+    );
+    console.log(
+      `all-levels trace from ${origin}: ${traced.nodeIds.size} of ${model.nodes.length} nodes`,
+    );
 
     const expected = directedReach(model, origin);
     expect(traced.nodeIds.size).toBe(expected);
@@ -116,9 +148,14 @@ describe('scoped surface ceiling', () => {
   it('bounds the scoped surface by the render limit', () => {
     const config = configWith({ renderLimit: 750 });
     const state = deriveGraphDisplayMode({
-      graphMode: 'full', filteredCount: 1000, config, renderLimitHit: 1000,
-      expandedSchemaCount: 0, schemaOverviewRenderedCount: 12,
-      scopedModeActive: true, scopedRenderedCount: 1000,
+      graphMode: 'full',
+      filteredCount: 1000,
+      config,
+      renderLimitHit: 1000,
+      expandedSchemaCount: 0,
+      schemaOverviewRenderedCount: 12,
+      scopedModeActive: true,
+      scopedRenderedCount: 1000,
     });
 
     expect(state.mode).toBe('renderLimit');
@@ -128,9 +165,14 @@ describe('scoped surface ceiling', () => {
   it('leaves a scope within the limit on the scoped surface', () => {
     const config = configWith({ renderLimit: 750 });
     const state = deriveGraphDisplayMode({
-      graphMode: 'full', filteredCount: 1000, config, renderLimitHit: 1000,
-      expandedSchemaCount: 0, schemaOverviewRenderedCount: 12,
-      scopedModeActive: true, scopedRenderedCount: 40,
+      graphMode: 'full',
+      filteredCount: 1000,
+      config,
+      renderLimitHit: 1000,
+      expandedSchemaCount: 0,
+      schemaOverviewRenderedCount: 12,
+      scopedModeActive: true,
+      scopedRenderedCount: 40,
     });
 
     expect(state.mode).toBe('scoped');
@@ -149,30 +191,50 @@ describe('5,000-object model: loaded and searchable, drawn only up to the render
     expect(checkObjectLimit(model, MAX_NODES).ok).toBe(true);
 
     const refused = checkObjectLimit(model, MAX_NODES - 1);
-    expect(refused).toEqual({ ok: false, count: MAX_NODES, limit: MAX_NODES - 1 });
+    expect(refused).toEqual({
+      ok: false,
+      count: MAX_NODES,
+      limit: MAX_NODES - 1,
+    });
     expect(formatObjectLimitMessage(MAX_NODES, MAX_NODES - 1)).toBe(
       '5,000 objects selected (limit 4,999, set by dataLineageViz.maxNodes). Select fewer schemas or raise the setting.',
     );
 
     const over = buildLargeModel(MAX_NODES + 1);
     const overCheck = checkObjectLimit(over, MAX_NODES);
-    expect(overCheck).toEqual({ ok: false, count: MAX_NODES + 1, limit: MAX_NODES });
-    expect(formatObjectLimitMessage(MAX_NODES + 1, MAX_NODES)).toContain('5,001 objects selected (limit 5,000');
+    expect(overCheck).toEqual({
+      ok: false,
+      count: MAX_NODES + 1,
+      limit: MAX_NODES,
+    });
+    expect(formatObjectLimitMessage(MAX_NODES + 1, MAX_NODES)).toContain(
+      '5,001 objects selected (limit 5,000',
+    );
   });
 
   it('blocks the object surface above the render limit and starts in Schema View', () => {
-    expect(deriveInitialGraphMode({ filteredCount: MAX_NODES, config })).toBe('overview');
+    expect(deriveInitialGraphMode({ filteredCount: MAX_NODES, config })).toBe(
+      'overview',
+    );
     const state = deriveGraphDisplayMode({
-      graphMode: 'full', filteredCount: MAX_NODES, config, renderLimitHit: MAX_NODES,
-      expandedSchemaCount: 0, schemaOverviewRenderedCount: 12,
+      graphMode: 'full',
+      filteredCount: MAX_NODES,
+      config,
+      renderLimitHit: MAX_NODES,
+      expandedSchemaCount: 0,
+      schemaOverviewRenderedCount: 12,
     });
     expect(state).toEqual({ mode: 'renderLimit', renderedCount: MAX_NODES });
   });
 
   it('keeps Schema View available at 5,000 objects', () => {
     const state = deriveGraphDisplayMode({
-      graphMode: 'overview', filteredCount: MAX_NODES, config, renderLimitHit: MAX_NODES,
-      expandedSchemaCount: 0, schemaOverviewRenderedCount: model.schemas.length,
+      graphMode: 'overview',
+      filteredCount: MAX_NODES,
+      config,
+      renderLimitHit: MAX_NODES,
+      expandedSchemaCount: 0,
+      schemaOverviewRenderedCount: model.schemas.length,
     });
     expect(state.mode).toBe('schemaOverview');
     expect(state.renderedCount).toBe(model.schemas.length);
@@ -181,29 +243,46 @@ describe('5,000-object model: loaded and searchable, drawn only up to the render
   it('finds an object the canvas does not draw', () => {
     const target = model.nodes[MAX_NODES - 1];
     const hits = filterSuggestions(model.nodes, target.name, 50);
-    expect(hits.map(n => n.id)).toContain(target.id);
-    expect(model.nodes.indexOf(target)).toBeGreaterThanOrEqual(RENDER_LIMIT_MAX);
+    expect(hits.map((n) => n.id)).toContain(target.id);
+    expect(model.nodes.indexOf(target)).toBeGreaterThanOrEqual(
+      RENDER_LIMIT_MAX,
+    );
   });
 
   it('bounds a scoped trace by the render limit', () => {
     const graph = buildGraphologyGraph(model);
     const origin = model.nodes[MAX_NODES / 2].id;
-    const reach = traceSizeByDepth(graph, origin, TRACE_ALL_LEVELS, TRACE_ALL_LEVELS);
+    const reach = traceSizeByDepth(
+      graph,
+      origin,
+      TRACE_ALL_LEVELS,
+      TRACE_ALL_LEVELS,
+    );
     expect(reach).toBe(directedReach(model, origin));
 
     const state = deriveGraphDisplayMode({
-      graphMode: 'full', filteredCount: MAX_NODES, config, renderLimitHit: MAX_NODES,
-      expandedSchemaCount: 0, schemaOverviewRenderedCount: 12,
-      scopedModeActive: true, scopedRenderedCount: reach,
+      graphMode: 'full',
+      filteredCount: MAX_NODES,
+      config,
+      renderLimitHit: MAX_NODES,
+      expandedSchemaCount: 0,
+      schemaOverviewRenderedCount: 12,
+      scopedModeActive: true,
+      scopedRenderedCount: reach,
     });
     expect(reach).toBeLessThanOrEqual(RENDER_LIMIT_MAX);
     expect(state.mode).toBe('scoped');
     expect(state.renderedCount).toBe(reach);
 
     const tooLarge = deriveGraphDisplayMode({
-      graphMode: 'full', filteredCount: MAX_NODES, config, renderLimitHit: MAX_NODES,
-      expandedSchemaCount: 0, schemaOverviewRenderedCount: 12,
-      scopedModeActive: true, scopedRenderedCount: RENDER_LIMIT_MAX + 1,
+      graphMode: 'full',
+      filteredCount: MAX_NODES,
+      config,
+      renderLimitHit: MAX_NODES,
+      expandedSchemaCount: 0,
+      schemaOverviewRenderedCount: 12,
+      scopedModeActive: true,
+      scopedRenderedCount: RENDER_LIMIT_MAX + 1,
     });
     expect(tooLarge.mode).toBe('renderLimit');
 

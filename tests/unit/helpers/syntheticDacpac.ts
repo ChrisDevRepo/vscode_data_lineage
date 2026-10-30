@@ -46,17 +46,25 @@ const DACPAC_TYPE: Record<Exclude<ObjectType, 'external'>, string> = {
 };
 
 function xmlEscape(value: string): string {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 /** Serializes a {@link DatabaseModel} produced by {@link generateDwhModel} into a `model.xml` body. */
-function serializeDwhModelToXml(model: DatabaseModel): { xml: string; edgeCount: number } {
-  const byId = new Map(model.nodes.map(n => [n.id, n]));
+function serializeDwhModelToXml(model: DatabaseModel): {
+  xml: string;
+  edgeCount: number;
+} {
+  const byId = new Map(model.nodes.map((n) => [n.id, n]));
 
   const externalUrlByCarrier = new Map<string, string>();
   for (const e of model.edges) {
     const source = byId.get(e.source);
-    if (source?.type === 'external' && source.externalUrl) externalUrlByCarrier.set(e.target, source.externalUrl);
+    if (source?.type === 'external' && source.externalUrl)
+      externalUrlByCarrier.set(e.target, source.externalUrl);
   }
 
   const incomingByTarget = new Map<string, string[]>();
@@ -64,7 +72,13 @@ function serializeDwhModelToXml(model: DatabaseModel): { xml: string; edgeCount:
   for (const e of model.edges) {
     const source = byId.get(e.source);
     const target = byId.get(e.target);
-    if (!source || !target || source.type === 'external' || target.type === 'external') continue;
+    if (
+      !source ||
+      !target ||
+      source.type === 'external' ||
+      target.type === 'external'
+    )
+      continue;
     const arr = incomingByTarget.get(e.target) ?? [];
     arr.push(source.fullName);
     incomingByTarget.set(e.target, arr);
@@ -78,30 +92,48 @@ function serializeDwhModelToXml(model: DatabaseModel): { xml: string; edgeCount:
     const url = externalUrlByCarrier.get(node.id);
     if (url) {
       const body = `SELECT * FROM OPENROWSET(BULK '${xmlEscape(url)}', FORMAT='CSV') AS r`;
-      elements.push(`<Element Type="${dacpacType}" Name="${xmlEscape(node.fullName)}"><Property Name="BodyScript" Value="${xmlEscape(body)}" /></Element>`);
+      elements.push(
+        `<Element Type="${dacpacType}" Name="${xmlEscape(node.fullName)}"><Property Name="BodyScript" Value="${xmlEscape(body)}" /></Element>`,
+      );
       continue;
     }
     const deps = incomingByTarget.get(node.id) ?? [];
-    const relXml = deps.length === 0
-      ? ''
-      : `<Relationship Name="BodyDependencies">${deps.map(name => `<Entry><References Name="${xmlEscape(name)}" /></Entry>`).join('')}</Relationship>`;
-    const bodyXml = node.type === 'procedure' ? '<Property Name="BodyScript" Value="SELECT 1" />' : '';
-    elements.push(`<Element Type="${dacpacType}" Name="${xmlEscape(node.fullName)}">${bodyXml}${relXml}</Element>`);
+    const relXml =
+      deps.length === 0
+        ? ''
+        : `<Relationship Name="BodyDependencies">${deps.map((name) => `<Entry><References Name="${xmlEscape(name)}" /></Entry>`).join('')}</Relationship>`;
+    const bodyXml =
+      node.type === 'procedure'
+        ? '<Property Name="BodyScript" Value="SELECT 1" />'
+        : '';
+    elements.push(
+      `<Element Type="${dacpacType}" Name="${xmlEscape(node.fullName)}">${bodyXml}${relXml}</Element>`,
+    );
   }
 
-  const xml = `<?xml version="1.0" encoding="utf-8"?>\n`
-    + `<DataSchemaModel DspName="Microsoft.Data.Tools.Schema.Sql.Sql160DatabaseSchemaProvider">\n`
-    + `  <Model>\n${elements.join('\n')}\n  </Model>\n`
-    + `</DataSchemaModel>`;
+  const xml =
+    `<?xml version="1.0" encoding="utf-8"?>\n` +
+    `<DataSchemaModel DspName="Microsoft.Data.Tools.Schema.Sql.Sql160DatabaseSchemaProvider">\n` +
+    `  <Model>\n${elements.join('\n')}\n  </Model>\n` +
+    `</DataSchemaModel>`;
 
   return { xml, edgeCount };
 }
 
 /** Builds a real `model.xml` at the requested size — via the shared {@link generateDwhModel} — zipped into a `.dacpac` buffer, so the scale-boundary tests around `dataLineageViz.maxNodes` exercise the actual DACPAC extraction path rather than a hand-built `DatabaseModel`. */
-export async function buildSyntheticDacpac(params: SyntheticDacpacParams): Promise<SyntheticDacpacResult> {
-  const { objectCount, schemaCount, externalRefCount = 0, seed = DEFAULT_SEED, profile } = params;
+export async function buildSyntheticDacpac(
+  params: SyntheticDacpacParams,
+): Promise<SyntheticDacpacResult> {
+  const {
+    objectCount,
+    schemaCount,
+    externalRefCount = 0,
+    seed = DEFAULT_SEED,
+    profile,
+  } = params;
   if (schemaCount < 1) throw new Error('schemaCount must be at least 1');
-  if (externalRefCount > objectCount) throw new Error('externalRefCount cannot exceed objectCount');
+  if (externalRefCount > objectCount)
+    throw new Error('externalRefCount cannot exceed objectCount');
 
   const { model } = generateDwhModel({
     objectCount,
@@ -117,8 +149,10 @@ export async function buildSyntheticDacpac(params: SyntheticDacpacParams): Promi
 
   const perSchemaObjectCount: Record<string, number> = {};
   for (const s of model.schemas) perSchemaObjectCount[s.name] = s.nodeCount;
-  const schemaNames = model.schemas.map(s => s.name);
-  const realExternalRefCount = model.nodes.filter(n => n.type === 'external').length;
+  const schemaNames = model.schemas.map((s) => s.name);
+  const realExternalRefCount = model.nodes.filter(
+    (n) => n.type === 'external',
+  ).length;
   const realObjectCount = model.nodes.length - realExternalRefCount;
 
   return {
@@ -142,7 +176,9 @@ export async function buildThreePartDacpac(
   ],
 ): Promise<Uint8Array> {
   const zip = new JSZip();
-  zip.file('model.xml', `<?xml version="1.0"?>
+  zip.file(
+    'model.xml',
+    `<?xml version="1.0"?>
     <DataSchemaModel DspName="Microsoft.Data.Tools.Schema.Sql.Sql160DatabaseSchemaProvider">
       <Model>
         <Element Type="SqlTable" Name="[dbo].[T]" />
@@ -150,13 +186,15 @@ export async function buildThreePartDacpac(
         <Element Type="SqlProcedure" Name="[dbo].[usp_Sync]">
           <Property Name="BodyScript" Value="${body}" />
           <Relationship Name="BodyDependencies">
-            ${dependencies.map(reference => `<Entry><References Name="${xmlEscape(reference.name)}"${reference.externalSource ? ` ExternalSource="${xmlEscape(reference.externalSource)}"` : ''} /></Entry>`).join('\n')}
+            ${dependencies.map((reference) => `<Entry><References Name="${xmlEscape(reference.name)}"${reference.externalSource ? ` ExternalSource="${xmlEscape(reference.externalSource)}"` : ''} /></Entry>`).join('\n')}
           </Relationship>
         </Element>
       </Model>
-    </DataSchemaModel>`);
+    </DataSchemaModel>`,
+  );
   if (dacMetadata !== undefined) zip.file('DacMetadata.xml', dacMetadata);
   return zip.generateAsync({ type: 'uint8array' });
 }
 
-export const SELF_DB_METADATA = '<?xml version="1.0" encoding="utf-8"?><DacType xmlns="http://schemas.microsoft.com/sqlserver/dac/Serialization/2012/02"><Name>SelfDb</Name><Version>1.0.0.0</Version></DacType>';
+export const SELF_DB_METADATA =
+  '<?xml version="1.0" encoding="utf-8"?><DacType xmlns="http://schemas.microsoft.com/sqlserver/dac/Serialization/2012/02"><Name>SelfDb</Name><Version>1.0.0.0</Version></DacType>';

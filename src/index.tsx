@@ -12,7 +12,11 @@ if (!root) {
 }
 
 /** Reports a failed bootstrap chunk load and leaves a visible message in place of the panel. */
-function reportBootstrapFailure(surface: 'detail' | 'panel', mount: HTMLElement, error: unknown): void {
+function reportBootstrapFailure(
+  surface: 'detail' | 'panel',
+  mount: HTMLElement,
+  error: unknown,
+): void {
   const message = errorMessage(error);
   window.vscode?.postMessage({
     type: 'error',
@@ -22,7 +26,8 @@ function reportBootstrapFailure(surface: 'detail' | 'panel', mount: HTMLElement,
     timestamp: Date.now(),
   });
   // textContent, never innerHTML: `message` is provider/runtime text and must not be parsed as markup.
-  mount.textContent = 'Data Lineage could not load this view. Reload the window; if it persists, reinstall the extension.';
+  mount.textContent =
+    'Data Lineage could not load this view. Reload the window; if it persists, reinstall the extension.';
   mount.style.setProperty('padding', '12px');
   mount.style.setProperty('font-size', '12px');
   mount.style.setProperty('color', 'var(--vscode-errorForeground)');
@@ -33,29 +38,40 @@ if ((window as unknown as { __DETAIL_MODE__?: boolean }).__DETAIL_MODE__) {
   Promise.all([
     import('./detail/DetailApp'),
     import('./components/ErrorBoundary'),
-  ]).then(([{ DetailApp }, { ErrorBoundary }]) => {
-    createRoot(root).render(
-      <ErrorBoundary
-        onError={() => {
-          // Crash is already logged by ErrorBoundary.componentDidCatch; surface it to the
-          // user before recovery so a real crash is never a silent flicker.
-          notifyUser('The detail panel hit an error and was closed — see the output channel for details.');
-          // 800 ms delay lets the fallback render before disposal.
-          setTimeout(() => window.vscode?.postMessage({ type: 'close-detail' }), 800);
-        }}
-        fallback={
-          <div className="px-4 py-3 text-xs" style={{ color: 'var(--vscode-descriptionForeground)' }}>
-            Detail panel encountered an error — closing…
-          </div>
-        }
-      >
-        <DetailApp />
-      </ErrorBoundary>
-    );
-  }).catch(err => reportBootstrapFailure('detail', root, err));
+  ])
+    .then(([{ DetailApp }, { ErrorBoundary }]) => {
+      createRoot(root).render(
+        <ErrorBoundary
+          onError={() => {
+            // Crash is already logged by ErrorBoundary.componentDidCatch; surface it to the
+            // user before recovery so a real crash is never a silent flicker.
+            notifyUser(
+              'The detail panel hit an error and was closed — see the output channel for details.',
+            );
+            // 800 ms delay lets the fallback render before disposal.
+            setTimeout(
+              () => window.vscode?.postMessage({ type: 'close-detail' }),
+              800,
+            );
+          }}
+          fallback={
+            <div
+              className="px-4 py-3 text-xs"
+              style={{ color: 'var(--vscode-descriptionForeground)' }}
+            >
+              Detail panel encountered an error — closing…
+            </div>
+          }
+        >
+          <DetailApp />
+        </ErrorBoundary>,
+      );
+    })
+    .catch((err) => reportBootstrapFailure('detail', root, err));
 } else {
   // acquireVsCodeApi may be called once per webview; this is the only call site.
-  const vscodeApi = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : null;
+  const vscodeApi =
+    typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : null;
   window.vscode = vscodeApi ?? undefined; // Read by ErrorBoundary, a class component without context access.
 
   // Surface otherwise silent failures in the Output channel.
@@ -73,7 +89,11 @@ if ((window as unknown as { __DETAIL_MODE__?: boolean }).__DETAIL_MODE__) {
   window.addEventListener('error', (event) => {
     // A browser notice with nothing thrown behind it goes to the log, not a modal toast the user cannot act on.
     if (!(event.error instanceof Error)) {
-      window.vscode?.postMessage({ type: 'log', level: 'debug', text: `[Graph] Window notice: ${event.message}` });
+      window.vscode?.postMessage({
+        type: 'log',
+        level: 'debug',
+        text: `[Graph] Window notice: ${event.message}`,
+      });
       return;
     }
     window.vscode?.postMessage({
@@ -90,27 +110,44 @@ if ((window as unknown as { __DETAIL_MODE__?: boolean }).__DETAIL_MODE__) {
     import('./contexts/VsCodeContext'),
     import('./components/ErrorBoundary'),
     import('./engine/graphBuilder'),
-  ]).then(([{ App }, { VsCodeProvider }, { ErrorBoundary }, { setGraphLogSink }]) => {
-    // The engine has no bridge of its own, so this is the one place the sink is installed, before the first render can build one.
-    setGraphLogSink((level, text) => window.vscode?.postMessage({ type: 'log', level, text }));
+  ])
+    .then(
+      ([
+        { App },
+        { VsCodeProvider },
+        { ErrorBoundary },
+        { setGraphLogSink },
+      ]) => {
+        // The engine has no bridge of its own, so this is the one place the sink is installed, before the first render can build one.
+        setGraphLogSink((level, text) =>
+          window.vscode?.postMessage({ type: 'log', level, text }),
+        );
 
-    createRoot(root).render(
-      <ErrorBoundary
-        onError={() => {
-          // ErrorBoundary emits the error toast and Output log; this handler only auto-reopens the panel.
-          // 800 ms delay lets the fallback render before the panel is recycled.
-          setTimeout(() => window.vscode?.postMessage({ type: 'reload' }), 800);
-        }}
-        fallback={
-          <div className="px-4 py-3 text-xs" style={{ color: 'var(--vscode-descriptionForeground)' }}>
-            App encountered an error — recovering…
-          </div>
-        }
-      >
-        <VsCodeProvider api={vscodeApi}>
-          <App />
-        </VsCodeProvider>
-      </ErrorBoundary>
-    );
-  }).catch(err => reportBootstrapFailure('panel', root, err));
+        createRoot(root).render(
+          <ErrorBoundary
+            onError={() => {
+              // ErrorBoundary emits the error toast and Output log; this handler only auto-reopens the panel.
+              // 800 ms delay lets the fallback render before the panel is recycled.
+              setTimeout(
+                () => window.vscode?.postMessage({ type: 'reload' }),
+                800,
+              );
+            }}
+            fallback={
+              <div
+                className="px-4 py-3 text-xs"
+                style={{ color: 'var(--vscode-descriptionForeground)' }}
+              >
+                App encountered an error — recovering…
+              </div>
+            }
+          >
+            <VsCodeProvider api={vscodeApi}>
+              <App />
+            </VsCodeProvider>
+          </ErrorBoundary>,
+        );
+      },
+    )
+    .catch((err) => reportBootstrapFailure('panel', root, err));
 }

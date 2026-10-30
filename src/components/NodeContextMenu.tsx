@@ -1,4 +1,11 @@
-import { memo, useState, useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
+import {
+  memo,
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  type ReactNode,
+} from 'react';
 import {
   useFloating,
   useInteractions,
@@ -19,24 +26,38 @@ import { escapeRegexLiteral, quoteIdentifier } from '../utils/sql';
 function useContextMenuFloating(x: number, y: number, onClose: () => void) {
   const virtualRef = useRef({
     getBoundingClientRect() {
-      return { x, y, width: 0, height: 0, top: y, right: x, bottom: y, left: x };
+      return {
+        x,
+        y,
+        width: 0,
+        height: 0,
+        top: y,
+        right: x,
+        bottom: y,
+        left: x,
+      };
     },
   });
 
   useEffect(() => {
     virtualRef.current.getBoundingClientRect = () => ({
-      x, y, width: 0, height: 0, top: y, right: x, bottom: y, left: x,
+      x,
+      y,
+      width: 0,
+      height: 0,
+      top: y,
+      right: x,
+      bottom: y,
+      left: x,
     });
   }, [x, y]);
 
   const { refs, floatingStyles, context } = useFloating({
     open: true,
-    onOpenChange: (open) => { if (!open) onClose(); },
-    middleware: [
-      offset(2),
-      flip({ padding: 8 }),
-      shift({ padding: 8 }),
-    ],
+    onOpenChange: (open) => {
+      if (!open) onClose();
+    },
+    middleware: [offset(2), flip({ padding: 8 }), shift({ padding: 8 })],
   });
 
   useEffect(() => {
@@ -46,11 +67,20 @@ function useContextMenuFloating(x: number, y: number, onClose: () => void) {
   const listRef = useRef<Array<HTMLElement | null>>([]);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   useLayoutEffect(() => {
-    listRef.current = Array.from(refs.floating.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
+    listRef.current = Array.from(
+      refs.floating.current?.querySelectorAll<HTMLElement>(
+        '[role="menuitem"]',
+      ) ?? [],
+    );
   });
 
   const dismiss = useDismiss(context, { referencePress: true });
-  const listNavigation = useListNavigation(context, { listRef, activeIndex, onNavigate: setActiveIndex, loop: true });
+  const listNavigation = useListNavigation(context, {
+    listRef,
+    activeIndex,
+    onNavigate: setActiveIndex,
+    loop: true,
+  });
   const { getFloatingProps } = useInteractions([dismiss, listNavigation]);
 
   return { refs, floatingStyles, context, getFloatingProps };
@@ -100,7 +130,17 @@ interface NodeContextMenuProps {
 }
 
 /** Shared row styling for a full-width menu button, dimmed and inert when `disabled`. */
-function MenuButton({ onClick, disabled, reason, children }: { onClick: () => void; disabled?: boolean; reason?: string; children: ReactNode }) {
+function MenuButton({
+  onClick,
+  disabled,
+  reason,
+  children,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  reason?: string;
+  children: ReactNode;
+}) {
   const trigger = disabledControl(onClick, disabled, reason);
   return (
     <button
@@ -117,15 +157,20 @@ function MenuButton({ onClick, disabled, reason, children }: { onClick: () => vo
   );
 }
 
-const REMOVE_ICON = 'M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636';
+const REMOVE_ICON =
+  'M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636';
 
 /** Label the single Remove item shows for each {@link RemoveAction} kind. */
 function removeActionLabel(action: RemoveAction): string {
   switch (action.kind) {
-    case 'exclude': return 'Exclude from view';
-    case 'trace-prune': return 'Remove from trace';
-    case 'curated-remove': return 'Remove from view';
-    case 'refuse': return 'Remove';
+    case 'exclude':
+      return 'Exclude from view';
+    case 'trace-prune':
+      return 'Remove from trace';
+    case 'curated-remove':
+      return 'Remove from view';
+    case 'refuse':
+      return 'Remove';
   }
 }
 
@@ -153,16 +198,23 @@ export const NodeContextMenu = memo(function NodeContextMenu({
   onCollapseSchema,
 }: NodeContextMenuProps) {
   const [copyFailed, setCopyFailed] = useState(false);
-  const { refs, floatingStyles, context, getFloatingProps } = useContextMenuFloating(x, y, onClose);
+  const { refs, floatingStyles, context, getFloatingProps } =
+    useContextMenuFloating(x, y, onClose);
 
   const isExternal = externalType === 'file' || externalType === 'db';
-  const effectiveRemoveAction: RemoveAction = removeAction.kind === 'exclude' && isExternal
-    ? { kind: 'refuse', reason: 'External references cannot be excluded here' }
-    : removeAction;
+  const effectiveRemoveAction: RemoveAction =
+    removeAction.kind === 'exclude' && isExternal
+      ? {
+          kind: 'refuse',
+          reason: 'External references cannot be excluded here',
+        }
+      : removeAction;
 
   const handleRemove = () => {
     if (effectiveRemoveAction.kind === 'exclude') {
-      onExcludeNode?.(`^${escapeRegexLiteral(schema)}\\.${escapeRegexLiteral(nodeName)}$`);
+      onExcludeNode?.(
+        `^${escapeRegexLiteral(schema)}\\.${escapeRegexLiteral(nodeName)}$`,
+      );
     } else if (effectiveRemoveAction.kind === 'trace-prune') {
       onTracePruneNode?.(nodeId);
     } else if (effectiveRemoveAction.kind === 'curated-remove') {
@@ -174,96 +226,245 @@ export const NodeContextMenu = memo(function NodeContextMenu({
   return (
     <FloatingPortal>
       <FloatingFocusManager context={context} initialFocus={refs.floating}>
-      <div
-        ref={refs.setFloating}
-        role="menu"
-        aria-label={`${schema}.${nodeName}`}
-        style={{ ...floatingStyles, zIndex: 50, boxShadow: 'var(--ln-dropdown-shadow)' }}
-        className="rounded-lg py-1 min-w-[180px] ln-dropdown outline-none"
-        {...getFloatingProps()}
-      >
-        <div className="px-3 py-1.5 text-xs truncate ln-text-muted ln-border-bottom" aria-hidden="true">
-          {schema}.{nodeName}
+        <div
+          ref={refs.setFloating}
+          role="menu"
+          aria-label={`${schema}.${nodeName}`}
+          style={{
+            ...floatingStyles,
+            zIndex: 50,
+            boxShadow: 'var(--ln-dropdown-shadow)',
+          }}
+          className="rounded-lg py-1 min-w-[180px] ln-dropdown outline-none"
+          {...getFloatingProps()}
+        >
+          <div
+            className="px-3 py-1.5 text-xs truncate ln-text-muted ln-border-bottom"
+            aria-hidden="true"
+          >
+            {schema}.{nodeName}
+          </div>
+
+          {!isTracing && (
+            <>
+              <MenuButton
+                onClick={() => {
+                  onTrace(nodeId);
+                  onClose();
+                }}
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  strokeWidth={2}
+                  stroke="currentColor"
+                  className="w-4 h-4"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M15.042 21.672 13.684 16.6m0 0-2.51 2.225.569-9.47 5.227 7.917-3.286-.672Zm-7.518-.267A8.25 8.25 0 1 1 20.25 10.5M8.288 14.212A5.25 5.25 0 1 1 17.25 10.5"
+                  />
+                </svg>
+                Trace Levels
+              </MenuButton>
+              <MenuButton
+                onClick={() => {
+                  onFindPath(nodeId);
+                  onClose();
+                }}
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  strokeWidth={2}
+                  stroke="currentColor"
+                  className="w-4 h-4"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"
+                  />
+                </svg>
+                Find Path
+              </MenuButton>
+              <div role="separator" className="my-1 ln-border-top" />
+            </>
+          )}
+
+          {objectType === 'table' || objectType === 'external' ? (
+            <MenuButton
+              onClick={() => {
+                onViewDdl(nodeId);
+                onClose();
+              }}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                strokeWidth={2}
+                stroke="currentColor"
+                className="w-4 h-4"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 0 1-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0 1 12 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621-.504 1.125-1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 8.25c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m17.25-3.75h-7.5c-.621 0-1.125.504-1.125 1.125m8.625-1.125c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5m-7.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125M12 10.875v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M12 10.875c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125v1.5m2.25-2.625c.621 0 1.125.504 1.125 1.125v1.5m-2.25 0v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M11.25 15v-1.5"
+                />
+              </svg>
+              Show Table Details
+            </MenuButton>
+          ) : (
+            <MenuButton
+              onClick={() => {
+                onViewDdl(nodeId);
+                onClose();
+              }}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                strokeWidth={2}
+                stroke="currentColor"
+                className="w-4 h-4"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z"
+                />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
+                />
+              </svg>
+              Show DDL
+            </MenuButton>
+          )}
+
+          <MenuButton
+            onClick={() => {
+              onShowDetails(nodeId);
+              onClose();
+            }}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={2}
+              stroke="currentColor"
+              className="w-4 h-4"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z"
+              />
+            </svg>
+            Show Details
+          </MenuButton>
+
+          {onCollapseSchema && (
+            <>
+              <div role="separator" className="my-1 ln-border-top" />
+              <MenuButton
+                onClick={() => {
+                  onCollapseSchema(schema);
+                  onClose();
+                }}
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  strokeWidth={2}
+                  stroke="currentColor"
+                  className="w-4 h-4"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M5 12h14M4.5 4.5h15v15h-15v-15Z"
+                  />
+                </svg>
+                Collapse schema
+              </MenuButton>
+            </>
+          )}
+
+          <div role="separator" className="my-1 ln-border-top" />
+          <MenuButton
+            onClick={handleRemove}
+            disabled={effectiveRemoveAction.kind === 'refuse'}
+            reason={
+              effectiveRemoveAction.kind === 'refuse'
+                ? effectiveRemoveAction.reason
+                : undefined
+            }
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={2}
+              stroke="currentColor"
+              className="w-4 h-4"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d={REMOVE_ICON}
+              />
+            </svg>
+            {removeActionLabel(effectiveRemoveAction)}
+          </MenuButton>
+
+          <div role="separator" className="my-1 ln-border-top" />
+
+          <MenuButton
+            onClick={() => {
+              const copyText =
+                externalType === 'file'
+                  ? (externalUrl ?? nodeName)
+                  : externalType === 'db'
+                    ? (fullName ??
+                      `${quoteIdentifier(schema)}.${quoteIdentifier(nodeName)}`)
+                    : `${quoteIdentifier(schema)}.${quoteIdentifier(nodeName)}`;
+              (
+                navigator.clipboard?.writeText(copyText) ??
+                Promise.reject(new Error('Clipboard unavailable'))
+              )
+                .then(() => onClose())
+                .catch((_err) => {
+                  setCopyFailed(true);
+                  setTimeout(() => setCopyFailed(false), 2000);
+                });
+            }}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={2}
+              stroke="currentColor"
+              className="w-4 h-4"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9.75a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184"
+              />
+            </svg>
+            {copyFailed ? 'Copy failed' : 'Copy Qualified Name'}
+          </MenuButton>
         </div>
-
-        {!isTracing && (
-          <>
-            <MenuButton onClick={() => { onTrace(nodeId); onClose(); }}>
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15.042 21.672 13.684 16.6m0 0-2.51 2.225.569-9.47 5.227 7.917-3.286-.672Zm-7.518-.267A8.25 8.25 0 1 1 20.25 10.5M8.288 14.212A5.25 5.25 0 1 1 17.25 10.5" />
-              </svg>
-              Trace Levels
-            </MenuButton>
-            <MenuButton onClick={() => { onFindPath(nodeId); onClose(); }}>
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
-              </svg>
-              Find Path
-            </MenuButton>
-            <div role="separator" className="my-1 ln-border-top" />
-          </>
-        )}
-
-        {(objectType === 'table' || objectType === 'external') ? (
-          <MenuButton onClick={() => { onViewDdl(nodeId); onClose(); }}>
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 0 1-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0 1 12 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621-.504 1.125-1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 8.25c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m17.25-3.75h-7.5c-.621 0-1.125.504-1.125 1.125m8.625-1.125c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5m-7.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125M12 10.875v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M12 10.875c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125v1.5m2.25-2.625c.621 0 1.125.504 1.125 1.125v1.5m-2.25 0v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M11.25 15v-1.5" />
-            </svg>
-            Show Table Details
-          </MenuButton>
-        ) : (
-          <MenuButton onClick={() => { onViewDdl(nodeId); onClose(); }}>
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-            </svg>
-            Show DDL
-          </MenuButton>
-        )}
-
-        <MenuButton onClick={() => { onShowDetails(nodeId); onClose(); }}>
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-            <path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
-          </svg>
-          Show Details
-        </MenuButton>
-
-        {onCollapseSchema && (
-          <>
-            <div role="separator" className="my-1 ln-border-top" />
-            <MenuButton onClick={() => { onCollapseSchema(schema); onClose(); }}>
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M4.5 4.5h15v15h-15v-15Z" />
-              </svg>
-              Collapse schema
-            </MenuButton>
-          </>
-        )}
-
-        <div role="separator" className="my-1 ln-border-top" />
-        <MenuButton onClick={handleRemove} disabled={effectiveRemoveAction.kind === 'refuse'} reason={effectiveRemoveAction.kind === 'refuse' ? effectiveRemoveAction.reason : undefined}>
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-            <path strokeLinecap="round" strokeLinejoin="round" d={REMOVE_ICON} />
-          </svg>
-          {removeActionLabel(effectiveRemoveAction)}
-        </MenuButton>
-
-        <div role="separator" className="my-1 ln-border-top" />
-
-        <MenuButton onClick={() => {
-            const copyText = externalType === 'file' ? (externalUrl ?? nodeName)
-              : externalType === 'db' ? (fullName ?? `${quoteIdentifier(schema)}.${quoteIdentifier(nodeName)}`)
-              : `${quoteIdentifier(schema)}.${quoteIdentifier(nodeName)}`;
-            (navigator.clipboard?.writeText(copyText) ?? Promise.reject(new Error('Clipboard unavailable')))
-              .then(() => onClose())
-              .catch((_err) => { setCopyFailed(true); setTimeout(() => setCopyFailed(false), 2000); });
-          }}>
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9.75a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
-          </svg>
-          {copyFailed ? 'Copy failed' : 'Copy Qualified Name'}
-        </MenuButton>
-      </div>
       </FloatingFocusManager>
     </FloatingPortal>
   );
@@ -299,27 +500,59 @@ export const SchemaContextMenu = memo(function SchemaContextMenu({
   onExpand,
   onCollapse,
 }: SchemaContextMenuProps) {
-  const { refs, floatingStyles, context, getFloatingProps } = useContextMenuFloating(x, y, onClose);
+  const { refs, floatingStyles, context, getFloatingProps } =
+    useContextMenuFloating(x, y, onClose);
 
   return (
     <FloatingPortal>
       <FloatingFocusManager context={context} initialFocus={refs.floating}>
-      <div
-        ref={refs.setFloating}
-        role="menu"
-        aria-label={schema}
-        style={{ ...floatingStyles, zIndex: 50, boxShadow: 'var(--ln-dropdown-shadow)' }}
-        className="rounded-lg py-1 min-w-[180px] ln-dropdown outline-none"
-        {...getFloatingProps()}
-      >
-        <div className="px-3 py-1.5 text-xs truncate ln-text-muted ln-border-bottom" aria-hidden="true">{schema}</div>
-        <MenuButton onClick={() => { (isExpanded ? onCollapse : onExpand)(schema); onClose(); }} disabled={!!disabledReason} reason={disabledReason}>
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-            <path strokeLinecap="round" strokeLinejoin="round" d={isExpanded ? 'M5 12h14M4.5 4.5h15v15h-15v-15Z' : 'M12 4.5v15m7.5-7.5h-15'} />
-          </svg>
-          {isExpanded ? 'Collapse schema' : 'Expand schema'}
-        </MenuButton>
-      </div>
+        <div
+          ref={refs.setFloating}
+          role="menu"
+          aria-label={schema}
+          style={{
+            ...floatingStyles,
+            zIndex: 50,
+            boxShadow: 'var(--ln-dropdown-shadow)',
+          }}
+          className="rounded-lg py-1 min-w-[180px] ln-dropdown outline-none"
+          {...getFloatingProps()}
+        >
+          <div
+            className="px-3 py-1.5 text-xs truncate ln-text-muted ln-border-bottom"
+            aria-hidden="true"
+          >
+            {schema}
+          </div>
+          <MenuButton
+            onClick={() => {
+              (isExpanded ? onCollapse : onExpand)(schema);
+              onClose();
+            }}
+            disabled={!!disabledReason}
+            reason={disabledReason}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={2}
+              stroke="currentColor"
+              className="w-4 h-4"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d={
+                  isExpanded
+                    ? 'M5 12h14M4.5 4.5h15v15h-15v-15Z'
+                    : 'M12 4.5v15m7.5-7.5h-15'
+                }
+              />
+            </svg>
+            {isExpanded ? 'Collapse schema' : 'Expand schema'}
+          </MenuButton>
+        </div>
       </FloatingFocusManager>
     </FloatingPortal>
   );

@@ -15,16 +15,28 @@ vi.mock('vscode', async () => {
   };
 });
 
-const { createMessageHandlers, buildDebugDump } = await import('../../../src/bridge/messageHandlers');
+const { createMessageHandlers, buildDebugDump } = await import(
+  '../../../src/bridge/messageHandlers'
+);
 
 const SECRET = 'Zk93mQpL71xv';
 
 function dumpAfterWebviewError(error: Record<string, unknown>): string {
-  const session = { phase: { kind: 'idle' }, hopCount: 0, sourceLabel: 'demo', parseRulesLabel: 'default' };
-  const host = { log: vi.fn(), showErrorMessage: vi.fn() } as unknown as BridgeHost;
+  const session = {
+    phase: { kind: 'idle' },
+    hopCount: 0,
+    sourceLabel: 'demo',
+    parseRulesLabel: 'default',
+  };
+  const host = {
+    log: vi.fn(),
+    showErrorMessage: vi.fn(),
+  } as unknown as BridgeHost;
   const context = {
     globalState: { get: vi.fn(), update: vi.fn() },
-    extension: { packageJSON: { version: '0.0.0', contributes: { configuration: [] } } },
+    extension: {
+      packageJSON: { version: '0.0.0', contributes: { configuration: [] } },
+    },
   };
   const { handlers } = createMessageHandlers(
     host,
@@ -37,13 +49,19 @@ function dumpAfterWebviewError(error: Record<string, unknown>): string {
     false,
     vi.fn(),
   );
-  (handlers['error'] as (msg: unknown) => void)({ type: 'error', source: 'error-boundary', ...error });
+  (handlers['error'] as (msg: unknown) => void)({
+    type: 'error',
+    source: 'error-boundary',
+    ...error,
+  });
   return buildDebugDump(context as never, () => session as never);
 }
 
 describe('webview error diagnostics', () => {
   it('keeps the webview error readable in the debug dump', () => {
-    const dump = dumpAfterWebviewError({ error: 'Render failed for dbo.Orders' });
+    const dump = dumpAfterWebviewError({
+      error: 'Render failed for dbo.Orders',
+    });
     expect(dump).toContain('message:   Render failed for dbo.Orders');
   });
 
@@ -51,7 +69,10 @@ describe('webview error diagnostics', () => {
     const dump = dumpAfterWebviewError({
       error: `Fetch failed: password=${SECRET};Server=x`,
       stack: `Error: token: ${SECRET}\n    at fetch (app.js:1:1)`,
-      context: { url: `https://u:${SECRET}@host/db`, note: `client_secret=${SECRET}` },
+      context: {
+        url: `https://u:${SECRET}@host/db`,
+        note: `client_secret=${SECRET}`,
+      },
     });
     expect(dump).not.toContain(SECRET);
     expect(dump).toContain('Server=x');
@@ -72,7 +93,14 @@ describe('webview error diagnostics', () => {
     settings.values = {
       maxNodes: 50,
       renderLimit: 750,
-      'database.connections': [{ id: '1', server: 'secret-host.example', authenticationType: 'sqlLogin', user: 'sa' }],
+      'database.connections': [
+        {
+          id: '1',
+          server: 'secret-host.example',
+          authenticationType: 'sqlLogin',
+          user: 'sa',
+        },
+      ],
       'ai.enabled': false,
       'layout.direction': `password=${SECRET} ${'x'.repeat(180)}`,
     };
@@ -101,7 +129,15 @@ describe('webview error diagnostics', () => {
         droppedRefs: 1,
         scripts: 1,
         unreadableDefinitions: 1,
-        spDetails: [{ name: 'dbo.secret_proc', inCount: 1, outCount: 0, inRefs: ['dbo.secret_table'], unrelated: [] }],
+        spDetails: [
+          {
+            name: 'dbo.secret_proc',
+            inCount: 1,
+            outCount: 0,
+            inRefs: ['dbo.secret_table'],
+            unrelated: [],
+          },
+        ],
         droppedRefNames: ['cte.hidden'],
         unreadableNames: ['dbo.broken'],
       },
@@ -109,18 +145,41 @@ describe('webview error diagnostics', () => {
         graphMode: 'full',
         filteredCount: 2,
         renderLimitHit: 0,
-        filter: { schemas: ['dbo'], types: ['table'], hideIsolated: true, focusSchemas: [], showExternalRefs: false, exclusionPatterns: ['^tmp'] },
-        trace: { mode: 'none', selectedNodeId: null, upstreamLevels: 1, downstreamLevels: Number.MAX_SAFE_INTEGER },
+        filter: {
+          schemas: ['dbo'],
+          types: ['table'],
+          hideIsolated: true,
+          focusSchemas: [],
+          showExternalRefs: false,
+          exclusionPatterns: ['^tmp'],
+        },
+        trace: {
+          mode: 'none',
+          selectedNodeId: null,
+          upstreamLevels: 1,
+          downstreamLevels: Number.MAX_SAFE_INTEGER,
+        },
       },
     };
     const context = {
-      extension: { packageJSON: { version: '1.2.6', contributes: { configuration: [{ properties: {
-        'dataLineageViz.maxNodes': { default: 2000 },
-        'dataLineageViz.renderLimit': { default: 750 },
-        'dataLineageViz.database.connections': { default: [] },
-        'dataLineageViz.ai.enabled': { default: true },
-        'dataLineageViz.layout.direction': { default: 'TB' },
-      } }] } } },
+      extension: {
+        packageJSON: {
+          version: '1.2.6',
+          contributes: {
+            configuration: [
+              {
+                properties: {
+                  'dataLineageViz.maxNodes': { default: 2000 },
+                  'dataLineageViz.renderLimit': { default: 750 },
+                  'dataLineageViz.database.connections': { default: [] },
+                  'dataLineageViz.ai.enabled': { default: true },
+                  'dataLineageViz.layout.direction': { default: 'TB' },
+                },
+              },
+            ],
+          },
+        },
+      },
     };
     const dump = buildDebugDump(context as never, () => session as never);
     expect(dump).toContain('Nodes total:  3');
@@ -146,7 +205,9 @@ describe('webview error diagnostics', () => {
     expect(dump).toContain('database.connections: 1 connection(s)');
     expect(dump).not.toContain('secret-host.example');
     expect(dump).not.toContain('ai.enabled');
-    expect(dump).toContain('Full SM dump: use Data Lineage: Dump AI State Machine');
+    expect(dump).toContain(
+      'Full SM dump: use Data Lineage: Dump AI State Machine',
+    );
     expect(dump).toContain('(no render-state reported');
   });
 });

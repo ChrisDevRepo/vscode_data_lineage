@@ -31,10 +31,13 @@ interface NodeInfoBarProps {
   onClose: () => void;
 }
 
-
 /** Hoverable badge showing In or Out count. On hover: schema-grouped, alphabetically sorted list. ⊘ suffix = object is known but not rendered in the current graph (filtered out by type-filter, focus-schema, or search). */
 function NeighborHoverList({
-  label, count, ids, catalog, visibleNodeIds,
+  label,
+  count,
+  ids,
+  catalog,
+  visibleNodeIds,
 }: {
   label: string;
   count: number;
@@ -49,19 +52,21 @@ function NeighborHoverList({
     onOpenChange: setIsOpen,
     placement: 'top-start',
     whileElementsMounted: autoUpdate,
-    middleware: [
-      offset(6),
-      flip({ padding: 8 }),
-      shift({ padding: 8 }),
-    ],
+    middleware: [offset(6), flip({ padding: 8 }), shift({ padding: 8 })],
   });
 
-  const hover = useHover(context, { delay: { open: 150, close: 100 }, move: false });
+  const hover = useHover(context, {
+    delay: { open: 150, close: 100 },
+    move: false,
+  });
   const { getReferenceProps, getFloatingProps } = useInteractions([hover]);
 
   if (count === 0) return <span className="ln-text-dim">{label}: 0</span>;
 
-  const bySchema = new Map<string, Array<{ id: string; entry: CatalogEntry }>>();
+  const bySchema = new Map<
+    string,
+    Array<{ id: string; entry: CatalogEntry }>
+  >();
   for (const id of ids) {
     const entry = catalog[id];
     if (!entry) continue;
@@ -69,7 +74,9 @@ function NeighborHoverList({
     if (!bySchema.has(schema)) bySchema.set(schema, []);
     bySchema.get(schema)!.push({ id, entry });
   }
-  const sortedSchemas = Array.from(bySchema.entries()).sort(([a], [b]) => a.localeCompare(b));
+  const sortedSchemas = Array.from(bySchema.entries()).sort(([a], [b]) =>
+    a.localeCompare(b),
+  );
   for (const [, items] of sortedSchemas) {
     items.sort((a, b) => a.entry.name.localeCompare(b.entry.name));
   }
@@ -98,18 +105,27 @@ function NeighborHoverList({
                   {schema || 'External'}
                 </div>
                 {items.map(({ id, entry }) => {
-                  const icon = (entry.externalType === 'file' || entry.externalType === 'db')
-                    ? '⬡'
-                    : entry.externalType === 'et' ? '⬢'
-                    : (TYPE_COLORS[entry.type]?.icon ?? '?');
+                  const icon =
+                    entry.externalType === 'file' || entry.externalType === 'db'
+                      ? '⬡'
+                      : entry.externalType === 'et'
+                        ? '⬢'
+                        : (TYPE_COLORS[entry.type]?.icon ?? '?');
                   const hidden = !visibleNodeIds.has(id);
                   return (
-                    <div key={id} className={`py-0.5 flex items-center gap-1 whitespace-nowrap ${hidden ? 'ln-text-dim' : 'ln-text'}`}>
+                    <div
+                      key={id}
+                      className={`py-0.5 flex items-center gap-1 whitespace-nowrap ${hidden ? 'ln-text-dim' : 'ln-text'}`}
+                    >
                       <span className="opacity-60 select-none">{icon}</span>
-                      <span className={`flex-1${hidden ? ' opacity-50' : ''}`}>{entry.name}</span>
+                      <span className={`flex-1${hidden ? ' opacity-50' : ''}`}>
+                        {entry.name}
+                      </span>
                       {hidden && (
                         <Tooltip content="Not visible in current graph view">
-                          <span className="ml-2 opacity-50 text-[10px] select-none">⊘</span>
+                          <span className="ml-2 opacity-50 text-[10px] select-none">
+                            ⊘
+                          </span>
                         </Tooltip>
                       )}
                     </div>
@@ -124,8 +140,15 @@ function NeighborHoverList({
   );
 }
 
-
-function SimpleHoverList({ label, count, items }: { label: string; count: number; items: string[] }) {
+function SimpleHoverList({
+  label,
+  count,
+  items,
+}: {
+  label: string;
+  count: number;
+  items: string[];
+}) {
   const [isOpen, setIsOpen] = useState(false);
 
   const { refs, floatingStyles, context } = useFloating({
@@ -133,14 +156,13 @@ function SimpleHoverList({ label, count, items }: { label: string; count: number
     onOpenChange: setIsOpen,
     placement: 'top-start',
     whileElementsMounted: autoUpdate,
-    middleware: [
-      offset(6),
-      flip({ padding: 8 }),
-      shift({ padding: 8 }),
-    ],
+    middleware: [offset(6), flip({ padding: 8 }), shift({ padding: 8 })],
   });
 
-  const hover = useHover(context, { delay: { open: 150, close: 100 }, move: false });
+  const hover = useHover(context, {
+    delay: { open: 150, close: 100 },
+    move: false,
+  });
   const { getReferenceProps, getFloatingProps } = useInteractions([hover]);
 
   if (count === 0) return <span className="ln-text-dim">{label}: 0</span>;
@@ -164,7 +186,9 @@ function SimpleHoverList({ label, count, items }: { label: string; count: number
             {...getFloatingProps()}
           >
             {items.map((item) => (
-              <div key={item} className="py-0.5 ln-text whitespace-nowrap">{item}</div>
+              <div key={item} className="py-0.5 ln-text whitespace-nowrap">
+                {item}
+              </div>
             ))}
           </div>
         )}
@@ -173,10 +197,15 @@ function SimpleHoverList({ label, count, items }: { label: string; count: number
   );
 }
 
-
 /** Displays identity, connectivity, and parse diagnostics for the selected node. */
 export const NodeInfoBar = memo(function NodeInfoBar({
-  nodeId, identifierCaseSensitive, catalog, neighborIndex, visibleNodeIds, parseStats, onClose,
+  nodeId,
+  identifierCaseSensitive,
+  catalog,
+  neighborIndex,
+  visibleNodeIds,
+  parseStats,
+  onClose,
 }: NodeInfoBarProps) {
   const entry = catalog[nodeId];
   const neighbors = neighborIndex[nodeId] ?? { in: [], out: [] };
@@ -184,9 +213,13 @@ export const NodeInfoBar = memo(function NodeInfoBar({
   const spDetail = useMemo(() => {
     if (!entry || !parseStats) return null;
     const spLabel = `${entry.schema}.${entry.name}`;
-    return parseStats.spDetails.find(
-      sp => schemaKey(sp.name, identifierCaseSensitive) === schemaKey(spLabel, identifierCaseSensitive)
-    ) ?? null;
+    return (
+      parseStats.spDetails.find(
+        (sp) =>
+          schemaKey(sp.name, identifierCaseSensitive) ===
+          schemaKey(spLabel, identifierCaseSensitive),
+      ) ?? null
+    );
   }, [entry, parseStats, identifierCaseSensitive]);
 
   const unresolvedItems = spDetail?.unrelated ?? [];
@@ -203,18 +236,32 @@ export const NodeInfoBar = memo(function NodeInfoBar({
       </span>
       <span className="ln-text-dim">|</span>
       <NeighborHoverList
-        label="In" count={neighbors.in.length} ids={neighbors.in}
-        catalog={catalog} visibleNodeIds={visibleNodeIds}
+        label="In"
+        count={neighbors.in.length}
+        ids={neighbors.in}
+        catalog={catalog}
+        visibleNodeIds={visibleNodeIds}
       />
       <span className="ln-text-dim">|</span>
       <NeighborHoverList
-        label="Out" count={neighbors.out.length} ids={neighbors.out}
-        catalog={catalog} visibleNodeIds={visibleNodeIds}
+        label="Out"
+        count={neighbors.out.length}
+        ids={neighbors.out}
+        catalog={catalog}
+        visibleNodeIds={visibleNodeIds}
       />
       <span className="ln-text-dim">|</span>
-      <SimpleHoverList label="Unresolved" count={unresolvedItems.length} items={unresolvedItems} />
+      <SimpleHoverList
+        label="Unresolved"
+        count={unresolvedItems.length}
+        items={unresolvedItems}
+      />
       <span className="ln-text-dim">|</span>
-      <SimpleHoverList label="Excluded" count={excludedItems.length} items={excludedItems} />
+      <SimpleHoverList
+        label="Excluded"
+        count={excludedItems.length}
+        items={excludedItems}
+      />
       <Tooltip content="Close details">
         <button
           onClick={onClose}

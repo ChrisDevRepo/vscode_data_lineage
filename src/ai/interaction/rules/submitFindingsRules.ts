@@ -8,15 +8,23 @@ export function missingSectionParts(
   classification: ClassificationValue | undefined,
   archivedAngles?: ReadonlySet<'business' | 'technical'>,
 ): string[] {
-  const angles = new Set((sections ?? []).map(section => section.angle));
+  const angles = new Set((sections ?? []).map((section) => section.angle));
   if (!classification) return angles.size ? [] : ['sections'];
   return CLASSIFICATION_KEPT_ANGLES[classification]
-    .filter(angle => !angles.has(angle) && !archivedAngles?.has(angle)).map(angle => `sections.${angle}`);
+    .filter((angle) => !angles.has(angle) && !archivedAngles?.has(angle))
+    .map((angle) => `sections.${angle}`);
 }
 
 /** Converts a `sections` object keyed by angle into angle-bearing entries. */
-export function extractRawSectionAngles(rawSections: unknown): CapturedSection[] {
-  if (typeof rawSections !== 'object' || rawSections === null || Array.isArray(rawSections)) return [];
+export function extractRawSectionAngles(
+  rawSections: unknown,
+): CapturedSection[] {
+  if (
+    typeof rawSections !== 'object' ||
+    rawSections === null ||
+    Array.isArray(rawSections)
+  )
+    return [];
   const record = rawSections as Record<string, unknown>;
   const out: CapturedSection[] = [];
   for (const angle of ['business', 'technical'] as const) {
@@ -26,4 +34,3 @@ export function extractRawSectionAngles(rawSections: unknown): CapturedSection[]
   }
   return out;
 }
-

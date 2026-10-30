@@ -6,9 +6,16 @@ import { StatusMessage } from './ui/StatusMessage';
 import { SchemaSelector } from './SchemaSelector';
 import { Spinner } from './ui/Spinner';
 import type { DacpacLoaderState } from '../hooks/useDacpacLoader';
-import type { DacpacConnection, DatabaseConnection, StoredConnectionInfo } from '../engine/projectStore';
+import type {
+  DacpacConnection,
+  DatabaseConnection,
+  StoredConnectionInfo,
+} from '../engine/projectStore';
 import { generateProjectName } from '../engine/projectStore';
-import { exceedsObjectLimit, formatObjectLimitMessage } from '../engine/modelFilters';
+import {
+  exceedsObjectLimit,
+  formatObjectLimitMessage,
+} from '../engine/modelFilters';
 
 interface CreateFlowProps {
   /** The state object from the `useDacpacLoader` hook, managing the connection lifecycle. */
@@ -18,7 +25,10 @@ interface CreateFlowProps {
   /** Callback triggered to return to the previous screen (StartScreen). */
   onBack: () => void;
   /** Callback triggered to finalize project creation and start the visualization. */
-  onVisualize: (projectName: string, connection: DacpacConnection | DatabaseConnection | null) => void;
+  onVisualize: (
+    projectName: string,
+    connection: DacpacConnection | DatabaseConnection | null,
+  ) => void;
 }
 
 /** A wizard-style component that guides the user through creating a new lineage visualization. */
@@ -33,13 +43,14 @@ export const CreateFlow = memo(function CreateFlow({
 
   const schemaOrModel = loader.schemaPreview ?? loader.model;
   const hasSource = !!schemaOrModel;
-  const isPhase1Loading = loader.isLoading && !loader.schemaPreview && !loader.model;
+  const isPhase1Loading =
+    loader.isLoading && !loader.schemaPreview && !loader.model;
 
   /** Total object count across selected schemas, from the Phase 1 preview counts. */
   const selectedCount = useMemo(() => {
     const schemas = schemaOrModel?.schemas ?? [];
     return schemas
-      .filter(s => loader.selectedSchemas.has(s.name))
+      .filter((s) => loader.selectedSchemas.has(s.name))
       .reduce((sum, s) => sum + s.nodeCount, 0);
   }, [schemaOrModel, loader.selectedSchemas]);
   const overLimit = exceedsObjectLimit(selectedCount, maxNodes);
@@ -69,7 +80,8 @@ export const CreateFlow = memo(function CreateFlow({
 
   /** Handles the final 'Visualize' action. */
   const handleVisualize = useCallback(() => {
-    const name = displayName.trim() || autoName().trim() || loader.fileName || 'Project';
+    const name =
+      displayName.trim() || autoName().trim() || loader.fileName || 'Project';
     if (loader.filePath) {
       const conn: DacpacConnection = {
         type: 'dacpac',
@@ -81,15 +93,32 @@ export const CreateFlow = memo(function CreateFlow({
     } else {
       onVisualize(name, null);
     }
-  }, [displayName, autoName, loader.filePath, loader.fileName, loader.selectedSchemas, onVisualize]);
+  }, [
+    displayName,
+    autoName,
+    loader.filePath,
+    loader.fileName,
+    loader.selectedSchemas,
+    onVisualize,
+  ]);
 
-  const canVisualize = hasSource && loader.selectedSchemas.size > 0 && !loader.isLoading && !overLimit;
+  const canVisualize =
+    hasSource &&
+    loader.selectedSchemas.size > 0 &&
+    !loader.isLoading &&
+    !overLimit;
 
-  const footer = hasSource && !isPhase1Loading ? (
-    <Button variant="primary" className="w-full" disabled={!canVisualize} onClick={handleVisualize}>
-      Visualize
-    </Button>
-  ) : undefined;
+  const footer =
+    hasSource && !isPhase1Loading ? (
+      <Button
+        variant="primary"
+        className="w-full"
+        disabled={!canVisualize}
+        onClick={handleVisualize}
+      >
+        Visualize
+      </Button>
+    ) : undefined;
 
   return (
     <WizardPanel footer={footer}>
@@ -97,29 +126,83 @@ export const CreateFlow = memo(function CreateFlow({
         className="flex items-center gap-1 text-xs hover:underline ln-text-link"
         onClick={onBack}
       >
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+          strokeWidth={2}
+          stroke="currentColor"
+          className="w-3.5 h-3.5"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18"
+          />
         </svg>
         Back
       </button>
 
       {/* Source selection — locked once source is loaded */}
       {hasSource && !isPhase1Loading ? (
-        <div className="flex items-center gap-2 px-3 py-2.5 rounded-sm text-sm ln-file-picker" style={{ opacity: 0.7, cursor: 'default' }}>
+        <div
+          className="flex items-center gap-2 px-3 py-2.5 rounded-sm text-sm ln-file-picker"
+          style={{ opacity: 0.7, cursor: 'default' }}
+        >
           {loader.filePath ? (
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 shrink-0">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.5}
+              stroke="currentColor"
+              className="w-4 h-4 shrink-0"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"
+              />
             </svg>
           ) : (
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 shrink-0">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 5.625c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.5}
+              stroke="currentColor"
+              className="w-4 h-4 shrink-0"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 5.625c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125"
+              />
             </svg>
           )}
-          <Tooltip content={loader.filePath ?? loader.fileName} multiline maxWidth={420} className="ln-tooltip--wizard" asChild>
+          <Tooltip
+            content={loader.filePath ?? loader.fileName}
+            multiline
+            maxWidth={420}
+            className="ln-tooltip--wizard"
+            asChild
+          >
             <span className="truncate flex-1">{loader.fileName}</span>
           </Tooltip>
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--ln-wizard-fg-dim)' }}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth={1.5}
+            stroke="currentColor"
+            className="w-3.5 h-3.5 shrink-0"
+            style={{ color: 'var(--ln-wizard-fg-dim)' }}
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z"
+            />
           </svg>
         </div>
       ) : (
@@ -129,13 +212,28 @@ export const CreateFlow = memo(function CreateFlow({
             onClick={loader.openFile}
             disabled={loader.isLoading}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 shrink-0">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.5}
+              stroke="currentColor"
+              className="w-4 h-4 shrink-0"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"
+              />
             </svg>
             <span className="truncate">
-              {loader.fileName && loader.filePath ? loader.fileName : 'Open .dacpac file…'}
+              {loader.fileName && loader.filePath
+                ? loader.fileName
+                : 'Open .dacpac file…'}
             </span>
-            {isPhase1Loading && loader.loadingContext === 'dacpac' && <InlineSpinner />}
+            {isPhase1Loading && loader.loadingContext === 'dacpac' && (
+              <InlineSpinner />
+            )}
           </button>
 
           {/* "or" divider */}
@@ -152,18 +250,36 @@ export const CreateFlow = memo(function CreateFlow({
               onClick={loader.connectToDatabase}
               disabled={loader.isLoading}
             >
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 shrink-0">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 5.625c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
-            </svg>
-            <span className="truncate">
-              {loader.fileName && !loader.filePath ? loader.fileName : 'Connect to database…'}
-            </span>
-            {isPhase1Loading && loader.loadingContext === 'database' && <InlineSpinner />}
-          </button>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                strokeWidth={1.5}
+                stroke="currentColor"
+                className="w-4 h-4 shrink-0"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 5.625c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125"
+                />
+              </svg>
+              <span className="truncate">
+                {loader.fileName && !loader.filePath
+                  ? loader.fileName
+                  : 'Connect to database…'}
+              </span>
+              {isPhase1Loading && loader.loadingContext === 'database' && (
+                <InlineSpinner />
+              )}
+            </button>
           </Tooltip>
 
           {loader.status && (
-            <StatusMessage text={loader.status.text} type={loader.status.type} />
+            <StatusMessage
+              text={loader.status.text}
+              type={loader.status.type}
+            />
           )}
         </div>
       )}
@@ -172,7 +288,12 @@ export const CreateFlow = memo(function CreateFlow({
       {hasSource && !isPhase1Loading && (
         <>
           <div className="space-y-1">
-            <label htmlFor={projectNameInputId} className="text-xs font-medium ln-text">Project name</label>
+            <label
+              htmlFor={projectNameInputId}
+              className="text-xs font-medium ln-text"
+            >
+              Project name
+            </label>
             <input
               id={projectNameInputId}
               type="text"
@@ -183,35 +304,45 @@ export const CreateFlow = memo(function CreateFlow({
             />
           </div>
 
-          {(loader.schemaPreview ?? loader.model)?.schemas && (() => {
-            const schemas = (loader.schemaPreview ?? loader.model)!.schemas;
-            if (schemas.length === 0) {
-              return (
-                <div className="ln-status-warning text-xs px-3 py-2 rounded-sm">
-                  {loader.status?.text ?? 'No schemas found — the file may be empty or damaged.'}
-                </div>
-              );
-            }
-            return (
-              <>
-                <SchemaSelector
-                  schemas={schemas}
-                  identifierCaseSensitive={schemaOrModel?.identifierCaseSensitive}
-                  selectedSchemas={loader.selectedSchemas}
-                  onToggle={loader.toggleSchema}
-                  onSelectAll={loader.selectAllSchemas}
-                  onClearAll={loader.clearAllSchemas}
-                />
-                {overLimit ? (
-                  <StatusMessage text={formatObjectLimitMessage(selectedCount, maxNodes)} type="error" />
-                ) : (
-                  <div className="text-xs px-1" style={{ color: 'var(--ln-wizard-fg-dim)' }}>
-                    {`${selectedCount.toLocaleString()} objects selected`}
+          {(loader.schemaPreview ?? loader.model)?.schemas &&
+            (() => {
+              const schemas = (loader.schemaPreview ?? loader.model)!.schemas;
+              if (schemas.length === 0) {
+                return (
+                  <div className="ln-status-warning text-xs px-3 py-2 rounded-sm">
+                    {loader.status?.text ??
+                      'No schemas found — the file may be empty or damaged.'}
                   </div>
-                )}
-              </>
-            );
-          })()}
+                );
+              }
+              return (
+                <>
+                  <SchemaSelector
+                    schemas={schemas}
+                    identifierCaseSensitive={
+                      schemaOrModel?.identifierCaseSensitive
+                    }
+                    selectedSchemas={loader.selectedSchemas}
+                    onToggle={loader.toggleSchema}
+                    onSelectAll={loader.selectAllSchemas}
+                    onClearAll={loader.clearAllSchemas}
+                  />
+                  {overLimit ? (
+                    <StatusMessage
+                      text={formatObjectLimitMessage(selectedCount, maxNodes)}
+                      type="error"
+                    />
+                  ) : (
+                    <div
+                      className="text-xs px-1"
+                      style={{ color: 'var(--ln-wizard-fg-dim)' }}
+                    >
+                      {`${selectedCount.toLocaleString()} objects selected`}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
         </>
       )}
     </WizardPanel>

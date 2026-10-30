@@ -21,36 +21,49 @@ describe('generateDwhModel — determinism', () => {
   });
 
   it('generates exactly objectCount real nodes plus externalRefCount external nodes', () => {
-    const { model, stats } = generateDwhModel({ objectCount: 800, seed: 7, profile: { externalRefCount: 12 } });
-    const real = model.nodes.filter(n => n.type !== 'external');
-    const external = model.nodes.filter(n => n.type === 'external');
+    const { model, stats } = generateDwhModel({
+      objectCount: 800,
+      seed: 7,
+      profile: { externalRefCount: 12 },
+    });
+    const real = model.nodes.filter((n) => n.type !== 'external');
+    const external = model.nodes.filter((n) => n.type === 'external');
     expect(real).toHaveLength(800);
     expect(external).toHaveLength(12);
     expect(stats.nodeCount).toBe(812);
   });
 });
 
-describe.each([2000, 10000])('generateDwhModel — asymmetry sanity at %i objects', (objectCount) => {
-  const { stats } = generateDwhModel({ objectCount, seed: 1234 });
+describe.each([2000, 10000])(
+  'generateDwhModel — asymmetry sanity at %i objects',
+  (objectCount) => {
+    const { stats } = generateDwhModel({ objectCount, seed: 1234 });
 
-  it('edges per node land within the 2.5-3.5 band', () => {
-    expect(stats.edgesPerNode).toBeGreaterThanOrEqual(2.5);
-    expect(stats.edgesPerNode).toBeLessThanOrEqual(3.5);
-  });
+    it('edges per node land within the 2.5-3.5 band', () => {
+      expect(stats.edgesPerNode).toBeGreaterThanOrEqual(2.5);
+      expect(stats.edgesPerNode).toBeLessThanOrEqual(3.5);
+    });
 
-  it('at least one hub object exists with above-average degree', () => {
-    const avgDegree = (stats.edgeCount * 2) / stats.nodeCount;
-    expect(stats.hubs.length).toBeGreaterThan(0);
-    expect(stats.hubs.some(h => h.total > avgDegree)).toBe(true);
-  });
-});
+    it('at least one hub object exists with above-average degree', () => {
+      const avgDegree = (stats.edgeCount * 2) / stats.nodeCount;
+      expect(stats.hubs.length).toBeGreaterThan(0);
+      expect(stats.hubs.some((h) => h.total > avgDegree)).toBe(true);
+    });
+  },
+);
 
 describe('generateDwhModel — dacpac round-trip', () => {
   loadParseRules();
 
   it('round-trips a 2k-object generated dacpac through the real extractor to the same node and edge counts', async () => {
-    const gt = await buildSyntheticDacpac({ objectCount: 2000, schemaCount: 40, externalRefCount: 20 });
-    const model = await extractDacpac(gt.buffer, undefined, undefined, { externalRefsEnabled: true });
+    const gt = await buildSyntheticDacpac({
+      objectCount: 2000,
+      schemaCount: 40,
+      externalRefCount: 20,
+    });
+    const model = await extractDacpac(gt.buffer, undefined, undefined, {
+      externalRefsEnabled: true,
+    });
 
     expect(model.nodes).toHaveLength(gt.totalNodeCount);
     expect(model.edges).toHaveLength(gt.edgeCount + gt.externalRefCount);

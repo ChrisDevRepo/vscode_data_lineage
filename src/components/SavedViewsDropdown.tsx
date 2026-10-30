@@ -36,7 +36,15 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
   onDeleteView,
   onUpdateView,
 }: SavedViewsDropdownProps) {
-  const { isOpen, toggle, close, refs, floatingStyles, context, getFloatingProps } = useDropdown();
+  const {
+    isOpen,
+    toggle,
+    close,
+    refs,
+    floatingStyles,
+    context,
+    getFloatingProps,
+  } = useDropdown();
   const [isAdding, setIsAdding] = useState(false);
   const [newName, setNewName] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -65,7 +73,15 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
 
   return (
     <>
-      <Tooltip content={isEnabled ? (activeViewId ? 'Bookmarks (active)' : 'Bookmarks') : 'Open a project to use bookmarks'}>
+      <Tooltip
+        content={
+          isEnabled
+            ? activeViewId
+              ? 'Bookmarks (active)'
+              : 'Bookmarks'
+            : 'Open a project to use bookmarks'
+        }
+      >
         <Button
           ref={refs.setReference}
           onClick={() => isEnabled && toggle()}
@@ -74,189 +90,291 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
           aria-label="Bookmarks"
           aria-expanded={isOpen}
           aria-haspopup="dialog"
-          style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
+          style={
+            isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined
+          }
         >
-        {activeViewId ? (
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-            <path fillRule="evenodd" d="M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z" clipRule="evenodd" />
-          </svg>
-        ) : (
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" />
-          </svg>
-        )}
-      </Button>
+          {activeViewId ? (
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              className="w-5 h-5"
+            >
+              <path
+                fillRule="evenodd"
+                d="M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z"
+                clipRule="evenodd"
+              />
+            </svg>
+          ) : (
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.5}
+              stroke="currentColor"
+              className="w-5 h-5"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z"
+              />
+            </svg>
+          )}
+        </Button>
       </Tooltip>
 
       <FloatingPortal>
         {isOpen && (
           <FloatingFocusManager context={context} modal={false}>
-          <div
-            ref={refs.setFloating}
-            style={{ ...floatingStyles, boxShadow: 'var(--ln-dropdown-shadow)' }}
-            className="w-72 rounded-md shadow-lg z-50 p-2 ln-dropdown"
-            role="dialog"
-            aria-label="Bookmarks"
-            {...getFloatingProps()}
-          >
-            {!isAdding ? (
-              <button
-                className="w-full text-left px-2 py-1.5 text-xs rounded-sm transition-colors ln-list-item flex items-center gap-2"
-                onClick={() => setIsAdding(true)}
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4 shrink-0">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                </svg>
-                Save current view
-              </button>
-            ) : (
-              <div className="space-y-1 px-1 pb-1">
-                <input
-                  ref={inputRef}
-                  type="text"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleSave();
-                    if (e.key === 'Escape') {
-                      e.stopPropagation();
-                      setIsAdding(false);
-                      setNewName('');
-                    }
-                  }}
-                  placeholder="View name…"
-                  className="w-full h-7 px-2 text-xs rounded-sm ln-input"
-                />
-                <div className="flex gap-1">
-                  <Button variant="primary" className="h-6 px-2 text-xs" onClick={handleSave} disabled={!newName.trim()}>
-                    Save
-                  </Button>
-                  <Button variant="ghost" className="h-6 px-2 text-xs" onClick={() => { setIsAdding(false); setNewName(''); }}>
-                    Cancel
-                  </Button>
+            <div
+              ref={refs.setFloating}
+              style={{
+                ...floatingStyles,
+                boxShadow: 'var(--ln-dropdown-shadow)',
+              }}
+              className="w-72 rounded-md shadow-lg z-50 p-2 ln-dropdown"
+              role="dialog"
+              aria-label="Bookmarks"
+              {...getFloatingProps()}
+            >
+              {!isAdding ? (
+                <button
+                  className="w-full text-left px-2 py-1.5 text-xs rounded-sm transition-colors ln-list-item flex items-center gap-2"
+                  onClick={() => setIsAdding(true)}
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    strokeWidth={1.5}
+                    stroke="currentColor"
+                    className="w-4 h-4 shrink-0"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M12 4.5v15m7.5-7.5h-15"
+                    />
+                  </svg>
+                  Save current view
+                </button>
+              ) : (
+                <div className="space-y-1 px-1 pb-1">
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleSave();
+                      if (e.key === 'Escape') {
+                        e.stopPropagation();
+                        setIsAdding(false);
+                        setNewName('');
+                      }
+                    }}
+                    placeholder="View name…"
+                    className="w-full h-7 px-2 text-xs rounded-sm ln-input"
+                  />
+                  <div className="flex gap-1">
+                    <Button
+                      variant="primary"
+                      className="h-6 px-2 text-xs"
+                      onClick={handleSave}
+                      disabled={!newName.trim()}
+                    >
+                      Save
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      className="h-6 px-2 text-xs"
+                      onClick={() => {
+                        setIsAdding(false);
+                        setNewName('');
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {filterProfiles.length > 0 && (
-              <>
-                <div className="w-full h-px my-1.5" style={{ background: 'var(--ln-border)' }} />
-                {/* Scrolls past the viewport rather than clipping the tail of a long bookmark list. */}
-                <div style={{ maxHeight: 'min(60vh, 400px)', overflowY: 'auto', overflowX: 'hidden' }}>
-                  {filterProfiles.map((profile) => {
-                    if (confirmDeleteId === profile.id) {
+              {filterProfiles.length > 0 && (
+                <>
+                  <div
+                    className="w-full h-px my-1.5"
+                    style={{ background: 'var(--ln-border)' }}
+                  />
+                  {/* Scrolls past the viewport rather than clipping the tail of a long bookmark list. */}
+                  <div
+                    style={{
+                      maxHeight: 'min(60vh, 400px)',
+                      overflowY: 'auto',
+                      overflowX: 'hidden',
+                    }}
+                  >
+                    {filterProfiles.map((profile) => {
+                      if (confirmDeleteId === profile.id) {
+                        return (
+                          <div
+                            key={profile.id}
+                            className="flex items-center gap-1.5 px-2 py-1.5 text-xs"
+                          >
+                            <span className="flex-1 truncate ln-text-error">
+                              Delete &ldquo;{profile.name}&rdquo;?
+                            </span>
+                            <Button
+                              variant="ghost"
+                              className="h-6 px-1.5 text-xs ln-text-error"
+                              onClick={() => {
+                                onDeleteView(profile.id);
+                                setConfirmDeleteId(null);
+                              }}
+                            >
+                              Delete
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              className="h-6 px-1.5 text-xs"
+                              onClick={() => {
+                                setConfirmDeleteId(null);
+                                deleteFocus.returnFocus(profile.id);
+                              }}
+                              autoFocus
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                        );
+                      }
+                      const isActive = profile.id === activeViewId;
+                      const isModified = isActive && isViewModified;
                       return (
-                        <div key={profile.id} className="flex items-center gap-1.5 px-2 py-1.5 text-xs">
-                          <span className="flex-1 truncate ln-text-error">
-                            Delete &ldquo;{profile.name}&rdquo;?
+                        <div
+                          key={profile.id}
+                          className="flex items-center gap-1.5 px-2 py-1.5 rounded-sm transition-colors ln-list-item"
+                          style={
+                            isActive
+                              ? { background: 'var(--ln-selection-bg)' }
+                              : undefined
+                          }
+                        >
+                          {/* Fixed-width icon slot for vertical alignment */}
+                          <span className="w-3 shrink-0 flex items-center justify-center">
+                            {profile.filter.allowlistNodeIds !== undefined ? (
+                              <Tooltip content="Advanced bookmark">
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  viewBox="0 0 24 24"
+                                  fill="currentColor"
+                                  className="w-3 h-3"
+                                  style={{
+                                    color: 'var(--ln-analysis-icon)',
+                                    opacity: 0.8,
+                                  }}
+                                  aria-label="Advanced bookmark"
+                                >
+                                  <path
+                                    fillRule="evenodd"
+                                    d="M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z"
+                                    clipRule="evenodd"
+                                  />
+                                </svg>
+                              </Tooltip>
+                            ) : isModified ? (
+                              <Tooltip content="Modified">
+                                <span
+                                  className="block w-2 h-2 rounded-full"
+                                  style={{ background: 'var(--ln-warning-fg)' }}
+                                />
+                              </Tooltip>
+                            ) : null}
                           </span>
-                          <Button
-                            variant="ghost"
-                            className="h-6 px-1.5 text-xs ln-text-error"
-                            onClick={() => { onDeleteView(profile.id); setConfirmDeleteId(null); }}
-                          >
-                            Delete
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            className="h-6 px-1.5 text-xs"
-                            onClick={() => { setConfirmDeleteId(null); deleteFocus.returnFocus(profile.id); }}
-                            autoFocus
-                          >
-                            Cancel
-                          </Button>
-                        </div>
-                      );
-                    }
-                    const isActive = profile.id === activeViewId;
-                    const isModified = isActive && isViewModified;
-                    return (
-                      <div
-                        key={profile.id}
-                        className="flex items-center gap-1.5 px-2 py-1.5 rounded-sm transition-colors ln-list-item"
-                        style={isActive ? { background: 'var(--ln-selection-bg)' } : undefined}
-                      >
-                        {/* Fixed-width icon slot for vertical alignment */}
-                        <span className="w-3 shrink-0 flex items-center justify-center">
-                          {profile.filter.allowlistNodeIds !== undefined ? (
-                            <Tooltip content="Advanced bookmark">
-                              <svg
-                                xmlns="http://www.w3.org/2000/svg"
-                                viewBox="0 0 24 24"
-                                fill="currentColor"
-                                className="w-3 h-3"
-                                style={{ color: 'var(--ln-analysis-icon)', opacity: 0.8 }}
-                                aria-label="Advanced bookmark"
+                          <Tooltip content={profile.name} asChild>
+                            <span className="flex-1 text-xs truncate">
+                              {profile.name}
+                            </span>
+                          </Tooltip>
+                          <span className="ml-auto flex gap-1 shrink-0">
+                            {isModified && onUpdateView && (
+                              <Tooltip
+                                content={`Update "${profile.name}" with current filters`}
                               >
-                                <path fillRule="evenodd" d="M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z" clipRule="evenodd" />
-                              </svg>
-                            </Tooltip>
-                          ) : isModified ? (
-                            <Tooltip content="Modified">
-                              <span
-                                className="block w-2 h-2 rounded-full"
-                                style={{ background: 'var(--ln-warning-fg)' }}
-                              />
-                            </Tooltip>
-                          ) : null}
-                        </span>
-                        <Tooltip content={profile.name} asChild>
-                          <span className="flex-1 text-xs truncate">
-                            {profile.name}
-                          </span>
-                        </Tooltip>
-                        <span className="ml-auto flex gap-1 shrink-0">
-                          {isModified && onUpdateView && (
-                            <Tooltip content={`Update "${profile.name}" with current filters`}>
+                                <button
+                                  type="button"
+                                  className="px-1.5 py-0 text-[10px] rounded-sm font-medium"
+                                  style={{
+                                    background: 'var(--ln-warning-fg)',
+                                    color:
+                                      'var(--vscode-button-foreground, #fff)',
+                                    lineHeight: '18px',
+                                  }}
+                                  onClick={() => {
+                                    onUpdateView(profile.id);
+                                  }}
+                                >
+                                  Update
+                                </button>
+                              </Tooltip>
+                            )}
+                            <Tooltip
+                              content={
+                                isActive
+                                  ? `Reapply "${profile.name}"`
+                                  : `Apply "${profile.name}"`
+                              }
+                            >
                               <button
                                 type="button"
                                 className="px-1.5 py-0 text-[10px] rounded-sm font-medium"
                                 style={{
-                                  background: 'var(--ln-warning-fg)',
-                                  color: 'var(--vscode-button-foreground, #fff)',
+                                  background: 'var(--ln-button-bg)',
+                                  color: 'var(--ln-button-fg)',
                                   lineHeight: '18px',
                                 }}
-                                onClick={() => { onUpdateView(profile.id); }}
+                                onClick={() => {
+                                  onApplyView(profile);
+                                  close();
+                                }}
                               >
-                                Update
+                                Apply
                               </button>
                             </Tooltip>
-                          )}
-                          <Tooltip content={isActive ? `Reapply "${profile.name}"` : `Apply "${profile.name}"`}>
+                          </span>
+                          <Tooltip content={`Delete "${profile.name}"`}>
                             <button
+                              ref={deleteFocus.triggerRef(profile.id)}
                               type="button"
-                              className="px-1.5 py-0 text-[10px] rounded-sm font-medium"
-                              style={{
-                                background: 'var(--ln-button-bg)',
-                                color: 'var(--ln-button-fg)',
-                                lineHeight: '18px',
-                              }}
-                              onClick={() => { onApplyView(profile); close(); }}
+                              className="shrink-0 p-0.5 rounded-sm ln-list-item"
+                              onClick={() => setConfirmDeleteId(profile.id)}
+                              aria-label={`Delete ${profile.name}`}
                             >
-                              Apply
+                              <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                strokeWidth={1.5}
+                                stroke="currentColor"
+                                className="w-3 h-3"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  d="M6 18 18 6M6 6l12 12"
+                                />
+                              </svg>
                             </button>
                           </Tooltip>
-                        </span>
-                        <Tooltip content={`Delete "${profile.name}"`}>
-                          <button
-                            ref={deleteFocus.triggerRef(profile.id)}
-                            type="button"
-                            className="shrink-0 p-0.5 rounded-sm ln-list-item"
-                            onClick={() => setConfirmDeleteId(profile.id)}
-                            aria-label={`Delete ${profile.name}`}
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3 h-3">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
-                            </svg>
-                          </button>
-                        </Tooltip>
-                      </div>
-                    );
-                  })}
-                </div>
-              </>
-            )}
-          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
           </FloatingFocusManager>
         )}
       </FloatingPortal>

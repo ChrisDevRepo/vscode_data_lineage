@@ -4,7 +4,10 @@ import 'katex/dist/katex.min.css';
 import { Tooltip } from './ui/Tooltip';
 import { useDropdown } from '../hooks/useDropdown';
 import { useVsCode } from '../contexts/VsCodeContext';
-import { AI_SECTION_ID_PREFIX, renderAiMarkdown } from './markdown/renderAiMarkdown';
+import {
+  AI_SECTION_ID_PREFIX,
+  renderAiMarkdown,
+} from './markdown/renderAiMarkdown';
 import { FOCUS_NODE_HREF_PREFIX } from '../engine/shared/bridgeContract';
 import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
 import { errorMessage } from '../utils/errorMessage';
@@ -13,11 +16,12 @@ import { errorMessage } from '../utils/errorMessage';
 export type AiDockPosition = 'right' | 'left' | 'bottom';
 
 /** The dock choices, in the order the menu lists them. */
-const DOCK_CHOICES: ReadonlyArray<{ position: AiDockPosition; label: string }> = [
-  { position: 'left', label: 'Dock left' },
-  { position: 'bottom', label: 'Dock bottom' },
-  { position: 'right', label: 'Dock right' },
-];
+const DOCK_CHOICES: ReadonlyArray<{ position: AiDockPosition; label: string }> =
+  [
+    { position: 'left', label: 'Dock left' },
+    { position: 'bottom', label: 'Dock bottom' },
+    { position: 'right', label: 'Dock right' },
+  ];
 
 /** The collapsed rail's expand glyph, per dock edge: it points the way the panel will reopen. */
 const RAIL_TOGGLE_GLYPH: Readonly<Record<AiDockPosition, string>> = {
@@ -37,10 +41,45 @@ const COLLAPSE_GLYPH: Readonly<Record<AiDockPosition, string>> = {
 function DockIcon({ position }: { position: AiDockPosition }) {
   return (
     <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
-      <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="none" stroke="currentColor" />
-      {position === 'left' && <rect x="2.5" y="3.5" width="3.5" height="9" rx="0.5" fill="currentColor" />}
-      {position === 'right' && <rect x="10" y="3.5" width="3.5" height="9" rx="0.5" fill="currentColor" />}
-      {position === 'bottom' && <rect x="2.5" y="9" width="11" height="3.5" rx="0.5" fill="currentColor" />}
+      <rect
+        x="1.5"
+        y="2.5"
+        width="13"
+        height="11"
+        rx="1.5"
+        fill="none"
+        stroke="currentColor"
+      />
+      {position === 'left' && (
+        <rect
+          x="2.5"
+          y="3.5"
+          width="3.5"
+          height="9"
+          rx="0.5"
+          fill="currentColor"
+        />
+      )}
+      {position === 'right' && (
+        <rect
+          x="10"
+          y="3.5"
+          width="3.5"
+          height="9"
+          rx="0.5"
+          fill="currentColor"
+        />
+      )}
+      {position === 'bottom' && (
+        <rect
+          x="2.5"
+          y="9"
+          width="11"
+          height="3.5"
+          rx="0.5"
+          fill="currentColor"
+        />
+      )}
     </svg>
   );
 }
@@ -106,7 +145,11 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
     const el = anchorRef.current;
     if (!el) return;
     const observer = new ResizeObserver(([entry]) => {
-      if (entry) onPanelResize(Math.round(entry.contentRect.width), Math.round(entry.contentRect.height));
+      if (entry)
+        onPanelResize(
+          Math.round(entry.contentRect.width),
+          Math.round(entry.contentRect.height),
+        );
     });
     observer.observe(el);
     return () => observer.disconnect();
@@ -115,12 +158,14 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const savedScrollTop = useRef(0);
   useEffect(() => {
-    if (expanded && bodyRef.current) bodyRef.current.scrollTop = savedScrollTop.current;
+    if (expanded && bodyRef.current)
+      bodyRef.current.scrollTop = savedScrollTop.current;
   }, [expanded]);
 
   useEffect(() => {
     if (activeSection == null) return;
-    document.getElementById(`${AI_SECTION_ID_PREFIX}${activeSection}`)
+    document
+      .getElementById(`${AI_SECTION_ID_PREFIX}${activeSection}`)
       ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [activeSection]);
 
@@ -130,10 +175,21 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
       handleCollapse();
       return;
     }
-    if ((e.key !== SHORTCUT_KEYS.aiSectionPrevious && e.key !== SHORTCUT_KEYS.aiSectionNext) || !sections?.length) return;
+    if (
+      (e.key !== SHORTCUT_KEYS.aiSectionPrevious &&
+        e.key !== SHORTCUT_KEYS.aiSectionNext) ||
+      !sections?.length
+    )
+      return;
     e.preventDefault();
-    const idx = activeSection == null ? -1 : sections.findIndex(s => s.n === activeSection);
-    const nextIdx = e.key === SHORTCUT_KEYS.aiSectionNext ? Math.min(idx + 1, sections.length - 1) : Math.max(idx - 1, 0);
+    const idx =
+      activeSection == null
+        ? -1
+        : sections.findIndex((s) => s.n === activeSection);
+    const nextIdx =
+      e.key === SHORTCUT_KEYS.aiSectionNext
+        ? Math.min(idx + 1, sections.length - 1)
+        : Math.max(idx - 1, 0);
     onFocusSection?.(sections[nextIdx].n);
   }
 
@@ -144,7 +200,11 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
     try {
       nodeId = decodeURIComponent(encoded);
     } catch (err) {
-      vscodeApi.postMessage({ type: 'log', level: 'debug', text: `[AI] focus link decode failed: ${encoded} (${errorMessage(err)})` });
+      vscodeApi.postMessage({
+        type: 'log',
+        level: 'debug',
+        text: `[AI] focus link decode failed: ${encoded} (${errorMessage(err)})`,
+      });
     }
     return () => onFocusNode(nodeId);
   }
@@ -191,16 +251,24 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
     'ln-ai-description-overlay',
     maximized ? 'ln-ai-description-overlay-maximized' : '',
     `ln-ai-description-font-${fontScale}`,
-  ].filter(Boolean).join(' ');
+  ]
+    .filter(Boolean)
+    .join(' ');
   const anchorClassName = [
     'ln-ai-description-anchor',
     dockPosition !== 'right' ? `ln-ai-description-anchor-${dockPosition}` : '',
     maximized ? 'ln-ai-description-anchor-maximized' : '',
-  ].filter(Boolean).join(' ');
+  ]
+    .filter(Boolean)
+    .join(' ');
   const railwrapClassName = [
     'ln-ai-description-railwrap',
-    dockPosition !== 'right' ? `ln-ai-description-railwrap--${dockPosition}` : '',
-  ].filter(Boolean).join(' ');
+    dockPosition !== 'right'
+      ? `ln-ai-description-railwrap--${dockPosition}`
+      : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
 
   if (!expanded) {
     return (
@@ -212,7 +280,9 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
           aria-label="Expand AI report"
         >
           <span className="ln-ai-description-rail-name">{railName}</span>
-          <span className="ln-ai-description-rail-toggle">{RAIL_TOGGLE_GLYPH[dockPosition]}</span>
+          <span className="ln-ai-description-rail-toggle">
+            {RAIL_TOGGLE_GLYPH[dockPosition]}
+          </span>
         </button>
       </div>
     );
@@ -236,8 +306,21 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
                 aria-expanded={dockMenu.isOpen}
               >
                 <DockIcon position={dockPosition} />
-                <svg className="ln-ai-dock-chevron" width="8" height="8" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-                  <path d="M3 6l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
+                <svg
+                  className="ln-ai-dock-chevron"
+                  width="8"
+                  height="8"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M3 6l5 5 5-5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
                 </svg>
               </button>
             </Tooltip>
@@ -245,13 +328,16 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
               {dockMenu.isOpen && (
                 <div
                   ref={dockMenu.refs.setFloating}
-                  style={{ ...dockMenu.floatingStyles, boxShadow: 'var(--ln-dropdown-shadow)' }}
+                  style={{
+                    ...dockMenu.floatingStyles,
+                    boxShadow: 'var(--ln-dropdown-shadow)',
+                  }}
                   className="ln-dropdown rounded-md z-50 p-1"
                   role="menu"
                   aria-label="Report panel dock position"
                   {...dockMenu.getFloatingProps()}
                 >
-                  {DOCK_CHOICES.map(choice => (
+                  {DOCK_CHOICES.map((choice) => (
                     <button
                       key={choice.position}
                       className="ln-ai-dock-menu-item"
@@ -262,7 +348,10 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
                         dockMenu.close();
                       }}
                     >
-                      <span className="ln-ai-dock-menu-check" aria-hidden="true">
+                      <span
+                        className="ln-ai-dock-menu-check"
+                        aria-hidden="true"
+                      >
                         {dockPosition === choice.position ? '✓' : ''}
                       </span>
                       <DockIcon position={choice.position} />
@@ -278,13 +367,23 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
                 onClick={handleOpenInEditor}
                 aria-label="Open description in editor"
               >
-                <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M13.75 7a.75.75 0 0 1 .75.75v5.5A1.75 1.75 0 0 1 12.75 15h-9.5A1.75 1.75 0 0 1 1.5 13.25v-9.5A1.75 1.75 0 0 1 3.25 2h5.5a.75.75 0 0 1 0 1.5h-5.5a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h9.5a.25.25 0 0 0 .25-.25v-5.5a.75.75 0 0 1 .75-.75Z"/><path d="M14.5 1.5h-4a.75.75 0 0 0 0 1.5h2.19L6.22 9.47a.75.75 0 1 0 1.06 1.06L13.75 4V6.5a.75.75 0 0 0 1.5 0v-4a.75.75 0 0 0-.75-.75Z"/></svg>
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 16 16"
+                  fill="currentColor"
+                >
+                  <path d="M13.75 7a.75.75 0 0 1 .75.75v5.5A1.75 1.75 0 0 1 12.75 15h-9.5A1.75 1.75 0 0 1 1.5 13.25v-9.5A1.75 1.75 0 0 1 3.25 2h5.5a.75.75 0 0 1 0 1.5h-5.5a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h9.5a.25.25 0 0 0 .25-.25v-5.5a.75.75 0 0 1 .75-.75Z" />
+                  <path d="M14.5 1.5h-4a.75.75 0 0 0 0 1.5h2.19L6.22 9.47a.75.75 0 1 0 1.06 1.06L13.75 4V6.5a.75.75 0 0 0 1.5 0v-4a.75.75 0 0 0-.75-.75Z" />
+                </svg>
               </button>
             </Tooltip>
             <Tooltip content="Decrease text size">
               <button
                 className="ln-ai-description-action ln-ai-description-text-action"
-                onClick={() => setFontScale(v => (v > 0 ? (v - 1) as 0 | 1 : v))}
+                onClick={() =>
+                  setFontScale((v) => (v > 0 ? ((v - 1) as 0 | 1) : v))
+                }
                 aria-label="Decrease description text size"
                 disabled={fontScale === 0}
               >
@@ -294,23 +393,47 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
             <Tooltip content="Increase text size">
               <button
                 className="ln-ai-description-action ln-ai-description-text-action"
-                onClick={() => setFontScale(v => (v < 2 ? (v + 1) as 1 | 2 : v))}
+                onClick={() =>
+                  setFontScale((v) => (v < 2 ? ((v + 1) as 1 | 2) : v))
+                }
                 aria-label="Increase description text size"
                 disabled={fontScale === 2}
               >
                 A+
               </button>
             </Tooltip>
-            <Tooltip content={maximized ? 'Restore original size' : 'Maximize description'}>
+            <Tooltip
+              content={
+                maximized ? 'Restore original size' : 'Maximize description'
+              }
+            >
               <button
                 className="ln-ai-description-action"
-                onClick={() => setMaximized(v => !v)}
-                aria-label={maximized ? 'Restore original description size' : 'Maximize description'}
+                onClick={() => setMaximized((v) => !v)}
+                aria-label={
+                  maximized
+                    ? 'Restore original description size'
+                    : 'Maximize description'
+                }
               >
                 {maximized ? (
-                  <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M6.75 1a.75.75 0 0 1 .75.75v5a.75.75 0 0 1-.75.75h-5a.75.75 0 0 1 0-1.5h3.19L.72 1.78A.75.75 0 0 1 1.78.72L6 4.94V1.75A.75.75 0 0 1 6.75 1ZM9.25 15a.75.75 0 0 1-.75-.75v-5a.75.75 0 0 1 .75-.75h5a.75.75 0 0 1 0 1.5h-3.19l4.22 4.22a.75.75 0 1 1-1.06 1.06L10 11.06v3.19a.75.75 0 0 1-.75.75Z"/></svg>
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 16 16"
+                    fill="currentColor"
+                  >
+                    <path d="M6.75 1a.75.75 0 0 1 .75.75v5a.75.75 0 0 1-.75.75h-5a.75.75 0 0 1 0-1.5h3.19L.72 1.78A.75.75 0 0 1 1.78.72L6 4.94V1.75A.75.75 0 0 1 6.75 1ZM9.25 15a.75.75 0 0 1-.75-.75v-5a.75.75 0 0 1 .75-.75h5a.75.75 0 0 1 0 1.5h-3.19l4.22 4.22a.75.75 0 1 1-1.06 1.06L10 11.06v3.19a.75.75 0 0 1-.75.75Z" />
+                  </svg>
                 ) : (
-                  <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M1.75 1a.75.75 0 0 0 0 1.5h3.19L.72 6.72a.75.75 0 0 0 1.06 1.06L6 3.56v3.19a.75.75 0 0 0 1.5 0v-5A.75.75 0 0 0 6.75 1h-5ZM14.25 15a.75.75 0 0 0 0-1.5h-3.19l4.22-4.22a.75.75 0 1 0-1.06-1.06L10 12.44V9.25a.75.75 0 0 0-1.5 0v5c0 .414.336.75.75.75h5Z"/></svg>
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 16 16"
+                    fill="currentColor"
+                  >
+                    <path d="M1.75 1a.75.75 0 0 0 0 1.5h3.19L.72 6.72a.75.75 0 0 0 1.06 1.06L6 3.56v3.19a.75.75 0 0 0 1.5 0v-5A.75.75 0 0 0 6.75 1h-5ZM14.25 15a.75.75 0 0 0 0-1.5h-3.19l4.22-4.22a.75.75 0 1 0-1.06-1.06L10 12.44V9.25a.75.75 0 0 0-1.5 0v5c0 .414.336.75.75.75h5Z" />
+                  </svg>
                 )}
               </button>
             </Tooltip>
@@ -324,8 +447,12 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
           </div>
         </div>
         {sections && sections.length > 0 && (
-          <div className="ln-ai-section-chips" role="navigation" aria-label="Report sections">
-            {sections.map(section => (
+          <div
+            className="ln-ai-section-chips"
+            role="navigation"
+            aria-label="Report sections"
+          >
+            {sections.map((section) => (
               <button
                 key={section.n}
                 className={`ln-ai-section-chip${activeSection === section.n ? ' ln-active' : ''}`}
@@ -341,7 +468,9 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
         <div
           ref={bodyRef}
           className="ln-ai-description-body"
-          onScroll={(e) => { savedScrollTop.current = e.currentTarget.scrollTop; }}
+          onScroll={(e) => {
+            savedScrollTop.current = e.currentTarget.scrollTop;
+          }}
         >
           <div
             className="ln-ai-description-md"

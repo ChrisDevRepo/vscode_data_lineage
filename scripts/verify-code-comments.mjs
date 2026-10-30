@@ -46,8 +46,11 @@ const CHATTY_PATTERNS = [
         .replace(/https?:\/\/\S+/g, '')
         .replace(/`[^`]+`/g, '')
         .replace(/\ben-us\b/gi, '');
-      return /\b(I|we|our|my|mine)\b/.test(sanitized) || /\b(we|our|us|my|mine)\b/i.test(sanitized);
-    }
+      return (
+        /\b(I|we|our|my|mine)\b/.test(sanitized) ||
+        /\b(we|our|us|my|mine)\b/i.test(sanitized)
+      );
+    },
   },
   {
     id: 'second-person',
@@ -57,58 +60,72 @@ const CHATTY_PATTERNS = [
         .replace(/https?:\/\/\S+/g, '')
         .replace(/`[^`]+`/g, '');
       return /\b(you|your|yours)\b/i.test(sanitized);
-    }
+    },
   },
   {
     id: 'conversational-filler',
-    label: 'Conversational filler (actually, basically, obviously, simply, just, maybe, perhaps)',
+    label:
+      'Conversational filler (actually, basically, obviously, simply, just, maybe, perhaps)',
     test: (comment) => {
       const sanitized = comment
         .replace(/https?:\/\/\S+/g, '')
         .replace(/`[^`]+`/g, '');
-      return /\b(actually|basically|obviously|simply|maybe|perhaps)\b/i.test(sanitized);
-    }
+      return /\b(actually|basically|obviously|simply|maybe|perhaps)\b/i.test(
+        sanitized,
+      );
+    },
   },
   {
     id: 'narration',
-    label: 'Narration (here we, now we, then we, lets, let\'s, note that, please note, remember that)',
+    label:
+      "Narration (here we, now we, then we, lets, let's, note that, please note, remember that)",
     test: (comment) => {
       const sanitized = comment
         .replace(/https?:\/\/\S+/g, '')
         .replace(/`[^`]+`/g, '');
-      return /\b(here\s+we|now\s+we|then\s+we|first\s+we|next\s+we|let'?s|note\s+that|please\s+note|remember\s+that|notice\s+that)\b/i.test(sanitized);
-    }
+      return /\b(here\s+we|now\s+we|then\s+we|first\s+we|next\s+we|let'?s|note\s+that|please\s+note|remember\s+that|notice\s+that)\b/i.test(
+        sanitized,
+      );
+    },
   },
   {
     id: 'history-marker',
-    label: 'Historical note or changelog (previously, used to be, before this, formerly)',
+    label:
+      'Historical note or changelog (previously, used to be, before this, formerly)',
     test: (comment) => {
       const sanitized = comment
         .replace(/https?:\/\/\S+/g, '')
         .replace(/`[^`]+`/g, '');
-      return /\b(used\s+to\s+be|before\s+this\s+(change|commit|fix)|formerly\s+was|previously\s+was|prior\s+to\s+this)\b/i.test(sanitized);
-    }
+      return /\b(used\s+to\s+be|before\s+this\s+(change|commit|fix)|formerly\s+was|previously\s+was|prior\s+to\s+this)\b/i.test(
+        sanitized,
+      );
+    },
   },
   {
     id: 'author-date',
     label: 'Author/date marker (@author, @date, created by, authored by)',
-    test: (comment) => /(@author|@date|created\s+by|authored\s+by)/i.test(comment),
+    test: (comment) =>
+      /(@author|@date|created\s+by|authored\s+by)/i.test(comment),
   },
   {
     id: 'jsdoc-type',
-    label: 'Redundant JSDoc type annotation in TSDoc (@param {type} or @returns {type})',
+    label:
+      'Redundant JSDoc type annotation in TSDoc (@param {type} or @returns {type})',
     test: (comment) => /@(param|returns?)\s*\{[^}]+\}/.test(comment),
   },
   {
     id: 'commented-code',
     label: 'Commented-out code',
-    test: (comment) => /^\s*\/\/\s*(const|let|var|function|return|import|export)\s+[a-zA-Z_$0-9]+\s*(=|\(|:)/.test(comment),
+    test: (comment) =>
+      /^\s*\/\/\s*(const|let|var|function|return|import|export)\s+[a-zA-Z_$0-9]+\s*(=|\(|:)/.test(
+        comment,
+      ),
   },
   {
     id: 'todo-marker',
     label: 'TODO / FIXME / HACK marker',
     test: (comment) => /\b(TODO|FIXME|HACK|XXX)\b/.test(comment),
-  }
+  },
 ];
 
 let totalIssues = 0;
@@ -127,7 +144,12 @@ function addIssue(filePath, line, col, ruleId, message, sample) {
 
 for (const filePath of files) {
   const content = fs.readFileSync(filePath, 'utf8');
-  const sf = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true);
+  const sf = ts.createSourceFile(
+    filePath,
+    content,
+    ts.ScriptTarget.Latest,
+    true,
+  );
 
   // 1. Check exported declarations for missing TSDoc
   function isExported(node) {
@@ -138,7 +160,9 @@ for (const filePath of files) {
   function hasTsDocComment(node) {
     const text = node.getFullText(sf);
     const leadingRanges = ts.getLeadingCommentRanges(text, 0) || [];
-    return leadingRanges.some((r) => text.slice(r.pos, r.end).startsWith('/**'));
+    return leadingRanges.some((r) =>
+      text.slice(r.pos, r.end).startsWith('/**'),
+    );
   }
 
   ts.forEachChild(sf, (node) => {
@@ -152,12 +176,16 @@ for (const filePath of files) {
     ) {
       if (isExported(node)) {
         if (!hasTsDocComment(node)) {
-          const { line, character } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
+          const { line, character } = sf.getLineAndCharacterOfPosition(
+            node.getStart(sf),
+          );
           let name = 'declaration';
           if (node.name && node.name.text) {
             name = node.name.text;
           } else if (ts.isVariableStatement(node)) {
-            name = node.declarationList.declarations.map((d) => d.name.getText(sf)).join(', ');
+            name = node.declarationList.declarations
+              .map((d) => d.name.getText(sf))
+              .join(', ');
           }
           addIssue(
             filePath,
@@ -165,7 +193,7 @@ for (const filePath of files) {
             character + 1,
             'missing-tsdoc',
             `Exported declaration '${name}' is missing TSDoc documentation.`,
-            node.getText(sf).slice(0, 60)
+            node.getText(sf).slice(0, 60),
           );
         }
       }
@@ -173,7 +201,12 @@ for (const filePath of files) {
   });
 
   // 2. Scan all comments for chatty phrasing, narration, author markers, etc.
-  const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, ts.LanguageVariant.Standard, content);
+  const scanner = ts.createScanner(
+    ts.ScriptTarget.Latest,
+    false,
+    ts.LanguageVariant.Standard,
+    content,
+  );
   let token = scanner.scan();
   while (token !== ts.SyntaxKind.EndOfFileToken) {
     if (
@@ -202,7 +235,7 @@ for (const filePath of files) {
             character + 1,
             pattern.id,
             pattern.label,
-            firstLine
+            firstLine,
           );
           break;
         }
@@ -214,14 +247,20 @@ for (const filePath of files) {
 
 // Print results
 if (totalIssues === 0) {
-  console.log(`PASS: All code comments verified across ${files.length} files. No chatty or missing TSDoc comments found.`);
+  console.log(
+    `PASS: All code comments verified across ${files.length} files. No chatty or missing TSDoc comments found.`,
+  );
   process.exit(0);
 } else {
-  console.log(`FAIL: Found ${totalIssues} comment issues across ${issuesByFile.size} files:\n`);
+  console.log(
+    `FAIL: Found ${totalIssues} comment issues across ${issuesByFile.size} files:\n`,
+  );
   for (const [relPath, issues] of issuesByFile.entries()) {
     console.log(`--- ${relPath} (${issues.length}) ---`);
     for (const issue of issues) {
-      console.log(`  L${issue.line}:${issue.col} [${issue.ruleId}] ${issue.message}`);
+      console.log(
+        `  L${issue.line}:${issue.col} [${issue.ruleId}] ${issue.message}`,
+      );
       if (issue.sample) {
         console.log(`    > ${issue.sample}`);
       }

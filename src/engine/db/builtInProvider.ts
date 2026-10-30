@@ -6,11 +6,25 @@
 
 import * as vscode from 'vscode';
 import type { Connection } from 'tedious';
-import type { DbCellValue, IServerInfo, SimpleExecuteResult } from '../../types/database';
+import type {
+  DbCellValue,
+  IServerInfo,
+  SimpleExecuteResult,
+} from '../../types/database';
 import { Logger } from '../../utils/log';
 import { DEFAULT_CONFIG } from '../types';
-import { StoredConnectionInfoSchema, type StoredConnectionInfo } from '../shared/bridgeContract';
-import { readSavedPassword, savePassword, passwordTooLong, describeConnection, resolveServerAddress, type BuiltInConnection } from './connectionSettings';
+import {
+  StoredConnectionInfoSchema,
+  type StoredConnectionInfo,
+} from '../shared/bridgeContract';
+import {
+  readSavedPassword,
+  savePassword,
+  passwordTooLong,
+  describeConnection,
+  resolveServerAddress,
+  type BuiltInConnection,
+} from './connectionSettings';
 import { redactSecrets } from '../../utils/redact';
 import type { DbQueryOptions, DbSession } from './dbSession';
 import { acquireSqlToken } from './entraSignIn';
@@ -62,7 +76,8 @@ interface ColumnMetadata extends CellMetadata {
 
 const NULL_CELL: DbCellValue = { displayValue: 'NULL', isNull: true };
 
-const pad = (n: number, width: number): string => String(n).padStart(width, '0');
+const pad = (n: number, width: number): string =>
+  String(n).padStart(width, '0');
 
 function isoDate(d: Date): string {
   return `${pad(d.getUTCFullYear(), 4)}-${pad(d.getUTCMonth() + 1, 2)}-${pad(d.getUTCDate(), 2)}`;
@@ -75,7 +90,8 @@ function clockTime(d: Date): string {
 /** Fractional-second digits of a temporal value, truncated to `digits` (0-7), millisecond precision plus tedious's sub-millisecond delta. */
 function fraction(d: Date, digits: number): string {
   if (digits <= 0) return '';
-  const delta = (d as Date & { nanosecondsDelta?: number }).nanosecondsDelta ?? 0;
+  const delta =
+    (d as Date & { nanosecondsDelta?: number }).nanosecondsDelta ?? 0;
   const full = `${pad(d.getUTCMilliseconds(), 3)}${pad(Math.round(delta * 1e7), 4)}`;
   return `.${full.slice(0, Math.min(digits, 7)).padEnd(digits, '0')}`;
 }
@@ -116,7 +132,9 @@ function renderReal(n: number): string {
 
 /** Renders an exact numeric with its declared scale. */
 function renderScaled(n: number, scale: number): string {
-  return Math.abs(n) * 10 ** scale <= Number.MAX_SAFE_INTEGER ? n.toFixed(scale) : String(n);
+  return Math.abs(n) * 10 ** scale <= Number.MAX_SAFE_INTEGER
+    ? n.toFixed(scale)
+    : String(n);
 }
 
 function renderNumber(n: number, typeName: string, meta: CellMetadata): string {
@@ -143,15 +161,28 @@ function renderNumber(n: number, typeName: string, meta: CellMetadata): string {
 function mapCell(value: unknown, meta: CellMetadata): DbCellValue {
   if (value === null || value === undefined) return NULL_CELL;
   const typeName = meta.type.name;
-  if (value instanceof Date) return { displayValue: renderTemporal(value, typeName, meta), isNull: false };
-  if (typeof value === 'boolean') return { displayValue: value ? '1' : '0', isNull: false };
-  if (Buffer.isBuffer(value)) return { displayValue: `0x${value.toString('hex').toUpperCase()}`, isNull: false };
-  if (typeof value === 'number') return { displayValue: renderNumber(value, typeName, meta), isNull: false };
+  if (value instanceof Date)
+    return {
+      displayValue: renderTemporal(value, typeName, meta),
+      isNull: false,
+    };
+  if (typeof value === 'boolean')
+    return { displayValue: value ? '1' : '0', isNull: false };
+  if (Buffer.isBuffer(value))
+    return {
+      displayValue: `0x${value.toString('hex').toUpperCase()}`,
+      isNull: false,
+    };
+  if (typeof value === 'number')
+    return { displayValue: renderNumber(value, typeName, meta), isNull: false };
   return { displayValue: String(value), isNull: false };
 }
 
 /** Returns the SQL of the named DMV query, or `undefined` when the YAML does not define it. */
-async function yamlQuerySql(loadQueries: () => Promise<DmvQuery[]>, name: string): Promise<string | undefined> {
+async function yamlQuerySql(
+  loadQueries: () => Promise<DmvQuery[]>,
+  name: string,
+): Promise<string | undefined> {
   return (await loadQueries()).find((q) => q.name === name)?.sql;
 }
 
@@ -172,24 +203,43 @@ class BuiltInSession implements DbSession {
   ) {
     connection.on('error', (err: Error) => {
       this.failure = err;
-      this.logger.debug(`Connection error on ${label}: ${redactSecrets(err.message)}`);
+      this.logger.debug(
+        `Connection error on ${label}: ${redactSecrets(err.message)}`,
+      );
     });
-    connection.on('end', () => { this.closed = true; });
+    connection.on('end', () => {
+      this.closed = true;
+    });
   }
 
-  executeSimpleQuery(sql: string, options?: DbQueryOptions): Promise<SimpleExecuteResult> {
+  executeSimpleQuery(
+    sql: string,
+    options?: DbQueryOptions,
+  ): Promise<SimpleExecuteResult> {
     const run = () => this.run(sql, options);
     const result = this.tail.then(run, run);
     this.tail = result.catch(() => undefined);
     return result;
   }
 
-  private run(sql: string, options?: DbQueryOptions): Promise<SimpleExecuteResult> {
-    if (this.closed) return Promise.reject(new Error(`The connection to ${this.label} is closed.`));
-    if (this.failure) return Promise.reject(new Error(`The connection to ${this.label} was lost: ${this.failure.message}`));
+  private run(
+    sql: string,
+    options?: DbQueryOptions,
+  ): Promise<SimpleExecuteResult> {
+    if (this.closed)
+      return Promise.reject(
+        new Error(`The connection to ${this.label} is closed.`),
+      );
+    if (this.failure)
+      return Promise.reject(
+        new Error(
+          `The connection to ${this.label} was lost: ${this.failure.message}`,
+        ),
+      );
     const timeoutMs = options?.timeoutMs ?? defaultRequestTimeoutMs();
-    const timeoutMessage = options?.timeoutMessage
-      ?? `Query timed out after ${timeoutMs / MS_PER_SECOND}s. Increase dataLineageViz.dmvQueryTimeout if needed.`;
+    const timeoutMessage =
+      options?.timeoutMessage ??
+      `Query timed out after ${timeoutMs / MS_PER_SECOND}s. Increase dataLineageViz.dmvQueryTimeout if needed.`;
 
     return new Promise<SimpleExecuteResult>((resolve, reject) => {
       let timedOut = false;
@@ -202,12 +252,21 @@ class BuiltInSession implements DbSession {
         settle();
       };
       const request = new this.lib.Request(sql, (err) => {
-        if (err) finish(() => reject(timedOut ? new Error(timeoutMessage) : err));
-        else finish(() => resolve({ rowCount: rows.length, columnInfo: columns.map((meta) => ({ columnName: meta.colName })), rows }));
+        if (err)
+          finish(() => reject(timedOut ? new Error(timeoutMessage) : err));
+        else
+          finish(() =>
+            resolve({
+              rowCount: rows.length,
+              columnInfo: columns.map((meta) => ({ columnName: meta.colName })),
+              rows,
+            }),
+          );
       });
       request.on('columnMetadata', (meta) => {
         resultSets++;
-        if (resultSets === 1) columns = Array.isArray(meta) ? meta : Object.values(meta);
+        if (resultSets === 1)
+          columns = Array.isArray(meta) ? meta : Object.values(meta);
       });
       request.on('row', (cells: Array<{ value: unknown }>) => {
         if (resultSets !== 1) return;
@@ -224,32 +283,49 @@ class BuiltInSession implements DbSession {
 
   async getServerInfo(): Promise<IServerInfo> {
     const sql = await yamlQuerySql(this.loadQueries, 'platform-info');
-    if (!sql) throw new Error("The DMV queries YAML defines no 'platform-info' query, so server details are unavailable.");
+    if (!sql)
+      throw new Error(
+        "The DMV queries YAML defines no 'platform-info' query, so server details are unavailable.",
+      );
     const result = await this.executeSimpleQuery(sql);
     const row = result.rows[0];
     const cell = (name: string): string => {
-      const at = result.columnInfo.findIndex((c) => c.columnName.toLowerCase() === name);
+      const at = result.columnInfo.findIndex(
+        (c) => c.columnName.toLowerCase() === name,
+      );
       return at >= 0 && row && !row[at].isNull ? row[at].displayValue : '';
     };
-    return { engineEditionId: Number.parseInt(cell('engine_edition'), 10) || 0 };
+    return {
+      engineEditionId: Number.parseInt(cell('engine_edition'), 10) || 0,
+    };
   }
 
   async dispose(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    this.abortCurrent?.(new Error(`The connection to ${this.label} was closed.`));
+    this.abortCurrent?.(
+      new Error(`The connection to ${this.label} was closed.`),
+    );
     this.connection.close();
     this.logger.debug(`Closed connection to ${this.label}`);
   }
 }
 
 function defaultRequestTimeoutMs(): number {
-  const seconds = vscode.workspace.getConfiguration('dataLineageViz').get<number>('dmvQueryTimeout', DEFAULT_CONFIG.dmvQueryTimeout);
-  return (Number.isFinite(seconds) && seconds > 0 ? seconds : DEFAULT_CONFIG.dmvQueryTimeout) * MS_PER_SECOND;
+  const seconds = vscode.workspace
+    .getConfiguration('dataLineageViz')
+    .get<number>('dmvQueryTimeout', DEFAULT_CONFIG.dmvQueryTimeout);
+  return (
+    (Number.isFinite(seconds) && seconds > 0
+      ? seconds
+      : DEFAULT_CONFIG.dmvQueryTimeout) * MS_PER_SECOND
+  );
 }
 
 /** Asks for a SQL login password once, and whether to keep it in the secret store. */
-async function promptForPassword(connection: BuiltInConnection): Promise<{ password: string; save: boolean } | undefined> {
+async function promptForPassword(
+  connection: BuiltInConnection,
+): Promise<{ password: string; save: boolean } | undefined> {
   const password = await vscode.window.showInputBox({
     title: `Password for ${connection.user} on ${connection.server}`,
     prompt: `No saved password for "${connection.name}".`,
@@ -260,7 +336,11 @@ async function promptForPassword(connection: BuiltInConnection): Promise<{ passw
   if (password === undefined) return undefined;
   const choice = await vscode.window.showQuickPick(
     [
-      { label: 'Save password', description: 'Keep it in the VS Code secret store', save: true },
+      {
+        label: 'Save password',
+        description: 'Keep it in the VS Code secret store',
+        save: true,
+      },
       { label: 'Use once', description: 'Ask again next time', save: false },
     ],
     { placeHolder: 'Save this password?', ignoreFocusOut: true },
@@ -274,18 +354,29 @@ async function resolveAuthentication(
   env: BuiltInEnv,
   passwordOverride: string | undefined,
   logger: Logger,
-): Promise<{ type: 'default'; options: { userName: string; password: string } }
-  | { type: 'azure-active-directory-access-token'; options: { token: string } } | undefined> {
+): Promise<
+  | { type: 'default'; options: { userName: string; password: string } }
+  | { type: 'azure-active-directory-access-token'; options: { token: string } }
+  | undefined
+> {
   if (connection.authenticationType === 'entraId') {
-    return { type: 'azure-active-directory-access-token', options: { token: await acquireSqlToken(connection, logger) } };
+    return {
+      type: 'azure-active-directory-access-token',
+      options: { token: await acquireSqlToken(connection, logger) },
+    };
   }
 
   if (!connection.user) {
-    throw new Error('The SQL login has no user name. Edit the connection to add one.');
+    throw new Error(
+      'The SQL login has no user name. Edit the connection to add one.',
+    );
   }
-  let password = passwordOverride ?? await readSavedPassword(env.secrets, connection);
+  let password =
+    passwordOverride ?? (await readSavedPassword(env.secrets, connection));
   if (password === undefined) {
-    logger.debug(`No saved password for connection ${connection.id} — prompting`);
+    logger.debug(
+      `No saved password for connection ${connection.id} — prompting`,
+    );
     const prompted = await promptForPassword(connection);
     if (!prompted) return undefined;
     password = prompted.password;
@@ -304,11 +395,21 @@ export async function openBuiltInSession(
   const label = describeConnection(connection);
   const database = options.database ?? connection.database;
 
-  if (connection.authenticationType === 'entraId' && connection.encrypt === false) {
-    throw new Error('Microsoft Entra ID sign-in needs an encrypted connection. Remove "encrypt": false from this connection in dataLineageViz.database.connections.');
+  if (
+    connection.authenticationType === 'entraId' &&
+    connection.encrypt === false
+  ) {
+    throw new Error(
+      'Microsoft Entra ID sign-in needs an encrypted connection. Remove "encrypt": false from this connection in dataLineageViz.database.connections.',
+    );
   }
 
-  const authentication = await resolveAuthentication(connection, env, options.password, logger);
+  const authentication = await resolveAuthentication(
+    connection,
+    env,
+    options.password,
+    logger,
+  );
   if (!authentication) {
     logger.info('Password prompt cancelled');
     return undefined;
@@ -324,7 +425,11 @@ export async function openBuiltInSession(
     server: address.host,
     authentication,
     options: {
-      ...(connection.port ? { port: connection.port } : address.instanceName ? { instanceName: address.instanceName } : {}),
+      ...(connection.port
+        ? { port: connection.port }
+        : address.instanceName
+          ? { instanceName: address.instanceName }
+          : {}),
       ...(database ? { database } : {}),
       encrypt,
       trustServerCertificate,
@@ -341,7 +446,9 @@ export async function openBuiltInSession(
   const connectionInfo = StoredConnectionInfoSchema.parse({
     server: connection.server,
     database: database ?? '',
-    ...(connection.authenticationType === 'sqlLogin' && connection.user ? { user: connection.user } : {}),
+    ...(connection.authenticationType === 'sqlLogin' && connection.user
+      ? { user: connection.user }
+      : {}),
     authenticationType: connection.authenticationType,
     ...(connection.tenantId ? { tenantId: connection.tenantId } : {}),
     ...(connection.port ? { port: connection.port } : {}),
@@ -349,15 +456,26 @@ export async function openBuiltInSession(
     trustServerCertificate,
     connectionId: connection.id,
   });
-  const session = new BuiltInSession(raw, lib, connectionInfo, label, logger, env.loadQueries);
+  const session = new BuiltInSession(
+    raw,
+    lib,
+    connectionInfo,
+    label,
+    logger,
+    env.loadQueries,
+  );
 
   logger.info(`Connecting (${connection.authenticationType})`);
-  logger.debug(`Connection target: ${label}${database ? ` / ${database}` : ''}`);
+  logger.debug(
+    `Connection target: ${label}${database ? ` / ${database}` : ''}`,
+  );
   const started = Date.now();
   let cancelled: boolean;
   try {
     cancelled = await new Promise<boolean>((resolve, reject) => {
-      const subscription = options.token?.onCancellationRequested(() => resolve(true));
+      const subscription = options.token?.onCancellationRequested(() =>
+        resolve(true),
+      );
       raw.connect((err?: Error) => {
         subscription?.dispose();
         if (err) reject(err);

@@ -48,11 +48,20 @@ interface InstructionFactsShared {
 /** Mission/runtime facts from which observable plan metadata is derived. */
 type InstructionPlanFacts =
   /** Whole-object (BB) exploration — never carries named target columns. */
-  | (InstructionFactsShared & { readonly analysisMode: 'bb'; readonly targetColumns?: never })
+  | (InstructionFactsShared & {
+      readonly analysisMode: 'bb';
+      readonly targetColumns?: never;
+    })
   /** Column-trace (CT) exploration — always carries at least one locked target column. */
-  | (InstructionFactsShared & { readonly analysisMode: 'ct'; readonly targetColumns: readonly [string, ...string[]] })
+  | (InstructionFactsShared & {
+      readonly analysisMode: 'ct';
+      readonly targetColumns: readonly [string, ...string[]];
+    })
   /** Mode-agnostic calls (entry detection, discovery, compose) — no mode, no targets. */
-  | (InstructionFactsShared & { readonly analysisMode?: undefined; readonly targetColumns?: never });
+  | (InstructionFactsShared & {
+      readonly analysisMode?: undefined;
+      readonly targetColumns?: never;
+    });
 
 /** Provenance shared by both BB and CT members of an exploration-scoped facts value. */
 interface ExplorationFactsShared {
@@ -68,8 +77,15 @@ export function explorationFacts(
   shared: ExplorationFactsShared,
 ): InstructionPlanFacts {
   if (analysisMode === 'ct') {
-    if (!targetColumns?.length) throw new Error('InstructionPlan: CT requires at least one target column.');
-    return { analysisMode: 'ct', targetColumns: targetColumns as readonly [string, ...string[]], ...shared };
+    if (!targetColumns?.length)
+      throw new Error(
+        'InstructionPlan: CT requires at least one target column.',
+      );
+    return {
+      analysisMode: 'ct',
+      targetColumns: targetColumns as readonly [string, ...string[]],
+      ...shared,
+    };
   }
   return { analysisMode: 'bb', ...shared };
 }
@@ -82,7 +98,10 @@ interface StructuredContract<T> {
   readonly schema: GenerateStructuredInput<T>['schema'];
 }
 
-type StructuredPlanDraft<T> = Omit<GenerateStructuredInput<T>, 'phase' | 'instructionContext' | 'schema'> & {
+type StructuredPlanDraft<T> = Omit<
+  GenerateStructuredInput<T>,
+  'phase' | 'instructionContext' | 'schema'
+> & {
   readonly kind: 'structured';
   readonly phase: InstructionPhase;
   readonly contract: StructuredContract<T>;
@@ -100,14 +119,22 @@ interface ConversePlanInput {
   readonly detectReroute?: (toolName: string, resultText: string) => boolean;
   readonly toolChoice?: ModelToolChoice;
   readonly requiredTerminalTool?: string;
-  readonly onToolResult?: (toolName: string, input: unknown, isError: boolean, resultText: string) => void;
+  readonly onToolResult?: (
+    toolName: string,
+    input: unknown,
+    isError: boolean,
+    resultText: string,
+  ) => void;
   readonly proseGate?: 'buffer-until-tool';
   readonly phase: InstructionPhase;
   readonly instructionContext: InstructionContext;
 }
 
 /** Compiler-ready instruction plan for a converse-mode turn. */
-export type ConversePlanDraft = Omit<ConversePlanInput, 'phase' | 'instructionContext'> & {
+export type ConversePlanDraft = Omit<
+  ConversePlanInput,
+  'phase' | 'instructionContext'
+> & {
   readonly kind: 'converse';
   readonly stage: ChatLmStage;
   readonly registry: IToolRegistry<string>;
@@ -131,7 +158,10 @@ type TextPlanDraft = Omit<CompleteTextInput, 'phase' | 'instructionContext'> & {
 };
 
 /** Inputs accepted by {@link compileInstructionPlan}. */
-type InstructionPlanDraft<T = unknown> = StructuredPlanDraft<T> | ConversePlanDraft | TextPlanDraft;
+type InstructionPlanDraft<T = unknown> =
+  | StructuredPlanDraft<T>
+  | ConversePlanDraft
+  | TextPlanDraft;
 
 /** Readonly structured-output model call with a frozen top-level envelope. */
 export interface StructuredInstructionPlan<T> {
@@ -193,14 +223,22 @@ function phaseOf(stage: ChatLmStage): InstructionPhase {
 
 /** True for every stage whose `lineage_present_result` schema may be swapped for a live-resolved repair-patch schema (session-authorized held-draft repair). */
 function stageSupportsPresentResultRepair(stage: ChatLmStage): boolean {
-  return stage.kind === 'synthesis' || stage.kind === 'visual_preview' || stage.kind === 'completed';
+  return (
+    stage.kind === 'synthesis' ||
+    stage.kind === 'visual_preview' ||
+    stage.kind === 'completed'
+  );
 }
 
-function freezeStrings(values: readonly string[] | undefined): readonly string[] {
+function freezeStrings(
+  values: readonly string[] | undefined,
+): readonly string[] {
   return Object.freeze([...(values ?? [])]);
 }
 
-function freezeFacts(facts: InstructionPlanFacts | undefined): InstructionPlanFacts | undefined {
+function freezeFacts(
+  facts: InstructionPlanFacts | undefined,
+): InstructionPlanFacts | undefined {
   if (!facts) return undefined;
   const shared = {
     ...(facts.classification ? { classification: facts.classification } : {}),
@@ -208,9 +246,17 @@ function freezeFacts(facts: InstructionPlanFacts | undefined): InstructionPlanFa
     memorySections: freezeStrings(facts.memorySections),
   };
   if (facts.analysisMode === 'ct') {
-    return Object.freeze({ ...shared, analysisMode: 'ct', targetColumns: freezeStrings(facts.targetColumns) as readonly [string, ...string[]] });
+    return Object.freeze({
+      ...shared,
+      analysisMode: 'ct',
+      targetColumns: freezeStrings(facts.targetColumns) as readonly [
+        string,
+        ...string[],
+      ],
+    });
   }
-  if (facts.analysisMode === 'bb') return Object.freeze({ ...shared, analysisMode: 'bb' });
+  if (facts.analysisMode === 'bb')
+    return Object.freeze({ ...shared, analysisMode: 'bb' });
   return Object.freeze(shared);
 }
 
@@ -222,12 +268,17 @@ function buildContext(
   schemaId?: string,
 ): InstructionContext {
   const analysisMode = facts?.analysisMode;
-  const targets = facts?.analysisMode === 'ct' ? facts.targetColumns : undefined;
+  const targets =
+    facts?.analysisMode === 'ct' ? facts.targetColumns : undefined;
   if ((phase === 'active' || phase === 'synthesis') && !facts?.classification) {
-    throw new Error(`InstructionPlan: ${phase} requires a locked classification.`);
+    throw new Error(
+      `InstructionPlan: ${phase} requires a locked classification.`,
+    );
   }
   if ((phase === 'active' || phase === 'synthesis') && !analysisMode) {
-    throw new Error(`InstructionPlan: ${phase} requires an approved analysis mode.`);
+    throw new Error(
+      `InstructionPlan: ${phase} requires an approved analysis mode.`,
+    );
   }
 
   const context: InstructionContext = {
@@ -244,23 +295,49 @@ function buildContext(
 }
 
 /** @param draft - Structured-output call ingredients. @returns A readonly structured plan. */
-export function compileInstructionPlan<T>(draft: StructuredPlanDraft<T>): StructuredInstructionPlan<T>;
+export function compileInstructionPlan<T>(
+  draft: StructuredPlanDraft<T>,
+): StructuredInstructionPlan<T>;
 /** @param draft - Tool-generation ingredients. @returns A readonly converse plan. */
-export function compileInstructionPlan(draft: ConversePlanDraft): ConverseInstructionPlan;
+export function compileInstructionPlan(
+  draft: ConversePlanDraft,
+): ConverseInstructionPlan;
 /** @param draft - Internal text-completion ingredients. @returns A readonly text plan. */
-export function compileInstructionPlan(draft: TextPlanDraft): TextInstructionPlan;
+export function compileInstructionPlan(
+  draft: TextPlanDraft,
+): TextInstructionPlan;
 /** Implements plan compilation while preserving discriminated result types. */
-export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): InstructionPlan<T> {
+export function compileInstructionPlan<T>(
+  draft: InstructionPlanDraft<T>,
+): InstructionPlan<T> {
   if (draft.kind === 'structured') {
     const { kind: _kind, phase, contract, facts, ...input } = draft;
     const frozenFacts = freezeFacts(facts);
-    const frame: RuntimeFrame = Object.freeze({ phase, facts: frozenFacts, schemaId: contract.id });
-    const context = buildContext('structured', phase, frozenFacts, [], contract.id);
+    const frame: RuntimeFrame = Object.freeze({
+      phase,
+      facts: frozenFacts,
+      schemaId: contract.id,
+    });
+    const context = buildContext(
+      'structured',
+      phase,
+      frozenFacts,
+      [],
+      contract.id,
+    );
     return Object.freeze({
       kind: 'structured',
       context,
       frame,
-      input: Object.freeze({ ...input, messages: Object.freeze([...input.messages]) as unknown as ModelMessage[], schema: contract.schema, phase, instructionContext: context }),
+      input: Object.freeze({
+        ...input,
+        messages: Object.freeze([
+          ...input.messages,
+        ]) as unknown as ModelMessage[],
+        schema: contract.schema,
+        phase,
+        instructionContext: context,
+      }),
     });
   }
   if (draft.kind === 'text') {
@@ -272,7 +349,12 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
       kind: 'text',
       context,
       frame,
-      input: Object.freeze({ ...input, messages: Object.freeze([...input.messages]), phase, instructionContext: context }),
+      input: Object.freeze({
+        ...input,
+        messages: Object.freeze([...input.messages]),
+        phase,
+        instructionContext: context,
+      }),
     });
   }
 
@@ -290,39 +372,63 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
   } = draft;
   const phase = phaseOf(stage);
   const frozenFacts = freezeFacts(facts);
-  const frame: RuntimeFrame = Object.freeze({ phase, stage, facts: frozenFacts });
+  const frame: RuntimeFrame = Object.freeze({
+    phase,
+    stage,
+    facts: frozenFacts,
+  });
   if (stage.kind === 'active') {
     const stageMode = stage.mode === 'sm_ct' ? 'ct' : 'bb';
     if (facts?.analysisMode !== stageMode) {
-      throw new Error(`InstructionPlan: active stage mode ${stageMode} does not match the approved analysis mode.`);
+      throw new Error(
+        `InstructionPlan: active stage mode ${stageMode} does not match the approved analysis mode.`,
+      );
     }
   }
   const allowed = new Set(getAllowedLmToolNames(stage));
-  if (stage.kind !== 'active' || !(canPruneCurrent?.() ?? false)) allowed.delete('lineage_prune_current');
+  if (stage.kind !== 'active' || !(canPruneCurrent?.() ?? false))
+    allowed.delete('lineage_prune_current');
   const filteredRegistry = filterRegistry(sourceRegistry, allowed);
   const schemaOverrides = new Map(toolSchemaOverrides ?? []);
   const liveResolvers = new Map<string, () => z.ZodType>();
   if (stage.kind === 'active') {
     const submitMode = stage.mode === 'sm_ct' ? 'ct' : 'bb';
-    liveResolvers.set(
-      'lineage_submit_findings',
-      () => submitFindingsSchemaForMode(submitMode, frozenFacts?.classification, false, hopColumns?.(), true),
+    liveResolvers.set('lineage_submit_findings', () =>
+      submitFindingsSchemaForMode(
+        submitMode,
+        frozenFacts?.classification,
+        false,
+        hopColumns?.(),
+        true,
+      ),
     );
   }
   if (stageSupportsPresentResultRepair(stage)) {
-    liveResolvers.set('lineage_present_result', () => presentResultSchemaForPhase(
-      stage.kind, presentResultRetainableSections?.() ?? false, presentResultPreviewBlockCount));
+    liveResolvers.set('lineage_present_result', () =>
+      presentResultSchemaForPhase(
+        stage.kind,
+        presentResultRetainableSections?.() ?? false,
+        presentResultPreviewBlockCount,
+      ),
+    );
   }
-  let registry = schemaOverrides.size ? overrideRegistrySchemas(filteredRegistry, schemaOverrides) : filteredRegistry;
-  if (liveResolvers.size) registry = resolveRegistrySchemas(registry, liveResolvers);
-  const toolNames = registry.getTools().map(tool => tool.name);
+  let registry = schemaOverrides.size
+    ? overrideRegistrySchemas(filteredRegistry, schemaOverrides)
+    : filteredRegistry;
+  if (liveResolvers.size)
+    registry = resolveRegistrySchemas(registry, liveResolvers);
+  const toolNames = registry.getTools().map((tool) => tool.name);
   if (input.requiredTerminalTool && !registry.has(input.requiredTerminalTool)) {
-    throw new Error(`InstructionPlan: required terminal tool ${input.requiredTerminalTool} is not available in ${phase}.`);
+    throw new Error(
+      `InstructionPlan: required terminal tool ${input.requiredTerminalTool} is not available in ${phase}.`,
+    );
   }
   let toolChoice = input.toolChoice;
   if (toolChoice === 'required' && toolNames.length > 1) {
     if (!input.requiredTerminalTool) {
-      throw new Error(`InstructionPlan: multi-tool required choice in ${phase} needs a graph-enforced terminal tool.`);
+      throw new Error(
+        `InstructionPlan: multi-tool required choice in ${phase} needs a graph-enforced terminal tool.`,
+      );
     }
     toolChoice = 'auto';
   }
@@ -331,16 +437,32 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
     kind: 'converse',
     context,
     frame,
-    input: Object.freeze({ ...input, messages: Object.freeze([...input.messages]) as unknown as ModelMessage[], phase, registry, toolChoice, instructionContext: context }),
+    input: Object.freeze({
+      ...input,
+      messages: Object.freeze([...input.messages]) as unknown as ModelMessage[],
+      phase,
+      registry,
+      toolChoice,
+      instructionContext: context,
+    }),
   });
 }
 
-type InstructionPlanExecutor = Pick<ModelPort, 'generateStructured' | 'completeText'>;
+type InstructionPlanExecutor = Pick<
+  ModelPort,
+  'generateStructured' | 'completeText'
+>;
 
 /** @param model - Active provider-neutral model port. @param plan - Structured plan to run. @returns Validated structured output. */
-export function executeInstructionPlan<T>(model: InstructionPlanExecutor, plan: StructuredInstructionPlan<T>): Promise<T>;
+export function executeInstructionPlan<T>(
+  model: InstructionPlanExecutor,
+  plan: StructuredInstructionPlan<T>,
+): Promise<T>;
 /** @param model - Active provider-neutral model port. @param plan - Text plan to run. @returns Trimmed provider text. */
-export function executeInstructionPlan(model: InstructionPlanExecutor, plan: TextInstructionPlan): Promise<string>;
+export function executeInstructionPlan(
+  model: InstructionPlanExecutor,
+  plan: TextInstructionPlan,
+): Promise<string>;
 /** Forwards one compiled structured or text plan to the provider-neutral port. */
 export function executeInstructionPlan<T>(
   model: InstructionPlanExecutor,

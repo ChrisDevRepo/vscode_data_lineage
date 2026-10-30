@@ -13,24 +13,44 @@ export type TraceNeighborPicker = {
 };
 
 /** The candidates `controls` currently offer for `action` on `side`; empty when there are no controls. */
-function currentOptions(controls: TraceNodeControls | undefined, action: TraceNeighborAction, side: NeighborSide): TraceNeighborOption[] {
+function currentOptions(
+  controls: TraceNodeControls | undefined,
+  action: TraceNeighborAction,
+  side: NeighborSide,
+): TraceNeighborOption[] {
   return controls?.[side][action] ?? [];
 }
 
-function sameOptionIds(a: readonly TraceNeighborOption[], b: readonly TraceNeighborOption[]): boolean {
+function sameOptionIds(
+  a: readonly TraceNeighborOption[],
+  b: readonly TraceNeighborOption[],
+): boolean {
   return a.length === b.length && a.every((option, i) => option.id === b[i].id);
 }
 
 /** Tracks the active add/prune neighbor picker for one trace-controlled node and applies its actions. */
-export function useTraceNeighborPicker(traceControls: TraceNodeControls | undefined) {
+export function useTraceNeighborPicker(
+  traceControls: TraceNodeControls | undefined,
+) {
   const [opened, setOpened] = useState<TraceNeighborPicker | null>(null);
-  const picker = opened && sameOptionIds(opened.options, currentOptions(traceControls, opened.action, opened.side)) ? opened : null;
+  const picker =
+    opened &&
+    sameOptionIds(
+      opened.options,
+      currentOptions(traceControls, opened.action, opened.side),
+    )
+      ? opened
+      : null;
 
   useEffect(() => {
     if (opened && !picker) setOpened(null);
   }, [opened, picker]);
 
-  const applyTraceAction = (action: TraceNeighborAction, side: NeighborSide, options: TraceNeighborOption[]) => {
+  const applyTraceAction = (
+    action: TraceNeighborAction,
+    side: NeighborSide,
+    options: TraceNeighborOption[],
+  ) => {
     if (!traceControls || options.length === 0) return;
     if (options.length === 1) {
       if (action === 'add') traceControls.onAdd(options[0].id);
@@ -38,9 +58,11 @@ export function useTraceNeighborPicker(traceControls: TraceNodeControls | undefi
       setOpened(null);
       return;
     }
-    setOpened(prev => (
-      prev?.action === action && prev.side === side ? null : { action, side, options }
-    ));
+    setOpened((prev) =>
+      prev?.action === action && prev.side === side
+        ? null
+        : { action, side, options },
+    );
   };
 
   const closePicker = () => setOpened(null);

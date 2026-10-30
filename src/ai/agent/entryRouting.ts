@@ -5,8 +5,15 @@ import type { AgentExecutionTrigger } from './state';
 type InitialAgentStage = 'discover' | 'visual_preview' | 'sm_entry';
 
 /** Derives the first tool stage from the turn's mechanical execution trigger. */
-export function selectInitialAgentStage(trigger: AgentExecutionTrigger): InitialAgentStage {
+export function selectInitialAgentStage(
+  trigger: AgentExecutionTrigger,
+): InitialAgentStage {
   if (trigger === 'preview_button') return 'visual_preview';
-  if (trigger === 'slash_trace' || trigger === 'run_trace' || trigger === 'discovery_budget') return 'sm_entry';
+  if (
+    trigger === 'slash_trace' ||
+    trigger === 'run_trace' ||
+    trigger === 'discovery_budget'
+  )
+    return 'sm_entry';
   return 'discover';
 }

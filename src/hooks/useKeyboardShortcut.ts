@@ -1,5 +1,8 @@
 import { useEffect, useRef } from 'react';
-import { isTextEntryTarget, isTextEntryTargetWithContent } from '../ui/keyboardShortcuts';
+import {
+  isTextEntryTarget,
+  isTextEntryTargetWithContent,
+} from '../ui/keyboardShortcuts';
 
 /** Tuning knobs for one {@link useKeyboardShortcut} registration. */
 interface KeyboardShortcutOptions {
@@ -65,12 +68,15 @@ export function useKeyboardShortcut(
 
   useEffect(() => {
     if (!active) return;
-    const keys = (Array.isArray(key) ? key : [key]).map(k => k.toLowerCase());
+    const keys = (Array.isArray(key) ? key : [key]).map((k) => k.toLowerCase());
     const entry: RegisteredShortcut = {
       keys,
       priority,
       preventDefault,
-      isBlocked: (target) => (allowEmptyTextEntry ? isTextEntryTargetWithContent(target) : isTextEntryTarget(target)),
+      isBlocked: (target) =>
+        allowEmptyTextEntry
+          ? isTextEntryTargetWithContent(target)
+          : isTextEntryTarget(target),
       invoke: () => callbackRef.current(),
     };
     registry.add(entry);

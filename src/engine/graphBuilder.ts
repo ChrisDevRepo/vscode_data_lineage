@@ -16,8 +16,23 @@ import { bfsFromNode } from 'graphology-traversal';
 import { findShortestPathOrdered } from './graphGuards';
 import dagre from '@dagrejs/dagre';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
-import { DatabaseModel, LineageNode, TraceState, ExtensionConfig, DEFAULT_CONFIG, SchemaNodeData, ObjectType } from './types';
-import { createSchemaColorMap, getExternalNodeColor, getSchemaColorFromMap, getSchemaDisplayColor, isExternalOnlyTypeBreakdown, type SchemaColorMap } from '../utils/schemaColors';
+import {
+  DatabaseModel,
+  LineageNode,
+  TraceState,
+  ExtensionConfig,
+  DEFAULT_CONFIG,
+  SchemaNodeData,
+  ObjectType,
+} from './types';
+import {
+  createSchemaColorMap,
+  getExternalNodeColor,
+  getSchemaColorFromMap,
+  getSchemaDisplayColor,
+  isExternalOnlyTypeBreakdown,
+  type SchemaColorMap,
+} from '../utils/schemaColors';
 import {
   projectExpandedSchemaView,
   projectSchemaQuotient,
@@ -139,9 +154,13 @@ function buildLineageFlowNode(
       outDegree: graph?.hasNode(source.id) ? graph.outDegree(source.id) : 0,
       ...(source.externalType && { externalType: source.externalType }),
       ...(source.externalUrl && { externalUrl: source.externalUrl }),
-      ...(source.externalDatabase && { externalDatabase: source.externalDatabase }),
+      ...(source.externalDatabase && {
+        externalDatabase: source.externalDatabase,
+      }),
       ...(source.definitionUnreadable && { definitionUnreadable: true }),
-      ...(options?.highlighted !== undefined && { highlighted: options.highlighted }),
+      ...(options?.highlighted !== undefined && {
+        highlighted: options.highlighted,
+      }),
       ...(options?.schemaColor && { schemaColor: options.schemaColor }),
     },
   };
@@ -150,10 +169,16 @@ function buildLineageFlowNode(
 /** Builds a directed graphology graph from a database model. Carries the model's identifier comparison policy as a graph attribute for derived schema views. */
 export function buildGraphologyGraph(model: DatabaseModel): Graph {
   const graph = new Graph({ type: 'directed', multi: false });
-  graph.setAttribute('identifierCaseSensitive', model.identifierCaseSensitive === true);
+  graph.setAttribute(
+    'identifierCaseSensitive',
+    model.identifierCaseSensitive === true,
+  );
   for (const node of model.nodes) {
     if (!node.id) {
-      logSink('warn', `[Graph] Skipping node with empty ID: ${node.schema}.${node.name}`);
+      logSink(
+        'warn',
+        `[Graph] Skipping node with empty ID: ${node.schema}.${node.name}`,
+      );
       continue;
     }
     if (graph.hasNode(node.id)) {
@@ -166,7 +191,9 @@ export function buildGraphologyGraph(model: DatabaseModel): Graph {
     if (graph.hasNode(edge.source) && graph.hasNode(edge.target)) {
       const edgeId = `${edge.source}→${edge.target}`;
       if (!graph.hasEdge(edgeId)) {
-        graph.addEdgeWithKey(edgeId, edge.source, edge.target, { type: edge.type });
+        graph.addEdgeWithKey(edgeId, edge.source, edge.target, {
+          type: edge.type,
+        });
       }
     }
   }
@@ -178,26 +205,35 @@ function toFlowResult(
   model: DatabaseModel,
   graph: Graph,
   positions: Map<string, { x: number; y: number }>,
-  config: ExtensionConfig
+  config: ExtensionConfig,
 ): GraphResult {
-  const flowNodes: FlowNode[] = model.nodes.map((node) => buildLineageFlowNode(
-    flowNodeSource(node),
-    graph,
-    positions.get(node.id) || { x: 0, y: 0 },
-  ));
+  const flowNodes: FlowNode[] = model.nodes.map((node) =>
+    buildLineageFlowNode(
+      flowNodeSource(node),
+      graph,
+      positions.get(node.id) || { x: 0, y: 0 },
+    ),
+  );
   const flowEdges: FlowEdge[] = buildFlowEdges(model.edges, graph, config);
   return { flowNodes, flowEdges, graph };
 }
 
 /** Fully builds and layouts a graph for visualization. */
-export function buildGraph(model: DatabaseModel, config: ExtensionConfig = DEFAULT_CONFIG, annotatedNodeIds?: readonly string[]): GraphResult {
+export function buildGraph(
+  model: DatabaseModel,
+  config: ExtensionConfig = DEFAULT_CONFIG,
+  annotatedNodeIds?: readonly string[],
+): GraphResult {
   const graph = buildGraphologyGraph(model);
   const positions = computeLayout(graph, config, annotatedNodeIds);
   return toFlowResult(model, graph, positions, config);
 }
 
 /** Builds a graph without executing layout algorithms, preserving default positions. */
-export function buildGraphNoLayout(model: DatabaseModel, config: ExtensionConfig = DEFAULT_CONFIG): GraphResult {
+export function buildGraphNoLayout(
+  model: DatabaseModel,
+  config: ExtensionConfig = DEFAULT_CONFIG,
+): GraphResult {
   const graph = buildGraphologyGraph(model);
   return toFlowResult(model, graph, new Map(), config);
 }
@@ -207,9 +243,14 @@ export function traceNodeWithLevels(
   graph: Graph,
   nodeId: string,
   upstreamLevels: number,
-  downstreamLevels: number
+  downstreamLevels: number,
 ): { nodeIds: Set<string>; edgeIds: Set<string> } {
-  const nodeIds = traceNodeIdsWithLevels(graph, nodeId, upstreamLevels, downstreamLevels);
+  const nodeIds = traceNodeIdsWithLevels(
+    graph,
+    nodeId,
+    upstreamLevels,
+    downstreamLevels,
+  );
   return { nodeIds, edgeIds: collectTraceEdges(graph, nodeIds) };
 }
 
@@ -218,24 +259,34 @@ export function traceNodeIdsWithLevels(
   graph: Graph,
   nodeId: string,
   upstreamLevels: number,
-  downstreamLevels: number
+  downstreamLevels: number,
 ): Set<string> {
   if (!graph.hasNode(nodeId)) return new Set<string>();
 
   const nodeIds = new Set<string>([nodeId]);
 
   if (upstreamLevels > 0) {
-    bfsFromNode(graph, nodeId, (node, _attrs, depth) => {
-      if (depth > upstreamLevels) return true;
-      nodeIds.add(node);
-    }, { mode: 'inbound' });
+    bfsFromNode(
+      graph,
+      nodeId,
+      (node, _attrs, depth) => {
+        if (depth > upstreamLevels) return true;
+        nodeIds.add(node);
+      },
+      { mode: 'inbound' },
+    );
   }
 
   if (downstreamLevels > 0) {
-    bfsFromNode(graph, nodeId, (node, _attrs, depth) => {
-      if (depth > downstreamLevels) return true;
-      nodeIds.add(node);
-    }, { mode: 'outbound' });
+    bfsFromNode(
+      graph,
+      nodeId,
+      (node, _attrs, depth) => {
+        if (depth > downstreamLevels) return true;
+        nodeIds.add(node);
+      },
+      { mode: 'outbound' },
+    );
   }
 
   return nodeIds;
@@ -245,7 +296,7 @@ export function traceNodeIdsWithLevels(
 export function computeShortestPath(
   graph: Graph,
   sourceId: string,
-  targetId: string
+  targetId: string,
 ): { nodeIds: Set<string>; edgeIds: Set<string> } | null {
   const result = findShortestPathOrdered(graph, sourceId, targetId);
   if (!result) return null;
@@ -261,12 +312,18 @@ export function computeShortestPath(
 }
 
 /** Lays out nodes in a uniform grid. */
-function gridLayout(nodeIds: string[], cols: number = GRID_DEFAULT_COLS): Map<string, { x: number; y: number }> {
+function gridLayout(
+  nodeIds: string[],
+  cols: number = GRID_DEFAULT_COLS,
+): Map<string, { x: number; y: number }> {
   const positions = new Map<string, { x: number; y: number }>();
   const cellW = NODE_WIDTH + GRID_CELL_PADDING;
   const cellH = NODE_HEIGHT + GRID_CELL_PADDING;
   nodeIds.forEach((id, i) => {
-    positions.set(id, { x: (i % cols) * cellW, y: Math.floor(i / cols) * cellH });
+    positions.set(id, {
+      x: (i % cols) * cellW,
+      y: Math.floor(i / cols) * cellH,
+    });
   });
   return positions;
 }
@@ -277,7 +334,10 @@ function logTraceWarn(msg: string): void {
 }
 
 /** Trace modes that trigger synthesis of out-of-filter nodes and edges into the visible set. */
-function isSynthesizingMode(trace: TraceState, synthesizeOutOfFilter?: boolean): boolean {
+function isSynthesizingMode(
+  trace: TraceState,
+  synthesizeOutOfFilter?: boolean,
+): boolean {
   return trace.mode === 'path-applied' || !!synthesizeOutOfFilter;
 }
 
@@ -292,7 +352,10 @@ function projectFlowToTrace(
     if (trace.tracedEdgeIds.has(e.id)) return true;
     if (e.id.includes('↔')) {
       const [a, b] = e.id.split('↔');
-      return trace.tracedEdgeIds.has(`${a}→${b}`) || trace.tracedEdgeIds.has(`${b}→${a}`);
+      return (
+        trace.tracedEdgeIds.has(`${a}→${b}`) ||
+        trace.tracedEdgeIds.has(`${b}→${a}`)
+      );
     }
     return false;
   });
@@ -313,7 +376,9 @@ function synthesizeMissingTraceScope(
     if (flowNodeIdSet.has(id)) continue;
     const mn = modelNodeMap.get(id);
     if (!mn) continue;
-    filteredNodes.push(buildLineageFlowNode(flowNodeSource(mn), null, { x: 0, y: 0 }));
+    filteredNodes.push(
+      buildLineageFlowNode(flowNodeSource(mn), null, { x: 0, y: 0 }),
+    );
   }
 
   const existingEdgeIds = new Set(filteredEdges.map((e) => e.id));
@@ -321,29 +386,43 @@ function synthesizeMissingTraceScope(
     if (existingEdgeIds.has(edgeId)) continue;
     const [src, tgt] = edgeId.split('→');
     if (!src || !tgt) continue;
-    if (existingEdgeIds.has(`${src}↔${tgt}`) || existingEdgeIds.has(`${tgt}↔${src}`)) continue;
+    if (
+      existingEdgeIds.has(`${src}↔${tgt}`) ||
+      existingEdgeIds.has(`${tgt}↔${src}`)
+    )
+      continue;
     filteredEdges.push({
       id: edgeId,
       source: src,
       target: tgt,
-      type: config.layout.edgeStyle === 'default' ? undefined : config.layout.edgeStyle,
+      type:
+        config.layout.edgeStyle === 'default'
+          ? undefined
+          : config.layout.edgeStyle,
       style: { stroke: 'var(--ln-edge-color)', strokeWidth: 1.2 },
     });
   }
 }
 
 /** Recomputes `inDegree` / `outDegree` for nodes that were synthesized with zero degree. */
-function recomputeSynthesizedDegrees(filteredNodes: FlowNode[], filteredEdges: FlowEdge[]): void {
+function recomputeSynthesizedDegrees(
+  filteredNodes: FlowNode[],
+  filteredEdges: FlowEdge[],
+): void {
   const synthesizedIds = new Set(
-    filteredNodes.filter((n) => n.data.inDegree === 0 && n.data.outDegree === 0).map((n) => n.id),
+    filteredNodes
+      .filter((n) => n.data.inDegree === 0 && n.data.outDegree === 0)
+      .map((n) => n.id),
   );
   if (synthesizedIds.size === 0) return;
 
   const inCount = new Map<string, number>();
   const outCount = new Map<string, number>();
   for (const e of filteredEdges) {
-    if (synthesizedIds.has(e.target)) inCount.set(e.target, (inCount.get(e.target) ?? 0) + 1);
-    if (synthesizedIds.has(e.source)) outCount.set(e.source, (outCount.get(e.source) ?? 0) + 1);
+    if (synthesizedIds.has(e.target))
+      inCount.set(e.target, (inCount.get(e.target) ?? 0) + 1);
+    if (synthesizedIds.has(e.source))
+      outCount.set(e.source, (outCount.get(e.source) ?? 0) + 1);
   }
   for (const n of filteredNodes) {
     if (!synthesizedIds.has(n.id)) continue;
@@ -376,9 +455,13 @@ export function applyTraceToFlow(
   trace: TraceState,
   config: ExtensionConfig = DEFAULT_CONFIG,
   model?: DatabaseModel | null,
-  synthesizeOutOfFilter?: boolean
+  synthesizeOutOfFilter?: boolean,
 ): { nodes: FlowNode[]; edges: FlowEdge[]; graph?: Graph } {
-  if (trace.mode === 'none' || trace.mode === 'configuring' || trace.mode === 'pathfinding') {
+  if (
+    trace.mode === 'none' ||
+    trace.mode === 'configuring' ||
+    trace.mode === 'pathfinding'
+  ) {
     return { nodes: flowNodes, edges: flowEdges };
   }
   if (trace.tracedNodeIds.size === 0) {
@@ -387,16 +470,28 @@ export function applyTraceToFlow(
     return { nodes: flowNodes, edges: flowEdges };
   }
 
-  const { nodes: filteredNodes, edges: filteredEdges } = projectFlowToTrace(flowNodes, flowEdges, trace);
+  const { nodes: filteredNodes, edges: filteredEdges } = projectFlowToTrace(
+    flowNodes,
+    flowEdges,
+    trace,
+  );
 
   if (filteredNodes.length === 0 && flowNodes.length > 0) {
-    logTraceWarn(`applyTraceToFlow: 0 match for ${trace.tracedNodeIds.size} ids (mode=${trace.mode})`);
+    logTraceWarn(
+      `applyTraceToFlow: 0 match for ${trace.tracedNodeIds.size} ids (mode=${trace.mode})`,
+    );
     notifyUser('Traced nodes are not visible in the current view.');
   }
 
   const synth = isSynthesizingMode(trace, synthesizeOutOfFilter);
   if (synth && model && filteredNodes.length < trace.tracedNodeIds.size) {
-    synthesizeMissingTraceScope(filteredNodes, filteredEdges, trace, config, model);
+    synthesizeMissingTraceScope(
+      filteredNodes,
+      filteredEdges,
+      trace,
+      config,
+      model,
+    );
   }
   if (synth && model) {
     recomputeSynthesizedDegrees(filteredNodes, filteredEdges);
@@ -408,25 +503,36 @@ export function applyTraceToFlow(
     traceGraph = buildGraphologyGraph({
       ...model,
       nodes: model.nodes.filter((n) => nodeIdSet.has(n.id)),
-      edges: model.edges.filter((e) => nodeIdSet.has(e.source) && nodeIdSet.has(e.target)),
+      edges: model.edges.filter(
+        (e) => nodeIdSet.has(e.source) && nodeIdSet.has(e.target),
+      ),
     });
   }
 
-  const positions = layoutTraceFlow(filteredNodes, filteredEdges, trace, config);
+  const positions = layoutTraceFlow(
+    filteredNodes,
+    filteredEdges,
+    trace,
+    config,
+  );
 
   const nodes = filteredNodes.map((n) => ({
     ...n,
     position: positions.get(n.id) || n.position,
     data: {
       ...n.data,
-      highlighted: n.id === trace.selectedNodeId
-        ? true
-        : n.id === trace.targetNodeId
-          ? ('yellow' as const)
-          : false,
+      highlighted:
+        n.id === trace.selectedNodeId
+          ? true
+          : n.id === trace.targetNodeId
+            ? ('yellow' as const)
+            : false,
     },
   }));
-  const edges = filteredEdges.map((e) => ({ ...e, style: { ...e.style, strokeWidth: 1.8 } }));
+  const edges = filteredEdges.map((e) => ({
+    ...e,
+    style: { ...e.style, strokeWidth: 1.8 },
+  }));
 
   return { nodes, edges, graph: traceGraph };
 }
@@ -447,21 +553,43 @@ export interface LayoutInput {
 }
 
 const LAYOUT_CACHE_SIZE = 12;
-const layoutCache: Array<{ key: string; positions: Map<string, { x: number; y: number }> }> = [];
+const layoutCache: Array<{
+  key: string;
+  positions: Map<string, { x: number; y: number }>;
+}> = [];
 
 /** Builds the layout cache identity from sorted topology, layout settings, node sizes and annotations. */
-export function layoutCacheKey({ nodeIds, edges, config, ranker, direction, sizeOf, annotatedNodeIds }: LayoutInput): string {
+export function layoutCacheKey({
+  nodeIds,
+  edges,
+  config,
+  ranker,
+  direction,
+  sizeOf,
+  annotatedNodeIds,
+}: LayoutInput): string {
   const sortedNodes = [...nodeIds].sort();
-  const sortedEdges = edges.map(e => `${e.source}→${e.target}`).sort();
-  const sizes = sizeOf ? sortedNodes.map(id => { const s = sizeOf(id); return `${s.width}x${s.height}`; }).join(',') : '';
-  const annotated = annotatedNodeIds ? [...annotatedNodeIds].sort().join(',') : '';
+  const sortedEdges = edges.map((e) => `${e.source}→${e.target}`).sort();
+  const sizes = sizeOf
+    ? sortedNodes
+        .map((id) => {
+          const s = sizeOf(id);
+          return `${s.width}x${s.height}`;
+        })
+        .join(',')
+    : '';
+  const annotated = annotatedNodeIds
+    ? [...annotatedNodeIds].sort().join(',')
+    : '';
   return `${direction ?? config.layout.direction}|${config.layout.rankSeparation}|${config.layout.nodeSeparation}|${ranker ?? ''}|${sortedNodes.join(',')}|${sortedEdges.join(',')}|${sizes}|${annotated}`;
 }
 
 /** Computes spatial positions using the Dagre layout engine with LRU caching. */
-export function dagreLayout(input: LayoutInput): Map<string, { x: number; y: number }> {
+export function dagreLayout(
+  input: LayoutInput,
+): Map<string, { x: number; y: number }> {
   const key = layoutCacheKey(input);
-  const cached = layoutCache.find(e => e.key === key);
+  const cached = layoutCache.find((e) => e.key === key);
   if (cached) {
     layoutCache.splice(layoutCache.indexOf(cached), 1);
     layoutCache.unshift(cached);
@@ -473,15 +601,26 @@ export function dagreLayout(input: LayoutInput): Map<string, { x: number; y: num
 }
 
 /** Inserts one layout at the front of the LRU cache, evicting the oldest entry past its size. */
-function storeLayout(key: string, positions: Map<string, { x: number; y: number }>): void {
-  const existing = layoutCache.findIndex(e => e.key === key);
+function storeLayout(
+  key: string,
+  positions: Map<string, { x: number; y: number }>,
+): void {
+  const existing = layoutCache.findIndex((e) => e.key === key);
   if (existing >= 0) layoutCache.splice(existing, 1);
   layoutCache.unshift({ key, positions });
   if (layoutCache.length > LAYOUT_CACHE_SIZE) layoutCache.pop();
 }
 
 /** Runs Dagre on one layout input without touching the cache — the unit of work a layout worker executes off the UI thread. */
-export function runDagre({ nodeIds, edges, config, ranker, direction, sizeOf, annotatedNodeIds }: LayoutInput): Map<string, { x: number; y: number }> {
+export function runDagre({
+  nodeIds,
+  edges,
+  config,
+  ranker,
+  direction,
+  sizeOf,
+  annotatedNodeIds,
+}: LayoutInput): Map<string, { x: number; y: number }> {
   const g = new dagre.graphlib.Graph();
   g.setGraph({
     rankdir: direction ?? config.layout.direction,
@@ -493,13 +632,23 @@ export function runDagre({ nodeIds, edges, config, ranker, direction, sizeOf, an
   });
   g.setDefaultEdgeLabel(() => ({}));
 
-  const annotated = annotatedNodeIds && annotatedNodeIds.length > 0 ? new Set(annotatedNodeIds) : undefined;
-  const topBandOf = (id: string): number => (annotated?.has(id) ? AI_BADGE_BAND : 0);
-  const bottomBandOf = (id: string): number => (annotated?.has(id) ? AI_NOTE_BAND : 0);
+  const annotated =
+    annotatedNodeIds && annotatedNodeIds.length > 0
+      ? new Set(annotatedNodeIds)
+      : undefined;
+  const topBandOf = (id: string): number =>
+    annotated?.has(id) ? AI_BADGE_BAND : 0;
+  const bottomBandOf = (id: string): number =>
+    annotated?.has(id) ? AI_NOTE_BAND : 0;
 
   for (const id of nodeIds) {
-    const box = sizeOf ? sizeOf(id) : { width: NODE_WIDTH, height: NODE_HEIGHT };
-    g.setNode(id, { width: box.width, height: box.height + topBandOf(id) + bottomBandOf(id) });
+    const box = sizeOf
+      ? sizeOf(id)
+      : { width: NODE_WIDTH, height: NODE_HEIGHT };
+    g.setNode(id, {
+      width: box.width,
+      height: box.height + topBandOf(id) + bottomBandOf(id),
+    });
   }
   for (const { source, target } of edges) g.setEdge(source, target);
 
@@ -513,7 +662,11 @@ export function runDagre({ nodeIds, edges, config, ranker, direction, sizeOf, an
   const positions = new Map<string, { x: number; y: number }>();
   for (const id of g.nodes()) {
     const n = g.node(id);
-    if (n) positions.set(id, { x: n.x - n.width / 2, y: n.y - n.height / 2 + topBandOf(id) });
+    if (n)
+      positions.set(id, {
+        x: n.x - n.width / 2,
+        y: n.y - n.height / 2 + topBandOf(id),
+      });
   }
   return positions;
 }
@@ -524,18 +677,26 @@ export function seedLayoutCache(
   positions: Map<string, { x: number; y: number }>,
   key: string = layoutCacheKey(input),
 ): boolean {
-  if (!input.nodeIds.every(id => positions.has(id))) return false;
+  if (!input.nodeIds.every((id) => positions.has(id))) return false;
   storeLayout(key, positions);
   return true;
 }
 
 /** Whether {@link dagreLayout} would answer this input from the cache. */
-export function hasCachedLayout(input: LayoutInput, key: string = layoutCacheKey(input)): boolean {
-  return layoutCache.some(e => e.key === key);
+export function hasCachedLayout(
+  input: LayoutInput,
+  key: string = layoutCacheKey(input),
+): boolean {
+  return layoutCache.some((e) => e.key === key);
 }
 
 /** Calculates graph metrics for diagnostic purposes. */
-export function getGraphMetrics(graph: Graph): { totalNodes: number; totalEdges: number; rootNodes: number; leafNodes: number } {
+export function getGraphMetrics(graph: Graph): {
+  totalNodes: number;
+  totalEdges: number;
+  rootNodes: number;
+  leafNodes: number;
+} {
   let rootNodes = 0;
   let leafNodes = 0;
 
@@ -553,7 +714,11 @@ export function getGraphMetrics(graph: Graph): { totalNodes: number; totalEdges:
 }
 
 /** Selects a canonical direction for a bidirectional edge pair, favoring data flows (transformers → sinks). */
-function canonicalDirection(graph: Graph, a: string, b: string): [string, string] {
+function canonicalDirection(
+  graph: Graph,
+  a: string,
+  b: string,
+): [string, string] {
   const aType = graph.getNodeAttributes(a).type;
   const bType = graph.getNodeAttributes(b).type;
   const aIsTransformer = aType === 'procedure' || aType === 'function';
@@ -565,9 +730,13 @@ function canonicalDirection(graph: Graph, a: string, b: string): [string, string
 }
 
 /** Transforms relational model edges into React Flow edges, handling bidirectionality. */
-function buildFlowEdges(edges: ReadonlyArray<{ source: string; target: string }>, graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG): FlowEdge[] {
+function buildFlowEdges(
+  edges: ReadonlyArray<{ source: string; target: string }>,
+  graph: Graph,
+  config: ExtensionConfig = DEFAULT_CONFIG,
+): FlowEdge[] {
   const valid = edges.filter(
-    (e) => graph.hasNode(e.source) && graph.hasNode(e.target)
+    (e) => graph.hasNode(e.source) && graph.hasNode(e.target),
   );
 
   const consumed = new Set<string>();
@@ -580,24 +749,45 @@ function buildFlowEdges(edges: ReadonlyArray<{ source: string; target: string }>
     if (consumed.has(fwd)) continue;
 
     if (graph.hasEdge(edge.target, edge.source) && !consumed.has(rev)) {
-      const [canonSource, canonTarget] = canonicalDirection(graph, edge.source, edge.target);
+      const [canonSource, canonTarget] = canonicalDirection(
+        graph,
+        edge.source,
+        edge.target,
+      );
       consumed.add(fwd);
       consumed.add(rev);
       result.push({
         id: `${canonSource}↔${canonTarget}`,
         source: canonSource,
         target: canonTarget,
-        type: config.layout.edgeStyle === 'default' ? undefined : config.layout.edgeStyle,
+        type:
+          config.layout.edgeStyle === 'default'
+            ? undefined
+            : config.layout.edgeStyle,
         label: '⇄',
-        labelStyle: { fontSize: 16, fill: 'var(--ln-edge-color)', fontWeight: 700 },
+        labelStyle: {
+          fontSize: 16,
+          fill: 'var(--ln-edge-color)',
+          fontWeight: 700,
+        },
         labelBgStyle: { fill: 'transparent' },
         labelBgPadding: LABEL_BG_PAD,
         style: {
           stroke: 'var(--ln-edge-color)',
           strokeWidth: 1.2,
         },
-        markerEnd: { type: 'arrowclosed' as const, width: 20, height: 20, color: 'var(--ln-edge-color)' },
-        markerStart: { type: 'arrow' as const, width: 16, height: 16, color: 'var(--ln-edge-color)' },
+        markerEnd: {
+          type: 'arrowclosed' as const,
+          width: 20,
+          height: 20,
+          color: 'var(--ln-edge-color)',
+        },
+        markerStart: {
+          type: 'arrow' as const,
+          width: 16,
+          height: 16,
+          color: 'var(--ln-edge-color)',
+        },
       });
     } else {
       consumed.add(fwd);
@@ -605,12 +795,20 @@ function buildFlowEdges(edges: ReadonlyArray<{ source: string; target: string }>
         id: fwd,
         source: edge.source,
         target: edge.target,
-        type: config.layout.edgeStyle === 'default' ? undefined : config.layout.edgeStyle,
+        type:
+          config.layout.edgeStyle === 'default'
+            ? undefined
+            : config.layout.edgeStyle,
         style: {
           stroke: 'var(--ln-edge-color)',
           strokeWidth: 1.2,
         },
-        markerEnd: { type: 'arrowclosed' as const, width: 20, height: 20, color: 'var(--ln-edge-color)' },
+        markerEnd: {
+          type: 'arrowclosed' as const,
+          width: 20,
+          height: 20,
+          color: 'var(--ln-edge-color)',
+        },
       });
     }
   }
@@ -619,7 +817,10 @@ function buildFlowEdges(edges: ReadonlyArray<{ source: string; target: string }>
 }
 
 /** Calculates visual stroke properties based on schema-to-schema connection count. */
-function schemaEdgeStroke(count: number): { strokeWidth: number; opacity: number } {
+function schemaEdgeStroke(count: number): {
+  strokeWidth: number;
+  opacity: number;
+} {
   const t = Math.min(Math.log2(Math.max(count, 1)) / 6, 1);
   return { strokeWidth: 0.8 + t * 2.2, opacity: 0.55 + t * 0.45 };
 }
@@ -636,7 +837,11 @@ function schemaNamesFromGraph(graph: Graph): string[] {
 
 /** Builds the working-set schema color map shared by every overview surface. */
 function buildOverviewColorMap(graph: Graph): SchemaColorMap {
-  return createSchemaColorMap(schemaNamesFromGraph(graph), undefined, graph.getAttribute('identifierCaseSensitive') === true);
+  return createSchemaColorMap(
+    schemaNamesFromGraph(graph),
+    undefined,
+    graph.getAttribute('identifierCaseSensitive') === true,
+  );
 }
 
 /** Builds the macro-level Schema View graph. */
@@ -649,7 +854,11 @@ export function buildSchemaGraph(
   const schemaIds = [...schemaIdSet];
   const schemaColorMap = buildOverviewColorMap(graph);
   const edgesForLayout: Array<{ source: string; target: string }> = [];
-  for (const edge of projection.edges) edgesForLayout.push({ source: edge.sourceSchema, target: edge.targetSchema });
+  for (const edge of projection.edges)
+    edgesForLayout.push({
+      source: edge.sourceSchema,
+      target: edge.targetSchema,
+    });
 
   const g = new dagre.graphlib.Graph();
   g.setGraph({
@@ -660,7 +869,8 @@ export function buildSchemaGraph(
     marginy: 30,
   });
   g.setDefaultEdgeLabel(() => ({}));
-  for (const id of schemaIds) g.setNode(id, { width: SCHEMA_NODE_WIDTH, height: SCHEMA_NODE_HEIGHT });
+  for (const id of schemaIds)
+    g.setNode(id, { width: SCHEMA_NODE_WIDTH, height: SCHEMA_NODE_HEIGHT });
   for (const { source, target } of edgesForLayout) {
     if (g.hasNode(source) && g.hasNode(target)) g.setEdge(source, target);
   }
@@ -677,7 +887,10 @@ export function buildSchemaGraph(
       id: `__schema__${schema}`,
       type: 'schemaNode',
       position: pos
-        ? { x: pos.x - SCHEMA_NODE_WIDTH / 2, y: pos.y - SCHEMA_NODE_HEIGHT / 2 }
+        ? {
+            x: pos.x - SCHEMA_NODE_WIDTH / 2,
+            y: pos.y - SCHEMA_NODE_HEIGHT / 2,
+          }
         : { x: 0, y: 0 },
       draggable: true,
       selectable: true,
@@ -685,7 +898,12 @@ export function buildSchemaGraph(
         schemaName: schema,
         objectCount: meta.objectCount,
         typeBreakdown: meta.typeBreakdown,
-        color: getSchemaDisplayColor(schema, schemaColorMap, meta.typeBreakdown, graph.getAttribute('identifierCaseSensitive') === true),
+        color: getSchemaDisplayColor(
+          schema,
+          schemaColorMap,
+          meta.typeBreakdown,
+          graph.getAttribute('identifierCaseSensitive') === true,
+        ),
         isExternalOnly: isExternalOnlyTypeBreakdown(meta.typeBreakdown),
       },
     };
@@ -695,7 +913,11 @@ export function buildSchemaGraph(
   for (const edge of projection.edges) {
     const srcId = `__schema__${edge.sourceSchema}`;
     const tgtId = `__schema__${edge.targetSchema}`;
-    if (!schemaIdSet.has(edge.sourceSchema) || !schemaIdSet.has(edge.targetSchema)) continue;
+    if (
+      !schemaIdSet.has(edge.sourceSchema) ||
+      !schemaIdSet.has(edge.targetSchema)
+    )
+      continue;
 
     const { strokeWidth, opacity } = schemaEdgeStroke(edge.totalCount);
     edges.push({
@@ -704,15 +926,28 @@ export function buildSchemaGraph(
         : `__schema__${edge.sourceSchema}→${edge.targetSchema}`,
       source: srcId,
       target: tgtId,
-      type: config.layout.edgeStyle === 'default' ? undefined : config.layout.edgeStyle,
+      type:
+        config.layout.edgeStyle === 'default'
+          ? undefined
+          : config.layout.edgeStyle,
       label: edge.bidirectional ? `⇄ ${edge.totalCount}` : `${edge.count}`,
       labelStyle: { fontSize: 11, fill: 'var(--ln-fg-muted)' },
       labelBgStyle: { fill: 'var(--ln-bg)', opacity: 0.8 },
       labelBgPadding: LABEL_BG_PAD,
       style: { stroke: 'var(--ln-edge-color)', strokeWidth, opacity },
-      markerEnd: { type: 'arrowclosed' as const, width: 18, height: 18, color: 'var(--ln-edge-color)' },
+      markerEnd: {
+        type: 'arrowclosed' as const,
+        width: 18,
+        height: 18,
+        color: 'var(--ln-edge-color)',
+      },
       ...(edge.bidirectional && {
-        markerStart: { type: 'arrow' as const, width: 14, height: 14, color: 'var(--ln-edge-color)' },
+        markerStart: {
+          type: 'arrow' as const,
+          width: 14,
+          height: 14,
+          color: 'var(--ln-edge-color)',
+        },
       }),
     });
   }
@@ -721,7 +956,11 @@ export function buildSchemaGraph(
 }
 
 /** Splits an object graph into the Dagre input for its connected nodes and the isolated nodes placed on a grid row below — the one definition {@link buildGraph} and a layout worker share, so both produce the same cache key. */
-function objectLayoutPlan(graph: Graph, config: ExtensionConfig, annotatedNodeIds?: readonly string[]): { input: LayoutInput; isolatedIds: string[] } {
+function objectLayoutPlan(
+  graph: Graph,
+  config: ExtensionConfig,
+  annotatedNodeIds?: readonly string[],
+): { input: LayoutInput; isolatedIds: string[] } {
   const seen = new Set<string>();
   const edges: Array<{ source: string; target: string }> = [];
 
@@ -729,35 +968,54 @@ function objectLayoutPlan(graph: Graph, config: ExtensionConfig, annotatedNodeId
     if (graph.hasEdge(target, source)) {
       const [s, t] = canonicalDirection(graph, source, target);
       const key = `${s}→${t}`;
-      if (!seen.has(key)) { seen.add(key); edges.push({ source: s, target: t }); }
+      if (!seen.has(key)) {
+        seen.add(key);
+        edges.push({ source: s, target: t });
+      }
     } else {
       edges.push({ source, target });
     }
   });
 
   const connectedIds = new Set<string>();
-  for (const { source, target } of edges) { connectedIds.add(source); connectedIds.add(target); }
+  for (const { source, target } of edges) {
+    connectedIds.add(source);
+    connectedIds.add(target);
+  }
   const allIds = graph.nodes();
   return {
     input: {
-      nodeIds: allIds.filter(id => connectedIds.has(id)),
+      nodeIds: allIds.filter((id) => connectedIds.has(id)),
       edges,
       config,
       ranker: 'longest-path',
-      ...(annotatedNodeIds && annotatedNodeIds.length > 0 && { annotatedNodeIds }),
+      ...(annotatedNodeIds &&
+        annotatedNodeIds.length > 0 && { annotatedNodeIds }),
     },
-    isolatedIds: allIds.filter(id => !connectedIds.has(id)),
+    isolatedIds: allIds.filter((id) => !connectedIds.has(id)),
   };
 }
 
 /** Dagre input {@link buildGraph} lays out for a graph built from a model — structured-cloneable (no `sizeOf`), so a layout worker can compute it and {@link seedLayoutCache} can store the result. */
-export function objectLayoutInputForGraph(graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG, annotatedNodeIds?: readonly string[]): LayoutInput {
+export function objectLayoutInputForGraph(
+  graph: Graph,
+  config: ExtensionConfig = DEFAULT_CONFIG,
+  annotatedNodeIds?: readonly string[],
+): LayoutInput {
   return objectLayoutPlan(graph, config, annotatedNodeIds).input;
 }
 
 /** Computes spatial layout for the object graph. */
-function computeLayout(graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG, annotatedNodeIds?: readonly string[]): Map<string, { x: number; y: number }> {
-  const { input, isolatedIds } = objectLayoutPlan(graph, config, annotatedNodeIds);
+function computeLayout(
+  graph: Graph,
+  config: ExtensionConfig = DEFAULT_CONFIG,
+  annotatedNodeIds?: readonly string[],
+): Map<string, { x: number; y: number }> {
+  const { input, isolatedIds } = objectLayoutPlan(
+    graph,
+    config,
+    annotatedNodeIds,
+  );
   return placeIsolatedRow(new Map(dagreLayout(input)), isolatedIds);
 }
 
@@ -788,8 +1046,14 @@ function expandedSchemaViewClusterId(schema: string): string {
 
 function toBridgeLayoutEdge(bridge: SchemaBridgeEdge): LayoutEdge {
   return bridge.dir === 'down'
-    ? { source: bridge.nearId, target: expandedSchemaViewClusterId(bridge.schema) }
-    : { source: expandedSchemaViewClusterId(bridge.schema), target: bridge.nearId };
+    ? {
+        source: bridge.nearId,
+        target: expandedSchemaViewClusterId(bridge.schema),
+      }
+    : {
+        source: expandedSchemaViewClusterId(bridge.schema),
+        target: bridge.nearId,
+      };
 }
 
 function collectConnectedIds(edges: readonly LayoutEdge[]): Set<string> {
@@ -816,15 +1080,24 @@ function buildExpandedSchemaViewPositions(
     target: expandedSchemaViewClusterId(edge.targetSchema),
   }));
 
-  const layoutEdges = [...individualEdges, ...bridgeLayoutEdges, ...schemaClusterLayoutEdges];
+  const layoutEdges = [
+    ...individualEdges,
+    ...bridgeLayoutEdges,
+    ...schemaClusterLayoutEdges,
+  ];
   const connectedIds = collectConnectedIds(layoutEdges);
   const candidateIds = [...individualIds, ...clusterNodeIds];
-  const positions = new Map(dagreLayout({
-    nodeIds: candidateIds.filter((id) => connectedIds.has(id)),
-    edges: layoutEdges,
-    config,
-  }));
-  return placeIsolatedRow(positions, candidateIds.filter((id) => !connectedIds.has(id)));
+  const positions = new Map(
+    dagreLayout({
+      nodeIds: candidateIds.filter((id) => connectedIds.has(id)),
+      edges: layoutEdges,
+      config,
+    }),
+  );
+  return placeIsolatedRow(
+    positions,
+    candidateIds.filter((id) => !connectedIds.has(id)),
+  );
 }
 
 function buildExpandedSchemaViewFlowNodes(
@@ -862,22 +1135,29 @@ function buildExpandedSchemaViewFlowNodes(
       externalDatabase: n.externalDatabase,
       definitionUnreadable: n.definitionUnreadable,
     };
-    flowNodes.push(buildLineageFlowNode(
-      source,
-      graph,
-      positions.get(id) ?? { x: 0, y: 0 },
-      {
+    flowNodes.push(
+      buildLineageFlowNode(source, graph, positions.get(id) ?? { x: 0, y: 0 }, {
         highlighted: id === focusId,
-        schemaColor: source.objectType === 'external' ? getExternalNodeColor() : getSchemaColorFromMap(source.schema, colorMap, graph.getAttribute('identifierCaseSensitive') === true),
-      },
-    ));
+        schemaColor:
+          source.objectType === 'external'
+            ? getExternalNodeColor()
+            : getSchemaColorFromMap(
+                source.schema,
+                colorMap,
+                graph.getAttribute('identifierCaseSensitive') === true,
+              ),
+      }),
+    );
   }
 
   for (const [schema, meta] of clusterMeta) {
     flowNodes.push({
       id: expandedSchemaViewClusterId(schema),
       type: 'schemaNode',
-      position: positions.get(expandedSchemaViewClusterId(schema)) ?? { x: 0, y: 0 },
+      position: positions.get(expandedSchemaViewClusterId(schema)) ?? {
+        x: 0,
+        y: 0,
+      },
       draggable: true,
       selectable: true,
       ...(hideClusters && { hidden: true }),
@@ -885,7 +1165,12 @@ function buildExpandedSchemaViewFlowNodes(
         schemaName: schema,
         objectCount: meta.objectCount,
         typeBreakdown: meta.typeBreakdown,
-        color: getSchemaDisplayColor(schema, colorMap, meta.typeBreakdown, graph.getAttribute('identifierCaseSensitive') === true),
+        color: getSchemaDisplayColor(
+          schema,
+          colorMap,
+          meta.typeBreakdown,
+          graph.getAttribute('identifierCaseSensitive') === true,
+        ),
         isExternalOnly: isExternalOnlyTypeBreakdown(meta.typeBreakdown),
         isExpandedSchemaViewCluster: true,
       } satisfies SchemaNodeData,
@@ -895,10 +1180,15 @@ function buildExpandedSchemaViewFlowNodes(
   return flowNodes;
 }
 
-function buildMixedBridgeEdges(bridges: Iterable<SchemaBridgeEdge>): FlowEdge[] {
+function buildMixedBridgeEdges(
+  bridges: Iterable<SchemaBridgeEdge>,
+): FlowEdge[] {
   return [...bridges].map((bridge) => {
     const cluster = expandedSchemaViewClusterId(bridge.schema);
-    const [source, target] = bridge.dir === 'down' ? [bridge.nearId, cluster] : [cluster, bridge.nearId];
+    const [source, target] =
+      bridge.dir === 'down'
+        ? [bridge.nearId, cluster]
+        : [cluster, bridge.nearId];
     return {
       id: `__bridge__${source}→${target}`,
       source,
@@ -907,8 +1197,18 @@ function buildMixedBridgeEdges(bridges: Iterable<SchemaBridgeEdge>): FlowEdge[] 
       labelStyle: { fontSize: 11, fill: 'var(--ln-fg-muted)' },
       labelBgStyle: { fill: 'var(--ln-bg)', opacity: 0.8 },
       labelBgPadding: LABEL_BG_PAD,
-      style: { stroke: 'var(--ln-edge-color)', strokeWidth: 1.0, strokeDasharray: '4 3', opacity: 0.5 },
-      markerEnd: { type: 'arrowclosed' as const, width: 18, height: 18, color: 'var(--ln-edge-color)' },
+      style: {
+        stroke: 'var(--ln-edge-color)',
+        strokeWidth: 1.0,
+        strokeDasharray: '4 3',
+        opacity: 0.5,
+      },
+      markerEnd: {
+        type: 'arrowclosed' as const,
+        width: 18,
+        height: 18,
+        color: 'var(--ln-edge-color)',
+      },
     };
   });
 }
@@ -921,17 +1221,34 @@ function buildMixedClusterEdges(
     const target = expandedSchemaViewClusterId(edge.targetSchema);
     const { strokeWidth, opacity } = schemaEdgeStroke(edge.totalCount);
     return {
-      id: edge.bidirectional ? `__clusteredge__${edge.sourceSchema}↔${edge.targetSchema}` : `__clusteredge__${edge.sourceSchema}→${edge.targetSchema}`,
+      id: edge.bidirectional
+        ? `__clusteredge__${edge.sourceSchema}↔${edge.targetSchema}`
+        : `__clusteredge__${edge.sourceSchema}→${edge.targetSchema}`,
       source,
       target,
       label: edge.bidirectional ? `⇄ ${edge.totalCount}` : `${edge.count}`,
       labelStyle: { fontSize: 11, fill: 'var(--ln-fg-muted)' },
       labelBgStyle: { fill: 'var(--ln-bg)', opacity: 0.8 },
       labelBgPadding: LABEL_BG_PAD,
-      style: { stroke: 'var(--ln-edge-color)', strokeWidth, strokeDasharray: '4 3', opacity },
-      markerEnd: { type: 'arrowclosed' as const, width: 18, height: 18, color: 'var(--ln-edge-color)' },
+      style: {
+        stroke: 'var(--ln-edge-color)',
+        strokeWidth,
+        strokeDasharray: '4 3',
+        opacity,
+      },
+      markerEnd: {
+        type: 'arrowclosed' as const,
+        width: 18,
+        height: 18,
+        color: 'var(--ln-edge-color)',
+      },
       ...(edge.bidirectional && {
-        markerStart: { type: 'arrow' as const, width: 14, height: 14, color: 'var(--ln-edge-color)' },
+        markerStart: {
+          type: 'arrow' as const,
+          width: 14,
+          height: 14,
+          color: 'var(--ln-edge-color)',
+        },
       }),
     };
   });
@@ -947,8 +1264,12 @@ function buildExpandedSchemaViewFlowEdges(
 ): FlowEdge[] {
   return [
     ...buildFlowEdges(individualEdges, graph, config),
-    ...buildMixedBridgeEdges(bridges.values()).map(e => hideClusters ? { ...e, hidden: true } : e),
-    ...buildMixedClusterEdges(schemaClusterEdges).map(e => hideClusters ? { ...e, hidden: true } : e),
+    ...buildMixedBridgeEdges(bridges.values()).map((e) =>
+      hideClusters ? { ...e, hidden: true } : e,
+    ),
+    ...buildMixedClusterEdges(schemaClusterEdges).map((e) =>
+      hideClusters ? { ...e, hidden: true } : e,
+    ),
   ];
 }
 
@@ -960,8 +1281,10 @@ export function buildExpandedSchemaViewGraph(
   config: ExtensionConfig = DEFAULT_CONFIG,
   options: ExpandedSchemaViewRenderOptions = {},
 ): { flowNodes: FlowNode[]; flowEdges: FlowEdge[] } {
-  const projection = projectExpandedSchemaView(graph, expandedSchemas,
-    { ...options, includeCollapsedSchemaClusters: true });
+  const projection = projectExpandedSchemaView(graph, expandedSchemas, {
+    ...options,
+    includeCollapsedSchemaClusters: true,
+  });
   const hideClusters = options.hideClusters ?? false;
   const colorMap = buildOverviewColorMap(graph);
   const individualIds = [...projection.individual];
@@ -975,7 +1298,22 @@ export function buildExpandedSchemaViewGraph(
   );
 
   return {
-    flowNodes: buildExpandedSchemaViewFlowNodes(individualIds, projection.collapsedSchemas, positions, graph, colorMap, focusId, hideClusters),
-    flowEdges: buildExpandedSchemaViewFlowEdges(graph, projection.individualEdges, projection.bridges, projection.schemaClusterEdges, config, hideClusters),
+    flowNodes: buildExpandedSchemaViewFlowNodes(
+      individualIds,
+      projection.collapsedSchemas,
+      positions,
+      graph,
+      colorMap,
+      focusId,
+      hideClusters,
+    ),
+    flowEdges: buildExpandedSchemaViewFlowEdges(
+      graph,
+      projection.individualEdges,
+      projection.bridges,
+      projection.schemaClusterEdges,
+      config,
+      hideClusters,
+    ),
   };
 }

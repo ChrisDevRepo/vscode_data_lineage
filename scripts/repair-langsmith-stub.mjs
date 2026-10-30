@@ -17,17 +17,29 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const repoRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+);
 const stubSource = path.join(repoRoot, 'stubs', 'langsmith');
 const stubTarget = path.join(repoRoot, 'node_modules', 'langsmith');
 
 function stubIdentityOk(dir) {
   try {
-    const pkg = JSON.parse(readFileSync(path.join(dir, 'package.json'), 'utf8'));
+    const pkg = JSON.parse(
+      readFileSync(path.join(dir, 'package.json'), 'utf8'),
+    );
     return pkg.name === 'langsmith' && pkg.version === '0.0.0-excluded';
   } catch {
     return false;
@@ -46,32 +58,51 @@ function targetIsUsable() {
 
 try {
   if (targetIsUsable()) {
-    console.log('[repair-langsmith-stub] stub already in place — nothing to do.');
+    console.log(
+      '[repair-langsmith-stub] stub already in place — nothing to do.',
+    );
     process.exit(0);
   }
 
-  const probe = spawnSync(process.execPath, ['-p', 'require.resolve("langsmith/package.json")'], {
-    cwd: repoRoot,
-    encoding: 'utf8',
-  });
-  const resolvedDir = probe.status === 0 && probe.stdout.trim()
-    ? path.dirname(probe.stdout.trim())
-    : null;
+  const probe = spawnSync(
+    process.execPath,
+    ['-p', 'require.resolve("langsmith/package.json")'],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    },
+  );
+  const resolvedDir =
+    probe.status === 0 && probe.stdout.trim()
+      ? path.dirname(probe.stdout.trim())
+      : null;
   if (resolvedDir && stubIdentityOk(resolvedDir)) {
-    console.log('[repair-langsmith-stub] the inert stub resolves — leaving the install untouched.');
+    console.log(
+      '[repair-langsmith-stub] the inert stub resolves — leaving the install untouched.',
+    );
     process.exit(0);
   }
   if (resolvedDir && path.resolve(resolvedDir) !== path.resolve(stubTarget)) {
-    console.error(`[repair-langsmith-stub] WARNING: a non-stub "langsmith" resolves from ${resolvedDir}.`);
-    console.error('The LangSmith containment is broken there — reinstall with `npm ci` and check the `overrides` entry.');
+    console.error(
+      `[repair-langsmith-stub] WARNING: a non-stub "langsmith" resolves from ${resolvedDir}.`,
+    );
+    console.error(
+      'The LangSmith containment is broken there — reinstall with `npm ci` and check the `overrides` entry.',
+    );
   }
 
   rmSync(stubTarget, { force: true, recursive: true });
   mkdirSync(path.dirname(stubTarget), { recursive: true });
   cpSync(stubSource, stubTarget, { recursive: true });
-  console.log('[repair-langsmith-stub] reinstalled the inert langsmith stub (npm left the override symlink dangling).');
+  console.log(
+    '[repair-langsmith-stub] reinstalled the inert langsmith stub (npm left the override symlink dangling).',
+  );
 } catch (error) {
-  console.error(`[repair-langsmith-stub] FAILED: ${error instanceof Error ? error.message : String(error)}`);
-  console.error('The extension bundle will fail to resolve "langsmith" until this is fixed.');
+  console.error(
+    `[repair-langsmith-stub] FAILED: ${error instanceof Error ? error.message : String(error)}`,
+  );
+  console.error(
+    'The extension bundle will fail to resolve "langsmith" until this is fixed.',
+  );
   process.exit(1);
 }

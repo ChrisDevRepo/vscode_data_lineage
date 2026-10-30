@@ -15,12 +15,20 @@ import {
   userFilterForHost,
   type ViewSnapshot,
 } from '../../../src/engine/graphDisplayMode';
-import { DEFAULT_CONFIG, type ExtensionConfig, type FilterState } from '../../../src/engine/types';
+import {
+  DEFAULT_CONFIG,
+  type ExtensionConfig,
+  type FilterState,
+} from '../../../src/engine/types';
 import { makeGraph } from '../helpers/modelFixtures';
 
 const config: ExtensionConfig = {
   ...DEFAULT_CONFIG,
-  overview: { enabled: true, threshold: 150, schemaDoubleClickBehavior: 'expandOnly' },
+  overview: {
+    enabled: true,
+    threshold: 150,
+    schemaDoubleClickBehavior: 'expandOnly',
+  },
   renderLimit: 750,
 };
 
@@ -44,22 +52,39 @@ describe('deriveInitialGraphMode', () => {
   });
 
   it('seeds Schema View above overview.threshold', () => {
-    expect(deriveInitialGraphMode({ filteredCount: 151, config })).toBe('overview');
+    expect(deriveInitialGraphMode({ filteredCount: 151, config })).toBe(
+      'overview',
+    );
   });
 
   it('seeds Object View regardless of count when overview is disabled', () => {
-    const disabled = { ...config, overview: { ...config.overview, enabled: false, threshold: 150 } };
-    expect(deriveInitialGraphMode({ filteredCount: 151, config: disabled })).toBe('full');
+    const disabled = {
+      ...config,
+      overview: { ...config.overview, enabled: false, threshold: 150 },
+    };
+    expect(
+      deriveInitialGraphMode({ filteredCount: 151, config: disabled }),
+    ).toBe('full');
   });
 
   it('seeds Schema View when the threshold exceeds the render limit and the count is between them', () => {
-    const wideThreshold = { ...config, overview: { ...config.overview, threshold: 1000 }, renderLimit: 750 };
-    expect(deriveInitialGraphMode({ filteredCount: 800, config: wideThreshold })).toBe('overview');
+    const wideThreshold = {
+      ...config,
+      overview: { ...config.overview, threshold: 1000 },
+      renderLimit: 750,
+    };
+    expect(
+      deriveInitialGraphMode({ filteredCount: 800, config: wideThreshold }),
+    ).toBe('overview');
   });
 });
 
 describe('deriveGraphDisplayMode', () => {
-  const CASES: Array<{ rule: string; input: Partial<DisplayInput>; mode: string }> = [
+  const CASES: Array<{
+    rule: string;
+    input: Partial<DisplayInput>;
+    mode: string;
+  }> = [
     {
       rule: 'explicit Object View ignores the overview threshold after initialization',
       input: { graphMode: 'full', filteredCount: 500, renderLimitHit: 0 },
@@ -67,21 +92,30 @@ describe('deriveGraphDisplayMode', () => {
     },
     {
       rule: 'explicit Schema View stays active at or below the threshold',
-      input: { graphMode: 'overview', filteredCount: 150, schemaOverviewRenderedCount: 2 },
+      input: {
+        graphMode: 'overview',
+        filteredCount: 150,
+        schemaOverviewRenderedCount: 2,
+      },
       mode: 'schemaOverview',
     },
     {
       rule: 'Expanded Schema View stays active when filters drop below the threshold',
       input: {
-        graphMode: 'overview', filteredCount: 120, expandedSchemaCount: 2,
-        schemaOverviewRenderedCount: 4, expandedSchemaViewRenderedCount: 118,
+        graphMode: 'overview',
+        filteredCount: 120,
+        expandedSchemaCount: 2,
+        schemaOverviewRenderedCount: 4,
+        expandedSchemaViewRenderedCount: 118,
       },
       mode: 'schemaExpanded',
     },
     {
       rule: 'raw object count over renderLimit still renders Schema View when the clusters fit',
       input: {
-        graphMode: 'overview', filteredCount: 5000, renderLimitHit: 5000,
+        graphMode: 'overview',
+        filteredCount: 5000,
+        renderLimitHit: 5000,
         schemaOverviewRenderedCount: 10,
       },
       mode: 'schemaOverview',
@@ -89,47 +123,71 @@ describe('deriveGraphDisplayMode', () => {
     {
       rule: 'raw object count over renderLimit still renders Expanded Schema View when the projection fits',
       input: {
-        graphMode: 'overview', filteredCount: 5000, renderLimitHit: 5000, expandedSchemaCount: 2,
-        schemaOverviewRenderedCount: 10, expandedSchemaViewRenderedCount: 740,
+        graphMode: 'overview',
+        filteredCount: 5000,
+        renderLimitHit: 5000,
+        expandedSchemaCount: 2,
+        schemaOverviewRenderedCount: 10,
+        expandedSchemaViewRenderedCount: 740,
       },
       mode: 'schemaExpanded',
     },
     {
       rule: 'Expanded Schema View over the projected renderLimit is blocked',
       input: {
-        graphMode: 'overview', filteredCount: 5000, renderLimitHit: 5000, expandedSchemaCount: 3,
-        schemaOverviewRenderedCount: 10, expandedSchemaViewRenderedCount: 751,
+        graphMode: 'overview',
+        filteredCount: 5000,
+        renderLimitHit: 5000,
+        expandedSchemaCount: 3,
+        schemaOverviewRenderedCount: 10,
+        expandedSchemaViewRenderedCount: 751,
       },
       mode: 'renderLimit',
     },
     {
       rule: 'trace/path/analysis scoped mode takes precedence over the base render limit',
       input: {
-        graphMode: 'overview', filteredCount: 5000, renderLimitHit: 5000, expandedSchemaCount: 3,
-        schemaOverviewRenderedCount: 10, expandedSchemaViewRenderedCount: 751, scopedModeActive: true,
+        graphMode: 'overview',
+        filteredCount: 5000,
+        renderLimitHit: 5000,
+        expandedSchemaCount: 3,
+        schemaOverviewRenderedCount: 10,
+        expandedSchemaViewRenderedCount: 751,
+        scopedModeActive: true,
       },
       mode: 'scoped',
     },
     {
       rule: 'a scope within the render limit renders even when the base surface is far over it',
       input: {
-        graphMode: 'full', filteredCount: 5000, renderLimitHit: 5000,
-        schemaOverviewRenderedCount: 10, scopedModeActive: true, scopedRenderedCount: 40,
+        graphMode: 'full',
+        filteredCount: 5000,
+        renderLimitHit: 5000,
+        schemaOverviewRenderedCount: 10,
+        scopedModeActive: true,
+        scopedRenderedCount: 40,
       },
       mode: 'scoped',
     },
     {
       rule: 'a scope over the render limit is blocked — an all-levels trace reaches the whole model',
       input: {
-        graphMode: 'full', filteredCount: 1000, renderLimitHit: 1000,
-        schemaOverviewRenderedCount: 10, scopedModeActive: true, scopedRenderedCount: 1000,
+        graphMode: 'full',
+        filteredCount: 1000,
+        renderLimitHit: 1000,
+        schemaOverviewRenderedCount: 10,
+        scopedModeActive: true,
+        scopedRenderedCount: 1000,
       },
       mode: 'renderLimit',
     },
     {
       rule: 'Object View over renderLimit shows the limit screen instead of silently switching views',
       input: {
-        graphMode: 'full', filteredCount: 751, renderLimitHit: 751, schemaOverviewRenderedCount: 2,
+        graphMode: 'full',
+        filteredCount: 751,
+        renderLimitHit: 751,
+        schemaOverviewRenderedCount: 2,
       },
       mode: 'renderLimit',
     },
@@ -142,36 +200,64 @@ describe('deriveGraphDisplayMode', () => {
 
 describe('deriveGraphDisplayMode — reported rendered count', () => {
   it('a blocked Expanded Schema View reports its projected rendered count', () => {
-    expect(displayState({
-      graphMode: 'overview', filteredCount: 5000, renderLimitHit: 5000, expandedSchemaCount: 3,
-      schemaOverviewRenderedCount: 10, expandedSchemaViewRenderedCount: 751,
-    }).renderedCount).toBe(751);
+    expect(
+      displayState({
+        graphMode: 'overview',
+        filteredCount: 5000,
+        renderLimitHit: 5000,
+        expandedSchemaCount: 3,
+        schemaOverviewRenderedCount: 10,
+        expandedSchemaViewRenderedCount: 751,
+      }).renderedCount,
+    ).toBe(751);
   });
 
   it('a blocked Object View reports the render-limited node count', () => {
-    expect(displayState({
-      graphMode: 'full', filteredCount: 751, renderLimitHit: 751, schemaOverviewRenderedCount: 2,
-    }).renderedCount).toBe(751);
+    expect(
+      displayState({
+        graphMode: 'full',
+        filteredCount: 751,
+        renderLimitHit: 751,
+        schemaOverviewRenderedCount: 2,
+      }).renderedCount,
+    ).toBe(751);
   });
 
   it('Schema View reports the rendered cluster count, not the object count', () => {
-    expect(displayState({
-      graphMode: 'overview', filteredCount: 150, schemaOverviewRenderedCount: 2,
-    }).renderedCount).toBe(2);
+    expect(
+      displayState({
+        graphMode: 'overview',
+        filteredCount: 150,
+        schemaOverviewRenderedCount: 2,
+      }).renderedCount,
+    ).toBe(2);
   });
 });
 
 describe('userFilterForHost', () => {
-  const userFilter = { schemas: new Set(['dbo', 'Person']), types: new Set(['table']) } as unknown as FilterState;
-  const previewFilter = { schemas: new Set(['dbo', 'Person', 'HumanResources']), types: new Set(['table', 'view']) } as unknown as FilterState;
-  const snapshot: ViewSnapshot = { filter: userFilter, graphMode: 'full', expandedSchemas: [], focusNodeId: null };
+  const userFilter = {
+    schemas: new Set(['dbo', 'Person']),
+    types: new Set(['table']),
+  } as unknown as FilterState;
+  const previewFilter = {
+    schemas: new Set(['dbo', 'Person', 'HumanResources']),
+    types: new Set(['table', 'view']),
+  } as unknown as FilterState;
+  const snapshot: ViewSnapshot = {
+    filter: userFilter,
+    graphMode: 'full',
+    expandedSchemas: [],
+    focusNodeId: null,
+  };
 
   it('reports the pre-preview selection while the AI preview overrides the display filter', () => {
     expect(userFilterForHost(previewFilter, true, snapshot)).toBe(userFilter);
   });
 
   it('reports the live filter when no AI preview is shown', () => {
-    expect(userFilterForHost(previewFilter, false, snapshot)).toBe(previewFilter);
+    expect(userFilterForHost(previewFilter, false, snapshot)).toBe(
+      previewFilter,
+    );
   });
 
   it('reports the live filter when no snapshot was captured', () => {
@@ -197,10 +283,20 @@ describe('aiPreviewDisplayFilter', () => {
   const modelSchemas = ['ai', 'dbo', 'Sales'];
 
   it('renders every allowlisted preview node even when the user unticked its schema or hid external refs', () => {
-    const selection = userSelection({ allowlistNodeIds: new Set(['[ai].[Orders]']), showExternalRefs: false, externalRefTypes: new Set() });
+    const selection = userSelection({
+      allowlistNodeIds: new Set(['[ai].[Orders]']),
+      showExternalRefs: false,
+      externalRefTypes: new Set(),
+    });
     const display = aiPreviewDisplayFilter(selection, true, modelSchemas);
     expect([...display.schemas].sort()).toEqual(['Sales', 'ai', 'dbo']);
-    expect([...display.types].sort()).toEqual(['external', 'function', 'procedure', 'table', 'view']);
+    expect([...display.types].sort()).toEqual([
+      'external',
+      'function',
+      'procedure',
+      'table',
+      'view',
+    ]);
     expect(display.showExternalRefs).toBe(true);
     expect([...display.externalRefTypes].sort()).toEqual(['db', 'file']);
     expect(display.exclusionPatterns).toEqual([]);
@@ -209,7 +305,9 @@ describe('aiPreviewDisplayFilter', () => {
   });
 
   it('leaves the user selection itself untouched', () => {
-    const selection = userSelection({ allowlistNodeIds: new Set(['[ai].[Orders]']) });
+    const selection = userSelection({
+      allowlistNodeIds: new Set(['[ai].[Orders]']),
+    });
     aiPreviewDisplayFilter(selection, true, modelSchemas);
     expect([...selection.schemas].sort()).toEqual(['Sales', 'dbo']);
     expect(selection.exclusionPatterns).toEqual(['^tmp_']);
@@ -217,13 +315,19 @@ describe('aiPreviewDisplayFilter', () => {
   });
 
   it('returns the selection unchanged when no AI preview is shown', () => {
-    const selection = userSelection({ allowlistNodeIds: new Set(['[ai].[Orders]']) });
-    expect(aiPreviewDisplayFilter(selection, false, modelSchemas)).toBe(selection);
+    const selection = userSelection({
+      allowlistNodeIds: new Set(['[ai].[Orders]']),
+    });
+    expect(aiPreviewDisplayFilter(selection, false, modelSchemas)).toBe(
+      selection,
+    );
   });
 
   it('returns the selection unchanged when the filter carries no allowlist', () => {
     const selection = userSelection();
-    expect(aiPreviewDisplayFilter(selection, true, modelSchemas)).toBe(selection);
+    expect(aiPreviewDisplayFilter(selection, true, modelSchemas)).toBe(
+      selection,
+    );
   });
 
   it('keeps an explicitly empty AI scope while deriving its display filter', () => {
@@ -237,7 +341,10 @@ describe('aiPreviewDisplayFilter', () => {
 
 describe('filterAfterAiPreviewDiscard', () => {
   it('drops only the preview allowlist and keeps the selection edited while the preview was shown', () => {
-    const edited = userSelection({ schemas: new Set(['dbo']), allowlistNodeIds: new Set(['[ai].[Orders]']) });
+    const edited = userSelection({
+      schemas: new Set(['dbo']),
+      allowlistNodeIds: new Set(['[ai].[Orders]']),
+    });
     const next = filterAfterAiPreviewDiscard(edited);
     expect(next.allowlistNodeIds).toBeUndefined();
     expect([...next.schemas]).toEqual(['dbo']);
@@ -249,34 +356,54 @@ describe('filterAfterAiPreviewDiscard', () => {
 
 describe('deriveViewSnapshotTransition', () => {
   it('captures on the entering edge when nothing is saved yet', () => {
-    expect(deriveViewSnapshotTransition(true, false, false)).toEqual({ shouldSnapshot: true, shouldRestore: false });
+    expect(deriveViewSnapshotTransition(true, false, false)).toEqual({
+      shouldSnapshot: true,
+      shouldRestore: false,
+    });
   });
 
   it('never re-captures while already locked, even across a second lock (e.g. Refresh mid-trace)', () => {
-    expect(deriveViewSnapshotTransition(true, true, true)).toEqual({ shouldSnapshot: false, shouldRestore: false });
+    expect(deriveViewSnapshotTransition(true, true, true)).toEqual({
+      shouldSnapshot: false,
+      shouldRestore: false,
+    });
   });
 
   it('does not capture on the entering edge when a snapshot is already saved', () => {
-    expect(deriveViewSnapshotTransition(true, false, true)).toEqual({ shouldSnapshot: false, shouldRestore: false });
+    expect(deriveViewSnapshotTransition(true, false, true)).toEqual({
+      shouldSnapshot: false,
+      shouldRestore: false,
+    });
   });
 
   it('restores on the leaving edge when a snapshot is saved', () => {
-    expect(deriveViewSnapshotTransition(false, true, true)).toEqual({ shouldSnapshot: false, shouldRestore: true });
+    expect(deriveViewSnapshotTransition(false, true, true)).toEqual({
+      shouldSnapshot: false,
+      shouldRestore: true,
+    });
   });
 
   it('does nothing on the leaving edge when nothing was saved', () => {
-    expect(deriveViewSnapshotTransition(false, true, false)).toEqual({ shouldSnapshot: false, shouldRestore: false });
+    expect(deriveViewSnapshotTransition(false, true, false)).toEqual({
+      shouldSnapshot: false,
+      shouldRestore: false,
+    });
   });
 
   it('does nothing while unlocked and staying unlocked', () => {
-    expect(deriveViewSnapshotTransition(false, false, false)).toEqual({ shouldSnapshot: false, shouldRestore: false });
+    expect(deriveViewSnapshotTransition(false, false, false)).toEqual({
+      shouldSnapshot: false,
+      shouldRestore: false,
+    });
   });
 });
 
 describe('deriveRenderLimitFallback', () => {
   it('names filter scope and VS Code settings and offers no action', () => {
     const result = deriveRenderLimitFallback();
-    expect(result).toEqual({ message: 'Reduce filter scope or adjust VS Code settings.' });
+    expect(result).toEqual({
+      message: 'Reduce filter scope or adjust VS Code settings.',
+    });
     expect(result).not.toHaveProperty('offerSchemaView');
     expect(result.message).not.toContain('Schema View');
     expect(result.message).not.toContain('Reduce depth');
@@ -309,23 +436,33 @@ describe('collapseLastExpandedSchema — Esc in Expanded Schema View steps back 
 
 describe('retainExistingSchemas — settings change / Refresh keep what still exists', () => {
   it('keeps every expanded schema still present in the model', () => {
-    const result = retainExistingSchemas(new Set(['sales', 'hr']), new Set(['sales', 'hr', 'finance']));
+    const result = retainExistingSchemas(
+      new Set(['sales', 'hr']),
+      new Set(['sales', 'hr', 'finance']),
+    );
     expect(result).toEqual(new Set(['sales', 'hr']));
   });
 
   it('drops only the schemas no longer present, never collapsing the rest', () => {
-    const result = retainExistingSchemas(new Set(['sales', 'hr', 'dropped']), new Set(['sales', 'hr']));
+    const result = retainExistingSchemas(
+      new Set(['sales', 'hr', 'dropped']),
+      new Set(['sales', 'hr']),
+    );
     expect(result).toEqual(new Set(['sales', 'hr']));
   });
 
   it('returns null when nothing expanded still exists', () => {
-    expect(retainExistingSchemas(new Set(['gone']), new Set(['sales']))).toBeNull();
+    expect(
+      retainExistingSchemas(new Set(['gone']), new Set(['sales'])),
+    ).toBeNull();
   });
 });
 
 describe('serializeExpandedSchemas — deterministic sorted output for every posted/persisted record', () => {
   it('sorts regardless of Set insertion order', () => {
-    expect(serializeExpandedSchemas(new Set(['sales', 'hr', 'finance']))).toEqual(['finance', 'hr', 'sales']);
+    expect(
+      serializeExpandedSchemas(new Set(['sales', 'hr', 'finance'])),
+    ).toEqual(['finance', 'hr', 'sales']);
   });
 
   it('returns an empty array for undefined (no expanded-schema view)', () => {
@@ -341,8 +478,20 @@ describe('traceSizeByDepth — BFS-only node count, no layout', () => {
   /** A → B → C → D, a side branch A → E, and an unreachable Z. */
   function fanOut() {
     return makeGraph(
-      [{ id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'D' }, { id: 'E' }, { id: 'Z' }],
-      [['A', 'B'], ['B', 'C'], ['C', 'D'], ['A', 'E']],
+      [
+        { id: 'A' },
+        { id: 'B' },
+        { id: 'C' },
+        { id: 'D' },
+        { id: 'E' },
+        { id: 'Z' },
+      ],
+      [
+        ['A', 'B'],
+        ['B', 'C'],
+        ['C', 'D'],
+        ['A', 'E'],
+      ],
     );
   }
 

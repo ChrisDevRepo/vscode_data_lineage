@@ -11,7 +11,10 @@
 
 import { AI_BADGE_BAND, AI_NOTE_BAND, dagreLayout } from './graphBuilder';
 import { normalizeColName, schemaKey } from '../utils/sql';
-import type { ColumnAspectEdge, ColumnTransformClass } from './shared/bridgeContract';
+import type {
+  ColumnAspectEdge,
+  ColumnTransformClass,
+} from './shared/bridgeContract';
 import type { ExtensionConfig } from './types';
 
 /** Whether the value arriving at a relation's target is the value that left its source. */
@@ -157,7 +160,8 @@ export const COLUMN_TRANSFORM_CIRCLE_DIAMETER = 40;
 export const COLUMN_TRANSFORM_NAME_STRIP_HEIGHT = 20;
 
 /** Height of a transform super node — the circle, a small margin, and the name strip beneath it. */
-export const COLUMN_TRANSFORM_NODE_HEIGHT = COLUMN_TRANSFORM_CIRCLE_DIAMETER + 8 + COLUMN_TRANSFORM_NAME_STRIP_HEIGHT;
+export const COLUMN_TRANSFORM_NODE_HEIGHT =
+  COLUMN_TRANSFORM_CIRCLE_DIAMETER + 8 + COLUMN_TRANSFORM_NAME_STRIP_HEIGHT;
 
 /** Largest vertical distance between consecutive port handles on a transform super node. The handles are the edges' attachment points on the circle; when more ports run through the hub than this spacing fits on the arc, the spacing shrinks so every handle stays on the stroke. */
 export const COLUMN_TRANSFORM_PORT_SPREAD = 10;
@@ -181,13 +185,24 @@ export const COLUMN_EDGE_DIM_OPACITY = 0.25;
 export const COLUMN_ROW_DIM_OPACITY = 0.5;
 
 /** Builds a React Flow handle id for a column row. */
-export function columnHandleId(column: string, side: 'source' | 'target', identifierCaseSensitive = false): string {
+export function columnHandleId(
+  column: string,
+  side: 'source' | 'target',
+  identifierCaseSensitive = false,
+): string {
   return `${side}:${normalizeColName(column, identifierCaseSensitive)}`;
 }
 
 /** Builds the canonical key for a node-and-column pair. */
-export function columnRowKey(nodeId: string, column: string, identifierCaseSensitive = false): string {
-  return JSON.stringify([schemaKey(nodeId, identifierCaseSensitive), normalizeColName(column, identifierCaseSensitive)]);
+export function columnRowKey(
+  nodeId: string,
+  column: string,
+  identifierCaseSensitive = false,
+): string {
+  return JSON.stringify([
+    schemaKey(nodeId, identifierCaseSensitive),
+    normalizeColName(column, identifierCaseSensitive),
+  ]);
 }
 
 /** Row-key adjacency of a column view, one map per direction the value flows. */
@@ -199,21 +214,55 @@ export interface ColumnThreadIndex {
 }
 
 /** Indexes a column view's edges and port bridges by direction, once per view. */
-export function buildColumnThreadIndex(view: Pick<ColumnTraceView, 'edges' | 'portBridges' | 'identifierCaseSensitive'>): ColumnThreadIndex {
+export function buildColumnThreadIndex(
+  view: Pick<
+    ColumnTraceView,
+    'edges' | 'portBridges' | 'identifierCaseSensitive'
+  >,
+): ColumnThreadIndex {
   const index: ColumnThreadIndex = { down: new Map(), up: new Map() };
   const link = (from: string, to: string): void => {
     const down = index.down.get(from);
-    if (down) down.push(to); else index.down.set(from, [to]);
+    if (down) down.push(to);
+    else index.down.set(from, [to]);
     const up = index.up.get(to);
-    if (up) up.push(from); else index.up.set(to, [from]);
+    if (up) up.push(from);
+    else index.up.set(to, [from]);
   };
-  for (const edge of view.edges) link(columnRowKey(edge.source, edge.sourceColumn, view.identifierCaseSensitive), columnRowKey(edge.target, edge.targetColumn, view.identifierCaseSensitive));
-  for (const bridge of view.portBridges) link(columnRowKey(bridge.nodeId, bridge.fromColumn, view.identifierCaseSensitive), columnRowKey(bridge.nodeId, bridge.toColumn, view.identifierCaseSensitive));
+  for (const edge of view.edges)
+    link(
+      columnRowKey(
+        edge.source,
+        edge.sourceColumn,
+        view.identifierCaseSensitive,
+      ),
+      columnRowKey(
+        edge.target,
+        edge.targetColumn,
+        view.identifierCaseSensitive,
+      ),
+    );
+  for (const bridge of view.portBridges)
+    link(
+      columnRowKey(
+        bridge.nodeId,
+        bridge.fromColumn,
+        view.identifierCaseSensitive,
+      ),
+      columnRowKey(
+        bridge.nodeId,
+        bridge.toColumn,
+        view.identifierCaseSensitive,
+      ),
+    );
   return index;
 }
 
 /** Row keys in the trace cone of one row: everything it is derived from plus everything derived from it. */
-export function columnThread(index: ColumnThreadIndex, startKey: string): Set<string> {
+export function columnThread(
+  index: ColumnThreadIndex,
+  startKey: string,
+): Set<string> {
   const cone = new Set<string>([startKey]);
   for (const adjacency of [index.up, index.down]) {
     const seen = new Set<string>([startKey]);
@@ -234,7 +283,12 @@ export function columnThread(index: ColumnThreadIndex, startKey: string): Set<st
 export function resolveColumnLineState(
   transforms?: readonly ColumnTransformClass[],
 ): ColumnLineState {
-  if (transforms?.some(transform => transform === 'compute' || transform === 'aggregate')) return 'transformation';
+  if (
+    transforms?.some(
+      (transform) => transform === 'compute' || transform === 'aggregate',
+    )
+  )
+    return 'transformation';
   if (transforms?.includes('pass_through')) return 'passthrough';
   return 'unknown';
 }
@@ -246,13 +300,22 @@ export function resolveRowLineStates(
 ): Map<string, ColumnLineState> {
   const byRow = new Map<string, ColumnLineState>();
   for (const edge of edges) {
-    const key = columnRowKey(edge.target, edge.targetColumn, identifierCaseSensitive);
+    const key = columnRowKey(
+      edge.target,
+      edge.targetColumn,
+      identifierCaseSensitive,
+    );
     const seen = byRow.get(key);
     if (seen === undefined || seen === edge.state) {
       byRow.set(key, edge.state);
       continue;
     }
-    byRow.set(key, seen === 'transformation' || edge.state === 'transformation' ? 'transformation' : 'unknown');
+    byRow.set(
+      key,
+      seen === 'transformation' || edge.state === 'transformation'
+        ? 'transformation'
+        : 'unknown',
+    );
   }
   return byRow;
 }
@@ -283,19 +346,31 @@ interface NodeAccumulator {
   outbound: Map<string, Set<string>>;
 }
 
-function pushInbound(map: Map<string, RowRelation[]>, rowKey: string, entry: RowRelation): void {
+function pushInbound(
+  map: Map<string, RowRelation[]>,
+  rowKey: string,
+  entry: RowRelation,
+): void {
   const existing = map.get(rowKey);
   if (existing) existing.push(entry);
   else map.set(rowKey, [entry]);
 }
 
-function addOutbound(map: Map<string, Set<string>>, rowKey: string, tupleKey: string): void {
+function addOutbound(
+  map: Map<string, Set<string>>,
+  rowKey: string,
+  tupleKey: string,
+): void {
   const existing = map.get(rowKey);
   if (existing) existing.add(tupleKey);
   else map.set(rowKey, new Set([tupleKey]));
 }
 
-function touchRow(acc: NodeAccumulator, columnName: string, identifierCaseSensitive: boolean | undefined): string {
+function touchRow(
+  acc: NodeAccumulator,
+  columnName: string,
+  identifierCaseSensitive: boolean | undefined,
+): string {
   const rowKey = normalizeColName(columnName, identifierCaseSensitive);
   if (!acc.rowNames.has(rowKey)) {
     acc.rowNames.set(rowKey, acc.object.columnNames?.get(rowKey) ?? columnName);
@@ -305,13 +380,22 @@ function touchRow(acc: NodeAccumulator, columnName: string, identifierCaseSensit
 }
 
 /** Derives one node's rows from its accumulated relations. */
-function buildRows(acc: NodeAccumulator, identifierCaseSensitive: boolean | undefined): ColumnTraceRow[] {
+function buildRows(
+  acc: NodeAccumulator,
+  identifierCaseSensitive: boolean | undefined,
+): ColumnTraceRow[] {
   return acc.rowKeys.map((rowKey) => {
     const name = acc.rowNames.get(rowKey)!;
     const inbound = acc.inbound.get(rowKey) ?? [];
-    const upstreamTuples = new Set(inbound.map((x) => JSON.stringify([x.otherNodeKey, x.otherColKey])));
+    const upstreamTuples = new Set(
+      inbound.map((x) => JSON.stringify([x.otherNodeKey, x.otherColKey])),
+    );
     const downstreamTuples = acc.outbound.get(rowKey) ?? new Set<string>();
-    const renamed = inbound.some((x) => normalizeColName(x.fromColRaw, identifierCaseSensitive) !== normalizeColName(x.toColRaw, identifierCaseSensitive));
+    const renamed = inbound.some(
+      (x) =>
+        normalizeColName(x.fromColRaw, identifierCaseSensitive) !==
+        normalizeColName(x.toColRaw, identifierCaseSensitive),
+    );
 
     let shape: ColumnRowShape | undefined;
     let contributors: number | undefined;
@@ -337,29 +421,50 @@ function buildRows(acc: NodeAccumulator, identifierCaseSensitive: boolean | unde
 }
 
 /** Widens the layout separation on the axis the AI annotations grow along. */
-function withAnnotationBand(config: ExtensionConfig, direction: 'LR' | 'TB'): ExtensionConfig {
-  const layout = direction === 'TB'
-    ? { ...config.layout, rankSeparation: config.layout.rankSeparation + COLUMN_AI_ANNOTATION_BAND }
-    : { ...config.layout, nodeSeparation: config.layout.nodeSeparation + COLUMN_AI_ANNOTATION_BAND };
+function withAnnotationBand(
+  config: ExtensionConfig,
+  direction: 'LR' | 'TB',
+): ExtensionConfig {
+  const layout =
+    direction === 'TB'
+      ? {
+          ...config.layout,
+          rankSeparation:
+            config.layout.rankSeparation + COLUMN_AI_ANNOTATION_BAND,
+        }
+      : {
+          ...config.layout,
+          nodeSeparation:
+            config.layout.nodeSeparation + COLUMN_AI_ANNOTATION_BAND,
+        };
   return { ...config, layout };
 }
 
 /** Whether an object draws as a transform hub rather than a column card. */
 function isColumnTraceTransformNode(object: ColumnTraceViewObject): boolean {
   if (object.objectType === 'procedure') return true;
-  if (object.objectType === 'function') return !object.columnTypes || object.columnTypes.size === 0;
+  if (object.objectType === 'function')
+    return !object.columnTypes || object.columnTypes.size === 0;
   return false;
 }
 
 /** Builds the column-level rendering of an AI column trace. */
-export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceView {
+export function buildColumnTraceView(
+  input: ColumnTraceViewInput,
+): ColumnTraceView {
   const nodeAccs = new Map<string, NodeAccumulator>();
 
   function getAcc(object: ColumnTraceViewObject): NodeAccumulator {
     const key = schemaKey(object.id, input.identifierCaseSensitive);
     let acc = nodeAccs.get(key);
     if (!acc) {
-      acc = { object, rowKeys: [], rowNames: new Map(), inbound: new Map(), outbound: new Map() };
+      acc = {
+        object,
+        rowKeys: [],
+        rowNames: new Map(),
+        inbound: new Map(),
+        outbound: new Map(),
+      };
       nodeAccs.set(key, acc);
     }
     return acc;
@@ -385,24 +490,46 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
   const seenBridges = new Set<string>();
 
   input.relations.forEach((relation, index) => {
-    const sourceObj = input.objects.get(schemaKey(relation.fromNode, input.identifierCaseSensitive));
-    const targetObj = input.objects.get(schemaKey(relation.toNode, input.identifierCaseSensitive));
+    const sourceObj = input.objects.get(
+      schemaKey(relation.fromNode, input.identifierCaseSensitive),
+    );
+    const targetObj = input.objects.get(
+      schemaKey(relation.toNode, input.identifierCaseSensitive),
+    );
     if (!sourceObj || !targetObj) return;
 
     const sourceKey = schemaKey(sourceObj.id, input.identifierCaseSensitive);
     const targetKey = schemaKey(targetObj.id, input.identifierCaseSensitive);
     const hopKey = schemaKey(relation.hopNode, input.identifierCaseSensitive);
 
-    const identity = JSON.stringify([sourceKey, normalizeColName(relation.fromCol, input.identifierCaseSensitive), targetKey, normalizeColName(relation.toCol, input.identifierCaseSensitive), hopKey]);
+    const identity = JSON.stringify([
+      sourceKey,
+      normalizeColName(relation.fromCol, input.identifierCaseSensitive),
+      targetKey,
+      normalizeColName(relation.toCol, input.identifierCaseSensitive),
+      hopKey,
+    ]);
     if (seenRelations.has(identity)) return;
     seenRelations.add(identity);
 
     const sourceAcc = getAcc(sourceObj);
     const targetAcc = getAcc(targetObj);
-    const sourceRowKey = touchRow(sourceAcc, relation.fromCol, input.identifierCaseSensitive);
-    const targetRowKey = touchRow(targetAcc, relation.toCol, input.identifierCaseSensitive);
+    const sourceRowKey = touchRow(
+      sourceAcc,
+      relation.fromCol,
+      input.identifierCaseSensitive,
+    );
+    const targetRowKey = touchRow(
+      targetAcc,
+      relation.toCol,
+      input.identifierCaseSensitive,
+    );
 
-    addOutbound(sourceAcc.outbound, sourceRowKey, JSON.stringify([targetKey, targetRowKey]));
+    addOutbound(
+      sourceAcc.outbound,
+      sourceRowKey,
+      JSON.stringify([targetKey, targetRowKey]),
+    );
     pushInbound(targetAcc.inbound, targetRowKey, {
       otherNodeKey: sourceKey,
       otherColKey: sourceRowKey,
@@ -416,22 +543,42 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
       if (hopObj) {
         viaId = hopObj.id;
         const viaAcc = getAcc(hopObj);
-        const inRowKey = touchRow(viaAcc, relation.fromCol, input.identifierCaseSensitive);
-        const outRowKey = touchRow(viaAcc, relation.toCol, input.identifierCaseSensitive);
+        const inRowKey = touchRow(
+          viaAcc,
+          relation.fromCol,
+          input.identifierCaseSensitive,
+        );
+        const outRowKey = touchRow(
+          viaAcc,
+          relation.toCol,
+          input.identifierCaseSensitive,
+        );
         pushInbound(viaAcc.inbound, inRowKey, {
           otherNodeKey: sourceKey,
           otherColKey: sourceRowKey,
           fromColRaw: relation.fromCol,
           toColRaw: relation.fromCol,
         });
-        addOutbound(viaAcc.outbound, outRowKey, JSON.stringify([targetKey, targetRowKey]));
+        addOutbound(
+          viaAcc.outbound,
+          outRowKey,
+          JSON.stringify([targetKey, targetRowKey]),
+        );
         if (inRowKey !== outRowKey) {
           const bridgeKey = JSON.stringify([hopKey, inRowKey, outRowKey]);
           if (!seenBridges.has(bridgeKey)) {
             seenBridges.add(bridgeKey);
-            portBridges.push({ nodeId: hopObj.id, fromColumn: viaAcc.rowNames.get(inRowKey)!, toColumn: viaAcc.rowNames.get(outRowKey)! });
+            portBridges.push({
+              nodeId: hopObj.id,
+              fromColumn: viaAcc.rowNames.get(inRowKey)!,
+              toColumn: viaAcc.rowNames.get(outRowKey)!,
+            });
           }
-          addOutbound(viaAcc.outbound, inRowKey, JSON.stringify([hopKey, outRowKey]));
+          addOutbound(
+            viaAcc.outbound,
+            inRowKey,
+            JSON.stringify([hopKey, outRowKey]),
+          );
           pushInbound(viaAcc.inbound, outRowKey, {
             otherNodeKey: hopKey,
             otherColKey: inRowKey,
@@ -455,30 +602,37 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
   });
 
   const requested = input.requested;
-  const origin = requested && input.objects.get(schemaKey(requested.node, input.identifierCaseSensitive));
+  const origin =
+    requested &&
+    input.objects.get(schemaKey(requested.node, input.identifierCaseSensitive));
   if (origin && requested) {
-    for (const column of requested.columns) touchRow(getAcc(origin), column, input.identifierCaseSensitive);
+    for (const column of requested.columns)
+      touchRow(getAcc(origin), column, input.identifierCaseSensitive);
   }
 
   for (const object of input.objects.values()) getAcc(object);
 
-  const nodes: ColumnTraceViewNode[] = Array.from(nodeAccs.values()).map((acc) => {
-    const rows = buildRows(acc, input.identifierCaseSensitive);
-    const isTransform = isColumnTraceTransformNode(acc.object);
-    return {
-      id: acc.object.id,
-      label: acc.object.label,
-      schema: acc.object.schema,
-      objectType: acc.object.objectType,
-      isTransformNode: isTransform,
-      rows,
-      width: isTransform ? COLUMN_TRANSFORM_NODE_WIDTH : COLUMN_NODE_WIDTH,
-      height: isTransform
-        ? COLUMN_TRANSFORM_NODE_HEIGHT
-        : COLUMN_NODE_HEADER_HEIGHT + rows.length * COLUMN_ROW_HEIGHT + 2 * COLUMN_NODE_BORDER_WIDTH,
-      position: { x: 0, y: 0 },
-    };
-  });
+  const nodes: ColumnTraceViewNode[] = Array.from(nodeAccs.values()).map(
+    (acc) => {
+      const rows = buildRows(acc, input.identifierCaseSensitive);
+      const isTransform = isColumnTraceTransformNode(acc.object);
+      return {
+        id: acc.object.id,
+        label: acc.object.label,
+        schema: acc.object.schema,
+        objectType: acc.object.objectType,
+        isTransformNode: isTransform,
+        rows,
+        width: isTransform ? COLUMN_TRANSFORM_NODE_WIDTH : COLUMN_NODE_WIDTH,
+        height: isTransform
+          ? COLUMN_TRANSFORM_NODE_HEIGHT
+          : COLUMN_NODE_HEADER_HEIGHT +
+            rows.length * COLUMN_ROW_HEIGHT +
+            2 * COLUMN_NODE_BORDER_WIDTH,
+        position: { x: 0, y: 0 },
+      };
+    },
+  );
 
   const edges: ColumnTraceViewEdge[] = [];
   const edgeByLeg = new Map<string, ColumnTraceViewEdge>();
@@ -494,22 +648,47 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     transforms?: ColumnTransformClass[],
     note?: string,
   ): void {
-    const legKey = JSON.stringify([schemaKey(source, input.identifierCaseSensitive), normalizeColName(sourceCol, input.identifierCaseSensitive), schemaKey(target, input.identifierCaseSensitive), normalizeColName(targetCol, input.identifierCaseSensitive)]);
+    const legKey = JSON.stringify([
+      schemaKey(source, input.identifierCaseSensitive),
+      normalizeColName(sourceCol, input.identifierCaseSensitive),
+      schemaKey(target, input.identifierCaseSensitive),
+      normalizeColName(targetCol, input.identifierCaseSensitive),
+    ]);
     const shared = edgeByLeg.get(legKey);
     if (shared) {
-      if (transforms) shared.transforms = [...new Set([...(shared.transforms ?? []), ...transforms])];
+      if (transforms)
+        shared.transforms = [
+          ...new Set([...(shared.transforms ?? []), ...transforms]),
+        ];
       shared.state = resolveColumnLineState(shared.transforms);
-      if (note && !shared.note?.split('\n').includes(note)) shared.note = shared.note ? `${shared.note}\n${note}` : note;
+      if (note && !shared.note?.split('\n').includes(note))
+        shared.note = shared.note ? `${shared.note}\n${note}` : note;
       return;
     }
     const edge: ColumnTraceViewEdge = {
       id: `${source}::${normalizeColName(sourceCol, input.identifierCaseSensitive)}->${target}::${normalizeColName(targetCol, input.identifierCaseSensitive)}#${index}${leg}`,
       source,
-      sourceHandle: columnHandleId(sourceCol, 'source', input.identifierCaseSensitive),
-      sourceColumn: nodeAccs.get(schemaKey(source, input.identifierCaseSensitive))!.rowNames.get(normalizeColName(sourceCol, input.identifierCaseSensitive))!,
+      sourceHandle: columnHandleId(
+        sourceCol,
+        'source',
+        input.identifierCaseSensitive,
+      ),
+      sourceColumn: nodeAccs
+        .get(schemaKey(source, input.identifierCaseSensitive))!
+        .rowNames.get(
+          normalizeColName(sourceCol, input.identifierCaseSensitive),
+        )!,
       target,
-      targetHandle: columnHandleId(targetCol, 'target', input.identifierCaseSensitive),
-      targetColumn: nodeAccs.get(schemaKey(target, input.identifierCaseSensitive))!.rowNames.get(normalizeColName(targetCol, input.identifierCaseSensitive))!,
+      targetHandle: columnHandleId(
+        targetCol,
+        'target',
+        input.identifierCaseSensitive,
+      ),
+      targetColumn: nodeAccs
+        .get(schemaKey(target, input.identifierCaseSensitive))!
+        .rowNames.get(
+          normalizeColName(targetCol, input.identifierCaseSensitive),
+        )!,
       state,
     };
     if (transforms) edge.transforms = transforms;
@@ -521,49 +700,119 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
   for (const relation of normalized) {
     const state = resolveColumnLineState(relation.transforms);
     if (relation.viaId) {
-      pushEdge(relation.index, 'a', relation.sourceId, relation.sourceCol, relation.viaId, relation.sourceCol, state, relation.transforms, relation.note);
-      pushEdge(relation.index, 'b', relation.viaId, relation.targetCol, relation.targetId, relation.targetCol, state, relation.transforms, relation.note);
+      pushEdge(
+        relation.index,
+        'a',
+        relation.sourceId,
+        relation.sourceCol,
+        relation.viaId,
+        relation.sourceCol,
+        state,
+        relation.transforms,
+        relation.note,
+      );
+      pushEdge(
+        relation.index,
+        'b',
+        relation.viaId,
+        relation.targetCol,
+        relation.targetId,
+        relation.targetCol,
+        state,
+        relation.transforms,
+        relation.note,
+      );
       continue;
     }
-    pushEdge(relation.index, '', relation.sourceId, relation.sourceCol, relation.targetId, relation.targetCol, state, relation.transforms, relation.note);
+    pushEdge(
+      relation.index,
+      '',
+      relation.sourceId,
+      relation.sourceCol,
+      relation.targetId,
+      relation.targetCol,
+      state,
+      relation.transforms,
+      relation.note,
+    );
   }
 
   const objectEdges: ColumnTraceViewObjectEdge[] = [];
   // A rendered column leg covers only its directed object pair, including each leg through a procedure.
-  const seenObjectEdges = new Set(edges.map(({ source, target }) =>
-    JSON.stringify([schemaKey(source, input.identifierCaseSensitive), schemaKey(target, input.identifierCaseSensitive)])));
+  const seenObjectEdges = new Set(
+    edges.map(({ source, target }) =>
+      JSON.stringify([
+        schemaKey(source, input.identifierCaseSensitive),
+        schemaKey(target, input.identifierCaseSensitive),
+      ]),
+    ),
+  );
   for (const { source, target } of input.objectEdges ?? []) {
-    const sourceAcc = nodeAccs.get(schemaKey(source, input.identifierCaseSensitive));
-    const targetAcc = nodeAccs.get(schemaKey(target, input.identifierCaseSensitive));
+    const sourceAcc = nodeAccs.get(
+      schemaKey(source, input.identifierCaseSensitive),
+    );
+    const targetAcc = nodeAccs.get(
+      schemaKey(target, input.identifierCaseSensitive),
+    );
     if (!sourceAcc || !targetAcc || sourceAcc === targetAcc) continue;
-    const pair = JSON.stringify([schemaKey(source, input.identifierCaseSensitive), schemaKey(target, input.identifierCaseSensitive)]);
+    const pair = JSON.stringify([
+      schemaKey(source, input.identifierCaseSensitive),
+      schemaKey(target, input.identifierCaseSensitive),
+    ]);
     if (seenObjectEdges.has(pair)) continue;
     seenObjectEdges.add(pair);
-    const firstRow = (acc: NodeAccumulator) => acc.rowKeys.length > 0 ? acc.rowNames.get(acc.rowKeys[0]) : undefined;
+    const firstRow = (acc: NodeAccumulator) =>
+      acc.rowKeys.length > 0 ? acc.rowNames.get(acc.rowKeys[0]) : undefined;
     const sourceRow = firstRow(sourceAcc);
     const targetRow = firstRow(targetAcc);
     objectEdges.push({
       id: `object::${sourceAcc.object.id}->${targetAcc.object.id}`,
       source: sourceAcc.object.id,
       target: targetAcc.object.id,
-      ...(sourceRow !== undefined ? { sourceHandle: columnHandleId(sourceRow, 'source', input.identifierCaseSensitive) } : {}),
-      ...(targetRow !== undefined ? { targetHandle: columnHandleId(targetRow, 'target', input.identifierCaseSensitive) } : {}),
+      ...(sourceRow !== undefined
+        ? {
+            sourceHandle: columnHandleId(
+              sourceRow,
+              'source',
+              input.identifierCaseSensitive,
+            ),
+          }
+        : {}),
+      ...(targetRow !== undefined
+        ? {
+            targetHandle: columnHandleId(
+              targetRow,
+              'target',
+              input.identifierCaseSensitive,
+            ),
+          }
+        : {}),
     });
   }
 
-  const boxes = new Map(nodes.map(n => [n.id, { width: n.width, height: n.height }]));
+  const boxes = new Map(
+    nodes.map((n) => [n.id, { width: n.width, height: n.height }]),
+  );
   const direction = input.layoutDirection ?? input.config.layout.direction;
   const positions = dagreLayout({
-    nodeIds: nodes.map(n => n.id),
-    edges: [...edges, ...objectEdges].filter(e => e.source !== e.target).map(e => ({ source: e.source, target: e.target })),
+    nodeIds: nodes.map((n) => n.id),
+    edges: [...edges, ...objectEdges]
+      .filter((e) => e.source !== e.target)
+      .map((e) => ({ source: e.source, target: e.target })),
     config: withAnnotationBand(input.config, direction),
     direction,
-    sizeOf: id => boxes.get(id) ?? { width: COLUMN_NODE_WIDTH, height: 0 },
+    sizeOf: (id) => boxes.get(id) ?? { width: COLUMN_NODE_WIDTH, height: 0 },
   });
   for (const node of nodes) {
     const positioned = positions.get(node.id);
     if (positioned) node.position = positioned;
   }
 
-  return { nodes, edges, objectEdges, portBridges, identifierCaseSensitive: input.identifierCaseSensitive };
+  return {
+    nodes,
+    edges,
+    objectEdges,
+    portBridges,
+    identifierCaseSensitive: input.identifierCaseSensitive,
+  };
 }

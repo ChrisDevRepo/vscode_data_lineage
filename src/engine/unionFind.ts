@@ -12,7 +12,8 @@ class UnionFind {
   /** Returns the set representative for `key`, compressing the path en route. */
   find(key: string): string {
     let root = key;
-    while ((this.parent.get(root) ?? root) !== root) root = this.parent.get(root)!;
+    while ((this.parent.get(root) ?? root) !== root)
+      root = this.parent.get(root)!;
     let cur = key;
     while ((this.parent.get(cur) ?? cur) !== root) {
       const next = this.parent.get(cur)!;

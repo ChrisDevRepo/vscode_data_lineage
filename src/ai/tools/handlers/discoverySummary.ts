@@ -1,8 +1,16 @@
 /** Composes the discovery-to-exploration handoff memo — the one-shot, no-tool LM round that turns the user's discovery Q/A into the `<discovery_summary>` stable-prefix field every later hop and synthesis prompt reads as established fact. */
 import type { ModelPort } from '../../model/modelPort';
 import { modelUserMessage } from '../../model/modelPort';
-import { compileInstructionPlan, executeInstructionPlan, explorationFacts } from '../../agent/instructionPlan';
-import { buildDiscoverySummaryComposePrompt, DISCOVERY_SUMMARY_COMPOSE_SYSTEM_PROMPT, DISCOVERY_SUMMARY_EMPTY_REASON } from '../../prompting/prompts';
+import {
+  compileInstructionPlan,
+  executeInstructionPlan,
+  explorationFacts,
+} from '../../agent/instructionPlan';
+import {
+  buildDiscoverySummaryComposePrompt,
+  DISCOVERY_SUMMARY_COMPOSE_SYSTEM_PROMPT,
+  DISCOVERY_SUMMARY_EMPTY_REASON,
+} from '../../prompting/prompts';
 import type { NavigationEngine } from '../../sm/smBase';
 import type { ClassificationValue } from '../../session/classification';
 import { sanitizeForLog, type Logger } from '../../../utils/log';
@@ -24,13 +32,18 @@ export async function composeDiscoverySummaryText(
     const scope = engine.getScopeSummary();
     const filters = scope.activeFilters;
     const analysisMode = engine.currentAnalysisMode;
-    const targetColumns = analysisMode === 'ct' ? (engine.currentTargetColumns ?? undefined) : undefined;
+    const targetColumns =
+      analysisMode === 'ct'
+        ? (engine.currentTargetColumns ?? undefined)
+        : undefined;
     const contractSummary = [
       `- origin: ${engine.currentOrigin ?? '(unset)'}`,
       `- scope: ${scope.scopeCount} nodes`,
       `- direction: ${engine.currentDirection}`,
       `- analysisMode: ${analysisMode}`,
-      ...(analysisMode === 'ct' ? [`- targetColumns: ${(targetColumns ?? []).join(', ')}`] : []),
+      ...(analysisMode === 'ct'
+        ? [`- targetColumns: ${(targetColumns ?? []).join(', ')}`]
+        : []),
       `- excludeTypes: ${filters.types.length ? filters.types.join(', ') : '(none)'}`,
       `- excludeSchemas: ${filters.schemas.length ? filters.schemas.join(', ') : '(none)'}`,
       `- excludeNodeIds: ${filters.nodeIds.length ? filters.nodeIds.join(', ') : '(none)'}`,
@@ -39,34 +52,51 @@ export async function composeDiscoverySummaryText(
     ].join('\n');
     let summary = '';
     let rejectReason = '';
-    for (let attempt = 1; attempt <= DISCOVERY_SUMMARY_COMPOSE_ATTEMPTS; attempt++) {
+    for (
+      let attempt = 1;
+      attempt <= DISCOVERY_SUMMARY_COMPOSE_ATTEMPTS;
+      attempt++
+    ) {
       const prompt = buildDiscoverySummaryComposePrompt(
         lastDiscoveryQuestion,
         lastDiscoveryAnswer,
         contractSummary,
         attempt === 1 ? undefined : rejectReason,
       );
-      const composed = await executeInstructionPlan(model, compileInstructionPlan({
-        kind: 'text',
-        phase: 'compose',
-        system: DISCOVERY_SUMMARY_COMPOSE_SYSTEM_PROMPT,
-        facts: explorationFacts(analysisMode, targetColumns, {
-          classification,
-          memorySections: ['discovery_question', 'discovery_answer', 'approved_contract'],
+      const composed = await executeInstructionPlan(
+        model,
+        compileInstructionPlan({
+          kind: 'text',
+          phase: 'compose',
+          system: DISCOVERY_SUMMARY_COMPOSE_SYSTEM_PROMPT,
+          facts: explorationFacts(analysisMode, targetColumns, {
+            classification,
+            memorySections: [
+              'discovery_question',
+              'discovery_answer',
+              'approved_contract',
+            ],
+          }),
+          messages: [modelUserMessage(prompt)],
+          signal,
         }),
-        messages: [modelUserMessage(prompt)],
-        signal,
-      }));
+      );
       summary = composed.trim();
       if (summary) break;
       rejectReason = DISCOVERY_SUMMARY_EMPTY_REASON;
-      logger?.debug(`[AI] [DiscoveryHandoff] attempt=${attempt} rejected reason=${sanitizeForLog(rejectReason)}`);
+      logger?.debug(
+        `[AI] [DiscoveryHandoff] attempt=${attempt} rejected reason=${sanitizeForLog(rejectReason)}`,
+      );
     }
     if (!summary) {
-      logger?.debug('[AI] [DiscoveryHandoff] status=degraded reason=invalid_summary_after_retry');
+      logger?.debug(
+        '[AI] [DiscoveryHandoff] status=degraded reason=invalid_summary_after_retry',
+      );
       return undefined;
     }
-    logger?.debug(`[AI] [DiscoveryHandoff] status=composed chars=${summary.length}`);
+    logger?.debug(
+      `[AI] [DiscoveryHandoff] status=composed chars=${summary.length}`,
+    );
     return summary;
   } catch (err) {
     if (signal?.aborted) throw err;

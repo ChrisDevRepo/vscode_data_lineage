@@ -1,4 +1,9 @@
-import type { CustomNodeData, SchemaNodeData, GraphMode, TraceState } from '../engine/types';
+import type {
+  CustomNodeData,
+  SchemaNodeData,
+  GraphMode,
+  TraceState,
+} from '../engine/types';
 import { schemaKey } from '../utils/sql';
 import { getSchemaColor, type SchemaColorMap } from '../utils/schemaColors';
 
@@ -35,37 +40,50 @@ export function deriveLegendSchemas(
     return [...schemas].sort();
   }
 
-  const isTraceActive = traceMode === 'applied' || traceMode === 'path-applied'
-    || traceMode === 'filtered' || traceMode === 'analysis';
+  const isTraceActive =
+    traceMode === 'applied' ||
+    traceMode === 'path-applied' ||
+    traceMode === 'filtered' ||
+    traceMode === 'analysis';
 
   const schemasWithRealObjects = new Set(
     nodes
-      .map(n => n.data as CustomNodeData)
-      .filter(d => d.objectType !== 'external')
-      .map(d => d.schema)
-      .filter(s => !!s && s.trim().length > 0)
+      .map((n) => n.data as CustomNodeData)
+      .filter((d) => d.objectType !== 'external')
+      .map((d) => d.schema)
+      .filter((s) => !!s && s.trim().length > 0),
   );
 
   if (!isTraceActive) {
-    return (renderedSchemas || []).filter(s => schemasWithRealObjects.has(s));
+    return (renderedSchemas || []).filter((s) => schemasWithRealObjects.has(s));
   }
   return Array.from(schemasWithRealObjects).filter(Boolean).sort();
 }
 
 /** Builds the schema → color map backing the legend swatches. */
-export function deriveLegendColorMap(nodes: readonly LegendNode[], identifierCaseSensitive = false): SchemaColorMap {
+export function deriveLegendColorMap(
+  nodes: readonly LegendNode[],
+  identifierCaseSensitive = false,
+): SchemaColorMap {
   const colors: SchemaColorMap = new Map();
   for (const node of nodes) {
     if (node.type === 'schemaNode') {
       const data = node.data as SchemaNodeData;
       if (!data.isExternalOnly) {
-        colors.set(schemaKey(data.schemaName, identifierCaseSensitive), data.color);
+        colors.set(
+          schemaKey(data.schemaName, identifierCaseSensitive),
+          data.color,
+        );
       }
       continue;
     }
     const data = node.data as CustomNodeData;
     if (data.objectType !== 'external') {
-      colors.set(schemaKey(data.schema, identifierCaseSensitive), data.schemaColor ?? getSchemaColor(data.schema, undefined, identifierCaseSensitive));
+      colors.set(
+        schemaKey(data.schema, identifierCaseSensitive),
+        data.schemaColor ??
+          getSchemaColor(data.schema, undefined, identifierCaseSensitive),
+      );
     }
   }
   return colors;

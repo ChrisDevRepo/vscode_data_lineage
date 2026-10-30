@@ -8,7 +8,9 @@ const args = process.argv.slice(2);
 const env = { ...process.env };
 const vitestBin = path.join(repoRoot, 'node_modules', 'vitest', 'vitest.mjs');
 const hasConfigLoader = args.includes('--configLoader');
-const vitestArgs = hasConfigLoader ? args : ['--configLoader', 'runner', ...args];
+const vitestArgs = hasConfigLoader
+  ? args
+  : ['--configLoader', 'runner', ...args];
 
 for (const key of Object.keys(env)) {
   if (key === 'INIT_CWD' || key.startsWith('npm_')) {

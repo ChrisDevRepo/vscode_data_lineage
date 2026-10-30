@@ -10,24 +10,54 @@ const readers = ['[sales].[v1]', '[sales].[v2]', '[sales].[v3]'];
 const remote = '[otherdb].[dbo].[customers]';
 
 function model() {
-  return makeModel([
-    makeNode({ id: hub, schema: 'sales', name: 'Orders', type: 'table' }),
-    ...readers.map((id, index) => makeNode({ id, schema: 'sales', name: `v${index + 1}`, type: 'view' })),
-    makeNode({ id: remote, schema: 'dbo', name: 'Customers', type: 'external', externalType: 'db', externalDatabase: 'OtherDb' }),
-  ], [...readers.map(reader => [hub, reader] as const), [remote, hub]], ['sales', 'dbo']);
+  return makeModel(
+    [
+      makeNode({ id: hub, schema: 'sales', name: 'Orders', type: 'table' }),
+      ...readers.map((id, index) =>
+        makeNode({ id, schema: 'sales', name: `v${index + 1}`, type: 'view' }),
+      ),
+      makeNode({
+        id: remote,
+        schema: 'dbo',
+        name: 'Customers',
+        type: 'external',
+        externalType: 'db',
+        externalDatabase: 'OtherDb',
+      }),
+    ],
+    [...readers.map((reader) => [hub, reader] as const), [remote, hub]],
+    ['sales', 'dbo'],
+  );
 }
 
-type Groups = { groups: Array<{ id: string; label: string; meta: Record<string, unknown> }> };
+type Groups = {
+  groups: Array<{ id: string; label: string; meta: Record<string, unknown> }>;
+};
 
 describe('graph pattern labels on the bare graph', () => {
   it('labels a hub with its schema and object name', () => {
-    const result = runAnalysis(buildBareGraph(model()), 'hubs', BUDGET, 4) as Groups;
-    expect(result.groups).toEqual([expect.objectContaining({ id: `hub-${hub}`, label: '[sales].Orders' })]);
+    const result = runAnalysis(
+      buildBareGraph(model()),
+      'hubs',
+      BUDGET,
+      4,
+    ) as Groups;
+    expect(result.groups).toEqual([
+      expect.objectContaining({ id: `hub-${hub}`, label: '[sales].Orders' }),
+    ]);
     expect(JSON.stringify(result)).not.toContain('undefined');
   });
 
   it('reports a cross-database reference with its kind and database', () => {
-    const result = runAnalysis(buildBareGraph(model()), 'external-refs', BUDGET) as Groups;
-    expect(result.groups).toEqual([expect.objectContaining({ meta: expect.objectContaining({ kind: 'db', database: 'OtherDb' }) })]);
+    const result = runAnalysis(
+      buildBareGraph(model()),
+      'external-refs',
+      BUDGET,
+    ) as Groups;
+    expect(result.groups).toEqual([
+      expect.objectContaining({
+        meta: expect.objectContaining({ kind: 'db', database: 'OtherDb' }),
+      }),
+    ]);
   });
 });

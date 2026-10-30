@@ -10,7 +10,11 @@ const OBJECTS_HEADING_PREFIX = 'Objects ';
 export const AI_SECTION_ID_PREFIX = 'ln-ai-sec-';
 
 const HTML_ESCAPES: Readonly<Record<string, string>> = {
-  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;',
 };
 
 const marked = new Marked({ gfm: true, breaks: false })
@@ -18,7 +22,7 @@ const marked = new Marked({ gfm: true, breaks: false })
   .use({
     renderer: {
       html(token: Tokens.HTML | Tokens.Tag): string {
-        return token.text.replace(/[&<>"']/g, ch => HTML_ESCAPES[ch]);
+        return token.text.replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch]);
       },
       heading(token: Tokens.Heading): string {
         const body = this.parser.parseInline(token.tokens);
@@ -27,7 +31,8 @@ const marked = new Marked({ gfm: true, breaks: false })
         }
         if (token.depth === 2) {
           const sectionNumber = /^\s*(\d+)\s/.exec(token.text ?? '');
-          if (sectionNumber) return `<h2 id="${AI_SECTION_ID_PREFIX}${sectionNumber[1]}">${body}</h2>\n`;
+          if (sectionNumber)
+            return `<h2 id="${AI_SECTION_ID_PREFIX}${sectionNumber[1]}">${body}</h2>\n`;
         }
         return `<h${token.depth}>${body}</h${token.depth}>\n`;
       },
@@ -54,5 +59,8 @@ function aiPurifier(): DOMPurifyInstance {
 
 /** Renders an engine-assembled AI description to sanitized HTML. */
 export function renderAiMarkdown(description: string): string {
-  return aiPurifier().sanitize(marked.parse(description, { async: false }), SANITIZE_CONFIG);
+  return aiPurifier().sanitize(
+    marked.parse(description, { async: false }),
+    SANITIZE_CONFIG,
+  );
 }

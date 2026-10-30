@@ -8,7 +8,11 @@ import {
   type MessageContent,
 } from '@langchain/core/messages';
 import { ModelPortError } from '../../src/ai/model/modelPort';
-import type { TokenUsage, WireMessage, WirePart } from '../../src/ai/observability/wireLog';
+import type {
+  TokenUsage,
+  WireMessage,
+  WirePart,
+} from '../../src/ai/observability/wireLog';
 
 /** One assistant tool call in the `/chat/completions` request and response shape. */
 interface OpenAiToolCall {
@@ -38,7 +42,10 @@ export type ReasoningLookup = (
 ) => string | undefined;
 
 /** Looks up the complete opaque reasoning block sequence for one assistant turn. */
-export type ReasoningDetailsLookup = (callIds: readonly string[], text: string) => readonly unknown[] | undefined;
+export type ReasoningDetailsLookup = (
+  callIds: readonly string[],
+  text: string,
+) => readonly unknown[] | undefined;
 
 /** Looks up the opaque `extra_content` a previous generation returned for one tool call. */
 export type ExtraContentLookup = (
@@ -57,7 +64,14 @@ export function projectMessages(
   const messages: OpenAiChatMessage[] = [];
   if (system) messages.push({ role: 'system', content: system });
   for (const message of history) {
-    messages.push(projectMessage(message, reasoningFor, extraContentFor, reasoningDetailsFor));
+    messages.push(
+      projectMessage(
+        message,
+        reasoningFor,
+        extraContentFor,
+        reasoningDetailsFor,
+      ),
+    );
   }
   return messages;
 }
@@ -90,7 +104,10 @@ function projectMessage(
       return {
         id: ids[index],
         type: 'function' as const,
-        function: { name: call.name, arguments: JSON.stringify(call.args ?? {}) },
+        function: {
+          name: call.name,
+          arguments: JSON.stringify(call.args ?? {}),
+        },
         ...(extraContent ? { extra_content: extraContent } : {}),
       };
     });
@@ -129,8 +146,13 @@ function messageText(content: MessageContent): string {
       text += part;
       continue;
     }
-    if (part && typeof part === 'object' && part.type === 'text' && 'text' in part
-      && typeof part.text === 'string') {
+    if (
+      part &&
+      typeof part === 'object' &&
+      part.type === 'text' &&
+      'text' in part &&
+      typeof part.text === 'string'
+    ) {
       text += part.text;
       continue;
     }
@@ -145,44 +167,80 @@ function messageText(content: MessageContent): string {
 /** One opaque Responses reasoning item with the call it preceded in `output` (`before` is that `call_id`; absent when text or nothing followed). */
 export interface ResponsesReasoning {
   readonly before?: string;
-  readonly item: { readonly type: 'reasoning'; readonly [key: string]: unknown };
+  readonly item: {
+    readonly type: 'reasoning';
+    readonly [key: string]: unknown;
+  };
 }
 
 /** One item of the Responses API `input` array. */
 export type ResponsesInputItem =
   | { readonly role: 'system' | 'user' | 'assistant'; readonly content: string }
   | { readonly type: 'reasoning'; readonly [key: string]: unknown }
-  | { readonly type: 'function_call'; readonly call_id: string; readonly name: string; readonly arguments: string }
-  | { readonly type: 'function_call_output'; readonly call_id: string; readonly output: string };
+  | {
+      readonly type: 'function_call';
+      readonly call_id: string;
+      readonly name: string;
+      readonly arguments: string;
+    }
+  | {
+      readonly type: 'function_call_output';
+      readonly call_id: string;
+      readonly output: string;
+    };
 
 /** Re-renders projected chat messages as Responses `input` items; call ids pair calls with outputs. */
-export function toResponsesInput(messages: readonly OpenAiChatMessage[]): ResponsesInputItem[] {
+export function toResponsesInput(
+  messages: readonly OpenAiChatMessage[],
+): ResponsesInputItem[] {
   return messages.flatMap((message): ResponsesInputItem[] => {
     if (message.role === 'tool') {
-      return [{ type: 'function_call_output', call_id: message.tool_call_id ?? '', output: message.content ?? '' }];
+      return [
+        {
+          type: 'function_call_output',
+          call_id: message.tool_call_id ?? '',
+          output: message.content ?? '',
+        },
+      ];
     }
-    const reasoning = (message.reasoning_details ?? []) as readonly ResponsesReasoning[];
+    const reasoning = (message.reasoning_details ??
+      []) as readonly ResponsesReasoning[];
     // Each reasoning item stays directly ahead of the call it preceded: [r1, call1, r2, call2].
     return [
-      ...reasoning.filter(({ before }) => before === undefined).map(({ item }) => item),
-      ...(message.content ? [{ role: message.role, content: message.content }] : []),
+      ...reasoning
+        .filter(({ before }) => before === undefined)
+        .map(({ item }) => item),
+      ...(message.content
+        ? [{ role: message.role, content: message.content }]
+        : []),
       ...(message.tool_calls ?? []).flatMap((call): ResponsesInputItem[] => [
-        ...reasoning.filter(({ before }) => before === call.id).map(({ item }) => item),
-        { type: 'function_call', call_id: call.id, name: call.function.name, arguments: call.function.arguments },
+        ...reasoning
+          .filter(({ before }) => before === call.id)
+          .map(({ item }) => item),
+        {
+          type: 'function_call',
+          call_id: call.id,
+          name: call.function.name,
+          arguments: call.function.arguments,
+        },
       ]),
     ];
   });
 }
 
 /** Captures the projected request messages for the wire trace, keeping the wire role verbatim. */
-export function toWireMessages(messages: readonly OpenAiChatMessage[]): WireMessage[] {
+export function toWireMessages(
+  messages: readonly OpenAiChatMessage[],
+): WireMessage[] {
   return messages.map((message) => {
     const parts: WirePart[] = [];
     if (message.role === 'tool') {
       parts.push({
         type: 'tool-result',
         callId: message.tool_call_id ?? '',
-        content: message.content ? [{ type: 'text', value: message.content }] : [],
+        content: message.content
+          ? [{ type: 'text', value: message.content }]
+          : [],
       });
     } else if (message.content) {
       parts.push({ type: 'text', value: message.content });
@@ -197,15 +255,24 @@ export function toWireMessages(messages: readonly OpenAiChatMessage[]): WireMess
       if (call.extra_content) {
         parts.push({
           type: 'other',
-          json: JSON.stringify({ callId: call.id, extra_content: call.extra_content }),
+          json: JSON.stringify({
+            callId: call.id,
+            extra_content: call.extra_content,
+          }),
         });
       }
     }
     if (message.reasoning_content) {
-      parts.push({ type: 'other', json: JSON.stringify({ reasoning_content: message.reasoning_content }) });
+      parts.push({
+        type: 'other',
+        json: JSON.stringify({ reasoning_content: message.reasoning_content }),
+      });
     }
     if (message.reasoning_details) {
-      parts.push({ type: 'other', json: JSON.stringify({ reasoning_details: message.reasoning_details }) });
+      parts.push({
+        type: 'other',
+        json: JSON.stringify({ reasoning_details: message.reasoning_details }),
+      });
     }
     return { role: message.role, parts };
   });
@@ -233,8 +300,12 @@ const TOOL_CALL_IN_TEXT_MARKERS: readonly RegExp[] = [
 /** Whether a text-only generation looks like a tool call the server failed to parse. */
 export function suspectsToolCallAsText(text: string): boolean {
   if (!text) return false;
-  if (TOOL_CALL_IN_TEXT_MARKERS.some((marker) => marker.test(text))) return true;
-  if (/"name"\s*:\s*"[A-Za-z0-9_.-]+"/.test(text) && /"(arguments|parameters)"\s*:/.test(text)) {
+  if (TOOL_CALL_IN_TEXT_MARKERS.some((marker) => marker.test(text)))
+    return true;
+  if (
+    /"name"\s*:\s*"[A-Za-z0-9_.-]+"/.test(text) &&
+    /"(arguments|parameters)"\s*:/.test(text)
+  ) {
     return true;
   }
   // The `{name, arguments}` wrapper is one spelling among several, and flagged none of the 27
@@ -246,7 +317,8 @@ export function suspectsToolCallAsText(text: string): boolean {
 const FENCED_JSON_BLOCK = /```(?:json)?\s*\n([\s\S]*?)\n```/;
 
 /** One `<parameter=name>` pair of the Hermes/XML tool-call envelope; the closing tag is the bare `</parameter>`. */
-const XML_TOOL_PARAMETER = /<parameter=([A-Za-z0-9_]+)>\n?([\s\S]*?)\n?<\/parameter>/g;
+const XML_TOOL_PARAMETER =
+  /<parameter=([A-Za-z0-9_]+)>\n?([\s\S]*?)\n?<\/parameter>/g;
 
 /** Reads a text-only generation as the record a tool call would carry — fenced JSON, the whole body as JSON, or the Hermes/XML `<parameter=…>` envelope — without judging it against any schema. */
 function readProseToolCandidate(text: string): Record<string, unknown> | null {
@@ -268,7 +340,8 @@ function readProseToolCandidate(text: string): Record<string, unknown> | null {
       }),
     );
   }
-  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate))
+    return null;
   return candidate as Record<string, unknown>;
 }
 
@@ -276,8 +349,12 @@ function readProseToolCandidate(text: string): Record<string, unknown> | null {
 export function readUsage(raw: unknown): TokenUsage | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const usage = raw as Record<string, unknown>;
-  const details = usage.completion_tokens_details as Record<string, unknown> | undefined;
-  const promptDetails = usage.prompt_tokens_details as Record<string, unknown> | undefined;
+  const details = usage.completion_tokens_details as
+    | Record<string, unknown>
+    | undefined;
+  const promptDetails = usage.prompt_tokens_details as
+    | Record<string, unknown>
+    | undefined;
   const mapped: {
     inputTokens?: number;
     outputTokens?: number;
@@ -312,5 +389,7 @@ export function readResponsesUsage(raw: unknown): TokenUsage | undefined {
 }
 
 function finite(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+  return typeof value === 'number' && Number.isFinite(value)
+    ? value
+    : undefined;
 }

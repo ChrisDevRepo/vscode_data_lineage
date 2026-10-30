@@ -23,7 +23,10 @@ export interface DbSession {
   /** Persistable, credential-free description of the connection. */
   readonly connectionInfo: StoredConnectionInfo;
   /** Runs one SQL batch and resolves with its first result set. */
-  executeSimpleQuery(sql: string, options?: DbQueryOptions): Promise<SimpleExecuteResult>;
+  executeSimpleQuery(
+    sql: string,
+    options?: DbQueryOptions,
+  ): Promise<SimpleExecuteResult>;
   /** Reads server version and edition metadata. */
   getServerInfo(): Promise<IServerInfo>;
   /** Releases what this extension opened; safe to call more than once. */
@@ -52,7 +55,10 @@ export interface ConnectionErrorTarget {
 
 /** A failed connect, keeping the original driver error untouched. */
 export class DbConnectionError extends Error {
-  constructor(readonly target: ConnectionErrorTarget, readonly original: unknown) {
+  constructor(
+    readonly target: ConnectionErrorTarget,
+    readonly original: unknown,
+  ) {
     super(errorMessage(original));
     this.name = 'DbConnectionError';
   }

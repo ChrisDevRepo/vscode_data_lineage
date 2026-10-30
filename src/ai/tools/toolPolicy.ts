@@ -35,9 +35,7 @@ const DISCOVERY_TOOLS: readonly string[] = [
 ];
 
 /** Tools visible while resolving and rendering one bounded discovery scope. */
-const VISUAL_PREVIEW_TOOLS: readonly string[] = [
-  'lineage_present_result',
-];
+const VISUAL_PREVIEW_TOOLS: readonly string[] = ['lineage_present_result'];
 
 /** Tools visible while resolving the SM origin and opening the consent gate; the screen card resolves an origin the user referred to as "this trace". `get_object_detail` is included so the CT missing-columns rejection's hint ("read them with `lineage_get_object_detail`") names a tool callable at this stage, enabling resolution of "all columns" for a CT start instead of abandoning the trace. */
 const SM_ENTRY_TOOLS: readonly string[] = [
@@ -48,9 +46,7 @@ const SM_ENTRY_TOOLS: readonly string[] = [
 ];
 
 /** Tools visible when authoring the final report. */
-const SYNTHESIS_TOOLS: readonly string[] = [
-  'lineage_present_result',
-];
+const SYNTHESIS_TOOLS: readonly string[] = ['lineage_present_result'];
 
 /** Tools visible in the post-synthesis follow-up phase. */
 const COMPLETED_TOOLS: readonly string[] = [
@@ -75,7 +71,9 @@ export const EXTERNAL_TOOL_NAMES: ReadonlySet<string> = new Set(EXTERNAL_TOOLS);
 
 /** Exhaustiveness helper — forces the compiler to flag an un-handled `kind` when a new variant is added to {@link LmStage}. */
 function assertNever(x: never): never {
-  throw new Error(`toolPolicy: unhandled LmStage variant: ${JSON.stringify(x)}`);
+  throw new Error(
+    `toolPolicy: unhandled LmStage variant: ${JSON.stringify(x)}`,
+  );
 }
 
 /** Returns the set of LM tool names allowed in the given stage. */
@@ -94,9 +92,15 @@ export function getAllowedLmToolNames(stage: LmStage): ReadonlySet<string> {
     case 'external':
       return EXTERNAL_TOOL_NAMES;
     case 'active': {
-      return new Set(stage.mode === 'sm_ct'
-        ? ['lineage_submit_findings', 'lineage_prune_current', 'lineage_get_neighbor_columns']
-        : ['lineage_submit_findings', 'lineage_prune_current']);
+      return new Set(
+        stage.mode === 'sm_ct'
+          ? [
+              'lineage_submit_findings',
+              'lineage_prune_current',
+              'lineage_get_neighbor_columns',
+            ]
+          : ['lineage_submit_findings', 'lineage_prune_current'],
+      );
     }
     default:
       return assertNever(stage);

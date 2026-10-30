@@ -12,319 +12,591 @@ import {
   findShortestPathOrdered,
   analyzeRemoval,
 } from '../../../src/engine/graphGuards';
-import type { DatabaseModel, LineageEdge, LineageNode, TraceState } from '../../../src/engine/types';
+import type {
+  DatabaseModel,
+  LineageEdge,
+  LineageNode,
+  TraceState,
+} from '../../../src/engine/types';
 import { describe, expect, it } from 'vitest';
 
-describe("Trace Scope Safety Tests", () => {
+describe('Trace Scope Safety Tests', () => {
   function edges(...pairs: Array<[string, string]>): LineageEdge[] {
-    return pairs.map(([source, target]) => ({ source, target, type: 'body' as const }));
+    return pairs.map(([source, target]) => ({
+      source,
+      target,
+      type: 'body' as const,
+    }));
   }
-  it("base only: every base node is visible", () => {
-  const base = new Set(['A', 'B', 'C']);
-  const { nodeIds } = buildVisibleTraceScope(base, new Set(), new Set(), []);
-  expect(nodeIds.has('A') && nodeIds.has('B') && nodeIds.has('C'), 'base only: all base nodes present').toBe(true);
-  expect(nodeIds.size, 'base only: exact count 3').toBe(3);
+  it('base only: every base node is visible', () => {
+    const base = new Set(['A', 'B', 'C']);
+    const { nodeIds } = buildVisibleTraceScope(base, new Set(), new Set(), []);
+    expect(
+      nodeIds.has('A') && nodeIds.has('B') && nodeIds.has('C'),
+      'base only: all base nodes present',
+    ).toBe(true);
+    expect(nodeIds.size, 'base only: exact count 3').toBe(3);
+  });
+
+  it('add: A B C all present', () => {
+    const base = new Set(['A', 'B']);
+    const added = new Set(['C']);
+    const { nodeIds } = buildVisibleTraceScope(base, added, new Set(), []);
+    expect(
+      nodeIds.has('A') && nodeIds.has('B') && nodeIds.has('C'),
+      'add: A B C all present',
+    ).toBe(true);
+    expect(nodeIds.size, 'add: exact count 3').toBe(3);
+  });
+
+  it('prune: A and C remain', () => {
+    const base = new Set(['A', 'B', 'C']);
+    const pruned = new Set(['B']);
+    const { nodeIds } = buildVisibleTraceScope(base, new Set(), pruned, []);
+    expect(nodeIds.has('A') && nodeIds.has('C'), 'prune: A and C remain').toBe(
+      true,
+    );
+    expect(!nodeIds.has('B'), 'prune: B is gone').toBe(true);
+    expect(nodeIds.size, 'prune: exact count 2').toBe(2);
+  });
+
+  it('add+prune: a pruned node stays hidden whether it came from base or add', () => {
+    const base = new Set(['A', 'B']);
+    const added = new Set(['C', 'D']);
+    const pruned = new Set(['B', 'C']); // C added then pruned → absent
+    const { nodeIds } = buildVisibleTraceScope(base, added, pruned, []);
+    expect(nodeIds.has('A'), 'add+prune: A present').toBe(true);
+    expect(nodeIds.has('D'), 'add+prune: D present (added, not pruned)').toBe(
+      true,
+    );
+    expect(!nodeIds.has('B'), 'add+prune: B absent (base then pruned)').toBe(
+      true,
+    );
+    expect(!nodeIds.has('C'), 'add+prune: C absent (added then pruned)').toBe(
+      true,
+    );
+    expect(nodeIds.size, 'add+prune: exact count 2').toBe(2);
+  });
+
+  it('edge collection: keeps edges with both ends in scope, drops the rest', () => {
+    const base = new Set(['A', 'B', 'C']);
+    const edgeList = edges(['A', 'B'], ['B', 'C'], ['A', 'C'], ['B', 'D']);
+    const { nodeIds, edgeIds } = buildVisibleTraceScope(
+      base,
+      new Set(),
+      new Set(),
+      edgeList,
+    );
+    expect(nodeIds.size, 'edge collection: 3 nodes').toBe(3);
+    expect(edgeIds.has('A→B'), 'edge collection: A→B included').toBe(true);
+    expect(edgeIds.has('B→C'), 'edge collection: B→C included').toBe(true);
+    expect(edgeIds.has('A→C'), 'edge collection: A→C included').toBe(true);
+    expect(
+      !edgeIds.has('B→D'),
+      'edge collection: B→D excluded (D not in scope)',
+    ).toBe(true);
+    expect(edgeIds.size, 'edge collection: exact 3 edges').toBe(3);
+  });
+
+  it('empty node scope → 0 edges', () => {
+    const result = collectScopeEdgeIds(edges(['A', 'B']), new Set());
+    expect(result.size, 'empty node scope → 0 edges').toBe(0);
+  });
+
+  it('self-loop included when node in scope', () => {
+    const result = collectScopeEdgeIds(edges(['A', 'A']), new Set(['A']));
+    expect(result.has('A→A'), 'self-loop included when node in scope').toBe(
+      true,
+    );
+  });
+
+  it('bfsReachable: a chain is reachable end to end', () => {
+    const g = makeGraph(
+      [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
+      [
+        ['A', 'B'],
+        ['B', 'C'],
+      ],
+    );
+    const reach = bfsReachable(g, 'A', new Set());
+    expect(
+      reach.has('A') && reach.has('B') && reach.has('C'),
+      'chain: A B C reachable from A',
+    ).toBe(true);
+    expect(reach.size, 'chain: exact count 3').toBe(3);
+  });
+
+  it('removed B: A still reachable from A (start)', () => {
+    const g = makeGraph(
+      [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
+      [
+        ['A', 'B'],
+        ['B', 'C'],
+      ],
+    );
+    const reach = bfsReachable(g, 'A', new Set(['B']));
+    expect(reach.has('A'), 'removed B: A still reachable from A (start)').toBe(
+      true,
+    );
+    expect(!reach.has('B'), 'removed B: B not in result').toBe(true);
+    expect(!reach.has('C'), 'removed B: C cut off').toBe(true);
+  });
+
+  it('candidateId B excluded', () => {
+    const g = makeGraph(
+      [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
+      [
+        ['A', 'B'],
+        ['B', 'C'],
+      ],
+    );
+    const reach = bfsReachable(g, 'A', new Set(), 'B');
+    expect(!reach.has('B'), 'candidateId B excluded').toBe(true);
+    expect(!reach.has('C'), 'C cut off by candidateId exclusion').toBe(true);
+  });
+
+  it('scope A+B: both reachable', () => {
+    const g = makeGraph(
+      [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
+      [
+        ['A', 'B'],
+        ['B', 'C'],
+      ],
+    );
+    const reach = bfsReachable(
+      g,
+      'A',
+      new Set(),
+      undefined,
+      new Set(['A', 'B']),
+    );
+    expect(reach.has('A') && reach.has('B'), 'scope A+B: both reachable').toBe(
+      true,
+    );
+    expect(!reach.has('C'), 'scope A+B: C outside scope, not reached').toBe(
+      true,
+    );
+  });
+
+  it('analyzeRemoval: bridge removal cuts its subtree', () => {
+    const g = makeGraph(
+      [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
+      [
+        ['A', 'B'],
+        ['B', 'C'],
+      ],
+    );
+    const cut = analyzeRemoval(g, {
+      originId: 'A',
+      scope: new Set(g.nodes()),
+      removedBefore: new Set(),
+      removedAfter: new Set(['B']),
+      visited: new Set(),
+      sides: ['downstream', 'upstream'],
+    }).cutIds;
+    expect(cut, 'analyzeRemoval: C cut, B excluded as removedAfter').toEqual([
+      'C',
+    ]);
+  });
+
+  it('analyzeRemoval: diamond keeps C reachable through the other branch', () => {
+    const g = makeGraph(
+      [{ id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'D' }],
+      [
+        ['A', 'B'],
+        ['A', 'D'],
+        ['B', 'C'],
+        ['D', 'C'],
+      ],
+    );
+    const cut = analyzeRemoval(g, {
+      originId: 'A',
+      scope: new Set(g.nodes()),
+      removedBefore: new Set(),
+      removedAfter: new Set(['B']),
+      visited: new Set(),
+      sides: ['downstream', 'upstream'],
+    }).cutIds;
+    expect(cut, 'analyzeRemoval: C survives through D').toEqual([]);
+  });
+
+  it('analyzeRemoval: keep set excludes an already-visited node from the cut', () => {
+    const g = makeGraph(
+      [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
+      [
+        ['A', 'B'],
+        ['B', 'C'],
+      ],
+    );
+    const cut = analyzeRemoval(g, {
+      originId: 'A',
+      scope: new Set(g.nodes()),
+      removedBefore: new Set(),
+      removedAfter: new Set(['B']),
+      visited: new Set(['C']),
+      sides: ['downstream', 'upstream'],
+    }).cutIds;
+    expect(
+      cut,
+      'analyzeRemoval: C kept even though it would otherwise be cut',
+    ).toEqual([]);
+  });
+
+  it('origin prune: not safe, reason origin', () => {
+    const g = makeGraph(
+      [{ id: 'O' }, { id: 'A' }, { id: 'B' }],
+      [
+        ['O', 'A'],
+        ['A', 'B'],
+      ],
+    );
+    const visible = new Set(['O', 'A', 'B']);
+    const check = canPruneTraceNode(g, 'O', visible, 'O', [
+      'downstream',
+      'upstream',
+    ]);
+    expect(!check.safe, 'origin prune: not safe').toBe(true);
+    expect(check.reason, "origin prune: reason='origin'").toBe('origin');
+  });
+
+  it('not-visible prune: not safe', () => {
+    const g = makeGraph([{ id: 'O' }, { id: 'A' }], [['O', 'A']]);
+    const visible = new Set(['O', 'A']);
+    const check = canPruneTraceNode(g, 'O', visible, 'HIDDEN', [
+      'downstream',
+      'upstream',
+    ]);
+    expect(!check.safe, 'not-visible prune: not safe').toBe(true);
+    expect(check.reason, "not-visible prune: reason='not-visible'").toBe(
+      'not-visible',
+    );
+  });
+
+  it('null origin: not safe', () => {
+    const g = makeGraph([{ id: 'A' }], []);
+    const check = canPruneTraceNode(g, null, new Set(['A']), 'A', [
+      'downstream',
+      'upstream',
+    ]);
+    expect(!check.safe, 'null origin: not safe').toBe(true);
+    expect(check.reason, "null origin: reason='origin'").toBe('origin');
+  });
+
+  it('bridge prune: self-prune, safe, takes C with it', () => {
+    const g = makeGraph(
+      [{ id: 'O' }, { id: 'B' }, { id: 'C' }],
+      [
+        ['O', 'B'],
+        ['B', 'C'],
+      ],
+    );
+    const visible = new Set(['O', 'B', 'C']);
+    const check = canPruneTraceNode(g, 'O', visible, 'B', [
+      'downstream',
+      'upstream',
+    ]);
+    expect(check.safe, 'bridge prune: self-prune is safe, never refused').toBe(
+      true,
+    );
+    expect(check.reason === undefined, 'bridge prune: no reason').toBe(true);
+    expect(
+      check.cutNodeIds,
+      'bridge prune: C leaves with B (its subtree)',
+    ).toEqual(['C']);
+  });
+
+  it('safe leaf prune: safe=true, nothing cut', () => {
+    const g = makeGraph(
+      [{ id: 'O' }, { id: 'A' }, { id: 'B' }],
+      [
+        ['O', 'A'],
+        ['O', 'B'],
+      ],
+    );
+    const visible = new Set(['O', 'A', 'B']);
+    const check = canPruneTraceNode(g, 'O', visible, 'A', [
+      'downstream',
+      'upstream',
+    ]);
+    expect(check.safe, 'safe leaf prune: safe=true').toBe(true);
+    expect(check.reason === undefined, 'safe leaf prune: no reason').toBe(true);
+    expect(check.cutNodeIds, 'safe leaf prune: no subtree').toEqual([]);
+  });
+
+  it('diamond prune A: safe, nothing cut — C reachable via B', () => {
+    const g = makeGraph(
+      [{ id: 'O' }, { id: 'A' }, { id: 'B' }, { id: 'C' }],
+      [
+        ['O', 'A'],
+        ['O', 'B'],
+        ['A', 'C'],
+        ['B', 'C'],
+      ],
+    );
+    const visible = new Set(['O', 'A', 'B', 'C']);
+    const check = canPruneTraceNode(g, 'O', visible, 'A', [
+      'downstream',
+      'upstream',
+    ]);
+    expect(check.safe, 'diamond prune A: safe — C reachable via B').toBe(true);
+    expect(
+      check.cutNodeIds,
+      'diamond prune A: C survives, nothing cut',
+    ).toEqual([]);
+  });
+
+  it('chain origin→A→B→C plus origin→D: pruning A cuts B and C, D survives', () => {
+    const g = makeGraph(
+      [{ id: 'O' }, { id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'D' }],
+      [
+        ['O', 'A'],
+        ['A', 'B'],
+        ['B', 'C'],
+        ['O', 'D'],
+      ],
+    );
+    const visible = new Set(['O', 'A', 'B', 'C', 'D']);
+    const check = canPruneTraceNode(g, 'O', visible, 'A', [
+      'downstream',
+      'upstream',
+    ]);
+    expect(check.safe, 'chain prune A: safe').toBe(true);
+    expect(new Set(check.cutNodeIds), 'chain prune A: cuts [B, C]').toEqual(
+      new Set(['B', 'C']),
+    );
+    expect(check.cutNodeIds?.length, 'chain prune A: exactly 2 cut').toBe(2);
+
+    const remaining = new Set(visible);
+    remaining.delete('A');
+    for (const id of check.cutNodeIds ?? []) remaining.delete(id);
+    const stillReachable = bfsReachable(
+      g,
+      'O',
+      new Set(['A', ...(check.cutNodeIds ?? [])]),
+    );
+    for (const id of remaining) {
+      expect(
+        stillReachable.has(id),
+        `no island: ${id} stays reachable from origin after prune+cut`,
+      ).toBe(true);
+    }
+  });
+
+  it('manually added co-parent leaves with the only node it hangs on', () => {
+    // O→N traced downstream; M→N was added with the + control (no directed support from O).
+    const g = makeGraph(
+      [{ id: 'O' }, { id: 'N' }, { id: 'M' }],
+      [
+        ['O', 'N'],
+        ['M', 'N'],
+      ],
+    );
+    const check = canPruneTraceNode(g, 'O', new Set(['O', 'N', 'M']), 'N', [
+      'downstream',
+    ]);
+    expect(check.safe).toBe(true);
+    expect(check.cutNodeIds, 'M would be stranded without N').toEqual(['M']);
+  });
+
+  it('manually added sibling chain leaves with the cut branch that carries it', () => {
+    // O→A→B traced downstream; S (S→B) and then T (T→S) were added by hand.
+    const g = makeGraph(
+      [{ id: 'O' }, { id: 'A' }, { id: 'B' }, { id: 'S' }, { id: 'T' }],
+      [
+        ['O', 'A'],
+        ['A', 'B'],
+        ['S', 'B'],
+        ['T', 'S'],
+      ],
+    );
+    const check = canPruneTraceNode(
+      g,
+      'O',
+      new Set(['O', 'A', 'B', 'S', 'T']),
+      'A',
+      ['downstream'],
+    );
+    expect(new Set(check.cutNodeIds)).toEqual(new Set(['B', 'S', 'T']));
+  });
+
+  it('manually added node with another visible link survives the prune', () => {
+    const g = makeGraph(
+      [{ id: 'O' }, { id: 'N' }, { id: 'K' }, { id: 'M' }],
+      [
+        ['O', 'N'],
+        ['O', 'K'],
+        ['M', 'N'],
+        ['M', 'K'],
+      ],
+    );
+    const check = canPruneTraceNode(
+      g,
+      'O',
+      new Set(['O', 'N', 'K', 'M']),
+      'N',
+      ['downstream'],
+    );
+    expect(check.cutNodeIds).toEqual([]);
+  });
+
+  it('a node already disconnected before the prune is not swept into an unrelated cut', () => {
+    const g = makeGraph([{ id: 'O' }, { id: 'N' }, { id: 'Z' }], [['O', 'N']]);
+    const check = canPruneTraceNode(g, 'O', new Set(['O', 'N', 'Z']), 'N', [
+      'downstream',
+    ]);
+    expect(check.cutNodeIds).toEqual([]);
+  });
+
+  it('origin not in visible: not safe', () => {
+    const g = makeGraph([{ id: 'O' }, { id: 'A' }], [['O', 'A']]);
+    const visible = new Set(['A']);
+    const check = canPruneTraceNode(g, 'O', visible, 'A', [
+      'downstream',
+      'upstream',
+    ]);
+    expect(!check.safe, 'origin not in visible: not safe').toBe(true);
+    expect(check.reason, "origin not in visible: reason='origin'").toBe(
+      'origin',
+    );
+  });
+
+  it('union: origin-anchored legs merge, origin target skipped', () => {
+    const g = makeGraph(
+      [{ id: 'O' }, { id: 'A' }, { id: 'B' }, { id: 'C' }],
+      [
+        ['O', 'A'],
+        ['A', 'B'],
+        ['O', 'C'],
+      ],
+    );
+    const union = unionConnectingPaths(g, 'O', ['B', 'C', 'O']);
+    expect(union !== null, 'union: legs resolve').toBe(true);
+    expect(new Set(union!.nodeIds), 'union: O A B C merged').toEqual(
+      new Set(['O', 'A', 'B', 'C']),
+    );
+  });
+
+  it('union: a diamond keeps both branches and every edge between them', () => {
+    const g = makeGraph(
+      [{ id: 'O' }, { id: 'A' }, { id: 'B' }, { id: 'T' }, { id: 'S' }],
+      [
+        ['O', 'A'],
+        ['O', 'B'],
+        ['A', 'T'],
+        ['B', 'T'],
+        ['O', 'S'],
+      ],
+    );
+    const union = unionConnectingPaths(g, 'O', ['T']);
+    expect(
+      [...union!.nodeIds].sort(),
+      'diamond: both branches, side branch excluded',
+    ).toEqual(['A', 'B', 'O', 'T']);
+    expect(
+      [...union!.edgeIds].sort(),
+      'diamond: all four branch edges',
+    ).toEqual(['A→T', 'B→T', 'O→A', 'O→B']);
+  });
+
+  it('union: an upstream target resolves against the reverse direction', () => {
+    const g = makeGraph(
+      [{ id: 'U' }, { id: 'M1' }, { id: 'M2' }, { id: 'O' }, { id: 'D' }],
+      [
+        ['U', 'M1'],
+        ['U', 'M2'],
+        ['M1', 'O'],
+        ['M2', 'O'],
+        ['O', 'D'],
+      ],
+    );
+    const union = unionConnectingPaths(g, 'O', ['U']);
+    expect(
+      [...union!.nodeIds].sort(),
+      'upstream diamond: both branches',
+    ).toEqual(['M1', 'M2', 'O', 'U']);
+  });
+
+  it('union: a cycle through the origin stays off the route', () => {
+    const g = makeGraph(
+      [{ id: 'P' }, { id: 'O' }, { id: 'C1' }, { id: 'C2' }],
+      [
+        ['P', 'O'],
+        ['O', 'C1'],
+        ['C1', 'C2'],
+        ['C2', 'O'],
+      ],
+    );
+    const union = unionConnectingPaths(g, 'O', ['P']);
+    expect([...union!.nodeIds].sort(), 'cycle: only the P → O route').toEqual([
+      'O',
+      'P',
+    ]);
+    expect([...union!.edgeIds], 'cycle: only the route edge').toEqual(['P→O']);
+  });
+
+  it('union: any unreachable leg fails the whole union', () => {
+    const g = makeGraph([{ id: 'O' }, { id: 'A' }, { id: 'X' }], [['O', 'A']]);
+    expect(
+      unionConnectingPaths(g, 'O', ['A', 'X']) === null,
+      'union: island leg → null',
+    ).toBe(true);
+    expect(
+      unionConnectingPaths(g, 'MISSING', ['A']) === null,
+      'union: missing origin → null',
+    ).toBe(true);
+  });
+
+  it('no-path: disconnected → null', () => {
+    const g = makeGraph([{ id: 'A' }, { id: 'B' }], []); // no edges
+    const result = findShortestPathOrdered(g, 'A', 'B');
+    expect(result === null, 'no-path: disconnected → null').toBe(true);
+  });
+
+  it('forward path: returns the source-to-target path', () => {
+    const g = makeGraph(
+      [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
+      [
+        ['A', 'B'],
+        ['B', 'C'],
+      ],
+    );
+    const result = findShortestPathOrdered(g, 'A', 'C');
+    expect(result !== null, 'forward path: result not null').toBe(true);
+    expect(
+      result!.direction,
+      "forward path: direction='source_to_target'",
+    ).toBe('source_to_target');
+    expect(result!.path[0], 'forward path: starts at A').toBe('A');
+    expect(
+      result!.path[result!.path.length - 1],
+      'forward path: ends at C',
+    ).toBe('C');
+    expect(result!.path.length, 'forward path: length=3 (A-B-C)').toBe(3);
+  });
+
+  it('reverse path: returns the target-to-source path', () => {
+    const g = makeGraph(
+      [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
+      [
+        ['C', 'B'],
+        ['B', 'A'],
+      ],
+    );
+    const result = findShortestPathOrdered(g, 'A', 'C');
+    expect(result !== null, 'reverse path: result not null').toBe(true);
+    expect(
+      result!.direction,
+      "reverse path: direction='target_to_source'",
+    ).toBe('target_to_source');
+    expect(result!.path[0], 'reverse path: starts at C (target)').toBe('C');
+    expect(
+      result!.path[result!.path.length - 1],
+      'reverse path: ends at A (source)',
+    ).toBe('A');
+  });
 });
 
-  it("add: A B C all present", () => {
-  const base = new Set(['A', 'B']);
-  const added = new Set(['C']);
-  const { nodeIds } = buildVisibleTraceScope(base, added, new Set(), []);
-  expect(nodeIds.has('A') && nodeIds.has('B') && nodeIds.has('C'), 'add: A B C all present').toBe(true);
-  expect(nodeIds.size, 'add: exact count 3').toBe(3);
-});
-
-  it("prune: A and C remain", () => {
-  const base = new Set(['A', 'B', 'C']);
-  const pruned = new Set(['B']);
-  const { nodeIds } = buildVisibleTraceScope(base, new Set(), pruned, []);
-  expect(nodeIds.has('A') && nodeIds.has('C'), 'prune: A and C remain').toBe(true);
-  expect(!nodeIds.has('B'), 'prune: B is gone').toBe(true);
-  expect(nodeIds.size, 'prune: exact count 2').toBe(2);
-});
-
-  it("add+prune: a pruned node stays hidden whether it came from base or add", () => {
-  const base = new Set(['A', 'B']);
-  const added = new Set(['C', 'D']);
-  const pruned = new Set(['B', 'C']); // C added then pruned → absent
-  const { nodeIds } = buildVisibleTraceScope(base, added, pruned, []);
-  expect(nodeIds.has('A'), 'add+prune: A present').toBe(true);
-  expect(nodeIds.has('D'), 'add+prune: D present (added, not pruned)').toBe(true);
-  expect(!nodeIds.has('B'), 'add+prune: B absent (base then pruned)').toBe(true);
-  expect(!nodeIds.has('C'), 'add+prune: C absent (added then pruned)').toBe(true);
-  expect(nodeIds.size, 'add+prune: exact count 2').toBe(2);
-});
-
-  it("edge collection: keeps edges with both ends in scope, drops the rest", () => {
-  const base = new Set(['A', 'B', 'C']);
-  const edgeList = edges(['A', 'B'], ['B', 'C'], ['A', 'C'], ['B', 'D']);
-  const { nodeIds, edgeIds } = buildVisibleTraceScope(base, new Set(), new Set(), edgeList);
-  expect(nodeIds.size, 'edge collection: 3 nodes').toBe(3);
-  expect(edgeIds.has('A→B'), 'edge collection: A→B included').toBe(true);
-  expect(edgeIds.has('B→C'), 'edge collection: B→C included').toBe(true);
-  expect(edgeIds.has('A→C'), 'edge collection: A→C included').toBe(true);
-  expect(!edgeIds.has('B→D'), 'edge collection: B→D excluded (D not in scope)').toBe(true);
-  expect(edgeIds.size, 'edge collection: exact 3 edges').toBe(3);
-});
-
-  it("empty node scope → 0 edges", () => {
-  const result = collectScopeEdgeIds(edges(['A', 'B']), new Set());
-  expect(result.size, 'empty node scope → 0 edges').toBe(0);
-});
-
-  it("self-loop included when node in scope", () => {
-  const result = collectScopeEdgeIds(edges(['A', 'A']), new Set(['A']));
-  expect(result.has('A→A'), 'self-loop included when node in scope').toBe(true);
-});
-
-  it("bfsReachable: a chain is reachable end to end", () => {
-  const g = makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['B', 'C']]);
-  const reach = bfsReachable(g, 'A', new Set());
-  expect(reach.has('A') && reach.has('B') && reach.has('C'), 'chain: A B C reachable from A').toBe(true);
-  expect(reach.size, 'chain: exact count 3').toBe(3);
-});
-
-  it("removed B: A still reachable from A (start)", () => {
-  const g = makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['B', 'C']]);
-  const reach = bfsReachable(g, 'A', new Set(['B']));
-  expect(reach.has('A'), 'removed B: A still reachable from A (start)').toBe(true);
-  expect(!reach.has('B'), 'removed B: B not in result').toBe(true);
-  expect(!reach.has('C'), 'removed B: C cut off').toBe(true);
-});
-
-  it("candidateId B excluded", () => {
-  const g = makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['B', 'C']]);
-  const reach = bfsReachable(g, 'A', new Set(), 'B');
-  expect(!reach.has('B'), 'candidateId B excluded').toBe(true);
-  expect(!reach.has('C'), 'C cut off by candidateId exclusion').toBe(true);
-});
-
-  it("scope A+B: both reachable", () => {
-  const g = makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['B', 'C']]);
-  const reach = bfsReachable(g, 'A', new Set(), undefined, new Set(['A', 'B']));
-  expect(reach.has('A') && reach.has('B'), 'scope A+B: both reachable').toBe(true);
-  expect(!reach.has('C'), 'scope A+B: C outside scope, not reached').toBe(true);
-});
-
-  it("analyzeRemoval: bridge removal cuts its subtree", () => {
-  const g = makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['B', 'C']]);
-  const cut = analyzeRemoval(g, {originId:'A',scope:new Set(g.nodes()),removedBefore:new Set(),removedAfter:new Set(['B']),visited:new Set(),sides:['downstream','upstream']}).cutIds;
-  expect(cut, 'analyzeRemoval: C cut, B excluded as removedAfter').toEqual(['C']);
-});
-
-  it("analyzeRemoval: diamond keeps C reachable through the other branch", () => {
-  const g = makeGraph(
-    [{ id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'D' }],
-    [['A', 'B'], ['A', 'D'], ['B', 'C'], ['D', 'C']]
-  );
-  const cut = analyzeRemoval(g, {originId:'A',scope:new Set(g.nodes()),removedBefore:new Set(),removedAfter:new Set(['B']),visited:new Set(),sides:['downstream','upstream']}).cutIds;
-  expect(cut, 'analyzeRemoval: C survives through D').toEqual([]);
-});
-
-  it("analyzeRemoval: keep set excludes an already-visited node from the cut", () => {
-  const g = makeGraph([{ id: 'A' }, { id: 'B' }, { id: 'C' }], [['A', 'B'], ['B', 'C']]);
-  const cut = analyzeRemoval(g, {originId:'A',scope:new Set(g.nodes()),removedBefore:new Set(),removedAfter:new Set(['B']),visited:new Set(['C']),sides:['downstream','upstream']}).cutIds;
-  expect(cut, 'analyzeRemoval: C kept even though it would otherwise be cut').toEqual([]);
-});
-
-  it("origin prune: not safe, reason origin", () => {
-  const g = makeGraph([{ id: 'O' }, { id: 'A' }, { id: 'B' }], [['O', 'A'], ['A', 'B']]);
-  const visible = new Set(['O', 'A', 'B']);
-  const check = canPruneTraceNode(g, 'O', visible, 'O', ['downstream', 'upstream']);
-  expect(!check.safe, 'origin prune: not safe').toBe(true);
-  expect(check.reason, "origin prune: reason='origin'").toBe('origin');
-});
-
-  it("not-visible prune: not safe", () => {
-  const g = makeGraph([{ id: 'O' }, { id: 'A' }], [['O', 'A']]);
-  const visible = new Set(['O', 'A']);
-  const check = canPruneTraceNode(g, 'O', visible, 'HIDDEN', ['downstream', 'upstream']);
-  expect(!check.safe, 'not-visible prune: not safe').toBe(true);
-  expect(check.reason, "not-visible prune: reason='not-visible'").toBe('not-visible');
-});
-
-  it("null origin: not safe", () => {
-  const g = makeGraph([{ id: 'A' }], []);
-  const check = canPruneTraceNode(g, null, new Set(['A']), 'A', ['downstream', 'upstream']);
-  expect(!check.safe, 'null origin: not safe').toBe(true);
-  expect(check.reason, "null origin: reason='origin'").toBe('origin');
-});
-
-  it("bridge prune: self-prune, safe, takes C with it", () => {
-  const g = makeGraph(
-    [{ id: 'O' }, { id: 'B' }, { id: 'C' }],
-    [['O', 'B'], ['B', 'C']]
-  );
-  const visible = new Set(['O', 'B', 'C']);
-  const check = canPruneTraceNode(g, 'O', visible, 'B', ['downstream', 'upstream']);
-  expect(check.safe, 'bridge prune: self-prune is safe, never refused').toBe(true);
-  expect(check.reason === undefined, 'bridge prune: no reason').toBe(true);
-  expect(check.cutNodeIds, 'bridge prune: C leaves with B (its subtree)').toEqual(['C']);
-});
-
-  it("safe leaf prune: safe=true, nothing cut", () => {
-  const g = makeGraph(
-    [{ id: 'O' }, { id: 'A' }, { id: 'B' }],
-    [['O', 'A'], ['O', 'B']]
-  );
-  const visible = new Set(['O', 'A', 'B']);
-  const check = canPruneTraceNode(g, 'O', visible, 'A', ['downstream', 'upstream']);
-  expect(check.safe, 'safe leaf prune: safe=true').toBe(true);
-  expect(check.reason === undefined, 'safe leaf prune: no reason').toBe(true);
-  expect(check.cutNodeIds, 'safe leaf prune: no subtree').toEqual([]);
-});
-
-  it("diamond prune A: safe, nothing cut — C reachable via B", () => {
-  const g = makeGraph(
-    [{ id: 'O' }, { id: 'A' }, { id: 'B' }, { id: 'C' }],
-    [['O', 'A'], ['O', 'B'], ['A', 'C'], ['B', 'C']]
-  );
-  const visible = new Set(['O', 'A', 'B', 'C']);
-  const check = canPruneTraceNode(g, 'O', visible, 'A', ['downstream', 'upstream']);
-  expect(check.safe, 'diamond prune A: safe — C reachable via B').toBe(true);
-  expect(check.cutNodeIds, 'diamond prune A: C survives, nothing cut').toEqual([]);
-});
-
-  it("chain origin→A→B→C plus origin→D: pruning A cuts B and C, D survives", () => {
-  const g = makeGraph(
-    [{ id: 'O' }, { id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'D' }],
-    [['O', 'A'], ['A', 'B'], ['B', 'C'], ['O', 'D']]
-  );
-  const visible = new Set(['O', 'A', 'B', 'C', 'D']);
-  const check = canPruneTraceNode(g, 'O', visible, 'A', ['downstream', 'upstream']);
-  expect(check.safe, 'chain prune A: safe').toBe(true);
-  expect(new Set(check.cutNodeIds), 'chain prune A: cuts [B, C]').toEqual(new Set(['B', 'C']));
-  expect(check.cutNodeIds?.length, 'chain prune A: exactly 2 cut').toBe(2);
-
-  const remaining = new Set(visible);
-  remaining.delete('A');
-  for (const id of check.cutNodeIds ?? []) remaining.delete(id);
-  const stillReachable = bfsReachable(g, 'O', new Set(['A', ...(check.cutNodeIds ?? [])]));
-  for (const id of remaining) {
-    expect(stillReachable.has(id), `no island: ${id} stays reachable from origin after prune+cut`).toBe(true);
-  }
-});
-
-  it("manually added co-parent leaves with the only node it hangs on", () => {
-  // O→N traced downstream; M→N was added with the + control (no directed support from O).
-  const g = makeGraph([{ id: 'O' }, { id: 'N' }, { id: 'M' }], [['O', 'N'], ['M', 'N']]);
-  const check = canPruneTraceNode(g, 'O', new Set(['O', 'N', 'M']), 'N', ['downstream']);
-  expect(check.safe).toBe(true);
-  expect(check.cutNodeIds, 'M would be stranded without N').toEqual(['M']);
-});
-
-  it("manually added sibling chain leaves with the cut branch that carries it", () => {
-  // O→A→B traced downstream; S (S→B) and then T (T→S) were added by hand.
-  const g = makeGraph(
-    [{ id: 'O' }, { id: 'A' }, { id: 'B' }, { id: 'S' }, { id: 'T' }],
-    [['O', 'A'], ['A', 'B'], ['S', 'B'], ['T', 'S']],
-  );
-  const check = canPruneTraceNode(g, 'O', new Set(['O', 'A', 'B', 'S', 'T']), 'A', ['downstream']);
-  expect(new Set(check.cutNodeIds)).toEqual(new Set(['B', 'S', 'T']));
-});
-
-  it("manually added node with another visible link survives the prune", () => {
-  const g = makeGraph(
-    [{ id: 'O' }, { id: 'N' }, { id: 'K' }, { id: 'M' }],
-    [['O', 'N'], ['O', 'K'], ['M', 'N'], ['M', 'K']],
-  );
-  const check = canPruneTraceNode(g, 'O', new Set(['O', 'N', 'K', 'M']), 'N', ['downstream']);
-  expect(check.cutNodeIds).toEqual([]);
-});
-
-  it("a node already disconnected before the prune is not swept into an unrelated cut", () => {
-  const g = makeGraph([{ id: 'O' }, { id: 'N' }, { id: 'Z' }], [['O', 'N']]);
-  const check = canPruneTraceNode(g, 'O', new Set(['O', 'N', 'Z']), 'N', ['downstream']);
-  expect(check.cutNodeIds).toEqual([]);
-});
-
-  it("origin not in visible: not safe", () => {
-  const g = makeGraph([{ id: 'O' }, { id: 'A' }], [['O', 'A']]);
-  const visible = new Set(['A']);
-  const check = canPruneTraceNode(g, 'O', visible, 'A', ['downstream', 'upstream']);
-  expect(!check.safe, 'origin not in visible: not safe').toBe(true);
-  expect(check.reason, "origin not in visible: reason='origin'").toBe('origin');
-});
-
-  it("union: origin-anchored legs merge, origin target skipped", () => {
-  const g = makeGraph(
-    [{ id: 'O' }, { id: 'A' }, { id: 'B' }, { id: 'C' }],
-    [['O', 'A'], ['A', 'B'], ['O', 'C']]
-  );
-  const union = unionConnectingPaths(g, 'O', ['B', 'C', 'O']);
-  expect(union !== null, 'union: legs resolve').toBe(true);
-  expect(new Set(union!.nodeIds), 'union: O A B C merged').toEqual(new Set(['O', 'A', 'B', 'C']));
-});
-
-  it("union: a diamond keeps both branches and every edge between them", () => {
-  const g = makeGraph(
-    [{ id: 'O' }, { id: 'A' }, { id: 'B' }, { id: 'T' }, { id: 'S' }],
-    [['O', 'A'], ['O', 'B'], ['A', 'T'], ['B', 'T'], ['O', 'S']]
-  );
-  const union = unionConnectingPaths(g, 'O', ['T']);
-  expect([...union!.nodeIds].sort(), 'diamond: both branches, side branch excluded').toEqual(['A', 'B', 'O', 'T']);
-  expect([...union!.edgeIds].sort(), 'diamond: all four branch edges').toEqual(['A→T', 'B→T', 'O→A', 'O→B']);
-});
-
-  it("union: an upstream target resolves against the reverse direction", () => {
-  const g = makeGraph(
-    [{ id: 'U' }, { id: 'M1' }, { id: 'M2' }, { id: 'O' }, { id: 'D' }],
-    [['U', 'M1'], ['U', 'M2'], ['M1', 'O'], ['M2', 'O'], ['O', 'D']]
-  );
-  const union = unionConnectingPaths(g, 'O', ['U']);
-  expect([...union!.nodeIds].sort(), 'upstream diamond: both branches').toEqual(['M1', 'M2', 'O', 'U']);
-});
-
-  it("union: a cycle through the origin stays off the route", () => {
-  const g = makeGraph(
-    [{ id: 'P' }, { id: 'O' }, { id: 'C1' }, { id: 'C2' }],
-    [['P', 'O'], ['O', 'C1'], ['C1', 'C2'], ['C2', 'O']]
-  );
-  const union = unionConnectingPaths(g, 'O', ['P']);
-  expect([...union!.nodeIds].sort(), 'cycle: only the P → O route').toEqual(['O', 'P']);
-  expect([...union!.edgeIds], 'cycle: only the route edge').toEqual(['P→O']);
-});
-
-  it("union: any unreachable leg fails the whole union", () => {
-  const g = makeGraph([{ id: 'O' }, { id: 'A' }, { id: 'X' }], [['O', 'A']]);
-  expect(unionConnectingPaths(g, 'O', ['A', 'X']) === null, 'union: island leg → null').toBe(true);
-  expect(unionConnectingPaths(g, 'MISSING', ['A']) === null, 'union: missing origin → null').toBe(true);
-});
-
-  it("no-path: disconnected → null", () => {
-  const g = makeGraph([{ id: 'A' }, { id: 'B' }], []); // no edges
-  const result = findShortestPathOrdered(g, 'A', 'B');
-  expect(result === null, 'no-path: disconnected → null').toBe(true);
-});
-
-  it("forward path: returns the source-to-target path", () => {
-  const g = makeGraph(
-    [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
-    [['A', 'B'], ['B', 'C']]
-  );
-  const result = findShortestPathOrdered(g, 'A', 'C');
-  expect(result !== null, 'forward path: result not null').toBe(true);
-  expect(result!.direction, "forward path: direction='source_to_target'").toBe('source_to_target');
-  expect(result!.path[0], 'forward path: starts at A').toBe('A');
-  expect(result!.path[result!.path.length - 1], 'forward path: ends at C').toBe('C');
-  expect(result!.path.length, 'forward path: length=3 (A-B-C)').toBe(3);
-});
-
-  it("reverse path: returns the target-to-source path", () => {
-  const g = makeGraph(
-    [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
-    [['C', 'B'], ['B', 'A']]
-  );
-  const result = findShortestPathOrdered(g, 'A', 'C');
-  expect(result !== null, 'reverse path: result not null').toBe(true);
-  expect(result!.direction, "reverse path: direction='target_to_source'").toBe('target_to_source');
-  expect(result!.path[0], 'reverse path: starts at C (target)').toBe('C');
-  expect(result!.path[result!.path.length - 1], 'reverse path: ends at A (source)').toBe('A');
-});
-
-});
-
-describe("isManualTraceScopeEdit", () => {
+describe('isManualTraceScopeEdit', () => {
   function baseState(overrides: Partial<TraceState> = {}): TraceState {
     return {
       mode: 'applied',
@@ -343,188 +615,317 @@ describe("isManualTraceScopeEdit", () => {
     };
   }
 
-  it("identical states, no manual delta: false (nothing to preserve viewport for)", () => {
-  const previous = baseState();
-  const next = baseState();
-  expect(isManualTraceScopeEdit(previous, next), 'identical states: false').toBe(false);
-});
+  it('identical states, no manual delta: false (nothing to preserve viewport for)', () => {
+    const previous = baseState();
+    const next = baseState();
+    expect(
+      isManualTraceScopeEdit(previous, next),
+      'identical states: false',
+    ).toBe(false);
+  });
 
   it("previous.mode='none': false (non-editable previous mode short-circuits)", () => {
-  const previous = baseState({ mode: 'none' });
-  const next = baseState({ manualAddedNodeIds: new Set(['C']) });
-  expect(isManualTraceScopeEdit(previous, next), "previous.mode='none': false").toBe(false);
-});
+    const previous = baseState({ mode: 'none' });
+    const next = baseState({ manualAddedNodeIds: new Set(['C']) });
+    expect(
+      isManualTraceScopeEdit(previous, next),
+      "previous.mode='none': false",
+    ).toBe(false);
+  });
 
   it("previous.mode='configuring': false (non-editable previous mode)", () => {
-  const previous = baseState({ mode: 'configuring' });
-  const next = baseState({ manualAddedNodeIds: new Set(['C']) });
-  expect(isManualTraceScopeEdit(previous, next), "previous.mode='configuring': false").toBe(false);
-});
+    const previous = baseState({ mode: 'configuring' });
+    const next = baseState({ manualAddedNodeIds: new Set(['C']) });
+    expect(
+      isManualTraceScopeEdit(previous, next),
+      "previous.mode='configuring': false",
+    ).toBe(false);
+  });
 
   it("previous.mode='pathfinding': false (non-editable previous mode)", () => {
-  const previous = baseState({ mode: 'pathfinding' });
-  const next = baseState({ mode: 'pathfinding', manualAddedNodeIds: new Set(['C']) });
-  expect(isManualTraceScopeEdit(previous, next), "previous.mode='pathfinding': false").toBe(false);
-});
+    const previous = baseState({ mode: 'pathfinding' });
+    const next = baseState({
+      mode: 'pathfinding',
+      manualAddedNodeIds: new Set(['C']),
+    });
+    expect(
+      isManualTraceScopeEdit(previous, next),
+      "previous.mode='pathfinding': false",
+    ).toBe(false);
+  });
 
   it("previous.mode='path-applied': false (non-editable previous mode)", () => {
-  const previous = baseState({ mode: 'path-applied' });
-  const next = baseState({ mode: 'path-applied', manualAddedNodeIds: new Set(['C']) });
-  expect(isManualTraceScopeEdit(previous, next), "previous.mode='path-applied': false").toBe(false);
-});
+    const previous = baseState({ mode: 'path-applied' });
+    const next = baseState({
+      mode: 'path-applied',
+      manualAddedNodeIds: new Set(['C']),
+    });
+    expect(
+      isManualTraceScopeEdit(previous, next),
+      "previous.mode='path-applied': false",
+    ).toBe(false);
+  });
 
   it("previous.mode='analysis': false (non-editable previous mode)", () => {
-  const previous = baseState({ mode: 'analysis' });
-  const next = baseState({ mode: 'analysis', manualAddedNodeIds: new Set(['C']) });
-  expect(isManualTraceScopeEdit(previous, next), "previous.mode='analysis': false").toBe(false);
-});
+    const previous = baseState({ mode: 'analysis' });
+    const next = baseState({
+      mode: 'analysis',
+      manualAddedNodeIds: new Set(['C']),
+    });
+    expect(
+      isManualTraceScopeEdit(previous, next),
+      "previous.mode='analysis': false",
+    ).toBe(false);
+  });
 
   it("next.mode='none': false (non-editable next mode short-circuits)", () => {
-  const previous = baseState();
-  const next = baseState({ mode: 'none', manualAddedNodeIds: new Set(['C']) });
-  expect(isManualTraceScopeEdit(previous, next), "next.mode='none': false").toBe(false);
-});
+    const previous = baseState();
+    const next = baseState({
+      mode: 'none',
+      manualAddedNodeIds: new Set(['C']),
+    });
+    expect(
+      isManualTraceScopeEdit(previous, next),
+      "next.mode='none': false",
+    ).toBe(false);
+  });
 
   it("next.mode='analysis': false (non-editable next mode)", () => {
-  const previous = baseState();
-  const next = baseState({ mode: 'analysis', manualAddedNodeIds: new Set(['C']) });
-  expect(isManualTraceScopeEdit(previous, next), "next.mode='analysis': false").toBe(false);
-});
+    const previous = baseState();
+    const next = baseState({
+      mode: 'analysis',
+      manualAddedNodeIds: new Set(['C']),
+    });
+    expect(
+      isManualTraceScopeEdit(previous, next),
+      "next.mode='analysis': false",
+    ).toBe(false);
+  });
 
   it("mode 'applied' -> 'filtered', otherwise identical: false (both editable, no manual delta)", () => {
-  const previous = baseState({ mode: 'applied' });
-  const next = baseState({ mode: 'filtered' });
-  expect(isManualTraceScopeEdit(previous, next), "mode transition, no manual delta: false").toBe(false);
-});
+    const previous = baseState({ mode: 'applied' });
+    const next = baseState({ mode: 'filtered' });
+    expect(
+      isManualTraceScopeEdit(previous, next),
+      'mode transition, no manual delta: false',
+    ).toBe(false);
+  });
 
   it("mode 'filtered' -> 'applied', with manual add delta: true (both editable)", () => {
-  const previous = baseState({ mode: 'filtered' });
-  const next = baseState({ mode: 'applied', manualAddedNodeIds: new Set(['C']) });
-  expect(isManualTraceScopeEdit(previous, next), "mode transition, with manual delta: true").toBe(true);
-});
-
-  it("selectedNodeId differs: false (origin change is not a manual scope edit)", () => {
-  const previous = baseState({ selectedNodeId: 'ORIGIN' });
-  const next = baseState({ selectedNodeId: 'OTHER', manualAddedNodeIds: new Set(['C']) });
-  expect(isManualTraceScopeEdit(previous, next), 'selectedNodeId differs: false').toBe(false);
-});
-
-  it("selectedNodeId null vs non-null: false", () => {
-  const previous = baseState({ selectedNodeId: null });
-  const next = baseState({ selectedNodeId: 'ORIGIN' });
-  expect(isManualTraceScopeEdit(previous, next), 'selectedNodeId null vs non-null: false').toBe(false);
-});
-
-  it("targetNodeId differs: false (pathfinding target change is not a manual scope edit)", () => {
-  const previous = baseState({ targetNodeId: null });
-  const next = baseState({ targetNodeId: 'TARGET', manualAddedNodeIds: new Set(['C']) });
-  expect(isManualTraceScopeEdit(previous, next), 'targetNodeId differs: false').toBe(false);
-});
-
-  it("upstreamLevels differs: false (depth change is not a manual scope edit)", () => {
-  const previous = baseState({ upstreamLevels: 2 });
-  const next = baseState({ upstreamLevels: 3, manualAddedNodeIds: new Set(['C']) });
-  expect(isManualTraceScopeEdit(previous, next), 'upstreamLevels differs: false').toBe(false);
-});
-
-  it("downstreamLevels differs: false (depth change is not a manual scope edit)", () => {
-  const previous = baseState({ downstreamLevels: 2 });
-  const next = baseState({ downstreamLevels: 3, manualAddedNodeIds: new Set(['C']) });
-  expect(isManualTraceScopeEdit(previous, next), 'downstreamLevels differs: false').toBe(false);
-});
-
-  it("autoPromoted differs (false -> true): false (promotion is a fresh scope, not a manual edit)", () => {
-  const previous = baseState({ autoPromoted: false });
-  const next = baseState({ autoPromoted: true, manualAddedNodeIds: new Set(['C']) });
-  expect(isManualTraceScopeEdit(previous, next), 'autoPromoted false->true: false').toBe(false);
-});
-
-  it("autoPromoted differs (undefined -> true): false (strict !== treats missing as distinct from true)", () => {
-  const previous = baseState({ autoPromoted: undefined });
-  const next = baseState({ autoPromoted: true, manualAddedNodeIds: new Set(['C']) });
-  expect(isManualTraceScopeEdit(previous, next), 'autoPromoted undefined->true: false').toBe(false);
-});
-
-  it("autoPromoted same on both sides (undefined): true when manual delta present", () => {
-  const previous = baseState({ autoPromoted: undefined });
-  const next = baseState({ autoPromoted: undefined, manualAddedNodeIds: new Set(['C']) });
-  expect(isManualTraceScopeEdit(previous, next), 'autoPromoted undefined on both sides: true').toBe(true);
-});
-
-  it("baseNodeIds differs (fresh BFS scope): false, even with a manual delta present", () => {
-  const previous = baseState({ baseNodeIds: new Set(['ORIGIN', 'A', 'B']) });
-  const next = baseState({
-    baseNodeIds: new Set(['ORIGIN', 'A', 'B', 'D']),
-    manualAddedNodeIds: new Set(['C']),
+    const previous = baseState({ mode: 'filtered' });
+    const next = baseState({
+      mode: 'applied',
+      manualAddedNodeIds: new Set(['C']),
+    });
+    expect(
+      isManualTraceScopeEdit(previous, next),
+      'mode transition, with manual delta: true',
+    ).toBe(true);
   });
-  expect(isManualTraceScopeEdit(previous, next), 'baseNodeIds differs: false').toBe(false);
-});
 
-  it("baseNodeIds same size, different membership: false (sameIdSet checks membership, not just size)", () => {
-  const previous = baseState({ baseNodeIds: new Set(['ORIGIN', 'A', 'B']) });
-  const next = baseState({
-    baseNodeIds: new Set(['ORIGIN', 'A', 'D']),
-    manualAddedNodeIds: new Set(['C']),
+  it('selectedNodeId differs: false (origin change is not a manual scope edit)', () => {
+    const previous = baseState({ selectedNodeId: 'ORIGIN' });
+    const next = baseState({
+      selectedNodeId: 'OTHER',
+      manualAddedNodeIds: new Set(['C']),
+    });
+    expect(
+      isManualTraceScopeEdit(previous, next),
+      'selectedNodeId differs: false',
+    ).toBe(false);
   });
-  expect(isManualTraceScopeEdit(previous, next), 'baseNodeIds same size, different membership: false').toBe(false);
-});
 
-  it("baseEdgeIds differs (fresh BFS scope): false, even with a manual delta present", () => {
-  const previous = baseState({ baseEdgeIds: new Set(['ORIGIN→A', 'A→B']) });
-  const next = baseState({
-    baseEdgeIds: new Set(['ORIGIN→A']),
-    manualAddedNodeIds: new Set(['C']),
+  it('selectedNodeId null vs non-null: false', () => {
+    const previous = baseState({ selectedNodeId: null });
+    const next = baseState({ selectedNodeId: 'ORIGIN' });
+    expect(
+      isManualTraceScopeEdit(previous, next),
+      'selectedNodeId null vs non-null: false',
+    ).toBe(false);
   });
-  expect(isManualTraceScopeEdit(previous, next), 'baseEdgeIds differs: false').toBe(false);
-});
 
-  it("manualAddedNodeIds differs, manualPrunedNodeIds identical: true", () => {
-  const previous = baseState({ manualAddedNodeIds: new Set() });
-  const next = baseState({ manualAddedNodeIds: new Set(['C']) });
-  expect(isManualTraceScopeEdit(previous, next), 'manualAddedNodeIds differs: true').toBe(true);
-});
-
-  it("manualPrunedNodeIds differs, manualAddedNodeIds identical: true", () => {
-  const previous = baseState({ manualPrunedNodeIds: new Set() });
-  const next = baseState({ manualPrunedNodeIds: new Set(['A']) });
-  expect(isManualTraceScopeEdit(previous, next), 'manualPrunedNodeIds differs: true').toBe(true);
-});
-
-  it("manualAddedNodeIds AND manualPrunedNodeIds both differ: true", () => {
-  const previous = baseState({ manualAddedNodeIds: new Set(), manualPrunedNodeIds: new Set() });
-  const next = baseState({
-    manualAddedNodeIds: new Set(['C']),
-    manualPrunedNodeIds: new Set(['A']),
+  it('targetNodeId differs: false (pathfinding target change is not a manual scope edit)', () => {
+    const previous = baseState({ targetNodeId: null });
+    const next = baseState({
+      targetNodeId: 'TARGET',
+      manualAddedNodeIds: new Set(['C']),
+    });
+    expect(
+      isManualTraceScopeEdit(previous, next),
+      'targetNodeId differs: false',
+    ).toBe(false);
   });
-  expect(isManualTraceScopeEdit(previous, next), 'manualAdded and manualPruned both differ: true').toBe(true);
-});
 
-  it("manualAddedNodeIds same size, different membership: true (sameIdSet checks membership)", () => {
-  const previous = baseState({ manualAddedNodeIds: new Set(['C']) });
-  const next = baseState({ manualAddedNodeIds: new Set(['D']) });
-  expect(isManualTraceScopeEdit(previous, next), 'manualAddedNodeIds same size, different membership: true').toBe(true);
-});
-
-  it("all compared fields identical (both manual sets non-empty but unchanged): false", () => {
-  const previous = baseState({
-    manualAddedNodeIds: new Set(['C']),
-    manualPrunedNodeIds: new Set(['A']),
+  it('upstreamLevels differs: false (depth change is not a manual scope edit)', () => {
+    const previous = baseState({ upstreamLevels: 2 });
+    const next = baseState({
+      upstreamLevels: 3,
+      manualAddedNodeIds: new Set(['C']),
+    });
+    expect(
+      isManualTraceScopeEdit(previous, next),
+      'upstreamLevels differs: false',
+    ).toBe(false);
   });
-  const next = baseState({
-    manualAddedNodeIds: new Set(['C']),
-    manualPrunedNodeIds: new Set(['A']),
-  });
-  expect(isManualTraceScopeEdit(previous, next), 'no manual delta despite non-empty sets: false').toBe(false);
-});
 
+  it('downstreamLevels differs: false (depth change is not a manual scope edit)', () => {
+    const previous = baseState({ downstreamLevels: 2 });
+    const next = baseState({
+      downstreamLevels: 3,
+      manualAddedNodeIds: new Set(['C']),
+    });
+    expect(
+      isManualTraceScopeEdit(previous, next),
+      'downstreamLevels differs: false',
+    ).toBe(false);
+  });
+
+  it('autoPromoted differs (false -> true): false (promotion is a fresh scope, not a manual edit)', () => {
+    const previous = baseState({ autoPromoted: false });
+    const next = baseState({
+      autoPromoted: true,
+      manualAddedNodeIds: new Set(['C']),
+    });
+    expect(
+      isManualTraceScopeEdit(previous, next),
+      'autoPromoted false->true: false',
+    ).toBe(false);
+  });
+
+  it('autoPromoted differs (undefined -> true): false (strict !== treats missing as distinct from true)', () => {
+    const previous = baseState({ autoPromoted: undefined });
+    const next = baseState({
+      autoPromoted: true,
+      manualAddedNodeIds: new Set(['C']),
+    });
+    expect(
+      isManualTraceScopeEdit(previous, next),
+      'autoPromoted undefined->true: false',
+    ).toBe(false);
+  });
+
+  it('autoPromoted same on both sides (undefined): true when manual delta present', () => {
+    const previous = baseState({ autoPromoted: undefined });
+    const next = baseState({
+      autoPromoted: undefined,
+      manualAddedNodeIds: new Set(['C']),
+    });
+    expect(
+      isManualTraceScopeEdit(previous, next),
+      'autoPromoted undefined on both sides: true',
+    ).toBe(true);
+  });
+
+  it('baseNodeIds differs (fresh BFS scope): false, even with a manual delta present', () => {
+    const previous = baseState({ baseNodeIds: new Set(['ORIGIN', 'A', 'B']) });
+    const next = baseState({
+      baseNodeIds: new Set(['ORIGIN', 'A', 'B', 'D']),
+      manualAddedNodeIds: new Set(['C']),
+    });
+    expect(
+      isManualTraceScopeEdit(previous, next),
+      'baseNodeIds differs: false',
+    ).toBe(false);
+  });
+
+  it('baseNodeIds same size, different membership: false (sameIdSet checks membership, not just size)', () => {
+    const previous = baseState({ baseNodeIds: new Set(['ORIGIN', 'A', 'B']) });
+    const next = baseState({
+      baseNodeIds: new Set(['ORIGIN', 'A', 'D']),
+      manualAddedNodeIds: new Set(['C']),
+    });
+    expect(
+      isManualTraceScopeEdit(previous, next),
+      'baseNodeIds same size, different membership: false',
+    ).toBe(false);
+  });
+
+  it('baseEdgeIds differs (fresh BFS scope): false, even with a manual delta present', () => {
+    const previous = baseState({ baseEdgeIds: new Set(['ORIGIN→A', 'A→B']) });
+    const next = baseState({
+      baseEdgeIds: new Set(['ORIGIN→A']),
+      manualAddedNodeIds: new Set(['C']),
+    });
+    expect(
+      isManualTraceScopeEdit(previous, next),
+      'baseEdgeIds differs: false',
+    ).toBe(false);
+  });
+
+  it('manualAddedNodeIds differs, manualPrunedNodeIds identical: true', () => {
+    const previous = baseState({ manualAddedNodeIds: new Set() });
+    const next = baseState({ manualAddedNodeIds: new Set(['C']) });
+    expect(
+      isManualTraceScopeEdit(previous, next),
+      'manualAddedNodeIds differs: true',
+    ).toBe(true);
+  });
+
+  it('manualPrunedNodeIds differs, manualAddedNodeIds identical: true', () => {
+    const previous = baseState({ manualPrunedNodeIds: new Set() });
+    const next = baseState({ manualPrunedNodeIds: new Set(['A']) });
+    expect(
+      isManualTraceScopeEdit(previous, next),
+      'manualPrunedNodeIds differs: true',
+    ).toBe(true);
+  });
+
+  it('manualAddedNodeIds AND manualPrunedNodeIds both differ: true', () => {
+    const previous = baseState({
+      manualAddedNodeIds: new Set(),
+      manualPrunedNodeIds: new Set(),
+    });
+    const next = baseState({
+      manualAddedNodeIds: new Set(['C']),
+      manualPrunedNodeIds: new Set(['A']),
+    });
+    expect(
+      isManualTraceScopeEdit(previous, next),
+      'manualAdded and manualPruned both differ: true',
+    ).toBe(true);
+  });
+
+  it('manualAddedNodeIds same size, different membership: true (sameIdSet checks membership)', () => {
+    const previous = baseState({ manualAddedNodeIds: new Set(['C']) });
+    const next = baseState({ manualAddedNodeIds: new Set(['D']) });
+    expect(
+      isManualTraceScopeEdit(previous, next),
+      'manualAddedNodeIds same size, different membership: true',
+    ).toBe(true);
+  });
+
+  it('all compared fields identical (both manual sets non-empty but unchanged): false', () => {
+    const previous = baseState({
+      manualAddedNodeIds: new Set(['C']),
+      manualPrunedNodeIds: new Set(['A']),
+    });
+    const next = baseState({
+      manualAddedNodeIds: new Set(['C']),
+      manualPrunedNodeIds: new Set(['A']),
+    });
+    expect(
+      isManualTraceScopeEdit(previous, next),
+      'no manual delta despite non-empty sets: false',
+    ).toBe(false);
+  });
 });
 
 describe('buildTraceScopeGraph', () => {
   function node(name: string): LineageNode {
-    return { id: `[dbo].[${name}]`, schema: 'dbo', name, fullName: `[dbo].[${name}]`, type: 'table' };
+    return {
+      id: `[dbo].[${name}]`,
+      schema: 'dbo',
+      name,
+      fullName: `[dbo].[${name}]`,
+      type: 'table',
+    };
   }
   function edge(source: string, target: string): LineageEdge {
-    return { source: `[dbo].[${source}]`, target: `[dbo].[${target}]`, type: 'body' };
+    return {
+      source: `[dbo].[${source}]`,
+      target: `[dbo].[${target}]`,
+      type: 'body',
+    };
   }
   const model: DatabaseModel = {
     nodes: [node('A'), node('B'), node('C'), node('D')],
@@ -535,8 +936,14 @@ describe('buildTraceScopeGraph', () => {
   };
 
   it('keeps only scope members and internal edges', () => {
-    const graph = buildTraceScopeGraph(model, new Set(['[dbo].[A]', '[dbo].[B]']));
-    expect(graph.hasNode('[dbo].[A]') && graph.hasNode('[dbo].[B]'), 'scope members present').toBe(true);
+    const graph = buildTraceScopeGraph(
+      model,
+      new Set(['[dbo].[A]', '[dbo].[B]']),
+    );
+    expect(
+      graph.hasNode('[dbo].[A]') && graph.hasNode('[dbo].[B]'),
+      'scope members present',
+    ).toBe(true);
     expect(!graph.hasNode('[dbo].[C]'), 'out-of-scope node absent').toBe(true);
     expect(graph.order, 'exact node count 2').toBe(2);
     expect(graph.size, 'only the internal edge survives').toBe(1);
@@ -547,7 +954,14 @@ describe('buildTraceScopeGraph', () => {
     const graph = buildTraceScopeGraph(model, scope);
     const union = unionConnectingPaths(graph, '[dbo].[A]', ['[dbo].[C]']);
     expect(union, 'in-scope leg unions').not.toBeNull();
-    expect([...union!.nodeIds].sort(), 'union path nodes').toEqual(['[dbo].[A]', '[dbo].[B]', '[dbo].[C]']);
-    expect(unionConnectingPaths(graph, '[dbo].[A]', ['[dbo].[D]']), 'out-of-scope leg fails').toBeNull();
+    expect([...union!.nodeIds].sort(), 'union path nodes').toEqual([
+      '[dbo].[A]',
+      '[dbo].[B]',
+      '[dbo].[C]',
+    ]);
+    expect(
+      unionConnectingPaths(graph, '[dbo].[A]', ['[dbo].[D]']),
+      'out-of-scope leg fails',
+    ).toBeNull();
   });
 });

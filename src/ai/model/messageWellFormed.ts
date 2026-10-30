@@ -1,11 +1,20 @@
 /** Full-array structural validation of a model-bound message history. */
-import { AIMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages';
+import {
+  AIMessage,
+  ToolMessage,
+  type BaseMessage,
+} from '@langchain/core/messages';
 import { InternalInvariantError } from '../support/internalInvariant';
 
 /** Thrown when a message array would be rejected by the provider for a tool-pairing mismatch. */
 class MessageEnvelopeInvariantError extends InternalInvariantError {
-  constructor(public readonly reason: string, public readonly snapshot: string) {
-    super(`Message envelope invariant violated: ${reason} | snapshot=${snapshot}`);
+  constructor(
+    public readonly reason: string,
+    public readonly snapshot: string,
+  ) {
+    super(
+      `Message envelope invariant violated: ${reason} | snapshot=${snapshot}`,
+    );
     this.name = 'MessageEnvelopeInvariantError';
   }
 }
@@ -16,19 +25,23 @@ function tailId(id: string | undefined): string {
 
 /** Compact role + tool-id dump for diagnostics; call ids are tail-truncated, content omitted. */
 function snapshotMessages(messages: readonly BaseMessage[]): string {
-  return messages.map((message, index) => {
-    if (AIMessage.isInstance(message) && message.tool_calls?.length) {
-      return `[${index}]ai{${message.tool_calls.map((call) => `c:${tailId(call.id)}`).join(',')}}`;
-    }
-    if (ToolMessage.isInstance(message)) {
-      return `[${index}]tool{r:${tailId(message.tool_call_id)}}`;
-    }
-    return `[${index}]${message.getType()}`;
-  }).join(' ');
+  return messages
+    .map((message, index) => {
+      if (AIMessage.isInstance(message) && message.tool_calls?.length) {
+        return `[${index}]ai{${message.tool_calls.map((call) => `c:${tailId(call.id)}`).join(',')}}`;
+      }
+      if (ToolMessage.isInstance(message)) {
+        return `[${index}]tool{r:${tailId(message.tool_call_id)}}`;
+      }
+      return `[${index}]${message.getType()}`;
+    })
+    .join(' ');
 }
 
 /** Verifies every tool message answers a tool call on the nearest preceding assistant message. */
-export function assertToolPairingWellFormed(messages: readonly BaseMessage[]): void {
+export function assertToolPairingWellFormed(
+  messages: readonly BaseMessage[],
+): void {
   for (let i = 0; i < messages.length; i++) {
     const message = messages[i];
     if (!ToolMessage.isInstance(message)) continue;
@@ -41,7 +54,9 @@ export function assertToolPairingWellFormed(messages: readonly BaseMessage[]): v
         snapshotMessages(messages),
       );
     }
-    const callIds = new Set((assistant.tool_calls ?? []).map((call) => call.id));
+    const callIds = new Set(
+      (assistant.tool_calls ?? []).map((call) => call.id),
+    );
     if (!callIds.has(message.tool_call_id)) {
       throw new MessageEnvelopeInvariantError(
         `tool_call_id="${tailId(message.tool_call_id)}" at messages[${i}] has no matching tool call on messages[${anchor}]`,

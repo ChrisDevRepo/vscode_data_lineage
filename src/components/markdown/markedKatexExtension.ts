@@ -32,14 +32,20 @@ const blockRule = /^(\${1,2})\n((?:\\[^]|[^\\])+?)\n\1(?:\n|$)/;
 type MarkedKatexOptions = KatexOptions;
 
 function htmlAttributeEncodeValue(value: string): string {
-  return value.replace(/[<>"'&]/g, ch => {
+  return value.replace(/[<>"'&]/g, (ch) => {
     switch (ch) {
-      case '<': return '&lt;';
-      case '>': return '&gt;';
-      case '"': return '&quot;';
-      case '\'': return '&apos;';
-      case '&': return '&amp;';
-      default: return ch;
+      case '<':
+        return '&lt;';
+      case '>':
+        return '&gt;';
+      case '"':
+        return '&quot;';
+      case "'":
+        return '&apos;';
+      case '&':
+        return '&amp;';
+      default:
+        return ch;
     }
   });
 }
@@ -66,7 +72,9 @@ function createRenderer(
   };
 }
 
-function inlineKatex(renderer: RendererExtensionFunction): TokenizerAndRendererExtension {
+function inlineKatex(
+  renderer: RendererExtensionFunction,
+): TokenizerAndRendererExtension {
   return {
     name: 'inlineKatex',
     level: 'inline',
@@ -91,7 +99,9 @@ function inlineKatex(renderer: RendererExtensionFunction): TokenizerAndRendererE
   };
 }
 
-function blockKatex(renderer: RendererExtensionFunction): TokenizerAndRendererExtension {
+function blockKatex(
+  renderer: RendererExtensionFunction,
+): TokenizerAndRendererExtension {
   return {
     name: 'blockKatex',
     level: 'block',

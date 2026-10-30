@@ -23,7 +23,6 @@ import {
 } from '../../../src/engine/shared/bridgeContract';
 import { stripSensitiveFields } from '../../../src/engine/connectionManager';
 
-
 const dacpacConn: DacpacConnection = {
   type: 'dacpac',
   path: '/data/AdventureWorks.dacpac',
@@ -44,62 +43,140 @@ const dbConn: DatabaseConnection = {
   schemas: ['dbo', 'Sales'],
 };
 
-
 describe('migrateProjectStore', () => {
-  it.each([false, true])('retains the project when an optional view is malformed (valid siblings: %s)', (withValidViews) => {
-    const valid: FilterProfile = {
-      id: 'valid-view', name: 'Case-sensitive view', createdAt: '2026-01-01',
-      filter: serializeFilter({ ...sampleFilter, allowlistNodeIds: new Set(['[Sales].[Orders]', '[sales].[Orders]']) }),
-    };
-    const profiles = withValidViews ? [valid, { ...valid, id: 42 }, { ...valid, id: 'empty-view', filter: { ...valid.filter, allowlistNodeIds: [] } }] : [{ ...valid, id: 42 }];
-    const project = { ...createProject('Retained project', dacpacConn), filterProfiles: profiles };
-    const reports: ProjectStoreDropReport[] = [];
-    const store = migrateProjectStore({ schemaVersion: 1, projects: [project], lastOpenedId: project.id }, report => reports.push(report));
-    expect(store.projects).toHaveLength(1);
-    expect(store.lastOpenedId).toBe(project.id);
-    expect(store.projects[0].filterProfiles).toEqual(withValidViews ? [valid, profiles[2]] : []);
-    expect(reports).toEqual([{ dropped: 0, droppedViews: 1, issuePaths: ['filterProfiles'] }]);
-    expect(profiles[withValidViews ? 1 : 0].id).toBe(42);
-  });
+  it.each([false, true])(
+    'retains the project when an optional view is malformed (valid siblings: %s)',
+    (withValidViews) => {
+      const valid: FilterProfile = {
+        id: 'valid-view',
+        name: 'Case-sensitive view',
+        createdAt: '2026-01-01',
+        filter: serializeFilter({
+          ...sampleFilter,
+          allowlistNodeIds: new Set(['[Sales].[Orders]', '[sales].[Orders]']),
+        }),
+      };
+      const profiles = withValidViews
+        ? [
+            valid,
+            { ...valid, id: 42 },
+            {
+              ...valid,
+              id: 'empty-view',
+              filter: { ...valid.filter, allowlistNodeIds: [] },
+            },
+          ]
+        : [{ ...valid, id: 42 }];
+      const project = {
+        ...createProject('Retained project', dacpacConn),
+        filterProfiles: profiles,
+      };
+      const reports: ProjectStoreDropReport[] = [];
+      const store = migrateProjectStore(
+        { schemaVersion: 1, projects: [project], lastOpenedId: project.id },
+        (report) => reports.push(report),
+      );
+      expect(store.projects).toHaveLength(1);
+      expect(store.lastOpenedId).toBe(project.id);
+      expect(store.projects[0].filterProfiles).toEqual(
+        withValidViews ? [valid, profiles[2]] : [],
+      );
+      expect(reports).toEqual([
+        { dropped: 0, droppedViews: 1, issuePaths: ['filterProfiles'] },
+      ]);
+      expect(profiles[withValidViews ? 1 : 0].id).toBe(42);
+    },
+  );
 
   it('returns empty store for invalid inputs', () => {
     for (const input of [
-      null, undefined, 'string-value',
+      null,
+      undefined,
+      'string-value',
       { schemaVersion: 99, projects: [], lastOpenedId: null },
       { schemaVersion: 1, projects: 'oops', lastOpenedId: null },
     ]) {
       const s = migrateProjectStore(input);
-      expect(s.schemaVersion, `schemaVersion 1 for ${JSON.stringify(input)}`).toBe(1);
-      expect(s.projects.length, `no projects for ${JSON.stringify(input)}`).toBe(0);
+      expect(
+        s.schemaVersion,
+        `schemaVersion 1 for ${JSON.stringify(input)}`,
+      ).toBe(1);
+      expect(
+        s.projects.length,
+        `no projects for ${JSON.stringify(input)}`,
+      ).toBe(0);
     }
   });
 
   it('preserves valid v1 data for both connection types', () => {
     const projD = createProject('AW', dacpacConn);
-    const sD = migrateProjectStore({ schemaVersion: 1, projects: [projD], lastOpenedId: projD.id });
+    const sD = migrateProjectStore({
+      schemaVersion: 1,
+      projects: [projD],
+      lastOpenedId: projD.id,
+    });
     expect(sD.projects.length, 'dacpac: one project').toBe(1);
     expect(sD.projects[0].id, 'dacpac: id preserved').toBe(projD.id);
     expect(sD.lastOpenedId, 'dacpac: lastOpenedId preserved').toBe(projD.id);
     const projDb = createProject('DB', dbConn);
-    const sDb = migrateProjectStore({ schemaVersion: 1, projects: [projDb], lastOpenedId: null });
+    const sDb = migrateProjectStore({
+      schemaVersion: 1,
+      projects: [projDb],
+      lastOpenedId: null,
+    });
     expect(sDb.projects.length, 'database: one project').toBe(1);
     const c = sDb.projects[0].connection as DatabaseConnection;
-    expect(c.sourceName, 'database: sourceName preserved').toBe(dbConn.sourceName);
+    expect(c.sourceName, 'database: sourceName preserved').toBe(
+      dbConn.sourceName,
+    );
   });
 
   it('keeps the saved wizard view and drops an unknown one', () => {
-    expect(migrateProjectStore({ schemaVersion: 1, projects: [], lastOpenedId: null, lastWizardView: 'projects' }).lastWizardView)
-      .toBe('projects');
-    expect(migrateProjectStore({ schemaVersion: 1, projects: [], lastOpenedId: null, lastWizardView: 'gallery' }))
-      .not.toHaveProperty('lastWizardView');
+    expect(
+      migrateProjectStore({
+        schemaVersion: 1,
+        projects: [],
+        lastOpenedId: null,
+        lastWizardView: 'projects',
+      }).lastWizardView,
+    ).toBe('projects');
+    expect(
+      migrateProjectStore({
+        schemaVersion: 1,
+        projects: [],
+        lastOpenedId: null,
+        lastWizardView: 'gallery',
+      }),
+    ).not.toHaveProperty('lastWizardView');
   });
 
   it('filters out malformed project entries', () => {
     const valid = createProject('OK', dacpacConn);
-    const badNoId = { name: 'Missing id', createdAt: 'x', updatedAt: 'x', connection: dacpacConn };
-    const badConnType = { id: 'x', name: 'Bad conn', createdAt: 'x', updatedAt: 'x', connection: { type: 'ftp', host: 'foo' } };
-    const badNoPath = { id: 'bad', name: 'Bad', createdAt: 'x', updatedAt: 'x', connection: { type: 'dacpac', displayName: 'AW', schemas: [] } };
-    const raw = { schemaVersion: 1, projects: [valid, badNoId, badConnType, badNoPath], lastOpenedId: null };
+    const badNoId = {
+      name: 'Missing id',
+      createdAt: 'x',
+      updatedAt: 'x',
+      connection: dacpacConn,
+    };
+    const badConnType = {
+      id: 'x',
+      name: 'Bad conn',
+      createdAt: 'x',
+      updatedAt: 'x',
+      connection: { type: 'ftp', host: 'foo' },
+    };
+    const badNoPath = {
+      id: 'bad',
+      name: 'Bad',
+      createdAt: 'x',
+      updatedAt: 'x',
+      connection: { type: 'dacpac', displayName: 'AW', schemas: [] },
+    };
+    const raw = {
+      schemaVersion: 1,
+      projects: [valid, badNoId, badConnType, badNoPath],
+      lastOpenedId: null,
+    };
     const s = migrateProjectStore(raw);
     expect(s.projects.length, 'only valid project retained').toBe(1);
     expect(s.projects[0].id, 'valid project preserved').toBe(valid.id);
@@ -113,12 +190,20 @@ describe('migrateProjectStore', () => {
       updatedAt: 'x',
       connection: {
         type: 'database',
-        connectionInfo: { server: 'corp-sql', database: 'Warehouse', authenticationType: 'Integrated' },
+        connectionInfo: {
+          server: 'corp-sql',
+          database: 'Warehouse',
+          authenticationType: 'Integrated',
+        },
         sourceName: 'Warehouse (corp-sql)',
         schemas: ['dbo'],
       },
     };
-    const s = migrateProjectStore({ schemaVersion: 1, projects: [legacy], lastOpenedId: 'legacy-int' });
+    const s = migrateProjectStore({
+      schemaVersion: 1,
+      projects: [legacy],
+      lastOpenedId: 'legacy-int',
+    });
     expect(s.projects.length, 'integrated-auth project survives').toBe(1);
     const c = s.projects[0].connection as DatabaseConnection;
     expect(c.connectionInfo.server, 'server preserved').toBe('corp-sql');
@@ -134,13 +219,25 @@ describe('migrateProjectStore', () => {
       updatedAt: 'x',
       connection: {
         type: 'database',
-        connectionInfo: { server: 'srv', database: 'DB', user: 'sa', authenticationType: 'SqlLogin', port: '1433' },
+        connectionInfo: {
+          server: 'srv',
+          database: 'DB',
+          user: 'sa',
+          authenticationType: 'SqlLogin',
+          port: '1433',
+        },
         sourceName: 'DB (srv)',
         schemas: ['dbo'],
       },
     };
-    const s = migrateProjectStore({ schemaVersion: 1, projects: [legacy], lastOpenedId: null });
-    expect(s.projects.length, 'string-port project survives validation').toBe(1);
+    const s = migrateProjectStore({
+      schemaVersion: 1,
+      projects: [legacy],
+      lastOpenedId: null,
+    });
+    expect(s.projects.length, 'string-port project survives validation').toBe(
+      1,
+    );
     const c = s.projects[0].connection as DatabaseConnection;
     expect(c.connectionInfo.port, 'port coerced to number').toBe(1433);
   });
@@ -160,52 +257,102 @@ describe('migrateProjectStore', () => {
         },
       },
     };
-    const s = migrateProjectStore({ schemaVersion: 1, projects: [wide], lastOpenedId: null });
-    expect(s.projects.length, 'legacy live-database project survives upgrade').toBe(1);
+    const s = migrateProjectStore({
+      schemaVersion: 1,
+      projects: [wide],
+      lastOpenedId: null,
+    });
+    expect(
+      s.projects.length,
+      'legacy live-database project survives upgrade',
+    ).toBe(1);
     const c = s.projects[0].connection as DatabaseConnection;
-    expect(c.connectionInfo.server, 'declared fields preserved').toBe(dbConn.connectionInfo.server);
-    expect(Object.keys(c.connectionInfo), 'undeclared fields stripped').not.toContain('applicationName');
+    expect(c.connectionInfo.server, 'declared fields preserved').toBe(
+      dbConn.connectionInfo.server,
+    );
+    expect(
+      Object.keys(c.connectionInfo),
+      'undeclared fields stripped',
+    ).not.toContain('applicationName');
   });
 
   it('keeps a project whose saved views carry unknown keys at every nested level', () => {
     const project = createProject('Views', dacpacConn);
     const withViews = {
       ...project,
-      filterProfiles: [{
-        id: 'view-1',
-        name: 'AI View',
-        createdAt: '2026-01-01T00:00:00.000Z',
-        source: 'ai',
-        filter: { ...serializeFilter(sampleFilter), futureFilterFlag: true },
-        positions: { '[dbo].[FactSales]': { x: 1, y: 2, z: 3 } },
-        viewport: { x: 0, y: 0, zoom: 1, futureViewportField: 'x' },
-        aiMetadata: {
+      filterProfiles: [
+        {
+          id: 'view-1',
+          name: 'AI View',
           createdAt: '2026-01-01T00:00:00.000Z',
-          modelName: 'Test Model',
-          highlightGroups: [{ label: 'Sources', color: 'source', nodeIds: ['[dbo].[FactSales]'], futureGroupField: 1 }],
-          badges: [{ nodeId: '[dbo].[FactSales]', text: '1 Source', futureBadgeField: 1 }],
-          notes: [{ nodeId: '[dbo].[FactSales]', text: 'note', futureNoteField: 1 }],
-          columnAspect: {
-            edges: [{
-              hopNode: '[dbo].[FactSales]',
-              fromNode: '[dbo].[DimDate]',
-              toNode: '[dbo].[FactSales]',
-              fromCol: 'DateKey',
-              toCol: 'DateKey',
-              futureEdgeField: 1,
-            }],
+          source: 'ai',
+          filter: { ...serializeFilter(sampleFilter), futureFilterFlag: true },
+          positions: { '[dbo].[FactSales]': { x: 1, y: 2, z: 3 } },
+          viewport: { x: 0, y: 0, zoom: 1, futureViewportField: 'x' },
+          aiMetadata: {
+            createdAt: '2026-01-01T00:00:00.000Z',
+            modelName: 'Test Model',
+            highlightGroups: [
+              {
+                label: 'Sources',
+                color: 'source',
+                nodeIds: ['[dbo].[FactSales]'],
+                futureGroupField: 1,
+              },
+            ],
+            badges: [
+              {
+                nodeId: '[dbo].[FactSales]',
+                text: '1 Source',
+                futureBadgeField: 1,
+              },
+            ],
+            notes: [
+              { nodeId: '[dbo].[FactSales]', text: 'note', futureNoteField: 1 },
+            ],
+            columnAspect: {
+              edges: [
+                {
+                  hopNode: '[dbo].[FactSales]',
+                  fromNode: '[dbo].[DimDate]',
+                  toNode: '[dbo].[FactSales]',
+                  fromCol: 'DateKey',
+                  toCol: 'DateKey',
+                  futureEdgeField: 1,
+                },
+              ],
+            },
           },
         },
-      }],
+      ],
     };
-    const s = migrateProjectStore({ schemaVersion: 1, projects: [withViews], lastOpenedId: null });
-    expect(s.projects.length, 'project with an unrecognised view field survives').toBe(1);
+    const s = migrateProjectStore({
+      schemaVersion: 1,
+      projects: [withViews],
+      lastOpenedId: null,
+    });
+    expect(
+      s.projects.length,
+      'project with an unrecognised view field survives',
+    ).toBe(1);
     const profile = s.projects[0].filterProfiles?.[0];
     expect(profile?.name, 'saved view retained').toBe('AI View');
-    expect(profile ? 'positions' in profile : false, 'saved node positions are dropped on read').toBe(false);
-    expect(profile ? 'viewport' in profile : false, 'viewport is no longer a declared field, dropped on read').toBe(false);
-    expect(Object.keys(profile?.aiMetadata?.badges[0] ?? {}), 'badge fields stripped').toEqual(['nodeId', 'text']);
-    expect(profile?.aiMetadata?.columnAspect?.edges[0].toCol, 'column-trace edge retained').toBe('DateKey');
+    expect(
+      profile ? 'positions' in profile : false,
+      'saved node positions are dropped on read',
+    ).toBe(false);
+    expect(
+      profile ? 'viewport' in profile : false,
+      'viewport is no longer a declared field, dropped on read',
+    ).toBe(false);
+    expect(
+      Object.keys(profile?.aiMetadata?.badges[0] ?? {}),
+      'badge fields stripped',
+    ).toEqual(['nodeId', 'text']);
+    expect(
+      profile?.aiMetadata?.columnAspect?.edges[0].toCol,
+      'column-trace edge retained',
+    ).toBe('DateKey');
   });
 
   it('drops project whose connectionInfo is not an object', () => {
@@ -214,20 +361,33 @@ describe('migrateProjectStore', () => {
       name: 'Malformed DB',
       createdAt: 'x',
       updatedAt: 'x',
-      connection: { type: 'database', connectionInfo: 'not-an-object', sourceName: 'x', schemas: [] },
+      connection: {
+        type: 'database',
+        connectionInfo: 'not-an-object',
+        sourceName: 'x',
+        schemas: [],
+      },
     };
     const valid = createProject('OK', dbConn);
-    const s = migrateProjectStore({ schemaVersion: 1, projects: [malformed, valid], lastOpenedId: null });
+    const s = migrateProjectStore({
+      schemaVersion: 1,
+      projects: [malformed, valid],
+      lastOpenedId: null,
+    });
     expect(s.projects.length, 'only the valid project retained').toBe(1);
     expect(s.projects[0].id, 'malformed connectionInfo dropped').toBe(valid.id);
   });
 });
 
-
 describe('migrateProjectStore drop reporting', () => {
   it('reports the dropped count and offending field paths', () => {
     const valid = createProject('OK', dacpacConn);
-    const badNoId = { name: 'Missing id', createdAt: 'x', updatedAt: 'x', connection: dacpacConn };
+    const badNoId = {
+      name: 'Missing id',
+      createdAt: 'x',
+      updatedAt: 'x',
+      connection: dacpacConn,
+    };
     const leaked = {
       ...createProject('Unsafe', dbConn),
       connection: {
@@ -237,15 +397,27 @@ describe('migrateProjectStore drop reporting', () => {
     };
     const reports: ProjectStoreDropReport[] = [];
     const s = migrateProjectStore(
-      { schemaVersion: 1, projects: [valid, badNoId, leaked], lastOpenedId: null },
+      {
+        schemaVersion: 1,
+        projects: [valid, badNoId, leaked],
+        lastOpenedId: null,
+      },
       (report) => reports.push(report),
     );
 
     expect(s.projects.length, 'valid and strippable projects retained').toBe(2);
     expect(reports.length, 'reported once for the whole store').toBe(1);
-    expect(reports[0].dropped, 'only the record missing a required field counted').toBe(1);
-    expect(reports[0].issuePaths, 'missing id reported by path').toContain('id');
-    expect(reports[0].issuePaths.join('|'), 'no field values leaked').not.toContain('secret');
+    expect(
+      reports[0].dropped,
+      'only the record missing a required field counted',
+    ).toBe(1);
+    expect(reports[0].issuePaths, 'missing id reported by path').toContain(
+      'id',
+    );
+    expect(
+      reports[0].issuePaths.join('|'),
+      'no field values leaked',
+    ).not.toContain('secret');
     const stripped = s.projects.find((p) => p.name === 'Unsafe');
     expect(
       Object.keys((stripped!.connection as DatabaseConnection).connectionInfo),
@@ -255,7 +427,10 @@ describe('migrateProjectStore drop reporting', () => {
 
   it('does not report when every project is valid', () => {
     const reports: ProjectStoreDropReport[] = [];
-    const projects = [createProject('A', dacpacConn), createProject('B', dbConn)];
+    const projects = [
+      createProject('A', dacpacConn),
+      createProject('B', dbConn),
+    ];
     const s = migrateProjectStore(
       { schemaVersion: 1, projects, lastOpenedId: null },
       (report) => reports.push(report),
@@ -268,14 +443,20 @@ describe('migrateProjectStore drop reporting', () => {
   it('reports records abandoned by an unknown schema version', () => {
     const reports: ProjectStoreDropReport[] = [];
     const s = migrateProjectStore(
-      { schemaVersion: 99, projects: [createProject('A', dacpacConn)], lastOpenedId: null },
+      {
+        schemaVersion: 99,
+        projects: [createProject('A', dacpacConn)],
+        lastOpenedId: null,
+      },
       (report) => reports.push(report),
     );
 
     expect(s.projects.length, 'store reset').toBe(0);
     expect(reports.length, 'abandonment reported').toBe(1);
     expect(reports[0].dropped, 'abandoned record counted').toBe(1);
-    expect(reports[0].issuePaths, 'cause identified').toEqual(['schemaVersion']);
+    expect(reports[0].issuePaths, 'cause identified').toEqual([
+      'schemaVersion',
+    ]);
   });
 });
 
@@ -298,26 +479,45 @@ describe('stripSensitiveFields → persisted shape', () => {
     expect(stored).not.toHaveProperty('password');
     expect(stored).not.toHaveProperty('connectionString');
     expect(JSON.stringify(stored)).not.toContain('hunter2');
-    for (const key of ['applicationName', 'connectTimeout', 'persistSecurityInfo', 'multipleActiveResultSets']) {
+    for (const key of [
+      'applicationName',
+      'connectTimeout',
+      'persistSecurityInfo',
+      'multipleActiveResultSets',
+    ]) {
       expect(stored, `${key} must not be persisted`).not.toHaveProperty(key);
     }
     const parsed = StoredConnectionInfoSchema.safeParse(stored);
-    expect(parsed.success, parsed.success ? '' : JSON.stringify(parsed.error.issues)).toBe(true);
+    expect(
+      parsed.success,
+      parsed.success ? '' : JSON.stringify(parsed.error.issues),
+    ).toBe(true);
     const expected = {
-      server: 'sql.example.net', database: 'AdventureWorks', authenticationType: 'Integrated', port: 1433,
+      server: 'sql.example.net',
+      database: 'AdventureWorks',
+      authenticationType: 'Integrated',
+      port: 1433,
     };
     expect(stored).toEqual(expected);
     const project = createProject('Live', {
-      type: 'database', connectionInfo: stored, sourceName: 'sql.example.net / AdventureWorks', schemas: ['dbo'],
+      type: 'database',
+      connectionInfo: stored,
+      sourceName: 'sql.example.net / AdventureWorks',
+      schemas: ['dbo'],
     });
     let report: ProjectStoreDropReport | undefined;
     const store = migrateProjectStore(
       { schemaVersion: 1, projects: [project], lastOpenedId: project.id },
-      (r) => { report = r; },
+      (r) => {
+        report = r;
+      },
     );
     expect(report, 'no project may be dropped').toBeUndefined();
     expect(store.projects).toHaveLength(1);
-    expect(store.projects[0].connection).toMatchObject({ type: 'database', connectionInfo: expected });
+    expect(store.projects[0].connection).toMatchObject({
+      type: 'database',
+      connectionInfo: expected,
+    });
     expect(stored.server).toBe('sql.example.net');
     expect(stored.database).toBe('AdventureWorks');
     expect(stored.authenticationType).toBe('Integrated');
@@ -336,38 +536,93 @@ describe('stripSensitiveFields → persisted shape', () => {
 describe('retired stored connection provider marker', () => {
   const base = { server: 'sql.example.net', database: 'AdventureWorks' };
 
-  it.each(['builtIn', 'mssqlExtension'])('a record saved with provider %s loads without it and is sendable and savable again', (provider) => {
-    const saved = {
-      id: 'p-old', name: 'Old', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
-      connection: {
-        type: 'database', sourceName: 'sql.example.net / AdventureWorks', schemas: ['dbo'],
-        connectionInfo: { ...base, authenticationType: 'sqlLogin', user: 'sa', provider, connectionId: 'c-1' },
-      },
-    };
-    const reports: ProjectStoreDropReport[] = [];
-    const store = migrateProjectStore({ schemaVersion: 1, projects: [saved], lastOpenedId: 'p-old' }, (r) => reports.push(r));
+  it.each(['builtIn', 'mssqlExtension'])(
+    'a record saved with provider %s loads without it and is sendable and savable again',
+    (provider) => {
+      const saved = {
+        id: 'p-old',
+        name: 'Old',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+        connection: {
+          type: 'database',
+          sourceName: 'sql.example.net / AdventureWorks',
+          schemas: ['dbo'],
+          connectionInfo: {
+            ...base,
+            authenticationType: 'sqlLogin',
+            user: 'sa',
+            provider,
+            connectionId: 'c-1',
+          },
+        },
+      };
+      const reports: ProjectStoreDropReport[] = [];
+      const store = migrateProjectStore(
+        { schemaVersion: 1, projects: [saved], lastOpenedId: 'p-old' },
+        (r) => reports.push(r),
+      );
 
-    expect(reports).toEqual([]);
-    expect(store.projects).toHaveLength(1);
-    const connection = store.projects[0].connection;
-    expect(connection.type === 'database' && connection.connectionInfo).toEqual({
-      ...base, authenticationType: 'sqlLogin', user: 'sa', connectionId: 'c-1',
-    });
-    expect(ExtensionToWebviewMsgSchema.safeParse({ type: 'projects-list', projects: store.projects, lastOpenedId: 'p-old' }).success).toBe(true);
-    expect(MainPanelToExtensionMsgSchema.safeParse({ type: 'save-project', project: store.projects[0] }).success).toBe(true);
-  });
+      expect(reports).toEqual([]);
+      expect(store.projects).toHaveLength(1);
+      const connection = store.projects[0].connection;
+      expect(
+        connection.type === 'database' && connection.connectionInfo,
+      ).toEqual({
+        ...base,
+        authenticationType: 'sqlLogin',
+        user: 'sa',
+        connectionId: 'c-1',
+      });
+      expect(
+        ExtensionToWebviewMsgSchema.safeParse({
+          type: 'projects-list',
+          projects: store.projects,
+          lastOpenedId: 'p-old',
+        }).success,
+      ).toBe(true);
+      expect(
+        MainPanelToExtensionMsgSchema.safeParse({
+          type: 'save-project',
+          project: store.projects[0],
+        }).success,
+      ).toBe(true);
+    },
+  );
 
-  it.each(['builtIn', 'mssqlExtension'])('a legacy workspace record with provider %s migrates without it', (provider) => {
-    expect(stripSensitiveFields({ ...base, user: 'sa', provider })).toEqual({ ...base, user: 'sa' });
-  });
+  it.each(['builtIn', 'mssqlExtension'])(
+    'a legacy workspace record with provider %s migrates without it',
+    (provider) => {
+      expect(stripSensitiveFields({ ...base, user: 'sa', provider })).toEqual({
+        ...base,
+        user: 'sa',
+      });
+    },
+  );
 
   it('the strict write and IPC schema no longer declares provider, and its other rules are unchanged', () => {
-    expect(StoredConnectionInfoSchema.safeParse({ ...base, authenticationType: 'sqlLogin', user: 'sa', connectionId: 'c-1', port: '1444', encrypt: true }).success).toBe(true);
+    expect(
+      StoredConnectionInfoSchema.safeParse({
+        ...base,
+        authenticationType: 'sqlLogin',
+        user: 'sa',
+        connectionId: 'c-1',
+        port: '1444',
+        encrypt: true,
+      }).success,
+    ).toBe(true);
     for (const provider of ['builtIn', 'mssqlExtension', 'carrierPigeon']) {
-      expect(StoredConnectionInfoSchema.safeParse({ ...base, provider }).success).toBe(false);
+      expect(
+        StoredConnectionInfoSchema.safeParse({ ...base, provider }).success,
+      ).toBe(false);
     }
-    expect(StoredConnectionInfoSchema.safeParse({ ...base, password: 'x' }).success).toBe(false);
-    expect(StoredConnectionInfoSchema.safeParse({ server: 'sql.example.net' }).success).toBe(false);
+    expect(
+      StoredConnectionInfoSchema.safeParse({ ...base, password: 'x' }).success,
+    ).toBe(false);
+    expect(
+      StoredConnectionInfoSchema.safeParse({ server: 'sql.example.net' })
+        .success,
+    ).toBe(false);
   });
 });
 
@@ -382,7 +637,8 @@ describe('project bridge contract', () => {
     });
 
     expect(parsed.type).toBe('projects-list');
-    if (parsed.type !== 'projects-list') throw new Error('Expected projects-list message');
+    if (parsed.type !== 'projects-list')
+      throw new Error('Expected projects-list message');
     expect(parsed.projects[0]).toEqual(project);
   });
 
@@ -402,7 +658,6 @@ describe('project bridge contract', () => {
     expect(parsed.success).toBe(false);
   });
 });
-
 
 describe('bookmark view-shape fields', () => {
   const baseProfile = (extra: Partial<FilterProfile>): FilterProfile => ({
@@ -424,11 +679,18 @@ describe('bookmark view-shape fields', () => {
   it('a profile carrying the view shape round-trips through save, persistence read, and projects-list', () => {
     const profile = baseProfile({
       graphMode: 'overview',
-      expandedSchemaView: { focusNodeId: null, expandedSchemas: ['Sales', 'dbo'] },
+      expandedSchemaView: {
+        focusNodeId: null,
+        expandedSchemas: ['Sales', 'dbo'],
+      },
       showExpandedSchemaClusters: false,
     });
 
-    const saved = MainPanelToExtensionMsgSchema.safeParse({ type: 'save-view', projectId: 'p1', profile });
+    const saved = MainPanelToExtensionMsgSchema.safeParse({
+      type: 'save-view',
+      projectId: 'p1',
+      profile,
+    });
     expect(saved.success).toBe(true);
 
     const project = createProject('AW', dacpacConn);
@@ -450,20 +712,30 @@ describe('bookmark view-shape fields', () => {
 
   it('a 1.0.3-shaped profile without view-shape fields loads and re-saves unchanged', () => {
     const legacy = baseProfile({});
-    const project = { ...createProject('AW', dacpacConn), filterProfiles: [legacy] };
+    const project = {
+      ...createProject('AW', dacpacConn),
+      filterProfiles: [legacy],
+    };
 
-    const reloaded = migrateProjectStore({ schemaVersion: 1, projects: [project], lastOpenedId: project.id });
+    const reloaded = migrateProjectStore({
+      schemaVersion: 1,
+      projects: [project],
+      lastOpenedId: project.id,
+    });
     const restored = reloaded.projects[0].filterProfiles?.[0];
     expect(restored).toEqual(legacy);
     expect(restored).not.toHaveProperty('graphMode');
     expect(restored).not.toHaveProperty('expandedSchemaView');
     expect(restored).not.toHaveProperty('showExpandedSchemaClusters');
 
-    const resaved = MainPanelToExtensionMsgSchema.safeParse({ type: 'save-view', projectId: project.id, profile: restored });
+    const resaved = MainPanelToExtensionMsgSchema.safeParse({
+      type: 'save-view',
+      projectId: project.id,
+      profile: restored,
+    });
     expect(resaved.success).toBe(true);
   });
 });
-
 
 const sampleFilter: FilterState = {
   schemas: new Set(['dbo', 'Sales']),
@@ -477,12 +749,25 @@ const sampleFilter: FilterState = {
 };
 
 describe('serializeFilter / deserializeFilter', () => {
-  it.each([undefined, [], ['[Sales].[Orders]', '[sales].[Orders]']].map(ids => ({ ids })))('preserves scope presence and exact IDs: $ids', ({ ids }) => {
-    const filter = { ...sampleFilter, ...(ids === undefined ? {} : { allowlistNodeIds: new Set(ids) }) };
-    const serialized = JSON.parse(JSON.stringify(serializeFilter(filter))) as SerializedFilterState;
+  it.each(
+    [undefined, [], ['[Sales].[Orders]', '[sales].[Orders]']].map((ids) => ({
+      ids,
+    })),
+  )('preserves scope presence and exact IDs: $ids', ({ ids }) => {
+    const filter = {
+      ...sampleFilter,
+      ...(ids === undefined ? {} : { allowlistNodeIds: new Set(ids) }),
+    };
+    const serialized = JSON.parse(
+      JSON.stringify(serializeFilter(filter)),
+    ) as SerializedFilterState;
     expect(serialized.allowlistNodeIds).toEqual(ids);
     const restored = deserializeFilter(serialized);
-    expect(restored.allowlistNodeIds === undefined ? undefined : [...restored.allowlistNodeIds]).toEqual(ids);
+    expect(
+      restored.allowlistNodeIds === undefined
+        ? undefined
+        : [...restored.allowlistNodeIds],
+    ).toEqual(ids);
   });
 
   it('roundtrip: serialize then deserialize preserves all fields', () => {
@@ -490,7 +775,9 @@ describe('serializeFilter / deserializeFilter', () => {
     expect(Array.isArray(s.schemas), 'schemas is array').toBe(true);
     expect(Array.isArray(s.types), 'types is array').toBe(true);
     const restored = deserializeFilter(s);
-    expect(restored.schemas instanceof Set, 'schemas restored to Set').toBe(true);
+    expect(restored.schemas instanceof Set, 'schemas restored to Set').toBe(
+      true,
+    );
     expect(restored.types instanceof Set, 'types restored to Set').toBe(true);
     expect(restored.schemas.has('dbo'), 'dbo in schemas').toBe(true);
     expect(restored.schemas.has('Sales'), 'Sales in schemas').toBe(true);
@@ -499,17 +786,31 @@ describe('serializeFilter / deserializeFilter', () => {
     expect(restored.hideIsolated, 'hideIsolated roundtrip').toBe(false);
     expect(restored.focusSchemas.has('dbo'), 'dbo in focusSchemas').toBe(true);
     expect(restored.showExternalRefs, 'showExternalRefs roundtrip').toBe(true);
-    expect(restored.externalRefTypes.has('file'), 'file in externalRefTypes').toBe(true);
-    expect(restored.exclusionPatterns.length, 'exclusionPatterns count').toBe(2);
-    expect(restored.exclusionPatterns[0], 'first exclusionPattern').toBe('%tmp%');
+    expect(
+      restored.externalRefTypes.has('file'),
+      'file in externalRefTypes',
+    ).toBe(true);
+    expect(restored.exclusionPatterns.length, 'exclusionPatterns count').toBe(
+      2,
+    );
+    expect(restored.exclusionPatterns[0], 'first exclusionPattern').toBe(
+      '%tmp%',
+    );
   });
 
   it('deserializeFilter defaults exclusionPatterns when absent', () => {
     const s: SerializedFilterState = {
-      schemas: ['dbo'], types: ['table'], searchTerm: '', hideIsolated: false,
-      focusSchemas: [], showExternalRefs: true, externalRefTypes: [],
+      schemas: ['dbo'],
+      types: ['table'],
+      searchTerm: '',
+      hideIsolated: false,
+      focusSchemas: [],
+      showExternalRefs: true,
+      externalRefTypes: [],
     };
     const restored = deserializeFilter(s);
-    expect(restored.exclusionPatterns.length, 'defaults to empty array').toBe(0);
+    expect(restored.exclusionPatterns.length, 'defaults to empty array').toBe(
+      0,
+    );
   });
 });

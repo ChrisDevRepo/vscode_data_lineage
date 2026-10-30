@@ -24,7 +24,9 @@ export function resolveNodeHighlightStyle(
   const isYellow = highlighted === 'yellow';
   const highlightColor = aiHighlight
     ? aiHighlight.color
-    : isYellow ? 'var(--ln-highlight-yellow)' : 'var(--ln-highlight-blue)';
+    : isYellow
+      ? 'var(--ln-highlight-yellow)'
+      : 'var(--ln-highlight-blue)';
   const boxShadow = isYellow
     ? '0 0 0 4px var(--ln-highlight-yellow-glow), 0 8px 20px var(--ln-highlight-yellow-shadow)'
     : aiHighlight

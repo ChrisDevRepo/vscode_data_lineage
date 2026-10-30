@@ -14,7 +14,8 @@ export default defineConfig({
   base: './',
   build: {
     // The webview CSP permits fonts from its asset source, so fonts must remain files.
-    assetsInlineLimit: (filePath) => /\.(?:woff2?|ttf|otf)$/i.test(filePath) ? false : undefined,
+    assetsInlineLimit: (filePath) =>
+      /\.(?:woff2?|ttf|otf)$/i.test(filePath) ? false : undefined,
     // Webview only runs in VS Code's current-Electron Chromium; a modern target
     // keeps the bundler from down-leveling natively-supported syntax (e.g. destructuring).
     target: 'es2022',
@@ -28,8 +29,14 @@ export default defineConfig({
         assetFileNames: `assets/[name].[ext]`,
         codeSplitting: {
           groups: [
-            { name: 'flow-vendor', test: /node_modules[\\/]@xyflow[\\/]react[\\/]/ },
-            { name: 'monaco-vendor', test: /node_modules[\\/]monaco-editor[\\/]/ },
+            {
+              name: 'flow-vendor',
+              test: /node_modules[\\/]@xyflow[\\/]react[\\/]/,
+            },
+            {
+              name: 'monaco-vendor',
+              test: /node_modules[\\/]monaco-editor[\\/]/,
+            },
           ],
         },
       },

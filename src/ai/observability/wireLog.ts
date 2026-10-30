@@ -47,7 +47,11 @@ export type WireEvent =
       readonly type: 'wire-request';
       readonly messages: readonly WireMessage[];
       /** Tools offered on the request. */
-      readonly tools: ReadonlyArray<{ readonly name: string; readonly descriptionHash: string; readonly inputSchema: unknown }>;
+      readonly tools: ReadonlyArray<{
+        readonly name: string;
+        readonly descriptionHash: string;
+        readonly inputSchema: unknown;
+      }>;
       /** `LanguageModelChatToolMode` integer, absent when the request carries no tools. */
       readonly toolMode?: number;
       /** The verbatim system instruction, captured only while the trace runs verbose. */
@@ -106,10 +110,16 @@ export type WireRecord = WireEvent & {
 };
 
 /** The per-generation measurement row: model identity, stop reason, latency, and usage. */
-export type GenerationRecord = Extract<WireRecord, { readonly type: 'generation' }>;
+export type GenerationRecord = Extract<
+  WireRecord,
+  { readonly type: 'generation' }
+>;
 
 /** One verbatim provider HTTP body, emitted only while the trace runs verbose. */
-export type ProviderRawRecord = Extract<WireRecord, { readonly type: 'provider-raw' }>;
+export type ProviderRawRecord = Extract<
+  WireRecord,
+  { readonly type: 'provider-raw' }
+>;
 
 /** Digests one system instruction into the stable identifier the non-verbose trace records. */
 export function systemPromptHash(system: string): string {
@@ -131,15 +141,16 @@ export function safeTraceStringify(value: unknown): string {
 function toJsonSafeValue(value: unknown, ancestors: Set<object>): unknown {
   if (typeof value === 'bigint') return `[BigInt:${value.toString()}]`;
   if (
-    value === null
-    || typeof value === 'string'
-    || typeof value === 'number'
-    || typeof value === 'boolean'
-    || value === undefined
+    value === null ||
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    value === undefined
   ) {
     return value;
   }
-  if (typeof value === 'symbol' || typeof value === 'function') return String(value);
+  if (typeof value === 'symbol' || typeof value === 'function')
+    return String(value);
   if (typeof value !== 'object') return String(value);
   if (ancestors.has(value)) return '[Circular]';
 
@@ -150,7 +161,9 @@ function toJsonSafeValue(value: unknown, ancestors: Set<object>): unknown {
     }
 
     if (value instanceof Date) {
-      return Number.isNaN(value.getTime()) ? '[Invalid Date]' : value.toISOString();
+      return Number.isNaN(value.getTime())
+        ? '[Invalid Date]'
+        : value.toISOString();
     }
     if (value instanceof Map) {
       return {
@@ -161,7 +174,9 @@ function toJsonSafeValue(value: unknown, ancestors: Set<object>): unknown {
       };
     }
     if (value instanceof Set) {
-      return { '[Set]': [...value].map((entry) => toJsonSafeValue(entry, ancestors)) };
+      return {
+        '[Set]': [...value].map((entry) => toJsonSafeValue(entry, ancestors)),
+      };
     }
 
     const result: Record<string, unknown> = {};
@@ -173,9 +188,13 @@ function toJsonSafeValue(value: unknown, ancestors: Set<object>): unknown {
     }
     for (const key of keys) {
       try {
-        result[key] = toJsonSafeValue((value as Record<string, unknown>)[key], ancestors);
+        result[key] = toJsonSafeValue(
+          (value as Record<string, unknown>)[key],
+          ancestors,
+        );
       } catch (error) {
-        result[key] = `[Unserializable:${error instanceof Error ? error.name : 'Error'}]`;
+        result[key] =
+          `[Unserializable:${error instanceof Error ? error.name : 'Error'}]`;
       }
     }
     return result;

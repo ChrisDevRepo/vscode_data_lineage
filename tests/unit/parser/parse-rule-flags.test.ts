@@ -3,7 +3,12 @@
 import { readFileSync } from 'fs';
 import * as yaml from 'js-yaml';
 import { describe, it, expect, afterAll } from 'vitest';
-import { loadRules, extractExternalRefs, parseSqlBody, type RawParseRulesConfig } from '../../../src/engine/sqlBodyParser';
+import {
+  loadRules,
+  extractExternalRefs,
+  parseSqlBody,
+  type RawParseRulesConfig,
+} from '../../../src/engine/sqlBodyParser';
 import { loadParseRules, rootPath } from '../helpers/testUtils';
 
 /** Restores the shipped rule set — `loadRules` replaces a module-global. */
@@ -11,18 +16,23 @@ afterAll(() => {
   loadParseRules();
 });
 
-function externalRefRule(flags: string, pattern = "\\bOPENROWSET\\s*\\(\\s*BULK\\s+'([^']+)'"): RawParseRulesConfig {
+function externalRefRule(
+  flags: string,
+  pattern = "\\bOPENROWSET\\s*\\(\\s*BULK\\s+'([^']+)'",
+): RawParseRulesConfig {
   return {
-    rules: [{
-      name: 'scan_openrowset',
-      enabled: true,
-      priority: 50,
-      category: 'external_ref',
-      kind: 'openrowset',
-      pattern,
-      flags,
-      description: 'test rule',
-    }],
+    rules: [
+      {
+        name: 'scan_openrowset',
+        enabled: true,
+        priority: 50,
+        category: 'external_ref',
+        kind: 'openrowset',
+        pattern,
+        flags,
+        description: 'test rule',
+      },
+    ],
   };
 }
 
@@ -52,36 +62,79 @@ describe('parse rule regex flags', () => {
     expect(result.errors).toEqual([]);
   });
 
-  it.each(['g', 'gu', 'gv'])('advances zero-width matches through Unicode SQL under flags=%s', (flags) => {
-    const result = loadRules({ rules: [{
-      name: 'conditional_zero_width', priority: 1, category: 'source',
-      pattern: '\\bFROM\\s+(\\w+\\.\\w+)|(?=.)|(?<=X)$', flags,
-      description: 'Captures a reference alongside conditional zero-width branches.',
-    }] });
-    expect(result.loaded).toBe(1);
-    expect(parseSqlBody('🚀 SELECT * FROM dbo.Match;X').sources).toEqual(['[dbo].[match]']);
-  });
+  it.each(['g', 'gu', 'gv'])(
+    'advances zero-width matches through Unicode SQL under flags=%s',
+    (flags) => {
+      const result = loadRules({
+        rules: [
+          {
+            name: 'conditional_zero_width',
+            priority: 1,
+            category: 'source',
+            pattern: '\\bFROM\\s+(\\w+\\.\\w+)|(?=.)|(?<=X)$',
+            flags,
+            description:
+              'Captures a reference alongside conditional zero-width branches.',
+          },
+        ],
+      });
+      expect(result.loaded).toBe(1);
+      expect(parseSqlBody('🚀 SELECT * FROM dbo.Match;X').sources).toEqual([
+        '[dbo].[match]',
+      ]);
+    },
+  );
 
   it('retains the validated global rule when the caller reuses its configuration object', () => {
-    const rule = { name: 'snapshot_source', priority: 1, category: 'source', pattern: '\\bFROM\\s+(\\w+\\.\\w+)', flags: 'g', description: 'Source references.' };
+    const rule = {
+      name: 'snapshot_source',
+      priority: 1,
+      category: 'source',
+      pattern: '\\bFROM\\s+(\\w+\\.\\w+)',
+      flags: 'g',
+      description: 'Source references.',
+    };
     expect(loadRules({ rules: [rule] }).loaded).toBe(1);
     rule.flags = 'i';
-    expect(parseSqlBody('SELECT * FROM dbo.First; SELECT * FROM dbo.Last;').sources).toEqual(['[dbo].[first]', '[dbo].[last]']);
+    expect(
+      parseSqlBody('SELECT * FROM dbo.First; SELECT * FROM dbo.Last;').sources,
+    ).toEqual(['[dbo].[first]', '[dbo].[last]']);
   });
 
-  const valid = externalRefRule('gi').rules![0] as unknown as Record<string, unknown>;
+  const valid = externalRefRule('gi').rules![0] as unknown as Record<
+    string,
+    unknown
+  >;
   it.each([
     ['not an object', 'x', 'not an object'],
     ['a missing name', { ...valid, name: '' }, "missing 'name'"],
     ['a missing pattern', { ...valid, pattern: '' }, "missing 'pattern'"],
-    ['an unknown category', { ...valid, category: 'sink' }, "invalid category 'sink'"],
-    ['an external_ref rule without kind', { ...valid, kind: '' }, "require a non-empty 'kind'"],
-    ['a missing priority', { ...valid, priority: '50' }, "missing or invalid 'priority'"],
+    [
+      'an unknown category',
+      { ...valid, category: 'sink' },
+      "invalid category 'sink'",
+    ],
+    [
+      'an external_ref rule without kind',
+      { ...valid, kind: '' },
+      "require a non-empty 'kind'",
+    ],
+    [
+      'a missing priority',
+      { ...valid, priority: '50' },
+      "missing or invalid 'priority'",
+    ],
     ['missing flags', { ...valid, flags: undefined }, "missing 'flags'"],
-    ['an empty-matching pattern', { ...valid, pattern: 'a*' }, 'matches empty string'],
+    [
+      'an empty-matching pattern',
+      { ...valid, pattern: 'a*' },
+      'matches empty string',
+    ],
     ['an uncompilable pattern', { ...valid, pattern: '(' }, 'invalid regex'],
   ])('rejects %s', (_title, rule, error) => {
-    const result = loadRules({ rules: [rule] } as unknown as RawParseRulesConfig);
+    const result = loadRules({
+      rules: [rule],
+    } as unknown as RawParseRulesConfig);
 
     expect(result.loaded).toBe(0);
     expect(result.errors[0]).toContain(error);
@@ -103,8 +156,15 @@ describe('parse rule regex flags', () => {
     expect(result.usedFallback).toBe(true);
     expect(result.loaded).toBe(1);
     expect(result.skipped).toEqual(['scan_openrowset']);
-    expect(result.errors).toEqual([expect.stringContaining("must include 'g'"), 'No valid rules found']);
-    expect(extractExternalRefs("SELECT * FROM OPENROWSET(BULK 'https://a.example/f.parquet') AS r")).toHaveLength(1);
+    expect(result.errors).toEqual([
+      expect.stringContaining("must include 'g'"),
+      'No valid rules found',
+    ]);
+    expect(
+      extractExternalRefs(
+        "SELECT * FROM OPENROWSET(BULK 'https://a.example/f.parquet') AS r",
+      ),
+    ).toHaveLength(1);
   });
 
   it('keeps the configuration rules and ignores the fallback when any rule is valid', () => {
@@ -128,27 +188,32 @@ describe('extractExternalRefs', () => {
   it('keeps custom rules matching quoted paths while ignoring quoted identifiers', () => {
     const config = externalRefRule('g', "'(https://[^']+)'");
     expect(loadRules(config).errors).toEqual([]);
-    expect(extractExternalRefs("SELECT [ref 'https://phantom.example'], 'https://real.example/data.csv';"))
-      .toEqual([{ url: 'https://real.example/data.csv', kind: 'openrowset' }]);
+    expect(
+      extractExternalRefs(
+        "SELECT [ref 'https://phantom.example'], 'https://real.example/data.csv';",
+      ),
+    ).toEqual([{ url: 'https://real.example/data.csv', kind: 'openrowset' }]);
   });
 
   it('terminates and keeps every distinct reference over a body with many matches', () => {
     loadRules(externalRefRule('gi'));
     const body = Array.from(
       { length: 5000 },
-      (_, i) => `SELECT * FROM OPENROWSET(BULK 'https://acct.blob.core.windows.net/d/f${i}.parquet', FORMAT='PARQUET') AS r${i}`,
+      (_, i) =>
+        `SELECT * FROM OPENROWSET(BULK 'https://acct.blob.core.windows.net/d/f${i}.parquet', FORMAT='PARQUET') AS r${i}`,
     ).join('\n');
 
     const refs = extractExternalRefs(body);
 
     expect(refs).toHaveLength(5000);
     expect(refs[0].kind).toBe('openrowset');
-    expect(new Set(refs.map(r => r.url)).size).toBe(5000);
+    expect(new Set(refs.map((r) => r.url)).size).toBe(5000);
   });
 
   it('reports a repeated reference once', () => {
     loadRules(externalRefRule('gi'));
-    const line = "SELECT * FROM OPENROWSET(BULK 'https://acct.blob.core.windows.net/d/same.parquet', FORMAT='PARQUET') AS r";
+    const line =
+      "SELECT * FROM OPENROWSET(BULK 'https://acct.blob.core.windows.net/d/same.parquet', FORMAT='PARQUET') AS r";
 
     const refs = extractExternalRefs(`${line}\n${line}\n${line}`);
 
@@ -159,6 +224,9 @@ describe('extractExternalRefs', () => {
 
 /** Loads the shipped YAML through the same entry point and returns its diagnostics. */
 function loadParseRulesResult() {
-  const rulesYaml = readFileSync(rootPath('assets/defaultParseRules.yaml'), 'utf-8');
+  const rulesYaml = readFileSync(
+    rootPath('assets/defaultParseRules.yaml'),
+    'utf-8',
+  );
   return loadRules(yaml.load(rulesYaml) as RawParseRulesConfig);
 }

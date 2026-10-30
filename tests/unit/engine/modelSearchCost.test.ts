@@ -18,17 +18,36 @@ describe('search pattern cost on a long line', () => {
     bodyScript: `${'a'.repeat(50_000)} FROM dbo.Orders`,
   };
 
-  it.each(['(a+)+x', '(.*a){12}x', '.*.*x', 'a*a*x'])('terminates %s at the worker deadline', async (pattern) => {
-    await expect(executeIsolatedRegexSearch({ kind: 'ddl', pattern, nodes: [longNode], budget: DEFAULT_TURN_TOKEN_BUDGET, rowChars: 60 })).rejects.toMatchObject({ reason: 'deadline' });
-  }, 20_000);
+  it.each(['(a+)+x', '(.*a){12}x', '.*.*x', 'a*a*x'])(
+    'terminates %s at the worker deadline',
+    async (pattern) => {
+      await expect(
+        executeIsolatedRegexSearch({
+          kind: 'ddl',
+          pattern,
+          nodes: [longNode],
+          budget: DEFAULT_TURN_TOKEN_BUDGET,
+          rowChars: 60,
+        }),
+      ).rejects.toMatchObject({ reason: 'deadline' });
+    },
+    20_000,
+  );
 
   it('still returns the locator for a normal pattern on the same line', () => {
     const compiled = compileSearchRegex('from\\s+dbo\\.orders');
     expect(compiled.ok).toBe(true);
     if (!compiled.ok) return;
     const start = performance.now();
-    const result = scanBodyMatches([longNode], compiled.regex, undefined, () => true);
+    const result = scanBodyMatches(
+      [longNode],
+      compiled.regex,
+      undefined,
+      () => true,
+    );
     expect(performance.now() - start).toBeLessThan(1000);
-    expect(result.oversized[0].lines[0].length).toBeGreaterThan(SEARCH_LINE_MAX_CHARS);
+    expect(result.oversized[0].lines[0].length).toBeGreaterThan(
+      SEARCH_LINE_MAX_CHARS,
+    );
   }, 20_000);
 });

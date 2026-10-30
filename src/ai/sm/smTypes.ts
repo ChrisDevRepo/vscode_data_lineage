@@ -1,17 +1,32 @@
 /** Navigation Engine hop lifecycle types. */
 
 import type { ClassificationValue } from '../session/classification';
-import type { CapturedSection, DetailSlot, MemoryStateSnapshot } from '../session/memoryManager';
+import type {
+  CapturedSection,
+  DetailSlot,
+  MemoryStateSnapshot,
+} from '../session/memoryManager';
 import type { ColumnTransformClass } from '../../engine/shared/bridgeContract';
 import type { DepthSideValue } from '../../engine/shared/explorationDepthContract';
 import type { ToolRejection } from '../support/toolErrorEnvelope';
 
-
 /** Represents the current lifecycle stage of an SM exploration session. */
-export type SmStatus = 'created' | 'initialized' | 'exploring' | 'awaiting_findings' | 'complete' | 'error';
+export type SmStatus =
+  | 'created'
+  | 'initialized'
+  | 'exploring'
+  | 'awaiting_findings'
+  | 'complete'
+  | 'error';
 
 /** Live progress for the hop loop: completed AI hops, queued nodes, display-safe total work, and cumulative prunes. */
-export type HopProgress = { current: number; open: number; total: number; pruned: number; added: number };
+export type HopProgress = {
+  current: number;
+  open: number;
+  total: number;
+  pruned: number;
+  added: number;
+};
 
 /** Whether a hop neighbor was already visited (`cycle`) or not (`none`). */
 type BoundaryFlag = 'none' | 'cycle';
@@ -104,7 +119,6 @@ export interface ColumnEdge {
   /** One-clause model note carried verbatim beside {@link transforms}. Absent whenever the model offered none — the webview then describes the edge structurally instead. */
   note?: string;
 }
-
 
 /** Metadata for a neighbor node encountered during a navigation hop. */
 export interface HopNeighbor {
@@ -236,7 +250,12 @@ export interface RouteOutcome {
   /** True when queued as a post-synthesis follow-up offer (SM mode, out of scope). */
   deferred?: boolean;
   /** Reason for deferral: - `depth` — route target lies past a depth border the user stated; user will see it as a follow-up offer. - `out_of_direction` — route target exists but is not reachable in the approved traversal direction; never loaded, so a named question is recorded as a follow-up offer. - `excluded` — route target exists but is outside the user's approved exclude filters; never loaded, so a named question is recorded as a follow-up offer. - `schema` — route target's schema is outside the session's GUI schema filter, not a user-authored exclusion; never loaded, so a named question is recorded as a follow-up offer that can be granted through a new proposal. - `already_visited` — route target was already analyzed on an earlier hop; visit-once, no new hop. - `already_pruned` — same as `already_visited`, for a node pruned on an earlier hop. */
-  reason?: 'depth' | 'out_of_direction' | 'excluded' | 'schema' | SettledRouteReason;
+  reason?:
+    | 'depth'
+    | 'out_of_direction'
+    | 'excluded'
+    | 'schema'
+    | SettledRouteReason;
 }
 
 /** Route reasons for a target an earlier hop already settled (visit-once). */
@@ -311,7 +330,6 @@ export interface DiagnosticsSnapshot {
   columnFlowEntries?: number;
 }
 
-
 /** Per-(schema,type) leaf in the scope tree. */
 export interface ScopeSummaryLeaf {
   /** Bodied-node count (view / procedure / function) at this leaf — agenda candidates. */
@@ -369,11 +387,19 @@ export interface ScopeSummary {
   /** Approximate DDL token count (1 token ~= 4 chars) across the proposed scope. */
   estimatedDdlTokens: number;
   /** Schema → type → leaf rollup used by `renderScopeSummaryMd` to reproduce the approval tree. */
-  bySchema: Record<string, { hops: number; scope: number; byType: Record<string, ScopeSummaryLeaf> }>;
+  bySchema: Record<
+    string,
+    { hops: number; scope: number; byType: Record<string, ScopeSummaryLeaf> }
+  >;
   /** Per object-type list of lowercased names that recur in more than one schema of the loaded model — a model fact, computed once from the full node map, never from the proposed scope alone. The card renderer schema-qualifies a name in this set so a bare name never reads as a specific object when the model holds more than one by that name and type. Absent or empty for a type with no repeated name. */
   ambiguousObjectNames?: Record<string, readonly string[]>;
   /** Active filter set on the engine — surfaces what the user has narrowed so far. */
-  activeFilters: { schemas: string[]; types: string[]; nodeIds: string[]; passNodeIds: string[] };
+  activeFilters: {
+    schemas: string[];
+    types: string[];
+    nodeIds: string[];
+    passNodeIds: string[];
+  };
   /** Every schema of the loaded model that {@link activeFilters} does not exclude, alphabetised — with `activeFilters.schemas` the full schema set, so a renderer can state the filter from its shorter side. Absent on a summary built before this field existed; a renderer then falls back to the schemas carrying in-scope nodes. */
   selectedSchemas?: string[];
   /** The excluded objects of {@link activeFilters} grouped by what excluded them, for the approval card and the full plan. Absent on a summary built before this rollup existed; a renderer then falls back to the flat `activeFilters.nodeIds`. */
@@ -413,7 +439,6 @@ export interface SmResult {
   /** Column lineage chain. Present when CT was active for this session; null otherwise. */
   columnAspect: ColumnAspect | null;
 }
-
 
 /** A route request to an out-of-approved-scope node, captured during an SM session. */
 export interface DeferredQuestion {
@@ -460,22 +485,23 @@ interface InvestigationTaskBase {
 }
 
 /** Engine-owned unit of investigation. Questions remain structured state rather than agenda prose. */
-export type InvestigationTask = InvestigationTaskBase & (
-  | {
-      /** BB root mission or analytical sub-question. */
-      kind: 'root' | 'analytical';
-      /** BB tasks structurally forbid column state. */
-      activeColumns?: never;
-    }
-  | {
-      /** CT lineage continuation, including the CT root mission. */
-      kind: 'column_lineage';
-      /** Non-empty canonical column context for this CT task. */
-      activeColumns: [string, ...string[]];
-      /** Qualified incoming column context; a task does not itself create a column edge. */
-      sourceRefs?: Array<{ node: string; col: string }>;
-    }
-);
+export type InvestigationTask = InvestigationTaskBase &
+  (
+    | {
+        /** BB root mission or analytical sub-question. */
+        kind: 'root' | 'analytical';
+        /** BB tasks structurally forbid column state. */
+        activeColumns?: never;
+      }
+    | {
+        /** CT lineage continuation, including the CT root mission. */
+        kind: 'column_lineage';
+        /** Non-empty canonical column context for this CT task. */
+        activeColumns: [string, ...string[]];
+        /** Qualified incoming column context; a task does not itself create a column edge. */
+        sourceRefs?: Array<{ node: string; col: string }>;
+      }
+  );
 
 /** Valuable investigation deliberately left outside the approved run boundary. */
 export interface PendingLead {
@@ -488,7 +514,15 @@ export interface PendingLead {
   /** In-scope node from which the lead was discovered. */
   fromNodeId: string;
   /** Mechanical boundary that prevented exploration in the current run. */
-  reason: 'schema_boundary' | 'depth_boundary' | 'contracted_scope' | 'budget' | 'insufficient_evidence' | 'out_of_direction' | 'excluded' | 'pruned_by_ai';
+  reason:
+    | 'schema_boundary'
+    | 'depth_boundary'
+    | 'contracted_scope'
+    | 'budget'
+    | 'insufficient_evidence'
+    | 'out_of_direction'
+    | 'excluded'
+    | 'pruned_by_ai';
   /** Target schema used by the derived synthesis projection. */
   schema?: string;
   /** Target depth retained when a depth boundary created the lead. */
@@ -641,9 +675,19 @@ export interface EngineInternalsSnapshot {
   /** Legacy follow-up targets accepted when reading older snapshots; current runs omit this field. */
   supplementNodeIds?: string[];
   /** Accepted prune/keep votes not yet resolved because another sender remains live. */
-  pruneBallots?: Array<{ nodeId: string; votes: Array<{ senderId: string; vote: 'prune' | 'keep' }> }>;
+  pruneBallots?: Array<{
+    nodeId: string;
+    votes: Array<{ senderId: string; vote: 'prune' | 'keep' }>;
+  }>;
   /** Held finding and its authorization, recorded together. */
-  heldFinding?: { focusId: string; hop: number; mode: 'bb' | 'ct'; failed: string[]; alternatives?: string[]; finding: HopFindingKept } | null;
+  heldFinding?: {
+    focusId: string;
+    hop: number;
+    mode: 'bb' | 'ct';
+    failed: string[];
+    alternatives?: string[];
+    finding: HopFindingKept;
+  } | null;
   /** Continuation-state format marker, written as `1`. */
   continuationVersion?: 1;
 }
@@ -687,7 +731,12 @@ export interface SmState {
     /** CT chain-continuation questions opened for this node by an earlier hop, owned by this entry. */
     lineageQuestions?: string[];
     /** Per-neighbour column-carry decision that survived contraction (`carry` / `row_role_only`). */
-    columnCarry?: ColumnCarry | { readonly kind: 'scalar_return'; readonly outputs: readonly ScalarReturnTarget[] };
+    columnCarry?:
+      | ColumnCarry
+      | {
+          readonly kind: 'scalar_return';
+          readonly outputs: readonly ScalarReturnTarget[];
+        };
   }>;
   /** ID of the node currently under analysis, if any. */
   currentFocusNodeId: string | null;
@@ -718,41 +767,42 @@ export interface HopLogEntry {
 }
 
 /** Kinds of invalid routes during exploration. */
-export type InvalidRouteKind = | 'absent_contributor'
-      | 'bad_out_col'
-      | 'bad_contributor_col'
-      | 'self_loop_column'
-      | 'bad_caller_context'
-      | 'pruned_contributor'
-      | 'column_out_of_scope'
-      | 'prune_absent'
-      | 'prune_noop_removed'
-      | 'prune_noop_visited'
-      | 'prune_noop_analyzed'
-      | 'prune_noop_queued'
-      | 'prune_noop_out_of_scope'
-      | 'prune_unsupported'
-      | 'prune_question_conflict'
-      | 'question_not_neighbor'
-      | 'question_closed'
-      | 'neighbor_outcome_missing';
+export type InvalidRouteKind =
+  | 'absent_contributor'
+  | 'bad_out_col'
+  | 'bad_contributor_col'
+  | 'self_loop_column'
+  | 'bad_caller_context'
+  | 'pruned_contributor'
+  | 'column_out_of_scope'
+  | 'prune_absent'
+  | 'prune_noop_removed'
+  | 'prune_noop_visited'
+  | 'prune_noop_analyzed'
+  | 'prune_noop_queued'
+  | 'prune_noop_out_of_scope'
+  | 'prune_unsupported'
+  | 'prune_question_conflict'
+  | 'question_not_neighbor'
+  | 'question_closed'
+  | 'neighbor_outcome_missing';
 
 /** Represents an invalid route returned during validation. */
 export interface InvalidRoute {
-    /** Classification of the route or prune failure. */
-    kind: InvalidRouteKind;
-    /** Node id the failure applies to. */
-    id: string;
-    /** Human-readable explanation for the failure. */
-    reason: string;
-    /** Alternative fields that can supply a missing decision without invalidating supplied content. */
-    alternatives?: string[];
-    /** Exact submit_findings field path that must be corrected. */
-    path?: string;
-    /** Possible values for the failing field, disclosed by the shared rejection escalation. */
-    allowed_values?: string[];
-    /** Object qualifier for column choices. */
-    when?: { node: string };
+  /** Classification of the route or prune failure. */
+  kind: InvalidRouteKind;
+  /** Node id the failure applies to. */
+  id: string;
+  /** Human-readable explanation for the failure. */
+  reason: string;
+  /** Alternative fields that can supply a missing decision without invalidating supplied content. */
+  alternatives?: string[];
+  /** Exact submit_findings field path that must be corrected. */
+  path?: string;
+  /** Possible values for the failing field, disclosed by the shared rejection escalation. */
+  allowed_values?: string[];
+  /** Object qualifier for column choices. */
+  when?: { node: string };
 }
 
 /** Parts of a rejected `lineage_submit_findings` call held for retry. A sent list replaces the held list whole. */

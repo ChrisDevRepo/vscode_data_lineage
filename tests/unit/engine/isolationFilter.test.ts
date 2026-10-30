@@ -2,15 +2,32 @@
 
 import { describe, it, expect } from 'vitest';
 import { applyIsolationFilter } from '../../../src/engine/modelFilters';
-import type { DatabaseModel, LineageNode, LineageEdge, ParseStats } from '../../../src/engine/types';
+import type {
+  DatabaseModel,
+  LineageNode,
+  LineageEdge,
+  ParseStats,
+} from '../../../src/engine/types';
 
-const node = (schema: string, name: string): LineageNode =>
-  ({ id: `${schema}.${name}`.toLowerCase(), schema, name, fullName: `[${schema}].[${name}]`, type: 'table' });
+const node = (schema: string, name: string): LineageNode => ({
+  id: `${schema}.${name}`.toLowerCase(),
+  schema,
+  name,
+  fullName: `[${schema}].[${name}]`,
+  type: 'table',
+});
 
-const edge = (source: string, target: string): LineageEdge =>
-  ({ source, target, type: 'body' });
+const edge = (source: string, target: string): LineageEdge => ({
+  source,
+  target,
+  type: 'body',
+});
 
-function model(nodes: LineageNode[], edges: LineageEdge[], parseStats?: ParseStats): DatabaseModel {
+function model(
+  nodes: LineageNode[],
+  edges: LineageEdge[],
+  parseStats?: ParseStats,
+): DatabaseModel {
   const counts = new Map<string, number>();
   for (const n of nodes) counts.set(n.schema, (counts.get(n.schema) ?? 0) + 1);
   const schemas = [...counts].map(([name, nodeCount]) => ({ name, nodeCount }));
@@ -34,12 +51,18 @@ describe('isolation filter', () => {
   it('removes degree-zero nodes and keeps every edge between survivors', () => {
     const filtered = applyIsolationFilter(sample(), true);
 
-    expect(filtered.nodes.map((n) => n.id)).toEqual(['dbo.orders', 'dbo.customers']);
+    expect(filtered.nodes.map((n) => n.id)).toEqual([
+      'dbo.orders',
+      'dbo.customers',
+    ]);
     expect(filtered.edges).toEqual([edge('dbo.orders', 'dbo.customers')]);
   });
 
   it('empties an edgeless model', () => {
-    const filtered = applyIsolationFilter(model([node('dbo', 'A'), node('dbo', 'B')], []), true);
+    const filtered = applyIsolationFilter(
+      model([node('dbo', 'A'), node('dbo', 'B')], []),
+      true,
+    );
 
     expect(filtered.nodes).toEqual([]);
     expect(filtered.edges).toEqual([]);

@@ -6,9 +6,9 @@ import { readFile } from 'node:fs/promises';
 class HarnessShimError extends Error {
   public constructor(member: string) {
     super(
-      `vscode.${member} is not implemented by the headless harness shim (tests/harness/vscodeHostShim.ts). `
-      + 'A real extension host supplies it; either add a faithful implementation or keep this path out '
-      + 'of the harness lane — never let it resolve to undefined.',
+      `vscode.${member} is not implemented by the headless harness shim (tests/harness/vscodeHostShim.ts). ` +
+        'A real extension host supplies it; either add a faithful implementation or keep this path out ' +
+        'of the harness lane — never let it resolve to undefined.',
     );
     this.name = 'HarnessShimError';
   }
@@ -25,13 +25,16 @@ export function setShimLogSink(sink: (line: string) => void): void {
  * @public
  */
 export function getConfiguration(section?: string): Record<string, unknown> {
-  const qualify = (key: string): string => (section ? `${section}.${key}` : key);
+  const qualify = (key: string): string =>
+    section ? `${section}.${key}` : key;
   return {
     get: (_key: string, defaultValue?: unknown): unknown => defaultValue,
     has: (): boolean => false,
     inspect: (): undefined => undefined,
     update: (key: string): never => {
-      throw new HarnessShimError(`workspace.getConfiguration().update('${qualify(key)}')`);
+      throw new HarnessShimError(
+        `workspace.getConfiguration().update('${qualify(key)}')`,
+      );
     },
   };
 }
@@ -67,7 +70,11 @@ function record(severity: 'error' | 'warning' | 'information') {
 
 /** Ad-hoc channel for production code that creates its own; every level lands in the run log. */
 function createOutputChannel(name: string): Record<string, unknown> {
-  const write = (level: string) => (message: string): void => { logSink(`[${name}] ${level} ${message}`); };
+  const write =
+    (level: string) =>
+    (message: string): void => {
+      logSink(`[${name}] ${level} ${message}`);
+    };
   return {
     name,
     logLevel: 1,
@@ -109,14 +116,23 @@ const implemented: Record<string, unknown> = {
     createOutputChannel,
   },
   authentication: {
-    getSession: async (_providerId: string, scopes: readonly string[] = [], _options?: { createIfNone?: boolean }) => {
+    getSession: async (
+      _providerId: string,
+      scopes: readonly string[] = [],
+      _options?: { createIfNone?: boolean },
+    ) => {
       const directToken = process.env.DB_TEST_TOKEN;
       if (directToken) {
-        logSink('[shim] Used direct access token for Microsoft Entra ID authentication');
+        logSink(
+          '[shim] Used direct access token for Microsoft Entra ID authentication',
+        );
         return {
           id: 'headless-entra-token-session',
           accessToken: directToken,
-          account: { id: process.env.DB_TEST_USER ?? 'headless-entra-user', label: process.env.DB_TEST_USER ?? 'headless-entra-user' },
+          account: {
+            id: process.env.DB_TEST_USER ?? 'headless-entra-user',
+            label: process.env.DB_TEST_USER ?? 'headless-entra-user',
+          },
           scopes: Array.isArray(scopes) ? scopes : [],
         };
       }
@@ -128,7 +144,8 @@ const implemented: Record<string, unknown> = {
 /** The module object the `vscode` alias resolves to. */
 module.exports = new Proxy(implemented, {
   get: (target, property): unknown => {
-    if (typeof property === 'string' && !(property in target)) throw new HarnessShimError(property);
+    if (typeof property === 'string' && !(property in target))
+      throw new HarnessShimError(property);
     return target[property as string];
   },
 });

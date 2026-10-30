@@ -21,14 +21,22 @@ interface Manifest {
   };
 }
 
-const manifest = JSON.parse(readFileSync(rootPath('package.json'), 'utf-8')) as Manifest;
-const settings = Object.assign({}, ...manifest.contributes.configuration.map((s) => s.properties)) as Record<string, ConfigurationProperty>;
+const manifest = JSON.parse(
+  readFileSync(rootPath('package.json'), 'utf-8'),
+) as Manifest;
+const settings = Object.assign(
+  {},
+  ...manifest.contributes.configuration.map((s) => s.properties),
+) as Record<string, ConfigurationProperty>;
 
 describe('connection settings contribution', () => {
-
   it('is application-scoped so a workspace cannot override where connections come from', () => {
-    expect(settings).not.toHaveProperty('dataLineageViz.database.connectionProvider');
-    expect(settings['dataLineageViz.database.connections'].scope).toBe('application');
+    expect(settings).not.toHaveProperty(
+      'dataLineageViz.database.connectionProvider',
+    );
+    expect(settings['dataLineageViz.database.connections'].scope).toBe(
+      'application',
+    );
   });
 
   it('declares the connections array with a closed item schema and no password property', () => {
@@ -36,25 +44,47 @@ describe('connection settings contribution', () => {
     expect(connections.type).toBe('array');
     expect(connections.items.additionalProperties).toBe(false);
     expect(Object.keys(connections.items.properties)).not.toContain('password');
-    expect(connections.markdownDescription).toMatch(/passwords are kept in vs code secure storage/i);
-    for (const command of ['addDatabaseConnection', 'editDatabaseConnection', 'updateDatabasePassword', 'removeDatabaseConnection']) {
-      expect(connections.markdownDescription).toContain(`(command:dataLineageViz.${command})`);
+    expect(connections.markdownDescription).toMatch(
+      /passwords are kept in vs code secure storage/i,
+    );
+    for (const command of [
+      'addDatabaseConnection',
+      'editDatabaseConnection',
+      'updateDatabasePassword',
+      'removeDatabaseConnection',
+    ]) {
+      expect(connections.markdownDescription).toContain(
+        `(command:dataLineageViz.${command})`,
+      );
     }
   });
 
   it('item properties match the runtime schema keys', () => {
-    const declared = Object.keys(settings['dataLineageViz.database.connections'].items.properties).sort();
+    const declared = Object.keys(
+      settings['dataLineageViz.database.connections'].items.properties,
+    ).sort();
     expect(declared).toEqual(Object.keys(BuiltInConnectionSchema.shape).sort());
   });
 
   it('contributes the four commands under the Data Lineage category', () => {
-    const wanted = ['addDatabaseConnection', 'editDatabaseConnection', 'removeDatabaseConnection', 'updateDatabasePassword'];
+    const wanted = [
+      'addDatabaseConnection',
+      'editDatabaseConnection',
+      'removeDatabaseConnection',
+      'updateDatabasePassword',
+    ];
     for (const name of wanted) {
-      const entry = manifest.contributes.commands.find((c) => c.command === `dataLineageViz.${name}`);
+      const entry = manifest.contributes.commands.find(
+        (c) => c.command === `dataLineageViz.${name}`,
+      );
       expect(entry, name).toBeDefined();
       expect(entry?.category).toBe('Data Lineage');
     }
-    expect(manifest.contributes.commands.find((c) => c.command === 'dataLineageViz.addDatabaseConnection')?.title).toBe('Add Database Connection');
+    expect(
+      manifest.contributes.commands.find(
+        (c) => c.command === 'dataLineageViz.addDatabaseConnection',
+      )?.title,
+    ).toBe('Add Database Connection');
   });
 
   it('requires no external extension and ships tedious', () => {

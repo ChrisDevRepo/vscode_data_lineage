@@ -10,7 +10,10 @@ import { at, type IssueCode } from '../support/toolErrorEnvelope';
 import { validateToolCandidate } from '../support/toolValidation';
 import { normalizeModelInput } from '../tools/normalizeModelInput';
 import { toolCallNotationFault } from '../support/toolCallNotation';
-import { STRUCTURED_OUTPUT_TOOL, StructuredOutputError } from '../providers/structuredOutput';
+import {
+  STRUCTURED_OUTPUT_TOOL,
+  StructuredOutputError,
+} from '../providers/structuredOutput';
 import {
   describeProviderErrorForUser,
   type ProviderErrorDiagnostic,
@@ -58,7 +61,9 @@ export function modelToolCallMessage(
       args: modelToolArgs(call.input),
       type: 'tool_call' as const,
     })),
-    ...(providerParts.length > 0 ? { additional_kwargs: { [PROVIDER_PARTS_KEY]: [...providerParts] } } : {}),
+    ...(providerParts.length > 0
+      ? { additional_kwargs: { [PROVIDER_PARTS_KEY]: [...providerParts] } }
+      : {}),
   });
 }
 
@@ -117,8 +122,16 @@ export class ModelPortError extends Error {
 export function assertToolCallIds(ids: readonly (string | undefined)[]): void {
   const seen = new Set<string>();
   for (const id of ids) {
-    if (!id) throw new ModelPortError('unsupported_response', 'Language model returned an incomplete tool call.');
-    if (seen.has(id)) throw new ModelPortError('unsupported_response', 'Language model returned repeated tool call identifiers.');
+    if (!id)
+      throw new ModelPortError(
+        'unsupported_response',
+        'Language model returned an incomplete tool call.',
+      );
+    if (seen.has(id))
+      throw new ModelPortError(
+        'unsupported_response',
+        'Language model returned repeated tool call identifiers.',
+      );
     seen.add(id);
   }
 }
@@ -130,7 +143,10 @@ export function isPortCancellation(error: unknown): boolean {
 
 /** Creates the port-level cancellation error that {@link isPortCancellation} recognizes. */
 export function cancelledError(): ModelPortError {
-  return new ModelPortError('cancelled', 'Language model request was cancelled.');
+  return new ModelPortError(
+    'cancelled',
+    'Language model request was cancelled.',
+  );
 }
 
 /** Error names the VS Code language-model host raises when a request is cancelled. */
@@ -142,7 +158,9 @@ const HOST_CANCELLATION_ERROR_NAMES: ReadonlySet<string> = new Set([
 
 /** Whether a thrown value carries one of the host's cancellation error names. */
 export function isHostCancellationError(error: unknown): boolean {
-  return error instanceof Error && HOST_CANCELLATION_ERROR_NAMES.has(error.name);
+  return (
+    error instanceof Error && HOST_CANCELLATION_ERROR_NAMES.has(error.name)
+  );
 }
 
 /** Model-facing context used to audit which instruction fragments reached a generation. */
@@ -203,10 +221,12 @@ export interface ToolGenerationInput {
 }
 
 /** Reason of the `type` fault for a call whose arguments were not a JSON object, shared by every model port so both lanes state the same fault and the same next action. */
-export const TOOL_ARGUMENTS_NOT_OBJECT_REASON = 'Tool arguments were not a JSON object; send the required fields as one JSON object.';
+export const TOOL_ARGUMENTS_NOT_OBJECT_REASON =
+  'Tool arguments were not a JSON object; send the required fields as one JSON object.';
 
 /** Reason of the `type` fault for a call whose arguments were empty text. */
-const TOOL_ARGUMENTS_EMPTY_REASON = 'Tool arguments were empty; send the required fields as a JSON object.';
+const TOOL_ARGUMENTS_EMPTY_REASON =
+  'Tool arguments were empty; send the required fields as a JSON object.';
 
 /** A registered native tool call ready for argument validation at its execution boundary. */
 export interface ValidGeneratedToolCall {
@@ -231,7 +251,10 @@ export interface InvalidGeneratedToolCall {
   /** The rejected payload exactly as the provider sent it. Kept so retry-budget guards can compare a follow-up call against the prior rejected one (by fingerprint, never by retaining it) and distinguish a genuine repair attempt from an unproductive resend; without it every reject of the same tool would be indistinguishable. Never dispatched, replayed, or logged raw. */
   readonly input?: unknown;
   /** Issue code of the rejection — arguments that are no JSON object, tool-call notation in a text value, or a tool the phase does not offer. */
-  readonly code: Extract<IssueCode, 'type' | 'tool_call_notation' | 'off_policy'>;
+  readonly code: Extract<
+    IssueCode,
+    'type' | 'tool_call_notation' | 'off_policy'
+  >;
   /** Human-readable rejection prose returned to the model for repair. */
   readonly reason: string;
   /** Paths of the input values that rejected the call, when the producer names them. */
@@ -239,7 +262,10 @@ export interface InvalidGeneratedToolCall {
 }
 
 /** One provider tool call as a port's transport decoded it: its object arguments, or the argument text that was no JSON object. */
-export type EmittedToolCall = { readonly callId: string; readonly toolName: string } & (
+export type EmittedToolCall = {
+  readonly callId: string;
+  readonly toolName: string;
+} & (
   | { readonly args: Record<string, unknown> }
   | { readonly malformedArgs: string }
 );
@@ -249,19 +275,40 @@ export function classifyToolCall(
   emitted: EmittedToolCall,
   definitions: ReadonlyMap<string, ModelToolDefinition>,
   debugLog?: (message: string) => void,
-): { readonly call: GeneratedToolCall; readonly replayInput: Record<string, unknown> } {
+): {
+  readonly call: GeneratedToolCall;
+  readonly replayInput: Record<string, unknown>;
+} {
   const { callId, toolName } = emitted;
   const replayInput = 'args' in emitted ? emitted.args : {};
-  const reject = (code: InvalidGeneratedToolCall['code'], reason: string) => ({ replayInput,
-    call: { valid: false as const, callId, toolName, input: 'args' in emitted ? emitted.args : emitted.malformedArgs, code, reason } });
+  const reject = (code: InvalidGeneratedToolCall['code'], reason: string) => ({
+    replayInput,
+    call: {
+      valid: false as const,
+      callId,
+      toolName,
+      input: 'args' in emitted ? emitted.args : emitted.malformedArgs,
+      code,
+      reason,
+    },
+  });
   const definition = definitions.get(toolName);
-  if (!definition) return reject('off_policy', 'Tool is not available in this phase.');
+  if (!definition)
+    return reject('off_policy', 'Tool is not available in this phase.');
   if ('malformedArgs' in emitted) {
-    return reject('type', emitted.malformedArgs.trim() ? TOOL_ARGUMENTS_NOT_OBJECT_REASON : TOOL_ARGUMENTS_EMPTY_REASON);
+    return reject(
+      'type',
+      emitted.malformedArgs.trim()
+        ? TOOL_ARGUMENTS_NOT_OBJECT_REASON
+        : TOOL_ARGUMENTS_EMPTY_REASON,
+    );
   }
   const normalized = normalizeModelInput(definition.inputSchema, emitted.args);
   logFixes(toolName, normalized.fixes, debugLog);
-  return { call: { valid: true, callId, toolName, input: normalized.input }, replayInput };
+  return {
+    call: { valid: true, callId, toolName, input: normalized.input },
+    replayInput,
+  };
 }
 
 /** Finishes a forced structured-output generation: one call to the structured tool, normalized once (D-086), then admitted by Ajv against the served JSON Schema alone (D-126). */
@@ -271,32 +318,74 @@ export function finishStructured<T>(
   debugLog?: (message: string) => void,
 ): T {
   const calls = emitted.flatMap((call) => ('args' in call ? [call.args] : []));
-  if (emitted.some((call) => call.toolName !== STRUCTURED_OUTPUT_TOOL) || (calls.length > 0 && calls.length < emitted.length)) {
-    throw new StructuredOutputError(`unexpected tool call alongside ${STRUCTURED_OUTPUT_TOOL}`, at('one_call'));
+  if (
+    emitted.some((call) => call.toolName !== STRUCTURED_OUTPUT_TOOL) ||
+    (calls.length > 0 && calls.length < emitted.length)
+  ) {
+    throw new StructuredOutputError(
+      `unexpected tool call alongside ${STRUCTURED_OUTPUT_TOOL}`,
+      at('one_call'),
+    );
   }
-  const empty = (): StructuredOutputError => new StructuredOutputError(`${STRUCTURED_OUTPUT_TOOL} arguments were empty`, at('missing'));
+  const empty = (): StructuredOutputError =>
+    new StructuredOutputError(
+      `${STRUCTURED_OUTPUT_TOOL} arguments were empty`,
+      at('missing'),
+    );
   const [first] = emitted;
   if (calls.length === 0 && first && 'malformedArgs' in first) {
     if (emitted.length === 1 && !first.malformedArgs.trim()) throw empty();
-    throw new StructuredOutputError(`${STRUCTURED_OUTPUT_TOOL} arguments were not a JSON object`, at('type', [''], ['object']));
+    throw new StructuredOutputError(
+      `${STRUCTURED_OUTPUT_TOOL} arguments were not a JSON object`,
+      at('type', [''], ['object']),
+    );
   }
-  const normalized = calls.length === 1 ? normalizeModelInput(schema, calls[0]) : undefined;
+  const normalized =
+    calls.length === 1 ? normalizeModelInput(schema, calls[0]) : undefined;
   logFixes(STRUCTURED_OUTPUT_TOOL, normalized?.fixes ?? [], debugLog);
   const payload = normalized?.input;
   const notation = toolCallNotationFault(payload);
-  if (notation) throw new StructuredOutputError(notation.reason, at('tool_call_notation', notation.issuePaths));
-  const admitted = calls.length === 1 ? validateToolCandidate(schema, payload) : undefined;
+  if (notation)
+    throw new StructuredOutputError(
+      notation.reason,
+      at('tool_call_notation', notation.issuePaths),
+    );
+  const admitted =
+    calls.length === 1 ? validateToolCandidate(schema, payload) : undefined;
   if (admitted?.success) return admitted.data;
   if (calls.length === 1 && Object.keys(calls[0]).length === 0) throw empty();
-  if (calls.length > 1) throw new StructuredOutputError(`multiple ${STRUCTURED_OUTPUT_TOOL} tool calls`, at('one_call'));
-  if (!admitted) throw new StructuredOutputError(`missing ${STRUCTURED_OUTPUT_TOOL} tool call`, at('no_tool_call', [''], [STRUCTURED_OUTPUT_TOOL]));
+  if (calls.length > 1)
+    throw new StructuredOutputError(
+      `multiple ${STRUCTURED_OUTPUT_TOOL} tool calls`,
+      at('one_call'),
+    );
+  if (!admitted)
+    throw new StructuredOutputError(
+      `missing ${STRUCTURED_OUTPUT_TOOL} tool call`,
+      at('no_tool_call', [''], [STRUCTURED_OUTPUT_TOOL]),
+    );
   const { errors } = admitted.rejection;
-  throw new StructuredOutputError(`invalid ${STRUCTURED_OUTPUT_TOOL} fields: ${errors.map(error => `${error.path}: ${error.code}`).join(', ')}`, errors);
+  throw new StructuredOutputError(
+    `invalid ${STRUCTURED_OUTPUT_TOOL} fields: ${errors.map((error) => `${error.path}: ${error.code}`).join(', ')}`,
+    errors,
+  );
 }
 
-function logFixes(toolName: string, fixes: readonly { path: string; before: string }[], debugLog?: (message: string) => void): void {
-  const identifiers = { extraChars: '.:-[]', replacement: '_', maxLength: 128, fallback: 'root' };
-  for (const fix of fixes) debugLog?.(`[Normalize] tool=${safeIdentifier(toolName, identifiers)} path=${safeIdentifier(fix.path, identifiers)} beforeBytes=${Buffer.byteLength(fix.before)}`);
+function logFixes(
+  toolName: string,
+  fixes: readonly { path: string; before: string }[],
+  debugLog?: (message: string) => void,
+): void {
+  const identifiers = {
+    extraChars: '.:-[]',
+    replacement: '_',
+    maxLength: 128,
+    fallback: 'root',
+  };
+  for (const fix of fixes)
+    debugLog?.(
+      `[Normalize] tool=${safeIdentifier(toolName, identifiers)} path=${safeIdentifier(fix.path, identifiers)} beforeBytes=${Buffer.byteLength(fix.before)}`,
+    );
 }
 
 /** Validation result for a provider-emitted tool call. */
@@ -398,7 +487,15 @@ export interface SingleGenerationModelPort {
 /** Flattens LangChain `MessageContent` (a string or a list of content blocks) into plain text for a provider token counter. */
 export function messageContentToText(content: MessageContent): string {
   if (typeof content === 'string') return content;
-  return content.map((block) => (typeof block === 'string' ? block : 'text' in block && typeof block.text === 'string' ? block.text : '')).join('');
+  return content
+    .map((block) =>
+      typeof block === 'string'
+        ? block
+        : 'text' in block && typeof block.text === 'string'
+          ? block.text
+          : '',
+    )
+    .join('');
 }
 
 /** Full provider-neutral model boundary used by the lineage runtime. */

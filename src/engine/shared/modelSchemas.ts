@@ -1,8 +1,15 @@
-import { createEmptySchemaInfo, type LineageNode, type SchemaInfo } from '../types';
+import {
+  createEmptySchemaInfo,
+  type LineageNode,
+  type SchemaInfo,
+} from '../types';
 import { schemaKey } from '../../utils/sql';
 
 /** Computes architectural schema metrics from the resolved node list. */
-export function computeSchemas(nodes: LineageNode[], identifierCaseSensitive = false): SchemaInfo[] {
+export function computeSchemas(
+  nodes: LineageNode[],
+  identifierCaseSensitive = false,
+): SchemaInfo[] {
   const map = new Map<string, SchemaInfo>();
   for (const node of nodes) {
     if (node.externalType === 'file' || node.externalType === 'db') continue;

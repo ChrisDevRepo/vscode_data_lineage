@@ -4,7 +4,9 @@ interface ErrorBoundaryProps {
   /** The child components to be rendered and monitored for errors. */
   children: ReactNode;
   /** Optional custom fallback UI to display when an error occurs. */
-  fallback?: ReactNode | ((args: { error: Error | null; reset: () => void }) => ReactNode);
+  fallback?:
+    | ReactNode
+    | ((args: { error: Error | null; reset: () => void }) => ReactNode);
   /** Optional callback triggered when an error is caught. */
   onError?: (error: Error, errorInfo: ErrorInfo) => void;
   /** Changes when the guarded surface should retry after a previous render failure. */
@@ -23,7 +25,10 @@ interface ErrorBoundaryState {
 }
 
 /** A standard React Error Boundary that captures runtime errors in the component tree. */
-export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+export class ErrorBoundary extends Component<
+  ErrorBoundaryProps,
+  ErrorBoundaryState
+> {
   constructor(props: ErrorBoundaryProps) {
     super(props);
     this.state = { hasError: false, error: null, resetKey: props.resetKey };
@@ -35,7 +40,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 
   /** Clears a captured error when the caller changes the reset key. */
-  static getDerivedStateFromProps(props: ErrorBoundaryProps, state: ErrorBoundaryState): Partial<ErrorBoundaryState> | null {
+  static getDerivedStateFromProps(
+    props: ErrorBoundaryProps,
+    state: ErrorBoundaryState,
+  ): Partial<ErrorBoundaryState> | null {
     if (state.hasError && props.resetKey !== state.resetKey) {
       return { hasError: false, error: null, resetKey: props.resetKey };
     }
@@ -56,7 +64,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         stack: error.stack,
         componentStack: errorInfo.componentStack ?? undefined,
         context: this.props.context,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
     }
 
@@ -70,7 +78,12 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         if (typeof this.props.fallback === 'function') {
           return this.props.fallback({
             error: this.state.error,
-            reset: () => this.setState({ hasError: false, error: null, resetKey: this.props.resetKey }),
+            reset: () =>
+              this.setState({
+                hasError: false,
+                error: null,
+                resetKey: this.props.resetKey,
+              }),
           });
         }
         return this.props.fallback;

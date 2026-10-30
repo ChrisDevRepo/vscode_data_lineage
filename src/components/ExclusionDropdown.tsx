@@ -27,7 +27,8 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
   disabled = false,
   disabledReason,
 }: ExclusionDropdownProps) {
-  const { isOpen, toggle, refs, floatingStyles, context, getFloatingProps } = useDropdown('bottom-end');
+  const { isOpen, toggle, refs, floatingStyles, context, getFloatingProps } =
+    useDropdown('bottom-end');
   const [inputValue, setInputValue] = useState('');
   const [inputError, setInputError] = useState(false);
   const [tipsOpen, setTipsOpen] = useState(false);
@@ -42,30 +43,52 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
 
   const validate = useCallback((value: string): boolean => {
     if (!value.trim()) return false;
-    try { compileExclusionPattern(value); return true; } catch { return false; }
+    try {
+      compileExclusionPattern(value);
+      return true;
+    } catch {
+      return false;
+    }
   }, []);
 
-  const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const v = e.target.value;
-    setInputValue(v);
-    if (inputError && v) setInputError(false);
-  }, [inputError]);
+  const handleInputChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const v = e.target.value;
+      setInputValue(v);
+      if (inputError && v) setInputError(false);
+    },
+    [inputError],
+  );
 
   const handleAdd = useCallback(() => {
     const v = inputValue.trim();
     if (!v) return;
-    if (!validate(v)) { setInputError(true); return; }
+    if (!validate(v)) {
+      setInputError(true);
+      return;
+    }
     onAddPattern(v);
     setInputValue('');
     setInputError(false);
   }, [inputValue, validate, onAddPattern]);
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') { e.preventDefault(); handleAdd(); }
-  }, [handleAdd]);
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleAdd();
+      }
+    },
+    [handleAdd],
+  );
 
   const count = exclusionPatterns.length;
-  const trigger = disabledControl(toggle, disabled, disabledReason, 'Exclusion Rules — hide nodes matching patterns');
+  const trigger = disabledControl(
+    toggle,
+    disabled,
+    disabledReason,
+    'Exclusion Rules — hide nodes matching patterns',
+  );
 
   return (
     <>
@@ -79,13 +102,26 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
             aria-label="Exclusion rules"
             aria-expanded={isOpen}
             aria-haspopup="dialog"
-          style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
-        >
-          {/* no-symbol icon */}
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" />
-          </svg>
-        </Button>
+            style={
+              isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined
+            }
+          >
+            {/* no-symbol icon */}
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={1.5}
+              stroke="currentColor"
+              className="w-5 h-5"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636"
+              />
+            </svg>
+          </Button>
         </Tooltip>
         {count > 0 && (
           <span
@@ -99,121 +135,192 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
 
       <FloatingPortal>
         {!disabled && isOpen && (
-          <FloatingFocusManager context={context} modal={false} initialFocus={inputRef}>
-          <div
-            ref={refs.setFloating}
-            style={{ ...floatingStyles, width: '288px', boxShadow: 'var(--ln-dropdown-shadow)' }}
-            className="rounded-md shadow-lg z-50 ln-dropdown"
-            role="dialog"
-            aria-label="Exclusion rules"
-            {...getFloatingProps()}
+          <FloatingFocusManager
+            context={context}
+            modal={false}
+            initialFocus={inputRef}
           >
-            <div className="p-2 flex gap-1.5">
-              <input
-                ref={inputRef}
-                type="text"
-                value={inputValue}
-                onChange={handleInputChange}
-                onKeyDown={handleKeyDown}
-                placeholder="Pattern, e.g. %tmp% or ^dbo\.stg_"
-                className="flex-1 text-xs rounded-sm px-2 py-1.5 min-w-0 ln-input"
-                style={inputError ? { outline: '1px solid var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground))' } : undefined}
-                aria-label="Enter exclusion pattern"
-                aria-invalid={inputError}
-                spellCheck={false}
-              />
-              <Tooltip content="Add pattern (Enter)">
-                <button
-                  onClick={handleAdd}
-                  className="px-2.5 py-1 text-xs rounded-sm font-medium transition-colors ln-btn-primary"
+            <div
+              ref={refs.setFloating}
+              style={{
+                ...floatingStyles,
+                width: '288px',
+                boxShadow: 'var(--ln-dropdown-shadow)',
+              }}
+              className="rounded-md shadow-lg z-50 ln-dropdown"
+              role="dialog"
+              aria-label="Exclusion rules"
+              {...getFloatingProps()}
+            >
+              <div className="p-2 flex gap-1.5">
+                <input
+                  ref={inputRef}
+                  type="text"
+                  value={inputValue}
+                  onChange={handleInputChange}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Pattern, e.g. %tmp% or ^dbo\.stg_"
+                  className="flex-1 text-xs rounded-sm px-2 py-1.5 min-w-0 ln-input"
+                  style={
+                    inputError
+                      ? {
+                          outline:
+                            '1px solid var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground))',
+                        }
+                      : undefined
+                  }
+                  aria-label="Enter exclusion pattern"
+                  aria-invalid={inputError}
+                  spellCheck={false}
+                />
+                <Tooltip content="Add pattern (Enter)">
+                  <button
+                    onClick={handleAdd}
+                    className="px-2.5 py-1 text-xs rounded-sm font-medium transition-colors ln-btn-primary"
+                  >
+                    Add
+                  </button>
+                </Tooltip>
+              </div>
+              {inputError && (
+                <p
+                  className="px-3 pb-1.5 text-[11px]"
+                  style={{
+                    color:
+                      'var(--vscode-inputValidation-errorForeground, var(--vscode-errorForeground))',
+                  }}
                 >
-                  Add
-                </button>
-              </Tooltip>
-            </div>
-            {inputError && (
-              <p className="px-3 pb-1.5 text-[11px]" style={{ color: 'var(--vscode-inputValidation-errorForeground, var(--vscode-errorForeground))' }}>
-                Invalid pattern — check regex syntax
-              </p>
-            )}
-
-            <div className="px-2 pb-1">
-              <button
-                onClick={() => setTipsOpen(prev => !prev)}
-                className="w-full flex items-center gap-1 px-1 py-1 text-xs rounded-sm ln-list-item ln-text-muted"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"
-                  className="w-3 h-3 shrink-0 transition-transform"
-                  style={{ transform: tipsOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-                </svg>
-                Quick Tips
-              </button>
-              {tipsOpen && (
-                <div className="mt-1 px-2 pb-1.5 text-[11px] space-y-0.5 ln-text-muted font-mono">
-                  <div className="grid grid-cols-2 gap-x-2">
-                    <span className="font-medium" style={{ color: 'var(--ln-fg)' }}>%word%</span>
-                    <span>contains "word"</span>
-                    <span className="font-medium" style={{ color: 'var(--ln-fg)' }}>schema.%</span>
-                    <span>whole schema</span>
-                    <span className="font-medium" style={{ color: 'var(--ln-fg)' }}>^dbo\.tmp_</span>
-                    <span>starts with dbo.tmp_</span>
-                    <span className="font-medium" style={{ color: 'var(--ln-fg)' }}>(tmp|stg)</span>
-                    <span>regex alternation</span>
-                  </div>
-                  <p className="pt-0.5 font-sans" style={{ color: 'var(--ln-fg-dim)' }}>
-                    Matched against <em>schema.name</em>. Case-insensitive.
-                  </p>
-                </div>
+                  Invalid pattern — check regex syntax
+                </p>
               )}
-            </div>
 
-            <div className="mx-2 ln-border-top" />
-
-            <div className="p-1.5 max-h-52 overflow-y-auto">
-              {count === 0 ? (
-                <p className="px-2 py-2 text-xs text-center ln-text-muted">No exclusion rules</p>
-              ) : (
-                exclusionPatterns.map((pattern) => {
-                  const isWildcard = pattern.includes('%');
-                  return (
-                    <div
-                      key={pattern}
-                      className="flex items-center gap-1.5 px-2 py-1.5 rounded-sm transition-colors ln-list-item group"
+              <div className="px-2 pb-1">
+                <button
+                  onClick={() => setTipsOpen((prev) => !prev)}
+                  className="w-full flex items-center gap-1 px-1 py-1 text-xs rounded-sm ln-list-item ln-text-muted"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    strokeWidth={2}
+                    stroke="currentColor"
+                    className="w-3 h-3 shrink-0 transition-transform"
+                    style={{
+                      transform: tipsOpen ? 'rotate(90deg)' : 'rotate(0deg)',
+                    }}
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="m8.25 4.5 7.5 7.5-7.5 7.5"
+                    />
+                  </svg>
+                  Quick Tips
+                </button>
+                {tipsOpen && (
+                  <div className="mt-1 px-2 pb-1.5 text-[11px] space-y-0.5 ln-text-muted font-mono">
+                    <div className="grid grid-cols-2 gap-x-2">
+                      <span
+                        className="font-medium"
+                        style={{ color: 'var(--ln-fg)' }}
+                      >
+                        %word%
+                      </span>
+                      <span>contains "word"</span>
+                      <span
+                        className="font-medium"
+                        style={{ color: 'var(--ln-fg)' }}
+                      >
+                        schema.%
+                      </span>
+                      <span>whole schema</span>
+                      <span
+                        className="font-medium"
+                        style={{ color: 'var(--ln-fg)' }}
+                      >
+                        ^dbo\.tmp_
+                      </span>
+                      <span>starts with dbo.tmp_</span>
+                      <span
+                        className="font-medium"
+                        style={{ color: 'var(--ln-fg)' }}
+                      >
+                        (tmp|stg)
+                      </span>
+                      <span>regex alternation</span>
+                    </div>
+                    <p
+                      className="pt-0.5 font-sans"
+                      style={{ color: 'var(--ln-fg-dim)' }}
                     >
-                      <Tooltip content={pattern} asChild>
-                        <span className="flex-1 text-xs font-mono truncate ln-text">
-                          {pattern}
-                        </span>
-                      </Tooltip>
-                      {isWildcard && (
-                        <Tooltip content="Uses % wildcard">
-                          <span
-                            className="text-[10px] px-1 rounded-sm shrink-0"
-                            style={{ background: 'var(--ln-bg-secondary)', color: 'var(--ln-fg-dim)' }}
-                          >
-                            %
+                      Matched against <em>schema.name</em>. Case-insensitive.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <div className="mx-2 ln-border-top" />
+
+              <div className="p-1.5 max-h-52 overflow-y-auto">
+                {count === 0 ? (
+                  <p className="px-2 py-2 text-xs text-center ln-text-muted">
+                    No exclusion rules
+                  </p>
+                ) : (
+                  exclusionPatterns.map((pattern) => {
+                    const isWildcard = pattern.includes('%');
+                    return (
+                      <div
+                        key={pattern}
+                        className="flex items-center gap-1.5 px-2 py-1.5 rounded-sm transition-colors ln-list-item group"
+                      >
+                        <Tooltip content={pattern} asChild>
+                          <span className="flex-1 text-xs font-mono truncate ln-text">
+                            {pattern}
                           </span>
                         </Tooltip>
-                      )}
-                      <Tooltip content={`Remove: ${pattern}`}>
-                        <button
-                          onClick={() => onRemovePattern(pattern)}
-                          className="shrink-0 w-4 h-4 flex items-center justify-center rounded-sm transition-colors ln-text-muted hover:opacity-80"
-                          aria-label={`Remove exclusion pattern: ${pattern}`}
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3 h-3">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
-                          </svg>
-                        </button>
-                      </Tooltip>
-                    </div>
-                  );
-                })
-              )}
+                        {isWildcard && (
+                          <Tooltip content="Uses % wildcard">
+                            <span
+                              className="text-[10px] px-1 rounded-sm shrink-0"
+                              style={{
+                                background: 'var(--ln-bg-secondary)',
+                                color: 'var(--ln-fg-dim)',
+                              }}
+                            >
+                              %
+                            </span>
+                          </Tooltip>
+                        )}
+                        <Tooltip content={`Remove: ${pattern}`}>
+                          <button
+                            onClick={() => onRemovePattern(pattern)}
+                            className="shrink-0 w-4 h-4 flex items-center justify-center rounded-sm transition-colors ln-text-muted hover:opacity-80"
+                            aria-label={`Remove exclusion pattern: ${pattern}`}
+                          >
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              strokeWidth={2.5}
+                              stroke="currentColor"
+                              className="w-3 h-3"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                d="M6 18 18 6M6 6l12 12"
+                              />
+                            </svg>
+                          </button>
+                        </Tooltip>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
             </div>
-          </div>
           </FloatingFocusManager>
         )}
       </FloatingPortal>

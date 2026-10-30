@@ -14,12 +14,19 @@ import {
   buildOriginalQuestionBlock,
 } from '../prompting/prompts';
 import { buildSmProtocol } from '../prompting/smPrompts';
-import { resolveStagePrompt, type StagePromptResult, type StageRenderScope } from '../prompting/templateRenderer';
+import {
+  resolveStagePrompt,
+  type StagePromptResult,
+  type StageRenderScope,
+} from '../prompting/templateRenderer';
 import { escapeDelimitedJson } from '../support/text';
 import { SCRIPT_TYPES } from '../support/graphUtils';
 
 /** Serialises the peeked hop context (focus DDL + immediate neighbours) into the worker's single user message. The hop is blinkered: the worker sees this payload plus its hop tools (`lineage_submit_findings`, `lineage_prune_current`, and in CT `lineage_get_neighbor_columns`), not prior hops' tool results. */
-function buildWorkerHopMessage(hop: HopContext | null, focusId: string): string {
+function buildWorkerHopMessage(
+  hop: HopContext | null,
+  focusId: string,
+): string {
   let escapedBody: string;
   if (hop) {
     const hopForJson = { ...hop };
@@ -37,19 +44,23 @@ function buildWorkerHopMessage(hop: HopContext | null, focusId: string): string 
   ].join('\n');
 }
 
-
 /** Whether the current focus is a non-bodied node (table/external) — gates the `structural_summary` template. */
 function focusIsNonBodied(sess: AiSession, engine: NavigationEngine): boolean {
   const focusId = engine.currentFocus;
   if (!focusId) return false;
-  const node = sess.model?.nodes.find(n => n.id === focusId);
+  const node = sess.model?.nodes.find((n) => n.id === focusId);
   return node ? !SCRIPT_TYPES.has(node.type) : false;
 }
 
 type AgentStage = 'discover' | 'active' | 'synthesis';
 
 /** Resolves a stage's YAML template block for the session's classification + memory depth. */
-function resolveStage(sess: AiSession, stage: AgentStage, isCtMode?: boolean, render?: StageRenderScope): StagePromptResult {
+function resolveStage(
+  sess: AiSession,
+  stage: AgentStage,
+  isCtMode?: boolean,
+  render?: StageRenderScope,
+): StagePromptResult {
   return resolveStagePrompt(
     sess.outputTemplates,
     stage,
@@ -63,7 +74,9 @@ function resolveStage(sess: AiSession, stage: AgentStage, isCtMode?: boolean, re
 
 /** The template keys a render dropped because the locked classification did not request them. */
 function classificationGatedKeys(result: StagePromptResult): string[] {
-  return result.gatedOut.filter(entry => entry.reason === 'classification').map(entry => entry.key);
+  return result.gatedOut
+    .filter((entry) => entry.reason === 'classification')
+    .map((entry) => entry.key);
 }
 
 /** Assembles a phase system prompt: the grounded stage base followed by the ordered non-empty blocks. */
@@ -73,7 +86,9 @@ function assemblePhaseSystem(
   blocks: ReadonlyArray<string | null | undefined>,
   analysisMode: 'bb' | 'ct' = 'bb',
 ): string {
-  return [buildHostStageSystemPrompt(stage, ctx, analysisMode), ...blocks].filter(Boolean).join('\n');
+  return [buildHostStageSystemPrompt(stage, ctx, analysisMode), ...blocks]
+    .filter(Boolean)
+    .join('\n');
 }
 
 /** Stage system prompt plus the YAML + memory provenance used by the InstructionPlan compiler. */
@@ -89,7 +104,10 @@ export interface StageSystemInstruction {
 }
 
 /** Builds the discovery system prompt together with its YAML-selection provenance. */
-export function buildDiscoveryInstruction(sess: AiSession, ctx: StagePromptContext): StageSystemInstruction {
+export function buildDiscoveryInstruction(
+  sess: AiSession,
+  ctx: StagePromptContext,
+): StageSystemInstruction {
   const stage = resolveStage(sess, 'discover');
   return {
     system: assemblePhaseSystem('discover', ctx, [stage.prompt]),
@@ -100,17 +118,28 @@ export function buildDiscoveryInstruction(sess: AiSession, ctx: StagePromptConte
 }
 
 /** Composes the active stable prefix and YAML provenance. */
-export function buildActiveInstruction(sess: AiSession, ctx: StagePromptContext, hopMode: 'bb' | 'ct'): StageSystemInstruction {
+export function buildActiveInstruction(
+  sess: AiSession,
+  ctx: StagePromptContext,
+  hopMode: 'bb' | 'ct',
+): StageSystemInstruction {
   const engine = sess.stateMachine as NavigationEngine;
   sess.requireLockedClassification();
   const isCtMode = hopMode === 'ct';
   const smProtocol = buildSmProtocol({
     targetColumns: isCtMode ? engine.columnAspect?.target_columns : undefined,
   });
-  const stageBlock = resolveStage(sess, 'active', isCtMode, { scope: 'stable' });
+  const stageBlock = resolveStage(sess, 'active', isCtMode, {
+    scope: 'stable',
+  });
   const stableContext = buildStableContextBlocks(sess, engine);
   return {
-    system: assemblePhaseSystem('active', ctx, [smProtocol, stageBlock.prompt, ...stableContext.blocks], hopMode),
+    system: assemblePhaseSystem(
+      'active',
+      ctx,
+      [smProtocol, stageBlock.prompt, ...stableContext.blocks],
+      hopMode,
+    ),
     templateKeys: stageBlock.shippedKeys,
     memorySections: stableContext.memorySections,
     classificationGatedKeys: classificationGatedKeys(stageBlock),
@@ -118,7 +147,10 @@ export function buildActiveInstruction(sess: AiSession, ctx: StagePromptContext,
 }
 
 /** Assembles the session-constant context blocks — mission brief, original question, discovery summary — shared by every stage system prompt, plus the measured provenance list of the blocks that assembled non-empty. */
-function buildStableContextBlocks(sess: AiSession, engine: NavigationEngine | null): {
+function buildStableContextBlocks(
+  sess: AiSession,
+  engine: NavigationEngine | null,
+): {
   blocks: readonly string[];
   memorySections: string[];
 } {
@@ -127,13 +159,20 @@ function buildStableContextBlocks(sess: AiSession, engine: NavigationEngine | nu
     sess.memory.getUserQuestion() ?? '',
     sess.memory.getScopeNotes(),
   );
-  const originalQuestion = buildOriginalQuestionBlock(sess.memory.getUserQuestion());
-  const discoverySummary = buildDiscoverySummaryBlock(engine?.getDiscoverySummary() ?? null);
+  const originalQuestion = buildOriginalQuestionBlock(
+    sess.memory.getUserQuestion(),
+  );
+  const discoverySummary = buildDiscoverySummaryBlock(
+    engine?.getDiscoverySummary() ?? null,
+  );
   const memorySections: string[] = [];
   if (missionBrief) memorySections.push('mission_brief');
   if (originalQuestion) memorySections.push('original_question');
   if (discoverySummary) memorySections.push('discovery_summary');
-  return { blocks: [missionBrief, originalQuestion, discoverySummary], memorySections };
+  return {
+    blocks: [missionBrief, originalQuestion, discoverySummary],
+    memorySections,
+  };
 }
 
 /** The per-hop worker user message plus its YAML and memory provenance. */
@@ -149,15 +188,24 @@ interface ActiveHopInstruction {
 }
 
 /** Builds the lean per-hop worker user message — the focus task, the focus node DDL + neighbours, and rolling memory — together with its focus-sensitive YAML provenance. */
-export function buildActiveHopInstruction(sess: AiSession, engine: NavigationEngine, focusId: string): ActiveHopInstruction {
+export function buildActiveHopInstruction(
+  sess: AiSession,
+  engine: NavigationEngine,
+  focusId: string,
+): ActiveHopInstruction {
   const isCtMode = engine.currentHopAnalysisMode === 'ct';
   const nonBodied = focusIsNonBodied(sess, engine);
   const currentTask = buildCurrentTaskBlock(
-    engine.getCurrentTasks().map(task => ({ ...task, endpoints: engine.taskEndpoints(task) })),
+    engine
+      .getCurrentTasks()
+      .map((task) => ({ ...task, endpoints: engine.taskEndpoints(task) })),
     isCtMode ? engine.columnAspect?.active_columns : undefined,
     engine.pendingLineageQuestions,
     nonBodied,
-    { analysisMode: engine.currentHopAnalysisMode, originNodeId: engine.currentOrigin },
+    {
+      analysisMode: engine.currentHopAnalysisMode,
+      originNodeId: engine.currentOrigin,
+    },
   );
   const captureRecipe = resolveStage(sess, 'active', isCtMode, {
     scope: 'per_focus',
@@ -165,8 +213,13 @@ export function buildActiveHopInstruction(sess: AiSession, engine: NavigationEng
     writeSections: true,
   });
   const focus = buildWorkerHopMessage(engine.peekHopContext(), focusId);
-  const recentRejections = sess.memory.getRecentRejections().filter(rejection => rejection.atHop < engine.currentHop);
-  const memory = buildMemoryBlock(sess.memory.getShortTermMemory(), recentRejections);
+  const recentRejections = sess.memory
+    .getRecentRejections()
+    .filter((rejection) => rejection.atHop < engine.currentHop);
+  const memory = buildMemoryBlock(
+    sess.memory.getShortTermMemory(),
+    recentRejections,
+  );
   const memorySections: string[] = [];
   if (currentTask) memorySections.push('current_task');
   if (captureRecipe.prompt) memorySections.push('capture_recipe');
@@ -174,7 +227,9 @@ export function buildActiveHopInstruction(sess: AiSession, engine: NavigationEng
   memorySections.push('short_term_memory');
   if (recentRejections.length > 0) memorySections.push('recent_rejections');
   return {
-    message: [currentTask, captureRecipe.prompt, focus, memory].filter(Boolean).join('\n\n'),
+    message: [currentTask, captureRecipe.prompt, focus, memory]
+      .filter(Boolean)
+      .join('\n\n'),
     templateKeys: captureRecipe.shippedKeys,
     memorySections,
     classificationGatedKeys: classificationGatedKeys(captureRecipe),
@@ -182,13 +237,21 @@ export function buildActiveHopInstruction(sess: AiSession, engine: NavigationEng
 }
 
 /** Composes the synthesis authoring system prompt: grounded base (which routes to the TS `buildSynthesisPrompt` protocol) + synthesis-stage YAML block + the stable mission blocks. */
-export function buildSynthesisInstruction(sess: AiSession, ctx: StagePromptContext): StageSystemInstruction {
+export function buildSynthesisInstruction(
+  sess: AiSession,
+  ctx: StagePromptContext,
+): StageSystemInstruction {
   const engine = sess.stateMachine as NavigationEngine | null;
   const stage = resolveStage(sess, 'synthesis');
   const stableContext = buildStableContextBlocks(sess, engine);
   const analysisMode: 'bb' | 'ct' = engine?.columnAspect ? 'ct' : 'bb';
   return {
-    system: assemblePhaseSystem('synthesis', ctx, [stage.prompt, ...stableContext.blocks], analysisMode),
+    system: assemblePhaseSystem(
+      'synthesis',
+      ctx,
+      [stage.prompt, ...stableContext.blocks],
+      analysisMode,
+    ),
     templateKeys: stage.shippedKeys,
     memorySections: stableContext.memorySections,
     classificationGatedKeys: classificationGatedKeys(stage),

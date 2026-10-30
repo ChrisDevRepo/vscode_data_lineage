@@ -11,14 +11,34 @@ import { getGlobalSingleton } from '../../utils/globalSingleton';
 import type { SerializedFilterState } from '../../engine/projectStore';
 import { ColumnStore } from '../../engine/columnStore';
 import { AiMemoryManager } from '../session/memoryManager';
-import { type ResultGraph, type AiOutputTemplates, type AiOutputSections, type PresentationArtifact, type DiscoveryScopeArtifact, EMPTY_AI_TEMPLATES, EMPTY_AI_SECTIONS } from '../session/types';
+import {
+  type ResultGraph,
+  type AiOutputTemplates,
+  type AiOutputSections,
+  type PresentationArtifact,
+  type DiscoveryScopeArtifact,
+  EMPTY_AI_TEMPLATES,
+  EMPTY_AI_SECTIONS,
+} from '../session/types';
 import type { IHopStateMachine } from '../sm/smBase';
-import type { HopLogEntry, NavigationInitParams, ScopeSummary, SmResult } from '../sm/smTypes';
+import type {
+  HopLogEntry,
+  NavigationInitParams,
+  ScopeSummary,
+  SmResult,
+} from '../sm/smTypes';
 import type { SessionPhase, ToolControlSignal } from '../session/sessionPhase';
 import { InternalInvariantError } from '../support/internalInvariant';
 import type { ClassificationValue } from '../session/classification';
-import { contextBlockBytes, storedEvidenceKindBytes, type TurnTokenBudget } from '../support/tokenBudget';
-import { readToolError, type ToolRejection } from '../support/toolErrorEnvelope';
+import {
+  contextBlockBytes,
+  storedEvidenceKindBytes,
+  type TurnTokenBudget,
+} from '../support/tokenBudget';
+import {
+  readToolError,
+  type ToolRejection,
+} from '../support/toolErrorEnvelope';
 import { sanitizeForLog, trunc } from '../../utils/log';
 import type { PresentResultInput } from '../tools/presentResult';
 import { ToolDraft } from '../support/toolDraft';
@@ -47,28 +67,53 @@ export interface PendingExplorationProposal {
 function canonicalJson(value: unknown): string {
   return JSON.stringify(value, (_key, val: unknown) =>
     val !== null && typeof val === 'object' && !Array.isArray(val)
-      ? Object.fromEntries(Object.entries(val as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
-      : val);
+      ? Object.fromEntries(
+          Object.entries(val as Record<string, unknown>).sort(([a], [b]) =>
+            a < b ? -1 : a > b ? 1 : 0,
+          ),
+        )
+      : val,
+  );
 }
 
 /** Structural equality for two fully merged, validated exploration proposals. */
 export function sameExplorationProposal(
-  left: Omit<PendingExplorationProposal, 'revision' | 'discoverySummary' | 'proposalId'>,
-  right: PendingExplorationProposal | Omit<PendingExplorationProposal, 'revision'>,
+  left: Omit<
+    PendingExplorationProposal,
+    'revision' | 'discoverySummary' | 'proposalId'
+  >,
+  right:
+    | PendingExplorationProposal
+    | Omit<PendingExplorationProposal, 'revision'>,
 ): boolean {
-  const { revision: _revision, discoverySummary: _discoverySummary, proposalId: _proposalId, ...rightRest } = right as PendingExplorationProposal;
+  const {
+    revision: _revision,
+    discoverySummary: _discoverySummary,
+    proposalId: _proposalId,
+    ...rightRest
+  } = right as PendingExplorationProposal;
   return canonicalJson(left) === canonicalJson(rightRest);
 }
 
 /** Result of a turn-guarded session write ({@link AiSession.enterExploring} and its siblings). */
 export type SessionWriteOutcome =
   | { kind: 'accepted' }
-  | { kind: 'dropped_stale_turn'; op: string; captured: number; current: number };
+  | {
+      kind: 'dropped_stale_turn';
+      op: string;
+      captured: number;
+      current: number;
+    };
 
 /** Outcome of attempting to start or resume a navigation engine session. */
 type ExplorationActivationOutcome =
   | { kind: 'accepted'; engine: IHopStateMachine }
-  | { kind: 'dropped_stale_turn'; op: string; captured: number; current: number }
+  | {
+      kind: 'dropped_stale_turn';
+      op: string;
+      captured: number;
+      current: number;
+    }
   | { kind: 'rejected'; reason: string };
 
 /** Maximum accepted discovery observations retained in one live session — a *count* bound, so a long discovery walk cannot grow the retained set even when every result is individually small. */
@@ -102,7 +147,9 @@ type DiscoveryTranscriptTurn = readonly [
   { readonly role: 'assistant'; readonly content: string },
 ];
 
-function renderDiscoveryTranscript(turns: readonly DiscoveryTranscriptTurn[]): string {
+function renderDiscoveryTranscript(
+  turns: readonly DiscoveryTranscriptTurn[],
+): string {
   return JSON.stringify(turns.flat());
 }
 
@@ -191,28 +238,43 @@ export class AiSession {
   /** Exact LangGraph tool stage; the dispatcher must not infer this from the broader session phase. */
   public activeLmStage: ChatLmStage | null = null;
   /** Last `present_result` description string — consumed by `dataLineageViz.aiCreateView` when re-posting the AI preview to the webview so the narrative survives panel reveal. */
-  public get lastPresentResultDescription(): string | null { return this.presentationArtifact?.aiMetadata.description ?? null; }
+  public get lastPresentResultDescription(): string | null {
+    return this.presentationArtifact?.aiMetadata.description ?? null;
+  }
   /** Last `present_result` headline summary — emitted to chat after presentation so the user sees an answer to their original question without opening the description overlay. */
-  public get lastPresentResultSummary(): string | null { return this.presentationArtifact?.aiMetadata.summary ?? null; }
+  public get lastPresentResultSummary(): string | null {
+    return this.presentationArtifact?.aiMetadata.summary ?? null;
+  }
   /** `true` when `present_result` was successfully invoked in the current turn. */
   private _presentResultCalledThisTurn = false;
   /** Whether a `present_result` call succeeded in the current turn. */
-  public get presentResultCalledThisTurn(): boolean { return this._presentResultCalledThisTurn; }
+  public get presentResultCalledThisTurn(): boolean {
+    return this._presentResultCalledThisTurn;
+  }
   private _presentResultAutoDispatched = false;
   /** Whether the successful presentation was auto-dispatched to the webview panel this turn. */
-  public get presentResultAutoDispatched(): boolean { return this._presentResultAutoDispatched; }
+  public get presentResultAutoDispatched(): boolean {
+    return this._presentResultAutoDispatched;
+  }
   /** Number of `present_result` tool invocations observed in the current turn. */
   private _presentResultAttemptCountThisTurn = 0;
   /** Count of `present_result` invocations observed in the current turn. */
-  public get presentResultAttemptCountThisTurn(): number { return this._presentResultAttemptCountThisTurn; }
+  public get presentResultAttemptCountThisTurn(): number {
+    return this._presentResultAttemptCountThisTurn;
+  }
   /** Number of failed `present_result` invocations in the current turn. */
   private _presentResultFailureCountThisTurn = 0;
   /** Count of failed `present_result` invocations in the current turn. */
-  public get presentResultFailureCountThisTurn(): number { return this._presentResultFailureCountThisTurn; }
+  public get presentResultFailureCountThisTurn(): number {
+    return this._presentResultFailureCountThisTurn;
+  }
   /** Uncommitted start fields, scoped to the turn, stage and pending proposal. */
-  public readonly startExplorationDraft = new ToolDraft<Record<string, unknown>>();
+  public readonly startExplorationDraft = new ToolDraft<
+    Record<string, unknown>
+  >();
   /** Uncommitted report fields; the phase schema remains complete during correction. */
-  public readonly presentResultRepairDraft = new ToolDraft<PresentResultInput>();
+  public readonly presentResultRepairDraft =
+    new ToolDraft<PresentResultInput>();
 
   /** Reason the current turn's synthesis rendered the model's held text without a working preview/panel step, or `null` when the last render was clean. Set by {@link markSynthesisRenderDegraded}; read and cleared once by the participant's one-shot warning toast via {@link consumeSynthesisRenderDegraded}. */
   private _synthesisRenderDegradedReason: string | null = null;
@@ -224,8 +286,10 @@ export class AiSession {
 
   /** Clears a render-degraded mark that a preview delivery set, leaving a mark from any other cause. */
   public clearPreviewDeliveryDegraded(): void {
-    if (this._synthesisRenderDegradedReason === 'preview_post_failed'
-      || this._synthesisRenderDegradedReason === 'preview_dispatch') {
+    if (
+      this._synthesisRenderDegradedReason === 'preview_post_failed' ||
+      this._synthesisRenderDegradedReason === 'preview_dispatch'
+    ) {
       this._synthesisRenderDegradedReason = null;
     }
   }
@@ -244,7 +308,9 @@ export class AiSession {
 
   /** Returns the queued notices in queue order, joined as markdown paragraphs, and clears the queue. */
   public takeClosingNotices(): string {
-    const notices = [...this._closingNotices.values()].map(notice => `\n\n${notice}`).join('');
+    const notices = [...this._closingNotices.values()]
+      .map((notice) => `\n\n${notice}`)
+      .join('');
     this._closingNotices.clear();
     return notices;
   }
@@ -318,7 +384,12 @@ export class AiSession {
   /** Guards a turn-scoped write: accepts only while {@link token} still matches the live {@link turnEpoch}, otherwise reports the write as a dropped stale-turn no-op. */
   private guardTurnWrite(token: number, op: string): SessionWriteOutcome {
     if (token !== this._turnEpoch) {
-      return { kind: 'dropped_stale_turn', op, captured: token, current: this._turnEpoch };
+      return {
+        kind: 'dropped_stale_turn',
+        op,
+        captured: token,
+        current: this._turnEpoch,
+      };
     }
     return { kind: 'accepted' };
   }
@@ -353,7 +424,12 @@ export class AiSession {
   }
 
   /** Publishes prepared model data atomically, retiring prior approvals, exploration state and turn leases. */
-  public replaceModel(model: DatabaseModel, graph: Graph, columnStore: ColumnStore, isDb: boolean): void {
+  public replaceModel(
+    model: DatabaseModel,
+    graph: Graph,
+    columnStore: ColumnStore,
+    isDb: boolean,
+  ): void {
     this.beginTurn();
     this.resetExploration();
     this.beginTurnState();
@@ -399,7 +475,9 @@ export class AiSession {
   /** The newest follow-up prose held back by `proseGate: 'buffer-until-tool'`, turn-scoped. */
   private _bufferedFollowUpProse: string | null = null;
   /** The newest buffered follow-up prose, or null when this turn produced none. */
-  public get bufferedFollowUpProse(): string | null { return this._bufferedFollowUpProse; }
+  public get bufferedFollowUpProse(): string | null {
+    return this._bufferedFollowUpProse;
+  }
   /** Holds one generation's suppressed prose, replacing any earlier one. Blank text clears nothing. */
   public bufferFollowUpProse(text: string): void {
     if (text.trim().length > 0) this._bufferedFollowUpProse = text;
@@ -420,7 +498,10 @@ export class AiSession {
   }
 
   /** Stores one canonical scope artifact if the producing turn still owns the session. */
-  public storeDiscoveryScope(artifact: DiscoveryScopeArtifact, token: number): SessionWriteOutcome {
+  public storeDiscoveryScope(
+    artifact: DiscoveryScopeArtifact,
+    token: number,
+  ): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'storeDiscoveryScope');
     if (guard.kind === 'accepted') this.discoveryScopeArtifact = artifact;
     return guard;
@@ -436,32 +517,41 @@ export class AiSession {
   ): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'settleDiscoveryTurn');
     if (guard.kind !== 'accepted') return guard;
-    const scope = this.discoveryScopeArtifact?.turnEpoch === token ? this.discoveryScopeArtifact : null;
-    const walk = scope && scope.nodeIds.length >= 2
-      ? { origin: scope.origin, walkCount: scope.nodeIds.length }
-      : detailWalk;
+    const scope =
+      this.discoveryScopeArtifact?.turnEpoch === token
+        ? this.discoveryScopeArtifact
+        : null;
+    const walk =
+      scope && scope.nodeIds.length >= 2
+        ? { origin: scope.origin, walkCount: scope.nodeIds.length }
+        : detailWalk;
     if (walk) {
       this.lastDiscoveryOrigin = walk.origin;
       this.lastDiscoveryWalkCount = walk.walkCount;
       this.lastDiscoveryQuestion = question;
       this.lastDiscoveryAnswer = answer;
     }
-    if (readCatalog && !(scope && scope.nodeIds.length >= 2)) this.discoveryScopeArtifact = null;
+    if (readCatalog && !(scope && scope.nodeIds.length >= 2))
+      this.discoveryScopeArtifact = null;
     return guard;
   }
 
   /** Whether the post-discovery SM-offer may render (idle phase, multi-object walk with an origin). */
   public smOfferAvailable(): boolean {
-    return this.phase.kind === 'idle'
-      && Boolean(this.lastDiscoveryOrigin)
-      && this.lastDiscoveryWalkCount >= 2;
+    return (
+      this.phase.kind === 'idle' &&
+      Boolean(this.lastDiscoveryOrigin) &&
+      this.lastDiscoveryWalkCount >= 2
+    );
   }
 
   /** Whether a completed bounded BFS chat answer can offer a visual-preview action. */
   public previewOfferAvailable(): boolean {
-    return this.smOfferAvailable()
-      && this.discoveryScopeArtifact !== null
-      && !this.presentResultCalledThisTurn;
+    return (
+      this.smOfferAvailable() &&
+      this.discoveryScopeArtifact !== null &&
+      !this.presentResultCalledThisTurn
+    );
   }
 
   /** Appends canonical conversation text and bounded accepted discovery evidence. */
@@ -475,58 +565,84 @@ export class AiSession {
     let assistant: string | null = null;
     for (const message of turnMessages) {
       if (
-        HumanMessage.isInstance(message)
-        && typeof message.content === 'string'
-        && user === null
-      ) user = message.content;
+        HumanMessage.isInstance(message) &&
+        typeof message.content === 'string' &&
+        user === null
+      )
+        user = message.content;
       if (
-        AIMessage.isInstance(message)
-        && typeof message.content === 'string'
-        && user !== null
-      ) assistant = message.content;
+        AIMessage.isInstance(message) &&
+        typeof message.content === 'string' &&
+        user !== null
+      )
+        assistant = message.content;
     }
     if (user !== null && assistant !== null) {
       this.discoveryTranscript.push([
         { role: 'user', content: user },
         { role: 'assistant', content: assistant },
       ]);
-      while (this.discoveryTranscript.length > MAX_DISCOVERY_TRANSCRIPT_TURNS
-        || Buffer.byteLength(renderDiscoveryTranscript(this.discoveryTranscript), 'utf8') > contextBlockBytes(budget)) {
+      while (
+        this.discoveryTranscript.length > MAX_DISCOVERY_TRANSCRIPT_TURNS ||
+        Buffer.byteLength(
+          renderDiscoveryTranscript(this.discoveryTranscript),
+          'utf8',
+        ) > contextBlockBytes(budget)
+      ) {
         this.discoveryTranscript.shift();
-        debugLog?.(`[AI] [Discovery] oldest transcript turn evicted — turnsRemaining=${this.discoveryTranscript.length} cap=${MAX_DISCOVERY_TRANSCRIPT_TURNS}`);
+        debugLog?.(
+          `[AI] [Discovery] oldest transcript turn evicted — turnsRemaining=${this.discoveryTranscript.length} cap=${MAX_DISCOVERY_TRANSCRIPT_TURNS}`,
+        );
       }
     }
     for (const observation of observations) {
-      const toolName = observation.toolName ? trunc(sanitizeForLog(observation.toolName), 64) : '(missing)';
+      const toolName = observation.toolName
+        ? trunc(sanitizeForLog(observation.toolName), 64)
+        : '(missing)';
       if (!observation.toolName) {
-        debugLog?.(`[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=missing_tool_name`);
+        debugLog?.(
+          `[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=missing_tool_name`,
+        );
         continue;
       }
       const resultBytes = Buffer.byteLength(observation.result, 'utf8');
       if (resultBytes > storedEvidenceKindBytes(budget)) {
-        debugLog?.(`[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=oversized bytes=${resultBytes} cap=${storedEvidenceKindBytes(budget)}`);
+        debugLog?.(
+          `[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=oversized bytes=${resultBytes} cap=${storedEvidenceKindBytes(budget)}`,
+        );
         continue;
       }
       let result: unknown;
       try {
         result = JSON.parse(observation.result);
       } catch {
-        debugLog?.(`[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=unparseable`);
+        debugLog?.(
+          `[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=unparseable`,
+        );
         continue;
       }
       if (result === null || typeof result !== 'object') {
-        debugLog?.(`[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=not_an_object`);
+        debugLog?.(
+          `[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=not_an_object`,
+        );
         continue;
       }
       if (readToolError(result)) {
-        debugLog?.(`[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=error_envelope`);
+        debugLog?.(
+          `[AI] [Discovery] evidence observation dropped — tool=${toolName} reason=error_envelope`,
+        );
         continue;
       }
       this.discoveryEvidence.push({ toolName: observation.toolName, result });
-      while (this.discoveryEvidence.length > MAX_DISCOVERY_EVIDENCE_OBSERVATIONS
-        || Buffer.byteLength(this.renderDiscoveryEvidence(), 'utf8') > contextBlockBytes(budget)) {
+      while (
+        this.discoveryEvidence.length > MAX_DISCOVERY_EVIDENCE_OBSERVATIONS ||
+        Buffer.byteLength(this.renderDiscoveryEvidence(), 'utf8') >
+          contextBlockBytes(budget)
+      ) {
         const evicted = this.discoveryEvidence.shift();
-        debugLog?.(`[AI] [Discovery] oldest evidence observation evicted — tool=${evicted ? trunc(sanitizeForLog(evicted.toolName), 64) : '(unknown)'} remaining=${this.discoveryEvidence.length}`);
+        debugLog?.(
+          `[AI] [Discovery] oldest evidence observation evicted — tool=${evicted ? trunc(sanitizeForLog(evicted.toolName), 64) : '(unknown)'} remaining=${this.discoveryEvidence.length}`,
+        );
       }
     }
   }
@@ -538,9 +654,7 @@ export class AiSession {
       modelAssistantMessage(turn[1].content),
     ]);
     const evidence = this.renderDiscoveryEvidence();
-    return evidence
-      ? [...transcript, modelUserMessage(evidence)]
-      : transcript;
+    return evidence ? [...transcript, modelUserMessage(evidence)] : transcript;
   }
 
   /** Clears cross-turn discovery memory: on model/project (re)load, on a new native chat, and after every turn that supplied native history (which then owns cross-turn conversation). Never on SM start. */
@@ -552,13 +666,18 @@ export class AiSession {
   /** Renders the accepted-evidence projection without provider call ids or transcript roles. */
   private renderDiscoveryEvidence(): string {
     if (this.discoveryEvidence.length === 0) return '';
-    return JSON.stringify({ kind: 'accepted_discovery_evidence', observations: this.discoveryEvidence });
+    return JSON.stringify({
+      kind: 'accepted_discovery_evidence',
+      observations: this.discoveryEvidence,
+    });
   }
 
   /** Returns the gate-locked classification required by active and synthesis model calls. */
   public requireLockedClassification(): ClassificationValue {
     if (!this.classification) {
-      throw new Error('AiSession: active exploration requires a locked classification.');
+      throw new Error(
+        'AiSession: active exploration requires a locked classification.',
+      );
     }
     return this.classification;
   }
@@ -567,15 +686,24 @@ export class AiSession {
   public enterGate(token: number): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'enterGate');
     if (guard.kind !== 'accepted') return guard;
-    if (!this.pendingExploration) throw new InternalInvariantError('enterGate without a pending exploration proposal');
-    this.pendingExploration = { ...this.pendingExploration, proposalId: randomUUID() };
+    if (!this.pendingExploration)
+      throw new InternalInvariantError(
+        'enterGate without a pending exploration proposal',
+      );
+    this.pendingExploration = {
+      ...this.pendingExploration,
+      proposalId: randomUUID(),
+    };
     this.phase = { kind: 'awaiting_gate' };
     return guard;
   }
 
   /** Whether the card with `proposalId` is the one the user can still resolve. */
   public holdsProposal(proposalId: string): boolean {
-    return this.phase.kind === 'awaiting_gate' && this.pendingExploration?.proposalId === proposalId;
+    return (
+      this.phase.kind === 'awaiting_gate' &&
+      this.pendingExploration?.proposalId === proposalId
+    );
   }
 
   /** Replaces the reviewable proposal without creating or publishing an exploration engine. */
@@ -593,11 +721,21 @@ export class AiSession {
   }
 
   /** Attaches the composed discovery-handoff memo to the pending proposal at `revision`. */
-  public attachDiscoverySummary(revision: number, text: string, token: number): SessionWriteOutcome {
+  public attachDiscoverySummary(
+    revision: number,
+    text: string,
+    token: number,
+  ): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'attachDiscoverySummary');
     if (guard.kind !== 'accepted') return guard;
-    if (this.pendingExploration && this.pendingExploration.revision === revision) {
-      this.pendingExploration = { ...this.pendingExploration, discoverySummary: text };
+    if (
+      this.pendingExploration &&
+      this.pendingExploration.revision === revision
+    ) {
+      this.pendingExploration = {
+        ...this.pendingExploration,
+        discoverySummary: text,
+      };
     }
     return guard;
   }
@@ -608,7 +746,8 @@ export class AiSession {
     if (guard.kind !== 'accepted') return guard;
     this.startExplorationDraft.clear();
     this.pendingExploration = null;
-    if (this.stateMachine?.status === 'complete' && this.resultGraph) this.enterCompleted(token);
+    if (this.stateMachine?.status === 'complete' && this.resultGraph)
+      this.enterCompleted(token);
     else this.enterIdle(token);
     return guard;
   }
@@ -617,14 +756,20 @@ export class AiSession {
   public activatePendingExploration(
     proposalId: string,
     token: number,
-    factory: (proposal: PendingExplorationProposal) => IHopStateMachine | ToolRejection,
+    factory: (
+      proposal: PendingExplorationProposal,
+    ) => IHopStateMachine | ToolRejection,
   ): ExplorationActivationOutcome {
     const guard = this.guardTurnWrite(token, 'activatePendingExploration');
     if (guard.kind !== 'accepted') return guard;
     const proposal = this.pendingExploration;
-    if (!proposal) return { kind: 'rejected', reason: 'missing_pending_proposal' };
+    if (!proposal)
+      return { kind: 'rejected', reason: 'missing_pending_proposal' };
     if (!this.holdsProposal(proposalId)) {
-      return { kind: 'rejected', reason: `stale_proposal:${proposalId}->${proposal.proposalId ?? 'unshown'}` };
+      return {
+        kind: 'rejected',
+        reason: `stale_proposal:${proposalId}->${proposal.proposalId ?? 'unshown'}`,
+      };
     }
     const built = factory(proposal);
     if ('code' in built) return { kind: 'rejected', reason: built.code };
@@ -722,15 +867,20 @@ export class AiSession {
   }
 
   /** Transmutes state-machine findings into the visual `ResultGraph` format. */
-  public storeSmResult(fullResult: SmResult, token: number): SessionWriteOutcome {
+  public storeSmResult(
+    fullResult: SmResult,
+    token: number,
+  ): SessionWriteOutcome {
     const guard = this.guardTurnWrite(token, 'storeSmResult');
     if (guard.kind !== 'accepted') return guard;
-    const sourceMode = this.stateMachine?.columnAspect ? 'column_trace' : 'blackboard';
+    const sourceMode = this.stateMachine?.columnAspect
+      ? 'column_trace'
+      : 'blackboard';
 
     const prior = this.resultGraph;
     this.resultGraph = {
-      nodeIds: fullResult.fullNodes.map(n => n.id),
-      evidenceNodeIds: fullResult.fullNodes.map(n => n.id),
+      nodeIds: fullResult.fullNodes.map((n) => n.id),
+      evidenceNodeIds: fullResult.fullNodes.map((n) => n.id),
       edges: fullResult.edges,
       source: sourceMode,
       originNodeId: fullResult.originNodeId,
@@ -743,21 +893,30 @@ export class AiSession {
       closing: prior?.closing,
       sections: prior?.sections,
       sectionsRunId: prior?.sectionsRunId,
-      ...(fullResult.columnAspect ? {
-        columnAspect: {
-          edges: fullResult.columnAspect.edges,
-          requested: { node: fullResult.originNodeId, columns: [...fullResult.columnAspect.target_columns] },
-        },
-      } : {}),
+      ...(fullResult.columnAspect
+        ? {
+            columnAspect: {
+              edges: fullResult.columnAspect.edges,
+              requested: {
+                node: fullResult.originNodeId,
+                columns: [...fullResult.columnAspect.target_columns],
+              },
+            },
+          }
+        : {}),
     };
     return guard;
   }
 
   /** The committed report sections a further render of this same run may keep instead of resending. */
-  public retainableReportSections(): NonNullable<ResultGraph['sections']> | null {
+  public retainableReportSections(): NonNullable<
+    ResultGraph['sections']
+  > | null {
     const sections = this.resultGraph?.sections;
     if (!sections?.length || !this.explorationRunId) return null;
-    return this.resultGraph?.sectionsRunId === this.explorationRunId ? sections : null;
+    return this.resultGraph?.sectionsRunId === this.explorationRunId
+      ? sections
+      : null;
   }
 
   /** Mirrors the engine-derived hop count into {@link hopCount} for UI/telemetry, guarded by the turn epoch. */

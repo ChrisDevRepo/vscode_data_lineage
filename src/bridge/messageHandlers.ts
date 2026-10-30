@@ -14,33 +14,80 @@ import {
 import { notifyError, notifyWarning } from '../utils/notifications';
 import { type BridgeHost } from './host';
 import {
-  type DatabaseModel, type LineageNode, type ColumnDef, type ParseStats, DEFAULT_CONFIG,
-  type ExtensionConfig, type LayoutConfig, type OverviewConfig,
+  type DatabaseModel,
+  type LineageNode,
+  type ColumnDef,
+  type ParseStats,
+  DEFAULT_CONFIG,
+  type ExtensionConfig,
+  type LayoutConfig,
+  type OverviewConfig,
 } from '../engine/types';
-import { extractDacpac, extractSchemaPreview, extractDacpacFiltered } from '../engine/dacpacExtractor';
-import { checkObjectLimit, formatObjectLimitMessage } from '../engine/modelFilters';
 import {
-  connectDatabase, connectionErrorHooks,
-  loadDmvQueries, createDmvQueryCache, executeDmvQueries, executeDmvQueriesFiltered,
-  executeSimpleQuery, isPhase2Query, type DmvQuery, type DbConnectEnv,
+  extractDacpac,
+  extractSchemaPreview,
+  extractDacpacFiltered,
+} from '../engine/dacpacExtractor';
+import {
+  checkObjectLimit,
+  formatObjectLimitMessage,
+} from '../engine/modelFilters';
+import {
+  connectDatabase,
+  connectionErrorHooks,
+  loadDmvQueries,
+  createDmvQueryCache,
+  executeDmvQueries,
+  executeDmvQueriesFiltered,
+  executeSimpleQuery,
+  isPhase2Query,
+  type DmvQuery,
+  type DbConnectEnv,
 } from '../engine/connectionManager';
 import { type DbSession } from '../engine/db/dbSession';
-import { isDbConnectionError, isDriverError, reportConnectionError, targetFromSession } from '../engine/db/connectionErrors';
+import {
+  isDbConnectionError,
+  isDriverError,
+  reportConnectionError,
+  targetFromSession,
+} from '../engine/db/connectionErrors';
 import { redactSecrets } from '../utils/redact';
 import { type SimpleExecuteResult } from '../types/database';
-import { buildColumnAggregations, buildProfilingQuery, buildRowCountQuery, parseProfilingResult, computeSamplePercent, profilingRowFromResult } from '../engine/profilingEngine';
-import { type StatsMode } from '../engine/profilingEngine';
-import { buildModelFromDmv, buildSchemaPreview, validateQueryResult, type DmvResults } from '../engine/dmvExtractor';
 import {
-  createProject, updateProject, deleteProject,
-  addFilterProfile, deleteFilterProfile,
+  buildColumnAggregations,
+  buildProfilingQuery,
+  buildRowCountQuery,
+  parseProfilingResult,
+  computeSamplePercent,
+  profilingRowFromResult,
+} from '../engine/profilingEngine';
+import { type StatsMode } from '../engine/profilingEngine';
+import {
+  buildModelFromDmv,
+  buildSchemaPreview,
+  validateQueryResult,
+  type DmvResults,
+} from '../engine/dmvExtractor';
+import {
+  createProject,
+  updateProject,
+  deleteProject,
+  addFilterProfile,
+  deleteFilterProfile,
   type ProjectStore,
 } from '../engine/projectStore';
 import { buildBareGraph } from '../ai/support/graphUtils';
-import { buildStoredRun, clearStoredRun, writeStoredRun } from '../ai/session/runStore';
+import {
+  buildStoredRun,
+  clearStoredRun,
+  writeStoredRun,
+} from '../ai/session/runStore';
 import { populateColumnStore } from '../engine/modelBuilder';
 import { ColumnStore } from '../engine/columnStore';
-import { summarizeModelConnectivity, formatModelConnectivity } from '../engine/schemaAdjacency';
+import {
+  summarizeModelConnectivity,
+  formatModelConnectivity,
+} from '../engine/schemaAdjacency';
 import { formatRenderConnectivity } from '../engine/renderConnectivity';
 import { formatScreenStateSections } from './debugDumpScreenState';
 import {
@@ -90,7 +137,10 @@ const WEBVIEW_LOG_CATEGORIES: Readonly<Record<string, LogCategory>> = {
   saveview: 'Project',
 };
 
-function parseWebviewLog(text: string): { category: LogCategory; message: string } {
+function parseWebviewLog(text: string): {
+  category: LogCategory;
+  message: string;
+} {
   const match = /^\s*\[([A-Za-z][A-Za-z0-9]*)\]\s*/.exec(text);
   if (!match) return { category: 'Bridge', message: text };
   return {
@@ -100,15 +150,20 @@ function parseWebviewLog(text: string): { category: LogCategory; message: string
 }
 
 /** Splits a project list into the records the webview contract accepts and those it rejects. */
-export function partitionSendableProjects(
-  projects: readonly Project[],
-): { sendable: Project[]; rejected: Array<{ id: string; issues: string }> } {
+export function partitionSendableProjects(projects: readonly Project[]): {
+  sendable: Project[];
+  rejected: Array<{ id: string; issues: string }>;
+} {
   const sendable: Project[] = [];
   const rejected: Array<{ id: string; issues: string }> = [];
   for (const project of projects) {
     const parsed = ProjectSchema.safeParse(project);
     if (parsed.success) sendable.push(parsed.data);
-    else rejected.push({ id: project?.id ?? '(no id)', issues: summarizeZodError(parsed.error) });
+    else
+      rejected.push({
+        id: project?.id ?? '(no id)',
+        issues: summarizeZodError(parsed.error),
+      });
   }
   return { sendable, rejected };
 }
@@ -116,7 +171,11 @@ export function partitionSendableProjects(
 function postProjectsList(host: BridgeHost, store: ProjectStore): void {
   const { sendable, rejected } = partitionSendableProjects(store.projects);
   for (const record of rejected) {
-    host.log('warn', 'Bridge', `Project "${record.id}" was not sent to the view — ${record.issues}`);
+    host.log(
+      'warn',
+      'Bridge',
+      `Project "${record.id}" was not sent to the view — ${record.issues}`,
+    );
   }
   void host.postMessage({
     type: 'projects-list',
@@ -206,7 +265,11 @@ export function applyModelToSession(
   } else {
     sess.sourceLabel = isDb ? 'database' : 'dacpac';
   }
-  void vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
+  void vscode.commands.executeCommand(
+    'setContext',
+    'dataLineageViz.modelLoaded',
+    true,
+  );
 }
 
 /** Mutable holder for the session's untitled AI report document; a closed document is never reused. */
@@ -221,33 +284,65 @@ export function createMessageHandlers(
   getSession: () => AiSession,
   outputChannel: vscode.LogOutputChannel,
   loadProjectStore: (context: vscode.ExtensionContext) => ProjectStore,
-  saveProjectStore: (context: vscode.ExtensionContext, store: ProjectStore) => Promise<void>,
-  migrateFromWorkspaceState: (context: vscode.ExtensionContext) => Promise<void>,
+  saveProjectStore: (
+    context: vscode.ExtensionContext,
+    store: ProjectStore,
+  ) => Promise<void>,
+  migrateFromWorkspaceState: (
+    context: vscode.ExtensionContext,
+  ) => Promise<void>,
   loadDemoFlag: boolean,
   setDetailPanel: (panel: vscode.WebviewPanel | undefined) => void,
-  reportDocumentRef: ReportDocumentRef = {}
+  reportDocumentRef: ReportDocumentRef = {},
 ): MessageHandlerBundle {
-
   type DacpacPreview = Awaited<ReturnType<typeof extractSchemaPreview>>;
   let cachedDacpac: DacpacPreview | null = null;
   /** Builds the selected schemas of a DACPAC preview and installs the model; false when it is over the object limit. */
-  function installFilteredDacpac(dacpac: DacpacPreview, schemas: readonly string[], project: { id: string; name: string } | null, sourceName: string): boolean {
+  function installFilteredDacpac(
+    dacpac: DacpacPreview,
+    schemas: readonly string[],
+    project: { id: string; name: string } | null,
+    sourceName: string,
+  ): boolean {
     const config = readExtensionConfig(host);
     const logger = Logger.create(outputChannel, 'Parse');
-    const model = extractDacpacFiltered(dacpac.elements, new Set(schemas), dacpac.dspName, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
-      externalRefsEnabled: config.externalRefs.enabled,
-      identifierCaseSensitive: dacpac.identifierCaseSensitive,
-    });
+    const model = extractDacpacFiltered(
+      dacpac.elements,
+      new Set(schemas),
+      dacpac.dspName,
+      (msg) => logger.debug(msg),
+      (msg) => logger.info(msg),
+      {
+        externalRefsEnabled: config.externalRefs.enabled,
+        identifierCaseSensitive: dacpac.identifierCaseSensitive,
+      },
+    );
     if (isModelOverLimit(model, config.maxNodes, logger, host)) return false;
-    logger.info(`Dacpac filtered — ${model.nodes.length} nodes, ${model.edges.length} edges`);
+    logger.info(
+      `Dacpac filtered — ${model.nodes.length} nodes, ${model.edges.length} edges`,
+    );
     setCurrentModel(model, false, project);
-    if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
+    if (model.parseStats)
+      handleParseStats(
+        model.parseStats,
+        outputChannel,
+        getSession,
+        model.nodes.length,
+        model.edges.length,
+        model.schemas.length,
+      );
     host.postMessage({ type: 'dacpac-model', model, config, sourceName });
     return true;
   }
   let lastConnectionInfo: StoredConnectionInfo | undefined;
-  const dmvQueries = createDmvQueryCache(() => loadDmvQueries(outputChannel, context.extensionUri));
-  const dbEnv: DbConnectEnv = { secrets: context.secrets, outputChannel, loadQueries: dmvQueries.get };
+  const dmvQueries = createDmvQueryCache(() =>
+    loadDmvQueries(outputChannel, context.extensionUri),
+  );
+  const dbEnv: DbConnectEnv = {
+    secrets: context.secrets,
+    outputChannel,
+    loadQueries: dmvQueries.get,
+  };
   let detailPanel: vscode.WebviewPanel | undefined;
   let lastDetailNode: LineageNode | null = null;
 
@@ -262,9 +357,13 @@ export function createMessageHandlers(
     else host.postMessage({ type: 'load-started' });
     return activeLoad;
   }
-  function cancelLoad(load = activeLoad, replyType: 'db-cancelled' | 'load-cancelled' = 'db-cancelled'): void {
+  function cancelLoad(
+    load = activeLoad,
+    replyType: 'db-cancelled' | 'load-cancelled' = 'db-cancelled',
+  ): void {
     load.cancel();
-    if (!panelClosed && load === activeLoad) host.postMessage({ type: replyType });
+    if (!panelClosed && load === activeLoad)
+      host.postMessage({ type: replyType });
   }
 
   let reportWrite: Promise<unknown> = Promise.resolve();
@@ -275,15 +374,24 @@ export function createMessageHandlers(
     return written;
   }
   /** Replaces the report document's text, creating the document when none is open or the edit is refused. */
-  async function putReportContent(content: string): Promise<vscode.TextDocument> {
+  async function putReportContent(
+    content: string,
+  ): Promise<vscode.TextDocument> {
     const open = reportDocumentRef.document;
     if (open && !open.isClosed) {
       if (open.getText() === content) return open;
       const edit = new vscode.WorkspaceEdit();
-      edit.replace(open.uri, open.validateRange(new vscode.Range(0, 0, open.lineCount, 0)), content);
+      edit.replace(
+        open.uri,
+        open.validateRange(new vscode.Range(0, 0, open.lineCount, 0)),
+        content,
+      );
       if (await vscode.workspace.applyEdit(edit)) return open;
     }
-    const created = await vscode.workspace.openTextDocument({ content, language: 'markdown' });
+    const created = await vscode.workspace.openTextDocument({
+      content,
+      language: 'markdown',
+    });
     reportDocumentRef.document = created;
     return created;
   }
@@ -291,22 +399,46 @@ export function createMessageHandlers(
   function reportPreviewTabs(doc: vscode.TextDocument): vscode.Tab[] {
     const name = path.basename(doc.uri.path);
     return vscode.window.tabGroups.all.flatMap((group) =>
-      group.tabs.filter((tab) =>
-        tab.input instanceof vscode.TabInputWebview && tab.input.viewType.endsWith('markdown.preview') && tab.label.endsWith(` ${name}`)));
+      group.tabs.filter(
+        (tab) =>
+          tab.input instanceof vscode.TabInputWebview &&
+          tab.input.viewType.endsWith('markdown.preview') &&
+          tab.label.endsWith(` ${name}`),
+      ),
+    );
   }
   /** Leaves at most the visible report previews on screen; returns true when one is the visible tab of an editor group. */
-  async function settleReportPreviews(doc: vscode.TextDocument): Promise<boolean> {
+  async function settleReportPreviews(
+    doc: vscode.TextDocument,
+  ): Promise<boolean> {
     const previews = reportPreviewTabs(doc);
     for (const tab of previews.filter((candidate) => !candidate.isActive)) {
-      const closed = await Promise.resolve(vscode.window.tabGroups.close(tab)).catch(() => false);
-      if (!closed) host.log('warn', 'Bridge', `Hidden report preview tab "${tab.label}" could not be closed`);
+      const closed = await Promise.resolve(
+        vscode.window.tabGroups.close(tab),
+      ).catch(() => false);
+      if (!closed)
+        host.log(
+          'warn',
+          'Bridge',
+          `Hidden report preview tab "${tab.label}" could not be closed`,
+        );
     }
     return previews.some((tab) => tab.isActive);
   }
 
   /** Installs a newly loaded model. */
-  function setCurrentModel(m: DatabaseModel, isDb: boolean, project?: { id: string; name: string } | null): void {
-    applyModelToSession(getSession(), m, isDb, project, project ? loadProjectStore(context) : null);
+  function setCurrentModel(
+    m: DatabaseModel,
+    isDb: boolean,
+    project?: { id: string; name: string } | null,
+  ): void {
+    applyModelToSession(
+      getSession(),
+      m,
+      isDb,
+      project,
+      project ? loadProjectStore(context) : null,
+    );
     if (!isDb) lastConnectionInfo = undefined;
     lastDetailNode = null;
     if (detailPanel) {
@@ -320,7 +452,11 @@ export function createMessageHandlers(
     try {
       await clearStoredRun(context.globalState, profileId);
     } catch (err) {
-      host.log('warn', 'Bridge', `Failed to clear AI run memory for view ${profileId}: ${errorMessage(err)}`);
+      host.log(
+        'warn',
+        'Bridge',
+        `Failed to clear AI run memory for view ${profileId}: ${errorMessage(err)}`,
+      );
     }
   }
 
@@ -329,9 +465,18 @@ export function createMessageHandlers(
     const sess = getSession();
     return {
       isDbMode: sess.isDbSession,
-      statsEnabled: cfg.get<boolean>('tableStatistics.enabled', DEFAULT_CONFIG.tableStatistics.enabled),
-      excludeExternalTables: cfg.get<boolean>('tableStatistics.excludeExternalTables', DEFAULT_CONFIG.tableStatistics.excludeExternalTables),
-      standardModeEnabled: cfg.get<boolean>('tableStatistics.standardModeEnabled', DEFAULT_CONFIG.tableStatistics.standardModeEnabled),
+      statsEnabled: cfg.get<boolean>(
+        'tableStatistics.enabled',
+        DEFAULT_CONFIG.tableStatistics.enabled,
+      ),
+      excludeExternalTables: cfg.get<boolean>(
+        'tableStatistics.excludeExternalTables',
+        DEFAULT_CONFIG.tableStatistics.excludeExternalTables,
+      ),
+      standardModeEnabled: cfg.get<boolean>(
+        'tableStatistics.standardModeEnabled',
+        DEFAULT_CONFIG.tableStatistics.standardModeEnabled,
+      ),
     };
   }
 
@@ -339,29 +484,41 @@ export function createMessageHandlers(
     const sess = getSession();
     const cols = sess.columnStore.getColumns(node.id);
     const ddl = sess.columnStore.getDdl(node.id);
-    return { ...node, ...(cols && { columns: cols }), ...(ddl && { bodyScript: ddl }) };
+    return {
+      ...node,
+      ...(cols && { columns: cols }),
+      ...(ddl && { bodyScript: ddl }),
+    };
   }
 
   /** Shows `node` in the open detail panel, or clears the panel when there is no node. */
-  async function postDetailNode(panel: vscode.WebviewPanel, node: LineageNode | null | undefined, findQuery?: string): Promise<void> {
+  async function postDetailNode(
+    panel: vscode.WebviewPanel,
+    node: LineageNode | null | undefined,
+    findQuery?: string,
+  ): Promise<void> {
     if (!node) {
       panel.title = 'Detail';
       void postToDetail(panel, { type: 'detail-clear' }, bridgeLogger);
       return;
     }
     panel.title = `Detail: ${node.name}`;
-    void postToDetail(panel, {
-      type: 'detail-update',
-      node: enrichNodeForDetail(node),
-      findQuery,
-      config: await getDetailConfig(),
-    }, bridgeLogger);
+    void postToDetail(
+      panel,
+      {
+        type: 'detail-update',
+        node: enrichNodeForDetail(node),
+        findQuery,
+        config: await getDetailConfig(),
+      },
+      bridgeLogger,
+    );
   }
 
   const bridgeLogger = Logger.create(outputChannel, 'Bridge');
   const handlers: WebviewMessageHandlers = {
     'cancel-load': () => cancelLoad(activeLoad, 'load-cancelled'),
-    'ready': async () => {
+    ready: async () => {
       host.log('info', 'Bridge', 'Webview ready');
       if (loadDemoFlag) {
         await handlers['load-demo']({ type: 'load-demo' });
@@ -370,7 +527,11 @@ export function createMessageHandlers(
       const token = beginLoad().token;
       if (token.isCancellationRequested) return;
       if (host.getGlobalState().get(PROJECT_STORE_KEY) === undefined) {
-        host.log('info', 'Bridge', 'No project store found, triggering migration');
+        host.log(
+          'info',
+          'Bridge',
+          'No project store found, triggering migration',
+        );
         await migrateFromWorkspaceState(context);
         if (token.isCancellationRequested) return;
       }
@@ -379,28 +540,53 @@ export function createMessageHandlers(
       const sess = getSession();
       postProjectsList(host, store);
       if (sess.model && store.lastOpenedId) {
-        const project = store.projects.find(p => p.id === store.lastOpenedId);
+        const project = store.projects.find((p) => p.id === store.lastOpenedId);
         if (project) {
           sess.currentProjectId = project.id;
           sess.projectName = project.name;
           sess.isDbSession = project.connection.type === 'database';
         }
-        host.log('info', 'Bridge', `Restoring session for project: ${sess.projectName}`);
-        host.postMessage({ type: 'dacpac-model', model: sess.model, config, sourceName: sess.projectName ?? 'Project', autoVisualize: true });
+        host.log(
+          'info',
+          'Bridge',
+          `Restoring session for project: ${sess.projectName}`,
+        );
+        host.postMessage({
+          type: 'dacpac-model',
+          model: sess.model,
+          config,
+          sourceName: sess.projectName ?? 'Project',
+          autoVisualize: true,
+        });
       }
     },
     'show-detail': async (msg) => {
       host.log('info', 'Bridge', 'Node detail opened');
-      host.log('debug', 'Bridge', `Node detail: ${msg.node?.id || '(no node)'}`);
+      host.log(
+        'debug',
+        'Bridge',
+        `Node detail: ${msg.node?.id || '(no node)'}`,
+      );
       lastDetailNode = msg.node ?? null;
 
       if (!detailPanel) {
         const title = msg.node ? `Detail: ${msg.node.name}` : 'Detail';
-        detailPanel = vscode.window.createWebviewPanel('dataLineageDetail', title, vscode.ViewColumn.Beside, {
-          enableScripts: true,
-          localResourceRoots: [vscode.Uri.joinPath(host.getExtensionUri(), 'dist'), vscode.Uri.joinPath(host.getExtensionUri(), 'images')],
-        });
-        detailPanel.webview.html = getDetailWebviewHtml(detailPanel.webview, host.getExtensionUri());
+        detailPanel = vscode.window.createWebviewPanel(
+          'dataLineageDetail',
+          title,
+          vscode.ViewColumn.Beside,
+          {
+            enableScripts: true,
+            localResourceRoots: [
+              vscode.Uri.joinPath(host.getExtensionUri(), 'dist'),
+              vscode.Uri.joinPath(host.getExtensionUri(), 'images'),
+            ],
+          },
+        );
+        detailPanel.webview.html = getDetailWebviewHtml(
+          detailPanel.webview,
+          host.getExtensionUri(),
+        );
         detailPanel.onDidDispose(() => {
           detailPanel = undefined;
           setDetailPanel(undefined);
@@ -409,8 +595,12 @@ export function createMessageHandlers(
         setDetailPanel(detailPanel);
 
         detailPanel.webview.onDidReceiveMessage(async (rawM) => {
-          const inboundVersion = (rawM as BridgeEnvelope | undefined)?.protocolVersion;
-          if (inboundVersion !== undefined && inboundVersion !== BRIDGE_PROTOCOL_VERSION) {
+          const inboundVersion = (rawM as BridgeEnvelope | undefined)
+            ?.protocolVersion;
+          if (
+            inboundVersion !== undefined &&
+            inboundVersion !== BRIDGE_PROTOCOL_VERSION
+          ) {
             notifyError(
               bridgeLogger,
               'Bridge protocol mismatch (detail panel)',
@@ -420,27 +610,57 @@ export function createMessageHandlers(
           }
           const parsed = DetailPanelToExtensionMsgSchema.safeParse(rawM);
           if (!parsed.success) {
-            host.log('warn', 'Bridge', `Rejected malformed detail-panel message (type=${rawM?.type ?? '?'}): ${summarizeZodError(parsed.error)}`);
+            host.log(
+              'warn',
+              'Bridge',
+              `Rejected malformed detail-panel message (type=${rawM?.type ?? '?'}): ${summarizeZodError(parsed.error)}`,
+            );
             return;
           }
           try {
             const m = parsed.data;
             if (m.type === 'detail-ready') {
               if (lastDetailNode && detailPanel) {
-                void postToDetail(detailPanel, {
-                  type: 'detail-update',
-                  node: enrichNodeForDetail(lastDetailNode),
-                  findQuery: m.findQuery || msg.findQuery,
-                  config: await getDetailConfig()
-                }, bridgeLogger);
+                void postToDetail(
+                  detailPanel,
+                  {
+                    type: 'detail-update',
+                    node: enrichNodeForDetail(lastDetailNode),
+                    findQuery: m.findQuery || msg.findQuery,
+                    config: await getDetailConfig(),
+                  },
+                  bridgeLogger,
+                );
               } else if (detailPanel) {
-                void postToDetail(detailPanel, { type: 'detail-clear' }, bridgeLogger);
+                void postToDetail(
+                  detailPanel,
+                  { type: 'detail-clear' },
+                  bridgeLogger,
+                );
               }
             } else if (m.type === 'table-stats-request') {
               if (detailPanel && !getSession().isDbSession) {
-                void postToDetail(detailPanel, { type: 'table-stats-error', objectRef: { schema: m.schema, objectName: m.objectName }, message: 'Table statistics need a database project.' }, bridgeLogger);
+                void postToDetail(
+                  detailPanel,
+                  {
+                    type: 'table-stats-error',
+                    objectRef: { schema: m.schema, objectName: m.objectName },
+                    message: 'Table statistics need a database project.',
+                  },
+                  bridgeLogger,
+                );
               } else if (detailPanel) {
-                await handleTableStatsRequestHost(host, dbEnv, lastConnectionInfo, detailPanel, m.schema, m.objectName, m.mode, m.columns ?? [], outputChannel);
+                await handleTableStatsRequestHost(
+                  host,
+                  dbEnv,
+                  lastConnectionInfo,
+                  detailPanel,
+                  m.schema,
+                  m.objectName,
+                  m.mode,
+                  m.columns ?? [],
+                  outputChannel,
+                );
               }
             } else if (m.type === 'close-detail') {
               detailPanel?.dispose();
@@ -450,7 +670,12 @@ export function createMessageHandlers(
               await handlers['show-warning'](m);
             }
           } catch (err) {
-            host.log('error', 'Bridge', 'Detail panel handler threw unexpectedly', err);
+            host.log(
+              'error',
+              'Bridge',
+              'Detail panel handler threw unexpectedly',
+              err,
+            );
           }
         });
       } else {
@@ -460,7 +685,8 @@ export function createMessageHandlers(
     },
     'update-detail': async (msg) => {
       lastDetailNode = msg.node ?? null;
-      if (detailPanel) await postDetailNode(detailPanel, msg.node, msg.findQuery);
+      if (detailPanel)
+        await postDetailNode(detailPanel, msg.node, msg.findQuery);
     },
     'open-dacpac': async () => {
       const token = beginLoad().token;
@@ -468,8 +694,8 @@ export function createMessageHandlers(
       host.log('info', 'Bridge', 'Opening dacpac picker');
       const uris = await host.showOpenDialog({
         canSelectMany: false,
-        filters: { 'DACPAC': ['dacpac'] },
-        title: 'Select a .dacpac file'
+        filters: { DACPAC: ['dacpac'] },
+        title: 'Select a .dacpac file',
       });
       if (token.isCancellationRequested) return;
       if (uris && uris.length > 0) {
@@ -486,7 +712,11 @@ export function createMessageHandlers(
           if (token.isCancellationRequested) return;
           const reason = errorMessage(err);
           host.log('error', 'Dacpac', `Open ${uris[0].fsPath}`, err);
-          host.postMessage({ type: 'db-error', message: `Could not open ${path.basename(uris[0].fsPath)}: ${reason}`, phase: 'extract' });
+          host.postMessage({
+            type: 'db-error',
+            message: `Could not open ${path.basename(uris[0].fsPath)}: ${reason}`,
+            phase: 'extract',
+          });
           return;
         }
         const { preview } = extracted;
@@ -496,9 +726,13 @@ export function createMessageHandlers(
           preview,
           config,
           sourceName: path.basename(uris[0].fsPath, '.dacpac'),
-          filePath: uris[0].fsPath
+          filePath: uris[0].fsPath,
         });
-        host.log('info', 'Dacpac', `Schema preview — ${preview.schemas.length} schemas, ${preview.totalObjects} objects`);
+        host.log(
+          'info',
+          'Dacpac',
+          `Schema preview — ${preview.schemas.length} schemas, ${preview.totalObjects} objects`,
+        );
       } else {
         host.log('info', 'Bridge', 'Dacpac picker cancelled');
         host.postMessage({ type: 'db-cancelled' });
@@ -511,10 +745,19 @@ export function createMessageHandlers(
       host.log('info', 'Bridge', `Loading project: ${msg.id}`);
 
       const store = loadProjectStore(context);
-      const project = store.projects.find(p => p.id === msg.id);
+      const project = store.projects.find((p) => p.id === msg.id);
       if (!project) {
-        host.log('error', 'Bridge', 'Load project', `Project not found: ${msg.id}`);
-        host.postMessage({ type: 'db-error', message: `Project not found: ${msg.id}`, phase: 'connect' });
+        host.log(
+          'error',
+          'Bridge',
+          'Load project',
+          `Project not found: ${msg.id}`,
+        );
+        host.postMessage({
+          type: 'db-error',
+          message: `Project not found: ${msg.id}`,
+          phase: 'connect',
+        });
         return;
       }
 
@@ -531,62 +774,146 @@ export function createMessageHandlers(
           if (token.isCancellationRequested) return;
 
           if (schemas && schemas.length > 0) {
-            host.log('debug', 'Bridge', `Extracting filtered dacpac for schemas: ${trunc(schemas, LOG_TRUNC_LIST)}`);
+            host.log(
+              'debug',
+              'Bridge',
+              `Extracting filtered dacpac for schemas: ${trunc(schemas, LOG_TRUNC_LIST)}`,
+            );
             const name = project.connection.displayName;
-            if (!installFilteredDacpac(extracted, schemas, { id: project.id, name }, name)) return;
+            if (
+              !installFilteredDacpac(
+                extracted,
+                schemas,
+                { id: project.id, name },
+                name,
+              )
+            )
+              return;
           } else {
-            host.log('debug', 'Bridge', 'No schemas in project, showing preview');
+            host.log(
+              'debug',
+              'Bridge',
+              'No schemas in project, showing preview',
+            );
             cachedDacpac = extracted;
             const { preview } = extracted;
-            host.postMessage({ type: 'dacpac-schema-preview', preview, config: readExtensionConfig(host), sourceName: project.connection.displayName });
-            host.log('info', 'Dacpac', `Schema preview — ${preview.schemas.length} schemas, ${preview.totalObjects} objects`);
+            host.postMessage({
+              type: 'dacpac-schema-preview',
+              preview,
+              config: readExtensionConfig(host),
+              sourceName: project.connection.displayName,
+            });
+            host.log(
+              'info',
+              'Dacpac',
+              `Schema preview — ${preview.schemas.length} schemas, ${preview.totalObjects} objects`,
+            );
           }
           const latestStore = loadProjectStore(context);
-          const latestProject = latestStore.projects.find(p => p.id === project.id);
+          const latestProject = latestStore.projects.find(
+            (p) => p.id === project.id,
+          );
           if (latestProject) {
-            const updatedStore = updateProject(latestStore, { ...latestProject, updatedAt: new Date().toISOString() });
+            const updatedStore = updateProject(latestStore, {
+              ...latestProject,
+              updatedAt: new Date().toISOString(),
+            });
             await saveProjectStore(context, updatedStore);
             if (token.isCancellationRequested) return;
             postProjectsList(host, updatedStore);
           }
         } catch (err) {
           if (token.isCancellationRequested) return;
-          if (err instanceof vscode.FileSystemError && err.code === 'FileNotFound') {
-            host.log('warn', 'Bridge', `Dacpac file not found: ${project.connection.path}`);
+          if (
+            err instanceof vscode.FileSystemError &&
+            err.code === 'FileNotFound'
+          ) {
+            host.log(
+              'warn',
+              'Bridge',
+              `Dacpac file not found: ${project.connection.path}`,
+            );
             host.postMessage({ type: 'last-dacpac-gone' });
           } else {
             const reason = errorMessage(err);
-            host.log('error', 'Bridge', `Load project ${project.connection.path}`, err);
-            host.postMessage({ type: 'db-error', message: `Could not load ${project.connection.displayName}: ${reason}`, phase: 'extract' });
+            host.log(
+              'error',
+              'Bridge',
+              `Load project ${project.connection.path}`,
+              err,
+            );
+            host.postMessage({
+              type: 'db-error',
+              message: `Could not load ${project.connection.displayName}: ${reason}`,
+              phase: 'extract',
+            });
           }
         }
       } else if (project.connection.type === 'database') {
         const dbConn = project.connection;
-        await withDbProgressHost(host, dbEnv, 'Loading project', (patch, token) => connectDatabase(dbEnv, { ...dbConn.connectionInfo, ...patch }, token), async (session, token) => {
-          lastConnectionInfo = session.connectionInfo;
-          const schemas = dbConn.schemas;
-          if (!schemas || schemas.length === 0) {
-            await runDbPhase1Host(host, session, outputChannel, dmvQueries.reload, token);
-          } else {
-            const loaded = await runDbPhase2Host(host, session, schemas, outputChannel, dmvQueries.reload, token, getSession, session.connectionInfo.database, dbConn.sourceName, (m) => {
-              setCurrentModel(m, true, { id: project.id, name: project.name });
-            });
-            if (!loaded || token.isCancellationRequested) return;
-            const latestStore = loadProjectStore(context);
-            const latestProject = latestStore.projects.find(p => p.id === project.id);
-            if (latestProject?.connection.type === 'database') {
-              const refreshed = {
-                ...latestProject,
-                connection: { ...latestProject.connection, connectionInfo: session.connectionInfo },
-                updatedAt: new Date().toISOString(),
-              };
-              const updatedStore = updateProject(latestStore, refreshed);
-              await saveProjectStore(context, updatedStore);
-              if (token.isCancellationRequested) return;
-              postProjectsList(host, updatedStore);
+        await withDbProgressHost(
+          host,
+          dbEnv,
+          'Loading project',
+          (patch, token) =>
+            connectDatabase(
+              dbEnv,
+              { ...dbConn.connectionInfo, ...patch },
+              token,
+            ),
+          async (session, token) => {
+            lastConnectionInfo = session.connectionInfo;
+            const schemas = dbConn.schemas;
+            if (!schemas || schemas.length === 0) {
+              await runDbPhase1Host(
+                host,
+                session,
+                outputChannel,
+                dmvQueries.reload,
+                token,
+              );
+            } else {
+              const loaded = await runDbPhase2Host(
+                host,
+                session,
+                schemas,
+                outputChannel,
+                dmvQueries.reload,
+                token,
+                getSession,
+                session.connectionInfo.database,
+                dbConn.sourceName,
+                (m) => {
+                  setCurrentModel(m, true, {
+                    id: project.id,
+                    name: project.name,
+                  });
+                },
+              );
+              if (!loaded || token.isCancellationRequested) return;
+              const latestStore = loadProjectStore(context);
+              const latestProject = latestStore.projects.find(
+                (p) => p.id === project.id,
+              );
+              if (latestProject?.connection.type === 'database') {
+                const refreshed = {
+                  ...latestProject,
+                  connection: {
+                    ...latestProject.connection,
+                    connectionInfo: session.connectionInfo,
+                  },
+                  updatedAt: new Date().toISOString(),
+                };
+                const updatedStore = updateProject(latestStore, refreshed);
+                await saveProjectStore(context, updatedStore);
+                if (token.isCancellationRequested) return;
+                postProjectsList(host, updatedStore);
+              }
             }
-          }
-        }, load, () => cancelLoad(load));
+          },
+          load,
+          () => cancelLoad(load),
+        );
       }
     },
     'save-project': async (msg) => {
@@ -602,7 +929,9 @@ export function createMessageHandlers(
     'delete-project': async (msg) => {
       host.log('debug', 'Bridge', `Deleting project: ${msg.id}`);
       const store = loadProjectStore(context);
-      const profileIds = (store.projects.find(p => p.id === msg.id)?.filterProfiles ?? []).map(fp => fp.id);
+      const profileIds = (
+        store.projects.find((p) => p.id === msg.id)?.filterProfiles ?? []
+      ).map((fp) => fp.id);
       const updated = deleteProject(store, msg.id);
       await saveProjectStore(context, updated);
       postProjectsList(host, updated);
@@ -622,73 +951,136 @@ export function createMessageHandlers(
     'dacpac-visualize': async (msg) => {
       const token = beginLoad().token;
       if (token.isCancellationRequested) return;
-      host.log('debug', 'Bridge', `Dacpac visualize requested for schemas: ${msg.schemas?.join(', ')}`);
+      host.log(
+        'debug',
+        'Bridge',
+        `Dacpac visualize requested for schemas: ${msg.schemas?.join(', ')}`,
+      );
       if (!cachedDacpac) {
-        host.log('error', 'Bridge', 'Dacpac visualize', 'Session expired (no cached dacpac preview)');
-        host.postMessage({ type: 'db-error', message: 'Session expired. Please reopen the file.', phase: 'extract' });
+        host.log(
+          'error',
+          'Bridge',
+          'Dacpac visualize',
+          'Session expired (no cached dacpac preview)',
+        );
+        host.postMessage({
+          type: 'db-error',
+          message: 'Session expired. Please reopen the file.',
+          phase: 'extract',
+        });
         return;
       }
       const sess = getSession();
       const projectName = msg.projectName ?? sess.projectName ?? 'dacpac';
       try {
-        installFilteredDacpac(cachedDacpac, msg.schemas, sess.currentProjectId ? { id: sess.currentProjectId, name: projectName } : null, projectName);
+        installFilteredDacpac(
+          cachedDacpac,
+          msg.schemas,
+          sess.currentProjectId
+            ? { id: sess.currentProjectId, name: projectName }
+            : null,
+          projectName,
+        );
       } catch (err) {
         const reason = errorMessage(err);
         host.log('error', 'Dacpac', 'Dacpac visualize', err);
-        host.postMessage({ type: 'db-error', message: `Could not build the lineage model: ${reason}`, phase: 'extract' });
+        host.postMessage({
+          type: 'db-error',
+          message: `Could not build the lineage model: ${reason}`,
+          phase: 'extract',
+        });
       }
     },
     'db-visualize': async (msg) => {
       const load = beginLoad();
       if (load.token.isCancellationRequested) return;
-      host.log('debug', 'Bridge', `Database visualize requested for schemas: ${msg.schemas?.join(', ')}`);
-      return withDbProgressHost(host, dbEnv, 'Loading selected schemas', async (patch, token) => {
-        if (!lastConnectionInfo) {
-          host.log('error', 'Bridge', 'Database visualize', 'No stored connection info');
-          host.postMessage({ type: 'db-error', message: 'No stored connection info. Please reconnect.', phase: 'connect' });
-          return undefined;
-        }
-        return connectDatabase(dbEnv, { ...lastConnectionInfo, ...patch }, token);
-      }, async (conn, token) => {
-        const sourceName = `${conn.connectionInfo.server} / ${conn.connectionInfo.database}`;
-        let pendingProject: ReturnType<typeof createProject> | null = null;
-        if (msg.projectName) {
-          try {
-            pendingProject = createProject(msg.projectName, {
-              type: 'database',
-              connectionInfo: conn.connectionInfo,
-              sourceName,
-              schemas: msg.schemas,
-            });
-          } catch (err) {
-            const dbLogger = Logger.create(outputChannel, 'DB');
-            notifyWarning(
-              dbLogger,
-              'Persist database project',
-              `Data Lineage: the project "${msg.projectName}" could not be saved — the connection info failed validation. The graph still loads.`,
-              { error: err },
+      host.log(
+        'debug',
+        'Bridge',
+        `Database visualize requested for schemas: ${msg.schemas?.join(', ')}`,
+      );
+      return withDbProgressHost(
+        host,
+        dbEnv,
+        'Loading selected schemas',
+        async (patch, token) => {
+          if (!lastConnectionInfo) {
+            host.log(
+              'error',
+              'Bridge',
+              'Database visualize',
+              'No stored connection info',
             );
-            dbLogger.debug(`Unsaved project source: ${sourceName}`);
+            host.postMessage({
+              type: 'db-error',
+              message: 'No stored connection info. Please reconnect.',
+              phase: 'connect',
+            });
+            return undefined;
           }
-        }
-
-        const loaded = await runDbPhase2Host(host, conn, msg.schemas, outputChannel, dmvQueries.reload, token, getSession, conn.connectionInfo.database, sourceName, (m) => {
-          if (pendingProject) {
-            setCurrentModel(m, true, { id: pendingProject.id, name: pendingProject.name });
-          } else {
-            setCurrentModel(m, true, null);
-            getSession().projectName = sourceName;
+          return connectDatabase(
+            dbEnv,
+            { ...lastConnectionInfo, ...patch },
+            token,
+          );
+        },
+        async (conn, token) => {
+          const sourceName = `${conn.connectionInfo.server} / ${conn.connectionInfo.database}`;
+          let pendingProject: ReturnType<typeof createProject> | null = null;
+          if (msg.projectName) {
+            try {
+              pendingProject = createProject(msg.projectName, {
+                type: 'database',
+                connectionInfo: conn.connectionInfo,
+                sourceName,
+                schemas: msg.schemas,
+              });
+            } catch (err) {
+              const dbLogger = Logger.create(outputChannel, 'DB');
+              notifyWarning(
+                dbLogger,
+                'Persist database project',
+                `Data Lineage: the project "${msg.projectName}" could not be saved — the connection info failed validation. The graph still loads.`,
+                { error: err },
+              );
+              dbLogger.debug(`Unsaved project source: ${sourceName}`);
+            }
           }
-        });
 
-        if (loaded && pendingProject && !token.isCancellationRequested) {
-          const store = loadProjectStore(context);
-          const updated = updateProject(store, pendingProject);
-          await saveProjectStore(context, updated);
-          if (token.isCancellationRequested) return;
-          postProjectsList(host, updated);
-        }
-      }, load, () => cancelLoad(load));
+          const loaded = await runDbPhase2Host(
+            host,
+            conn,
+            msg.schemas,
+            outputChannel,
+            dmvQueries.reload,
+            token,
+            getSession,
+            conn.connectionInfo.database,
+            sourceName,
+            (m) => {
+              if (pendingProject) {
+                setCurrentModel(m, true, {
+                  id: pendingProject.id,
+                  name: pendingProject.name,
+                });
+              } else {
+                setCurrentModel(m, true, null);
+                getSession().projectName = sourceName;
+              }
+            },
+          );
+
+          if (loaded && pendingProject && !token.isCancellationRequested) {
+            const store = loadProjectStore(context);
+            const updated = updateProject(store, pendingProject);
+            await saveProjectStore(context, updated);
+            if (token.isCancellationRequested) return;
+            postProjectsList(host, updated);
+          }
+        },
+        load,
+        () => cancelLoad(load),
+      );
     },
     'filter-changed': (msg) => {
       const sess = getSession();
@@ -702,8 +1094,15 @@ export function createMessageHandlers(
       sess.filteredCount = uiState.filteredCount;
       sess.renderLimitHit = uiState.renderLimitHit;
       getUiDiagnostics(sess).lastUiSyncAt = Date.now();
-      if (prevCount !== uiState.filteredCount || prevHit !== uiState.renderLimitHit) {
-        host.log('debug', 'Filter', `State sync — ${uiState.filteredCount} nodes, renderLimitHit=${uiState.renderLimitHit}`);
+      if (
+        prevCount !== uiState.filteredCount ||
+        prevHit !== uiState.renderLimitHit
+      ) {
+        host.log(
+          'debug',
+          'Filter',
+          `State sync — ${uiState.filteredCount} nodes, renderLimitHit=${uiState.renderLimitHit}`,
+        );
       }
     },
     'render-state': (msg) => {
@@ -717,14 +1116,30 @@ export function createMessageHandlers(
       const load = beginLoad();
       if (load.token.isCancellationRequested) return;
       host.log('debug', 'Bridge', 'Database connect requested');
-      return withDbProgressHost(host, dbEnv, 'Connecting', (_patch, token) => connectDatabase(dbEnv, undefined, token), (conn, token) => {
-        lastConnectionInfo = conn.connectionInfo;
-        return runDbPhase1Host(host, conn, outputChannel, dmvQueries.reload, token);
-      }, load, () => cancelLoad(load));
+      return withDbProgressHost(
+        host,
+        dbEnv,
+        'Connecting',
+        (_patch, token) => connectDatabase(dbEnv, undefined, token),
+        (conn, token) => {
+          lastConnectionInfo = conn.connectionInfo;
+          return runDbPhase1Host(
+            host,
+            conn,
+            outputChannel,
+            dmvQueries.reload,
+            token,
+          );
+        },
+        load,
+        () => cancelLoad(load),
+      );
     },
     'save-view': async (msg) => {
       const logger = Logger.create(outputChannel, 'Bridge');
-      logger.debug(`Saving filter view: "${msg.profile?.name}" (projectId: ${msg.projectId})`);
+      logger.debug(
+        `Saving filter view: "${msg.profile?.name}" (projectId: ${msg.projectId})`,
+      );
       try {
         const store = loadProjectStore(context);
         const updated = addFilterProfile(store, msg.projectId, msg.profile);
@@ -733,15 +1148,29 @@ export function createMessageHandlers(
         postProjectsList(host, updated);
         try {
           const sess = getSession();
-          const run = buildStoredRun(msg.profile, sess.presentationArtifact, id => sess.columnStore.getDdl(id));
+          const run = buildStoredRun(
+            msg.profile,
+            sess.presentationArtifact,
+            (id) => sess.columnStore.getDdl(id),
+          );
           if (run) {
-            const chars = await writeStoredRun(context.globalState, msg.profile.id, run);
-            logger.debug(`AI run memory stored for "${msg.profile?.name}" (${chars} chars).`);
+            const chars = await writeStoredRun(
+              context.globalState,
+              msg.profile.id,
+              run,
+            );
+            logger.debug(
+              `AI run memory stored for "${msg.profile?.name}" (${chars} chars).`,
+            );
           } else {
-            logger.debug(`AI run memory kept for "${msg.profile?.name}" — the save resolves to no presented run.`);
+            logger.debug(
+              `AI run memory kept for "${msg.profile?.name}" — the save resolves to no presented run.`,
+            );
           }
         } catch (runErr) {
-          logger.warn(`Failed to store AI run memory for "${msg.profile?.name}": ${errorMessage(runErr)}`);
+          logger.warn(
+            `Failed to store AI run memory for "${msg.profile?.name}": ${errorMessage(runErr)}`,
+          );
         }
       } catch (err) {
         logger.error(`Failed to save filter view: "${msg.profile?.name}"`, err);
@@ -760,12 +1189,12 @@ export function createMessageHandlers(
       postProjectsList(host, updated);
       await clearStoredRunLogged(msg.profileId);
     },
-    'rebuild': async () => {
+    rebuild: async () => {
       host.log('debug', 'Bridge', 'Rebuild requested');
       const config = readExtensionConfig(host);
       host.postMessage({ type: 'rebuild-config', config });
     },
-    'reload': () => {
+    reload: () => {
       host.log('debug', 'Bridge', 'Reloading panel');
       host.executeCommand('dataLineageViz.open');
     },
@@ -788,7 +1217,9 @@ export function createMessageHandlers(
     'export-file': async (msg) => {
       const defaultName = path.basename(msg.defaultName);
       host.log('debug', 'Bridge', `Exporting file: ${defaultName}`);
-      const uri = await host.showSaveDialog({ defaultUri: vscode.Uri.file(defaultName) });
+      const uri = await host.showSaveDialog({
+        defaultUri: vscode.Uri.file(defaultName),
+      });
       if (uri) {
         await host.writeFile(uri, Buffer.from(msg.data, 'utf-8'));
         host.executeCommand('revealFileInOS', uri);
@@ -801,9 +1232,14 @@ export function createMessageHandlers(
       const doc = await writeReportDocument(content);
       if (await settleReportPreviews(doc)) return;
       try {
-        await vscode.commands.executeCommand('markdown.showPreviewToSide', doc.uri);
+        await vscode.commands.executeCommand(
+          'markdown.showPreviewToSide',
+          doc.uri,
+        );
       } catch (err) {
-        await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Beside });
+        await vscode.window.showTextDocument(doc, {
+          viewColumn: vscode.ViewColumn.Beside,
+        });
         notifyWarning(
           Logger.create(outputChannel, 'Bridge'),
           'Markdown preview unavailable',
@@ -812,12 +1248,12 @@ export function createMessageHandlers(
         );
       }
     },
-    'log': (msg) => {
+    log: (msg) => {
       const level = msg.level ?? 'debug';
       const { category, message } = parseWebviewLog(msg.text ?? '');
       host.log(level, category, message);
     },
-    'error': (msg) => {
+    error: (msg) => {
       const source = msg.source ?? 'unknown';
       const err = new Error(msg.error);
       if (msg.stack) err.stack = msg.stack;
@@ -832,16 +1268,24 @@ export function createMessageHandlers(
         timestamp: msg.timestamp ?? Date.now(),
         source,
         message: redactSecrets(msg.error),
-        stack: msg.stack ? trunc(redactSecrets(sanitizeForLog(msg.stack)), 600) : undefined,
+        stack: msg.stack
+          ? trunc(redactSecrets(sanitizeForLog(msg.stack)), 600)
+          : undefined,
         componentStack: componentLine,
         context: msg.context,
       });
 
-      const userMessage = source === 'error-boundary'
-        ? 'Data Lineage hit an error and is reloading the view — see the "Data Lineage Viz" Output channel for details.'
-        : 'Data Lineage encountered an unexpected error — see the "Data Lineage Viz" Output channel for details.';
+      const userMessage =
+        source === 'error-boundary'
+          ? 'Data Lineage hit an error and is reloading the view — see the "Data Lineage Viz" Output channel for details.'
+          : 'Data Lineage encountered an unexpected error — see the "Data Lineage Viz" Output channel for details.';
 
-      host.log('error', 'Bridge', `Webview ${sanitizeForLog(source)} — notification="${userMessage}" — messageType=error; source=${sanitizeForLog(source)}; component=${componentLine}; context=${contextLine}`, err);
+      host.log(
+        'error',
+        'Bridge',
+        `Webview ${sanitizeForLog(source)} — notification="${userMessage}" — messageType=error; source=${sanitizeForLog(source)}; component=${componentLine}; context=${contextLine}`,
+        err,
+      );
       host.showErrorMessage(userMessage);
     },
     'show-warning': (msg) => {
@@ -856,9 +1300,17 @@ export function createMessageHandlers(
     'view-render-result': (msg) => {
       const logger = Logger.create(outputChannel, 'Bridge');
       if (msg.of === 0) return;
-      if (msg.rendered === 0) logger.warn(`AI view rendered 0/${msg.of} — none of the scoped objects are in the loaded render model`);
-      else if (msg.rendered < msg.of) logger.info(`AI view rendered ${msg.rendered}/${msg.of} — ${msg.unresolved.length} scoped id(s) not in the loaded model`);
-      logger.debug(`AI view rendered ${msg.rendered}/${msg.of}${msg.unresolved.length ? ` — unresolved: ${trunc(msg.unresolved.join(', '), 200)}` : ''}`);
+      if (msg.rendered === 0)
+        logger.warn(
+          `AI view rendered 0/${msg.of} — none of the scoped objects are in the loaded render model`,
+        );
+      else if (msg.rendered < msg.of)
+        logger.info(
+          `AI view rendered ${msg.rendered}/${msg.of} — ${msg.unresolved.length} scoped id(s) not in the loaded model`,
+        );
+      logger.debug(
+        `AI view rendered ${msg.rendered}/${msg.of}${msg.unresolved.length ? ` — unresolved: ${trunc(msg.unresolved.join(', '), 200)}` : ''}`,
+      );
     },
   };
 
@@ -870,7 +1322,9 @@ export function createMessageHandlers(
       activeLoad.dispose();
       dmvQueries.dispose();
     },
-    triggerDemoLoad: async () => { await handlers['load-demo']({ type: 'load-demo' }); },
+    triggerDemoLoad: async () => {
+      await handlers['load-demo']({ type: 'load-demo' });
+    },
     beginExternalLoad: () => beginLoad().token,
   };
 }
@@ -882,7 +1336,11 @@ const MAX_DACPAC_BYTES = 50 * 1024 * 1024;
 const SHOWN_INLINE = (): void => {};
 
 /** Refuses a dacpac over {@link MAX_DACPAC_BYTES}. Like {@link isModelOverLimit}, the refusal is posted as a `db-error`, so the loader shows it inline and leaves its loading state instead of spinning to its timeout. */
-function isDacpacTooLarge(bytes: number, host: BridgeHost, outputChannel: vscode.LogOutputChannel): boolean {
+function isDacpacTooLarge(
+  bytes: number,
+  host: BridgeHost,
+  outputChannel: vscode.LogOutputChannel,
+): boolean {
   if (bytes <= MAX_DACPAC_BYTES) return false;
   const mb = (bytes / 1024 / 1024).toFixed(1);
   const message = `Dacpac too large (${mb} MB). Max supported is ${MAX_DACPAC_BYTES / 1024 / 1024} MB.`;
@@ -899,7 +1357,12 @@ function isDacpacTooLarge(bytes: number, host: BridgeHost, outputChannel: vscode
 }
 
 /** Refuses a built model that exceeds `dataLineageViz.maxNodes` — the shared `checkObjectLimit` gate for every model load path, webview-bridge or command. When a webview bridge is present the refusal is posted to it as a `db-error` — shown inline, and the loader leaves its loading state at once instead of spinning to the generic "Processing timed out" notice. `host` is omitted where there is no webview bridge; the refusal is then a `vscode.window.showErrorMessage` toast. */
-export function isModelOverLimit(model: DatabaseModel, maxNodes: number, logger: Logger, host?: BridgeHost): boolean {
+export function isModelOverLimit(
+  model: DatabaseModel,
+  maxNodes: number,
+  logger: Logger,
+  host?: BridgeHost,
+): boolean {
   const check = checkObjectLimit(model, maxNodes);
   if (check.ok) return false;
   const message = formatObjectLimitMessage(check.count, check.limit);
@@ -907,7 +1370,9 @@ export function isModelOverLimit(model: DatabaseModel, maxNodes: number, logger:
     logger,
     'Validate object count',
     message,
-    new Error(`Model object count ${check.count} exceeds maxNodes ${check.limit}`),
+    new Error(
+      `Model object count ${check.count} exceeds maxNodes ${check.limit}`,
+    ),
     { count: check.count, limit: check.limit },
     host ? SHOWN_INLINE : undefined,
   );
@@ -915,24 +1380,54 @@ export function isModelOverLimit(model: DatabaseModel, maxNodes: number, logger:
   return true;
 }
 
-async function handleLoadDemo(host: BridgeHost, getSession: () => AiSession, outputChannel: vscode.LogOutputChannel, token: vscode.CancellationToken, onModelBuilt?: (model: DatabaseModel) => void) {
+async function handleLoadDemo(
+  host: BridgeHost,
+  getSession: () => AiSession,
+  outputChannel: vscode.LogOutputChannel,
+  token: vscode.CancellationToken,
+  onModelBuilt?: (model: DatabaseModel) => void,
+) {
   const config = readExtensionConfig(host);
   try {
-    const demoUri = vscode.Uri.joinPath(host.getExtensionUri(), 'assets', 'demo.dacpac');
+    const demoUri = vscode.Uri.joinPath(
+      host.getExtensionUri(),
+      'assets',
+      'demo.dacpac',
+    );
     host.log('debug', 'Dacpac', `Loading demo dacpac from: ${demoUri.fsPath}`);
     const data = await host.readFile(demoUri);
     if (token.isCancellationRequested) return;
     if (isDacpacTooLarge(data.byteLength, host, outputChannel)) return;
     const logger = Logger.create(outputChannel, 'Parse');
-    const model = await extractDacpac(data, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
-      externalRefsEnabled: config.externalRefs.enabled,
-    });
+    const model = await extractDacpac(
+      data,
+      (msg) => logger.debug(msg),
+      (msg) => logger.info(msg),
+      {
+        externalRefsEnabled: config.externalRefs.enabled,
+      },
+    );
     if (token.isCancellationRequested) return;
     if (isModelOverLimit(model, config.maxNodes, logger, host)) return;
     onModelBuilt?.(model);
-    if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
+    if (model.parseStats)
+      handleParseStats(
+        model.parseStats,
+        outputChannel,
+        getSession,
+        model.nodes.length,
+        model.edges.length,
+        model.schemas.length,
+      );
     host.log('info', 'Dacpac', `Demo loaded: ${model.nodes.length} nodes`);
-    host.postMessage({ type: 'dacpac-model', model, config, sourceName: 'AdventureWorks (Demo)', autoVisualize: true, isDemo: true });
+    host.postMessage({
+      type: 'dacpac-model',
+      model,
+      config,
+      sourceName: 'AdventureWorks (Demo)',
+      autoVisualize: true,
+      isDemo: true,
+    });
   } catch (err) {
     if (token.isCancellationRequested) return;
     const msg = errorMessage(err);
@@ -944,60 +1439,155 @@ async function handleLoadDemo(host: BridgeHost, getSession: () => AiSession, out
       { asset: 'assets/demo.dacpac' },
       SHOWN_INLINE,
     );
-    host.postMessage({ type: 'db-error', message: `Failed to load demo — ${msg}`, phase: 'extract' });
+    host.postMessage({
+      type: 'db-error',
+      message: `Failed to load demo — ${msg}`,
+      phase: 'extract',
+    });
   }
 }
 
-async function runDbPhase1Host(host: BridgeHost, session: DbSession, outputChannel: vscode.LogOutputChannel, loadQueries: () => Promise<DmvQuery[]>, token: vscode.CancellationToken) {
+async function runDbPhase1Host(
+  host: BridgeHost,
+  session: DbSession,
+  outputChannel: vscode.LogOutputChannel,
+  loadQueries: () => Promise<DmvQuery[]>,
+  token: vscode.CancellationToken,
+) {
   const queries = await loadQueries();
   if (token.isCancellationRequested) return;
-  const previewQuery = queries.find(q => q.name === 'schema-preview');
+  const previewQuery = queries.find((q) => q.name === 'schema-preview');
   if (!previewQuery) throw new Error('Missing schema-preview query');
   host.log('info', 'DB', 'Running schema preview query');
-  const timeoutMs = readDeclaredNumericSetting(host.getConfiguration(), 'dmvQueryTimeout', DEFAULT_CONFIG.dmvQueryTimeout) * 1000;
-  const resultMap = await executeDmvQueries(session, [previewQuery], outputChannel, undefined, timeoutMs);
+  const timeoutMs =
+    readDeclaredNumericSetting(
+      host.getConfiguration(),
+      'dmvQueryTimeout',
+      DEFAULT_CONFIG.dmvQueryTimeout,
+    ) * 1000;
+  const resultMap = await executeDmvQueries(
+    session,
+    [previewQuery],
+    outputChannel,
+    undefined,
+    timeoutMs,
+  );
   if (token.isCancellationRequested) return;
   const result = resultMap.get('schema-preview');
   if (!result) throw new Error('No schema preview result');
-  const platform = await loadDatabasePlatform(session, queries, outputChannel, timeoutMs);
+  const platform = await loadDatabasePlatform(
+    session,
+    queries,
+    outputChannel,
+    timeoutMs,
+  );
   if (token.isCancellationRequested) return;
   const preview = buildSchemaPreview(result, platform.platformInfo);
   const config = readExtensionConfig(host);
-  host.postMessage({ type: 'db-schema-preview', preview, config, sourceName: `${session.connectionInfo.server} / ${session.connectionInfo.database}` });
-  host.log('info', 'DB', `Phase 1 Complete — ${preview.schemas.length} schemas, ${preview.totalObjects} objects`);
+  host.postMessage({
+    type: 'db-schema-preview',
+    preview,
+    config,
+    sourceName: `${session.connectionInfo.server} / ${session.connectionInfo.database}`,
+  });
+  host.log(
+    'info',
+    'DB',
+    `Phase 1 Complete — ${preview.schemas.length} schemas, ${preview.totalObjects} objects`,
+  );
 }
 
-async function runDbPhase2Host(host: BridgeHost, session: DbSession, schemas: string[], outputChannel: vscode.LogOutputChannel, loadQueries: () => Promise<DmvQuery[]>, token: vscode.CancellationToken, getSession: () => AiSession, currentDatabase?: string, sourceName?: string, onModelBuilt?: (model: DatabaseModel) => void) {
+async function runDbPhase2Host(
+  host: BridgeHost,
+  session: DbSession,
+  schemas: string[],
+  outputChannel: vscode.LogOutputChannel,
+  loadQueries: () => Promise<DmvQuery[]>,
+  token: vscode.CancellationToken,
+  getSession: () => AiSession,
+  currentDatabase?: string,
+  sourceName?: string,
+  onModelBuilt?: (model: DatabaseModel) => void,
+) {
   const queries = await loadQueries();
   if (token.isCancellationRequested) return;
-  host.log('info', 'DB', `Running Phase 2 queries for ${schemas.length} schema(s)`);
+  host.log(
+    'info',
+    'DB',
+    `Running Phase 2 queries for ${schemas.length} schema(s)`,
+  );
   host.log('debug', 'DB', `Phase 2 schemas: ${trunc(schemas, LOG_TRUNC_LIST)}`);
-  const timeoutMs = readDeclaredNumericSetting(host.getConfiguration(), 'dmvQueryTimeout', DEFAULT_CONFIG.dmvQueryTimeout) * 1000;
-  const allObjectsQuery = queries.find(q => q.name === 'all-objects');
+  const timeoutMs =
+    readDeclaredNumericSetting(
+      host.getConfiguration(),
+      'dmvQueryTimeout',
+      DEFAULT_CONFIG.dmvQueryTimeout,
+    ) * 1000;
+  const allObjectsQuery = queries.find((q) => q.name === 'all-objects');
   const leadSteps = allObjectsQuery ? 2 : 1;
   const totalSteps = queries.filter(isPhase2Query).length + leadSteps;
-  host.postMessage({ type: 'db-progress', step: 1, total: totalSteps, label: 'Detecting database platform' });
-  const platformMetadata = await loadDatabasePlatform(session, queries, outputChannel, timeoutMs);
+  host.postMessage({
+    type: 'db-progress',
+    step: 1,
+    total: totalSteps,
+    label: 'Detecting database platform',
+  });
+  const platformMetadata = await loadDatabasePlatform(
+    session,
+    queries,
+    outputChannel,
+    timeoutMs,
+  );
   if (token.isCancellationRequested) return;
   let allObjectsResult: SimpleExecuteResult | undefined;
   if (allObjectsQuery) {
-    host.postMessage({ type: 'db-progress', step: 2, total: totalSteps, label: 'Loading object catalog' });
+    host.postMessage({
+      type: 'db-progress',
+      step: 2,
+      total: totalSteps,
+      label: 'Loading object catalog',
+    });
     try {
-      const catalogMap = await executeDmvQueries(session, [allObjectsQuery], outputChannel, undefined, timeoutMs);
+      const catalogMap = await executeDmvQueries(
+        session,
+        [allObjectsQuery],
+        outputChannel,
+        undefined,
+        timeoutMs,
+      );
       allObjectsResult = catalogMap.get('all-objects');
     } catch (err) {
-      host.log('warn', 'DB', `Object catalog unavailable — cross-schema references stay unresolved: ${errorMessage(err)}`);
+      host.log(
+        'warn',
+        'DB',
+        `Object catalog unavailable — cross-schema references stay unresolved: ${errorMessage(err)}`,
+      );
     }
   }
   if (token.isCancellationRequested) return;
-  const resultMap = await executeDmvQueriesFiltered(session, queries, schemas, outputChannel, (step, total, label) => {
-    if (token.isCancellationRequested) throw new vscode.CancellationError();
-    host.postMessage({ type: 'db-progress', step: step + leadSteps, total: total + leadSteps, label });
-  }, timeoutMs);
+  const resultMap = await executeDmvQueriesFiltered(
+    session,
+    queries,
+    schemas,
+    outputChannel,
+    (step, total, label) => {
+      if (token.isCancellationRequested) throw new vscode.CancellationError();
+      host.postMessage({
+        type: 'db-progress',
+        step: step + leadSteps,
+        total: total + leadSteps,
+        label,
+      });
+    },
+    timeoutMs,
+  );
   if (token.isCancellationRequested) return;
-  const requireResult = (name: 'nodes' | 'columns' | 'dependencies'): SimpleExecuteResult => {
+  const requireResult = (
+    name: 'nodes' | 'columns' | 'dependencies',
+  ): SimpleExecuteResult => {
     const result = resultMap.get(name);
-    if (!result) throw new Error(`No '${name}' result from Phase 2 DMV queries`);
+    if (!result)
+      throw new Error(`No '${name}' result from Phase 2 DMV queries`);
     return result;
   };
   const dmvResults: DmvResults = {
@@ -1010,17 +1600,39 @@ async function runDbPhase2Host(host: BridgeHost, session: DbSession, schemas: st
   };
   const config = readExtensionConfig(host);
   const logger = Logger.create(outputChannel, 'Parse');
-  logger.info(`Phase 2 Resolution: Starting object parsing for ${dmvResults.nodes.rowCount} nodes...`);
+  logger.info(
+    `Phase 2 Resolution: Starting object parsing for ${dmvResults.nodes.rowCount} nodes...`,
+  );
 
-  const model = buildModelFromDmv(dmvResults, currentDatabase, config.externalRefs.enabled, (msg) => {
-    logger.debug(msg);
-  });
+  const model = buildModelFromDmv(
+    dmvResults,
+    currentDatabase,
+    config.externalRefs.enabled,
+    (msg) => {
+      logger.debug(msg);
+    },
+  );
   if (isModelOverLimit(model, config.maxNodes, logger, host)) return;
-  logger.info(`Extraction Complete — ${model.nodes.length} nodes, ${model.edges.length} deps`);
+  logger.info(
+    `Extraction Complete — ${model.nodes.length} nodes, ${model.edges.length} deps`,
+  );
 
   onModelBuilt?.(model);
-  if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
-  host.postMessage({ type: 'db-model', model, config, sourceName: sourceName ?? 'Database' });
+  if (model.parseStats)
+    handleParseStats(
+      model.parseStats,
+      outputChannel,
+      getSession,
+      model.nodes.length,
+      model.edges.length,
+      model.schemas.length,
+    );
+  host.postMessage({
+    type: 'db-model',
+    model,
+    config,
+    sourceName: sourceName ?? 'Database',
+  });
   return true;
 }
 
@@ -1035,25 +1647,41 @@ async function loadDatabasePlatform(
   timeoutMs: number,
 ): Promise<Pick<DmvResults, 'platformInfo'>> {
   const logger = Logger.create(outputChannel, 'DB');
-  const platformQuery = queries.find(q => q.name === 'platform-info');
+  const platformQuery = queries.find((q) => q.name === 'platform-info');
   const probeTimeoutMs = Math.min(timeoutMs, PLATFORM_PROBE_TIMEOUT_MS);
   const fallback = 'platform will be explicit unknown';
 
   if (platformQuery) {
     try {
-      const resultMap = await executeDmvQueries(session, [platformQuery], outputChannel, undefined, probeTimeoutMs);
+      const resultMap = await executeDmvQueries(
+        session,
+        [platformQuery],
+        outputChannel,
+        undefined,
+        probeTimeoutMs,
+      );
       const platformInfo = resultMap.get('platform-info');
-      const missingColumns = platformInfo ? validateQueryResult('platform-info', platformInfo) : [];
-      if (platformInfo?.rows.length && missingColumns.length === 0) return { platformInfo };
-      const reason = missingColumns.length > 0
-        ? `missing columns: ${missingColumns.join(', ')}`
-        : 'no rows';
-      logger.warn(`Platform query returned unusable metadata (${reason}) — ${fallback}`);
+      const missingColumns = platformInfo
+        ? validateQueryResult('platform-info', platformInfo)
+        : [];
+      if (platformInfo?.rows.length && missingColumns.length === 0)
+        return { platformInfo };
+      const reason =
+        missingColumns.length > 0
+          ? `missing columns: ${missingColumns.join(', ')}`
+          : 'no rows';
+      logger.warn(
+        `Platform query returned unusable metadata (${reason}) — ${fallback}`,
+      );
     } catch (err) {
-      logger.warn(`Platform query failed — ${fallback}: ${redactSecrets(errorMessage(err))}`);
+      logger.warn(
+        `Platform query failed — ${fallback}: ${redactSecrets(errorMessage(err))}`,
+      );
     }
   } else {
-    logger.warn(`Custom DMV configuration has no platform-info query — ${fallback}`);
+    logger.warn(
+      `Custom DMV configuration has no platform-info query — ${fallback}`,
+    );
   }
   return {};
 }
@@ -1062,52 +1690,94 @@ async function withDbProgressHost(
   host: BridgeHost,
   env: DbConnectEnv,
   title: string,
-  connectFn: (patch: Partial<StoredConnectionInfo> | undefined, token: vscode.CancellationToken) => Promise<DbSession | undefined>,
-  phaseFn: (session: DbSession, token: vscode.CancellationToken) => Promise<void>,
+  connectFn: (
+    patch: Partial<StoredConnectionInfo> | undefined,
+    token: vscode.CancellationToken,
+  ) => Promise<DbSession | undefined>,
+  phaseFn: (
+    session: DbSession,
+    token: vscode.CancellationToken,
+  ) => Promise<void>,
   load: vscode.CancellationTokenSource,
   onCancel: () => void,
 ) {
-  await host.withProgress({ location: vscode.ProgressLocation.Notification, title, cancellable: true }, async (_progress, token) => {
-    let session: DbSession | undefined;
-    let disconnected: Promise<void> | undefined;
-    const disconnect = () => session ? disconnected ??= session.dispose().catch((err: unknown) =>
-      host.log('warn', 'DB', `Disconnect failed: ${errorMessage(err)}`)) : Promise.resolve();
-    const progressCancellation = token.onCancellationRequested(onCancel);
-    const loadCancellation = load.token.onCancellationRequested(() => { void disconnect(); });
-    if (token.isCancellationRequested) onCancel();
-    try {
-      if (load.token.isCancellationRequested) return;
-      session = await connectFn(undefined, load.token);
-      if (load.token.isCancellationRequested) return;
-      if (session) {
-        await phaseFn(session, load.token);
-      } else {
-        host.log('info', 'DB', `${title} cancelled or failed to connect`);
-        host.postMessage({ type: 'db-cancelled' });
+  await host.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title,
+      cancellable: true,
+    },
+    async (_progress, token) => {
+      let session: DbSession | undefined;
+      let disconnected: Promise<void> | undefined;
+      const disconnect = () =>
+        session
+          ? (disconnected ??= session
+              .dispose()
+              .catch((err: unknown) =>
+                host.log(
+                  'warn',
+                  'DB',
+                  `Disconnect failed: ${errorMessage(err)}`,
+                ),
+              ))
+          : Promise.resolve();
+      const progressCancellation = token.onCancellationRequested(onCancel);
+      const loadCancellation = load.token.onCancellationRequested(() => {
+        void disconnect();
+      });
+      if (token.isCancellationRequested) onCancel();
+      try {
+        if (load.token.isCancellationRequested) return;
+        session = await connectFn(undefined, load.token);
+        if (load.token.isCancellationRequested) return;
+        if (session) {
+          await phaseFn(session, load.token);
+        } else {
+          host.log('info', 'DB', `${title} cancelled or failed to connect`);
+          host.postMessage({ type: 'db-cancelled' });
+        }
+      } catch (err) {
+        if (load.token.isCancellationRequested) return;
+        const target = isDbConnectionError(err)
+          ? err.target
+          : session && isDriverError(err)
+            ? targetFromSession(session)
+            : undefined;
+        if (target) {
+          const retry = (patch?: Partial<StoredConnectionInfo>) =>
+            withDbProgressHost(
+              host,
+              env,
+              title,
+              (_patch, token) => connectFn(patch, token),
+              phaseFn,
+              load,
+              onCancel,
+            );
+          const reported = reportConnectionError(
+            isDbConnectionError(err) ? err.original : err,
+            target,
+            Logger.create(env.outputChannel, 'DB'),
+            connectionErrorHooks(env, target.connectionId, retry),
+          );
+          host.postMessage({
+            type: 'db-error',
+            message: reported.message,
+            phase: 'connect',
+          });
+        } else {
+          const message = redactSecrets(errorMessage(err));
+          host.log('error', 'DB', title, message);
+          host.postMessage({ type: 'db-error', message, phase: 'connect' });
+        }
+      } finally {
+        progressCancellation.dispose();
+        loadCancellation.dispose();
+        await disconnect();
       }
-    } catch (err) {
-      if (load.token.isCancellationRequested) return;
-      const target = isDbConnectionError(err) ? err.target : session && isDriverError(err) ? targetFromSession(session) : undefined;
-      if (target) {
-        const retry = (patch?: Partial<StoredConnectionInfo>) => withDbProgressHost(host, env, title, (_patch, token) => connectFn(patch, token), phaseFn, load, onCancel);
-        const reported = reportConnectionError(
-          isDbConnectionError(err) ? err.original : err,
-          target,
-          Logger.create(env.outputChannel, 'DB'),
-          connectionErrorHooks(env, target.connectionId, retry),
-        );
-        host.postMessage({ type: 'db-error', message: reported.message, phase: 'connect' });
-      } else {
-        const message = redactSecrets(errorMessage(err));
-        host.log('error', 'DB', title, message);
-        host.postMessage({ type: 'db-error', message, phase: 'connect' });
-      }
-    } finally {
-      progressCancellation.dispose();
-      loadCancellation.dispose();
-      await disconnect();
-    }
-  });
+    },
+  );
 }
 
 async function handleTableStatsRequestHost(
@@ -1119,24 +1789,51 @@ async function handleTableStatsRequestHost(
   objectName: string,
   mode: StatsMode,
   cols: ColumnDef[],
-  outputChannel: vscode.LogOutputChannel
+  outputChannel: vscode.LogOutputChannel,
 ): Promise<void> {
   const logger = Logger.create(outputChannel, 'Stats');
   const cfg = host.getConfiguration();
-  if (!cfg.get('tableStatistics.enabled', DEFAULT_CONFIG.tableStatistics.enabled)) {
+  if (
+    !cfg.get('tableStatistics.enabled', DEFAULT_CONFIG.tableStatistics.enabled)
+  ) {
     logger.info('Profiling disabled — request rejected');
     logger.debug(`Rejected profiling target: ${schema}.${objectName}`);
-    void postToDetail(panel, {
-      type: 'table-stats-error', objectRef: { schema, objectName },
-      message: 'Table profiling is disabled by dataLineageViz.tableStatistics.enabled.',
-    }, logger);
+    void postToDetail(
+      panel,
+      {
+        type: 'table-stats-error',
+        objectRef: { schema, objectName },
+        message:
+          'Table profiling is disabled by dataLineageViz.tableStatistics.enabled.',
+      },
+      logger,
+    );
     return;
   }
-  const sampleThreshold = readDeclaredNumericSetting(cfg, 'tableStatistics.sampleThreshold', DEFAULT_CONFIG.tableStatistics.sampleThreshold);
-  const sampleSize = readDeclaredNumericSetting(cfg, 'tableStatistics.sampleSize', DEFAULT_CONFIG.tableStatistics.sampleSize);
-  const useApprox = cfg.get('tableStatistics.useApproxDistinct', DEFAULT_CONFIG.tableStatistics.useApproxDistinct);
-  const maxColumns = readDeclaredNumericSetting(cfg, 'tableStatistics.maxColumns', DEFAULT_CONFIG.tableStatistics.maxColumns);
-  const timeoutSec = readDeclaredNumericSetting(cfg, 'tableStatistics.queryTimeout', DEFAULT_CONFIG.tableStatistics.queryTimeout);
+  const sampleThreshold = readDeclaredNumericSetting(
+    cfg,
+    'tableStatistics.sampleThreshold',
+    DEFAULT_CONFIG.tableStatistics.sampleThreshold,
+  );
+  const sampleSize = readDeclaredNumericSetting(
+    cfg,
+    'tableStatistics.sampleSize',
+    DEFAULT_CONFIG.tableStatistics.sampleSize,
+  );
+  const useApprox = cfg.get(
+    'tableStatistics.useApproxDistinct',
+    DEFAULT_CONFIG.tableStatistics.useApproxDistinct,
+  );
+  const maxColumns = readDeclaredNumericSetting(
+    cfg,
+    'tableStatistics.maxColumns',
+    DEFAULT_CONFIG.tableStatistics.maxColumns,
+  );
+  const timeoutSec = readDeclaredNumericSetting(
+    cfg,
+    'tableStatistics.queryTimeout',
+    DEFAULT_CONFIG.tableStatistics.queryTimeout,
+  );
   const timeoutMs = timeoutSec * 1000;
   const t0 = Date.now();
 
@@ -1146,68 +1843,181 @@ async function handleTableStatsRequestHost(
   try {
     session = await connectDatabase(dbEnv, storedConnectionInfo);
     if (!session) {
-      void postToDetail(panel, { type: 'table-stats-error', objectRef: { schema, objectName }, message: 'Connection cancelled.' }, logger);
+      void postToDetail(
+        panel,
+        {
+          type: 'table-stats-error',
+          objectRef: { schema, objectName },
+          message: 'Connection cancelled.',
+        },
+        logger,
+      );
       return;
     }
     const serverInfo = await session.getServerInfo();
     const engineEdition = serverInfo.engineEditionId;
 
     const rowCountSql = buildRowCountQuery(schema, objectName);
-    const rowCountResult = await executeSimpleQuery(session, rowCountSql, outputChannel, {
-      ms: timeoutMs, message: `Row count query for ${schema}.${objectName} timed out after ${timeoutSec}s.`,
-    });
-    const rowCount = rowCountResult.rowCount > 0 ? parseInt(rowCountResult.rows[0][0].displayValue, 10) || 0 : 0;
+    const rowCountResult = await executeSimpleQuery(
+      session,
+      rowCountSql,
+      outputChannel,
+      {
+        ms: timeoutMs,
+        message: `Row count query for ${schema}.${objectName} timed out after ${timeoutSec}s.`,
+      },
+    );
+    const rowCount =
+      rowCountResult.rowCount > 0
+        ? parseInt(rowCountResult.rows[0][0].displayValue, 10) || 0
+        : 0;
 
-    const aggregations = buildColumnAggregations(cols, useApprox, mode, maxColumns);
-    const profilingSql = buildProfilingQuery(schema, objectName, aggregations, engineEdition, rowCount, sampleThreshold, sampleSize);
+    const aggregations = buildColumnAggregations(
+      cols,
+      useApprox,
+      mode,
+      maxColumns,
+    );
+    const profilingSql = buildProfilingQuery(
+      schema,
+      objectName,
+      aggregations,
+      engineEdition,
+      rowCount,
+      sampleThreshold,
+      sampleSize,
+    );
     if (!profilingSql) {
       logger.info('No profileable columns — nothing to query');
-      void postToDetail(panel, {
-        type: 'table-stats-error', objectRef: { schema, objectName },
-        message: `No profileable columns in ${schema}.${objectName} — the column types are not supported by statistics, or dataLineageViz.tableStatistics.maxColumns excludes them all.`,
-      }, logger);
+      void postToDetail(
+        panel,
+        {
+          type: 'table-stats-error',
+          objectRef: { schema, objectName },
+          message: `No profileable columns in ${schema}.${objectName} — the column types are not supported by statistics, or dataLineageViz.tableStatistics.maxColumns excludes them all.`,
+        },
+        logger,
+      );
       return;
     }
 
-    const profilingTimeout = { ms: timeoutMs, message: `Profiling query for ${schema}.${objectName} timed out after ${timeoutSec}s.` };
+    const profilingTimeout = {
+      ms: timeoutMs,
+      message: `Profiling query for ${schema}.${objectName} timed out after ${timeoutSec}s.`,
+    };
     let sampled = rowCount > sampleThreshold && sampleThreshold >= 0;
     let profilingResult;
     try {
-      profilingResult = await executeSimpleQuery(session, profilingSql, outputChannel, profilingTimeout);
+      profilingResult = await executeSimpleQuery(
+        session,
+        profilingSql,
+        outputChannel,
+        profilingTimeout,
+      );
     } catch (sampleErr) {
-      if (!sampled || !/TABLESAMPLE/i.test(errorMessage(sampleErr))) throw sampleErr;
+      if (!sampled || !/TABLESAMPLE/i.test(errorMessage(sampleErr)))
+        throw sampleErr;
       // The table refuses TABLESAMPLE: profile it with a full scan, reported as unsampled.
-      const fullScanSql = buildProfilingQuery(schema, objectName, aggregations, engineEdition, rowCount, -1, sampleSize);
-      profilingResult = await executeSimpleQuery(session, fullScanSql, outputChannel, profilingTimeout);
+      const fullScanSql = buildProfilingQuery(
+        schema,
+        objectName,
+        aggregations,
+        engineEdition,
+        rowCount,
+        -1,
+        sampleSize,
+      );
+      profilingResult = await executeSimpleQuery(
+        session,
+        fullScanSql,
+        outputChannel,
+        profilingTimeout,
+      );
       sampled = false;
     }
     if (!profilingResult.rows.length) {
-      throw new Error(`Profiling query returned no rows for ${schema}.${objectName}`);
+      throw new Error(
+        `Profiling query returned no rows for ${schema}.${objectName}`,
+      );
     }
     const resultRow = profilingRowFromResult(profilingResult);
 
-    const samplePercent = sampled ? computeSamplePercent(sampleSize, rowCount) : undefined;
-    const stats = parseProfilingResult(resultRow, cols, rowCount, sampled, samplePercent);
-    logger.info(`Table statistics ready — rows=${rowCount}${sampled ? ` (sampled ${samplePercent}%)` : ''} (${((Date.now() - t0) / 1000).toFixed(2)}s)`);
-    void postToDetail(panel, { type: 'table-stats-result', objectRef: { schema, objectName }, stats, mode }, logger);
+    const samplePercent = sampled
+      ? computeSamplePercent(sampleSize, rowCount)
+      : undefined;
+    const stats = parseProfilingResult(
+      resultRow,
+      cols,
+      rowCount,
+      sampled,
+      samplePercent,
+    );
+    logger.info(
+      `Table statistics ready — rows=${rowCount}${sampled ? ` (sampled ${samplePercent}%)` : ''} (${((Date.now() - t0) / 1000).toFixed(2)}s)`,
+    );
+    void postToDetail(
+      panel,
+      {
+        type: 'table-stats-result',
+        objectRef: { schema, objectName },
+        stats,
+        mode,
+      },
+      logger,
+    );
   } catch (err) {
     if (isDbConnectionError(err)) {
-      const reported = reportConnectionError(err.original, err.target, logger, connectionErrorHooks(dbEnv, err.target.connectionId, undefined));
-      void postToDetail(panel, { type: 'table-stats-error', objectRef: { schema, objectName }, message: reported.message }, logger);
+      const reported = reportConnectionError(
+        err.original,
+        err.target,
+        logger,
+        connectionErrorHooks(dbEnv, err.target.connectionId, undefined),
+      );
+      void postToDetail(
+        panel,
+        {
+          type: 'table-stats-error',
+          objectRef: { schema, objectName },
+          message: reported.message,
+        },
+        logger,
+      );
       return;
     }
     host.log('error', 'Stats', 'Profiling', err);
-    void postToDetail(panel, { type: 'table-stats-error', objectRef: { schema, objectName }, message: redactSecrets(errorMessage(err)) }, logger);
+    void postToDetail(
+      panel,
+      {
+        type: 'table-stats-error',
+        objectRef: { schema, objectName },
+        message: redactSecrets(errorMessage(err)),
+      },
+      logger,
+    );
   } finally {
     if (session) {
-      await session.dispose().catch((err: unknown) =>
-        host.log('warn', 'Stats', `Disconnect failed: ${redactSecrets(errorMessage(err))}`));
+      await session
+        .dispose()
+        .catch((err: unknown) =>
+          host.log(
+            'warn',
+            'Stats',
+            `Disconnect failed: ${redactSecrets(errorMessage(err))}`,
+          ),
+        );
     }
   }
 }
 
 /** Logs a summary of the SQL parsing results and stores it in the session. */
-function handleParseStats(stats: ParseStats, outputChannel: vscode.LogOutputChannel, getSession: () => AiSession, objectCount?: number, edgeCount?: number, schemaCount?: number) {
+function handleParseStats(
+  stats: ParseStats,
+  outputChannel: vscode.LogOutputChannel,
+  getSession: () => AiSession,
+  objectCount?: number,
+  edgeCount?: number,
+  schemaCount?: number,
+) {
   const logger = Logger.create(outputChannel, 'Parse');
   const sess = getSession();
   const spCount = stats.spDetails?.length ?? 0;
@@ -1219,28 +2029,49 @@ function handleParseStats(stats: ParseStats, outputChannel: vscode.LogOutputChan
     unreadableDefinitions: stats.unreadableDefinitions?.length ?? 0,
   };
   if (objectCount !== undefined) {
-    logger.info(`Phase 2 Result: Construction Complete — ${objectCount} objects, ${edgeCount} edges, ${schemaCount} schemas`);
-    logger.info(`Phase 2 Result: Parsing Complete — ${spCount} objects scripted, ${stats.parsedRefs} refs found, ${stats.resolvedEdges} refs resolved`);
+    logger.info(
+      `Phase 2 Result: Construction Complete — ${objectCount} objects, ${edgeCount} edges, ${schemaCount} schemas`,
+    );
+    logger.info(
+      `Phase 2 Result: Parsing Complete — ${spCount} objects scripted, ${stats.parsedRefs} refs found, ${stats.resolvedEdges} refs resolved`,
+    );
     if (stats.droppedRefs.length > 0) {
-      logger.info(`Phase 2 Result: Dropped — ${stats.droppedRefs.length} refs unrelated (aliases/built-ins)`);
+      logger.info(
+        `Phase 2 Result: Dropped — ${stats.droppedRefs.length} refs unrelated (aliases/built-ins)`,
+      );
     }
   }
 
-  const unsupported: Array<[string, string[]]> = [['Definition not readable (encrypted or no VIEW DEFINITION permission) — loaded without edges', stats.unreadableDefinitions ?? []],
-    ...Object.entries(stats.unsupported ?? {}).map(([label, names]): [string, string[]] => [`${label} not fully supported — loaded with the references the parser captures`, names])];
+  const unsupported: Array<[string, string[]]> = [
+    [
+      'Definition not readable (encrypted or no VIEW DEFINITION permission) — loaded without edges',
+      stats.unreadableDefinitions ?? [],
+    ],
+    ...Object.entries(stats.unsupported ?? {}).map(
+      ([label, names]): [string, string[]] => [
+        `${label} not fully supported — loaded with the references the parser captures`,
+        names,
+      ],
+    ),
+  ];
   for (const [text, names] of unsupported) {
-    if (names.length) logger.warn(`${text}: ${names.length} module(s), named in the debug log`);
+    if (names.length)
+      logger.warn(`${text}: ${names.length} module(s), named in the debug log`);
     if (names.length) logger.debug(`${text}: ${trunc(names, LOG_TRUNC_LIST)}`);
   }
 
   if (spCount === 0) {
-    logger.debug('No scripted objects (procedures/views) with valid definitions found for parsing.');
+    logger.debug(
+      'No scripted objects (procedures/views) with valid definitions found for parsing.',
+    );
   }
 
   for (const sp of stats.spDetails) {
     const inRefs = sp.inRefs?.length ? ` In:[${sp.inRefs.join(', ')}]` : '';
     const outRefs = sp.outRefs?.length ? ` Out:[${sp.outRefs.join(', ')}]` : '';
-    logger.debug(`Parsed ${sp.name} — ${sp.inCount + sp.outCount} refs${inRefs}${outRefs}`);
+    logger.debug(
+      `Parsed ${sp.name} — ${sp.inCount + sp.outCount} refs${inRefs}${outRefs}`,
+    );
     if (sp.unrelated && sp.unrelated.length > 0) {
       logger.debug(`  Unrelated: ${sp.unrelated.join(', ')}`);
     }
@@ -1250,30 +2081,64 @@ function handleParseStats(stats: ParseStats, outputChannel: vscode.LogOutputChan
 /** The settings snapshot the host sends to the webview. Every other {@link ExtensionConfig} field is host-only and read where it is used. */
 export type HostConfigSnapshot = Pick<
   ExtensionConfig,
-  'excludePatterns' | 'maxNodes' | 'layout' | 'externalRefs' | 'overview' | 'renderLimit' | 'trace' | 'analysis'
+  | 'excludePatterns'
+  | 'maxNodes'
+  | 'layout'
+  | 'externalRefs'
+  | 'overview'
+  | 'renderLimit'
+  | 'trace'
+  | 'analysis'
 >;
 
 /** Reads display and behaviour settings from a VS Code workspace configuration and returns the serialisable config snapshot sent to the webview. Numeric settings are clamped to their declared manifest range; an unset value takes its `DEFAULT_CONFIG` default. */
-export function buildExtensionConfig(cfg: vscode.WorkspaceConfiguration): HostConfigSnapshot {
+export function buildExtensionConfig(
+  cfg: vscode.WorkspaceConfiguration,
+): HostConfigSnapshot {
   const num = (key: string) => readDeclaredNumericSetting(cfg, key);
   const { layout, overview, externalRefs } = DEFAULT_CONFIG;
   return {
-    excludePatterns: cfg.get<string[]>('excludePatterns', DEFAULT_CONFIG.excludePatterns),
+    excludePatterns: cfg.get<string[]>(
+      'excludePatterns',
+      DEFAULT_CONFIG.excludePatterns,
+    ),
     maxNodes: num('maxNodes'),
     layout: {
-      direction: cfg.get<LayoutConfig['direction']>('layout.direction', layout.direction),
+      direction: cfg.get<LayoutConfig['direction']>(
+        'layout.direction',
+        layout.direction,
+      ),
       rankSeparation: num('layout.rankSeparation'),
       nodeSeparation: num('layout.nodeSeparation'),
-      edgeAnimation: cfg.get<boolean>('layout.edgeAnimation', layout.edgeAnimation),
-      highlightAnimation: cfg.get<boolean>('layout.highlightAnimation', layout.highlightAnimation),
-      minimapEnabled: cfg.get<boolean>('layout.minimapEnabled', layout.minimapEnabled),
-      edgeStyle: cfg.get<LayoutConfig['edgeStyle']>('layout.edgeStyle', layout.edgeStyle),
+      edgeAnimation: cfg.get<boolean>(
+        'layout.edgeAnimation',
+        layout.edgeAnimation,
+      ),
+      highlightAnimation: cfg.get<boolean>(
+        'layout.highlightAnimation',
+        layout.highlightAnimation,
+      ),
+      minimapEnabled: cfg.get<boolean>(
+        'layout.minimapEnabled',
+        layout.minimapEnabled,
+      ),
+      edgeStyle: cfg.get<LayoutConfig['edgeStyle']>(
+        'layout.edgeStyle',
+        layout.edgeStyle,
+      ),
     },
-    externalRefs: { enabled: cfg.get<boolean>('externalRefs.enabled', externalRefs.enabled) },
+    externalRefs: {
+      enabled: cfg.get<boolean>('externalRefs.enabled', externalRefs.enabled),
+    },
     overview: {
       enabled: cfg.get<boolean>('overview.enabled', overview.enabled),
       threshold: num('overview.threshold'),
-      schemaDoubleClickBehavior: cfg.get<OverviewConfig['schemaDoubleClickBehavior']>('overview.schemaDoubleClickBehavior', overview.schemaDoubleClickBehavior),
+      schemaDoubleClickBehavior: cfg.get<
+        OverviewConfig['schemaDoubleClickBehavior']
+      >(
+        'overview.schemaDoubleClickBehavior',
+        overview.schemaDoubleClickBehavior,
+      ),
     },
     renderLimit: num('renderLimit'),
     trace: {
@@ -1293,9 +2158,16 @@ function readExtensionConfig(host: BridgeHost): HostConfigSnapshot {
 }
 
 /** Generates the root HTML for the secondary Detail Webview. */
-function getDetailWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
-  const stylesUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "dist", "assets", "index.css"));
-  const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "dist", "assets", "index.js"));
+function getDetailWebviewHtml(
+  webview: vscode.Webview,
+  extensionUri: vscode.Uri,
+): string {
+  const stylesUri = webview.asWebviewUri(
+    vscode.Uri.joinPath(extensionUri, 'dist', 'assets', 'index.css'),
+  );
+  const scriptUri = webview.asWebviewUri(
+    vscode.Uri.joinPath(extensionUri, 'dist', 'assets', 'index.js'),
+  );
   const nonce = getNonce();
   const csp = buildWebviewCsp({ nonce, cspSource: webview.cspSource });
 
@@ -1335,7 +2207,9 @@ const SETTING_VALUE_CAP = 120;
 
 /** Reads one field of an untrusted snapshot object. */
 function recordField(value: unknown, key: string): unknown {
-  return value !== null && typeof value === 'object' ? (value as Record<string, unknown>)[key] : undefined;
+  return value !== null && typeof value === 'object'
+    ? (value as Record<string, unknown>)[key]
+    : undefined;
 }
 
 /** Prints a trace level, using All for the unbounded sentinel. */
@@ -1347,7 +2221,9 @@ function formatTraceLevel(value: unknown): string {
 function formatSettingValue(value: unknown): string {
   if (Array.isArray(value)) {
     const text = JSON.stringify(value);
-    return text.length > SETTING_VALUE_CAP ? `${value.length} item(s)` : redactSecrets(text);
+    return text.length > SETTING_VALUE_CAP
+      ? `${value.length} item(s)`
+      : redactSecrets(text);
   }
   if (value === undefined) return 'undefined';
   const text = typeof value === 'string' ? value : JSON.stringify(value);
@@ -1356,7 +2232,8 @@ function formatSettingValue(value: unknown): string {
 
 /** True when two setting values are the same JSON shape, treating a missing value as null. */
 function sameSetting(actual: unknown, fallback: unknown): boolean {
-  const stable = (value: unknown) => JSON.stringify(value === undefined ? null : value);
+  const stable = (value: unknown) =>
+    JSON.stringify(value === undefined ? null : value);
   return stable(actual) === stable(fallback);
 }
 
@@ -1377,27 +2254,41 @@ function formatGuiSummary(uiState: unknown): string | null {
   if (uiState === null || typeof uiState !== 'object') return null;
   const lines = ['GUI'];
   const graphMode = recordField(uiState, 'graphMode');
-  if (graphMode !== undefined) lines.push(`  Graph mode:   ${String(graphMode)}`);
+  if (graphMode !== undefined)
+    lines.push(`  Graph mode:   ${String(graphMode)}`);
   const filteredCount = recordField(uiState, 'filteredCount');
-  if (typeof filteredCount === 'number') lines.push(`  Filtered:     ${filteredCount} nodes`);
+  if (typeof filteredCount === 'number')
+    lines.push(`  Filtered:     ${filteredCount} nodes`);
   const renderLimitHit = recordField(uiState, 'renderLimitHit');
-  if (typeof renderLimitHit === 'number') lines.push(`  Render limit: ${renderLimitHit}`);
+  if (typeof renderLimitHit === 'number')
+    lines.push(`  Render limit: ${renderLimitHit}`);
   const filter = recordField(uiState, 'filter');
   if (filter !== null && typeof filter === 'object') {
-    const count = (key: string) => Array.isArray(recordField(filter, key)) ? (recordField(filter, key) as unknown[]).length : 0;
+    const count = (key: string) =>
+      Array.isArray(recordField(filter, key))
+        ? (recordField(filter, key) as unknown[]).length
+        : 0;
     const allowlist = recordField(filter, 'allowlistNodeIds');
-    const allowText = Array.isArray(allowlist) ? `, allowlist ${allowlist.length}` : '';
-    lines.push(`  Filter:       schemas ${count('schemas')}, types ${count('types')}, exclusions ${count('exclusionPatterns')}, focus ${count('focusSchemas')}, hideIsolated ${String(recordField(filter, 'hideIsolated'))}, external ${String(recordField(filter, 'showExternalRefs'))}${allowText}`);
+    const allowText = Array.isArray(allowlist)
+      ? `, allowlist ${allowlist.length}`
+      : '';
+    lines.push(
+      `  Filter:       schemas ${count('schemas')}, types ${count('types')}, exclusions ${count('exclusionPatterns')}, focus ${count('focusSchemas')}, hideIsolated ${String(recordField(filter, 'hideIsolated'))}, external ${String(recordField(filter, 'showExternalRefs'))}${allowText}`,
+    );
   }
   const trace = recordField(uiState, 'trace');
   if (trace !== null && typeof trace === 'object') {
-    lines.push(`  Trace:        ${String(recordField(trace, 'mode') ?? 'none')} origin ${String(recordField(trace, 'selectedNodeId') ?? '(none)')} up ${formatTraceLevel(recordField(trace, 'upstreamLevels'))} down ${formatTraceLevel(recordField(trace, 'downstreamLevels'))}`);
+    lines.push(
+      `  Trace:        ${String(recordField(trace, 'mode') ?? 'none')} origin ${String(recordField(trace, 'selectedNodeId') ?? '(none)')} up ${formatTraceLevel(recordField(trace, 'upstreamLevels'))} down ${formatTraceLevel(recordField(trace, 'downstreamLevels'))}`,
+    );
   }
   const expanded = recordField(uiState, 'expandedSchemaView');
   if (expanded !== null && typeof expanded === 'object') {
     const schemas = recordField(expanded, 'expandedSchemas');
     const count = Array.isArray(schemas) ? schemas.length : 0;
-    lines.push(`  Schema view:  ${count} expanded schema(s), focus ${String(recordField(expanded, 'focusNodeId') ?? '(none)')}`);
+    lines.push(
+      `  Schema view:  ${count} expanded schema(s), focus ${String(recordField(expanded, 'focusNodeId') ?? '(none)')}`,
+    );
   }
   return lines.join('\n');
 }
@@ -1407,7 +2298,13 @@ function formatNonDefaultSettings(context: vscode.ExtensionContext): string {
   const lines = ['SETTINGS (non-default dataLineageViz.*, excluding ai.*)'];
   try {
     const cfg = vscode.workspace.getConfiguration('dataLineageViz');
-    const pkg = context.extension.packageJSON as { contributes?: { configuration?: Array<{ properties?: Record<string, { default?: unknown }> }> } };
+    const pkg = context.extension.packageJSON as {
+      contributes?: {
+        configuration?: Array<{
+          properties?: Record<string, { default?: unknown }>;
+        }>;
+      };
+    };
     const sections = pkg.contributes?.configuration ?? [];
     let declared = 0;
     let any = false;
@@ -1423,7 +2320,9 @@ function formatNonDefaultSettings(context: vscode.ExtensionContext): string {
           lines.push(`  database.connections: ${actual.length} connection(s)`);
           continue;
         }
-        lines.push(`  ${shortKey}: ${formatSettingValue(actual)} (default ${formatSettingValue(property.default)})`);
+        lines.push(
+          `  ${shortKey}: ${formatSettingValue(actual)} (default ${formatSettingValue(property.default)})`,
+        );
       }
     }
     if (declared === 0) lines.push('  (no declared settings)');
@@ -1435,17 +2334,24 @@ function formatNonDefaultSettings(context: vscode.ExtensionContext): string {
 }
 
 /** Builds a GUI diagnostic snapshot for the current extension state. */
-export function buildDebugDump(context: vscode.ExtensionContext, getSession: () => AiSession): string {
+export function buildDebugDump(
+  context: vscode.ExtensionContext,
+  getSession: () => AiSession,
+): string {
   const sess = getSession();
   const uiDiagnostics = getUiDiagnostics(sess);
   const lines: string[] = [];
   const add = (s: string) => lines.push(s);
-  const version = (context.extension.packageJSON as { version: string }).version ?? 'unknown';
-  const buildStamp = typeof __BUILD_TIMESTAMP__ !== 'undefined' ? __BUILD_TIMESTAMP__ : 'dev';
+  const version =
+    (context.extension.packageJSON as { version: string }).version ?? 'unknown';
+  const buildStamp =
+    typeof __BUILD_TIMESTAMP__ !== 'undefined' ? __BUILD_TIMESTAMP__ : 'dev';
 
   add(`Data Lineage Viz — Debug Info`);
   add(`Generated: ${new Date().toISOString()}`);
-  add(`Last UI sync: ${uiDiagnostics.lastUiSyncAt ? new Date(uiDiagnostics.lastUiSyncAt).toISOString() : '(never — webview has not reported state)'}`);
+  add(
+    `Last UI sync: ${uiDiagnostics.lastUiSyncAt ? new Date(uiDiagnostics.lastUiSyncAt).toISOString() : '(never — webview has not reported state)'}`,
+  );
   add(`Webview errors captured: ${uiDiagnostics.lastErrors.length}`);
   add('');
 
@@ -1475,12 +2381,17 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
     add('');
 
     const legend = sess.model.schemas
-      .filter(s => !(s.types['external'] > 0 && s.nodeCount === s.types['external']))
-      .map(s => `${s.name} (${s.nodeCount})`);
+      .filter(
+        (s) =>
+          !(s.types['external'] > 0 && s.nodeCount === s.types['external']),
+      )
+      .map((s) => `${s.name} (${s.nodeCount})`);
     const shownLegend = legend.slice(0, SCHEMA_LEGEND_CAP);
     const hiddenLegend = legend.length - shownLegend.length;
     add('SCHEMA LEGEND');
-    add(`  ${shownLegend.join(', ') || '(none)'}${hiddenLegend > 0 ? ` … +${hiddenLegend} more` : ''}`);
+    add(
+      `  ${shownLegend.join(', ') || '(none)'}${hiddenLegend > 0 ? ` … +${hiddenLegend} more` : ''}`,
+    );
     add('');
   }
 
@@ -1497,18 +2408,26 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
 
   add('RENDER STATE (current screen)');
   if (uiDiagnostics.renderState) {
-    add(`  Highlighted: ${uiDiagnostics.renderState.highlightedNodeId ?? '(none)'}`);
-    if (uiDiagnostics.renderState.connectivity) add(formatRenderConnectivity(uiDiagnostics.renderState.connectivity));
+    add(
+      `  Highlighted: ${uiDiagnostics.renderState.highlightedNodeId ?? '(none)'}`,
+    );
+    if (uiDiagnostics.renderState.connectivity)
+      add(formatRenderConnectivity(uiDiagnostics.renderState.connectivity));
   } else {
-    add('  (no render-state reported — graph not rendered, or render-limit mode)');
+    add(
+      '  (no render-state reported — graph not rendered, or render-limit mode)',
+    );
   }
   add('');
 
-  add(formatScreenStateSections(
-    uiDiagnostics.renderState,
-    (sess.uiState as { screenState?: ScreenStateExtras } | null)?.screenState ?? null,
-    sess.model ?? null,
-  ));
+  add(
+    formatScreenStateSections(
+      uiDiagnostics.renderState,
+      (sess.uiState as { screenState?: ScreenStateExtras } | null)
+        ?.screenState ?? null,
+      sess.model ?? null,
+    ),
+  );
 
   add(`LAST ERRORS (${uiDiagnostics.lastErrors.length})`);
   if (uiDiagnostics.lastErrors.length === 0) {
@@ -1518,7 +2437,10 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
       add(`  [${new Date(e.timestamp).toISOString()}] source=${e.source}`);
       add(`    message:   ${e.message}`);
       if (e.componentStack) add(`    component: ${e.componentStack}`);
-      if (e.context !== undefined) add(`    context:   ${trunc(redactSecrets(JSON.stringify(e.context)), 800)}`);
+      if (e.context !== undefined)
+        add(
+          `    context:   ${trunc(redactSecrets(JSON.stringify(e.context)), 800)}`,
+        );
       if (e.stack) add(`    stack:     ${e.stack}`);
     }
   }
@@ -1528,7 +2450,9 @@ export function buildDebugDump(context: vscode.ExtensionContext, getSession: () 
   add(`  Phase:        ${sess.phase.kind}`);
   add(`  Status:       ${sess.stateMachine?.status ?? 'idle'}`);
   add(`  Hops:         ${sess.hopCount}`);
-  add(`  Pending gate: ${sess.phase.kind === 'awaiting_gate' ? 'confirm_sm_start' : 'none'}`);
+  add(
+    `  Pending gate: ${sess.phase.kind === 'awaiting_gate' ? 'confirm_sm_start' : 'none'}`,
+  );
   add(`  Result nodes: ${sess.resultGraph?.nodeIds.length ?? 0}`);
   add('  Full SM dump: use Data Lineage: Dump AI State Machine');
   add('');

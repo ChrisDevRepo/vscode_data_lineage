@@ -61,7 +61,8 @@ export function migrateProjectStore(
   const obj = raw as Record<string, unknown>;
   if (obj.schemaVersion !== 1) {
     const abandoned = Array.isArray(obj.projects) ? obj.projects.length : 0;
-    if (abandoned > 0) onDropped?.({ dropped: abandoned, issuePaths: ['schemaVersion'] });
+    if (abandoned > 0)
+      onDropped?.({ dropped: abandoned, issuePaths: ['schemaVersion'] });
     return emptyStore();
   }
   if (!Array.isArray(obj.projects)) {
@@ -73,28 +74,47 @@ export function migrateProjectStore(
   const projects = (obj.projects as unknown[]).flatMap((project) => {
     const parsed = ProjectReadSchema.safeParse(project);
     if (parsed.success) {
-      const skippedViews = ((project as { filterProfiles?: unknown[] }).filterProfiles?.length ?? 0) - (parsed.data.filterProfiles?.length ?? 0);
+      const skippedViews =
+        ((project as { filterProfiles?: unknown[] }).filterProfiles?.length ??
+          0) - (parsed.data.filterProfiles?.length ?? 0);
       droppedViews += skippedViews;
-      if (skippedViews > 0 && issuePaths.length < MAX_REPORTED_ISSUE_PATHS && !issuePaths.includes('filterProfiles')) {
+      if (
+        skippedViews > 0 &&
+        issuePaths.length < MAX_REPORTED_ISSUE_PATHS &&
+        !issuePaths.includes('filterProfiles')
+      ) {
         issuePaths.push('filterProfiles');
       }
       return [parsed.data];
     }
     dropped += 1;
     for (const issue of parsed.error.issues) {
-      const path = issue.path.map((segment) => String(segment)).join('.') || '(root)';
-      if (issuePaths.length < MAX_REPORTED_ISSUE_PATHS && !issuePaths.includes(path)) {
+      const path =
+        issue.path.map((segment) => String(segment)).join('.') || '(root)';
+      if (
+        issuePaths.length < MAX_REPORTED_ISSUE_PATHS &&
+        !issuePaths.includes(path)
+      ) {
         issuePaths.push(path);
       }
     }
     return [];
   });
-  if (dropped > 0 || droppedViews > 0) onDropped?.({ dropped, issuePaths, ...(droppedViews > 0 ? { droppedViews } : {}) });
+  if (dropped > 0 || droppedViews > 0)
+    onDropped?.({
+      dropped,
+      issuePaths,
+      ...(droppedViews > 0 ? { droppedViews } : {}),
+    });
   return {
     schemaVersion: 1,
     projects,
-    lastOpenedId: typeof obj.lastOpenedId === 'string' ? obj.lastOpenedId : null,
-    ...((obj.lastWizardView === 'main' || obj.lastWizardView === 'projects') && { lastWizardView: obj.lastWizardView }),
+    lastOpenedId:
+      typeof obj.lastOpenedId === 'string' ? obj.lastOpenedId : null,
+    ...((obj.lastWizardView === 'main' ||
+      obj.lastWizardView === 'projects') && {
+      lastWizardView: obj.lastWizardView,
+    }),
   };
 }
 
@@ -104,36 +124,47 @@ export function createProject(
   connection: DacpacConnection | DatabaseConnection,
 ): Project {
   const now = new Date().toISOString();
-  return { id: crypto.randomUUID(), name, createdAt: now, updatedAt: now, connection };
+  return {
+    id: crypto.randomUUID(),
+    name,
+    createdAt: now,
+    updatedAt: now,
+    connection,
+  };
 }
 
 /** Upserts a project into the store and updates the last opened identifier. If the project ID already exists, it is replaced; otherwise, it is appended. */
-export function updateProject(store: ProjectStore, project: Project): ProjectStore {
-  const exists = store.projects.some(p => p.id === project.id);
+export function updateProject(
+  store: ProjectStore,
+  project: Project,
+): ProjectStore {
+  const exists = store.projects.some((p) => p.id === project.id);
   const projects = exists
-    ? store.projects.map(p => (p.id === project.id ? project : p))
+    ? store.projects.map((p) => (p.id === project.id ? project : p))
     : [...store.projects, project];
   return { ...store, projects, lastOpenedId: project.id };
 }
 
 /** Removes a project from the store by its identifier. Automatically adjusts the last opened ID to the most recently updated project if the current active project is deleted. */
 export function deleteProject(store: ProjectStore, id: string): ProjectStore {
-  const projects = store.projects.filter(p => p.id !== id);
+  const projects = store.projects.filter((p) => p.id !== id);
   const lastOpenedId =
     store.lastOpenedId === id
-      ? ([...projects].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]?.id ?? null)
+      ? ([...projects].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
+          ?.id ?? null)
       : store.lastOpenedId;
   return { ...store, projects, lastOpenedId };
 }
 
 /** Generates a default project name based on the connection type and current timestamp. Format: "{sourceName or displayName} YYYY-MM-DD HH:mm". */
-export function generateProjectName(connection: DacpacConnection | DatabaseConnection): string {
+export function generateProjectName(
+  connection: DacpacConnection | DatabaseConnection,
+): string {
   const now = new Date();
-  const ts = [
-    now.getFullYear(),
-    pad(now.getMonth() + 1),
-    pad(now.getDate()),
-  ].join('-') + ' ' + [pad(now.getHours()), pad(now.getMinutes())].join(':');
+  const ts =
+    [now.getFullYear(), pad(now.getMonth() + 1), pad(now.getDate())].join('-') +
+    ' ' +
+    [pad(now.getHours()), pad(now.getMinutes())].join(':');
 
   return connection.type === 'dacpac'
     ? `${connection.displayName} ${ts}`
@@ -146,12 +177,16 @@ function pad(n: number): string {
 }
 
 /** Adds or replaces a filter profile for a specific project. Matches existing profiles based on their ID. */
-export function addFilterProfile(store: ProjectStore, projectId: string, profile: FilterProfile): ProjectStore {
-  const projects = store.projects.map(p => {
+export function addFilterProfile(
+  store: ProjectStore,
+  projectId: string,
+  profile: FilterProfile,
+): ProjectStore {
+  const projects = store.projects.map((p) => {
     if (p.id !== projectId) return p;
     const existing = p.filterProfiles ?? [];
-    const profiles = existing.some(fp => fp.id === profile.id)
-      ? existing.map(fp => (fp.id === profile.id ? profile : fp))
+    const profiles = existing.some((fp) => fp.id === profile.id)
+      ? existing.map((fp) => (fp.id === profile.id ? profile : fp))
       : [...existing, profile];
     return { ...p, filterProfiles: profiles };
   });
@@ -159,10 +194,19 @@ export function addFilterProfile(store: ProjectStore, projectId: string, profile
 }
 
 /** Removes a filter profile from a specific project. */
-export function deleteFilterProfile(store: ProjectStore, projectId: string, profileId: string): ProjectStore {
-  const projects = store.projects.map(p => {
+export function deleteFilterProfile(
+  store: ProjectStore,
+  projectId: string,
+  profileId: string,
+): ProjectStore {
+  const projects = store.projects.map((p) => {
     if (p.id !== projectId) return p;
-    return { ...p, filterProfiles: (p.filterProfiles ?? []).filter(fp => fp.id !== profileId) };
+    return {
+      ...p,
+      filterProfiles: (p.filterProfiles ?? []).filter(
+        (fp) => fp.id !== profileId,
+      ),
+    };
   });
   return { ...store, projects };
 }
@@ -193,7 +237,9 @@ export function deserializeFilter(s: SerializedFilterState): FilterState {
     hideIsolated: s.hideIsolated,
     focusSchemas: new Set(s.focusSchemas),
     showExternalRefs: s.showExternalRefs,
-    externalRefTypes: new Set(s.externalRefTypes) as FilterState['externalRefTypes'],
+    externalRefTypes: new Set(
+      s.externalRefTypes,
+    ) as FilterState['externalRefTypes'],
     exclusionPatterns: s.exclusionPatterns ?? [],
     ...(s.allowlistNodeIds !== undefined
       ? { allowlistNodeIds: new Set(s.allowlistNodeIds) }

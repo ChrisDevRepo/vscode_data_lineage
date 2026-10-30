@@ -30,13 +30,15 @@ export function findShortestPathOrdered(
   return null;
 }
 
-
 /** Logging callback injected into state machines for operational tracing. */
-export type LogFn = (level: 'info' | 'debug' | 'warn' | 'error', msg: string, err?: unknown) => void;
+export type LogFn = (
+  level: 'info' | 'debug' | 'warn' | 'error',
+  msg: string,
+  err?: unknown,
+) => void;
 
 /** Directional side of a lineage node when listing direct neighbors. */
 export type NeighborSide = 'in' | 'out';
-
 
 /** Performs a BFS reachability check from a starting node, respecting a set of removed (pruned) nodes. */
 export function bfsReachable(
@@ -62,7 +64,6 @@ export function bfsReachable(
   }
   return reachable;
 }
-
 
 /** A fixed directed lineage leg; combining legs never permits changing direction mid-walk. */
 export type RemovalSide = 'upstream' | 'downstream';
@@ -92,25 +93,57 @@ export interface RemovalAnalysis {
 }
 
 /** Analyzes the same pruning policy for AI navigation and interactive traces. */
-export function analyzeRemoval(graph: Graph, context: RemovalContext): RemovalAnalysis {
-  const { originId, scope, removedBefore, removedAfter, visited, sides, currentNodeId } = context;
-  const invalid = (rejection: NonNullable<RemovalAnalysis['rejection']>): RemovalAnalysis =>
-    ({ before: new Set(), after: new Set(), disconnectedVisited: [], cutIds: [], rejection });
+export function analyzeRemoval(
+  graph: Graph,
+  context: RemovalContext,
+): RemovalAnalysis {
+  const {
+    originId,
+    scope,
+    removedBefore,
+    removedAfter,
+    visited,
+    sides,
+    currentNodeId,
+  } = context;
+  const invalid = (
+    rejection: NonNullable<RemovalAnalysis['rejection']>,
+  ): RemovalAnalysis => ({
+    before: new Set(),
+    after: new Set(),
+    disconnectedVisited: [],
+    cutIds: [],
+    rejection,
+  });
   if (removedAfter.has(originId)) return invalid('origin');
   if (!graph.hasNode(originId)) return invalid('unknown-node');
-  if (!scope.has(originId) || [...removedBefore].some(id => !removedAfter.has(id))) return invalid('invalid-scope');
-  const starts = [...removedAfter].filter(id => !removedBefore.has(id));
-  if (starts.some(id => !graph.hasNode(id))) return invalid('unknown-node');
-  if (starts.some(id => !scope.has(id))) return invalid('invalid-scope');
-  if (starts.some(id => visited.has(id) && id !== currentNodeId)) return invalid('visited');
-  const modeFor = (side: RemovalSide): 'inbound' | 'outbound' => side === 'upstream' ? 'inbound' : 'outbound';
-  const support = (removed: ReadonlySet<string>, side: RemovalSide): Set<string> => {
+  if (
+    !scope.has(originId) ||
+    [...removedBefore].some((id) => !removedAfter.has(id))
+  )
+    return invalid('invalid-scope');
+  const starts = [...removedAfter].filter((id) => !removedBefore.has(id));
+  if (starts.some((id) => !graph.hasNode(id))) return invalid('unknown-node');
+  if (starts.some((id) => !scope.has(id))) return invalid('invalid-scope');
+  if (starts.some((id) => visited.has(id) && id !== currentNodeId))
+    return invalid('visited');
+  const modeFor = (side: RemovalSide): 'inbound' | 'outbound' =>
+    side === 'upstream' ? 'inbound' : 'outbound';
+  const support = (
+    removed: ReadonlySet<string>,
+    side: RemovalSide,
+  ): Set<string> => {
     const found = new Set<string>();
-    bfsFromNode(graph, originId, id => {
-      if (!scope.has(id) || removed.has(id)) return true;
-      found.add(id);
-      return false;
-    }, { mode: modeFor(side) });
+    bfsFromNode(
+      graph,
+      originId,
+      (id) => {
+        if (!scope.has(id) || removed.has(id)) return true;
+        found.add(id);
+        return false;
+      },
+      { mode: modeFor(side) },
+    );
     return found;
   };
   const before = new Set<string>([originId]);
@@ -119,9 +152,16 @@ export function analyzeRemoval(graph: Graph, context: RemovalContext): RemovalAn
     for (const id of support(removedBefore, side)) before.add(id);
     for (const id of support(removedAfter, side)) after.add(id);
   }
-  const lost = [...before].filter(id => !after.has(id) && !removedAfter.has(id));
-  const disconnectedVisited = lost.filter(id => visited.has(id));
-  return { before, after, disconnectedVisited, cutIds: disconnectedVisited.length ? [] : lost };
+  const lost = [...before].filter(
+    (id) => !after.has(id) && !removedAfter.has(id),
+  );
+  const disconnectedVisited = lost.filter((id) => visited.has(id));
+  return {
+    before,
+    after,
+    disconnectedVisited,
+    cutIds: disconnectedVisited.length ? [] : lost,
+  };
 }
 
 /** Returns exact direct neighbors for one node and lineage side. */
@@ -130,8 +170,11 @@ export function directNeighborIds(
   nodeId: string,
   side: NeighborSide,
 ): string[] {
-  const indexed = model.neighborIndex?.[nodeId]
-    ?? (model.identifierCaseSensitive ? undefined : model.neighborIndex?.[nodeId.toLowerCase()]);
+  const indexed =
+    model.neighborIndex?.[nodeId] ??
+    (model.identifierCaseSensitive
+      ? undefined
+      : model.neighborIndex?.[nodeId.toLowerCase()]);
   const fromIndex = indexed?.[side];
   if (fromIndex) return Array.from(new Set(fromIndex));
 

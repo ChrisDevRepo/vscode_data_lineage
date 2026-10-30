@@ -22,7 +22,9 @@ const DENSITY_STEP = 0.05;
 export function edgeDensity(edgeCount: number): number {
   if (edgeCount <= SPARSE_EDGE_COUNT) return 0;
   if (edgeCount >= DENSE_EDGE_COUNT) return 1;
-  const density = Math.log(edgeCount / SPARSE_EDGE_COUNT) / Math.log(DENSE_EDGE_COUNT / SPARSE_EDGE_COUNT);
+  const density =
+    Math.log(edgeCount / SPARSE_EDGE_COUNT) /
+    Math.log(DENSE_EDGE_COUNT / SPARSE_EDGE_COUNT);
   return Number((Math.round(density / DENSITY_STEP) * DENSITY_STEP).toFixed(2));
 }
 
@@ -43,8 +45,10 @@ export function decorateFlowEdges(
   const decorated = edges.map((edge) => {
     present.add(edge.id);
     const connected = routeEdgeIds
-      ? routeEdgeIds.has(`${edge.source}→${edge.target}`) || routeEdgeIds.has(`${edge.target}→${edge.source}`)
-      : !!connectedTo && (edge.source === connectedTo || edge.target === connectedTo);
+      ? routeEdgeIds.has(`${edge.source}→${edge.target}`) ||
+        routeEdgeIds.has(`${edge.target}→${edge.source}`)
+      : !!connectedTo &&
+        (edge.source === connectedTo || edge.target === connectedTo);
     const key = [connected, connected && litAnimated] as const;
     const cached = cache.get(edge.id);
     if (cached && cached.source === edge && sameKey(cached.key, key)) {

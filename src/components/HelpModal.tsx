@@ -1,7 +1,12 @@
 import { memo, useState } from 'react';
 import { FloatingFocusManager, useFloating } from '@floating-ui/react';
 import { useVsCode } from '../contexts/VsCodeContext';
-import { SHORTCUT_KEYS, SHORTCUT_DESCRIPTIONS, ESC_PRIORITY, type AppShortcutId } from '../ui/keyboardShortcuts';
+import {
+  SHORTCUT_KEYS,
+  SHORTCUT_DESCRIPTIONS,
+  ESC_PRIORITY,
+  type AppShortcutId,
+} from '../ui/keyboardShortcuts';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import { CloseIcon } from './ui/CloseIcon';
 import { Tooltip } from './ui/Tooltip';
@@ -16,23 +21,36 @@ interface HelpModalProps {
 type HelpTab = 'overview' | 'analysis' | 'database' | 'ai';
 
 const TABS: Array<{ id: HelpTab; label: string }> = [
-  { id: 'overview', label: 'Overview'    },
-  { id: 'analysis', label: 'Analysis'    },
-  { id: 'database', label: 'Database'    },
-  { id: 'ai',       label: '@lineage AI' },
+  { id: 'overview', label: 'Overview' },
+  { id: 'analysis', label: 'Analysis' },
+  { id: 'database', label: 'Database' },
+  { id: 'ai', label: '@lineage AI' },
 ];
 
 const ICON_SIZE: Record<number, string> = { 3: 'w-3 h-3', 4: 'w-4 h-4' };
 
 function IconPath({ d, size = 4 }: { d: string; size?: number }) {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className={`${ICON_SIZE[size] ?? 'w-4 h-4'} shrink-0 ln-text-muted`}>
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+      strokeWidth={1.5}
+      stroke="currentColor"
+      className={`${ICON_SIZE[size] ?? 'w-4 h-4'} shrink-0 ln-text-muted`}
+    >
       <path strokeLinecap="round" strokeLinejoin="round" d={d} />
     </svg>
   );
 }
 
-function SectionHeader({ icon, title }: { icon: React.ReactNode; title: string }) {
+function SectionHeader({
+  icon,
+  title,
+}: {
+  icon: React.ReactNode;
+  title: string;
+}) {
   return (
     <div className="flex items-center gap-2 mb-3">
       {icon}
@@ -41,20 +59,39 @@ function SectionHeader({ icon, title }: { icon: React.ReactNode; title: string }
   );
 }
 
-function ExtLink({ url, openExternal, children }: {
+function ExtLink({
+  url,
+  openExternal,
+  children,
+}: {
   url: string;
   openExternal: (url: string) => void;
   children: React.ReactNode;
 }) {
   return (
-    <a href="#" role="link" onClick={(e) => { e.preventDefault(); openExternal(url); }} className="ln-text-link hover:underline cursor-pointer">
+    <a
+      href="#"
+      role="link"
+      onClick={(e) => {
+        e.preventDefault();
+        openExternal(url);
+      }}
+      className="ln-text-link hover:underline cursor-pointer"
+    >
       {children}
     </a>
   );
 }
 
-
-function FeatureCard({ icon, title, desc }: { icon: string; title: string; desc: string }) {
+function FeatureCard({
+  icon,
+  title,
+  desc,
+}: {
+  icon: string;
+  title: string;
+  desc: string;
+}) {
   return (
     <div className="rounded-lg p-3 ln-help-analysis-card">
       <div className="flex items-center gap-2 mb-1">
@@ -70,8 +107,13 @@ function ShortcutRow({ keys, label }: { keys: string[]; label: string }) {
   return (
     <div className="grid grid-cols-[minmax(7.5rem,auto)_1fr] items-center gap-3">
       <span className="flex items-center gap-1.5">
-        {keys.map(key => (
-          <kbd key={key} className="px-1.5 py-0.5 text-xs font-mono rounded-sm border ln-kbd">{key}</kbd>
+        {keys.map((key) => (
+          <kbd
+            key={key}
+            className="px-1.5 py-0.5 text-xs font-mono rounded-sm border ln-kbd"
+          >
+            {key}
+          </kbd>
         ))}
       </span>
       <span className="min-w-0 text-xs ln-text-muted">{label}</span>
@@ -80,44 +122,64 @@ function ShortcutRow({ keys, label }: { keys: string[]; label: string }) {
 }
 
 /** Shorter labels for keys whose `KeyboardEvent.key` name reads poorly on a keycap. */
-const KEY_CAPTIONS: Partial<Record<AppShortcutId, string>> = { exitMode: 'Esc' };
+const KEY_CAPTIONS: Partial<Record<AppShortcutId, string>> = {
+  exitMode: 'Esc',
+};
 
 /** Every registered app shortcut, followed by the keys handled per-control rather than through {@link SHORTCUT_KEYS} — so this panel is the complete list it claims to be, and adding a binding without a description fails to compile. */
 const OVERVIEW_SHORTCUTS: Array<{ keys: string[]; label: string }> = [
-  ...(Object.keys(SHORTCUT_DESCRIPTIONS) as AppShortcutId[]).map(id => ({
+  ...(Object.keys(SHORTCUT_DESCRIPTIONS) as AppShortcutId[]).map((id) => ({
     keys: [KEY_CAPTIONS[id] ?? [SHORTCUT_KEYS[id]].flat().join(' / ')],
     label: SHORTCUT_DESCRIPTIONS[id],
   })),
   { keys: ['Enter'], label: 'Select a suggestion or apply the focused action' },
 ];
 
-
-function TabOverview({ openExternal }: { openExternal: (url: string) => void }) {
+function TabOverview({
+  openExternal,
+}: {
+  openExternal: (url: string) => void;
+}) {
   return (
     <div className="space-y-5">
       <section>
         <SectionHeader
-          icon={<IconPath d="M12 3a1.5 1.5 0 0 0-1.5 1.5v1.5H9a1.5 1.5 0 0 0 0 3h1.5V12a1.5 1.5 0 0 0 3 0V9H15a1.5 1.5 0 0 0 0-3h-1.5V4.5A1.5 1.5 0 0 0 12 3ZM3 12a9 9 0 1 1 18 0 9 9 0 0 1-18 0Z" />}
+          icon={
+            <IconPath d="M12 3a1.5 1.5 0 0 0-1.5 1.5v1.5H9a1.5 1.5 0 0 0 0 3h1.5V12a1.5 1.5 0 0 0 3 0V9H15a1.5 1.5 0 0 0 0-3h-1.5V4.5A1.5 1.5 0 0 0 12 3ZM3 12a9 9 0 1 1 18 0 9 9 0 0 1-18 0Z" />
+          }
           title="Shortcuts"
         />
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-x-8 gap-y-2">
-            {OVERVIEW_SHORTCUTS.map(shortcut => (
-              <ShortcutRow key={shortcut.keys.join('+')} keys={shortcut.keys} label={shortcut.label} />
+            {OVERVIEW_SHORTCUTS.map((shortcut) => (
+              <ShortcutRow
+                key={shortcut.keys.join('+')}
+                keys={shortcut.keys}
+                label={shortcut.label}
+              />
             ))}
           </div>
           <p className="text-xs ln-text-muted mt-2">
-            Bare-key shortcuts are ignored while typing in inputs, textareas, or editable text, and
-            never fire with a Ctrl, Cmd, or Alt modifier. <code className="font-mono px-1 py-0.5 rounded-sm ln-kbd">Esc</code> first
-            closes the active input, dropdown, or this panel, then exits the current graph mode.{' '}
-            <ExtLink url="https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/FEATURES.md#keyboard-shortcuts" openExternal={openExternal}>Also listed in the docs ↗</ExtLink>
+            Bare-key shortcuts are ignored while typing in inputs, textareas, or
+            editable text, and never fire with a Ctrl, Cmd, or Alt modifier.{' '}
+            <code className="font-mono px-1 py-0.5 rounded-sm ln-kbd">Esc</code>{' '}
+            first closes the active input, dropdown, or this panel, then exits
+            the current graph mode.{' '}
+            <ExtLink
+              url="https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/FEATURES.md#keyboard-shortcuts"
+              openExternal={openExternal}
+            >
+              Also listed in the docs ↗
+            </ExtLink>
           </p>
         </div>
       </section>
 
       <section>
         <SectionHeader
-          icon={<IconPath d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6Zm9.75 0A2.25 2.25 0 0 1 15.75 3.75H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25Zm9.75 0a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25a2.25 2.25 0 0 1-2.25-2.25v-2.25Z" />}
+          icon={
+            <IconPath d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6Zm9.75 0A2.25 2.25 0 0 1 15.75 3.75H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25Zm9.75 0a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25a2.25 2.25 0 0 1-2.25-2.25v-2.25Z" />
+          }
           title="Core Workflow"
         />
         <div className="grid grid-cols-2 gap-2">
@@ -155,12 +217,16 @@ function TabOverview({ openExternal }: { openExternal: (url: string) => void }) 
       </section>
 
       <p className="text-xs ln-text-muted text-center">
-        <ExtLink url="https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/FEATURES.md" openExternal={openExternal}>Full documentation on GitHub ↗</ExtLink>
+        <ExtLink
+          url="https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/FEATURES.md"
+          openExternal={openExternal}
+        >
+          Full documentation on GitHub ↗
+        </ExtLink>
       </p>
     </div>
   );
 }
-
 
 function TabAnalysis() {
   const analyses = [
@@ -211,30 +277,42 @@ function TabAnalysis() {
             <span className="text-sm font-semibold ln-text">{title}</span>
           </div>
           <p className="text-xs ln-text-muted">{desc}</p>
-          <p className="text-xs ln-text-muted mt-1"><span className="font-medium ln-text">Tip:</span> {tip}</p>
+          <p className="text-xs ln-text-muted mt-1">
+            <span className="font-medium ln-text">Tip:</span> {tip}
+          </p>
         </div>
       ))}
       <p className="text-xs ln-text-muted pt-2">
         Click any group in the sidebar to zoom into that subset.
       </p>
       <p className="text-xs ln-text-muted mt-1">
-        Thresholds are configurable — search <code className="font-mono px-1 py-0.5 rounded-sm ln-kbd">dataLineageViz.analysis</code> in VS Code Settings.
+        Thresholds are configurable — search{' '}
+        <code className="font-mono px-1 py-0.5 rounded-sm ln-kbd">
+          dataLineageViz.analysis
+        </code>{' '}
+        in VS Code Settings.
       </p>
     </div>
   );
 }
 
-
-function TabDatabase({ openExternal }: { openExternal: (url: string) => void }) {
+function TabDatabase({
+  openExternal,
+}: {
+  openExternal: (url: string) => void;
+}) {
   return (
     <div className="space-y-5">
       <section>
         <SectionHeader
-          icon={<IconPath d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />}
+          icon={
+            <IconPath d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
+          }
           title="Import"
         />
         <p className="text-sm ln-text-muted mb-2">
-          Use a built-in database connection with <code>VIEW DEFINITION</code> permission on the database.
+          Use a built-in database connection with <code>VIEW DEFINITION</code>{' '}
+          permission on the database.
         </p>
         <div className="grid grid-cols-2 gap-2">
           <div className="rounded-lg p-3 ln-help-analysis-card">
@@ -242,86 +320,139 @@ function TabDatabase({ openExternal }: { openExternal: (url: string) => void }) 
               <span className="text-xs font-bold ln-text-link">1</span>
               <span className="text-sm font-semibold ln-text">Schema Scan</span>
             </div>
-            <p className="text-xs ln-text-muted">Lightweight scan of all schemas and object counts — select which to load.</p>
+            <p className="text-xs ln-text-muted">
+              Lightweight scan of all schemas and object counts — select which
+              to load.
+            </p>
           </div>
           <div className="rounded-lg p-3 ln-help-analysis-card">
             <div className="flex items-center gap-2 mb-1">
               <span className="text-xs font-bold ln-text-link">2</span>
               <span className="text-sm font-semibold ln-text">Full Import</span>
             </div>
-            <p className="text-xs ln-text-muted">Loads DDL bodies and dependency edges for selected schemas only.</p>
+            <p className="text-xs ln-text-muted">
+              Loads DDL bodies and dependency edges for selected schemas only.
+            </p>
           </div>
         </div>
       </section>
 
       <section>
         <SectionHeader
-          icon={<IconPath d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5M9 11.25v1.5M12 9v3.75m3-6v6" />}
+          icon={
+            <IconPath d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5M9 11.25v1.5M12 9v3.75m3-6v6" />
+          }
           title="Table Profiling"
         />
         <p className="text-sm ln-text-muted">
-          On-demand column statistics — min, max, nulls, distinct counts, top values.
+          On-demand column statistics — min, max, nulls, distinct counts, top
+          values.
         </p>
         <p className="text-xs ln-text-muted mt-1.5">
-          Runs only on explicit click via a separate database connection. Large tables are sampled. External tables are skipped by default.
+          Runs only on explicit click via a separate database connection. Large
+          tables are sampled. External tables are skipped by default.
         </p>
         <p className="text-xs ln-text-muted mt-2">
-          All generated SQL is logged to the Output channel (<code>View → Output → Data Lineage Viz</code>).{' '}
-          <ExtLink url="https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/PROFILING_PATTERNS.md" openExternal={openExternal}>Profiling patterns guide ↗</ExtLink>
+          All generated SQL is logged to the Output channel (
+          <code>View → Output → Data Lineage Viz</code>).{' '}
+          <ExtLink
+            url="https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/PROFILING_PATTERNS.md"
+            openExternal={openExternal}
+          >
+            Profiling patterns guide ↗
+          </ExtLink>
         </p>
       </section>
 
       <section>
         <SectionHeader
-          icon={<IconPath d="M5.25 14.25h13.5m-13.5 0a3 3 0 0 1-3-3m3 3a3 3 0 1 0 6 0m-6 0H3m16.5 0a3 3 0 0 0 3-3m-3 3a3 3 0 1 1-6 0m6 0h1.5m-7.5 0v-8.25m0 8.25a3 3 0 0 1-3-3V6m3 8.25H6" />}
+          icon={
+            <IconPath d="M5.25 14.25h13.5m-13.5 0a3 3 0 0 1-3-3m3 3a3 3 0 1 0 6 0m-6 0H3m16.5 0a3 3 0 0 0 3-3m-3 3a3 3 0 1 1-6 0m6 0h1.5m-7.5 0v-8.25m0 8.25a3 3 0 0 1-3-3V6m3 8.25H6" />
+          }
           title="Platforms"
         />
         <p className="text-sm ln-text-muted">
-          Tested on SQL Server 2025, Azure SQL Database, Fabric Data Warehouse, and Synapse Dedicated SQL Pool.
+          Tested on SQL Server 2025, Azure SQL Database, Fabric Data Warehouse,
+          and Synapse Dedicated SQL Pool.
         </p>
       </section>
 
       <section>
         <SectionHeader
-          icon={<IconPath d="M11.42 15.17 17.25 21A2.652 2.652 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 0 0 4.486-6.336l-3.276 3.277a3.004 3.004 0 0 1-2.25-2.25l3.276-3.276a4.5 4.5 0 0 0-6.336 4.486c.049.58.025 1.192-.14 1.743" />}
+          icon={
+            <IconPath d="M11.42 15.17 17.25 21A2.652 2.652 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 0 0 4.486-6.336l-3.276 3.277a3.004 3.004 0 0 1-2.25-2.25l3.276-3.276a4.5 4.5 0 0 0-6.336 4.486c.049.58.025 1.192-.14 1.743" />
+          }
           title="Customization"
         />
         <div className="grid grid-cols-2 gap-2 text-xs ln-text-muted">
           <div className="rounded-lg p-2.5 ln-help-analysis-card">
             <span className="font-semibold ln-text">DMV Queries</span>
-            <p className="mt-0.5">Customize the SQL used for database import.{' '}
-              <ExtLink url="https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/DMV_QUERIES.md" openExternal={openExternal}>Guide ↗</ExtLink>
+            <p className="mt-0.5">
+              Customize the SQL used for database import.{' '}
+              <ExtLink
+                url="https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/DMV_QUERIES.md"
+                openExternal={openExternal}
+              >
+                Guide ↗
+              </ExtLink>
             </p>
           </div>
           <div className="rounded-lg p-2.5 ln-help-analysis-card">
             <span className="font-semibold ln-text">Parse Rules</span>
-            <p className="mt-0.5">Customize regex rules for SP dependency extraction.{' '}
-              <ExtLink url="https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/PARSE_RULES.md" openExternal={openExternal}>Guide ↗</ExtLink>
+            <p className="mt-0.5">
+              Customize regex rules for SP dependency extraction.{' '}
+              <ExtLink
+                url="https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/PARSE_RULES.md"
+                openExternal={openExternal}
+              >
+                Guide ↗
+              </ExtLink>
             </p>
           </div>
         </div>
         <p className="mt-2 text-xs ln-text-muted">
-          Search <code className="font-mono px-1 py-0.5 rounded-sm ln-kbd">dataLineageViz</code> in VS Code Settings for all options including import caps, timeouts, layout, and trace depth.
+          Search{' '}
+          <code className="font-mono px-1 py-0.5 rounded-sm ln-kbd">
+            dataLineageViz
+          </code>{' '}
+          in VS Code Settings for all options including import caps, timeouts,
+          layout, and trace depth.
         </p>
       </section>
     </div>
   );
 }
 
-
 function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
   return (
     <div className="space-y-4">
       <div className="rounded-lg p-4 ln-help-analysis-card">
         <div className="flex items-center gap-2 mb-3">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 ln-text-link shrink-0">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z" />
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth={2}
+            stroke="currentColor"
+            className="w-4 h-4 ln-text-link shrink-0"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"
+            />
           </svg>
           <h3 className="text-sm font-semibold ln-text">VS Code Chat</h3>
-          <span className="ml-auto text-xs font-bold px-2 py-0.5 rounded-full ln-help-badge">NEW</span>
+          <span className="ml-auto text-xs font-bold px-2 py-0.5 rounded-full ln-help-badge">
+            NEW
+          </span>
         </div>
         <p className="text-sm mb-3 ln-text-muted">
-          Type <span className="font-bold font-mono ln-text-link">@lineage</span> in VS Code Chat to query your loaded graph. Lineage answers use the loaded model and SQL; general SQL questions can also use the model's knowledge.
+          Type{' '}
+          <span className="font-bold font-mono ln-text-link">@lineage</span> in
+          VS Code Chat to query your loaded graph. Lineage answers use the
+          loaded model and SQL; general SQL questions can also use the model's
+          knowledge.
         </p>
         <div className="rounded-sm p-3 space-y-1.5 font-mono text-xs ln-help-code-block">
           {[
@@ -330,11 +461,17 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
             'which objects are hubs with the most connections?',
             'what downstream objects depend on Sales.SalesTerritory?',
             'explain the SQL of Sales.vSalesPerson — any performance or logic issues?',
-          ].map(q => (
-            <div key={q}><span className="font-bold ln-text-link">@lineage </span><span className="ln-text">{q}</span></div>
+          ].map((q) => (
+            <div key={q}>
+              <span className="font-bold ln-text-link">@lineage </span>
+              <span className="ln-text">{q}</span>
+            </div>
           ))}
         </div>
-        <p className="text-xs mt-3 ln-text-muted">Requires a VS Code chat model provider such as GitHub Copilot &amp; VS Code 1.101+. Tools are inactive when no graph is loaded.</p>
+        <p className="text-xs mt-3 ln-text-muted">
+          Requires a VS Code chat model provider such as GitHub Copilot &amp; VS
+          Code 1.101+. Tools are inactive when no graph is loaded.
+        </p>
       </div>
 
       <div className="grid grid-cols-2 gap-2">
@@ -353,98 +490,185 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
       <div className="rounded-lg p-3 ln-help-analysis-card">
         <p className="text-xs font-semibold ln-text mb-1.5">Tips</p>
         <ul className="text-xs ln-text-muted space-y-1 list-disc pl-4">
-          <li><span className="font-medium ln-text">AI lineage guidance.</span> Ask <code>@lineage</code> where a field comes from, then verify with your database DDL.</li>
-          <li><span className="font-medium ln-text">Trace a column.</span> Ask &quot;where does <code>TotalDue</code> on <code>Sales.SalesOrderHeader</code> come from?&quot; — triggers column-level tracing through views and procedures.</li>
-          <li><span className="font-medium ln-text">Create a focused view.</span> Ask for full lineage of an object in the app to generate an annotated bookmark view.</li>
-          <li><span className="font-medium ln-text">Refine a bookmark.</span> With a view open, ask &quot;add <code>Sales.Customer</code> to this view&quot; or &quot;remove unused tables&quot; to patch the bookmark in place.</li>
-          <li><span className="font-medium ln-text">Column detail.</span> When an AI preview or AI bookmark carries column findings, switch its banner from <em>Objects</em> to <em>Detail</em> to see the traced columns on the graph.</li>
-          <li><span className="font-medium ln-text">Recall an analysis.</span> With an AI bookmark applied, ask &quot;what did you find about X?&quot; to recall the saved run instead of repeating it.</li>
-          <li><span className="font-medium ln-text">Use context questions.</span> Try &quot;what am I looking at?&quot; or &quot;what&apos;s filtered out?&quot;.</li>
-          <li><span className="font-medium ln-text">Use exact names.</span> Prefer <code>Sales.SalesOrderDetail</code> over generic table descriptions.</li>
-          <li><span className="font-medium ln-text">Customize format.</span> Command Palette → <em>Create AI Output Templates</em>. <ExtLink url="https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/AI_PROMPTS.md" openExternal={openExternal}>Guide ↗</ExtLink></li>
+          <li>
+            <span className="font-medium ln-text">AI lineage guidance.</span>{' '}
+            Ask <code>@lineage</code> where a field comes from, then verify with
+            your database DDL.
+          </li>
+          <li>
+            <span className="font-medium ln-text">Trace a column.</span> Ask
+            &quot;where does <code>TotalDue</code> on{' '}
+            <code>Sales.SalesOrderHeader</code> come from?&quot; — triggers
+            column-level tracing through views and procedures.
+          </li>
+          <li>
+            <span className="font-medium ln-text">Create a focused view.</span>{' '}
+            Ask for full lineage of an object in the app to generate an
+            annotated bookmark view.
+          </li>
+          <li>
+            <span className="font-medium ln-text">Refine a bookmark.</span> With
+            a view open, ask &quot;add <code>Sales.Customer</code> to this
+            view&quot; or &quot;remove unused tables&quot; to patch the bookmark
+            in place.
+          </li>
+          <li>
+            <span className="font-medium ln-text">Column detail.</span> When an
+            AI preview or AI bookmark carries column findings, switch its banner
+            from <em>Objects</em> to <em>Detail</em> to see the traced columns
+            on the graph.
+          </li>
+          <li>
+            <span className="font-medium ln-text">Recall an analysis.</span>{' '}
+            With an AI bookmark applied, ask &quot;what did you find about
+            X?&quot; to recall the saved run instead of repeating it.
+          </li>
+          <li>
+            <span className="font-medium ln-text">Use context questions.</span>{' '}
+            Try &quot;what am I looking at?&quot; or &quot;what&apos;s filtered
+            out?&quot;.
+          </li>
+          <li>
+            <span className="font-medium ln-text">Use exact names.</span> Prefer{' '}
+            <code>Sales.SalesOrderDetail</code> over generic table descriptions.
+          </li>
+          <li>
+            <span className="font-medium ln-text">Customize format.</span>{' '}
+            Command Palette → <em>Create AI Output Templates</em>.{' '}
+            <ExtLink
+              url="https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/AI_PROMPTS.md"
+              openExternal={openExternal}
+            >
+              Guide ↗
+            </ExtLink>
+          </li>
         </ul>
       </div>
 
       <p className="text-xs ln-text-muted">
-        Disable AI features entirely via <code>ai.enabled</code> in VS Code Settings.
+        Disable AI features entirely via <code>ai.enabled</code> in VS Code
+        Settings.
       </p>
     </div>
   );
 }
 
-
 /** Displays the extension's overview, analysis, database, and AI help tabs. */
-export const HelpModal = memo(function HelpModal({ isOpen, onClose }: HelpModalProps) {
+export const HelpModal = memo(function HelpModal({
+  isOpen,
+  onClose,
+}: HelpModalProps) {
   const vscodeApi = useVsCode();
   const [tab, setTab] = useState<HelpTab>('overview');
 
-  const { refs, context } = useFloating({ open: isOpen, onOpenChange: (open) => { if (!open) onClose(); } });
+  const { refs, context } = useFloating({
+    open: isOpen,
+    onOpenChange: (open) => {
+      if (!open) onClose();
+    },
+  });
 
-  useKeyboardShortcut(SHORTCUT_KEYS.exitMode, onClose, false, { priority: ESC_PRIORITY.help, active: isOpen });
+  useKeyboardShortcut(SHORTCUT_KEYS.exitMode, onClose, false, {
+    priority: ESC_PRIORITY.help,
+    active: isOpen,
+  });
 
   if (!isOpen) return null;
 
-  const openExternal = (url: string) => vscodeApi.postMessage({ type: 'open-external', url });
+  const openExternal = (url: string) =>
+    vscodeApi.postMessage({ type: 'open-external', url });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 ln-modal-overlay" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 ln-modal-overlay"
+      onClick={onClose}
+    >
       <FloatingFocusManager context={context} initialFocus={refs.floating}>
-      <div
-        ref={refs.setFloating}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Data Lineage help"
-        tabIndex={-1}
-        className="rounded-xl shadow-2xl w-full max-w-3xl flex flex-col ln-modal max-h-[85vh] outline-none"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-5 py-3 shrink-0 ln-help-sep-bottom">
-          <div className="flex items-center gap-2">
-            <img src={window.LOGO_URI} alt="" className="h-8 w-auto" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-            <span className="text-xs ln-text-muted">v{__APP_VERSION__}</span>
+        <div
+          ref={refs.setFloating}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Data Lineage help"
+          tabIndex={-1}
+          className="rounded-xl shadow-2xl w-full max-w-3xl flex flex-col ln-modal max-h-[85vh] outline-none"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between px-5 py-3 shrink-0 ln-help-sep-bottom">
+            <div className="flex items-center gap-2">
+              <img
+                src={window.LOGO_URI}
+                alt=""
+                className="h-8 w-auto"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = 'none';
+                }}
+              />
+              <span className="text-xs ln-text-muted">v{__APP_VERSION__}</span>
+            </div>
+            <Tooltip content="Close">
+              <button
+                onClick={onClose}
+                aria-label="Close help"
+                className="w-7 h-7 flex items-center justify-center rounded-sm transition-colors ln-list-item ln-text"
+              >
+                <CloseIcon className="w-4 h-4" />
+              </button>
+            </Tooltip>
           </div>
-          <Tooltip content="Close">
-            <button onClick={onClose} aria-label="Close help" className="w-7 h-7 flex items-center justify-center rounded-sm transition-colors ln-list-item ln-text">
-            <CloseIcon className="w-4 h-4" />
-          </button>
-          </Tooltip>
-        </div>
 
-        <div className="flex items-center gap-0.5 px-4 py-2 shrink-0 ln-help-sep-bottom">
-          {TABS.map(({ id, label }) => (
+          <div className="flex items-center gap-0.5 px-4 py-2 shrink-0 ln-help-sep-bottom">
+            {TABS.map(({ id, label }) => (
+              <button
+                key={id}
+                onClick={() => setTab(id)}
+                aria-pressed={tab === id}
+                className={`px-3 py-1.5 text-xs rounded-sm transition-colors ${tab === id ? 'ln-btn-primary font-medium' : 'ln-text-muted hover:ln-list-item'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-6 py-5">
+            {tab === 'overview' && <TabOverview openExternal={openExternal} />}
+            {tab === 'analysis' && <TabAnalysis />}
+            {tab === 'database' && <TabDatabase openExternal={openExternal} />}
+            {tab === 'ai' && <TabAI openExternal={openExternal} />}
+          </div>
+
+          <div className="flex items-center justify-between px-5 py-2.5 shrink-0 ln-help-sep-top">
             <button
-              key={id}
-              onClick={() => setTab(id)}
-              aria-pressed={tab === id}
-              className={`px-3 py-1.5 text-xs rounded-sm transition-colors ${tab === id ? 'ln-btn-primary font-medium' : 'ln-text-muted hover:ln-list-item'}`}
+              onClick={() => vscodeApi.postMessage({ type: 'open-settings' })}
+              className="flex items-center gap-1.5 text-xs ln-text-muted hover:underline cursor-pointer"
             >
-              {label}
+              <IconPath
+                d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 0 1 0 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 0 1 0-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"
+                size={3}
+              />
+              Settings
             </button>
-          ))}
-        </div>
-
-        <div className="flex-1 overflow-y-auto px-6 py-5">
-          {tab === 'overview'  && <TabOverview openExternal={openExternal} />}
-          {tab === 'analysis'  && <TabAnalysis />}
-          {tab === 'database'  && <TabDatabase openExternal={openExternal} />}
-          {tab === 'ai'        && <TabAI openExternal={openExternal} />}
-        </div>
-
-        <div className="flex items-center justify-between px-5 py-2.5 shrink-0 ln-help-sep-top">
-          <button
-            onClick={() => vscodeApi.postMessage({ type: 'open-settings' })}
-            className="flex items-center gap-1.5 text-xs ln-text-muted hover:underline cursor-pointer"
-          >
-            <IconPath d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 0 1 0 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 0 1 0-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z" size={3} />
-            Settings
-          </button>
-          <div className="flex items-center gap-3 text-xs">
-            <ExtLink url="https://github.com/ChrisDevRepo/vscode_data_lineage/issues" openExternal={openExternal}>Found a bug?</ExtLink>
-            <ExtLink url="https://marketplace.visualstudio.com/items?itemName=datahelper-chwagner.data-lineage-viz&ssr=false#review-details" openExternal={openExternal}>★ Leave a review</ExtLink>
-            <ExtLink url="https://www.linkedin.com/in/christian-wagner-11aa8614b" openExternal={openExternal}>LinkedIn</ExtLink>
+            <div className="flex items-center gap-3 text-xs">
+              <ExtLink
+                url="https://github.com/ChrisDevRepo/vscode_data_lineage/issues"
+                openExternal={openExternal}
+              >
+                Found a bug?
+              </ExtLink>
+              <ExtLink
+                url="https://marketplace.visualstudio.com/items?itemName=datahelper-chwagner.data-lineage-viz&ssr=false#review-details"
+                openExternal={openExternal}
+              >
+                ★ Leave a review
+              </ExtLink>
+              <ExtLink
+                url="https://www.linkedin.com/in/christian-wagner-11aa8614b"
+                openExternal={openExternal}
+              >
+                LinkedIn
+              </ExtLink>
+            </div>
           </div>
         </div>
-      </div>
       </FloatingFocusManager>
     </div>
   );

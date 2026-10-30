@@ -4,12 +4,18 @@ import { splitSqlName, stripBrackets } from '../../../src/utils/sql';
 import { sqlIdentifierComparisonKey } from '../../../src/engine/shared/sqlIdentifier';
 
 describe('sqlIdentifierComparisonKey', () => {
-  it.each(['[]', '""', '[].x', 'x.[]', '"".x', 'x.""', '[a]..[b]'])('rejects empty qualified identifier parts: %s', input => {
-    expect(sqlIdentifierComparisonKey(input)).toBeNull();
-  });
-  it.each(['[a]]b]', '"a""b"', '[]]]', '""""'])('accepts escaped delimiters as identifier content: %s', input => {
-    expect(sqlIdentifierComparisonKey(input)).not.toBeNull();
-  });
+  it.each(['[]', '""', '[].x', 'x.[]', '"".x', 'x.""', '[a]..[b]'])(
+    'rejects empty qualified identifier parts: %s',
+    (input) => {
+      expect(sqlIdentifierComparisonKey(input)).toBeNull();
+    },
+  );
+  it.each(['[a]]b]', '"a""b"', '[]]]', '""""'])(
+    'accepts escaped delimiters as identifier content: %s',
+    (input) => {
+      expect(sqlIdentifierComparisonKey(input)).not.toBeNull();
+    },
+  );
 });
 
 describe('stripBrackets', () => {
@@ -50,7 +56,10 @@ describe('splitSqlName', () => {
   });
 
   it('splits an ordinary qualified name', () => {
-    expect(splitSqlName('[schema].[obj.with.dot]')).toEqual(['[schema]', '[obj.with.dot]']);
+    expect(splitSqlName('[schema].[obj.with.dot]')).toEqual([
+      '[schema]',
+      '[obj.with.dot]',
+    ]);
     expect(splitSqlName('db.schema.obj')).toEqual(['db', 'schema', 'obj']);
   });
 

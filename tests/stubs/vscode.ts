@@ -60,7 +60,9 @@ type LanguageModelChatMessagePart =
 function toParts(
   content: string | readonly LanguageModelChatMessagePart[],
 ): readonly LanguageModelChatMessagePart[] {
-  return typeof content === 'string' ? [new LanguageModelTextPart(content)] : content;
+  return typeof content === 'string'
+    ? [new LanguageModelTextPart(content)]
+    : content;
 }
 
 export const LanguageModelChatToolMode = { Auto: 0, Required: 1 } as const;
@@ -76,7 +78,9 @@ export class CancellationTokenSource {
     const isCancelled = () => this.cancelled;
     const listeners = this.listeners;
     this.token = {
-      get isCancellationRequested() { return isCancelled(); },
+      get isCancellationRequested() {
+        return isCancelled();
+      },
       onCancellationRequested(listener) {
         listeners.add(listener);
         return { dispose: () => listeners.delete(listener) };
@@ -93,14 +97,25 @@ export class CancellationTokenSource {
 
 /** Minimal `vscode.extensions` surface: a registry unit tests write before exercising code that reaches for another extension's exported API. Empty by default, so the absent-extension path is what a test gets unless it registers one. */
 export const extensions = {
-  registry: new Map<string, { isActive: boolean; exports: unknown; packageJSON: { version: string } }>(),
+  registry: new Map<
+    string,
+    { isActive: boolean; exports: unknown; packageJSON: { version: string } }
+  >(),
   changeListeners: new Set<() => void>(),
   getExtension(id: string) {
     return extensions.registry.get(id);
   },
-  onDidChange(listener: () => void, _thisArgs?: unknown, disposables?: { dispose(): void }[]) {
+  onDidChange(
+    listener: () => void,
+    _thisArgs?: unknown,
+    disposables?: { dispose(): void }[],
+  ) {
     extensions.changeListeners.add(listener);
-    const disposable = { dispose: () => { extensions.changeListeners.delete(listener); } };
+    const disposable = {
+      dispose: () => {
+        extensions.changeListeners.delete(listener);
+      },
+    };
     disposables?.push(disposable);
     return disposable;
   },

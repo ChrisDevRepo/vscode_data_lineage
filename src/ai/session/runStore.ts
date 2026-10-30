@@ -50,15 +50,17 @@ type RunStoreReader = {
 };
 
 /** Read contract for one persisted run record. */
-const StoredAiRunSchema = z.object({
-  schemaVersion: z.literal(1),
-  nodeIdEncodingVersion: z.literal(2).optional(),
-  runId: z.string().min(1),
-  savedAt: z.string(),
-  origin: z.string().nullable().catch(null),
-  ddlHashes: z.record(z.string(), z.string()).catch(() => ({})),
-  snapshot: NavigationSnapshotSchema,
-}).passthrough();
+const StoredAiRunSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    nodeIdEncodingVersion: z.literal(2).optional(),
+    runId: z.string().min(1),
+    savedAt: z.string(),
+    origin: z.string().nullable().catch(null),
+    ddlHashes: z.record(z.string(), z.string()).catch(() => ({})),
+    snapshot: NavigationSnapshotSchema,
+  })
+  .passthrough();
 
 /** Reads the run record filed under one bookmark key. */
 export function readStoredRun(
@@ -70,8 +72,14 @@ export function readStoredRun(
   if (record === undefined || record === null) return undefined;
   const parsed = StoredAiRunSchema.safeParse(record);
   if (parsed.success) return parsed.data;
-  const paths = Array.from(new Set(parsed.error.issues.map(issue => issue.path.join('.') || '(root)')));
-  log?.debug(`[RunStore] discarded unreadable run record bookmark=${sanitizeForLog(bookmarkId)} paths=${trunc(paths, 3)}`);
+  const paths = Array.from(
+    new Set(
+      parsed.error.issues.map((issue) => issue.path.join('.') || '(root)'),
+    ),
+  );
+  log?.debug(
+    `[RunStore] discarded unreadable run record bookmark=${sanitizeForLog(bookmarkId)} paths=${trunc(paths, 3)}`,
+  );
   return undefined;
 }
 
@@ -90,11 +98,15 @@ export function buildStoredRun(
 ): StoredAiRun | null {
   if (profile.source !== 'ai') return null;
   const runId = profile.aiMetadata?.runId;
-  if (typeof runId !== 'string' || !artifact || runId !== artifact.runId) return null;
+  if (typeof runId !== 'string' || !artifact || runId !== artifact.runId)
+    return null;
   const checkpoint = artifact.checkpoint;
   if (!checkpoint) return null;
-  const scopeNodeIds = checkpoint.scopeNodeIds ?? profile.filter.allowlistNodeIds ?? [];
-  const ddlHashes: Record<string, string> = Object.fromEntries(scopeNodeIds.map(id => [id, hashDdl(getDdl(id))]));
+  const scopeNodeIds =
+    checkpoint.scopeNodeIds ?? profile.filter.allowlistNodeIds ?? [];
+  const ddlHashes: Record<string, string> = Object.fromEntries(
+    scopeNodeIds.map((id) => [id, hashDdl(getDdl(id))]),
+  );
   return {
     schemaVersion: 1,
     nodeIdEncodingVersion: 2,
@@ -107,7 +119,9 @@ export function buildStoredRun(
 }
 
 /** Wraps the session's presented run as an unsaved record for recall. */
-export function buildLiveRun(artifact: PresentationArtifact | null): StoredAiRun | undefined {
+export function buildLiveRun(
+  artifact: PresentationArtifact | null,
+): StoredAiRun | undefined {
   const checkpoint = artifact?.checkpoint;
   if (!artifact?.runId || !checkpoint) return undefined;
   return {
@@ -132,6 +146,9 @@ export async function writeStoredRun(
 }
 
 /** Clears the run record filed under one bookmark key. */
-export async function clearStoredRun(store: RunStoreWriter, bookmarkId: string): Promise<void> {
+export async function clearStoredRun(
+  store: RunStoreWriter,
+  bookmarkId: string,
+): Promise<void> {
   await store.update(aiRunStorageKey(bookmarkId), undefined);
 }

@@ -22,7 +22,9 @@ function assistantCallIds(msg: ModelMessage): Set<string> {
 }
 
 /** Finds the trailing `(assistant tool-call, tool tool-result)` pair by content shape: the last `tool`-role message whose tool-call ids are all answered by the assistant message immediately before it. */
-function findLastToolPair(messages: readonly ModelMessage[]): ToolPairIndices | null {
+function findLastToolPair(
+  messages: readonly ModelMessage[],
+): ToolPairIndices | null {
   for (let i = messages.length - 1; i >= 1; i--) {
     const result = messages[i];
     if (!ToolMessage.isInstance(result) || !result.tool_call_id) continue;
@@ -34,7 +36,10 @@ function findLastToolPair(messages: readonly ModelMessage[]): ToolPairIndices | 
 }
 
 /** Extracts the tail worth keeping from an accumulated history: a single leading user anchor plus the last well-formed tool pair. Used when the active loop ends incomplete; a committed hop is reseeded to the anchor alone by the graph. */
-export function extractShortTermMemory(messages: readonly ModelMessage[], anchor: ModelMessage): ModelMessage[] {
+export function extractShortTermMemory(
+  messages: readonly ModelMessage[],
+  anchor: ModelMessage,
+): ModelMessage[] {
   const pair = findLastToolPair(messages);
   if (!pair) return [anchor];
   return [anchor, messages[pair.assistantIdx], messages[pair.toolIdx]];

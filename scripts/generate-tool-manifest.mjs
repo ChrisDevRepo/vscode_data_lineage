@@ -34,12 +34,26 @@ const packageJsonPath = join(repoRoot, 'package.json');
 const check = process.argv.includes('--check');
 
 /** Manifest keys this script owns; everything else on an entry is preserved verbatim. */
-const CATALOG_OWNED_KEYS = ['name', 'displayName', 'userDescription', 'modelDescription', 'tags', 'inputSchema'];
+const CATALOG_OWNED_KEYS = [
+  'name',
+  'displayName',
+  'userDescription',
+  'modelDescription',
+  'tags',
+  'inputSchema',
+];
 
 /** Key order used for a tool that has no manifest entry yet. */
 const NEW_ENTRY_KEY_ORDER = [
-  'name', 'toolReferenceName', 'displayName', 'userDescription', 'modelDescription',
-  'canBeReferencedInPrompt', 'tags', 'when', 'inputSchema',
+  'name',
+  'toolReferenceName',
+  'displayName',
+  'userDescription',
+  'modelDescription',
+  'canBeReferencedInPrompt',
+  'tags',
+  'when',
+  'inputSchema',
 ];
 
 /**
@@ -87,9 +101,13 @@ async function loadCatalog() {
  */
 function findArrayValueRange(source, key) {
   const keyIndex = source.indexOf(`"${key}"`);
-  if (keyIndex === -1) throw new Error(`generate-tool-manifest: "${key}" not found in package.json`);
+  if (keyIndex === -1)
+    throw new Error(
+      `generate-tool-manifest: "${key}" not found in package.json`,
+    );
   const start = source.indexOf('[', keyIndex);
-  if (start === -1) throw new Error(`generate-tool-manifest: "${key}" is not an array`);
+  if (start === -1)
+    throw new Error(`generate-tool-manifest: "${key}" is not an array`);
 
   let depth = 0;
   let inString = false;
@@ -131,9 +149,9 @@ function buildEntry(contract, existing, toModelJsonSchema) {
       when: 'dataLineageViz.modelLoaded && config.dataLineageViz.ai.enabled',
     };
     return Object.fromEntries(
-      NEW_ENTRY_KEY_ORDER
-        .filter(key => fresh[key] !== undefined)
-        .map(key => [key, fresh[key]]),
+      NEW_ENTRY_KEY_ORDER.filter((key) => fresh[key] !== undefined).map(
+        (key) => [key, fresh[key]],
+      ),
     );
   }
 
@@ -146,7 +164,8 @@ function buildEntry(contract, existing, toModelJsonSchema) {
     }
   }
   for (const key of CATALOG_OWNED_KEYS) {
-    if (!(key in ordered) && generated[key] !== undefined) ordered[key] = generated[key];
+    if (!(key in ordered) && generated[key] !== undefined)
+      ordered[key] = generated[key];
   }
   return ordered;
 }
@@ -162,44 +181,56 @@ function renderBlock(entries, eol) {
 const { toModelJsonSchema, EXTERNAL_TOOL_DEFS } = await loadCatalog();
 const source = readFileSync(packageJsonPath, 'utf8');
 const eol = source.includes('\r\n') ? '\r\n' : '\n';
-const existingEntries = JSON.parse(source).contributes?.languageModelTools ?? [];
+const existingEntries =
+  JSON.parse(source).contributes?.languageModelTools ?? [];
 
 const externalDefs = EXTERNAL_TOOL_DEFS;
-const entries = externalDefs.map(def =>
-  buildEntry(def, existingEntries.find(entry => entry.name === def.name), toModelJsonSchema));
+const entries = externalDefs.map((def) =>
+  buildEntry(
+    def,
+    existingEntries.find((entry) => entry.name === def.name),
+    toModelJsonSchema,
+  ),
+);
 
 const created = externalDefs
-  .filter(def => !existingEntries.some(entry => entry.name === def.name))
-  .map(def => def.name);
+  .filter((def) => !existingEntries.some((entry) => entry.name === def.name))
+  .map((def) => def.name);
 const dropped = existingEntries
-  .filter(entry => !externalDefs.some(def => def.name === entry.name))
-  .map(entry => entry.name);
+  .filter((entry) => !externalDefs.some((def) => def.name === entry.name))
+  .map((entry) => entry.name);
 
 const { start, end } = findArrayValueRange(source, 'languageModelTools');
 const updated = `${source.slice(0, start)}${renderBlock(entries, eol)}${source.slice(end)}`;
 
 if (check) {
   if (updated === source) {
-    process.stdout.write(`languageModelTools is in sync with the catalog (${entries.length} external tools).\n`);
+    process.stdout.write(
+      `languageModelTools is in sync with the catalog (${entries.length} external tools).\n`,
+    );
     process.exit(0);
   }
   process.stderr.write(
-    'package.json contributes.languageModelTools is stale.\n'
-    + `  expected ${entries.length} external tools: ${externalDefs.map(def => def.name).join(', ')}\n`
-    + (dropped.length ? `  entries to remove: ${dropped.join(', ')}\n` : '')
-    + (created.length ? `  entries to add: ${created.join(', ')}\n` : '')
-    + '  run: npm run generate:tool-manifest\n',
+    'package.json contributes.languageModelTools is stale.\n' +
+      `  expected ${entries.length} external tools: ${externalDefs.map((def) => def.name).join(', ')}\n` +
+      (dropped.length ? `  entries to remove: ${dropped.join(', ')}\n` : '') +
+      (created.length ? `  entries to add: ${created.join(', ')}\n` : '') +
+      '  run: npm run generate:tool-manifest\n',
   );
   process.exit(1);
 }
 
 if (updated === source) {
-  process.stdout.write(`languageModelTools already up to date (${entries.length} external tools).\n`);
+  process.stdout.write(
+    `languageModelTools already up to date (${entries.length} external tools).\n`,
+  );
 } else {
   writeFileSync(packageJsonPath, updated);
   process.stdout.write(
-    `Regenerated languageModelTools — ${entries.length} external tools.\n`
-    + (dropped.length ? `  removed: ${dropped.join(', ')}\n` : '')
-    + (created.length ? `  added (review icon/when): ${created.join(', ')}\n` : ''),
+    `Regenerated languageModelTools — ${entries.length} external tools.\n` +
+      (dropped.length ? `  removed: ${dropped.join(', ')}\n` : '') +
+      (created.length
+        ? `  added (review icon/when): ${created.join(', ')}\n`
+        : ''),
   );
 }

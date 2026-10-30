@@ -3,10 +3,7 @@ import type { Logger } from '../../utils/log';
 import type { AgentFailureDetail } from '../host/agentRuntime';
 import { modelUserMessage } from '../model/modelPort';
 import { AgentRuntime } from '../host/agentRuntime';
-import type {
-  ModelMessage,
-  ModelPort,
-} from '../model/modelPort';
+import type { ModelMessage, ModelPort } from '../model/modelPort';
 import type { AiTraceWriter } from '../observability/aiTraceWriter';
 import type { AiSession } from '../session/session';
 import type { TurnLease } from '../session/turnLease';
@@ -15,7 +12,11 @@ import type { TurnEventSink } from './turnEventSink';
 import type { GateDecision } from '../agent/state';
 import type { TurnOutcome } from '../core/agentCore';
 import type { ToolRejection } from '../support/toolErrorEnvelope';
-import { readToolError, isAdmissionRefusal, isConsentGateRejection } from '../support/toolErrorEnvelope';
+import {
+  readToolError,
+  isAdmissionRefusal,
+  isConsentGateRejection,
+} from '../support/toolErrorEnvelope';
 import type { SyntheticRejectionTrace } from '../agent/toolAttempt';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 
@@ -58,7 +59,10 @@ interface LineageRuntimeDeps {
   /** Session accessor for the {@link AiSession} singleton. */
   readonly getSession: () => AiSession;
   /** Builds the strict direct-dispatch registry for the captured turn lease and request model. */
-  readonly createRegistry: (lease: TurnLease, model: ModelPort) => IToolRegistry<string>;
+  readonly createRegistry: (
+    lease: TurnLease,
+    model: ModelPort,
+  ) => IToolRegistry<string>;
   /** Optional logger forwarded to the agent runtime. */
   readonly logger?: Logger;
   /** Optional per-turn model-step cap forwarded to the agent runtime. */
@@ -74,7 +78,9 @@ export class LineageRuntime {
   public constructor(private readonly deps: LineageRuntimeDeps) {}
 
   /** Generates suggestions from compact facts without tools, history replay or session mutation. */
-  public async runSuggestions(input: LineageRuntimeRunInput): Promise<LineageRuntimeResult> {
+  public async runSuggestions(
+    input: LineageRuntimeRunInput,
+  ): Promise<LineageRuntimeResult> {
     const session = this.deps.getSession();
     const runFingerprint = fingerprint(`${session.id}:${input.request.id}`);
     const startedAt = performance.now();
@@ -86,9 +92,12 @@ export class LineageRuntime {
       modelFingerprint: fingerprint(input.model.identity.id),
     });
     const result = await input.model.generateToolTurn({
-      messages: [modelUserMessage(input.request.prompt)], tools: [], toolChoice: 'none',
-      phase: 'suggestions', signal: input.signal,
-      onTextDelta: text => input.sink.stream(text),
+      messages: [modelUserMessage(input.request.prompt)],
+      tools: [],
+      toolChoice: 'none',
+      phase: 'suggestions',
+      signal: input.signal,
+      onTextDelta: (text) => input.sink.stream(text),
     });
     const outcome = result.status === 'completed' ? 'ok' : result.status;
     this.writeLifecycle({
@@ -100,16 +109,25 @@ export class LineageRuntime {
       durationMs: elapsedMs(startedAt),
     });
     input.sink.result(outcome);
-    return { outcome, modelCalls: input.model.modelCalls, ...(result.status === 'error'
-      ? { failure: { message: result.error } } : {}) };
+    return {
+      outcome,
+      modelCalls: input.model.modelCalls,
+      ...(result.status === 'error'
+        ? { failure: { message: result.error } }
+        : {}),
+    };
   }
 
   /** Executes one request against a captured session epoch and request-selected model. */
-  public async run(input: LineageRuntimeRunInput): Promise<LineageRuntimeResult> {
+  public async run(
+    input: LineageRuntimeRunInput,
+  ): Promise<LineageRuntimeResult> {
     const session = this.deps.getSession();
     const requestKey = `${session.id}:${input.request.id}`;
     if (this.active.has(requestKey)) {
-      throw new Error(`LineageRuntime: request ${input.request.id} is already active.`);
+      throw new Error(
+        `LineageRuntime: request ${input.request.id} is already active.`,
+      );
     }
 
     const turnEpoch = session.beginTurn();
@@ -148,19 +166,23 @@ export class LineageRuntime {
       : registry;
     const traceSyntheticRejection = traceWriter
       ? (rejection: Parameters<SyntheticRejectionTrace>[0]): void => {
-          void traceWriter.write({
-            type: 'tool',
-            requestId: input.request.id,
-            runFingerprint,
-            seq: ++toolSequence,
-            phase,
-            ...(rejection.callId ? { callId: rejection.callId } : {}),
-            toolName: rejection.toolName,
-            status: rejection.status,
-            rejectionCode: rejection.code,
-            ...(rejection.issuePaths?.length ? { issuePaths: rejection.issuePaths } : {}),
-            durationMs: 0,
-          }).catch(() => {});
+          void traceWriter
+            .write({
+              type: 'tool',
+              requestId: input.request.id,
+              runFingerprint,
+              seq: ++toolSequence,
+              phase,
+              ...(rejection.callId ? { callId: rejection.callId } : {}),
+              toolName: rejection.toolName,
+              status: rejection.status,
+              rejectionCode: rejection.code,
+              ...(rejection.issuePaths?.length
+                ? { issuePaths: rejection.issuePaths }
+                : {}),
+              durationMs: 0,
+            })
+            .catch(() => {});
         }
       : undefined;
     const runtime = new AgentRuntime({
@@ -173,7 +195,8 @@ export class LineageRuntime {
       signal: input.signal,
       maxRounds: this.deps.maxRounds,
       turnEpoch,
-      priorMessages: input.request.priorMessages ?? session.getDiscoveryHistory(),
+      priorMessages:
+        input.request.priorMessages ?? session.getDiscoveryHistory(),
       logger: this.deps.logger,
       traceSyntheticRejection,
     });
@@ -187,7 +210,10 @@ export class LineageRuntime {
     });
 
     try {
-      const outcome = await runtime.run(input.request.prompt, input.request.gateDecision);
+      const outcome = await runtime.run(
+        input.request.prompt,
+        input.request.gateDecision,
+      );
       const failure = runtime.lastFailureDetail;
       this.writeLifecycle({
         type: 'turn-terminal',
@@ -207,14 +233,17 @@ export class LineageRuntime {
           : {}),
       };
     } finally {
-      if (input.request.priorMessages !== undefined) session.clearDiscoveryTranscript();
+      if (input.request.priorMessages !== undefined)
+        session.clearDiscoveryTranscript();
       eventObserver.dispose();
       this.active.delete(requestKey);
     }
   }
 
   private writeLifecycle(
-    record: Parameters<NonNullable<LineageRuntimeDeps['traceWriter']>['write']>[0],
+    record: Parameters<
+      NonNullable<LineageRuntimeDeps['traceWriter']>['write']
+    >[0],
   ): void {
     if (!this.deps.traceWriter) return;
     void this.deps.traceWriter.write(record).catch(() => {});
@@ -224,7 +253,9 @@ export class LineageRuntime {
     requestId: string,
     runFingerprint: string,
     sequence: number,
-    event: Parameters<NonNullable<LineageRuntimeDeps['traceWriter']>['writeTurnEvent']>[3],
+    event: Parameters<
+      NonNullable<LineageRuntimeDeps['traceWriter']>['writeTurnEvent']
+    >[3],
     elapsed: number,
   ): void {
     if (!this.deps.traceWriter) return;
@@ -275,24 +306,33 @@ function instrumentRegistry(
         const result = await registry.invoke(name, payload, callId);
         const rejection = parseRejection(result);
         const issuePaths = rejection?.issuePaths ?? [];
-        void instrumentation.writer.write({
-          ...base,
-          status: !rejection
-            ? 'accepted'
-            : isConsentGateRejection(rejection.code) ? 'gate'
-              : isAdmissionRefusal(rejection.code) ? 'refused' : 'rejected',
-          ...(rejection && !isConsentGateRejection(rejection.code) ? { rejectionCode: rejection.code } : {}),
-          ...(issuePaths.length > 0 ? { issuePaths } : {}),
-          durationMs: elapsedMs(startedAt),
-        }).catch(() => {});
+        void instrumentation.writer
+          .write({
+            ...base,
+            status: !rejection
+              ? 'accepted'
+              : isConsentGateRejection(rejection.code)
+                ? 'gate'
+                : isAdmissionRefusal(rejection.code)
+                  ? 'refused'
+                  : 'rejected',
+            ...(rejection && !isConsentGateRejection(rejection.code)
+              ? { rejectionCode: rejection.code }
+              : {}),
+            ...(issuePaths.length > 0 ? { issuePaths } : {}),
+            durationMs: elapsedMs(startedAt),
+          })
+          .catch(() => {});
         return result;
       } catch (error) {
-        void instrumentation.writer.write({
-          ...base,
-          status: 'dispatch_error',
-          rejectionCode: REJECTION_CODES.backendFault,
-          durationMs: elapsedMs(startedAt),
-        }).catch(() => {});
+        void instrumentation.writer
+          .write({
+            ...base,
+            status: 'dispatch_error',
+            rejectionCode: REJECTION_CODES.backendFault,
+            durationMs: elapsedMs(startedAt),
+          })
+          .catch(() => {});
         throw error;
       }
     },

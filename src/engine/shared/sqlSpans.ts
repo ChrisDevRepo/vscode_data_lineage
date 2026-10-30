@@ -8,7 +8,13 @@ export const SQL_LINE_COMMENT = 2;
 export const SQL_LITERAL = 3;
 
 /** Classifies every character of a T-SQL text as code, block comment or line comment. */
-export function sqlCommentMask(sql: string, options?: { readonly markLiterals?: boolean; readonly markIdentifiers?: boolean }): Uint8Array {
+export function sqlCommentMask(
+  sql: string,
+  options?: {
+    readonly markLiterals?: boolean;
+    readonly markIdentifiers?: boolean;
+  },
+): Uint8Array {
   const mask = new Uint8Array(sql.length);
   let depth = 0;
   let i = 0;
@@ -16,19 +22,31 @@ export function sqlCommentMask(sql: string, options?: { readonly markLiterals?: 
     const ch = sql[i];
     const next = sql[i + 1];
     if (depth > 0) {
-      if (ch === '/' && next === '*') { depth++; mask[i] = mask[i + 1] = SQL_BLOCK_COMMENT; i += 2; continue; }
-      if (ch === '*' && next === '/') { depth--; mask[i] = mask[i + 1] = SQL_BLOCK_COMMENT; i += 2; continue; }
+      if (ch === '/' && next === '*') {
+        depth++;
+        mask[i] = mask[i + 1] = SQL_BLOCK_COMMENT;
+        i += 2;
+        continue;
+      }
+      if (ch === '*' && next === '/') {
+        depth--;
+        mask[i] = mask[i + 1] = SQL_BLOCK_COMMENT;
+        i += 2;
+        continue;
+      }
       mask[i++] = SQL_BLOCK_COMMENT;
       continue;
     }
-    if (ch === '\'' || ch === '"' || ch === '[') {
+    if (ch === "'" || ch === '"' || ch === '[') {
       const end = skipQuoted(sql, i + 1, ch === '[' ? ']' : ch);
-      if (options?.markLiterals || (options?.markIdentifiers && ch !== "'")) mask.fill(SQL_LITERAL, i, end);
+      if (options?.markLiterals || (options?.markIdentifiers && ch !== "'"))
+        mask.fill(SQL_LITERAL, i, end);
       i = end;
       continue;
     }
     if (ch === '-' && next === '-') {
-      while (i < sql.length && sql[i] !== '\n' && sql[i] !== '\r') mask[i++] = SQL_LINE_COMMENT;
+      while (i < sql.length && sql[i] !== '\n' && sql[i] !== '\r')
+        mask[i++] = SQL_LINE_COMMENT;
       continue;
     }
     if (ch === '/' && next === '*') {
@@ -45,8 +63,14 @@ export function sqlCommentMask(sql: string, options?: { readonly markLiterals?: 
 /** Returns the index just past the closer of a quoted span opened before `i`; a doubled closer is an escape. */
 function skipQuoted(sql: string, i: number, closer: string): number {
   while (i < sql.length) {
-    if (sql[i] !== closer) { i++; continue; }
-    if (sql[i + 1] === closer) { i += 2; continue; }
+    if (sql[i] !== closer) {
+      i++;
+      continue;
+    }
+    if (sql[i + 1] === closer) {
+      i += 2;
+      continue;
+    }
     return i + 1;
   }
   return i;

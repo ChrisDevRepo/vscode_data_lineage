@@ -30,13 +30,19 @@ function schemaEdgeKey(sourceSchema: string, targetSchema: string): string {
 }
 
 /** Increments the directed schema→schema edge count in the raw aggregation map. */
-export function addRawSchemaEdge(rawEdges: Map<string, number>, sourceSchema: string, targetSchema: string): void {
+export function addRawSchemaEdge(
+  rawEdges: Map<string, number>,
+  sourceSchema: string,
+  targetSchema: string,
+): void {
   const key = schemaEdgeKey(sourceSchema, targetSchema);
   rawEdges.set(key, (rawEdges.get(key) ?? 0) + 1);
 }
 
 /** Collapses a raw directed schema→schema count map into deduplicated edges, merging antiparallel pairs into single bidirectional entries. */
-export function collapseRawSchemaEdges(rawEdges: ReadonlyMap<string, number>): CollapsedSchemaEdge[] {
+export function collapseRawSchemaEdges(
+  rawEdges: ReadonlyMap<string, number>,
+): CollapsedSchemaEdge[] {
   const consumed = new Set<string>();
   const edges: CollapsedSchemaEdge[] = [];
 

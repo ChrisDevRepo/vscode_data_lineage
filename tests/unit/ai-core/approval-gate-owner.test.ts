@@ -6,7 +6,10 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { AgentRuntime } from '../../../src/ai/host/agentRuntime';
-import { TurnEventSink, type TurnEvent } from '../../../src/ai/runtime/turnEventSink';
+import {
+  TurnEventSink,
+  type TurnEvent,
+} from '../../../src/ai/runtime/turnEventSink';
 import { AiSession } from '../../../src/ai/session/session';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { assertActiveTurnLease } from '../../../src/ai/session/turnLease';
@@ -14,35 +17,63 @@ import { applyModelToSession } from '../../../src/bridge/messageHandlers';
 import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
 import type { IToolRegistry } from '../../../src/ai/tools/registry';
 import { ScriptedModelPort, validCall } from '../../harness/scriptedModelPort';
-import { makeGraph, makeIndexedModel, makeNode } from '../helpers/modelFixtures';
+import {
+  makeGraph,
+  makeIndexedModel,
+  makeNode,
+} from '../helpers/modelFixtures';
 
 vi.mock('vscode', async (importOriginal) => ({
-  ...await importOriginal<object>(),
+  ...(await importOriginal<object>()),
   commands: { executeCommand: vi.fn(async () => undefined) },
 }));
 
 const ORIGIN = '[hop].[origin]';
 const BRANCH = '[hop].[branch]';
 const quiet = { info() {}, debug() {}, warn() {}, error() {} };
-const depth = (levels: number) => ({ upstream: { levels, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } });
+const depth = (levels: number) => ({
+  upstream: { levels, exactness: 'exact' },
+  downstream: { levels: 0, exactness: 'exact' },
+});
 
 function world() {
   const column = [{ name: 'Value', type: 'int', nullable: 'NULL', extra: '' }];
   const nodes = [
-    makeNode({ id: ORIGIN, schema: 'hop', name: 'origin', type: 'view', columns: column, bodyScript: `SELECT Value FROM ${BRANCH};` }),
-    makeNode({ id: BRANCH, schema: 'hop', name: 'branch', type: 'view', columns: column, bodyScript: 'SELECT 1 AS Value;' }),
+    makeNode({
+      id: ORIGIN,
+      schema: 'hop',
+      name: 'origin',
+      type: 'view',
+      columns: column,
+      bodyScript: `SELECT Value FROM ${BRANCH};`,
+    }),
+    makeNode({
+      id: BRANCH,
+      schema: 'hop',
+      name: 'branch',
+      type: 'view',
+      columns: column,
+      bodyScript: 'SELECT 1 AS Value;',
+    }),
   ];
   const session = new AiSession();
   session.model = makeIndexedModel(nodes, [[BRANCH, ORIGIN]]);
   session.graph = makeGraph(nodes, [[BRANCH, ORIGIN]]);
-  const registry = buildAiToolRegistry(() => session, quiet as never, () => undefined);
+  const registry = buildAiToolRegistry(
+    () => session,
+    quiet as never,
+    () => undefined,
+  );
   return { session, registry };
 }
 
 type World = ReturnType<typeof world>;
 
 /** One user turn in which the model proposes (or refines) the plan and the card is shown. */
-async function showCard({ session, registry }: World, input: Record<string, unknown>): Promise<string> {
+async function showCard(
+  { session, registry }: World,
+  input: Record<string, unknown>,
+): Promise<string> {
   session.beginTurn();
   session.currentRoundId += 1;
   session.enterLmStage({ kind: 'sm_entry' }, session.turnEpoch);
@@ -54,8 +85,18 @@ async function showCard({ session, registry }: World, input: Record<string, unkn
   return session.pendingExploration!.proposalId!;
 }
 
-const propose = (w: World) => showCard(w, { origin: ORIGIN, analysisMode: 'bb', classification: 'technical', depth: depth(1) });
-const refine = (w: World, levels: number) => showCard(w, { proposalRevision: w.session.pendingExploration!.revision, depth: depth(levels) });
+const propose = (w: World) =>
+  showCard(w, {
+    origin: ORIGIN,
+    analysisMode: 'bb',
+    classification: 'technical',
+    depth: depth(1),
+  });
+const refine = (w: World, levels: number) =>
+  showCard(w, {
+    proposalRevision: w.session.pendingExploration!.revision,
+    depth: depth(levels),
+  });
 
 /** Tries to approve the card with `id`; returns whether an engine was built from a proposal. */
 function approve(session: AiSession, id: string): boolean {
@@ -67,50 +108,94 @@ function approve(session: AiSession, id: string): boolean {
   return built;
 }
 
-const holds = (session: AiSession, id: string): boolean => session.holdsProposal(id);
+const holds = (session: AiSession, id: string): boolean =>
+  session.holdsProposal(id);
 
 describe('approval card — the session owns the proposal', () => {
-  it.each(['pending', 'active', 'completed'] as const)('loading another model retires the prior approval card and active turn lease (stage=%s)', async stage => {
-    const w = world();
-    const shown = await propose(w);
-    const lease = { sessionId: w.session.id, epoch: w.session.turnEpoch, signal: new AbortController().signal };
-    if (stage !== 'pending') {
-      const engine = new NavigationEngine(w.session.model!, w.session.graph!, () => {}, {});
-      expect(w.session.activatePendingExploration(shown, lease.epoch, proposal => {
-        const initialized = engine.init(proposal.init);
-        return 'code' in initialized ? initialized : engine;
-      }).kind).toBe('accepted');
-      if (stage === 'completed') {
-        engine.classification = 'technical';
-        expect(engine.getHopContext().focus_node?.id).toBe(ORIGIN);
-        expect(engine.submitFindings({ focus_node_id: ORIGIN, summary: 'Origin reads branch.',
-          sections: [{ angle: 'technical', text: 'Value comes from branch.' }],
-          questions: [{ nodeId: BRANCH, question: 'Explain Value.' }] })).toHaveProperty('ok', true);
-        expect(engine.getHopContext().focus_node?.id).toBe(BRANCH);
-        expect(engine.submitFindings({ focus_node_id: BRANCH, summary: 'Branch supplies Value.',
-          sections: [{ angle: 'technical', text: 'Value is the literal 1.' }] })).toHaveProperty('ok', true);
-        engine.getHopContext();
-        expect(engine.status).toBe('complete');
-        w.session.storeSmResult(engine.getResult(), lease.epoch);
-        w.session.enterCompleted(lease.epoch);
-        expect(w.session.resultGraph).not.toBeNull();
+  it.each(['pending', 'active', 'completed'] as const)(
+    'loading another model retires the prior approval card and active turn lease (stage=%s)',
+    async (stage) => {
+      const w = world();
+      const shown = await propose(w);
+      const lease = {
+        sessionId: w.session.id,
+        epoch: w.session.turnEpoch,
+        signal: new AbortController().signal,
+      };
+      if (stage !== 'pending') {
+        const engine = new NavigationEngine(
+          w.session.model!,
+          w.session.graph!,
+          () => {},
+          {},
+        );
+        expect(
+          w.session.activatePendingExploration(
+            shown,
+            lease.epoch,
+            (proposal) => {
+              const initialized = engine.init(proposal.init);
+              return 'code' in initialized ? initialized : engine;
+            },
+          ).kind,
+        ).toBe('accepted');
+        if (stage === 'completed') {
+          engine.classification = 'technical';
+          expect(engine.getHopContext().focus_node?.id).toBe(ORIGIN);
+          expect(
+            engine.submitFindings({
+              focus_node_id: ORIGIN,
+              summary: 'Origin reads branch.',
+              sections: [
+                { angle: 'technical', text: 'Value comes from branch.' },
+              ],
+              questions: [{ nodeId: BRANCH, question: 'Explain Value.' }],
+            }),
+          ).toHaveProperty('ok', true);
+          expect(engine.getHopContext().focus_node?.id).toBe(BRANCH);
+          expect(
+            engine.submitFindings({
+              focus_node_id: BRANCH,
+              summary: 'Branch supplies Value.',
+              sections: [
+                { angle: 'technical', text: 'Value is the literal 1.' },
+              ],
+            }),
+          ).toHaveProperty('ok', true);
+          engine.getHopContext();
+          expect(engine.status).toBe('complete');
+          w.session.storeSmResult(engine.getResult(), lease.epoch);
+          w.session.enterCompleted(lease.epoch);
+          expect(w.session.resultGraph).not.toBeNull();
+        }
       }
-    }
-    // The identity survives the reload, but the SQL and approved dependency scope change.
-    const replacement = makeIndexedModel([
-      makeNode({ id: ORIGIN, schema: 'hop', name: 'origin', type: 'view', bodyScript: 'SELECT 2 AS Value;' }),
-    ], []);
+      // The identity survives the reload, but the SQL and approved dependency scope change.
+      const replacement = makeIndexedModel(
+        [
+          makeNode({
+            id: ORIGIN,
+            schema: 'hop',
+            name: 'origin',
+            type: 'view',
+            bodyScript: 'SELECT 2 AS Value;',
+          }),
+        ],
+        [],
+      );
 
-    applyModelToSession(w.session, replacement, false);
+      applyModelToSession(w.session, replacement, false);
 
-    expect.soft(holds(w.session, shown)).toBe(false);
-    expect.soft(approve(w.session, shown)).toBe(false);
-    expect.soft(() => assertActiveTurnLease(lease, w.session.turnEpoch)).toThrow();
-    expect(w.session.stateMachine).toBeNull();
-    expect(w.session.resultGraph).toBeNull();
-    expect(w.session.phase.kind).toBe('idle');
-    expect(w.session.model).toBe(replacement);
-  });
+      expect.soft(holds(w.session, shown)).toBe(false);
+      expect.soft(approve(w.session, shown)).toBe(false);
+      expect
+        .soft(() => assertActiveTurnLease(lease, w.session.turnEpoch))
+        .toThrow();
+      expect(w.session.stateMachine).toBeNull();
+      expect(w.session.resultGraph).toBeNull();
+      expect(w.session.phase.kind).toBe('idle');
+      expect(w.session.model).toBe(replacement);
+    },
+  );
 
   it('a card left over from a cancelled proposal never approves the next proposal', async () => {
     const w = world();
@@ -170,7 +255,11 @@ describe('approval card — the session owns the proposal', () => {
 });
 
 describe('approval card — turns resolve only the held card', () => {
-  function runTurn(w: World, script: ConstructorParameters<typeof ScriptedModelPort>, options: { abortAfterTool?: string } = {}) {
+  function runTurn(
+    w: World,
+    script: ConstructorParameters<typeof ScriptedModelPort>,
+    options: { abortAfterTool?: string } = {},
+  ) {
     const events: TurnEvent[] = [];
     const controller = new AbortController();
     const registry: IToolRegistry<string> = options.abortAfterTool
@@ -197,7 +286,10 @@ describe('approval card — turns resolve only the held card', () => {
       turnEpoch,
       maxRounds: 10,
     });
-    const text = () => events.flatMap((event) => (event.type === 'text' ? [event.delta] : [])).join('');
+    const text = () =>
+      events
+        .flatMap((event) => (event.type === 'text' ? [event.delta] : []))
+        .join('');
     return { runtime, events, text, model };
   }
 
@@ -207,7 +299,10 @@ describe('approval card — turns resolve only the held card', () => {
     const held = await refine(w, 2);
     const turn = runTurn(w, [[]]);
 
-    await turn.runtime.run('Approve & Proceed', { kind: 'approve', proposalId: stale });
+    await turn.runtime.run('Approve & Proceed', {
+      kind: 'approve',
+      proposalId: stale,
+    });
 
     expect(turn.model.modelCalls + turn.model.structuredCallCount).toBe(0);
     expect(w.session.stateMachine).toBeNull();
@@ -231,11 +326,24 @@ describe('approval card — turns resolve only the held card', () => {
   it('a scope change stopped after the model replaced the plan leaves no proposal anyone can approve', async () => {
     const w = world();
     const shown = await propose(w);
-    const turn = runTurn(w, [
-      [{ toolCalls: [validCall('refine-1', 'lineage_start_exploration', { proposalRevision: 1, depth: depth(2) })] }],
-      [],
-      [{ action: 'change' }],
-    ], { abortAfterTool: 'lineage_start_exploration' });
+    const turn = runTurn(
+      w,
+      [
+        [
+          {
+            toolCalls: [
+              validCall('refine-1', 'lineage_start_exploration', {
+                proposalRevision: 1,
+                depth: depth(2),
+              }),
+            ],
+          },
+        ],
+        [],
+        [{ action: 'change' }],
+      ],
+      { abortAfterTool: 'lineage_start_exploration' },
+    );
 
     const outcome = await turn.runtime.run('go one level further upstream');
 

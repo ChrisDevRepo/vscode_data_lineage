@@ -25,7 +25,11 @@ const host = vi.hoisted(() => ({
 
 vi.mock('@microsoft/vscode-azext-azureauth', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  VSCodeAzureSubscriptionProvider: class { async getTenants() { return host.tenants; } },
+  VSCodeAzureSubscriptionProvider: class {
+    async getTenants() {
+      return host.tenants;
+    }
+  },
 }));
 
 vi.mock('vscode', async (importOriginal) => {
@@ -37,7 +41,10 @@ vi.mock('vscode', async (importOriginal) => {
     QuickInputButtons: { Back: { iconPath: 'back' } },
     authentication: { getSession: (...a: unknown[]) => host.getSession(...a) },
     commands: {
-      registerCommand: (id: string, fn: (...args: unknown[]) => unknown) => { host.handlers.set(id, fn); return { dispose: () => host.handlers.delete(id) }; },
+      registerCommand: (id: string, fn: (...args: unknown[]) => unknown) => {
+        host.handlers.set(id, fn);
+        return { dispose: () => host.handlers.delete(id) };
+      },
       executeCommand: vi.fn(),
     },
     window: {
@@ -46,7 +53,8 @@ vi.mock('vscode', async (importOriginal) => {
       createInputBox: (...a: unknown[]) => host.createInputBox(...a),
       createQuickPick: (...a: unknown[]) => host.createQuickPick(...a),
       showWarningMessage: (...a: unknown[]) => host.showWarningMessage(...a),
-      showInformationMessage: (...a: unknown[]) => host.showInformationMessage(...a),
+      showInformationMessage: (...a: unknown[]) =>
+        host.showInformationMessage(...a),
       showErrorMessage: (...a: unknown[]) => host.showErrorMessage(...a),
       withProgress: (...a: unknown[]) => host.withProgress(...a),
     },
@@ -55,8 +63,12 @@ vi.mock('vscode', async (importOriginal) => {
         get: (_k: string, d: unknown) => host.stored ?? d,
         inspect: () => ({ globalValue: host.stored }),
         update: async (key: string, value: unknown, target: unknown) => {
-          if (host.deferWrites) await new Promise((resolve) => setTimeout(resolve, 0));
-          if (host.failNextWrite) { host.failNextWrite = false; throw new Error('settings write failed'); }
+          if (host.deferWrites)
+            await new Promise((resolve) => setTimeout(resolve, 0));
+          if (host.failNextWrite) {
+            host.failNextWrite = false;
+            throw new Error('settings write failed');
+          }
           host.updates.push({ key, value, target });
           host.stored = value;
         },
@@ -70,21 +82,43 @@ vi.mock('../../../../src/engine/db/builtInProvider', () => ({
 }));
 
 const {
-  BuiltInConnectionSchema, readBuiltInConnections, passwordSecretKey, readSavedPassword, savePassword,
-  upsertBuiltInConnection, deleteBuiltInConnection,
+  BuiltInConnectionSchema,
+  readBuiltInConnections,
+  passwordSecretKey,
+  readSavedPassword,
+  savePassword,
+  upsertBuiltInConnection,
+  deleteBuiltInConnection,
 } = await import('../../../../src/engine/db/connectionSettings');
-const { registerConnectionCommands } = await import('../../../../src/engine/db/connectionCommands');
+const { registerConnectionCommands } = await import(
+  '../../../../src/engine/db/connectionCommands'
+);
 
-const outputChannel = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn() } as never;
+const outputChannel = {
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  trace: vi.fn(),
+} as never;
 
 function makeContext() {
-  const secrets = { get: vi.fn(), store: vi.fn(async (_key: string, _value: string) => {}), delete: vi.fn(async () => {}) };
+  const secrets = {
+    get: vi.fn(),
+    store: vi.fn(async (_key: string, _value: string) => {}),
+    delete: vi.fn(async () => {}),
+  };
   return { context: { secrets, subscriptions: [] } as never, secrets };
 }
 
 const valid = {
-  id: '3f2b8c1e-5d34-4e0a-9a41-2b7c9d1e8f60', name: 'Local', server: 'localhost', port: 1433, database: 'AdventureWorks',
-  authenticationType: 'sqlLogin', user: 'sa',
+  id: '3f2b8c1e-5d34-4e0a-9a41-2b7c9d1e8f60',
+  name: 'Local',
+  server: 'localhost',
+  port: 1433,
+  database: 'AdventureWorks',
+  authenticationType: 'sqlLogin',
+  user: 'sa',
 };
 
 beforeEach(() => {
@@ -94,24 +128,52 @@ beforeEach(() => {
   host.deferWrites = false;
   host.failNextWrite = false;
   host.handlers.clear();
-  for (const fn of [host.showInputBox, host.showQuickPick, host.createInputBox, host.createQuickPick, host.showWarningMessage, host.showInformationMessage, host.showErrorMessage, host.withProgress, host.getSession, host.openBuiltInSession]) fn.mockReset();
+  for (const fn of [
+    host.showInputBox,
+    host.showQuickPick,
+    host.createInputBox,
+    host.createQuickPick,
+    host.showWarningMessage,
+    host.showInformationMessage,
+    host.showErrorMessage,
+    host.withProgress,
+    host.getSession,
+    host.openBuiltInSession,
+  ])
+    fn.mockReset();
 });
 
 describe('BuiltInConnectionSchema', () => {
   it('accepts a full SQL login entry and a minimal Entra entry', () => {
     expect(BuiltInConnectionSchema.safeParse(valid).success).toBe(true);
-    expect(BuiltInConnectionSchema.parse({ ...valid, password: 'leaked' })).not.toHaveProperty('password');
-    expect(BuiltInConnectionSchema.safeParse({
-      id: 'b0f3a1c2-0000-4000-8000-000000000001', name: 'Cloud', server: 'x.database.windows.net', authenticationType: 'entraId', tenantId: 't',
-    }).success).toBe(true);
+    expect(
+      BuiltInConnectionSchema.parse({ ...valid, password: 'leaked' }),
+    ).not.toHaveProperty('password');
+    expect(
+      BuiltInConnectionSchema.safeParse({
+        id: 'b0f3a1c2-0000-4000-8000-000000000001',
+        name: 'Cloud',
+        server: 'x.database.windows.net',
+        authenticationType: 'entraId',
+        tenantId: 't',
+      }).success,
+    ).toBe(true);
   });
 
   it('rejects an unknown authentication type, an out-of-range port and an empty server', () => {
-    expect(BuiltInConnectionSchema.safeParse({ ...valid, authenticationType: 'kerberos' }).success).toBe(false);
-    expect(BuiltInConnectionSchema.safeParse({ ...valid, port: 70000 }).success).toBe(false);
-    expect(BuiltInConnectionSchema.safeParse({ ...valid, server: '' }).success).toBe(false);
+    expect(
+      BuiltInConnectionSchema.safeParse({
+        ...valid,
+        authenticationType: 'kerberos',
+      }).success,
+    ).toBe(false);
+    expect(
+      BuiltInConnectionSchema.safeParse({ ...valid, port: 70000 }).success,
+    ).toBe(false);
+    expect(
+      BuiltInConnectionSchema.safeParse({ ...valid, server: '' }).success,
+    ).toBe(false);
   });
-
 });
 
 describe('readBuiltInConnections', () => {
@@ -154,18 +216,35 @@ describe('connection commands', () => {
     registerConnectionCommands(context, outputChannel, async () => []);
     const { id: _ignored, ...withoutId } = valid;
 
-    const id = await host.handlers.get('dataLineageViz.addDatabaseConnection')!({ connection: withoutId, password: 's3cret' });
+    const id = await host.handlers.get('dataLineageViz.addDatabaseConnection')!(
+      { connection: withoutId, password: 's3cret' },
+    );
 
     expect(id).toMatch(/^[0-9a-f-]{36}$/);
     expect(host.updates).toHaveLength(1);
     expect(host.updates[0]).toMatchObject({ key: 'connections', target: 1 });
     const saved = host.updates[0].value as Array<Record<string, unknown>>;
     expect(saved).toHaveLength(1);
-    expect(saved[0]).toMatchObject({ id, server: 'localhost', authenticationType: 'sqlLogin', user: 'sa' });
+    expect(saved[0]).toMatchObject({
+      id,
+      server: 'localhost',
+      authenticationType: 'sqlLogin',
+      user: 'sa',
+    });
     expect(JSON.stringify(saved)).not.toContain('s3cret');
-    expect(secrets.store.mock.calls.map(([key, value]) => [key, JSON.parse(value)]))
-      .toContainEqual([`dataLineageViz.database.password.${id}`, { server: 'localhost', port: 1433, user: 'sa', password: 's3cret' }]);
-    for (const prompt of [host.showInputBox, host.showQuickPick, host.createInputBox, host.createQuickPick, host.withProgress]) {
+    expect(
+      secrets.store.mock.calls.map(([key, value]) => [key, JSON.parse(value)]),
+    ).toContainEqual([
+      `dataLineageViz.database.password.${id}`,
+      { server: 'localhost', port: 1433, user: 'sa', password: 's3cret' },
+    ]);
+    for (const prompt of [
+      host.showInputBox,
+      host.showQuickPick,
+      host.createInputBox,
+      host.createQuickPick,
+      host.withProgress,
+    ]) {
       expect(prompt).not.toHaveBeenCalled();
     }
   });
@@ -175,7 +254,9 @@ describe('connection commands', () => {
     const { context } = makeContext();
     registerConnectionCommands(context, outputChannel, async () => []);
 
-    const id = await host.handlers.get('dataLineageViz.addDatabaseConnection')!({ connection: { ...valid, name: 'Renamed' } });
+    const id = await host.handlers.get('dataLineageViz.addDatabaseConnection')!(
+      { connection: { ...valid, name: 'Renamed' } },
+    );
 
     expect(id).toBe(valid.id);
     const saved = host.updates[0].value as Array<Record<string, unknown>>;
@@ -186,8 +267,12 @@ describe('connection commands', () => {
     const { context, secrets } = makeContext();
     registerConnectionCommands(context, outputChannel, async () => []);
 
-    await expect(host.handlers.get('dataLineageViz.addDatabaseConnection')!({ connection: { name: 'x' }, password: 'p' }))
-      .rejects.toThrow(/connection/i);
+    await expect(
+      host.handlers.get('dataLineageViz.addDatabaseConnection')!({
+        connection: { name: 'x' },
+        password: 'p',
+      }),
+    ).rejects.toThrow(/connection/i);
     expect(host.updates).toHaveLength(0);
     expect(secrets.store).not.toHaveBeenCalled();
   });
@@ -196,7 +281,9 @@ describe('connection commands', () => {
     const { context, secrets } = makeContext();
     registerConnectionCommands(context, outputChannel, async () => []);
 
-    const id = await host.handlers.get('dataLineageViz.addDatabaseConnection')!({ connection: { ...valid, password: 'inline' } });
+    const id = await host.handlers.get('dataLineageViz.addDatabaseConnection')!(
+      { connection: { ...valid, password: 'inline' } },
+    );
 
     expect(JSON.stringify(host.updates)).not.toContain('inline');
     expect(secrets.store).not.toHaveBeenCalled();
@@ -204,25 +291,45 @@ describe('connection commands', () => {
   });
 
   it('addDatabaseConnection keeps hand-edited entries it cannot read, unchanged', async () => {
-    const handEdited = { id: 'typo-id', name: 'Typo', server: 'db2', authenticationType: 'sqllogin', user: 'u' };
+    const handEdited = {
+      id: 'typo-id',
+      name: 'Typo',
+      server: 'db2',
+      authenticationType: 'sqllogin',
+      user: 'u',
+    };
     host.stored = [valid, handEdited];
     const { context } = makeContext();
     registerConnectionCommands(context, outputChannel, async () => []);
 
-    await host.handlers.get('dataLineageViz.addDatabaseConnection')!({ connection: { ...valid, id: 'new-id', name: 'New' } });
+    await host.handlers.get('dataLineageViz.addDatabaseConnection')!({
+      connection: { ...valid, id: 'new-id', name: 'New' },
+    });
 
     const saved = host.updates[0].value as Array<Record<string, unknown>>;
-    expect(saved).toEqual([valid, handEdited, expect.objectContaining({ id: 'new-id' })]);
+    expect(saved).toEqual([
+      valid,
+      handEdited,
+      expect.objectContaining({ id: 'new-id' }),
+    ]);
   });
 
   it('removeDatabaseConnection keeps hand-edited entries it cannot read, unchanged', async () => {
-    const handEdited = { id: 'typo-id', name: 'Typo', server: 'db2', port: 0, authenticationType: 'sqlLogin' };
+    const handEdited = {
+      id: 'typo-id',
+      name: 'Typo',
+      server: 'db2',
+      port: 0,
+      authenticationType: 'sqlLogin',
+    };
     host.stored = [valid, handEdited];
     host.showWarningMessage.mockResolvedValueOnce('Remove');
     const { context } = makeContext();
     registerConnectionCommands(context, outputChannel, async () => []);
 
-    await host.handlers.get('dataLineageViz.removeDatabaseConnection')!(valid.id);
+    await host.handlers.get('dataLineageViz.removeDatabaseConnection')!(
+      valid.id,
+    );
 
     expect(host.updates[0].value).toEqual([handEdited]);
   });
@@ -233,10 +340,21 @@ describe('connection commands', () => {
     const huge = 'x'.repeat(1024 * 1024);
     const add = host.handlers.get('dataLineageViz.addDatabaseConnection')!;
 
-    for (const field of ['id', 'name', 'server', 'user', 'database', 'tenantId']) {
-      await expect(add({ connection: { ...valid, [field]: huge } })).rejects.toThrow(/connection/i);
+    for (const field of [
+      'id',
+      'name',
+      'server',
+      'user',
+      'database',
+      'tenantId',
+    ]) {
+      await expect(
+        add({ connection: { ...valid, [field]: huge } }),
+      ).rejects.toThrow(/connection/i);
     }
-    await expect(add({ connection: valid, password: huge })).rejects.toThrow(/connection/i);
+    await expect(add({ connection: valid, password: huge })).rejects.toThrow(
+      /connection/i,
+    );
     expect(host.updates).toHaveLength(0);
     expect(secrets.store).not.toHaveBeenCalled();
   });
@@ -247,7 +365,9 @@ describe('connection commands', () => {
     const { context, secrets } = makeContext();
     registerConnectionCommands(context, outputChannel, async () => []);
 
-    await host.handlers.get('dataLineageViz.removeDatabaseConnection')!(valid.id);
+    await host.handlers.get('dataLineageViz.removeDatabaseConnection')!(
+      valid.id,
+    );
 
     const saved = host.updates[0].value as Array<Record<string, unknown>>;
     expect(saved.map((c) => c.id)).toEqual(['keep-me']);
@@ -262,45 +382,75 @@ describe('connection commands', () => {
 
     await host.handlers.get('dataLineageViz.updateDatabasePassword')!(valid.id);
 
-    expect(host.showInputBox.mock.calls[0][0]).toMatchObject({ password: true });
-    expect(secrets.store.mock.calls.map(([key, value]) => [key, JSON.parse(value)]))
-      .toContainEqual(['dataLineageViz.database.password.3f2b8c1e-5d34-4e0a-9a41-2b7c9d1e8f60', { server: 'localhost', port: 1433, user: 'sa', password: 'new-pw' }]);
+    expect(host.showInputBox.mock.calls[0][0]).toMatchObject({
+      password: true,
+    });
+    expect(
+      secrets.store.mock.calls.map(([key, value]) => [key, JSON.parse(value)]),
+    ).toContainEqual([
+      'dataLineageViz.database.password.3f2b8c1e-5d34-4e0a-9a41-2b7c9d1e8f60',
+      { server: 'localhost', port: 1433, user: 'sa', password: 'new-pw' },
+    ]);
   });
 
   it('updateDatabasePassword refuses an Entra ID connection named by id without prompting or storing', async () => {
-    const entraEntry = { id: 'e1', name: 'Cloud', server: 'x.database.windows.net', authenticationType: 'entraId' };
+    const entraEntry = {
+      id: 'e1',
+      name: 'Cloud',
+      server: 'x.database.windows.net',
+      authenticationType: 'entraId',
+    };
     host.stored = [entraEntry];
     const { context, secrets } = makeContext();
     registerConnectionCommands(context, outputChannel, async () => []);
 
-    const stored = await host.handlers.get('dataLineageViz.updateDatabasePassword')!(entraEntry.id);
+    const stored = await host.handlers.get(
+      'dataLineageViz.updateDatabasePassword',
+    )!(entraEntry.id);
 
     expect(stored).toBe(false);
     expect(host.showInputBox).not.toHaveBeenCalled();
     expect(secrets.store).not.toHaveBeenCalled();
     expect(host.showWarningMessage).toHaveBeenCalledTimes(1);
-    expect(String(host.showWarningMessage.mock.calls[0][0])).toMatch(/"Cloud".*Microsoft Entra ID.*no password/i);
+    expect(String(host.showWarningMessage.mock.calls[0][0])).toMatch(
+      /"Cloud".*Microsoft Entra ID.*no password/i,
+    );
   });
 });
 
 describe('connection list writes', () => {
-  const second = { ...valid, id: 'b0f3a1c2-0000-4000-8000-000000000002', name: 'Second' };
+  const second = {
+    ...valid,
+    id: 'b0f3a1c2-0000-4000-8000-000000000002',
+    name: 'Second',
+  };
 
   it('two concurrent upserts both survive', async () => {
     host.deferWrites = true;
 
-    await Promise.all([upsertBuiltInConnection(valid as never), upsertBuiltInConnection(second as never)]);
+    await Promise.all([
+      upsertBuiltInConnection(valid as never),
+      upsertBuiltInConnection(second as never),
+    ]);
 
-    expect((host.stored as Array<{ id: string }>).map((c) => c.id)).toEqual([valid.id, second.id]);
+    expect((host.stored as Array<{ id: string }>).map((c) => c.id)).toEqual([
+      valid.id,
+      second.id,
+    ]);
   });
 
   it('a delete issued alongside an upsert sees the upserted entry', async () => {
     host.stored = [valid];
     host.deferWrites = true;
 
-    await Promise.all([upsertBuiltInConnection(second as never), deleteBuiltInConnection(valid.id)]);
+    await Promise.all([
+      upsertBuiltInConnection(second as never),
+      deleteBuiltInConnection(valid.id),
+    ]);
 
-    expect((host.stored as Array<{ id: string }>).map((c) => c.id)).toEqual([second.id]);
+    expect((host.stored as Array<{ id: string }>).map((c) => c.id)).toEqual([
+      second.id,
+    ]);
   });
 
   it('a failed write rejects its caller and the next write still runs', async () => {
@@ -311,14 +461,23 @@ describe('connection list writes', () => {
 
     await expect(failed).rejects.toThrow(/settings write failed/);
     await expect(next).resolves.toBeUndefined();
-    expect((host.stored as Array<{ id: string }>).map((c) => c.id)).toEqual([second.id]);
+    expect((host.stored as Array<{ id: string }>).map((c) => c.id)).toEqual([
+      second.id,
+    ]);
   });
 });
 
 describe('addDatabaseConnection asks before trusting a server certificate', () => {
-  const add = (arg: unknown) => host.handlers.get('dataLineageViz.addDatabaseConnection')!(arg);
-  const savedEntry = () => (host.updates.at(-1)!.value as Array<Record<string, unknown>>)[0];
-  const register = () => registerConnectionCommands(makeContext().context, outputChannel, async () => []);
+  const add = (arg: unknown) =>
+    host.handlers.get('dataLineageViz.addDatabaseConnection')!(arg);
+  const savedEntry = () =>
+    (host.updates.at(-1)!.value as Array<Record<string, unknown>>)[0];
+  const register = () =>
+    registerConnectionCommands(
+      makeContext().context,
+      outputChannel,
+      async () => [],
+    );
 
   it('saves trust when the user confirms the modal', async () => {
     host.showWarningMessage.mockResolvedValue('Trust Certificate');
@@ -332,24 +491,37 @@ describe('addDatabaseConnection asks before trusting a server certificate', () =
     host.showWarningMessage.mockResolvedValue(undefined);
     register();
     await add({ connection: { ...valid, trustServerCertificate: true } });
-    expect(savedEntry()).toMatchObject({ id: valid.id, trustServerCertificate: false });
+    expect(savedEntry()).toMatchObject({
+      id: valid.id,
+      trustServerCertificate: false,
+    });
   });
 
   it('does not ask again for a server already trusted under the same id', async () => {
     host.stored = [{ ...valid, trustServerCertificate: true }];
     register();
-    await add({ connection: { ...valid, name: 'Renamed', trustServerCertificate: true } });
+    await add({
+      connection: { ...valid, name: 'Renamed', trustServerCertificate: true },
+    });
     expect(host.showWarningMessage).not.toHaveBeenCalled();
-    expect(savedEntry()).toMatchObject({ name: 'Renamed', trustServerCertificate: true });
+    expect(savedEntry()).toMatchObject({
+      name: 'Renamed',
+      trustServerCertificate: true,
+    });
   });
 
   it('asks again when a trusted id moves to another server', async () => {
     host.stored = [{ ...valid, trustServerCertificate: true }];
     host.showWarningMessage.mockResolvedValue(undefined);
     register();
-    await add({ connection: { ...valid, server: 'other', trustServerCertificate: true } });
+    await add({
+      connection: { ...valid, server: 'other', trustServerCertificate: true },
+    });
     expect(host.showWarningMessage).toHaveBeenCalledTimes(1);
-    expect(savedEntry()).toMatchObject({ server: 'other', trustServerCertificate: false });
+    expect(savedEntry()).toMatchObject({
+      server: 'other',
+      trustServerCertificate: false,
+    });
   });
 
   it('does not ask when the argument leaves trust off', async () => {
@@ -362,7 +534,8 @@ describe('addDatabaseConnection asks before trusting a server certificate', () =
 describe('saved password follows the server it was entered for', () => {
   const trusted = { ...valid, trustServerCertificate: true };
   const key = passwordSecretKey(valid.id);
-  const add = (arg: unknown) => host.handlers.get('dataLineageViz.addDatabaseConnection')!(arg);
+  const add = (arg: unknown) =>
+    host.handlers.get('dataLineageViz.addDatabaseConnection')!(arg);
 
   it('addDatabaseConnection deletes the saved password when an existing id moves to another server', async () => {
     host.stored = [valid];
@@ -379,15 +552,18 @@ describe('saved password follows the server it was entered for', () => {
     ['port', { port: 1444 }],
     ['user', { user: 'other' }],
     ['authentication type', { authenticationType: 'entraId', user: undefined }],
-  ])('addDatabaseConnection deletes the saved password when the %s changes', async (_label, patch) => {
-    host.stored = [valid];
-    const { context, secrets } = makeContext();
-    registerConnectionCommands(context, outputChannel, async () => []);
+  ])(
+    'addDatabaseConnection deletes the saved password when the %s changes',
+    async (_label, patch) => {
+      host.stored = [valid];
+      const { context, secrets } = makeContext();
+      registerConnectionCommands(context, outputChannel, async () => []);
 
-    await add({ connection: { ...valid, ...patch } });
+      await add({ connection: { ...valid, ...patch } });
 
-    expect(secrets.delete).toHaveBeenCalledWith(key);
-  });
+      expect(secrets.delete).toHaveBeenCalledWith(key);
+    },
+  );
 
   it('addDatabaseConnection deletes a saved password whose previous entry could not be read', async () => {
     host.stored = [{ ...valid, port: 'not-a-port' }];
@@ -406,8 +582,12 @@ describe('saved password follows the server it was entered for', () => {
 
     await add({ connection: { ...valid, server: 'other' }, password: 'fresh' });
 
-    expect(secrets.store.mock.calls.map(([key, value]) => [key, JSON.parse(value)]))
-      .toContainEqual(['dataLineageViz.database.password.3f2b8c1e-5d34-4e0a-9a41-2b7c9d1e8f60', { server: 'other', port: 1433, user: 'sa', password: 'fresh' }]);
+    expect(
+      secrets.store.mock.calls.map(([key, value]) => [key, JSON.parse(value)]),
+    ).toContainEqual([
+      'dataLineageViz.database.password.3f2b8c1e-5d34-4e0a-9a41-2b7c9d1e8f60',
+      { server: 'other', port: 1433, user: 'sa', password: 'fresh' },
+    ]);
     expect(secrets.delete).not.toHaveBeenCalled();
   });
 
@@ -427,14 +607,23 @@ describe('saved password follows the server it was entered for', () => {
     const { context, secrets } = makeContext();
     registerConnectionCommands(context, outputChannel, async () => []);
 
-    await host.handlers.get('dataLineageViz.removeDatabaseConnection')!(valid.id);
+    await host.handlers.get('dataLineageViz.removeDatabaseConnection')!(
+      valid.id,
+    );
 
-    expect(host.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining(valid.name), { modal: true }, 'Remove');
+    expect(host.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining(valid.name),
+      { modal: true },
+      'Remove',
+    );
     expect(host.updates).toHaveLength(0);
     expect(secrets.delete).not.toHaveBeenCalled();
   });
 
-  interface Step { values?: string[]; pick?: string }
+  interface Step {
+    values?: string[];
+    pick?: string;
+  }
 
   function scriptWizard(steps: Step[]) {
     const prompts: string[] = [];
@@ -442,14 +631,30 @@ describe('saved password follows the server it was entered for', () => {
     let at = 0;
     const listeners = () => {
       const on: Record<string, (...a: unknown[]) => void> = {};
-      const reg = (name: string) => (fn: (...a: unknown[]) => void) => { on[name] = fn; return { dispose() {} }; };
+      const reg = (name: string) => (fn: (...a: unknown[]) => void) => {
+        on[name] = fn;
+        return { dispose() {} };
+      };
       return { on, reg };
     };
     host.createInputBox.mockImplementation(() => {
       const { on, reg } = listeners();
-      const box: { value: string; validationMessage?: string; prompt?: string; dispose(): void; onDidTriggerButton: ReturnType<typeof reg>; onDidHide: ReturnType<typeof reg>; onDidAccept: ReturnType<typeof reg>; show(): void } = {
-        value: '', validationMessage: undefined, dispose() {},
-        onDidTriggerButton: reg('button'), onDidHide: reg('hide'), onDidAccept: reg('accept'),
+      const box: {
+        value: string;
+        validationMessage?: string;
+        prompt?: string;
+        dispose(): void;
+        onDidTriggerButton: ReturnType<typeof reg>;
+        onDidHide: ReturnType<typeof reg>;
+        onDidAccept: ReturnType<typeof reg>;
+        show(): void;
+      } = {
+        value: '',
+        validationMessage: undefined,
+        dispose() {},
+        onDidTriggerButton: reg('button'),
+        onDidHide: reg('hide'),
+        onDidAccept: reg('accept'),
         show() {
           prompts.push(String(box.prompt));
           const step = steps[at++];
@@ -466,12 +671,26 @@ describe('saved password follows the server it was entered for', () => {
     });
     host.createQuickPick.mockImplementation(() => {
       const { on, reg } = listeners();
-      const box: { items: Array<{ label: string }>; selectedItems: Array<{ label: string } | undefined>; dispose(): void; onDidTriggerButton: ReturnType<typeof reg>; onDidHide: ReturnType<typeof reg>; onDidAccept: ReturnType<typeof reg>; show(): void } = {
-        items: [], selectedItems: [], dispose() {},
-        onDidTriggerButton: reg('button'), onDidHide: reg('hide'), onDidAccept: reg('accept'),
+      const box: {
+        items: Array<{ label: string }>;
+        selectedItems: Array<{ label: string } | undefined>;
+        dispose(): void;
+        onDidTriggerButton: ReturnType<typeof reg>;
+        onDidHide: ReturnType<typeof reg>;
+        onDidAccept: ReturnType<typeof reg>;
+        show(): void;
+      } = {
+        items: [],
+        selectedItems: [],
+        dispose() {},
+        onDidTriggerButton: reg('button'),
+        onDidHide: reg('hide'),
+        onDidAccept: reg('accept'),
         show() {
           const step = steps[at++];
-          box.selectedItems = [box.items.find((i: { label: string }) => i.label === step.pick)];
+          box.selectedItems = [
+            box.items.find((i: { label: string }) => i.label === step.pick),
+          ];
           on.accept();
         },
       };
@@ -481,48 +700,80 @@ describe('saved password follows the server it was entered for', () => {
   }
 
   function editWith(steps: Step[]) {
-    host.withProgress.mockImplementation((_options: unknown, task: () => unknown) => task());
+    host.withProgress.mockImplementation(
+      (_options: unknown, task: () => unknown) => task(),
+    );
     host.openBuiltInSession.mockResolvedValue({ dispose: async () => {} });
     const wizard = scriptWizard(steps);
     const { context, secrets } = makeContext();
     registerConnectionCommands(context, outputChannel, async () => []);
-    const run = () => host.handlers.get('dataLineageViz.editDatabaseConnection')!(valid.id);
+    const run = () =>
+      host.handlers.get('dataLineageViz.editDatabaseConnection')!(valid.id);
     return { wizard, secrets, run };
   }
 
   it.each([
     { change: 'server', endpoint: 'other,1433', server: 'other', port: 1433 },
-    { change: 'port', endpoint: 'localhost,1444', server: 'localhost', port: 1444 },
-  ])('edit wizard resets trust and requires a fresh password when the $change changes', async ({ endpoint, server, port }) => {
-    host.stored = [trusted];
-    const { wizard, secrets, run } = editWith([
-      { values: [endpoint] }, { pick: 'SQL Login' }, { values: ['sa'] }, { values: ['', 'fresh'] },
-      { values: ['AdventureWorks'] }, { values: ['Moved'] },
-    ]);
+    {
+      change: 'port',
+      endpoint: 'localhost,1444',
+      server: 'localhost',
+      port: 1444,
+    },
+  ])(
+    'edit wizard resets trust and requires a fresh password when the $change changes',
+    async ({ endpoint, server, port }) => {
+      host.stored = [trusted];
+      const { wizard, secrets, run } = editWith([
+        { values: [endpoint] },
+        { pick: 'SQL Login' },
+        { values: ['sa'] },
+        { values: ['', 'fresh'] },
+        { values: ['AdventureWorks'] },
+        { values: ['Moved'] },
+      ]);
 
-    await run();
+      await run();
 
-    expect(wizard.rejected).toEqual(['A password is required.']);
-    expect(wizard.prompts.find((p) => /Password/.test(p))).not.toMatch(/keep/i);
-    const saved = (host.updates.at(-1)!.value as Array<Record<string, unknown>>)[0];
-    expect(saved).toMatchObject({ server, port, name: 'Moved' });
-    expect(saved.trustServerCertificate).not.toBe(true);
-    expect(secrets.store.mock.calls.map(([key, value]) => [key, JSON.parse(value)]))
-      .toContainEqual(['dataLineageViz.database.password.3f2b8c1e-5d34-4e0a-9a41-2b7c9d1e8f60', { server, port, user: 'sa', password: 'fresh' }]);
-  });
+      expect(wizard.rejected).toEqual(['A password is required.']);
+      expect(wizard.prompts.find((p) => /Password/.test(p))).not.toMatch(
+        /keep/i,
+      );
+      const saved = (
+        host.updates.at(-1)!.value as Array<Record<string, unknown>>
+      )[0];
+      expect(saved).toMatchObject({ server, port, name: 'Moved' });
+      expect(saved.trustServerCertificate).not.toBe(true);
+      expect(
+        secrets.store.mock.calls.map(([key, value]) => [
+          key,
+          JSON.parse(value),
+        ]),
+      ).toContainEqual([
+        'dataLineageViz.database.password.3f2b8c1e-5d34-4e0a-9a41-2b7c9d1e8f60',
+        { server, port, user: 'sa', password: 'fresh' },
+      ]);
+    },
+  );
 
   it('edit wizard keeps the saved password and trust when the server is unchanged', async () => {
     host.stored = [trusted];
     const { wizard, secrets, run } = editWith([
-      { values: ['localhost,1433'] }, { pick: 'SQL Login' }, { values: ['sa'] }, { values: [''] },
-      { values: ['AdventureWorks'] }, { values: ['Renamed'] },
+      { values: ['localhost,1433'] },
+      { pick: 'SQL Login' },
+      { values: ['sa'] },
+      { values: [''] },
+      { values: ['AdventureWorks'] },
+      { values: ['Renamed'] },
     ]);
 
     await run();
 
     expect(wizard.rejected).toEqual([]);
     expect(wizard.prompts.find((p) => /Password/.test(p))).toMatch(/keep/i);
-    const saved = (host.updates.at(-1)!.value as Array<Record<string, unknown>>)[0];
+    const saved = (
+      host.updates.at(-1)!.value as Array<Record<string, unknown>>
+    )[0];
     expect(saved.trustServerCertificate).toBe(true);
     expect(secrets.store).not.toHaveBeenCalled();
     expect(secrets.delete).not.toHaveBeenCalled();
@@ -531,14 +782,23 @@ describe('saved password follows the server it was entered for', () => {
   it('edit wizard rejects blank database names before saving a required name', async () => {
     host.stored = [valid];
     const { wizard, run } = editWith([
-      { values: ['localhost,1433'] }, { pick: 'SQL Login' }, { values: ['sa'] }, { values: [''] },
-      { values: ['', ' \t ', 'AdventureWorks'] }, { values: ['Required database'] },
+      { values: ['localhost,1433'] },
+      { pick: 'SQL Login' },
+      { values: ['sa'] },
+      { values: [''] },
+      { values: ['', ' \t ', 'AdventureWorks'] },
+      { values: ['Required database'] },
     ]);
 
     await run();
 
-    const saved = (host.updates.at(-1)!.value as Array<Record<string, unknown>>)[0];
-    expect(wizard.rejected).toEqual(['A database name is required.', 'A database name is required.']);
+    const saved = (
+      host.updates.at(-1)!.value as Array<Record<string, unknown>>
+    )[0];
+    expect(wizard.rejected).toEqual([
+      'A database name is required.',
+      'A database name is required.',
+    ]);
     expect(saved.name).toBe('Required database');
     expect(saved.database).toBe('AdventureWorks');
   });
@@ -546,32 +806,53 @@ describe('saved password follows the server it was entered for', () => {
   it('the database name is typed and the only connection opened is the final test with that database', async () => {
     host.stored = [valid];
     const { run } = editWith([
-      { values: ['localhost,1433'] }, { pick: 'SQL Login' }, { values: ['sa'] }, { values: [''] },
-      { values: [' Reporting '] }, { values: ['Typed'] },
+      { values: ['localhost,1433'] },
+      { pick: 'SQL Login' },
+      { values: ['sa'] },
+      { values: [''] },
+      { values: [' Reporting '] },
+      { values: ['Typed'] },
     ]);
 
     await run();
 
-    const saved = (host.updates.at(-1)!.value as Array<Record<string, unknown>>)[0];
+    const saved = (
+      host.updates.at(-1)!.value as Array<Record<string, unknown>>
+    )[0];
     expect(saved.database).toBe('Reporting');
     expect(host.createQuickPick).toHaveBeenCalledTimes(1);
     expect(host.openBuiltInSession).toHaveBeenCalledTimes(1);
-    expect(host.openBuiltInSession.mock.calls[0][0]).toMatchObject({ database: 'Reporting' });
+    expect(host.openBuiltInSession.mock.calls[0][0]).toMatchObject({
+      database: 'Reporting',
+    });
   });
 
   it('a database that cannot be opened is reported by the final test and nothing is saved on Cancel', async () => {
     host.stored = [valid];
     const { run } = editWith([
-      { values: ['localhost,1433'] }, { pick: 'SQL Login' }, { values: ['sa'] }, { values: [''] },
-      { values: ['Missing'] }, { values: ['Typed'] },
+      { values: ['localhost,1433'] },
+      { pick: 'SQL Login' },
+      { values: ['sa'] },
+      { values: [''] },
+      { values: ['Missing'] },
+      { values: ['Typed'] },
     ]);
     host.openBuiltInSession.mockReset();
-    host.openBuiltInSession.mockRejectedValue(Object.assign(new Error('Cannot open database "Missing" requested by the login. The login failed.'), { number: 4060 }));
+    host.openBuiltInSession.mockRejectedValue(
+      Object.assign(
+        new Error(
+          'Cannot open database "Missing" requested by the login. The login failed.',
+        ),
+        { number: 4060 },
+      ),
+    );
     host.showErrorMessage.mockResolvedValueOnce('Cancel');
 
     await run();
 
-    expect(String(host.showErrorMessage.mock.calls[0][0])).toContain('Cannot open database "Missing"');
+    expect(String(host.showErrorMessage.mock.calls[0][0])).toContain(
+      'Cannot open database "Missing"',
+    );
     expect(host.showErrorMessage.mock.calls[0]).toContain('Edit');
     expect(host.updates).toHaveLength(0);
   });
@@ -580,59 +861,107 @@ describe('saved password follows the server it was entered for', () => {
     host.stored = [valid];
     const fabric = `${'x'.repeat(52)}-${'y'.repeat(26)}.datawarehouse.fabric.microsoft.com`;
     const { run } = editWith([
-      { values: [fabric] }, { pick: 'SQL Login' }, { values: ['sa'] }, { values: ['pw'] },
-      { values: ['Sales_Warehouse_2026'] }, { values: [`${fabric} / Sales_Warehouse_2026`] },
+      { values: [fabric] },
+      { pick: 'SQL Login' },
+      { values: ['sa'] },
+      { values: ['pw'] },
+      { values: ['Sales_Warehouse_2026'] },
+      { values: [`${fabric} / Sales_Warehouse_2026`] },
     ]);
 
     await run();
 
-    const saved = (host.updates.at(-1)!.value as Array<Record<string, unknown>>)[0];
-    expect(saved).toMatchObject({ server: fabric, database: 'Sales_Warehouse_2026', name: `${fabric} / Sales_Warehouse_2026` });
+    const saved = (
+      host.updates.at(-1)!.value as Array<Record<string, unknown>>
+    )[0];
+    expect(saved).toMatchObject({
+      server: fabric,
+      database: 'Sales_Warehouse_2026',
+      name: `${fabric} / Sales_Warehouse_2026`,
+    });
   });
 
   it('an over-long display name is refused at its step with the limit, not at save', async () => {
     host.stored = [valid];
     const { wizard, run } = editWith([
-      { values: ['localhost,1433'] }, { pick: 'SQL Login' }, { values: ['sa'] }, { values: [''] },
-      { values: ['AdventureWorks'] }, { values: ['n'.repeat(1025), 'Short'] },
+      { values: ['localhost,1433'] },
+      { pick: 'SQL Login' },
+      { values: ['sa'] },
+      { values: [''] },
+      { values: ['AdventureWorks'] },
+      { values: ['n'.repeat(1025), 'Short'] },
     ]);
 
     await run();
 
-    expect(wizard.rejected).toEqual(['A display name has at most 1024 characters.']);
-    expect((host.updates.at(-1)!.value as Array<Record<string, unknown>>)[0].name).toBe('Short');
+    expect(wizard.rejected).toEqual([
+      'A display name has at most 1024 characters.',
+    ]);
+    expect(
+      (host.updates.at(-1)!.value as Array<Record<string, unknown>>)[0].name,
+    ).toBe('Short');
   });
 
   it('a self-signed certificate on the final test offers Trust Server Certificate; confirming saves the connection trusted', async () => {
     host.stored = [valid];
     const { run } = editWith([
-      { values: ['localhost,1433'] }, { pick: 'SQL Login' }, { values: ['sa'] }, { values: [''] },
-      { values: ['AdventureWorks'] }, { values: ['Local'] },
+      { values: ['localhost,1433'] },
+      { pick: 'SQL Login' },
+      { values: ['sa'] },
+      { values: [''] },
+      { values: ['AdventureWorks'] },
+      { values: ['Local'] },
     ]);
-    const selfSigned = Object.assign(new Error('Failed to connect to localhost:1433 - self signed certificate'), { code: 'ESOCKET' });
+    const selfSigned = Object.assign(
+      new Error(
+        'Failed to connect to localhost:1433 - self signed certificate',
+      ),
+      { code: 'ESOCKET' },
+    );
     host.openBuiltInSession.mockReset();
-    host.openBuiltInSession.mockRejectedValueOnce(selfSigned).mockResolvedValue({ dispose: async () => {} });
+    host.openBuiltInSession
+      .mockRejectedValueOnce(selfSigned)
+      .mockResolvedValue({ dispose: async () => {} });
     host.showErrorMessage.mockResolvedValueOnce('Trust Server Certificate');
     host.showWarningMessage.mockResolvedValueOnce('Trust Certificate');
 
     await run();
 
-    expect(host.showErrorMessage.mock.calls[0]).toContain('Trust Server Certificate');
-    expect(host.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining('localhost'), { modal: true }, 'Trust Certificate');
-    const saved = (host.updates.at(-1)!.value as Array<Record<string, unknown>>)[0];
+    expect(host.showErrorMessage.mock.calls[0]).toContain(
+      'Trust Server Certificate',
+    );
+    expect(host.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining('localhost'),
+      { modal: true },
+      'Trust Certificate',
+    );
+    const saved = (
+      host.updates.at(-1)!.value as Array<Record<string, unknown>>
+    )[0];
     expect(saved.trustServerCertificate).toBe(true);
   });
 
   it('declining the trust confirmation saves nothing trusted', async () => {
     host.stored = [valid];
     const { run } = editWith([
-      { values: ['localhost,1433'] }, { pick: 'SQL Login' }, { values: ['sa'] }, { values: [''] },
-      { values: ['AdventureWorks'] }, { values: ['Local'] },
+      { values: ['localhost,1433'] },
+      { pick: 'SQL Login' },
+      { values: ['sa'] },
+      { values: [''] },
+      { values: ['AdventureWorks'] },
+      { values: ['Local'] },
     ]);
-    const selfSigned = Object.assign(new Error('Failed to connect to localhost:1433 - self signed certificate'), { code: 'ESOCKET' });
+    const selfSigned = Object.assign(
+      new Error(
+        'Failed to connect to localhost:1433 - self signed certificate',
+      ),
+      { code: 'ESOCKET' },
+    );
     host.openBuiltInSession.mockReset();
     host.openBuiltInSession.mockRejectedValue(selfSigned);
-    host.showErrorMessage.mockResolvedValueOnce('Trust Server Certificate').mockResolvedValueOnce('Cancel');
+    host.showErrorMessage
+      .mockResolvedValueOnce('Trust Server Certificate')
+      .mockResolvedValueOnce('Cancel');
     host.showWarningMessage.mockResolvedValueOnce(undefined);
 
     await run();
@@ -642,9 +971,15 @@ describe('saved password follows the server it was entered for', () => {
 
   it('edit wizard deletes the saved password when the connection switches to Entra ID', async () => {
     host.stored = [valid];
-    host.getSession.mockResolvedValue({ accessToken: 't', account: { id: 'o.h', label: 'a@x' } });
+    host.getSession.mockResolvedValue({
+      accessToken: 't',
+      account: { id: 'o.h', label: 'a@x' },
+    });
     const { secrets, run } = editWith([
-      { values: ['localhost,1433'] }, { pick: 'Microsoft Entra ID' }, { values: ['AdventureWorks'] }, { values: ['Entra'] },
+      { values: ['localhost,1433'] },
+      { pick: 'Microsoft Entra ID' },
+      { values: ['AdventureWorks'] },
+      { values: ['Entra'] },
     ]);
 
     await run();
@@ -654,28 +989,54 @@ describe('saved password follows the server it was entered for', () => {
 
   it('Entra sign-in saves the only directory without asking', async () => {
     host.stored = [valid];
-    host.tenants = [{ tenantId: 'azure-dir', displayName: 'Default Directory' }];
-    host.getSession.mockResolvedValue({ accessToken: 't', account: { id: 'o.h', label: 'a@x' } });
+    host.tenants = [
+      { tenantId: 'azure-dir', displayName: 'Default Directory' },
+    ];
+    host.getSession.mockResolvedValue({
+      accessToken: 't',
+      account: { id: 'o.h', label: 'a@x' },
+    });
     const { run } = editWith([
-      { values: ['localhost,1433'] }, { pick: 'Microsoft Entra ID' }, { values: ['AdventureWorks'] }, { values: ['Entra'] },
+      { values: ['localhost,1433'] },
+      { pick: 'Microsoft Entra ID' },
+      { values: ['AdventureWorks'] },
+      { values: ['Entra'] },
     ]);
 
     await run();
 
-    expect((host.updates.at(-1)!.value as Array<Record<string, unknown>>)[0]).toMatchObject({ authenticationType: 'entraId', accountId: 'o.h', tenantId: 'azure-dir' });
+    expect(
+      (host.updates.at(-1)!.value as Array<Record<string, unknown>>)[0],
+    ).toMatchObject({
+      authenticationType: 'entraId',
+      accountId: 'o.h',
+      tenantId: 'azure-dir',
+    });
   });
 
   it('Entra sign-in asks for the directory when the account has several, and saves the pick', async () => {
     host.stored = [valid];
-    host.tenants = [{ tenantId: 'a', displayName: 'Alpha' }, { tenantId: 'b', displayName: 'Beta' }];
-    host.getSession.mockResolvedValue({ accessToken: 't', account: { id: 'o.h', label: 'a@x' } });
+    host.tenants = [
+      { tenantId: 'a', displayName: 'Alpha' },
+      { tenantId: 'b', displayName: 'Beta' },
+    ];
+    host.getSession.mockResolvedValue({
+      accessToken: 't',
+      account: { id: 'o.h', label: 'a@x' },
+    });
     const { run } = editWith([
-      { values: ['localhost,1433'] }, { pick: 'Microsoft Entra ID' }, { pick: 'Beta' }, { values: ['AdventureWorks'] }, { values: ['Entra'] },
+      { values: ['localhost,1433'] },
+      { pick: 'Microsoft Entra ID' },
+      { pick: 'Beta' },
+      { values: ['AdventureWorks'] },
+      { values: ['Entra'] },
     ]);
 
     await run();
 
-    expect((host.updates.at(-1)!.value as Array<Record<string, unknown>>)[0]).toMatchObject({ tenantId: 'b' });
+    expect(
+      (host.updates.at(-1)!.value as Array<Record<string, unknown>>)[0],
+    ).toMatchObject({ tenantId: 'b' });
   });
 
   it('addDatabaseConnection deletes the saved password when the saved connection is Entra ID', async () => {
@@ -683,7 +1044,10 @@ describe('saved password follows the server it was entered for', () => {
     const { context, secrets } = makeContext();
     registerConnectionCommands(context, outputChannel, async () => []);
 
-    await add({ connection: { ...valid, authenticationType: 'entraId', user: undefined }, password: 'ignored' });
+    await add({
+      connection: { ...valid, authenticationType: 'entraId', user: undefined },
+      password: 'ignored',
+    });
 
     expect(secrets.delete).toHaveBeenCalledWith(key);
     expect(secrets.store).not.toHaveBeenCalled();
@@ -692,7 +1056,9 @@ describe('saved password follows the server it was entered for', () => {
 
 describe('passwordSecretKey', () => {
   it('namespaces the secret by connection id', () => {
-    expect(passwordSecretKey('abc')).toBe('dataLineageViz.database.password.abc');
+    expect(passwordSecretKey('abc')).toBe(
+      'dataLineageViz.database.password.abc',
+    );
   });
 });
 
@@ -702,27 +1068,41 @@ describe('saved password binding', () => {
     return {
       stored,
       get: async (k: string) => stored[k],
-      store: async (k: string, v: string) => { stored[k] = v; },
+      store: async (k: string, v: string) => {
+        stored[k] = v;
+      },
     };
   }
-  const conn = { id: 'c1', server: 'tcp:SQL.example.com', port: 1433, user: 'sa' };
+  const conn = {
+    id: 'c1',
+    server: 'tcp:SQL.example.com',
+    port: 1433,
+    user: 'sa',
+  };
 
   it('returns the password for the server, port and user it was saved for', async () => {
     const secrets = memorySecrets();
     await savePassword(secrets, conn, 'pw');
     expect(secrets.stored[passwordSecretKey('c1')]).not.toBe('pw');
-    await expect(readSavedPassword(secrets, { ...conn, server: 'sql.example.com' })).resolves.toBe('pw');
+    await expect(
+      readSavedPassword(secrets, { ...conn, server: 'sql.example.com' }),
+    ).resolves.toBe('pw');
   });
 
   it.each([
     ['server', { server: 'attacker.example.com' }],
     ['port', { port: 1434 }],
     ['user', { user: 'other' }],
-  ])('returns no password when the %s differs from the one it was saved for', async (_label, patch) => {
-    const secrets = memorySecrets();
-    await savePassword(secrets, conn, 'pw');
-    await expect(readSavedPassword(secrets, { ...conn, ...patch })).resolves.toBeUndefined();
-  });
+  ])(
+    'returns no password when the %s differs from the one it was saved for',
+    async (_label, patch) => {
+      const secrets = memorySecrets();
+      await savePassword(secrets, conn, 'pw');
+      await expect(
+        readSavedPassword(secrets, { ...conn, ...patch }),
+      ).resolves.toBeUndefined();
+    },
+  );
 
   it('returns no password for an unbound or unreadable stored value', async () => {
     const secrets = memorySecrets();

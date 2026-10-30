@@ -1,8 +1,21 @@
-import { useCallback, useEffect, useMemo, type Dispatch, type SetStateAction } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  type Dispatch,
+  type SetStateAction,
+} from 'react';
 import type Graph from 'graphology';
 import { buildExpandedSchemaViewGraph } from '../engine/graphBuilder';
-import { countExpandedSchemaViewRenderedNodes, partitionBySchema } from '../engine/schemaProjection';
-import type { DatabaseModel, ExtensionConfig, GraphMode } from '../engine/types';
+import {
+  countExpandedSchemaViewRenderedNodes,
+  partitionBySchema,
+} from '../engine/schemaProjection';
+import type {
+  DatabaseModel,
+  ExtensionConfig,
+  GraphMode,
+} from '../engine/types';
 import { notifyUser } from '../utils/notify';
 
 /** UI state that tracks which schemas are expanded in Expanded Schema View. */
@@ -21,7 +34,9 @@ interface UseExpandedSchemaViewArgs {
   graphMode: GraphMode;
   model: DatabaseModel | null;
   preserveViewportOnNextGraphChange: () => void;
-  setExpandedSchemaView: Dispatch<SetStateAction<ExpandedSchemaViewState | null>>;
+  setExpandedSchemaView: Dispatch<
+    SetStateAction<ExpandedSchemaViewState | null>
+  >;
   setShowExpandedSchemaClusters: Dispatch<SetStateAction<boolean>>;
   showExpandedSchemaClusters: boolean;
 }
@@ -40,7 +55,8 @@ export function useExpandedSchemaView({
   showExpandedSchemaClusters,
 }: UseExpandedSchemaViewArgs) {
   const expandedSchemaViewRenderedCount = useMemo(() => {
-    if (graphMode !== 'overview' || !expandedSchemaView || !graph) return undefined;
+    if (graphMode !== 'overview' || !expandedSchemaView || !graph)
+      return undefined;
     return countExpandedSchemaViewRenderedNodes(
       graph,
       expandedSchemaView.expandedSchemas,
@@ -50,7 +66,12 @@ export function useExpandedSchemaView({
 
   /** The projected expanded-schema graph, or null when there is none to show. */
   const expandedSchemaViewGraph = useMemo(() => {
-    if (!expandedSchemaView || !graph || expandedSchemaViewRenderedCount === undefined) return null;
+    if (
+      !expandedSchemaView ||
+      !graph ||
+      expandedSchemaViewRenderedCount === undefined
+    )
+      return null;
     if (expandedSchemaViewRenderedCount > config.renderLimit) return null;
     return buildExpandedSchemaViewGraph(
       graph,
@@ -59,63 +80,93 @@ export function useExpandedSchemaView({
       config,
       { hideClusters: !showExpandedSchemaClusters },
     );
-  }, [config, expandedSchemaView, expandedSchemaViewRenderedCount, graph, showExpandedSchemaClusters]);
+  }, [
+    config,
+    expandedSchemaView,
+    expandedSchemaViewRenderedCount,
+    graph,
+    showExpandedSchemaClusters,
+  ]);
 
   /** Node IDs in the working set that are currently collapsed inside a schema cluster. */
   const collapsedSchemaNodeIds = useMemo(() => {
     if (graphMode !== 'overview' || !graph) return undefined;
     if (!expandedSchemaView) return new Set(graph.nodes());
-    return partitionBySchema(graph, expandedSchemaView.expandedSchemas).collapsed;
+    return partitionBySchema(graph, expandedSchemaView.expandedSchemas)
+      .collapsed;
   }, [expandedSchemaView, graph, graphMode]);
 
   const clearExpandedSchemaView = useCallback(() => {
     setExpandedSchemaView(null);
   }, [setExpandedSchemaView]);
 
-  const applyExpandedSchemaViewSchemas = useCallback((
-    expandedSchemas: Set<string>,
-    focusNodeId: string | null,
-    label: string,
-  ) => {
-    if (!graph) {
-      notifyUser('Expanded Schema View is still rebuilding. Try again after the graph finishes loading.');
-      return;
-    }
-    const projectedCount = countExpandedSchemaViewRenderedNodes(
-      graph,
-      expandedSchemas,
-      { includeCollapsedSchemaClusters: showExpandedSchemaClusters },
-    );
-    if (projectedCount > config.renderLimit) {
-      const subject = label === 'all' ? 'all schemas' : `schema "${label}"`;
-      notifyUser(
-        `Cannot expand ${subject}: Expanded Schema View would render ${projectedCount} nodes, over the render limit of ${config.renderLimit}.`
+  const applyExpandedSchemaViewSchemas = useCallback(
+    (
+      expandedSchemas: Set<string>,
+      focusNodeId: string | null,
+      label: string,
+    ) => {
+      if (!graph) {
+        notifyUser(
+          'Expanded Schema View is still rebuilding. Try again after the graph finishes loading.',
+        );
+        return;
+      }
+      const projectedCount = countExpandedSchemaViewRenderedNodes(
+        graph,
+        expandedSchemas,
+        { includeCollapsedSchemaClusters: showExpandedSchemaClusters },
       );
-      return;
-    }
-    setExpandedSchemaView({ focusNodeId, expandedSchemas });
-  }, [config.renderLimit, graph, setExpandedSchemaView, showExpandedSchemaClusters]);
+      if (projectedCount > config.renderLimit) {
+        const subject = label === 'all' ? 'all schemas' : `schema "${label}"`;
+        notifyUser(
+          `Cannot expand ${subject}: Expanded Schema View would render ${projectedCount} nodes, over the render limit of ${config.renderLimit}.`,
+        );
+        return;
+      }
+      setExpandedSchemaView({ focusNodeId, expandedSchemas });
+    },
+    [
+      config.renderLimit,
+      graph,
+      setExpandedSchemaView,
+      showExpandedSchemaClusters,
+    ],
+  );
 
   /** Open a node's schema in expanded schema view without changing filters. */
-  const openExpandedSchemaViewForNode = useCallback((nodeId: string) => {
-    const schema = model?.nodes.find((node) => node.id === nodeId)?.schema;
-    if (!schema) return;
-    const expandedSchemas = new Set(expandedSchemaView?.expandedSchemas ?? []);
-    expandedSchemas.add(schema);
-    applyExpandedSchemaViewSchemas(expandedSchemas, nodeId, schema);
-  }, [applyExpandedSchemaViewSchemas, expandedSchemaView, model]);
+  const openExpandedSchemaViewForNode = useCallback(
+    (nodeId: string) => {
+      const schema = model?.nodes.find((node) => node.id === nodeId)?.schema;
+      if (!schema) return;
+      const expandedSchemas = new Set(
+        expandedSchemaView?.expandedSchemas ?? [],
+      );
+      expandedSchemas.add(schema);
+      applyExpandedSchemaViewSchemas(expandedSchemas, nodeId, schema);
+    },
+    [applyExpandedSchemaViewSchemas, expandedSchemaView, model],
+  );
 
   /** Expand a schema cluster in place without changing filters. */
-  const expandExpandedSchemaViewSchema = useCallback((schema: string) => {
-    const expandedSchemas = new Set(expandedSchemaView?.expandedSchemas ?? []);
-    expandedSchemas.add(schema);
-    applyExpandedSchemaViewSchemas(expandedSchemas, null, schema);
-  }, [applyExpandedSchemaViewSchemas, expandedSchemaView]);
+  const expandExpandedSchemaViewSchema = useCallback(
+    (schema: string) => {
+      const expandedSchemas = new Set(
+        expandedSchemaView?.expandedSchemas ?? [],
+      );
+      expandedSchemas.add(schema);
+      applyExpandedSchemaViewSchemas(expandedSchemas, null, schema);
+    },
+    [applyExpandedSchemaViewSchemas, expandedSchemaView],
+  );
 
   /** Replace the expanded schema set with one schema. */
-  const centerExpandedSchemaViewSchema = useCallback((schema: string) => {
-    applyExpandedSchemaViewSchemas(new Set([schema]), null, schema);
-  }, [applyExpandedSchemaViewSchemas]);
+  const centerExpandedSchemaViewSchema = useCallback(
+    (schema: string) => {
+      applyExpandedSchemaViewSchemas(new Set([schema]), null, schema);
+    },
+    [applyExpandedSchemaViewSchemas],
+  );
 
   const toggleExpandedSchemaClusters = useCallback(() => {
     preserveViewportOnNextGraphChange();
@@ -123,28 +174,42 @@ export function useExpandedSchemaView({
   }, [preserveViewportOnNextGraphChange, setShowExpandedSchemaClusters]);
 
   /** Expand all visible schemas at once; rejected with a toast if it would exceed the render limit. */
-  const expandAllSchemas = useCallback((allSchemaNames: string[]) => {
-    applyExpandedSchemaViewSchemas(new Set(allSchemaNames), null, 'all');
-  }, [applyExpandedSchemaViewSchemas]);
+  const expandAllSchemas = useCallback(
+    (allSchemaNames: string[]) => {
+      applyExpandedSchemaViewSchemas(new Set(allSchemaNames), null, 'all');
+    },
+    [applyExpandedSchemaViewSchemas],
+  );
 
   /** Collapse one expanded schema; clearing the last schema returns to Schema View. */
-  const collapseExpandedSchemaViewSchema = useCallback((schema: string) => {
-    preserveViewportOnNextGraphChange();
-    setExpandedSchemaView((previous) => {
-      if (!previous) return null;
-      const expandedSchemas = new Set(previous.expandedSchemas);
-      expandedSchemas.delete(schema);
-      return expandedSchemas.size > 0 ? { focusNodeId: null, expandedSchemas } : null;
-    });
-  }, [preserveViewportOnNextGraphChange, setExpandedSchemaView]);
+  const collapseExpandedSchemaViewSchema = useCallback(
+    (schema: string) => {
+      preserveViewportOnNextGraphChange();
+      setExpandedSchemaView((previous) => {
+        if (!previous) return null;
+        const expandedSchemas = new Set(previous.expandedSchemas);
+        expandedSchemas.delete(schema);
+        return expandedSchemas.size > 0
+          ? { focusNodeId: null, expandedSchemas }
+          : null;
+      });
+    },
+    [preserveViewportOnNextGraphChange, setExpandedSchemaView],
+  );
 
   useEffect(() => {
     setExpandedSchemaView((previous) => {
       if (!previous || previous.expandedSchemas.size === 0) return previous;
       if (filterSchemas.size === 0) return previous;
-      const surviving = new Set([...previous.expandedSchemas].filter((schema) => filterSchemas.has(schema)));
+      const surviving = new Set(
+        [...previous.expandedSchemas].filter((schema) =>
+          filterSchemas.has(schema),
+        ),
+      );
       if (surviving.size === previous.expandedSchemas.size) return previous;
-      return surviving.size > 0 ? { focusNodeId: null, expandedSchemas: surviving } : null;
+      return surviving.size > 0
+        ? { focusNodeId: null, expandedSchemas: surviving }
+        : null;
     });
   }, [filterSchemas, setExpandedSchemaView]);
 

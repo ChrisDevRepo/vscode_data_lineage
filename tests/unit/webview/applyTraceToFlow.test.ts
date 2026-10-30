@@ -19,8 +19,16 @@ function traceState(overrides: Partial<TraceState> = {}): TraceState {
   } as TraceState;
 }
 
-const node = (id: string): FlowNode => ({ id, position: { x: 0, y: 0 }, data: { label: id } });
-const edge = (id: string, source: string, target: string): FlowEdge => ({ id, source, target });
+const node = (id: string): FlowNode => ({
+  id,
+  position: { x: 0, y: 0 },
+  data: { label: id },
+});
+const edge = (id: string, source: string, target: string): FlowEdge => ({
+  id,
+  source,
+  target,
+});
 
 const nodes = [node('A'), node('B'), node('C')];
 const edges = [edge('A→B', 'A', 'B'), edge('B→C', 'B', 'C')];
@@ -36,45 +44,65 @@ describe('applyTraceToFlow — passthrough', () => {
   );
 
   it('returns the unfiltered flow when the trace produced no nodes', () => {
-    const result = applyTraceToFlow(nodes, edges, traceState({ tracedNodeIds: new Set() }));
+    const result = applyTraceToFlow(
+      nodes,
+      edges,
+      traceState({ tracedNodeIds: new Set() }),
+    );
     expect(result.nodes).toBe(nodes);
     expect(result.edges).toBe(edges);
   });
 
   it('returns an empty view, without throwing, when no traced id is in the flow', () => {
-    const result = applyTraceToFlow(nodes, edges, traceState({
-      tracedNodeIds: new Set(['not-rendered']),
-    }));
+    const result = applyTraceToFlow(
+      nodes,
+      edges,
+      traceState({
+        tracedNodeIds: new Set(['not-rendered']),
+      }),
+    );
     expect(result.nodes).toEqual([]);
   });
 });
 
 describe('applyTraceToFlow — projection', () => {
   it('narrows the flow to the traced nodes and edges', () => {
-    const result = applyTraceToFlow(nodes, edges, traceState({
-      tracedNodeIds: new Set(['A', 'B']),
-      tracedEdgeIds: new Set(['A→B']),
-    }));
-    expect(result.nodes.map(entry => entry.id)).toEqual(['A', 'B']);
-    expect(result.edges.map(entry => entry.id)).toEqual(['A→B']);
+    const result = applyTraceToFlow(
+      nodes,
+      edges,
+      traceState({
+        tracedNodeIds: new Set(['A', 'B']),
+        tracedEdgeIds: new Set(['A→B']),
+      }),
+    );
+    expect(result.nodes.map((entry) => entry.id)).toEqual(['A', 'B']);
+    expect(result.edges.map((entry) => entry.id)).toEqual(['A→B']);
   });
 
   it.each(['A→B', 'B→A'])(
     'keeps the bidirectional edge A↔B when the trace recorded it as %s',
     (recorded) => {
-      const result = applyTraceToFlow(nodes, [edge('A↔B', 'A', 'B')], traceState({
-        tracedNodeIds: new Set(['A', 'B']),
-        tracedEdgeIds: new Set([recorded]),
-      }));
-      expect(result.edges.map(entry => entry.id)).toEqual(['A↔B']);
+      const result = applyTraceToFlow(
+        nodes,
+        [edge('A↔B', 'A', 'B')],
+        traceState({
+          tracedNodeIds: new Set(['A', 'B']),
+          tracedEdgeIds: new Set([recorded]),
+        }),
+      );
+      expect(result.edges.map((entry) => entry.id)).toEqual(['A↔B']);
     },
   );
 
   it('drops an edge the trace never recorded, in either direction', () => {
-    const result = applyTraceToFlow(nodes, [edge('A↔B', 'A', 'B')], traceState({
-      tracedNodeIds: new Set(['A', 'B']),
-      tracedEdgeIds: new Set(['B→C']),
-    }));
+    const result = applyTraceToFlow(
+      nodes,
+      [edge('A↔B', 'A', 'B')],
+      traceState({
+        tracedNodeIds: new Set(['A', 'B']),
+        tracedEdgeIds: new Set(['B→C']),
+      }),
+    );
     expect(result.edges).toEqual([]);
   });
 });
@@ -89,7 +117,8 @@ describe('applyTraceToFlow — decoration', () => {
 
   it('marks the origin highlighted and the pathfinding target yellow', () => {
     const result = applyTraceToFlow(nodes, edges, traced);
-    const highlight = (id: string) => result.nodes.find(entry => entry.id === id)!.data.highlighted;
+    const highlight = (id: string) =>
+      result.nodes.find((entry) => entry.id === id)!.data.highlighted;
     expect(highlight('A')).toBe(true);
     expect(highlight('C')).toBe('yellow');
     expect(highlight('B')).toBe(false);
@@ -101,37 +130,58 @@ describe('applyTraceToFlow — decoration', () => {
     }
   });
 
-  it('leaves the caller\'s nodes unmutated', () => {
+  it("leaves the caller's nodes unmutated", () => {
     applyTraceToFlow(nodes, edges, traced);
-    expect(nodes.every(entry => entry.position.x === 0 && entry.position.y === 0)).toBe(true);
+    expect(
+      nodes.every((entry) => entry.position.x === 0 && entry.position.y === 0),
+    ).toBe(true);
     expect(nodes[0].data.highlighted).toBeUndefined();
   });
 });
 
 describe('applyTraceToFlow — layout', () => {
   it('re-lays the surviving nodes rather than keeping their unfiltered positions', () => {
-    const result = applyTraceToFlow(nodes, edges, traceState({
-      tracedNodeIds: new Set(['A', 'B']),
-      tracedEdgeIds: new Set(['A→B']),
-    }));
-    expect(result.nodes.some(entry => entry.position.x !== 0 || entry.position.y !== 0)).toBe(true);
+    const result = applyTraceToFlow(
+      nodes,
+      edges,
+      traceState({
+        tracedNodeIds: new Set(['A', 'B']),
+        tracedEdgeIds: new Set(['A→B']),
+      }),
+    );
+    expect(
+      result.nodes.some(
+        (entry) => entry.position.x !== 0 || entry.position.y !== 0,
+      ),
+    ).toBe(true);
   });
 
   it('grids orphan analysis, which has no edges for dagre to rank', () => {
-    const result = applyTraceToFlow(nodes, [], traceState({
-      mode: 'analysis',
-      analysisType: 'orphans',
-      tracedNodeIds: new Set(['A', 'B', 'C']),
-    }));
-    const placed = new Set(result.nodes.map(entry => `${entry.position.x},${entry.position.y}`));
+    const result = applyTraceToFlow(
+      nodes,
+      [],
+      traceState({
+        mode: 'analysis',
+        analysisType: 'orphans',
+        tracedNodeIds: new Set(['A', 'B', 'C']),
+      }),
+    );
+    const placed = new Set(
+      result.nodes.map((entry) => `${entry.position.x},${entry.position.y}`),
+    );
     expect(placed.size).toBe(3);
   });
 });
 
-
 describe('applyTraceToFlow — out-of-filter synthesis', () => {
   const modelNode = (id: string, extra: Record<string, unknown> = {}) => ({
-    id, schema: 'dbo', name: id, fullName: `[dbo].[${id}]`, type: 'table' as const, columns: [], ...extra,
+    id,
+    schema: 'dbo',
+    name: id,
+    fullName: `[dbo].[${id}]`,
+    type: 'table' as const,
+    columns: [],
+    ...extra,
   });
 
   const hiddenModel = {
@@ -142,51 +192,96 @@ describe('applyTraceToFlow — out-of-filter synthesis', () => {
     neighborIndex: {},
   } as unknown as Parameters<typeof applyTraceToFlow>[4];
 
-  const pathTrace = () => traceState({
-    mode: 'path-applied',
-    tracedNodeIds: new Set(['A', 'HIDDEN', 'B']),
-    tracedEdgeIds: new Set(['A→HIDDEN', 'HIDDEN→B']),
-  });
+  const pathTrace = () =>
+    traceState({
+      mode: 'path-applied',
+      tracedNodeIds: new Set(['A', 'HIDDEN', 'B']),
+      tracedEdgeIds: new Set(['A→HIDDEN', 'HIDDEN→B']),
+    });
 
   it('injects a traced object the current filter hid', () => {
-    const result = applyTraceToFlow([node('A'), node('B')], [], pathTrace(), DEFAULT_CONFIG, hiddenModel);
-    expect(result.nodes.map(entry => entry.id).sort()).toEqual(['A', 'B', 'HIDDEN']);
+    const result = applyTraceToFlow(
+      [node('A'), node('B')],
+      [],
+      pathTrace(),
+      DEFAULT_CONFIG,
+      hiddenModel,
+    );
+    expect(result.nodes.map((entry) => entry.id).sort()).toEqual([
+      'A',
+      'B',
+      'HIDDEN',
+    ]);
   });
 
   it('injects the edges that reconnect the injected object', () => {
-    const result = applyTraceToFlow([node('A'), node('B')], [], pathTrace(), DEFAULT_CONFIG, hiddenModel);
-    expect(result.edges.map(entry => entry.id).sort()).toEqual(['A→HIDDEN', 'HIDDEN→B']);
+    const result = applyTraceToFlow(
+      [node('A'), node('B')],
+      [],
+      pathTrace(),
+      DEFAULT_CONFIG,
+      hiddenModel,
+    );
+    expect(result.edges.map((entry) => entry.id).sort()).toEqual([
+      'A→HIDDEN',
+      'HIDDEN→B',
+    ]);
   });
 
   it('gives an injected object its degrees from the synthesized edges, not zero', () => {
-    const result = applyTraceToFlow([node('A'), node('B')], [], pathTrace(), DEFAULT_CONFIG, hiddenModel);
-    const injected = result.nodes.find(entry => entry.id === 'HIDDEN');
+    const result = applyTraceToFlow(
+      [node('A'), node('B')],
+      [],
+      pathTrace(),
+      DEFAULT_CONFIG,
+      hiddenModel,
+    );
+    const injected = result.nodes.find((entry) => entry.id === 'HIDDEN');
     expect(injected?.data.inDegree).toBe(1);
     expect(injected?.data.outDegree).toBe(1);
   });
 
-  it('carries an external reference\'s own attributes onto the injected node', () => {
+  it("carries an external reference's own attributes onto the injected node", () => {
     const externalModel = {
       ...hiddenModel,
-      nodes: [modelNode('A'), modelNode('EXT', { externalType: 'db', externalDatabase: 'Other', externalUrl: 'x://y' })],
+      nodes: [
+        modelNode('A'),
+        modelNode('EXT', {
+          externalType: 'db',
+          externalDatabase: 'Other',
+          externalUrl: 'x://y',
+        }),
+      ],
     } as unknown as Parameters<typeof applyTraceToFlow>[4];
-    const result = applyTraceToFlow([node('A')], [], traceState({
-      mode: 'path-applied',
-      tracedNodeIds: new Set(['A', 'EXT']),
-      tracedEdgeIds: new Set(['A→EXT']),
-    }), DEFAULT_CONFIG, externalModel);
-    const injected = result.nodes.find(entry => entry.id === 'EXT');
+    const result = applyTraceToFlow(
+      [node('A')],
+      [],
+      traceState({
+        mode: 'path-applied',
+        tracedNodeIds: new Set(['A', 'EXT']),
+        tracedEdgeIds: new Set(['A→EXT']),
+      }),
+      DEFAULT_CONFIG,
+      externalModel,
+    );
+    const injected = result.nodes.find((entry) => entry.id === 'EXT');
     expect(injected?.data.externalType).toBe('db');
     expect(injected?.data.externalDatabase).toBe('Other');
   });
 
   it('skips a traced id the model does not know, instead of injecting a blank node', () => {
-    const result = applyTraceToFlow([node('A')], [], traceState({
-      mode: 'path-applied',
-      tracedNodeIds: new Set(['A', 'GHOST']),
-      tracedEdgeIds: new Set<string>(),
-    }), DEFAULT_CONFIG, hiddenModel);
-    expect(result.nodes.map(entry => entry.id)).toEqual(['A']);
+    const result = applyTraceToFlow(
+      [node('A')],
+      [],
+      traceState({
+        mode: 'path-applied',
+        tracedNodeIds: new Set(['A', 'GHOST']),
+        tracedEdgeIds: new Set<string>(),
+      }),
+      DEFAULT_CONFIG,
+      hiddenModel,
+    );
+    expect(result.nodes.map((entry) => entry.id)).toEqual(['A']);
   });
 
   it('does not synthesize in applied mode unless the caller asks for it', () => {
@@ -195,10 +290,27 @@ describe('applyTraceToFlow — out-of-filter synthesis', () => {
       tracedNodeIds: new Set(['A', 'HIDDEN']),
       tracedEdgeIds: new Set(['A→HIDDEN']),
     });
-    expect(applyTraceToFlow([node('A')], [], applied, DEFAULT_CONFIG, hiddenModel).nodes.map(e => e.id))
-      .toEqual(['A']);
-    expect(applyTraceToFlow([node('A')], [], applied, DEFAULT_CONFIG, hiddenModel, true).nodes.map(e => e.id).sort())
-      .toEqual(['A', 'HIDDEN']);
+    expect(
+      applyTraceToFlow(
+        [node('A')],
+        [],
+        applied,
+        DEFAULT_CONFIG,
+        hiddenModel,
+      ).nodes.map((e) => e.id),
+    ).toEqual(['A']);
+    expect(
+      applyTraceToFlow(
+        [node('A')],
+        [],
+        applied,
+        DEFAULT_CONFIG,
+        hiddenModel,
+        true,
+      )
+        .nodes.map((e) => e.id)
+        .sort(),
+    ).toEqual(['A', 'HIDDEN']);
   });
 
   it('leaves an already-rendered bidirectional edge alone rather than adding a duplicate', () => {
@@ -213,6 +325,6 @@ describe('applyTraceToFlow — out-of-filter synthesis', () => {
       DEFAULT_CONFIG,
       hiddenModel,
     );
-    expect(result.edges.map(entry => entry.id)).toEqual(['A↔B']);
+    expect(result.edges.map((entry) => entry.id)).toEqual(['A↔B']);
   });
 });

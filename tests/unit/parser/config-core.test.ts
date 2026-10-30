@@ -16,7 +16,9 @@ describe('parseAiOutputTemplatesYaml (assets/aiOutputTemplates.yaml)', () => {
   const text = readFileSync(rootPath('assets/aiOutputTemplates.yaml'), 'utf-8');
 
   it('declares the schemaVersion the loader enforces', () => {
-    expect(parseAiOutputTemplatesYaml(text).schemaVersion).toBe(AI_TEMPLATE_SCHEMA_VERSION);
+    expect(parseAiOutputTemplatesYaml(text).schemaVersion).toBe(
+      AI_TEMPLATE_SCHEMA_VERSION,
+    );
   });
 
   it('carries every required key, with the shared channel disabled and other defaults non-empty', () => {
@@ -24,13 +26,18 @@ describe('parseAiOutputTemplatesYaml (assets/aiOutputTemplates.yaml)', () => {
     for (const key of REQUIRED_AI_TEMPLATE_KEYS) {
       const entry = parsed[key] as { instruction?: string } | undefined;
       expect(entry, `required key '${key}' present`).toBeTruthy();
-      expect(typeof entry?.instruction, `required key '${key}' has a string instruction`).toBe('string');
+      expect(
+        typeof entry?.instruction,
+        `required key '${key}' has a string instruction`,
+      ).toBe('string');
       if (key === 'shared_capture') expect(entry?.instruction).toBe('');
-      else expect((entry?.instruction ?? '').trim().length, `required key '${key}' instruction non-empty`).toBeGreaterThan(0);
+      else
+        expect(
+          (entry?.instruction ?? '').trim().length,
+          `required key '${key}' instruction non-empty`,
+        ).toBeGreaterThan(0);
     }
   });
-
-
 });
 
 describe('parseParseRulesYaml (assets/defaultParseRules.yaml)', () => {
@@ -38,7 +45,7 @@ describe('parseParseRulesYaml (assets/defaultParseRules.yaml)', () => {
 
   it('yields the full shipped rule inventory', () => {
     const parsed = parseParseRulesYaml(text);
-    expect(parsed.rules?.map(rule => rule.name).sort()).toEqual([
+    expect(parsed.rules?.map((rule) => rule.name).sort()).toEqual([
       'clean_sql',
       'extract_bulk_from',
       'extract_bulk_insert',
@@ -58,23 +65,30 @@ describe('parseParseRulesYaml (assets/defaultParseRules.yaml)', () => {
       'extract_update_alias_target',
     ]);
   });
-
 });
 
 describe('AiOutputTemplatesConfigSchema negative/positive cases', () => {
   it('rejects a scalar value under a template key', () => {
-    expect(() => parseAiOutputTemplatesYaml('schemaVersion: 1\nsummary: "just a string"\n')).toThrow();
+    expect(() =>
+      parseAiOutputTemplatesYaml(
+        'schemaVersion: 1\nsummary: "just a string"\n',
+      ),
+    ).toThrow();
   });
 
   it('accepts a bare top-level schemaVersion scalar and round-trips it', () => {
     let parsed: ReturnType<typeof parseAiOutputTemplatesYaml> | undefined;
-    expect(() => { parsed = parseAiOutputTemplatesYaml('schemaVersion: 2\n'); }).not.toThrow();
+    expect(() => {
+      parsed = parseAiOutputTemplatesYaml('schemaVersion: 2\n');
+    }).not.toThrow();
     expect(parsed?.schemaVersion).toBe(2);
   });
 
   it('coerces a string schemaVersion "1" to numeric 1', () => {
     let parsed: ReturnType<typeof parseAiOutputTemplatesYaml> | undefined;
-    expect(() => { parsed = parseAiOutputTemplatesYaml('schemaVersion: "1"\n'); }).not.toThrow();
+    expect(() => {
+      parsed = parseAiOutputTemplatesYaml('schemaVersion: "1"\n');
+    }).not.toThrow();
     expect(parsed?.schemaVersion).toBe(1);
   });
 });
@@ -88,16 +102,22 @@ describe('clampDeclaredNumericSetting', () => {
 
   it('holds a value below the declared minimum at the minimum', () => {
     expect(clampDeclaredNumericSetting('maxNodes', 1)).toBe(10);
-    expect(clampDeclaredNumericSetting('trace.defaultUpstreamLevels', -5)).toBe(0);
+    expect(clampDeclaredNumericSetting('trace.defaultUpstreamLevels', -5)).toBe(
+      0,
+    );
   });
 
   it('rounds a fractional value of an integer setting', () => {
-    expect(clampDeclaredNumericSetting('tableStatistics.sampleSize', 1000.5)).toBe(1001);
-    expect(clampDeclaredNumericSetting('trace.defaultUpstreamLevels', 2.4)).toBe(2);
+    expect(
+      clampDeclaredNumericSetting('tableStatistics.sampleSize', 1000.5),
+    ).toBe(1001);
+    expect(
+      clampDeclaredNumericSetting('trace.defaultUpstreamLevels', 2.4),
+    ).toBe(2);
   });
 
   it('reads through readDeclaredNumericSetting with the manifest default for an unset or non-numeric value', () => {
-    const cfg = (value: unknown) => ({ get: <T,>() => value as T | undefined });
+    const cfg = (value: unknown) => ({ get: <T>() => value as T | undefined });
     expect(readDeclaredNumericSetting(cfg(undefined), 'renderLimit')).toBe(750);
     expect(readDeclaredNumericSetting(cfg('1000'), 'renderLimit')).toBe(750);
     expect(readDeclaredNumericSetting(cfg(99999), 'renderLimit')).toBe(1500);
@@ -105,7 +125,9 @@ describe('clampDeclaredNumericSetting', () => {
 
   it('passes an in-range value, an unset value and an undeclared key through unchanged', () => {
     expect(clampDeclaredNumericSetting('renderLimit', 750)).toBe(750);
-    expect(clampDeclaredNumericSetting('renderLimit', undefined)).toBeUndefined();
+    expect(
+      clampDeclaredNumericSetting('renderLimit', undefined),
+    ).toBeUndefined();
     expect(clampDeclaredNumericSetting('notDeclared', 123456)).toBe(123456);
   });
 });

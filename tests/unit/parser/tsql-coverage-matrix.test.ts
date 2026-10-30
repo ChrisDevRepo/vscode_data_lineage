@@ -3,31 +3,53 @@ import { readFileSync } from 'node:fs';
 import { load } from 'js-yaml';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { buildModel } from '../../../src/engine/modelBuilder';
-import { extractExternalRefs, parseSqlBody } from '../../../src/engine/sqlBodyParser';
+import {
+  extractExternalRefs,
+  parseSqlBody,
+} from '../../../src/engine/sqlBodyParser';
 import { loadParseRules } from '../helpers/testUtils';
 
-beforeAll(() => { loadParseRules(); });
+beforeAll(() => {
+  loadParseRules();
+});
 
 /** Expected references as `schema.object`; cross-database ones as `db.schema.object`. */
-type Expect = { s?: string[]; t?: string[]; x?: string[]; xs?: string[]; xt?: string[] };
+type Expect = {
+  s?: string[];
+  t?: string[];
+  x?: string[];
+  xs?: string[];
+  xt?: string[];
+};
 
 /** Plain expectations split at the first dot; quoted expectations are already canonical. */
 const key = (name: string, cs: boolean) => {
-  const canonical = name.startsWith('[') ? name : `[${name.replace(/]/g, ']]').replace('.', '].[')}]`;
+  const canonical = name.startsWith('[')
+    ? name
+    : `[${name.replace(/]/g, ']]').replace('.', '].[')}]`;
   return cs ? canonical : canonical.toLowerCase();
 };
-const sorted = <T>(list: T[]) => [...list].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+const sorted = <T>(list: T[]) =>
+  [...list].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
 
 function expectParsed(sql: string, want: Expect, cs = false) {
   const parsed = parseSqlBody(sql, undefined, cs);
-  const names = (values: string[] = []) => sorted(values.map(name => key(name, cs)));
-  const remote = (values: string[] = []) => sorted(values.map(name => cs ? name : name.toLowerCase()));
+  const names = (values: string[] = []) =>
+    sorted(values.map((name) => key(name, cs)));
+  const remote = (values: string[] = []) =>
+    sorted(values.map((name) => (cs ? name : name.toLowerCase())));
   expect({
-    s: sorted(parsed.sources), t: sorted(parsed.targets), x: sorted(parsed.execCalls),
-    xs: sorted(parsed.crossDbSources), xt: sorted(parsed.crossDbTargets),
+    s: sorted(parsed.sources),
+    t: sorted(parsed.targets),
+    x: sorted(parsed.execCalls),
+    xs: sorted(parsed.crossDbSources),
+    xt: sorted(parsed.crossDbTargets),
   }).toEqual({
-    s: names(want.s), t: names(want.t), x: names(want.x),
-    xs: remote(want.xs), xt: remote(want.xt),
+    s: names(want.s),
+    t: names(want.t),
+    x: names(want.x),
+    xs: remote(want.xs),
+    xt: remote(want.xt),
   });
   return parsed;
 }
@@ -42,7 +64,12 @@ interface EdgeCase {
     tables: string[];
     metadata: string[];
     current_database?: string;
-    edges: Array<{ source: string; target: string; type: 'body' | 'exec'; deleteOnly?: true }>;
+    edges: Array<{
+      source: string;
+      target: string;
+      type: 'body' | 'exec';
+      deleteOnly?: true;
+    }>;
   };
   sources?: string[];
   targets?: string[];
@@ -53,50 +80,106 @@ interface EdgeCase {
   external?: { url: string; kind: string }[];
 }
 
-const cases = (load(readFileSync(new URL('../../cases/parser/exact-edges.yaml', import.meta.url), 'utf8')) as { cases: EdgeCase[] }).cases;
+const cases = (
+  load(
+    readFileSync(
+      new URL('../../cases/parser/exact-edges.yaml', import.meta.url),
+      'utf8',
+    ),
+  ) as { cases: EdgeCase[] }
+).cases;
 
 describe('exact parser edges', () => {
   it('gives every case its own id', () => {
-    const ids = cases.map(row => row.id);
+    const ids = cases.map((row) => row.id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(cases.every(row => row.id && row.description && row.sql)).toBe(true);
+    expect(cases.every((row) => row.id && row.description && row.sql)).toBe(
+      true,
+    );
     for (const row of cases) {
       const modes = row.case_modes ?? ['ci'];
       expect(modes.length, row.id).toBeGreaterThan(0);
       expect(new Set(modes).size, row.id).toBe(modes.length);
-      expect(modes.every(mode => mode === 'ci' || mode === 'cs'), row.id).toBe(true);
+      expect(
+        modes.every((mode) => mode === 'ci' || mode === 'cs'),
+        row.id,
+      ).toBe(true);
     }
   });
 
-  it.each(cases.flatMap(row => (row.case_modes ?? ['ci']).map(mode => ({ ...row, mode }))))('$id ($mode)', row => {
+  it.each(
+    cases.flatMap((row) =>
+      (row.case_modes ?? ['ci']).map((mode) => ({ ...row, mode })),
+    ),
+  )('$id ($mode)', (row) => {
     const cs = row.mode === 'cs';
-    const parsed = expectParsed(row.sql, {
-      s: row.sources, t: row.targets, x: row.exec, xs: row.cross_db_sources, xt: row.cross_db_targets,
-    }, cs);
-    if (row.mutations !== undefined) expect(parsed.mutations).toEqual(row.mutations);
+    const parsed = expectParsed(
+      row.sql,
+      {
+        s: row.sources,
+        t: row.targets,
+        x: row.exec,
+        xs: row.cross_db_sources,
+        xt: row.cross_db_targets,
+      },
+      cs,
+    );
+    if (row.mutations !== undefined)
+      expect(parsed.mutations).toEqual(row.mutations);
     if (row.graph !== undefined) {
       const focus = 'gen.Subject';
       const objects = [
         { fullName: focus, type: 'procedure' as const, bodyScript: row.sql },
-        ...row.graph.tables.map(fullName => ({ fullName, type: 'table' as const })),
+        ...row.graph.tables.map((fullName) => ({
+          fullName,
+          type: 'table' as const,
+        })),
       ];
-      const metadata = row.graph.metadata.map(targetName => ({ sourceName: focus, targetName }));
-      const model = buildModel(objects, metadata, objects, row.graph.current_database ?? 'LocalDb', true, undefined, cs);
-      expect(sorted(model.edges)).toEqual(sorted(row.graph.edges.map(edge => ({
-        ...edge, source: cs ? edge.source : edge.source.toLowerCase(), target: cs ? edge.target : edge.target.toLowerCase(),
-      }))));
+      const metadata = row.graph.metadata.map((targetName) => ({
+        sourceName: focus,
+        targetName,
+      }));
+      const model = buildModel(
+        objects,
+        metadata,
+        objects,
+        row.graph.current_database ?? 'LocalDb',
+        true,
+        undefined,
+        cs,
+      );
+      expect(sorted(model.edges)).toEqual(
+        sorted(
+          row.graph.edges.map((edge) => ({
+            ...edge,
+            source: cs ? edge.source : edge.source.toLowerCase(),
+            target: cs ? edge.target : edge.target.toLowerCase(),
+          })),
+        ),
+      );
     }
     if (row.external !== undefined) {
-      expect(extractExternalRefs(row.sql).map(ref => ({ url: ref.url, kind: ref.kind }))).toEqual(row.external);
+      expect(
+        extractExternalRefs(row.sql).map((ref) => ({
+          url: ref.url,
+          kind: ref.kind,
+        })),
+      ).toEqual(row.external);
     }
   });
 
   it('a SET list of any length keeps the aliased write', () => {
-    expectParsed(`UPDATE t SET x=1${', y=1'.repeat(1000)} FROM dbo.T t`, { s: ['dbo.T'], t: ['dbo.T'] });
+    expectParsed(`UPDATE t SET x=1${', y=1'.repeat(1000)} FROM dbo.T t`, {
+      s: ['dbo.T'],
+      t: ['dbo.T'],
+    });
   });
 
   it('CTAS with a column list, nested options and options of any length', () => {
-    expectParsed(`CREATE TABLE dbo.T (a, b) WITH (DISTRIBUTION = HASH(a), PARTITION (b RANGE RIGHT FOR VALUES (${'1, '.repeat(300)}2)))\nAS\nSELECT a, b FROM dbo.S`, { s: ['dbo.S'], t: ['dbo.T'] });
+    expectParsed(
+      `CREATE TABLE dbo.T (a, b) WITH (DISTRIBUTION = HASH(a), PARTITION (b RANGE RIGHT FOR VALUES (${'1, '.repeat(300)}2)))\nAS\nSELECT a, b FROM dbo.S`,
+      { s: ['dbo.S'], t: ['dbo.T'] },
+    );
   });
 });
 
@@ -123,21 +206,39 @@ describe('the ANSI-89 comma-list scan is linear in the size of the body', () => 
     return { cpu, wall };
   };
 
-  const body = (unit: string, kb: number) => unit.repeat(Math.ceil(kb * 1024 / unit.length));
+  const body = (unit: string, kb: number) =>
+    unit.repeat(Math.ceil((kb * 1024) / unit.length));
   const inputs: Array<[string, (kb: number) => string]> = [
-    ['repeated FETCH NEXT FROM c', kb => body('FETCH NEXT FROM c INTO @x\n', kb)],
-    ['repeated unbalanced [', kb => body('[ x ', kb)],
-    ['one long comma list', kb => 'SELECT * FROM dbo.A a' + body(', dbo.B b WITH (NOLOCK), dbo.fn(1, 2) f, (SELECT 1 x) d', kb)],
+    [
+      'repeated FETCH NEXT FROM c',
+      (kb) => body('FETCH NEXT FROM c INTO @x\n', kb),
+    ],
+    ['repeated unbalanced [', (kb) => body('[ x ', kb)],
+    [
+      'one long comma list',
+      (kb) =>
+        'SELECT * FROM dbo.A a' +
+        body(', dbo.B b WITH (NOLOCK), dbo.fn(1, 2) f, (SELECT 1 x) d', kb),
+    ],
   ];
 
-  it.each(inputs)('%s', (_name, build) => {
-    const times = fastestSeconds(SIZES_KB.map(kb => build(kb)));
-    expect(Math.max(...times.wall), 'elapsed time stays below the wall-clock cap').toBeLessThan(MAX_SECONDS);
-    times.cpu.slice(1).forEach((time, i) => {
-      // CPU growth detects nonlinear parsing; scheduler waits belong only to the absolute elapsed cap.
-      // A floor keeps a sub-millisecond baseline from turning timer noise into a ratio.
-      expect(time / Math.max(times.cpu[i], 0.01), `cpu scaling from ${SIZES_KB[i]} to ${SIZES_KB[i + 1]} KB`)
-        .toBeLessThan(MAX_RATIO_PER_DOUBLING);
-    });
-  }, RUNS * SIZES_KB.length * MAX_SECONDS * 1000); // the runner's timeout must not cut below the elapsed cap asserted above
+  it.each(inputs)(
+    '%s',
+    (_name, build) => {
+      const times = fastestSeconds(SIZES_KB.map((kb) => build(kb)));
+      expect(
+        Math.max(...times.wall),
+        'elapsed time stays below the wall-clock cap',
+      ).toBeLessThan(MAX_SECONDS);
+      times.cpu.slice(1).forEach((time, i) => {
+        // CPU growth detects nonlinear parsing; scheduler waits belong only to the absolute elapsed cap.
+        // A floor keeps a sub-millisecond baseline from turning timer noise into a ratio.
+        expect(
+          time / Math.max(times.cpu[i], 0.01),
+          `cpu scaling from ${SIZES_KB[i]} to ${SIZES_KB[i + 1]} KB`,
+        ).toBeLessThan(MAX_RATIO_PER_DOUBLING);
+      });
+    },
+    RUNS * SIZES_KB.length * MAX_SECONDS * 1000,
+  ); // the runner's timeout must not cut below the elapsed cap asserted above
 });

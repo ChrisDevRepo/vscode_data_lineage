@@ -1,7 +1,18 @@
 import { memo, useMemo, useCallback, useState } from 'react';
-import { FloatingPortal, useFloating, offset, flip, shift, size, autoUpdate } from '@floating-ui/react';
+import {
+  FloatingPortal,
+  useFloating,
+  offset,
+  flip,
+  shift,
+  size,
+  autoUpdate,
+} from '@floating-ui/react';
 import type { ObjectType } from '../engine/types';
-import { filterSuggestions, type AutocompleteNode } from '../utils/autocomplete';
+import {
+  filterSuggestions,
+  type AutocompleteNode,
+} from '../utils/autocomplete';
 import { useAutocomplete } from '../hooks/useAutocomplete';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import { SuggestionList } from './ui/SuggestionList';
@@ -17,7 +28,12 @@ interface SearchWithAutocompleteProps {
   /** When set, the Start Trace action renders disabled with this reason instead of starting a trace. */
   startTraceDisabledReason?: string;
   /** Flattened list of all nodes in the project for autocomplete suggestions. */
-  allNodes?: Array<{ id: string; name: string; schema: string; type: ObjectType }>;
+  allNodes?: Array<{
+    id: string;
+    name: string;
+    schema: string;
+    type: ObjectType;
+  }>;
   /** Authoritative set of node IDs currently rendered in the graph; partitions suggestions into "In View" and "Other". */
   visibleNodeIds: Set<string>;
   /** IDs of working-set nodes collapsed inside a schema cluster; forms a third suggestion partition when provided. */
@@ -40,17 +56,22 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
     [allNodes, searchTerm],
   );
 
-  const { suggestions, collapsedSuggestions, otherSuggestions } = useMemo(() => {
-    const rendered: typeof allSuggestions = [];
-    const collapsed: typeof allSuggestions = [];
-    const filtered: typeof allSuggestions = [];
-    for (const n of allSuggestions) {
-      if (!visibleNodeIds.has(n.id)) filtered.push(n);
-      else if (collapsedSchemaNodeIds?.has(n.id)) collapsed.push(n);
-      else rendered.push(n);
-    }
-    return { suggestions: rendered, collapsedSuggestions: collapsed, otherSuggestions: filtered };
-  }, [allSuggestions, visibleNodeIds, collapsedSchemaNodeIds]);
+  const { suggestions, collapsedSuggestions, otherSuggestions } =
+    useMemo(() => {
+      const rendered: typeof allSuggestions = [];
+      const collapsed: typeof allSuggestions = [];
+      const filtered: typeof allSuggestions = [];
+      for (const n of allSuggestions) {
+        if (!visibleNodeIds.has(n.id)) filtered.push(n);
+        else if (collapsedSchemaNodeIds?.has(n.id)) collapsed.push(n);
+        else rendered.push(n);
+      }
+      return {
+        suggestions: rendered,
+        collapsedSuggestions: collapsed,
+        otherSuggestions: filtered,
+      };
+    }, [allSuggestions, visibleNodeIds, collapsedSchemaNodeIds]);
 
   const allVisibleSuggestions = useMemo(
     () => [...suggestions, ...collapsedSuggestions, ...otherSuggestions],
@@ -76,32 +97,49 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
       shift({ padding: 8 }),
       size({
         apply({ rects, elements }) {
-          Object.assign(elements.floating.style, { minWidth: `${rects.reference.width}px`, width: '360px', maxWidth: '420px' });
+          Object.assign(elements.floating.style, {
+            minWidth: `${rects.reference.width}px`,
+            width: '360px',
+            maxWidth: '420px',
+          });
         },
       }),
     ],
   });
 
-  const mergedDropdownRef = useCallback((node: HTMLDivElement | null) => {
-    dropdownRef.current = node;
-    refs.setFloating(node);
-  }, [dropdownRef, refs]);
+  const mergedDropdownRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      dropdownRef.current = node;
+      refs.setFloating(node);
+    },
+    [dropdownRef, refs],
+  );
 
-  useKeyboardShortcut(SHORTCUT_KEYS.quickJump, () => inputRef.current?.focus(), true);
+  useKeyboardShortcut(
+    SHORTCUT_KEYS.quickJump,
+    () => inputRef.current?.focus(),
+    true,
+  );
 
   const closeSearch = useCallback(() => {
     setSearchTerm('');
     setIsOpen(false);
   }, [setIsOpen]);
 
-  const executeSearch = useCallback((name: string, schema?: string) => {
-    onExecuteSearch?.(name, schema);
-    closeSearch();
-  }, [onExecuteSearch, closeSearch]);
+  const executeSearch = useCallback(
+    (name: string, schema?: string) => {
+      onExecuteSearch?.(name, schema);
+      closeSearch();
+    },
+    [onExecuteSearch, closeSearch],
+  );
 
-  const selectSuggestion = useCallback((node: AutocompleteNode) => {
-    executeSearch(node.name, node.schema);
-  }, [executeSearch]);
+  const selectSuggestion = useCallback(
+    (node: AutocompleteNode) => {
+      executeSearch(node.name, node.schema);
+    },
+    [executeSearch],
+  );
 
   return (
     <div className="relative" ref={refs.setReference}>
@@ -129,18 +167,43 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
       />
       {searchTerm ? (
         <button
-          onClick={() => { setSearchTerm(''); setIsOpen(false); }}
+          onClick={() => {
+            setSearchTerm('');
+            setIsOpen(false);
+          }}
           className="absolute right-0 top-0 h-9 w-9 flex items-center justify-center ln-text-muted hover:opacity-70"
           aria-label="Clear search"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor" className="w-4 h-4">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth="2"
+            stroke="currentColor"
+            className="w-4 h-4"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M6 18 18 6M6 6l12 12"
+            />
           </svg>
         </button>
       ) : (
         <div className="absolute right-0 top-0 h-9 w-9 flex items-center justify-center pointer-events-none ln-text-placeholder">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor" className="w-4 h-4">
-            <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth="2"
+            stroke="currentColor"
+            className="w-4 h-4"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"
+            />
           </svg>
         </div>
       )}
@@ -156,33 +219,48 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
             onHover={setSelectedIndex}
             dropdownRef={mergedDropdownRef}
             style={floatingStyles}
-            renderAction={onStartTrace ? (node) => {
-              const trigger = disabledControl(
-                (e: React.MouseEvent) => {
-                  e.stopPropagation();
-                  onStartTrace(node.id);
-                  setSearchTerm('');
-                  setIsOpen(false);
-                },
-                !!startTraceDisabledReason,
-                startTraceDisabledReason,
-                'Start Trace',
-              );
-              return (
-                <Tooltip content={trigger.tooltip}>
-                  <button
-                    onClick={trigger.onClick}
-                    disabled={trigger.disabled}
-                    aria-label={`Start Trace from ${node.name}`}
-                    className="shrink-0 w-7 h-7 flex items-center justify-center rounded-sm hover:opacity-70 ln-text-link disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:opacity-40"
-                  >
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.042 21.672 13.684 16.6m0 0-2.51 2.225.569-9.47 5.227 7.917-3.286-.672Zm-7.518-.267A8.25 8.25 0 1 1 20.25 10.5M8.288 14.212A5.25 5.25 0 1 1 17.25 10.5" />
-                  </svg>
-                </button>
-                </Tooltip>
-              );
-            } : undefined}
+            renderAction={
+              onStartTrace
+                ? (node) => {
+                    const trigger = disabledControl(
+                      (e: React.MouseEvent) => {
+                        e.stopPropagation();
+                        onStartTrace(node.id);
+                        setSearchTerm('');
+                        setIsOpen(false);
+                      },
+                      !!startTraceDisabledReason,
+                      startTraceDisabledReason,
+                      'Start Trace',
+                    );
+                    return (
+                      <Tooltip content={trigger.tooltip}>
+                        <button
+                          onClick={trigger.onClick}
+                          disabled={trigger.disabled}
+                          aria-label={`Start Trace from ${node.name}`}
+                          className="shrink-0 w-7 h-7 flex items-center justify-center rounded-sm hover:opacity-70 ln-text-link disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:opacity-40"
+                        >
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            strokeWidth={2}
+                            stroke="currentColor"
+                            className="w-4 h-4"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="M15.042 21.672 13.684 16.6m0 0-2.51 2.225.569-9.47 5.227 7.917-3.286-.672Zm-7.518-.267A8.25 8.25 0 1 1 20.25 10.5M8.288 14.212A5.25 5.25 0 1 1 17.25 10.5"
+                            />
+                          </svg>
+                        </button>
+                      </Tooltip>
+                    );
+                  }
+                : undefined
+            }
           />
         </FloatingPortal>
       )}

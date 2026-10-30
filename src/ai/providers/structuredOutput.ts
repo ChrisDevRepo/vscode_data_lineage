@@ -23,4 +23,3 @@ export class StructuredOutputError extends Error {
     this.name = 'StructuredOutputError';
   }
 }
-

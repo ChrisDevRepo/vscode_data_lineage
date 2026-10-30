@@ -5,7 +5,11 @@ import type { TableStatsState } from '../components/TableDetailPanel';
 import type { StatsMode } from '../engine/profilingEngine';
 import { TableDetailPanel } from '../components/TableDetailPanel';
 import { MonacoSqlView } from './MonacoSqlView';
-import { BRIDGE_PROTOCOL_VERSION, ExtensionToDetailMsgSchema, validateBridgeFrame } from '../engine/shared/bridgeContract';
+import {
+  BRIDGE_PROTOCOL_VERSION,
+  ExtensionToDetailMsgSchema,
+  validateBridgeFrame,
+} from '../engine/shared/bridgeContract';
 
 /** Configuration options for the detail view, typically synchronized from VS Code settings. */
 interface DetailConfig {
@@ -31,10 +35,10 @@ interface DetailState {
 
 /** Default configuration used when no explicit config is provided by the extension host. */
 const DEFAULT_DETAIL_CONFIG: DetailConfig = {
-  isDbMode:              false,
-  statsEnabled:          DEFAULT_CONFIG.tableStatistics.enabled,
+  isDbMode: false,
+  statsEnabled: DEFAULT_CONFIG.tableStatistics.enabled,
   excludeExternalTables: DEFAULT_CONFIG.tableStatistics.excludeExternalTables,
-  standardModeEnabled:   DEFAULT_CONFIG.tableStatistics.standardModeEnabled,
+  standardModeEnabled: DEFAULT_CONFIG.tableStatistics.standardModeEnabled,
 };
 
 /** VS Code API acquired once for the detail webview lifecycle. */
@@ -43,19 +47,28 @@ const _vscodeApi = acquireVsCodeApi();
 window.vscode = _vscodeApi;
 
 window.addEventListener('unhandledrejection', (event) => {
-  const msg = event.reason instanceof Error ? event.reason.message : String(event.reason);
-  _vscodeApi.postMessage({ type: 'error', error: `[Detail] Unhandled rejection: ${msg}` });
+  const msg =
+    event.reason instanceof Error ? event.reason.message : String(event.reason);
+  _vscodeApi.postMessage({
+    type: 'error',
+    error: `[Detail] Unhandled rejection: ${msg}`,
+  });
 });
 window.addEventListener('error', (event) => {
-  _vscodeApi.postMessage({ type: 'error', error: `[Detail] Uncaught error: ${event.message}` });
+  _vscodeApi.postMessage({
+    type: 'error',
+    error: `[Detail] Uncaught error: ${event.message}`,
+  });
 });
 
 /** Coordinates detail-webview messages, DDL/column views, and profiling state. */
 export function DetailApp() {
-  const vscodeApi  = useRef(_vscodeApi);
-  const nodeRef    = useRef<LineageNode | undefined>(undefined);
+  const vscodeApi = useRef(_vscodeApi);
+  const nodeRef = useRef<LineageNode | undefined>(undefined);
   const [detail, setDetail] = useState<DetailState | null>(null);
-  const [statsState, setStatsState] = useState<TableStatsState>({ phase: 'idle' });
+  const [statsState, setStatsState] = useState<TableStatsState>({
+    phase: 'idle',
+  });
   const [detailMode, setDetailMode] = useState<'columns' | 'ddl'>('ddl');
 
   useEffect(() => {
@@ -78,22 +91,29 @@ export function DetailApp() {
       const msg = frame.data;
 
       if (msg.type === 'detail-update') {
-        if (nodeRef.current?.id !== msg.node.id) setStatsState({ phase: 'idle' });
+        if (nodeRef.current?.id !== msg.node.id)
+          setStatsState({ phase: 'idle' });
         nodeRef.current = msg.node;
         setDetail({
-          node:      msg.node,
+          node: msg.node,
           findQuery: msg.findQuery,
-          config:    msg.config ?? DEFAULT_DETAIL_CONFIG,
+          config: msg.config ?? DEFAULT_DETAIL_CONFIG,
         });
       } else if (msg.type === 'detail-clear') {
         nodeRef.current = undefined;
         setStatsState({ phase: 'idle' });
         setDetail(null);
-      } else if ((msg.type === 'table-stats-result' || msg.type === 'table-stats-error')
-        && msg.objectRef.schema === nodeRef.current?.schema && msg.objectRef.objectName === nodeRef.current?.name) {
-        setStatsState(msg.type === 'table-stats-result'
-          ? { phase: 'result', stats: msg.stats, mode: msg.mode }
-          : { phase: 'error', message: msg.message });
+      } else if (
+        (msg.type === 'table-stats-result' ||
+          msg.type === 'table-stats-error') &&
+        msg.objectRef.schema === nodeRef.current?.schema &&
+        msg.objectRef.objectName === nodeRef.current?.name
+      ) {
+        setStatsState(
+          msg.type === 'table-stats-result'
+            ? { phase: 'result', stats: msg.stats, mode: msg.mode }
+            : { phase: 'error', message: msg.message },
+        );
       }
     }
     window.addEventListener('message', handler);
@@ -101,7 +121,9 @@ export function DetailApp() {
     return () => window.removeEventListener('message', handler);
   }, []);
 
-  useEffect(() => { setDetailMode('ddl'); }, [detail?.node?.id]);
+  useEffect(() => {
+    setDetailMode('ddl');
+  }, [detail?.node?.id]);
 
   if (!detail) {
     return (
@@ -164,11 +186,15 @@ export function DetailApp() {
           <button
             onClick={() => setDetailMode('ddl')}
             className={`ln-detail-tab-button${detailMode === 'ddl' ? ' active' : ''}`}
-          >DDL</button>
+          >
+            DDL
+          </button>
           <button
             onClick={() => setDetailMode('columns')}
             className={`ln-detail-tab-button${detailMode === 'columns' ? ' active' : ''}`}
-          >Columns</button>
+          >
+            Columns
+          </button>
         </div>
         <div style={{ flex: 1, overflow: 'hidden' }}>
           {detailMode === 'columns' ? (

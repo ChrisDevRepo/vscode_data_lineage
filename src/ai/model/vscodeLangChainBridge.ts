@@ -25,7 +25,11 @@ import {
   PROVIDER_PARTS_KEY,
   type ModelPortErrorCode,
 } from './modelPort';
-import { systemPromptHash, type WireEvent, type WirePart } from '../observability/wireLog';
+import {
+  systemPromptHash,
+  type WireEvent,
+  type WirePart,
+} from '../observability/wireLog';
 import { toWireMessage, toWirePart } from '../observability/vscodeWireLog';
 import { sanitizeProviderError } from '../support/text';
 import { STRUCTURED_OUTPUT_TOOL_DESCRIPTION } from '../providers/structuredOutput';
@@ -49,7 +53,11 @@ interface VscodeLangChainCallOptions extends BaseChatModelCallOptions {
 }
 
 /** A tool-bound bridge runnable, streamable for its raw `AIMessageChunk`s. */
-export type VscodeBridgeRunnable = Runnable<BaseLanguageModelInput, AIMessageChunk, VscodeLangChainCallOptions>;
+export type VscodeBridgeRunnable = Runnable<
+  BaseLanguageModelInput,
+  AIMessageChunk,
+  VscodeLangChainCallOptions
+>;
 
 /** Constructor fields for one request-selected VS Code language model. */
 interface VscodeLangChainBridgeFields {
@@ -62,9 +70,7 @@ interface VscodeLangChainBridgeFields {
 }
 
 /** LangChain `BaseChatModel` backed by exactly one VS Code `request.model`. */
-export class VscodeLangChainBridge extends BaseChatModel<
-  VscodeLangChainCallOptions
-> {
+export class VscodeLangChainBridge extends BaseChatModel<VscodeLangChainCallOptions> {
   private readonly model: vscode.LanguageModelChat;
   private readonly token: vscode.CancellationToken;
   private readonly wire?: (event: WireEvent) => void;
@@ -95,16 +101,27 @@ export class VscodeLangChainBridge extends BaseChatModel<
   }
 
   /** Binds one tool, described by its model-facing JSON Schema, forced via `tool_choice`, guaranteeing that exact call. */
-  bindStructuredOutputTool(inputSchema: Record<string, unknown>, functionName: string): VscodeBridgeRunnable {
+  bindStructuredOutputTool(
+    inputSchema: Record<string, unknown>,
+    functionName: string,
+  ): VscodeBridgeRunnable {
     return this.bindTools(
-      [{ name: functionName, description: STRUCTURED_OUTPUT_TOOL_DESCRIPTION, inputSchema }],
+      [
+        {
+          name: functionName,
+          description: STRUCTURED_OUTPUT_TOOL_DESCRIPTION,
+          inputSchema,
+        },
+      ],
       { tool_choice: functionName },
     );
   }
 
   /** True once either the bridge's own cancellation token or the LangChain call's abort signal fires. */
   private isCancelled(options: this['ParsedCallOptions']): boolean {
-    return this.token.isCancellationRequested || Boolean(options.signal?.aborted);
+    return (
+      this.token.isCancellationRequested || Boolean(options.signal?.aborted)
+    );
   }
 
   /** Folds the streaming bridge output into LangChain's non-streaming result shape. */
@@ -114,14 +131,20 @@ export class VscodeLangChainBridge extends BaseChatModel<
     runManager?: CallbackManagerForLLMRun,
   ): Promise<ChatResult> {
     let combined: ChatGenerationChunk | undefined;
-    for await (const generation of this._streamResponseChunks(messages, options, runManager)) {
+    for await (const generation of this._streamResponseChunks(
+      messages,
+      options,
+      runManager,
+    )) {
       combined = combined ? combined.concat(generation) : generation;
     }
     return {
-      generations: [{
-        text: combined?.text ?? '',
-        message: combined?.message ?? new AIMessageChunk({ content: '' }),
-      }],
+      generations: [
+        {
+          text: combined?.text ?? '',
+          message: combined?.message ?? new AIMessageChunk({ content: '' }),
+        },
+      ],
     };
   }
 
@@ -135,7 +158,10 @@ export class VscodeLangChainBridge extends BaseChatModel<
       throw cancelledError();
     }
     const definitions = [...(options.tools ?? [])];
-    const { tools, toolMode } = projectToolChoice(definitions, options.tool_choice);
+    const { tools, toolMode } = projectToolChoice(
+      definitions,
+      options.tool_choice,
+    );
     let iterator: AsyncIterator<unknown> | undefined;
     let reachedEof = false;
     const capture = this.wire
@@ -181,7 +207,9 @@ export class VscodeLangChainBridge extends BaseChatModel<
               type: 'wire-response',
               text: capture.text,
               toolCalls: capture.calls,
-              ...(capture.otherParts.length > 0 ? { otherParts: capture.otherParts } : {}),
+              ...(capture.otherParts.length > 0
+                ? { otherParts: capture.otherParts }
+                : {}),
             });
           }
           if (this.isCancelled(options)) {
@@ -197,29 +225,44 @@ export class VscodeLangChainBridge extends BaseChatModel<
           break;
         }
         const part = next.value;
-        replyReceived ||= !(part instanceof vscode.LanguageModelTextPart) || part.value.length > 0;
+        replyReceived ||=
+          !(part instanceof vscode.LanguageModelTextPart) ||
+          part.value.length > 0;
         if (part instanceof vscode.LanguageModelTextPart) {
           if (capture) capture.text += part.value;
           const message = new AIMessageChunk({ content: part.value });
           const chunk = new ChatGenerationChunk({ text: part.value, message });
-          await runManager?.handleLLMNewToken(part.value, undefined, undefined, undefined, undefined, { chunk });
+          await runManager?.handleLLMNewToken(
+            part.value,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            { chunk },
+          );
           yield chunk;
           continue;
         }
         if (part instanceof vscode.LanguageModelToolCallPart) {
-          capture?.calls.push({ callId: part.callId, name: part.name, input: part.input });
+          capture?.calls.push({
+            callId: part.callId,
+            name: part.name,
+            input: part.input,
+          });
           // The input goes to LangChain as its JSON text: a value that is not a JSON object lands in
           // `invalid_tool_calls` with its id and name, so the port can charge that one call.
           const message = new AIMessageChunk({
             content: '',
-            tool_call_chunks: [{
-              id: part.callId,
-              name: part.name,
-              // JSON.stringify(undefined) is undefined. An empty args string is read as {} and would accept a call the model did not make.
-              args: JSON.stringify(part.input) ?? 'undefined',
-              index: toolIndex++,
-              type: 'tool_call_chunk',
-            }],
+            tool_call_chunks: [
+              {
+                id: part.callId,
+                name: part.name,
+                // JSON.stringify(undefined) is undefined. An empty args string is read as {} and would accept a call the model did not make.
+                args: JSON.stringify(part.input) ?? 'undefined',
+                index: toolIndex++,
+                type: 'tool_call_chunk',
+              },
+            ],
           });
           yield new ChatGenerationChunk({ text: '', message });
           continue;
@@ -228,7 +271,10 @@ export class VscodeLangChainBridge extends BaseChatModel<
         capture?.otherParts.push(toWirePart(part));
         const nonTextChars = streamedValueChars(part);
         if (nonTextChars > 0) {
-          const message = new AIMessageChunk({ content: '', response_metadata: { nonTextChars } });
+          const message = new AIMessageChunk({
+            content: '',
+            response_metadata: { nonTextChars },
+          });
           yield new ChatGenerationChunk({ text: '', message });
         }
       }
@@ -236,26 +282,39 @@ export class VscodeLangChainBridge extends BaseChatModel<
         throw cancelledError();
       }
     } catch (error) {
-      throw normalizeBridgeError(error, this.token, options.signal, replyReceived);
+      throw normalizeBridgeError(
+        error,
+        this.token,
+        options.signal,
+        replyReceived,
+      );
     } finally {
       if (iterator?.return && !reachedEof) {
         try {
           await iterator.return();
-        } catch {
-        }
+        } catch {}
       }
     }
   }
 }
 
 /** Converts one LangChain message without adding history or helper prose. */
-function toVscodeMessage(message: BaseMessage): vscode.LanguageModelChatMessage {
+function toVscodeMessage(
+  message: BaseMessage,
+): vscode.LanguageModelChatMessage {
   if (SystemMessage.isInstance(message) || HumanMessage.isInstance(message)) {
-    return vscode.LanguageModelChatMessage.User(toTextParts(message.content), message.name);
+    return vscode.LanguageModelChatMessage.User(
+      toTextParts(message.content),
+      message.name,
+    );
   }
   if (AIMessage.isInstance(message)) {
-    const parts: Array<vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart> = [
-      ...messageProviderParts(message) as ReadonlyArray<vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart>,
+    const parts: Array<
+      vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart
+    > = [
+      ...(messageProviderParts(message) as ReadonlyArray<
+        vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart
+      >),
       ...toTextParts(message.content),
       ...(message.tool_calls ?? []).map((call) => {
         if (!call.id) {
@@ -274,12 +333,15 @@ function toVscodeMessage(message: BaseMessage): vscode.LanguageModelChatMessage 
     return vscode.LanguageModelChatMessage.Assistant(parts, message.name);
   }
   if (ToolMessage.isInstance(message)) {
-    return vscode.LanguageModelChatMessage.User([
-      new vscode.LanguageModelToolResultPart(
-        message.tool_call_id,
-        toTextParts(message.content),
-      ),
-    ], message.name);
+    return vscode.LanguageModelChatMessage.User(
+      [
+        new vscode.LanguageModelToolResultPart(
+          message.tool_call_id,
+          toTextParts(message.content),
+        ),
+      ],
+      message.name,
+    );
   }
   throw new ModelPortError(
     'invalid_request',
@@ -289,10 +351,16 @@ function toVscodeMessage(message: BaseMessage): vscode.LanguageModelChatMessage 
 
 /** Character size of a stream part's string or string-array `value`; 0 for any other shape. */
 function streamedValueChars(part: unknown): number {
-  const value = part && typeof part === 'object' ? (part as { value?: unknown }).value : undefined;
+  const value =
+    part && typeof part === 'object'
+      ? (part as { value?: unknown }).value
+      : undefined;
   if (typeof value === 'string') return value.length;
   if (Array.isArray(value)) {
-    return value.reduce<number>((sum, item) => sum + (typeof item === 'string' ? item.length : 0), 0);
+    return value.reduce<number>(
+      (sum, item) => sum + (typeof item === 'string' ? item.length : 0),
+      0,
+    );
   }
   return 0;
 }
@@ -307,8 +375,13 @@ function toTextParts(content: MessageContent): vscode.LanguageModelTextPart[] {
       parts.push(new vscode.LanguageModelTextPart(part));
       continue;
     }
-    if (part && typeof part === 'object' && part.type === 'text' && 'text' in part
-      && typeof part.text === 'string') {
+    if (
+      part &&
+      typeof part === 'object' &&
+      part.type === 'text' &&
+      'text' in part &&
+      typeof part.text === 'string'
+    ) {
       parts.push(new vscode.LanguageModelTextPart(part.text));
       continue;
     }
@@ -330,13 +403,24 @@ function projectToolChoice(
   if (choice === 'none') {
     return { tools: [], toolMode: vscode.LanguageModelChatToolMode.Auto };
   }
-  const named = choice !== undefined && choice !== 'auto' && choice !== 'any' ? choice : undefined;
-  const selected = named ? definitions.filter((definition) => definition.name === named) : definitions;
+  const named =
+    choice !== undefined && choice !== 'auto' && choice !== 'any'
+      ? choice
+      : undefined;
+  const selected = named
+    ? definitions.filter((definition) => definition.name === named)
+    : definitions;
   if (named && selected.length !== 1) {
-    throw new ModelPortError('invalid_request', `Required tool is not available: ${named}.`);
+    throw new ModelPortError(
+      'invalid_request',
+      `Required tool is not available: ${named}.`,
+    );
   }
   if ((choice === 'any' || named) && selected.length === 0) {
-    throw new ModelPortError('invalid_request', 'Required tool mode requires at least one tool.');
+    throw new ModelPortError(
+      'invalid_request',
+      'Required tool mode requires at least one tool.',
+    );
   }
   return {
     tools: selected.map((definition) => ({
@@ -344,9 +428,10 @@ function projectToolChoice(
       description: definition.description,
       inputSchema: definition.inputSchema,
     })),
-    toolMode: choice === 'any' || named
-      ? vscode.LanguageModelChatToolMode.Required
-      : vscode.LanguageModelChatToolMode.Auto,
+    toolMode:
+      choice === 'any' || named
+        ? vscode.LanguageModelChatToolMode.Required
+        : vscode.LanguageModelChatToolMode.Auto,
   };
 }
 
@@ -356,8 +441,18 @@ function normalizeBridgeError(
   signal?: AbortSignal,
   replyReceived = false,
 ): ModelPortError {
-  if (error instanceof ModelPortError) return new ModelPortError(error.code, error.message, error.cause, replyReceived || error.replyReceived);
-  if (token.isCancellationRequested || signal?.aborted || isHostCancellationError(error)) {
+  if (error instanceof ModelPortError)
+    return new ModelPortError(
+      error.code,
+      error.message,
+      error.cause,
+      replyReceived || error.replyReceived,
+    );
+  if (
+    token.isCancellationRequested ||
+    signal?.aborted ||
+    isHostCancellationError(error)
+  ) {
     return cancelledError();
   }
   const rawCode = isRecord(error) && 'code' in error ? String(error.code) : '';
@@ -367,18 +462,29 @@ function normalizeBridgeError(
     NotFound: 'model_not_found',
   };
   const code = mapped[rawCode] ?? 'provider_error';
-  return new ModelPortError(code, providerFailureMessage(error, code), error, replyReceived);
+  return new ModelPortError(
+    code,
+    providerFailureMessage(error, code),
+    error,
+    replyReceived,
+  );
 }
 
 /** Redacted, length-capped provider message, falling back to the neutral code line when empty. */
-function providerFailureMessage(error: unknown, code: ModelPortErrorCode): string {
-  return sanitizeProviderError(rawErrorText(error))
-    || `Language model request failed (${code}).`;
+function providerFailureMessage(
+  error: unknown,
+  code: ModelPortErrorCode,
+): string {
+  return (
+    sanitizeProviderError(rawErrorText(error)) ||
+    `Language model request failed (${code}).`
+  );
 }
 
 function rawErrorText(error: unknown): string {
   if (error instanceof Error) return error.message;
-  if (isRecord(error)) return typeof error.message === 'string' ? error.message : '';
+  if (isRecord(error))
+    return typeof error.message === 'string' ? error.message : '';
   return error === null || error === undefined ? '' : String(error);
 }
 

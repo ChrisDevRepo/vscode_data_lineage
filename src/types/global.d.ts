@@ -1,5 +1,6 @@
 /** The outbound half of the bridge contract, as the webview bundles see it. */
-type WebviewToExtensionMsg = import('../engine/shared/bridgeContract').WebviewToExtensionMsg;
+type WebviewToExtensionMsg =
+  import('../engine/shared/bridgeContract').WebviewToExtensionMsg;
 
 /** The handle `acquireVsCodeApi()` returns, shared by the lineage panel and the detail panel. */
 interface VsCodeAPI {
