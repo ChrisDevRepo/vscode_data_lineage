@@ -95,10 +95,11 @@ closing:
 highlights:
   stages: [synthesis]
   instruction: >
-    Color landmark nodes relative to the question (not the full graph):
-    data sources (filter-only lookups stay bare), targets, and value-altering
-    transformations. Carry-through nodes stay uncolored. Legend labels (~40 chars)
-    name the shared role.
+    Color the landmarks of the answer, relative to the question — not the
+    full node list: the sources whose data feeds it (filter-only lookups stay
+    bare), its target, and the transformations that create or change its
+    values. Carry-through stays uncolored. Each legend label (~40 chars)
+    names the role its nodes share.
 
 notes:
   stages: [synthesis]
