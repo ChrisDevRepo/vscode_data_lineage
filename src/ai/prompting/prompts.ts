@@ -421,7 +421,7 @@ export function buildCurrentTaskBlock(
   const lines = ['<current_task>'];
   const inherited = context?.analysisMode === 'bb' ? currentTasks.filter(task => task.kind !== 'root'
     && task.passthroughFromNodeId && task.passthroughFromNodeId !== context.originNodeId && task.question.trim()) : [];
-  if (inherited.length) lines.push('  Establish this focus\'s relevance to the user\'s question from its own SQL. Inherited questions are reference context about the traversed object.');
+  if (inherited.length) lines.push('  Establish this focus\'s relevance to the user\'s question from its own SQL. Inherited questions are reference context about the traversed object. If relevant, capture the rules, calculations, and thresholds it uses to produce these values, not only which columns feed the downstream node.');
   for (const task of currentTasks) {
     if (inherited.includes(task)) continue;
     const question = task.question.trim();
