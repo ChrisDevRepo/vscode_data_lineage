@@ -406,7 +406,6 @@ export function buildMissionBriefBlock(brief: string, question: string, scopeNot
 /** Renders the original per-hop task and its supplied reference context. */
 export function buildCurrentTaskBlock(
   currentTasks: ReadonlyArray<Pick<InvestigationTask, 'kind' | 'question' | 'traversalSide' | 'callerContext' | 'passthroughFromNodeId'> & {
-    readonly returnTargets?: readonly ScalarReturnTarget[];
     /** The engine's qualified endpoints for this task, split by owning object. */
     readonly endpoints?: { readonly assigned: readonly ScalarReturnTarget[]; readonly external: readonly ScalarReturnTarget[] };
   }>,
@@ -427,7 +426,7 @@ export function buildCurrentTaskBlock(
     const tag = task.kind === 'root' ? 'root_question' : 'sub_question';
     lines.push(`  <${tag}>${escapePromptText(question)}</${tag}>`);
     // Caller-output investigations retain their specialized binding context in the hop envelope.
-    if (task.kind !== 'column_lineage' || task.returnTargets?.length || task.callerContext) continue;
+    if (task.kind !== 'column_lineage' || task.callerContext) continue;
     const { assigned = [], external = [] } = task.endpoints ?? {};
     const endpoints = (values: readonly ScalarReturnTarget[]) => values.map(ref => escapePromptText(`${ref.node}.${ref.col}`)).join(', ');
     if (assigned.length) lines.push(

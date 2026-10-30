@@ -10,7 +10,6 @@ const ROUTE_ISSUE = {
   bad_out_col: 'unknown_column',
   bad_contributor_col: 'unknown_column',
   self_loop_column: 'self_loop',
-  bad_return_target: 'bad_caller_output',
   bad_caller_context: 'bad_caller_output',
   pruned_contributor: 'closed_neighbor',
   column_out_of_scope: 'column_out_of_scope',

@@ -25,7 +25,7 @@ export type InvestigationTaskInput = {
   /** Root or analytical task: no traced column rides along. */
   | { kind: 'root' | 'analytical'; activeColumns?: never }
   /** Column-lineage task: the traced columns it must follow, at least one. */
-  | { kind: 'column_lineage'; activeColumns: [string, ...string[]]; returnTargets?: ScalarReturnTarget[]; sourceRefs?: ScalarReturnTarget[] }
+  | { kind: 'column_lineage'; activeColumns: [string, ...string[]]; sourceRefs?: ScalarReturnTarget[] }
 );
 
 function leadIdentity(input: Pick<PendingLead, 'taskId' | 'nodeId' | 'fromNodeId' | 'reason'>, caseSensitive = false): string {
@@ -48,7 +48,7 @@ export class TaskLedger {
   /** Returns immutable copies in insertion order. */
   public get investigationTasks(): ReadonlyArray<InvestigationTask> {
     return Array.from(this.tasks.values(), task => task.kind === 'column_lineage'
-      ? { ...task, ...(task.callerContext ? { callerContext: { ...task.callerContext } } : {}), activeColumns: [...task.activeColumns] as [string, ...string[]], ...(task.returnTargets ? { returnTargets: task.returnTargets.map(target => ({ ...target })) } : {}), ...(task.sourceRefs ? { sourceRefs: task.sourceRefs.map(ref => ({ ...ref })) } : {}) }
+      ? { ...task, ...(task.callerContext ? { callerContext: { ...task.callerContext } } : {}), activeColumns: [...task.activeColumns] as [string, ...string[]], ...(task.sourceRefs ? { sourceRefs: task.sourceRefs.map(ref => ({ ...ref })) } : {}) }
       : { ...task, ...(task.callerContext ? { callerContext: { ...task.callerContext } } : {}) });
   }
 
@@ -110,9 +110,6 @@ export class TaskLedger {
       ...(input.kind === 'column_lineage' && input.sourceRefs
         ? [{ sourceRefs: input.sourceRefs.map(ref => [this.identifierKey(ref.node), normalizeColName(ref.col, this.identifierCaseSensitive)]).sort() }]
         : []),
-      ...(input.kind === 'column_lineage' && input.returnTargets
-        ? [input.returnTargets.map(target => [this.identifierKey(target.node), normalizeColName(target.col, this.identifierCaseSensitive)]).sort()]
-        : []),
       ...(input.callerContext ? [[this.identifierKey(input.callerContext.node), normalizeColName(input.callerContext.col, this.identifierCaseSensitive), input.callerContext.callerTaskId, input.callerContext.ddlHash]] : []),
     ]);
     return this.upsertByIdentity(
@@ -124,7 +121,6 @@ export class TaskLedger {
       id => ({
         ...input,
         ...(input.callerContext ? { callerContext: { ...input.callerContext } } : {}),
-        ...(input.kind === 'column_lineage' && input.returnTargets ? { returnTargets: input.returnTargets.map(target => ({ ...target })) } : {}),
         ...(input.kind === 'column_lineage' && input.sourceRefs ? { sourceRefs: input.sourceRefs.map(ref => ({ ...ref })) } : {}),
         id,
         status: input.status ?? 'pending',

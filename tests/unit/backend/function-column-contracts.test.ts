@@ -83,15 +83,15 @@ describe('neighbor-specific function caller context', () => {
     expect(JSON.stringify(contextBeforeRetry!.focus_node)).toContain(`CREATE FUNCTION ${fn}(@Amount int)`);
     const rejected = engine.submitFindings({ focus_node_id: fn, summary: 'Value is computed from the caller argument.',
       sections: [{ angle: 'technical', text: 'The supplied function multiplies the bound Amount by two.' }],
-      column_flow: [{ out_col: 'Value', returns_to: { node: caller, col: 'Missing' }, upstream_columns: [{ node: source, col: 'Amount' }] }],
+      column_flow: [{ out_col: 'Missing', out_node: caller, upstream_columns: [{ node: source, col: 'Amount' }] }],
     });
-    expect(rejected).toMatchObject({ code: 'invalid_input', issuePaths: expect.arrayContaining(['column_flow.0.returns_to']) });
+    expect(rejected).toMatchObject({ code: 'invalid_input', issuePaths: expect.arrayContaining(['column_flow.0.out_col']) });
     expect(engine.peekHopContext()).toEqual(contextBeforeRetry);
     expect(engine.getCurrentTasks()).toEqual(tasksBeforeRetry);
     expect(engine.columnAspect!.edges).toEqual([]);
     const repair = admit(submitFindingsSchemaForMode('ct', 'technical', false, engine.hopSubmitColumns, engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false), {
       focus_node_id: fn,
-      column_flow: [{ out_col: 'Value', returns_to: { node: caller, col: 'Value' }, upstream_columns: [{ node: source, col: 'Amount', transforms: ['compute'] }] }],
+      column_flow: [{ out_col: 'Value', out_node: caller, upstream_columns: [{ node: source, col: 'Amount', transforms: ['compute'] }] }],
     });
     expect(engine.submitFindings(toHopFinding(repair))).toHaveProperty('ok', true);
     expect(engine.columnAspect!.edges).toContainEqual(expect.objectContaining({ from_node: source, from_col: 'Amount', to_node: caller, to_col: 'Value' }));
@@ -116,7 +116,7 @@ describe('neighbor-specific function caller context', () => {
     const schema = submitFindingsSchemaForMode('ct', 'technical', true, engine.hopSubmitColumns);
     const payload = { focus_node_id: fn, summary: 'Value comes from the lookup outside the requested trace.',
       sections: { technical: `${source}.Amount supplies the return value; its lookup lies beyond the upstream-one limit.` },
-      column_flow: [{ out_col: 'Value', returns_to: { node: caller, col: 'Value' }, upstream_columns: [] }] };
+      column_flow: [{ out_col: 'Value', out_node: caller, upstream_columns: [] }] };
     expect(new Ajv({ strict: false }).compile(toModelJsonSchema(schema))(payload)).toBe(true);
     expect(engine.submitFindings(toHopFinding(admit(schema, payload)))).toHaveProperty('ok', true);
     expect(engine.columnAspect!.edges).toEqual([]);
@@ -177,7 +177,7 @@ describe('neighbor-specific function caller context', () => {
     expect(engine.columnAspect?.edges).toEqual([]);
   });
 
-  it('never asks a scalar-function hop for an outcome on its returns_to caller, and offers an open second caller no column_flow', () => {
+  it('never asks a scalar-function hop for an outcome on its explicit caller output, and offers an open second caller no column_flow', () => {
     // The return target is the caller whose column task opened this hop, so it is already visited; any other caller reads the function and cannot be mapped here.
     const reader = '[d].[reader]';
     const nodes = [
@@ -196,7 +196,7 @@ describe('neighbor-specific function caller context', () => {
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: fn }, analysis_mode: 'ct', caller_requested_outputs: [{ node: caller, col: 'Value' }] });
     const schema = submitFindingsSchemaForMode('ct', 'technical', true, engine.hopSubmitColumns);
     const flow = (node: string, c: string) => ({ focus_node_id: fn, summary: 'Value is twice Amount.', sections: { technical: 'The function doubles the bound Amount.' },
-      column_flow: [{ out_col: c, returns_to: { node, col: c }, upstream_columns: [{ node: source, col: 'Amount', transforms: ['compute'] }] }] });
+      column_flow: [{ out_col: c, out_node: node, upstream_columns: [{ node: source, col: 'Amount', transforms: ['compute'] }] }] });
     expect(validateToolCandidate(schema, flow(reader, 'Other')).success).toBe(false);
     expect(validateToolCandidate(schema, flow(caller, 'Value')).success).toBe(true);
     const before = engine.toJSON();
@@ -236,7 +236,7 @@ describe('case-sensitive scalar caller identities', () => {
     expect(new Ajv({ strict: false }).compile(toModelJsonSchema(callerSchema))(callerReply)).toBe(true);
     expect(engine.submitFindings(toHopFinding(admit(callerSchema, callerReply)))).toHaveProperty('ok', true);
     const snapshot = engine.toJSON();
-    expect(snapshot.snapshotVersion).toBe(2);
+    expect(snapshot.snapshotVersion).toBe(1);
     expect(snapshot.engineInternals.investigationTasks.filter(task => task.kind === 'column_lineage' && task.callerContext)
       .map(task => task.callerContext!.col).sort()).toEqual(['Value', 'value']);
     const visited: string[] = [];
@@ -244,14 +244,13 @@ describe('case-sensitive scalar caller identities', () => {
       const hop = engine.getHopContext(), focus = engine.currentFocus!;
       visited.push(focus);
       const targets = outputs.filter(output => output.node === focus).map(output => ({ node: result, col: output.column }));
-      expect(hop.caller_output_targets).toEqual(targets);
       expect(hop.caller_requested_outputs).toEqual(targets);
       const schema = submitFindingsSchemaForMode('ct', 'technical', true, engine.hopSubmitColumns);
       const reply = { focus_node_id: focus, summary: 'The scalar returns the supplied argument.', sections: { technical: 'Each return stays bound to its declared caller column.' },
-        column_flow: targets.map(target => ({ out_col: target.col, returns_to: target, upstream_columns: [] })) };
+        column_flow: targets.map(target => ({ out_col: target.col, out_node: target.node, upstream_columns: [] })) };
       const native = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
       expect(native(reply)).toBe(true);
-      expect(native({ ...reply, column_flow: [{ out_col: 'VALUE', returns_to: { node: result, col: 'VALUE' }, upstream_columns: [] }] })).toBe(false);
+      expect(native({ ...reply, column_flow: [{ out_col: 'VALUE', out_node: result, upstream_columns: [] }] })).toBe(false);
       expect(engine.submitFindings(toHopFinding(admit(schema, reply)))).toHaveProperty('ok', true);
     }
     expect(visited.sort()).toEqual(functions.sort());

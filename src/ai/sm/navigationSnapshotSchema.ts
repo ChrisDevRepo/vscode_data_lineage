@@ -1,8 +1,8 @@
 import { z } from 'zod';
-import type { SmNodeState, SmState } from './smTypes';
+import type { HopFindingKept, SmNodeState, SmState } from './smTypes';
 import { ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
 import { bothSidesClosed } from '../../engine/shared/explorationDepthContract';
-import { heldHopFindingSchemaForMode } from '../tools/toolSchemas';
+import { ColumnFlowSchema, heldHopFindingSchemaForMode } from '../tools/toolSchemas';
 
 /** Stable failure of the navigation-snapshot shape check; a live engine invariant reports through the engine's error status instead. */
 export class InvalidEngineCheckpointError extends Error {
@@ -229,14 +229,18 @@ const AgendaEntrySchema = z.object({
 }).strict();
 
 /** Retires the old model verdict only when decoding an existing saved finding. */
-function savedHeldFinding(mode: 'bb' | 'ct') {
+function savedHeldFinding(mode: 'bb' | 'ct'): z.ZodType<HopFindingKept> {
+  const finding = heldHopFindingSchemaForMode(mode);
+  const schema = mode === 'ct' ? finding.safeExtend({ column_flow: z.array(ColumnFlowSchema.element.extend({
+    returns_to: z.object({ node: z.string(), col: z.string() }).strict().optional(),
+  })).optional() }) : finding;
   return z.preprocess(input => {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
     const legacy = input as Record<string, unknown>;
     if (legacy.verdict !== 'analyze' && legacy.verdict !== 'passthrough') return input;
     const { verdict: _legacyVerdict, ...finding } = legacy;
     return finding;
-  }, heldHopFindingSchemaForMode(mode));
+  }, schema) as z.ZodType<HopFindingKept>;
 }
 
 const EngineInternalsSchema = z.object({

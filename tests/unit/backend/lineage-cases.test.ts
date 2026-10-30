@@ -161,7 +161,6 @@ function run(row: LineageCase, upstream: readonly FlowColumn[]) {
     undefined,
     [],
     [],
-    [],
     row.roots ?? [],
   );
   return result;
@@ -285,7 +284,7 @@ describe('declared contributor identities', () => {
       makeNode({ id: 'source', name: 'source', schema: 'dbo', type: 'table', columns: [column('SourceAmount')] })];
     const result = new ColumnTracer([output]).validateColumnFlow('root',
       { column_flow: [{ out_col: output, upstream_columns: [{ node: 'proc', col: output }] }] },
-      new Map(nodes.map(node => [node.id, node])), makeIndexedModel(nodes, [['source', 'proc'], ['proc', 'root']]), null, undefined, undefined, 'upstream', undefined, [], [], [], [{ node: 'root', col: output }]);
+      new Map(nodes.map(node => [node.id, node])), makeIndexedModel(nodes, [['source', 'proc'], ['proc', 'root']]), null, undefined, undefined, 'upstream', undefined, [], [], [{ node: 'root', col: output }]);
     expect(result.invalidRoutes).toEqual([]);
     expect(result.stagedEdges.map(edge => edge.from_col)).toEqual([output]);
   });
@@ -298,7 +297,7 @@ describe('declared contributor identities', () => {
       return new ColumnTracer(['Amount'], undefined, caseSensitive).validateColumnFlow('writer',
         { column_flow: [{ out_node: 'owed', out_col, upstream_columns: [{ node: 'source', col: 'Amount' }] }] },
         new Map(nodes.map(node => [node.id, node])), { ...makeModel(nodes, [['owed', 'writer'], ['source', 'writer'], ['writer', 'owed']], ['dbo']), identifierCaseSensitive: caseSensitive },
-        null, undefined, undefined, 'upstream', [{ node: 'owed', col: 'Amount' }], [], [], [], [{ node: 'owed', col: 'Amount' }]);
+        null, undefined, undefined, 'upstream', [{ node: 'owed', col: 'Amount' }], [], [], [{ node: 'owed', col: 'Amount' }]);
     };
     it('stores the supplier pair on the destination column and no edge on the writer', () => {
       const result = bind(['Amount', 'Stamp'], 'Amount');
@@ -456,7 +455,7 @@ describe('carrier value-edge orientation', () => {
     const validate = (source: string) => new ColumnTracer(['Value']).validateColumnFlow(carrier,
       { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: source, col: 'Value' }] }] },
       new Map(nodes.map(node => [node.id, node])), model, null, undefined, undefined, direction,
-      [{ node: carrier, col: 'Value' }], [], [], [], [{ node: carrier, col: 'Value' }], new Set([writer, reader]));
+      [{ node: carrier, col: 'Value' }], [], [], [{ node: carrier, col: 'Value' }], new Set([writer, reader]));
     const valid = validate(writer);
     expect(valid.invalidRoutes).toEqual([]);
     expect(valid.stagedEdges).toMatchObject([{ from_node: writer, to_node: carrier }]);
@@ -921,18 +920,18 @@ describe('TaskLedger qualified references', () => {
     expect(ledger.ensureTask({ kind: 'analytical', source: 'model', nodeId: 'focus', question: questions[0], createdHop: 2 }).id).toBe(ids[0]);
   });
 
-  const task = (field: 'sourceRefs' | 'returnTargets', col: string) => ({
+  const task = (field: 'sourceRefs', col: string) => ({
     source: 'engine' as const, question: 'Trace Value', nodeId: 'dbo.Fn',
     kind: 'column_lineage' as const, activeColumns: ['Value'] as [string],
     [field]: [{ node: 'dbo.Caller', col }], createdHop: 1,
   });
 
-  it.each(['sourceRefs', 'returnTargets'] as const)('normalizes delimiters and insensitive case in %s identity', field => {
+  it.each(['sourceRefs'] as const)('normalizes delimiters and insensitive case in %s identity', field => {
     const ledger = new TaskLedger();
     expect(ledger.ensureTask(task(field, '[Value]')).id).toBe(ledger.ensureTask(task(field, 'value')).id);
   });
 
-  it.each(['sourceRefs', 'returnTargets'] as const)('preserves case-sensitive %s identity', field => {
+  it.each(['sourceRefs'] as const)('preserves case-sensitive %s identity', field => {
     const ledger = new TaskLedger(true);
     expect(ledger.ensureTask(task(field, 'Value')).id).not.toBe(ledger.ensureTask(task(field, 'value')).id);
     expect(ledger.ensureTask(task(field, '[Value]')).id).toBe(ledger.ensureTask(task(field, 'Value')).id);
@@ -1537,10 +1536,10 @@ describe('shared object dispatch', () => {
     const engine = new NavigationEngine(makeIndexedModel(nodes, pairs), makeGraph(nodes, pairs), () => {}, {}, store);
     expect(engine.init({ origin: stored, question: 'Trace the computed Value.', analysisMode: 'ct', targetColumns: ['Value'], direction: 'upstream', depthIntent: upstreamAll })).toHaveProperty('ok', true);
     expect(engine.getHopContext()).toMatchObject({ focus_node: { id: fn }, analysis_mode: 'ct',
-      caller_output_targets: [{ node: stored, col: 'Value' }], caller_objects: [{ node: stored, ddl }],
+      caller_objects: [{ node: stored, ddl }],
       storage_context: [expect.objectContaining({ id: stored, ddl, columns })] });
     expect(engine.columnAspect!.edges).toEqual([]);
-    expect(engine.submitFindings({ ...guardRecord(fn), column_flow: [{ out_col: 'Value', returns_to: { node: stored, col: 'Value' },
+    expect(engine.submitFindings({ ...guardRecord(fn), column_flow: [{ out_col: 'Value', out_node: stored,
       upstream_columns: [{ node: stored, col: 'Base', transforms: ['compute'] }] }] })).toHaveProperty('ok', true);
     expect(engine.getHopContext()).toHaveProperty('done', true);
     expect(engine.getResult().columnAspect!.edges).toEqual([expect.objectContaining({ from_node: stored, from_col: 'Base', to_node: stored, to_col: 'Value' })]);

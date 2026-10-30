@@ -1,7 +1,6 @@
 import Graph from 'graphology';
 import { stronglyConnectedComponents } from 'graphology-components';
 import type { ColumnCarry } from './smTypes';
-import { uniqueScalarReturnTargets } from './scalarReturnBinding';
 import { normalizeColName } from '../../utils/sql';
 
 /** Represents an entry in the navigation agenda. */
@@ -24,21 +23,10 @@ export interface AgendaEntry {
 
 /** Unions column demands; a row-only arrival cannot erase an existing demand. */
 function mergeColumnCarry(existing: ColumnCarry | undefined, incoming: ColumnCarry | undefined, identifierCaseSensitive = false): ColumnCarry | undefined {
-  if (existing?.kind === 'scalar_return' || incoming?.kind === 'scalar_return') {
-    const outputs = [...(existing?.kind === 'scalar_return' ? existing.outputs : []), ...(incoming?.kind === 'scalar_return' ? incoming.outputs : [])];
-    return { kind: 'scalar_return', outputs: uniqueScalarReturnTargets(outputs, identifierCaseSensitive) };
-  }
   if (existing?.kind === 'carry' || incoming?.kind === 'carry') {
     return { kind: 'carry', columns: mergeUnique(existing?.kind === 'carry' ? existing.columns : undefined, incoming?.kind === 'carry' ? incoming.columns : [], column => normalizeColName(column, identifierCaseSensitive)) };
   }
   return incoming ?? existing;
-}
-
-/** Ordinary carried columns a scalar-return merge leaves to their own task, empty otherwise. */
-function ordinaryColumnsBeside(existing: ColumnCarry | undefined, incoming: ColumnCarry | undefined): readonly string[] {
-  if (existing?.kind === 'scalar_return' && incoming?.kind === 'carry') return incoming.columns;
-  if (incoming?.kind === 'scalar_return' && existing?.kind === 'carry') return existing.columns;
-  return [];
 }
 
 /** Unions `incoming` into `existing` (order-preserving on first occurrence), deduplicated. */
@@ -82,8 +70,7 @@ function worklistRank(entry: AgendaEntry, view: WorklistView, prerequisites: Rea
 /** Only this arrival's persisted demand selects CT; global provenance never selects a queue tier. */
 function hasColumnWork(entry: AgendaEntry): boolean {
   if (entry.columnCarry?.kind === 'row_role_only') return false;
-  return entry.columnCarry?.kind === 'scalar_return'
-    || (entry.activeColumns?.length ?? 0) > 0;
+  return (entry.activeColumns?.length ?? 0) > 0;
 }
 
 /** Total order over {@link WorklistRank} — smaller dispatches first. */
@@ -143,15 +130,7 @@ function analyzeWorklist(queued: readonly string[], successors: (nodeId: string)
 
 /** Manages the NavigationEngine's agenda queue. */
 export class AgendaManager {
-  /**
-   * @param identifierCaseSensitive - Source policy used when merging qualified column destinations.
-   * @param onSeparateCarry - Told when a merge keeps ordinary columns on their own task beside a
-   *   scalar-return carry, so the split is never silent.
-   */
-  constructor(
-    private readonly identifierCaseSensitive = false,
-    private readonly onSeparateCarry?: (nodeId: string, columns: readonly string[]) => void,
-  ) {}
+  constructor(private readonly identifierCaseSensitive = false) {}
   private _entries: AgendaEntry[] = [];
   /** Id-keyed index onto `_entries`, kept in sync at every mutation site for O(1) lookups. */
   private _byId = new Map<string, AgendaEntry>();
@@ -183,14 +162,10 @@ export class AgendaManager {
       for (const taskId of entry.taskIds) {
         if (!existing.taskIds.includes(taskId)) existing.taskIds.push(taskId);
       }
-      const beside = ordinaryColumnsBeside(existing.columnCarry, entry.columnCarry);
-      if (beside.length > 0) this.onSeparateCarry?.(entry.nodeId, beside);
       const carry = mergeColumnCarry(existing.columnCarry, entry.columnCarry, this.identifierCaseSensitive);
       if (carry) existing.columnCarry = carry;
       if (carry?.kind === 'row_role_only') {
         existing.activeColumns = [];
-      } else if (carry?.kind === 'scalar_return') {
-        existing.activeColumns = mergeUnique(carry.outputs.map(o => o.col), [], column => normalizeColName(column, this.identifierCaseSensitive));
       } else if (entry.activeColumns) {
         existing.activeColumns = mergeUnique(existing.activeColumns, entry.activeColumns, column => normalizeColName(column, this.identifierCaseSensitive));
       }

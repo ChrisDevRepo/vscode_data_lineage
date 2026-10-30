@@ -216,7 +216,7 @@ describe('request assembly', () => {
       const continuations = /<lineage_questions>([\s\S]*?)<\/lineage_questions>/.exec(hop.request.message)?.[1].split('\n') ?? [];
       const declared = [...[...hop.request.message.matchAll(/<(?:assigned_endpoints|neighbor_columns)>([^<]*)</g)].map(match => match[1]), ...continuations];
       for (const task of hop.tasks.filter(candidate => candidate.kind === 'column_lineage')) {
-        const refs = task.sourceRefs ?? task.returnTargets ?? (task.nodeId === origin ? task.activeColumns.map(col => ({ node: origin, col })) : []);
+        const refs = task.sourceRefs ?? (task.nodeId === origin ? task.activeColumns.map(col => ({ node: origin, col })) : []);
         expect(refs.length, `${hop.focus} carries no endpoint`).toBeGreaterThan(0);
         for (const ref of refs) {
           // The qualified form must end at the column name, so `[x].Col` is not declared by `[x].ColB`.

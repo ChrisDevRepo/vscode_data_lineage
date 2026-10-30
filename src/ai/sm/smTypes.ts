@@ -67,8 +67,6 @@ export interface ColumnFlowEntry {
   out_col: string;
   /** Object owning `out_col` when it is not the focus: each `upstream_columns` entry stores one pair into `out_node.out_col` (D-130). Required at a procedure focus, whose own value is an `upstream_columns` entry naming the procedure. Never inferred from topology or matching column names. */
   out_node?: string;
-  /** Declared real caller output supplied by a scalar-return task; never a table write. */
-  returns_to?: ScalarReturnTarget;
   /** Supported dependencies recorded within the requested trace; sections retain known outside dependencies and unresolved evidence. */
   upstream_columns: ColumnRef[];
 }
@@ -149,8 +147,6 @@ export interface HopContext {
   agenda_remaining?: number;
   /** The node currently being analyzed. */
   focus_node?: HopFocusNode;
-  /** Exact compiler-declared real destinations for the active scalar return task. */
-  caller_output_targets?: ScalarReturnTarget[];
   /** Loaded caller SQL supplied beside formal parameters for semantic argument binding. */
   caller_objects?: Array<{ node: string; ddl: string }>;
   /** Explicit requested caller outputs; TVF investigations retain their own real output columns. */
@@ -209,7 +205,7 @@ export type HopFinding = HopFindingKept;
 /** Data structure used by the AI to submit its findings after analyzing a hop. */
 export type HopSubmission = HopFinding;
 
-/** A qualified real caller column whose expression declares the scalar function. */
+/** A qualified object-column endpoint, retaining its owning object. */
 export interface ScalarReturnTarget {
   readonly node: string;
   readonly col: string;
@@ -221,11 +217,10 @@ export interface FunctionCallerContext extends ScalarReturnTarget {
   readonly ddlHash: string;
 }
 
-/** Explicit per-neighbor column demand: ordinary columns, row-only investigation, or compiler-declared scalar caller outputs. Qualified outputs stay separate when callers share a column name. */
+/** Explicit per-neighbor column demand: carried column names or row-only investigation. Qualified endpoint identities stay on their tasks. */
 export type ColumnCarry =
   | { readonly kind: 'carry'; readonly columns: readonly string[] }
-  | { readonly kind: 'row_role_only' }
-  | { readonly kind: 'scalar_return'; readonly outputs: readonly ScalarReturnTarget[] };
+  | { readonly kind: 'row_role_only' };
 
 /** How a node served the traced columns at the hop that dispatched it. */
 export type SmNodeColumnRole = 'carrier' | 'row_role_only';
@@ -477,8 +472,6 @@ export type InvestigationTask = InvestigationTaskBase & (
       activeColumns: [string, ...string[]];
       /** Qualified incoming column context; a task does not itself create a column edge. */
       sourceRefs?: Array<{ node: string; col: string }>;
-      /** Qualified compiler-declared caller outputs; absent on ordinary column tasks. */
-      returnTargets?: ScalarReturnTarget[];
     }
 );
 
@@ -692,7 +685,7 @@ export interface SmState {
     /** CT chain-continuation questions opened for this node by an earlier hop, owned by this entry. */
     lineageQuestions?: string[];
     /** Per-neighbour column-carry decision that survived contraction (`carry` / `row_role_only`). */
-    columnCarry?: ColumnCarry;
+    columnCarry?: ColumnCarry | { readonly kind: 'scalar_return'; readonly outputs: readonly ScalarReturnTarget[] };
   }>;
   /** ID of the node currently under analysis, if any. */
   currentFocusNodeId: string | null;
@@ -727,7 +720,6 @@ export type InvalidRouteKind = | 'absent_contributor'
       | 'bad_out_col'
       | 'bad_contributor_col'
       | 'self_loop_column'
-      | 'bad_return_target'
       | 'bad_caller_context'
       | 'pruned_contributor'
       | 'column_out_of_scope'

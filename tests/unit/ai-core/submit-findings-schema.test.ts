@@ -40,14 +40,14 @@ describe('fresh kept required-field projection', () => {
       const held = kind === 'held';
       const schema = submitFindingsSchemaForMode(mode, 'technical', !held, {
         outCols: ['Value'], outNode: kind === 'procedure', columnSourceNodeIds: [source],
-        ...(kind === 'scalar' ? { returnTargets: [{ node: caller, col: 'Value' }] } : {}),
+        ...(kind === 'scalar' ? { columnDestinations: [{ node: caller, col: 'Value' }] } : {}),
         neighbors: [{ id: source, can_question: true, can_prune: true }],
       }, held);
       const input = { ...(!held ? { summary: 'Recorded findings.', sections: { technical: 'Authored findings.' } } : {}),
         ...(kind === 'bb' || held ? { questions: [{ nodeId: 'dbo.source', question: 'Establish Value.' }] }
           : { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: 'dbo.source', col: 'Value' }],
             ...(kind === 'procedure' ? { out_node: source } : {}),
-            ...(kind === 'scalar' ? { returns_to: { node: 'dbo.caller', col: 'Value' } } : {}),
+            ...(kind === 'scalar' ? { out_node: 'dbo.caller' } : {}),
           }] }),
       };
       const before = structuredClone(input);
@@ -172,8 +172,8 @@ describe('fresh kept required-field projection', () => {
       if (parsed.success) expect(parsed.data).toEqual(normalized.input);
       expect(input).toEqual(before);
     }
-    const input = { focus_node_id: 'focus', column_flow: [{ out_col: 'Value', upstream_columns: [], returns_to: { node: raw, col: 'Value' } }] };
-    const schema = submitFindingsSchemaForMode('ct', undefined, false, { ...hop, returnTargets: [{ node: canonical, col: 'Value' }] });
+    const input = { focus_node_id: 'focus', column_flow: [{ out_col: 'Value', upstream_columns: [], out_node: raw }] };
+    const schema = submitFindingsSchemaForMode('ct', undefined, false, { ...hop, columnDestinations: [{ node: canonical, col: 'Value' }] });
     const before = structuredClone(input);
     const normalized = normalizeModelInput(schema, input);
     const scalar = validateToolCandidate(schema, normalized.input);
@@ -254,10 +254,10 @@ describe('fresh kept required-field projection', () => {
     for (const scalar of [false, true]) {
       const schema = submitFindingsSchemaForMode('ct', undefined, false, {
         outCols: ['Value'], outNode: false, identifierCaseSensitive: caseSensitive,
-        ...(scalar ? { returnTargets: [{ node: 'caller', col: 'Value' }] } : {}),
+        ...(scalar ? { columnDestinations: [{ node: 'caller', col: 'Value' }] } : {}),
       });
       const input = { focus_node_id: 'focus', column_flow: [{ out_col: name, upstream_columns: [],
-        ...(scalar ? { returns_to: { node: 'caller', col: name } } : {}) }] };
+        ...(scalar ? { out_node: 'caller' } : {}) }] };
       const before = structuredClone(input);
       const normalized = normalizeModelInput(schema, input);
       const parsed = validateToolCandidate(schema, normalized.input);
@@ -422,7 +422,7 @@ it.each(['view', 'procedure', 'caller'] as const)('keeps a served %s flow exampl
   const source = '[dbo].[Orders]', target = '[dbo].[Target]', caller = '[dbo].[Caller]';
   const schema = submitFindingsSchemaForMode('ct', 'technical', false, {
     outCols: ['Total'], outNode: kind === 'procedure', columnSourceNodeIds: kind === 'procedure' ? [source, target] : [source],
-    ...(kind === 'caller' ? { returnTargets: [{ node: caller, col: 'Total' }] } : {}),
+    ...(kind === 'caller' ? { columnDestinations: [{ node: caller, col: 'Total' }] } : {}),
   });
   const wire = toModelJsonSchema(schema) as any;
   const description = wire.properties.column_flow.description as string;

@@ -286,11 +286,6 @@ const ColumnRefSchema = z.object({
   note: z.string().optional().describe('At most 12 words: the deciding expression, e.g. "Qty * Price".'),
 }).strict().meta(SUPPLIER_FACT).describe('One source column entry inside upstream_columns: fields node, col, transforms, note.');
 
-const ColumnFlowReturnsToObject = z.object({
-  node: stringFact(z.string(), 'flowReference').describe('Object id from <hop_context>.'),
-  col: stringFact(z.string(), 'returnColumn').describe('Column name on that object.'),
-}).strict();
-
 /** One closed `column_flow` entry; provider projection and runtime parsing reject surplus keys. */
 const OUT_COL_DESCRIPTION = "Output column of this hop from its column task; for a procedure, the column it writes. Never invent names.";
 const OUT_NODE_DESCRIPTION = 'Table from <hop_context> that this procedure writes out_col to. For a write to an object not listed, omit the entry and name the write in sections.';
@@ -302,9 +297,8 @@ const PROCEDURE_UPSTREAM_DESCRIPTION = `${UPSTREAM_DESCRIPTION} A value this pro
 const ColumnFlowEntrySchema = z.object({
   out_col: stringFact(z.string(), 'flowOutColumn').describe(OUT_COL_DESCRIPTION),
   out_node: stringFact(z.string(), 'flowReference').optional().describe(OUT_NODE_DESCRIPTION),
-  returns_to: ColumnFlowReturnsToObject.optional().meta({ toolValidated: 'returnTarget' }).describe('Real caller output supplied in caller_output_targets for this scalar-return task; never a table write.'),
   upstream_columns: z.array(ColumnRefSchema).meta({ toolArrayFact: 'suppliers' }).describe(`${UPSTREAM_DESCRIPTION} [] means the value originates here.`),
-}).strict().meta({ toolGroups: [{ name: 'flowHeader', fields: ['out_col', 'out_node', 'returns_to'] }], toolObjectFact: 'flowPresence' }).describe('One output column: out_col, upstream_columns, optional out_node or returns_to. note belongs inside an upstream_columns entry.');
+}).strict().meta({ toolGroups: [{ name: 'flowHeader', fields: ['out_col', 'out_node'] }], toolObjectFact: 'flowPresence' }).describe('One output column: out_col, upstream_columns, optional out_node. note belongs inside an upstream_columns entry.');
 
 
 /** The engine owns the dispatched hop; a sent id only guards against a stale or misdirected call. */
@@ -368,27 +362,25 @@ export function findingAdmissionFacts(schema: z.ZodType) {
   if (!(schema instanceof z.ZodObject)) throw new Error('Finding admission requires its object schema.');
   const fields: Partial<Pick<HopFindingKept, typeof FINDING_DECISION_FIELDS[number]>> = {};
   const valid = new Set<string>();
-  const headers = new Map<string, Pick<ColumnFlowEntry, 'out_col' | 'out_node' | 'returns_to'>>();
-  const columns = new Map<string, string>(), outColumns = new Map<string, string>(), returnColumns = new Map<string, string>();
+  const headers = new Map<string, Pick<ColumnFlowEntry, 'out_col' | 'out_node'>>();
+  const columns = new Map<string, string>(), outColumns = new Map<string, string>();
   const suppliers = new Map<string, ColumnFlowEntry['upstream_columns'][number]>();
-  const destinations = new Map<string, { node: string; col: string } | null | undefined>();
   const references = new Map<string, string>(), identities = new Map<string, string>(), arrays = new Map<string, number>(), rows = new Map<string, ReadonlySet<string>>();
   let supplied: Record<string, unknown> | undefined;
   const facts: ToolFactContext = {
     objects: new Map([['findingPresence', value => { supplied = value; }], ['flowPresence', (value, context) => { rows.set(context.instancePath, new Set(Object.keys(value))); }]]),
     arrays: new Map(['column_flow', 'suppliers', 'questions', 'prune_neighbors'].map(name => [name, (value, context) => { arrays.set(context.instancePath, value.length); }])),
-    strings: new Map([['returnColumn', (value, context) => { returnColumns.set(context.instancePath, value); }], ['flowOutColumn', (value, context) => { outColumns.set(context.instancePath, value); }], ['flowReference', (value, context) => { references.set(context.instancePath, value); }], ['supplierColumn', (value, context) => { columns.set(context.instancePath, value); }],
+    strings: new Map([['flowOutColumn', (value, context) => { outColumns.set(context.instancePath, value); }], ['flowReference', (value, context) => { references.set(context.instancePath, value); }], ['supplierColumn', (value, context) => { columns.set(context.instancePath, value); }],
       ...['questionIdentity', 'pruneIdentity'].map(name => [name, (value: string, context: { instancePath: string }) => { identities.set(context.instancePath, value); }] as const)]),
     validated: new Map([
       ['flowHeader', captureToolFact(ColumnFlowEntrySchema.omit({ upstream_columns: true }), (value, path) => { headers.set(path, value); })],
       ['supplier', captureToolFact(ColumnRefSchema, (value, path) => { suppliers.set(path, value); })],
-      ['returnTarget', captureToolFact(ColumnFlowReturnsToObject.nullish(), (value, path) => { destinations.set(path, value); })],
       ['questions', captureToolFact(HopFindingCtBaseSchema.shape.questions, value => { fields.questions = value; valid.add('questions'); })],
       ['prune_neighbors', captureToolFact(HopFindingBaseSchema.shape.prune_neighbors, value => { fields.prune_neighbors = value; valid.add('prune_neighbors'); })],
       ['column_flow', captureToolFact(ColumnFlowSchema, value => { fields.column_flow = value; valid.add('column_flow'); })],
     ]),
   };
-  return { facts, fields, headers, columns, outColumns, returnColumns, suppliers, destinations, references, identities, arrays, rows, unavailable: () => new Set<keyof HopFindingKept>(FINDING_DECISION_FIELDS.filter(field =>
+  return { facts, fields, headers, columns, outColumns, suppliers, references, identities, arrays, rows, unavailable: () => new Set<keyof HopFindingKept>(FINDING_DECISION_FIELDS.filter(field =>
     Object.prototype.hasOwnProperty.call(schema.shape, field) && (!supplied || (!valid.has(field)
       && (Object.prototype.hasOwnProperty.call(supplied, field) || !schema.shape[field].isOptional()))))) };
 }
@@ -484,7 +476,8 @@ export interface SubmitFindingsHopColumns {
   readonly outCols: readonly string[] | null;
   /** A procedure focus: each entry names the `out_node` it writes. */
   readonly outNode: boolean;
-  readonly returnTargets?: readonly { readonly node: string; readonly col: string }[];
+  /** Exact qualified destinations already named by current tasks; node and column choices stay paired. */
+  readonly columnDestinations?: readonly { readonly node: string; readonly col: string }[];
   readonly identifierCaseSensitive?: boolean;
   /** Neighboring functions eligible for an explicit current-caller output investigation. */
   readonly callerContextNodeIds?: readonly string[];
@@ -514,7 +507,7 @@ function spellingField(ids: readonly string[], identifierCaseSensitive = false) 
   markObjectIdField(field, new Map(ids.map(id => [id, true])), identifierCaseSensitive);
   return field;
 }
-const FLOW_HEADER_FACT = { toolObjectFact: 'flowPresence', toolGroups: [{ name: 'flowHeader', fields: ['out_col', 'out_node', 'returns_to'] }] };
+const FLOW_HEADER_FACT = { toolObjectFact: 'flowPresence', toolGroups: [{ name: 'flowHeader', fields: ['out_col', 'out_node'] }] };
 
 /** The same supplier owner is used by full submissions and held tuple corrections. */
 function columnRefSchemaForHop(hop: SubmitFindingsHopColumns) {
@@ -542,15 +535,15 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
       : stringFact(z.string(), 'flowReference')
     ).describe(OUT_NODE_DESCRIPTION),
   };
-  if (hop.returnTargets?.length) {
-    const ids = [...new Set(hop.returnTargets.map(target => target.node))], cols = [...new Set(hop.returnTargets.map(target => target.col))];
-    const assertions = { anyOf: hop.returnTargets.map(target => ({ properties: { out_col: { enum: [target.col] }, returns_to: { properties: { node: { enum: [target.node] }, col: { enum: [target.col] } } } } })) };
+  if (hop.columnDestinations?.length) {
+    const ids = [...new Set(hop.columnDestinations.map(target => target.node))], cols = [...new Set(hop.columnDestinations.map(target => target.col))];
+    const assertions = { anyOf: hop.columnDestinations.map(target => ({ properties: { out_col: { enum: [target.col] }, out_node: { enum: [target.node] } } })) };
     const entry = z.object({
       out_col: stringFact(suppliedValueSchema(cols, hop.identifierCaseSensitive), 'flowOutColumn'),
-      returns_to: z.object({ node: stringFact(spellingField(ids, hop.identifierCaseSensitive), 'flowReference'), col: stringFact(suppliedValueSchema(cols, hop.identifierCaseSensitive), 'returnColumn') }).strict().meta({ toolValidated: 'returnTarget' }),
+      out_node: stringFact(spellingField(ids, hop.identifierCaseSensitive), 'flowReference').describe('Object id from <hop_context>.'),
       upstream_columns: shape.upstream_columns,
-    }).strict().meta({ toolObjectFact: 'flowPresence', toolGroups: [{ name: 'flowHeader', fields: ['out_col', 'returns_to'], assertions }], toolDisplay: { allOf: [assertions] } });
-    return z.array(entry).describe('One mapping per entry in caller_output_targets, with matching returns_to. Identify dependencies from the supplied caller SQL and function body. List supported in-scope suppliers, or upstream_columns: [] when none can be recorded; retain known outside dependencies and unresolved evidence in sections.');
+    }).strict().meta({ toolObjectFact: 'flowPresence', toolGroups: [{ name: 'flowHeader', fields: ['out_col', 'out_node'], assertions }], toolDisplay: { allOf: [assertions] } });
+    return z.array(entry).describe('Identify dependencies from the supplied caller SQL and function body. List supported in-scope suppliers, or upstream_columns: [] when none can be recorded; retain known outside dependencies and unresolved evidence in sections.');
   }
   const entry = (hop.outNode
     ? z.object(shape)
@@ -666,8 +659,8 @@ function internalKeptFindingSchema(
 }
 
 /** Validates restorable held findings using the same fields as commit, without requiring resent CT flow. */
-export function heldHopFindingSchemaForMode(mode: 'bb' | 'ct'): z.ZodType<HopFindingKept> {
-  return internalKeptFindingSchema(mode, undefined, false, undefined, false) as z.ZodType<HopFindingKept>;
+export function heldHopFindingSchemaForMode(mode: 'bb' | 'ct') {
+  return internalKeptFindingSchema(mode, undefined, false, undefined, false);
 }
 
 /** Zod schema for `get_neighbor_columns` tool input. */
