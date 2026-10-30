@@ -127,7 +127,7 @@ export class ColumnTracer {
 
     for (const { edge, toCols } of fedByKey.values()) {
       const fed = toCols.map(c => `\`${c}\``).join(', ');
-      const question = `Column \`${edge.from_col}\` at \`${edge.from_node}\`: continues the trace into ${fed} at \`${edge.hop_node}\` — establish its column relationships from this object's SQL.`;
+      const question = `Column \`${edge.from_col}\` at \`${edge.from_node}\`: continues the trace into ${fed} at \`${edge.hop_node}\` — determine its origin here.`;
       const existing = byNode.get(edge.from_node);
       if (existing) existing.push(question);
       else byNode.set(edge.from_node, [question]);
