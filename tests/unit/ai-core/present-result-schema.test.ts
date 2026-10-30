@@ -48,7 +48,7 @@ describe('present-result schema and provider contract', () => {
 
   it('accepts long section labels unchanged in final reports and repairs', () => {
     const text = 'x'.repeat(2000);
-    const input = { ...resultWith([{ label: ` ${text} `, color: 'source', node_ids: [nodeId] }]), name: text, title: text };
+    const input = { ...resultWith([{ label: 'Sources', color: 'source', node_ids: [nodeId] }]), name: 'Result', title: 'Report' };
     const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(PresentResultModelSchema));
     expect(PresentResultModelSchema.parse(input)).toEqual(input);
     expect(wire(input)).toBe(true);
@@ -66,7 +66,7 @@ describe('present-result schema and provider contract', () => {
     expect(PresentResultModelSchema.safeParse(resultWith(highlightGroups)).success).toBe(false);
   });
 
-  it('advertises an unbounded group count and legend text', () => {
+  it('advertises an unbounded group count and the legend bound', () => {
     const schema = z.toJSONSchema(PresentResultModelSchema, { io: 'input' });
     const highlightGroups = schema.properties?.highlight_groups as {
       items?: { properties?: { label?: Record<string, unknown> } };
@@ -76,7 +76,16 @@ describe('present-result schema and provider contract', () => {
 
     expect(highlightGroups.minItems).toBe(1);
     expect(highlightGroups).not.toHaveProperty('maxItems');
-    expect(highlightGroups.items?.properties?.label).not.toHaveProperty('maxLength');
+    expect(highlightGroups.items?.properties?.label).toHaveProperty('maxLength', 60);
+  });
+
+  // Native presentation limits preserve long section labels.
+  it.each([['name', 90], ['title', 120], ['legend', 60]] as const)('enforces the %s bound and accepts its repaired value', (field, max) => {
+    const value = (length: number) => ({ ...resultWith([{ label: field === 'legend' ? 'x'.repeat(length) : 'Sources', color: 'source', node_ids: [nodeId] }]), name: field === 'name' ? 'x'.repeat(length) : 'Result', title: field === 'title' ? 'x'.repeat(length) : 'Report' });
+    for (const schema of [PresentResultModelSchema, presentResultSchemaForPhase('synthesis')]) {
+      expect(validateToolCandidate(schema, value(max + 1)).success).toBe(false);
+      expect(validateToolCandidate(schema, value(max)).success).toBe(true);
+    }
   });
 
   it('rejects the normalized duplicate at the exact second label path', () => {

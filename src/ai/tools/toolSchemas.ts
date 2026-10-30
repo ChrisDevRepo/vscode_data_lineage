@@ -748,8 +748,8 @@ const NotesModelSchema = notesListSchema(NoteSchema);
 
 /** Schema for a visual highlight group, grouping nodes by a shared role or status. */
 const HighlightGroupSchema = z.object({
-  label: z.string().regex(/\S/, 'Must contain non-whitespace text.').min(1, 'Group label is required').describe('Legend label describing the shared graph role or status; presentation style: see the `highlights` output template.'),
-  color: HighlightSchemeSchema.describe('Flow role or status. `source`: upstream origins feeding the flow. `target`: destination or focal object. `transform`: intermediate nodes that transform values. `good` / `warn` / `fail`: diagnostic status. One role per group.'),
+  label: z.string().regex(/\S/, 'Must contain non-whitespace text.').min(1, 'Group label is required').max(60).describe('Legend label describing the shared graph role or status; presentation style: see the `highlights` output template.'),
+  color: HighlightSchemeSchema.describe('Flow role or status. `source`: the deepest origins whose data feeds the answer. `target`: where the data lands — the queried object in an upstream trace. `transform`: nodes that create or change the answer\'s values. `good` / `warn` / `fail`: diagnostic status. One scheme per result.'),
   node_ids: z.array(NodeIdSchema).describe('Node IDs that share this graph role or status.'),
 }).strict();
 
@@ -807,9 +807,9 @@ function previewSchemas(blockCount: number) {
 
 /** Schema defining the shape of the final generated presentation result. */
 export const PresentResultModelSchema = z.object({
-  name: z.string().regex(/\S/, 'Name must not be blank.').min(1, 'name is required').describe('Name for the generated lineage view.'),
+  name: z.string().regex(/\S/, 'Name must not be blank.').min(1, 'name is required').max(90).describe('Name for the generated lineage view.'),
   summary: z.string().regex(/\S/, 'Must contain non-whitespace text.').min(1, 'summary is required — one-line graph purpose (~120 chars)').describe('One-line summary shown with the generated view.'),
-  title: z.string().optional().describe('Optional report heading.'),
+  title: z.string().max(120).optional().describe('Optional report heading.'),
   intro: z.string().optional().describe('Optional grounded introduction to the final report.'),
   closing: z.string().optional().describe('Closing synthesis. Length is never a rejection axis.'),
   prune_node_ids: z.array(NodeIdSchema).optional().describe('ONLY permitted during Completed Phase follow-ups. Strictly forbidden during the initial Synthesis Phase.'),
