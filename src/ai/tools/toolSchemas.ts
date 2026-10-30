@@ -34,9 +34,10 @@ const ScopeNotesValueSchema = z.array(z.string().min(1).regex(/\S/, 'A scope not
 /** Canonical answer-lens values and primary-intent instruction shared by entry and tool schemas. */
 export const ClassificationValueSchema = z.enum(['business', 'technical', 'both'])
   .describe(
-    'Answer lens selected from primary user intent. "business": domain meaning, purpose, impact, or business rules (default when ambiguous or unspecified). '
-    + 'Incidental SQL, table or schema mentions, or a small technical subquestion, do not change a primary business lens. '
-    + '"technical": execution mechanics, indexes, performance, query shapes, or loading patterns. "both": explicitly requested dual perspective. Required for fresh proposals.',
+    'Choose the answer lens from the primary user intent: "business" for meaning, purpose, impact or business rules, '
+    + 'and for unspecified or ambiguous intent. Incidental SQL, table or schema mentions, or a small technical subquestion, '
+    + 'do not change a primary business lens; answer those details with supported evidence. "technical" only for clear overall technical intent '
+    + '(performance, indexes, execution plan, query shape, load pattern); "both" only when the user explicitly asks for both perspectives. Required for a fresh proposal.',
   );
 
 /** Single source for the `depth` describe text on both {@link StartExplorationInputSchema} and every provider branch spread through `StartPatchFields` — one canonical home instead of a second literal duplicating it. Required for a fresh proposal, like {@link ClassificationValueSchema}; a refine may omit it to keep the reviewed proposal's depth. The per-side `0` clause matches {@link ExplorationDepthSelectionSchema}'s own contract (`explorationDepthContract.ts`) and `isReachableInApprovedDirection` (`smBase.ts`): 0 is a permanent border for the rest of the session, not merely a one-time skip of the initial seed. */
