@@ -32,7 +32,7 @@ Package with `npm run package` and inspect the VSIX before install. Data boundar
 
 - Change the layer that owns the contract. Engine, chat runtime, and webview stay separated as above.
 - Validate untrusted input at the boundary with the existing schema. Leave invalid model input rejected.
-- For product behavior, code, prompt or contract recommendations and changes, **MUST** apply the [AI/backend ownership decision and review gate](docs/ARCHITECTURE.md#exploration): AI owns semantic decisions and content; technical checks and structural rendering cannot infer, select, add or silently repair meaning. Only lossless normalization and explicit index/reference expansion transform supplied content.
+- For product behavior, code, prompt or contract recommendations and changes, **MUST** apply the AI/backend ownership decision and review gate: AI owns semantic decisions and content; technical checks and structural rendering cannot infer, select, add or silently repair meaning. Only lossless normalization and explicit index/reference expansion transform supplied content.
 - Follow strict TypeScript and layering standards for public API and installed-library reuse; a different agent reviews every code, prompt and test change (added, changed or removed) against applicable rules before integration.
 - Leave `package.json` and the lockfile versions unchanged unless the user asks.
 - Record changes in `CHANGELOG.md` under the version in `package.json`; that version is the unreleased one. Add no `[Unreleased]` heading.
