@@ -77,7 +77,6 @@ export type RuntimeLifecycleRecord =
       readonly issuePaths?: readonly string[];
       readonly missingParts?: readonly string[];
       readonly feedbackAt?: string;
-      readonly clarificationWindowMs?: number;
       readonly durationMs: number;
     };
 

@@ -257,12 +257,10 @@ function repairExchange(rejected, reply, generation) {
   const narrow = requested && content ? content.length > 0 && content.every(field => requested.some(part => field === part || field.startsWith(`${part}.`))) : null;
   const served = rejected.nextServedFeedback;
   const roundTripMs = elapsed(rejected.feedbackAt, reply.at);
-  const known = served.text !== null && roundTripMs !== null && narrow !== null && generation?.hasProse != null && served.latestAssistantOwnsCall !== null;
-  const classification = rejected.clarificationWindowMs === null ? 'unclassified_legacy'
-    : !requested ? 'retry' : !known ? 'unclassified_missing_evidence'
-      : rejected.rejectionOrdinal === 1 && reply.status === 'accepted' && narrow && served.latestAssistantOwnsCall
-        && generation.generation === served.requestGeneration && generation.toolCount === 1 && !generation.hasProse
-        && roundTripMs <= rejected.clarificationWindowMs ? 'clarification' : 'retry';
+  const known = served.text !== null && narrow !== null && generation?.hasProse != null && served.latestAssistantOwnsCall !== null;
+  const classification = !requested ? 'retry' : !known ? 'unclassified_missing_evidence'
+    : rejected.rejectionOrdinal === 1 && reply.status === 'accepted' && narrow && served.latestAssistantOwnsCall
+      && generation.generation === served.requestGeneration && generation.toolCount === 1 && !generation.hasProse ? 'clarification' : 'retry';
   return { classification, requestedParts: requested, returnedParts: returned, onlyRequestedParts: narrow,
     backendRequest: { sourceLine: served.requestLine, feedbackAt: rejected.feedbackAt, servedAt: served.requestAt, size: textSize(served.text), tokens: null },
     modelReply: { sourceLine: generation?.responseLine ?? null, callId: reply.callId, size: sizesOf(reply.input), tokens: null },
@@ -333,7 +331,7 @@ function measureRetryEpisodes(records, { trace = null, epoch = null, requestCase
       const generation = response?.record.generation ?? null;
       const request = response?.request;
       const focus = matched?.call.input?.focus_node_id ?? (matched || synthetic ? focusFrom(request?.record) : null);
-      const event = { trace, epoch, case: requestCases[requestId] ?? null, line, requestId, generation, responseLine: response?.line ?? null, requestLine: request?.line ?? null, phase: response?.record.phase ?? record.phase ?? null, tool: record.toolName, focus, status: record.status ?? null, code: record.rejectionCode ?? null, paths: record.issuePaths ?? null, at: record.at ?? null, validationMs: record.durationMs ?? null, missingParts: Array.isArray(record.missingParts) && record.missingParts.length && record.missingParts.every(part => typeof part === 'string') ? record.missingParts : null, feedbackAt: typeof record.feedbackAt === 'string' ? record.feedbackAt : null, clarificationWindowMs: Number.isFinite(record.clarificationWindowMs) && record.clarificationWindowMs > 0 ? record.clarificationWindowMs : null, callId: matched?.call.callId ?? null, callIndex: matched?.callIndex ?? null, input: matched?.call.input ?? null, match: aggregateSuccess ? 'aggregate_success_only' : matched ? record.callId ? 'call_id' : 'unique_tool_current_generation' : synthetic ? 'synthetic_required_call_absent' : possible.length > 1 ? 'ambiguous' : 'missing' };
+      const event = { trace, epoch, case: requestCases[requestId] ?? null, line, requestId, generation, responseLine: response?.line ?? null, requestLine: request?.line ?? null, phase: response?.record.phase ?? record.phase ?? null, tool: record.toolName, focus, status: record.status ?? null, code: record.rejectionCode ?? null, paths: record.issuePaths ?? null, at: record.at ?? null, validationMs: record.durationMs ?? null, missingParts: Array.isArray(record.missingParts) && record.missingParts.length && record.missingParts.every(part => typeof part === 'string') ? record.missingParts : null, feedbackAt: typeof record.feedbackAt === 'string' ? record.feedbackAt : null, callId: matched?.call.callId ?? null, callIndex: matched?.callIndex ?? null, input: matched?.call.input ?? null, match: aggregateSuccess ? 'aggregate_success_only' : matched ? record.callId ? 'call_id' : 'unique_tool_current_generation' : synthetic ? 'synthetic_required_call_absent' : possible.length > 1 ? 'ambiguous' : 'missing' };
       events.push(event);
       if (aggregateSuccess) continue;
       if (!matched && !synthetic) { ambiguities.push(event); continue; }
@@ -496,7 +494,7 @@ export function detailedMetrics(records, { finalSnapshot = null, causalAnnotatio
   summary.exchangeCounts = { clarificationRequests: 0, clarificationReplies: 0, retryRequests: 0, retryReplies: 0,
     unclassifiedRequests: 0, unclassifiedReplies: 0, rawRejections: summary.rejectedEvents };
   for (const event of measured.events.filter(event => event.status === 'rejected')) {
-    const kind = event.repair?.exchange.classification ?? (event.clarificationWindowMs !== null && !event.missingParts ? 'retry' : 'unclassified');
+    const kind = event.repair?.exchange.classification ?? (event.missingParts ? 'unclassified' : 'retry');
     const prefix = kind === 'clarification' ? 'clarification' : kind === 'retry' ? 'retry' : 'unclassified';
     summary.exchangeCounts[`${prefix}Requests`] += 1;
     if (event.nextServedFeedback?.reply) summary.exchangeCounts[`${prefix}Replies`] += 1;
