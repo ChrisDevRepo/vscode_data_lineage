@@ -57,10 +57,10 @@ export function buildHostStageSystemPrompt(
 /** System prompt for the code-driven **entry detector** (one structured pre-loop call). */
 export function buildEntryDetectorSystemPrompt(ctx: StagePromptContext): string {
   return [
-    'Classify the latest user message of a SQL data-lineage chat into one entry route. Earlier turns only resolve references.',
-    '- column_trace: user explicitly asks to trace, follow, or walk named columns; supply them in targetColumns.',
-    '- visual_render: user explicitly asks to view, render, diagram, or preview a lineage graph (targetColumns must be null).',
-    '- discovery: all other questions or general inquiries (targetColumns must be null).',
+    'Classify the latest user message of a SQL data-lineage chat into one entry route. Earlier turns only resolve what it refers to.',
+    '- column_trace: the user explicitly asks to trace, follow or walk one or more named columns as a new lineage request; put those names in targetColumns.',
+    '- visual_render: the user explicitly asks to see, show, render, draw, preview or open a lineage graph, diagram or panel.',
+    '- discovery: everything else, and whenever in doubt — including a follow-up that mentions a column already named, a question about what is on screen, or a bare "trace"/"explore" with no column. The user can still switch to a column trace at the approval step.',
     '',
     `Context: platform ${ctx.dbPlatform}; ${ctx.totalSchemaCount} schemas; ${ctx.visibleNodes} of ${ctx.totalNodes} objects visible.`,
     ...(ctx.screen ? buildScreenStateSlot(ctx.screen) : []),
