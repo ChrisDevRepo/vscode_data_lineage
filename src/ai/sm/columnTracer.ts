@@ -46,6 +46,24 @@ export class ColumnTracer {
     return this.aspect;
   }
 
+  /**
+   * The aspect a complete exploration delivers: the edges in the closure of the tracked roots in the approved
+   * direction. A procedure origin's root column is the column it writes under that name, so a pair its own hop
+   * stores into another object's same-named column is a root too (D-130 adds no writer pair). A stored pair outside
+   * the closure (one that reaches no requested output) is withheld and named in one `log` line; no edge is added or rewritten.
+   */
+  deliveredState(roots: readonly { node: string; col: string }[], direction: 'upstream' | 'downstream' | 'both', log?: TracerLogFn): ColumnAspect {
+    const written = this.aspect.edges.filter(edge => edge.to_node !== edge.hop_node
+      && roots.some(root => root.node === edge.hop_node && this.columnKey(root.col) === this.columnKey(edge.to_col)));
+    const closure = columnAttachment([...roots, ...written.map(edge => ({ node: edge.to_node, col: edge.to_col }))], this.aspect.edges, direction,
+      columnEndpointKeyFactory(new Map(), this.identifierCaseSensitive));
+    const delivered = this.aspect.edges.filter(edge => closure.attaches(edge));
+    if (delivered.length === this.aspect.edges.length) return this.aspect;
+    const detached = this.aspect.edges.filter(edge => !delivered.includes(edge)).map(e => `${e.from_node}.${e.from_col} -> ${e.to_node}.${e.to_col}`);
+    log?.('debug', `[Disposition] getResult withholds ${detached.length} column edge(s) outside the closure of the tracked roots — ${detached.join(', ')}`);
+    return { ...this.aspect, edges: delivered };
+  }
+
   /** Columns requested at the start of the trace. */
   get targetColumns(): string[] {
     return this.aspect.target_columns;
@@ -338,7 +356,7 @@ interface ColumnAttachment {
 export function columnAttachment(
   roots: readonly { node: string; col: string }[],
   edges: ReadonlyArray<ColumnClosureEdge>,
-  direction: 'upstream' | 'downstream',
+  direction: 'upstream' | 'downstream' | 'both',
   endpointKey: (node: string, col: string) => string,
 ): ColumnAttachment {
   const rootKeys = new Set(roots.map(root => endpointKey(root.node, root.col)));

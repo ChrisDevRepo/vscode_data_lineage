@@ -600,22 +600,22 @@ cases:
       column_edges: [[Mid, X, Out, X], [Src, X, Mid, X]]
 
   - id: walk-ct-stored-column-loaded-by-procedure
-    story: The view asks nothing; the continuation reaches the loading procedure through the stored table, which maps what it writes there.
+    story: The view asks nothing; the continuation reaches the loading procedure through the stored table, which maps what it writes there. Its pair off the traced flow (S2.K) stays stored but is not delivered; S2 stays in the object graph.
     runners: [scripted]
     contract: walk
     mode: ct
     direction: upstream
     graph:
       origin: V
-      nodes: { V: view, T: table, P: procedure, S: table }
-      columns: [X]
-      edges: [[T, V], [P, T], [S, P]]
+      nodes: { V: view, T: table, P: procedure, S: table, S2: table }
+      columns: [X, K]
+      edges: [[T, V], [P, T], [S, P], [S2, P]]
     hops:
       - { at: V, decide: { map: [{ col: X, from: [{ node: T, col: X }] }] } }
-      - { at: P, decide: { map: [{ col: X, to: T, from: [{ node: S, col: X }] }] } }
+      - { at: P, decide: { map: [{ col: X, to: T, from: [{ node: S, col: X }] }, { col: K, to: T, from: [{ node: S2, col: K }] }] } }
     expect:
-      nodes: [V, T, P, S]
-      edges: [[T, V], [P, T], [S, P]]
+      nodes: [V, T, P, S, S2]
+      edges: [[T, V], [P, T], [S, P], [S2, P]]
       column_edges: [[S, X, T, X], [T, X, V, X]]
 
   - id: walk-ct-out-of-scope-write-refused

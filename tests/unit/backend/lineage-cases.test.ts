@@ -183,7 +183,7 @@ function rejectAndReadHeld(engine: NavigationEngine, input: unknown) {
 }
 
 describe('declared contributor identities', () => {
-  it('continues only qualified arriving columns while retaining extra valid mappings', () => {
+  it('continues only qualified arriving columns, stores extra valid mappings and delivers only the traced flow', () => {
     const root = '[d].[Root]', source = '[d].[Source]';
     const nodes = [makeNode({ id: root, name: 'Root', schema: 'd', type: 'view', columns: ['Tracked', 'Other'].map(column), bodyScript: 'SELECT A AS Tracked, B AS Other FROM d.Source;' }),
       makeNode({ id: source, name: 'Source', schema: 'd', type: 'view', columns: ['A', 'B'].map(column), bodyScript: 'SELECT 1 AS A, 2 AS B;' })];
@@ -208,7 +208,8 @@ describe('declared contributor identities', () => {
       sections: [{ angle: 'technical', text: 'A has no upstream supplier.' }], column_flow: [{ out_col: 'A', upstream_columns: [] }],
     })).toHaveProperty('ok', true);
     expect(engine.getHopContext()).toHaveProperty('done', true);
-    expect(engine.getResult().columnAspect!.edges.map(edge => [edge.from_col, edge.to_col])).toEqual([['A', 'Tracked'], ['B', 'Other']]);
+    expect(engine.columnAspect!.edges.map(edge => [edge.from_col, edge.to_col])).toEqual([['A', 'Tracked'], ['B', 'Other']]);
+    expect(engine.getResult().columnAspect!.edges.map(edge => [edge.from_col, edge.to_col])).toEqual([['A', 'Tracked']]);
   });
   it('stages a valid neighbor-column pair that does not sit on the requested chain', () => {
     const result = run({ id: 'detached-source-array', active: ['Tracked'], focus: 'writer', out: 'Other', direction: 'downstream',

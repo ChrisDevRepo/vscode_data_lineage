@@ -2910,6 +2910,8 @@ export class NavigationEngine implements IHopStateMachine {
       throw new Error(`Exploration result requested in status '${this._status}': a result exists only for a complete exploration.`);
     }
     const nodeStates = Array.from(this.nodeStates.values());
+    const direction = this.effectiveDirection();
+    const columnAspect = this.tracer?.deliveredState(this.columnRoots(), direction === 'bidirectional' ? 'both' : direction, this.log) ?? null;
     const rendered = new Set(nodeStates.filter(state => state.action !== 'prune').map(state => state.nodeId));
     for (const edge of this.tracer?.edges ?? []) {
       rendered.add(edge.from_node);
@@ -2926,7 +2928,7 @@ export class NavigationEngine implements IHopStateMachine {
         .map(e => [e.source, e.target, edgeApiType(e.type, this.nodeMap.get(e.source)?.type ?? '')]),
       detail_slots: this.memory.getResult().detail_slots.filter(slot => rendered.has(slot.nodeId)),
       node_states: nodeStates,
-      columnAspect: this.tracer?.state ?? null,
+      columnAspect,
     };
   }
 
