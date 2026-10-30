@@ -223,7 +223,7 @@ function parseElements(xml: string): { elements: XmlElement[]; dspName: string; 
     cdataPropName: CDATA_PROP,
   });
 
-  let doc: any;
+  let doc: { DataSchemaModel?: { Model?: { Element?: XmlElement | XmlElement[] }; '@_DspName'?: string; '@_CollationCaseSensitive'?: string } };
   try {
     doc = parser.parse(xml, true);
   } catch (err) {

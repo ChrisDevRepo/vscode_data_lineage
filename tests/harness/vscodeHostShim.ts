@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 
 /** Thrown when production code reaches a `vscode` member the headless harness does not implement. */
-export class HarnessShimError extends Error {
+class HarnessShimError extends Error {
   public constructor(member: string) {
     super(
       `vscode.${member} is not implemented by the headless harness shim (tests/harness/vscodeHostShim.ts). `
@@ -21,7 +21,9 @@ export function setShimLogSink(sink: (line: string) => void): void {
   logSink = sink;
 }
 
-/** Configuration section that answers with the caller's declared default and never invents a value. */
+/** Configuration section that answers with the caller's declared default and never invents a value.
+ * @public
+ */
 export function getConfiguration(section?: string): Record<string, unknown> {
   const qualify = (key: string): string => (section ? `${section}.${key}` : key);
   return {

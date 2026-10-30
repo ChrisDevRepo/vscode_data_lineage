@@ -26,6 +26,7 @@ import { createHarnessSession, loadHarnessParseRules, repoPath } from './session
 import { parseTrace } from './traceModel';
 import { setShimLogSink, Uri } from './vscodeHostShim';
 import { createRequire } from 'node:module';
+import { providerEndpoint, isResponsesEndpoint } from '../fixtures/lm-provider-extension/live-provider-adapter.js';
 import { modelUserMessage, modelAssistantMessage, type ModelMessage } from '../../src/ai/model/modelPort';
 
 interface CatalogCase {
@@ -54,7 +55,9 @@ function headlessCases(): CatalogCase[] {
   return (createRequire(loader)(loader) as { loadCases: (runner?: string) => CatalogCase[] }).loadCases('headless');
 }
 
-/** Reports other declared test surfaces and unavailable fixtures without running or omitting them. */
+/** Reports other declared test surfaces and unavailable fixtures without running or omitting them.
+ * @public Used by the compiled headless launcher for --all reports.
+ */
 export function caseInventory() {
   const loader = repoPath('tests', 'cases', 'loadCases.cjs');
   const inventory = (createRequire(loader)(loader) as { loadInventory: () => {
@@ -476,7 +479,9 @@ export function databaseConfig(env: NodeJS.ProcessEnv) {
 const baselineArmSchema = z.object({ runDir: z.string().min(1), turns: z.array(z.number().int().positive()).min(1).optional() }).strict();
 const baselineMapSchema = z.object({ cases: z.record(z.string(), z.object({ main: baselineArmSchema.optional(), previous: baselineArmSchema.optional() }).strict()) }).strict();
 type BaselinePair = z.infer<typeof baselineMapSchema>['cases'][string];
-/** Reads the same baseline map for launch preflight and the selected case. */
+/** Reads the same baseline map for launch preflight and the selected case.
+ * @public Used by the compiled headless launcher for --baselines preflight.
+ */
 export function readBaselineMap(path: string) {
   return baselineMapSchema.parse(JSON.parse(readFileSync(path, 'utf8')));
 }
@@ -738,10 +743,6 @@ export async function main(kind: 'ai' | 'db', args: readonly string[], onResult?
       const envEffort = process.env.AI_TEST_REASONING_EFFORT || process.env.AI_TEST_THINKING_LEVEL;
       const reasoningEffort: ThinkingLevel | undefined = options.effort
         ?? (envEffort ? z.enum(['low', 'medium', 'high', 'xhigh', 'max', 'off']).parse(envEffort.toLowerCase()) : undefined);
-      const { providerEndpoint, isResponsesEndpoint } = require(repoPath('tests', 'fixtures', 'lm-provider-extension', 'live-provider-adapter.js')) as {
-        providerEndpoint: (endpoint: string, provider: string, model: string) => string;
-        isResponsesEndpoint: (endpoint: string) => boolean;
-      };
       const endpoint = providerEndpoint(process.env.AI_TEST_ENDPOINT!, provider!.provider, provider!.model);
       result.provider = provider!.provider;
       result.model = provider!.model;

@@ -13,7 +13,7 @@ const host = vi.hoisted(() => ({
 }));
 
 vi.mock('vscode', async (importOriginal) => {
-  const actual = await importOriginal<Record<string, any>>();
+  const actual = await importOriginal<typeof import('vscode')>();
   return {
     ...actual,
     ConfigurationTarget: { Global: 1 },

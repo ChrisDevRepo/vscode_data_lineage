@@ -113,3 +113,8 @@ debug*.txt
 .editorconfig
 
 .venv/**
+
+# Development quality tooling
+eslint.config.mjs
+prettier.config.mjs
+knip.jsonc

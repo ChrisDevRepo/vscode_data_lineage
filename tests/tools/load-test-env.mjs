@@ -6,7 +6,9 @@ import { z } from 'zod';
 
 const ENV_FILE = resolve('.env');
 const testTimeout = z.coerce.number().int().min(1).max(2_147_423_647);
+/** @public Exported for external contract checks. */
 export const REQUIRED_AI_KEYS = ['AI_TEST_ENDPOINT', 'AI_TEST_API_KEY', 'AI_TEST_MODEL'];
+/** @public Exported for external contract checks. */
 export const PROVIDER_PROFILES = {
   azure: ['AZURE_URI', 'AZURE_API', 'AZURE_MODEL'],
   fireworks: ['FIREWORKS_URL', 'FIREWORKS_API', 'FIREWORKS_MODEL'],

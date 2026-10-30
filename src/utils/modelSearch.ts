@@ -62,7 +62,7 @@ type SearchRegexRejection = Extract<SearchRegexResult, { ok: false }>;
 export const SEARCH_LINE_MAX_CHARS = 1000;
 
 /** Locator for a matching body line longer than {@link SEARCH_LINE_MAX_CHARS}. */
-export interface OversizedLineHit {
+interface OversizedLineHit {
   /** 1-based line number in the body. */
   readonly line: number;
   /** Length of the line in characters. */

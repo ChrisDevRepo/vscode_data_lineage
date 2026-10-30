@@ -22,14 +22,14 @@ export function parseTrace(text) {
 }
 
 /** Classifies one `column_flow` contributor by the contract: a contributor with a direct transform (or none stated) is a value input; one whose transforms are all `combine` or `filter` is a row role. */
-export function contributorKind(contributor) {
+function contributorKind(contributor) {
   const transforms = Array.isArray(contributor.transforms) ? contributor.transforms : [];
   if (transforms.length === 0) return 'direct';
   return transforms.some(t => DIRECT.has(t)) || !transforms.every(t => ROW_ROLE.has(t)) ? 'direct' : 'row_role';
 }
 
 /** Summarises one `lineage_submit_findings` input. */
-export function summariseSubmission(input) {
+function summariseSubmission(input) {
   const direct = new Set();
   const rowRole = new Set();
   const named = new Set();
@@ -56,7 +56,7 @@ export function summariseSubmission(input) {
 }
 
 /** Distinct captured-snippet ids (`S<n>`) opened as ```sql fences in a text. */
-export function snippetIds(text) {
+function snippetIds(text) {
   return new Set([...text.matchAll(/```sql S(\d+)/g)].map(match => `S${match[1]}`));
 }
 
@@ -149,12 +149,12 @@ export function runMetrics(records) {
 }
 
 /** Size of a rejected call, in characters of its input, from which a resend is judged on its size. A small call is cheaper to resend whole than to patch, so only a large exchange is expected to resend the defect only. */
-export const LARGE_CALL_CHARS = 4000;
+const LARGE_CALL_CHARS = 4000;
 /** Share of the rejected call's characters above which the resend of a large call is not defect-only. */
-export const MAX_RESEND_SHARE = 0.5;
+const MAX_RESEND_SHARE = 0.5;
 
 /** Follows every rejected call to the call that repaired it: how many replies the repair took, and whether each resend carried only the defect. Outcomes require conservative call/generation association. */
-export function repairChains(calls, toolRecords, measured = null) {
+function repairChains(calls, toolRecords, measured = null) {
   // Legacy direct callers receive conservative associations too; no ordinal zip across missing outcomes.
   if (!measured) {
     const sequence = [];
@@ -417,7 +417,7 @@ export function measureMarkup(text) {
 }
 
 /** Measure only an explicitly supplied canonical report; metadata array absence stays unknown. */
-export function measureFinalReport(report, representation) {
+function measureFinalReport(report, representation) {
   if (!['markdown', 'present_result_json'].includes(representation)) throw new Error('reportRepresentation must be markdown or present_result_json');
   const metadata = representation === 'present_result_json' ? report?.aiMetadata : null;
   const text = representation === 'present_result_json' ? metadata?.description : report;
@@ -449,7 +449,7 @@ function measureUsage(responses) {
 }
 
 /** Deterministic per-case diagnostics. Supply only records belonging to the case. finalSnapshot is an explicitly captured final projection { nodes: [], columnEdges: [] }; omitted arrays remain unknown. Causal annotations are caller supplied, never inferred here. Raw authored text, SQL, tool arguments and feedback are deliberately excluded. */
-export function detailedMetrics(records, { finalSnapshot = null, causalAnnotations = [] } = {}) {
+function detailedMetrics(records, { finalSnapshot = null, causalAnnotations = [] } = {}) {
   const measured = measureRetryEpisodes(records);
   const responses = records.filter(record => record.type === 'wire-response');
   const requests = records.filter(record => record.type === 'wire-request');
@@ -540,17 +540,17 @@ export function detailedMetrics(records, { finalSnapshot = null, causalAnnotatio
 }
 
 /** Write exactly the same bytes for the same JSON-safe input; no generated timestamps. */
-export function writeMetricsReport(path, metrics) {
+function writeMetricsReport(path, metrics) {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(metrics, null, 2)}\n`, 'utf8');
 }
 
 /** Citation counts prompt manual review when many snippets were offered and few were cited. */
-export const MIN_OFFERED_FOR_CITATION_CHECK = 10;
-export const MIN_CITED_SHARE = 0.1;
+const MIN_OFFERED_FOR_CITATION_CHECK = 10;
+const MIN_CITED_SHARE = 0.1;
 
 /** Operational failures are defects; differences in authored content are signals for side-by-side SQL review. */
-export const RULES = {
+const RULES = {
   run_not_completed: { kind: 'defect', correct: 'A turn ends with outcome ok, or with a stated stop reason; accepted work is not discarded by a transient fault.' },
   repair_unresolved: { kind: 'defect', correct: 'A rejected call is followed by an accepted resend, or the run ends with a stated stop reason.' },
   same_field_rejected_twice: { kind: 'signal', verify: 'Read both rejections and repairs: did the fault persist, or did the next call expose a different defect in the same field?' },
@@ -614,7 +614,7 @@ export function findings(run) {
 }
 
 /** Signals for manually selected baseline/candidate captures of the same question. */
-export function spreadFindings(runs) {
+function spreadFindings(runs) {
   const out = [];
   for (const row of compareRuns(runs)) {
     if (!row.identicalDirect) out.push(finding('source_set_differs_between_runs', { focus: row.focus, detail: `value inputs ${row.directCounts.join('/')}; in some runs only: ${row.onlyInSome.join(', ')}` }));
@@ -637,7 +637,7 @@ export function spreadFindings(runs) {
 }
 
 /** Compares the accepted hops of repeated runs of one question, per focus object: the sets a hop named as value inputs and row roles are reported for manual review, without judging content quality. */
-export function compareRuns(runs) {
+function compareRuns(runs) {
   const byFocus = new Map();
   runs.forEach((run, runIndex) => {
     for (const hop of run.hops) {
@@ -665,7 +665,9 @@ export function compareRuns(runs) {
   return rows.sort((a, b) => a.focus.localeCompare(b.focus));
 }
 
-/** Character length of the canonical preview, falling back to streamed answer text when that preview is absent. */
+/** Character length of the canonical preview, falling back to streamed answer text when that preview is absent.
+ * @public
+ */
 export function previewCharCount(runDir) {
   if (!existsSync(runDir)) return null;
   let chars = null;
@@ -690,7 +692,7 @@ export function previewCharCount(runDir) {
 }
 
 /** Finds the most recent NDJSON traces in the test-results/headless directory. */
-export function findLatestTraces(dir = 'test-results/headless', count = 2) {
+function findLatestTraces(dir = 'test-results/headless', count = 2) {
   const traces = [];
   function walk(d) {
     if (!existsSync(d)) return;

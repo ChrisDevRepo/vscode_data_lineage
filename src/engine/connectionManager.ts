@@ -49,7 +49,7 @@ export interface DmvQuery {
 }
 
 /** Root configuration structure for DMV query definition files. */
-export interface DmvQueriesConfig {
+interface DmvQueriesConfig {
   /** Schema version of the configuration file. */
   version: number;
   /** The collection of queries defined in the file. */

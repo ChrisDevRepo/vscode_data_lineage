@@ -234,7 +234,9 @@ export function scriptedRegistry(tools: readonly ScriptedTool[]): {
   return { registry, invocations };
 }
 
-/** Scripted start result that opens a gate as the real handler does: the typed signal on the session plus the envelope text. */
+/** Scripted start result that opens a gate as the real handler does: the typed signal on the session plus the envelope text.
+ * @public
+ */
 export function scriptedGate(getSession: () => Pick<AiSession, 'signalControl'>): () => string {
   return () => {
     getSession().signalControl({ kind: 'gate' });
@@ -242,7 +244,9 @@ export function scriptedGate(getSession: () => Pick<AiSession, 'signalControl'>)
   };
 }
 
-/** Scripted start result that refuses the request as the real handler does: the typed signal on the session plus the envelope text. */
+/** Scripted start result that refuses the request as the real handler does: the typed signal on the session plus the envelope text.
+ * @public
+ */
 export function scriptedRefusal(getSession: () => Pick<AiSession, 'signalControl'>, reason: string): () => string {
   return () => {
     getSession().signalControl({ kind: 'refused', reason });

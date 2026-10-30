@@ -42,6 +42,9 @@ const unitReport = (lane) => join(LOG_DIR, `${lane}-unit.json`);
 const unitReportArgs = (lane) => ['--reporter=default', '--reporter=json', `--outputFile.json=${unitReport(lane)}`];
 
 const STEPS = [
+  npmRun('typescript-eslint', 'lint'),
+  npmRun('Prettier', 'format:check'),
+  npmRun('knip', 'knip'),
   npmRun('typecheck', 'typecheck'),
   npmRun('typecheck:tests', 'typecheck:tests'),
   { name: 'tool manifest codegen', cmd: nodeBin, args: ['scripts/generate-tool-manifest.mjs', '--check'] },

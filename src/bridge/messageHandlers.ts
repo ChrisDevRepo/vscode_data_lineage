@@ -63,7 +63,7 @@ import { getNonce } from '../utils/getNonce';
 import { errorMessage } from '../utils/errorMessage';
 
 /** Maps each main-panel message type to a handler whose `msg` parameter is narrowed to the matching variant of {@link MainPanelToExtensionMsg}. */
-export type WebviewMessageHandlers = {
+type WebviewMessageHandlers = {
   [K in MainPanelToExtensionMsg['type']]: (
     msg: Extract<MainPanelToExtensionMsg, { type: K }>,
   ) => Promise<void> | void;

@@ -35,6 +35,9 @@ git clone https://github.com/ChrisDevRepo/vscode_data_lineage.git
 cd vscode_data_lineage
 npm ci
 npm run typecheck             # type-check only
+npm run lint                  # TypeScript lint
+npm run format:check          # Prettier formatting
+npm run knip                  # unused files, exports and dependencies
 npm run build                 # esbuild extension + Vite webview
 npm run package               # package with the pinned local @vscode/vsce
 ```

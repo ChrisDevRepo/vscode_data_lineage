@@ -50,7 +50,7 @@ function xmlEscape(value: string): string {
 }
 
 /** Serializes a {@link DatabaseModel} produced by {@link generateDwhModel} into a `model.xml` body. */
-export function serializeDwhModelToXml(model: DatabaseModel): { xml: string; edgeCount: number } {
+function serializeDwhModelToXml(model: DatabaseModel): { xml: string; edgeCount: number } {
   const byId = new Map(model.nodes.map(n => [n.id, n]));
 
   const externalUrlByCarrier = new Map<string, string>();

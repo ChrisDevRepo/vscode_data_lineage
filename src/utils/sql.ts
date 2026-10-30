@@ -105,12 +105,3 @@ export function compileExclusionMatcher(
 export function escapeRegexLiteral(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
-
-/** Normalizes a raw DDL script for display in the UI. - Removes blank lines. - Trims trailing whitespace. - Converts tabs to two-space indentation. */
-export function normalizeBodyScript(raw: string): string {
-  return raw
-    .split('\n')
-    .filter(line => line.trim().length > 0)
-    .map(line => line.trimEnd().replace(/\t/g, '  '))
-    .join('\n');
-}

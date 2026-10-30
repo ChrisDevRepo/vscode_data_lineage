@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { z } from 'zod';
 import { VscodeModelPort } from '../../../src/ai/model/vscodeModelPort';
-import { modelUserMessage } from '../../../src/ai/model/modelPort';
+import { modelUserMessage, type ModelMessage } from '../../../src/ai/model/modelPort';
 import { REGEX_MAX_LENGTH, checkScopeBudget, createTurnTokenBudget } from '../../../src/ai/support/tokenBudget';
 import { AiSession } from '../../../src/ai/session/session';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
@@ -174,11 +174,11 @@ function findingRepair(engine: NavigationEngine, input: object, rejection: { res
 function ownedInputWorld(options: { signal?: AbortSignal } = {}) {
   const world = ctWorld();
   let queued: Array<{ tool: string; input: object }> = [];
-  const offered: any[][] = [];
+  const offered: Array<Array<{ name: string; inputSchema: { properties: Record<string, unknown> } }>> = [];
   const port = new VscodeModelPort({ id: 'owned-boundary', name: 'owned-boundary', vendor: 'test', family: 'test', version: '1',
     maxInputTokens: 128000, countTokens: async () => 1,
-    sendRequest: async (_messages: unknown, options: any) => {
-      offered.push(structuredClone(options.tools));
+    sendRequest: async (_messages: unknown, options: vscode.LanguageModelChatRequestOptions) => {
+      offered.push(structuredClone(options.tools!) as typeof offered[number]);
       return { stream: { async *[Symbol.asyncIterator]() {
         for (const [index, call] of queued.entries())
           yield new vscode.LanguageModelToolCallPart(`owned-${port.modelCalls}-${index}`, call.tool, call.input);
@@ -1923,7 +1923,7 @@ it.each(['feedback marker', 'next provider schema and acknowledgement', 'second 
   const { session } = ctWorld(); session.stateMachine = null;
   session.currentRoundId = 1; // One user request contains both provider generations.
   session.enterLmStage({ kind: 'sm_entry' }, session.turnEpoch);
-  const offered: Array<Record<string, any>> = [];
+  const offered: Array<{ properties: Record<string, { enum?: string[]; properties?: Record<string, { enum?: string[] }> }>; required?: string[] }> = [];
   const inputs: Array<Record<string, unknown>> = check === 'second feedback allowed values'
     ? [{ origin: ORIGIN, analysisMode: 'bad-mode', classification: 'technical', depth: { upstream: { levels: 1, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } } },
       { analysisMode: 'still-bad' }, { analysisMode: 'bb' }]
@@ -1936,8 +1936,8 @@ it.each(['feedback marker', 'next provider schema and acknowledgement', 'second 
   let sends = 0;
   const model = new VscodeModelPort({ id: 'native-repair', name: 'native-repair', vendor: 'test', family: 'test', version: '1',
     maxInputTokens: 128000, countTokens: async () => 1,
-    sendRequest: async (_messages: unknown, options: any) => {
-      offered.push(options.tools.find((tool: any) => tool.name === 'lineage_start_exploration').inputSchema);
+    sendRequest: async (_messages: unknown, options: vscode.LanguageModelChatRequestOptions) => {
+      offered.push(options.tools!.find(tool => tool.name === 'lineage_start_exploration')!.inputSchema as typeof offered[number]);
       const input = inputs[sends++]!;
       return { stream: { async *[Symbol.asyncIterator]() {
         yield new vscode.LanguageModelToolCallPart(`generation-${sends}`, 'lineage_start_exploration', input);
@@ -1946,7 +1946,7 @@ it.each(['feedback marker', 'next provider schema and acknowledgement', 'second 
   } as never, { budget: createTurnTokenBudget({}) });
   const registry = buildAiToolRegistry(() => session, { info() {}, debug() {}, warn() {}, error() {} } as never,
     () => undefined, undefined, { model });
-  const plan = (messages: any[]) => compileInstructionPlan({ kind: 'converse', stage: { kind: 'sm_entry' }, registry,
+  const plan = (messages: ModelMessage[]) => compileInstructionPlan({ kind: 'converse', stage: { kind: 'sm_entry' }, registry,
     toolSchemaOverrides: new Map([['lineage_start_exploration', StartExplorationFreshProviderInputSchema]]),
     facts: { memorySections: [] }, messages, sink: new TurnEventSink(() => {}), toolChoice: 'auto' });
   let state = initialToolPhaseAttemptState('sm_entry');
@@ -2032,8 +2032,8 @@ it.each([
   queue([{ tool: row.tool, input: patch }]);
   await executeToolAttempt(port, plan(), { priorState: recordToolAttempt(initialToolPhaseAttemptState('discover'), first, registry) });
   expect(port.modelCalls).toBe(2); expect(session.currentRoundId).toBe(1);
-  expect(offered[1]!.find(tool => tool.name === row.tool).inputSchema, 'D-098: a repair serves the full schema')
-    .toEqual(offered[0]!.find(tool => tool.name === row.tool).inputSchema);
+  expect(offered[1]!.find(tool => tool.name === row.tool)!.inputSchema, 'D-098: a repair serves the full schema')
+    .toEqual(offered[0]!.find(tool => tool.name === row.tool)!.inputSchema);
   const fresh = ctWorld(); fresh.session.stateMachine = null; fresh.session.enterLmStage({ kind: 'discover' }, fresh.session.turnEpoch);
   expect(results.at(-1)).toBe(await fresh.registry.invoke(row.tool, patch)); expect(readToolErrorText(results.at(-1)!)).toBeNull();
   expect(session.hopLog.at(-1)?.input).toEqual(patch);
@@ -2074,9 +2074,9 @@ it.each([false, true])('repairs an owed section through the compiled active hop 
   expect(engine.heldPartsOfCurrentFocus()?.resend).toEqual(['sections.technical']);
   queue([{ tool: 'lineage_submit_findings', input: full ? { ...input, ...patch } : patch }]);
   const second = await executeToolAttempt(port, plan(), { priorState: recordToolAttempt(initialToolPhaseAttemptState('active'), first, registry) });
-  const schema = offered[1]!.find(tool => tool.name === 'lineage_submit_findings').inputSchema;
-  expect(Object.keys(schema.properties)).toEqual(Object.keys(offered[0]!.find(tool => tool.name === 'lineage_submit_findings').inputSchema.properties));
-  expect(schema, 'D-097: the original full schema stays unchanged').toEqual(offered[0]!.find(tool => tool.name === 'lineage_submit_findings').inputSchema);
+  const schema = offered[1]!.find(tool => tool.name === 'lineage_submit_findings')!.inputSchema;
+  expect(Object.keys(schema.properties)).toEqual(Object.keys(offered[0]!.find(tool => tool.name === 'lineage_submit_findings')!.inputSchema.properties));
+  expect(schema, 'D-097: the original full schema stays unchanged').toEqual(offered[0]!.find(tool => tool.name === 'lineage_submit_findings')!.inputSchema);
   expect(new Ajv({ strict: false }).compile(schema)(patch),
     'D-098: the served native wire card admits the named technical-leaf correction alone').toBe(true);
   expect(new Ajv({ strict: false }).compile(schema)({ ...input, sections: { ...input.sections, ...patch.sections } }),
@@ -2109,8 +2109,8 @@ it('keeps the original provider schema while rechecking held fields against curr
   const next = recordToolAttempt(state, first, registry);
   const second = await executeToolAttempt(port, plan(), { priorState: next });
   expect(second.rejections.flatMap(rejection => rejection.issuePaths ?? [])).toContain('column_flow.0.upstream_columns.0.col');
-  expect(offered[1]!.find(tool => tool.name === 'lineage_submit_findings').inputSchema)
-    .toEqual(offered[0]!.find(tool => tool.name === 'lineage_submit_findings').inputSchema);
+  expect(offered[1]!.find(tool => tool.name === 'lineage_submit_findings')!.inputSchema)
+    .toEqual(offered[0]!.find(tool => tool.name === 'lineage_submit_findings')!.inputSchema);
   expect(engine.getDetailSlots()).toEqual([]);
   queue([{ tool: 'lineage_submit_findings', input: { column_flow: [{ out_col: 'Value', upstream_columns: [{ node: BRANCH, col: 'Other' }] }] } }]);
   const third = await executeToolAttempt(port, plan(), { priorState: recordToolAttempt(next, second, registry) });
@@ -2139,9 +2139,9 @@ it.each(['column_flow', 'unknown-root'] as const)('uses the existing active auth
   const patch = fault === 'column_flow' ? { column_flow: valid.column_flow } : {};
   queue([{ tool: 'lineage_submit_findings', input: patch }]);
   const second = await executeToolAttempt(port, plan(), { priorState: recordToolAttempt(initialToolPhaseAttemptState('active'), first, registry) });
-  const schema = offered[1]!.find(tool => tool.name === 'lineage_submit_findings').inputSchema;
+  const schema = offered[1]!.find(tool => tool.name === 'lineage_submit_findings')!.inputSchema;
   expect(Object.keys(schema.properties), 'D-098: a repair serves the full schema')
-    .toEqual(Object.keys(offered[0]!.find(tool => tool.name === 'lineage_submit_findings').inputSchema.properties));
+    .toEqual(Object.keys(offered[0]!.find(tool => tool.name === 'lineage_submit_findings')!.inputSchema.properties));
   if (fault === 'column_flow') expect(new Ajv({ strict: false }).compile(schema)({ ...valid, column_flow: [{ out_col: 'Value' }] })).toBe(false);
   expect(second.rejections).toHaveLength(0);
   expect(engine.getDetailSlots().find(slot => slot.nodeId === ORIGIN)).toMatchObject({ summary: valid.summary,

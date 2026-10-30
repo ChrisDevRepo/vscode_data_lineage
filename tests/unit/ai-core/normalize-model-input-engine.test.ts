@@ -20,7 +20,7 @@ describe('N2 focus_node_id boundary normalization proof', () => {
       depthIntent: { upstream: { levels: 1, exactness: 'exact' }, downstream: { levels: 0, exactness: 'exact' } },
     });
     const ctx = engine.getHopContext();
-    expect((ctx as any).focus_node.id).toBe(origin);
+    expect(ctx).toMatchObject({ focus_node: { id: origin } });
 
     const hop = engine.hopSubmitColumns;
     expect(hop.focusNodeId).toBe(origin);
@@ -34,7 +34,7 @@ describe('N2 focus_node_id boundary normalization proof', () => {
 
     expect(normalized.input).toMatchObject({ focus_node_id: origin });
     expect(normalized.fixes.some(f => f.path === 'focus_node_id' && f.after === origin)).toBe(true);
-    const result = engine.submitFindings(toHopFinding(normalized.input as any));
+    const result = engine.submitFindings(toHopFinding(schema.parse(normalized.input)));
     expect(result).toMatchObject({ ok: true });
   });
 });

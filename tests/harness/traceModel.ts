@@ -6,26 +6,26 @@ import type { GenerationRecord, WireRecord } from '../../src/ai/observability/wi
 export const TRACE_MODEL_SCHEMA_VERSION = 2;
 
 /** One parsed line: the record fields, the writer's `at` timestamp, and the 0-based source line. */
-export type TraceEntry<T> = T & { readonly at: string; readonly lineIndex: number };
+type TraceEntry<T> = T & { readonly at: string; readonly lineIndex: number };
 
 type Lifecycle<TType extends RuntimeLifecycleRecord['type']> =
   Extract<RuntimeLifecycleRecord, { readonly type: TType }>;
 
-export type TraceOpenEntry = TraceEntry<Lifecycle<'trace-open'>>;
-export type TurnStartEntry = TraceEntry<Lifecycle<'turn-start'>>;
-export type TurnTerminalEntry = TraceEntry<Lifecycle<'turn-terminal'>>;
-export type GateEntry = TraceEntry<Lifecycle<'gate'>>;
-export type PhaseEntry = TraceEntry<Lifecycle<'phase'>>;
+type TraceOpenEntry = TraceEntry<Lifecycle<'trace-open'>>;
+type TurnStartEntry = TraceEntry<Lifecycle<'turn-start'>>;
+type TurnTerminalEntry = TraceEntry<Lifecycle<'turn-terminal'>>;
+type GateEntry = TraceEntry<Lifecycle<'gate'>>;
+type PhaseEntry = TraceEntry<Lifecycle<'phase'>>;
 export type ToolEntry = TraceEntry<Lifecycle<'tool'>>;
-export type TurnEntry = TurnStartEntry | TurnTerminalEntry;
+type TurnEntry = TurnStartEntry | TurnTerminalEntry;
 export type GenerationEntry = TraceEntry<GenerationRecord>;
 /** Every {@link WireRecord} variant except `generation`, which gets its own bucket — see {@link ParsedRun.generations}. */
-export type WireEntry = TraceEntry<Exclude<WireRecord, GenerationRecord>>;
+type WireEntry = TraceEntry<Exclude<WireRecord, GenerationRecord>>;
 /** A structurally valid `{at, type, ...}` line whose `type` this schema version does not recognize. */
-export type UnknownEntry = TraceEntry<{ readonly type: string } & Record<string, unknown>>;
+type UnknownEntry = TraceEntry<{ readonly type: string } & Record<string, unknown>>;
 
 /** One line that could not be read back as a trace record, kept verbatim rather than dropped. */
-export interface MalformedLine {
+interface MalformedLine {
   /** 0-based source line index, matching {@link TraceEntry.lineIndex} on well-formed neighbors. */
   readonly line: number;
   /** The original malformed line text, preserved for diagnosis. */

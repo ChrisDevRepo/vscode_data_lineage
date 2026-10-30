@@ -82,13 +82,13 @@ export interface GenerateDwhModelParams {
 }
 
 /** A node whose degree makes it a structural hub of the generated graph. */
-export interface HubEntry {
+interface HubEntry {
   id: string;
   total: number;
 }
 
 /** Structural statistics computed over a {@link generateDwhModel} result. */
-export interface DwhStats {
+interface DwhStats {
   nodeCount: number;
   edgeCount: number;
   edgesPerNode: number;

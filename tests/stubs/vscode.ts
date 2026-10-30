@@ -73,12 +73,13 @@ export class CancellationTokenSource {
     onCancellationRequested(listener: () => void): { dispose(): void };
   };
   constructor() {
-    const source = this;
+    const isCancelled = () => this.cancelled;
+    const listeners = this.listeners;
     this.token = {
-      get isCancellationRequested() { return source.cancelled; },
+      get isCancellationRequested() { return isCancelled(); },
       onCancellationRequested(listener) {
-        source.listeners.add(listener);
-        return { dispose: () => source.listeners.delete(listener) };
+        listeners.add(listener);
+        return { dispose: () => listeners.delete(listener) };
       },
     };
   }

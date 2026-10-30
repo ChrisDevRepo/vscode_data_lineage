@@ -33,13 +33,17 @@ function bookmarkIdFromUiState(uiState: unknown): string | undefined {
   return typeof id === 'string' ? id : undefined;
 }
 
-/** How one gate round is answered. */
+/** How one gate round is answered. Exposed to the CLI via import types.
+ * @public
+ */
 export type GateRoundPolicy =
   | { readonly kind: 'approve'; readonly expect?: string; readonly onMismatch?: AiGateRefine }
   | { readonly kind: 'deny' }
   | { readonly kind: 'refine'; readonly instruction: string };
 
-/** Evaluates one `approve:<expect>` assertion against the pending proposal. */
+/** Evaluates one `approve:<expect>` assertion against the pending proposal.
+ * @public
+ */
 export function evaluateGateExpectation(expr: string, session: AiSession): boolean {
   const proposal = session.pendingExploration;
   if (!proposal) return false;
@@ -131,7 +135,9 @@ export interface HarnessTurnOptions {
   readonly storedRun?: StoredAiRun;
 }
 
-/** One consent gate and the decision the run policy applied to it. */
+/** One consent gate and the decision the run policy applied to it.
+ * @public Gate decision API exposed to CLI result import types.
+ */
 export interface HarnessGateDecision {
   readonly gateId: string;
   readonly gate: string;

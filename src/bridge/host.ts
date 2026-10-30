@@ -15,11 +15,11 @@ export interface BridgeHost {
   /** Sends a type-safe message from the extension host to the webview. */
   postMessage(msg: ExtensionToWebviewMsg): Thenable<boolean>;
   /** Records a log entry with a specific severity level and category. */
-  log(level: 'info' | 'debug' | 'warn' | 'error', cat: LogCategory, text: string, err?: any): void;
+  log(level: 'info' | 'debug' | 'warn' | 'error', cat: LogCategory, text: string, err?: unknown): void;
   /** Displays a VS Code error notification to the user. */
   showErrorMessage(msg: string): void;
   /** Executes a VS Code command with optional arguments. */
-  executeCommand(command: string, ...args: any[]): Thenable<any>;
+  executeCommand(command: string, ...args: unknown[]): Thenable<unknown>;
   /** Opens a URL in the user's default external browser. */
   openExternal(url: string): Thenable<boolean>;
   /** Displays the standard VS Code file open dialog. */
@@ -31,7 +31,7 @@ export interface BridgeHost {
   /** Writes data to a file in the local file system. */
   writeFile(uri: vscode.Uri, content: Uint8Array): Thenable<void>;
   /** Displays a progress notification while executing an asynchronous task. */
-  withProgress<R>(options: vscode.ProgressOptions, task: (progress: vscode.Progress<any>, token: vscode.CancellationToken) => Thenable<R>): Thenable<R>;
+  withProgress<R>(options: vscode.ProgressOptions, task: (progress: vscode.Progress<{ message?: string; increment?: number }>, token: vscode.CancellationToken) => Thenable<R>): Thenable<R>;
   /** Retrieves the extension's workspace configuration. */
   getConfiguration(): vscode.WorkspaceConfiguration;
   /** Returns the base URI where the extension is installed. */

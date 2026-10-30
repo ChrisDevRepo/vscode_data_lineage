@@ -1,0 +1,33 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "src/utils/layout.worker.ts",
+    ".vscode-test*.mjs",
+    "tests/integration/**/*.test.ts",
+    "tests/scale/layout.test.ts",
+    "tests/scale/vitest.config.ts",
+    "scripts/generate-third-party-notices.mjs",
+    "scripts/verify-code-comments.mjs",
+    "scripts/verify-docs.mjs",
+    "tests/tools/assert-invariants.mjs",
+    "tests/tools/load-test-env.test.mjs",
+    "tests/tools/lineage-score.mjs",
+    "tests/tools/prompt-from-run.mjs",
+    // Fixture APIs consumed by external rendering and approval checks.
+    "tests/unit/helpers/mathParityCases.ts",
+    "tests/unit/helpers/scopeSummaryFixture.ts",
+    "src/index.css",
+    // Extension-host and CommonJS transport APIs loaded by host staging and contract checks.
+    "tests/fixtures/lm-provider-extension/extension.js",
+    "tests/fixtures/lm-provider-extension/live-provider-adapter.js",
+    "tests/fixtures/lm-provider-extension/chat-ui-provider.js",
+  ],
+  "project": [
+    "src/**/*.{ts,tsx,css}",
+    "tests/**/*.{ts,tsx,mjs,js}",
+    "scripts/*.mjs",
+    "*.{ts,mjs}",
+  ],
+  // VS Code supplies this module; @types/vscode provides the build-time API.
+  "ignoreDependencies": ["@types/vscode"],
+}

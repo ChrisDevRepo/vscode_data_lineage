@@ -7,7 +7,7 @@ import { readJsonLines } from './json-lines.mjs';
 const REPLAY_ORIGIN = '[ai].[spimportorders]';
 
 /** What the badge lane needs before it can run; the start of every setup error. */
-export const BADGE_REPLAY_SETUP =
+const BADGE_REPLAY_SETUP =
   'Badge acceptance needs a recorded successful public AdventureWorks AI synthesis.';
 
 /** Whether one NDJSON trace records the successful public analysis the badge lane replays: an admitted `[ai].[spImportOrders]` exploration with both classifications whose accepted synthesis reached an OK terminal. Native approval may continue in a fresh request of the same session. */
@@ -103,7 +103,7 @@ function isSuccessfulPublicAnalysis(path) {
 }
 
 /** Finds the newest recorded trace the badge lane can replay. */
-export function findBadgeReplayTrace(rootDir) {
+function findBadgeReplayTrace(rootDir) {
   const traceDir = join(rootDir, 'tmp', 'lm-trace');
   const setupError = () => new Error(
     `${BADGE_REPLAY_SETUP} Expected a successful live-lane trace under ${traceDir}; record one with `

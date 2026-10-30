@@ -63,7 +63,7 @@ export interface SchemaInfo {
 }
 
 /** Detailed parsing metrics for a single scripted object (procedure, view, function). */
-export interface SpParseDetail {
+interface SpParseDetail {
   /** Full schema-qualified name of the object. */
   name: string;
   /** Count of successfully resolved source (read) references. */
@@ -136,7 +136,7 @@ export interface DatabaseModel {
 }
 
 /** Ingestion lane that produced a {@link DatabaseModel}. */
-export type ModelSource = 'dacpac' | 'database';
+type ModelSource = 'dacpac' | 'database';
 
 /** Label recorded when no source can identify the database platform. */
 export const UNKNOWN_DB_PLATFORM = 'Unknown database platform';
@@ -173,7 +173,7 @@ export interface XmlElement {
 }
 
 /** Metadata annotation attached to an XML element. Often contains property values that define technical specifics like data types. */
-export interface XmlAnnotation {
+interface XmlAnnotation {
   /** The type of annotation (e.g., 'SqlColumn.Type'). */
   '@_Type': string;
   /** Optional name for identifying specific annotations. */
@@ -193,7 +193,7 @@ export interface XmlProperty {
 }
 
 /** Defines a structural relationship between elements in the DACPAC XML. */
-export interface XmlRelationship {
+interface XmlRelationship {
   /** The name of the relationship (e.g., 'Columns', 'QueryDependencies'). */
   '@_Name': string;
   /** The target entries participating in this relationship. */
@@ -201,7 +201,7 @@ export interface XmlRelationship {
 }
 
 /** A single entry within a {@link XmlRelationship}. */
-export interface XmlEntry {
+interface XmlEntry {
   /** References to other top-level elements. */
   References?: XmlReference | XmlReference[];
   /** Inline child elements defined specifically for this entry. */
@@ -209,7 +209,7 @@ export interface XmlEntry {
 }
 
 /** A reference pointer to another element in the SQL model. */
-export interface XmlReference {
+interface XmlReference {
   /** The name of the referenced object. */
   '@_Name': string;
   /** The external source of the reference, if applicable. */
@@ -254,7 +254,7 @@ export interface ColumnDef {
 }
 
 /** Exact source metadata for a column expression reference, without inferred SQL semantics. */
-export interface ColumnExpressionDependency {
+interface ColumnExpressionDependency {
   /** Source reference identity, including column qualification; DACPAC References.Name remains verbatim. */
   reference: string;
   /** Exact local source type: DACPAC XML Type or DMV sys.objects.type, when resolved. */
@@ -431,10 +431,10 @@ export interface LayoutConfig {
 }
 
 /** Supported edge rendering styles. */
-export type EdgeStyle = 'default' | 'smoothstep' | 'step' | 'straight';
+type EdgeStyle = 'default' | 'smoothstep' | 'step' | 'straight';
 
 /** Configuration for interactive lineage tracing. */
-export interface TraceConfig {
+interface TraceConfig {
   /** Default number of upstream levels to explore. */
   defaultUpstreamLevels: number;
   /** Default number of downstream levels to explore. */
@@ -452,7 +452,7 @@ export interface AnalysisConfig {
 }
 
 /** Configuration for the table profiling/statistics engine. */
-export interface TableStatsConfig {
+interface TableStatsConfig {
   /** Whether profiling is enabled. */
   enabled: boolean;
   /** Whether standard profiling (MIN/MAX, string length range, AVG, STDEV and zero/empty counts beyond the basic pass) is active. */
@@ -472,7 +472,7 @@ export interface TableStatsConfig {
 }
 
 /** Configuration for external reference detection and display. */
-export interface ExternalRefsConfig {
+interface ExternalRefsConfig {
   /** Whether to detect and display cross-database and file-based references. */
   enabled: boolean;
 }

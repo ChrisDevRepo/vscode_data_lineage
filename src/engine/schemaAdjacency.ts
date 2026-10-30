@@ -2,7 +2,7 @@ import type { DatabaseModel } from './types';
 import { groupByWeaklyConnected } from './unionFind';
 
 /** A weakly-connected group of schemas in the model's schema-level graph. */
-export interface SchemaComponent {
+interface SchemaComponent {
   /** Member schema names, sorted ascending. */
   schemas: string[];
 }

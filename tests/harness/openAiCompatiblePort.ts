@@ -1,5 +1,6 @@
 /** Shared OpenAI-compatible ModelPort: production validation with headless HTTP transport. */
 import { retryAfterDelayMs } from './httpRetry';
+import { createProviderFetch } from '../fixtures/lm-provider-extension/live-provider-adapter.js';
 import type { BaseMessage, MessageContent } from '@langchain/core/messages';
 import {
   classifyToolCall,
@@ -54,7 +55,7 @@ import {
 } from './openAiWire';
 
 /** Minimal HTTP response surface the port consumes; keeps the module free of DOM/node lib skew. */
-export interface HttpResponseLike {
+interface HttpResponseLike {
   readonly ok: boolean;
   readonly status: number;
   readonly statusText: string;
@@ -64,7 +65,7 @@ export interface HttpResponseLike {
 }
 
 /** Request shape handed to {@link FetchLike}; headers exist here and nowhere else. */
-export interface HttpRequestInit {
+interface HttpRequestInit {
   readonly method: string;
   readonly headers: Readonly<Record<string, string>>;
   readonly body: string;
@@ -91,7 +92,7 @@ function providerRoutingPayload(routing: OpenRouterProviderRouting | undefined):
 }
 
 /** Provider capabilities that change what the port sends or keeps. */
-export interface OpenAiLaneCapabilities {
+interface OpenAiLaneCapabilities {
   /** Whether a previous turn's `reasoning_content` is echoed back (DD-3). */
   readonly echoReasoning?: boolean;
   /** Preserve the complete opaque OpenRouter reasoning_details sequence on assistant replay. */
@@ -108,7 +109,7 @@ export interface OpenAiLaneCapabilities {
 
 /** Provider-specific request-body tuning. Every field lands verbatim in the request body, so a verbose trace's `provider-raw` capture always shows exactly what tuning was active for a run. */
 /** The ONLY request knob the harness may set: thinking level, plus which dialect carries it. */
-export interface OpenAiRequestTuning {
+interface OpenAiRequestTuning {
   /** Thinking level, rendered in the lane's {@link OpenAiRequestTuning.reasoningStyle} dialect. */
   readonly reasoning?: { readonly enabled: false } | { readonly effort: string };
   /** Which request-body dialect carries {@link OpenAiRequestTuning.reasoning}. */
@@ -116,7 +117,7 @@ export interface OpenAiRequestTuning {
 }
 
 /** OpenRouter upstream allow-list. `allowFallbacks: false` keeps the router inside `order`. */
-export interface OpenRouterProviderRouting {
+interface OpenRouterProviderRouting {
   /** Upstream names in try order. */
   readonly order: readonly string[];
   readonly allowFallbacks: false;
@@ -357,9 +358,6 @@ export class OpenAiCompatiblePort implements ModelPort {
     if (options.fetchImpl) {
       this.fetchImpl = options.fetchImpl;
     } else {
-      const { createProviderFetch } = require(
-        `${process.cwd()}/tests/fixtures/lm-provider-extension/live-provider-adapter.js`,
-      ) as { createProviderFetch: (timeoutMs: number) => FetchLike & { close: () => Promise<void> } };
       const transport = createProviderFetch(config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
       this.fetchImpl = transport;
       this.closeTransport = () => transport.close();

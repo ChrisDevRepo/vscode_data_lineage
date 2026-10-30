@@ -12,7 +12,7 @@ A VS Code extension that draws SQL Server lineage. Sources are SQL Server, Azure
 - `assets/` holds parse rules, DMV queries, AI output templates, and the public AdventureWorks demo.
 - `tests/` holds deterministic parser, lineage, and AI-contract checks, plus optional host checks. Sample SQL is the AdventureWorks demo or synthetic statements.
 
-Stack: Node.js per `package.json` engines, npm `>=10`, VS Code API `^1.101.0`, TypeScript `^5.7`. There is no lint script. Use `npm run typecheck`.
+Stack: Node.js per `package.json` engines, npm `>=10`, VS Code API `^1.101.0`, TypeScript `^5.7`. Use `npm run typecheck`, `npm run lint`, `npm run format:check`, and `npm run knip`.
 
 ## Review before use
 

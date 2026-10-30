@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { baselineApprovalForTurn, recordBaselineScore, aiRuns, aiRunStatus, assessCapture, nextAiRunStep, databaseConfig, databaseImportEvidence, parseOptions, main, turnChecks } from '../../harness/cli';
+import { baselineApprovalForTurn, recordBaselineScore, caseInventory, readBaselineMap, aiRuns, aiRunStatus, assessCapture, nextAiRunStep, databaseConfig, databaseImportEvidence, parseOptions, main, turnChecks } from '../../harness/cli';
 import { loadHarnessParseRules } from '../../harness/sessionFactory';
 import { loadRules } from '../../../src/engine/sqlBodyParser';
 import { buildModelFromDmv } from '../../../src/engine/dmvExtractor';
@@ -144,6 +144,23 @@ describe('operator runner configuration', () => {
     expect(manual.map(run => run.prompts)).toEqual([['Inspect dependencies', 'First']]);
     expect(manual[0]?.expectTerminal).toBeUndefined();
     expect(() => aiRuns(parseOptions('ai', ['--followup', 'First']))).toThrow('--followup requires --prompt.');
+  });
+
+  it('assembles baseline pairs and inventory for the optional --all launcher', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dlv-launcher-contract-'));
+    try {
+      const id = loadCases('headless')[0].id;
+      const mapping = { cases: { [id]: { main: { runDir: join(dir, 'main'), turns: [1] }, previous: { runDir: join(dir, 'previous') } } } };
+      const path = join(dir, 'baselines.json');
+      writeFileSync(path, JSON.stringify(mapping));
+      const options = parseOptions('ai', ['--all', '--baselines', path]);
+      const loaded = readBaselineMap(options.baselines!);
+      expect(loaded).toEqual(mapping);
+      expect(aiRuns(options).find(run => run.id === id)).toBeDefined();
+      const inventory = caseInventory();
+      expect(inventory.additionalCases.every(row => row.execution === 'not_run')).toBe(true);
+      expect(inventory.unavailableCases.every(row => row.execution === 'not_runnable')).toBe(true);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
   it.each(loadCases('headless').map(row => [row.id, row] as const))(

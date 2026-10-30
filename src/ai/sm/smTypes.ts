@@ -71,7 +71,9 @@ export interface ColumnFlowEntry {
   upstream_columns: ColumnRef[];
 }
 
-/** A single upstream real column in the column trace chain. */
+/** A single upstream real column in the column trace chain.
+ * @public Column reference in exported tool-schema return types.
+ */
 export interface ColumnRef {
   /** ID of the neighbor node providing the data. */
   node: string;

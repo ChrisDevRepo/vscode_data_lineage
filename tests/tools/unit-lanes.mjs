@@ -29,11 +29,13 @@ export function laneScriptProblems(scripts = {}) {
   });
 }
 
-/** Repo-relative POSIX path. */
+/** Repo-relative POSIX path.
+ * @public
+ */
 export const rel = (absolute) => path.relative(repoRoot, absolute).replaceAll('\\', '/');
 
 /** Lineage and graph facts. Distinct expected graphs stay here. */
-export const lineageEngineTests = [
+const lineageEngineTests = [
   'tests/unit/engine/allowlistFilter.test.ts',
   'tests/unit/webview/applyTraceToFlow.test.ts',
   'tests/unit/engine/column-expression-metadata.test.ts',
@@ -72,7 +74,7 @@ export const lineageEngineTests = [
 ];
 
 /** Engine tests that are not lineage oracles: persistence, bridge, export, profiling, and UI-adjacent helpers. Database connection tests are the `tests/unit/engine/db` directory below. */
-export const engineSupportTests = [
+const engineSupportTests = [
   'tests/unit/engine/ai-preview-rendering.test.ts',
   'tests/unit/engine/aiReportExportBoundary.test.ts',
   'tests/unit/engine/bridge-contract.test.ts',
@@ -135,7 +137,7 @@ export const runtimeContractTests = [
 export const corePaths = ['tests/unit/parser', ...lineageEngineTests];
 
 /** Directories whose every unit test is support unless a file is listed in `runtimeContractTests`. */
-export const supportDirectories = [
+const supportDirectories = [
   'tests/unit/webview',
   'tests/unit/engine/db',
   'tests/unit/ai-core',
@@ -153,7 +155,7 @@ export function unitTestFiles(dir = path.join(repoRoot, 'tests', 'unit'), found 
 }
 
 /** Expands a file path or a directory of unit tests. Returns null when the path is missing. */
-export function expandPath(entry, allFiles) {
+function expandPath(entry, allFiles) {
   const absolute = path.join(repoRoot, entry);
   let stats;
   try {

@@ -63,7 +63,9 @@ export async function openFixtureWalk(): Promise<FixtureWalk> {
 /** The grounding context every host prompt of the loaded model carries. */
 export const promptContext = (walk: FixtureWalk) => deriveStagePromptContext(walk.session.model, walk.session.filter, walk.session.uiState);
 
-/** Starts the approved exploration as the graph's approval node does. */
+/** Starts the approved exploration as the graph's approval node does.
+ * @public
+ */
 export function startWalk(walk: FixtureWalk, init: NavigationInitParams, classification: ClassificationValue, discoverySummary?: string, log: ConstructorParameters<typeof NavigationEngine>[2] = () => {}): NavigationEngine {
   const { session } = walk;
   const epoch = session.beginTurn();
@@ -89,12 +91,16 @@ export function servedTools(walk: FixtureWalk, draft: Omit<ConversePlanDraft, 'k
   }));
 }
 
-/** The user message of the dispatched hop. */
+/** The user message of the dispatched hop.
+ * @public
+ */
 export function hopMessage(walk: FixtureWalk): string {
   return buildActiveHopInstruction(walk.session, walk.engine!, walk.engine!.currentFocus!).message;
 }
 
-/** The plan draft of the dispatched hop: the stage, facts and terminal tool its model request is built from. */
+/** The plan draft of the dispatched hop: the stage, facts and terminal tool its model request is built from.
+ * @public
+ */
 export function hopDraft(walk: FixtureWalk): Omit<ConversePlanDraft, 'kind' | 'registry' | 'sink' | 'messages'> {
   const { session, engine } = walk;
   const mode = engine!.currentHopAnalysisMode;
@@ -108,7 +114,9 @@ export function hopDraft(walk: FixtureWalk): Omit<ConversePlanDraft, 'kind' | 'r
   };
 }
 
-/** The tools served with the dispatched hop. */
+/** The tools served with the dispatched hop.
+ * @public
+ */
 export function hopTools(walk: FixtureWalk): ServedTool[] {
   return servedTools(walk, hopDraft(walk));
 }

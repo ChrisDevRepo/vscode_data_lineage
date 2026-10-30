@@ -16,7 +16,7 @@ export function makeNode(
 }
 
 /** Build a `LineageEdge[]` fixture from `[source, target]` pairs. Every synthetic edge is tagged `'body'`; callers supply explicit execution edges when testing calls. */
-export function makeEdges(pairs: ReadonlyArray<readonly [string, string]>): LineageEdge[] {
+function makeEdges(pairs: ReadonlyArray<readonly [string, string]>): LineageEdge[] {
   return pairs.map(([source, target]) => ({ source, target, type: 'body' }));
 }
 
@@ -29,7 +29,7 @@ const ZERO_TYPE_COUNTS: Record<ObjectType, number> = {
 };
 
 /** Build a minimal `SchemaInfo[]` fixture from bare schema names. `nodeCount`/`types` default to zero; callers fill them when testing schema counts. */
-export function makeSchemas(names: ReadonlyArray<string>): SchemaInfo[] {
+function makeSchemas(names: ReadonlyArray<string>): SchemaInfo[] {
   return names.map((name) => ({ name, nodeCount: 0, types: { ...ZERO_TYPE_COUNTS } }));
 }
 

@@ -5,17 +5,24 @@ import { describe, it, expect } from 'vitest';
 import { rootPath } from '../../helpers/testUtils';
 import { BuiltInConnectionSchema } from '../../../../src/engine/db/connectionSettings';
 
+interface ConfigurationProperty {
+  scope: string;
+  type: string;
+  markdownDescription: string;
+  items: { additionalProperties: boolean; properties: Record<string, unknown> };
+}
+
 interface Manifest {
   extensionDependencies?: string[];
   dependencies: Record<string, string>;
   contributes: {
     commands: Array<{ command: string; title: string; category?: string }>;
-    configuration: Array<{ properties: Record<string, any> }>;
+    configuration: Array<{ properties: Record<string, ConfigurationProperty> }>;
   };
 }
 
 const manifest = JSON.parse(readFileSync(rootPath('package.json'), 'utf-8')) as Manifest;
-const settings = Object.assign({}, ...manifest.contributes.configuration.map((s) => s.properties)) as Record<string, any>;
+const settings = Object.assign({}, ...manifest.contributes.configuration.map((s) => s.properties)) as Record<string, ConfigurationProperty>;
 
 describe('connection settings contribution', () => {
 

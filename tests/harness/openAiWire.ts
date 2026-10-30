@@ -11,7 +11,7 @@ import { ModelPortError } from '../../src/ai/model/modelPort';
 import type { TokenUsage, WireMessage, WirePart } from '../../src/ai/observability/wireLog';
 
 /** One assistant tool call in the `/chat/completions` request and response shape. */
-export interface OpenAiToolCall {
+interface OpenAiToolCall {
   readonly id: string;
   readonly type: 'function';
   readonly function: { readonly name: string; readonly arguments: string };
@@ -249,7 +249,7 @@ const FENCED_JSON_BLOCK = /```(?:json)?\s*\n([\s\S]*?)\n```/;
 const XML_TOOL_PARAMETER = /<parameter=([A-Za-z0-9_]+)>\n?([\s\S]*?)\n?<\/parameter>/g;
 
 /** Reads a text-only generation as the record a tool call would carry — fenced JSON, the whole body as JSON, or the Hermes/XML `<parameter=…>` envelope — without judging it against any schema. */
-export function readProseToolCandidate(text: string): Record<string, unknown> | null {
+function readProseToolCandidate(text: string): Record<string, unknown> | null {
   const match = FENCED_JSON_BLOCK.exec(text);
   let candidate: unknown;
   try {

@@ -206,7 +206,7 @@ export interface ToolGenerationInput {
 export const TOOL_ARGUMENTS_NOT_OBJECT_REASON = 'Tool arguments were not a JSON object; send the required fields as one JSON object.';
 
 /** Reason of the `type` fault for a call whose arguments were empty text. */
-export const TOOL_ARGUMENTS_EMPTY_REASON = 'Tool arguments were empty; send the required fields as a JSON object.';
+const TOOL_ARGUMENTS_EMPTY_REASON = 'Tool arguments were empty; send the required fields as a JSON object.';
 
 /** A registered native tool call ready for argument validation at its execution boundary. */
 export interface ValidGeneratedToolCall {

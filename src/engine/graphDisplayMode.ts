@@ -3,7 +3,7 @@ import { OBJECT_TYPES, type ExtensionConfig, type FilterState, type GraphMode } 
 import { traceNodeIdsWithLevels } from './graphBuilder';
 
 /** Which graph surface the canvas renders. */
-export type GraphDisplayMode = 'full' | 'schemaOverview' | 'schemaExpanded' | 'scoped' | 'renderLimit';
+type GraphDisplayMode = 'full' | 'schemaOverview' | 'schemaExpanded' | 'scoped' | 'renderLimit';
 
 interface GraphModeInput {
   filteredCount: number;

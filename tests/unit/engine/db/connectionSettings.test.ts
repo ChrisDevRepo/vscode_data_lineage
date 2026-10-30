@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 const host = vi.hoisted(() => ({
   stored: undefined as unknown,
   updates: [] as Array<{ key: string; value: unknown; target: unknown }>,
-  handlers: new Map<string, (...args: any[]) => any>(),
+  handlers: new Map<string, (...args: unknown[]) => unknown>(),
   showInputBox: vi.fn(),
   showQuickPick: vi.fn(),
   createInputBox: vi.fn(),
@@ -29,7 +29,7 @@ vi.mock('@microsoft/vscode-azext-azureauth', async (importOriginal) => ({
 }));
 
 vi.mock('vscode', async (importOriginal) => {
-  const actual = await importOriginal<Record<string, any>>();
+  const actual = await importOriginal<typeof import('vscode')>();
   return {
     ...actual,
     ConfigurationTarget: { Global: 1, Workspace: 2, WorkspaceFolder: 3 },
@@ -37,7 +37,7 @@ vi.mock('vscode', async (importOriginal) => {
     QuickInputButtons: { Back: { iconPath: 'back' } },
     authentication: { getSession: (...a: unknown[]) => host.getSession(...a) },
     commands: {
-      registerCommand: (id: string, fn: (...args: any[]) => any) => { host.handlers.set(id, fn); return { dispose: () => host.handlers.delete(id) }; },
+      registerCommand: (id: string, fn: (...args: unknown[]) => unknown) => { host.handlers.set(id, fn); return { dispose: () => host.handlers.delete(id) }; },
       executeCommand: vi.fn(),
     },
     window: {
@@ -441,13 +441,13 @@ describe('saved password follows the server it was entered for', () => {
     const rejected: string[] = [];
     let at = 0;
     const listeners = () => {
-      const on: Record<string, (...a: any[]) => void> = {};
-      const reg = (name: string) => (fn: (...a: any[]) => void) => { on[name] = fn; return { dispose() {} }; };
+      const on: Record<string, (...a: unknown[]) => void> = {};
+      const reg = (name: string) => (fn: (...a: unknown[]) => void) => { on[name] = fn; return { dispose() {} }; };
       return { on, reg };
     };
     host.createInputBox.mockImplementation(() => {
       const { on, reg } = listeners();
-      const box: Record<string, any> = {
+      const box: { value: string; validationMessage?: string; prompt?: string; dispose(): void; onDidTriggerButton: ReturnType<typeof reg>; onDidHide: ReturnType<typeof reg>; onDidAccept: ReturnType<typeof reg>; show(): void } = {
         value: '', validationMessage: undefined, dispose() {},
         onDidTriggerButton: reg('button'), onDidHide: reg('hide'), onDidAccept: reg('accept'),
         show() {
@@ -466,7 +466,7 @@ describe('saved password follows the server it was entered for', () => {
     });
     host.createQuickPick.mockImplementation(() => {
       const { on, reg } = listeners();
-      const box: Record<string, any> = {
+      const box: { items: Array<{ label: string }>; selectedItems: Array<{ label: string } | undefined>; dispose(): void; onDidTriggerButton: ReturnType<typeof reg>; onDidHide: ReturnType<typeof reg>; onDidAccept: ReturnType<typeof reg>; show(): void } = {
         items: [], selectedItems: [], dispose() {},
         onDidTriggerButton: reg('button'), onDidHide: reg('hide'), onDidAccept: reg('accept'),
         show() {

@@ -2,7 +2,9 @@
 
 import { z } from 'zod';
 
-/** Zod enum for the mission-type classification value. */
+/** Zod enum for the mission-type classification value.
+ * @public
+ */
 export const ClassificationSchema = z.enum(['business', 'technical', 'both']);
 
 /** Resolved mission-type classification value. */

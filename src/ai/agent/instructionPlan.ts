@@ -176,7 +176,7 @@ export type InstructionPlan<T = unknown> =
   | TextInstructionPlan;
 
 /** Ephemeral runtime projection used to derive one provider call. */
-export interface RuntimeFrame {
+interface RuntimeFrame {
   /** Model-call phase selected by LangGraph. */
   readonly phase: InstructionPhase;
   /** Approved mission facts relevant to this call. */

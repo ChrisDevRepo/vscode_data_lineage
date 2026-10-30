@@ -658,12 +658,6 @@ export const DetailPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   WebviewWarningMessageSchema,
 ]);
 
-/** Messages sent from the detail-panel webview to the extension host. */
-export type DetailPanelToExtensionMsg = z.infer<typeof DetailPanelToExtensionMsgSchema>;
-
-/** Every message either webview may post to the extension host. */
-export type WebviewToExtensionMsg = MainPanelToExtensionMsg | DetailPanelToExtensionMsg;
-
 /** Zod schema for messages sent from the extension host **to the detail-panel webview**. */
 export const ExtensionToDetailMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('detail-update'), node: LineageNodeSchema, findQuery: z.string().optional(), config: z.any() }),

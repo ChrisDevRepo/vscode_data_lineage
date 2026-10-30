@@ -29,7 +29,7 @@ const katexContainerLatexAttributeName = 'data-latex';
 
 const blockRule = /^(\${1,2})\n((?:\\[^]|[^\\])+?)\n\1(?:\n|$)/;
 
-interface MarkedKatexOptions extends KatexOptions { }
+type MarkedKatexOptions = KatexOptions;
 
 function htmlAttributeEncodeValue(value: string): string {
   return value.replace(/[<>"'&]/g, ch => {

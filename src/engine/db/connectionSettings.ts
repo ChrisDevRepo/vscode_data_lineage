@@ -31,7 +31,9 @@ function bindingOf(connection: PasswordBinding): { server: string; port?: number
   return { server: dropTcpPrefix(connection.server).toLowerCase(), port: connection.port, user: connection.user ?? '' };
 }
 
-/** Secret-store value for a password, bound to the server, port and user it was entered for. */
+/** Secret-store value for a password, bound to the server, port and user it was entered for.
+ * @public
+ */
 export function encodeSavedPassword(connection: PasswordBinding, password: string): string {
   return JSON.stringify({ ...bindingOf(connection), password });
 }

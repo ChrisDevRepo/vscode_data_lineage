@@ -87,7 +87,7 @@ export interface ColumnTraceViewEdge {
 }
 
 /** A declared object dependency not already represented by a directed rendered column leg. */
-export interface ColumnTraceViewObjectEdge {
+interface ColumnTraceViewObjectEdge {
   /** Stable edge id, unique across the view and distinct from every {@link ColumnTraceViewEdge} id. */
   id: string;
   /** Source node id. */
@@ -101,7 +101,7 @@ export interface ColumnTraceViewObjectEdge {
 }
 
 /** Two ports of one node the same relation passes between — the hop's inside link. */
-export interface ColumnTracePortBridge {
+interface ColumnTracePortBridge {
   /** Node whose two ports the bridge links. */
   nodeId: string;
   /** Column name of the port the relation enters on. */

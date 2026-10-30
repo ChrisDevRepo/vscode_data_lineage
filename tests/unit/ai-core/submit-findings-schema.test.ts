@@ -66,10 +66,10 @@ describe('fresh kept required-field projection', () => {
     },
   );
   it('describes held sections as omittable in the actual provider schema', () => {
-    const fresh = toModelJsonSchema(submitFindingsSchemaForMode('ct', 'business', true)) as any;
+    const fresh = toModelJsonSchema(submitFindingsSchemaForMode('ct', 'business', true)) as { properties: Record<string, { description: string; pattern?: string }>; required?: string[] };
     expect(fresh.properties.sections.description).toMatch(/^Required\./);
     for (const classification of ['business', undefined] as const) {
-      const held = toModelJsonSchema(submitFindingsSchemaForMode('ct', classification, false, undefined, true)) as any;
+      const held = toModelJsonSchema(submitFindingsSchemaForMode('ct', classification, false, undefined, true)) as { properties: Record<string, { description: string; pattern?: string }>; required?: string[] };
       expect(held.properties.sections.description).not.toMatch(/^Required\./);
       expect(held.properties.sections.description).toContain('held');
     }
@@ -424,7 +424,7 @@ it.each(['view', 'procedure', 'caller'] as const)('keeps a served %s flow exampl
     outCols: ['Total'], outNode: kind === 'procedure', columnSourceNodeIds: kind === 'procedure' ? [source, target] : [source],
     ...(kind === 'caller' ? { columnDestinations: [{ node: caller, col: 'Total' }] } : {}),
   });
-  const wire = toModelJsonSchema(schema) as any;
+  const wire = toModelJsonSchema(schema) as { properties: Record<string, { description: string; pattern?: string }>; required?: string[] };
   const description = wire.properties.column_flow.description as string;
   for (const match of description.matchAll(/Example:\s*(\[[\s\S]*?\])\.\s+Reference /g)) {
     const shown = { column_flow: JSON.parse(match[1]!) };
@@ -436,8 +436,8 @@ it.each(['view', 'procedure', 'caller'] as const)('keeps a served %s flow exampl
 
 it.each((['bb', 'ct'] as const).flatMap(mode => (['business', 'technical', 'both'] as const)
   .map(classification => ({ mode, classification }))))('preserves declared summary guidance on the $mode/$classification repair schema', ({ mode, classification }) => {
-  const fresh = toModelJsonSchema(submitFindingsSchemaForMode(mode, classification, true)) as any;
-  const repair = toModelJsonSchema(submitFindingsSchemaForMode(mode, classification, false)) as any;
+  const fresh = toModelJsonSchema(submitFindingsSchemaForMode(mode, classification, true)) as { properties: Record<string, { description: string; pattern?: string }>; required?: string[] };
+  const repair = toModelJsonSchema(submitFindingsSchemaForMode(mode, classification, false)) as { properties: Record<string, { description: string; pattern?: string }>; required?: string[] };
   expect(repair.properties.summary.description).toBe(fresh.properties.summary.description);
   expect(repair.properties.summary.pattern).toBe('\\S');
   expect(repair.required ?? []).not.toContain('summary');

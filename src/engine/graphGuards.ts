@@ -6,7 +6,7 @@ import { bfsFromNode } from 'graphology-traversal';
 import type { DatabaseModel } from './types';
 
 /** Direction in which a shortest path between two endpoints was found. */
-export type ShortestPathDirection = 'source_to_target' | 'target_to_source';
+type ShortestPathDirection = 'source_to_target' | 'target_to_source';
 
 /** Ordered shortest path plus the direction in which it was found. */
 export interface OrderedShortestPath {
