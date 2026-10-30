@@ -104,9 +104,9 @@ highlights:
 notes:
   stages: [synthesis]
   instruction: >
-    One caption per linked node, one line (~120 chars): its role in this flow;
-    keep SQL and formulas in the section body. In a column trace, name the
-    traced column and any rename.
+    One caption per linked node, one line (~120 chars): what it does in this
+    flow; SQL and formulas stay in the section body. In a column trace, name
+    the traced column there and any rename.
   example: "Aggregates monthly invoices"
 
 # ── Per-hop capture (active phase) ───────────────────────────────────────────
