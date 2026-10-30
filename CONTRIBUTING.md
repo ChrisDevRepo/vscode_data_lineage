@@ -6,7 +6,7 @@ Bugs go to [issues](https://github.com/ChrisDevRepo/vscode_data_lineage/issues).
 
 ## Setup
 
-You need [Git](https://git-scm.com/), [Node.js](https://nodejs.org/) 22+ with npm 10+, and [VS Code](https://code.visualstudio.com/) 1.101+. A chat model provider such as GitHub Copilot is optional, to try `@lineage`.
+You need [Git](https://git-scm.com/), [Node.js](https://nodejs.org/) 22.22.2+, 24.15+ or 26+ with npm 10+, and [VS Code](https://code.visualstudio.com/) 1.101+. A chat model provider such as GitHub Copilot is optional, to try `@lineage`.
 
 1. Clone the repository and run `npm ci`.
 2. Open the folder in VS Code and press `F5` to launch the Extension Development Host.
@@ -27,4 +27,3 @@ None of these need a database, model provider or credentials. Test tiers are in 
 - Change behavior in the layer that owns it and add a focused test when the contract changes.
 - Keep the `.md` files true for what you changed.
 - Run `npm run gate` before you treat a code change as ready. It does not call a model provider.
-- Entries in `package.json` `overrides` are deliberate security pins plus the `langsmith` stub in `stubs/langsmith/`.

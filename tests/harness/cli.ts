@@ -91,7 +91,7 @@ dependent follow-ups; independent rows continue unless the run is cancelled.
 turns are explicit 1-based indices; paths are relative to the repository or absolute.
 Missing pairs remain unpaired; content is unverified until reviewed against SQL.
 --prompt runs that question instead of the catalog; it cannot be combined with catalog selectors.
-Other test surfaces and unavailable historical fixtures are listed in docs/testing/INVENTORY.md.
+Other test surfaces and unavailable historical fixtures are listed in docs/testing/README.md#optional-checks.
 --timeout-ms bounds the entire run; --request-timeout-ms independently bounds each
 provider request. AI_TEST_TIMEOUT_MS and AI_TEST_REQUEST_TIMEOUT_MS set defaults;
 AI defaults to two hours with requests bounded by the same budget.
@@ -632,7 +632,7 @@ export async function main(kind: 'ai' | 'db', args: readonly string[], onResult?
           questionHashes: run.prompts.map(prompt => createHash('sha256').update(prompt).digest('hex')),
           fixture: run.dacpac, fixtureHash: createHash('sha256').update(readFileSync(run.dacpac)).digest('hex'),
         })), caseCount: runs.length, turnCount: runs.reduce((sum, run) => sum + run.prompts.length, 0),
-          ...caseInventory(), otherSurfaces: 'docs/testing/INVENTORY.md', execution: 'not_run', contentVerdict: 'unreviewed' }, null, 2));
+          ...caseInventory(), otherSurfaces: 'docs/testing/README.md#optional-checks', execution: 'not_run', contentVerdict: 'unreviewed' }, null, 2));
         return 0;
       }
     }

@@ -82,19 +82,6 @@ Sampling applies when the row count exceeds `dataLineageViz.tableStatistics.samp
 
 Row-count headers show the catalog row count. On a `TABLESAMPLE` run, NULL %, completeness and uniqueness are computed against the rows the sample read, so they describe the sample; an empty sample falls back to the catalog row count as the denominator. On Fabric Data Warehouse the metrics are full-scan aggregates although the statistics show a sampling indicator.
 
-## Settings
-
-| Setting | Default | Effect |
-|---|---|---|
-| `dataLineageViz.tableStatistics.enabled` | `true` | Allows table statistics at all |
-| `dataLineageViz.tableStatistics.standardModeEnabled` | `true` | Allows Standard mode; when `false` only Quick mode is offered |
-| `dataLineageViz.tableStatistics.excludeExternalTables` | `true` | Hides profiling for external tables |
-| `dataLineageViz.tableStatistics.queryTimeout` | `60` (10–600 s) | Timeout of statements 2 and 3 |
-| `dataLineageViz.tableStatistics.sampleThreshold` | `100000` | Row count above which sampling applies; `0` samples nonempty tables |
-| `dataLineageViz.tableStatistics.sampleSize` | `10000` (100–1,000,000) | Target rows per sample |
-| `dataLineageViz.tableStatistics.useApproxDistinct` | `true` | `APPROX_COUNT_DISTINCT` instead of `COUNT(DISTINCT)` |
-| `dataLineageViz.tableStatistics.maxColumns` | `50` (1–500) | Maximum profiled columns per request |
-
 ## Diagnostics
 
 In **View → Output → Data Lineage Viz** at **Debug** level, `[Stats]` and `[DB]` entries show each request and statement. `[DB]` entries show the first 300 characters of each statement. Logs may contain object and column names; review them before sharing.

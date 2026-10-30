@@ -85,7 +85,7 @@ try {
     mkdirSync(reportDir, { recursive: true });
     const report = { runner: 'headless', plannedCases: runs.length, plannedTurns: runs.reduce((sum, run) => sum + run.prompts.length, 0),
       cases: inventory, unexecutedCases: runs.filter(run => !inventory.some(row => row.id === run.id)).map(run => run.id),
-      ...caseInventory(), otherSurfaces: 'docs/testing/INVENTORY.md', contentVerdict: 'unreviewed' };
+      ...caseInventory(), otherSurfaces: 'docs/testing/README.md#optional-checks', contentVerdict: 'unreviewed' };
     writeFileSync(resolve(reportDir, 'inventory.json'), JSON.stringify(report, null, 2) + '\n');
     console.log(JSON.stringify({ inventory: resolve(reportDir, 'inventory.json') }));
     process.exitCode = inventory.find(row => row.exitCode !== 0)?.exitCode ?? 0;

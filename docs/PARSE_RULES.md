@@ -81,18 +81,12 @@ Temp tables (`#local`, `##global`), table variables (`@name`), CTE names and unq
 
 `extract_update_alias_target` only anchors `UPDATE alias SET`. Its match must contain that text and must not consume the statement; capture group 1 is the alias.
 
-- The alias binds to the single top-level `FROM`/`JOIN` table of the same statement, or to a top-level `FROM`/`JOIN` derived table whose query names one table, however long the `SET` list is.
-- A CTE name used as the `UPDATE` target, or as a `FROM`/`JOIN` table of that `UPDATE`, resolves to the one table its query names: exactly one `FROM` at the query's own level holding one table reference (a derived table there is read the same way), followed through earlier CTEs of the same `WITH` list.
-- A join list names one table when exactly one member is a table reference and every other member is a derived table that cannot be written through (`DISTINCT`, `GROUP BY` or a set operator at its own level).
-- The rewrite applies only to the `UPDATE` that directly follows the `WITH` list.
-- A CTE that joins two table references, a table function or a writable derived table, uses `APPLY` or a set operator, or names no single table leaves the write unresolved. A comma list is read as a join list.
-- An `INSERT` or `MERGE` into a CTE yields no write target.
+- The alias binds to the single top-level `FROM`/`JOIN` table of the same statement, or to a derived table or CTE whose query names exactly one table.
+- A CTE that joins two table references, a table function or a writable derived table, uses `APPLY` or a set operator, or names no single table leaves the write unresolved. An `INSERT` or `MERGE` into a CTE yields no write target.
 
 ### DELETE and TRUNCATE classification
 
 The shipped target rules do not treat a deletion as data flowing into a table. When metadata supplies a table dependency, a separate mutation scan classifies `DELETE` and `TRUNCATE TABLE` as a procedure→table edge marked `deleteOnly`, provided the body has no data-producing write to the same target. A parsed source can also retain a table→procedure read edge.
-
-For `DELETE T FROM dbo.T AS T` and `DELETE FROM T FROM dbo.T AS T`, the target alias resolves only against source bindings in that statement. The optional `FROM` before the target is not a source binding. Ambiguous aliases stay unresolved; a CTE-only DELETE target is not traced through the CTE to invent a mutation target.
 
 ## Known boundaries
 
@@ -106,12 +100,13 @@ These constructs can lose references in SQL-body parsing, or are left unresolved
 | `OPENDATASOURCE(...)...` | Nothing is captured, including the four-part table name. | Where the SQL dialect supports this syntax |
 | `ALTER TABLE dbo.A SWITCH PARTITION n TO dbo.B` | Neither table is captured. | Partition switching is DDL, not DML; no edge is modelled either way |
 | ANSI-89 comma list whose member is followed by `TABLESAMPLE`, or that continues with a comma after a `JOIN ... ON` condition or an `APPLY` | The list ends at that member, so tables after it are lost (table-variable members are not tables). | Legacy bodies on any platform |
+| `DELETE T FROM dbo.T AS T` with an ambiguous alias, or a `DELETE` whose target is only a CTE | The alias stays unresolved; the CTE is not traced to invent a mutation target. | Any platform |
 | `DELETE` / `TRUNCATE TABLE` | No target edge comes from the shipped regex rules alone. Metadata-backed table dependencies use the mutation classification above; a qualified table after `FROM` can also be captured as a read. | Deletes remove rows rather than supply column values |
 | `WITH d AS (SELECT ... FROM dbo.T) DELETE FROM d` | `dbo.T` is read as a source; the delete-only write is not marked because the statement names only the CTE. | Any platform with CTEs |
 | Schema-less `EXEC uspA`, `FROM T`, `db..T` | Not captured; only schema-qualified names resolve. | By design: the parser does not choose a schema |
 | `EXEC db.schema.proc` / `EXEC server.db.schema.proc` | The cross-database call is not captured; cross-database reads and writes are. | SQL Server, Azure SQL Managed Instance |
 | `alias.method(...)` on an xml, spatial or hierarchyid column, such as `x.value(...)` or `g.STDistance(...)` | Captured as a two-part reference that becomes an edge only if the catalog holds that schema-qualified object. | By design: the text does not distinguish `column.method()` from `schema.function()` |
-| `UPDATE alias SET` where the alias names a derived table or CTE that joins more than one writable member (two tables, a table function, a derived table without `DISTINCT`, `GROUP BY` or a set operator), uses `APPLY` or a set operator, or names no single table, or is declared inside a parenthesised joined table | The write is not captured; the parser does not choose among the tables. | Any platform |
+| `UPDATE alias SET` where the alias does not resolve to exactly one table (see [`UPDATE alias`](#update-alias)), or is declared inside a parenthesised joined table | The write is not captured; the parser does not choose among the tables. | Any platform |
 | A body with an unbalanced parenthesis | The `CREATE TABLE AS SELECT` pass and the `UPDATE alias` binding stop at the open parenthesis, so a target or aliased write after it is not captured. | Malformed text only: a body the database compiled always balances |
 
 ## Out of scope
