@@ -452,7 +452,7 @@ export function buildCurrentTaskBlock(
   if (columnTraceColumns?.length && columnLineageQuestions?.length) {
     lines.push(
       `  <lineage_questions>`,
-      `    Endpoint continuations and consumption checks opened on an earlier hop for this focus. Address them:`,
+      `    Column-chain continuations opened on an earlier hop for this focus. Address them:`,
       ...columnLineageQuestions.map(q => `    - ${escapePromptText(q)}`),
       `  </lineage_questions>`,
     );
