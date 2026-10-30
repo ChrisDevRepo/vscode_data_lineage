@@ -69,7 +69,7 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_submit_findings', title: 'Submit Findings', inputSchema: SubmitFindingsModelSchema, tags: ['lineage', 'lineage-engine'], effect: 'hop_commit',
     userDescription: 'Submit analysis of the current node and each neighbor\'s prune or question decision.',
-    modelDescription: 'Submits or repairs the focus node\'s SQL findings and neighbor decisions.',
+    modelDescription: 'Commits this hop: the focus node\'s analysis, and its neighbor decisions.',
   },
   {
     name: 'lineage_prune_current', title: 'Prune Current Node', inputSchema: PruneCurrentInputSchema, tags: ['lineage', 'lineage-engine'], effect: 'hop_commit',
