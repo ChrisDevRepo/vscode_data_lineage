@@ -159,7 +159,7 @@ export function buildDiscoveryFinalAnswerTask(): string {
 function buildSynthesisPrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
   const isCt = analysisMode === 'ct';
   const evidence =
-    'Evidence, in the last tool result: `detail_slots[]` — what each analyzed node does; `synthesis_reminder` — engine facts: flow roles, edge direction and each node\'s inputs and outputs' +
+    'Evidence, in the last tool result: `detail_slots[]` — what each analyzed node does; `node_states[]` — each node\'s action and why; `synthesis_reminder` — engine facts: flow roles, edge direction, kept nodes without a detail slot and captured formulas' +
     (isCt ? ', plus the Column Trace Chain.' : '.');
   return [
     '## Task: write the report beside the graph',
@@ -207,7 +207,7 @@ function buildFollowUpPrompt(): string {
     '  its body. Send `text` only for a section you rewrite or a new or renamed',
     '  label, re-deriving what you cannot quote exactly; change only the `node_ids` you were asked to.',
     '- Change graph color/role labels such as `source`, `transform`, or `target`: update `highlight_groups[]`',
-    `  and call \`lineage_present_result\`. \`add_node_ids\` ${ADD_NODE_IDS_REVEALS};`,
+    `  and call \`lineage_present_result\`. \`add_node_ids\` ${ADD_NODE_IDS_REVEALS}.`,
     '- Change description text shown with the graph: update `title`, `intro`,',
     '  `sections[].text`, and/or `closing` in `lineage_present_result`.',
     '- Change note text below the graph: update `notes[]` (`node_id`, `caption`) in',
