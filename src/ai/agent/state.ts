@@ -3,6 +3,7 @@ import type { ModelMessage } from '../model/modelPort';
 import { z } from 'zod';
 import type { AiGateRefine } from '../../engine/shared/bridgeContract';
 import { ColumnIdentifierSchema } from '../tools/toolSchemas';
+import { at, type ToolError } from '../support/toolErrorEnvelope';
 import type { TurnOutcome } from '../core/agentCore';
 import type { StagePromptContext } from '../prompting/hostPrompts';
 import type { ToolPhaseAttemptState } from './toolAttempt';
@@ -19,14 +20,13 @@ export const EntryDetectionSchema = z.object({
     .describe('Discrete entry route selected from the user request.'),
   targetColumns: z.array(ColumnIdentifierSchema).nullable()
     .describe('Explicit user-named columns for column_trace; null for discovery or visual_render.'),
-}).strict().superRefine((value, ctx) => {
-  if (value.entry === 'column_trace' && (!value.targetColumns || value.targetColumns.length === 0)) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targetColumns'], message: 'column_trace requires at least one explicitly named column.' });
-  }
-  if (value.entry !== 'column_trace' && value.targetColumns != null) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['targetColumns'], message: `${value.entry === 'discovery' ? 'Discovery' : 'Visual render'} takes no \`targetColumns\`.` });
-  }
-});
+}).strict();
+
+/** Domain rule after schema admission: a column trace names at least one column; another route names none. */
+export function entryRouteFaults(value: z.infer<typeof EntryDetectionSchema>): ToolError[] {
+  return (value.entry === 'column_trace' ? !value.targetColumns?.length : value.targetColumns !== null) ? at('invalid', ['targetColumns']) : [];
+}
+
 /** The user's resolution of the card with `proposalId`: a click or a classified typed reply. */
 export type GateDecision =
   | { kind: 'approve'; proposalId: string }

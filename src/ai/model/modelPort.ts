@@ -7,10 +7,11 @@ import {
 } from '@langchain/core/messages';
 import type { ZodType } from 'zod';
 import { REJECTION_CODES } from '../support/rejectionCodes';
-import { at, rejectionFromZodError } from '../support/toolErrorEnvelope';
+import { at } from '../support/toolErrorEnvelope';
+import { validateToolCandidate } from '../support/toolValidation';
 import { normalizeModelInput } from '../tools/normalizeModelInput';
 import { toolCallNotationFault } from '../support/toolCallNotation';
-import { STRUCTURED_OUTPUT_TOOL, StructuredOutputError, structuredRejectReason } from '../providers/structuredOutput';
+import { STRUCTURED_OUTPUT_TOOL, StructuredOutputError } from '../providers/structuredOutput';
 import {
   describeProviderErrorForUser,
   type ProviderErrorDiagnostic,
@@ -266,7 +267,7 @@ export function classifyToolCall(
   return { call: { valid: true, callId, toolName, input: normalized.input }, replayInput };
 }
 
-/** Finishes a forced structured-output generation: one call to the structured tool, normalized once (D-086), then parsed by the schema. */
+/** Finishes a forced structured-output generation: one call to the structured tool, normalized once (D-086), then admitted by Ajv against the served JSON Schema alone (D-126). */
 export function finishStructured<T>(
   emitted: readonly EmittedToolCall[],
   schema: ZodType<T>,
@@ -287,12 +288,13 @@ export function finishStructured<T>(
   const payload = normalized?.input;
   const notation = toolCallNotationFault(payload);
   if (notation) throw new StructuredOutputError(notation.reason, REJECTION_CODES.invalidStructuredOutput, at('tool_call_notation', notation.issuePaths));
-  const parsed = calls.length === 1 ? schema.safeParse(payload) : undefined;
-  if (parsed?.success) return parsed.data;
+  const admitted = calls.length === 1 ? validateToolCandidate(schema, payload) : undefined;
+  if (admitted?.success) return admitted.data;
   if (calls.length === 1 && Object.keys(calls[0]).length === 0) throw empty();
   if (calls.length > 1) throw new StructuredOutputError(`multiple ${STRUCTURED_OUTPUT_TOOL} tool calls`, REJECTION_CODES.invalidStructuredOutput, at('one_call'));
-  throw new StructuredOutputError(structuredRejectReason(calls.length === 1, parsed?.error, payload, schema), REJECTION_CODES.invalidStructuredOutput,
-    parsed?.error ? rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidStructuredOutput, input: payload, schema }).errors : at('no_tool_call', [''], [STRUCTURED_OUTPUT_TOOL]));
+  if (!admitted) throw new StructuredOutputError(`missing ${STRUCTURED_OUTPUT_TOOL} tool call`, REJECTION_CODES.invalidStructuredOutput, at('no_tool_call', [''], [STRUCTURED_OUTPUT_TOOL]));
+  const { errors } = admitted.rejection;
+  throw new StructuredOutputError(`invalid ${STRUCTURED_OUTPUT_TOOL} fields: ${errors.map(error => `${error.path}: ${error.code}`).join(', ')}`, REJECTION_CODES.invalidStructuredOutput, errors);
 }
 
 function logFixes(toolName: string, fixes: readonly { path: string; before: unknown }[], debugLog?: (message: string) => void): void {

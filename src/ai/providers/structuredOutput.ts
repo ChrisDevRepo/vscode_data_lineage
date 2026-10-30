@@ -1,6 +1,5 @@
 /** Provider-neutral names and corrective messages for forced structured-output calls. */
-import type { z } from 'zod';
-import { at, rejectionFromZodError, type ToolError } from '../support/toolErrorEnvelope';
+import { at, type ToolError } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 
 /** Synthetic tool advertised when a provider lacks native JSON-schema output. */
@@ -29,14 +28,3 @@ export class StructuredOutputError extends Error {
   }
 }
 
-/** Builds a concise rejection reason for a missing or schema-invalid synthetic tool call. */
-export function structuredRejectReason(
-  callPresent: boolean,
-  error: z.ZodError | undefined,
-  input?: unknown,
-  schema?: z.ZodType,
-): string {
-  if (!callPresent) return `missing ${STRUCTURED_OUTPUT_TOOL} tool call`;
-  if (!error) return `invalid ${STRUCTURED_OUTPUT_TOOL} fields: schema mismatch`;
-  return `invalid ${STRUCTURED_OUTPUT_TOOL} fields: ${rejectionFromZodError(error, { code: REJECTION_CODES.invalidStructuredOutput, input, schema }).reason}`;
-}

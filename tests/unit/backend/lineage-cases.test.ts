@@ -9,7 +9,7 @@ import { ColumnTracer } from '../../../src/ai/sm/columnTracer';
 import type { ColumnEdge, ColumnFlowEntry } from '../../../src/ai/sm/smTypes';
 import { NavigationEngine, type HopNeighborDisclosure } from '../../../src/ai/sm/smBase';
 import { submitFindingsSchemaForMode, toHopFinding } from '../../../src/ai/tools/toolSchemas';
-import { rejectionFromZodError, renderProblem, type ToolRejection } from '../../../src/ai/support/toolErrorEnvelope';
+import { renderProblem, type ToolRejection } from '../../../src/ai/support/toolErrorEnvelope';
 /** The model-visible messages of an engine rejection at feedback 3. */
 /** Everything the model reads of a rejection at its last feedback stage. */
 const shownMessages = (rejection: unknown): string => renderProblem(rejection as ToolRejection, 3);
@@ -1371,10 +1371,9 @@ describe('current task completeness before advancement', () => {
       questions: [{ nodeId: neighbor, question: 'Explain Source Value.' }],
     };
     const fresh = submitFindingsSchemaForMode('ct', undefined, true, engine.hopSubmitColumns);
-    const parsed = fresh.safeParse(input);
-    if (parsed.success) throw new Error('The node badge exceeds its rendered-label bound');
-    const rejected = rejectionFromZodError(parsed.error, { code: 'invalid_input', input, schema: fresh });
-    expect(rejected).toMatchObject({ code: 'invalid_input', issuePaths: ['badge_label'] });
+    const admitted = validateToolCandidate(fresh, input);
+    if (admitted.success) throw new Error('The node badge exceeds its rendered-label bound');
+    expect(admitted.rejection).toMatchObject({ code: 'invalid_input', issuePaths: ['badge_label'] });
     expect(rejectAndReadHeld(engine, input)?.resend).toEqual(['badge_label']);
     expect(engine.columnAspect?.edges).toEqual([]);
     const schema = submitFindingsSchemaForMode('ct', undefined, false, engine.hopSubmitColumns, engine.heldPartsOfCurrentFocus()?.fields.includes('column_flow') ?? false);

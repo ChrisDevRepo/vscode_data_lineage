@@ -18,7 +18,8 @@ import { TurnEventSink } from '../../../src/ai/runtime/turnEventSink';
 import { ToolRegistry } from '../../../src/ai/tools/registry';
 import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
 import { EMPTY_AI_TEMPLATES } from '../../../src/ai/session/types';
-import { ISSUES, at as errorsAt, makeRejection, rejectionFromZodError, type ToolProblem } from '../../../src/ai/support/toolErrorEnvelope';
+import { ISSUES, at as errorsAt, makeRejection, type ToolProblem } from '../../../src/ai/support/toolErrorEnvelope';
+import { validateToolCandidate } from '../../../src/ai/support/toolValidation';
 import { REJECTION_CODES } from '../../../src/ai/support/rejectionCodes';
 import { AiSession } from '../../../src/ai/session/session';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
@@ -217,8 +218,8 @@ describe('D-103: every rejecting path renders the one problem shape', () => {
     const registry = new ToolRegistry<string>();
     registry.register({ name: 'lineage_search_objects', inputSchema: Schema, effect: 'read', modelDescription: 'Search.',
       execute: (value: unknown) => {
-        const parsed = Schema.safeParse(value);
-        if (!parsed.success) return JSON.stringify(rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidToolInput, input: value, schema: Schema }));
+        const admitted = validateToolCandidate(Schema, value);
+        if (!admitted.success) return JSON.stringify({ ...admitted.rejection, code: REJECTION_CODES.invalidToolInput });
         return JSON.stringify(makeRejection({ code: 'out_of_scope_or_not_neighbor', errors: errorsAt('not_neighbor', ['query']) }));
       } });
     const plan = compileInstructionPlan({ kind: 'converse', stage: { kind: 'discover' }, registry,
@@ -343,8 +344,8 @@ describe('D-105: a sibling closed by its reply renders that reply\'s stage, like
     const registry = new ToolRegistry<string>();
     registry.register({ name: 'lineage_search_objects', inputSchema: Schema, effect: 'read', modelDescription: 'Search.',
       execute: (value: unknown) => {
-        const parsed = Schema.safeParse(value);
-        return parsed.success ? '{"results":[]}' : JSON.stringify(rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidToolInput, input: value, schema: Schema }));
+        const admitted = validateToolCandidate(Schema, value);
+        return admitted.success ? '{"results":[]}' : JSON.stringify({ ...admitted.rejection, code: REJECTION_CODES.invalidToolInput });
       } });
     const plan = compileInstructionPlan({ kind: 'converse', stage: { kind: 'discover' }, registry, requiredTerminalTool: 'lineage_search_objects',
       messages: [new HumanMessage('Find Orders.')], sink: new TurnEventSink(() => {}), facts: { memorySections: [] }, toolChoice: 'required' });
