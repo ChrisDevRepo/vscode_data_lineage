@@ -1,4 +1,10 @@
-import { SECRET_ENV_KEYS } from '../tools/load-test-env.mjs';
+/** Env names whose values are secrets and must never reach run evidence; the harness redacts them. */
+const SECRET_ENV_KEYS = [
+  'AI_TEST_API_KEY',
+  'DB_TEST_PASSWORD',
+  'DB_TEST_TOKEN',
+  'LANGFUSE_SECRET_KEY',
+];
 
 /** Every configured harness secret plus the private host of the provider endpoint, for redaction at each sink. Not cached: the environment is read when the run starts. */
 export function harnessSecrets(env: NodeJS.ProcessEnv = process.env): string[] {

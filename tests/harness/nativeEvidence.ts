@@ -21,6 +21,7 @@ import {
   resolveLangfuseConfig,
 } from './langfuseExport';
 import { redactSecret } from './exportShared';
+import { harnessSecrets } from './harnessSecrets';
 import { parseTrace } from './traceModel';
 
 /** Copies the current extension output log from an isolated VS Code profile when available. */
@@ -188,7 +189,7 @@ export async function exportNativeEvidence(input: {
           ]
         : [];
     }),
-    redact: env.AI_TEST_API_KEY ? [env.AI_TEST_API_KEY] : [],
+    redact: harnessSecrets(env),
   };
   const frozen =
     saved ??
@@ -205,10 +206,10 @@ export async function exportNativeEvidence(input: {
   )!.content;
   assert.equal(
     frozenTrace,
-    [
-      config.secretKey,
-      ...(env.AI_TEST_API_KEY ? [env.AI_TEST_API_KEY] : []),
-    ].reduce((text, secret) => redactSecret(text, secret), input.trace),
+    [config.secretKey, ...harnessSecrets(env)].reduce(
+      (text, secret) => redactSecret(text, secret),
+      input.trace,
+    ),
     'Native trace differs from frozen evidence.',
   );
   const frozenAttachments = baseline ? frozen.attachments : undefined;

@@ -1568,6 +1568,96 @@ describe('explicit attachment export boundary', () => {
       rmSync(directory, { recursive: true, force: true });
     }
   });
+  it('native export redacts every configured harness secret, including the provider endpoint host', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'dlv-native-redact-'));
+    // The media stub hands out an upload URL, so the attachment bytes are really sent (PUT) and checked below.
+    const fetchImpl = vi.fn(async (url: unknown, init?: RequestInit) =>
+      init?.method === 'POST' && String(url).endsWith('/media')
+        ? Response.json({
+            mediaId: 'media-id',
+            uploadUrl: 'https://upload.example/object',
+          })
+        : Response.json({}),
+    );
+    vi.stubGlobal('fetch', fetchImpl);
+    const host = 'private-endpoint.example';
+    try {
+      const trace = [
+        {
+          type: 'trace-open',
+          at: '2026-01-01T00:00:00.000Z',
+          origin: 'native',
+          verbose: true,
+        },
+        {
+          type: 'turn-start',
+          at: '2026-01-01T00:00:00.000Z',
+          requestId: 'synthetic',
+          runFingerprint: 'run',
+          note: `https://${host}/openai/responses db-credential`,
+        },
+        {
+          type: 'turn-terminal',
+          at: '2026-01-01T00:00:00.001Z',
+          requestId: 'synthetic',
+          runFingerprint: 'run',
+          status: 'ok',
+        },
+      ]
+        .map((row) => JSON.stringify(row))
+        .join('\n');
+      const state = join(directory, 'sm-state.json');
+      writeFileSync(state, `{"endpoint":"https://${host}/openai"}\n`);
+      writeFileSync(
+        join(directory, 'host.log'),
+        `request-start https://${host}/openai/responses db-credential\n`,
+      );
+      // Baseline mode freezes and uploads attachments.
+      // Free-plan pacing waits between uploads; fake timers run them at once.
+      vi.useFakeTimers();
+      const exported = exportNativeEvidence({
+        trace,
+        directory,
+        sessionId: 'synthetic-session',
+        promptId: 'synthetic',
+        statePaths: new Map([['synthetic', state]]),
+        env: {
+          AI_TEST_BASELINE: '1',
+          AI_TEST_BRANCH: 'testing01',
+          AI_TEST_ENDPOINT: `https://${host}/openai/responses`,
+          DB_TEST_PASSWORD: 'db-credential',
+          LANGFUSE_BASE_URL: 'https://export.example',
+          LANGFUSE_PUBLIC_KEY: 'public',
+          LANGFUSE_SECRET_KEY: 'credential',
+        },
+      });
+      await vi.runAllTimersAsync();
+      await exported;
+      const sent = fetchImpl.mock.calls
+        .map(([, init]) =>
+          typeof init?.body === 'string'
+            ? init.body
+            : Buffer.from((init?.body ?? '') as Uint8Array).toString('utf8'),
+        )
+        .join('\n');
+      const files = ['evidence-snapshot.json', 'langfuse-otlp.json']
+        .map((file) => readFileSync(join(directory, file), 'utf8'))
+        .join('\n');
+      expect(
+        fetchImpl.mock.calls.some(([, init]) => init?.method === 'PUT'),
+      ).toBe(true);
+      expect(sent).toContain('[redacted]');
+      expect(files).toContain('[redacted]');
+      for (const text of [sent, files]) {
+        expect(text).not.toContain(host);
+        expect(text).not.toContain('db-credential');
+      }
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
   it('reexports only frozen, hash-checked bytes after later diagnostics and rejects changed snapshots', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'dlv-frozen-'));
     const hostPath = join(directory, 'host.log');
