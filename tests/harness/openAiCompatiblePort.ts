@@ -1158,7 +1158,9 @@ function toolCallPart(
   };
 }
 
-/** One stateless Responses request body from projected chat messages and chat-shaped function tools; the native test provider reuses it. */
+/** One stateless Responses request body from projected chat messages and chat-shaped function tools; the native test provider reuses it.
+ * @public
+ */
 export function responsesRequestBody(
   model: string,
   messages: readonly OpenAiChatMessage[],
@@ -1190,7 +1192,9 @@ export function responsesRequestBody(
   };
 }
 
-/** Decodes one `/responses` body into the same ordered parts as {@link readCompletion}. */
+/** Decodes one `/responses` body into the same ordered parts as {@link readCompletion}; the native test provider reuses it.
+ * @public
+ */
 export function readResponse(body: unknown): ReadCompletion {
   const root = asRecord(body);
   throwIfErrorEnvelope(

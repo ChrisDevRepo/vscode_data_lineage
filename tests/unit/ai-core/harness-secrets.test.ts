@@ -186,4 +186,54 @@ describe('harness secrets', () => {
       { input: { query: 'Sales abc table' } },
     ]);
   });
+
+  it('sends the key only in its configured header and keeps the endpoint and encrypted reasoning out of the wire trace', async () => {
+    const sent: Array<Record<string, string>> = [];
+    const records: unknown[] = [];
+    const port = new OpenAiCompatiblePort(
+      {
+        baseUrl: `https://${HOST}/openai/v1`,
+        chatCompletionsUrl: `https://${HOST}/openai/v1/responses`,
+        wire: 'responses',
+        apiKey: 'fake-api-key',
+        apiKeyHeader: 'api-key',
+        model: 'synthetic',
+      },
+      {
+        fetchImpl: async (_url, init) => {
+          sent.push(init.headers as Record<string, string>);
+          return Response.json({
+            status: 'completed',
+            output: [
+              {
+                type: 'reasoning',
+                id: 'r1',
+                summary: [],
+                encrypted_content: 'ENC-r1',
+              },
+              {
+                type: 'message',
+                content: [{ type: 'output_text', text: 'ok' }],
+              },
+            ],
+          });
+        },
+        traceVerbose: true,
+        wireLog: (record) => records.push(record),
+      },
+    );
+    const result = await port.generateToolTurn({
+      messages: [modelUserMessage('Find.')],
+      phase: 'discover',
+      tools: [],
+    });
+    expect(result.status).toBe('completed');
+    expect(sent[0]?.['api-key']).toBe('fake-api-key');
+    expect(sent[0]?.authorization).toBeUndefined();
+    const trace = JSON.stringify(records);
+    expect(trace).toContain('provider-raw');
+    expect(trace).not.toContain(HOST);
+    expect(trace).not.toContain('ENC-r1');
+    expect(trace).toContain('[omitted');
+  });
 });

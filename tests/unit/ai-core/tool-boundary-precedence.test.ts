@@ -3997,6 +3997,91 @@ describe('lineage_submit_findings boundary', () => {
   );
 
   it.each([false, true])(
+    'requires a current summary while archived sections stay retained (held=%s)',
+    (withHeld) => {
+      const { engine, session, model, graph } = ctWorld({ mode: 'bb' });
+      const { services } = stubToolServices({ session, model, graph });
+      const submit = (input: object) =>
+        JSON.parse(executeSubmitFindings(input, services));
+      engine.publishMemoryTo(session.memory);
+      const sections = [
+        { angle: 'technical' as const, text: 'Previously captured SQL.' },
+      ];
+      session.memory.storeDetail(
+        model.nodes.find((node) => node.id === ORIGIN)!,
+        sections,
+        'Earlier visit summary.',
+      );
+      const summary = 'Updated summary for this visit.';
+      const questions = [{ nodeId: BRANCH, question: 'Establish Value.' }];
+      if (withHeld)
+        expect(submit({ summary, questions, badge_label: 42 })).toHaveProperty(
+          'code',
+          'invalid_input',
+        );
+      else
+        expect(submit({ questions }).errors).toEqual([
+          { path: 'summary', code: 'missing' },
+        ]);
+      const nullSummary = submit({ summary: null });
+      expect(nullSummary.errors).toContainEqual({
+        path: 'summary',
+        code: 'type',
+        values: ['string'],
+      });
+      if (withHeld)
+        expect(nullSummary.errors).toContainEqual({
+          path: 'summary',
+          code: 'not_overwritten',
+        });
+      expect(submit(withHeld ? {} : { summary })).toHaveProperty('ok', true);
+      expect(engine.getDetailSlots()).toContainEqual(
+        expect.objectContaining({ summary, sections }),
+      );
+    },
+  );
+
+  it.each([false, true])(
+    'replaces a resent sections object whole; a faulty replacement keeps the held copy (D-101, complete=%s)',
+    (complete) => {
+      const { engine, session, model, graph } = ctWorld({ mode: 'bb' });
+      engine.classification = 'both';
+      const { services } = stubToolServices({ session, model, graph });
+      const submit = (input: object) =>
+        JSON.parse(executeSubmitFindings(input, services));
+      const held = { business: 'Held business.', technical: 'Held technical.' };
+      expect(
+        submit({
+          ...finding('bb'),
+          sections: held,
+          badge_label: 'x'.repeat(51),
+        }),
+      ).toHaveProperty('code', 'invalid_input');
+      const replacement = complete
+        ? { business: 'New business.', technical: 'New technical.' }
+        : { technical: 'Changed technical.' };
+      const result = submit({ sections: replacement, badge_label: 'Short' });
+      if (!complete) {
+        expect(result.errors).toEqual(
+          expect.arrayContaining([
+            { path: 'sections', code: 'not_overwritten' },
+            expect.objectContaining({
+              path: 'sections.business',
+              code: 'missing',
+            }),
+          ]),
+        );
+        expect(submit({})).toHaveProperty('ok', true);
+      } else expect(result).toHaveProperty('ok', true);
+      const kept = complete ? replacement : held;
+      expect(engine.getDetailSlots()[0]?.sections).toEqual([
+        { angle: 'business', text: kept.business },
+        { angle: 'technical', text: kept.technical },
+      ]);
+    },
+  );
+
+  it.each([false, true])(
     'preserves explicit route dispositions when done=%s',
     (done) => {
       const { session, model, graph } = ctWorld({ deferred: true });
