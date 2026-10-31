@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { loadTestEnv, prepareDatabaseToken } from './load-test-env.mjs';
 import * as badgeReplay from './chat-ui-replay-trace.mjs';
@@ -130,61 +131,101 @@ test('native controls and timeouts', () => {
   assert.equal(env.AI_TEST_TIMEOUT_MS, '5000');
 });
 
-test('gui launch and session helpers', async () => {
+test('gui host: parseCdpPort accepts the default and valid custom ports', () => {
   assert.equal(parseCdpPort(), 9222);
   assert.equal(parseCdpPort('9475'), 9475);
-  assert.throws(() => parseCdpPort('invalid'), /integer from 1 to 65535/);
+});
 
+test('gui host: parseCdpPort rejects invalid or unsafe ports', () => {
+  for (const value of ['', '0', '65536', '9222.5', '-1', 'abc']) {
+    assert.throws(() => parseCdpPort(value), /integer from 1 to 65535/);
+  }
+});
+
+test('gui host: buildLaunchArgs isolates the profile and binds CDP to loopback', () => {
   const args = buildLaunchArgs({
-    extensionPath: '/ext',
-    workspaceDir: '/ws',
-    userDataDir: '/ud',
-    extensionsDir: '/ed',
+    extensionPath: '/repo/data-lineage-viz',
+    workspaceDir: '/tmp/gui/workspace',
+    userDataDir: '/tmp/gui/user-data',
+    extensionsDir: '/tmp/gui/extensions',
     cdpPort: 9475,
   });
-  assert.ok(args.includes('--remote-debugging-port=9475'));
 
+  assert.deepEqual(args.slice(0, 2), ['/tmp/gui/workspace', '--no-sandbox']);
+  assert.ok(args.includes('--extensionDevelopmentPath=/repo/data-lineage-viz'));
+  assert.ok(args.includes('--user-data-dir=/tmp/gui/user-data'));
+  assert.ok(args.includes('--extensions-dir=/tmp/gui/extensions'));
+  assert.ok(args.includes('--disable-extensions'));
+  assert.ok(args.includes('--disable-renderer-backgrounding'));
+  assert.ok(args.includes('--disable-background-timer-throttling'));
+  assert.ok(args.includes('--disable-backgrounding-occluded-windows'));
+  assert.ok(args.includes('--window-size=1600,1000'));
+  assert.ok(args.includes('--remote-debugging-address=127.0.0.1'));
+  assert.ok(args.includes('--remote-debugging-port=9475'));
+  assert.equal(args.some((argument) => argument.includes('/Applications/')), false);
+});
+
+test('gui host: validateGuiSession binds a runner identity to its loopback endpoint', () => {
   const sessionId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
   const session = {
     schemaVersion: 1,
     sessionId,
     endpoint: 'http://127.0.0.1:9475',
-    pid: 1,
+    pid: 1234,
     workspaceName: `dlv-gui-${sessionId}`,
     cdpPort: 9475,
   };
+
   assert.deepEqual(validateGuiSession(session), session);
   assert.throws(
-    () => validateGuiSession({ ...session, endpoint: 'http://loc:9475' }),
+    () => validateGuiSession({ ...session, endpoint: 'http://localhost:9475' }),
     /loopback CDP port/,
   );
-
-  const cacheRoot = resolve('/repo/.vscode-test');
-  assert.equal(
-    isIsolatedWorkbenchPage(
-      {
-        title: '[Extension Development Host] dlv-gui-s',
-        url: `vscode-file://vscode-app${cacheRoot}/vscode-darwin/workbench.html`,
-      },
-      { workspaceName: 'dlv-gui-s' },
-      '/repo/.vscode-test',
-    ),
-    true,
+  assert.throws(
+    () => validateGuiSession({ ...session, workspaceName: 'ordinary-workspace' }),
+    /workspace identity/,
   );
-  assert.equal(
-    isIsolatedWorkbenchPage(
-      {
-        title: 'Ordinary',
-        url: 'vscode-file://vscode-app/Applications/workbench.html',
-      },
-      { workspaceName: 'dlv-gui-s' },
-      '/repo/.vscode-test',
-    ),
-    false,
-  );
+});
 
-  const probe = new EventEmitter();
-  probe.listen = (opts, cb) => queueMicrotask(cb);
-  probe.close = (cb) => queueMicrotask(cb);
-  await assertLoopbackPortAvailable(9475, () => probe);
+test('gui host: isIsolatedWorkbenchPage accepts the downloaded Extension Development Host', () => {
+  const session = { workspaceName: 'dlv-gui-3a2929d2-1ccd-4355-a624-29445b1df473' };
+  const page = {
+    title: '[Extension Development Host] dlv-gui-3a2929d2-1ccd-4355-a624-29445b1df473',
+    url: `vscode-file://vscode-app${pathToFileURL(resolve('/repo/.vscode-test')).pathname}/vscode-darwin-arm64-1.140.0/Visual%20Studio%20Code.app/Contents/Resources/app/out/vs/code/electron-browser/workbench/workbench.html`,
+  };
+
+  assert.equal(isIsolatedWorkbenchPage(page, session, '/repo/.vscode-test'), true);
+});
+
+test('gui host: isIsolatedWorkbenchPage excludes an ordinary VS Code installation', () => {
+  const session = { workspaceName: 'dlv-gui-3a2929d2-1ccd-4355-a624-29445b1df473' };
+  const page = {
+    title: '[Extension Development Host] dlv-gui-3a2929d2-1ccd-4355-a624-29445b1df473',
+    url: 'vscode-file://vscode-app/Applications/Visual%20Studio%20Code.app/Contents/Resources/app/out/vs/code/electron-browser/workbench/workbench.html',
+  };
+
+  assert.equal(isIsolatedWorkbenchPage(page, session, '/repo/.vscode-test'), false);
+});
+
+test('gui host: assertLoopbackPortAvailable rejects a port already owned on loopback', async () => {
+  const occupied = new EventEmitter();
+  occupied.listen = () => queueMicrotask(() => occupied.emit('error', new Error('EADDRINUSE')));
+
+  await assert.rejects(
+    assertLoopbackPortAvailable(9475, () => occupied),
+    /Loopback port 9475 is unavailable/,
+  );
+});
+
+test('gui host: assertLoopbackPortAvailable releases an available probe listener', async () => {
+  const available = new EventEmitter();
+  let options;
+  available.listen = (received, callback) => {
+    options = received;
+    queueMicrotask(callback);
+  };
+  available.close = (callback) => queueMicrotask(() => callback());
+
+  await assertLoopbackPortAvailable(9475, () => available);
+  assert.deepEqual(options, { host: '127.0.0.1', port: 9475, exclusive: true });
 });
