@@ -14,7 +14,7 @@ These need no database, model provider or display. Parser and lineage scenarios 
 | `npm run test:lineage` | Lineage only (`test:bfs` is the same lane) |
 | `npm run test:runtime` | Backend graph contracts, tool registration/dispatch, identifier boundaries, schema, redaction, cancellation, templates and `scripted` catalog rows |
 | `npm run test:support` | Webview, database connection, AI routing and operator tools (not in `npm test` or the gate) |
-| `npm run typecheck`, `npm run typecheck:tests` | TypeScript checks; there is no lint script |
+| `npm run typecheck`, `npm run typecheck:tests`, `npm run lint`, `npm run format:check`, `npm run knip` | TypeScript, lint, formatting and unused-code checks |
 | `npm run gate` | Everything above except `test:support`, plus coverage floors, build and repository checks; CI runs this |
 
 A path argument to `test:core`, `test:lineage`, `test:runtime` or `test:support` runs that file only: `npm run test:core -- tests/unit/parser/identifier-case.test.ts`.

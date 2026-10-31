@@ -3,31 +3,34 @@
 All notable user-facing changes to Data Lineage Viz are documented in this file.
 The newest version heading collects changes until that version ships.
 
-## [1.2.6] - 2026-10-08
+## [1.2.6] - Unreleased
 
 ### Added
 - The output log warns when a module uses a cursor or dynamic SQL, which are not fully supported, with the module count; the references the parser captures still load.
 
 ### Changed
 - Column traces record every SQL-proved output of the arriving columns, including downstream fanout. Procedure writes keep their source-to-target pairs, and asked columns always get a graph row and a Column Chain row.
-- The AI selects report SQL and formulas; if a report cannot be built after repeated attempts, chat shows the latest report text with a preview-failure notice.
+- If a report cannot be built after repeated attempts, chat also shows the AI's latest answer text when no report draft was kept, followed by the preview-failure notice.
 - The exploration plan card accepts Approve, Cancel and Change scope only while it is on display; an outdated card, including one restored after a window reload, never approves.
 
 ### Removed
-- The SQL Server (mssql) extension integration and the `dataLineageViz.database.connectionProvider` setting; databases connect through built-in connections only. Projects saved with an mssql connection keep it without the password; set the password with **Update Database Password**.
+- **Breaking:** the SQL Server (mssql) extension integration and the `dataLineageViz.database.connectionProvider` setting. Databases connect only through built-in connections (**Data Lineage: Add Database Connection**). Passwords saved in the mssql extension are not used: a project saved with an mssql connection reopens through a matching built-in connection, or through the connection picker, where adding a connection starts from the saved server, user and database and you enter the password again.
 
 ### Fixed
-- A formula the AI preview cannot render is shown as its source, marked as an error, with the reason on hover.
-- Clarified how object relevance and column continuation are analyzed independently.
-- Clearer AI correction guidance preserves an empty mapping list when removing out-of-scope column sources.
+- A formula the AI preview cannot render is shown as its source, marked as an error, with the reason on hover. Formulas that name a temporary table (`#Name`) render.
 - AI analysis reports independent scope and input faults together, with clear repair choices, and keeps valid text and column mappings while a repair is pending.
 - SQL evidence preserves stored text, including whitespace in literals; replacing a loaded project retires its previous exploration and approval card.
 - Updating a legacy bookmark keeps current selections; SQL identifiers with equivalent quoting, casing or Unicode format characters bind to the right objects.
 - Functions without declared columns now get column-trace edges; exploration depth is strict only when the user states a level count or complete chain, otherwise it starts at about 3 levels.
 - DACPAC references keep local objects local when database identity is known or unambiguous; references to another database remain external. Reconnecting by server matches a saved connection written with a `tcp:` prefix.
 
+### Known issues
+- In a deep analysis, a chat model can answer its last correction request in text instead of resubmitting its findings; the analysis then stops at that object without a result. Ask again, or exclude the object from the scope.
+- A column trace can leave out a direct link from one calculated column to a later calculation (for example a discount used in an adjusted revenue column) even though the answer text states the formula. Check column links against the SQL.
+
 ### Dependencies
-- Security updates: DOMPurify, @azure/identity (msal-node).
+- Security updates: DOMPurify, @azure/identity (msal-node), Zod.
+- Updated: tedious. New: ajv.
 
 ## [1.2.5] - 2026-10-07
 
