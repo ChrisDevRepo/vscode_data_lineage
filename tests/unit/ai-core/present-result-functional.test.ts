@@ -522,7 +522,10 @@ describe.each([false, true])('result origin closure (CS=%s)', (cs) => {
       ),
     );
     expect(result).toMatchObject({ code: 'invalid_input' });
-    expect(result.reason).toContain('disconnected');
+    expect(result.errors).toContainEqual({
+      path: '',
+      code: 'disconnects_view',
+    });
     expect(result.reason, 'D-102: no echoed id').not.toContain(sibling);
     expect(session.resultGraph).toEqual(before);
     expect(deliverPreview).not.toHaveBeenCalled();
@@ -557,7 +560,10 @@ describe.each([false, true])('result origin closure (CS=%s)', (cs) => {
         ),
       );
       expect(result).toMatchObject({ code: 'invalid_input' });
-      expect(result.reason).toContain('must keep the origin node');
+      expect(result.errors).toContainEqual({
+        path: 'prune_node_ids',
+        code: 'prunes_origin',
+      });
       expect(result.reason, 'D-102: no echoed id').not.toContain(origin);
       expect(session.resultGraph).toEqual(before);
       expect(session.presentationArtifact).toBeNull();
