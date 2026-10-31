@@ -68,6 +68,16 @@ suite('Participant turn — public API, no CDP', () => {
     );
   }
 
+  // Open Demo on an already open panel reloads the demo without awaiting it, and that reload supersedes a running turn; load it once per suite.
+  let demoOpened = false;
+  async function openDemoOnce(): Promise<void> {
+    if (!demoOpened) {
+      await vscode.commands.executeCommand('dataLineageViz.openDemo');
+      demoOpened = true;
+    }
+    await waitForDemoModel();
+  }
+
   async function waitForDemoModel(): Promise<void> {
     const deadline = Date.now() + 60_000;
     let lastProbe = '';
@@ -152,8 +162,7 @@ suite('Participant turn — public API, no CDP', () => {
     const exports = await vscode.extensions
       .getExtension(EXTENSION_ID)!
       .activate();
-    await vscode.commands.executeCommand('dataLineageViz.openDemo');
-    await waitForDemoModel();
+    await openDemoOnce();
 
     const { stream, calls } = recordingStream();
     const source = new vscode.CancellationTokenSource();
@@ -233,8 +242,7 @@ suite('Participant turn — public API, no CDP', () => {
       const extension = await vscode.extensions
         .getExtension(EXTENSION_ID)!
         .activate();
-      await vscode.commands.executeCommand('dataLineageViz.openDemo');
-      await waitForDemoModel();
+      await openDemoOnce();
       const interruption = {
         failures: scenario.failures,
         afterReply: scenario.afterReply,
