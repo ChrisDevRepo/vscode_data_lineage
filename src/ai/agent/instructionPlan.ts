@@ -17,10 +17,7 @@ import {
   type IToolRegistry,
 } from '../tools/registry';
 import { getAllowedLmToolNames, type ChatLmStage } from '../tools/toolPolicy';
-import {
-  presentResultSchemaForPhase,
-  submitFindingsSchemaForMode,
-} from '../tools/toolSchemas';
+import { presentResultSchemaForPhase } from '../tools/toolSchemas';
 import type { ToolControlSignal } from '../session/sessionPhase';
 
 /** Model-call phase labels emitted by the production LangGraph runtime. */
@@ -144,7 +141,7 @@ export type ConversePlanDraft = Omit<
   readonly presentResultRetainableSections?: () => boolean;
   /** Number of served `answer_blocks` the visual preview's section ranges may name (`B1`..`B<count>`). */
   readonly presentResultPreviewBlockCount?: number;
-  /** The active hop's admission `submit_findings` schema, served unchanged; read live, absent serves the general fresh schema. */
+  /** The active hop's admission `submit_findings` schema, served unchanged; read live; absent keeps the registry schema. */
   readonly findingSchema?: () => z.ZodType;
   /** Live engine eligibility for the optional current-candidate removal command; absent denies it. */
   readonly canPruneCurrent?: () => boolean;
@@ -390,19 +387,8 @@ export function compileInstructionPlan<T>(
   const filteredRegistry = filterRegistry(sourceRegistry, allowed);
   const schemaOverrides = new Map(toolSchemaOverrides ?? []);
   const liveResolvers = new Map<string, () => z.ZodType>();
-  if (stage.kind === 'active') {
-    const submitMode = stage.mode === 'sm_ct' ? 'ct' : 'bb';
-    liveResolvers.set(
-      'lineage_submit_findings',
-      findingSchema ??
-        (() =>
-          submitFindingsSchemaForMode(
-            submitMode,
-            frozenFacts?.classification,
-            true,
-          )),
-    );
-  }
+  if (stage.kind === 'active' && findingSchema)
+    liveResolvers.set('lineage_submit_findings', findingSchema);
   if (stageSupportsPresentResultRepair(stage)) {
     liveResolvers.set('lineage_present_result', () =>
       presentResultSchemaForPhase(
