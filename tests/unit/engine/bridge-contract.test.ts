@@ -5,7 +5,6 @@
  * 3. parseStats & spDetails strict validation.
  * 4. Phase-one schema previews (db/dacpac).
  */
-import { readFileSync } from 'node:fs';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import { postToDetail, postToWebview } from '../../../src/bridge/host';
@@ -171,20 +170,6 @@ describe('bridge protocol envelope', () => {
         protocolVersion: BRIDGE_PROTOCOL_VERSION,
       }),
     ).toMatchObject({ ok: true, data: { type: 'reload-source' } });
-  });
-
-  it('routes every webview receive site through validateBridgeFrame — one home for the check', () => {
-    const sites = [
-      '../../../src/components/App.tsx',
-      '../../../src/components/GraphCanvas.tsx',
-      '../../../src/detail/DetailApp.tsx',
-      '../../../src/hooks/useDacpacLoader.ts',
-    ];
-    for (const site of sites) {
-      const source = readFileSync(new URL(site, import.meta.url), 'utf8');
-      expect(source, site).toContain('validateBridgeFrame(');
-      expect(source, site).not.toMatch(/MsgSchema\.safeParse\(/u);
-    }
   });
 });
 

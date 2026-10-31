@@ -1126,25 +1126,17 @@ describe('DMV Extractor', () => {
       .filter((q) => !isPhase2Query(q as DmvQuery))
       .map((q) => q.name);
 
-    expect(
-      !sweep.some((q) => q.name === 'platform-info'),
-      'platform-info is excluded from the Phase 2 sweep despite running at Phase 2 time',
-    ).toBe(true);
-    expect(
-      !sweep.some((q) => q.name === 'schema-preview'),
-      'schema-preview is excluded from the Phase 2 sweep',
-    ).toBe(true);
-    expect(
-      excluded.includes('platform-info') && excluded.includes('schema-preview'),
-      `Excluded set is exactly the phase-1-tagged queries (got: ${JSON.stringify(excluded)})`,
-    ).toBe(true);
-
-    for (const name of ['nodes', 'columns', 'dependencies']) {
-      expect(
-        sweep.some((q) => q.name === name),
-        `Required query '${name}' is in the sweep`,
-      ).toBe(true);
-    }
+    expect(sweep.map((query) => query.name).sort()).toEqual([
+      'columns',
+      'constraints',
+      'dependencies',
+      'nodes',
+    ]);
+    expect(excluded.sort()).toEqual([
+      'all-objects',
+      'platform-info',
+      'schema-preview',
+    ]);
 
     expect(
       isPhase2Query({ name: 'custom', description: '', sql: '' }),
@@ -1154,11 +1146,6 @@ describe('DMV Extractor', () => {
       !isPhase2Query({ name: 'custom', description: '', sql: '', phase: 1 }),
       'phase: 1 query is excluded',
     ).toBe(true);
-
-    expect(
-      sweep.length + 1,
-      'Progress total = sweep size + 1 platform step',
-    ).toBe(config.queries.length - excluded.length + 1);
   }
 
   function testExpandedSqlStructure() {
