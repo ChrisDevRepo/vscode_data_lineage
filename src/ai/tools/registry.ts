@@ -7,6 +7,8 @@ export interface ToolDefinition {
   readonly name: string;
   /** The single Zod source for this tool's model-facing JSON Schema AND runtime validation. */
   readonly inputSchema: z.ZodType;
+  /** Applies context-owned held-field omissions after a phase resolves its full schema. */
+  readonly projectInputSchema?: (schema: z.ZodType) => z.ZodType;
   /** Manifest tags (e.g. `lineage-presentation`) — carried for parity assertions. */
   readonly tags?: readonly string[];
   /** Concise description intended for user-facing host surfaces. */
@@ -164,7 +166,8 @@ export function resolveRegistrySchemas<O>(
     return {
       ...tool,
       get inputSchema(): z.ZodType {
-        return resolve();
+        const schema = resolve();
+        return tool.projectInputSchema?.(schema) ?? schema;
       },
     };
   };

@@ -3,7 +3,6 @@
 import Ajv from 'ajv/dist/2020';
 import { validateToolCandidate } from '../../../src/ai/support/toolValidation';
 import { schemaFaults, withSchemaFaults } from './helpers/toolServices';
-import { canonicalResend } from '../helpers/testUtils';
 import { describe, expect, it, vi } from 'vitest';
 import {
   SubmitFindingsCtInputSchema,
@@ -721,8 +720,8 @@ describe('fresh kept required-field projection', () => {
     expect(wire(oneAngle)).toBe(true);
   });
 
-  it('requires the held CT flow and summary to be resent with each correction in both provider and runtime schemas', () => {
-    // D-099: the served schema is the canonical fresh contract; D-098: a resent field replaces the held one.
+  it('requires CT flow and summary when no content is held', () => {
+    // Approved 08: a fresh finding must supply its required fields.
     const served = submitFindingsSchemaForMode('ct', 'both', true);
     const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(served));
     const held = {
@@ -752,10 +751,7 @@ describe('fresh kept required-field projection', () => {
       const partial = { focus_node_id: 'source', ...correction };
       expect(validateToolCandidate(served, partial).success).toBe(false);
       expect(wire(partial)).toBe(false);
-      const resend = canonicalResend(toModelJsonSchema(served), held, {
-        focus_node_id: 'source',
-        ...correction,
-      });
+      const resend = { ...held, ...correction };
       expect(validateToolCandidate(served, resend).success).toBe(true);
       expect(wire(resend)).toBe(true);
     }

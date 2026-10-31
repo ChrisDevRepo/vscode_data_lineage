@@ -2811,8 +2811,16 @@ export class NavigationEngine implements IHopStateMachine {
       : undefined;
   }
 
-  /** The one `submit_findings` contract: served to the model and enforced at admission, so a card-valid reply is never rejected for an omitted field (Approved08 D-099). Stable through a hop's corrections; held fields still compose before admission (D-098). */
+  /** The served finding card: the canonical contract with omissions authorized by this context's held draft. */
   public findingSchema(modelBoundary = true) {
+    const schema = this.canonicalFindingSchema(modelBoundary);
+    return this.heldFindingDraft.matches(this.findingContext())
+      ? this.heldFindingDraft.modelSchema(schema)
+      : schema;
+  }
+
+  /** The one `submit_findings` admission contract; held fields compose into the candidate before it is checked (D-098). */
+  private canonicalFindingSchema(modelBoundary: boolean) {
     return submitFindingsSchemaForMode(
       this.currentHopAnalysisMode,
       this.classification,
@@ -2841,7 +2849,7 @@ export class NavigationEngine implements IHopStateMachine {
         : {};
     const currentFocusId = this.currentFocusNodeId;
     const archivedAngles = this.memory.getArchivedAngles(currentFocusId ?? '');
-    const schema = this.findingSchema(modelBoundary);
+    const schema = this.canonicalFindingSchema(modelBoundary);
     const admission = findingAdmissionFacts(schema);
     const bound =
       raw.focus_node_id === undefined || raw.focus_node_id === currentFocusId;

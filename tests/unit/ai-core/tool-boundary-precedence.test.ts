@@ -88,7 +88,6 @@ import {
   makeNode,
 } from '../helpers/modelFixtures';
 import { TOOL_DEFS } from '../../../src/ai/tools/toolDefs';
-import { canonicalResend } from '../helpers/testUtils';
 import {
   schemaFaults,
   withSchemaFaults,
@@ -377,40 +376,13 @@ function ctWorld(
 }
 
 /** Drives a correction that follows the feedback and the served card (D-099): the focus and the parts the rejection asks to resend, plus every required field of the model's own draft resent; a resent field replaces the held one (D-098). */
-function findingRepair(
-  engine: NavigationEngine,
-  draft: Record<string, unknown>,
-  input: object,
-  rejection: { resend?: readonly string[] },
-): object {
-  if (!engine.heldPartsOfCurrentFocus()) return input;
-  const schema = engine.findingSchema();
-  const card = toModelJsonSchema(schema);
-  const owed = ['focus_node_id', ...(rejection.resend ?? [])];
-  const select = (value: unknown, prefix: string): unknown =>
-    value && typeof value === 'object' && !Array.isArray(value)
-      ? Object.fromEntries(
-          Object.entries(value).flatMap(([key, child]) => {
-            const path = prefix ? `${prefix}.${key}` : key;
-            if (owed.includes(path)) return [[key, child]];
-            return owed.some((part) => part.startsWith(`${path}.`))
-              ? [[key, select(child, path)]]
-              : [];
-          }),
-        )
-      : value;
-  const selected = canonicalResend(
-    card,
-    draft,
-    select(input, '') as Record<string, unknown>,
-  );
-  expect(schema.safeParse(selected).success).toBe(true);
-  expect(new Ajv({ strict: false }).compile(card)(selected)).toBe(true);
-  return selected;
-}
-
 /** Native SDK generations drive the direct-boundary lifecycle fixtures; compiled dispatcher cases remain separate. */
-function ownedInputWorld(options: { signal?: AbortSignal } = {}) {
+function ownedInputWorld(
+  options: {
+    signal?: AbortSignal;
+    stage?: Parameters<AiSession['enterLmStage']>[0];
+  } = {},
+) {
   const world = ctWorld();
   let queued: Array<{ tool: string; input: object }> = [];
   const offered: Array<
@@ -474,9 +446,20 @@ function ownedInputWorld(options: { signal?: AbortSignal } = {}) {
         ],
       ]),
     );
+    const offeredRegistry = options.stage
+      ? compileInstructionPlan({
+          kind: 'converse',
+          stage: options.stage,
+          registry: projected,
+          messages: [],
+          sink: new TurnEventSink(() => {}),
+          presentResultRetainableSections: () =>
+            world.session.retainableReportSections() !== null,
+        }).input.registry
+      : projected;
     const reply = await port.generateToolTurn({
       messages: [modelUserMessage('Boundary fixture.')],
-      tools: projected.getTools().map((tool) => ({
+      tools: offeredRegistry.getTools().map((tool) => ({
         name: tool.name,
         description: tool.modelDescription ?? tool.name,
         inputSchema: tool.inputSchema,
@@ -508,6 +491,258 @@ function ownedInputWorld(options: { signal?: AbortSignal } = {}) {
       (await batch([{ tool, input }]))[0]!,
   };
 }
+
+it.each([
+  'start',
+  'nested-start',
+  'present',
+  'whole-replacement',
+  'unnamed-sibling-leaf',
+] as const)(
+  'advertises the actual held %s correction and preserves atomic admission',
+  async (kind) => {
+    const present = kind === 'present';
+    const { session, invoke, offered } = ownedInputWorld({
+      stage: { kind: present ? 'completed' : 'sm_entry' },
+    });
+    const depth = {
+      upstream: { levels: 1, exactness: 'exact' },
+      downstream: { levels: 0, exactness: 'exact' },
+    };
+    if (present) {
+      session.resultGraph = {
+        nodeIds: [ORIGIN, BRANCH],
+        edges: [[BRANCH, ORIGIN, 'read']],
+        source: 'blackboard',
+        originNodeId: ORIGIN,
+      };
+      session.enterCompleted(session.turnEpoch);
+    } else {
+      session.stateMachine = null;
+      session.enterLmStage({ kind: 'sm_entry' }, session.turnEpoch);
+    }
+    const tool = present
+      ? 'lineage_present_result'
+      : 'lineage_start_exploration';
+    const first = present
+      ? {
+          name: 'Result',
+          summary: 42,
+          sections: [
+            {
+              label: 'Flow',
+              node_ids: [ORIGIN, BRANCH],
+              text: 'Source feeds Result.',
+            },
+          ],
+          highlight_groups: [
+            { label: 'Flow', color: 'source', node_ids: [ORIGIN, BRANCH] },
+          ],
+        }
+      : {
+          origin: ORIGIN,
+          analysisMode: 'bb',
+          classification: kind === 'start' ? 'wrong' : 'technical',
+          depth:
+            kind === 'start'
+              ? depth
+              : { ...depth, upstream: { levels: 1, exactness: 'wrong' } },
+        };
+    const before = JSON.stringify({
+      proposal: session.pendingExploration,
+      graph: session.resultGraph,
+      artifact: session.presentationArtifact,
+    });
+    expect(JSON.parse(await invoke(tool, first))).toHaveProperty(
+      'code',
+      'invalid_input',
+    );
+    expect(
+      JSON.stringify({
+        proposal: session.pendingExploration,
+        graph: session.resultGraph,
+        artifact: session.presentationArtifact,
+      }),
+    ).toBe(before);
+    const patch = present
+      ? { summary: 'Source feeds Result.' }
+      : kind === 'start'
+        ? { classification: 'technical' }
+        : kind === 'whole-replacement'
+          ? {
+              depth: {
+                upstream: { exactness: 'exact' },
+                downstream: depth.downstream,
+              },
+            }
+          : kind === 'unnamed-sibling-leaf'
+            ? // D-101: an unnamed sibling makes the patch a whole depth replacement that drops held downstream.
+              { depth: { upstream: { levels: 1, exactness: 'exact' } } }
+            : { depth: { upstream: { exactness: 'exact' } } };
+    const result = JSON.parse(await invoke(tool, patch));
+    const card = offered.at(-1)!.find((t) => t.name === tool)!.inputSchema;
+    const validate = new Ajv({ strict: false }).compile(card);
+    const replaced =
+      kind === 'whole-replacement' || kind === 'unnamed-sibling-leaf';
+    expect(validate(patch), JSON.stringify(validate.errors)).toBe(!replaced);
+    if (replaced) {
+      expect(result).toHaveProperty('code', 'invalid_input');
+      expect(
+        JSON.stringify({
+          proposal: session.pendingExploration,
+          graph: session.resultGraph,
+          artifact: session.presentationArtifact,
+        }),
+      ).toBe(before);
+    } else {
+      expect(
+        present ? result.success === true : result.code === 'action_required',
+      ).toBe(true);
+      expect(validate({ ...patch, rogue: true })).toBe(false);
+    }
+  },
+);
+
+it.each(['start', 'present'] as const)(
+  'keeps fresh requirements, strict keys, array-item fields and required values in the actual %s card',
+  async (kind) => {
+    const present = kind === 'present';
+    const { session, invoke, offered } = ownedInputWorld({
+      stage: { kind: present ? 'completed' : 'sm_entry' },
+    });
+    if (present) {
+      session.resultGraph = {
+        nodeIds: [ORIGIN, BRANCH],
+        edges: [[BRANCH, ORIGIN, 'read']],
+        source: 'blackboard',
+        originNodeId: ORIGIN,
+      };
+      session.enterCompleted(session.turnEpoch);
+    } else {
+      session.stateMachine = null;
+      session.enterLmStage({ kind: 'sm_entry' }, session.turnEpoch);
+    }
+    const tool = present
+      ? 'lineage_present_result'
+      : 'lineage_start_exploration';
+    expect(JSON.parse(await invoke(tool, {}))).toHaveProperty(
+      'code',
+      'invalid_input',
+    );
+    expect(
+      new Ajv({ strict: false }).compile(
+        offered.at(-1)!.find((t) => t.name === tool)!.inputSchema,
+      )({}),
+    ).toBe(false);
+    const original = present
+      ? {
+          name: 'Result',
+          summary: 42,
+          sections: [
+            {
+              label: 'Flow',
+              node_ids: [ORIGIN, BRANCH],
+              text: 'Source feeds Result.',
+            },
+          ],
+          highlight_groups: [
+            { label: 'Flow', color: 'source', node_ids: [ORIGIN, BRANCH] },
+          ],
+        }
+      : {
+          origin: ORIGIN,
+          analysisMode: 'bb',
+          classification: 'wrong',
+          depth: {
+            upstream: { levels: 1, exactness: 'exact' },
+            downstream: { levels: 0, exactness: 'exact' },
+          },
+        };
+    expect(JSON.parse(await invoke(tool, original))).toHaveProperty(
+      'code',
+      'invalid_input',
+    );
+    const before = JSON.stringify({
+      proposal: session.pendingExploration,
+      graph: session.resultGraph,
+      artifact: session.presentationArtifact,
+    });
+    const bad = present
+      ? { summary: 'Source feeds Result.', sections: [{ label: 'Flow' }] }
+      : { classification: 'technical', origin: null };
+    expect(JSON.parse(await invoke(tool, bad))).toHaveProperty(
+      'code',
+      'invalid_input',
+    );
+    expect(
+      new Ajv({ strict: false }).compile(
+        offered.at(-1)!.find((t) => t.name === tool)!.inputSchema,
+      )(bad),
+    ).toBe(false);
+    expect(
+      JSON.stringify({
+        proposal: session.pendingExploration,
+        graph: session.resultGraph,
+        artifact: session.presentationArtifact,
+      }),
+    ).toBe(before);
+  },
+);
+
+it.each([['Value'], null, []])(
+  'preserves held CT mode during target-only repair: %j',
+  async (targetColumns) => {
+    const { session, invoke, offered } = ownedInputWorld({
+      stage: { kind: 'sm_entry' },
+    });
+    session.stateMachine = null;
+    session.enterLmStage({ kind: 'sm_entry' }, session.turnEpoch);
+    const tool = 'lineage_start_exploration';
+    const patch = { targetColumns };
+    const fresh = JSON.parse(await invoke(tool, patch));
+    expect(fresh.code).toBe('invalid_input');
+    expect(
+      new Ajv({ strict: false }).compile(
+        offered.at(-1)!.find((t) => t.name === tool)!.inputSchema,
+      )(patch),
+    ).toBe(false);
+    const rejected = JSON.parse(
+      await invoke(tool, {
+        origin: ORIGIN,
+        analysisMode: 'ct',
+        classification: 'technical',
+        targetColumns: ['Missing'],
+        depth: {
+          upstream: { levels: 1, exactness: 'exact' },
+          downstream: { levels: 0, exactness: 'exact' },
+        },
+      }),
+    );
+    expect(rejected.issuePaths).toContain('targetColumns.0');
+    expect(session.pendingExploration).toBeNull();
+    const result = JSON.parse(await invoke(tool, patch));
+    const valid = Array.isArray(targetColumns) && targetColumns.length > 0;
+    if (valid) {
+      expect(
+        new Ajv({ strict: false }).compile(
+          offered.at(-1)!.find((t) => t.name === tool)!.inputSchema,
+        )(patch),
+      ).toBe(true);
+      expect(result.code).toBe('action_required');
+      expect(session.pendingExploration?.init).toMatchObject({
+        analysisMode: 'ct',
+        targetColumns: ['Value'],
+      });
+    } else {
+      expect(result.code).toBe('invalid_input');
+      expect(session.pendingExploration).toBeNull();
+      expect(session.startExplorationDraft.get()).toMatchObject({
+        analysisMode: 'ct',
+      });
+    }
+    expect(session.stateMachine).toBeNull();
+  },
+);
 
 it('states whole action-list replacement and preserves explicit withdrawal without merging decisions', () => {
   const { engine, session, model, graph } = ctWorld({
@@ -1812,11 +2047,9 @@ describe('large findings repairs', () => {
       const card = new Ajv({ strict: false }).compile(
         toModelJsonSchema(schema),
       );
-      // D-099: the served card asks for the held required fields again; D-098: admission still composes them.
-      expect(card(correction)).toBe(false);
-      expect(
-        card(canonicalResend(toModelJsonSchema(schema), draft, correction)),
-      ).toBe(true);
+      // D-098/D-099: the live card accepts the correction that admission composes with held findings.
+      expect(card(correction)).toBe(true);
+      expect(card({ ...draft, ...correction })).toBe(true);
       expect(
         JSON.parse(executeSubmitFindings(correction, services)),
       ).toHaveProperty('ok', true);
@@ -1899,26 +2132,8 @@ describe('large findings repairs', () => {
         prune_neighbors: [],
         questions: [{ nodeId: BRANCH, question: 'Establish Value.' }],
       };
-      const repaired = JSON.parse(
-        executeSubmitFindings(
-          findingRepair(engine, draft, correction, rejected),
-          services,
-        ),
-      );
-      if (!validDestination) {
-        expect(repaired.detail).toContainEqual(
-          expect.objectContaining({ kind: 'prune_unsupported', id: BRANCH }),
-        );
-        expect(engine.getDetailSlots()).toEqual([]);
-        expect(
-          JSON.parse(
-            executeSubmitFindings(
-              findingRepair(engine, draft, correction, repaired),
-              services,
-            ),
-          ),
-        ).toHaveProperty('ok', true);
-      } else expect(repaired).toHaveProperty('ok', true);
+      const repaired = JSON.parse(executeSubmitFindings(correction, services));
+      expect(repaired).toHaveProperty('ok', true);
       expect(engine.columnAspect!.edges).toHaveLength(1);
     },
   );
@@ -2330,29 +2545,8 @@ describe('large findings repairs', () => {
           { id: '[hop].[extra]', reason: 'No required contribution.' },
         ],
       };
-      const repaired = JSON.parse(
-        executeSubmitFindings(
-          findingRepair(engine, draft, correction, result),
-          services,
-        ),
-      );
-      if (kind !== 'known') {
-        expect(repaired.detail).toContainEqual(
-          expect.objectContaining({
-            kind: 'neighbor_outcome_missing',
-            id: '[hop].[extra]',
-          }),
-        );
-        expect(engine.getDetailSlots()).toEqual([]);
-        expect(
-          JSON.parse(
-            executeSubmitFindings(
-              findingRepair(engine, draft, correction, repaired),
-              services,
-            ),
-          ),
-        ).toHaveProperty('ok', true);
-      } else expect(repaired).toHaveProperty('ok', true);
+      const repaired = JSON.parse(executeSubmitFindings(correction, services));
+      expect(repaired).toHaveProperty('ok', true);
       expect(engine.getDetailSlots()).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ summary: 'Known reference facts.' }),
@@ -2466,12 +2660,7 @@ describe('large findings repairs', () => {
       ],
     };
     expect(
-      JSON.parse(
-        executeSubmitFindings(
-          findingRepair(engine, draft, correction, rejected),
-          services,
-        ),
-      ),
+      JSON.parse(executeSubmitFindings(correction, services)),
     ).toHaveProperty('ok', true);
     expect(engine.columnAspect!.edges).toHaveLength(3);
     expect(engine.columnAspect!.edges).toEqual(
@@ -2555,8 +2744,7 @@ describe('large findings repairs', () => {
       };
       // D-099: the served schema admits the canonical resend; D-098: the held fields still compose with the flow patch.
       const schema = engine.findingSchema();
-      const resend = canonicalResend(toModelJsonSchema(schema), draft, patch);
-      expect(schema.safeParse(resend).success).toBe(true);
+      const resend = patch;
       expect(
         new Ajv({ strict: false }).compile(toModelJsonSchema(schema))(resend),
       ).toBe(true);
@@ -3517,12 +3705,7 @@ describe('lineage_submit_findings boundary', () => {
             ? { focus_node_id: ORIGIN, summary: valid.summary }
             : { focus_node_id: ORIGIN, column_flow: valid.column_flow };
       expect(
-        JSON.parse(
-          executeSubmitFindings(
-            findingRepair(engine, valid, correction, result),
-            services,
-          ),
-        ),
+        JSON.parse(executeSubmitFindings(correction, services)),
       ).toHaveProperty('ok', true);
       expect(engine.toJSON().memory.detailSlots[ORIGIN]).toMatchObject({
         summary: valid.summary,
@@ -3598,26 +3781,8 @@ describe('lineage_submit_findings boundary', () => {
           { nodeId: BRANCH, question: 'Establish Value provenance.' },
         ],
       };
-      const corrected = JSON.parse(
-        executeSubmitFindings(
-          findingRepair(engine, input, correction, result),
-          services,
-        ),
-      );
-      if (unavailable === 'column_flow') {
-        expect(corrected.detail).toContainEqual(
-          expect.objectContaining({ kind: 'prune_unsupported', id: BRANCH }),
-        );
-        expect(
-          JSON.parse(
-            executeSubmitFindings(
-              findingRepair(engine, input, correction, corrected),
-              services,
-            ),
-          ),
-        ).toHaveProperty('ok', true);
-      } else
-        expect(corrected, JSON.stringify(corrected)).toHaveProperty('ok', true);
+      const corrected = JSON.parse(executeSubmitFindings(correction, services));
+      expect(corrected, JSON.stringify(corrected)).toHaveProperty('ok', true);
       expect(engine.toJSON().memory.detailSlots[ORIGIN]).toMatchObject({
         summary: input.summary,
         sections: [{ angle: 'technical', text: input.sections.technical }],
@@ -3799,27 +3964,8 @@ describe('lineage_submit_findings boundary', () => {
                 ? { questions: complete.questions }
                 : {}),
             };
-      const accepted = JSON.parse(
-        executeSubmitFindings(
-          findingRepair(engine, complete, correction, result),
-          services,
-        ),
-      );
-      if (mode === 'bb' && schemaPath === 'prune_neighbors') {
-        expect(accepted.errors).toContainEqual(
-          expect.objectContaining({ code: 'neighbor_undecided' }),
-        );
-        expect(accepted.resend).toEqual(expect.arrayContaining(['questions']));
-        expect(engine.getDetailSlots()).toEqual([]);
-        expect(
-          JSON.parse(
-            executeSubmitFindings(
-              findingRepair(engine, complete, correction, accepted),
-              services,
-            ),
-          ),
-        ).toMatchObject({ ok: true, next_focus: BRANCH });
-      } else expect(accepted).toMatchObject({ ok: true, next_focus: BRANCH });
+      const accepted = JSON.parse(executeSubmitFindings(correction, services));
+      expect(accepted).toMatchObject({ ok: true, next_focus: BRANCH });
       expect(
         engine.toJSON().visited.filter((id) => id === ORIGIN),
       ).toHaveLength(1);
@@ -5630,9 +5776,10 @@ it.each([
           ),
         ),
       ).not.toHaveProperty('repair');
-      expect(offered[1], 'D-098: a repair serves the full schema').toEqual(
-        offered[0],
+      const validate = new Ajv({ strict: false, allErrors: true }).compile(
+        offered[1]!,
       );
+      expect(validate(inputs[1]), JSON.stringify(validate.errors)).toBe(true);
       expect(session.pendingExploration?.revision).toBe(1);
       expect(session.pendingExploration?.init.depthIntent).toMatchObject({
         upstream: { levels: 1, exactness: 'exact' },
@@ -5643,9 +5790,10 @@ it.each([
     }
     expect(model.modelCalls).toBe(2);
     expect(session.currentRoundId).toBe(1);
-    expect(offered[1], 'D-098: a repair serves the full schema').toEqual(
-      offered[0],
+    const validate = new Ajv({ strict: false, allErrors: true }).compile(
+      offered[1]!,
     );
+    expect(validate(inputs[1]), JSON.stringify(validate.errors)).toBe(true);
     expect(session.pendingExploration?.revision).toBe(1);
     expect(session.pendingExploration?.init.depthIntent).toMatchObject({
       upstream: { levels: 1, exactness: 'exact' },
@@ -5900,14 +6048,10 @@ it.each([false, true])(
           .inputSchema.properties,
       ),
     );
-    expect(schema, 'D-097: the original full schema stays unchanged').toEqual(
-      offered[0]!.find((tool) => tool.name === 'lineage_submit_findings')!
-        .inputSchema,
-    );
     expect(
       new Ajv({ strict: false }).compile(schema)(patch),
-      'D-099: the served card is canonical, so the technical-leaf patch alone omits required held fields',
-    ).toBe(false);
+      'D-098/D-099: the actual retry card accepts the named technical leaf while the business leaf stays held',
+    ).toBe(true);
     expect(
       new Ajv({ strict: false }).compile(schema)({
         ...input,
@@ -5982,13 +6126,14 @@ it('keeps the original provider schema while rechecking held fields against curr
   expect(
     second.rejections.flatMap((rejection) => rejection.issuePaths ?? []),
   ).toContain('column_flow.0.upstream_columns.0.col');
+  const repairCard = offered[1]!.find(
+    (tool) => tool.name === 'lineage_submit_findings',
+  )!;
   expect(
-    offered[1]!.find((tool) => tool.name === 'lineage_submit_findings')!
-      .inputSchema,
-  ).toEqual(
-    offered[0]!.find((tool) => tool.name === 'lineage_submit_findings')!
-      .inputSchema,
-  );
+    new Ajv({ strict: false }).compile(repairCard.inputSchema)({
+      badge_label: 'Source',
+    }),
+  ).toBe(true);
   expect(engine.getDetailSlots()).toEqual([]);
   queue([
     {

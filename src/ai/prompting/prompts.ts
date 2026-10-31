@@ -120,9 +120,7 @@ function buildActivePhasePrompt(analysisMode: 'bb' | 'ct'): string {
       (analysisMode === 'ct'
         ? ' The object graph answers the user question; its column trace starts at the same object and may end earlier on a branch.'
         : ''),
-    analysisMode === 'ct'
-      ? "After a rejection, saved content stays held; resend the requested fields with the schema's required fields; a resent field replaces its held value."
-      : "After a rejection, saved content stays held; correct the reported faults and resend the schema's required fields; a resent field replaces its held value.",
+    'After a rejection, saved content stays held; resend the requested fields; a resent field replaces its held value.',
     'Neighbor decisions in `prune_neighbors` and `questions`, as their fields describe.',
     'Flags on `neighbors[]` are committed: `already_visited` and `already_removed` neighbors take no decision; neighbors with `can_prune: false` are not pruned. `can_question` never widens scope.',
   ].join('\n');

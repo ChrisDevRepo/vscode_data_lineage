@@ -5956,14 +5956,12 @@ describe('CT boundary rejects instead of dropping a column reference', () => {
         expect(engine.heldPartsOfCurrentFocus()?.fields).toContain(
           'column_flow',
         );
-        // D-099: the served schema admits the canonical resend with a replacing prune list.
-        const served = engine.findingSchema();
+        // D-098/D-099: the served card admits a prune-only correction while the held fields stay held.
         expect(
-          served.safeParse(
-            canonicalResend(toModelJsonSchema(served), raw, {
-              prune_neighbors: prunes,
-            }),
-          ).success,
+          validateToolCandidate(engine.findingSchema(), {
+            focus_node_id: origin,
+            prune_neighbors: prunes,
+          }).success,
         ).toBe(true);
         // D-098: a prune-only correction composes with the held mapping, still conflicts and is refused atomically.
         submission = {

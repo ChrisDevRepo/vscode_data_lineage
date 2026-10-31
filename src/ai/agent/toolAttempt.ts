@@ -160,10 +160,10 @@ interface ToolAttemptCall extends ToolOutcomeIdentity {
   readonly closedByCallId?: string;
 }
 
-/** Original model-facing request, held for one phase/hop; dispatch still uses the live registry. */
+/** Original messages and system context, held for one phase/hop; tool schemas resolve from the live registry. */
 type ToolAttemptPrefix = Pick<
   ToolGenerationInput,
-  'messages' | 'system' | 'tools' | 'toolChoice' | 'instructionContext'
+  'messages' | 'system' | 'toolChoice' | 'instructionContext'
 >;
 
 /** Graph-visible outcome of exactly one generation and one ordered dispatch batch. */
@@ -766,13 +766,13 @@ export async function executeToolAttempt(
   const prefix = priorState?.prefix ?? {
     messages: plan.input.messages,
     system: plan.input.system,
-    tools: modelToolDefinitions(plan.input.registry),
     toolChoice: plan.input.toolChoice,
     instructionContext: plan.context,
   };
   const result = await executeToolGenerationAttempt(model, {
     ...plan.input,
     ...prefix,
+    tools: modelToolDefinitions(plan.input.registry),
     messages: [
       ...prefix.messages,
       ...(priorState ? renderToolAttemptContext(priorState) : []),

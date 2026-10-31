@@ -23,6 +23,7 @@ export class ToolDraft<T extends object> {
   private ownerContext = '';
   private calls = 0;
   private releaseAbort?: () => void;
+  private schemas = new WeakMap<z.ZodType, z.ZodType>();
 
   /** Generation identity belongs to transport; two state-changing calls cannot own one draft. */
   public own(context: string, generation: number): boolean {
@@ -42,6 +43,92 @@ export class ToolDraft<T extends object> {
     };
     signal.addEventListener('abort', cancel, { once: true });
     this.releaseAbort = () => signal.removeEventListener('abort', cancel);
+  }
+
+  /** Serves exactly what {@link apply} composes: complete held root fields may be omitted, and a held object accepts a patch whose every leaf is a named fault. Everything else keeps its canonical schema. */
+  public modelSchema<S extends z.ZodType>(schema: S): S {
+    if (!this.value || Object.keys(this.value).length === 0) return schema;
+    const cached = this.schemas.get(schema);
+    if (cached) return cached as S;
+    type Node = Record<string, unknown>;
+    const fields = (node: Node): Record<string, Node> | undefined => {
+      const current = {
+        ...node,
+        ...(object(node.toolDisplay) ? node.toolDisplay : {}),
+      };
+      return object(current.properties)
+        ? (current.properties as Record<string, Node>)
+        : (current.anyOf as Node[] | undefined)
+            ?.map(fields)
+            .find((found) => found !== undefined);
+    };
+    const required = (node: Node): string[] =>
+      ((object(node.toolDisplay) && Array.isArray(node.toolDisplay.required)
+        ? node.toolDisplay.required
+        : node.required) ?? []) as string[];
+    const complete = (node: Node, value: unknown): boolean => {
+      const owned = fields(node);
+      return (
+        value !== undefined &&
+        (!owned ||
+          !object(value) ||
+          required(node).every((key) => complete(owned[key], value[key])))
+      );
+    };
+    // Mirrors apply(): a held, unnamed object merges a non-empty patch built only from named fault leaves.
+    const patch = (
+      node: Node,
+      held: unknown,
+      path: string,
+    ): Node | undefined => {
+      if (!object(held) || this.faults.includes(path)) return undefined;
+      const owned = fields(node) ?? {};
+      const properties = Object.fromEntries(
+        Object.keys(owned).flatMap((key) => {
+          const leaf = `${path}.${key}`;
+          const value = this.faults.includes(leaf)
+            ? owned[key]
+            : patch(owned[key], held[key], leaf);
+          return value ? [[key, value]] : [];
+        }),
+      );
+      const keys = Object.keys(properties);
+      return keys.length
+        ? {
+            type: 'object',
+            minProperties: 1,
+            required: required(node).filter(
+              (key) => !complete(owned[key], held[key]),
+            ),
+            propertyNames: { enum: keys },
+            properties,
+          }
+        : undefined;
+    };
+    const source = z.toJSONSchema(schema, {
+      io: 'input',
+      unrepresentable: 'throw',
+    }) as Node;
+    const owned = fields(source) ?? {};
+    const held = this.value;
+    const projected = schema.meta({
+      ...schema.meta(),
+      toolDisplay: {
+        ...(schema.meta()?.toolDisplay as Node | undefined),
+        required: required(source).filter(
+          (key) => !complete(owned[key], held[key]),
+        ),
+        properties: Object.fromEntries(
+          Object.entries(owned).map(([key, field]) => {
+            const named = patch(field, held[key], key);
+            return [key, named ? { anyOf: [field, named] } : field];
+          }),
+        ),
+      },
+    });
+    this.schemas.set(schema, projected);
+    this.schemas.set(projected, projected);
+    return projected;
   }
 
   public get(): Partial<T> | null {
@@ -179,6 +266,7 @@ export class ToolDraft<T extends object> {
       ? keep(candidate, this.value ?? {}, schema, '')
       : this.value;
     this.faults = [...paths];
+    this.schemas = new WeakMap();
     return [...overwritten];
   }
 
@@ -186,6 +274,7 @@ export class ToolDraft<T extends object> {
     this.releaseAbort?.();
     this.releaseAbort = undefined;
     this.value = null;
+    this.schemas = new WeakMap();
     this.context = null;
     this.faults = [];
     this.sent = [];

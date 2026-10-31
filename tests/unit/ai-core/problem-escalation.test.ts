@@ -2,6 +2,8 @@
 import { assert, describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { z } from 'zod';
+import Ajv from 'ajv/dist/2020';
+import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import { HumanMessage, ToolMessage } from '@langchain/core/messages';
 import { VscodeModelPort } from '../../../src/ai/model/vscodeModelPort';
 import {
@@ -104,7 +106,7 @@ function hopOf(session: AiSession, epoch: number, engine: NavigationEngine) {
     requiredTerminalTool: TOOL,
     toolChoice: 'required',
   });
-  return { engine, plan, registry };
+  return { engine, plan, registry, session };
 }
 
 /** A BB exploration of `nodes` from `origin`, started and at its first hop. */
@@ -927,4 +929,75 @@ describe("D-105: a sibling closed by its reply renders that reply's stage, like 
       });
     },
   );
+});
+
+describe('Approved 08 repair calls match the live finding card', () => {
+  it.each(['questions', 'sections', 'empty'] as const)(
+    'advertises and accepts a %s-only repair without resending held findings',
+    async (repair) => {
+      const hop = bbHop();
+      const findings = {
+        focus_node_id: hop.focus.id,
+        summary: 'Report selects Value from Source.',
+        sections: { technical: 'Value is selected unchanged.' },
+        questions: [{ nodeId: hop.source.id, question: 'Establish Value.' }],
+      };
+      const faulty =
+        repair === 'questions'
+          ? { ...findings, questions: [{}] }
+          : {
+              ...findings,
+              sections: { ...findings.sections, unexpected: 'invalid key' },
+            };
+      const rejected = JSON.parse(
+        await hop.plan.input.registry.invoke(TOOL, faulty),
+      );
+      expect(rejected).toHaveProperty('code', 'invalid_input');
+      expect(hop.session.memory.slotCount).toBe(0);
+      const input =
+        repair === 'questions'
+          ? { questions: findings.questions }
+          : repair === 'sections'
+            ? { sections: findings.sections }
+            : {};
+      const schema = hop.plan.input.registry.get(TOOL)!.inputSchema;
+      const validate = new Ajv({ strict: false }).compile(
+        toModelJsonSchema(schema),
+      );
+      expect(validate(input), JSON.stringify(validate.errors)).toBe(true);
+      expect(validate({ ...input, unexpected: true })).toBe(false);
+      expect(validate({ questions: [{}] })).toBe(false);
+      const committed = JSON.parse(
+        await hop.plan.input.registry.invoke(TOOL, input),
+      );
+      expect(committed).toHaveProperty('ok', true);
+      expect(hop.session.memory.getResult().detail_slots[0]).toMatchObject({
+        summary: findings.summary,
+        sections: [{ angle: 'technical', text: findings.sections.technical }],
+      });
+    },
+  );
+
+  it('still requires unheld findings and refuses withdrawing a held required value', async () => {
+    const hop = bbHop();
+    const rejected = JSON.parse(
+      await hop.plan.input.registry.invoke(TOOL, {
+        focus_node_id: hop.focus.id,
+        summary: 'Report selects Value from Source.',
+        questions: [{ nodeId: hop.source.id, question: 'Establish Value.' }],
+      }),
+    );
+    expect(rejected).toHaveProperty('code', 'invalid_input');
+    const validate = new Ajv({ strict: false }).compile(
+      toModelJsonSchema(hop.plan.input.registry.get(TOOL)!.inputSchema),
+    );
+    expect(validate({})).toBe(false);
+    expect(
+      validate({ sections: { technical: 'Value is selected unchanged.' } }),
+    ).toBe(true);
+    expect(
+      JSON.parse(await hop.plan.input.registry.invoke(TOOL, { summary: null })),
+    ).toHaveProperty('code', 'invalid_input');
+    expect(hop.session.memory.slotCount).toBe(0);
+  });
 });

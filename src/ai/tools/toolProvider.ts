@@ -43,7 +43,8 @@ import {
   EXTERNAL_TOOL_NAMES,
   type LmStage,
 } from '../tools/toolPolicy';
-import { ToolRegistry } from '../tools/registry';
+import { ToolRegistry, type ToolDefinition } from '../tools/registry';
+import type { ToolDraft } from '../support/toolDraft';
 import {
   TOOL_DEFS,
   EXTERNAL_TOOL_DEFS,
@@ -773,13 +774,27 @@ export function buildAiToolRegistry(
     lineage_get_neighbor_columns: (input) => handler.getNeighborColumns(input),
   } satisfies Record<ToolName, ToolExecutor>;
 
+  const drafts: Partial<
+    Record<NonNullable<ToolDefinition['effect']>, () => ToolDraft<object>>
+  > = {
+    session_start: () => getSession().startExplorationDraft,
+    presentation_commit: () => getSession().presentResultRepairDraft,
+  };
   const registry = new ToolRegistry<LineageToolOutput>();
   const serialize = host?.serialize ?? createEffectSerializer();
   for (const def of TOOL_DEFS) {
     const execute = dispatch[def.name];
+    const draft = drafts[def.effect];
+    const projectInputSchema = draft
+      ? (schema: z.ZodType) => draft().modelSchema(schema)
+      : undefined;
     let group = { context: '', generation: -1, calls: 0 };
     registry.register({
       ...def,
+      projectInputSchema,
+      get inputSchema() {
+        return projectInputSchema?.(def.inputSchema) ?? def.inputSchema;
+      },
       execute: async (input: unknown) => {
         handler.signal?.throwIfAborted();
         const sess = getSession();

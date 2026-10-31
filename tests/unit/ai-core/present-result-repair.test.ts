@@ -5,10 +5,10 @@ import {
   ISSUES,
   renderProblem,
 } from '../../../src/ai/support/toolErrorEnvelope';
-import { presentResultSchemaForPhase } from '../../../src/ai/tools/toolSchemas';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
-import { resolveRegistrySchemas } from '../../../src/ai/tools/registry';
+import { compileInstructionPlan } from '../../../src/ai/agent/instructionPlan';
+import { TurnEventSink } from '../../../src/ai/runtime/turnEventSink';
 
 describe('Approved08 full-schema report draft boundary', () => {
   it('reports independent schema and report-reference faults together before accepting only their corrections (D-099)', async () => {
@@ -333,16 +333,12 @@ describe('Approved08 full-schema report draft boundary', () => {
 });
 
 it.each([false, true])(
-  'keeps the full served schema and accepts identical or changed held fields (D-098, changed=%s)',
+  'accepts an explicit full resend with identical or changed held fields (D-098, changed=%s)',
   async (changed) => {
     const { session, report, send } = draftWorld();
-    const before = toModelJsonSchema(presentResultSchemaForPhase('completed'));
     expect(await send({ ...report, summary: 42 })).toHaveProperty(
       'code',
       'invalid_input',
-    );
-    expect(toModelJsonSchema(presentResultSchemaForPhase('completed'))).toEqual(
-      before,
     );
     const name = changed ? 'Replacement result' : report.name;
     expect(await send({ ...report, name })).toHaveProperty('success', true);
@@ -477,18 +473,20 @@ it.each([false, true])(
       .filter((error) => error.code === 'missing')
       .map((error) => error.path);
     expect(missing.length).toBeGreaterThan(0);
-    const owner = presentResultSchemaForPhase(
-      synthesis ? 'synthesis' : 'completed',
-    );
-    // The production serving seam: the live phase owner resolved through the registry view.
-    const tool = resolveRegistrySchemas(
-      buildAiToolRegistry(
+    const tool = compileInstructionPlan({
+      kind: 'converse',
+      stage: { kind: synthesis ? 'synthesis' : 'completed' },
+      facts: { analysisMode: 'bb', classification: 'technical' },
+      registry: buildAiToolRegistry(
         () => session,
         { debug() {}, info() {}, warn() {}, error() {} } as never,
         () => undefined,
       ),
-      new Map([['lineage_present_result', () => owner]]),
-    ).get('lineage_present_result');
+      messages: [],
+      sink: new TurnEventSink(() => {}),
+      presentResultRetainableSections: () =>
+        session.retainableReportSections() !== null,
+    }).input.registry.get('lineage_present_result');
     const served = toModelJsonSchema(tool!.inputSchema);
     expect(served.required).toEqual(expect.arrayContaining(missing));
   },

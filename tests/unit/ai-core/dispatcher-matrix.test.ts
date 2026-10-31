@@ -53,7 +53,6 @@ import {
   makeNode,
 } from '../helpers/modelFixtures';
 import { stubToolServices } from './helpers/toolServices';
-import { canonicalResend } from '../helpers/testUtils';
 import { toModelJsonSchema } from '../../../src/ai/tools/jsonSchema';
 import { LineageRuntime } from '../../../src/ai/runtime/lineageRuntime';
 import { buildAiToolRegistry } from '../../../src/ai/tools/toolProvider';
@@ -162,7 +161,7 @@ it.each(
     })),
   ),
 )(
-  'keeps the original request prefix and tools through $mode/$classification corrections, resetting at the next hop',
+  'keeps the original request prefix and refreshes tool cards through $mode/$classification corrections, resetting at the next hop',
   async ({ mode, classification }) => {
     const angles =
       classification === 'both' ? ['business', 'technical'] : [classification];
@@ -404,7 +403,6 @@ it.each(
       );
       assert(first && correction);
       expect(correction.system).toBe(first.system);
-      expect(correction.tools).toBe(first.tools);
       expect(correction.messages.slice(0, first.messages.length)).toEqual(
         first.messages,
       );
@@ -427,7 +425,7 @@ it.each(
               ...(mode === 'ct' ? ['column_flow'] : []),
             ]),
       );
-      const submit = first.input.tools.find(
+      const submit = correction.input.tools.find(
         (tool) => tool.name === 'lineage_submit_findings',
       );
       assert(submit);
@@ -442,6 +440,20 @@ it.each(
               .map((issue) => issue.path),
           ),
         );
+      const validReply =
+        id === focus.id
+          ? { badge_label: 'Report' }
+          : {
+              summary: 'Source summary.',
+              sections: Object.fromEntries(
+                angles.map((angle) => [angle, 'Source detail.']),
+              ),
+              ...(mode === 'ct' ? { column_flow: [] } : {}),
+            };
+      expect(
+        validateWire(validReply),
+        JSON.stringify(validateWire.errors),
+      ).toBe(true);
       for (const invalid of [
         { summary: 42 },
         { sections: 42 },
@@ -464,7 +476,7 @@ it.each(
             ]
           : []),
       ])
-        expect(validateWire(invalid)).toBe(false);
+        expect(validateWire({ ...validReply, ...invalid })).toBe(false);
       expect(
         Object.keys(toModelJsonSchema(submit.inputSchema).properties as object),
       ).toEqual(
@@ -625,7 +637,7 @@ describe('start contract matrix through the native port and production registry'
       [false, true].map((resend) => ({ refining, resend })),
     ),
   )(
-    'D-098/D-099/D-097: the served start card requires the canonical fields; held fields compose, a resend replaces them (refine=$refining, resend=$resend)',
+    'D-098/D-099/D-097: the served repair card admits minimal corrections and explicit full resends (refine=$refining, resend=$resend)',
     async ({ refining, resend }) => {
       const w = startWorld();
       if (refining) {
@@ -663,26 +675,28 @@ describe('start contract matrix through the native port and production registry'
       const minimal = refining
         ? { depth: { upstream: { exactness: 'exact' } } }
         : { classification: 'technical' };
-      const resent = canonicalResend(
-        first.wire.schema,
-        refining ? { ...proposal, proposalRevision: 1 } : proposal,
-        refining
-          ? { depth: { ...depth, upstream: { levels: 2, exactness: 'exact' } } }
-          : { classification: 'technical' },
-      );
+      const resent = refining
+        ? {
+            proposalRevision: 1,
+            mission_brief: proposal.mission_brief,
+            depth: { ...depth, upstream: { levels: 2, exactness: 'exact' } },
+          }
+        : { ...proposal, classification: 'technical' };
+      const accepted = await w.send(resend ? resent : minimal);
       const validate = new Ajv({ strict: false, allErrors: true }).compile(
-        first.wire.schema,
+        accepted.wire.schema,
       );
-      // D-099: the served card is the canonical contract, so it asks for the held required fields again.
-      expect(validate(minimal)).toBe(false);
+      if (!refining) expect(validate({})).toBe(false);
+      expect(validate(minimal), JSON.stringify(validate.errors)).toBe(true);
       expect(
         validate(resent),
         `D-099: the served card must admit the canonical resend: ${JSON.stringify(validate.errors)}`,
       ).toBe(true);
       // D-098: held fields still satisfy admission; a resent field replaces the held one.
-      const accepted = await w.send(resend ? resent : minimal);
       expect(accepted.attempt.rejections).toEqual([]);
-      expect(accepted.wire.tools).toEqual(first.wire.tools);
+      expect(accepted.wire.tools.map((tool) => tool.name)).toEqual(
+        first.wire.tools.map((tool) => tool.name),
+      );
       expect(
         accepted.wire.messages.slice(0, first.wire.messages.length),
       ).toEqual(first.wire.messages);
@@ -837,16 +851,12 @@ describe('start contract matrix through the native port and production registry'
       ]);
       expect(w.session.pendingExploration).toBeNull();
       expect(w.session.stateMachine).toBeNull();
-      const correction = canonicalResend(
-        rejected.wire.schema,
-        { ...proposal, ...(target ? { analysisMode: 'ct' } : {}) },
-        { [field]: target ? ['Value'] : [] },
-      );
+      const correction = { [field]: target ? ['Value'] : [] };
+      const accepted = await w.send(correction);
       const validate = new Ajv({ strict: false, allErrors: true }).compile(
-        rejected.wire.schema,
+        accepted.wire.schema,
       );
       expect(validate(correction), JSON.stringify(validate.errors)).toBe(true);
-      const accepted = await w.send(correction);
       expect(accepted.attempt.rejections).toEqual([]);
       expect(w.session.pendingExploration).toMatchObject({
         init: {
@@ -1011,19 +1021,17 @@ describe('start contract matrix through the native port and production registry'
         expect(w.session.stateMachine).toBeNull();
         return;
       }
-      const correction = canonicalResend(
-        first.wire.schema,
-        proposal,
-        corrected,
-      );
+      const correction = corrected;
+      const repaired = await w.send(correction);
       const validate = new Ajv({ strict: false, allErrors: true }).compile(
-        first.wire.schema,
+        repaired.wire.schema,
       );
       expect(validate(correction), JSON.stringify(validate.errors)).toBe(true);
-      const repaired = await w.send(correction);
       expect(repaired.attempt.rejections).toEqual([]);
       expect(w.state().providerCalls).toBe(correctAt);
-      expect(repaired.wire.tools).toEqual(first.wire.tools);
+      expect(repaired.wire.tools.map((tool) => tool.name)).toEqual(
+        first.wire.tools.map((tool) => tool.name),
+      );
       expect(w.session.pendingExploration).toMatchObject({
         init: {
           origin: id,
@@ -1338,25 +1346,11 @@ it.each(reportScenarios)(
       (tool) => tool.name === 'lineage_present_result',
     );
     assert(offered);
-    payload = canonicalResend(
-      offered.inputSchema,
-      complete,
-      Object.fromEntries(
-        faults
-          .filter((fault) => fault.good !== undefined)
-          .map((fault) => [fault.field, fault.good]),
-      ),
+    payload = Object.fromEntries(
+      faults
+        .filter((fault) => fault.good !== undefined)
+        .map((fault) => [fault.field, fault.good]),
     );
-    const validate = new Ajv({ strict: false, allErrors: true }).compile(
-      offered.inputSchema,
-    );
-    expect(validate({ notes: [{ caption: 'Missing required node' }] })).toBe(
-      false,
-    );
-    expect(
-      validate(payload),
-      `D-099: report card must admit the canonical resend: ${JSON.stringify(validate.errors)}`,
-    ).toBe(true);
     const accepted = await executeToolAttempt(model.port, plan, {
       priorState: state,
     });
@@ -1382,8 +1376,27 @@ it.each(reportScenarios)(
     }
     const [nextMessages, nextOptions] = model.sendRequest.mock.calls.at(
       -1,
-    ) as unknown as [unknown[], { tools: unknown[] }];
-    expect(nextOptions.tools).toEqual(firstWire.tools);
+    ) as unknown as [
+      unknown[],
+      { tools: Array<{ name: string; inputSchema: object }> },
+    ];
+    const repairCard = nextOptions.tools.find(
+      (tool) => tool.name === 'lineage_present_result',
+    );
+    assert(repairCard);
+    const validate = new Ajv({ strict: false, allErrors: true }).compile(
+      repairCard.inputSchema,
+    );
+    expect(validate(payload), JSON.stringify(validate.errors)).toBe(true);
+    expect(
+      validate({
+        ...(payload as object),
+        notes: [{ caption: 'Missing required node' }],
+      }),
+    ).toBe(false);
+    expect(nextOptions.tools.map((tool) => tool.name)).toEqual(
+      firstWire.tools.map((tool) => tool.name),
+    );
     expect(nextMessages.slice(0, firstWire.messages.length)).toEqual(
       firstWire.messages,
     );
@@ -3639,12 +3652,9 @@ describe('submit_findings rejection form', () => {
       );
       const { engine, send, state } = hop(mode, classification);
       const before = engine.toJSON();
-      let firstWire: unknown;
       for (let stage = 1; stage < (correctAt ?? 4); stage++) {
         const rejected = await send(initial);
         assert(rejected.rejection);
-        firstWire ??= rejected.wire;
-        expect(rejected.wire).toEqual(firstWire);
         expect(
           rejected
             .rawErrors!.filter(
@@ -3680,17 +3690,8 @@ describe('submit_findings rejection form', () => {
         ))
           expect(rejected.content).not.toContain(text);
         expect(state().stopReason).toBeNull();
-        expect(
-          new Ajv({ strict: false }).compile(rejected.wire)(
-            canonicalResend(rejected.wire as object, complete, correction),
-          ),
-        ).toBe(true);
       }
-      const result = await send(
-        correctAt === null
-          ? initial
-          : canonicalResend(firstWire as object, complete, correction),
-      );
+      const result = await send(correctAt === null ? initial : correction);
       expect(state().providerCalls).toBe(correctAt ?? 4);
       if (correctAt === null) {
         expect(state()).toMatchObject({
@@ -3701,6 +3702,12 @@ describe('submit_findings rejection form', () => {
         expect(engine.columnAspect?.edges ?? []).toEqual([]);
         expect(engine.toJSON().agenda).toEqual(before.agenda);
       } else {
+        const validate = new Ajv({ strict: false, allErrors: true }).compile(
+          result.wire,
+        );
+        expect(validate(correction), JSON.stringify(validate.errors)).toBe(
+          true,
+        );
         expect(result.attempt.rejections).toEqual([]);
         expect(result.attempt.stop).toBe('phase_complete');
         expect(engine.getDetailSlots()).toContainEqual(
@@ -3934,15 +3941,14 @@ describe('submit_findings rejection form', () => {
       expect(engine.columnAspect?.edges).toEqual([]);
       expect(engine.getDetailSlots()).toEqual([]);
       const schema = engine.findingSchema();
-      const correctionInput = canonicalResend(
-        toModelJsonSchema(schema),
-        draft,
+      const correctionInput =
         correction === 'keep-mapping'
           ? { prune_neighbors: [] }
-          : { column_flow: terminals, prune_neighbors: prune },
-      );
+          : { column_flow: terminals, prune_neighbors: prune };
       expect(
-        schema.safeParse(correctionInput).success,
+        new Ajv({ strict: false }).compile(toModelJsonSchema(schema))(
+          correctionInput,
+        ),
         'the served schema must admit the canonical joint resend',
       ).toBe(true);
       const accepted = await send(correctionInput);
@@ -4241,8 +4247,7 @@ describe('submit_findings rejection form', () => {
     const exit = { prune_neighbors: [] };
     const schema = engine.findingSchema();
     expect(
-      schema.safeParse(canonicalResend(toModelJsonSchema(schema), draft, exit))
-        .success,
+      new Ajv({ strict: false }).compile(toModelJsonSchema(schema))(exit),
     ).toBe(true);
     const fourth = await send({ focus_node_id: root, ...exit });
     expect(fourth.attempt.stop).toBe('phase_complete');
