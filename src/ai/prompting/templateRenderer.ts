@@ -10,6 +10,10 @@ import {
 import type { ClassificationValue } from '../session/classification';
 import { CLASSIFICATION_KEPT_ANGLES } from '../session/classification';
 
+/** KaTeX source rule shared by the hop capture recipe and the synthesis formula rule: names keep TeX special characters escaped and environments complete. */
+export const LATEX_SOURCE_RULE =
+  'In LaTeX, write `\\#`, `\\_`, `\\%` and `\\&` for those characters in names, and close every `\\begin{…}` with its `\\end{…}`.';
+
 /** Stages at which a YAML instruction may be injected into the AI system prompt. */
 type TemplateStage = 'discover' | 'active' | 'synthesis';
 
@@ -85,7 +89,9 @@ function captureRecipeHeader(
     '### Capture recipe',
     `Submit \`sections\` as ${shape}, and put every applicable item from the active capture instructions inside that key's string value. Markdown without headings. Back each grain predicate, formula and any evidence-supported ⚠️ line with one short \`\`\`sql fence of its deciding expression, an exact substring of \`ddl\`; what the SQL does not establish reads \`not established from the available SQL\`. Skip an item the SQL lacks.`,
     'Formatting instructions describe the decoded section string. In tool-call JSON, encode its line breaks, double quotes and backslashes as JSON string escapes so the SQL and LaTeX decode unchanged; keep structural JSON quotes unescaped and omit trailing commas.',
-    'The recipe items are a coverage checklist, not disconnected output fragments. Write each substantive calculation, and each intermediate result another calculation builds on, once within its natural rule or transformation step: explain the inputs and affected rows, show the formula, explain its defined meaning and consequences, and quote the deciding SQL there. In every angle, use a LaTeX `$$ … $$` block on its own lines, or a LaTeX `$ … $` formula in a table with a short description of its meaning; short formulas may also sit inline within their explanatory sentence. Arithmetic, aggregate and window expressions in the supplied SQL define calculations; they do not establish observed statistics, counts, elapsed time or performance. Describe a calculated value only when its defining expression is supplied; report a measured result only when matching data or runtime evidence is supplied. These math delimiters are required. A formula carries every term and branch of the SQL it restates. Do not create a separate Formulas subsection. Capture this complete explanation in detail memory; a list of calculation names is not their explanation. Simple renames need no equation. Keep SQL quotes contiguous and verbatim: omit unrelated SQL by choosing a shorter quote, never by inserting ellipses. Describe intermediate and final surviving grain separately; later deletion or validation can leave zero rows from an earlier partition.',
+    'The recipe items are a coverage checklist, not disconnected output fragments. Write each substantive calculation, and each intermediate result another calculation builds on, once within its natural rule or transformation step: explain the inputs and affected rows, show the formula, explain its defined meaning and consequences, and quote the deciding SQL there. In every angle, use a LaTeX `$$ … $$` block on its own lines, or a LaTeX `$ … $` formula in a table with a short description of its meaning; short formulas may also sit inline within their explanatory sentence. Arithmetic, aggregate and window expressions in the supplied SQL define calculations; they do not establish observed statistics, counts, elapsed time or performance. Describe a calculated value only when its defining expression is supplied; report a measured result only when matching data or runtime evidence is supplied. These math delimiters are required. ' +
+      LATEX_SOURCE_RULE +
+      ' A formula carries every term and branch of the SQL it restates. Do not create a separate Formulas subsection. Capture this complete explanation in detail memory; a list of calculation names is not their explanation. Simple renames need no equation. Keep SQL quotes contiguous and verbatim: omit unrelated SQL by choosing a shorter quote, never by inserting ellipses. Describe intermediate and final surviving grain separately; later deletion or validation can leave zero rows from an earlier partition.',
   ].join('\n\n');
 }
 

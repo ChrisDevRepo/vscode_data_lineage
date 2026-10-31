@@ -1,6 +1,7 @@
 /** Shared AI prompt builders — surface-neutral. */
 
 import { escapePromptText } from '../support/text';
+import { LATEX_SOURCE_RULE } from './templateRenderer';
 import { ADD_NODE_IDS_REVEALS } from '../tools/presentResult';
 import type { InvestigationTask, ScalarReturnTarget } from '../sm/smTypes';
 
@@ -205,7 +206,9 @@ function buildSynthesisPrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
     '- Id fields take only ids from `result.scope.node_ids`, except an existing held entry named only for deletion; name other objects in section text.',
     '- When business and technical were both captured, state each fact once, under the angle whose question it answers.',
     '- DDL and DML establish definitions and SQL behavior, not observed statistics, row counts, elapsed time or performance. Explain a calculation only from its supplied defining expression; do not turn its formula or captured prose into a measured result without matching data or runtime evidence.',
-    '- Markdown only; formulas as LaTeX (`$…$` inline, `$$…$$` block); SQL in ```sql fences. Preserve substantive calculations even when a SQL witness is also present; where a captured formula and its captured SQL differ, correct the formula to the SQL. Embed formulas in the rule or transformation they explain: introduce block formulas on their own lines and explain their terms and result, or use a table with inline formulas and short descriptions of their meaning. Keep the final formula contextual too. Do not create a separate Formulas subsection or repeat simple mappings as equations and tables.',
+    '- Markdown only; formulas as LaTeX (`$…$` inline, `$$…$$` block); SQL in ```sql fences. ' +
+      LATEX_SOURCE_RULE +
+      ' Preserve substantive calculations even when a SQL witness is also present; where a captured formula and its captured SQL differ, correct the formula to the SQL. Embed formulas in the rule or transformation they explain: introduce block formulas on their own lines and explain their terms and result, or use a table with inline formulas and short descriptions of their meaning. Keep the final formula contextual too. Do not create a separate Formulas subsection or repeat simple mappings as equations and tables.',
     '- Each captured SQL fence in `detail_slots[]` shows an id on its opening line (```sql S7). To reuse that SQL unchanged, write two lines with nothing between them: the opening line with its id, then a bare closing ``` line; the engine inserts the captured SQL at that spot. Writing SQL out yourself is always allowed.',
     '- Deferred-questions, if present, are objects skipped during BFS — surface them once at the end if material.',
     '',
