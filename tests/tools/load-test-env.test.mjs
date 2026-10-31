@@ -162,7 +162,10 @@ test('gui host: buildLaunchArgs isolates the profile and binds CDP to loopback',
   assert.ok(args.includes('--window-size=1600,1000'));
   assert.ok(args.includes('--remote-debugging-address=127.0.0.1'));
   assert.ok(args.includes('--remote-debugging-port=9475'));
-  assert.equal(args.some((argument) => argument.includes('/Applications/')), false);
+  assert.equal(
+    args.some((argument) => argument.includes('/Applications/')),
+    false,
+  );
 });
 
 test('gui host: validateGuiSession binds a runner identity to its loopback endpoint', () => {
@@ -182,34 +185,48 @@ test('gui host: validateGuiSession binds a runner identity to its loopback endpo
     /loopback CDP port/,
   );
   assert.throws(
-    () => validateGuiSession({ ...session, workspaceName: 'ordinary-workspace' }),
+    () =>
+      validateGuiSession({ ...session, workspaceName: 'ordinary-workspace' }),
     /workspace identity/,
   );
 });
 
 test('gui host: isIsolatedWorkbenchPage accepts the downloaded Extension Development Host', () => {
-  const session = { workspaceName: 'dlv-gui-3a2929d2-1ccd-4355-a624-29445b1df473' };
+  const session = {
+    workspaceName: 'dlv-gui-3a2929d2-1ccd-4355-a624-29445b1df473',
+  };
   const page = {
-    title: '[Extension Development Host] dlv-gui-3a2929d2-1ccd-4355-a624-29445b1df473',
+    title:
+      '[Extension Development Host] dlv-gui-3a2929d2-1ccd-4355-a624-29445b1df473',
     url: `vscode-file://vscode-app${pathToFileURL(resolve('/repo/.vscode-test')).pathname}/vscode-darwin-arm64-1.140.0/Visual%20Studio%20Code.app/Contents/Resources/app/out/vs/code/electron-browser/workbench/workbench.html`,
   };
 
-  assert.equal(isIsolatedWorkbenchPage(page, session, '/repo/.vscode-test'), true);
+  assert.equal(
+    isIsolatedWorkbenchPage(page, session, '/repo/.vscode-test'),
+    true,
+  );
 });
 
 test('gui host: isIsolatedWorkbenchPage excludes an ordinary VS Code installation', () => {
-  const session = { workspaceName: 'dlv-gui-3a2929d2-1ccd-4355-a624-29445b1df473' };
+  const session = {
+    workspaceName: 'dlv-gui-3a2929d2-1ccd-4355-a624-29445b1df473',
+  };
   const page = {
-    title: '[Extension Development Host] dlv-gui-3a2929d2-1ccd-4355-a624-29445b1df473',
+    title:
+      '[Extension Development Host] dlv-gui-3a2929d2-1ccd-4355-a624-29445b1df473',
     url: 'vscode-file://vscode-app/Applications/Visual%20Studio%20Code.app/Contents/Resources/app/out/vs/code/electron-browser/workbench/workbench.html',
   };
 
-  assert.equal(isIsolatedWorkbenchPage(page, session, '/repo/.vscode-test'), false);
+  assert.equal(
+    isIsolatedWorkbenchPage(page, session, '/repo/.vscode-test'),
+    false,
+  );
 });
 
 test('gui host: assertLoopbackPortAvailable rejects a port already owned on loopback', async () => {
   const occupied = new EventEmitter();
-  occupied.listen = () => queueMicrotask(() => occupied.emit('error', new Error('EADDRINUSE')));
+  occupied.listen = () =>
+    queueMicrotask(() => occupied.emit('error', new Error('EADDRINUSE')));
 
   await assert.rejects(
     assertLoopbackPortAvailable(9475, () => occupied),
