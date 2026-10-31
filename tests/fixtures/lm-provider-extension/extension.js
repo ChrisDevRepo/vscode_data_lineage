@@ -1,6 +1,7 @@
 const vscode = require('vscode');
 const {
   createProviderFetch,
+  isResponsesEndpoint,
   sendProviderRequest,
 } = require('./live-provider-adapter');
 
@@ -121,6 +122,12 @@ async function callLiveProvider(
         provider,
         reasoningEffort,
         ...(process.env.DLV_CHAT_UI_REAL === '1' ? { temperature: 0.1 } : {}),
+        // The headless port's Responses codec, compiled by `pretest:integration`.
+        ...(isResponsesEndpoint(endpoint)
+          ? {
+              responsesWire: require('../../../out/test/tests/harness/openAiCompatiblePort.js'),
+            }
+          : {}),
       },
       transport,
       controller.signal,

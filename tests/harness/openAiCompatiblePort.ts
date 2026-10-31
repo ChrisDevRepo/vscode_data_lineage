@@ -639,22 +639,13 @@ export class OpenAiCompatiblePort implements ModelPort {
           this.config.capabilities?.namedToolChoice !== false,
         );
     const payload = responses
-      ? {
-          model: this.config.model,
-          input: toResponsesInput(messages),
-          store: false,
-          ...responsesReasoningPayload(this.config.requestTuning),
-          ...(tools.length > 0
-            ? {
-                tools: tools.map(({ function: fn }) => ({
-                  type: 'function' as const,
-                  ...fn,
-                  strict: false,
-                })),
-                tool_choice: responsesToolChoice(toolChoice),
-              }
-            : {}),
-        }
+      ? responsesRequestBody(
+          this.config.model,
+          messages,
+          tools,
+          toolChoice,
+          this.config.requestTuning,
+        )
       : {
           model: this.config.model,
           messages,
@@ -1167,8 +1158,40 @@ function toolCallPart(
   };
 }
 
+/** One stateless Responses request body from projected chat messages and chat-shaped function tools; the native test provider reuses it. */
+export function responsesRequestBody(
+  model: string,
+  messages: readonly OpenAiChatMessage[],
+  tools: readonly {
+    readonly function: {
+      readonly name: string;
+      readonly description: string;
+      readonly parameters: unknown;
+    };
+  }[],
+  toolChoice: unknown,
+  tuning: OpenAiRequestTuning | undefined,
+): Record<string, unknown> {
+  return {
+    model,
+    input: toResponsesInput(messages),
+    store: false,
+    ...responsesReasoningPayload(tuning),
+    ...(tools.length > 0
+      ? {
+          tools: tools.map(({ function: fn }) => ({
+            type: 'function' as const,
+            ...fn,
+            strict: false,
+          })),
+          tool_choice: responsesToolChoice(toolChoice),
+        }
+      : {}),
+  };
+}
+
 /** Decodes one `/responses` body into the same ordered parts as {@link readCompletion}. */
-function readResponse(body: unknown): ReadCompletion {
+export function readResponse(body: unknown): ReadCompletion {
   const root = asRecord(body);
   throwIfErrorEnvelope(
     asRecord(root?.error),

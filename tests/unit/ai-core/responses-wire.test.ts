@@ -1,4 +1,4 @@
-/** D-106 Responses wire of the headless port (request shape, decode, replay) and D-103/D-086 one normalization on both wires; fake fetch, no provider call. */
+/** D-106 Responses wire of the headless port and the native test provider (request shape, decode, replay) and D-103/D-086 one normalization on both wires; fake fetch, no provider call. */
 import { z } from 'zod';
 import { describe, expect, it } from 'vitest';
 import {
@@ -12,8 +12,11 @@ import {
 import type { WireRecord } from '../../../src/ai/observability/wireLog';
 import {
   OpenAiCompatiblePort,
+  readResponse,
+  responsesRequestBody,
   type FetchLike,
 } from '../../harness/openAiCompatiblePort';
+import { sendProviderRequest } from '../../fixtures/lm-provider-extension/live-provider-adapter.js';
 
 type Json = Record<string, unknown>;
 const URL_RESPONSES = 'https://res.example/openai/v1/responses';
@@ -501,5 +504,127 @@ describe('responses wire reasoning round trip (D-106)', () => {
     ]);
     expect(JSON.stringify(records)).not.toContain('ENC-r');
     expect(JSON.stringify(records)).toContain('[omitted');
+  });
+});
+
+describe('native test provider adapter wire (D-156)', () => {
+  const nativeRequest = {
+    messages: [
+      { role: 'user', content: [{ type: 'text', value: 'Find Sales.' }] },
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool-call',
+            callId: 'call_1',
+            name: 'lineage_search_objects',
+            input: { query: 'Sales' },
+          },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool-result',
+            callId: 'call_1',
+            content: [{ type: 'text', value: 'dbo.Sales' }],
+          },
+        ],
+      },
+    ],
+    tools: [
+      {
+        name: 'lineage_search_objects',
+        description: 'Search.',
+        schema: { type: 'object' },
+      },
+    ],
+    toolMode: 'required',
+  };
+  /** Sends one native request through a fake transport that answers `reply`. */
+  async function send(endpoint: string, reply: unknown) {
+    const sent: Array<{ url: string; body: Json }> = [];
+    const result = await sendProviderRequest(
+      nativeRequest,
+      {
+        endpoint,
+        apiKey: SECRET,
+        provider: 'azure',
+        model: 'gpt-6-luna',
+        reasoningEffort: 'medium',
+        temperature: 0.1,
+        responsesWire: { responsesRequestBody, readResponse },
+      },
+      async (url: string, init: { body: string }) => {
+        sent.push({ url, body: JSON.parse(init.body) as Json });
+        return { ok: true, status: 200, json: async () => reply };
+      },
+      undefined,
+    );
+    return { result, sent };
+  }
+
+  it('sends the port Responses body to a Responses endpoint and decodes its output', async () => {
+    const { result, sent } = await send(URL_RESPONSES, {
+      status: 'completed',
+      output: [reasoning('r1'), text('Found.'), call('{"query":"B"}', 'c2')],
+      usage: { input_tokens: 3, output_tokens: 2 },
+    });
+    expect(sent[0].url).toBe(URL_RESPONSES);
+    expect(sent[0].body).toEqual({
+      model: 'gpt-6-luna',
+      store: false,
+      reasoning: { effort: 'medium' },
+      tool_choice: 'required',
+      tools: [
+        {
+          type: 'function',
+          name: 'lineage_search_objects',
+          description: 'Search.',
+          parameters: { type: 'object' },
+          strict: false,
+        },
+      ],
+      input: [
+        { role: 'user', content: 'Find Sales.' },
+        {
+          type: 'function_call',
+          call_id: 'call_1',
+          name: 'lineage_search_objects',
+          arguments: '{"query":"Sales"}',
+        },
+        {
+          type: 'function_call_output',
+          call_id: 'call_1',
+          output: 'dbo.Sales',
+        },
+      ],
+    });
+    expect(result).toEqual({
+      text: 'Found.',
+      toolCalls: [
+        { id: 'c2', name: 'lineage_search_objects', input: { query: 'B' } },
+      ],
+      usage: { input_tokens: 3, output_tokens: 2 },
+    });
+  });
+
+  it('keeps the Chat Completions body and decode for a chat endpoint', async () => {
+    const { result, sent } = await send(URL_CHAT, {
+      choices: [{ message: { content: 'Done.' } }],
+    });
+    expect(sent[0].body).toMatchObject({
+      model: 'gpt-6-luna',
+      tool_choice: 'required',
+      reasoning_effort: 'medium',
+      temperature: 0.1,
+      messages: [
+        { role: 'user', content: 'Find Sales.' },
+        { role: 'assistant', content: null, tool_calls: [expect.any(Object)] },
+        { role: 'tool', tool_call_id: 'call_1', content: 'dbo.Sales' },
+      ],
+    });
+    expect(result).toEqual({ text: 'Done.', toolCalls: [] });
   });
 });

@@ -12,7 +12,12 @@
     "declarationMap": false,
     "sourceMap": true,
     "skipLibCheck": true,
-    "noEmit": false
+    "noEmit": false,
+    "allowJs": true
   },
-  "include": ["tests/integration/**/*.ts", "src/types/**/*.d.ts"]
+  "include": [
+    "tests/integration/**/*.ts",
+    "tests/harness/openAiCompatiblePort.ts",
+    "src/types/**/*.d.ts"
+  ]
 }

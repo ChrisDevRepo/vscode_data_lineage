@@ -66,12 +66,15 @@ function buildProviderRequest(request, config) {
       'AI provider request cannot require a tool when no tools are available.',
     );
   }
+  const url = providerEndpoint(
+    requiredString(config.endpoint, 'endpoint'),
+    provider,
+    model,
+  );
+  const messages = toProviderMessages(request.messages);
+  const toolChoice = request.toolMode === 'required' ? 'required' : 'auto';
   return {
-    url: providerEndpoint(
-      requiredString(config.endpoint, 'endpoint'),
-      provider,
-      model,
-    ),
+    url,
     headers:
       provider === 'azure'
         ? { 'content-type': 'application/json', 'api-key': apiKey }
@@ -79,23 +82,35 @@ function buildProviderRequest(request, config) {
             'content-type': 'application/json',
             authorization: `Bearer ${apiKey}`,
           },
-    body: {
-      model,
-      messages: toProviderMessages(request.messages),
-      ...(tools.length > 0
-        ? {
-            tools,
-            tool_choice: request.toolMode === 'required' ? 'required' : 'auto',
-          }
-        : {}),
-      ...(config.reasoningEffort
-        ? { reasoning_effort: config.reasoningEffort }
-        : {}),
-      ...(config.temperature !== undefined
-        ? { temperature: config.temperature }
-        : {}),
-    },
+    body: isResponsesEndpoint(url)
+      ? responsesWire(config).responsesRequestBody(
+          model,
+          messages,
+          tools,
+          toolChoice,
+          config.reasoningEffort
+            ? { reasoning: { effort: config.reasoningEffort } }
+            : undefined,
+        )
+      : {
+          model,
+          messages,
+          ...(tools.length > 0 ? { tools, tool_choice: toolChoice } : {}),
+          ...(config.reasoningEffort
+            ? { reasoning_effort: config.reasoningEffort }
+            : {}),
+          ...(config.temperature !== undefined
+            ? { temperature: config.temperature }
+            : {}),
+        },
   };
+}
+
+/** The headless port's Responses codec (`responsesRequestBody`, `readResponse`), passed in by the caller; this file keeps no second Responses implementation. */
+function responsesWire(config) {
+  if (!config.responsesWire)
+    throw new Error('A Responses endpoint needs the harness Responses wire.');
+  return config.responsesWire;
 }
 
 /** Non-streaming test transport with explicit header/body deadlines and caller cancellation. */
@@ -205,12 +220,56 @@ async function sendProviderRequest(request, config, fetchImpl, signal) {
     throw new Error('AI provider response was not valid JSON.');
   }
   return {
-    ...parseProviderResponse(payload),
+    ...parseProviderResponse(
+      payload,
+      isResponsesEndpoint(wire.url) ? responsesWire(config) : undefined,
+    ),
     ...(response.timing ? { timing: response.timing } : {}),
   };
 }
 
-function parseProviderResponse(payload) {
+/** Decodes a Chat Completions body, or a Responses body through `wire.readResponse` when given. */
+function parseProviderResponse(payload, wire) {
+  const { toolCalls, text } = wire
+    ? decodeResponses(wire.readResponse(payload))
+    : decodeChatCompletion(payload);
+  if (toolCalls.length === 0 && text.length === 0) {
+    throw new Error(
+      'AI provider response contained neither text nor tool calls.',
+    );
+  }
+  return {
+    toolCalls,
+    text,
+    ...(payload.usage && typeof payload.usage === 'object'
+      ? { usage: payload.usage }
+      : {}),
+  };
+}
+
+function decodeResponses({ parts }) {
+  return {
+    toolCalls: parts
+      .filter((part) => part.type === 'tool-call')
+      .map((part) => {
+        if (!part.input && part.rawArguments.trim())
+          throw new Error(
+            `AI provider tool call ${part.toolName} contained invalid JSON arguments.`,
+          );
+        return {
+          id: part.callId,
+          name: part.toolName,
+          input: part.input ?? {},
+        };
+      }),
+    text: parts
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text)
+      .join(''),
+  };
+}
+
+function decodeChatCompletion(payload) {
   const message = payload?.choices?.[0]?.message;
   if (!message || typeof message !== 'object' || Array.isArray(message)) {
     throw new Error('AI provider response did not contain choices[0].message.');
@@ -244,19 +303,7 @@ function parseProviderResponse(payload) {
       input: requiredObject(input, `arguments for provider tool call ${name}`),
     };
   });
-  const text = providerText(message.content);
-  if (toolCalls.length === 0 && text.length === 0) {
-    throw new Error(
-      'AI provider response contained neither text nor tool calls.',
-    );
-  }
-  return {
-    toolCalls,
-    text,
-    ...(payload.usage && typeof payload.usage === 'object'
-      ? { usage: payload.usage }
-      : {}),
-  };
+  return { toolCalls, text: providerText(message.content) };
 }
 
 /** Whether a complete request URL names the OpenAI Responses wire (path ends in `/responses`). */
