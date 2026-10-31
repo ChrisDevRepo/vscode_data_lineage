@@ -4787,6 +4787,90 @@ describe('result dispositions', () => {
     ]);
     expect(result.detail_slots.map((slot) => slot.nodeId)).toEqual([writer]);
   });
+  it('accepts a losing prune of a neighbor another branch already queued with a question', () => {
+    // Spec 06: a question counts as a keep vote; a prune of a neighbor another branch kept is a losing vote, not a refusal (D-037).
+    const origin = '[d].[V]',
+      writer = '[d].[W]',
+      reader = '[d].[P]',
+      sidecar = '[d].[L]';
+    const nodes = [
+      makeNode({
+        id: origin,
+        schema: 'd',
+        name: 'V',
+        type: 'view',
+        columns: [column('X')],
+        bodyScript: 'SELECT 1 AS X;',
+      }),
+      makeNode({
+        id: writer,
+        schema: 'd',
+        name: 'W',
+        type: 'procedure',
+        bodyScript: 'CREATE PROCEDURE d.W AS EXEC d.L;',
+      }),
+      makeNode({
+        id: reader,
+        schema: 'd',
+        name: 'P',
+        type: 'procedure',
+        bodyScript: 'CREATE PROCEDURE d.P AS SELECT X FROM d.V; EXEC d.L;',
+      }),
+      makeNode({
+        id: sidecar,
+        schema: 'd',
+        name: 'L',
+        type: 'procedure',
+        bodyScript: 'CREATE PROCEDURE d.L AS RETURN;',
+      }),
+    ];
+    const engine = navigationFor(nodes, [
+      [writer, origin],
+      [origin, reader],
+      [reader, sidecar],
+      [writer, sidecar],
+    ]);
+    expect(
+      engine.init({
+        origin,
+        question: 'Explain X.',
+        analysisMode: 'bb',
+        direction: 'bidirectional',
+        depthIntent: {
+          upstream: { levels: 'all', exactness: 'exact' },
+          downstream: { levels: 'all', exactness: 'exact' },
+        },
+      }),
+    ).toHaveProperty('ok', true);
+    const ask = (focus: string, ids: string[]) =>
+      engine.submitFindings({
+        ...guardRecord(focus),
+        questions: ids.map((nodeId) => ({ nodeId, question: 'Role in X?' })),
+      });
+    engine.getHopContext();
+    expect(ask(origin, [writer, reader])).toHaveProperty('ok', true);
+    expect(engine.getHopContext()).toMatchObject({
+      focus_node: { id: reader },
+    });
+    expect(ask(reader, [sidecar])).toHaveProperty('ok', true);
+    const hop = engine.getHopContext();
+    expect(hop).toMatchObject({ focus_node: { id: writer } });
+    expect(
+      hop && 'neighbors' in hop
+        ? hop.neighbors?.find((n) => n.id === sidecar)
+        : undefined,
+    ).toMatchObject({ id: sidecar, can_question: true, can_prune: true });
+    const accepted = engine.submitFindings({
+      ...guardRecord(writer),
+      prune_neighbors: [{ id: sidecar, reason: 'Logging only.' }],
+    });
+    expect(accepted, JSON.stringify(accepted)).toHaveProperty('ok', true);
+    expect(engine.toJSON().removedSet).toEqual([]);
+    expect(engine.getHopContext()).toMatchObject({
+      focus_node: { id: sidecar },
+    });
+  });
+
   it('accepts a losing prune of an unvisited neighbor mapped by an earlier branch', () => {
     const origin = '[d].[Proc]',
       focus = '[d].[Src]',
