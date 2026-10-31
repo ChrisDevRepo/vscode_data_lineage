@@ -16,15 +16,17 @@ describe('function declaration dependency boundaries', () => {
     expect(parseSqlBody(sql).targets).toEqual([]);
     expect(parseSqlBody(sql).crossDbSources).toEqual([]);
   });
-  it.each(['[dbo].[Declared]', '"dbo"."Declared"', '[a.b].[Decl]]ared]'])(
-    'preserves real calls after a %s declaration',
-    (name) => {
-      const sql = `CREATE OR ALTER FUNCTION ${name} (@amount int) RETURNS int AS BEGIN RETURN dbo.Calc(@amount) + ${name}(@amount - 1); END;`;
-      const parsed = parseSqlBody(sql);
-      expect(parsed.sources).toHaveLength(2);
-      expect(parsed.sources).toContain('[dbo].[calc]');
-    },
-  );
+  it.each([
+    ['[dbo].[Declared]', '[dbo].[declared]'],
+    ['"dbo"."Declared"', '[dbo].[declared]'],
+    ['[a.b].[Decl]]ared]', '[a.b].[decl]]ared]'],
+  ])('preserves real calls after a %s declaration', (name, expected) => {
+    const sql = `CREATE OR ALTER FUNCTION ${name} (@amount int) RETURNS int AS BEGIN RETURN dbo.Calc(@amount) + ${name}(@amount - 1); END;`;
+    const parsed = parseSqlBody(sql);
+    expect([...parsed.sources].sort()).toEqual(
+      ['[dbo].[calc]', expected].sort(),
+    );
+  });
   it('retains TVF body sources and scalar calls without inventing parameter dependencies', () => {
     const parsed = parseSqlBody(
       'CREATE FUNCTION dbo.Rows(@customer int) RETURNS TABLE AS RETURN SELECT dbo.Rate(t.Amount) AS Total FROM dbo.Orders t WHERE t.CustomerID = @customer;',
