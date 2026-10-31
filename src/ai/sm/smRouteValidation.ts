@@ -21,7 +21,6 @@ const ROUTE_ISSUE = {
   prune_noop_removed: 'prune_target',
   prune_noop_visited: 'prune_target',
   prune_noop_analyzed: 'prune_target',
-  prune_noop_queued: 'prune_target',
   prune_noop_out_of_scope: 'prune_target',
   prune_unsupported: 'prune_target',
   prune_question_conflict: 'conflict',

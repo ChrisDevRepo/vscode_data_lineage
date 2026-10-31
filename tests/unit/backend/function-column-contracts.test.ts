@@ -685,7 +685,11 @@ describe('neighbor-specific function caller context', () => {
         allowed: [reader],
       }),
     ]);
-    expect((missing as ToolRejection).resend).toEqual(['questions']);
+    // reader is queued by the origin's question, so a prune here is a legal losing vote (spec 06, D-037); column_flow is never offered.
+    expect((missing as ToolRejection).resend).toEqual([
+      'questions',
+      'prune_neighbors',
+    ]);
     expect(engine.columnAspect?.edges ?? []).toEqual([]);
     expect(engine.toJSON().visited).toEqual(before.visited);
     expect(

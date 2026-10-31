@@ -2778,9 +2778,10 @@ export class NavigationEngine implements IHopStateMachine {
     return undefined;
   }
 
-  /** A previously accepted route or mapping from another branch keeps this neighbor globally. */
+  /** A previously accepted route (queued or still on the ballot) or mapping from another branch keeps this neighbor globally. */
   private keptByOtherBranch(nodeId: string, focusId: string): boolean {
     return (
+      this._agenda.has(nodeId) ||
       [...(this.pruneBallots.get(nodeId) ?? [])].some(
         ([sender, vote]) => sender !== focusId && vote === 'keep',
       ) ||
@@ -4421,6 +4422,7 @@ export class NavigationEngine implements IHopStateMachine {
       this.pruneBallots.delete(nodeId);
       if (
         pruneVoters.length < voters.length ||
+        this._agenda.has(nodeId) ||
         this.tracer?.edges.some(
           (edge) => edge.from_node === nodeId || edge.to_node === nodeId,
         )
@@ -5022,14 +5024,6 @@ export class NavigationEngine implements IHopStateMachine {
       ]),
       removedIds: this.removedSet,
       notedIds: new Set(this.memory.notedNodeIds),
-      keptIds: new Set(
-        pruneTargets.flatMap((target) =>
-          target.resolved && this.keptByOtherBranch(target.resolved, focusId)
-            ? [target.resolved]
-            : [],
-        ),
-      ),
-      agendaIds: new Set(this._agenda.entries.map((entry) => entry.nodeId)),
     });
   }
 

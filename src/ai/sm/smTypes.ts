@@ -779,7 +779,6 @@ export type InvalidRouteKind =
   | 'prune_noop_removed'
   | 'prune_noop_visited'
   | 'prune_noop_analyzed'
-  | 'prune_noop_queued'
   | 'prune_noop_out_of_scope'
   | 'prune_unsupported'
   | 'prune_question_conflict'
