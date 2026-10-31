@@ -900,6 +900,7 @@
     "test:ai:smoke": "npm run pretest:integration && vscode-test --config .vscode-test.ai.mjs",
     "test:gui:host": "node tests/tools/gui-test-host.mjs",
     "test:gui:smoke": "node tests/tools/playwright-smoke.mjs",
+    "test:gui:preview": "node tests/tools/ai-preview-sbs.mjs",
     "package": "vsce package --no-dependencies",
     "pregate": "node tests/tools/check-node-engine.mjs",
     "gate": "node tests/tools/gate.mjs",
