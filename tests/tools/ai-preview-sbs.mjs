@@ -15,6 +15,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readJson } from './lineage-score.mjs';
@@ -50,22 +51,42 @@ function turns(dir) {
     });
 }
 
+// The host drops a preview message that breaks the bridge contract, so such a result could never render.
+const { ExtensionToWebviewMsgSchema } = createRequire(import.meta.url)(
+  join(root, 'out/test/src/engine/shared/bridgeContract.js'),
+);
+const contractIssues = (file) => {
+  const { name, nodeIds, aiMetadata } = readJson(file);
+  const parsed = ExtensionToWebviewMsgSchema.safeParse({
+    type: 'ai-view-preview',
+    name,
+    nodeIds,
+    aiMetadata,
+  });
+  return parsed.success
+    ? null
+    : parsed.error.issues
+        .map((i) => `${i.path.join('.')}: ${i.message}`)
+        .join('; ');
+};
+
 // A null column (no MAIN run) is the only intended empty column; any other column without a result is incomplete input.
-const emptyColumns = [];
+const badInputs = [];
 const renders = cases.flatMap((row) =>
   Object.entries(row.columns).flatMap(([column, dir]) => {
     const found = turns(dir);
     if (dir !== null && !found.length)
-      emptyColumns.push(`${row.id}__${column}: ${dir}`);
-    return found.map(({ turn, file }) => ({
-      key: `${row.id}__${column}__${turn}`,
-      presentResult: file,
-    }));
+      badInputs.push(`${row.id}__${column}: no present-result.json in ${dir}`);
+    return found.map(({ turn, file }) => {
+      const key = `${row.id}__${column}__${turn}`;
+      const issues = contractIssues(file);
+      if (issues) badInputs.push(`${key}: bridge contract: ${issues}`);
+      return { key, presentResult: file };
+    });
   }),
 );
-if (!renders.length || emptyColumns.length) {
-  for (const column of emptyColumns)
-    console.error(`INCOMPLETE ${column}: no present-result.json`);
+if (!renders.length || badInputs.length) {
+  for (const input of badInputs) console.error(`INCOMPLETE ${input}`);
   if (!renders.length) console.error('INCOMPLETE: no results to render.');
   process.exit(2);
 }
