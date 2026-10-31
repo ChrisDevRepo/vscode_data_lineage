@@ -247,9 +247,11 @@ export const LANGFUSE_FREE_PLAN = {
   ],
 } as const;
 
-export type LimitBucket = 'ingestion' | 'general';
+type LimitBucket = 'ingestion' | 'general';
 
-/** Serial spacing that stays inside a per-minute free-plan bucket when this process is the only caller. */
+/** Serial spacing that stays inside a per-minute free-plan bucket when this process is the only caller.
+ * @public
+ */
 export function limitIntervalMs(requestsPerMinute: number): number {
   return Math.ceil(60_000 / requestsPerMinute);
 }
@@ -261,7 +263,9 @@ const limitRate = (bucket: LimitBucket): number =>
       : 'generalApiRequestsPerMinute'
   ];
 
-/** Waits until the next call in `bucket` is inside the free-plan rate. The first call in a bucket does not wait. */
+/** Waits until the next call in `bucket` is inside the free-plan rate. The first call in a bucket does not wait.
+ * @public
+ */
 export function createLimitPacer(
   now: () => number = Date.now,
   wait: (ms: number) => Promise<void> = (ms) =>

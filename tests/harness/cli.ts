@@ -321,7 +321,9 @@ export function assessCapture(
   return { gaps, explorations };
 }
 
-/** Writes the baseline comparison for directories the operator already captured. Unset directories record that no comparison ran. */
+/** Writes the baseline comparison for directories the operator already captured. Unset directories record that no comparison ran.
+ * @public
+ */
 export function recordBaselineScore(
   runDir: string,
   result: Record<string, unknown>,
@@ -866,7 +868,7 @@ export function readBaselineMap(path: string) {
 }
 
 /** Evidence qualification for one stored baseline; never a simulated consent policy. */
-export interface BaselineApprovalReview {
+interface BaselineApprovalReview {
   readonly source: string;
   readonly status: 'aligned' | 'different_workload' | 'unknown';
   readonly expected?: ApprovalWorkload;
@@ -879,7 +881,9 @@ export interface BaselineApprovalReview {
   }[];
 }
 
-/** Reads the approved workload from an existing selected baseline, before any provider call. */
+/** Reads the approved workload from an existing selected baseline, before any provider call.
+ * @public
+ */
 export function baselineApprovalForTurn(
   runDir: string,
   turn: number,
