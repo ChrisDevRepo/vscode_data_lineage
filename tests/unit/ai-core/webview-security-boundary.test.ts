@@ -84,7 +84,19 @@ describe('AI description formulas', () => {
   });
 
   it.each([
-    ['before $\\text{#X}$ after', '$\\text{#X}$'],
+    // FT-13 RC headless-column-trace-pricing: SQL temp-table names are literal text in math.
+    String.raw`$$\text{#SalesBase.UnitPrice}=\begin{cases}\text{vwPriceList.UnitPrice},&\text{if non-NULL for the joined RegionCode}\\0,&\text{otherwise}\end{cases}$$`,
+    String.raw`$\text{\#Escaped} + \text{#A}\\#B$`,
+  ])('renders literal # in %j', (markdown) => {
+    const host = render(markdown);
+    expect(host.querySelector('.ln-ai-formula-error')).toBeNull();
+    const katex = host.querySelector('.vscode-katex-container .katex-html');
+    expect(katex).not.toBeNull();
+    expect(katex?.textContent).toMatch(/#(SalesBase|Escaped)/);
+  });
+
+  it.each([
+    ['before $\\frac{a$ after', '$\\frac{a$'],
     [
       'before\n\n$$\n\\begin{cases} a \\\\ b\n$$\n\nafter',
       '$$\n\\begin{cases} a \\\\ b\n$$',
@@ -102,10 +114,10 @@ describe('AI description formulas', () => {
   });
 
   it('escapes the unrendered source and keeps sibling formulas', () => {
-    const host = render('$x<y$ and $\\text{#&<b>}$ and $z^2$');
+    const host = render('$x<y$ and $\\text{&<b>}\\frac{$ and $z^2$');
     const errors = host.querySelectorAll('.ln-ai-formula-error');
     expect(errors).toHaveLength(1);
-    expect(errors[0].textContent).toBe('$\\text{#&<b>}$');
+    expect(errors[0].textContent).toBe('$\\text{&<b>}\\frac{$');
     expect(host.querySelector('b')).toBeNull();
     expect(host.querySelectorAll('.vscode-katex-container')).toHaveLength(2);
   });

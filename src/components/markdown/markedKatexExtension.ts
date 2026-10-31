@@ -7,7 +7,7 @@
  *  which is itself derived from https://github.com/UziTech/marked-katex-extension (MIT).
  *
  *  Modifications: namespace flattened to module exports, VS Code-internal imports replaced
- *  with `marked`/`katex`, local HTML-attribute encoding, contextual inline boundaries, and a visible
+ *  with `marked`/`katex`, local HTML-attribute encoding, contextual inline boundaries, literal `#`, and a visible
  *  error element for formulas KaTeX cannot render.
  *  See THIRD_PARTY_NOTICES.md.
  *--------------------------------------------------------------------------------------------*/
@@ -29,6 +29,9 @@ const mathInlineRegExp =
 const katexContainerClassName = 'vscode-katex-container';
 const katexContainerLatexAttributeName = 'data-latex';
 const katexErrorClassName = 'ln-ai-formula-error';
+
+/** Matches `#` not already escaped by an odd run of backslashes. */
+const unescapedHashRegExp = /(?<!\\)((?:\\\\)*)#/g;
 
 const blockRule = /^(\${1,2})\n((?:\\[^]|[^\\])+?)\n\1(?:\n|$)/;
 
@@ -61,11 +64,15 @@ function createRenderer(
   return (token: Tokens.Generic) => {
     let out: string;
     try {
-      const html = katexInstance.renderToString(token.text, {
-        ...options,
-        throwOnError: true,
-        displayMode: token.displayMode,
-      });
+      // AI math has no macro parameters; `#` is literal text such as a SQL temp-table name.
+      const html = katexInstance.renderToString(
+        token.text.replace(unescapedHashRegExp, '$1\\#'),
+        {
+          ...options,
+          throwOnError: true,
+          displayMode: token.displayMode,
+        },
+      );
 
       out = `<span class="${katexContainerClassName}" ${katexContainerLatexAttributeName}="${htmlAttributeEncodeValue(token.text)}">${html}</span>`;
     } catch (err) {
