@@ -69,3 +69,44 @@ describe('webview CSP security boundary', () => {
     expect(policy.get('form-action')).toEqual(["'none'"]);
   });
 });
+
+describe('AI description formulas', () => {
+  const render = (markdown: string) => {
+    const host = document.createElement('div');
+    host.innerHTML = renderAiMarkdown(markdown);
+    return host;
+  };
+
+  it('renders a valid formula through KaTeX', () => {
+    const host = render('Rate $a^2$ applies.');
+    expect(host.querySelector('.vscode-katex-container .katex')).not.toBeNull();
+    expect(host.querySelector('.ln-ai-formula-error')).toBeNull();
+  });
+
+  it.each([
+    ['before $\\text{#X}$ after', '$\\text{#X}$'],
+    [
+      'before\n\n$$\n\\begin{cases} a \\\\ b\n$$\n\nafter',
+      '$$\n\\begin{cases} a \\\\ b\n$$',
+    ],
+  ])('shows the unrendered formula in %j visibly', (markdown, source) => {
+    const host = render(markdown);
+    const errors = host.querySelectorAll('.ln-ai-formula-error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].textContent).toBe(source);
+    expect(errors[0].getAttribute('title')).toMatch(
+      /^Formula could not be rendered: \S/,
+    );
+    expect(host.textContent?.startsWith('before')).toBe(true);
+    expect(host.textContent?.trimEnd().endsWith('after')).toBe(true);
+  });
+
+  it('escapes the unrendered source and keeps sibling formulas', () => {
+    const host = render('$x<y$ and $\\text{#&<b>}$ and $z^2$');
+    const errors = host.querySelectorAll('.ln-ai-formula-error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].textContent).toBe('$\\text{#&<b>}$');
+    expect(host.querySelector('b')).toBeNull();
+    expect(host.querySelectorAll('.vscode-katex-container')).toHaveLength(2);
+  });
+});

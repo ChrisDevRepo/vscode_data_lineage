@@ -17,6 +17,7 @@ The newest version heading collects changes until that version ships.
 - The SQL Server (mssql) extension integration and the `dataLineageViz.database.connectionProvider` setting; databases connect through built-in connections only. Projects saved with an mssql connection keep it without the password; set the password with **Update Database Password**.
 
 ### Fixed
+- A formula the AI preview cannot render is shown as its source, marked as an error, with the reason on hover.
 - Clarified how object relevance and column continuation are analyzed independently.
 - Clearer AI correction guidance preserves an empty mapping list when removing out-of-scope column sources.
 - AI analysis reports independent scope and input faults together, with clear repair choices, and keeps valid text and column mappings while a repair is pending.

@@ -780,6 +780,12 @@ body.vscode-reduce-motion *::after {
   overflow-wrap: normal;
   overflow-x: auto;
 }
+/* A formula KaTeX cannot render stays visible as its marked source. */
+.ln-ai-description-md .ln-ai-formula-error {
+  color: var(--ln-error-fg);
+  border: 1px dashed var(--ln-validation-error-border);
+  white-space: pre-wrap;
+}
 /* Display math renders as its own centred block, matching VS Code chat. */
 .ln-ai-description-md .katex-display {
   margin: 8px 0;

@@ -7,7 +7,8 @@
  *  which is itself derived from https://github.com/UziTech/marked-katex-extension (MIT).
  *
  *  Modifications: namespace flattened to module exports, VS Code-internal imports replaced
- *  with `marked`/`katex`, local HTML-attribute encoding, and contextual inline boundaries.
+ *  with `marked`/`katex`, local HTML-attribute encoding, contextual inline boundaries, and a visible
+ *  error element for formulas KaTeX cannot render.
  *  See THIRD_PARTY_NOTICES.md.
  *--------------------------------------------------------------------------------------------*/
 import type { KatexOptions } from 'katex';
@@ -19,6 +20,7 @@ import type {
   Tokens,
   TokenizerAndRendererExtension,
 } from 'marked';
+import { errorMessage } from '../../utils/errorMessage';
 
 /** Matches inline math delimited by one or two dollars. */
 const mathInlineRegExp =
@@ -26,6 +28,7 @@ const mathInlineRegExp =
 
 const katexContainerClassName = 'vscode-katex-container';
 const katexContainerLatexAttributeName = 'data-latex';
+const katexErrorClassName = 'ln-ai-formula-error';
 
 const blockRule = /^(\${1,2})\n((?:\\[^]|[^\\])+?)\n\1(?:\n|$)/;
 
@@ -65,8 +68,8 @@ function createRenderer(
       });
 
       out = `<span class="${katexContainerClassName}" ${katexContainerLatexAttributeName}="${htmlAttributeEncodeValue(token.text)}">${html}</span>`;
-    } catch {
-      out = htmlAttributeEncodeValue(token.raw);
+    } catch (err) {
+      out = `<code class="${katexErrorClassName}" title="Formula could not be rendered: ${htmlAttributeEncodeValue(errorMessage(err))}">${htmlAttributeEncodeValue(token.raw.trimEnd())}</code>`;
     }
     return out + (isBlock ? '\n' : '');
   };
