@@ -1,691 +1,642 @@
-/**
- * Tests for dacpac extraction, filtering, edge integrity, and error handling.
- */
+/** Dacpac extraction: declared objects, edges, constraints, platform, two-phase schema selection and import errors. */
 
 import { readFileSync } from 'fs';
+import JSZip from 'jszip';
 import { describe, expect, it } from 'vitest';
-import { extractDacpac, extractSchemaPreview, extractDacpacFiltered, parseDspPlatform } from '../../../src/engine/dacpacExtractor';
-import { loadParseRules, testPath, loadAdventureWorksModel } from '../helpers/testUtils';
+import {
+  extractDacpac,
+  extractSchemaPreview,
+  extractDacpacFiltered,
+  parseDspPlatform,
+} from '../../../src/engine/dacpacExtractor';
+import {
+  loadParseRules,
+  testPath,
+  loadAdventureWorksModel,
+} from '../helpers/testUtils';
+
+type Model = Awaited<ReturnType<typeof extractDacpac>>;
+
+const AW = 'AdventureWorks2025_AI.dacpac';
+const SDK = 'AdventureWorks_sdk-style.dacpac';
+
+const OBJECT_TYPES: Record<string, string> = {
+  SqlTable: 'table',
+  SqlView: 'view',
+  SqlProcedure: 'procedure',
+  SqlScalarFunction: 'function',
+  SqlInlineTableValuedFunction: 'function',
+  SqlMultiStatementTableValuedFunction: 'function',
+  SqlExternalTable: 'external',
+};
+
+type DeclaredObject = {
+  schema: string;
+  name: string;
+  type: string;
+  externalType?: 'et';
+};
+
+/**
+ * Independent oracle: the top-level objects a fixture's model.xml declares,
+ * read with a plain regex over the raw XML (not through the extractor).
+ * Keys are the lower-cased two-part ids; values keep the XML spelling,
+ * except that an external table is listed without a schema under the UI's
+ * External group (NodeInfoBar groups by catalog schema, '' = External).
+ */
+async function declaredObjects(
+  fixture: string,
+): Promise<Record<string, DeclaredObject>> {
+  const zip = await JSZip.loadAsync(readFileSync(testPath(fixture)));
+  const xml = await zip.file('model.xml')!.async('string');
+  const out: Record<string, DeclaredObject> = {};
+  const re = /<Element Type="(Sql\w+)" Name="\[([^\]]+)\]\.\[([^\]]+)\]"/g;
+  for (const [, xmlType, schema, name] of xml.matchAll(re)) {
+    const type = OBJECT_TYPES[xmlType];
+    if (!type) continue;
+    out[`[${schema}].[${name}]`.toLowerCase()] =
+      type === 'external'
+        ? { schema: '', name, type, externalType: 'et' }
+        : { schema, name, type };
+  }
+  return out;
+}
+
+const countBy = (values: string[]) =>
+  values.reduce<Record<string, number>>((acc, v) => {
+    acc[v] = (acc[v] ?? 0) + 1;
+    return acc;
+  }, {});
+
+const edgeList = (model: Model) =>
+  model.edges.map((e) => `${e.source} -> ${e.target}`).sort();
+
+const bySchemaName = <T extends { name: string }>(list: T[]) =>
+  [...list].sort((a, b) => a.name.localeCompare(b.name));
+
+/**
+ * Per-schema object counts hand-counted from AdventureWorks2025_AI model.xml
+ * (SqlTable / SqlView / SqlProcedure / Sql*Function / SqlExternalTable).
+ */
+const AW_SCHEMAS = [
+  {
+    name: 'ai',
+    nodeCount: 32,
+    types: { table: 19, view: 5, procedure: 8, function: 0, external: 0 },
+  },
+  {
+    name: 'dbo',
+    nodeCount: 24,
+    types: { table: 3, view: 1, procedure: 8, function: 12, external: 0 },
+  },
+  {
+    name: 'ext',
+    nodeCount: 1,
+    types: { table: 0, view: 0, procedure: 0, function: 0, external: 1 },
+  },
+  {
+    name: 'HumanResources',
+    nodeCount: 15,
+    types: { table: 6, view: 6, procedure: 3, function: 0, external: 0 },
+  },
+  {
+    name: 'Person',
+    nodeCount: 15,
+    types: { table: 13, view: 2, procedure: 0, function: 0, external: 0 },
+  },
+  {
+    name: 'Production',
+    nodeCount: 28,
+    types: { table: 25, view: 3, procedure: 0, function: 0, external: 0 },
+  },
+  {
+    name: 'Purchasing',
+    nodeCount: 7,
+    types: { table: 5, view: 2, procedure: 0, function: 0, external: 0 },
+  },
+  {
+    name: 'Sales',
+    nodeCount: 26,
+    types: { table: 19, view: 7, procedure: 0, function: 0, external: 0 },
+  },
+];
+
+/** The HumanResources objects declared in AdventureWorks2025_AI model.xml. */
+const AW_HR_IDS = [
+  '[humanresources].[department]',
+  '[humanresources].[employee]',
+  '[humanresources].[employeedepartmenthistory]',
+  '[humanresources].[employeepayhistory]',
+  '[humanresources].[jobcandidate]',
+  '[humanresources].[shift]',
+  '[humanresources].[uspupdateemployeehireinfo]',
+  '[humanresources].[uspupdateemployeelogin]',
+  '[humanresources].[uspupdateemployeepersonalinfo]',
+  '[humanresources].[vemployee]',
+  '[humanresources].[vemployeedepartment]',
+  '[humanresources].[vemployeedepartmenthistory]',
+  '[humanresources].[vjobcandidate]',
+  '[humanresources].[vjobcandidateeducation]',
+  '[humanresources].[vjobcandidateemployment]',
+];
+
+/** Object ids per type, read from the SDK-style fixture's model.xml. */
+const SDK_IDS = {
+  function: [
+    '[core].[fn_calc_margin]',
+    '[core].[fn_calc_tenure]',
+    '[core].[fn_calc_variance]',
+  ],
+  procedure: [
+    '[core].[sp_build_budget]',
+    '[core].[sp_build_employee]',
+    '[core].[sp_build_product]',
+    '[core].[sp_build_sales_order]',
+    '[legacy].[sp_backup_monthly]',
+    '[legacy].[sp_export_to_file]',
+    '[mart_sales].[sp_load_dim_customer]',
+    '[mart_sales].[sp_load_dim_date]',
+    '[mart_sales].[sp_load_dim_product]',
+    '[mart_sales].[sp_load_dim_territory]',
+    '[mart_sales].[sp_load_fact_sales]',
+    '[mart_sales].[sp_load_fact_sales_bak]',
+    '[staging].[sp_load_budget]',
+    '[staging].[sp_load_customer]',
+    '[staging].[sp_load_employee]',
+    '[staging].[sp_load_inventory]',
+    '[staging].[sp_load_market_data]',
+    '[staging].[sp_load_order_detail]',
+    '[staging].[sp_load_order_header]',
+    '[staging].[sp_load_pay_history]',
+    '[staging].[sp_load_product]',
+  ],
+  view: [
+    '[core].[vw_employee_summary]',
+    '[core].[vw_sales_summary]',
+    '[legacy].[vw_archive_summary]',
+    '[legacy].[vw_deprecated_report]',
+    '[mart_hr].[vw_dim_employee]',
+    '[mart_hr].[vw_fact_headcount]',
+    '[mart_hr].[vw_headcount_dashboard]',
+    '[mart_sales].[vw_budget_analysis]',
+    '[mart_sales].[vw_product_performance]',
+    '[mart_sales].[vw_sales_dashboard]',
+    '[mart_sales].[vw_territory_summary]',
+  ],
+};
+
+/** Column count per table: the Columns relationship entries in the SDK-style model.xml. */
+const SDK_TABLE_COLUMNS: Record<string, number> = {
+  '[core].[int_employee]': 5,
+  '[core].[int_product]': 5,
+  '[core].[int_sales_order]': 10,
+  '[legacy].[bak_dim_customer_2022]': 2,
+  '[legacy].[bak_fact_sales_2023]': 4,
+  '[legacy].[bak_stg_orders_2022]': 3,
+  '[legacy].[tbl_calendar]': 3,
+  '[legacy].[tbl_tally]': 1,
+  '[legacy].[tmp_export_buffer]': 2,
+  '[mart_sales].[dim_customer]': 4,
+  '[mart_sales].[dim_date]': 6,
+  '[mart_sales].[dim_product]': 5,
+  '[mart_sales].[dim_territory]': 4,
+  '[mart_sales].[fact_sales]': 8,
+  '[src_hr].[tbl_employee]': 4,
+  '[src_hr].[tbl_pay_history]': 3,
+  '[src_prod].[tbl_inventory]': 3,
+  '[src_prod].[tbl_product]': 5,
+  '[src_sales].[tbl_customer]': 3,
+  '[src_sales].[tbl_order_detail]': 5,
+  '[src_sales].[tbl_order_header]': 6,
+  '[src_sales].[tbl_territory]': 3,
+  '[staging].[stg_budget]': 5,
+  '[staging].[stg_customer]': 3,
+  '[staging].[stg_customer_bak]': 3,
+  '[staging].[stg_employee]': 3,
+  '[staging].[stg_exchange_rates]': 3,
+  '[staging].[stg_inventory]': 3,
+  '[staging].[stg_market_data]': 5,
+  '[staging].[stg_order_detail]': 5,
+  '[staging].[stg_order_header]': 6,
+  '[staging].[stg_order_header_bak]': 4,
+  '[staging].[stg_pay_history]': 3,
+  '[staging].[stg_product]': 5,
+};
+
+/**
+ * Every edge of the SDK-style fixture, hand-derived: view inputs are the
+ * view's QueryDependencies in model.xml; procedure edges are read from each
+ * BodyScript (TRUNCATE/INSERT/UPDATE target = write, FROM/JOIN/APPLY = read;
+ * the UPDATE … FROM staging.stg_budget both reads and writes it).
+ */
+const SDK_EDGES = [
+  // views (QueryDependencies)
+  '[core].[int_employee] -> [core].[vw_employee_summary]',
+  '[core].[int_sales_order] -> [core].[vw_sales_summary]',
+  '[legacy].[bak_dim_customer_2022] -> [legacy].[vw_archive_summary]',
+  '[legacy].[bak_fact_sales_2023] -> [legacy].[vw_archive_summary]',
+  '[legacy].[bak_stg_orders_2022] -> [legacy].[vw_archive_summary]',
+  '[core].[int_employee] -> [mart_hr].[vw_dim_employee]',
+  '[core].[int_employee] -> [mart_hr].[vw_fact_headcount]',
+  '[mart_hr].[vw_dim_employee] -> [mart_hr].[vw_headcount_dashboard]',
+  '[mart_hr].[vw_fact_headcount] -> [mart_hr].[vw_headcount_dashboard]',
+  '[mart_sales].[dim_territory] -> [mart_sales].[vw_budget_analysis]',
+  '[staging].[stg_budget] -> [mart_sales].[vw_budget_analysis]',
+  '[core].[int_sales_order] -> [mart_sales].[vw_product_performance]',
+  '[mart_sales].[dim_product] -> [mart_sales].[vw_product_performance]',
+  '[core].[fn_calc_variance] -> [mart_sales].[vw_sales_dashboard]',
+  '[mart_sales].[dim_customer] -> [mart_sales].[vw_sales_dashboard]',
+  '[mart_sales].[dim_date] -> [mart_sales].[vw_sales_dashboard]',
+  '[mart_sales].[dim_territory] -> [mart_sales].[vw_sales_dashboard]',
+  '[mart_sales].[fact_sales] -> [mart_sales].[vw_sales_dashboard]',
+  '[mart_sales].[dim_territory] -> [mart_sales].[vw_territory_summary]',
+  '[mart_sales].[fact_sales] -> [mart_sales].[vw_territory_summary]',
+  // core procedures
+  '[core].[fn_calc_variance] -> [core].[sp_build_budget]',
+  '[staging].[stg_budget] -> [core].[sp_build_budget]',
+  '[core].[sp_build_budget] -> [staging].[stg_budget]',
+  '[core].[fn_calc_tenure] -> [core].[sp_build_employee]',
+  '[staging].[stg_employee] -> [core].[sp_build_employee]',
+  '[staging].[stg_pay_history] -> [core].[sp_build_employee]',
+  '[core].[sp_build_employee] -> [core].[int_employee]',
+  '[staging].[stg_inventory] -> [core].[sp_build_product]',
+  '[staging].[stg_product] -> [core].[sp_build_product]',
+  '[core].[sp_build_product] -> [core].[int_product]',
+  '[core].[fn_calc_margin] -> [core].[sp_build_sales_order]',
+  '[staging].[stg_order_detail] -> [core].[sp_build_sales_order]',
+  '[staging].[stg_order_header] -> [core].[sp_build_sales_order]',
+  '[staging].[stg_product] -> [core].[sp_build_sales_order]',
+  '[core].[sp_build_sales_order] -> [core].[int_sales_order]',
+  // legacy
+  '[legacy].[sp_export_to_file] -> [legacy].[tmp_export_buffer]',
+  // mart_sales procedures
+  '[staging].[stg_customer] -> [mart_sales].[sp_load_dim_customer]',
+  '[mart_sales].[sp_load_dim_customer] -> [mart_sales].[dim_customer]',
+  '[core].[int_sales_order] -> [mart_sales].[sp_load_dim_date]',
+  '[mart_sales].[sp_load_dim_date] -> [mart_sales].[dim_date]',
+  '[core].[int_product] -> [mart_sales].[sp_load_dim_product]',
+  '[mart_sales].[sp_load_dim_product] -> [mart_sales].[dim_product]',
+  '[src_sales].[tbl_territory] -> [mart_sales].[sp_load_dim_territory]',
+  '[mart_sales].[sp_load_dim_territory] -> [mart_sales].[dim_territory]',
+  '[core].[int_sales_order] -> [mart_sales].[sp_load_fact_sales]',
+  '[mart_sales].[dim_customer] -> [mart_sales].[sp_load_fact_sales]',
+  '[mart_sales].[dim_territory] -> [mart_sales].[sp_load_fact_sales]',
+  '[mart_sales].[sp_load_fact_sales] -> [mart_sales].[fact_sales]',
+  // staging procedures (TRUNCATE-only placeholders write their target)
+  '[staging].[sp_load_budget] -> [staging].[stg_budget]',
+  '[staging].[sp_load_customer] -> [staging].[stg_customer]',
+  '[src_hr].[tbl_employee] -> [staging].[sp_load_employee]',
+  '[staging].[sp_load_employee] -> [staging].[stg_employee]',
+  '[staging].[sp_load_inventory] -> [staging].[stg_inventory]',
+  '[staging].[sp_load_market_data] -> [staging].[stg_market_data]',
+  '[staging].[sp_load_order_detail] -> [staging].[stg_order_detail]',
+  '[staging].[sp_load_order_header] -> [staging].[stg_order_header]',
+  '[src_hr].[tbl_pay_history] -> [staging].[sp_load_pay_history]',
+  '[staging].[sp_load_pay_history] -> [staging].[stg_pay_history]',
+  '[staging].[sp_load_product] -> [staging].[stg_product]',
+].sort();
 
 describe('DACPAC Extractor', () => {
   loadParseRules();
 
-/** Builds a minimal in-memory dacpac with a single procedure referencing an external file (OPENROWSET). */
-async function makeExternalRefDacpac(): Promise<Uint8Array> {
-  const JSZip = (await import('jszip')).default;
-  const zip = new JSZip();
-  zip.file('model.xml', `<?xml version="1.0"?>
-    <DataSchemaModel DspName="Microsoft.Data.Tools.Schema.Sql.Sql160DatabaseSchemaProvider">
-      <Model>
-        <Element Type="SqlProcedure" Name="[dbo].[LoadExternal]">
-          <Property Name="BodyScript" Value="SELECT * FROM OPENROWSET(BULK 'https://storage.example/orders.csv', FORMAT='CSV') AS rows" />
-        </Element>
-      </Model>
-    </DataSchemaModel>`);
-  const bytes = await zip.generateAsync({ type: 'uint8array' });
-  return bytes;
-}
+  describe('AdventureWorks2025_AI dacpac', () => {
+    it('renders exactly the objects model.xml declares', async () => {
+      const model = await loadAdventureWorksModel();
+      const declared = await declaredObjects(AW);
+      expect(model.nodes.map((n) => n.id).sort()).toEqual(
+        Object.keys(declared).sort(),
+      );
+    });
 
+    it('classifies objects by their model.xml element type', async () => {
+      const model = await loadAdventureWorksModel();
+      // 90 SqlTable, 26 SqlView, 19 SqlProcedure, 11 SqlScalarFunction +
+      // 1 SqlMultiStatementTableValuedFunction, 1 SqlExternalTable.
+      expect(countBy(model.nodes.map((n) => n.type))).toEqual({
+        table: 90,
+        view: 26,
+        procedure: 19,
+        function: 12,
+        external: 1,
+      });
+    });
 
-/** A DACPAC foreign key keeps its ON DELETE action and a view column keeps a dotted bracketed name. */
-async function testFkDeleteActionAndDottedColumns() {
-  const model = await loadAdventureWorksModel();
-  const detail = model.nodes.find(n => n.id === '[sales].[salesorderdetail]');
-  const fk = detail?.fks?.find(f => f.name === 'FK_SalesOrderDetail_SalesOrderHeader_SalesOrderID');
-  expect(fk?.onDelete, 'OnDeleteAction=1 maps to CASCADE').toBe('CASCADE');
-  const noAction = model.nodes.flatMap(n => n.fks ?? []).find(f => f.name === 'FK_SalesOrderDetail_SpecialOfferProduct_SpecialOfferIDProductID');
-  expect(noAction?.onDelete, 'no OnDeleteAction property stays NO ACTION').toBe('NO ACTION');
+    it('reports per-schema object counts', async () => {
+      const model = await loadAdventureWorksModel();
+      expect(bySchemaName(model.schemas)).toEqual(AW_SCHEMAS);
+    });
 
-  const candidate = model.nodes.find(n => n.id === '[humanresources].[vjobcandidate]');
-  const names = candidate?.columns?.map(c => c.name) ?? [];
-  expect(names, 'dotted column name is kept whole').toContain('Name.Prefix');
-  expect(names, 'dotted column name is not cut at the dot').not.toContain('Prefix');
-}
+    it('catalogs every declared object with its model.xml spelling', async () => {
+      const model = await loadAdventureWorksModel();
+      expect(model.catalog).toEqual(await declaredObjects(AW));
+    });
 
+    it('records the SQL Server 2025 platform and the dacpac source', async () => {
+      const model = await loadAdventureWorksModel();
+      expect([model.dbPlatform, model.source]).toEqual([
+        'SQL Server 2025',
+        'dacpac',
+      ]);
+    });
 
-async function testExtraction() {
-  const model = await loadAdventureWorksModel();
+    it('reports no warnings for a successful extraction', async () => {
+      const model = await loadAdventureWorksModel();
+      expect(model.warnings).toBeUndefined();
+    });
 
-  expect(model.nodes.length > 0, `Extracted ${model.nodes.length} nodes`).toBe(true);
-  expect(model.edges.length > 0, `Extracted ${model.edges.length} edges`).toBe(true);
-  expect(model.schemas.length > 0, `Found ${model.schemas.length} schemas`).toBe(true);
+    it('derives the expected edges for named procedures', async () => {
+      const model = await loadAdventureWorksModel();
+      const edgesFor = (procId: string): string[] =>
+        model.edges
+          .filter((e) => e.source === procId || e.target === procId)
+          .map((e) => `${e.source}|${e.type}|${e.target}`)
+          .sort();
 
-  expect(model.edges.length, 'Edge count fell below the AdventureWorks floor').toBeGreaterThanOrEqual(169);
+      expect(edgesFor('[ai].[spcleanorders]')).toEqual([
+        '[ai].[cleanedorders]|body|[ai].[spcleanorders]',
+        '[ai].[customermaster]|body|[ai].[spcleanorders]',
+        '[ai].[raworderimport]|body|[ai].[spcleanorders]',
+        '[ai].[spcleanorders]|body|[ai].[cleanedorders]',
+        '[ai].[spcleanorders]|body|[ai].[errorlog]',
+        '[ai].[spcleanorders]|exec|[ai].[splogaudit]',
+      ]);
+      expect(edgesFor('[humanresources].[uspupdateemployeehireinfo]')).toEqual([
+        '[humanresources].[uspupdateemployeehireinfo]|body|[humanresources].[employee]',
+        '[humanresources].[uspupdateemployeehireinfo]|body|[humanresources].[employeepayhistory]',
+        '[humanresources].[uspupdateemployeehireinfo]|exec|[dbo].[usplogerror]',
+      ]);
+    });
 
-  for (const type of ['table', 'view', 'procedure', 'function'] as const) {
-    expect(model.nodes.some(n => n.type === type), `Has ${type} nodes`).toBe(true);
-  }
+    it('emits no edge whose endpoint is not a node', async () => {
+      const model = await loadAdventureWorksModel();
+      const ids = new Set(model.nodes.map((n) => n.id));
+      expect(
+        model.edges.filter((e) => !ids.has(e.source) || !ids.has(e.target)),
+      ).toEqual([]);
+    });
 
-  expect(Object.keys(model.catalog).length >= model.nodes.length, 'Catalog populated').toBe(true);
-  expect(Object.keys(model.neighborIndex).length > 0, 'NeighborIndex populated').toBe(true);
+    it('emits no self-loop edge', async () => {
+      const model = await loadAdventureWorksModel();
+      expect(model.edges.filter((e) => e.source === e.target)).toEqual([]);
+    });
 
-  return model;
-}
+    it('emits each source/target pair once', async () => {
+      const model = await loadAdventureWorksModel();
+      const keys = edgeList(model);
+      expect(keys.filter((k, i) => keys.indexOf(k) !== i)).toEqual([]);
+    });
 
+    it('keeps the Employee foreign key from model.xml', async () => {
+      const model = await loadAdventureWorksModel();
+      const employee = model.nodes.find(
+        (n) => n.id === '[humanresources].[employee]',
+      );
+      expect(employee?.fks).toEqual([
+        {
+          name: 'FK_Employee_Person_BusinessEntityID',
+          columns: ['BusinessEntityID'],
+          refSchema: 'Person',
+          refTable: 'Person',
+          refColumns: ['BusinessEntityID'],
+          onDelete: 'NO ACTION',
+        },
+      ]);
+    });
 
-/**
- * Pins the exact edge set the SQL-body parser derives for two AdventureWorks procedures.
- *
- * @remarks
- * `testExtraction` only proves the model has *some* edges. These two procedures were chosen
- * because between them they exercise every extraction category on real dacpac bodies: reads
- * (`FROM`/`JOIN`), writes (`INSERT`/`UPDATE`), a table that is both read and written in the same
- * body, and `EXEC` calls. A regression in any parse rule changes one of these sets.
- */
-async function testNamedProcedureEdges() {
-  const model = await loadAdventureWorksModel();
+    it('flags the six CK_Employee_* check constraints on their columns', async () => {
+      const model = await loadAdventureWorksModel();
+      const employee = model.nodes.find(
+        (n) => n.id === '[humanresources].[employee]',
+      );
+      expect(
+        employee?.columns
+          ?.filter((c) => c.check)
+          .map((c) => [c.name, c.check])
+          .sort(),
+      ).toEqual([
+        ['BirthDate', 'CK_Employee_BirthDate'],
+        ['Gender', 'CK_Employee_Gender'],
+        ['HireDate', 'CK_Employee_HireDate'],
+        ['MaritalStatus', 'CK_Employee_MaritalStatus'],
+        ['SickLeaveHours', 'CK_Employee_SickLeaveHours'],
+        ['VacationHours', 'CK_Employee_VacationHours'],
+      ]);
+    });
 
-  const edgesFor = (procId: string): string[] =>
-    model.edges
-      .filter(e => e.source === procId || e.target === procId)
-      .map(e => `${e.source}|${e.type}|${e.target}`)
-      .sort();
-
-  expect(edgesFor('[ai].[spcleanorders]')).toEqual([
-    '[ai].[cleanedorders]|body|[ai].[spcleanorders]',
-    '[ai].[customermaster]|body|[ai].[spcleanorders]',
-    '[ai].[raworderimport]|body|[ai].[spcleanorders]',
-    '[ai].[spcleanorders]|body|[ai].[cleanedorders]',
-    '[ai].[spcleanorders]|body|[ai].[errorlog]',
-    '[ai].[spcleanorders]|exec|[ai].[splogaudit]',
-  ]);
-
-  expect(edgesFor('[humanresources].[uspupdateemployeehireinfo]')).toEqual([
-    '[humanresources].[uspupdateemployeehireinfo]|body|[humanresources].[employee]',
-    '[humanresources].[uspupdateemployeehireinfo]|body|[humanresources].[employeepayhistory]',
-    '[humanresources].[uspupdateemployeehireinfo]|exec|[dbo].[usplogerror]',
-  ]);
-}
-
-
-function testEdgeIntegrity(model: Awaited<ReturnType<typeof extractDacpac>>) {
-
-  const nodeIds = new Set(model.nodes.map(n => n.id));
-
-  const danglingEdges = model.edges.filter(e => !nodeIds.has(e.source) || !nodeIds.has(e.target));
-  expect(danglingEdges.length === 0, `No dangling edges (found ${danglingEdges.length})`).toBe(true);
-
-  const selfLoops = model.edges.filter(e => e.source === e.target);
-  expect(selfLoops.length === 0, `No self-loops (found ${selfLoops.length})`).toBe(true);
-
-  const edgeKeys = model.edges.map(e => `${e.source}→${e.target}`);
-  const uniqueEdges = new Set(edgeKeys);
-  expect(uniqueEdges.size === edgeKeys.length, `No duplicate edges (${edgeKeys.length} total, ${uniqueEdges.size} unique)`).toBe(true);
-}
-
-
-async function testFabricDacpac() {
-  const fabricPath = testPath('AdventureWorks_sdk-style.dacpac');
-  const buffer = readFileSync(fabricPath);
-  const model = await extractDacpac(buffer);
-
-  const views = model.nodes.filter(n => n.type === 'view');
-  const tables = model.nodes.filter(n => n.type === 'table');
-  const procs = model.nodes.filter(n => n.type === 'procedure');
-  const funcs = model.nodes.filter(n => n.type === 'function');
-
-  expect(views.length > 0, `Found ${views.length} views`).toBe(true);
-  expect(tables.length > 0, `Found ${tables.length} tables`).toBe(true);
-  expect(procs.length > 0, `Found ${procs.length} procedures`).toBe(true);
-  expect(funcs.length > 0, `Found ${funcs.length} functions`).toBe(true);
-
-  const viewIds = new Set(views.map(n => n.id));
-  const viewEdges = model.edges.filter(e => viewIds.has(e.target));
-  expect(viewEdges.length > 0, `Views have ${viewEdges.length} incoming edges (QueryDependencies works)`).toBe(true);
-
-  const viewsWithEdges = new Set(viewEdges.map(e => e.target));
-  const noTableViews = new Set(['[legacy].[vw_deprecated_report]']);
-  const viewsMissing = views.filter(v => !viewsWithEdges.has(v.id) && !noTableViews.has(v.fullName));
-  expect(viewsMissing.length === 0, viewsMissing.length === 0
-    ? 'All views with table refs are connected'
-    : `Disconnected views: ${viewsMissing.map(v => v.fullName).join(', ')}`).toBe(true);
-
-  const procIds = new Set(procs.map(n => n.id));
-  const procEdges = model.edges.filter(e => procIds.has(e.target));
-  expect(procEdges.length > 0, `Procedures have ${procEdges.length} incoming edges (BodyDependencies works)`).toBe(true);
-
-  const nodeIds = new Set(model.nodes.map(n => n.id));
-  const dangling = model.edges.filter(e => !nodeIds.has(e.source) || !nodeIds.has(e.target));
-  expect(dangling.length === 0, `No dangling edges (found ${dangling.length})`).toBe(true);
-}
-
-
-async function testNumericEntitySecurity() {
-
-  const { XMLParser } = await import('fast-xml-parser');
-  const parser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: '@_',
-    parseTagValue: true,
-    trimValues: true,
+    it('gives a single-column primary key ordinal 1 and other columns none', async () => {
+      const model = await loadAdventureWorksModel();
+      const employee = model.nodes.find(
+        (n) => n.id === '[humanresources].[employee]',
+      );
+      expect(
+        employee?.columns
+          ?.filter((c) => c.pkOrdinal !== undefined)
+          .map((c) => [c.name, c.pkOrdinal]),
+      ).toEqual([['BusinessEntityID', 1]]);
+    });
   });
 
-  const xmlDecimal = `<root><item>test &#9999999; value</item></root>`;
-  let decimalOk = false;
-  try {
-    parser.parse(xmlDecimal);
-    decimalOk = true;
-  } catch (e: unknown) {
-    if (e instanceof RangeError) {
-      decimalOk = false;
-    } else {
-      decimalOk = true;
-    }
-  }
-  expect(decimalOk, 'Out-of-range decimal entity (&#9999999;) does not crash with RangeError').toBe(true);
+  describe('SDK-style (Fabric) dacpac', () => {
+    const load = () => extractDacpac(readFileSync(testPath(SDK)));
 
-  const xmlHex = `<root><item>test &#xFFFFFF; value</item></root>`;
-  let hexOk = false;
-  try {
-    parser.parse(xmlHex);
-    hexOk = true;
-  } catch (e: unknown) {
-    if (e instanceof RangeError) {
-      hexOk = false;
-    } else {
-      hexOk = true;
-    }
-  }
-  expect(hexOk, 'Out-of-range hex entity (&#xFFFFFF;) does not crash with RangeError').toBe(true);
+    it('renders the declared tables, views, procedures and functions', async () => {
+      const model = await load();
+      const ids = (type: string) =>
+        model.nodes
+          .filter((n) => n.type === type)
+          .map((n) => n.id)
+          .sort();
+      expect({
+        table: ids('table'),
+        view: ids('view'),
+        procedure: ids('procedure'),
+        function: ids('function'),
+      }).toEqual({ table: Object.keys(SDK_TABLE_COLUMNS).sort(), ...SDK_IDS });
+    });
 
-  const xmlValid = `<root><item>test &#65; value</item></root>`;
-  let validOk = false;
-  try {
-    parser.parse(xmlValid);
-    validOk = true;
-  } catch {
-    validOk = false;
-  }
-  expect(validOk, 'Valid entity &#65; parses without error').toBe(true);
+    it('derives the hand-checked edge set from QueryDependencies and procedure bodies', async () => {
+      expect(edgeList(await load())).toEqual(SDK_EDGES);
+    });
 
-  const parserWithEntities = new XMLParser({
-    processEntities: true,
-    htmlEntities: true,
+    it('records the Fabric Data Warehouse platform and the dacpac source', async () => {
+      const model = await load();
+      expect([model.dbPlatform, model.source]).toEqual([
+        'Fabric Data Warehouse',
+        'dacpac',
+      ]);
+    });
   });
 
-  let entDecOk = false;
-  try {
-    parserWithEntities.parse(`<root>&#9999999;</root>`);
-    entDecOk = true;
-  } catch (e: unknown) {
-    entDecOk = !(e instanceof RangeError);
-  }
-  expect(entDecOk, 'processEntities + out-of-range decimal does not RangeError').toBe(true);
+  describe('two-phase extraction (schema preview, then filtered build)', () => {
+    const preview = () => extractSchemaPreview(readFileSync(testPath(AW)));
 
-  let entHexOk = false;
-  try {
-    parserWithEntities.parse(`<root>&#xFFFFFF;</root>`);
-    entHexOk = true;
-  } catch (e: unknown) {
-    entHexOk = !(e instanceof RangeError);
-  }
-  expect(entHexOk, 'processEntities + out-of-range hex does not RangeError').toBe(true);
-}
+    it('previews the per-schema counts, the object total and the provider name', async () => {
+      const { preview: p, dspName } = await preview();
+      expect({
+        schemas: bySchemaName(p.schemas),
+        totalObjects: p.totalObjects,
+        dspName,
+      }).toEqual({
+        schemas: AW_SCHEMAS,
+        totalObjects: 148,
+        dspName: 'Microsoft.Data.Tools.Schema.Sql.Sql170DatabaseSchemaProvider',
+      });
+    });
 
+    it('builds the same nodes and edges as the full extract when every schema is chosen', async () => {
+      const { preview: p, elements, dspName } = await preview();
+      const all = extractDacpacFiltered(
+        elements,
+        new Set(p.schemas.map((s) => s.name)),
+        dspName,
+      );
+      const full = await loadAdventureWorksModel();
+      expect({
+        nodes: all.nodes.map((n) => n.id).sort(),
+        edges: edgeList(all),
+        dbPlatform: all.dbPlatform,
+      }).toEqual({
+        nodes: full.nodes.map((n) => n.id).sort(),
+        edges: edgeList(full),
+        dbPlatform: 'SQL Server 2025',
+      });
+    });
 
-async function testImportErrorHandling() {
-  const JSZip = (await import('jszip')).default;
+    it('renders only the chosen schema', async () => {
+      const { elements, dspName } = await preview();
+      const hr = extractDacpacFiltered(
+        elements,
+        new Set(['HumanResources']),
+        dspName,
+      );
+      expect(hr.nodes.map((n) => n.id).sort()).toEqual(AW_HR_IDS);
+    });
 
-  try {
-    await extractDacpac(new TextEncoder().encode('this is not a zip file'));
-    expect(false, 'Non-ZIP should throw').toBe(true);
-  } catch (err: unknown) {
-    const msg = (err as Error).message;
-    expect(msg.includes('Not a valid .dacpac file'), `Non-ZIP error is user-friendly: "${msg}"`).toBe(true);
-    expect(!msg.includes('https://'), 'No raw URL in error message').toBe(true);
-  }
+    it('catalogs out-of-filter objects with their model.xml spelling', async () => {
+      const { elements } = await preview();
+      const model = extractDacpacFiltered(
+        elements,
+        new Set(['HumanResources']),
+      );
+      const declared = await declaredObjects(AW);
+      const outside = Object.fromEntries(
+        Object.entries(declared).filter(([id]) => !AW_HR_IDS.includes(id)),
+      );
+      const rendered = new Set(model.nodes.map((n) => n.id));
+      expect(
+        Object.fromEntries(
+          Object.entries(model.catalog).filter(([id]) => !rendered.has(id)),
+        ),
+      ).toEqual(outside);
+    });
 
-  try {
-    await extractDacpac(new ArrayBuffer(0));
-    expect(false, 'Empty file should throw').toBe(true);
-  } catch (err: unknown) {
-    const msg = (err as Error).message;
-    expect(msg.includes('corrupted or truncated') || msg.includes('Not a valid'), `Empty file error is user-friendly: "${msg}"`).toBe(true);
-  }
+    it('keeps the out-edges from rendered nodes to out-of-filter objects', async () => {
+      const { elements } = await preview();
+      const model = extractDacpacFiltered(
+        elements,
+        new Set(['HumanResources']),
+      );
+      const rendered = new Set(model.nodes.map((n) => n.id));
+      // The three HumanResources update procedures EXECUTE dbo.uspLogError in their CATCH blocks.
+      expect(
+        Object.entries(model.neighborIndex)
+          .filter(([id]) => rendered.has(id))
+          .flatMap(([id, nb]) =>
+            nb.out.filter((t) => !rendered.has(t)).map((t) => `${id} -> ${t}`),
+          )
+          .sort(),
+      ).toEqual([
+        '[humanresources].[uspupdateemployeehireinfo] -> [dbo].[usplogerror]',
+        '[humanresources].[uspupdateemployeelogin] -> [dbo].[usplogerror]',
+        '[humanresources].[uspupdateemployeepersonalinfo] -> [dbo].[usplogerror]',
+      ]);
+    });
+  });
 
-  const zip = new JSZip();
-  zip.file('other.xml', '<root/>');
-  const noModelBuf = await zip.generateAsync({ type: 'arraybuffer' });
-  try {
-    await extractDacpac(noModelBuf);
-    expect(false, 'ZIP without model.xml should throw').toBe(true);
-  } catch (err: unknown) {
-    const msg = (err as Error).message;
-    expect(msg.includes('model.xml not found'), `Missing model.xml error: "${msg}"`).toBe(true);
-  }
+  describe('import errors', () => {
+    it('rejects a non-ZIP file with a readable message and no URL', async () => {
+      const result = extractDacpac(
+        new TextEncoder().encode('this is not a zip file'),
+      );
+      await expect(result).rejects.toThrow(
+        /^Not a valid \.dacpac file \(invalid ZIP archive\)$/,
+      );
+    });
 
-  const emptyZip = new JSZip();
-  emptyZip.file('model.xml', `<?xml version="1.0"?>
+    it('rejects a ZIP without model.xml', async () => {
+      const zip = new JSZip();
+      zip.file('other.xml', '<root/>');
+      await expect(
+        extractDacpac(await zip.generateAsync({ type: 'arraybuffer' })),
+      ).rejects.toThrow(/^model\.xml not found in \.dacpac$/);
+    });
+
+    it('warns, without throwing, when model.xml declares no objects', async () => {
+      const zip = new JSZip();
+      zip.file(
+        'model.xml',
+        `<?xml version="1.0"?>
     <DataSchemaModel>
       <Model>
         <Element Type="SqlDatabaseOptions" Name="Options"/>
       </Model>
-    </DataSchemaModel>`);
-  const emptyBuf = await emptyZip.generateAsync({ type: 'arraybuffer' });
-  const emptyModel = await extractDacpac(emptyBuf);
-  expect(emptyModel.nodes.length === 0, 'Empty dacpac has 0 nodes').toBe(true);
-  expect(emptyModel.warnings !== undefined && emptyModel.warnings.length > 0, 'Empty dacpac has warnings').toBe(true);
-  expect(emptyModel.warnings![0].includes('No tables, views, or stored procedures'), `Warning explains why: "${emptyModel.warnings![0]}"`).toBe(true);
-
-  const model = await loadAdventureWorksModel();
-  expect(model.warnings === undefined, 'Successful extraction has no warnings').toBe(true);
-}
-
-
-async function testConstraints() {
-  const model = await loadAdventureWorksModel();
-
-  const employee = model.nodes.find(n => n.schema === 'HumanResources' && n.name === 'Employee');
-  expect(!!employee, 'HumanResources.Employee node found').toBe(true);
-  expect((employee?.fks?.length ?? 0) > 0, 'Employee has FK constraints').toBe(true);
-  expect(employee!.fks!.some(fk => fk.name === 'FK_Employee_Person_BusinessEntityID'), 'Employee has FK_Employee_Person_BusinessEntityID').toBe(true);
-  expect(employee!.fks!.some(fk => fk.refTable === 'Person'), 'FK references Person table').toBe(true);
-  expect(employee!.columns!.some(c => c.check !== undefined && c.check !== ''), 'Employee has CK flag on a column').toBe(true);
-
-  const document = model.nodes.find(n => n.schema === 'Production' && n.name === 'Document');
-  expect(!!document, 'Production.Document node found').toBe(true);
-  expect(document!.columns!.some(c => c.unique !== undefined && c.unique !== ''), 'Document has UQ flag on a column').toBe(true);
-
-  const noFkTable = model.nodes.find(n => n.type === 'table' && n.fks !== undefined && n.fks.length === 0);
-  expect(!!noFkTable, 'Table with no FKs has empty fks array').toBe(true);
-
-  const buffer2 = readFileSync(testPath('AdventureWorks2025_AI.dacpac'));
-  const { elements } = await extractSchemaPreview(buffer2);
-  const filteredModel = extractDacpacFiltered(elements, new Set(['HumanResources', 'Person']));
-  const empFiltered = filteredModel.nodes.find(n => n.schema === 'HumanResources' && n.name === 'Employee');
-  expect(!!empFiltered, 'Phase 2: HumanResources.Employee found after schema filter').toBe(true);
-  expect((empFiltered?.fks?.length ?? 0) > 0, 'Phase 2: Employee has FK constraints (not dropped by filter)').toBe(true);
-  const addrFiltered = filteredModel.nodes.find(n => n.schema === 'Person' && n.name === 'Address');
-  expect(!!addrFiltered, 'Phase 2: Person.Address found after schema filter').toBe(true);
-  expect((addrFiltered?.fks?.length ?? 0) > 0, 'Phase 2: Person.Address has FK constraints (not dropped by filter)').toBe(true);
-
-  const fabricPath = testPath('AdventureWorks_sdk-style.dacpac');
-  const fabricBuf = readFileSync(fabricPath);
-  const fabricModel = await extractDacpac(fabricBuf);
-  const fabricTable = fabricModel.nodes.find(n => n.type === 'table');
-  expect(!!fabricTable, 'SDK-style dacpac has at least one table').toBe(true);
-  expect(fabricTable?.columns !== undefined, 'SDK-style table has columns').toBe(true);
-}
-
-
-function testParseDspPlatform() {
-
-  expect(parseDspPlatform(''), 'Empty string returns empty').toBe('');
-
-  expect(parseDspPlatform('Microsoft.Data.Tools.Schema.Sql.SqlDwUnifiedDatabaseSchemaProvider'), 'SqlDwUnified → Fabric Data Warehouse').toBe('Fabric Data Warehouse');
-  expect(parseDspPlatform('Microsoft.Data.Tools.Schema.Sql.SqlDbFabricDatabaseSchemaProvider'), 'SqlDbFabric → SQL Database in Fabric').toBe('SQL Database in Fabric');
-  expect(parseDspPlatform('Microsoft.Data.Tools.Schema.Sql.SqlDwDatabaseSchemaProvider'), 'SqlDwDatabase → Synapse Dedicated Pool').toBe('Synapse Dedicated Pool');
-  expect(parseDspPlatform('Microsoft.Data.Tools.Schema.Sql.SqlManagedInstanceDatabaseSchemaProvider'), 'SqlManagedInstance → Azure SQL Managed Instance').toBe('Azure SQL Managed Instance');
-  expect(parseDspPlatform('Microsoft.Data.Tools.Schema.Sql.SqlHyperscaleDatabaseSchemaProvider'), 'SqlHyperscale → Azure SQL Hyperscale').toBe('Azure SQL Hyperscale');
-  expect(parseDspPlatform('Microsoft.Data.Tools.Schema.Sql.SqlAzureV12DatabaseSchemaProvider'), 'SqlAzureV12 → Azure SQL Database').toBe('Azure SQL Database');
-
-  const onPremCases: [string, string][] = [
-    ['Microsoft.Data.Tools.Schema.Sql.Sql170DatabaseSchemaProvider', 'SQL Server 2025'],
-    ['Microsoft.Data.Tools.Schema.Sql.Sql130DatabaseSchemaProvider', 'SQL Server 2016'],
-    ['Microsoft.Data.Tools.Schema.Sql.Sql80DatabaseSchemaProvider',  'SQL Server 2000'],
-  ];
-  for (const [dsp, expected] of onPremCases) {
-    expect(parseDspPlatform(dsp), `${dsp.split('.').pop()} → ${expected}`).toBe(expected);
-  }
-
-  expect(parseDspPlatform('SqlAzureV12DatabaseSchemaProvider'), 'Bare SqlAzureV12 still matches').toBe('Azure SQL Database');
-
-  expect(parseDspPlatform('Vendor.MyTool.Schema.SqlFutureDatabaseSchemaProvider'), 'Unknown provider: extract readable part before DatabaseSchemaProvider').toBe('SqlFuture');
-
-  expect(parseDspPlatform('some-unknown-provider'), 'Completely unknown: return raw string').toBe('some-unknown-provider');
-}
-
-
-async function testDbPlatformInModel() {
-
-  const awModel = await loadAdventureWorksModel();
-  expect(awModel.dbPlatform, 'AdventureWorks dacpac: dbPlatform = SQL Server 2025').toBe('SQL Server 2025');
-
-  const fabricBuf = readFileSync(testPath('AdventureWorks_sdk-style.dacpac'));
-  const fabricModel = await extractDacpac(fabricBuf);
-  expect(fabricModel.dbPlatform, 'SDK-style dacpac: dbPlatform = Fabric Data Warehouse').toBe('Fabric Data Warehouse');
-
-  const awBuf = readFileSync(testPath('AdventureWorks2025_AI.dacpac'));
-  const { elements, dspName } = await extractSchemaPreview(awBuf);
-  expect(dspName.includes('Sql170'), `Phase 1 dspName contains Sql170 (got: "${dspName}")`).toBe(true);
-  const filteredModel = extractDacpacFiltered(elements, new Set(['HumanResources', 'Person']), dspName);
-  expect(filteredModel.dbPlatform, 'Phase 2 filtered model: dbPlatform preserved from dspName').toBe('SQL Server 2025');
-
-  const filteredNoPlat = extractDacpacFiltered(elements, new Set(['HumanResources']));
-  expect(filteredNoPlat.dbPlatform === undefined || filteredNoPlat.dbPlatform === '',
-    'Phase 2 without dspName: dbPlatform absent').toBe(true);
-
-  expect(awModel.source, 'Full dacpac extract: source = dacpac').toBe('dacpac');
-  expect(fabricModel.source, 'SDK-style dacpac: source = dacpac').toBe('dacpac');
-  expect(filteredModel.source, 'Phase 2 filtered dacpac: source = dacpac').toBe('dacpac');
-  expect(filteredNoPlat.source,
-    'Phase 2 dacpac without platform: source still dacpac, not inferred from dbPlatform').toBe('dacpac');
-}
-
-
-async function testPkOrdinalInModel() {
-  const model = await loadAdventureWorksModel();
-
-  const employee = model.nodes.find(n => n.schema === 'HumanResources' && n.name === 'Employee');
-  expect(employee !== undefined, 'HumanResources.Employee found').toBe(true);
-  const beid = employee!.columns?.find(c => c.name === 'BusinessEntityID');
-  expect(beid !== undefined, 'BusinessEntityID column found').toBe(true);
-  expect(beid!.pkOrdinal, 'BusinessEntityID: pkOrdinal = 1 (single PK)').toBe(1);
-
-  const natId = employee!.columns?.find(c => c.name === 'NationalIDNumber');
-  expect(natId !== undefined, 'NationalIDNumber column found').toBe(true);
-  expect(natId!.pkOrdinal === undefined, 'NationalIDNumber: no pkOrdinal (not a PK column)').toBe(true);
-
-  const compositePkTable = model.nodes.find(n =>
-    n.type === 'table' &&
-    n.columns !== undefined &&
-    n.columns.filter(c => c.pkOrdinal !== undefined).length >= 2,
-  );
-  expect(compositePkTable !== undefined, 'At least one table with composite PK found').toBe(true);
-  const pkCols = compositePkTable!.columns!.filter(c => c.pkOrdinal !== undefined);
-  const ordinals = pkCols.map(c => c.pkOrdinal!).sort((a, b) => a - b);
-  expect(ordinals[0], `Composite PK: first ordinal is 1 (table: ${compositePkTable!.name})`).toBe(1);
-  expect(ordinals[1], `Composite PK: second ordinal is 2 (table: ${compositePkTable!.name})`).toBe(2);
-  expect(ordinals.every((v, i) => v === i + 1), 'Composite PK: ordinals are 1-based and sequential').toBe(true);
-
-  const anyView = model.nodes.find(n => n.type === 'view' && n.columns !== undefined);
-  if (anyView) {
-    const viewPkCols = anyView.columns!.filter(c => c.pkOrdinal !== undefined);
-    expect(viewPkCols.length, `View ${anyView.name}: no pkOrdinal columns (views have no PK)`).toBe(0);
-  }
-
-  const anyProc = model.nodes.find(n => n.type === 'procedure');
-  expect(anyProc !== undefined, 'At least one procedure found').toBe(true);
-  const procPkCols = anyProc!.columns?.filter(c => c.pkOrdinal !== undefined) ?? [];
-  expect(procPkCols.length, 'Procedure: no pkOrdinal columns').toBe(0);
-}
-
-
-async function testPhase1Phase2Bridge() {
-
-  const buf = readFileSync(testPath('AdventureWorks2025_AI.dacpac'));
-  const { preview, elements, dspName } = await extractSchemaPreview(buf);
-
-  expect(preview.schemas.length > 0, 'Phase 1: schemas list populated').toBe(true);
-  expect(preview.totalObjects > 0, 'Phase 1: totalObjects > 0').toBe(true);
-  expect(typeof dspName === 'string' && dspName.length > 0, 'Phase 1: dspName is non-empty string').toBe(true);
-
-  expect(Array.isArray(elements) && elements.length > 0, 'Phase 1: elements array non-empty (bridge cache)').toBe(true);
-
-  const allSchemas = new Set(preview.schemas.map(s => s.name));
-  const phase2Model = extractDacpacFiltered(elements, allSchemas, dspName);
-  const fullModel = await loadAdventureWorksModel();
-
-  expect(phase2Model.nodes.length,
-    `Phase 2 with all schemas: same node count as full extract (${fullModel.nodes.length})`).toBe(fullModel.nodes.length);
-  expect(phase2Model.edges.length,
-    `Phase 2 with all schemas: same edge count as full extract (${fullModel.edges.length})`).toBe(fullModel.edges.length);
-  expect(phase2Model.dbPlatform,
-    'Phase 2: dbPlatform matches full extract').toBe(fullModel.dbPlatform);
-
-  const hrOnly = extractDacpacFiltered(elements, new Set(['HumanResources']), dspName);
-  expect(hrOnly.nodes.length < fullModel.nodes.length,
-    'Phase 2 schema subset: fewer nodes than full model').toBe(true);
-  expect(hrOnly.nodes.every(n => n.schema === 'HumanResources' || n.externalType !== undefined),
-    'Phase 2 schema subset: only HumanResources nodes (+ virtual externals)').toBe(true);
-  expect(hrOnly.dbPlatform,
-    'Phase 2 schema subset: dbPlatform still set from dspName').toBe('SQL Server 2025');
-
-  const emptyModel = extractDacpacFiltered(elements, new Set(), dspName);
-  expect(emptyModel.nodes.length, 'Phase 2 empty schema set: 0 nodes (no crash)').toBe(0);
-}
-
-
-/** Builds an in-memory dacpac whose single table exercises entity-encoded names, `IsMax` types and a `sys`-qualified CLR type. */
-async function makeNameAndTypeDacpac(): Promise<Uint8Array> {
-  const JSZip = (await import('jszip')).default;
-  const zip = new JSZip();
-  const column = (name: string, type: string, props = '') => `
-        <Entry><Element Type="SqlSimpleColumn" Name="[my schema].[r&amp;d &lt;t&gt;].[${name}]">
-          <Relationship Name="TypeSpecifier"><Entry><Element Type="SqlTypeSpecifier">${props}
-            <Relationship Name="Type"><Entry><References ExternalSource="BuiltIns" Name="${type}" /></Entry></Relationship>
-          </Element></Entry></Relationship>
-        </Element></Entry>`;
-  zip.file('model.xml', `<?xml version="1.0"?>
-    <DataSchemaModel DspName="Microsoft.Data.Tools.Schema.Sql.Sql160DatabaseSchemaProvider">
-      <Model>
-        <Element Type="SqlTable" Name="[my schema].[r&amp;d &lt;t&gt;]">
-          <Relationship Name="Columns">${column('say &quot;hi&quot;', '[int]')}${column('vc', '[varchar]', '<Property Name="IsMax" Value="True" />')}${column('nv', '[nvarchar]', '<Property Name="IsMax" Value="True" />')}${column('vb', '[varbinary]', '<Property Name="IsMax" Value="True" />')}${column('n50', '[nvarchar]', '<Property Name="Length" Value="50" />')}${column('g', '[sys].[geography]')}${column('bad&#0;x&#xD800;y', '[int]')}
-          </Relationship>
-        </Element>
-      </Model>
-    </DataSchemaModel>`);
-  return zip.generateAsync({ type: 'uint8array' });
-}
-
-async function testNamesAndTypesRoundTrip() {
-  const model = await extractDacpac(await makeNameAndTypeDacpac());
-  const table = model.nodes.find(n => n.type === 'table');
-  expect(table?.name, 'XML entities in an object name are decoded').toBe('r&d <t>');
-  expect(table?.schema).toBe('my schema');
-  const byName = new Map((table?.columns ?? []).map(c => [c.name, c.type]));
-  expect([...byName.keys()], 'XML entities in a column name are decoded').toContain('say "hi"');
-  expect(byName.get('vc'), 'IsMax keeps (max) on varchar').toBe('varchar(max)');
-  expect(byName.get('nv'), 'IsMax keeps (max) on nvarchar').toBe('nvarchar(max)');
-  expect(byName.get('vb'), 'IsMax keeps (max) on varbinary').toBe('varbinary(max)');
-  expect(byName.get('n50'), 'a declared length is untouched').toBe('nvarchar(50)');
-  expect(byName.get('g'), 'a sys-qualified CLR type reads as its bare name').toBe('geography');
-  expect([...byName.keys()], 'a reference to a code point XML forbids decodes to U+FFFD').toContain('bad\uFFFDx\uFFFDy');
-}
-
-
-async function testDacpacExtractionOptions() {
-  const buffer = await makeExternalRefDacpac();
-
-  const enabled = await extractDacpac(buffer, undefined, undefined, { externalRefsEnabled: true });
-  expect(enabled.nodes.some(n => n.type === 'external' && n.externalType === 'file'),
-    'Full extract: externalRefsEnabled=true creates virtual file node').toBe(true);
-
-  const disabled = await extractDacpac(buffer, undefined, undefined, { externalRefsEnabled: false });
-  expect(!disabled.nodes.some(n => n.type === 'external' && n.externalType === 'file'),
-    'Full extract: externalRefsEnabled=false suppresses virtual file node').toBe(true);
-
-  const { elements, dspName } = await extractSchemaPreview(buffer);
-  const filteredEnabled = extractDacpacFiltered(elements, new Set(['dbo']), dspName, undefined, undefined, {
-    externalRefsEnabled: true,
+    </DataSchemaModel>`,
+      );
+      const model = await extractDacpac(
+        await zip.generateAsync({ type: 'arraybuffer' }),
+      );
+      expect({ nodes: model.nodes, warnings: model.warnings }).toEqual({
+        nodes: [],
+        warnings: [
+          'No tables, views, or stored procedures found in this file.',
+        ],
+      });
+    });
   });
-  expect(filteredEnabled.nodes.some(n => n.type === 'external' && n.externalType === 'file'),
-    'Filtered extract: externalRefsEnabled=true creates virtual file node').toBe(true);
 
-  const filteredDisabled = extractDacpacFiltered(elements, new Set(['dbo']), dspName, undefined, undefined, {
-    externalRefsEnabled: false,
-  });
-  expect(!filteredDisabled.nodes.some(n => n.type === 'external' && n.externalType === 'file'),
-    'Filtered extract: externalRefsEnabled=false suppresses virtual file node').toBe(true);
-}
-
-
-/**
- * Covers the `allObjects`-defined branch of `buildModel` — `buildCatalog(allObjects ?? objects)`
- * and `buildFullCatalog(allObjects)`.
- *
- * The DMV lane does not supply `allObjects`, so the DACPAC lane is the only producer of a catalog
- * wider than the rendered node set — this is the sole coverage for that branch. Asserts that an
- * object outside the selected schemas is still resolvable for display and still reachable
- * through `neighborIndex`, without being rendered as a node.
- */
-async function testCrossSchemaCatalogUnderFilter() {
-
-  const buf = readFileSync(testPath('AdventureWorks2025_AI.dacpac'));
-  const { elements } = await extractSchemaPreview(buf);
-  const model = extractDacpacFiltered(elements, new Set(['HumanResources']));
-
-  expect(model.nodes.length > 0, 'Filtered model has nodes').toBe(true);
-  expect(model.nodes.every(n => n.schema === 'HumanResources'),
-    'Only HumanResources nodes rendered').toBe(true);
-
-  const renderedIds = new Set(model.nodes.map(n => n.id));
-  const outOfFilter = Object.entries(model.catalog).filter(([id]) => !renderedIds.has(id));
-  expect(outOfFilter.length > 0,
-    `Catalog retains objects outside the filter (got ${outOfFilter.length})`).toBe(true);
-
-  const [, sampleEntry] = outOfFilter[0];
-  expect(typeof sampleEntry.schema === 'string' && sampleEntry.schema.length > 0,
-    `Out-of-filter catalog entry has a schema (got: ${JSON.stringify(sampleEntry.schema)})`).toBe(true);
-  expect(typeof sampleEntry.name === 'string' && sampleEntry.name.length > 0,
-    `Out-of-filter catalog entry has a name (got: ${JSON.stringify(sampleEntry.name)})`).toBe(true);
-  expect(['table', 'view', 'procedure', 'function', 'external'].includes(sampleEntry.type),
-    `Out-of-filter catalog entry has a valid type (got: ${sampleEntry.type})`).toBe(true);
-  expect(outOfFilter.some(([, e]) => e.schema !== e.schema.toLowerCase()),
-    'At least one out-of-filter entry preserves mixed-case schema/name from the catalog').toBe(true);
-
-  const crossRefs = Object.entries(model.neighborIndex)
-    .filter(([id]) => renderedIds.has(id))
-    .flatMap(([id, nb]) => nb.out.filter(t => !renderedIds.has(t)).map(t => [id, t] as const));
-  expect(crossRefs.length > 0,
-    `Rendered nodes keep out-edges to out-of-filter objects (got ${crossRefs.length})`).toBe(true);
-
-  const [sourceId, targetId] = crossRefs[0];
-  expect(model.catalog[targetId] !== undefined,
-    `Out-of-filter neighbor ${targetId} is resolvable in the catalog`).toBe(true);
-  expect(model.neighborIndex[targetId]?.in.includes(sourceId),
-    `Reverse neighbor entry: ${targetId}.in includes ${sourceId}`).toBe(true);
-}
-
-
-/**
- * Builds a dacpac whose property values carry the five predefined XML entities, a numeric
- * character reference, and a double-escaped `&amp;lt;`, plus a CDATA body whose literal
- * entity-like text must be served verbatim.
- */
-async function makeEntityDacpac(): Promise<Uint8Array> {
-  const JSZip = (await import('jszip')).default;
-  const zip = new JSZip();
-  zip.file('model.xml', `<?xml version="1.0"?>
-    <DataSchemaModel DspName="Microsoft.Data.Tools.Schema.Sql.Sql160DatabaseSchemaProvider">
-      <Model>
-        <Element Type="SqlProcedure" Name="[dbo].[spHeader]">
-          <Property Name="BodyScript">
-            <Value><![CDATA[BEGIN SELECT '&lt;kept&gt; &#x41;' AS Raw END]]></Value>
-          </Property>
-          <Annotation Type="SysCommentsObjectAnnotation">
-            <Property Name="HeaderContents" Value="-- age &lt; 7 days &amp;&amp; qty &gt; 0, &quot;q&quot; &apos;a&apos;&#xA;-- literal &amp;lt;tag&amp;gt; &#65; &#38;lt;" />
-          </Annotation>
-        </Element>
-        <Element Type="SqlView" Name="[dbo].[vText]">
-          <Property Name="QueryScript">
-            <Value>SELECT 1 AS a WHERE 2 &gt; 1 AND 'x' &lt;&gt; 'y'</Value>
-          </Property>
-        </Element>
-      </Model>
-    </DataSchemaModel>`);
-  return zip.generateAsync({ type: 'uint8array' });
-}
-
-async function testPredefinedEntityDecoding() {
-  const model = await extractDacpac(await makeEntityDacpac());
-  const proc = model.nodes.find(n => n.name === 'spHeader');
-  const view = model.nodes.find(n => n.name === 'vText');
-  expect(proc?.bodyScript).toBeDefined();
-  expect(proc!.bodyScript!.startsWith(
-    `-- age < 7 days && qty > 0, "q" 'a'\n-- literal &lt;tag&gt; A &lt;\nBEGIN`,
-  ), 'HeaderContents attribute value is XML-decoded once').toBe(true);
-  expect(proc!.bodyScript!.includes(`SELECT '&lt;kept&gt; &#x41;' AS Raw`),
-    'CDATA body is served verbatim, never entity-decoded').toBe(true);
-  expect(view?.bodyScript?.includes(`WHERE 2 > 1 AND 'x' <> 'y'`),
-    'Element text value is XML-decoded').toBe(true);
-}
-
-
-/** A declared-type column element for the computed-column fixture. */
-function simpleColumnXml(owner: string, name: string, type: string): string {
-  return `<Entry><Element Type="SqlSimpleColumn" Name="${owner}.[${name}]">
-    <Relationship Name="TypeSpecifier"><Entry><Element Type="SqlTypeSpecifier">
-      <Relationship Name="Type"><Entry><References ExternalSource="BuiltIns" Name="[${type}]" /></Entry></Relationship>
-    </Element></Entry></Relationship>
-  </Element></Entry>`;
-}
-
-/** A computed column element with an optional ExpressionScript and its ExpressionDependencies. */
-function computedColumnXml(owner: string, name: string, script: string | undefined, deps: string[]): string {
-  const scriptXml = script === undefined ? '' : `<Property Name="ExpressionScript"><Value><![CDATA[${script}]]></Value></Property>`;
-  const depsXml = deps.length === 0 ? '' : `<Relationship Name="ExpressionDependencies">${
-    deps.map(d => `<Entry><References Name="${d}" /></Entry>`).join('')}</Relationship>`;
-  return `<Entry><Element Type="SqlComputedColumn" Name="${owner}.[${name}]">${scriptXml}${depsXml}</Element></Entry>`;
-}
-
-/**
- * Builds a dacpac with a table whose computed columns are bare references or expressions, and a
- * view whose columns (no ExpressionScript, as DacFx emits them) each read one table column.
- */
-async function makeComputedColumnDacpac(): Promise<Uint8Array> {
-  const JSZip = (await import('jszip')).default;
-  const zip = new JSZip();
-  const t = '[dbo].[OrderLine]';
-  const v = '[dbo].[vOrderLine]';
-  zip.file('model.xml', `<?xml version="1.0"?>
-    <DataSchemaModel DspName="Microsoft.Data.Tools.Schema.Sql.Sql160DatabaseSchemaProvider">
-      <Model>
-        <Element Type="SqlTable" Name="${t}">
-          <Relationship Name="Columns">
-            ${simpleColumnXml(t, 'Qty', 'int')}
-            ${simpleColumnXml(t, 'Price', 'money')}
-            ${computedColumnXml(t, 'QtyBracketed', '([Qty])', [`${t}.[Qty]`])}
-            ${computedColumnXml(t, 'QtyBare', 'Qty', [`${t}.[Qty]`])}
-            ${computedColumnXml(t, 'QtyNested', '(( [Price] ))', [`${t}.[Price]`])}
-            ${computedColumnXml(t, 'QtyDoubled', '([Qty]*(2))', [`${t}.[Qty]`])}
-            ${computedColumnXml(t, 'QtyText', '(CONVERT([varchar](10),[Qty]))', [`${t}.[Qty]`])}
-            ${computedColumnXml(t, 'LineTotal', '([Qty]*[Price])', [`${t}.[Qty]`, `${t}.[Price]`])}
-          </Relationship>
-        </Element>
-        <Element Type="SqlView" Name="${v}">
-          <Property Name="QueryScript"><Value><![CDATA[SELECT Qty, CAST(Price AS varchar(20)) AS PriceText FROM dbo.OrderLine]]></Value></Property>
-          <Relationship Name="Columns">
-            ${computedColumnXml(v, 'Qty', undefined, [`${t}.[Qty]`])}
-            ${computedColumnXml(v, 'PriceText', undefined, [`${t}.[Price]`])}
-          </Relationship>
-        </Element>
-      </Model>
-    </DataSchemaModel>`);
-  return zip.generateAsync({ type: 'uint8array' });
-}
-
-async function testComputedColumnTypeBorrowing() {
-  const model = await extractDacpac(await makeComputedColumnDacpac());
-  const typeOf = (node: string, column: string) =>
-    model.nodes.find(n => n.name === node)?.columns?.find(c => c.name === column)?.type;
-  expect(typeOf('OrderLine', 'QtyBracketed'), 'bracketed bare reference borrows').toBe('int');
-  expect(typeOf('OrderLine', 'QtyBare'), 'unbracketed bare reference borrows').toBe('int');
-  expect(typeOf('OrderLine', 'QtyNested'), 'bare reference under nested parentheses borrows').toBe('money');
-  expect(typeOf('OrderLine', 'QtyDoubled'), 'arithmetic on one column does not borrow').toBe('—');
-  expect(typeOf('OrderLine', 'QtyText'), 'CONVERT of one column does not borrow').toBe('—');
-  expect(typeOf('OrderLine', 'LineTotal'), 'expression over two columns does not borrow').toBe('—');
-  expect(typeOf('vOrderLine', 'Qty'), 'view column with no ExpressionScript does not borrow').toBe('—');
-  expect(typeOf('vOrderLine', 'PriceText'), 'view expression column does not borrow').toBe('—');
-}
-
-  it('extracts the AdventureWorks model', async () => { await testExtraction(); });
-  it('gives a computed column a type only when its expression is a bare column reference', testComputedColumnTypeBorrowing);
-  it('derives the expected edges for named AdventureWorks procedures', async () => {
-    await testNamedProcedureEdges();
-  });
-  it('preserves edge integrity', async () => {
-    await testEdgeIntegrity(await loadAdventureWorksModel());
-  });
-  it('extracts Fabric DACPACs', testFabricDacpac);
-  it('handles numeric XML entities safely', testNumericEntitySecurity);
-  it('decodes predefined XML entities in served text, never inside CDATA', testPredefinedEntityDecoding);
-  it('reports import errors', testImportErrorHandling);
-  it('extracts constraints', testConstraints);
-  it('keeps the FK delete action and dotted column names', testFkDeleteActionAndDottedColumns);
-  it('maps DSP platforms', testParseDspPlatform);
-  it('records database platforms in the model', testDbPlatformInModel);
-  it('records primary-key ordinals', testPkOrdinalInModel);
-  it('bridges phase-one and phase-two extraction', testPhase1Phase2Bridge);
-  it('retains the cross-schema catalog under filtering', testCrossSchemaCatalogUnderFilter);
-  it('honors DACPAC extraction options', testDacpacExtractionOptions);
-  it('decodes entity-encoded names and keeps (max) and CLR type names', testNamesAndTypesRoundTrip);
-
-  it('extracts from a byte view at a nonzero offset', async () => {
-    const file = readFileSync(testPath('AdventureWorks_sdk-style.dacpac'));
-    const padded = new Uint8Array(64 * 1024);
-    padded.set(file, 104);
-    const model = await extractDacpac(padded.subarray(104, 104 + file.length));
-    expect(model.nodes.length > 0, `Offset view extracts ${model.nodes.length} nodes`).toBe(true);
+  it.each([
+    ['', ''],
+    [
+      'Microsoft.Data.Tools.Schema.Sql.SqlDwUnifiedDatabaseSchemaProvider',
+      'Fabric Data Warehouse',
+    ],
+    [
+      'Microsoft.Data.Tools.Schema.Sql.SqlDbFabricDatabaseSchemaProvider',
+      'SQL Database in Fabric',
+    ],
+    [
+      'Microsoft.Data.Tools.Schema.Sql.SqlDwDatabaseSchemaProvider',
+      'Synapse Dedicated Pool',
+    ],
+    [
+      'Microsoft.Data.Tools.Schema.Sql.SqlManagedInstanceDatabaseSchemaProvider',
+      'Azure SQL Managed Instance',
+    ],
+    [
+      'Microsoft.Data.Tools.Schema.Sql.SqlHyperscaleDatabaseSchemaProvider',
+      'Azure SQL Hyperscale',
+    ],
+    [
+      'Microsoft.Data.Tools.Schema.Sql.SqlAzureV12DatabaseSchemaProvider',
+      'Azure SQL Database',
+    ],
+    [
+      'Microsoft.Data.Tools.Schema.Sql.Sql170DatabaseSchemaProvider',
+      'SQL Server 2025',
+    ],
+    [
+      'Microsoft.Data.Tools.Schema.Sql.Sql130DatabaseSchemaProvider',
+      'SQL Server 2016',
+    ],
+    [
+      'Microsoft.Data.Tools.Schema.Sql.Sql80DatabaseSchemaProvider',
+      'SQL Server 2000',
+    ],
+    ['SqlAzureV12DatabaseSchemaProvider', 'Azure SQL Database'],
+    // Unknown provider: the readable part before DatabaseSchemaProvider.
+    ['Vendor.MyTool.Schema.SqlFutureDatabaseSchemaProvider', 'SqlFuture'],
+    ['some-unknown-provider', 'some-unknown-provider'],
+  ])('maps DSP provider name %j to platform label %j', (dsp, expected) => {
+    expect(parseDspPlatform(dsp)).toBe(expected);
   });
 });

@@ -1,53 +1,84 @@
-/**
- * Identifier-normalization tests for `src/utils/sql.ts`: the delimiter strip and the qualified-name
- * split must agree with T-SQL, where `]]` inside a bracketed name is one literal `]`.
- */
+/** Identifier-normalization tests for `src/utils/sql.ts`: the delimiter strip and the qualified-name split must agree with T-SQL, where `]]` inside a bracketed name is one literal `]`. */
 import { describe, expect, it } from 'vitest';
 import { splitSqlName, stripBrackets } from '../../../src/utils/sql';
+import { sqlIdentifierComparisonKey } from '../../../src/engine/shared/sqlIdentifier';
+
+describe('sqlIdentifierComparisonKey', () => {
+  it.each(['[]', '""', '[].x', 'x.[]', '"".x', 'x.""', '[a]..[b]'])(
+    'rejects empty qualified identifier parts: %s',
+    (input) => {
+      expect(sqlIdentifierComparisonKey(input)).toBeNull();
+    },
+  );
+  // The key is opaque, so expected values are other spellings of the same
+  // T-SQL identity: an escaped delimiter is one literal character, so the
+  // bracketed and the double-quoted spelling of each name must agree.
+  it.each([
+    ['[a]]b]', '"a]b"'],
+    ['"a""b"', '[a"b]'],
+    ['[]]]', '"]"'],
+    ['""""', '["]'],
+    ['[dbo].[a]]b]', 'dbo."a]b"'],
+  ])(
+    'reads escaped delimiters as identifier content: %s is %s',
+    (escaped, other) => {
+      const key = sqlIdentifierComparisonKey(escaped);
+      expect(key).not.toBeNull();
+      expect(key).toBe(sqlIdentifierComparisonKey(other));
+    },
+  );
+  it.each([
+    ['[a]]b]', '[ab]'],
+    ['[a]]b]', '[a].[b]'],
+    ['"a""b"', '"ab"'],
+    ['[a.b]', '[a].[b]'],
+  ])(
+    'keeps an escaped delimiter or a dot as content distinct: %s is not %s',
+    (left, right) => {
+      expect(sqlIdentifierComparisonKey(left)).not.toBe(
+        sqlIdentifierComparisonKey(right),
+      );
+    },
+  );
+  it('ignores delimiters, outside whitespace and case only where the source allows', () => {
+    expect(sqlIdentifierComparisonKey('[dbo].[Foo]')).toBe(
+      sqlIdentifierComparisonKey(' dbo . foo '),
+    );
+    expect(sqlIdentifierComparisonKey('[dbo].[Foo]', true)).not.toBe(
+      sqlIdentifierComparisonKey('dbo.foo', true),
+    );
+    expect(sqlIdentifierComparisonKey('[dbo].[Foo]', true)).toBe(
+      sqlIdentifierComparisonKey('"dbo"."Foo"', true),
+    );
+  });
+});
 
 describe('stripBrackets', () => {
-  it('unwraps a plain bracketed identifier', () => {
-    expect(stripBrackets('[a]')).toBe('a');
-  });
-
-  it('unescapes a doubled bracket to the single literal character', () => {
-    expect(stripBrackets('[a]]b]')).toBe('a]b');
-  });
-
-  it('unwraps every part of a qualified name', () => {
-    expect(stripBrackets('[dbo].[Table]')).toBe('dbo.Table');
-    expect(stripBrackets('[dbo].[a]]b]')).toBe('dbo.a]b');
-  });
-
-  it('unwraps double-quoted identifiers and leaves undelimited text alone', () => {
-    expect(stripBrackets('"dbo"."Table"')).toBe('dbo.Table');
-    expect(stripBrackets('dbo.Table')).toBe('dbo.Table');
-  });
-
-  it('unescapes a doubled quote to the single literal character', () => {
-    expect(stripBrackets('"a""b"')).toBe('a"b');
-  });
-
-  it('drops stray delimiters from an unbalanced name', () => {
-    expect(stripBrackets('dbo].[Table')).toBe('dbo.Table');
+  it.each([
+    ['[a]', 'a'],
+    ['[a]]b]', 'a]b'],
+    ['[dbo].[Table]', 'dbo.Table'],
+    ['[dbo].[a]]b]', 'dbo.a]b'],
+    ['"dbo"."Table"', 'dbo.Table'],
+    ['"a""b"', 'a"b'],
+    ['dbo.Table', 'dbo.Table'],
+    // Stray delimiters of an unbalanced name are dropped.
+    ['dbo].[Table', 'dbo.Table'],
+  ])('unwraps %s to %s, unescaping doubled delimiters', (input, expected) => {
+    expect(stripBrackets(input)).toBe(expected);
   });
 });
 
 describe('splitSqlName', () => {
-  it('keeps a doubled bracket inside the part it belongs to', () => {
-    expect(splitSqlName('[dbo].[a]]b]')).toEqual(['[dbo]', '[a]]b]']);
-  });
-
-  it('does not split on a dot that follows an escaped bracket inside a name', () => {
-    expect(splitSqlName('[dbo].[a]].b]')).toEqual(['[dbo]', '[a]].b]']);
-  });
-
-  it('splits an ordinary qualified name', () => {
-    expect(splitSqlName('[schema].[obj.with.dot]')).toEqual(['[schema]', '[obj.with.dot]']);
-    expect(splitSqlName('db.schema.obj')).toEqual(['db', 'schema', 'obj']);
-  });
-
-  it('does not close a quoted identifier at an escaped quote', () => {
-    expect(splitSqlName('"dbo"."a""b"')).toEqual(['"dbo"', '"a""b"']);
+  it.each([
+    ['[dbo].[a]]b]', ['[dbo]', '[a]]b]']],
+    // A dot after an escaped bracket stays inside the name.
+    ['[dbo].[a]].b]', ['[dbo]', '[a]].b]']],
+    ['[schema].[obj.with.dot]', ['[schema]', '[obj.with.dot]']],
+    ['db.schema.obj', ['db', 'schema', 'obj']],
+    // An escaped quote does not close a quoted identifier.
+    ['"dbo"."a""b"', ['"dbo"', '"a""b"']],
+  ])('splits %s into %j', (input, parts) => {
+    expect(splitSqlName(input)).toEqual(parts);
   });
 });

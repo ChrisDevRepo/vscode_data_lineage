@@ -1,62 +1,17 @@
-/**
- * AI Memory Manager — per-hop working memory for the navigation engine.
- *
- * @remarks
- * Stores high-fidelity per-node analysis (`DetailSlot`). On every hop the manager
- * emits a {@link WorkingMemory} snapshot containing the user's original question,
- * a sliding window of recent node summaries (incremental loading), and progress
- * metrics. Emission is state-machine-driven — the full detail archive remains
- * internal until synthesis to prevent context bloat.
- */
+/** AI Memory Manager — per-hop working memory for the navigation engine. */
 
 import type { LineageNode } from '../../engine/types';
 
-/**
- * Node summaries carried forward in the `<short_term_memory>` window.
- *
- * @remarks
- * Three because the window exists to show how the *immediately preceding* hops connect; the full
- * detail archive stays internal until synthesis, so widening this trades prompt budget for context
- * the model already committed to engine memory.
- */
+/** Node summaries carried forward in the `<short_term_memory>` window. */
 const RECENT_SUMMARY_WINDOW = 3;
 
-/**
- * Depth of the recent-rejection ring replayed to the active worker.
- *
- * @remarks
- * Five because the ring exists for self-correction on the *current* routing attempt; rejections
- * older than that describe routes the engine has already moved past and only crowd the prompt.
- */
+/** Depth of the recent-rejection ring replayed to the active worker. */
 const MAX_RECENT_REJECTIONS = 5;
 
+/** Angle of a captured section — drives YAML render-rule selection at synthesis. */
+type CaptureAngle = 'business' | 'technical';
 
-/**
- * Angle of a captured section — drives YAML render-rule selection at synthesis.
- *
- * @remarks
- * The locked classification (`business | technical | both`) dictates which angles
- * are required at capture time:
- * - `business` → at least one section with `angle: 'business'`
- * - `technical` → at least one section with `angle: 'technical'`
- * - `both` → at least one section of each angle
- * Mechanically enforced two ways per the agreement-phase classification contract: the
- * per-dispatch `submit_findings` schema (`tools/toolSchemas.ts` `submitFindingsSchemaForMode`)
- * narrows the advertised `angle` enum to the locked angle(s) so an off-lock angle cannot be
- * authored at all, and `interaction/rules/submitFindingsRules.validateSectionsAgainstClassification`
- * checks the locked angle(s) are present.
- */
-export type CaptureAngle = 'business' | 'technical';
-
-/**
- * One captured section within a `DetailSlot` — output of one fired `*_capture` template.
- *
- * @remarks
- * Each `business_capture` / `technical_capture` YAML key produces ONE entry with the
- * matching angle. Body text arrives pre-formatted from active phase and is lifted
- * verbatim by synthesis as a peer entry in `present_result.sections[]` (NOT as a
- * nested subheading inside another section).
- */
+/** One captured section within a `DetailSlot` — output of one fired `*_capture` template. */
 export interface CapturedSection {
   /** Which YAML capture template produced this section. */
   angle: CaptureAngle;
@@ -64,52 +19,77 @@ export interface CapturedSection {
   text: string;
 }
 
-/**
- * High-fidelity analysis for a single visited node.
- *
- * @remarks
- * Populated during the hop loop by `AiMemoryManager.storeDetail`. Remains at full
- * fidelity for the entire session and is exposed in `getResult()` so the synthesis
- * step can render every archived slot verbatim.
- */
+/** High-fidelity analysis for a single visited node. */
 export interface DetailSlot {
-  /** Node identifier. */
   nodeId: string;
   /** Schema of the database object. */
   schema: string;
-  /** Object name. */
   name: string;
   /** Object type (e.g. 'table', 'view', 'procedure'). */
   type: string;
   /**
-   * Captured sections — one per fired `*_capture` template. The locked
-   * classification defines required angles; optional extra valid angle sections
-   * may also be stored.
-   *
-   * @remarks
-   * Synthesis lifts each section verbatim into `present_result.sections[]` as a
-   * peer entry (groupable across nodes for sibling-variant tables). The capture
-   * vs synthesis split is mechanical: the AI writes per-node sections at active
-   * phase; synthesis groups across nodes.
+   * Captured sections — one per fired `*_capture` template. The locked classification defines
+   * required angles; optional extra valid angle sections may also be stored.
    */
   sections: CapturedSection[];
-  /** One-line digest of the whole node (across both angles when both fire), shared across hops via `short_term_memory`. */
+  /**
+   * One-line digest of the whole node (across both angles when both fire), shared across hops via
+   * `short_term_memory`.
+   */
   summary: string;
   /** Optional hop-time role hint for synthesis; not rendered directly. */
   badge_label?: string;
-  /** The specific reason or question that triggered the analysis of this node. */
+  /**
+   * Every non-blank sub-question the hop was dispatched with, verbatim, with the node whose hop
+   * asked it when the task ledger records one. Revisits append; nothing is replaced.
+   */
+  incoming_questions?: IncomingQuestion[];
+  /** Read from old snapshots only. */
   reason_for_visit?: string;
+  /** True for an automatic placeholder slot (e.g. storage traversed without a model call). */
+  is_placeholder?: boolean;
 }
 
-
 /**
- * Snapshot of the memory state delivered to the model at every navigation hop.
- *
- * @remarks
- * The user question is echoed verbatim and a sliding window of prior findings is
- * exposed through `short_term_memory`. The model receives the immediate
- * investigation context each hop.
+ * Canonical summary string assigned to storage tables traversed automatically without a model call.
  */
+export const STORAGE_TRAVERSED_PLACEHOLDER_SUMMARY =
+  'Storage object traversed without inferring a column mapping.';
+
+function isPlaceholderDetailSlot(slot: DetailSlot): boolean {
+  return (
+    slot.is_placeholder ??
+    ((slot.type === 'table' || slot.type === 'external') &&
+      slot.summary === STORAGE_TRAVERSED_PLACEHOLDER_SUMMARY)
+  );
+}
+
+/** One sub-question a hop was dispatched with. */
+export interface IncomingQuestion {
+  /** The question text as the hop received it. */
+  question: string;
+  /** Node whose hop asked the question; absent when the ledger records no asking hop. */
+  from_node?: string;
+}
+
+/** Appends `incoming` questions not already present by exact sender and trimmed text. */
+function appendUniqueQuestions(
+  earlier: readonly IncomingQuestion[],
+  incoming: readonly IncomingQuestion[],
+): IncomingQuestion[] {
+  const key = (q: IncomingQuestion): string =>
+    JSON.stringify([q.from_node ?? '', q.question.trim()]);
+  const seen = new Set(earlier.map(key));
+  const merged = [...earlier];
+  for (const q of incoming) {
+    if (seen.has(key(q))) continue;
+    seen.add(key(q));
+    merged.push(q);
+  }
+  return merged;
+}
+
+/** Snapshot of the memory state delivered to the model at every navigation hop. */
 export interface WorkingMemory {
   /** The user's original question, echoed verbatim every hop. */
   user_question: string;
@@ -119,29 +99,33 @@ export interface WorkingMemory {
     current_hop: number;
     /** Number of nodes with a stored `DetailSlot`. */
     noted: number;
-    /** Total number of nodes in the exploration scope. */
     total: number;
     /** Nodes still awaiting analysis (= `total - noted`). */
     open: number;
     /** Coverage percentage across `total`. */
     coveragePct: number;
-    /** Monotonic hop counter exposed as the AI-visible budget signal — a counter (not countdown) to avoid the model anchoring on remaining budget. */
+    /**
+     * Monotonic hop counter exposed as the AI-visible budget signal — a counter (not countdown) to
+     * avoid the model anchoring on remaining budget.
+     */
     rounds_used: number;
     /** Cumulative count of soft/silent-mode scope expansions. */
     scope_growth: number;
   };
 
-  /** Recent route rejections — prevents the AI from repeating the same invalid or blocked route. Capped at 5 entries. */
+  /**
+   * Recent route rejections — prevents the AI from repeating the same invalid or blocked route.
+   * Capped at 5 entries.
+   */
   recent_rejections: Array<{ nodeId: string; reason: string; atHop: number }>;
-  /** Schemas currently on the session allowlist. Starts from the user filter; grows when the user confirms an expansion gate. */
+  /**
+   * Schemas currently on the session allowlist. Starts from the user filter; grows when the user
+   * confirms an expansion gate.
+   */
   active_schemas: string[];
 }
 
-
-/**
- * Frozen snapshot of an `AiMemoryManager`. Returned by `toJSON()` and embedded in
- * `SmState.memory` for the SM-state debug dump and eval extraction.
- */
+/** Frozen snapshot of an `AiMemoryManager`, embedded in `SmState.memory`. */
 export interface MemoryStateSnapshot {
   /** The user's original question, captured at session start. */
   userQuestion: string;
@@ -159,23 +143,7 @@ export interface MemoryStateSnapshot {
   recentRejections: Array<{ nodeId: string; reason: string; atHop: number }>;
 }
 
-
-/**
- * Appends `incoming` sections that the archived `earlier` ones do not already carry verbatim.
- *
- * @remarks
- * Identity is trimmed body text, matched by exact
- * equality against an earlier section's own trimmed text, angle ignored. First occurrence wins.
- * A first write (no `earlier`) is passed through untouched. A section that merely contains, or
- * is contained by, an earlier one is distinct evidence and is kept. A dropped exact duplicate
- * is NORMALIZE-WITH-LOG when `debugLog` is supplied.
- *
- * @param earlier - Sections already archived for the node, in capture order.
- * @param incoming - Sections captured by the current visit.
- * @param nodeId - Node id, for the log line when a duplicate is dropped.
- * @param debugLog - Optional debug sink; {@link AiMemoryManager.storeDetail} passes the logger it holds.
- * @returns `earlier` followed by the incoming sections it does not already carry verbatim.
- */
+/** Appends `incoming` sections that the archived `earlier` ones do not already carry verbatim. */
 function appendUniqueSections(
   earlier: readonly CapturedSection[],
   incoming: readonly CapturedSection[],
@@ -183,7 +151,7 @@ function appendUniqueSections(
   debugLog?: (message: string) => void,
 ): CapturedSection[] {
   if (earlier.length === 0) return [...incoming];
-  const seenTexts = new Set(earlier.map(s => s.text.trim()));
+  const seenTexts = new Set(earlier.map((s) => s.text.trim()));
   const merged = [...earlier];
   let droppedCount = 0;
   for (const section of incoming) {
@@ -195,25 +163,25 @@ function appendUniqueSections(
     merged.push(section);
   }
   if (droppedCount > 0) {
-    debugLog?.(`[Memory] duplicate section(s) dropped on revisit — node=${nodeId ?? '(unknown)'} count=${droppedCount}`);
+    debugLog?.(
+      `[Memory] duplicate section(s) dropped on revisit — node=${nodeId ?? '(unknown)'} count=${droppedCount}`,
+    );
   }
   return merged;
 }
 
-/**
- * In-session store for the per-hop working memory and full detail archive.
- *
- * @remarks
- * Storage + delivery + execution only — no ranking, no truncation, no content
- * decisions. The model reads the snapshot and decides relevance on its own.
- */
+/** In-session store for the per-hop working memory and full detail archive. */
 export class AiMemoryManager {
   private detailSlots = new Map<string, DetailSlot>();
   private userQuestion = '';
   private missionBrief = '';
   private scopeNotes: string[] = [];
   private verdictCounts = { analyze: 0, passthrough: 0, prune: 0 };
-  private recentRejections: Array<{ nodeId: string; reason: string; atHop: number }> = [];
+  private recentRejections: Array<{
+    nodeId: string;
+    reason: string;
+    atHop: number;
+  }> = [];
 
   /** Clears every field so the manager can be reused across sessions. */
   public reset(): void {
@@ -225,34 +193,19 @@ export class AiMemoryManager {
     this.recentRejections = [];
   }
 
-  /**
-   * Records one focus verdict against the running tally.
-   *
-   * @param verdict - The verdict committed this hop. A focus is kept as `analyze` or `passthrough`;
-   *   the tally's `prune` count is not fed from here, and the engine reports pruned nodes from node
-   *   lifecycle (`NavigationEngine` progress).
-   */
+  /** Records one focus verdict against the running tally. */
   public recordVerdict(verdict: 'analyze' | 'passthrough'): void {
     this.verdictCounts[verdict]++;
   }
 
-  /**
-   * Appends a route rejection to the ring buffer surfaced back to the model via working memory.
-   *
-   * @param nodeId - Node id that was rejected.
-   * @param reason - Short reason string (engine error code + detail).
-   * @param atHop - Hop index the rejection happened at.
-   */
+  /** Appends a route rejection to the ring buffer surfaced back to the model via working memory. */
   public recordRejection(nodeId: string, reason: string, atHop: number): void {
     this.recentRejections.push({ nodeId, reason, atHop });
-    if (this.recentRejections.length > MAX_RECENT_REJECTIONS) this.recentRejections.shift();
+    if (this.recentRejections.length > MAX_RECENT_REJECTIONS)
+      this.recentRejections.shift();
   }
 
-  /**
-   * Records the user's original question so it can be echoed in every working-memory snapshot.
-   *
-   * @param q - The user's question, verbatim.
-   */
+  /** Records the user's original question so it can be echoed in every working-memory snapshot. */
   public setUserQuestion(q: string): void {
     this.userQuestion = q;
   }
@@ -275,14 +228,7 @@ export class AiMemoryManager {
     return this.missionBrief;
   }
 
-  /**
-   * Records the user-stated analysis constraints that no filter field expresses.
-   *
-   * @remarks
-   * Fixed once at `start_exploration` approval, so it is stable-prefix-safe: every hop renders the
-   * same bytes. Without this carrier an instruction like "ignore filter criteria" reaches the first
-   * hop only as conversation history and is dropped by the sliding-memory wipe.
-   */
+  /** Records the user-stated analysis constraints that no filter field expresses. */
   public setScopeNotes(notes: readonly string[]): void {
     this.scopeNotes = [...notes];
   }
@@ -292,42 +238,39 @@ export class AiMemoryManager {
     return [...this.scopeNotes];
   }
 
-  /**
-   * Stores the technical findings for a single node in the detail archive.
-   *
-   * @param node - The node the findings describe.
-   * @param sections - Captured sections (one per fired `*_capture` template).
-   * @param summary - One-line digest of the whole node, shared across hops via `short_term_memory`.
-   * @param meta - Optional synthesis metadata — `badge_label`, `reason_for_visit`.
-   *
-   * @remarks
-   * Sections are stored verbatim. A revisit (a post-delivery `supplementAgenda` follow-up re-enqueues a visited node)
-   * appends its sections after the earlier visit's — summary and metadata take the latest visit,
-   * and {@link appendUniqueSections} drops any re-emitted text as no new evidence. Column-flow notes remain on their structural records.
-   *
-   * @param debugLog - Optional debug sink for the NORMALIZE-WITH-LOG lines: the one
-   * {@link appendUniqueSections} emits when a revisit's section is dropped as an exact repeat, and
-   * the one naming each `summary` / `badge_label` / `reason_for_visit` a revisit replaced.
-   */
+  /** Stores the technical findings for a single node in the detail archive. */
   public storeDetail(
     node: LineageNode,
     sections: CapturedSection[],
     summary: string,
-    meta?: { badge_label?: string; reason_for_visit?: string },
+    meta?: {
+      badge_label?: string;
+      incoming_questions?: readonly IncomingQuestion[];
+      is_placeholder?: boolean;
+    },
     debugLog?: (message: string) => void,
   ): void {
     const previous = this.detailSlots.get(node.id);
     const earlier = previous?.sections ?? [];
     if (previous) {
-      const replaced = ([
-        ['summary', previous.summary, summary],
-        ['badge_label', previous.badge_label, meta?.badge_label],
-        ['reason_for_visit', previous.reason_for_visit, meta?.reason_for_visit],
-      ] as const).filter(([, before, after]) => before !== after).map(([field]) => field);
+      const replaced = (
+        [
+          ['summary', previous.summary, summary],
+          ['badge_label', previous.badge_label, meta?.badge_label],
+        ] as const
+      )
+        .filter(([, before, after]) => before !== after)
+        .map(([field]) => field);
       if (replaced.length > 0) {
-        debugLog?.(`[Memory] revisit replaced ${replaced.join(',')} — node=${node.id}`);
+        debugLog?.(
+          `[Memory] revisit replaced ${replaced.join(',')} — node=${node.id}`,
+        );
       }
     }
+    const questions = appendUniqueQuestions(
+      previous?.incoming_questions ?? [],
+      meta?.incoming_questions ?? [],
+    );
     this.detailSlots.set(node.id, {
       nodeId: node.id,
       schema: node.schema,
@@ -336,35 +279,25 @@ export class AiMemoryManager {
       sections: appendUniqueSections(earlier, sections, node.id, debugLog),
       summary,
       badge_label: meta?.badge_label,
-      reason_for_visit: meta?.reason_for_visit,
+      ...(questions.length > 0 ? { incoming_questions: questions } : {}),
+      is_placeholder: meta?.is_placeholder ?? false,
     });
   }
 
   /**
    * Capture angles already archived for `nodeId` from an earlier visit, read before this
    * submission's own sections are merged in by {@link storeDetail}.
-   *
-   * @remarks
-   * A follow-up (`supplementAgenda`) re-enqueues a node `storeDetail` already wrote once; that earlier write's
-   * sections stay in the archive (appended, never replaced), so a revisit submission does not
-   * need to re-carry an angle the archive already holds. Callers use this to credit the archive
-   * when checking classification-locked angle coverage.
-   *
-   * @param nodeId - Node id to look up in the detail archive.
-   * @returns The set of angles already archived for `nodeId`; empty for a first visit.
    */
   public getArchivedAngles(nodeId: string): Set<CaptureAngle> {
-    return new Set(this.detailSlots.get(nodeId)?.sections.map(s => s.angle) ?? []);
+    const slot = this.detailSlots.get(nodeId);
+    return new Set(
+      slot && !isPlaceholderDetailSlot(slot)
+        ? slot.sections.map((s) => s.angle)
+        : [],
+    );
   }
 
-  /**
-   * Produces the working-memory snapshot delivered to the model this hop.
-   *
-   * @param hopCount - Hop index (1-based) supplied by the engine.
-   * @param scopeSize - Total number of nodes in the exploration scope.
-   * @param extras - Additional progress metrics.
-   * @returns A `WorkingMemory` snapshot with `user_question`, checklist metrics, and route rejection history.
-   */
+  /** Produces the working-memory snapshot delivered to the model this hop. */
   public getWorkingMemory(
     hopCount: number,
     scopeSize: number,
@@ -374,8 +307,9 @@ export class AiMemoryManager {
       active_schemas: string[];
     } = { rounds_used: hopCount, scope_growth: 0, active_schemas: [] },
   ): WorkingMemory {
-    const noted = this.detailSlots.size;
-    const coveragePct = scopeSize > 0 ? Math.round((noted / scopeSize) * 100) : 0;
+    const noted = this.notedNodeIds.length;
+    const coveragePct =
+      scopeSize > 0 ? Math.round((noted / scopeSize) * 100) : 0;
 
     const memory: WorkingMemory = {
       user_question: this.userQuestion,
@@ -395,15 +329,18 @@ export class AiMemoryManager {
   }
 
   /**
-   * Returns the full detail archive for the synthesis phase.
-   *
-   * @returns An object containing every stored `DetailSlot` in insertion order.
+   * Returns the authored detail archive for the synthesis phase, excluding automatic storage
+   * placeholders.
    */
   public getResult(): { detail_slots: DetailSlot[] } {
-    return { detail_slots: Array.from(this.detailSlots.values()) };
+    return {
+      detail_slots: Array.from(this.detailSlots.values()).filter(
+        (s) => !isPlaceholderDetailSlot(s),
+      ),
+    };
   }
 
-  /** JSON snapshot used by telemetry, eval extraction, and strict engine-checkpoint assembly. */
+  /** JSON snapshot embedded in the engine checkpoint (state dump and saved run). */
   public toJSON(): MemoryStateSnapshot {
     const slots: Record<string, DetailSlot> = {};
     for (const [id, slot] of this.detailSlots) slots[id] = slot;
@@ -418,36 +355,20 @@ export class AiMemoryManager {
     };
   }
 
-  /**
-   * Rehydrates a manager from a {@link toJSON} snapshot.
-   *
-   * @remarks
-   * The inverse of {@link toJSON}: restores the detail archive **in insertion order** (so the
-   * sliding `<short_term_memory>` window and synthesis lift see the same sequence), plus the
-   * mission brief, verdict tally and rejection ring.
-   *
-   * @param snapshot - A prior `toJSON()` payload (typically after a JSON serialize/parse round-trip).
-   * @returns A new manager carrying the restored state.
-   */
+  /** Rehydrates a manager from a {@link toJSON} snapshot. */
   public static fromJSON(snapshot: MemoryStateSnapshot): AiMemoryManager {
     const m = new AiMemoryManager();
     m.userQuestion = snapshot.userQuestion;
     m.missionBrief = snapshot.missionBrief;
     m.scopeNotes = [...snapshot.scopeNotes];
     m.verdictCounts = { ...snapshot.verdictCounts };
-    m.recentRejections = snapshot.recentRejections.map(r => ({ ...r }));
-    for (const [id, slot] of Object.entries(snapshot.detailSlots)) m.detailSlots.set(id, slot);
+    m.recentRejections = snapshot.recentRejections.map((r) => ({ ...r }));
+    for (const [id, slot] of Object.entries(snapshot.detailSlots))
+      m.detailSlots.set(id, slot);
     return m;
   }
 
-  /**
-   * Replaces this manager's contents with a validated persisted snapshot.
-   *
-   * @remarks
-   * `AiSession.memory` is a stable readonly object shared by prompt builders and the
-   * state machine. An in-process rollback must therefore restore the object in place
-   * rather than swapping the reference.
-   */
+  /** Replaces this manager's contents with a validated persisted snapshot. */
   public restoreFromJSON(snapshot: MemoryStateSnapshot): void {
     const restored = AiMemoryManager.fromJSON(snapshot);
     this.detailSlots = restored.detailSlots;
@@ -463,40 +384,42 @@ export class AiMemoryManager {
     return this.detailSlots.size;
   }
 
-  /** Node IDs of every stored detail slot. */
+  /** Node IDs of every authored detail slot, excluding automatic storage placeholders. */
   public get notedNodeIds(): string[] {
-    return Array.from(this.detailSlots.keys());
+    return Array.from(this.detailSlots.values())
+      .filter((s) => !isPlaceholderDetailSlot(s))
+      .map((s) => s.nodeId);
   }
 
   /** Cloned A/P/prune verdict tally for diagnostics / logging. */
-  public getVerdictCounts(): { analyze: number; passthrough: number; prune: number } {
+  public getVerdictCounts(): {
+    analyze: number;
+    passthrough: number;
+    prune: number;
+  } {
     return { ...this.verdictCounts };
   }
 
   /**
-   * Returns the last {@link RECENT_SUMMARY_WINDOW} node summaries for injection into the per-hop
-   * user message's `<short_term_memory>` block.
-   *
-   * @remarks
-   * Same sliding window used by `getWorkingMemory` — exposed separately so prompt builders
-   * can access it without constructing the full working-memory envelope.
+   * Returns the last {@link RECENT_SUMMARY_WINDOW} authored hop summaries, excluding automatic
+   * storage placeholders.
    */
   public getShortTermMemory(): Array<{ nodeId: string; summary: string }> {
     return Array.from(this.detailSlots.values())
+      .filter((s) => !isPlaceholderDetailSlot(s))
       .slice(-RECENT_SUMMARY_WINDOW)
-      .map(s => ({ nodeId: s.nodeId, summary: s.summary }));
+      .map((s) => ({ nodeId: s.nodeId, summary: s.summary }));
   }
 
   /**
    * Returns the recent-rejection ring (max {@link MAX_RECENT_REJECTIONS}) for injection into the
    * active worker prompt so the model can self-correct from prior rejected hops.
-   *
-   * @remarks
-   * Same ring surfaced in `getWorkingMemory().recent_rejections` — exposed separately so the host
-   * worker's `buildMemoryBlock` can render it without constructing the full working-memory envelope
-   * (the host worker is handed `peekHopContext`, which omits `working_memory`).
    */
-  public getRecentRejections(): Array<{ nodeId: string; reason: string; atHop: number }> {
+  public getRecentRejections(): Array<{
+    nodeId: string;
+    reason: string;
+    atHop: number;
+  }> {
     return this.recentRejections.slice();
   }
 }

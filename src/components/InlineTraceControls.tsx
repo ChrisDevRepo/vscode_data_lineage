@@ -4,25 +4,25 @@ import { Tooltip } from './ui/Tooltip';
 import { TRACE_ALL_LEVELS } from '../engine/shared/bridgeContract';
 
 interface InlineTraceControlsProps {
-  /** ID of the node starting the trace. */
   startNodeId: string;
-  /** Display name of the start node. */
   startNodeName: string;
-  /** Initial upstream depth to show in the input. */
   defaultUpstream?: number;
-  /** Initial downstream depth to show in the input. */
   defaultDownstream?: number;
-  /** Callback fired when the user applies the trace configuration. */
   onApply: (config: {
     startNodeId: string;
     upstreamLevels: number;
     downstreamLevels: number;
   }) => void;
-  /** Callback fired to cancel the trace configuration. */
   onClose: () => void;
-  /** BFS-only probe for the object count the current upstream/downstream choice would produce — "count before the click". Omitted when the caller cannot resolve a graph yet. */
+  /**
+   * BFS-only probe for the object count the current upstream/downstream choice would produce —
+   * "count before the click". Omitted when the caller cannot resolve a graph yet.
+   */
   estimateCount?: (upstreamLevels: number, downstreamLevels: number) => number;
-  /** Render limit the count is checked against for the "over limit" hint; the choice stays clickable regardless — the render-limit notice handles it once applied. */
+  /**
+   * Render limit the count is checked against for the "over limit" hint; the choice stays clickable
+   * regardless — the render-limit notice handles it once applied.
+   */
   renderLimit?: number;
 }
 
@@ -87,10 +87,17 @@ export const InlineTraceControls = memo(function InlineTraceControls({
     () => estimateCount?.(effectiveUpstream, effectiveDownstream),
     [estimateCount, effectiveUpstream, effectiveDownstream],
   );
-  const overLimit = previewCount !== undefined && renderLimit !== undefined && previewCount > renderLimit;
+  const overLimit =
+    previewCount !== undefined &&
+    renderLimit !== undefined &&
+    previewCount > renderLimit;
 
   const handleApply = () => {
-    onApply({ startNodeId, upstreamLevels: effectiveUpstream, downstreamLevels: effectiveDownstream });
+    onApply({
+      startNodeId,
+      upstreamLevels: effectiveUpstream,
+      downstreamLevels: effectiveDownstream,
+    });
   };
 
   return (
@@ -98,14 +105,19 @@ export const InlineTraceControls = memo(function InlineTraceControls({
       <div className="flex items-center gap-4 shrink-0">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium ln-text">From:</span>
-          <span className="text-sm font-semibold ln-text-link">{startNodeName}</span>
+          <span className="text-sm font-semibold ln-text-link">
+            {startNodeName}
+          </span>
         </div>
 
         <DepthInput
           label="Upstream"
           value={upstream}
           isAll={isUpstreamAll}
-          onChange={(value) => { setUpstream(value); setIsUpstreamAll(false); }}
+          onChange={(value) => {
+            setUpstream(value);
+            setIsUpstreamAll(false);
+          }}
           onToggleAll={() => setIsUpstreamAll(!isUpstreamAll)}
         />
 
@@ -113,15 +125,21 @@ export const InlineTraceControls = memo(function InlineTraceControls({
           label="Downstream"
           value={downstream}
           isAll={isDownstreamAll}
-          onChange={(value) => { setDownstream(value); setIsDownstreamAll(false); }}
+          onChange={(value) => {
+            setDownstream(value);
+            setIsDownstreamAll(false);
+          }}
           onToggleAll={() => setIsDownstreamAll(!isDownstreamAll)}
         />
       </div>
 
       <div className="flex items-center gap-2 shrink-0">
         {previewCount !== undefined && (
-          <span className={`text-xs whitespace-nowrap ${overLimit ? 'ln-text-warning' : 'ln-text-muted'}`}>
-            {previewCount.toLocaleString()} objects{overLimit ? ' — over limit' : ''}
+          <span
+            className={`text-xs whitespace-nowrap ${overLimit ? 'ln-text-warning' : 'ln-text-muted'}`}
+          >
+            {previewCount.toLocaleString()} objects
+            {overLimit ? ' — over limit' : ''}
           </span>
         )}
         <button

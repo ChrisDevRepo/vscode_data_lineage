@@ -12,19 +12,13 @@ import { Spinner } from './ui/Spinner';
 export type LoadingPhase = 'load' | 'parse' | 'generate';
 
 interface VisualizingScreenProps {
-  /** The name or path of the data source currently being processed. */
   sourceName: string;
-  /** The current active phase of the loading process. */
   phase: LoadingPhase;
-  /** Optional real-time progress text (e.g., table count) from the extractor. */
   progressText: string | null;
   /** High-level summary stats (node/edge count) shown once parsing is complete. */
   stats: string | null;
-  /** Error message to display if the process fails. */
   error: string | null;
-  /** Callback to cancel the current loading operation and stop extraction. */
   onCancel: () => void;
-  /** Callback to return to the project selection screen. */
   onBack: () => void;
 }
 
@@ -34,19 +28,19 @@ const PHASES: { key: LoadingPhase; label: string }[] = [
   { key: 'generate', label: 'Generate' },
 ];
 
-const PHASE_ORDER: Record<LoadingPhase, number> = { load: 0, parse: 1, generate: 2 };
+const PHASE_ORDER: Record<LoadingPhase, number> = {
+  load: 0,
+  parse: 1,
+  generate: 2,
+};
 
 type PhaseStatus = 'pending' | 'active' | 'done' | 'error';
 
-/**
- * Determines the status of a specific loading phase based on the current active phase.
- *
- * @param rowPhase - The phase to check.
- * @param current - The currently active loading phase.
- * @param hasError - Whether an error has occurred in the process.
- * @returns The status of the phase (pending, active, done, or error).
- */
-function phaseStatus(rowPhase: LoadingPhase, current: LoadingPhase, hasError: boolean): PhaseStatus {
+function phaseStatus(
+  rowPhase: LoadingPhase,
+  current: LoadingPhase,
+  hasError: boolean,
+): PhaseStatus {
   const rowIdx = PHASE_ORDER[rowPhase];
   const curIdx = PHASE_ORDER[current];
   if (hasError && rowIdx === curIdx) return 'error';
@@ -59,19 +53,39 @@ function phaseStatus(rowPhase: LoadingPhase, current: LoadingPhase, hasError: bo
 function PhaseIcon({ status }: { status: PhaseStatus }) {
   if (status === 'done') {
     return (
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        fill="none"
+        viewBox="0 0 24 24"
+        strokeWidth={2}
+        stroke="currentColor"
         className="w-4 h-4 shrink-0"
-        style={{ color: 'var(--vscode-testing-iconPassed, #73c991)' }}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+        style={{ color: 'var(--vscode-testing-iconPassed, #73c991)' }}
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M4.5 12.75l6 6 9-13.5"
+        />
       </svg>
     );
   }
   if (status === 'error') {
     return (
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        fill="none"
+        viewBox="0 0 24 24"
+        strokeWidth={2}
+        stroke="currentColor"
         className="w-4 h-4 shrink-0"
-        style={{ color: 'var(--vscode-editorError-foreground, #f14c4c)' }}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+        style={{ color: 'var(--vscode-editorError-foreground, #f14c4c)' }}
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M6 18L18 6M6 6l12 12"
+        />
       </svg>
     );
   }
@@ -79,9 +93,15 @@ function PhaseIcon({ status }: { status: PhaseStatus }) {
     return <Spinner className="w-4 h-4 shrink-0" />;
   }
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor"
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+      strokeWidth={1.5}
+      stroke="currentColor"
       className="w-4 h-4 shrink-0"
-      style={{ color: 'var(--ln-fg-dim)' }}>
+      style={{ color: 'var(--ln-fg-dim)' }}
+    >
       <circle cx="12" cy="12" r="9" />
     </svg>
   );
@@ -89,9 +109,7 @@ function PhaseIcon({ status }: { status: PhaseStatus }) {
 
 const AUTO_REDIRECT_MS = 8000;
 
-/**
- * Displays project-loading progress, elapsed time, cancellation, and failure recovery.
- */
+/** Displays project-loading progress, elapsed time, cancellation, and failure recovery. */
 export const VisualizingScreen = memo(function VisualizingScreen({
   sourceName,
   phase,
@@ -103,16 +121,22 @@ export const VisualizingScreen = memo(function VisualizingScreen({
 }: VisualizingScreenProps) {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
-    if (phase !== 'load' || progressText || !!error) { setElapsed(0); return; }
+    if (phase !== 'load' || progressText || !!error) {
+      setElapsed(0);
+      return;
+    }
     setElapsed(0);
-    const interval = setInterval(() => setElapsed(s => s + 1), 1000);
+    const interval = setInterval(() => setElapsed((s) => s + 1), 1000);
     return () => clearInterval(interval);
   }, [phase, progressText, error]);
 
   const [countdown, setCountdown] = useState<number | null>(null);
 
   useEffect(() => {
-    if (!error) { setCountdown(null); return; }
+    if (!error) {
+      setCountdown(null);
+      return;
+    }
 
     setCountdown(Math.ceil(AUTO_REDIRECT_MS / 1000));
     const start = Date.now();
@@ -136,27 +160,35 @@ export const VisualizingScreen = memo(function VisualizingScreen({
 
   const footer = hasError ? (
     <div className="flex items-center gap-4 w-full">
-      <Button variant="secondary" onClick={onBack}>← Back to Start</Button>
+      <Button variant="secondary" onClick={onBack}>
+        ← Back to Start
+      </Button>
       {countdown !== null && countdown > 0 && (
-        <span className="text-xs" style={{ color: 'var(--ln-wizard-fg-muted)' }}>
+        <span
+          className="text-xs"
+          style={{ color: 'var(--ln-wizard-fg-muted)' }}
+        >
           Auto-returning in {countdown}s
         </span>
       )}
     </div>
   ) : showCancel ? (
-    <Button variant="ghost" onClick={onCancel}>Cancel</Button>
+    <Button variant="ghost" onClick={onCancel}>
+      Cancel
+    </Button>
   ) : (
     <span />
   );
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 ln-start-screen">
-      <div className="w-full max-w-md ln-panel flex flex-col" style={{ borderRadius: 6, minHeight: 280 }}>
+      <div
+        className="w-full max-w-md ln-panel flex flex-col"
+        style={{ borderRadius: 6, minHeight: 280 }}
+      >
         <div className="px-5 py-6 space-y-4 flex-1 overflow-y-auto">
           <Tooltip content={sourceName} asChild>
-            <div className="text-sm font-medium truncate">
-              {sourceName}
-            </div>
+            <div className="text-sm font-medium truncate">{sourceName}</div>
           </Tooltip>
 
           <div className="space-y-3">
@@ -166,17 +198,18 @@ export const VisualizingScreen = memo(function VisualizingScreen({
               const isDone = status === 'done';
               const isError = status === 'error';
 
-              const subText = isActive && key === 'load' && progressText
-                ? progressText
-                : isActive && key === 'parse'
-                ? 'Building model…'
-                : isActive && key === 'generate'
-                ? 'Calculating layout…'
-                : isDone && key === 'parse' && stats
-                ? stats
-                : isError && error
-                ? error
-                : null;
+              const subText =
+                isActive && key === 'load' && progressText
+                  ? progressText
+                  : isActive && key === 'parse'
+                    ? 'Building model…'
+                    : isActive && key === 'generate'
+                      ? 'Calculating layout…'
+                      : isDone && key === 'parse' && stats
+                        ? stats
+                        : isError && error
+                          ? error
+                          : null;
 
               return (
                 <div key={key}>
@@ -188,14 +221,17 @@ export const VisualizingScreen = memo(function VisualizingScreen({
                         color: isError
                           ? 'var(--vscode-editorError-foreground, #f14c4c)'
                           : status === 'pending'
-                          ? 'var(--ln-wizard-fg-muted)'
-                          : 'inherit',
+                            ? 'var(--ln-wizard-fg-muted)'
+                            : 'inherit',
                       }}
                     >
                       {label}
                     </span>
                     {isDone && key === 'parse' && stats && (
-                      <span className="text-xs ml-1" style={{ color: 'var(--ln-wizard-fg-muted)' }}>
+                      <span
+                        className="text-xs ml-1"
+                        style={{ color: 'var(--ln-wizard-fg-muted)' }}
+                      >
                         {stats}
                       </span>
                     )}
@@ -213,7 +249,10 @@ export const VisualizingScreen = memo(function VisualizingScreen({
                     </div>
                   )}
                   {isActive && key === 'load' && !progressText && (
-                    <div className="text-xs mt-1 ml-7" style={{ color: 'var(--ln-wizard-fg-muted)' }}>
+                    <div
+                      className="text-xs mt-1 ml-7"
+                      style={{ color: 'var(--ln-wizard-fg-muted)' }}
+                    >
                       Reading file…{elapsed > 2 ? ` (${elapsed}s)` : ''}
                     </div>
                   )}
@@ -223,9 +262,7 @@ export const VisualizingScreen = memo(function VisualizingScreen({
           </div>
         </div>
         {footer && (
-          <div className="px-5 pb-5 pt-2 ln-border-top shrink-0">
-            {footer}
-          </div>
+          <div className="px-5 pb-5 pt-2 ln-border-top shrink-0">{footer}</div>
         )}
       </div>
     </div>

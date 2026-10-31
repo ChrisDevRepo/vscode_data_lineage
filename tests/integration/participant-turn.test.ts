@@ -2,19 +2,17 @@ import * as assert from 'node:assert';
 import * as vscode from 'vscode';
 import { announceLaneTier } from './laneTier';
 
-/**
- * Drives a real `@lineage` participant turn through public API and observes what it streams.
- *
- * The recording stream is a test double, so this asserts emitted responses, not rendered UI.
- */
+/** Drives a real `@lineage` participant turn through public API and observes what it streams. */
 suite('Participant turn — public API, no CDP', () => {
   const EXTENSION_ID = 'datahelper-chwagner.data-lineage-viz';
 
-  suiteSetup(() => { announceLaneTier(
-    'participant-turn',
-    'fixture',
-    'a real handleChatRequest turn streams progress and settles with a terminal ChatResult',
-  ); });
+  suiteSetup(() => {
+    announceLaneTier(
+      'participant-turn',
+      'fixture',
+      'a real handleChatRequest turn streams progress and settles with a terminal ChatResult',
+    );
+  });
   const FIXTURE_ID = 'data-lineage-test.data-lineage-test-model-provider';
   const TEST_VENDOR = 'lineage-test';
   const TEST_MODEL_ID = 'lineage-smoke-model';
@@ -23,20 +21,31 @@ suite('Participant turn — public API, no CDP', () => {
   function recordingStream() {
     const calls: Array<{ kind: string; value: string }> = [];
     const stream = {
-      progress: (value: string) => { calls.push({ kind: 'progress', value }); },
+      progress: (value: string) => {
+        calls.push({ kind: 'progress', value });
+      },
       markdown: (value: unknown) => {
-        const text = typeof value === 'string'
-          ? value
-          : String((value as { value?: string })?.value ?? value);
+        const text =
+          typeof value === 'string'
+            ? value
+            : String((value as { value?: string })?.value ?? value);
         calls.push({ kind: 'markdown', value: text });
       },
-      button: (value: unknown) => { calls.push({ kind: 'button', value: JSON.stringify(value) }); },
-      anchor: () => {}, filetree: () => {}, reference: () => {}, push: () => {},
+      button: (value: unknown) => {
+        calls.push({ kind: 'button', value: JSON.stringify(value) });
+      },
+      anchor: () => {},
+      filetree: () => {},
+      reference: () => {},
+      push: () => {},
     } as unknown as vscode.ChatResponseStream;
     return { stream, calls };
   }
 
-  function chatRequest(prompt: string, model: vscode.LanguageModelChat): vscode.ChatRequest {
+  function chatRequest(
+    prompt: string,
+    model: vscode.LanguageModelChat,
+  ): vscode.ChatRequest {
     return {
       prompt,
       command: undefined,
@@ -54,17 +63,44 @@ suite('Participant turn — public API, no CDP', () => {
       if (models.length > 0) return models[0];
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
-    return assert.fail('fixture language model was not available from the public VS Code API');
+    return assert.fail(
+      'fixture language model was not available from the public VS Code API',
+    );
+  }
+
+  // Open Demo on an already open panel reloads the demo without awaiting it, and that reload supersedes a running turn; load it once per suite.
+  let demoOpened = false;
+  async function openDemoOnce(): Promise<void> {
+    if (!demoOpened) {
+      await vscode.commands.executeCommand('dataLineageViz.openDemo');
+      demoOpened = true;
+    }
+    await waitForDemoModel();
   }
 
   async function waitForDemoModel(): Promise<void> {
     const deadline = Date.now() + 60_000;
     let lastProbe = '';
     while (Date.now() < deadline) {
-      const result = await vscode.lm.invokeTool('lineage_search_objects', {
-        input: { query: 'Sales' },
-        toolInvocationToken: undefined,
+      // A rejection reaches a vscode.lm caller as a thrown error; only the no-project one means "not yet".
+      const result = await Promise.resolve(
+        vscode.lm.invokeTool('lineage_search_objects', {
+          input: { query: 'Sales' },
+          toolInvocationToken: undefined,
+        }),
+      ).catch((error: unknown) => {
+        if (
+          error instanceof Error &&
+          /no project is loaded/i.test(error.message)
+        )
+          return null;
+        throw error;
       });
+      if (!result) {
+        lastProbe = 'no project loaded';
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        continue;
+      }
       lastProbe = result.content
         .map((part) => (part as { value?: unknown }).value ?? '')
         .join('');
@@ -72,29 +108,41 @@ suite('Participant turn — public API, no CDP', () => {
       if (Array.isArray(payload.results) && payload.results.length > 0) return;
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
-    assert.fail(`demo model did not become queryable within 60s; last probe: ${lastProbe}`);
+    assert.fail(
+      `demo model did not become queryable within 60s; last probe: ${lastProbe}`,
+    );
   }
 
   suiteSetup(async () => {
     const fixture = vscode.extensions.getExtension(FIXTURE_ID);
     assert.ok(fixture, 'language-model fixture must be installed in this lane');
     await fixture.activate();
-  });
-
-  test('the fixture model resolves from the public API with the expected identity', async () => {
     const model = await fixtureModel();
-    assert.strictEqual(model.vendor, TEST_VENDOR);
-    assert.strictEqual(model.id, TEST_MODEL_ID);
+    assert.strictEqual(
+      model.vendor,
+      TEST_VENDOR,
+      'the fixture must use the declared test vendor',
+    );
+    assert.strictEqual(
+      model.id,
+      TEST_MODEL_ID,
+      'the fixture must use the declared model identity',
+    );
   });
 
   test('with no lineage data loaded the turn degrades to a notice rather than throwing', async () => {
-    const exports = await vscode.extensions.getExtension(EXTENSION_ID)!.activate();
+    const exports = await vscode.extensions
+      .getExtension(EXTENSION_ID)!
+      .activate();
     assert.ok(exports?.participant, 'activate() must export the participant');
     const { stream, calls } = recordingStream();
     const source = new vscode.CancellationTokenSource();
     try {
       await exports.participant.handleChatRequest(
-        chatRequest('trace Sales', undefined as unknown as vscode.LanguageModelChat),
+        chatRequest(
+          'trace Sales',
+          undefined as unknown as vscode.LanguageModelChat,
+        ),
         { history: [] },
         stream,
         source.token,
@@ -111,9 +159,10 @@ suite('Participant turn — public API, no CDP', () => {
 
   test('a full turn streams progress and settles with a terminal ChatResult', async function () {
     this.timeout(120_000);
-    const exports = await vscode.extensions.getExtension(EXTENSION_ID)!.activate();
-    await vscode.commands.executeCommand('dataLineageViz.openDemo');
-    await waitForDemoModel();
+    const exports = await vscode.extensions
+      .getExtension(EXTENSION_ID)!
+      .activate();
+    await openDemoOnce();
 
     const { stream, calls } = recordingStream();
     const source = new vscode.CancellationTokenSource();
@@ -125,15 +174,137 @@ suite('Participant turn — public API, no CDP', () => {
         source.token,
       );
 
-      assert.ok(calls.some((call) => call.kind === 'progress'), 'a turn must report progress');
+      assert.ok(
+        calls.some((call) => call.kind === 'progress'),
+        'a turn must report progress',
+      );
       const metadata = (result as vscode.ChatResult)?.metadata as
         | { requestId?: string; status?: string; modelCalls?: number }
         | undefined;
-      assert.ok(metadata?.requestId, 'the turn must return a correlated requestId');
-      assert.strictEqual(metadata?.status, 'ok', 'the fixture-backed turn must settle ok');
-      assert.ok((metadata?.modelCalls ?? 0) > 0, 'the turn must have reached the model');
+      assert.ok(
+        metadata?.requestId,
+        'the turn must return a correlated requestId',
+      );
+      assert.strictEqual(
+        metadata?.status,
+        'ok',
+        'the fixture-backed turn must settle ok',
+      );
+      assert.ok(
+        (metadata?.modelCalls ?? 0) > 0,
+        'the turn must have reached the model',
+      );
     } finally {
       source.dispose();
     }
   });
+
+  // Only a connection interruption before any reply gets one retry.
+  for (const scenario of [
+    {
+      name: 'retries a dropped connection before the reply',
+      failures: 1,
+      afterReply: false,
+      toolName: 'structured_output',
+      status: 'ok',
+      attempts: 2,
+    },
+    {
+      name: 'stops after a second dropped connection',
+      failures: 2,
+      afterReply: false,
+      toolName: 'structured_output',
+      status: 'error',
+      attempts: 2,
+    },
+    {
+      name: 'does not retry buffered discovery after a reply starts',
+      failures: 1,
+      afterReply: true,
+      toolName: 'lineage_search_objects',
+      status: 'error',
+      attempts: 1,
+    },
+    {
+      name: 'does not retry structured entry after a reply starts',
+      failures: 1,
+      afterReply: true,
+      toolName: 'structured_output',
+      status: 'error',
+      attempts: 1,
+    },
+  ]) {
+    test(scenario.name, async function () {
+      this.timeout(120_000);
+      const fixture = await vscode.extensions
+        .getExtension(FIXTURE_ID)!
+        .activate();
+      const extension = await vscode.extensions
+        .getExtension(EXTENSION_ID)!
+        .activate();
+      await openDemoOnce();
+      const interruption = {
+        failures: scenario.failures,
+        afterReply: scenario.afterReply,
+        attempts: 0,
+        toolName: scenario.toolName,
+        release: undefined as (() => void) | undefined,
+      };
+      fixture.setInterruption(interruption);
+      const { stream, calls } = recordingStream();
+      const source = new vscode.CancellationTokenSource();
+      let replyReceived = false;
+      try {
+        const nativeModel = await fixtureModel();
+        const model: vscode.LanguageModelChat = scenario.afterReply
+          ? {
+              ...nativeModel,
+              countTokens: nativeModel.countTokens.bind(nativeModel),
+              async sendRequest(...args) {
+                const response = await nativeModel.sendRequest(...args);
+                return {
+                  text: response.text,
+                  stream: (async function* () {
+                    for await (const value of response.stream) {
+                      if (
+                        value instanceof vscode.LanguageModelTextPart &&
+                        value.value === 'Partial reply.'
+                      ) {
+                        replyReceived = true;
+                        interruption.release!();
+                      }
+                      yield value;
+                    }
+                  })(),
+                };
+              },
+            }
+          : nativeModel;
+        const result = await extension.participant.handleChatRequest(
+          chatRequest('Which tables feed Sales?', model),
+          { history: [] },
+          stream,
+          source.token,
+        );
+        const metadata = (result as vscode.ChatResult)?.metadata as
+          | { status?: string }
+          | undefined;
+        if (scenario.afterReply)
+          assert.ok(
+            replyReceived,
+            `native model stream must deliver the partial reply before interruption: ${JSON.stringify({ metadata, calls, attempts: interruption.attempts })}`,
+          );
+        assert.strictEqual(metadata?.status, scenario.status);
+        assert.strictEqual(
+          interruption.attempts,
+          scenario.attempts,
+          'count retries of the same native request',
+        );
+      } finally {
+        interruption.release?.();
+        fixture.setInterruption(undefined);
+        source.dispose();
+      }
+    });
+  }
 });

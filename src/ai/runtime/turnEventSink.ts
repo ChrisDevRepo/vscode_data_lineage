@@ -1,19 +1,14 @@
 /** Non-terminal progress phases exposed to native chat surfaces. */
-export type TurnStatusPhase = 'thinking' | 'scoping' | 'tool' | 'synthesizing';
+type TurnStatusPhase = 'thinking' | 'scoping' | 'tool' | 'synthesizing';
 
-/** Terminal status of a graph-owned turn. */
-export type TurnResultStatus = 'ok' | 'error' | 'cancelled';
+type TurnResultStatus = 'ok' | 'error' | 'cancelled';
 
 /** Provider-neutral payload for a native consent gate. */
-export interface NativeGateEvent {
-  /** Identifier the user's decision reply carries so the paused turn can be resumed. */
-  readonly gateId: string;
+interface NativeGateEvent {
+  /** Identity of the card that shows the session's pending proposal; its buttons carry it back. */
+  readonly proposalId: string;
   /** Engine consent gate that fired, as named by the engine's gate envelope. */
   readonly gate: string;
-  /** One-line human-readable summary of what needs the user's approval. */
-  readonly summary: string;
-  /** Optional exposure classes from the gate payload; an approve decision echoes them back. */
-  readonly classes?: readonly string[];
 }
 
 /** Native, provider-neutral output events emitted by one graph-owned turn. */
@@ -36,18 +31,12 @@ export type TurnEvent =
       readonly error?: string;
     };
 
-/** Callback that receives each accepted turn event. */
-export type TurnEventConsumer = (event: TurnEvent) => void;
+type TurnEventConsumer = (event: TurnEvent) => void;
 
 /** Observer callback that also receives the event's 1-based sequence number. */
-export type TurnEventObserver = (event: TurnEvent, sequence: number) => void;
+type TurnEventObserver = (event: TurnEvent, sequence: number) => void;
 
-/**
- * Provider-neutral event sink for exactly one runtime turn.
- *
- * The terminal outcome is claimed before invoking the external callback, so
- * synchronous re-entry cannot emit a second terminal or a late event.
- */
+/** Provider-neutral event sink for exactly one runtime turn. */
 export class TurnEventSink {
   private eventCount = 0;
   private terminal: TurnResultStatus | null = null;

@@ -1,32 +1,28 @@
-import { memo, useState, useRef, useEffect, type ReactNode, type ReactElement } from 'react';
+import {
+  memo,
+  useState,
+  useRef,
+  useEffect,
+  type ReactNode,
+  type ReactElement,
+} from 'react';
 import { Tooltip } from './ui/Tooltip';
 
-/**
- * Supported visual variants for the {@link ModeBanner}.
- * Each variant applies specific styling and icon colors.
- */
-export type BannerVariant = 'trace' | 'analysis' | 'ai' | 'bookmark';
+/** Visual variants of {@link ModeBanner}. */
+type BannerVariant = 'trace' | 'analysis' | 'ai' | 'bookmark';
 
 interface ModeBannerProps {
-  /** The visual style of the banner. */
   variant: BannerVariant;
   /** SVG path data for the leading icon. */
   icon: string;
-  /** Bold primary title text. */
   title: string;
-  /** Secondary information or summary text. */
   subtitle: ReactNode;
-  /** Callback fired when the user closes the banner. */
   onClose: () => void;
-  /** Optional callback to save the current mode's result as a permanent bookmark. */
-  onSaveAsBookmark?: (name: string, withPositions: boolean) => void;
+  onSaveAsBookmark?: (name: string) => void;
   /** Extra controls rendered in the action area (before Save as Bookmark). */
   extraControls?: ReactElement | null;
 }
 
-/**
- * Maps banner variants to their corresponding CSS class names.
- */
 const VARIANT_CLASS: Record<BannerVariant, string> = {
   trace: 'ln-mode-banner--trace',
   analysis: 'ln-mode-banner--analysis',
@@ -34,17 +30,7 @@ const VARIANT_CLASS: Record<BannerVariant, string> = {
   bookmark: 'ln-mode-banner--bookmark',
 };
 
-/**
- * A shared UI component for displaying the active graph mode (Trace, Analysis, AI).
- *
- * It appears at the top of the canvas and provides:
- * - A summary of the active operation.
- * - Mode-specific actions (via `extraControls`).
- * - A standardized workflow for saving the current view as a named bookmark.
- *
- * @param props - The component props.
- * @returns A memoized React component.
- */
+/** A shared UI component for displaying the active graph mode (Trace, Analysis, AI). */
 export const ModeBanner = memo(function ModeBanner({
   variant,
   icon,
@@ -56,7 +42,6 @@ export const ModeBanner = memo(function ModeBanner({
 }: ModeBannerProps) {
   const [saving, setSaving] = useState(false);
   const [saveName, setSaveName] = useState('');
-  const [withPositions, setWithPositions] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -66,14 +51,15 @@ export const ModeBanner = memo(function ModeBanner({
   function handleConfirmSave() {
     const name = saveName.trim();
     if (!name) return;
-    onSaveAsBookmark?.(name, withPositions);
+    onSaveAsBookmark?.(name);
     setSaving(false);
     setSaveName('');
-    setWithPositions(false);
   }
 
   return (
-    <div className={`ln-mode-banner ${VARIANT_CLASS[variant]} px-3 py-1.5 flex items-center gap-3`}>
+    <div
+      className={`ln-mode-banner ${VARIANT_CLASS[variant]} px-3 py-1.5 flex items-center gap-3`}
+    >
       <svg
         className="ln-mode-banner__icon w-5 h-5 shrink-0"
         fill="none"
@@ -84,7 +70,9 @@ export const ModeBanner = memo(function ModeBanner({
         <path strokeLinecap="round" strokeLinejoin="round" d={icon} />
       </svg>
 
-      <span className="text-xs font-semibold ln-text whitespace-nowrap">{title}</span>
+      <span className="text-xs font-semibold ln-text whitespace-nowrap">
+        {title}
+      </span>
       <span className="text-xs ln-text-muted">·</span>
       <span className="text-xs ln-text-muted truncate">{subtitle}</span>
 
@@ -109,8 +97,8 @@ export const ModeBanner = memo(function ModeBanner({
               ref={inputRef}
               type="text"
               value={saveName}
-              onChange={e => setSaveName(e.target.value)}
-              onKeyDown={e => {
+              onChange={(e) => setSaveName(e.target.value)}
+              onKeyDown={(e) => {
                 if (e.key === 'Enter') handleConfirmSave();
                 if (e.key === 'Escape') {
                   e.stopPropagation();
@@ -121,15 +109,6 @@ export const ModeBanner = memo(function ModeBanner({
               placeholder="Bookmark name..."
               className="h-7 px-2 text-xs rounded-sm ln-input w-[140px]"
             />
-            <label className="flex items-center gap-1 text-xs ln-text-muted cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={withPositions}
-                onChange={e => setWithPositions(e.target.checked)}
-                className="ln-checkbox"
-              />
-              Positions
-            </label>
             <button
               onClick={handleConfirmSave}
               disabled={!saveName.trim()}
@@ -138,7 +117,10 @@ export const ModeBanner = memo(function ModeBanner({
               Save
             </button>
             <button
-              onClick={() => { setSaving(false); setSaveName(''); }}
+              onClick={() => {
+                setSaving(false);
+                setSaveName('');
+              }}
               className="ln-mode-banner__btn-sm ln-btn-secondary"
             >
               Cancel
@@ -146,9 +128,23 @@ export const ModeBanner = memo(function ModeBanner({
           </div>
         )}
         <Tooltip content="Close">
-          <button onClick={() => onClose()} className="ln-mode-banner__close" aria-label="Close">
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+          <button
+            onClick={() => onClose()}
+            className="ln-mode-banner__close"
+            aria-label="Close"
+          >
+            <svg
+              className="w-4 h-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={1.5}
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M6 18 18 6M6 6l12 12"
+              />
             </svg>
           </button>
         </Tooltip>

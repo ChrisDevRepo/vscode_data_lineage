@@ -14,28 +14,31 @@ const variantClasses: Record<ButtonVariant, string> = {
   icon: 'w-9 h-9 ln-btn-icon',
 };
 
-/**
- * Shared button component with the repository variant styling.
- */
-export const Button = memo(forwardRef<HTMLButtonElement, ButtonProps>(function Button({
-  variant = 'secondary',
-  children,
-  className = '',
-  disabled = false,
-  style,
-  ...props
-}, ref) {
-  const combinedStyles = `inline-flex items-center justify-center font-semibold rounded-sm transition-colors focus:outline-hidden disabled:cursor-not-allowed ln-btn-disabled ${variantClasses[variant]} ${className}`;
+/** Shared button component with the repository variant styling. */
+export const Button = memo(
+  forwardRef<HTMLButtonElement, ButtonProps>(function Button(
+    {
+      variant = 'secondary',
+      children,
+      className = '',
+      disabled = false,
+      style,
+      ...props
+    },
+    ref,
+  ) {
+    const combinedStyles = `inline-flex items-center justify-center font-semibold rounded-sm transition-colors focus:outline-hidden disabled:cursor-not-allowed ln-btn-disabled ${variantClasses[variant]} ${className}`;
 
-  return (
-    <button
-      ref={ref}
-      className={combinedStyles}
-      disabled={disabled}
-      style={style}
-      {...props}
-    >
-      {children}
-    </button>
-  );
-}));
+    return (
+      <button
+        ref={ref}
+        className={combinedStyles}
+        disabled={disabled}
+        style={style}
+        {...props}
+      >
+        {children}
+      </button>
+    );
+  }),
+);

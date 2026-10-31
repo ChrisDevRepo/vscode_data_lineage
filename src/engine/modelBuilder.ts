@@ -1,35 +1,36 @@
 /**
  * @module ModelBuilder
- * Provides a unified pipeline for constructing a `DatabaseModel` from extracted metadata.
- *
- * This module is used by both dacpac and DMV extractors to:
- * - Normalize schema and object names (handling case-insensitivity and bracketed identifiers).
- * - Resolve object-level dependencies into graph edges.
- * - Infer data flow direction (read vs. write) for stored procedures and views.
- * - Handle cross-schema and cross-database dependency resolution.
- * - Create virtual nodes for external references (files, external databases).
- * - Compute schema-level statistics and build search/neighbor indexes.
+ * Shared pipeline that builds a DatabaseModel from dacpac and DMV metadata.
  */
 
 import {
   DatabaseModel,
   LineageNode,
   LineageEdge,
-  SchemaInfo,
   ObjectType,
   ParseStats,
   ExtractedObject,
   ExtractedDependency,
   CatalogEntry,
   NeighborIndex,
-  createEmptySchemaInfo,
 } from './types';
 import { parseSqlBody, extractExternalRefs } from './sqlBodyParser';
-import { quoteIdentifier, stripBrackets, splitSqlName, schemaKey } from '../utils/sql';
+import {
+  quoteIdentifier,
+  stripBrackets,
+  splitSqlName,
+  schemaKey,
+} from '../utils/sql';
 import { trunc, sanitizeForLog } from '../utils/log';
 import { ColumnStore } from './columnStore';
-import { SYSTEM_SCHEMAS, XML_METHODS, CLR_TYPE_METHODS } from './shared/sqlMetadata';
+import {
+  SYSTEM_SCHEMAS,
+  XML_METHODS,
+  CLR_TYPE_METHODS,
+} from './shared/sqlMetadata';
 import { normalizeName } from './shared/sqlIdentifier';
+import { allocateExternalFileIds } from './externalFileIdentity';
+import { computeSchemas } from './shared/modelSchemas';
 
 export { normalizeName };
 
@@ -37,14 +38,8 @@ export { normalizeName };
 const PARSE_TRACE_BUDGET = 5;
 
 /**
- * Builds a per-rule trace callback for the next sampled body and decrements `ctx.parseTrace.budget`.
- * Returns `undefined` when no body remains in the sampling budget. The callback emits one log line
- * per matching rule via `ctx.parseTrace.emit`, prefixed with the node label and a single SQL preview.
- *
- * @remarks
- * Emits a header line `Trace [schema.name] sql=<preview>` once per traced body, then a per-rule
- * line for each rule that contributed at least one new ref. Routed by the caller to the `[Parse]`
- * category so DBAs can verify YAML rule firing without instrumenting code.
+ * Returns a per-rule trace callback for the next sampled body, or undefined once the budget is
+ * spent.
  */
 function makeParseTraceCallback(
   node: LineageNode,
@@ -56,24 +51,13 @@ function makeParseTraceCallback(
   const sqlPreview = trunc(sanitizeForLog((node.bodyScript ?? '').trim()), 200);
   ctx.parseTrace.emit(`Trace [${label}] sql=${sqlPreview}`);
   return (ruleName, category, added) => {
-    ctx.parseTrace!.emit(`Trace [${label}]   rule=${ruleName} cat=${category} +${added} refs`);
+    ctx.parseTrace!.emit(
+      `Trace [${label}]   rule=${ruleName} cat=${category} +${added} refs`,
+    );
   };
 }
 
-/**
- * Builds a complete DatabaseModel from extracted objects and dependencies.
- *
- *
- * @param objects - Extracted objects to include in the model.
- * @param deps - Extracted dependencies between objects.
- * @param allObjects - Catalog of all known objects in scope.
- * @param currentDatabase - Current database name for local-object resolution.
- * @param externalRefsEnabled - Whether external reference nodes should be emitted.
- * @param onDebugLog - Debug logger callback.
- * @param identifierCaseSensitive - Checked catalog comparison policy; missing metadata stays CI.
- *
- * @returns A fully assembled DatabaseModel.
- */
+/** Builds a complete DatabaseModel from extracted objects and dependencies. */
 export function buildModel(
   objects: ExtractedObject[],
   deps: ExtractedDependency[],
@@ -83,7 +67,15 @@ export function buildModel(
   onDebugLog?: (msg: string) => void,
   identifierCaseSensitive = false,
 ): DatabaseModel {
-  const { nodes, edges, stats, neighborPairs } = buildNodesAndEdges(objects, deps, allObjects, currentDatabase, externalRefsEnabled, onDebugLog, identifierCaseSensitive);
+  const { nodes, edges, stats, neighborPairs } = buildNodesAndEdges(
+    objects,
+    deps,
+    allObjects,
+    currentDatabase,
+    externalRefsEnabled,
+    onDebugLog,
+    identifierCaseSensitive,
+  );
 
   const schemaCanonical = new Map<string, string>();
   for (const node of nodes) {
@@ -91,51 +83,46 @@ export function buildModel(
     if (!schemaCanonical.has(k)) schemaCanonical.set(k, node.schema);
   }
   for (const node of nodes) {
-    node.schema = schemaCanonical.get(schemaKey(node.schema, identifierCaseSensitive))!;
+    node.schema = schemaCanonical.get(
+      schemaKey(node.schema, identifierCaseSensitive),
+    )!;
   }
 
   const schemas = computeSchemas(nodes, identifierCaseSensitive);
-  const catalog = buildCatalog(allObjects ?? objects, schemaCanonical, identifierCaseSensitive);
+  const catalog = buildCatalog(
+    allObjects ?? objects,
+    schemaCanonical,
+    identifierCaseSensitive,
+  );
 
-  const uniqueNodes: LineageNode[] = [];
-  const seenIds = new Set<string>();
   for (const node of nodes) {
-    if (!seenIds.has(node.id)) {
-      seenIds.add(node.id);
-      uniqueNodes.push(node);
-    }
-  }
-
-  for (const node of uniqueNodes) {
-    if (node.type === 'external' || node.externalType === 'file' || node.externalType === 'db') {
-      catalog[node.id] = { schema: '', name: node.name, type: 'external', externalType: node.externalType };
+    if (
+      node.type === 'external' ||
+      node.externalType === 'file' ||
+      node.externalType === 'db'
+    ) {
+      catalog[node.id] = externalCatalogEntry(node.name, node.externalType);
     }
   }
 
   const neighborIndex = buildNeighborIndex(edges, neighborPairs);
 
-  const warnings: string[] = [];
-  if (objects.length === 0) {
-    warnings.push('No objects found in data source.');
-  } else if (uniqueNodes.length === 0) {
-    warnings.push('No tables, views, or stored procedures found.');
-  }
-
   return {
-    nodes: uniqueNodes, edges, schemas, catalog, neighborIndex,
+    nodes,
+    edges,
+    schemas,
+    catalog,
+    neighborIndex,
     ...(identifierCaseSensitive && { identifierCaseSensitive }),
     parseStats: stats,
-    warnings: warnings.length > 0 ? warnings : undefined,
   };
 }
 
-/**
- * Transfers heavy metadata (columns, DDL) from nodes into the provided ColumnStore.
- *
- * @param model - The database model to index.
- * @param store - Target ColumnStore instance.
- */
-export function populateColumnStore(model: DatabaseModel, store: ColumnStore): void {
+/** Transfers heavy metadata (columns, DDL) from nodes into the provided ColumnStore. */
+export function populateColumnStore(
+  model: DatabaseModel,
+  store: ColumnStore,
+): void {
   for (const node of model.nodes) {
     if (node.columns && node.columns.length > 0) {
       store.setColumns(node.id, node.columns);
@@ -148,9 +135,7 @@ export function populateColumnStore(model: DatabaseModel, store: ColumnStore): v
   }
 }
 
-/**
- * Constructs a display catalog for cross-schema resolution and neighbor discovery.
- */
+/** Constructs a display catalog for cross-schema resolution and neighbor discovery. */
 function buildCatalog(
   allObjects: ExtractedObject[],
   schemaCanonical: Map<string, string>,
@@ -159,9 +144,19 @@ function buildCatalog(
   const catalog: Record<string, CatalogEntry> = {};
   for (const obj of allObjects) {
     const { schema, objectName } = parseName(obj.fullName);
-    const displaySchema = schemaCanonical.get(schemaKey(schema, identifierCaseSensitive)) ?? schema;
-    catalog[normalizeName(obj.fullName, identifierCaseSensitive)] = {
-      schema: displaySchema, name: objectName, type: obj.type,
+    const id = normalizeName(obj.fullName, identifierCaseSensitive);
+    if (obj.type === 'external') {
+      // A catalog external table is listed like a rendered external node (see buildModel), in or
+      // out of the schema filter.
+      catalog[id] = externalCatalogEntry(objectName, obj.externalType ?? 'et');
+      continue;
+    }
+    const displaySchema =
+      schemaCanonical.get(schemaKey(schema, identifierCaseSensitive)) ?? schema;
+    catalog[id] = {
+      schema: displaySchema,
+      name: objectName,
+      type: obj.type,
       ...(obj.externalType && { externalType: obj.externalType }),
     };
   }
@@ -169,16 +164,24 @@ function buildCatalog(
 }
 
 /**
- * Builds an O(1) neighbor index for efficient graph traversal and UI interaction.
+ * The catalog entry of an external object: listed without a schema, under the UI's External group.
  */
+function externalCatalogEntry(
+  name: string,
+  externalType: CatalogEntry['externalType'],
+): CatalogEntry {
+  return { schema: '', name, type: 'external', externalType };
+}
+
+/** Builds an O(1) neighbor index for efficient graph traversal and UI interaction. */
 function buildNeighborIndex(
   edges: LineageEdge[],
   extraPairs?: Array<{ source: string; target: string }>,
 ): NeighborIndex {
-  const inSets  = new Map<string, Set<string>>();
+  const inSets = new Map<string, Set<string>>();
   const outSets = new Map<string, Set<string>>();
   const ensure = (id: string) => {
-    if (!inSets.has(id))  inSets.set(id, new Set());
+    if (!inSets.has(id)) inSets.set(id, new Set());
     if (!outSets.has(id)) outSets.set(id, new Set());
   };
   const addPair = (source: string, target: string) => {
@@ -197,104 +200,78 @@ function buildNeighborIndex(
   return index;
 }
 
-/**
- * Parses a full SQL name into schema and object components, respecting bracketed identifiers.
- *
- * @param fullName - Fully qualified name to parse.
- *
- * @returns Schema and object name; schema defaults to `dbo` when unqualified.
- */
-export function parseName(fullName: string): { schema: string; objectName: string } {
-  const parts = splitSqlName(fullName).map(p => stripBrackets(p));
+/** Parses a full SQL name into schema and object components, respecting bracketed identifiers. */
+export function parseName(fullName: string): {
+  schema: string;
+  objectName: string;
+} {
+  const parts = splitSqlName(fullName).map((p) => stripBrackets(p));
   if (parts.length >= 2) {
     return { schema: parts[0], objectName: parts[1] };
   }
   return { schema: 'dbo', objectName: parts[0] };
 }
 
-/**
- * Checks if a name contains a schema qualifier (e.g., 'dbo.Table' vs 'Table').
- *
- * @param name - The SQL identifier to check.
- * @returns `true` if the name is schema-qualified.
- */
+/** Checks if a name contains a schema qualifier (e.g., 'dbo.Table' vs 'Table'). */
 function isSchemaQualified(name: string): boolean {
   return stripBrackets(name).includes('.');
 }
 
-/**
- * Checks if a reference points to a known system schema (e.g., sys, INFORMATION_SCHEMA).
- *
- * @param name - The SQL identifier to check.
- * @returns `true` if it belongs to a system schema.
- */
+/** Checks if a reference points to a known system schema (e.g., sys, INFORMATION_SCHEMA). */
 function isSystemRef(name: string, ctx?: EdgeContext): boolean {
-  if (ctx?.identifierCaseSensitive && (ctx.nodeIds.has(name) || ctx.allNodeIds.has(name))) return false;
+  if (
+    ctx?.identifierCaseSensitive &&
+    (ctx.nodeIds.has(name) || ctx.allNodeIds.has(name))
+  )
+    return false;
   const schema = stripBrackets(splitSqlName(name)[0] ?? '').toLowerCase();
   return SYSTEM_SCHEMAS.has(schema);
 }
 
-/**
- * Heuristically classifies how a script mutates a specific object.
- *
- * @remarks
- * Uses a regex to look for INSERT/UPDATE/DELETE/MERGE/TRUNCATE keywords
- * preceding the object name. Used to infer flow direction for SPs.
- *
- * @param body - The SQL script body.
- * @param schema - Object schema.
- * @param name - Object name.
- * @returns `'delete'` when every matched mutation is a DELETE or TRUNCATE (rows removed, no column
- * data supplied) and no INSERT, UPDATE or MERGE names the object by a three-part name; `'write'` when
- * any matched mutation is an INSERT, UPDATE or MERGE; otherwise `'read'`.
- */
-function classifyBodyMutation(body: string, schema: string, name: string, identifierCaseSensitive = false): 'write' | 'delete' | 'read' {
-  const esc = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const identifier = (value: string) =>
-    `(?:${esc(quoteIdentifier(value))}|${esc(value)}(?![\\p{L}\\p{N}_@$#]))`;
-  const pattern = new RegExp(
-    `\\b(UPDATE|INSERT|DELETE|MERGE|TRUNCATE\\s+TABLE)\\s+` +
-    `(?:TOP\\s*\\([^)]*\\)\\s*(?:PERCENT\\s+)?)?(?:(?:INTO|FROM)\\s+)?(?:(${identifier(schema)})\\s*\\.\\s*)?(${identifier(name)})(?!\\s*\\.)`,
-    'giu',
+/** Compares a three-part reference database with known current-database metadata. */
+function isCurrentDatabase(
+  db: string,
+  currentDatabase: string | undefined,
+): boolean {
+  return (
+    !!currentDatabase &&
+    stripBrackets(db).toLowerCase() ===
+      stripBrackets(currentDatabase).toLowerCase()
   );
+}
+
+/** Classifies an existing metadata dependency using captured tuples, never body text. */
+function classifyMutation(
+  mutations: ReturnType<typeof parseSqlBody>['mutations'],
+  target: string[],
+  currentDatabase: string | undefined,
+  identifierCaseSensitive: boolean,
+): 'write' | 'delete' | 'read' {
+  const same = (a: string, b: string) =>
+    schemaKey(a, identifierCaseSensitive) ===
+    schemaKey(b, identifierCaseSensitive);
   let deleted = false;
-  for (const match of body.matchAll(pattern)) {
-    if ((match[2] === undefined || schemaKey(stripBrackets(match[2]), identifierCaseSensitive) === schemaKey(schema, identifierCaseSensitive))
-      && schemaKey(stripBrackets(match[3]), identifierCaseSensitive) === schemaKey(name, identifierCaseSensitive)) {
-      if (!/^(?:DELETE|TRUNCATE)/iu.test(match[1])) return 'write';
-      deleted = true;
-    }
+  for (const mutation of mutations) {
+    const parts = mutation.parts;
+    const matches =
+      target.length === 2
+        ? parts.length === 1
+          ? same(parts[0], target[1])
+          : parts.length === 2
+            ? parts.every((part, i) => same(part, target[i]))
+            : parts.length === 3 &&
+              isCurrentDatabase(parts[0], currentDatabase) &&
+              parts.slice(1).every((part, i) => same(part, target[i]))
+        : parts.length === target.length &&
+          parts.every((part, i) => same(part, target[i]));
+    if (!matches) continue;
+    if (mutation.kind === 'write') return 'write';
+    deleted = true;
   }
-  if (!deleted) return 'read';
-  const threePart = new RegExp(
-    `\\b(?:UPDATE|INSERT(?:\\s+INTO)?|MERGE(?:\\s+INTO)?)\\s+(?:\\[[^\\]]+\\]|[\\p{L}_][\\p{L}\\p{N}_@$#]*)\\s*\\.\\s*${identifier(schema)}\\s*\\.\\s*${identifier(name)}`,
-    'iu',
-  );
-  return threePart.test(body) ? 'write' : 'delete';
+  return deleted ? 'delete' : 'read';
 }
 
-/**
- * Heuristically determines if a script writes to a specific object.
- *
- * @param body - The SQL script body.
- * @param schema - Object schema.
- * @param name - Object name.
- * @returns `'write'` when the SQL mutates the named object (DELETE and TRUNCATE included); otherwise `'read'`.
- */
-function inferBodyDirection(body: string, schema: string, name: string, identifierCaseSensitive = false): 'write' | 'read' {
-  return classifyBodyMutation(body, schema, name, identifierCaseSensitive) === 'read' ? 'read' : 'write';
-}
-
-/**
- * Internal utility to add a directional edge to the lineage graph.
- *
- * @param edges - The collection of edges to add to.
- * @param edgeKeys - A set used to deduplicate edges by their source→target key.
- * @param source - Source node ID.
- * @param target - Target node ID.
- * @param type - The edge type (body-read, write, or exec).
- * @param deleteOnly - Marks a write edge whose every mutation is a DELETE or TRUNCATE.
- */
+/** Internal utility to add a directional edge to the lineage graph. */
 function addEdge(
   edges: LineageEdge[],
   edgeKeys: Set<string>,
@@ -306,39 +283,19 @@ function addEdge(
   const key = `${source}→${target}`;
   if (!edgeKeys.has(key)) {
     edgeKeys.add(key);
-    edges.push(deleteOnly ? { source, target, type, deleteOnly: true } : { source, target, type });
+    edges.push(
+      deleteOnly
+        ? { source, target, type, deleteOnly: true }
+        : { source, target, type },
+    );
   }
 }
 
-/**
- * Computes architectural schema metrics from the resolved node list.
- *
- * @param nodes - All discovered lineage nodes.
- * @returns An array of schema info objects, sorted by node count.
- */
-export function computeSchemas(nodes: LineageNode[], identifierCaseSensitive = false): SchemaInfo[] {
-  const map = new Map<string, SchemaInfo>();
-  for (const node of nodes) {
-    if (node.externalType === 'file' || node.externalType === 'db') continue;
-    const key = schemaKey(node.schema, identifierCaseSensitive);
-    let info = map.get(key);
-    if (!info) {
-      info = createEmptySchemaInfo(node.schema);
-      map.set(key, info);
-    }
-    info.nodeCount++;
-    info.types[node.type]++;
-  }
-  return Array.from(map.values()).sort((a, b) => b.nodeCount - a.nodeCount);
-}
-
-/**
- * Builds the primary list of LineageNodes from extracted object metadata.
- *
- * @param objects - Metadata for objects discovered in the active scope.
- * @returns The assembled nodes and their unique IDs.
- */
-function buildNodeList(objects: ExtractedObject[], identifierCaseSensitive: boolean): { nodes: LineageNode[]; nodeIds: Set<string> } {
+/** Builds the primary list of LineageNodes from extracted object metadata. */
+function buildNodeList(
+  objects: ExtractedObject[],
+  identifierCaseSensitive: boolean,
+): { nodes: LineageNode[]; nodeIds: Set<string> } {
   const nodes: LineageNode[] = [];
   const nodeIds = new Set<string>();
 
@@ -350,7 +307,11 @@ function buildNodeList(objects: ExtractedObject[], identifierCaseSensitive: bool
     nodeIds.add(id);
 
     nodes.push({
-      id, schema, name: objectName, fullName: obj.fullName, type: obj.type,
+      id,
+      schema,
+      name: objectName,
+      fullName: obj.fullName,
+      type: obj.type,
       ...(obj.bodyScript && { bodyScript: obj.bodyScript }),
       ...(obj.columns && obj.columns.length > 0 && { columns: obj.columns }),
       ...(obj.fks !== undefined && { fks: obj.fks }),
@@ -361,18 +322,22 @@ function buildNodeList(objects: ExtractedObject[], identifierCaseSensitive: bool
   return { nodes, nodeIds };
 }
 
-/**
- * Builds the full cross-schema catalog for Phase 2 dependency resolution.
- *
- * @param allObjects - The full database catalog (optional).
- * @returns Metadata for all objects available for neighbor resolution.
- */
-function buildFullCatalog(allObjects: ExtractedObject[] | undefined, identifierCaseSensitive: boolean): {
+/** Builds the full cross-schema catalog for Phase 2 dependency resolution. */
+function buildFullCatalog(
+  allObjects: ExtractedObject[] | undefined,
+  identifierCaseSensitive: boolean,
+): {
   allNodeIds: Set<string>;
-  allObjectMeta: Map<string, { schema: string; name: string; type: ObjectType }>;
+  allObjectMeta: Map<
+    string,
+    { schema: string; name: string; type: ObjectType }
+  >;
 } {
   const allNodeIds = new Set<string>();
-  const allObjectMeta = new Map<string, { schema: string; name: string; type: ObjectType }>();
+  const allObjectMeta = new Map<
+    string,
+    { schema: string; name: string; type: ObjectType }
+  >();
   if (allObjects) {
     for (const obj of allObjects) {
       const id = normalizeName(obj.fullName, identifierCaseSensitive);
@@ -384,9 +349,7 @@ function buildFullCatalog(allObjects: ExtractedObject[] | undefined, identifierC
   return { allNodeIds, allObjectMeta };
 }
 
-/**
- * Classification structure for dependencies found during extraction.
- */
+/** Classification structure for dependencies found during extraction. */
 interface GroupedDeps {
   /** Resolved local dependencies. */
   depsPerSource: Map<string, string[]>;
@@ -396,17 +359,15 @@ interface GroupedDeps {
   unresolvableDepsForNode: Map<string, string[]>;
   /** Pairs where the neighbor depends on an in-scope node. */
   inboundNeighborPairs: Array<{ source: string; target: string }>;
-  /** Dependencies that appear to target another database (3-part names). */
+  /**
+   * Three-part (cross-database) dependencies of in-scope nodes; an out-of-scope source has no node
+   * to attach them to.
+   */
   crossDbMetaDeps: Map<string, string[]>;
 }
 
 /**
  * Categorizes dependencies based on their visibility and resolution status in the current catalog.
- *
- * @param deps - Raw extracted dependencies.
- * @param nodeIds - Nodes in the active filtered scope.
- * @param allNodeIds - All nodes in the database catalog.
- * @returns A grouped collection of dependencies ready for graph processing.
  */
 function groupDependencies(
   deps: ExtractedDependency[],
@@ -421,23 +382,21 @@ function groupDependencies(
   const crossDbMetaDeps = new Map<string, string[]>();
 
   for (const dep of deps) {
-    const targetParts = splitSqlName(dep.targetName);
-    if (targetParts.length >= 3) {
-      const sourceId = normalizeName(dep.sourceName, identifierCaseSensitive);
-      if (nodeIds.has(sourceId) || (allNodeIds.size > 0 && allNodeIds.has(sourceId))) {
+    const sourceId = normalizeName(dep.sourceName, identifierCaseSensitive);
+    if (splitSqlName(dep.targetName).length >= 3) {
+      if (nodeIds.has(sourceId)) {
         if (!crossDbMetaDeps.has(sourceId)) crossDbMetaDeps.set(sourceId, []);
         crossDbMetaDeps.get(sourceId)!.push(dep.targetName);
       }
       continue;
     }
 
-    const sourceId = normalizeName(dep.sourceName, identifierCaseSensitive);
     const targetId = normalizeName(dep.targetName, identifierCaseSensitive);
 
     if (sourceId === targetId) continue;
 
     if (!nodeIds.has(sourceId)) {
-      if (allNodeIds.size > 0 && allNodeIds.has(sourceId) && nodeIds.has(targetId)) {
+      if (allNodeIds.has(sourceId) && nodeIds.has(targetId)) {
         inboundNeighborPairs.push({ source: targetId, target: sourceId });
       }
       continue;
@@ -446,31 +405,42 @@ function groupDependencies(
     if (nodeIds.has(targetId)) {
       if (!depsPerSource.has(sourceId)) depsPerSource.set(sourceId, []);
       depsPerSource.get(sourceId)!.push(targetId);
-    } else if (allNodeIds.size > 0 && allNodeIds.has(targetId)) {
-      if (!crossSchemaDepsForNode.has(sourceId)) crossSchemaDepsForNode.set(sourceId, []);
+    } else if (allNodeIds.has(targetId)) {
+      if (!crossSchemaDepsForNode.has(sourceId))
+        crossSchemaDepsForNode.set(sourceId, []);
       crossSchemaDepsForNode.get(sourceId)!.push(targetId);
     } else {
       if (isSchemaQualified(dep.targetName) && !isSystemRef(dep.targetName)) {
-        if (!unresolvableDepsForNode.has(sourceId)) unresolvableDepsForNode.set(sourceId, []);
+        if (!unresolvableDepsForNode.has(sourceId))
+          unresolvableDepsForNode.set(sourceId, []);
         unresolvableDepsForNode.get(sourceId)!.push(dep.targetName);
       }
     }
   }
 
-  return { depsPerSource, crossSchemaDepsForNode, unresolvableDepsForNode, inboundNeighborPairs, crossDbMetaDeps };
+  return {
+    depsPerSource,
+    crossSchemaDepsForNode,
+    unresolvableDepsForNode,
+    inboundNeighborPairs,
+    crossDbMetaDeps,
+  };
 }
 
-/**
- * Shared context for processing dependency edges per-node.
- */
+/** Shared context for processing dependency edges per-node. */
 interface EdgeContext {
   identifierCaseSensitive: boolean;
+  currentDatabase?: string;
+  mutationsByNode: Map<string, ReturnType<typeof parseSqlBody>['mutations']>;
   /** IDs of all nodes in the current filtered scope. */
   nodeIds: Set<string>;
   /** IDs of all nodes in the database catalog. */
   allNodeIds: Set<string>;
   /** Metadata lookup for nodes in the full catalog. */
-  allObjectMeta: Map<string, { schema: string; name: string; type: ObjectType }>;
+  allObjectMeta: Map<
+    string,
+    { schema: string; name: string; type: ObjectType }
+  >;
   /** Lookup map for nodes in the current filtered scope. */
   nodeMap: Map<string, LineageNode>;
   /** The collection of graph edges being built. */
@@ -497,32 +467,56 @@ interface EdgeContext {
 interface ParseTraceCtx {
   /** Remaining bodies to trace before tracing stops. */
   budget: number;
-  /** Receiver for the formatted log line. Routed by the caller to `Logger.create(ch, 'Parse').debug`. */
+  /**
+   * Receiver for the formatted log line. Routed by the caller to
+   * `Logger.create(ch, 'Parse').debug`.
+   */
   emit: (msg: string) => void;
 }
 
 /**
- * Resolves regex-parsed references into graph edges or neighbor index pairs.
- *
- * @param refs - Canonical references emitted by the SQL-body parser.
- * @param sourceId - ID of the node being parsed.
- * @param spLabel - Human-readable name for logging.
- * @param direction - Edge directionality (inward vs outward).
- * @param edgeType - The semantic type of connection (body vs exec).
- * @param ctx - Shared edge creation context.
- * @param outRefs - Collection for successful resolutions.
- * @param unrelated - Collection for unresolvable drops.
- * @returns The number of successfully resolved edges.
+ * One module's unresolved references, one entry per canonical id. A reference named by both the
+ * catalog dependency rows and the SQL body is listed once: the catalog spelling is kept, and a
+ * call from the body marks the entry ` (exec)`. Each entry is also one dropped reference.
  */
+class UnresolvedRefs {
+  private readonly entries = new Map<
+    string,
+    { display: string; exec: boolean; fromCatalog: boolean }
+  >();
+
+  add(id: string, display: string, exec: boolean, fromCatalog: boolean): void {
+    const entry = this.entries.get(id);
+    if (!entry) {
+      this.entries.set(id, { display, exec, fromCatalog });
+      return;
+    }
+    if (exec) entry.exec = true;
+    if (fromCatalog && !entry.fromCatalog) {
+      entry.display = display;
+      entry.fromCatalog = true;
+    }
+  }
+
+  /** Lists the entries in first-seen order and records each as a dropped reference. */
+  flush(label: string, stats: ParseStats): string[] {
+    const list = [...this.entries.values()].map((entry) =>
+      entry.exec ? `${entry.display} (exec)` : entry.display,
+    );
+    for (const ref of list) stats.droppedRefs.push(`${label} → ${ref}`);
+    return list;
+  }
+}
+
+/** Resolves regex-parsed references into graph edges or neighbor index pairs. */
 function processRegexRefs(
   refs: string[],
   sourceId: string,
-  spLabel: string,
   direction: 'in' | 'out',
   edgeType: 'body' | 'exec',
   ctx: EdgeContext,
   outRefs: string[],
-  unrelated: string[],
+  unrelated: UnresolvedRefs,
 ): number {
   let count = 0;
   for (const dep of refs) {
@@ -542,45 +536,41 @@ function processRegexRefs(
         const n = ctx.nodeMap.get(depId);
         const label = n ? `${n.schema}.${n.name}` : dep;
         outRefs.push(edgeType === 'exec' ? label + ' (exec)' : label);
-      } else if (ctx.allNodeIds.size > 0 && ctx.allNodeIds.has(depId)) {
+      } else if (ctx.allNodeIds.has(depId)) {
         if (direction === 'in') {
           ctx.neighborPairs.push({ source: depId, target: sourceId });
         } else {
           ctx.neighborPairs.push({ source: sourceId, target: depId });
         }
       } else {
-        const suffix = edgeType === 'exec' ? dep + ' (exec)' : dep;
-        unrelated.push(suffix);
-        ctx.stats.droppedRefs.push(`${spLabel} → ${suffix}`);
+        unrelated.add(depId, dep, edgeType === 'exec', false);
       }
     }
   }
   return count;
 }
 
-/**
- * Orchestrates edge creation for non-procedural nodes (tables, views, functions).
- *
- * @param node - The node to process.
- * @param xmlDeps - Dependencies declared in the XML model (DACPAC only).
- * @param ctx - Shared edge context.
- */
-function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext): void {
+/** Orchestrates edge creation for non-procedural nodes (tables, views, functions). */
+function processNonSpEdges(
+  node: LineageNode,
+  xmlDeps: string[],
+  ctx: EdgeContext,
+): void {
   const sourceId = node.id;
 
   for (const depId of xmlDeps) {
     addEdge(ctx.edges, ctx.edgeKeys, depId, sourceId, 'body');
   }
-  for (const csDepId of ctx.grouped.crossSchemaDepsForNode.get(sourceId) ?? []) {
+  for (const csDepId of ctx.grouped.crossSchemaDepsForNode.get(sourceId) ??
+    []) {
     ctx.neighborPairs.push({ source: csDepId, target: sourceId });
   }
 
   if (node.bodyScript && (node.type === 'view' || node.type === 'function')) {
-    const onRuleFire = makeParseTraceCallback(node, ctx);
-    const parsed = parseSqlBody(node.bodyScript, onRuleFire, ctx.identifierCaseSensitive);
+    const parsed = parseNode(node, ctx);
     const spLabel = `${node.schema}.${node.name}`;
     const spInRefs: string[] = [];
-    const spUnrelated: string[] = [];
+    const unrelated = new UnresolvedRefs();
 
     for (const r of parsed.crossDbSources) {
       spInRefs.push(r);
@@ -592,7 +582,10 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
         existing.sources.push(...parsed.crossDbSources);
         existing.targets.push(...parsed.crossDbTargets);
       } else {
-        ctx.crossDbRegexRefs.set(sourceId, { sources: parsed.crossDbSources, targets: parsed.crossDbTargets });
+        ctx.crossDbRegexRefs.set(sourceId, {
+          sources: parsed.crossDbSources,
+          targets: parsed.crossDbTargets,
+        });
       }
     }
     const xmlDepIds = new Set(xmlDeps);
@@ -608,25 +601,32 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
         ctx.stats.resolvedEdges++;
         const n = ctx.nodeMap.get(depId);
         spInRefs.push(n ? `${n.schema}.${n.name}` : dep);
-      } else if (ctx.allNodeIds.size > 0 && ctx.allNodeIds.has(depId)) {
+      } else if (ctx.allNodeIds.has(depId)) {
         ctx.neighborPairs.push({ source: depId, target: sourceId });
       } else {
         const parts = splitSqlName(dep);
         const objPart = stripBrackets(parts[parts.length - 1]).toLowerCase();
         if (XML_METHODS.has(objPart)) continue;
-        spUnrelated.push(dep);
-        ctx.stats.droppedRefs.push(`${spLabel} → ${dep}`);
+        unrelated.add(depId, dep, false, false);
       }
     }
 
-    for (const rawName of ctx.grouped.unresolvableDepsForNode.get(sourceId) ?? []) {
-      spUnrelated.push(rawName);
-      ctx.stats.droppedRefs.push(`${spLabel} → ${rawName}`);
+    for (const rawName of ctx.grouped.unresolvableDepsForNode.get(sourceId) ??
+      []) {
+      unrelated.add(
+        normalizeName(rawName, ctx.identifierCaseSensitive),
+        rawName,
+        false,
+        true,
+      );
     }
+    const spUnrelated = unrelated.flush(spLabel, ctx.stats);
 
     if (spInRefs.length > 0 || spUnrelated.length > 0) {
       ctx.stats.spDetails.push({
-        name: spLabel, inCount: spInRefs.length, outCount: 0,
+        name: spLabel,
+        inCount: spInRefs.length,
+        outCount: 0,
         ...(spInRefs.length > 0 && { inRefs: spInRefs }),
         unrelated: spUnrelated,
       });
@@ -634,24 +634,40 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
   }
 }
 
-/**
- * Orchestrates edge creation for stored procedures using regex-based script analysis.
- *
- * @param node - The node to process.
- * @param xmlDeps - XML-declared dependencies.
- * @param ctx - Shared edge context.
- */
-function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext): void {
+/** Parses a module body and records each construct that is not fully supported. */
+function parseNode(
+  node: LineageNode,
+  ctx: EdgeContext,
+): ReturnType<typeof parseSqlBody> {
+  const parsed = parseSqlBody(
+    node.bodyScript!,
+    makeParseTraceCallback(node, ctx),
+    ctx.identifierCaseSensitive,
+  );
+  for (const label of parsed.unsupported)
+    ((ctx.stats.unsupported ??= {})[label] ??= []).push(node.fullName);
+  return parsed;
+}
+
+/** Orchestrates edge creation for stored procedures using regex-based script analysis. */
+function processSpEdges(
+  node: LineageNode,
+  xmlDeps: string[],
+  ctx: EdgeContext,
+): void {
   const sourceId = node.id;
-  const onRuleFire = makeParseTraceCallback(node, ctx);
-  const parsed = parseSqlBody(node.bodyScript!, onRuleFire, ctx.identifierCaseSensitive);
+  const parsed = parseNode(node, ctx);
+  ctx.mutationsByNode.set(sourceId, parsed.mutations);
   const spLabel = `${node.schema}.${node.name}`;
   const spInRefs: string[] = [];
   const spOutRefs: string[] = [];
-  const spUnrelated: string[] = [];
+  const unrelated = new UnresolvedRefs();
 
   if (parsed.crossDbSources.length > 0 || parsed.crossDbTargets.length > 0) {
-    ctx.crossDbRegexRefs.set(sourceId, { sources: parsed.crossDbSources, targets: parsed.crossDbTargets });
+    ctx.crossDbRegexRefs.set(sourceId, {
+      sources: parsed.crossDbSources,
+      targets: parsed.crossDbTargets,
+    });
   }
 
   const outboundIds = new Set<string>();
@@ -671,15 +687,30 @@ function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext):
         (depNode?.type === 'table' || depNode?.type === 'external') &&
         node.bodyScript
       ) {
-        const mutation = classifyBodyMutation(node.bodyScript, depNode.schema, depNode.name, ctx.identifierCaseSensitive);
-        if (mutation === 'read') addEdge(ctx.edges, ctx.edgeKeys, depId, sourceId, 'body');
-        else addEdge(ctx.edges, ctx.edgeKeys, sourceId, depId, 'body', mutation === 'delete');
+        const mutation = classifyMutation(
+          parsed.mutations,
+          [depNode.schema, depNode.name],
+          ctx.currentDatabase,
+          ctx.identifierCaseSensitive,
+        );
+        if (mutation === 'read')
+          addEdge(ctx.edges, ctx.edgeKeys, depId, sourceId, 'body');
+        else
+          addEdge(
+            ctx.edges,
+            ctx.edgeKeys,
+            sourceId,
+            depId,
+            'body',
+            mutation === 'delete',
+          );
       } else {
         addEdge(ctx.edges, ctx.edgeKeys, depId, sourceId, 'body');
       }
     }
   }
-  for (const csDepId of ctx.grouped.crossSchemaDepsForNode.get(sourceId) ?? []) {
+  for (const csDepId of ctx.grouped.crossSchemaDepsForNode.get(sourceId) ??
+    []) {
     if (!outboundIds.has(csDepId)) {
       const meta = ctx.allObjectMeta.get(csDepId);
       if (meta?.type === 'procedure') {
@@ -687,7 +718,12 @@ function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext):
       } else if (
         (meta?.type === 'table' || meta?.type === 'external') &&
         node.bodyScript &&
-        inferBodyDirection(node.bodyScript, meta.schema, meta.name, ctx.identifierCaseSensitive) === 'write'
+        classifyMutation(
+          parsed.mutations,
+          [meta.schema, meta.name],
+          ctx.currentDatabase,
+          ctx.identifierCaseSensitive,
+        ) !== 'read'
       ) {
         ctx.neighborPairs.push({ source: sourceId, target: csDepId });
       } else {
@@ -696,39 +732,62 @@ function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext):
     }
   }
 
-  for (const rawName of ctx.grouped.unresolvableDepsForNode.get(sourceId) ?? []) {
-    spUnrelated.push(rawName);
-    ctx.stats.droppedRefs.push(`${spLabel} → ${rawName}`);
+  for (const rawName of ctx.grouped.unresolvableDepsForNode.get(sourceId) ??
+    []) {
+    unrelated.add(
+      normalizeName(rawName, ctx.identifierCaseSensitive),
+      rawName,
+      false,
+      true,
+    );
   }
 
-  const spIn = processRegexRefs(parsed.sources, sourceId, spLabel, 'in', 'body', ctx, spInRefs, spUnrelated) + parsed.crossDbSources.length;
+  const spIn =
+    processRegexRefs(
+      parsed.sources,
+      sourceId,
+      'in',
+      'body',
+      ctx,
+      spInRefs,
+      unrelated,
+    ) + parsed.crossDbSources.length;
   const spOut =
-    processRegexRefs(parsed.targets, sourceId, spLabel, 'out', 'body', ctx, spOutRefs, spUnrelated) +
-    processRegexRefs(parsed.execCalls, sourceId, spLabel, 'out', 'exec', ctx, spOutRefs, spUnrelated) +
+    processRegexRefs(
+      parsed.targets,
+      sourceId,
+      'out',
+      'body',
+      ctx,
+      spOutRefs,
+      unrelated,
+    ) +
+    processRegexRefs(
+      parsed.execCalls,
+      sourceId,
+      'out',
+      'exec',
+      ctx,
+      spOutRefs,
+      unrelated,
+    ) +
     parsed.crossDbTargets.length;
 
   for (const r of parsed.crossDbSources) spInRefs.push(r);
   for (const r of parsed.crossDbTargets) spOutRefs.push(r);
+  const spUnrelated = unrelated.flush(spLabel, ctx.stats);
 
   ctx.stats.spDetails.push({
-    name: spLabel, inCount: spIn, outCount: spOut,
+    name: spLabel,
+    inCount: spIn,
+    outCount: spOut,
     ...(spInRefs.length > 0 && { inRefs: spInRefs }),
     ...(spOutRefs.length > 0 && { outRefs: spOutRefs }),
     unrelated: spUnrelated,
   });
 }
 
-/**
- * Primary internal builder for the node and edge lists.
- *
- * @param objects - Objects discovered in scope.
- * @param deps - Extracted object-level dependencies.
- * @param allObjects - Full database catalog.
- * @param currentDatabase - Active database name.
- * @param externalRefsEnabled - Whether to create virtual nodes for external systems.
- * @param onDebugLog - Optional sink for sampled parser diagnostics.
- * @returns Assembled nodes, edges, statistics, and neighbor index pairs.
- */
+/** Primary internal builder for the node and edge lists. */
 function buildNodesAndEdges(
   objects: ExtractedObject[],
   deps: ExtractedDependency[],
@@ -737,24 +796,62 @@ function buildNodesAndEdges(
   externalRefsEnabled = true,
   onDebugLog?: (msg: string) => void,
   identifierCaseSensitive: boolean = false,
-): { nodes: LineageNode[]; edges: LineageEdge[]; stats: ParseStats; neighborPairs: Array<{ source: string; target: string }> } {
+): {
+  nodes: LineageNode[];
+  edges: LineageEdge[];
+  stats: ParseStats;
+  neighborPairs: Array<{ source: string; target: string }>;
+} {
   const { nodes, nodeIds } = buildNodeList(objects, identifierCaseSensitive);
-  const { allNodeIds, allObjectMeta } = buildFullCatalog(allObjects, identifierCaseSensitive);
-  const grouped = groupDependencies(deps, nodeIds, allNodeIds, identifierCaseSensitive);
+  const { allNodeIds, allObjectMeta } = buildFullCatalog(
+    allObjects,
+    identifierCaseSensitive,
+  );
+  const grouped = groupDependencies(
+    deps,
+    nodeIds,
+    allNodeIds,
+    identifierCaseSensitive,
+  );
 
   const edges: LineageEdge[] = [];
   const edgeKeys = new Set<string>();
-  const stats: ParseStats = { parsedRefs: 0, resolvedEdges: 0, droppedRefs: [], spDetails: [] };
-  const neighborPairs: Array<{ source: string; target: string }> = [...grouped.inboundNeighborPairs];
-  const nodeMap = new Map(nodes.map(n => [n.id, n]));
-  const crossDbRegexRefs = new Map<string, { sources: string[]; targets: string[] }>();
+  const stats: ParseStats = {
+    parsedRefs: 0,
+    resolvedEdges: 0,
+    droppedRefs: [],
+    spDetails: [],
+  };
+  const neighborPairs: Array<{ source: string; target: string }> = [
+    ...grouped.inboundNeighborPairs,
+  ];
+  const nodeMap = new Map(nodes.map((n) => [n.id, n]));
+  const crossDbRegexRefs = new Map<
+    string,
+    { sources: string[]; targets: string[] }
+  >();
 
   const parseTrace: ParseTraceCtx | undefined = onDebugLog
     ? { budget: PARSE_TRACE_BUDGET, emit: onDebugLog }
     : undefined;
   const traceStartBudget = parseTrace?.budget ?? 0;
 
-  const ctx: EdgeContext = { identifierCaseSensitive, nodeIds, allNodeIds, allObjectMeta, nodeMap, edges, edgeKeys, stats, neighborPairs, grouped, crossDbRegexRefs, parseTrace };
+  const ctx: EdgeContext = {
+    identifierCaseSensitive,
+    currentDatabase,
+    mutationsByNode: new Map(),
+    nodeIds,
+    allNodeIds,
+    allObjectMeta,
+    nodeMap,
+    edges,
+    edgeKeys,
+    stats,
+    neighborPairs,
+    grouped,
+    crossDbRegexRefs,
+    parseTrace,
+  };
 
   if (onDebugLog) onDebugLog(`Starting processing of ${nodes.length} nodes...`);
   let scriptedCount = 0;
@@ -770,23 +867,39 @@ function buildNodesAndEdges(
       scriptedCount++;
       processSpEdges(node, xmlDeps, ctx);
     } else {
-      if (node.bodyScript && (node.type === 'view' || node.type === 'function')) {
+      if (
+        node.bodyScript &&
+        (node.type === 'view' || node.type === 'function')
+      ) {
         scriptedCount++;
       }
       processNonSpEdges(node, xmlDeps, ctx);
     }
   }
 
-  if (onDebugLog) onDebugLog(`Finished processing. Scripted objects found: ${scriptedCount}`);
+  if (onDebugLog)
+    onDebugLog(`Finished processing. Scripted objects found: ${scriptedCount}`);
   if (parseTrace && traceStartBudget > 0 && parseTrace.budget === 0) {
-    onDebugLog!(`Parse trace sample limit reached (${traceStartBudget} bodies) — see [Parse] aggregate stats for full counts`);
+    onDebugLog!(
+      `Parse trace sample limit reached (${traceStartBudget} bodies) — see [Parse] aggregate stats for full counts`,
+    );
   }
 
-  if (externalRefsEnabled) {
-    createVirtualNodes(nodes, nodeIds, edges, edgeKeys, crossDbRegexRefs, grouped.crossDbMetaDeps, currentDatabase, identifierCaseSensitive);
-  }
+  resolveFileAndDatabaseReferences(
+    nodes,
+    nodeIds,
+    edges,
+    edgeKeys,
+    crossDbRegexRefs,
+    grouped.crossDbMetaDeps,
+    ctx.mutationsByNode,
+    externalRefsEnabled,
+    currentDatabase,
+    identifierCaseSensitive,
+    ctx.allNodeIds,
+  );
 
-  const typeById = new Map(nodes.map(n => [n.id, n.type]));
+  const typeById = new Map(nodes.map((n) => [n.id, n.type]));
   const sanitized: LineageEdge[] = [];
   for (const e of edges) {
     const src = typeById.get(e.source);
@@ -798,28 +911,7 @@ function buildNodesAndEdges(
   return { nodes, edges: sanitized, stats, neighborPairs };
 }
 
-/**
- * Deterministic hash of a URL string → 8-char hex for stable virtual node IDs.
- *
- * @param url - The URL to hash.
- * @returns An 8-character hex string.
- */
-function hashUrl(url: string): string {
-  let hash = 0;
-  for (let i = 0; i < url.length; i++) {
-    hash = ((hash << 5) - hash) + url.charCodeAt(i);
-    hash |= 0;
-  }
-  return Math.abs(hash).toString(16).padStart(8, '0').slice(0, 8);
-}
-
-/**
- * Extract last path segment from a URL, max length 40.
- *
- * @param url - The URL to parse.
- * @param maxLen - Maximum character length.
- * @returns The last segment of the path.
- */
+/** Extract last path segment from a URL, max length 40. */
 function lastUrlSegment(url: string, maxLen = 40): string {
   const cleaned = url.replace(/[?#].*$/, '');
   const segments = cleaned.split('/');
@@ -828,80 +920,105 @@ function lastUrlSegment(url: string, maxLen = 40): string {
 }
 
 /**
- * Creates virtual nodes for external systems like cloud files or remote databases.
- *
- * @remarks
- * Every distinct external reference becomes a node and edge; there is no admission budget. A
- * caller that must honor `dataLineageViz.maxNodes` checks the assembled model afterward with
- * {@link checkObjectLimit} in `modelFilters.ts`.
- *
- * @param nodes - Node collection to add to.
- * @param nodeIds - ID set to add to.
- * @param edges - Edge collection.
- * @param edgeKeys - Edge deduplication set.
- * @param crossDbRegexRefs - Discovered 3-part references from regex.
- * @param crossDbMetaDeps - Discovered 3-part references from model metadata.
- * @param currentDatabase - Active database name.
+ * Binds local database references and optionally emits virtual nodes for files and remote
+ * databases.
  */
-function createVirtualNodes(
+function resolveFileAndDatabaseReferences(
   nodes: LineageNode[],
   nodeIds: Set<string>,
   edges: LineageEdge[],
   edgeKeys: Set<string>,
   crossDbRegexRefs: Map<string, { sources: string[]; targets: string[] }>,
   crossDbMetaDeps: Map<string, string[]>,
+  mutationsByNode: EdgeContext['mutationsByNode'],
+  externalRefsEnabled: boolean,
   currentDatabase?: string,
   identifierCaseSensitive = false,
+  catalogNodeIds: ReadonlySet<string> = nodeIds,
 ): void {
-  const nodeMap = new Map(nodes.map(n => [n.id, n]));
-
-  const fileNodeMap = new Map<string, string>();
-  const nodeSnapshot = [...nodes];
-  for (const node of nodeSnapshot) {
-    if (!node.bodyScript) continue;
-    const refs = extractExternalRefs(node.bodyScript);
-    for (const ref of refs) {
-      let virtualId = fileNodeMap.get(ref.url);
-      if (!virtualId) {
-        const hash = hashUrl(ref.url);
-        virtualId = `[__ext__].[${hash}]`;
-        fileNodeMap.set(ref.url, virtualId);
-        if (!nodeIds.has(virtualId)) {
-          nodeIds.add(virtualId);
-          nodes.push({
-            id: virtualId, schema: '', name: lastUrlSegment(ref.url),
-            fullName: virtualId, type: 'external', externalType: 'file',
-            externalUrl: ref.url,
-          });
-        }
+  const nodeMap = new Map(nodes.map((n) => [n.id, n]));
+  const addVirtualEdge = (
+    node: LineageNode,
+    source: string,
+    target: string,
+    deleteOnly = false,
+  ): void => {
+    if (externalRefsEnabled) {
+      if (!nodeIds.has(node.id)) {
+        nodeIds.add(node.id);
+        nodes.push(node);
       }
-      addEdge(edges, edgeKeys, virtualId, node.id, 'body');
+      addEdge(edges, edgeKeys, source, target, 'body', deleteOnly);
+    }
+  };
+
+  const fileRefs = nodes
+    .filter((node) => node.bodyScript)
+    .map((node) => ({ node, refs: extractExternalRefs(node.bodyScript!) }));
+  const fileNodeMap = allocateExternalFileIds(
+    fileRefs.flatMap((entry) => entry.refs.map((ref) => ref.url)),
+    new Set([...catalogNodeIds, ...nodeIds]),
+  );
+  for (const { node, refs } of fileRefs) {
+    for (const ref of refs) {
+      const virtualId = fileNodeMap.get(ref.url)!;
+      addVirtualEdge(
+        {
+          id: virtualId,
+          schema: '',
+          name: lastUrlSegment(ref.url),
+          fullName: virtualId,
+          type: 'external',
+          externalType: 'file',
+          externalUrl: ref.url,
+        },
+        virtualId,
+        node.id,
+      );
     }
   }
 
-  const isLocalRef = (db: string, localId: string): boolean => {
-    const normDb = stripBrackets(db).toLowerCase();
-    const normLocal = normalizeName(localId, identifierCaseSensitive);
-    if (currentDatabase && normDb === stripBrackets(currentDatabase).toLowerCase()) return true;
-    if (!currentDatabase && nodeIds.has(normLocal)) return true;
-    return false;
-  };
+  const isLocalRef = (db: string, localId: string): boolean =>
+    isCurrentDatabase(db, currentDatabase) ||
+    (!currentDatabase &&
+      nodeIds.has(normalizeName(localId, identifierCaseSensitive)));
 
-  const addLocalEdge = (sourceId: string, localId: string, isWrite: boolean): void => {
+  const addLocalEdge = (
+    sourceId: string,
+    localId: string,
+    isWrite: boolean,
+    deleteOnly = false,
+  ): void => {
     const resolved = normalizeName(localId, identifierCaseSensitive);
     if (!nodeIds.has(resolved) || resolved === sourceId) return;
-    if (isWrite) addEdge(edges, edgeKeys, sourceId, resolved, 'body');
+    if (isWrite)
+      addEdge(edges, edgeKeys, sourceId, resolved, 'body', deleteOnly);
     else addEdge(edges, edgeKeys, resolved, sourceId, 'body');
   };
 
-  const ensureCrossDbNode = (db: string, schema: string, object: string, crossDbId: string): void => {
-    if (nodeIds.has(crossDbId)) return;
-    nodeIds.add(crossDbId);
-    nodes.push({
-      id: crossDbId, schema: '', name: `${schema}.${object}`,
-      fullName: crossDbId, type: 'external', externalType: 'db',
-      externalDatabase: db,
-    });
+  const addCrossDbEdge = (
+    db: string,
+    schema: string,
+    object: string,
+    crossDbId: string,
+    sourceId: string,
+    isWrite = false,
+    deleteOnly = false,
+  ): void => {
+    addVirtualEdge(
+      {
+        id: crossDbId,
+        schema: '',
+        name: `${schema}.${object}`,
+        fullName: crossDbId,
+        type: 'external',
+        externalType: 'db',
+        externalDatabase: db,
+      },
+      isWrite ? sourceId : crossDbId,
+      isWrite ? crossDbId : sourceId,
+      deleteOnly,
+    );
   };
 
   for (const [nodeId, { sources, targets }] of crossDbRegexRefs) {
@@ -910,13 +1027,15 @@ function createVirtualNodes(
       if (parts.length !== 3) continue;
       const [db, schema, object] = parts;
       const localId = `${quoteIdentifier(schema)}.${quoteIdentifier(object)}`;
-      const crossDbId = normalizeName([db, schema, object].map(quoteIdentifier).join('.'), identifierCaseSensitive);
+      const crossDbId = normalizeName(
+        [db, schema, object].map(quoteIdentifier).join('.'),
+        identifierCaseSensitive,
+      );
       if (isLocalRef(db, localId)) {
         addLocalEdge(nodeId, localId, false);
         continue;
       }
-      ensureCrossDbNode(db, schema, object, crossDbId);
-      addEdge(edges, edgeKeys, crossDbId, nodeId, 'body');
+      addCrossDbEdge(db, schema, object, crossDbId, nodeId);
     }
     const node = nodeMap.get(nodeId);
     const canWrite = node?.type === 'procedure';
@@ -926,37 +1045,58 @@ function createVirtualNodes(
         if (parts.length !== 3) continue;
         const [db, schema, object] = parts;
         const localId = `${quoteIdentifier(schema)}.${quoteIdentifier(object)}`;
-        const crossDbId = normalizeName([db, schema, object].map(quoteIdentifier).join('.'), identifierCaseSensitive);
+        const crossDbId = normalizeName(
+          [db, schema, object].map(quoteIdentifier).join('.'),
+          identifierCaseSensitive,
+        );
         if (isLocalRef(db, localId)) {
           addLocalEdge(nodeId, localId, true);
           continue;
         }
-        ensureCrossDbNode(db, schema, object, crossDbId);
-        addEdge(edges, edgeKeys, nodeId, crossDbId, 'body');
+        addCrossDbEdge(db, schema, object, crossDbId, nodeId, true);
       }
     }
   }
 
-  const metaDepsNodeMap = new Map(nodes.map(n => [n.id, n]));
+  const metaDepsNodeMap = new Map(nodes.map((n) => [n.id, n]));
   for (const [sourceId, rawTargets] of crossDbMetaDeps) {
     const sourceNode = metaDepsNodeMap.get(sourceId);
+    if (sourceNode?.type === 'procedure' && sourceNode.definitionUnreadable)
+      continue;
     for (const rawTarget of rawTargets) {
-      const parts = splitSqlName(rawTarget).map(p => stripBrackets(p));
+      const parts = splitSqlName(rawTarget).map((p) => stripBrackets(p));
       if (parts.length < 3) continue;
       const pertinentParts = parts.length >= 4 ? parts.slice(-3) : parts;
       const [db, schema, object] = pertinentParts;
       if (CLR_TYPE_METHODS.has(object.toLowerCase())) continue;
       const localId = `${quoteIdentifier(schema)}.${quoteIdentifier(object)}`;
-      const crossDbId = normalizeName([db, schema, object].map(quoteIdentifier).join('.'), identifierCaseSensitive);
-      const isWrite = sourceNode?.type === 'procedure' && !!sourceNode.bodyScript
-        && inferBodyDirection(sourceNode.bodyScript, schema, object, identifierCaseSensitive) === 'write';
+      const crossDbId = normalizeName(
+        [db, schema, object].map(quoteIdentifier).join('.'),
+        identifierCaseSensitive,
+      );
+      const mutation =
+        sourceNode?.type === 'procedure'
+          ? classifyMutation(
+              mutationsByNode.get(sourceId) ?? [],
+              isCurrentDatabase(db, currentDatabase) ? [schema, object] : parts,
+              currentDatabase,
+              identifierCaseSensitive,
+            )
+          : 'read';
+      const isWrite = mutation !== 'read';
       if (isLocalRef(db, localId)) {
-        addLocalEdge(sourceId, localId, isWrite);
+        addLocalEdge(sourceId, localId, isWrite, mutation === 'delete');
         continue;
       }
-      ensureCrossDbNode(db, schema, object, crossDbId);
-      if (isWrite) addEdge(edges, edgeKeys, sourceId, crossDbId, 'body');
-      else         addEdge(edges, edgeKeys, crossDbId, sourceId, 'body');
+      addCrossDbEdge(
+        db,
+        schema,
+        object,
+        crossDbId,
+        sourceId,
+        isWrite,
+        mutation === 'delete',
+      );
     }
   }
 }

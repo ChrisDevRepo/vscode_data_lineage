@@ -6,12 +6,20 @@ import {
   type MessageContent,
 } from '@langchain/core/messages';
 import type { ZodType } from 'zod';
-import { REJECTION_CODES } from '../support/rejectionCodes';
+import { at, type IssueCode } from '../support/toolErrorEnvelope';
+import { validateToolCandidate } from '../support/toolValidation';
+import { normalizeModelInput } from '../tools/normalizeModelInput';
+import { toolCallNotationFault } from '../support/toolCallNotation';
+import {
+  STRUCTURED_OUTPUT_TOOL,
+  StructuredOutputError,
+} from '../providers/structuredOutput';
 import {
   describeProviderErrorForUser,
   type ProviderErrorDiagnostic,
 } from '../support/text';
 import type { TurnTokenBudget } from '../support/tokenBudget';
+import { safeIdentifier } from '../support/logIdentifier';
 
 /** LangChain's provider-neutral message hierarchy is the graph's sole history type. */
 export type ModelMessage = BaseMessage;
@@ -27,32 +35,18 @@ export function modelAssistantMessage(text: string): AIMessage {
 }
 
 /**
- * `AIMessage.additional_kwargs` key carrying a generation's provider stream parts: every part the
- * bridge does not interpret as text or a tool call (reasoning, thought signatures, provider data),
- * held as the original objects in stream order.
- *
- * @remarks
- * The array rides exactly one stream chunk: `AIMessageChunk.concat` keeps that array's objects and
- * order untouched, whereas two chunks each carrying the key would have their items merged by `id`
- * into plain objects.
+ * `AIMessage.additional_kwargs` key holding a generation's provider stream parts (reasoning,
+ * thought signatures), in stream order.
  */
 export const PROVIDER_PARTS_KEY = 'providerParts';
 
-/**
- * Reads a message's provider stream parts ({@link PROVIDER_PARTS_KEY}); empty when it carries none.
- */
+/** Reads a message's provider stream parts; empty when none. */
 export function messageProviderParts(message: BaseMessage): readonly unknown[] {
   const parts = message.additional_kwargs?.[PROVIDER_PARTS_KEY];
   return Array.isArray(parts) ? parts : [];
 }
 
-/**
- * Creates an assistant message containing validated JSON-object tool calls.
- *
- * @param providerParts - The provider stream parts of the generation that emitted these calls,
- * replayed verbatim before them so a provider that signs its own turn receives it unchanged.
- * @throws {@link ModelPortError} when a call input is not a JSON object.
- */
+/** Creates an assistant message containing validated JSON-object tool calls. */
 export function modelToolCallMessage(
   calls: readonly {
     readonly callId: string;
@@ -70,7 +64,9 @@ export function modelToolCallMessage(
       args: modelToolArgs(call.input),
       type: 'tool_call' as const,
     })),
-    ...(providerParts.length > 0 ? { additional_kwargs: { [PROVIDER_PARTS_KEY]: [...providerParts] } } : {}),
+    ...(providerParts.length > 0
+      ? { additional_kwargs: { [PROVIDER_PARTS_KEY]: [...providerParts] } }
+      : {}),
   });
 }
 
@@ -84,14 +80,7 @@ function modelToolArgs(input: unknown): Record<string, unknown> {
   return input as Record<string, unknown>;
 }
 
-/**
- * Creates the tool-result message paired with a preceding tool call.
- * @param status - Standard tool-result outcome: `'success'` for an executed call, `'error'`
- * otherwise.
- * @param artifact - Machine-only facts riding `@langchain/core`'s documented `ToolMessage.artifact`
- * side channel — kept on the message for a reader that needs the full structured record, never sent
- * to the provider. Omitted when the caller has none.
- */
+/** Creates the tool-result message paired with a preceding tool call. */
 export function modelToolResultMessage(
   callId: string,
   toolName: string,
@@ -118,69 +107,63 @@ export type ModelPortErrorCode =
   | 'unsupported_response'
   | 'provider_error';
 
-/**
- * Bounded provider-neutral error safe to retain in graph state.
- *
- * @remarks
- * `cause` retains the original provider exception when one exists. It is what
- * `sanitizeProviderErrorDiagnostic` walks to recover the connection-level `code`
- * (`ECONNRESET`/`ETIMEDOUT`/…) that transport classification keys off. It is
- * declared here rather than relying on the ES2022
- * `Error(message, { cause })` overload because this project compiles against `lib: ES2020`.
- * Every sink sanitizes before emitting, so the raw exception never reaches a log or the UI.
- */
+/** Bounded provider-neutral error safe to retain in graph state. */
 export class ModelPortError extends Error {
   public constructor(
     public readonly code: ModelPortErrorCode,
     message: string,
     public readonly cause?: unknown,
+    /** True once the provider emitted any reply part, including buffered or opaque output. */
+    public readonly replyReceived = false,
   ) {
     super(message);
     this.name = 'ModelPortError';
   }
 }
 
-/**
- * Whether a thrown value is a port-level cancellation ({@link ModelPortError}
- * with code `'cancelled'`).
- *
- * @remarks
- * The one predicate callers above the port use for this case — pair it with
- * `support/cancellation.ts`'s `isCancellationOutcome` for signal/transport
- * aborts instead of re-rolling the `instanceof` + code check per caller.
- */
+/** Validates a generation's correlation IDs before any of its calls can dispatch. */
+export function assertToolCallIds(ids: readonly (string | undefined)[]): void {
+  const seen = new Set<string>();
+  for (const id of ids) {
+    if (!id)
+      throw new ModelPortError(
+        'unsupported_response',
+        'Language model returned an incomplete tool call.',
+      );
+    if (seen.has(id))
+      throw new ModelPortError(
+        'unsupported_response',
+        'Language model returned repeated tool call identifiers.',
+      );
+    seen.add(id);
+  }
+}
+
+/** Whether a thrown value is a port-level cancellation. */
 export function isPortCancellation(error: unknown): boolean {
   return error instanceof ModelPortError && error.code === 'cancelled';
 }
 
-/**
- * Error names the VS Code language-model host raises when a request is cancelled.
- *
- * @remarks
- * `Canceled` is the platform spelling (`vscode.CancellationError`), `Cancelled` appears from
- * providers that spell it with two `l`s, and `AbortError` is the fetch-level abort surfaced
- * through the same call. Declared once here because the bridge and the port both classify the
- * raw transport error and a byte-for-byte copy of the list drifts silently.
- */
+/** Creates the port-level cancellation error that {@link isPortCancellation} recognizes. */
+export function cancelledError(): ModelPortError {
+  return new ModelPortError(
+    'cancelled',
+    'Language model request was cancelled.',
+  );
+}
+
+/** Error names the VS Code language-model host raises when a request is cancelled. */
 const HOST_CANCELLATION_ERROR_NAMES: ReadonlySet<string> = new Set([
   'AbortError',
   'Canceled',
   'Cancelled',
 ]);
 
-/**
- * Whether a thrown value carries one of the host's cancellation error names.
- *
- * @remarks
- * Name-based by necessity: the host raises a plain `Error` with no code for this case. Pair it
- * with {@link isPortCancellation} for an already-normalized port error, and with
- * `support/cancellation.ts`'s `isCancellationOutcome` for the `ABORT_ERR`/`20` code forms.
- *
- * @param error - The thrown value to classify.
- * @returns `true` when the error name is one the host uses for cancellation.
- */
+/** Whether a thrown value carries one of the host's cancellation error names. */
 export function isHostCancellationError(error: unknown): boolean {
-  return error instanceof Error && HOST_CANCELLATION_ERROR_NAMES.has(error.name);
+  return (
+    error instanceof Error && HOST_CANCELLATION_ERROR_NAMES.has(error.name)
+  );
 }
 
 /** Model-facing context used to audit which instruction fragments reached a generation. */
@@ -209,7 +192,6 @@ export interface ModelToolDefinition {
   readonly name: string;
   /** Natural-language description of what the tool does. */
   readonly description: string;
-  /** Zod schema validating the call input. */
   readonly inputSchema: ZodType;
 }
 
@@ -226,11 +208,9 @@ export interface ToolGenerationInput {
   readonly messages: readonly ModelMessage[];
   /** Optional system instruction prepended ahead of `messages`. */
   readonly system?: string;
-  /** Tool definitions offered to the model. */
   readonly tools: readonly ModelToolDefinition[];
   /** Optional policy narrowing which tools the model may call. */
   readonly toolChoice?: ModelToolChoice;
-  /** Optional abort signal cancelling the generation. */
   readonly signal?: AbortSignal;
   /** Graph phase label carried into diagnostics and trace records. */
   readonly phase: string;
@@ -240,20 +220,32 @@ export interface ToolGenerationInput {
   readonly onTextDelta?: (text: string) => void;
 }
 
-/** A registered native tool call ready for argument validation at its execution boundary. */
+/**
+ * Reason of the `type` fault for non-object tool-call arguments, shared by both model lanes.
+ * @internal
+ */
+export const TOOL_ARGUMENTS_NOT_OBJECT_REASON =
+  'Tool arguments were not a JSON object; send the required fields as one JSON object.';
+
+/** Reason of the `type` fault for a call whose arguments were empty text. */
+const TOOL_ARGUMENTS_EMPTY_REASON =
+  'Tool arguments were empty; send the required fields as a JSON object.';
+
+/**
+ * A registered native tool call ready for argument validation.
+ * @internal
+ */
 export interface ValidGeneratedToolCall {
-  /** Literal `true` discriminator for the valid arm. */
   readonly valid: true;
   /** Provider call identifier, echoed into the paired tool-result message. */
   readonly callId: string;
-  /** Registry tool name to dispatch. */
   readonly toolName: string;
   /** Transport-decoded arguments, preserved for the receiving tool's schema admission. */
   readonly input: unknown;
 }
 
 /** A provider tool call rejected before dispatch. */
-export interface InvalidGeneratedToolCall {
+interface InvalidGeneratedToolCall {
   /** Literal `false` discriminator for the invalid arm. */
   readonly valid: false;
   /** Provider call identifier exactly as the provider emitted it. */
@@ -261,31 +253,155 @@ export interface InvalidGeneratedToolCall {
   /** Tool name as the provider spelled it; it may name no registered tool. */
   readonly toolName: string;
   /**
-   * The rejected payload exactly as the provider sent it. Kept so retry-budget guards can compare
-   * a follow-up call against the just-rejected one (by fingerprint, never by retaining it) and
-   * distinguish a genuine repair attempt from an unproductive resend; without it every reject of
-   * the same tool would be indistinguishable. Never dispatched, replayed, or logged raw.
+   * The rejected payload exactly as sent, so retry guards can fingerprint a follow-up against it;
+   * never dispatched, replayed or logged raw.
    */
   readonly input?: unknown;
-  /** Rejection category — schema-invalid input, tool-call notation in a text value, unknown tool, or a duplicate call id. */
-  readonly code:
-    | typeof REJECTION_CODES.invalidToolInput
-    | typeof REJECTION_CODES.toolCallNotation
-    | typeof REJECTION_CODES.unknownTool
-    | typeof REJECTION_CODES.duplicateCallId;
+  /** Issue code of the rejection. */
+  readonly code: Extract<
+    IssueCode,
+    'type' | 'tool_call_notation' | 'off_policy'
+  >;
   /** Human-readable rejection prose returned to the model for repair. */
   readonly reason: string;
-  /**
-   * Repair instruction naming the fix for this specific rejection, when the producer derived one
-   * from the issue shape (e.g. an `unrecognized_keys` Zod issue names removal, never the standing
-   * resend-unchanged instruction). Absent for shapes with no producer-derived hint, in which case
-   * the dispatcher applies its own fixed per-code hint.
-   */
-  readonly hint?: string;
-  /** Paths of the schema issues that rejected the input, when known. */
+  /** Paths of the input values that rejected the call, when the producer names them. */
   readonly issuePaths?: readonly string[];
-  /** Offending key(s) when the rejection carries a Zod `unrecognized_keys` issue. */
-  readonly unrecognizedKeys?: readonly string[];
+}
+
+/**
+ * One provider tool call as a port's transport decoded it: its object arguments, or the argument
+ * text that was no JSON object.
+ */
+export type EmittedToolCall = {
+  readonly callId: string;
+  readonly toolName: string;
+} & (
+  | { readonly args: Record<string, unknown> }
+  | { readonly malformedArgs: string }
+);
+
+/**
+ * Classifies one emitted call against the offered tools, normalizing valid arguments once;
+ * `replayInput` is what the transcript replays (`{}` for arguments that were no object).
+ */
+export function classifyToolCall(
+  emitted: EmittedToolCall,
+  definitions: ReadonlyMap<string, ModelToolDefinition>,
+  debugLog?: (message: string) => void,
+): {
+  readonly call: GeneratedToolCall;
+  readonly replayInput: Record<string, unknown>;
+} {
+  const { callId, toolName } = emitted;
+  const replayInput = 'args' in emitted ? emitted.args : {};
+  const reject = (code: InvalidGeneratedToolCall['code'], reason: string) => ({
+    replayInput,
+    call: {
+      valid: false as const,
+      callId,
+      toolName,
+      input: 'args' in emitted ? emitted.args : emitted.malformedArgs,
+      code,
+      reason,
+    },
+  });
+  const definition = definitions.get(toolName);
+  if (!definition)
+    return reject('off_policy', 'Tool is not available in this phase.');
+  if ('malformedArgs' in emitted) {
+    return reject(
+      'type',
+      emitted.malformedArgs.trim()
+        ? TOOL_ARGUMENTS_NOT_OBJECT_REASON
+        : TOOL_ARGUMENTS_EMPTY_REASON,
+    );
+  }
+  const normalized = normalizeModelInput(definition.inputSchema, emitted.args);
+  logFixes(toolName, normalized.fixes, debugLog);
+  return {
+    call: { valid: true, callId, toolName, input: normalized.input },
+    replayInput,
+  };
+}
+
+/**
+ * Finishes a forced structured-output generation: one call to the structured tool, normalized once,
+ * then admitted by Ajv against the served JSON Schema alone.
+ */
+export function finishStructured<T>(
+  emitted: readonly EmittedToolCall[],
+  schema: ZodType<T>,
+  debugLog?: (message: string) => void,
+): T {
+  const calls = emitted.flatMap((call) => ('args' in call ? [call.args] : []));
+  if (
+    emitted.some((call) => call.toolName !== STRUCTURED_OUTPUT_TOOL) ||
+    (calls.length > 0 && calls.length < emitted.length)
+  ) {
+    throw new StructuredOutputError(
+      `unexpected tool call alongside ${STRUCTURED_OUTPUT_TOOL}`,
+      at('one_call'),
+    );
+  }
+  const empty = (): StructuredOutputError =>
+    new StructuredOutputError(
+      `${STRUCTURED_OUTPUT_TOOL} arguments were empty`,
+      at('missing'),
+    );
+  const [first] = emitted;
+  if (calls.length === 0 && first && 'malformedArgs' in first) {
+    if (emitted.length === 1 && !first.malformedArgs.trim()) throw empty();
+    throw new StructuredOutputError(
+      `${STRUCTURED_OUTPUT_TOOL} arguments were not a JSON object`,
+      at('type', [''], ['object']),
+    );
+  }
+  const normalized =
+    calls.length === 1 ? normalizeModelInput(schema, calls[0]) : undefined;
+  logFixes(STRUCTURED_OUTPUT_TOOL, normalized?.fixes ?? [], debugLog);
+  const payload = normalized?.input;
+  const notation = toolCallNotationFault(payload);
+  if (notation)
+    throw new StructuredOutputError(
+      notation.reason,
+      at('tool_call_notation', notation.issuePaths),
+    );
+  const admitted =
+    calls.length === 1 ? validateToolCandidate(schema, payload) : undefined;
+  if (admitted?.success) return admitted.data;
+  if (calls.length === 1 && Object.keys(calls[0]).length === 0) throw empty();
+  if (calls.length > 1)
+    throw new StructuredOutputError(
+      `multiple ${STRUCTURED_OUTPUT_TOOL} tool calls`,
+      at('one_call'),
+    );
+  if (!admitted)
+    throw new StructuredOutputError(
+      `missing ${STRUCTURED_OUTPUT_TOOL} tool call`,
+      at('no_tool_call', [''], [STRUCTURED_OUTPUT_TOOL]),
+    );
+  const { errors } = admitted.rejection;
+  throw new StructuredOutputError(
+    `invalid ${STRUCTURED_OUTPUT_TOOL} fields: ${errors.map((error) => `${error.path}: ${error.code}`).join(', ')}`,
+    errors,
+  );
+}
+
+function logFixes(
+  toolName: string,
+  fixes: readonly { path: string; before: string }[],
+  debugLog?: (message: string) => void,
+): void {
+  const identifiers = {
+    extraChars: '.:-[]',
+    replacement: '_',
+    maxLength: 128,
+    fallback: 'root',
+  };
+  for (const fix of fixes)
+    debugLog?.(
+      `[Normalize] tool=${safeIdentifier(toolName, identifiers)} path=${safeIdentifier(fix.path, identifiers)} beforeBytes=${Buffer.byteLength(fix.before)}`,
+    );
 }
 
 /** Validation result for a provider-emitted tool call. */
@@ -381,14 +497,7 @@ export interface SingleGenerationModelPort {
   readonly identity: ModelIdentity;
   /** Provider requests attempted through this port so far. */
   readonly modelCalls: number;
-  /**
-   * Token budget this request runs under, fixed when the turn built the port.
-   *
-   * @remarks
-   * Rides the port because the port is the object every generation path already receives, and the
-   * window half of the budget is a property of the exact model the port wraps. A superseded turn
-   * still executing therefore keeps measuring against its own model's window and caps.
-   */
+  /** Token budget this request runs under, fixed when the turn built the port. */
   readonly budget: TurnTokenBudget;
   /** Runs one tool-capable generation and validates emitted calls against the supplied tools. */
   generateToolTurn(input: ToolGenerationInput): Promise<ToolGenerationResult>;
@@ -399,10 +508,21 @@ export interface SingleGenerationModelPort {
   getNumTokens(content: MessageContent): Promise<number>;
 }
 
-/** Flattens LangChain `MessageContent` (a string or a list of content blocks) into plain text for a provider token counter. */
+/**
+ * Flattens LangChain `MessageContent` (a string or a list of content blocks) into plain text for a
+ * provider token counter.
+ */
 export function messageContentToText(content: MessageContent): string {
   if (typeof content === 'string') return content;
-  return content.map((block) => (typeof block === 'string' ? block : 'text' in block && typeof block.text === 'string' ? block.text : '')).join('');
+  return content
+    .map((block) =>
+      typeof block === 'string'
+        ? block
+        : 'text' in block && typeof block.text === 'string'
+          ? block.text
+          : '',
+    )
+    .join('');
 }
 
 /** Full provider-neutral model boundary used by the lineage runtime. */
@@ -423,12 +543,7 @@ export function cancelledToolTurnResult(): ToolGenerationResult {
   };
 }
 
-/**
- * Creates the canonical provider-error result without retaining raw provider output.
- *
- * @param diagnostic - Sanitized provider diagnostic retained for classification.
- * @param userMessage - Optional user-facing message; derived from `diagnostic` when omitted.
- */
+/** Creates the canonical provider-error result without retaining raw provider output. */
 export function errorToolTurnResult(
   diagnostic: ProviderErrorDiagnostic,
   userMessage?: string,

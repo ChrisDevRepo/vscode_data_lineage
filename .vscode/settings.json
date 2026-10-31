@@ -1,5 +1,4 @@
 {
-  "chat.mcp.access": "none",
   "git.openRepositoryInSubfolders": false,
   "git.repositoryScanIgnoredFolders": [
     "**/.git",

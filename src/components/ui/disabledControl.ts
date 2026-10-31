@@ -6,8 +6,8 @@ export interface DisabledControlState<H> {
 }
 
 /**
- * Derives the onClick/disabled/tooltip triplet for a control that stays visible but disables with
- * a reason: the handler is withheld exactly when `disabled` is set, the tooltip shows `reason` in
+ * Derives the onClick/disabled/tooltip triplet for a control that stays visible but disables with a
+ * reason: the handler is withheld exactly when `disabled` is set, the tooltip shows `reason` in
  * that case, and falls back to `activeTooltip` otherwise.
  */
 export function disabledControl<H>(

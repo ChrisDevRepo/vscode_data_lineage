@@ -3,10 +3,7 @@ import type { Logger } from '../../utils/log';
 import type { AgentFailureDetail } from '../host/agentRuntime';
 import { modelUserMessage } from '../model/modelPort';
 import { AgentRuntime } from '../host/agentRuntime';
-import type {
-  ModelMessage,
-  ModelPort,
-} from '../model/modelPort';
+import type { ModelMessage, ModelPort } from '../model/modelPort';
 import type { AiTraceWriter } from '../observability/aiTraceWriter';
 import type { AiSession } from '../session/session';
 import type { TurnLease } from '../session/turnLease';
@@ -15,33 +12,42 @@ import type { TurnEventSink } from './turnEventSink';
 import type { GateDecision } from '../agent/state';
 import type { TurnOutcome } from '../core/agentCore';
 import type { ToolRejection } from '../support/toolErrorEnvelope';
-import { readToolError, isConsentGateRejection } from '../support/toolErrorEnvelope';
+import {
+  readToolError,
+  isAdmissionRefusal,
+  isConsentGateRejection,
+} from '../support/toolErrorEnvelope';
+import type { SyntheticRejectionTrace } from '../agent/toolAttempt';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 
 /** Immutable request identity, prompt, and optional history for one lineage turn. */
-export interface LineageRuntimeRequest {
+interface LineageRuntimeRequest {
   /** Request identifier; must be unique among this session's currently active turns. */
   readonly id: string;
   /** Verbatim user prompt for this turn. */
   readonly prompt: string;
-  /** Optional prior-turn conversation, oldest first; when present the session transcript is cleared after the turn. */
+  /**
+   * Optional prior-turn conversation, oldest first; when present the session transcript is cleared
+   * after the turn.
+   */
   readonly priorMessages?: readonly ModelMessage[];
+  /** The approval-card click this turn answers, when it was started by one. */
+  readonly gateDecision?: GateDecision;
 }
 
 /** Request-scoped dependencies required to execute one lineage turn. */
-export interface LineageRuntimeRunInput {
+interface LineageRuntimeRunInput {
   /** The exact native request model, already wrapped as a provider-neutral port. */
   readonly model: ModelPort;
   /** Request identity, prompt, and optional history for this turn. */
   readonly request: LineageRuntimeRequest;
-  /** Native event sink that receives this turn's events and its one terminal result. */
   readonly sink: TurnEventSink;
   /** Optional abort signal cancelling the turn; rides the captured turn lease. */
   readonly signal?: AbortSignal;
 }
 
 /** Terminal runtime outcome and provider-call accounting for one lineage turn. */
-export interface LineageRuntimeResult {
+interface LineageRuntimeResult {
   /** Terminal status of the turn. */
   readonly outcome: TurnOutcome;
   /** Provider calls attempted through the request's model port. */
@@ -51,11 +57,13 @@ export interface LineageRuntimeResult {
 }
 
 /** Long-lived dependencies used to construct request-scoped lineage turns. */
-export interface LineageRuntimeDeps {
-  /** Session accessor for the {@link AiSession} singleton. */
+interface LineageRuntimeDeps {
   readonly getSession: () => AiSession;
   /** Builds the strict direct-dispatch registry for the captured turn lease and request model. */
-  readonly createRegistry: (lease: TurnLease, model: ModelPort) => IToolRegistry<string>;
+  readonly createRegistry: (
+    lease: TurnLease,
+    model: ModelPort,
+  ) => IToolRegistry<string>;
   /** Optional logger forwarded to the agent runtime. */
   readonly logger?: Logger;
   /** Optional per-turn model-step cap forwarded to the agent runtime. */
@@ -64,29 +72,16 @@ export interface LineageRuntimeDeps {
   readonly traceWriter?: AiTraceWriter;
 }
 
-/**
- * Single production facade for native lineage turns.
- *
- * The facade owns turn setup and active-request coordination. The outer
- * LangGraph owns phase/hop routing and `AgentRuntime` owns interrupt/resume and
- * the one terminal event.
- */
+/** Single production facade for native lineage turns. */
 export class LineageRuntime {
-  private readonly active = new Map<string, {
-    readonly runtime: AgentRuntime;
-    readonly completed: Promise<void>;
-  }>();
+  private readonly active = new Set<string>();
 
   public constructor(private readonly deps: LineageRuntimeDeps) {}
 
-  /**
-   * Generates suggestions from compact facts without tools, history replay or session mutation.
-   *
-   * @remarks
-   * Writes the same `turn-start`/`turn-terminal` lifecycle pair as {@link run}, so the trace joins
-   * this turn's wire records to a turn like any other request.
-   */
-  public async runSuggestions(input: LineageRuntimeRunInput): Promise<LineageRuntimeResult> {
+  /** Generates suggestions from compact facts without tools, history replay or session mutation. */
+  public async runSuggestions(
+    input: LineageRuntimeRunInput,
+  ): Promise<LineageRuntimeResult> {
     const session = this.deps.getSession();
     const runFingerprint = fingerprint(`${session.id}:${input.request.id}`);
     const startedAt = performance.now();
@@ -98,9 +93,12 @@ export class LineageRuntime {
       modelFingerprint: fingerprint(input.model.identity.id),
     });
     const result = await input.model.generateToolTurn({
-      messages: [modelUserMessage(input.request.prompt)], tools: [], toolChoice: 'none',
-      phase: 'suggestions', signal: input.signal,
-      onTextDelta: text => input.sink.stream(text),
+      messages: [modelUserMessage(input.request.prompt)],
+      tools: [],
+      toolChoice: 'none',
+      phase: 'suggestions',
+      signal: input.signal,
+      onTextDelta: (text) => input.sink.stream(text),
     });
     const outcome = result.status === 'completed' ? 'ok' : result.status;
     this.writeLifecycle({
@@ -112,20 +110,25 @@ export class LineageRuntime {
       durationMs: elapsedMs(startedAt),
     });
     input.sink.result(outcome);
-    return { outcome, modelCalls: input.model.modelCalls, ...(result.status === 'error'
-      ? { failure: { message: result.error } } : {}) };
+    return {
+      outcome,
+      modelCalls: input.model.modelCalls,
+      ...(result.status === 'error'
+        ? { failure: { message: result.error } }
+        : {}),
+    };
   }
 
-  /**
-   * Executes one request against a captured session epoch and request-selected model.
-   *
-   * @throws When the same session/request identifier is already active.
-   */
-  public async run(input: LineageRuntimeRunInput): Promise<LineageRuntimeResult> {
+  /** Executes one request against a captured session epoch and request-selected model. */
+  public async run(
+    input: LineageRuntimeRunInput,
+  ): Promise<LineageRuntimeResult> {
     const session = this.deps.getSession();
     const requestKey = `${session.id}:${input.request.id}`;
     if (this.active.has(requestKey)) {
-      throw new Error(`LineageRuntime: request ${input.request.id} is already active.`);
+      throw new Error(
+        `LineageRuntime: request ${input.request.id} is already active.`,
+      );
     }
 
     const turnEpoch = session.beginTurn();
@@ -163,22 +166,29 @@ export class LineageRuntime {
         })
       : registry;
     const traceSyntheticRejection = traceWriter
-      ? (rejection: { toolName: string; code: string }): void => {
-          void traceWriter.write({
-            type: 'tool',
-            requestId: input.request.id,
-            runFingerprint,
-            seq: ++toolSequence,
-            phase,
-            toolName: rejection.toolName,
-            status: 'rejected',
-            rejectionCode: rejection.code,
-            durationMs: 0,
-          }).catch(() => {});
+      ? (rejection: Parameters<SyntheticRejectionTrace>[0]): void => {
+          void traceWriter
+            .write({
+              type: 'tool',
+              requestId: input.request.id,
+              runFingerprint,
+              seq: ++toolSequence,
+              phase,
+              ...(rejection.callId ? { callId: rejection.callId } : {}),
+              toolName: rejection.toolName,
+              status: rejection.status,
+              rejectionCode: rejection.code,
+              ...(rejection.issuePaths?.length
+                ? { issuePaths: rejection.issuePaths }
+                : {}),
+              durationMs: 0,
+            })
+            .catch(() => {});
         }
       : undefined;
     const runtime = new AgentRuntime({
       threadId: requestKey,
+      requestId: input.request.id,
       getSession: this.deps.getSession,
       model: input.model,
       registry: instrumentedRegistry,
@@ -186,14 +196,12 @@ export class LineageRuntime {
       signal: input.signal,
       maxRounds: this.deps.maxRounds,
       turnEpoch,
-      priorMessages: input.request.priorMessages ?? session.getDiscoveryHistory(),
+      priorMessages:
+        input.request.priorMessages ?? session.getDiscoveryHistory(),
       logger: this.deps.logger,
       traceSyntheticRejection,
     });
-    let completeRun!: () => void;
-    const completed = new Promise<void>((resolve) => { completeRun = resolve; });
-    const activeRun = { runtime, completed };
-    this.active.set(requestKey, activeRun);
+    this.active.add(requestKey);
     this.writeLifecycle({
       type: 'turn-start',
       requestId: input.request.id,
@@ -203,7 +211,10 @@ export class LineageRuntime {
     });
 
     try {
-      const outcome = await runtime.run(input.request.prompt);
+      const outcome = await runtime.run(
+        input.request.prompt,
+        input.request.gateDecision,
+      );
       const failure = runtime.lastFailureDetail;
       this.writeLifecycle({
         type: 'turn-terminal',
@@ -223,26 +234,17 @@ export class LineageRuntime {
           : {}),
       };
     } finally {
-      if (input.request.priorMessages !== undefined) session.clearDiscoveryTranscript();
+      if (input.request.priorMessages !== undefined)
+        session.clearDiscoveryTranscript();
       eventObserver.dispose();
-      completeRun();
-      if (this.active.get(requestKey) === activeRun) this.active.delete(requestKey);
+      this.active.delete(requestKey);
     }
-  }
-
-  /** Routes a consent decision and resolves after its owning turn reaches terminal state. */
-  public async resumeGate(gateId: string, decision: GateDecision): Promise<boolean> {
-    const matchingRuns: Promise<void>[] = [];
-    for (const activeRun of this.active.values()) {
-      if (activeRun.runtime.resumeGate(gateId, decision)) matchingRuns.push(activeRun.completed);
-    }
-    if (matchingRuns.length === 0) return false;
-    await Promise.all(matchingRuns);
-    return true;
   }
 
   private writeLifecycle(
-    record: Parameters<NonNullable<LineageRuntimeDeps['traceWriter']>['write']>[0],
+    record: Parameters<
+      NonNullable<LineageRuntimeDeps['traceWriter']>['write']
+    >[0],
   ): void {
     if (!this.deps.traceWriter) return;
     void this.deps.traceWriter.write(record).catch(() => {});
@@ -252,7 +254,9 @@ export class LineageRuntime {
     requestId: string,
     runFingerprint: string,
     sequence: number,
-    event: Parameters<NonNullable<LineageRuntimeDeps['traceWriter']>['writeTurnEvent']>[3],
+    event: Parameters<
+      NonNullable<LineageRuntimeDeps['traceWriter']>['writeTurnEvent']
+    >[3],
     elapsed: number,
   ): void {
     if (!this.deps.traceWriter) return;
@@ -287,7 +291,7 @@ function instrumentRegistry(
     getTools: () => registry.getTools(),
     get: (name) => registry.get(name),
     has: (name) => registry.has(name),
-    invoke: async (name, payload) => {
+    invoke: async (name, payload, callId) => {
       const startedAt = performance.now();
       const sequence = instrumentation.nextSequence();
       const base = {
@@ -296,29 +300,40 @@ function instrumentRegistry(
         runFingerprint: instrumentation.runFingerprint,
         seq: sequence,
         phase: instrumentation.currentPhase(),
+        ...(callId ? { callId } : {}),
         toolName: name,
       };
       try {
-        const result = await registry.invoke(name, payload);
+        const result = await registry.invoke(name, payload, callId);
         const rejection = parseRejection(result);
         const issuePaths = rejection?.issuePaths ?? [];
-        void instrumentation.writer.write({
-          ...base,
-          status: rejection
-            ? (isConsentGateRejection(rejection.code) ? 'gate' : 'rejected')
-            : 'accepted',
-          ...(rejection ? { rejectionCode: rejection.code } : {}),
-          ...(issuePaths.length > 0 ? { issuePaths } : {}),
-          durationMs: elapsedMs(startedAt),
-        }).catch(() => {});
+        void instrumentation.writer
+          .write({
+            ...base,
+            status: !rejection
+              ? 'accepted'
+              : isConsentGateRejection(rejection.code)
+                ? 'gate'
+                : isAdmissionRefusal(rejection.code)
+                  ? 'refused'
+                  : 'rejected',
+            ...(rejection && !isConsentGateRejection(rejection.code)
+              ? { rejectionCode: rejection.code }
+              : {}),
+            ...(issuePaths.length > 0 ? { issuePaths } : {}),
+            durationMs: elapsedMs(startedAt),
+          })
+          .catch(() => {});
         return result;
       } catch (error) {
-        void instrumentation.writer.write({
-          ...base,
-          status: 'dispatch_error',
-          rejectionCode: REJECTION_CODES.toolExecutionError,
-          durationMs: elapsedMs(startedAt),
-        }).catch(() => {});
+        void instrumentation.writer
+          .write({
+            ...base,
+            status: 'dispatch_error',
+            rejectionCode: REJECTION_CODES.backendFault,
+            durationMs: elapsedMs(startedAt),
+          })
+          .catch(() => {});
         throw error;
       }
     },

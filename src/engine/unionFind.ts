@@ -1,11 +1,3 @@
-/**
- * Minimal disjoint-set (union-find) over string keys.
- *
- * Pure, zero-import module shared by the schema-level and rendered-graph
- * connectivity summarizers for weakly-connected grouping. Safe to bundle in both
- * the extension host and the webview.
- */
-
 /** Minimal disjoint-set (union-find) over string keys for weakly-connected grouping. */
 class UnionFind {
   private parent = new Map<string, string>();
@@ -18,7 +10,8 @@ class UnionFind {
   /** Returns the set representative for `key`, compressing the path en route. */
   find(key: string): string {
     let root = key;
-    while ((this.parent.get(root) ?? root) !== root) root = this.parent.get(root)!;
+    while ((this.parent.get(root) ?? root) !== root)
+      root = this.parent.get(root)!;
     let cur = key;
     while ((this.parent.get(cur) ?? cur) !== root) {
       const next = this.parent.get(cur)!;
@@ -38,17 +31,7 @@ class UnionFind {
   }
 }
 
-/**
- * Groups items into weakly-connected components.
- *
- * @param items - Items to group; each contributes one singleton set up front.
- * @param edges - Undirected key pairs that merge the sets containing both endpoints.
- * @param keyOf - Maps an item to its union-find key.
- * @param labelOf - Maps an item to the label emitted in the result; defaults to `keyOf`.
- *
- * @returns Label groups with each group's labels sorted ascending; groups sorted
- * largest first, then by first label ascending.
- */
+/** Groups items into weakly-connected components. */
 export function groupByWeaklyConnected<T>(
   items: readonly T[],
   edges: Iterable<readonly [string, string]>,

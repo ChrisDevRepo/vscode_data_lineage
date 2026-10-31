@@ -1,43 +1,45 @@
-/**
- * Zod → model-facing JSON Schema conversion.
- *
- * @remarks
- * Zod 4's built-in `z.toJSONSchema` is the single projection source. Runtime declarations
- * preserve descriptions, strict-object `additionalProperties:false`, integer semantics,
- * enums, patterns, and supported bounds so providers see the same constraints the dispatcher
- * validates. Only the top-level JSON Schema dialect marker is removed because VS Code expects
- * a schema fragment rather than a standalone schema document.
- *
- * Zero VS Code imports — pure schema transformation, unit-testable in the `ai` project.
- */
+/** Zod → model-facing JSON Schema conversion. */
 import { z } from 'zod';
 
-/** A plain JSON-Schema fragment. */
 type JsonSchemaNode = Record<string, unknown>;
 
-/**
- * Per-schema-object memo for {@link toModelJsonSchema}.
- *
- * @remarks
- * Tool input schemas are module-level `z.object(...)` constants declared once in the registry
- * (`toolSchemas.ts`) — the same object reference is passed in on every provider attempt of a
- * self-looping phase (up to `MAX_TOOL_PROVIDER_CALLS` per hop). Keying on schema identity (never a
- * derived string) lets an unrelated schema fall out of scope and be collected normally, and the
- * conversion — pure and options-invariant — runs at most once per distinct schema for the process.
- */
+/** Per-schema-object memo for {@link toModelJsonSchema}. */
 const modelJsonSchemaCache = new WeakMap<z.ZodType, JsonSchemaNode>();
 
-/**
- * Generates a fidelity-preserving model-facing JSON Schema for a tool's Zod input schema.
- *
- * @param schema - The single Zod source for the tool's input.
- * @returns The JSON Schema fragment with runtime constraints intact and no dialect marker.
- */
+/** Generates a fidelity-preserving model-facing JSON Schema for a tool's Zod input schema. */
 export function toModelJsonSchema(schema: z.ZodType): JsonSchemaNode {
   const cached = modelJsonSchemaCache.get(schema);
   if (cached) return cached;
-  const raw = z.toJSONSchema(schema, { io: 'input', unrepresentable: 'throw' }) as JsonSchemaNode;
-  const fragment = { ...raw };
+  const raw = z.toJSONSchema(schema, {
+    io: 'input',
+    unrepresentable: 'throw',
+  }) as JsonSchemaNode;
+  const fragment = structuredClone(raw);
+  const project = (node: unknown): void => {
+    if (!node || typeof node !== 'object') return;
+    if ('toolDisplay' in node) {
+      Object.assign(node, node.toolDisplay);
+      delete node.toolDisplay;
+    }
+    for (const key of [
+      'toolAdmission',
+      'toolIdentifier',
+      'toolChoice',
+      'toolUniqueLabels',
+      'toolNoteCaptions',
+      'toolFindingShape',
+      'toolStringFact',
+      'toolArrayFact',
+      'toolObjectFact',
+      'toolGroups',
+      'toolValidated',
+      'toolDepthOpen',
+      'toolIssue',
+    ])
+      delete (node as Record<string, unknown>)[key];
+    Object.values(node).forEach(project);
+  };
+  project(fragment);
   delete fragment.$schema;
   modelJsonSchemaCache.set(schema, fragment);
   return fragment;

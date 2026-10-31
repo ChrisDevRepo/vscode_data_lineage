@@ -1,7 +1,7 @@
 /** Executes the real compiled search worker in Vitest, without depending on a prior extension build. */
 import { afterAll, vi } from 'vitest';
 
-vi.mock('node:worker_threads', async importOriginal => {
+vi.mock('node:worker_threads', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:worker_threads')>();
   const { build } = await import('esbuild');
   const { mkdtemp } = await import('node:fs/promises');
@@ -15,14 +15,31 @@ vi.mock('node:worker_threads', async importOriginal => {
     await rm(directory, { recursive: true, force: true });
   });
   await build({
-    entryPoints: [fileURLToPath(new URL('../../src/ai/support/regexSearch.worker.ts', import.meta.url))],
-    outfile: workerFile, bundle: true, platform: 'node', format: 'cjs', target: 'node22',
+    entryPoints: [
+      fileURLToPath(
+        new URL('../../src/ai/support/regexSearch.worker.ts', import.meta.url),
+      ),
+    ],
+    outfile: workerFile,
+    bundle: true,
+    platform: 'node',
+    format: 'cjs',
+    target: 'node22',
   });
   return {
     ...actual,
     Worker: class extends actual.Worker {
-      constructor(filename: string | URL, options?: import('node:worker_threads').WorkerOptions) {
-        super(typeof filename === 'string' && /[\\/]regexSearch\.worker\.js$/.test(filename) ? workerFile : filename, options);
+      constructor(
+        filename: string | URL,
+        options?: import('node:worker_threads').WorkerOptions,
+      ) {
+        super(
+          typeof filename === 'string' &&
+            /[\\/]regexSearch\.worker\.js$/.test(filename)
+            ? workerFile
+            : filename,
+          options,
+        );
       }
     },
   };

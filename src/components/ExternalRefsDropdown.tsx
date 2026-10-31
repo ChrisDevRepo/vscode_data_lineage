@@ -2,34 +2,34 @@ import { memo } from 'react';
 import { ToolbarDropdown } from './ui/ToolbarDropdown';
 
 interface ExternalRefsDropdownProps {
-  /** Whether any external references are shown at all (Master toggle). */
   showExternalRefs: boolean;
-  /** Set of active external reference sub-types. */
   externalRefTypes: Set<'file' | 'db'>;
-  /** Callback to toggle the master 'showExternalRefs' state. */
   onToggleMaster: () => void;
-  /** Callback to toggle a specific external reference sub-type. */
   onToggleSubType: (subType: 'file' | 'db') => void;
-  /** Optional visual flag indicating if the view is already narrowed by other filters. */
   isNarrowed?: boolean;
-  /** When true, the trigger renders disabled and never opens the panel. */
   disabled?: boolean;
   /** Tooltip text shown on the trigger while {@link disabled}. */
   disabledReason?: string;
 }
 
 const EXTERNAL_REFS_ICON = (
-  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" />
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    fill="none"
+    viewBox="0 0 24 24"
+    strokeWidth={1.5}
+    stroke="currentColor"
+    className="w-5 h-5"
+  >
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244"
+    />
   </svg>
 );
 
-/**
- * A dropdown for filtering external references in the lineage graph.
- *
- * Provides a master toggle to show/hide all external references and granular
- * checkboxes for specific types (file sources, cross-database links).
- */
+/** A dropdown for filtering external references in the lineage graph. */
 export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
   showExternalRefs,
   externalRefTypes,
@@ -60,7 +60,6 @@ export const ExternalRefsDropdown = memo(function ExternalRefsDropdown({
         <span className="text-sm ln-text">External Refs</span>
       </label>
 
-      {/* Sub-filters (only interactive when master is ON) */}
       <div className={showExternalRefs ? '' : 'opacity-40'}>
         <label className="flex items-center gap-2 px-2 py-1.5 pl-6 rounded-sm transition-colors ln-list-item cursor-pointer">
           <input

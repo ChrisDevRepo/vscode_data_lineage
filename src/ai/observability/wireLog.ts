@@ -1,19 +1,6 @@
 /**
- * Full-fidelity capture of what the language model actually receives and returns, plus sanitized
- * provider diagnostics for requests that fail before a response is available.
- *
- * @remarks
- * The bridge is the only point where the converted messages, the tool definitions (with their
- * input schemas) and the tool mode all exist at once, and it is the only place the wire is
- * observable at all: `@lineage` calls `vscode.lm.sendRequest` directly, so VS Code's own
- * `chat.agentDebugLog.*` panels — which instrument Copilot's agent sessions — record nothing for
- * it. Every record carries schema, table and column names and SQL, which is why the sink exists
- * only after the user explicitly enables AI trace logging for the current extension-host session.
- * Wire and lifecycle records then share the same diagnostic NDJSON file.
- *
- * The module is deliberately free of `vscode` imports so every model port — the native
- * `vscode.lm` lane and any plain-Node lane — emits the same record surface. The VS Code specific
- * message projection lives next door in [`vscodeWireLog.ts`](./vscodeWireLog.ts).
+ * Full-fidelity capture of what the language model receives and returns, plus sanitized provider
+ * diagnostics for requests that fail before a response is available.
  */
 import { createHash } from 'node:crypto';
 import type { ProviderErrorDiagnostic } from '../support/text';
@@ -32,31 +19,20 @@ export type WirePart =
       readonly callId: string;
       readonly content: readonly WirePart[];
     }
-  /** Preserve unknown result-part variants so wire capture remains total across VS Code API changes. */
+  /**
+   * Preserve unknown result-part variants so wire capture remains total across VS Code API changes.
+   */
   | { readonly type: 'other'; readonly json: string };
 
 /** One converted message as handed to the provider. */
 export interface WireMessage {
-  /**
-   * The role exactly as the lane spells it, never normalized.
-   *
-   * @remarks
-   * `vscode.lm` records the raw `LanguageModelChatMessageRole` integer (that API has no system
-   * role); OpenAI-compatible lanes record the wire string. Both are kept verbatim so a trace never
-   * claims a role its provider never saw.
-   */
+  /** The role exactly as the lane spells it, never normalized. */
   readonly role: number | string;
   /** Message content parts, shaped exactly as they sit on the wire. */
   readonly parts: readonly WirePart[];
 }
 
-/**
- * Provider-reported token accounting for one generation.
- *
- * @remarks
- * Every field is optional because usage is provider-reported, not port-guaranteed: `vscode.lm`
- * exposes none at all. An absent field means "not reported", never zero.
- */
+/** Provider-reported token accounting for one generation. */
 export interface TokenUsage {
   /** Provider-reported prompt (input) token count; absent when not reported. */
   readonly inputTokens?: number;
@@ -66,6 +42,8 @@ export interface TokenUsage {
   readonly totalTokens?: number;
   /** Reasoning tokens billed separately by reasoning models, when the provider itemizes them. */
   readonly reasoningTokens?: number;
+  /** Prompt tokens served from the provider's cache (a subset of `inputTokens`), when reported. */
+  readonly cachedTokens?: number;
 }
 
 /** One captured moment of a generation, before the port stamps it with its context. */
@@ -73,25 +51,17 @@ export type WireEvent =
   | {
       readonly type: 'wire-request';
       readonly messages: readonly WireMessage[];
-      /**
-       * Tools offered on the request.
-       *
-       * @remarks
-       * The input schema is the field no other capture surface exposes. The description rides as
-       * its {@link systemPromptHash} digest, so a trace proves which revision the model received.
-       */
-      readonly tools: ReadonlyArray<{ readonly name: string; readonly descriptionHash: string; readonly inputSchema: unknown }>;
+      /** Tools offered on the request. */
+      readonly tools: ReadonlyArray<{
+        readonly name: string;
+        readonly descriptionHash: string;
+        readonly inputSchema: unknown;
+      }>;
       /** `LanguageModelChatToolMode` integer, absent when the request carries no tools. */
       readonly toolMode?: number;
-      /**
-       * The verbatim system instruction, captured only while the trace runs verbose.
-       *
-       * @remarks
-       * The default trace records {@link systemHash} alone, since the prompt is unchanged across
-       * generations; verbose mode exists to prove which prompt revision a bad answer came from.
-       */
+      /** The verbatim system instruction, captured only while the trace runs verbose. */
       readonly system?: string;
-      /** SHA-256 of the system instruction ({@link systemPromptHash}); always present when one was sent. */
+      /** SHA-256 of the system instruction; present whenever one was sent. */
       readonly systemHash?: string;
     }
   | {
@@ -105,12 +75,7 @@ export type WireEvent =
       /** Raw provider stop reason, on lanes whose protocol reports one. */
       readonly finishReason?: string;
       readonly usage?: TokenUsage;
-      /**
-       * Stream parts that are neither text nor a tool call (reasoning, signatures).
-       *
-       * @remarks
-       * Replayed verbatim on the next request; absent when none arrived.
-       */
+      /** Stream parts that are neither text nor a tool call (reasoning, signatures). */
       readonly otherParts?: readonly WirePart[];
     }
   | {
@@ -119,15 +84,7 @@ export type WireEvent =
       readonly diagnostic: ProviderErrorDiagnostic;
     }
   | {
-      /**
-       * One completed generation, summarized: which model answered, how it stopped, how long it
-       * took, and what it cost.
-       *
-       * @remarks
-       * Deliberately separate from `wire-response` (the payload). This is the only record naming the
-       * model in clear text: a `modelFingerprint` hash cannot answer which model misbehaved, and a
-       * model id is a public identifier, never a credential.
-       */
+      /** One completed generation, summarized. */
       readonly type: 'generation';
       readonly modelId: string;
       readonly finishReason: string;
@@ -135,20 +92,18 @@ export type WireEvent =
       readonly usage?: TokenUsage;
     }
   | {
-      /**
-       * One verbatim provider HTTP body, captured only while the trace runs verbose.
-       *
-       * @remarks
-       * Bodies only: request headers are never captured on any lane, since the Authorization header
-       * is where the credential lives and a trace attached to a bug report must be safe to attach.
-       */
+      /** One verbatim provider HTTP body, captured only while the trace runs verbose. */
       readonly type: 'provider-raw';
       readonly direction: 'request' | 'response';
-      readonly url: string;
       readonly method?: string;
       readonly status?: number;
       /** Response media type, without exposing the response's other headers. */
       readonly contentType?: string;
+      /**
+       * Allowlisted diagnostic headers of a failed response (rate limit, request id); never request
+       * headers.
+       */
+      readonly headers?: Readonly<Record<string, string>>;
       readonly body: unknown;
     };
 
@@ -163,32 +118,23 @@ export type WireRecord = WireEvent & {
 };
 
 /** The per-generation measurement row: model identity, stop reason, latency, and usage. */
-export type GenerationRecord = Extract<WireRecord, { readonly type: 'generation' }>;
+export type GenerationRecord = Extract<
+  WireRecord,
+  { readonly type: 'generation' }
+>;
 
 /** One verbatim provider HTTP body, emitted only while the trace runs verbose. */
-export type ProviderRawRecord = Extract<WireRecord, { readonly type: 'provider-raw' }>;
+export type ProviderRawRecord = Extract<
+  WireRecord,
+  { readonly type: 'provider-raw' }
+>;
 
-/**
- * Digests one system instruction into the stable identifier the non-verbose trace records.
- *
- * @remarks
- * SHA-256 rather than a shorter digest so two prompt revisions can never collide in a comparison
- * across runs, and hex rather than base64 so the value is inert in every consumer — a 64-character
- * lowercase hex run carries none of the character classes the trace-security guard treats as
- * possible key material.
- */
+/** Digests one system instruction into the stable identifier the non-verbose trace records. */
 export function systemPromptHash(system: string): string {
   return createHash('sha256').update(system, 'utf8').digest('hex');
 }
 
-/**
- * Serializes trace-only diagnostic content without throwing or truncating it.
- *
- * Unlike Output-channel serialization, the opt-in wire trace must retain complete
- * prompts and payloads. Cycles, bigint values, throwing getters, and exotic
- * objects are therefore represented with explicit string markers while the rest
- * of the record remains valid JSON.
- */
+/** Serializes trace-only diagnostic content without throwing or truncating it. */
 export function safeTraceStringify(value: unknown): string {
   try {
     return JSON.stringify(toJsonSafeValue(value, new Set<object>())) ?? 'null';
@@ -199,29 +145,20 @@ export function safeTraceStringify(value: unknown): string {
   }
 }
 
-/**
- * Rewrites one value into a JSON-safe shape, degrading only the part that cannot be represented.
- *
- * @remarks
- * `ancestors` holds the objects on the *current path*, not every object ever seen, and each entry
- * is removed again in the `finally`. Two siblings pointing at the same object are a shared
- * reference, not a cycle, so both must serialize their real content; a `JSON.stringify` replacer
- * cannot make that distinction because it is never told when a subtree ends. The per-key try/catch
- * is the second half of the same contract: one throwing getter degrades to `[Unserializable:…]`
- * while its siblings survive, because a wire trace exists to be read after a failure.
- */
+/** Rewrites a value into a JSON-safe shape, degrading only the part that cannot be represented. */
 function toJsonSafeValue(value: unknown, ancestors: Set<object>): unknown {
   if (typeof value === 'bigint') return `[BigInt:${value.toString()}]`;
   if (
-    value === null
-    || typeof value === 'string'
-    || typeof value === 'number'
-    || typeof value === 'boolean'
-    || value === undefined
+    value === null ||
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    value === undefined
   ) {
     return value;
   }
-  if (typeof value === 'symbol' || typeof value === 'function') return String(value);
+  if (typeof value === 'symbol' || typeof value === 'function')
+    return String(value);
   if (typeof value !== 'object') return String(value);
   if (ancestors.has(value)) return '[Circular]';
 
@@ -232,7 +169,9 @@ function toJsonSafeValue(value: unknown, ancestors: Set<object>): unknown {
     }
 
     if (value instanceof Date) {
-      return Number.isNaN(value.getTime()) ? '[Invalid Date]' : value.toISOString();
+      return Number.isNaN(value.getTime())
+        ? '[Invalid Date]'
+        : value.toISOString();
     }
     if (value instanceof Map) {
       return {
@@ -243,7 +182,9 @@ function toJsonSafeValue(value: unknown, ancestors: Set<object>): unknown {
       };
     }
     if (value instanceof Set) {
-      return { '[Set]': [...value].map((entry) => toJsonSafeValue(entry, ancestors)) };
+      return {
+        '[Set]': [...value].map((entry) => toJsonSafeValue(entry, ancestors)),
+      };
     }
 
     const result: Record<string, unknown> = {};
@@ -255,9 +196,13 @@ function toJsonSafeValue(value: unknown, ancestors: Set<object>): unknown {
     }
     for (const key of keys) {
       try {
-        result[key] = toJsonSafeValue((value as Record<string, unknown>)[key], ancestors);
+        result[key] = toJsonSafeValue(
+          (value as Record<string, unknown>)[key],
+          ancestors,
+        );
       } catch (error) {
-        result[key] = `[Unserializable:${error instanceof Error ? error.name : 'Error'}]`;
+        result[key] =
+          `[Unserializable:${error instanceof Error ? error.name : 'Error'}]`;
       }
     }
     return result;

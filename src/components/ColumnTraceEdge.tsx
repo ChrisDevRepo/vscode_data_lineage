@@ -6,25 +6,18 @@ import {
   type EdgeProps,
 } from '@xyflow/react';
 import { Tooltip } from './ui/Tooltip';
-import { isIndirectOnly, type ColumnTransformClass } from '../engine/shared/bridgeContract';
+import {
+  isIndirectOnly,
+  type ColumnTransformClass,
+} from '../engine/shared/bridgeContract';
 import { COLUMN_EDGE_DIM_OPACITY } from '../engine/columnTraceView';
 import type { ColumnLineState } from '../engine/columnTraceView';
 
-/** Stroke width of a column-view edge lit by hover or selection. */
 const LIT_STROKE_WIDTH = 1.6;
 
-/** Stroke width of a column-view edge outside the lit set. */
 const DIM_STROKE_WIDTH = 1;
 
-/**
- * Dash pattern of an edge that only shaped which rows arrive, never the value.
- *
- * @remarks
- * The one drawing convention column-lineage tools actually share: OpenLineage splits every column
- * relation into DIRECT and INDIRECT, and a lineage viewer draws the indirect one broken — a column
- * used in a WHERE or a JOIN predicate reaches the output without its value ever landing in it. The
- * `COLUMN_TRANSFORM_DIRECTION` map classifies each class; an INDIRECT-only edge is drawn dashed.
- */
+/** Dash pattern of an edge that only shaped which rows arrive, never the value. */
 const INDIRECT_DASH_PATTERN = '5 4';
 
 /** Outer size, in px, of the marker chip centred on the edge path. */
@@ -36,19 +29,19 @@ const CHIP_GLYPH_SIZE = 20;
 /** How many class glyphs the chip shows before the remainder collapses into a count. */
 const CHIP_MAX_GLYPHS = 2;
 
-/**
- * Payload a column-view edge carries to its renderer.
- *
- * @remarks
- * Indexed to satisfy React Flow's edge-data constraint. `lit` is resolved by the canvas, which
- * owns the hovered column path, so the edge renders the effect without recomputing it.
- */
+/** Payload a column-view edge carries to its renderer. */
 export interface ColumnTraceEdgeData extends Record<string, unknown> {
   /** Whether the value changed between the two endpoints. */
   state: ColumnLineState;
-  /** Whether this edge is inside the lit set — the hovered column path, or the selected node's edges. */
+  /**
+   * Whether this edge is inside the lit set — the hovered column path, or the selected node's
+   * edges.
+   */
   lit: boolean;
-  /** Whether the edge is lit by a narrowing — a hovered or selected column path, or a selected node — so its marker chip takes the line's highlight. */
+  /**
+   * Whether the edge is lit by a narrowing — a hovered or selected column path, or a selected node
+   * — so its marker chip takes the line's highlight.
+   */
   focused?: boolean;
   /** Source column name as recorded, for the marker's hover text. */
   sourceColumn: string;
@@ -65,13 +58,10 @@ export interface ColumnTraceEdgeData extends Record<string, unknown> {
   objectLevel?: boolean;
 }
 
-/**
- * Display name of one transform class, as the tooltip's first line spells it.
- *
- * @remarks
- * The chip's tooltip is the only surface that names the class, so these strings are user-facing.
- */
-const COLUMN_TRANSFORM_CLASS_LABELS: Readonly<Record<ColumnTransformClass, string>> = {
+/** Display name of one transform class, as the tooltip's first line spells it. */
+const COLUMN_TRANSFORM_CLASS_LABELS: Readonly<
+  Record<ColumnTransformClass, string>
+> = {
   pass_through: 'Pass through',
   compute: 'Compute',
   aggregate: 'Aggregate',
@@ -80,32 +70,43 @@ const COLUMN_TRANSFORM_CLASS_LABELS: Readonly<Record<ColumnTransformClass, strin
 };
 
 /** The distinct non-identity classes an edge marks — one glyph and one label per class. */
-function markedTransformClasses(transforms: readonly ColumnTransformClass[] | undefined): ColumnTransformClass[] {
-  return [...new Set(transforms ?? [])].filter(c => c !== 'pass_through');
+function markedTransformClasses(
+  transforms: readonly ColumnTransformClass[] | undefined,
+): ColumnTransformClass[] {
+  return [...new Set(transforms ?? [])].filter((c) => c !== 'pass_through');
 }
 
 /**
  * Builds the marker chip's tooltip text: the class names first, then the model's own one-clause
  * note when it offered one, else the structural description of the line.
- *
- * @remarks
- * A `pass_through`-only edge never reaches here — it renders no chip, because identity is what an
- * unmarked line already says. `filter`/`combine` are INDIRECT: no value crosses the edge, so the
- * structural fallback says what the edge does to the row set rather than claiming a value changed.
- * Exported so the tooltip contract is testable without simulating hover.
  */
-export function describeColumnEdge(data: Pick<ColumnTraceEdgeData, 'sourceColumn' | 'targetColumn' | 'transforms' | 'note'>): string {
+function describeColumnEdge(
+  data: Pick<
+    ColumnTraceEdgeData,
+    'sourceColumn' | 'targetColumn' | 'transforms' | 'note'
+  >,
+): string {
   const classes = markedTransformClasses(data.transforms);
   if (classes.length === 0) {
-    return data.note ?? `${data.sourceColumn} → ${data.targetColumn} — the value changes here.`;
+    return (
+      data.note ??
+      `${data.sourceColumn} → ${data.targetColumn} — the value changes here.`
+    );
   }
   const indirectOnly = isIndirectOnly(classes);
-  const detail = data.note
-    ?? `${data.sourceColumn} → ${data.targetColumn} — ${indirectOnly ? 'shapes which rows reach here.' : 'the value changes here.'}`;
-  return `${classes.map(c => COLUMN_TRANSFORM_CLASS_LABELS[c]).join(' + ')}:\n${detail}`;
+  const detail =
+    data.note ??
+    `${data.sourceColumn} → ${data.targetColumn} — ${indirectOnly ? 'shapes which rows reach here.' : 'the value changes here.'}`;
+  return `${classes.map((c) => COLUMN_TRANSFORM_CLASS_LABELS[c]).join(' + ')}:\n${detail}`;
 }
 
-function GlyphSvg({ transformClass, children }: { transformClass: ColumnTransformClass; children: ReactNode }) {
+function GlyphSvg({
+  transformClass,
+  children,
+}: {
+  transformClass: ColumnTransformClass;
+  children: ReactNode;
+}) {
   return (
     <svg
       width={CHIP_GLYPH_SIZE}
@@ -124,17 +125,12 @@ function GlyphSvg({ transformClass, children }: { transformClass: ColumnTransfor
   );
 }
 
-/**
- * The mark drawn for one transform class.
- *
- * @remarks
- * Inline SVG, since the webview ships no icon library. One mark per class, each the symbol its
- * operation already carries in data tooling: arrow copies, `fx` computes, sigma aggregates,
- * overlapping circles join, funnel filters. All are stroked primitives in the shared 24-unit box
- * so they render as one family at chip scale. DIRECT vs INDIRECT is carried by the line itself
- * (an indirect edge is drawn broken), never by the chip.
- */
-function TransformClassGlyph({ transformClass }: { transformClass: ColumnTransformClass }) {
+/** The mark drawn for one transform class. */
+function TransformClassGlyph({
+  transformClass,
+}: {
+  transformClass: ColumnTransformClass;
+}) {
   switch (transformClass) {
     case 'pass_through':
       return (
@@ -184,15 +180,8 @@ function TransformClassGlyph({ transformClass }: { transformClass: ColumnTransfo
   }
 }
 
-/**
- * The mark drawn inside an unclassified chip: an open ring.
- *
- * @remarks
- * The ring carries no orientation, so it cannot be misread as a direction on a canvas where
- * direction is the primary semantic, and it stays unfilled because the object-type legend uses a
- * filled dot for a view. r=7 in the 24-unit box lands as a ~5.8px ring inside the 20px glyph box.
- */
-export function ColumnTransformGlyph() {
+/** The mark drawn inside an unclassified chip: an open ring. */
+function ColumnTransformGlyph() {
   return (
     <svg
       width={CHIP_GLYPH_SIZE}
@@ -208,20 +197,7 @@ export function ColumnTransformGlyph() {
   );
 }
 
-/**
- * Renders one column-view edge and, where the trace recorded a transformation, its marker chip.
- *
- * @remarks
- * A custom edge rather than React Flow's `label` prop because the marker has to be a hover target:
- * `label` renders inert text with no pointer callback, so the transformation could be seen but not
- * interrogated. The chip is the trigger — hovering the bare line does nothing, matching how every
- * comparable lineage tool exposes transform detail.
- *
- * The chip's content follows the classification: a model-classified edge shows one glyph per class
- * (capped, the remainder collapsed into a count), an unclassified transformation keeps the neutral
- * ring. A `pass_through`-only edge renders no chip at all — identity is what an unmarked line
- * already says, so marking it would spend the reader's attention to say nothing.
- */
+/** Renders one column-view edge and, where the trace recorded a transformation, its marker chip. */
 export const ColumnTraceEdge = memo(function ColumnTraceEdge({
   sourceX,
   sourceY,
@@ -232,7 +208,16 @@ export const ColumnTraceEdge = memo(function ColumnTraceEdge({
   markerEnd,
   data,
 }: EdgeProps) {
-  const { state, lit, focused, sourceColumn, targetColumn, transforms, note, objectLevel } = (data ?? {}) as ColumnTraceEdgeData;
+  const {
+    state,
+    lit,
+    focused,
+    sourceColumn,
+    targetColumn,
+    transforms,
+    note,
+    objectLevel,
+  } = (data ?? {}) as ColumnTraceEdgeData;
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
@@ -245,11 +230,16 @@ export const ColumnTraceEdge = memo(function ColumnTraceEdge({
   const classes = markedTransformClasses(transforms);
   const identityOnly = (transforms?.length ?? 0) > 0 && classes.length === 0;
   const indirect = !!objectLevel || isIndirectOnly(classes);
-  const showChip = !objectLevel && !identityOnly && (state === 'transformation' || classes.length > 0);
+  const showChip =
+    !objectLevel &&
+    !identityOnly &&
+    (state === 'transformation' || classes.length > 0 || !!note);
   const shown = classes.slice(0, CHIP_MAX_GLYPHS);
   const overflow = classes.length - shown.length;
   const stroke = lit ? 'var(--ln-focus-border)' : 'var(--ln-edge-color)';
-  const description = showChip ? describeColumnEdge({ sourceColumn, targetColumn, transforms, note }) : '';
+  const description = showChip
+    ? describeColumnEdge({ sourceColumn, targetColumn, transforms, note })
+    : '';
 
   return (
     <>
@@ -288,11 +278,18 @@ export const ColumnTraceEdge = memo(function ColumnTraceEdge({
                 pointerEvents: 'all',
               }}
             >
-              {shown.length > 0
-                ? shown.map(c => <TransformClassGlyph key={c} transformClass={c} />)
-                : <ColumnTransformGlyph />}
+              {shown.length > 0 ? (
+                shown.map((c) => (
+                  <TransformClassGlyph key={c} transformClass={c} />
+                ))
+              ) : (
+                <ColumnTransformGlyph />
+              )}
               {overflow > 0 && (
-                <span aria-hidden="true" style={{ fontSize: 10, fontWeight: 700, lineHeight: 1 }}>
+                <span
+                  aria-hidden="true"
+                  style={{ fontSize: 10, fontWeight: 700, lineHeight: 1 }}
+                >
                   +{overflow}
                 </span>
               )}

@@ -28,117 +28,99 @@ import {
   DEFAULT_CONFIG,
 } from './types';
 import { buildModel, parseName, normalizeName } from './modelBuilder';
-import { applyExclusionFilter } from './modelFilters';
-import { quoteIdentifier, stripBrackets, schemaKey, normalizeColName, splitSqlName } from '../utils/sql';
+import {
+  quoteIdentifier,
+  stripBrackets,
+  schemaKey,
+  normalizeColName,
+  splitSqlName,
+} from '../utils/sql';
 import { trunc } from '../utils/log';
 
 interface DacpacExtractionOptions {
   externalRefsEnabled?: boolean;
   /** Checked metadata returned by this extractor's schema preview; absent preserves CI. */
   identifierCaseSensitive?: boolean;
+  /**
+   * Explicit current-database identity supplied by the caller; package names are not database
+   * identity.
+   */
+  databaseName?: string;
 }
 
-/** Counts extracted objects by canonical type for summary logging. */
-function countObjectsByType(objs: ExtractedObject[]): Record<'table' | 'view' | 'procedure' | 'function', number> {
+function countObjectsByType(
+  objs: ExtractedObject[],
+): Record<'table' | 'view' | 'procedure' | 'function', number> {
   const c = { table: 0, view: 0, procedure: 0, function: 0 };
   for (const o of objs) {
-    if (o.type === 'table' || o.type === 'view' || o.type === 'procedure' || o.type === 'function') c[o.type]++;
+    if (
+      o.type === 'table' ||
+      o.type === 'view' ||
+      o.type === 'procedure' ||
+      o.type === 'function'
+    )
+      c[o.type]++;
   }
   return c;
 }
 
-/**
- * Extracts a complete {@link DatabaseModel} from a DACPAC archive buffer.
- *
- * @param buffer - DACPAC archive bytes to extract.
- * @param options - Runtime extraction settings from VS Code configuration.
- *
- * @throws If the buffer is not a valid ZIP archive, or if `model.xml` is missing or corrupted.
- *   The thrown error carries the underlying archive error as `cause`.
- *
- * @remarks Accepts `Uint8Array` so callers pass `readFile` output directly. Node pools file reads
- * up to 32KB, so `.buffer` on a small dacpac is a 64KB pool shared with later allocations rather
- * than the file's bytes.
- */
+/** Extracts a complete {@link DatabaseModel} from a DACPAC archive buffer. */
 export async function extractDacpac(
   buffer: Uint8Array | ArrayBuffer,
   onDebugLog?: (msg: string) => void,
   onInfoLog?: (msg: string) => void,
   options: DacpacExtractionOptions = {},
 ): Promise<DatabaseModel> {
-  const xml = await extractModelXml(buffer);
-  if (onDebugLog) onDebugLog(`Dacpac: ZIP loaded — model.xml=${xml.length} chars`);
+  const { xml } = await readArchive(buffer);
+  if (onDebugLog)
+    onDebugLog(`Dacpac: ZIP loaded — model.xml=${xml.length} chars`);
 
   const { elements, dspName, identifierCaseSensitive } = parseElements(xml);
-  if (onDebugLog) onDebugLog(`Dacpac: model.xml parsed — ${elements.length} elements (dsp=${dspName || 'unspecified'})`);
+  if (onDebugLog)
+    onDebugLog(
+      `Dacpac: model.xml parsed — ${elements.length} elements (dsp=${dspName || 'unspecified'})`,
+    );
 
-  const dbPlatform = parseDspPlatform(dspName);
-
-  const objects = extractObjects(elements, undefined, identifierCaseSensitive);
-  const allObjects = extractObjectsLightweight(elements, identifierCaseSensitive);
-  const deps = extractDependencies(elements);
-  const c = countObjectsByType(objects);
-  if (onDebugLog) onDebugLog(`Dacpac: Extracted ${objects.length} objects, ${deps.length} deps (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function})`);
-  if (onInfoLog) onInfoLog(`Dacpac extracted — ${objects.length} objects (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function}) ${deps.length} deps`);
-
-  const model = buildModel(
-    objects,
-    deps,
-    allObjects,
-    undefined,
-    options.externalRefsEnabled ?? DEFAULT_CONFIG.externalRefs.enabled,
+  const emptyWarning =
+    elements.length === 0
+      ? 'This dacpac appears to be empty.'
+      : 'No tables, views, or stored procedures found in this file.';
+  return buildDacpacModel(
+    elements,
+    elements,
+    dspName,
+    { ...options, identifierCaseSensitive },
+    emptyWarning,
     onDebugLog,
-    identifierCaseSensitive,
+    onInfoLog,
   );
-
-  const warnings: string[] = [];
-  if (elements.length === 0) {
-    warnings.push('This dacpac appears to be empty.');
-  } else if (model.nodes.length === 0) {
-    warnings.push('No tables, views, or stored procedures found in this file.');
-  }
-
-  return {
-    ...model,
-    warnings: warnings.length > 0 ? warnings : undefined,
-    dbPlatform: dbPlatform || undefined,
-    source: 'dacpac',
-  };
 }
 
 /**
- * Extracts a lightweight preview of the database schemas from a .dacpac file buffer.
- * This Phase 1 extraction counts schemas and object types without parsing body scripts,
- * columns, or deep dependencies.
- *
- * @param buffer - The raw bytes of the .dacpac file.
- * @returns A Promise resolving to the schema preview and the pre-parsed XML elements for Phase 2.
+ * Extracts a lightweight preview of the database schemas from a .dacpac file buffer. This Phase 1
+ * extraction counts schemas and object types without parsing body scripts, columns, or deep
+ * dependencies.
  */
-export async function extractSchemaPreview(buffer: Uint8Array | ArrayBuffer): Promise<{
+export async function extractSchemaPreview(
+  buffer: Uint8Array | ArrayBuffer,
+): Promise<{
   preview: SchemaPreview;
   elements: XmlElement[];
   dspName: string;
   identifierCaseSensitive: boolean;
 }> {
-  const xml = await extractModelXml(buffer);
+  const { xml } = await readArchive(buffer);
   const { elements, dspName, identifierCaseSensitive } = parseElements(xml);
-  const preview = computeSchemaPreviewFromElements(elements, identifierCaseSensitive);
+  const preview = computeSchemaPreviewFromElements(
+    elements,
+    identifierCaseSensitive,
+  );
   return { preview, elements, dspName, identifierCaseSensitive };
 }
 
 /**
- * Performs a Phase 2 full extraction filtered to a specific set of schemas.
- * Uses pre-parsed XML elements from Phase 1 to significantly improve performance.
- *
- *
- * @param elements - Pre-parsed DACPAC elements to filter.
- * @param selectedSchemas - Schemas selected for extraction.
- * @param dspName - Source DSP name from the DACPAC metadata.
- * @param onDebugLog - Debug logger callback.
- * @param onInfoLog - Info logger callback.
- * @param options - Runtime extraction settings from VS Code configuration.
- *
- * @returns The resulting DatabaseModel containing only the filtered objects.
+ * Performs a Phase 2 full extraction filtered to a specific set of schemas. Uses pre-parsed XML
+ * elements from Phase 1 to significantly improve performance.
  */
 export function extractDacpacFiltered(
   elements: XmlElement[],
@@ -149,54 +131,90 @@ export function extractDacpacFiltered(
   options: DacpacExtractionOptions = {},
 ): DatabaseModel {
   const identifierCaseSensitive = options.identifierCaseSensitive === true;
-  if (onDebugLog) onDebugLog(`Dacpac: Filtering by schemas=[${trunc(Array.from(selectedSchemas), 20)}]`);
+  if (onDebugLog)
+    onDebugLog(
+      `Dacpac: Filtering by schemas=[${trunc(Array.from(selectedSchemas), 20)}]`,
+    );
 
-  const lowerSchemas = new Set(Array.from(selectedSchemas).map(s => schemaKey(s, identifierCaseSensitive)));
-  const filtered = elements.filter(el => {
+  const lowerSchemas = new Set(
+    Array.from(selectedSchemas).map((s) =>
+      schemaKey(s, identifierCaseSensitive),
+    ),
+  );
+  const filtered = elements.filter((el) => {
     const name = el['@_Name'];
     if (!name || !TRACKED_ELEMENT_TYPES.has(el['@_Type'])) return false;
     const { schema } = parseName(name);
     return lowerSchemas.has(schemaKey(schema, identifierCaseSensitive));
   });
-  if (onDebugLog) onDebugLog(`Dacpac: Filter — ${elements.length} → ${filtered.length} tracked elements after schema filter`);
+  if (onDebugLog)
+    onDebugLog(
+      `Dacpac: Filter — ${elements.length} → ${filtered.length} tracked elements after schema filter`,
+    );
 
-  const allObjects = extractObjectsLightweight(elements, identifierCaseSensitive);
-  const objects = extractObjects(filtered, elements, identifierCaseSensitive);
-  const deps = extractDependencies(filtered);
+  return buildDacpacModel(
+    filtered,
+    elements,
+    dspName,
+    options,
+    'No tables, views, or stored procedures found for selected schemas.',
+    onDebugLog,
+    onInfoLog,
+  );
+}
+
+/**
+ * Builds the model of the given DACPAC elements, with `allElements` as the catalog; `emptyWarning`
+ * is reported when no node is built.
+ */
+function buildDacpacModel(
+  elements: XmlElement[],
+  allElements: XmlElement[],
+  dspName: string | undefined,
+  options: DacpacExtractionOptions,
+  emptyWarning: string,
+  onDebugLog?: (msg: string) => void,
+  onInfoLog?: (msg: string) => void,
+): DatabaseModel {
+  const identifierCaseSensitive = options.identifierCaseSensitive === true;
+  const objects = extractObjects(
+    elements,
+    allElements,
+    identifierCaseSensitive,
+  );
+  const deps = extractDependencies(elements);
   const c = countObjectsByType(objects);
-  if (onDebugLog) onDebugLog(`Dacpac: Extracted ${objects.length} objects, ${deps.length} deps (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function})`);
-  if (onInfoLog) onInfoLog(`Dacpac extracted — ${objects.length} objects (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function}) ${deps.length} deps`);
+  if (onDebugLog)
+    onDebugLog(
+      `Dacpac: Extracted ${objects.length} objects, ${deps.length} deps (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function})`,
+    );
+  if (onInfoLog)
+    onInfoLog(
+      `Dacpac extracted — ${objects.length} objects (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function}) ${deps.length} deps`,
+    );
 
   const model = buildModel(
     objects,
     deps,
-    allObjects,
-    undefined,
+    extractObjectsLightweight(allElements, identifierCaseSensitive),
+    options.databaseName,
     options.externalRefsEnabled ?? DEFAULT_CONFIG.externalRefs.enabled,
     onDebugLog,
     identifierCaseSensitive,
   );
-  const dbPlatform = dspName ? parseDspPlatform(dspName) : undefined;
-
-  const warnings: string[] = [];
-  if (model.nodes.length === 0) {
-    warnings.push('No tables, views, or stored procedures found for selected schemas.');
-  }
   return {
     ...model,
-    warnings: warnings.length > 0 ? warnings : undefined,
-    dbPlatform: dbPlatform || undefined,
+    warnings: model.nodes.length === 0 ? [emptyWarning] : undefined,
+    dbPlatform: (dspName && parseDspPlatform(dspName)) || undefined,
     source: 'dacpac',
   };
 }
 
-/**
- * Internal logic to compute schema-level statistics from parsed XML elements.
- *
- * @param elements - The full array of parsed elements from model.xml.
- * @returns A summary object containing schema info and total object count.
- */
-function computeSchemaPreviewFromElements(elements: XmlElement[], identifierCaseSensitive: boolean): SchemaPreview {
+/** Internal logic to compute schema-level statistics from parsed XML elements. */
+function computeSchemaPreviewFromElements(
+  elements: XmlElement[],
+  identifierCaseSensitive: boolean,
+): SchemaPreview {
   const schemaMap = new Map<string, SchemaInfo>();
   const seen = new Set<string>();
   let totalObjects = 0;
@@ -224,7 +242,9 @@ function computeSchemaPreviewFromElements(elements: XmlElement[], identifierCase
     totalObjects++;
   }
 
-  const schemas = Array.from(schemaMap.values()).sort((a, b) => b.nodeCount - a.nodeCount);
+  const schemas = Array.from(schemaMap.values()).sort(
+    (a, b) => b.nodeCount - a.nodeCount,
+  );
   const warnings: string[] = [];
   if (elements.length === 0) {
     warnings.push('This dacpac appears to be empty.');
@@ -232,62 +252,19 @@ function computeSchemaPreviewFromElements(elements: XmlElement[], identifierCase
     warnings.push('No tables, views, or stored procedures found in this file.');
   }
 
-  return { schemas, totalObjects, ...(identifierCaseSensitive && { identifierCaseSensitive }), warnings: warnings.length > 0 ? warnings : undefined };
-}
-
-/**
- * Filters an existing DatabaseModel in memory to include only objects from specific schemas.
- *
- * @remarks
- * Retains every matching object and every external reference it touches — this never truncates.
- * Callers that must honor `dataLineageViz.maxNodes` check the result with
- * {@link checkObjectLimit} before loading or rendering it.
- *
- * @param selectedSchemas - Set of schema names to retain.
- * @returns A new DatabaseModel instance containing the filtered subset.
- */
-export function filterBySchemas(
-  model: DatabaseModel,
-  selectedSchemas: Set<string>,
-): DatabaseModel {
-  const lowerSelected = new Set(Array.from(selectedSchemas).map(s => schemaKey(s, model.identifierCaseSensitive)));
-  const schemaNodes = model.nodes.filter((n) => lowerSelected.has(schemaKey(n.schema, model.identifierCaseSensitive)));
-  const schemaNodeIds = new Set(schemaNodes.map(n => n.id));
-
-  const connectedVirtualIds = new Set<string>();
-  for (const e of model.edges) {
-    if (schemaNodeIds.has(e.target)) connectedVirtualIds.add(e.source);
-    if (schemaNodeIds.has(e.source)) connectedVirtualIds.add(e.target);
-  }
-  const virtualNodes = model.nodes.filter((n) =>
-    n.type === 'external' && connectedVirtualIds.has(n.id) && !schemaNodeIds.has(n.id)
-  );
-  const filtered = [...schemaNodes, ...virtualNodes];
-  const nodeIds = new Set(filtered.map((n) => n.id));
-
-  const edges = model.edges.filter(
-    (e) => nodeIds.has(e.source) && nodeIds.has(e.target)
-  );
-
   return {
-    nodes: filtered,
-    edges,
-    schemas: model.schemas.filter((s) => lowerSelected.has(schemaKey(s.name, model.identifierCaseSensitive))),
-    catalog: model.catalog,
-    neighborIndex: model.neighborIndex,
-    parseStats: model.parseStats,
-    warnings: model.warnings,
-    identifierCaseSensitive: model.identifierCaseSensitive,
+    schemas,
+    totalObjects,
+    ...(identifierCaseSensitive && { identifierCaseSensitive }),
+    warnings: warnings.length > 0 ? warnings : undefined,
   };
 }
 
-/**
- * Extracts a lightweight catalog of all tracked objects from XML elements.
- *
- * @param elements - The source XML elements.
- * @returns A collection of extracted objects without body or column detail.
- */
-function extractObjectsLightweight(elements: XmlElement[], identifierCaseSensitive: boolean): ExtractedObject[] {
+/** Extracts a lightweight catalog of all tracked objects from XML elements. */
+function extractObjectsLightweight(
+  elements: XmlElement[],
+  identifierCaseSensitive: boolean,
+): ExtractedObject[] {
   const seen = new Set<string>();
   const objects: ExtractedObject[] = [];
   for (const el of elements) {
@@ -303,96 +280,134 @@ function extractObjectsLightweight(elements: XmlElement[], identifierCaseSensiti
 }
 
 /**
- * Loads the dacpac buffer into JSZip and retrieves the `model.xml` content.
- *
- * @param buffer - Raw file bytes.
- * @returns The XML content as a string.
+ * Loads the dacpac buffer into JSZip and retrieves its model; package metadata is not deployment
+ * identity.
  */
-async function extractModelXml(buffer: Uint8Array | ArrayBuffer): Promise<string> {
+async function readArchive(
+  buffer: Uint8Array | ArrayBuffer,
+): Promise<{ xml: string }> {
   let zip: JSZip;
   try {
     zip = await JSZip.loadAsync(buffer);
   } catch (err) {
     const msg = err instanceof Error ? err.message : '';
-    if (msg.includes('end of central directory') || msg.includes('is this a zip file'))
-      throw Object.assign(new Error('Not a valid .dacpac file (invalid ZIP archive)'), { cause: err });
+    if (
+      msg.includes('end of central directory') ||
+      msg.includes('is this a zip file')
+    )
+      throw Object.assign(
+        new Error('Not a valid .dacpac file (invalid ZIP archive)'),
+        { cause: err },
+      );
     if (msg.includes('End of data reached') || msg.includes('Corrupted zip'))
-      throw Object.assign(new Error('File appears to be corrupted or truncated'), { cause: err });
+      throw Object.assign(
+        new Error('File appears to be corrupted or truncated'),
+        { cause: err },
+      );
     throw new Error(`Invalid .dacpac file: ${msg || 'unknown error'}`);
   }
   const modelFile = zip.file('model.xml');
   if (!modelFile) throw new Error('model.xml not found in .dacpac');
-  return modelFile.async('string');
+  return { xml: await modelFile.async('string') };
 }
 
-/**
- * Parses the raw XML string into a structured object using `fast-xml-parser`.
- *
- * @remarks
- * Entity processing stays off so a hostile DOCTYPE cannot expand entities. The five predefined entities
- * and character references in `Name` attributes are decoded afterwards by {@link decodeXmlText}, so an
- * object or column named `a&b` is read as `a&b`; `Value` attributes and text are decoded where they are read.
- *
- * @param xml - The XML string to parse.
- * @returns An object containing the elements array and the DSP name.
- */
-function parseElements(xml: string): { elements: XmlElement[]; dspName: string; identifierCaseSensitive: boolean } {
+/** Parses the raw XML string into a structured object using `fast-xml-parser`. */
+function parseElements(xml: string): {
+  elements: XmlElement[];
+  dspName: string;
+  identifierCaseSensitive: boolean;
+} {
   const parser = new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: '@_',
-    isArray: (name) => name === 'Element' || name === 'Entry' || name === 'Property' || name === 'Relationship' || name === 'Annotation',
+    isArray: (name) =>
+      name === 'Element' ||
+      name === 'Entry' ||
+      name === 'Property' ||
+      name === 'Relationship' ||
+      name === 'Annotation',
     parseTagValue: true,
     trimValues: true,
     processEntities: false,
-    attributeValueProcessor: (attrName, value) => (attrName === 'Name' ? decodeXmlText(value) : value),
+    attributeValueProcessor: (attrName, value) =>
+      attrName === 'Name' ? decodeXmlText(value) : value,
     cdataPropName: CDATA_PROP,
   });
 
-  let doc: any;
+  let doc: {
+    DataSchemaModel?: {
+      Model?: { Element?: XmlElement | XmlElement[] };
+      '@_DspName'?: string;
+      '@_CollationCaseSensitive'?: string;
+    };
+  };
   try {
-    doc = parser.parse(xml);
-  } catch {
-    throw new Error('Failed to parse model.xml — the file may be corrupted');
+    doc = parser.parse(xml, true);
+  } catch (err) {
+    throw Object.assign(
+      new Error('Failed to parse model.xml — the file may be corrupted'),
+      { cause: err },
+    );
   }
   const model = doc?.DataSchemaModel?.Model;
-  if (!model) throw new Error('Invalid model.xml: missing DataSchemaModel/Model');
+  if (!model)
+    throw new Error('Invalid model.xml: missing DataSchemaModel/Model');
 
   const elements: XmlElement[] = asArray(model.Element);
   const dspName: string = doc.DataSchemaModel?.['@_DspName'] ?? '';
-  const optionElements = elements.filter(el => el['@_Type'] === 'SqlDatabaseOptions');
+  const optionElements = elements.filter(
+    (el) => el['@_Type'] === 'SqlDatabaseOptions',
+  );
   const databaseOptions = asArray(optionElements[0]?.Property);
-  const catalogs = databaseOptions.filter(prop => prop['@_Name'] === 'CatalogCollation');
-  const containments = databaseOptions.filter(prop => prop['@_Name'] === 'Containment');
+  const catalogs = databaseOptions.filter(
+    (prop) => prop['@_Name'] === 'CatalogCollation',
+  );
+  const containments = databaseOptions.filter(
+    (prop) => prop['@_Name'] === 'Containment',
+  );
   const catalog = catalogs[0]?.['@_Value'];
   // Azure's data collation may differ from its catalog. Only DATABASE_DEFAULT explicitly ties them.
   const containment = containments[0]?.['@_Value'];
-  const checkedOptions = optionElements.length <= 1 && catalogs.length <= 1 && containments.length <= 1;
-  const catalogUsesModel = (!/SqlAzure|SqlHyperscale|SqlDbFabric/.test(dspName) && (containment === undefined || containment === '0')) || catalog === '0';
-  const identifierCaseSensitive = doc.DataSchemaModel?.['@_CollationCaseSensitive'] === 'True' && checkedOptions && catalogUsesModel && (catalog === undefined || catalog === '0');
+  const checkedOptions =
+    optionElements.length <= 1 &&
+    catalogs.length <= 1 &&
+    containments.length <= 1;
+  const catalogUsesModel =
+    (!/SqlAzure|SqlHyperscale|SqlDbFabric/.test(dspName) &&
+      (containment === undefined || containment === '0')) ||
+    catalog === '0';
+  const identifierCaseSensitive =
+    doc.DataSchemaModel?.['@_CollationCaseSensitive'] === 'True' &&
+    checkedOptions &&
+    catalogUsesModel &&
+    (catalog === undefined || catalog === '0');
   return { elements, dspName, identifierCaseSensitive };
 }
 
 /**
- * Maps the DspName attribute from a dacpac's DataSchemaModel element to a human-readable platform string.
- *
- * @param dsp - The Data Schema Provider name string (e.g., 'Sql160DatabaseSchemaProvider').
- * @returns A user-friendly database platform name, or the raw provider string if unrecognized.
+ * Maps the DspName attribute from a dacpac's DataSchemaModel element to a human-readable platform
+ * string.
  */
 export function parseDspPlatform(dsp: string): string {
   if (!dsp) return '';
-  if (dsp.includes('SqlDwUnified'))       return 'Fabric Data Warehouse';
-  if (dsp.includes('SqlDbFabric'))        return 'SQL Database in Fabric';
-  if (dsp.includes('SqlDwDatabase'))      return 'Synapse Dedicated Pool';
+  if (dsp.includes('SqlDwUnified')) return 'Fabric Data Warehouse';
+  if (dsp.includes('SqlDbFabric')) return 'SQL Database in Fabric';
+  if (dsp.includes('SqlDwDatabase')) return 'Synapse Dedicated Pool';
   if (dsp.includes('SqlManagedInstance')) return 'Azure SQL Managed Instance';
-  if (dsp.includes('SqlHyperscale'))      return 'Azure SQL Hyperscale';
-  if (dsp.includes('SqlAzureV12'))        return 'Azure SQL Database';
+  if (dsp.includes('SqlHyperscale')) return 'Azure SQL Hyperscale';
+  if (dsp.includes('SqlAzureV12')) return 'Azure SQL Database';
 
   const verMap: [string, string][] = [
-    ['Sql170', 'SQL Server 2025'], ['Sql160', 'SQL Server 2022'],
-    ['Sql150', 'SQL Server 2019'], ['Sql140', 'SQL Server 2017'],
-    ['Sql130', 'SQL Server 2016'], ['Sql120', 'SQL Server 2014'],
-    ['Sql110', 'SQL Server 2012'], ['Sql100', 'SQL Server 2008'],
-    ['Sql90',  'SQL Server 2005'], ['Sql80',  'SQL Server 2000'],
+    ['Sql170', 'SQL Server 2025'],
+    ['Sql160', 'SQL Server 2022'],
+    ['Sql150', 'SQL Server 2019'],
+    ['Sql140', 'SQL Server 2017'],
+    ['Sql130', 'SQL Server 2016'],
+    ['Sql120', 'SQL Server 2014'],
+    ['Sql110', 'SQL Server 2012'],
+    ['Sql100', 'SQL Server 2008'],
+    ['Sql90', 'SQL Server 2005'],
+    ['Sql80', 'SQL Server 2000'],
   ];
   for (const [key, label] of verMap) if (dsp.includes(key)) return label;
 
@@ -400,28 +415,33 @@ export function parseDspPlatform(dsp: string): string {
   return m ? m[1] : dsp;
 }
 
-/**
- * Extracts deep metadata (DDL, columns, constraints) for tracked objects.
- *
- * @param elements - The elements to process.
- * @param constraintElements - Optional elements collection for cross-referencing constraints.
- * @returns The collection of detailed object metadata.
- */
-function extractObjects(elements: XmlElement[], constraintElements: XmlElement[] | undefined, identifierCaseSensitive: boolean): ExtractedObject[] {
+/** Extracts deep metadata (DDL, columns, constraints) for tracked objects. */
+function extractObjects(
+  elements: XmlElement[],
+  constraintElements: XmlElement[] | undefined,
+  identifierCaseSensitive: boolean,
+): ExtractedObject[] {
   const objects: ExtractedObject[] = [];
   const seen = new Set<string>();
-  const constraintMaps = extractConstraintMaps(constraintElements ?? elements, identifierCaseSensitive);
+  const constraintMaps = extractConstraintMaps(
+    constraintElements ?? elements,
+    identifierCaseSensitive,
+  );
   const computedSources = new Map<string, string>();
   const sourceElementTypes = new Map<string, string>();
   const pendingElements = [...(constraintElements ?? elements)];
   while (pendingElements.length > 0) {
     const element = pendingElements.pop()!;
     if (element['@_Name'] && element['@_ExternalSource'] === undefined) {
-      sourceElementTypes.set(expressionReferenceKey(element['@_Name'], identifierCaseSensitive), element['@_Type']);
+      sourceElementTypes.set(
+        expressionReferenceKey(element['@_Name'], identifierCaseSensitive),
+        element['@_Type'],
+      );
     }
     pendingElements.push(...asArray(element.Element));
     for (const relationship of asArray(element.Relationship)) {
-      for (const entry of asArray(relationship.Entry)) pendingElements.push(...asArray(entry.Element));
+      for (const entry of asArray(relationship.Entry))
+        pendingElements.push(...asArray(entry.Element));
     }
   }
 
@@ -438,16 +458,22 @@ function extractObjects(elements: XmlElement[], constraintElements: XmlElement[]
     const { schema, objectName } = parseName(name);
     const bodyScript = getBodyScript(el, type, schema, objectName);
 
-    const COLUMN_BEARING_DACPAC_TYPES = new Set([
-      'SqlTable', 'SqlExternalTable', 'SqlView',
-      'SqlInlineTableValuedFunction', 'SqlMultiStatementTableValuedFunction',
-    ]);
     let columns: ColumnDef[] | undefined;
     let fks: ForeignKeyInfo[] | undefined;
     if (COLUMN_BEARING_DACPAC_TYPES.has(type)) {
-      columns = extractColumnsFromXml(el, computedSources, sourceElementTypes, identifierCaseSensitive);
+      columns = extractColumnsFromXml(
+        el,
+        computedSources,
+        sourceElementTypes,
+        identifierCaseSensitive,
+      );
       if (columns && (type === 'SqlTable' || type === 'SqlExternalTable')) {
-        fks = enrichColumnsWithConstraints(columns, normalizeName(name, identifierCaseSensitive), constraintMaps, identifierCaseSensitive);
+        fks = enrichColumnsWithConstraints(
+          columns,
+          normalizeName(name, identifierCaseSensitive),
+          constraintMaps,
+          identifierCaseSensitive,
+        );
       }
     }
 
@@ -465,20 +491,28 @@ function extractObjects(elements: XmlElement[], constraintElements: XmlElement[]
   return objects;
 }
 
-/** A computed-column expression that is one column reference, bracketed or not, under optional parentheses. */
-const BARE_COLUMN_REFERENCE = /^\s*(?:\[((?:[^\]]|\]\])+)\]|([A-Za-z_@#][\w@#$]*))\s*$/;
+/** DACPAC element types whose `Columns` relationship lists result or table columns. */
+const COLUMN_BEARING_DACPAC_TYPES = new Set([
+  'SqlTable',
+  'SqlExternalTable',
+  'SqlView',
+  'SqlInlineTableValuedFunction',
+  'SqlMultiStatementTableValuedFunction',
+]);
 
 /**
- * Names the column a computed-column expression passes through unchanged.
- *
- * @param script - The column's `ExpressionScript`, if the model records one.
- * @returns The referenced column name when the whole expression is a bare column reference such as
- *   `([Qty])` or `Qty`; `null` for any other expression, and for a column with no script.
+ * A computed-column expression that is one column reference, bracketed or not, under optional
+ * parentheses.
  */
+const BARE_COLUMN_REFERENCE =
+  /^\s*(?:\[((?:[^\]]|\]\])+)\]|([A-Za-z_@#][\w@#$]*))\s*$/;
+
+/** Names the column a computed-column expression passes through unchanged. */
 function bareColumnReference(script: string | undefined): string | null {
   if (script === undefined) return null;
   let body = script.trim();
-  while (body.startsWith('(') && body.endsWith(')')) body = body.slice(1, -1).trim();
+  while (body.startsWith('(') && body.endsWith(')'))
+    body = body.slice(1, -1).trim();
   const match = BARE_COLUMN_REFERENCE.exec(body);
   if (!match) return null;
   return match[1] !== undefined ? match[1].replace(/\]\]/g, ']') : match[2];
@@ -486,25 +520,21 @@ function bareColumnReference(script: string | undefined): string | null {
 
 /**
  * Gives a computed column the declared type of the column its expression passes through unchanged.
- *
- * @remarks
- * A computed column carries no `TypeSpecifier`, which is why an unresolved one renders as `—`. Only
- * a column whose `ExpressionScript` is a bare column reference has the referenced column's declared
- * type; any other expression (arithmetic, `CONVERT`, a function call) produces a type the model does
- * not state, and a view or function column has no `ExpressionScript` at all — both keep the `—`.
- *
- * Iterated to a fixpoint so a reference to a column resolved in an earlier pass is typed in the next.
- * Terminates because each pass only replaces `—` and a pass that resolves nothing ends the loop.
- *
- * @param objects - Extracted objects, mutated in place.
- * @param computedSources - Computed column key → the column its bare-reference expression names.
  */
-function resolveComputedColumnTypes(objects: ExtractedObject[], computedSources: Map<string, string>, identifierCaseSensitive: boolean): void {
+function resolveComputedColumnTypes(
+  objects: ExtractedObject[],
+  computedSources: Map<string, string>,
+  identifierCaseSensitive: boolean,
+): void {
   if (computedSources.size === 0) return;
   const declared = new Map<string, string>();
   for (const obj of objects) {
     const objectId = normalizeName(obj.fullName, identifierCaseSensitive);
-    for (const col of obj.columns ?? []) declared.set(`${objectId}::${normalizeColName(col.name, identifierCaseSensitive)}`, col.type);
+    for (const col of obj.columns ?? [])
+      declared.set(
+        `${objectId}::${normalizeColName(col.name, identifierCaseSensitive)}`,
+        col.type,
+      );
   }
 
   const keyOf = (reference: string): string | null => {
@@ -536,12 +566,7 @@ function resolveComputedColumnTypes(objects: ExtractedObject[], computedSources:
   }
 }
 
-/**
- * Extracts object-level dependencies between XML elements.
- *
- * @param elements - The source XML elements.
- * @returns The collection of discovered dependencies.
- */
+/** Extracts object-level dependencies between XML elements. */
 function extractDependencies(elements: XmlElement[]): ExtractedDependency[] {
   const deps: ExtractedDependency[] = [];
 
@@ -559,18 +584,27 @@ function extractDependencies(elements: XmlElement[]): ExtractedDependency[] {
   return deps;
 }
 
-/** Keys references by every qualified SQL identifier part without changing their emitted identity. */
-function expressionReferenceKey(reference: string, identifierCaseSensitive: boolean): string {
-  return JSON.stringify(splitSqlName(reference).map(part => schemaKey(stripBrackets(part), identifierCaseSensitive)));
+/**
+ * Keys references by every qualified SQL identifier part without changing their emitted identity.
+ */
+function expressionReferenceKey(
+  reference: string,
+  identifierCaseSensitive: boolean,
+): string {
+  return JSON.stringify(
+    splitSqlName(reference).map((part) =>
+      schemaKey(stripBrackets(part), identifierCaseSensitive),
+    ),
+  );
 }
 
-/**
- * Extracts column definitions for tables, views, and functions from the XML model.
- *
- * @param el - The source element.
- * @returns An array of column definitions.
- */
-function extractColumnsFromXml(el: XmlElement, computedSources: Map<string, string> | undefined, sourceElementTypes: ReadonlyMap<string, string> | undefined, identifierCaseSensitive: boolean): ColumnDef[] {
+/** Extracts column definitions for tables, views, and functions from the XML model. */
+function extractColumnsFromXml(
+  el: XmlElement,
+  computedSources: Map<string, string> | undefined,
+  sourceElementTypes: ReadonlyMap<string, string> | undefined,
+  identifierCaseSensitive: boolean,
+): ColumnDef[] {
   const cols: ColumnDef[] = [];
   const rels = asArray(el.Relationship);
   const objectId = normalizeName(el['@_Name'] ?? '', identifierCaseSensitive);
@@ -581,8 +615,12 @@ function extractColumnsFromXml(el: XmlElement, computedSources: Map<string, stri
       for (const colEl of asArray(entry.Element)) {
         const colName = lastNamePart(colEl['@_Name'] ?? '');
         const props = asArray(colEl.Property);
-        const isNullable = props.find(p => p['@_Name'] === 'IsNullable')?.['@_Value'] !== 'False';
-        const isIdentity = props.find(p => p['@_Name'] === 'IsIdentity')?.['@_Value'] === 'True';
+        const isNullable =
+          props.find((p) => p['@_Name'] === 'IsNullable')?.['@_Value'] !==
+          'False';
+        const isIdentity =
+          props.find((p) => p['@_Name'] === 'IsIdentity')?.['@_Value'] ===
+          'True';
         const isComputed = colEl['@_Type'] === 'SqlComputedColumn';
 
         let typeName = '?';
@@ -591,16 +629,33 @@ function extractColumnsFromXml(el: XmlElement, computedSources: Map<string, stri
         let scale: string | undefined;
 
         if (isComputed && computedSources) {
-          const scriptProp = props.find(p => p['@_Name'] === 'ExpressionScript');
-          const bareName = bareColumnReference(scriptProp ? extractPropertyValue(scriptProp) : undefined);
-          const source = bareName === null ? undefined : asArray(colEl.Relationship)
-            .filter(r => r['@_Name'] === 'ExpressionDependencies')
-            .flatMap(r => asArray(r.Entry))
-            .flatMap(entry => asArray(entry.References))
-            .map(ref => ref['@_Name'])
-            .find((n): n is string => !!n
-              && normalizeColName(stripBrackets(splitSqlName(n).pop() ?? ''), identifierCaseSensitive) === normalizeColName(bareName, identifierCaseSensitive));
-          if (source) computedSources.set(`${objectId}::${normalizeColName(colName, identifierCaseSensitive)}`, source);
+          const scriptProp = props.find(
+            (p) => p['@_Name'] === 'ExpressionScript',
+          );
+          const bareName = bareColumnReference(
+            scriptProp ? extractPropertyValue(scriptProp) : undefined,
+          );
+          const source =
+            bareName === null
+              ? undefined
+              : asArray(colEl.Relationship)
+                  .filter((r) => r['@_Name'] === 'ExpressionDependencies')
+                  .flatMap((r) => asArray(r.Entry))
+                  .flatMap((entry) => asArray(entry.References))
+                  .map((ref) => ref['@_Name'])
+                  .find(
+                    (n): n is string =>
+                      !!n &&
+                      normalizeColName(
+                        stripBrackets(splitSqlName(n).pop() ?? ''),
+                        identifierCaseSensitive,
+                      ) === normalizeColName(bareName, identifierCaseSensitive),
+                  );
+          if (source)
+            computedSources.set(
+              `${objectId}::${normalizeColName(colName, identifierCaseSensitive)}`,
+              source,
+            );
         }
 
         if (!isComputed) {
@@ -609,15 +664,25 @@ function extractColumnsFromXml(el: XmlElement, computedSources: Map<string, stri
             for (const tsEntry of asArray(colRel.Entry)) {
               for (const tsEl of asArray(tsEntry.Element)) {
                 const tsProps = asArray(tsEl.Property);
-                const isMax = tsProps.find(p => p['@_Name'] === 'IsMax')?.['@_Value'] === 'True';
-                length = isMax ? '-1' : tsProps.find(p => p['@_Name'] === 'Length')?.['@_Value'];
-                precision = tsProps.find(p => p['@_Name'] === 'Precision')?.['@_Value'];
-                scale = tsProps.find(p => p['@_Name'] === 'Scale')?.['@_Value'];
+                const isMax =
+                  tsProps.find((p) => p['@_Name'] === 'IsMax')?.['@_Value'] ===
+                  'True';
+                length = isMax
+                  ? '-1'
+                  : tsProps.find((p) => p['@_Name'] === 'Length')?.['@_Value'];
+                precision = tsProps.find((p) => p['@_Name'] === 'Precision')?.[
+                  '@_Value'
+                ];
+                scale = tsProps.find((p) => p['@_Name'] === 'Scale')?.[
+                  '@_Value'
+                ];
                 for (const typeRel of asArray(tsEl.Relationship)) {
                   if (typeRel['@_Name'] !== 'Type') continue;
                   for (const typeEntry of asArray(typeRel.Entry)) {
                     for (const ref of asArray(typeEntry.References)) {
-                      typeName = ref['@_Name'] ? stripBrackets(ref['@_Name']).replace(/^sys\./i, '') : '?';
+                      typeName = ref['@_Name']
+                        ? stripBrackets(ref['@_Name']).replace(/^sys\./i, '')
+                        : '?';
                     }
                   }
                 }
@@ -626,23 +691,48 @@ function extractColumnsFromXml(el: XmlElement, computedSources: Map<string, stri
           }
         }
 
-        const column = buildColumnDef(colName, typeName, isNullable, isIdentity, isComputed, length, precision, scale, true);
+        const column = buildColumnDef(
+          colName,
+          typeName,
+          isNullable,
+          isIdentity,
+          isComputed,
+          length,
+          precision,
+          scale,
+          true,
+        );
         const expressionDependencies = asArray(colEl.Relationship)
-          .filter(relationship => relationship['@_Name'] === 'ExpressionDependencies')
-          .flatMap(relationship => asArray(relationship.Entry))
-          .flatMap(entry => asArray(entry.References))
-          .filter(reference => typeof reference['@_Name'] === 'string' && reference['@_Name'].trim().length > 0)
-          .map(reference => {
+          .filter(
+            (relationship) =>
+              relationship['@_Name'] === 'ExpressionDependencies',
+          )
+          .flatMap((relationship) => asArray(relationship.Entry))
+          .flatMap((entry) => asArray(entry.References))
+          .filter(
+            (reference) =>
+              typeof reference['@_Name'] === 'string' &&
+              reference['@_Name'].trim().length > 0,
+          )
+          .map((reference) => {
             const externalSource = reference['@_ExternalSource'];
-            const sourceElementType = externalSource === undefined
-              ? sourceElementTypes?.get(expressionReferenceKey(reference['@_Name'], identifierCaseSensitive)) : undefined;
+            const sourceElementType =
+              externalSource === undefined
+                ? sourceElementTypes?.get(
+                    expressionReferenceKey(
+                      reference['@_Name'],
+                      identifierCaseSensitive,
+                    ),
+                  )
+                : undefined;
             return {
               reference: reference['@_Name'],
               ...(sourceElementType !== undefined && { sourceElementType }),
               ...(externalSource !== undefined && { externalSource }),
             };
           });
-        if (expressionDependencies.length > 0) column.expressionDependencies = expressionDependencies;
+        if (expressionDependencies.length > 0)
+          column.expressionDependencies = expressionDependencies;
         cols.push(column);
       }
     }
@@ -651,37 +741,33 @@ function extractColumnsFromXml(el: XmlElement, computedSources: Map<string, stri
   return cols;
 }
 
-/**
- * Utility to extract `@_Name` values from a specific Relationship.
- *
- * @param el - The source element.
- * @param relName - The relationship name to lookup.
- * @returns An array of referenced names.
- */
+/** Utility to extract `@_Name` values from a specific Relationship. */
 function getRelRefs(el: XmlElement, relName: string): string[] {
-  const rel = asArray(el.Relationship).find(r => r['@_Name'] === relName);
+  const rel = asArray(el.Relationship).find((r) => r['@_Name'] === relName);
   if (!rel) return [];
-  return asArray(rel.Entry).flatMap(e =>
-    asArray(e.References).map(r => r['@_Name'] ?? '').filter(Boolean)
+  return asArray(rel.Entry).flatMap((e) =>
+    asArray(e.References)
+      .map((r) => r['@_Name'] ?? '')
+      .filter(Boolean),
   );
 }
 
-/**
- * Mapping of SQL Server Foreign Key delete actions from numeric IDs to strings.
- */
-const FK_DELETE_ACTION: Record<string, string> = { '1': 'CASCADE', '2': 'SET NULL', '3': 'SET DEFAULT' };
+/** Mapping of SQL Server Foreign Key delete actions from numeric IDs to strings. */
+const FK_DELETE_ACTION: Record<string, string> = {
+  '1': 'CASCADE',
+  '2': 'SET NULL',
+  '3': 'SET DEFAULT',
+};
 
-/**
- * Extracts comprehensive constraint metadata (UQ, CK, FK, PK) for the entire model.
- *
- * @param elements - The source XML elements.
- * @returns Maps of unique, check, foreign key, and primary key constraints.
- */
-function extractConstraintMaps(elements: XmlElement[], identifierCaseSensitive: boolean): ConstraintMaps {
-  const uqColMap      = new Map<string, string>();
-  const ckColMap      = new Map<string, string>();
-  const fkMap         = new Map<string, ForeignKeyInfo[]>();
-  const pkOrdinalMap  = new Map<string, number>();
+/** Extracts comprehensive constraint metadata (UQ, CK, FK, PK) for the entire model. */
+function extractConstraintMaps(
+  elements: XmlElement[],
+  identifierCaseSensitive: boolean,
+): ConstraintMaps {
+  const uqColMap = new Map<string, string>();
+  const ckColMap = new Map<string, string>();
+  const fkMap = new Map<string, ForeignKeyInfo[]>();
+  const pkOrdinalMap = new Map<string, number>();
 
   for (const el of elements) {
     const type = el['@_Type'];
@@ -690,18 +776,26 @@ function extractConstraintMaps(elements: XmlElement[], identifierCaseSensitive: 
       const tableRef = getRelRefs(el, 'DefiningTable')[0];
       if (!tableRef) continue;
       const tableKey = normalizeName(tableRef, identifierCaseSensitive);
-      const ann = asArray(el.Annotation).find(a => a['@_Type'] === 'SqlInlineConstraintAnnotation');
-      const constraintName = ann ? parseName(ann['@_Name'] ?? '').objectName : 'UQ';
-      const colSpecRel = asArray(el.Relationship).find(r => r['@_Name'] === 'ColumnSpecifications');
+      const ann = asArray(el.Annotation).find(
+        (a) => a['@_Type'] === 'SqlInlineConstraintAnnotation',
+      );
+      const constraintName = ann
+        ? parseName(ann['@_Name'] ?? '').objectName
+        : 'UQ';
+      const colSpecRel = asArray(el.Relationship).find(
+        (r) => r['@_Name'] === 'ColumnSpecifications',
+      );
       for (const entry of asArray(colSpecRel?.Entry)) {
         for (const specEl of asArray(entry.Element)) {
           const colRef = getRelRefs(specEl, 'Column')[0];
           if (!colRef) continue;
           const colName = lastNamePart(colRef);
-          uqColMap.set(`${tableKey}.${schemaKey(colName, identifierCaseSensitive)}`, constraintName);
+          uqColMap.set(
+            `${tableKey}.${schemaKey(colName, identifierCaseSensitive)}`,
+            constraintName,
+          );
         }
       }
-
     } else if (type === 'SqlCheckConstraint') {
       const tableRef = getRelRefs(el, 'DefiningTable')[0];
       if (!tableRef) continue;
@@ -711,9 +805,12 @@ function extractConstraintMaps(elements: XmlElement[], identifierCaseSensitive: 
       const ckColRefs = getRelRefs(el, 'CheckExpressionDependencies');
       if (ckColRefs.length === 1) {
         const colName = lastNamePart(ckColRefs[0]);
-        if (colName) ckColMap.set(`${tableKey}.${schemaKey(colName, identifierCaseSensitive)}`, constraintName);
+        if (colName)
+          ckColMap.set(
+            `${tableKey}.${schemaKey(colName, identifierCaseSensitive)}`,
+            constraintName,
+          );
       }
-
     } else if (type === 'SqlForeignKeyConstraint') {
       const tableRef = getRelRefs(el, 'DefiningTable')[0];
       if (!tableRef) continue;
@@ -722,28 +819,49 @@ function extractConstraintMaps(elements: XmlElement[], identifierCaseSensitive: 
       if (!constraintName) continue;
       const foreignTableRef = getRelRefs(el, 'ForeignTable')[0];
       if (!foreignTableRef) continue;
-      const { schema: refSchema, objectName: refTable } = parseName(foreignTableRef);
-      const parentCols  = getRelRefs(el, 'Columns').map(r => lastNamePart(r)).filter(Boolean);
-      const refColsList = getRelRefs(el, 'ForeignColumns').map(r => lastNamePart(r)).filter(Boolean);
-      if (parentCols.length === 0 || parentCols.length !== refColsList.length) continue;
-      const deleteVal = asArray(el.Property).find(p => p['@_Name'] === 'OnDeleteAction')?.['@_Value'] ?? '';
+      const { schema: refSchema, objectName: refTable } =
+        parseName(foreignTableRef);
+      const parentCols = getRelRefs(el, 'Columns')
+        .map((r) => lastNamePart(r))
+        .filter(Boolean);
+      const refColsList = getRelRefs(el, 'ForeignColumns')
+        .map((r) => lastNamePart(r))
+        .filter(Boolean);
+      if (parentCols.length === 0 || parentCols.length !== refColsList.length)
+        continue;
+      const deleteVal =
+        asArray(el.Property).find((p) => p['@_Name'] === 'OnDeleteAction')?.[
+          '@_Value'
+        ] ?? '';
       const onDelete = FK_DELETE_ACTION[deleteVal] ?? 'NO ACTION';
       const list = fkMap.get(tableKey) ?? [];
-      list.push({ name: constraintName, columns: parentCols, refSchema, refTable, refColumns: refColsList, onDelete });
+      list.push({
+        name: constraintName,
+        columns: parentCols,
+        refSchema,
+        refTable,
+        refColumns: refColsList,
+        onDelete,
+      });
       fkMap.set(tableKey, list);
-
     } else if (type === 'SqlPrimaryKeyConstraint') {
       const tableRef = getRelRefs(el, 'DefiningTable')[0];
       if (!tableRef) continue;
       const tableKey = normalizeName(tableRef, identifierCaseSensitive);
-      const colSpecRel = asArray(el.Relationship).find(r => r['@_Name'] === 'ColumnSpecifications');
+      const colSpecRel = asArray(el.Relationship).find(
+        (r) => r['@_Name'] === 'ColumnSpecifications',
+      );
       let ordinal = 1;
       for (const entry of asArray(colSpecRel?.Entry)) {
         for (const specEl of asArray(entry.Element)) {
           const colRef = getRelRefs(specEl, 'Column')[0];
           if (!colRef) continue;
           const colName = lastNamePart(colRef);
-          if (colName) pkOrdinalMap.set(`${tableKey}.${schemaKey(colName, identifierCaseSensitive)}`, ordinal++);
+          if (colName)
+            pkOrdinalMap.set(
+              `${tableKey}.${schemaKey(colName, identifierCaseSensitive)}`,
+              ordinal++,
+            );
         }
       }
     }
@@ -752,9 +870,7 @@ function extractConstraintMaps(elements: XmlElement[], identifierCaseSensitive: 
   return { uqColMap, ckColMap, fkMap, pkOrdinalMap };
 }
 
-/**
- * Relationship types that indicate object-to-object dependencies in dacpac XML.
- */
+/** Relationship types that indicate object-to-object dependencies in dacpac XML. */
 const DEPENDENCY_RELATIONSHIPS = new Set([
   'BodyDependencies',
   'QueryDependencies',
@@ -762,24 +878,14 @@ const DEPENDENCY_RELATIONSHIPS = new Set([
   'CheckExpressionDependencies',
 ]);
 
-/**
- * Extracts dependencies from an element's script or body.
- *
- * @param el - The source element.
- * @returns A collection of dependency names.
- */
+/** Extracts dependencies from an element's script or body. */
 function extractBodyDependencies(el: XmlElement): string[] {
   const deps: string[] = [];
   collectDeps(el, deps);
   return deps;
 }
 
-/**
- * Recursively collects object-level dependency references from XML relationships.
- *
- * @param el - The current element.
- * @param deps - Dependency names accumulated so far.
- */
+/** Recursively collects object-level dependency references from XML relationships. */
 function collectDeps(el: XmlElement, deps: string[]): void {
   const rels = asArray(el.Relationship);
   for (const rel of rels) {
@@ -805,16 +911,13 @@ function collectDeps(el: XmlElement, deps: string[]): void {
   }
 }
 
-/**
- * Retrieves the full SQL body script for an element, synthesizing a header if necessary.
- *
- * @param el - The source element.
- * @param type - Dacpac element type.
- * @param schema - Object schema.
- * @param objectName - Object name.
- * @returns The full SQL body or `undefined`.
- */
-function getBodyScript(el: XmlElement, type: string, schema: string, objectName: string): string | undefined {
+/** Retrieves the full SQL body script for an element, synthesizing a header if necessary. */
+function getBodyScript(
+  el: XmlElement,
+  type: string,
+  schema: string,
+  objectName: string,
+): string | undefined {
   const bodyScript = getDirectBodyScript(el, type);
   if (bodyScript) {
     const header = getScriptHeader(el);
@@ -829,8 +932,12 @@ function getBodyScript(el: XmlElement, type: string, schema: string, objectName:
       for (const entry of asArray(rel.Entry)) {
         for (const implementation of asArray(entry.Element)) {
           const header = getScriptHeader(implementation);
-          const implementationBody = getDirectBodyScript(implementation, 'SqlScriptFunctionImplementation');
-          if (header && implementationBody) return `${header}\n${implementationBody}`;
+          const implementationBody = getDirectBodyScript(
+            implementation,
+            'SqlScriptFunctionImplementation',
+          );
+          if (header && implementationBody)
+            return `${header}\n${implementationBody}`;
         }
       }
     }
@@ -858,12 +965,7 @@ function getScriptHeader(el: XmlElement): string | undefined {
   return undefined;
 }
 
-/**
- * Maps a dacpac element type to its SQL keyword equivalent.
- *
- * @param type - The dacpac element type.
- * @returns The keyword (e.g. 'PROCEDURE', 'VIEW') or `undefined`.
- */
+/** Maps a dacpac element type to its SQL keyword equivalent. */
 function getSqlKeyword(type: string): string | undefined {
   if (type === 'SqlProcedure') return 'PROCEDURE';
   if (type === 'SqlView') return 'VIEW';
@@ -871,13 +973,7 @@ function getSqlKeyword(type: string): string | undefined {
   return undefined;
 }
 
-/**
- * Extracts the raw script content from dacpac properties or function body elements.
- *
- * @param el - The source element.
- * @param type - Element type.
- * @returns The raw script string or `undefined`.
- */
+/** Extracts the raw script content from dacpac properties or function body elements. */
 function getDirectBodyScript(el: XmlElement, type: string): string | undefined {
   const props = asArray(el.Property);
   for (const prop of props) {
@@ -914,147 +1010,71 @@ function getDirectBodyScript(el: XmlElement, type: string): string | undefined {
 const CDATA_PROP = '__cdata';
 
 /** The five entities predefined by XML 1.0 §4.6. */
-const PREDEFINED_ENTITIES: Readonly<Record<string, string>> = { lt: '<', gt: '>', amp: '&', quot: '"', apos: "'" };
+const PREDEFINED_ENTITIES: Readonly<Record<string, string>> = {
+  lt: '<',
+  gt: '>',
+  amp: '&',
+  quot: '"',
+  apos: "'",
+};
+
+/** XML 1.0 `Char` production: a reference to any other code point is not well-formed text. */
+function isXmlChar(cp: number): boolean {
+  return (
+    cp === 0x9 ||
+    cp === 0xa ||
+    cp === 0xd ||
+    (cp >= 0x20 && cp <= 0xd7ff) ||
+    (cp >= 0xe000 && cp <= 0xfffd) ||
+    (cp >= 0x10000 && cp <= 0x10ffff)
+  );
+}
 
 /**
  * Decodes XML character references and the five predefined entities in attribute or text content.
- *
- * @remarks
- * One pass, so decoded text is never decoded again: `&amp;lt;` and `&#38;lt;` both yield the literal `&lt;`.
- *
- * @param raw - Entity-encoded text as read from model.xml.
- * @returns The decoded text.
  */
-/** XML 1.0 `Char` production: a reference to any other code point is not well-formed text. */
-function isXmlChar(cp: number): boolean {
-  return cp === 0x9 || cp === 0xA || cp === 0xD
-    || (cp >= 0x20 && cp <= 0xD7FF) || (cp >= 0xE000 && cp <= 0xFFFD) || (cp >= 0x10000 && cp <= 0x10FFFF);
-}
-
 function decodeXmlText(raw: string): string {
-  return raw.replace(/&(?:#x([0-9A-Fa-f]+)|#(\d+)|(lt|gt|amp|quot|apos));/g, (_, hex, dec, name) => {
-    if (name) return PREDEFINED_ENTITIES[name];
-    const cp = hex !== undefined ? parseInt(hex, 16) : parseInt(dec, 10);
-    return isXmlChar(cp) ? String.fromCodePoint(cp) : '\uFFFD';
-  });
+  return raw.replace(
+    /&(?:#x([0-9A-Fa-f]+)|#(\d+)|(lt|gt|amp|quot|apos));/g,
+    (_, hex, dec, name) => {
+      if (name) return PREDEFINED_ENTITIES[name];
+      const cp = hex !== undefined ? parseInt(hex, 16) : parseInt(dec, 10);
+      return isXmlChar(cp) ? String.fromCodePoint(cp) : '\uFFFD';
+    },
+  );
 }
 
-/**
- * Extracts a property value, decoding XML references in attribute and text content.
- *
- * @remarks
- * CDATA content is returned verbatim: it holds no references, so decoding it would corrupt
- * literal text such as `'&lt;'` inside a SQL string.
- *
- * @param prop - The XML property object.
- * @returns The decoded string value.
- */
+/** Extracts a property value, decoding XML references in attribute and text content. */
 function extractPropertyValue(prop: XmlProperty): string | undefined {
   if (prop['@_Value']) return decodeXmlText(prop['@_Value']);
   const value = prop.Value;
   if (typeof value === 'string') return value ? decodeXmlText(value) : value;
   if (value && typeof value === 'object') {
     const cdata = value[CDATA_PROP];
-    if (cdata !== undefined) return Array.isArray(cdata) ? cdata.join('') : cdata;
-    if (typeof value['#text'] === 'string') return value['#text'] ? decodeXmlText(value['#text']) : value['#text'];
+    if (cdata !== undefined)
+      return Array.isArray(cdata) ? cdata.join('') : cdata;
+    if (typeof value['#text'] === 'string')
+      return value['#text'] ? decodeXmlText(value['#text']) : value['#text'];
   }
   return undefined;
 }
 
 /**
- * Returns the last part of a qualified name, unbracketed; a dot inside `[...]` stays part of the name.
- *
- * @param ref - A qualified reference such as `[Schema].[View].[Name.Prefix]`.
+ * Returns the last part of a qualified name, unbracketed; a dot inside `[...]` stays part of the
+ * name.
  */
 function lastNamePart(ref: string): string {
   return stripBrackets(splitSqlName(ref).pop() ?? '');
 }
 
-/**
- * Checks if a reference is object-level (schema.object) rather than column-level.
- *
- * @param name - The reference string.
- * @returns `true` if it looks like an object-level reference.
- */
+/** Checks if a reference is object-level (schema.object) rather than column-level. */
 function isObjectLevelRef(name: string): boolean {
   const parts = splitSqlName(name).map(stripBrackets);
   return parts.length === 2 && !parts[1].startsWith('@');
 }
 
-/**
- * Ensures the provided value is treated as an array.
- *
- * @param val - A single value or an array.
- * @returns An array.
- */
+/** Ensures the provided value is treated as an array. */
 function asArray<T>(val: T | T[] | undefined | null): T[] {
   if (val == null) return [];
   return Array.isArray(val) ? val : [val];
-}
-
-/**
- * Removes nodes from a DatabaseModel that match specified exclusion patterns, and records
- * the removed objects on the parse statistics of the surviving objects that referenced them.
- *
- * @remarks
- * Node and edge exclusion is delegated to {@link applyExclusionFilter} so the load-time and
- * graph-time paths cannot diverge; only the parse-stat annotation is specific to this entry
- * point. Invalid patterns are skipped and reported, matching that function's contract.
- *
- * @param model - The DatabaseModel to filter.
- * @param patterns - Array of regex pattern strings.
- * @param onWarning - Callback receiving a formatted message for each invalid regex pattern.
- * @returns A new DatabaseModel with matching nodes and edges removed.
- */
-export function applyExclusionPatterns(model: DatabaseModel, patterns: string[], onWarning?: (msg: string) => void): DatabaseModel {
-  const filtered = applyExclusionFilter(model, patterns, (pattern, err) => {
-    onWarning?.(`Invalid exclude pattern "${pattern}": ${err instanceof Error ? err.message : err}`);
-  });
-  if (filtered === model) return model;
-
-  const { nodes } = filtered;
-  const nodeIds = new Set(nodes.map((n) => n.id));
-  const excludedNodes = model.nodes.filter((n) => !nodeIds.has(n.id));
-
-  const excludedIds = new Set(excludedNodes.map((n) => n.id));
-  const excludedNameById = new Map(excludedNodes.map((n) => [n.id, `${n.schema}.${n.name}`]));
-  let parseStats = model.parseStats;
-  if (parseStats && excludedIds.size > 0) {
-    const allEdges = model.edges;
-
-    const nameToIdMap = new Map<string, string>();
-    for (const n of nodes) nameToIdMap.set(schemaKey(`${n.schema}.${n.name}`, model.identifierCaseSensitive), n.id);
-    for (const n of excludedNodes) {
-      const key = schemaKey(`${n.schema}.${n.name}`, model.identifierCaseSensitive);
-      if (!nameToIdMap.has(key)) nameToIdMap.set(key, n.id);
-    }
-
-    const adjacency = new Map<string, string[]>();
-    for (const e of allEdges) {
-      if (excludedIds.has(e.target)) {
-        let arr = adjacency.get(e.source);
-        if (!arr) { arr = []; adjacency.set(e.source, arr); }
-        arr.push(e.target);
-      }
-      if (excludedIds.has(e.source)) {
-        let arr = adjacency.get(e.target);
-        if (!arr) { arr = []; adjacency.set(e.target, arr); }
-        arr.push(e.source);
-      }
-    }
-
-    parseStats = {
-      ...parseStats,
-      spDetails: parseStats.spDetails.map((sp) => {
-        const spId = nameToIdMap.get(schemaKey(sp.name, model.identifierCaseSensitive));
-        if (!spId) return sp;
-        const neighbors = adjacency.get(spId);
-        if (!neighbors) return sp;
-        const lost = neighbors.map(id => excludedNameById.get(id)!).filter(Boolean);
-        return lost.length > 0 ? { ...sp, excluded: lost } : sp;
-      }),
-    };
-  }
-
-  return { ...filtered, parseStats };
 }

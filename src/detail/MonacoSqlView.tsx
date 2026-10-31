@@ -9,11 +9,6 @@ import type { LineageNode } from '../engine/types';
 /** Configures the React loader with the core editor and SQL tokenizer only. */
 loader.config({ monaco: monacoEditor });
 
-/**
- * Maps the current VS Code theme kind to a corresponding Monaco Editor theme.
- *
- * @returns The matching Monaco theme identifier.
- */
 function getMonacoTheme(): string {
   const kind = document.body.getAttribute('data-vscode-theme-kind');
   if (kind === 'vscode-high-contrast') return 'hc-black';
@@ -23,36 +18,36 @@ function getMonacoTheme(): string {
 }
 
 interface MonacoSqlViewProps {
-  /** The SQL lineage node containing the DDL script to display. */
   node: LineageNode;
   /** An optional search query for highlighting specific terms within the script. */
   findQuery?: string;
 }
 
-/**
- * Renders read-only SQL with VS Code theme synchronization and search decorations.
- */
+/** Renders read-only SQL with VS Code theme synchronization and search decorations. */
 export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
-  const decorationsRef = useRef<Monaco.editor.IEditorDecorationsCollection | null>(null);
+  const decorationsRef =
+    useRef<Monaco.editor.IEditorDecorationsCollection | null>(null);
   const contentListenerRef = useRef<Monaco.IDisposable | null>(null);
   const findQueryRef = useRef(findQuery);
   const [monacoTheme, setMonacoTheme] = useState(getMonacoTheme);
   findQueryRef.current = findQuery;
 
   useEffect(() => {
-    const observer = new MutationObserver(() => setMonacoTheme(getMonacoTheme()));
-    observer.observe(document.body, { attributes: true, attributeFilter: ['data-vscode-theme-kind'] });
+    const observer = new MutationObserver(() =>
+      setMonacoTheme(getMonacoTheme()),
+    );
+    observer.observe(document.body, {
+      attributes: true,
+      attributeFilter: ['data-vscode-theme-kind'],
+    });
     return () => observer.disconnect();
   }, []);
 
-  /**
-   * Applies inline highlights to the editor based on the provided search query.
-   *
-   * @param ed - The active Monaco editor instance.
-   * @param query - The search term to highlight.
-   */
-  function applyHighlights(ed: Monaco.editor.IStandaloneCodeEditor, query: string | undefined) {
+  function applyHighlights(
+    ed: Monaco.editor.IStandaloneCodeEditor,
+    query: string | undefined,
+  ) {
     if (!decorationsRef.current) {
       decorationsRef.current = ed.createDecorationsCollection([]);
     }
@@ -62,13 +57,12 @@ export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
     }
     const model = ed.getModel();
     if (!model) return;
-    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const matches = model.findMatches(escaped, true, true, false, null, false);
+    const matches = model.findMatches(query, true, false, false, null, false);
     decorationsRef.current.set(
-      matches.map(m => ({
+      matches.map((m) => ({
         range: m.range,
         options: { inlineClassName: 'monaco-search-highlight' },
-      }))
+      })),
     );
     if (matches.length > 0) {
       ed.revealRangeInCenterIfOutsideViewport(matches[0].range);
@@ -90,9 +84,6 @@ export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
     };
   }, []);
 
-  /**
-   * Callback invoked when the Monaco editor instance has mounted successfully.
-   */
   function handleEditorMount(ed: Monaco.editor.IStandaloneCodeEditor) {
     editorRef.current = ed;
     contentListenerRef.current?.dispose();
@@ -102,10 +93,19 @@ export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
     applyHighlights(ed, findQuery);
   }
 
-  const sql = node.bodyScript ?? `-- No SQL body available for ${node.fullName}`;
+  const sql =
+    node.bodyScript ?? `-- No SQL body available for ${node.fullName}`;
 
   return (
-    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--ln-bg)' }}>
+    <div
+      style={{
+        width: '100%',
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        background: 'var(--ln-bg)',
+      }}
+    >
       <div
         style={{
           padding: '6px 12px',
@@ -121,7 +121,13 @@ export function MonacoSqlView({ node, findQuery }: MonacoSqlViewProps) {
         }}
       >
         {node.fullName}
-        <span style={{ fontWeight: 400, color: 'var(--ln-fg-muted)', marginLeft: 8 }}>
+        <span
+          style={{
+            fontWeight: 400,
+            color: 'var(--ln-fg-muted)',
+            marginLeft: 8,
+          }}
+        >
           {node.type.toUpperCase()}
         </span>
       </div>

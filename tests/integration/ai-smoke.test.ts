@@ -1,13 +1,16 @@
 /** Exercises one real provider-backed @lineage turn through VS Code's public model API. */
 import * as assert from 'node:assert';
 import * as vscode from 'vscode';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
+import { copyNativeHostLog } from '../harness/nativeEvidence';
 
 suite('Real provider smoke', () => {
   const EXTENSION_ID = 'datahelper-chwagner.data-lineage-viz';
   const FIXTURE_ID = 'data-lineage-test.data-lineage-test-model-provider';
   const TEST_VENDOR = 'lineage-test';
-  const TEST_TIMEOUT_MS = 290_000;
-  const PROVIDER_REQUEST_TIMEOUT_MS = 120_000;
+  const TEST_TIMEOUT_MS = Number(process.env.AI_TEST_TIMEOUT_MS);
   const DEADLINE_MARGIN_MS = 10_000;
 
   function recordingStream() {
@@ -15,25 +18,47 @@ suite('Real provider smoke', () => {
     const stream = {
       progress: () => {},
       markdown: (value: unknown) => {
-        markdown.push(typeof value === 'string' ? value : String((value as { value?: string })?.value ?? value));
+        markdown.push(
+          typeof value === 'string'
+            ? value
+            : String((value as { value?: string })?.value ?? value),
+        );
       },
-      button: () => {}, anchor: () => {}, filetree: () => {}, reference: () => {}, push: () => {},
+      button: () => {},
+      anchor: () => {},
+      filetree: () => {},
+      reference: () => {},
+      push: () => {},
     } as unknown as vscode.ChatResponseStream;
     return { stream, markdown };
   }
 
   test('a configured provider completes a public demo-data question', async function () {
-    this.timeout(TEST_TIMEOUT_MS);
+    this.timeout(TEST_TIMEOUT_MS + 60_000);
     const startedAt = Date.now();
     const testDeadline = startedAt + TEST_TIMEOUT_MS;
-    for (const name of ['AI_TEST_PROVIDER', 'AI_TEST_ENDPOINT', 'AI_TEST_API_KEY', 'AI_TEST_MODEL']) {
-      assert.ok(process.env[name], `Set ${name} in .env before running npm run test:ai:smoke.`);
+    for (const name of [
+      'AI_TEST_PROVIDER',
+      'AI_TEST_ENDPOINT',
+      'AI_TEST_API_KEY',
+      'AI_TEST_MODEL',
+    ]) {
+      assert.ok(
+        process.env[name],
+        `Set ${name} in .env before running npm run test:ai:smoke.`,
+      );
     }
 
     const fixture = vscode.extensions.getExtension(FIXTURE_ID);
-    assert.ok(fixture, 'the language-model adapter fixture must be installed in this lane');
+    assert.ok(
+      fixture,
+      'the language-model adapter fixture must be installed in this lane',
+    );
     await fixture.activate();
-    const deadline = Math.min(testDeadline - 150_000, Date.now() + 20_000);
+    const deadline = Math.min(
+      testDeadline - DEADLINE_MARGIN_MS,
+      Date.now() + 20_000,
+    );
     let model: vscode.LanguageModelChat | undefined;
     while (Date.now() < deadline && !model) {
       model = (await vscode.lm.selectChatModels({ vendor: TEST_VENDOR }))[0];
@@ -45,14 +70,42 @@ suite('Real provider smoke', () => {
     assert.ok(extension);
     const exports = await extension.activate();
     assert.ok(exports?.participant);
+    const directory = join(
+      extension.extensionPath,
+      'test-results',
+      'ai-smoke',
+      randomUUID(),
+    );
+    mkdirSync(directory, { recursive: true });
+    const tracePath = await vscode.commands.executeCommand<string>(
+      'dataLineageViz.enableAiTraceLogging',
+      true,
+    );
+    assert.ok(tracePath, 'real-provider smoke requires a fresh verbose trace');
     await vscode.commands.executeCommand('dataLineageViz.openDemo');
-    const readyBy = Math.min(testDeadline - 130_000, Date.now() + 45_000);
+    const readyBy = Math.min(
+      testDeadline - DEADLINE_MARGIN_MS,
+      Date.now() + 45_000,
+    );
     let demoLoaded = false;
     while (Date.now() < readyBy && !demoLoaded) {
-      const probe = await vscode.lm.invokeTool('lineage_search_objects', {
-        input: { query: 'Sales' },
-        toolInvocationToken: undefined,
+      const probe = await Promise.resolve(
+        vscode.lm.invokeTool('lineage_search_objects', {
+          input: { query: 'Sales' },
+          toolInvocationToken: undefined,
+        }),
+      ).catch((error: unknown) => {
+        if (
+          error instanceof Error &&
+          /no project is loaded/i.test(error.message)
+        )
+          return null;
+        throw error;
       });
+      if (!probe) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        continue;
+      }
       const resultText = probe.content
         .map((part) => (part as { value?: unknown }).value ?? '')
         .join('');
@@ -64,21 +117,31 @@ suite('Real provider smoke', () => {
       }
       if (!demoLoaded) await new Promise((resolve) => setTimeout(resolve, 250));
     }
-    assert.ok(demoLoaded, 'the public demo DACPAC must be searchable before the provider turn starts');
+    assert.ok(
+      demoLoaded,
+      'the public demo DACPAC must be searchable before the provider turn starts',
+    );
 
     const { stream, markdown } = recordingStream();
     const cancellation = new vscode.CancellationTokenSource();
-    // A provider request can remain in flight for 120 seconds. Cancel early enough for that
-    // request and host teardown to finish before Mocha's hard deadline.
-    const cancelAt = testDeadline - PROVIDER_REQUEST_TIMEOUT_MS - DEADLINE_MARGIN_MS;
-    assert.ok(cancelAt > Date.now(), 'setup left no safe time for a provider turn');
-    const cancelTimer = setTimeout(() => cancellation.cancel(), cancelAt - Date.now());
+    // Cancellation aborts the provider request; reserve only teardown time.
+    const cancelAt = testDeadline - DEADLINE_MARGIN_MS;
+    assert.ok(
+      cancelAt > Date.now(),
+      'setup left no safe time for a provider turn',
+    );
+    const cancelTimer = setTimeout(
+      () => cancellation.cancel(),
+      cancelAt - Date.now(),
+    );
     let finalStatus = 'error';
     let modelCalls = 0;
+    const question =
+      'Which tables feed Sales? Name the sources you can verify from the loaded lineage data.';
     try {
       const result = await exports.participant.handleChatRequest(
         {
-          prompt: 'Which tables feed Sales? Name the sources you can verify from the loaded lineage data.',
+          prompt: question,
           command: undefined,
           references: [],
           toolReferences: [],
@@ -89,19 +152,41 @@ suite('Real provider smoke', () => {
         stream,
         cancellation.token,
       );
-      const metadata = (result as vscode.ChatResult)?.metadata as { status?: string; modelCalls?: number } | undefined;
+      const metadata = (result as vscode.ChatResult)?.metadata as
+        | { status?: string; modelCalls?: number }
+        | undefined;
       finalStatus = metadata?.status ?? 'missing';
       modelCalls = metadata?.modelCalls ?? 0;
-      assert.strictEqual(metadata?.status, 'ok', 'the real-provider turn must settle successfully');
-      assert.ok(modelCalls > 0, 'the participant must call the configured provider');
-      assert.ok(markdown.some((part) => part.trim().length > 0), 'the participant must produce an answer');
+      assert.strictEqual(
+        metadata?.status,
+        'ok',
+        'the real-provider turn must settle successfully',
+      );
+      assert.ok(
+        modelCalls > 0,
+        'the participant must call the configured provider',
+      );
+      assert.ok(
+        markdown.some((part) => part.trim().length > 0),
+        'the participant must produce an answer',
+      );
     } finally {
       clearTimeout(cancelTimer);
       cancellation.dispose();
+      let trace = '';
+      const drainBy = Date.now() + 2000;
+      do {
+        trace = existsSync(tracePath) ? readFileSync(tracePath, 'utf8') : '';
+        if (trace.includes('"type":"turn-terminal"')) break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      } while (Date.now() < drainBy);
+      writeFileSync(join(directory, 'trace.ndjson'), trace);
+      copyNativeHostLog(process.env.DLV_AI_SMOKE_PROFILE, directory);
+      writeFileSync(join(directory, 'answer.txt'), markdown.join('\n'));
       console.log(
-        `[ai-smoke] provider=${process.env.AI_TEST_PROVIDER} model=${process.env.AI_TEST_MODEL} `
-        + `adapter=${model.vendor}/${model.family}/${model.version} elapsedMs=${Date.now() - startedAt} `
-        + `status=${finalStatus} modelCalls=${modelCalls}`,
+        `[ai-smoke] provider=${process.env.AI_TEST_PROVIDER} model=${process.env.AI_TEST_MODEL} ` +
+          `adapter=${model.vendor}/${model.family}/${model.version} elapsedMs=${Date.now() - startedAt} ` +
+          `status=${finalStatus} modelCalls=${modelCalls}`,
       );
     }
   });

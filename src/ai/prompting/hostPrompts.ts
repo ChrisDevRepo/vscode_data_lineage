@@ -1,16 +1,4 @@
-/**
- * Per-phase system-prompt composition for the **host** agent runtime.
- *
- * @remarks
- * The single place the grounded, phase-aware system prompt is assembled. It composes the shared,
- * pure builders in {@link ./prompts} ({@link buildGeneralSystemPrompt} + {@link buildPhasePrompt}),
- * so the grounding rules, routing, and phase protocol stay single-sourced (DRY) and no chat surface
- * builds a prompt of its own.
- *
- * Intentionally omits the YAML stage template + SM-protocol blocks needed for `active`/`synthesis`
- * output formatting — `agent/stagePrompts.ts` layers those in per phase.
- * VS Code-free: pure data in, string out.
- */
+/** Per-phase system-prompt composition for the **host** agent runtime. */
 
 import {
   buildGeneralSystemPrompt,
@@ -26,32 +14,10 @@ import { describeScreen } from '../tools/screenStatePresenter';
 import { escapePromptText } from '../support/text';
 import { ClassificationValueSchema } from '../tools/toolSchemas';
 
-/**
- * The grounding context surfaced in the system prompt's `## Context` block.
- *
- * @remarks
- * Derived from the loaded model and active filter so every phase receives the same grounded
- * counts and platform metadata. Same shape as `GeneralPromptContext` in `./prompts` — that module
- * is the one-directional source, this is the name callers in this file (and its consumers) use.
- */
+/** The grounding context surfaced in the system prompt's `## Context` block. */
 export type StagePromptContext = GeneralPromptContext;
 
-/**
- * Derives the {@link StagePromptContext} from the loaded model + active filter.
- *
- * @remarks
- * When a schema filter is active, `visibleNodes` counts only nodes in those schemas.
- * Degrades cleanly to zeros when no model is loaded, so the discovery prompt still renders.
- * `dbPlatform` stays platform-typed in that case rather than carrying a "no model" sentence:
- * it is rendered under a `- Platform:` label, so a non-platform value reads as a category
- * error to the model, and the zeroed counts already state that nothing is loaded.
- *
- * @param model - The session's loaded model, or `null` when none is loaded.
- * @param filter - The active serialized filter, or `null`.
- * @param uiState - Raw UI-state payload passed to {@link describeScreen}; absent or unrecognized
- *   shapes simply omit the `screen` field.
- * @returns The prompt grounding values derived from the current model and filter.
- */
+/** Derives the {@link StagePromptContext} from the loaded model + active filter. */
 export function deriveStagePromptContext(
   model: DatabaseModel | null,
   filter: SerializedFilterState | null,
@@ -59,13 +25,21 @@ export function deriveStagePromptContext(
 ): StagePromptContext {
   const screen = describeScreen(uiState);
   if (!model) {
-    return { dbPlatform: UNKNOWN_DB_PLATFORM, filterSchemas: [], totalSchemaCount: 0, visibleNodes: 0, totalNodes: 0, ...(screen ? { screen } : {}) };
+    return {
+      dbPlatform: UNKNOWN_DB_PLATFORM,
+      filterSchemas: [],
+      totalSchemaCount: 0,
+      visibleNodes: 0,
+      totalNodes: 0,
+      ...(screen ? { screen } : {}),
+    };
   }
   const filterSchemas = filter?.schemas ?? [];
   const totalNodes = model.nodes.length;
-  const visibleNodes = filterSchemas.length > 0
-    ? model.nodes.filter((n) => filterSchemas.includes(n.schema)).length
-    : totalNodes;
+  const visibleNodes =
+    filterSchemas.length > 0
+      ? model.nodes.filter((n) => filterSchemas.includes(n.schema)).length
+      : totalNodes;
   return {
     dbPlatform: model.dbPlatform?.trim() || UNKNOWN_DB_PLATFORM,
     filterSchemas,
@@ -77,15 +51,7 @@ export function deriveStagePromptContext(
   };
 }
 
-/**
- * Composes the host system prompt for a phase: the grounded base + the phase protocol block.
- *
- * @param phase - The lifecycle phase whose protocol to render.
- * @param ctx - The grounding context (see {@link deriveStagePromptContext}).
- * @param analysisMode - Hop or session analysis mode forwarded to {@link buildPhasePrompt} so
- *   active and synthesis compose CT as BB plus a column rider.
- * @returns The assembled system-prompt string.
- */
+/** Composes the host system prompt for a phase: the grounded base + the phase protocol block. */
 export function buildHostStageSystemPrompt(
   phase: PromptPhase,
   ctx: StagePromptContext,
@@ -96,18 +62,10 @@ export function buildHostStageSystemPrompt(
   return [base, phaseSpecific].filter(Boolean).join('\n\n');
 }
 
-/**
- * System prompt for the code-driven **entry detector** (one structured pre-loop call).
- *
- * @remarks
- * Classifies semantic intent only. `visual_render` enters discovery like any other free-text
- * request; the host-owned preview action remains a separate RuntimeFrame fact for the bounded
- * preview route reached afterward.
- *
- * @param ctx - Grounding context (see {@link deriveStagePromptContext}).
- * @returns The detector system-prompt string.
- */
-export function buildEntryDetectorSystemPrompt(ctx: StagePromptContext): string {
+/** System prompt for the code-driven **entry detector** (one structured pre-loop call). */
+export function buildEntryDetectorSystemPrompt(
+  ctx: StagePromptContext,
+): string {
   return [
     'Classify the latest user message of a SQL data-lineage chat into one entry route. Earlier turns only resolve what it refers to.',
     '- column_trace: the user explicitly asks to trace, follow or walk one or more named columns as a new lineage request; put those names in targetColumns.',
@@ -119,32 +77,18 @@ export function buildEntryDetectorSystemPrompt(ctx: StagePromptContext): string 
   ].join('\n');
 }
 
-/**
- * System prompt for one bounded discovery preview call.
- *
- * @remarks
- * Composed exactly like every other stage — {@link buildHostStageSystemPrompt} — rather than
- * appending a directive of its own. Building the block here instead is what let the preview stage
- * drift out of the shared presentation contract while still being judged by it.
- */
-export function buildVisualPreviewSystemPrompt(ctx: StagePromptContext): string {
+/** System prompt for one bounded discovery preview call. */
+export function buildVisualPreviewSystemPrompt(
+  ctx: StagePromptContext,
+): string {
   return buildHostStageSystemPrompt('visual_preview', ctx);
 }
 
-/**
- * Directive system prompt for the restricted **SM-entry** turn.
- *
- * @remarks
- * Paired with a 4-tool registry (`lineage_get_screen_state` + `lineage_search_objects` + `lineage_get_object_detail` + `lineage_start_exploration`)
- * under automatic tool choice: a `lineage_start_exploration` call opens the `confirm_sm_start` gate,
- * and a text-only reply ends the turn as its answer. For a column trace, the detected columns are
- * surfaced so the model passes them as `targetColumns`.
- *
- * @param ctx - Grounding context.
- * @param targetColumns - Columns to trace when the entry route is `column_trace`; omitted otherwise.
- * @returns The SM-entry system-prompt string.
- */
-export function buildSmEntrySystemPrompt(ctx: StagePromptContext, targetColumns?: string[]): string {
+/** Directive system prompt for the restricted **SM-entry** turn. */
+export function buildSmEntrySystemPrompt(
+  ctx: StagePromptContext,
+  targetColumns?: string[],
+): string {
   const base = buildGeneralSystemPrompt(ctx);
   const ctLine = targetColumns?.length
     ? `Column trace: analysisMode "ct", targetColumns [${targetColumns.map((c) => `"${escapePromptText(c)}"`).join(', ')}].`
@@ -155,7 +99,9 @@ export function buildSmEntrySystemPrompt(ctx: StagePromptContext, targetColumns?
     ClassificationValueSchema.description,
     ctLine,
     'The user then reviews your proposal at an approval gate.',
-  ].filter(Boolean).join('\n');
+  ]
+    .filter(Boolean)
+    .join('\n');
   return [base, directive].join('\n\n');
 }
 
@@ -190,22 +136,14 @@ export function buildGateRefinePrompt(
     '',
     `Call \`lineage_start_exploration\` with proposalRevision:${proposalRevision} and only the fields changed by the requested edits.`,
     'Preserve unchanged origin, question, depth (direction is derived from it), filters, mode, classification, and columns by omitting them. mission_brief is kept only when origin, analysisMode, targetColumns and depth are unchanged; otherwise restate it. An analysis constraint that no other `lineage_start_exploration` field expresses goes in `scopeNotes`.',
-  ].filter(Boolean).join('\n');
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 /**
  * The leading user anchor the active-phase thread is reseeded to at approval and after every
  * committed hop.
- *
- * @remarks
- * The graph replaces the thread with `[anchor]` alone (`RemoveMessage(REMOVE_ALL_MESSAGES)` + this message); the per-hop
- * task, focus context and `<short_term_memory>` ride the following worker message, while hop
- * protocol and session memo stay in the stable `system`. The anchor keeps the conversation leading
- * with a `user` turn (strict providers reject a leading assistant turn), so it stays a one-line
- * continuation directive, not a per-hop task config. The incomplete-stop path keeps the last tool
- * pair instead (`extractShortTermMemory`).
- *
- * @returns The anchor user-message text.
  */
 export function buildActiveContinuationAnchor(): string {
   return 'Analyze `<current_task>` on the next agenda node.';

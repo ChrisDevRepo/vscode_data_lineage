@@ -3,27 +3,26 @@ import type { FilterProfile } from '../engine/projectStore';
 import { BOOKMARK_SOURCE_DESCRIPTIONS } from '../engine/shared/bridgeContract';
 
 interface BookmarkInfoCardProps {
-  /** The saved view profile whose information is being displayed. */
   profile: FilterProfile;
-  /** Total number of nodes currently present in the model that match this view. */
   nodeCount: number;
-  /** Total number of distinct schemas represented in this view. */
   schemaCount: number;
-  /** List of object names that were part of the bookmark but are no longer found in the current model. */
+  /** Bookmarked object names missing from the current model. */
   staleNodeNames: string[];
 }
 
-/** Local alias; the contract owns the values. */
 const SOURCE_DESCRIPTIONS = BOOKMARK_SOURCE_DESCRIPTIONS;
 
 /**
- * Formats an ISO date string into a localized short date and time format.
- * Example: "Mar 29, 2026, 12:15"
+ * Formats an ISO date string into a localized short date and time format. Example: "Mar 29, 2026,
+ * 12:15"
  */
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
-    month: 'short', day: 'numeric', year: 'numeric',
-    hour: '2-digit', minute: '2-digit',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
   });
 }
 
@@ -59,42 +58,61 @@ export const BookmarkInfoCard = memo(function BookmarkInfoCard({
     >
       <button
         className="w-full flex items-center justify-between px-3 py-2 cursor-pointer border-0"
-        onClick={() => setCollapsed(c => !c)}
-        style={{ background: 'none', borderBottom: collapsed ? 'none' : '1px solid var(--ln-border-light)', textAlign: 'left' }}
+        onClick={() => setCollapsed((c) => !c)}
+        style={{
+          background: 'none',
+          borderBottom: collapsed ? 'none' : '1px solid var(--ln-border-light)',
+          textAlign: 'left',
+        }}
         aria-expanded={!collapsed}
         aria-label="Toggle view info"
       >
         <span className="text-[10px] font-semibold ln-text-muted uppercase tracking-wide">
           View Info
         </span>
-        <span className="text-[10px] ln-text-muted">{collapsed ? '▲' : '▼'}</span>
+        <span className="text-[10px] ln-text-muted">
+          {collapsed ? '▲' : '▼'}
+        </span>
       </button>
 
       {!collapsed && (
         <div className="px-3 pb-3 flex flex-col gap-1.5">
           <div className="flex flex-col">
-            <span className="text-[9px] ln-text-muted uppercase tracking-wide">Scope</span>
-            <span className="text-[10px] ln-text">{nodeCount} objects, {schemaCount} schemas</span>
+            <span className="text-[9px] ln-text-muted uppercase tracking-wide">
+              Scope
+            </span>
+            <span className="text-[10px] ln-text">
+              {nodeCount} objects, {schemaCount} schemas
+            </span>
           </div>
 
           <div className="flex flex-col">
-            <span className="text-[9px] ln-text-muted uppercase tracking-wide">Source</span>
-            <span className="text-[10px] ln-text">{SOURCE_DESCRIPTIONS[source]}</span>
+            <span className="text-[9px] ln-text-muted uppercase tracking-wide">
+              Source
+            </span>
+            <span className="text-[10px] ln-text">
+              {SOURCE_DESCRIPTIONS[source]}
+            </span>
           </div>
 
           {ai?.summary && (
             <div className="flex flex-col">
-              <span className="text-[9px] ln-text-muted uppercase tracking-wide">Summary</span>
+              <span className="text-[9px] ln-text-muted uppercase tracking-wide">
+                Summary
+              </span>
               <span className="text-[10px] ln-text">{ai.summary}</span>
             </div>
           )}
 
-          {/* Created + Model — AI views show model name, others show date only */}
           <div className="flex flex-col">
-            <span className="text-[9px] ln-text-muted uppercase tracking-wide">Created</span>
+            <span className="text-[9px] ln-text-muted uppercase tracking-wide">
+              Created
+            </span>
             <span className="text-[10px] ln-text">
               {formatDate(ai?.createdAt ?? profile.createdAt)}
-              {ai?.modelName && <span className="ln-text-muted"> by {ai.modelName}</span>}
+              {ai?.modelName && (
+                <span className="ln-text-muted"> by {ai.modelName}</span>
+              )}
             </span>
           </div>
 

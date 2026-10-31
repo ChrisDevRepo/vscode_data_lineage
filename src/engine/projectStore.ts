@@ -1,11 +1,4 @@
-/**
- * Project store — named sessions with connection + schema selection + saved filter views.
- *
- * Pure module: no VS Code imports. Usable in both extension host and tests.
- * Stored in context.globalState under key 'dataLineageViz.projectStore'.
- *
- * Schema versioning: schemaVersion field enables forward-compatible migrations.
- */
+/** Project store — named sessions with connection + schema selection + saved filter views. */
 
 import type { FilterState } from './types';
 import {
@@ -27,41 +20,26 @@ export type {
   StoredConnectionInfo,
 } from './shared/bridgeContract';
 
-/**
- * Represents the root persistence object for the data lineage extension.
- * Contains all user projects and the state of the wizard.
- */
+/** Root persisted state: all projects plus the wizard state. */
 export interface ProjectStore {
-  /** The current schema version of the store. Used for migrations. */
+  /** The current schema version of the store, checked by the validating loader. */
   schemaVersion: 1;
-  /** The list of saved projects. */
   projects: Project[];
   /** The ID of the last opened project, or null if none was opened. */
   lastOpenedId: string | null;
-  /** The last active view in the setup wizard. */
   lastWizardView?: 'main' | 'projects';
 }
 
-/**
- * Returns an empty ProjectStore initialized to the current schema version.
- *
- * @returns A fresh, empty project store instance.
- */
 function emptyStore(): ProjectStore {
   return { schemaVersion: 1, projects: [], lastOpenedId: null };
 }
 
-/**
- * Diagnostic summary of persisted records discarded by {@link migrateProjectStore}.
- *
- * @remarks
- * Dropping a record is permanent data loss from the user's point of view, so the host must be
- * able to say it happened. Field *paths* are carried, never field values: the report reaches the
- * output channel, which must stay free of connection content.
- */
+/** Diagnostic summary of persisted records discarded by {@link migrateProjectStore}. */
 export interface ProjectStoreDropReport {
   /** Number of persisted project records that failed validation and were discarded. */
   dropped: number;
+  /** Optional saved views skipped inside retained projects; absent when no views were skipped. */
+  droppedViews?: number;
   /** Dot-joined paths of the rejected fields, de-duplicated and capped. Names only, no values. */
   issuePaths: string[];
 }
@@ -69,24 +47,7 @@ export interface ProjectStoreDropReport {
 /** Upper bound on reported field paths — a corrupt store must not flood the log. */
 const MAX_REPORTED_ISSUE_PATHS = 10;
 
-/**
- * Safely deserializes a raw object into a ProjectStore.
- * Validates the schema version and project shapes. Returns an empty store on any parse failure.
- *
- * @remarks
- * Validation is deliberately tolerant of fields it does not recognize — `ProjectReadSchema` drops
- * them rather than rejecting the record. A project written by an older build carries keys this one
- * never declared, and a record is discarded only when a field the schema *requires* is missing or
- * of the wrong type.
- *
- * Kept free of VS Code imports: discarded records are surfaced through the optional `onDropped`
- * callback so the extension host owns logging and notification, and the engine stays testable.
- * The callback fires at most once per call, and only when at least one record was discarded.
- *
- * @param raw - The untyped data loaded from persistent storage.
- * @param onDropped - Invoked with the drop report when records were discarded.
- * @returns A validated ProjectStore.
- */
+/** Deserializes a raw object into a ProjectStore, returning an empty store on any failure. */
 export function migrateProjectStore(
   raw: unknown,
   onDropped?: (report: ProjectStoreDropReport) => void,
@@ -97,155 +58,166 @@ export function migrateProjectStore(
   const obj = raw as Record<string, unknown>;
   if (obj.schemaVersion !== 1) {
     const abandoned = Array.isArray(obj.projects) ? obj.projects.length : 0;
-    if (abandoned > 0) onDropped?.({ dropped: abandoned, issuePaths: ['schemaVersion'] });
+    if (abandoned > 0)
+      onDropped?.({ dropped: abandoned, issuePaths: ['schemaVersion'] });
     return emptyStore();
   }
   if (!Array.isArray(obj.projects)) {
     return emptyStore();
   }
   let dropped = 0;
+  let droppedViews = 0;
   const issuePaths: string[] = [];
   const projects = (obj.projects as unknown[]).flatMap((project) => {
     const parsed = ProjectReadSchema.safeParse(project);
-    if (parsed.success) return [parsed.data];
+    if (parsed.success) {
+      const skippedViews =
+        ((project as { filterProfiles?: unknown[] }).filterProfiles?.length ??
+          0) - (parsed.data.filterProfiles?.length ?? 0);
+      droppedViews += skippedViews;
+      if (
+        skippedViews > 0 &&
+        issuePaths.length < MAX_REPORTED_ISSUE_PATHS &&
+        !issuePaths.includes('filterProfiles')
+      ) {
+        issuePaths.push('filterProfiles');
+      }
+      return [parsed.data];
+    }
     dropped += 1;
     for (const issue of parsed.error.issues) {
-      const path = issue.path.map((segment) => String(segment)).join('.') || '(root)';
-      if (issuePaths.length < MAX_REPORTED_ISSUE_PATHS && !issuePaths.includes(path)) {
+      const path =
+        issue.path.map((segment) => String(segment)).join('.') || '(root)';
+      if (
+        issuePaths.length < MAX_REPORTED_ISSUE_PATHS &&
+        !issuePaths.includes(path)
+      ) {
         issuePaths.push(path);
       }
     }
     return [];
   });
-  if (dropped > 0) onDropped?.({ dropped, issuePaths });
+  if (dropped > 0 || droppedViews > 0)
+    onDropped?.({
+      dropped,
+      issuePaths,
+      ...(droppedViews > 0 ? { droppedViews } : {}),
+    });
   return {
     schemaVersion: 1,
     projects,
-    lastOpenedId: typeof obj.lastOpenedId === 'string' ? obj.lastOpenedId : null,
+    lastOpenedId:
+      typeof obj.lastOpenedId === 'string' ? obj.lastOpenedId : null,
+    ...((obj.lastWizardView === 'main' ||
+      obj.lastWizardView === 'projects') && {
+      lastWizardView: obj.lastWizardView,
+    }),
   };
 }
 
-/**
- * Creates a new Project record with a generated UUID and current timestamps.
- *
- * @param name - The user-defined or auto-generated name for the project.
- * @param connection - The validated DACPAC or Database connection.
- * @returns A newly instantiated Project object.
- */
+/** Creates a new Project record with a generated UUID and current timestamps. */
 export function createProject(
   name: string,
   connection: DacpacConnection | DatabaseConnection,
 ): Project {
   const now = new Date().toISOString();
-  return { id: crypto.randomUUID(), name, createdAt: now, updatedAt: now, connection };
+  return {
+    id: crypto.randomUUID(),
+    name,
+    createdAt: now,
+    updatedAt: now,
+    connection,
+  };
 }
 
-/**
- * Upserts a project into the store and updates the last opened identifier.
- * If the project ID already exists, it is replaced; otherwise, it is appended.
- *
- * @param store - The current project store state.
- * @param project - The project to insert or update.
- * @returns A new project store instance with the applied changes.
- */
-export function updateProject(store: ProjectStore, project: Project): ProjectStore {
-  const exists = store.projects.some(p => p.id === project.id);
+/** Replaces the project with the same id or appends it, and marks it last opened. */
+export function updateProject(
+  store: ProjectStore,
+  project: Project,
+): ProjectStore {
+  const exists = store.projects.some((p) => p.id === project.id);
   const projects = exists
-    ? store.projects.map(p => (p.id === project.id ? project : p))
+    ? store.projects.map((p) => (p.id === project.id ? project : p))
     : [...store.projects, project];
   return { ...store, projects, lastOpenedId: project.id };
 }
 
 /**
- * Removes a project from the store by its identifier.
- * Automatically adjusts the last opened ID to the most recently updated project if the current active project is deleted.
- *
- * @param store - The current project store state.
- * @param id - The UUID of the project to delete.
- * @returns A new project store instance with the project removed.
+ * Removes a project from the store by its identifier. Automatically adjusts the last opened ID to
+ * the most recently updated project if the current active project is deleted.
  */
 export function deleteProject(store: ProjectStore, id: string): ProjectStore {
-  const projects = store.projects.filter(p => p.id !== id);
+  const projects = store.projects.filter((p) => p.id !== id);
   const lastOpenedId =
     store.lastOpenedId === id
-      ? ([...projects].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]?.id ?? null)
+      ? ([...projects].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
+          ?.id ?? null)
       : store.lastOpenedId;
   return { ...store, projects, lastOpenedId };
 }
 
 /**
- * Generates a default project name based on the connection type and current timestamp.
- * Format: "{sourceName or displayName} YYYY-MM-DD HH:mm".
- *
- * @param connection - The connection to derive the name from.
- * @returns A formatted string representing the default project name.
+ * Generates a default project name based on the connection type and current timestamp. Format:
+ * "{sourceName or displayName} YYYY-MM-DD HH:mm".
  */
-export function generateProjectName(connection: DacpacConnection | DatabaseConnection): string {
+export function generateProjectName(
+  connection: DacpacConnection | DatabaseConnection,
+): string {
   const now = new Date();
-  const ts = [
-    now.getFullYear(),
-    pad(now.getMonth() + 1),
-    pad(now.getDate()),
-  ].join('-') + ' ' + [pad(now.getHours()), pad(now.getMinutes())].join(':');
+  const ts =
+    [now.getFullYear(), pad(now.getMonth() + 1), pad(now.getDate())].join('-') +
+    ' ' +
+    [pad(now.getHours()), pad(now.getMinutes())].join(':');
 
   return connection.type === 'dacpac'
     ? `${connection.displayName} ${ts}`
     : `${connection.sourceName} ${ts}`;
 }
 
-/**
- * Pads a number with a leading zero if it is less than 10.
- *
- * @param n - The number to pad.
- * @returns A two-character padded string.
- */
+/** Pads a number with a leading zero if it is less than 10. */
 function pad(n: number): string {
   return n.toString().padStart(2, '0');
 }
 
 /**
- * Adds or replaces a filter profile for a specific project.
- * Matches existing profiles based on their ID.
- *
- * @param store - The current project store state.
- * @param projectId - The UUID of the project to modify.
- * @param profile - The new or updated filter profile to insert.
- * @returns A new project store instance with the updated filter profiles.
+ * Adds or replaces a filter profile for a specific project. Matches existing profiles based on
+ * their ID.
  */
-export function addFilterProfile(store: ProjectStore, projectId: string, profile: FilterProfile): ProjectStore {
-  const projects = store.projects.map(p => {
+export function addFilterProfile(
+  store: ProjectStore,
+  projectId: string,
+  profile: FilterProfile,
+): ProjectStore {
+  const projects = store.projects.map((p) => {
     if (p.id !== projectId) return p;
     const existing = p.filterProfiles ?? [];
-    const profiles = existing.some(fp => fp.id === profile.id)
-      ? existing.map(fp => (fp.id === profile.id ? profile : fp))
+    const profiles = existing.some((fp) => fp.id === profile.id)
+      ? existing.map((fp) => (fp.id === profile.id ? profile : fp))
       : [...existing, profile];
     return { ...p, filterProfiles: profiles };
   });
   return { ...store, projects };
 }
 
-/**
- * Removes a filter profile from a specific project.
- *
- * @param store - The current project store state.
- * @param projectId - The UUID of the project to modify.
- * @param profileId - The UUID of the filter profile to remove.
- * @returns A new project store instance with the filter profile removed.
- */
-export function deleteFilterProfile(store: ProjectStore, projectId: string, profileId: string): ProjectStore {
-  const projects = store.projects.map(p => {
+/** Removes a filter profile from a specific project. */
+export function deleteFilterProfile(
+  store: ProjectStore,
+  projectId: string,
+  profileId: string,
+): ProjectStore {
+  const projects = store.projects.map((p) => {
     if (p.id !== projectId) return p;
-    return { ...p, filterProfiles: (p.filterProfiles ?? []).filter(fp => fp.id !== profileId) };
+    return {
+      ...p,
+      filterProfiles: (p.filterProfiles ?? []).filter(
+        (fp) => fp.id !== profileId,
+      ),
+    };
   });
   return { ...store, projects };
 }
 
-/**
- * Converts a live FilterState containing Sets into a JSON-serializable SerializedFilterState.
- *
- * @param filter - The active in-memory filter state.
- * @returns A plain object suitable for persistent storage.
- */
+/** Converts a live FilterState containing Sets into a JSON-serializable SerializedFilterState. */
 export function serializeFilter(filter: FilterState): SerializedFilterState {
   return {
     schemas: Array.from(filter.schemas),
@@ -256,7 +228,7 @@ export function serializeFilter(filter: FilterState): SerializedFilterState {
     showExternalRefs: filter.showExternalRefs,
     externalRefTypes: Array.from(filter.externalRefTypes),
     exclusionPatterns: filter.exclusionPatterns,
-    ...(filter.allowlistNodeIds && filter.allowlistNodeIds.size > 0
+    ...(filter.allowlistNodeIds !== undefined
       ? { allowlistNodeIds: Array.from(filter.allowlistNodeIds) }
       : {}),
   };
@@ -265,9 +237,6 @@ export function serializeFilter(filter: FilterState): SerializedFilterState {
 /**
  * Restores a SerializedFilterState from persistent storage back into a live FilterState.
  * Reconstructs Set objects where required.
- *
- * @param s - The serialized filter state object.
- * @returns An in-memory FilterState object with fully instantiated Sets.
  */
 export function deserializeFilter(s: SerializedFilterState): FilterState {
   return {
@@ -277,9 +246,11 @@ export function deserializeFilter(s: SerializedFilterState): FilterState {
     hideIsolated: s.hideIsolated,
     focusSchemas: new Set(s.focusSchemas),
     showExternalRefs: s.showExternalRefs,
-    externalRefTypes: new Set(s.externalRefTypes) as FilterState['externalRefTypes'],
+    externalRefTypes: new Set(
+      s.externalRefTypes,
+    ) as FilterState['externalRefTypes'],
     exclusionPatterns: s.exclusionPatterns ?? [],
-    ...(s.allowlistNodeIds && s.allowlistNodeIds.length > 0
+    ...(s.allowlistNodeIds !== undefined
       ? { allowlistNodeIds: new Set(s.allowlistNodeIds) }
       : {}),
   };

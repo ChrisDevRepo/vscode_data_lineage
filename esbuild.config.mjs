@@ -46,19 +46,27 @@ const sharedConfig = {
   charset: 'utf8',
   legalComments: 'external',
   define: {
-    '__BUILD_TIMESTAMP__': JSON.stringify(resolveBuildTimestamp()),
+    __BUILD_TIMESTAMP__: JSON.stringify(resolveBuildTimestamp()),
   },
 };
 
+/** Keeps the deferred extension runtime out of its bootstrap bundle. */
 const deferredRuntimePlugin = {
   name: 'deferred-extension-runtime',
   setup(build) {
-    build.onResolve({ filter: /^\.\/extensionRuntime\.js$/ }, ({ path }) => ({ path, external: true }));
+    build.onResolve({ filter: /^\.\/extensionRuntime\.js$/ }, ({ path }) => ({
+      path,
+      external: true,
+    }));
   },
 };
 
 const configs = [
-  { ...sharedConfig, entryPoints: ['./src/ai/support/regexSearch.worker.ts'], outfile: 'out/regexSearch.worker.js' },
+  {
+    ...sharedConfig,
+    entryPoints: ['./src/ai/support/regexSearch.worker.ts'],
+    outfile: 'out/regexSearch.worker.js',
+  },
   {
     ...sharedConfig,
     entryPoints: ['./src/extension.ts'],
@@ -81,5 +89,7 @@ if (watch) {
   console.log('Watching for extension changes...');
 } else {
   for (const config of configs) await esbuild.build(config);
-  console.log('Extension bundled to out/extension.js and out/extensionRuntime.js');
+  console.log(
+    'Extension bundled to out/extension.js and out/extensionRuntime.js',
+  );
 }

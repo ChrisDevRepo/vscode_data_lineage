@@ -1,8 +1,8 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "module": "node16",
-    "moduleResolution": "node16",
+    "module": "commonjs",
+    "moduleResolution": "node",
     "esModuleInterop": true,
     "outDir": "out/test",
     "rootDir": ".",
@@ -12,7 +12,12 @@
     "declarationMap": false,
     "sourceMap": true,
     "skipLibCheck": true,
-    "noEmit": false
+    "noEmit": false,
+    "allowJs": true
   },
-  "include": ["tests/integration/**/*.ts"]
+  "include": [
+    "tests/integration/**/*.ts",
+    "tests/harness/openAiCompatiblePort.ts",
+    "src/types/**/*.d.ts"
+  ]
 }

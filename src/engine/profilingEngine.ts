@@ -1,33 +1,20 @@
 /**
  * @module ProfilingEngine
- * Handles SQL generation and result parsing for table-level data profiling.
- *
- * This module enables "Smart Profiling" by generating type-aware, single-pass SQL
- * aggregation queries. It supports multiple target platforms (SQL Server 2022+,
- * Azure SQL, Synapse, Fabric DWH) and provides:
- * - Statistical metrics (distinct counts, null percentages, completeness, uniqueness).
- * - Advanced profiling (min/max, mean, standard deviation, zero/empty counts).
- * - Automatic sampling logic for massive datasets.
- * - Platform-specific optimizations like `APPROX_COUNT_DISTINCT`.
+ * Generates type-aware single-pass profiling SQL and parses its results.
  */
 
 import { ENGINE_EDITION_FABRIC, type ColumnDef } from './types';
-import type { SimpleExecuteResult } from '../types/mssql';
+import type { SimpleExecuteResult } from '../types/database';
 import { quoteIdentifier } from '../utils/sql';
 
-/**
- * Statistical profile for a single column.
- */
+/** Statistical profile for a single column. */
 export interface ColumnStats {
-  /** The original column name. */
   name: string;
   /** The SQL data type (e.g., 'nvarchar(50)'). */
   type: string;
   /** Number of unique values (may be approximated). */
   distinctCount: number;
-  /** count of NULL values. */
   nullCount: number | null;
-  /** Percentage of rows containing NULL. */
   nullPercent: number | null;
   /** Ratio of non-NULL values to total rows. */
   completeness: number;
@@ -37,13 +24,10 @@ export interface ColumnStats {
   min?: string;
   /** Maximum value (formatted as string). */
   max?: string;
-  /** Numeric mean. */
   mean?: number;
   /** Sample standard deviation (`STDEV`). */
   stdDev?: number;
-  /** Minimum string length. */
   minLength?: number;
-  /** Maximum string length. */
   maxLength?: number;
   /** Count of values equal to 0 (numeric only). */
   zeroCount?: number;
@@ -53,71 +37,86 @@ export interface ColumnStats {
   skipped?: boolean;
 }
 
-/**
- * Comprehensive statistical profile for a database table.
- */
+/** Comprehensive statistical profile for a database table. */
 export interface TableStats {
   /** Total rows evaluated (or sampled). */
   rowCount: number;
-  /** Metrics for each individual column. */
   columns: ColumnStats[];
   /** Whether the data was sampled or fully scanned. */
   sampled: boolean;
-  /** The percentage of the table that was sampled. */
   samplePercent?: number;
-  /** Warnings encountered during parsing. */
   warnings?: string[];
 }
 
-/**
- * Available profiling depths.
- */
+/** Available profiling depths. */
 export type StatsMode = 'quick' | 'standard';
 
-/**
- * Internal classification for determining applicable aggregations.
- */
-type ColCategory = 'integer' | 'decimal' | 'string' | 'datetime' | 'boolean' | 'uuid' | 'skip';
+/** Internal classification for determining applicable aggregations. */
+type ColCategory =
+  | 'integer'
+  | 'decimal'
+  | 'string'
+  | 'datetime'
+  | 'boolean'
+  | 'uuid'
+  | 'skip';
 
-/**
- * Mapping of SQL Server base types to profiling categories.
- */
 const TYPE_CATEGORIES: Record<string, ColCategory> = {
-  int: 'integer', bigint: 'integer', smallint: 'integer', tinyint: 'integer',
-  decimal: 'decimal', numeric: 'decimal', float: 'decimal', real: 'decimal',
-  money: 'decimal', smallmoney: 'decimal',
-  varchar: 'string', nvarchar: 'string', char: 'string', nchar: 'string',
-  date: 'datetime', datetime: 'datetime', datetime2: 'datetime',
-  smalldatetime: 'datetime', datetimeoffset: 'datetime', time: 'datetime',
+  int: 'integer',
+  bigint: 'integer',
+  smallint: 'integer',
+  tinyint: 'integer',
+  decimal: 'decimal',
+  numeric: 'decimal',
+  float: 'decimal',
+  real: 'decimal',
+  money: 'decimal',
+  smallmoney: 'decimal',
+  varchar: 'string',
+  nvarchar: 'string',
+  char: 'string',
+  nchar: 'string',
+  date: 'datetime',
+  datetime: 'datetime',
+  datetime2: 'datetime',
+  smalldatetime: 'datetime',
+  datetimeoffset: 'datetime',
+  time: 'datetime',
   bit: 'boolean',
   uniqueidentifier: 'uuid',
-  binary: 'skip', varbinary: 'skip', image: 'skip',
-  text: 'skip', ntext: 'skip', xml: 'skip',
-  geography: 'skip', geometry: 'skip', hierarchyid: 'skip',
-  sql_variant: 'skip', timestamp: 'skip', rowversion: 'skip', sysname: 'skip',
+  binary: 'skip',
+  varbinary: 'skip',
+  image: 'skip',
+  text: 'skip',
+  ntext: 'skip',
+  xml: 'skip',
+  geography: 'skip',
+  geometry: 'skip',
+  hierarchyid: 'skip',
+  sql_variant: 'skip',
+  timestamp: 'skip',
+  rowversion: 'skip',
+  sysname: 'skip',
 };
 
-/** String types whose `= ''` comparison also matches whitespace-only values, so emptiness is measured by byte length instead. */
-const VARIABLE_LENGTH_STRINGS: ReadonlySet<string> = new Set(['varchar', 'nvarchar']);
+/**
+ * String types whose `= ''` comparison also matches whitespace-only values, so emptiness is
+ * measured by byte length instead.
+ */
+const VARIABLE_LENGTH_STRINGS: ReadonlySet<string> = new Set([
+  'varchar',
+  'nvarchar',
+]);
 
 /**
  * Extracts the base type name from a complex type string (e.g., 'varchar(max)' -> 'varchar').
- *
- * @param typeStr - SQL type text to inspect.
- *
- * @returns Lowercase base type name with any length/precision suffix removed.
+ * @internal
  */
 export function extractBaseType(typeStr: string): string {
   return typeStr.replace(/\(.*$/, '').trim().toLowerCase();
 }
 
-/**
- * Classifies a column definition into a profiling category.
- *
- * @param col - Column definition to classify.
- *
- * @returns Profiling category for the column; `skip` for computed/unprofilable types.
- */
+/** Classifies a column definition into a profiling category. @internal */
 export function classifyColumn(col: ColumnDef): ColCategory {
   if (col.extra === 'COMPUTED') return 'skip';
   const base = extractBaseType(col.type);
@@ -128,53 +127,44 @@ const qi = quoteIdentifier;
 
 /**
  * Result-column alias of one aggregate of the column at `index` in the profiled column list.
- * Positional, so the alias length is independent of the column name (an identifier is at most
- * 128 characters) and two columns can never share an alias.
+ * Positional, so the alias length is independent of the column name (an identifier is at most 128
+ * characters) and two columns can never share an alias.
  */
 function aggregateAlias(index: number, suffix: string): string {
   return `c${index}_${suffix}`;
 }
 
-/** Largest magnitude a float column may hold for AVG and STDEV to stay inside the float range (the variance squares each value). */
+/**
+ * Largest magnitude a float column may hold for AVG and STDEV to stay inside the float range (the
+ * variance squares each value).
+ */
 const FLOAT_MOMENT_LIMIT = '1E+150';
 
 /**
- * Builds a mean or standard-deviation aggregate over a float column that cannot raise an
- * arithmetic overflow: values beyond {@link FLOAT_MOMENT_LIMIT} are left out of the aggregate and
- * their presence turns the statistic into NULL, which the reader reports as absent.
+ * Builds a mean or standard-deviation aggregate over a float column that cannot raise an arithmetic
+ * overflow: values beyond {@link FLOAT_MOMENT_LIMIT} are left out of the aggregate and their
+ * presence turns the statistic into NULL, which the reader reports as absent.
  */
-function floatMomentFragment(aggregate: 'AVG' | 'STDEV', qn: string, alias: string): string {
+function floatMomentFragment(
+  aggregate: 'AVG' | 'STDEV',
+  qn: string,
+  alias: string,
+): string {
   const inRange = `CASE WHEN ABS(${qn}) <= ${FLOAT_MOMENT_LIMIT} THEN ${qn} END`;
   return `CASE WHEN MAX(ABS(${qn})) > ${FLOAT_MOMENT_LIMIT} THEN NULL ELSE ${aggregate}(${inRange}) END AS ${alias}`;
 }
 
-/**
- * Pair of column name and its generated SQL aggregation fragments.
- */
+/** Pair of column name and its generated SQL aggregation fragments. */
 export interface ColumnAggregation {
-  /**
-   * Column name represented by this aggregation bucket.
-   */
+  /** Column name represented by this aggregation bucket. */
   colName: string;
-  /**
-   * Expression fragments collected for the column.
-   */
+  /** Expression fragments collected for the column. */
   fragments: string[];
-  /**
-   * Derived aggregation category for the column.
-   */
+  /** Derived aggregation category for the column. */
   category: ColCategory;
 }
 
-/**
- * Generates SQL aggregation fragments for a set of columns based on the requested mode.
- *
- * @param cols - Columns to profile.
- * @param useApprox - Whether to use faster `APPROX_COUNT_DISTINCT`.
- * @param mode - The depth of profiling ('quick' or 'standard').
- * @param maxColumns - Budget for total columns to profile in a single pass.
- * @returns Array of column aggregations.
- */
+/** Generates SQL aggregation fragments for a set of columns based on the requested mode. */
 export function buildColumnAggregations(
   cols: ColumnDef[],
   useApprox: boolean,
@@ -203,7 +193,9 @@ export function buildColumnAggregations(
 
     const isNullable = col.nullable === 'NULL';
     if (isNullable) {
-      fragments.push(`SUM(CASE WHEN ${qn} IS NULL THEN 1 ELSE 0 END) AS ${alias('n')}`);
+      fragments.push(
+        `SUM(CASE WHEN ${qn} IS NULL THEN 1 ELSE 0 END) AS ${alias('n')}`,
+      );
     }
 
     if (mode === 'standard') {
@@ -218,7 +210,9 @@ export function buildColumnAggregations(
           fragments.push(`STDEV(CAST(${qn} AS float)) AS ${alias('sd')}`);
         }
         if (isNullable) {
-          fragments.push(`SUM(CASE WHEN ${qn} = 0 THEN 1 ELSE 0 END) AS ${alias('z')}`);
+          fragments.push(
+            `SUM(CASE WHEN ${qn} = 0 THEN 1 ELSE 0 END) AS ${alias('z')}`,
+          );
         }
       } else if (cat === 'datetime') {
         fragments.push(`MIN(${qn}) AS ${alias('min')}`);
@@ -226,8 +220,12 @@ export function buildColumnAggregations(
       } else if (cat === 'string') {
         fragments.push(`MIN(LEN(${qn})) AS ${alias('minl')}`);
         fragments.push(`MAX(LEN(${qn})) AS ${alias('maxl')}`);
-        const isEmpty = VARIABLE_LENGTH_STRINGS.has(extractBaseType(col.type)) ? `DATALENGTH(${qn}) = 0` : `${qn} = ''`;
-        fragments.push(`SUM(CASE WHEN ${isEmpty} THEN 1 ELSE 0 END) AS ${alias('e')}`);
+        const isEmpty = VARIABLE_LENGTH_STRINGS.has(extractBaseType(col.type))
+          ? `DATALENGTH(${qn}) = 0`
+          : `${qn} = ''`;
+        fragments.push(
+          `SUM(CASE WHEN ${isEmpty} THEN 1 ELSE 0 END) AS ${alias('e')}`,
+        );
       }
     }
 
@@ -237,21 +235,10 @@ export function buildColumnAggregations(
   return result;
 }
 
-/** Result column that carries the number of rows a `TABLESAMPLE` query actually read. */
+/** Result column that carries the number of rows a `TABLESAMPLE` query read. @internal */
 export const SAMPLE_ROWS_ALIAS = '__rows';
 
-/**
- * Assembles the full profiling SELECT statement with optional sampling.
- *
- * @param schema - Target schema.
- * @param tableName - Target table.
- * @param aggregations - Pre-computed column aggregations.
- * @param engineEdition - SQL Server engine edition for platform-specific sampling.
- * @param rowCount - Known total row count.
- * @param sampleThreshold - Threshold to trigger sampling.
- * @param sampleSize - Target row count for the sample.
- * @returns Complete T-SQL profiling query.
- */
+/** Assembles the full profiling SELECT statement with optional sampling. */
 export function buildProfilingQuery(
   schema: string,
   tableName: string,
@@ -261,7 +248,7 @@ export function buildProfilingQuery(
   sampleThreshold: number,
   sampleSize: number,
 ): string {
-  const allFragments = aggregations.flatMap(a => a.fragments);
+  const allFragments = aggregations.flatMap((a) => a.fragments);
   if (allFragments.length === 0) return '';
 
   const columnsAgg = allFragments.join(',\n  ');
@@ -279,26 +266,19 @@ export function buildProfilingQuery(
       tablesampleClause = ` TABLESAMPLE(${pct} PERCENT)`;
     }
   }
-  const sampleRowsAgg = tablesampleClause ? `COUNT_BIG(*) AS ${qi(SAMPLE_ROWS_ALIAS)},\n  ` : '';
+  const sampleRowsAgg = tablesampleClause
+    ? `COUNT_BIG(*) AS ${qi(SAMPLE_ROWS_ALIAS)},\n  `
+    : '';
 
   return `SELECT ${topClause}${sampleRowsAgg}${columnsAgg}\nFROM ${fullTable}${tablesampleClause}`;
 }
 
-/**
- * Bracket-quotes and escapes a string for use in dynamic SQL literals.
- */
+/** Bracket-quotes and escapes a string for use in dynamic SQL literals. */
 function qiStr(name: string): string {
   return qi(name).replace(/'/g, "''");
 }
 
-/**
- * Generates an efficient row count query using `sys.partitions`.
- *
- * @param schema - Schema name to query.
- * @param tableName - Table name to query.
- *
- * @returns T-SQL statement summing `sys.partitions` rows for the heap/clustered index.
- */
+/** Generates an efficient row count query using `sys.partitions`. */
 export function buildRowCountQuery(schema: string, tableName: string): string {
   return `SELECT SUM(p.rows) AS row_count
 FROM sys.partitions p
@@ -306,38 +286,34 @@ WHERE p.object_id = OBJECT_ID(N'${qiStr(schema)}.${qiStr(tableName)}')
   AND p.index_id IN (0, 1)`;
 }
 
-/**
- * Calculates the required sampling percentage for `TABLESAMPLE`.
- *
- * @param sampleSize - Requested sample size.
- * @param rowCount - Known row count.
- *
- * @returns Sampling percentage in `[1, 100]`; 100 when the row count is unknown or zero.
- */
-export function computeSamplePercent(sampleSize: number, rowCount: number): number {
+/** Calculates the required sampling percentage for `TABLESAMPLE`. */
+export function computeSamplePercent(
+  sampleSize: number,
+  rowCount: number,
+): number {
   if (rowCount <= 0) return 100;
   return Math.min(100, Math.ceil((sampleSize / rowCount) * 100));
 }
 
-/**
- * Formats a raw database datetime string into a compact, UI-friendly format.
- *
- * @param raw - Raw input value to normalize.
- *
- * @returns Date-only string when the time part is midnight, otherwise `date hh:mm`;
- * non-datetime input is returned unchanged.
- */
+/** Formats a raw database datetime string into a compact, UI-friendly format. @internal */
 export function compactDate(raw: string): string {
   if (!raw || raw === 'NULL') return raw;
   const trimmed = raw.trim();
 
   if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
 
-  const match = trimmed.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?/);
+  const match = trimmed.match(
+    /^(\d{4}-\d{2}-\d{2})\s+(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?/,
+  );
   if (!match) return trimmed;
 
   const [, datePart, hh, mm, ss, ms] = match;
-  if (hh === '00' && mm === '00' && (!ss || ss === '00') && (!ms || /^0+$/.test(ms))) {
+  if (
+    hh === '00' &&
+    mm === '00' &&
+    (!ss || ss === '00') &&
+    (!ms || /^0+$/.test(ms))
+  ) {
     return datePart;
   }
   return `${datePart} ${hh}:${mm}`;
@@ -345,43 +321,50 @@ export function compactDate(raw: string): string {
 
 /** Short UI labels for base SQL types. */
 const TYPE_BADGE_LABELS: Record<string, string> = {
-  int: 'INT', bigint: 'INT', smallint: 'INT', tinyint: 'INT',
-  decimal: 'DEC', numeric: 'DEC', float: 'DEC', real: 'DEC',
-  money: 'DEC', smallmoney: 'DEC',
-  varchar: 'STR', nvarchar: 'STR', char: 'STR', nchar: 'STR',
-  date: 'DATE', datetime: 'DATE', datetime2: 'DATE',
-  smalldatetime: 'DATE', datetimeoffset: 'DATE', time: 'TIME',
+  int: 'INT',
+  bigint: 'INT',
+  smallint: 'INT',
+  tinyint: 'INT',
+  decimal: 'DEC',
+  numeric: 'DEC',
+  float: 'DEC',
+  real: 'DEC',
+  money: 'DEC',
+  smallmoney: 'DEC',
+  varchar: 'STR',
+  nvarchar: 'STR',
+  char: 'STR',
+  nchar: 'STR',
+  date: 'DATE',
+  datetime: 'DATE',
+  datetime2: 'DATE',
+  smalldatetime: 'DATE',
+  datetimeoffset: 'DATE',
+  time: 'TIME',
   bit: 'BIT',
   uniqueidentifier: 'UUID',
-  binary: 'BIN', varbinary: 'BIN', image: 'BIN',
-  text: 'TXT', ntext: 'TXT',
+  binary: 'BIN',
+  varbinary: 'BIN',
+  image: 'BIN',
+  text: 'TXT',
+  ntext: 'TXT',
   xml: 'XML',
-  geography: 'GEO', geometry: 'GEO', hierarchyid: 'HIER',
-  sql_variant: 'VAR', timestamp: 'TS', rowversion: 'TS', sysname: 'STR',
+  geography: 'GEO',
+  geometry: 'GEO',
+  hierarchyid: 'HIER',
+  sql_variant: 'VAR',
+  timestamp: 'TS',
+  rowversion: 'TS',
+  sysname: 'STR',
 };
 
-/**
- * Returns a 3-4 letter badge label for a SQL type.
- *
- * @param typeStr - SQL type text to inspect.
- *
- * @returns Known badge label for the base type, else the first 4 letters uppercased.
- */
+/** Returns a 3-4 letter badge label for a SQL type. */
 export function typeBadgeLabel(typeStr: string): string {
   const base = extractBaseType(typeStr);
   return TYPE_BADGE_LABELS[base] ?? base.toUpperCase().slice(0, 4);
 }
 
-/**
- * Parses the single-row result from a profiling query into structured statistics.
- *
- * @param row - The raw relational result row.
- * @param cols - Column definitions of the table.
- * @param rowCount - The evaluated row count.
- * @param sampled - Whether sampling was used.
- * @param samplePercent - Percentage of rows sampled.
- * @returns Structured TableStats.
- */
+/** Parses the single-row result from a profiling query into structured statistics. */
 export function parseProfilingResult(
   row: Record<string, string>,
   cols: ColumnDef[],
@@ -402,14 +385,17 @@ export function parseProfilingResult(
     return n;
   }
 
-  const sampleRows = sampled && row[SAMPLE_ROWS_ALIAS] !== undefined ? safeInt(row[SAMPLE_ROWS_ALIAS], 'sample rows') : 0;
+  const sampleRows =
+    sampled && row[SAMPLE_ROWS_ALIAS] !== undefined
+      ? safeInt(row[SAMPLE_ROWS_ALIAS], 'sample rows')
+      : 0;
   const denominator = sampleRows > 0 ? sampleRows : rowCount;
 
   for (const [index, col] of cols.entries()) {
     const cat = classifyColumn(col);
     const isNullable = col.nullable === 'NULL';
 
-    if (cat === 'skip') {
+    if (cat === 'skip' || row[aggregateAlias(index, 'd')] === undefined) {
       columns.push({
         name: col.name,
         type: col.type,
@@ -423,11 +409,21 @@ export function parseProfilingResult(
       continue;
     }
 
-    const distinctCount = safeInt(row[aggregateAlias(index, 'd')], `${col.name} distinct`);
-    const nullCount = isNullable ? safeInt(row[aggregateAlias(index, 'n')], `${col.name} nulls`) : null;
-    const nullPercent = nullCount !== null && denominator > 0 ? (nullCount / denominator) * 100 : null;
-    const completeness = nullCount !== null && denominator > 0 ? 1 - (nullCount / denominator) : 1;
-    const uniqueness = denominator > 0 ? Math.min(distinctCount / denominator, 1) : 0;
+    const distinctCount = safeInt(
+      row[aggregateAlias(index, 'd')],
+      `${col.name} distinct`,
+    );
+    const nullCount = isNullable
+      ? safeInt(row[aggregateAlias(index, 'n')], `${col.name} nulls`)
+      : null;
+    const nullPercent =
+      nullCount !== null && denominator > 0
+        ? (nullCount / denominator) * 100
+        : null;
+    const completeness =
+      nullCount !== null && denominator > 0 ? 1 - nullCount / denominator : 1;
+    const uniqueness =
+      denominator > 0 ? Math.min(distinctCount / denominator, 1) : 0;
 
     const entry: ColumnStats = {
       name: col.name,
@@ -442,8 +438,10 @@ export function parseProfilingResult(
     const minRaw = row[aggregateAlias(index, 'min')];
     const maxRaw = row[aggregateAlias(index, 'max')];
     const isDatetime = cat === 'datetime';
-    if (minRaw !== undefined) entry.min = isDatetime ? compactDate(minRaw) : minRaw;
-    if (maxRaw !== undefined) entry.max = isDatetime ? compactDate(maxRaw) : maxRaw;
+    if (minRaw !== undefined)
+      entry.min = isDatetime ? compactDate(minRaw) : minRaw;
+    if (maxRaw !== undefined)
+      entry.max = isDatetime ? compactDate(maxRaw) : maxRaw;
 
     const avgRaw = row[aggregateAlias(index, 'avg')];
     const sdRaw = row[aggregateAlias(index, 'sd')];
@@ -452,29 +450,39 @@ export function parseProfilingResult(
 
     const minlRaw = row[aggregateAlias(index, 'minl')];
     const maxlRaw = row[aggregateAlias(index, 'maxl')];
-    if (minlRaw !== undefined) entry.minLength = safeInt(minlRaw, `${col.name} minLen`);
-    if (maxlRaw !== undefined) entry.maxLength = safeInt(maxlRaw, `${col.name} maxLen`);
+    if (minlRaw !== undefined)
+      entry.minLength = safeInt(minlRaw, `${col.name} minLen`);
+    if (maxlRaw !== undefined)
+      entry.maxLength = safeInt(maxlRaw, `${col.name} maxLen`);
 
     const zRaw = row[aggregateAlias(index, 'z')];
-    if (zRaw !== undefined) entry.zeroCount = safeInt(zRaw, `${col.name} zeroCount`);
+    if (zRaw !== undefined)
+      entry.zeroCount = safeInt(zRaw, `${col.name} zeroCount`);
 
     const eRaw = row[aggregateAlias(index, 'e')];
-    if (eRaw !== undefined) entry.emptyCount = safeInt(eRaw, `${col.name} emptyCount`);
+    if (eRaw !== undefined)
+      entry.emptyCount = safeInt(eRaw, `${col.name} emptyCount`);
 
     columns.push(entry);
   }
 
-  return { rowCount, columns, sampled, samplePercent, warnings: warnings.length > 0 ? warnings : undefined };
+  return {
+    rowCount,
+    columns,
+    sampled,
+    samplePercent,
+    warnings: warnings.length > 0 ? warnings : undefined,
+  };
 }
 
 /**
  * Turns the single row of a profiling query into the name → value map {@link parseProfilingResult}
  * reads. A NULL cell is left out, so an aggregate over no values (MIN of an all-NULL column) is
  * absent rather than the text `NULL`.
- *
- * @param result - The profiling query result; only the first row is read.
  */
-export function profilingRowFromResult(result: SimpleExecuteResult): Record<string, string> {
+export function profilingRowFromResult(
+  result: SimpleExecuteResult,
+): Record<string, string> {
   const row: Record<string, string> = {};
   const cells = result.rows[0] ?? [];
   result.columnInfo.forEach((column, i) => {

@@ -9,18 +9,12 @@ interface SuggestionListProps {
   onSelect: (node: AutocompleteNode) => void;
   onHover: (index: number) => void;
   dropdownRef: Ref<HTMLDivElement>;
-  className?: string;
   renderAction?: (node: AutocompleteNode) => ReactNode;
-  /** When true, skip absolute positioning classes (portal handles positioning). */
-  portal?: boolean;
-  /** Inline styles from Floating UI positioning. */
+  /** Inline styles from Floating UI positioning; the list renders inside the caller's portal. */
   style?: CSSProperties;
   /** Nodes that exist in the model but are not visible in the current filtered view. */
   otherSuggestions?: AutocompleteNode[];
-  /**
-   * Nodes in the working set that are currently collapsed inside a schema cluster.
-   * Selecting one uses the same search/navigation callback as other suggestions.
-   */
+  /** Working-set nodes collapsed inside a schema cluster. */
   collapsedSuggestions?: AutocompleteNode[];
 }
 
@@ -63,7 +57,9 @@ function SuggestionRow({
       </Tooltip>
       {dimmed && (
         <Tooltip content="Not in Current Filter">
-          <span className="text-[10px] ln-text-dim select-none shrink-0">{'\u2298'}</span>
+          <span className="text-[10px] ln-text-dim select-none shrink-0">
+            {'\u2298'}
+          </span>
         </Tooltip>
       )}
       {renderAction?.(node)}
@@ -71,33 +67,30 @@ function SuggestionRow({
   );
 }
 
-/**
- * Renders the keyboard-navigable autocomplete suggestion list.
- *
- * @returns The suggestion listbox, or `null` when all partitions are empty.
- */
+/** Renders the keyboard-navigable autocomplete suggestion list. */
 export function SuggestionList({
   suggestions,
   selectedIndex,
   onSelect,
   onHover,
   dropdownRef,
-  className = 'w-full',
   renderAction,
-  portal = false,
   style,
   otherSuggestions = [],
   collapsedSuggestions = [],
 }: SuggestionListProps) {
-  const total = suggestions.length + collapsedSuggestions.length + otherSuggestions.length;
+  const total =
+    suggestions.length + collapsedSuggestions.length + otherSuggestions.length;
   if (total === 0) return null;
-  const showVisibleHeader = suggestions.length > 0 && (collapsedSuggestions.length > 0 || otherSuggestions.length > 0);
+  const showVisibleHeader =
+    suggestions.length > 0 &&
+    (collapsedSuggestions.length > 0 || otherSuggestions.length > 0);
 
   return (
     <div
       ref={dropdownRef}
       role="listbox"
-      className={`${portal ? 'z-50' : 'absolute top-full mt-1 z-30'} rounded-md shadow-lg overflow-y-auto ln-dropdown ${className}`}
+      className="z-50 rounded-md shadow-lg overflow-y-auto ln-dropdown w-full"
       style={{ ...style, maxHeight: 320 }}
     >
       {showVisibleHeader && (
@@ -131,7 +124,9 @@ export function SuggestionList({
               onHover={onHover}
               renderAction={() => (
                 <Tooltip content={`Expand schema ${node.schema} to view`}>
-                  <span className="text-[10px] ln-text-link select-none shrink-0">{'\u229e'}</span>
+                  <span className="text-[10px] ln-text-link select-none shrink-0">
+                    {'\u229e'}
+                  </span>
                 </Tooltip>
               )}
             />

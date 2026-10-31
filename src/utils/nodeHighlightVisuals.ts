@@ -14,15 +14,7 @@ interface NodeHighlightStyle {
   zIndex: number;
 }
 
-/**
- * Resolves the highlight/dim/glow visuals every node card applies on top of its own size,
- * background, and left-accent color.
- *
- * @param highlighted - Click-selection state; `'yellow'` is the plain click highlight.
- * @param aiHighlight - AI-authored highlight color/glow, when the model marked this node.
- * @param dimmed - Whether a different node is selected and this one is out of scope. Omitted by a
- * caller whose dim is expressed as CSS instead — see `LIT_CLASS_NAME` in `src/engine/nodeDecoration.ts`.
- */
+/** Resolves the highlight, dim and glow visuals a node card applies. */
 export function resolveNodeHighlightStyle(
   highlighted: boolean | 'yellow' | undefined,
   aiHighlight: { color: string; glow: string; shadow: string } | undefined,
@@ -32,7 +24,9 @@ export function resolveNodeHighlightStyle(
   const isYellow = highlighted === 'yellow';
   const highlightColor = aiHighlight
     ? aiHighlight.color
-    : isYellow ? 'var(--ln-highlight-yellow)' : 'var(--ln-highlight-blue)';
+    : isYellow
+      ? 'var(--ln-highlight-yellow)'
+      : 'var(--ln-highlight-blue)';
   const boxShadow = isYellow
     ? '0 0 0 4px var(--ln-highlight-yellow-glow), 0 8px 20px var(--ln-highlight-yellow-shadow)'
     : aiHighlight

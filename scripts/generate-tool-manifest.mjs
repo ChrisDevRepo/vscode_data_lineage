@@ -4,19 +4,19 @@
  *
  * The catalog (`src/ai/tools/toolDefs.ts`) is the single source of truth for tool names,
  * descriptions, tags, and input schemas; `package.json` is the static copy VS Code reads before the
- * extension activates. Hand-editing two copies of the same facts is what the drift test in
- * `tests/unit/sm/ai-tool-registration.test.ts` keeps catching, so this script makes the manifest a
- * derived artifact and leaves the test as the CI guard.
+ * extension activates. Hand-editing two copies of the same facts drifts, so this script makes the
+ * manifest a derived artifact, and the gate runs it with `--check` as the CI guard.
  *
  * Two rules shape the output:
  *
- * 1. **Read-only subset.** A `vscode.lm` registration is invokable by any extension in the window,
- *    so `registerAiTools` binds only `effect: 'read'` tools. A contributed entry with no
- *    `registerTool` binding is a broken tool, not an unused one — the manifest therefore carries
- *    exactly the tools that get bound.
- * 2. **Presentation fields are manifest-owned.** `toolReferenceName`, `displayName`,
- *    `canBeReferencedInPrompt`, `icon`, and `when` exist only in the manifest; they are carried over
- *    from the current entry (in its existing key order) so regeneration is a no-op diff.
+ * 1. **External subset.** `registerAiTools` binds exactly `EXTERNAL_TOOL_DEFS` — the tools the core policy allows callers
+ *    without a chat turn (`EXTERNAL_TOOL_NAMES` in `toolPolicy.ts`). A
+ *    contributed entry with no `registerTool` binding is a broken tool, not an unused one — the
+ *    manifest therefore carries exactly the tools that get bound.
+ * 2. **Presentation fields are manifest-owned**, except `displayName`, which is the catalog `title`.
+ *    `toolReferenceName`, `canBeReferencedInPrompt`, `icon`, and `when` exist only in the manifest;
+ *    they are carried over from the current entry (in its existing key order) so regeneration is a
+ *    no-op diff.
  *
  * Usage:
  *   node scripts/generate-tool-manifest.mjs           # rewrite package.json in place
@@ -33,12 +33,26 @@ const packageJsonPath = join(repoRoot, 'package.json');
 const check = process.argv.includes('--check');
 
 /** Manifest keys this script owns; everything else on an entry is preserved verbatim. */
-const CATALOG_OWNED_KEYS = ['name', 'userDescription', 'modelDescription', 'tags', 'inputSchema'];
+const CATALOG_OWNED_KEYS = [
+  'name',
+  'displayName',
+  'userDescription',
+  'modelDescription',
+  'tags',
+  'inputSchema',
+];
 
 /** Key order used for a tool that has no manifest entry yet. */
 const NEW_ENTRY_KEY_ORDER = [
-  'name', 'toolReferenceName', 'displayName', 'userDescription', 'modelDescription',
-  'canBeReferencedInPrompt', 'tags', 'when', 'inputSchema',
+  'name',
+  'toolReferenceName',
+  'displayName',
+  'userDescription',
+  'modelDescription',
+  'canBeReferencedInPrompt',
+  'tags',
+  'when',
+  'inputSchema',
 ];
 
 /**
@@ -58,6 +72,7 @@ async function loadCatalog() {
         contents: [
           "export { TOOL_DEFS } from './src/ai/tools/toolDefs';",
           "export { toModelJsonSchema } from './src/ai/tools/jsonSchema';",
+          "export { EXTERNAL_TOOL_DEFS } from './src/ai/tools/toolDefs';",
         ].join('\n'),
         resolveDir: repoRoot,
         sourcefile: 'generate-tool-manifest-entry.ts',
@@ -77,15 +92,6 @@ async function loadCatalog() {
   }
 }
 
-/** Title-cases a catalog name for a tool that has no manifest entry to inherit a display name from. */
-function deriveDisplayName(name) {
-  return name
-    .replace(/^lineage_/, '')
-    .split('_')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
-}
-
 /**
  * Finds the `[ ... ]` text span of a top-level array value, honouring strings and escapes.
  *
@@ -94,9 +100,13 @@ function deriveDisplayName(name) {
  */
 function findArrayValueRange(source, key) {
   const keyIndex = source.indexOf(`"${key}"`);
-  if (keyIndex === -1) throw new Error(`generate-tool-manifest: "${key}" not found in package.json`);
+  if (keyIndex === -1)
+    throw new Error(
+      `generate-tool-manifest: "${key}" not found in package.json`,
+    );
   const start = source.indexOf('[', keyIndex);
-  if (start === -1) throw new Error(`generate-tool-manifest: "${key}" is not an array`);
+  if (start === -1)
+    throw new Error(`generate-tool-manifest: "${key}" is not an array`);
 
   let depth = 0;
   let inString = false;
@@ -123,6 +133,7 @@ function findArrayValueRange(source, key) {
 function buildEntry(contract, existing, toModelJsonSchema) {
   const generated = {
     name: contract.name,
+    displayName: contract.title,
     userDescription: contract.userDescription,
     modelDescription: contract.modelDescription,
     tags: contract.tags ? [...contract.tags] : undefined,
@@ -133,14 +144,13 @@ function buildEntry(contract, existing, toModelJsonSchema) {
     const fresh = {
       ...generated,
       toolReferenceName: contract.name,
-      displayName: deriveDisplayName(contract.name),
       canBeReferencedInPrompt: true,
       when: 'dataLineageViz.modelLoaded && config.dataLineageViz.ai.enabled',
     };
     return Object.fromEntries(
-      NEW_ENTRY_KEY_ORDER
-        .filter(key => fresh[key] !== undefined)
-        .map(key => [key, fresh[key]]),
+      NEW_ENTRY_KEY_ORDER.filter((key) => fresh[key] !== undefined).map(
+        (key) => [key, fresh[key]],
+      ),
     );
   }
 
@@ -153,7 +163,8 @@ function buildEntry(contract, existing, toModelJsonSchema) {
     }
   }
   for (const key of CATALOG_OWNED_KEYS) {
-    if (!(key in ordered) && generated[key] !== undefined) ordered[key] = generated[key];
+    if (!(key in ordered) && generated[key] !== undefined)
+      ordered[key] = generated[key];
   }
   return ordered;
 }
@@ -166,47 +177,59 @@ function renderBlock(entries, eol) {
     .join(eol);
 }
 
-const { TOOL_DEFS, toModelJsonSchema } = await loadCatalog();
+const { toModelJsonSchema, EXTERNAL_TOOL_DEFS } = await loadCatalog();
 const source = readFileSync(packageJsonPath, 'utf8');
 const eol = source.includes('\r\n') ? '\r\n' : '\n';
-const existingEntries = JSON.parse(source).contributes?.languageModelTools ?? [];
+const existingEntries =
+  JSON.parse(source).contributes?.languageModelTools ?? [];
 
-const readOnlyDefs = TOOL_DEFS.filter(def => def.effect === 'read');
-const entries = readOnlyDefs.map(def =>
-  buildEntry(def, existingEntries.find(entry => entry.name === def.name), toModelJsonSchema));
+const externalDefs = EXTERNAL_TOOL_DEFS;
+const entries = externalDefs.map((def) =>
+  buildEntry(
+    def,
+    existingEntries.find((entry) => entry.name === def.name),
+    toModelJsonSchema,
+  ),
+);
 
-const created = readOnlyDefs
-  .filter(def => !existingEntries.some(entry => entry.name === def.name))
-  .map(def => def.name);
+const created = externalDefs
+  .filter((def) => !existingEntries.some((entry) => entry.name === def.name))
+  .map((def) => def.name);
 const dropped = existingEntries
-  .filter(entry => !readOnlyDefs.some(def => def.name === entry.name))
-  .map(entry => entry.name);
+  .filter((entry) => !externalDefs.some((def) => def.name === entry.name))
+  .map((entry) => entry.name);
 
 const { start, end } = findArrayValueRange(source, 'languageModelTools');
 const updated = `${source.slice(0, start)}${renderBlock(entries, eol)}${source.slice(end)}`;
 
 if (check) {
   if (updated === source) {
-    process.stdout.write(`languageModelTools is in sync with the catalog (${entries.length} read-only tools).\n`);
+    process.stdout.write(
+      `languageModelTools is in sync with the catalog (${entries.length} external tools).\n`,
+    );
     process.exit(0);
   }
   process.stderr.write(
-    'package.json contributes.languageModelTools is stale.\n'
-    + `  expected ${entries.length} read-only tools: ${readOnlyDefs.map(def => def.name).join(', ')}\n`
-    + (dropped.length ? `  entries to remove: ${dropped.join(', ')}\n` : '')
-    + (created.length ? `  entries to add: ${created.join(', ')}\n` : '')
-    + '  run: npm run generate:tool-manifest\n',
+    'package.json contributes.languageModelTools is stale.\n' +
+      `  expected ${entries.length} external tools: ${externalDefs.map((def) => def.name).join(', ')}\n` +
+      (dropped.length ? `  entries to remove: ${dropped.join(', ')}\n` : '') +
+      (created.length ? `  entries to add: ${created.join(', ')}\n` : '') +
+      '  run: npm run generate:tool-manifest\n',
   );
   process.exit(1);
 }
 
 if (updated === source) {
-  process.stdout.write(`languageModelTools already up to date (${entries.length} read-only tools).\n`);
+  process.stdout.write(
+    `languageModelTools already up to date (${entries.length} external tools).\n`,
+  );
 } else {
   writeFileSync(packageJsonPath, updated);
   process.stdout.write(
-    `Regenerated languageModelTools — ${entries.length} read-only tools.\n`
-    + (dropped.length ? `  removed: ${dropped.join(', ')}\n` : '')
-    + (created.length ? `  added (review displayName/icon/when): ${created.join(', ')}\n` : ''),
+    `Regenerated languageModelTools — ${entries.length} external tools.\n` +
+      (dropped.length ? `  removed: ${dropped.join(', ')}\n` : '') +
+      (created.length
+        ? `  added (review icon/when): ${created.join(', ')}\n`
+        : ''),
   );
 }

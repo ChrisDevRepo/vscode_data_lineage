@@ -1,6 +1,26 @@
-import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { Tree, type NodeApi, type NodeRendererProps, type TreeApi } from 'react-arborist';
-import type { TraceTree, TraceTreeGroup, TraceTreeLevel, TraceTreeSide } from '../engine/traceTree';
+import {
+  createContext,
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from 'react';
+import {
+  Tree,
+  type NodeApi,
+  type NodeRendererProps,
+  type TreeApi,
+} from 'react-arborist';
+import type {
+  TraceTree,
+  TraceTreeGroup,
+  TraceTreeLevel,
+  TraceTreeSide,
+} from '../engine/traceTree';
 import type { ObjectType } from '../engine/types';
 import { TYPE_COLORS } from '../utils/schemaColors';
 import { SidePanel } from './SidePanel';
@@ -8,8 +28,7 @@ import { TRACE_ICON } from './TracedFilterBanner';
 import { Tooltip } from './ui/Tooltip';
 
 /** Display metadata for one tree row, resolved from the canvas node lists. */
-export interface TraceTreeNodeMeta {
-  /** Human-readable object name. */
+interface TraceTreeNodeMeta {
   name: string;
   /** Secondary line (schema); omitted when unknown. */
   detail?: string;
@@ -27,14 +46,12 @@ function typeIcon(type?: ObjectType): string {
   return (type && TYPE_COLORS[type]?.icon) || '▪';
 }
 
-export interface TraceTreePanelProps {
+interface TraceTreePanelProps {
   /** L0-anchored trace projection from the adapter, over the pre-route scope. */
   tree: TraceTree;
-  /** Display name of the trace origin. */
   originName: string;
   /** Collapsed to the reopen button. */
   collapsed: boolean;
-  /** Collapse toggle. */
   onToggleCollapse: () => void;
   /** Label lookup by node id. */
   resolveNode: (id: string) => TraceTreeNodeMeta | undefined;
@@ -48,7 +65,9 @@ export interface TraceTreePanelProps {
   onShowWhole: () => void;
   /** Checked route targets; owned by the trace. */
   focusTargetIds: readonly string[];
-  /** Shows only the routes to the given targets (empty restores); false when a route is unreachable. */
+  /**
+   * Shows only the routes to the given targets (empty restores); false when a route is unreachable.
+   */
   onFocusTargets: (ids: string[]) => boolean;
   /** Nodes on the canvas while routes are shown; null when the full trace is on stage. */
   onStageIds: ReadonlySet<string> | null;
@@ -89,7 +108,6 @@ interface PanelRow {
   children?: PanelRow[];
 }
 
-
 interface PanelContext {
   checkedIds: ReadonlySet<string>;
   onToggleCheck: (id: string) => void;
@@ -115,25 +133,65 @@ const INITIAL_OPEN_LEVELS = 2;
 const SIDE_ROW_IDS = new Set(['trace-up', 'trace-down', 'trace-connected']);
 
 const ExpandAllIcon = (
-  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l4-4 4 4M8 15l4 4 4-4" />
+  <svg
+    className="w-3.5 h-3.5"
+    fill="none"
+    viewBox="0 0 24 24"
+    stroke="currentColor"
+    strokeWidth={2}
+    aria-hidden="true"
+  >
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      d="M8 9l4-4 4 4M8 15l4 4 4-4"
+    />
   </svg>
 );
 
 const CollapseAllIcon = (
-  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M8 5l4 4 4-4M8 19l4-4 4 4" />
+  <svg
+    className="w-3.5 h-3.5"
+    fill="none"
+    viewBox="0 0 24 24"
+    stroke="currentColor"
+    strokeWidth={2}
+    aria-hidden="true"
+  >
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      d="M8 5l4 4 4-4M8 19l4-4 4 4"
+    />
   </svg>
 );
 
 const FindIcon = (
-  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.2-5.2M17 10.5a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z" />
+  <svg
+    className="w-3.5 h-3.5"
+    fill="none"
+    viewBox="0 0 24 24"
+    stroke="currentColor"
+    strokeWidth={2}
+    aria-hidden="true"
+  >
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      d="M21 21l-5.2-5.2M17 10.5a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z"
+    />
   </svg>
 );
 
 const PlusIcon = (
-  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+  <svg
+    className="w-3.5 h-3.5"
+    fill="none"
+    viewBox="0 0 24 24"
+    stroke="currentColor"
+    strokeWidth={2}
+    aria-hidden="true"
+  >
     <path strokeLinecap="round" d="M12 4.5v15m7.5-7.5h-15" />
   </svg>
 );
@@ -184,7 +242,15 @@ function LeafRow({ row }: { row: PanelRow }) {
   const checked = checkedIds.has(nodeId);
   return (
     <>
-      <Tooltip content={!routable ? 'No route from the starting point' : checked ? 'Remove this route' : 'Add the route to this node (⌘/Ctrl+click)'}>
+      <Tooltip
+        content={
+          !routable
+            ? 'No route from the starting point'
+            : checked
+              ? 'Remove this route'
+              : 'Add the route to this node (⌘/Ctrl+click)'
+        }
+      >
         <input
           type="checkbox"
           aria-label={`Show route to ${row.name}`}
@@ -203,7 +269,9 @@ function LeafRow({ row }: { row: PanelRow }) {
           onToggleCheck(nodeId);
         }}
       >
-        <span className="ln-tree-type" aria-hidden="true">{row.typeIcon}</span>
+        <span className="ln-tree-type" aria-hidden="true">
+          {row.typeIcon}
+        </span>
         <Tooltip content={row.fullName} asChild>
           <span className="ln-tree-name">{row.name}</span>
         </Tooltip>
@@ -216,25 +284,43 @@ function LeafRow({ row }: { row: PanelRow }) {
  * Row body inside the widget's own `treeitem`, which owns role, selection, expansion and
  * activation; this renderer adds the section label, route checkbox and +1 level action.
  */
-const TraceTreeRow = memo(function TraceTreeRow({ node, style }: NodeRendererProps<PanelRow>) {
+const TraceTreeRow = memo(function TraceTreeRow({
+  node,
+  style,
+}: NodeRendererProps<PanelRow>) {
   const { onStageIds } = useContext(PanelRowContext);
   const row = node.data;
-  const offStage = row.kind === 'leaf' && !!onStageIds && !onStageIds.has(row.nodeId!);
+  const offStage =
+    row.kind === 'leaf' && !!onStageIds && !onStageIds.has(row.nodeId!);
   const rowStyle: CSSProperties = row.schemaColor
-    ? { ...style, '--ln-tree-schema': row.schemaColor } as CSSProperties
+    ? ({ ...style, '--ln-tree-schema': row.schemaColor } as CSSProperties)
     : style;
-  const className = ['ln-tree-row', node.isSelected && 'ln-tree-row-active', offStage && 'ln-tree-row-offstage']
-    .filter(Boolean).join(' ');
+  const className = [
+    'ln-tree-row',
+    node.isSelected && 'ln-tree-row-active',
+    offStage && 'ln-tree-row-offstage',
+  ]
+    .filter(Boolean)
+    .join(' ');
   return (
-    <div style={rowStyle} data-testid={`trace-tree-row-${node.id}`} data-trace-tree-kind={row.kind} className={className}>
+    <div
+      style={rowStyle}
+      data-testid={`trace-tree-row-${node.id}`}
+      data-trace-tree-kind={row.kind}
+      className={className}
+    >
       {row.kind === 'side' ? <SideRow row={row} /> : null}
       {row.kind === 'leaf' ? <LeafRow row={row} /> : null}
       {row.kind === 'level' ? (
         <>
-          <span className="ln-tree-chevron" aria-hidden="true">{node.isOpen ? '▾' : '▸'}</span>
+          <span className="ln-tree-chevron" aria-hidden="true">
+            {node.isOpen ? '▾' : '▸'}
+          </span>
           <span className="ln-tree-label">
             <span className="ln-tree-name">{row.name}</span>
-            {row.count != null ? <span className="ln-tree-count">{row.count}</span> : null}
+            {row.count != null ? (
+              <span className="ln-tree-count">{row.count}</span>
+            ) : null}
           </span>
         </>
       ) : null}
@@ -242,26 +328,46 @@ const TraceTreeRow = memo(function TraceTreeRow({ node, style }: NodeRendererPro
   );
 });
 
-function toPanelRows(tree: TraceTree, resolveNode: (id: string) => TraceTreeNodeMeta | undefined): PanelRow[] {
-  /** Leaves of a group, sorted by schema then name; schemaless nodes read as External like the legend. */
-  const leaves = (group: TraceTreeGroup): PanelRow[] => group.nodeIds
-    .map((nodeId) => {
-      const meta = resolveNode(nodeId);
-      const row: PanelRow = {
-        id: `${group.side}:${nodeId}`,
-        kind: 'leaf',
-        side: group.side,
-        nodeId,
-        name: meta?.name ?? nodeId,
-        fullName: meta?.detail ? `${meta.detail}.${meta.name}` : meta?.name ?? nodeId,
-        typeIcon: typeIcon(meta?.type),
-        schemaColor: meta?.color,
-      };
-      return { schema: meta?.detail || 'External', row };
-    })
-    .sort((a, b) => a.schema.localeCompare(b.schema) || a.row.name.localeCompare(b.row.name))
-    .map(({ row }) => row);
-  const side = (sideId: string, sideKey: 'up' | 'down', name: string, total: number, levels: TraceTreeLevel[], nextIds: string[]): PanelRow => ({
+function toPanelRows(
+  tree: TraceTree,
+  resolveNode: (id: string) => TraceTreeNodeMeta | undefined,
+): PanelRow[] {
+  /**
+   * Leaves of a group, sorted by schema then name; schemaless nodes read as External like the
+   * legend.
+   */
+  const leaves = (group: TraceTreeGroup): PanelRow[] =>
+    group.nodeIds
+      .map((nodeId) => {
+        const meta = resolveNode(nodeId);
+        const row: PanelRow = {
+          id: `${group.side}:${nodeId}`,
+          kind: 'leaf',
+          side: group.side,
+          nodeId,
+          name: meta?.name ?? nodeId,
+          fullName: meta?.detail
+            ? `${meta.detail}.${meta.name}`
+            : (meta?.name ?? nodeId),
+          typeIcon: typeIcon(meta?.type),
+          schemaColor: meta?.color,
+        };
+        return { schema: meta?.detail || 'External', row };
+      })
+      .sort(
+        (a, b) =>
+          a.schema.localeCompare(b.schema) ||
+          a.row.name.localeCompare(b.row.name),
+      )
+      .map(({ row }) => row);
+  const side = (
+    sideId: string,
+    sideKey: 'up' | 'down',
+    name: string,
+    total: number,
+    levels: TraceTreeLevel[],
+    nextIds: string[],
+  ): PanelRow => ({
     id: sideId,
     kind: 'side',
     side: sideKey,
@@ -278,8 +384,22 @@ function toPanelRows(tree: TraceTree, resolveNode: (id: string) => TraceTreeNode
     })),
   });
   const rows = [
-    side('trace-up', 'up', '↑ Upstream', tree.totalUpstream, tree.upstream, tree.nextUpstream),
-    side('trace-down', 'down', '↓ Downstream', tree.totalDownstream, tree.downstream, tree.nextDownstream),
+    side(
+      'trace-up',
+      'up',
+      '↑ Upstream',
+      tree.totalUpstream,
+      tree.upstream,
+      tree.nextUpstream,
+    ),
+    side(
+      'trace-down',
+      'down',
+      '↓ Downstream',
+      tree.totalDownstream,
+      tree.downstream,
+      tree.nextDownstream,
+    ),
   ];
   if (tree.connected) {
     rows.push({
@@ -295,8 +415,19 @@ function toPanelRows(tree: TraceTree, resolveNode: (id: string) => TraceTreeNode
 }
 
 /** Rows the widget renders: every top-level row plus the children of each open row. */
-function countVisibleRows(rows: PanelRow[], isOpen: (id: string) => boolean): number {
-  return rows.reduce((total, row) => total + 1 + (row.children && isOpen(row.id) ? countVisibleRows(row.children, isOpen) : 0), 0);
+function countVisibleRows(
+  rows: PanelRow[],
+  isOpen: (id: string) => boolean,
+): number {
+  return rows.reduce(
+    (total, row) =>
+      total +
+      1 +
+      (row.children && isOpen(row.id)
+        ? countVisibleRows(row.children, isOpen)
+        : 0),
+    0,
+  );
 }
 
 /** Leaf rows in display order, the find and selection index of the tree. */
@@ -308,7 +439,8 @@ function leafRows(rows: PanelRow[]): PanelRow[] {
  * Trace navigator on the shared {@link SidePanel} shell: the L0 starting point as the title, find
  * on demand, fixed upstream/downstream sections, widget-owned tree, and a footer only while a route
  * or edit status exists. The card is as tall as its visible rows, up to the canvas height. The
- * canvas selection drives the widget's controlled `selection`; trace state stays owned by the canvas.
+ * canvas selection drives the widget's controlled `selection`; trace state stays owned by the
+ * canvas.
  */
 export const TraceTreePanel = memo(function TraceTreePanel({
   tree,
@@ -330,7 +462,9 @@ export const TraceTreePanel = memo(function TraceTreePanel({
 }: TraceTreePanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const treeRef = useRef<TreeApi<PanelRow> | undefined>(undefined);
-  /** Level rows the user or the first open has already decided. A later grow must not reopen them. */
+  /**
+   * Level rows the user or the first open has already decided. A later grow must not reopen them.
+   */
   const openDecisions = useRef(new Set<string>());
   const focusIndexRef = useRef<number | null>(null);
   const [viewportHeight, setViewportHeight] = useState(320);
@@ -350,7 +484,10 @@ export const TraceTreePanel = memo(function TraceTreePanel({
     return () => observer.disconnect();
   }, [collapsed]);
 
-  const data = useMemo(() => toPanelRows(tree, resolveNode), [tree, resolveNode]);
+  const data = useMemo(
+    () => toPanelRows(tree, resolveNode),
+    [tree, resolveNode],
+  );
   const leaves = useMemo(() => leafRows(data), [data]);
   /** Sides and levels 1–2 start open; deeper levels start closed. */
   const initialOpenState = useMemo<Record<string, boolean>>(() => {
@@ -358,13 +495,16 @@ export const TraceTreePanel = memo(function TraceTreePanel({
     for (const side of data) {
       open[side.id] = true;
       for (const child of side.children ?? []) {
-        if (child.kind === 'level' && (child.level ?? 0) <= INITIAL_OPEN_LEVELS) open[child.id] = true;
+        if (child.kind === 'level' && (child.level ?? 0) <= INITIAL_OPEN_LEVELS)
+          open[child.id] = true;
       }
     }
     return open;
   }, [data]);
 
-  const [visibleRowCount, setVisibleRowCount] = useState(() => countVisibleRows(data, (id) => !!initialOpenState[id]));
+  const [visibleRowCount, setVisibleRowCount] = useState(() =>
+    countVisibleRows(data, (id) => !!initialOpenState[id]),
+  );
   /** Re-reads the widget's open state; its store updates before `onToggle` fires. */
   const refreshVisibleRows = useCallback(() => {
     const api = treeRef.current;
@@ -385,7 +525,11 @@ export const TraceTreePanel = memo(function TraceTreePanel({
     if (!api) return;
     const visit = (rows: PanelRow[]): void => {
       for (const row of rows) {
-        if (row.kind === 'level' && (row.level ?? 0) <= INITIAL_OPEN_LEVELS && !openDecisions.current.has(row.id)) {
+        if (
+          row.kind === 'level' &&
+          (row.level ?? 0) <= INITIAL_OPEN_LEVELS &&
+          !openDecisions.current.has(row.id)
+        ) {
           if (!api.isOpen(row.id)) api.open(row.id);
           openDecisions.current.add(row.id);
         }
@@ -398,10 +542,15 @@ export const TraceTreePanel = memo(function TraceTreePanel({
 
   const checkedIds = useMemo(() => new Set(focusTargetIds), [focusTargetIds]);
 
-  const toggleCheck = useCallback((id: string) => {
-    const next = checkedIds.has(id) ? focusTargetIds.filter((target) => target !== id) : [...focusTargetIds, id];
-    setRouteRefused(!onFocusTargets(next));
-  }, [checkedIds, focusTargetIds, onFocusTargets]);
+  const toggleCheck = useCallback(
+    (id: string) => {
+      const next = checkedIds.has(id)
+        ? focusTargetIds.filter((target) => target !== id)
+        : [...focusTargetIds, id];
+      setRouteRefused(!onFocusTargets(next));
+    },
+    [checkedIds, focusTargetIds, onFocusTargets],
+  );
 
   const rowContext = useMemo<PanelContext>(
     () => ({
@@ -421,10 +570,15 @@ export const TraceTreePanel = memo(function TraceTreePanel({
   const matches = useMemo(() => {
     const term = findQuery.trim().toLowerCase();
     if (!term) return [];
-    return leaves.filter((row) => `${row.name} ${row.nodeId}`.toLowerCase().includes(term));
+    return leaves.filter((row) =>
+      `${row.name} ${row.nodeId}`.toLowerCase().includes(term),
+    );
   }, [leaves, findQuery]);
 
-  const currentMatch = matches.length > 0 ? matches[Math.min(findIndex, matches.length - 1)] : undefined;
+  const currentMatch =
+    matches.length > 0
+      ? matches[Math.min(findIndex, matches.length - 1)]
+      : undefined;
   const originMeta = resolveNode(tree.originId);
   const originColor = originMeta?.color;
 
@@ -443,36 +597,59 @@ export const TraceTreePanel = memo(function TraceTreePanel({
    */
   useEffect(() => {
     const api = treeRef.current;
-    if (!api || api.selectedNodes[0]?.data.nodeId === (selectedNodeId ?? undefined)) return;
-    const rowId = selectedNodeId ? leaves.find((row) => row.nodeId === selectedNodeId)?.id ?? null : null;
-    api.setSelection({ ids: rowId ? [rowId] : [], anchor: rowId, mostRecent: rowId });
+    if (
+      !api ||
+      api.selectedNodes[0]?.data.nodeId === (selectedNodeId ?? undefined)
+    )
+      return;
+    const rowId = selectedNodeId
+      ? (leaves.find((row) => row.nodeId === selectedNodeId)?.id ?? null)
+      : null;
+    api.setSelection({
+      ids: rowId ? [rowId] : [],
+      anchor: rowId,
+      mostRecent: rowId,
+    });
     if (rowId) void api.scrollTo(rowId);
   }, [selectedNodeId, leaves]);
 
-  /** Keeps keyboard focus in the list when a trim removes the focused row: the row now at its index takes it. */
+  /**
+   * Keeps keyboard focus in the list when a trim removes the focused row: the row now at its index
+   * takes it.
+   */
   useEffect(() => {
     const api = treeRef.current;
     const index = focusIndexRef.current;
     if (!api || index == null || api.focusedNode) return;
     const rows = api.visibleNodes;
-    if (rows.length > 0) api.focus(rows[Math.min(index, rows.length - 1)], { scroll: false });
+    if (rows.length > 0)
+      api.focus(rows[Math.min(index, rows.length - 1)], { scroll: false });
   }, [data]);
 
-  const activateRow = useCallback((node: NodeApi<PanelRow>) => {
-    if (node.data.nodeId) onSelectNode(node.data.nodeId);
-    else if (node.data.kind !== 'side') {
-      openDecisions.current.add(node.id);
-      node.toggle();
-    }
-  }, [onSelectNode]);
+  const activateRow = useCallback(
+    (node: NodeApi<PanelRow>) => {
+      if (node.data.nodeId) onSelectNode(node.data.nodeId);
+      else if (node.data.kind !== 'side') {
+        openDecisions.current.add(node.id);
+        node.toggle();
+      }
+    },
+    [onSelectNode],
+  );
 
-  /** Side sections are fixed: a keyboard collapse reopens at once. A level toggle is the user's decision. */
-  const handleToggle = useCallback((id: string) => {
-    openDecisions.current.add(id);
-    const api = treeRef.current;
-    if (api && SIDE_ROW_IDS.has(id) && !api.isOpen(id)) api.open(id);
-    else refreshVisibleRows();
-  }, [refreshVisibleRows]);
+  /**
+   * Side sections are fixed: a keyboard collapse reopens at once. A level toggle is the user's
+   * decision.
+   */
+  const handleToggle = useCallback(
+    (id: string) => {
+      openDecisions.current.add(id);
+      const api = treeRef.current;
+      if (api && SIDE_ROW_IDS.has(id) && !api.isOpen(id)) api.open(id);
+      else refreshVisibleRows();
+    },
+    [refreshVisibleRows],
+  );
 
   const closeFind = useCallback(() => {
     setFindQuery('');
@@ -481,11 +658,30 @@ export const TraceTreePanel = memo(function TraceTreePanel({
 
   if (collapsed) {
     return (
-      <div className="ln-trace-tree-collapsed" data-testid="trace-tree-collapsed">
+      <div
+        className="ln-trace-tree-collapsed"
+        data-testid="trace-tree-collapsed"
+      >
         <Tooltip content="Show trace navigator" placement="right" asChild>
-          <button type="button" aria-label="Show trace navigator" onClick={onToggleCollapse} className="ln-btn-icon w-7 h-7 flex items-center justify-center rounded-sm">
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
-              <path strokeLinecap="round" strokeLinejoin="round" d={TRACE_ICON} />
+          <button
+            type="button"
+            aria-label="Show trace navigator"
+            onClick={onToggleCollapse}
+            className="ln-btn-icon w-7 h-7 flex items-center justify-center rounded-sm"
+          >
+            <svg
+              className="w-4 h-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={1.5}
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d={TRACE_ICON}
+              />
             </svg>
           </button>
         </Tooltip>
@@ -498,13 +694,15 @@ export const TraceTreePanel = memo(function TraceTreePanel({
   const editSummary = [
     editCounts.trimmed > 0 ? `${editCounts.trimmed} trimmed` : null,
     editCounts.added > 0 ? `${editCounts.added} added` : null,
-  ].filter(Boolean).join(' · ');
+  ]
+    .filter(Boolean)
+    .join(' · ');
   const hasStatus = routeRefused || routeCount > 0 || edited;
 
   return (
     <PanelRowContext.Provider value={rowContext}>
       <SidePanel
-        title={(
+        title={
           <Tooltip
             multiline
             content={`Starting point (L0) · click to show the whole trace\nRow click: route · ⌘/Ctrl+click or ☐: add route · right-click the node on the graph: remove from trace`}
@@ -514,21 +712,27 @@ export const TraceTreePanel = memo(function TraceTreePanel({
               type="button"
               data-testid="trace-tree-anchor"
               className="ln-trace-tree-recenter"
-              style={originColor ? ({ '--ln-tree-schema': originColor } as CSSProperties) : undefined}
+              style={
+                originColor
+                  ? ({ '--ln-tree-schema': originColor } as CSSProperties)
+                  : undefined
+              }
               aria-label={`Show the whole trace from ${originName}`}
               onClick={onShowWhole}
             >
               <span className="ln-trace-tree-level-badge">L0</span>
-              <span className="ln-tree-type" aria-hidden="true">{typeIcon(originMeta?.type)}</span>
+              <span className="ln-tree-type" aria-hidden="true">
+                {typeIcon(originMeta?.type)}
+              </span>
               <span className="ln-trace-tree-origin">{originName}</span>
             </button>
           </Tooltip>
-        )}
+        }
         className="ln-trace-tree"
         style={{ width: TRACE_NAVIGATOR_WIDTH }}
         closeLabel="Hide trace navigator"
         onClose={onToggleCollapse}
-        actions={(
+        actions={
           <>
             <Tooltip content="Find node (⌘/Ctrl+F)" asChild>
               <button
@@ -542,24 +746,37 @@ export const TraceTreePanel = memo(function TraceTreePanel({
               </button>
             </Tooltip>
             <Tooltip content="Expand all" asChild>
-              <button type="button" aria-label="Expand all" className="ln-btn-icon w-5 h-5 flex items-center justify-center rounded-sm" onClick={() => treeRef.current?.openAll()}>
+              <button
+                type="button"
+                aria-label="Expand all"
+                className="ln-btn-icon w-5 h-5 flex items-center justify-center rounded-sm"
+                onClick={() => treeRef.current?.openAll()}
+              >
                 {ExpandAllIcon}
               </button>
             </Tooltip>
             <Tooltip content="Collapse all" asChild>
-              <button type="button" aria-label="Collapse all" className="ln-btn-icon w-5 h-5 flex items-center justify-center rounded-sm" onClick={() => treeRef.current?.closeAll()}>
+              <button
+                type="button"
+                aria-label="Collapse all"
+                className="ln-btn-icon w-5 h-5 flex items-center justify-center rounded-sm"
+                onClick={() => treeRef.current?.closeAll()}
+              >
                 {CollapseAllIcon}
               </button>
             </Tooltip>
           </>
-        )}
+        }
       >
         <section
           aria-label="Trace navigator"
           data-testid="trace-tree-panel"
           className="ln-trace-tree-content"
           onKeyDown={(event) => {
-            if (event.key.toLowerCase() === 'f' && (event.metaKey || event.ctrlKey)) {
+            if (
+              event.key.toLowerCase() === 'f' &&
+              (event.metaKey || event.ctrlKey)
+            ) {
               event.preventDefault();
               setFindOpen(true);
             }
@@ -581,7 +798,9 @@ export const TraceTreePanel = memo(function TraceTreePanel({
                     setFindIndex((index) => (index + 1) % matches.length);
                   } else if (event.key === 'ArrowUp' && matches.length > 0) {
                     event.preventDefault();
-                    setFindIndex((index) => (index + matches.length - 1) % matches.length);
+                    setFindIndex(
+                      (index) => (index + matches.length - 1) % matches.length,
+                    );
                   } else if (event.key === 'Enter' && currentMatch) {
                     event.preventDefault();
                     if (currentMatch.nodeId) onSelectNode(currentMatch.nodeId);
@@ -593,13 +812,22 @@ export const TraceTreePanel = memo(function TraceTreePanel({
                 className="ln-input"
               />
               {findQuery.trim() ? (
-                <span className="ln-tree-detail" data-testid="trace-tree-find-count">
-                  {matches.length > 0 ? `${Math.min(findIndex, matches.length - 1) + 1}/${matches.length}` : '0/0'}
+                <span
+                  className="ln-tree-detail"
+                  data-testid="trace-tree-find-count"
+                >
+                  {matches.length > 0
+                    ? `${Math.min(findIndex, matches.length - 1) + 1}/${matches.length}`
+                    : '0/0'}
                 </span>
               ) : null}
             </div>
           ) : null}
-          <div ref={containerRef} className="ln-trace-tree-body" style={{ height: visibleRowCount * ROW_HEIGHT }}>
+          <div
+            ref={containerRef}
+            className="ln-trace-tree-body"
+            style={{ height: visibleRowCount * ROW_HEIGHT }}
+          >
             <Tree<PanelRow>
               ref={treeRef}
               data={data}
@@ -626,24 +854,44 @@ export const TraceTreePanel = memo(function TraceTreePanel({
           {hasStatus ? (
             <footer className="ln-trace-tree-footer">
               {routeRefused ? (
-                <p role="status" className="ln-tree-detail" data-testid="trace-tree-focus-refused">
+                <p
+                  role="status"
+                  className="ln-tree-detail"
+                  data-testid="trace-tree-focus-refused"
+                >
                   No route from the starting point to that node.
                 </p>
               ) : null}
               {routeCount > 0 ? (
                 <div className="ln-trace-tree-status">
-                  <span>Viewing {routeCount} route{routeCount === 1 ? '' : 's'}</span>
-                  <button type="button" className="ln-tree-action" onClick={() => onFocusTargets([])}>
+                  <span>
+                    Viewing {routeCount} route{routeCount === 1 ? '' : 's'}
+                  </span>
+                  <button
+                    type="button"
+                    className="ln-tree-action"
+                    onClick={() => onFocusTargets([])}
+                  >
                     Show all
                   </button>
                 </div>
               ) : null}
               {edited ? (
-                <div className="ln-trace-tree-status" data-testid="trace-tree-edits">
+                <div
+                  className="ln-trace-tree-status"
+                  data-testid="trace-tree-edits"
+                >
                   <span>{editSummary}</span>
                   {routeCount === 0 ? (
-                    <Tooltip content="Restore the trace's starting scope" asChild>
-                      <button type="button" className="ln-tree-action" onClick={onResetTrace}>
+                    <Tooltip
+                      content="Restore the trace's starting scope"
+                      asChild
+                    >
+                      <button
+                        type="button"
+                        className="ln-tree-action"
+                        onClick={onResetTrace}
+                      >
                         Reset
                       </button>
                     </Tooltip>

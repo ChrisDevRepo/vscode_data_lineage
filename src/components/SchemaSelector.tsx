@@ -1,15 +1,16 @@
 import { memo, useMemo, useState } from 'react';
 import type { SchemaInfo } from '../engine/types';
-import { createSchemaColorMap, getSchemaDisplayColor, isExternalOnlyTypeBreakdown } from '../utils/schemaColors';
+import {
+  createSchemaColorMap,
+  getSchemaDisplayColor,
+  isExternalOnlyTypeBreakdown,
+} from '../utils/schemaColors';
 
 interface SchemaSelectorProps {
-  /** Array of schema information objects to display in the list. */
   schemas: SchemaInfo[];
   /** Checked source catalog comparison policy for palette identity. */
   identifierCaseSensitive?: boolean;
-  /** A set of currently selected schema names. */
   selectedSchemas: Set<string>;
-  /** Callback function to toggle the selection of a specific schema. */
   onToggle: (name: string) => void;
   /** Callback function to select all schemas in the current filtered list. */
   onSelectAll: (names: string[]) => void;
@@ -17,9 +18,7 @@ interface SchemaSelectorProps {
   onClearAll: (names: string[]) => void;
 }
 
-/**
- * Provides searchable schema selection with counts, colors, and bulk actions.
- */
+/** Provides searchable schema selection with counts, colors, and bulk actions. */
 export const SchemaSelector = memo(function SchemaSelector({
   schemas,
   identifierCaseSensitive = false,
@@ -30,15 +29,21 @@ export const SchemaSelector = memo(function SchemaSelector({
 }: SchemaSelectorProps) {
   const [searchTerm, setSearchTerm] = useState('');
 
-  /**
-   * Filters the schema list based on the user's search term.
-   */
   const filteredSchemas = searchTerm
-    ? schemas.filter((s) => s.name.toLowerCase().includes(searchTerm.toLowerCase()))
+    ? schemas.filter((s) =>
+        s.name.toLowerCase().includes(searchTerm.toLowerCase()),
+      )
     : schemas;
   const schemaColorMap = useMemo(
-    () => createSchemaColorMap(schemas.filter(s => !isExternalOnlyTypeBreakdown(s.types)).map(s => s.name), undefined, identifierCaseSensitive),
-    [schemas, identifierCaseSensitive]
+    () =>
+      createSchemaColorMap(
+        schemas
+          .filter((s) => !isExternalOnlyTypeBreakdown(s.types))
+          .map((s) => s.name),
+        undefined,
+        identifierCaseSensitive,
+      ),
+    [schemas, identifierCaseSensitive],
   );
 
   return (
@@ -48,14 +53,14 @@ export const SchemaSelector = memo(function SchemaSelector({
         <div className="flex items-center gap-2">
           <button
             className="text-[10px] hover:underline ln-text-link"
-            onClick={() => onSelectAll(filteredSchemas.map(s => s.name))}
+            onClick={() => onSelectAll(filteredSchemas.map((s) => s.name))}
           >
             All
           </button>
           <span className="text-[10px] ln-text-muted">|</span>
           <button
             className="text-[10px] hover:underline ln-text-link"
-            onClick={() => onClearAll(filteredSchemas.map(s => s.name))}
+            onClick={() => onClearAll(filteredSchemas.map((s) => s.name))}
           >
             None
           </button>
@@ -72,7 +77,12 @@ export const SchemaSelector = memo(function SchemaSelector({
       )}
       <div className="space-y-0.5 h-52 overflow-y-auto p-1.5 rounded-sm ln-schema-list">
         {filteredSchemas.map((schema) => {
-          const color = getSchemaDisplayColor(schema.name, schemaColorMap, schema.types, identifierCaseSensitive);
+          const color = getSchemaDisplayColor(
+            schema.name,
+            schemaColorMap,
+            schema.types,
+            identifierCaseSensitive,
+          );
           return (
             <label
               key={schema.name}
@@ -88,8 +98,12 @@ export const SchemaSelector = memo(function SchemaSelector({
                 className="inline-block rounded-full shrink-0"
                 style={{ width: 8, height: 8, backgroundColor: color }}
               />
-              <span className="text-xs flex-1 truncate" title={schema.name}>{schema.name}</span>
-              <span className="text-[10px] tabular-nums ln-text-muted">{schema.nodeCount}</span>
+              <span className="text-xs flex-1 truncate" title={schema.name}>
+                {schema.name}
+              </span>
+              <span className="text-[10px] tabular-nums ln-text-muted">
+                {schema.nodeCount}
+              </span>
             </label>
           );
         })}

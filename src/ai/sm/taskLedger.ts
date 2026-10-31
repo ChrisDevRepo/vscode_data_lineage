@@ -1,22 +1,22 @@
 import { normalizeColName, schemaKey } from '../../utils/sql';
-import type { InvestigationTask, PendingLead, ScalarReturnTarget } from './smTypes';
+import type {
+  InvestigationTask,
+  PendingLead,
+  ScalarReturnTarget,
+} from './smTypes';
 
-/**
- * What a caller supplies to open a ledger task; the ledger assigns the id and the closed state.
- *
- * @remarks
- * The `kind` arm decides whether traced columns ride along: a column-lineage task always names at
- * least one, a root or analytical task never does.
- */
+/** What a caller supplies to open a ledger task; the ledger assigns the id and the closed state. */
 export type InvestigationTaskInput = {
   /** Who raised the task — the user's question, the engine, or the model. */
   source: InvestigationTask['source'];
-  /** The question this task exists to answer, compared by normalized identity. */
+  /** The question this task exists to answer, compared verbatim so SQL literals stay distinct. */
   question: string;
   /** Object the task is pinned to, when it concerns one node rather than the walk. */
   nodeId?: string;
   /** Task this one was split from, so a resolved child rolls up to its parent. */
   parentTaskId?: string;
+  /** Engine-owned storage object traversed before this task; retained in task identity. */
+  passthroughFromNodeId?: string;
   traversalSide?: InvestigationTask['traversalSide'];
   /** Initial status; defaults to pending. */
   status?: InvestigationTask['status'];
@@ -25,38 +25,30 @@ export type InvestigationTaskInput = {
   /** Hop at which the task was closed, when it is opened already resolved. */
   resolvedHop?: number;
   callerContext?: InvestigationTask['callerContext'];
-} & (
+} &
   /** Root or analytical task: no traced column rides along. */
-  | { kind: 'root' | 'analytical'; activeColumns?: never }
-  /** Column-lineage task: the traced columns it must follow, at least one. */
-  | { kind: 'column_lineage'; activeColumns: [string, ...string[]]; returnTargets?: ScalarReturnTarget[]; sourceRefs?: ScalarReturnTarget[] }
-);
+  (| { kind: 'root' | 'analytical'; activeColumns?: never }
+    /** Column-lineage task: the traced columns it must follow, at least one. */
+    | {
+        kind: 'column_lineage';
+        activeColumns: [string, ...string[]];
+        sourceRefs?: ScalarReturnTarget[];
+      }
+  );
 
-/** Normalizes authored questions for exact identity comparison without substring matching. */
-function normalizeText(value: string): string {
-  return value.trim().replace(/\s+/g, ' ').toLowerCase();
+function leadIdentity(
+  input: Pick<PendingLead, 'taskId' | 'nodeId' | 'fromNodeId' | 'reason'>,
+  caseSensitive = false,
+): string {
+  return JSON.stringify([
+    input.taskId,
+    schemaKey(input.nodeId, caseSensitive),
+    schemaKey(input.fromNodeId, caseSensitive),
+    input.reason,
+  ]);
 }
 
-function leadIdentity(input: Pick<PendingLead, 'taskId' | 'nodeId' | 'fromNodeId' | 'reason'>, caseSensitive = false): string {
-  return JSON.stringify([input.taskId, schemaKey(input.nodeId, caseSensitive), schemaKey(input.fromNodeId, caseSensitive), input.reason]);
-}
-
-function stableId(prefix: 'task' | 'lead', identity: string): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < identity.length; i++) {
-    hash ^= identity.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return `${prefix}_${(hash >>> 0).toString(36)}`;
-}
-
-/**
- * Engine-owned registry for investigation questions and post-run leads.
- *
- * @remarks
- * Task identity is the exact normalized tuple, not a node-only or substring match. This keeps
- * two different questions about the same node distinct while making retries idempotent.
- */
+/** Engine-owned registry for investigation questions and post-run leads. */
 export class TaskLedger {
   /** Follows the proven source identifier policy; existing callers default to case-insensitive. */
   constructor(private readonly identifierCaseSensitive = false) {}
@@ -71,14 +63,30 @@ export class TaskLedger {
 
   /** Returns immutable copies in insertion order. */
   public get investigationTasks(): ReadonlyArray<InvestigationTask> {
-    return Array.from(this.tasks.values(), task => task.kind === 'column_lineage'
-      ? { ...task, ...(task.callerContext ? { callerContext: { ...task.callerContext } } : {}), activeColumns: [...task.activeColumns] as [string, ...string[]], ...(task.returnTargets ? { returnTargets: task.returnTargets.map(target => ({ ...target })) } : {}), ...(task.sourceRefs ? { sourceRefs: task.sourceRefs.map(ref => ({ ...ref })) } : {}) }
-      : { ...task, ...(task.callerContext ? { callerContext: { ...task.callerContext } } : {}) });
+    return Array.from(this.tasks.values(), (task) =>
+      task.kind === 'column_lineage'
+        ? {
+            ...task,
+            ...(task.callerContext
+              ? { callerContext: { ...task.callerContext } }
+              : {}),
+            activeColumns: [...task.activeColumns] as [string, ...string[]],
+            ...(task.sourceRefs
+              ? { sourceRefs: task.sourceRefs.map((ref) => ({ ...ref })) }
+              : {}),
+          }
+        : {
+            ...task,
+            ...(task.callerContext
+              ? { callerContext: { ...task.callerContext } }
+              : {}),
+          },
+    );
   }
 
   /** Returns immutable copies in insertion order. */
   public get pendingLeads(): ReadonlyArray<PendingLead> {
-    return Array.from(this.leads.values(), lead => ({ ...lead }));
+    return Array.from(this.leads.values(), (lead) => ({ ...lead }));
   }
 
   /** Clears all tasks and leads after a validated exploration re-initialization. */
@@ -90,100 +98,134 @@ export class TaskLedger {
   }
 
   /**
-   * Shared identity-keyed upsert mechanics for {@link ensureTask} and {@link ensureLead}: the id
-   * lookup, `stableId` derivation and collision guard are identical; only the identity-hit and
-   * fresh-insert behavior (`onHit` / `buildRecord`) differs per caller.
+   * Identity-keyed upsert shared by {@link ensureTask} and {@link ensureLead}; new identities get
+   * the next sequence id (`task_1`, `lead_1`).
    */
   private upsertByIdentity<T extends { id: string }>(
     store: Map<string, T>,
     idsByIdentity: Map<string, string>,
     identity: string,
     prefix: 'task' | 'lead',
-    collisionLabel: string,
     onHit: (existing: T) => T,
     buildRecord: (id: string) => T,
   ): T {
     const existingId = idsByIdentity.get(identity);
     if (existingId) return onHit(store.get(existingId)!);
 
-    const id = stableId(prefix, identity);
-    const collision = store.get(id);
-    if (collision) throw new Error(`${collisionLabel} id collision: ${id}`);
+    const id = `${prefix}_${store.size + 1}`;
     const record = buildRecord(id);
     store.set(id, record);
     idsByIdentity.set(identity, id);
     return record;
   }
 
-  /**
-   * Creates or returns the task with the same normalized identity tuple.
-   * @param input - Typed task content without its derived ID.
-  */
+  /** Creates or returns the task with the same question and qualified identity tuple. */
   public ensureTask(input: InvestigationTaskInput): InvestigationTask {
     const rawInput = input as { kind: string; activeColumns?: unknown };
-    if (rawInput.activeColumns !== undefined && !Array.isArray(rawInput.activeColumns)) {
+    if (
+      rawInput.activeColumns !== undefined &&
+      !Array.isArray(rawInput.activeColumns)
+    ) {
       throw new Error('activeColumns must be an array');
     }
-    const canonicalColumns = (rawInput.activeColumns as string[] | undefined)?.map(column => column.trim()).filter(Boolean);
-    const identityColumns = canonicalColumns?.map(column => normalizeColName(column, this.identifierCaseSensitive));
-    if (input.kind === 'column_lineage' && (!canonicalColumns || canonicalColumns.length === 0)) {
-      throw new Error('column_lineage tasks require at least one active column');
+    const canonicalColumns = (rawInput.activeColumns as string[] | undefined)
+      ?.map((column) => column.trim())
+      .filter(Boolean);
+    const identityColumns = canonicalColumns?.map((column) =>
+      normalizeColName(column, this.identifierCaseSensitive),
+    );
+    if (
+      input.kind === 'column_lineage' &&
+      (!canonicalColumns || canonicalColumns.length === 0)
+    ) {
+      throw new Error(
+        'column_lineage tasks require at least one active column',
+      );
     }
-    if (input.kind !== 'column_lineage' && rawInput.activeColumns !== undefined) {
+    if (
+      input.kind !== 'column_lineage' &&
+      rawInput.activeColumns !== undefined
+    ) {
       throw new Error(`${rawInput.kind} tasks must not carry active columns`);
     }
     const identity = JSON.stringify([
       input.kind,
       input.source,
-      normalizeText(input.question),
+      input.question,
       input.nodeId === undefined ? '' : this.identifierKey(input.nodeId),
       input.parentTaskId ?? '',
       identityColumns ?? [],
       ...(input.traversalSide ? [{ traversalSide: input.traversalSide }] : []),
+      ...(input.passthroughFromNodeId
+        ? [
+            {
+              passthroughFromNodeId: this.identifierKey(
+                input.passthroughFromNodeId,
+              ),
+            },
+          ]
+        : []),
       ...(input.kind === 'column_lineage' && input.sourceRefs
-        ? [{ sourceRefs: input.sourceRefs.map(ref => [this.identifierKey(ref.node), normalizeColName(ref.col, this.identifierCaseSensitive)]).sort() }]
+        ? [
+            {
+              sourceRefs: input.sourceRefs
+                .map((ref) => [
+                  this.identifierKey(ref.node),
+                  normalizeColName(ref.col, this.identifierCaseSensitive),
+                ])
+                .sort(),
+            },
+          ]
         : []),
-      ...(input.kind === 'column_lineage' && input.returnTargets
-        ? [input.returnTargets.map(target => [this.identifierKey(target.node), normalizeColName(target.col, this.identifierCaseSensitive)]).sort()]
+      ...(input.callerContext
+        ? [
+            [
+              this.identifierKey(input.callerContext.node),
+              normalizeColName(
+                input.callerContext.col,
+                this.identifierCaseSensitive,
+              ),
+              input.callerContext.callerTaskId,
+              input.callerContext.ddlHash,
+            ],
+          ]
         : []),
-      ...(input.callerContext ? [[input.callerContext.node, input.callerContext.col, input.callerContext.callerTaskId, input.callerContext.ddlHash]] : []),
     ]);
     return this.upsertByIdentity(
       this.tasks,
       this.taskIdsByIdentity,
       identity,
       'task',
-      'Investigation task',
-      existing => existing,
-      id => ({
-        ...input,
-        ...(input.callerContext ? { callerContext: { ...input.callerContext } } : {}),
-        ...(input.kind === 'column_lineage' && input.returnTargets ? { returnTargets: input.returnTargets.map(target => ({ ...target })) } : {}),
-        ...(input.kind === 'column_lineage' && input.sourceRefs ? { sourceRefs: input.sourceRefs.map(ref => ({ ...ref })) } : {}),
-        id,
-        status: input.status ?? 'pending',
-        ...(canonicalColumns ? { activeColumns: canonicalColumns as [string, ...string[]] } : {}),
-      } as InvestigationTask),
+      (existing) => existing,
+      (id) =>
+        ({
+          ...input,
+          ...(input.callerContext
+            ? { callerContext: { ...input.callerContext } }
+            : {}),
+          ...(input.kind === 'column_lineage' && input.sourceRefs
+            ? { sourceRefs: input.sourceRefs.map((ref) => ({ ...ref })) }
+            : {}),
+          id,
+          status: input.status ?? 'pending',
+          ...(canonicalColumns
+            ? { activeColumns: canonicalColumns as [string, ...string[]] }
+            : {}),
+        }) as InvestigationTask,
     );
   }
 
-  /**
-   * Returns a task by stable id.
-   * @param taskId - Engine-owned task identity.
-   * @returns Stored task, or `undefined` when absent.
-   */
+  /** Returns a task by stable id. */
   public getTask(taskId: string): InvestigationTask | undefined {
     return this.tasks.get(taskId);
   }
 
-  /**
-   * Applies a valid task lifecycle transition.
-   * @param taskId - Task selected by the host.
-   * @param status - New engine-owned lifecycle state.
-   * @param hop - Resolution hop when applicable.
-   * @returns Whether the task existed.
-   */
-  public setTaskStatus(taskId: string, status: InvestigationTask['status'], hop?: number): boolean {
+  /** Applies a valid task lifecycle transition. */
+  public setTaskStatus(
+    taskId: string,
+    status: InvestigationTask['status'],
+    hop?: number,
+  ): boolean {
     const task = this.tasks.get(taskId);
     if (!task) return false;
     task.status = status;
@@ -192,64 +234,37 @@ export class TaskLedger {
     return true;
   }
 
-  /**
-   * Creates or updates the lead for a deferred task and boundary.
-   * @param input - Lead content without its derived ID.
-   */
-  public ensureLead(input: Omit<PendingLead, 'id' | 'status'> & { status?: PendingLead['status'] }): PendingLead {
+  /** Creates or updates the lead for a deferred task and boundary. */
+  public ensureLead(
+    input: Omit<PendingLead, 'id' | 'status'> & {
+      status?: PendingLead['status'];
+    },
+  ): PendingLead {
     const identity = leadIdentity(input, this.identifierCaseSensitive);
     return this.upsertByIdentity(
       this.leads,
       this.leadIdsByIdentity,
       identity,
       'lead',
-      'Pending lead',
-      existing => {
+      (existing) => {
         existing.valueToUser = input.valueToUser;
+        if (input.status) existing.status = input.status;
         return existing;
       },
-      id => ({ ...input, id, status: input.status ?? 'pending' }),
+      (id) => ({ ...input, id, status: input.status ?? 'pending' }),
     );
   }
 
-  /**
-   * Marks an unresolved lead scheduled and reactivates its task.
-   * @param leadId - Pending lead selected by the host.
-   * @returns Scheduled lead, or `undefined` when it cannot be scheduled.
-   */
-  public scheduleLead(leadId: string): PendingLead | undefined {
-    const lead = this.leads.get(leadId);
-    if (!lead || lead.status === 'resolved' || lead.status === 'dismissed') return undefined;
-    lead.status = 'scheduled';
-    this.setTaskStatus(lead.taskId, 'pending');
-    return lead;
-  }
-
-  /**
-   * Resolves every scheduled lead backed by the completed task.
-   * @param taskId - Task that completed successfully.
-   */
-  public resolveTaskLeads(taskId: string): void {
-    for (const lead of this.leads.values()) {
-      if (lead.taskId === taskId && lead.status === 'scheduled') lead.status = 'resolved';
-    }
-  }
-
-  /**
-   * Resolves every scheduled lead on a node whose hop completed, with its task.
-   *
-   * @remarks
-   * A follow-up add names an object, not a lead, so the leads it schedules on that object are owned
-   * by other tasks; the analysed object answers them all.
-   * @param nodeId - Node whose hop completed.
-   * @param hop - Resolution hop.
-   */
-  public resolveNodeLeads(nodeId: string, hop: number): void {
+  /** Dismisses every pending lead of one reason on a node. */
+  public dismissNodeLeads(nodeId: string, reason: PendingLead['reason']): void {
     const key = this.identifierKey(nodeId);
     for (const lead of this.leads.values()) {
-      if (lead.status !== 'scheduled' || this.identifierKey(lead.nodeId) !== key) continue;
-      lead.status = 'resolved';
-      this.setTaskStatus(lead.taskId, 'resolved', hop);
+      if (
+        lead.status === 'pending' &&
+        lead.reason === reason &&
+        this.identifierKey(lead.nodeId) === key
+      )
+        lead.status = 'dismissed';
     }
   }
 }

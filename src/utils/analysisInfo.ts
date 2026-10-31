@@ -1,31 +1,13 @@
 import type { AnalysisType } from '../engine/types';
 
-/**
- * Represents display metadata for a specific graph analysis type.
- */
+/** Represents display metadata for a specific graph analysis type. */
 export interface AnalysisTypeInfo {
-  /** The human-readable title of the analysis. */
   title: string;
-  /** The SVG path or icon identifier used for UI display. */
   icon: string;
-  /** A brief description of what the analysis identifies in the graph. */
   description: string;
 }
 
-/**
- * Central registry of configuration for all graph analysis modes.
- *
- * Each entry defines the UI properties (title, icon, description) used in the
- * Analysis Sidebar and Detail View.
- *
- * @remarks
- * Architectural remarks:
- * - Islands: Detects connected components where |components| > 1.
- * - Hubs: Identifies nodes with high degree centrality (blast radius).
- * - Orphans: Nodes with degree 0.
- * - Longest Path: Computes the diameter or critical path of the DAG.
- * - Cycles: Detects Strongly Connected Components (SCC) to find recursion.
- */
+/** Central registry of configuration for all graph analysis modes. */
 export const ANALYSIS_TYPE_INFO: Record<AnalysisType, AnalysisTypeInfo> = {
   islands: {
     title: 'Islands',
@@ -45,7 +27,8 @@ export const ANALYSIS_TYPE_INFO: Record<AnalysisType, AnalysisTypeInfo> = {
   'longest-path': {
     title: 'Longest Path',
     icon: 'M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3',
-    description: 'Deepest dependency chains — the longest paths from source to sink.',
+    description:
+      'Deepest dependency chains — the longest paths from source to sink.',
   },
   cycles: {
     title: 'Cycles',
@@ -55,13 +38,12 @@ export const ANALYSIS_TYPE_INFO: Record<AnalysisType, AnalysisTypeInfo> = {
   'external-refs': {
     title: 'External Refs',
     icon: 'M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25',
-    description: 'File sources and cross-database references — virtual nodes with no local metadata.',
+    description:
+      'File sources and cross-database references — virtual nodes with no local metadata.',
   },
 };
 
-/**
- * Mapping of AnalysisType to their full human-readable labels.
- */
+/** Mapping of AnalysisType to their full human-readable labels. */
 export const ANALYSIS_TYPE_LABELS: Record<AnalysisType, string> = {
   islands: 'Islands Analysis',
   hubs: 'Hubs Analysis',
@@ -71,7 +53,12 @@ export const ANALYSIS_TYPE_LABELS: Record<AnalysisType, string> = {
   'external-refs': 'External Refs',
 };
 
-/**
- * Array of all supported analysis types, used for iteration and validation.
- */
-export const ALL_ANALYSIS_TYPES: AnalysisType[] = ['islands', 'hubs', 'orphans', 'longest-path', 'cycles', 'external-refs'];
+/** Array of all supported analysis types, used for iteration and validation. */
+export const ALL_ANALYSIS_TYPES: AnalysisType[] = [
+  'islands',
+  'hubs',
+  'orphans',
+  'longest-path',
+  'cycles',
+  'external-refs',
+];
