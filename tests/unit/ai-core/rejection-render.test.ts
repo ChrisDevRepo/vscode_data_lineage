@@ -1,7 +1,6 @@
 /** Approved08 / D-103 / D-105: one flat problem names every fault, stages metadata and report-reference fallback, and never echoes submitted values. */
 import {
   ISSUES,
-  LAST_CORRECTION,
   makeRejection,
   renderProblem,
   type FeedbackStage,
@@ -30,17 +29,9 @@ const render = (
 /** D-103: every error owns its path, code and table message; D-105 adds eligible fallback only at feedback 3. */
 function assertStructural(rendered: Rendered): void {
   expect(Object.keys(rendered).sort()).toEqual(
-    [
-      'code',
-      'attempt',
-      'errors',
-      'resend',
-      ...(rendered.notice === undefined ? [] : ['notice']),
-    ].sort(),
+    ['code', 'attempt', 'errors', 'resend'].sort(),
   );
   expect(rendered.attempt).toMatch(/^[123]\/3$/);
-  if (rendered.notice !== undefined)
-    expect(rendered.notice).toBe(LAST_CORRECTION);
   expect(rendered.errors.length).toBeGreaterThan(0);
   for (const error of rendered.errors) {
     expect(Object.keys(error).sort()).toEqual(
@@ -150,7 +141,7 @@ describe('flat rejection renderer contract (D-103)', () => {
     ).toEqual([...missing].sort((a, b) => a.localeCompare(b)));
   });
 
-  it('renders only issue-table messages and the stage notice, never a submitted value', () => {
+  it('renders only issue-table messages, never a submitted value', () => {
     for (const stage of [1, 2, 3] as const) {
       const rendered = render(
         r1(),
@@ -159,7 +150,6 @@ describe('flat rejection renderer contract (D-103)', () => {
         'hop_commit',
       );
       assertStructural(rendered);
-      expect(rendered.notice !== undefined).toBe(stage === 3);
     }
   });
 

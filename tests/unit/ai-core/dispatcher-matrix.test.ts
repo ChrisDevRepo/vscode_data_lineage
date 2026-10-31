@@ -28,7 +28,6 @@ import {
 } from '../../../src/ai/tools/registry';
 import {
   ISSUES,
-  LAST_CORRECTION,
   at,
   makeRejection,
   type IssueCode,
@@ -135,7 +134,7 @@ const call = (id: string, input: unknown, tool = 'lineage_search_objects') =>
 /** The rendered problem the model reads (D-103) and its errors across categories. */
 type ShownError = ToolProblem['errors'][number];
 type Problem = ToolProblem;
-const PROBLEM_KEYS = ['attempt', 'code', 'errors', 'notice', 'resend'];
+const PROBLEM_KEYS = ['attempt', 'code', 'errors', 'resend'];
 const problemOf = (value: unknown): Problem =>
   (typeof value === 'string' ? JSON.parse(value) : value) as Problem;
 const shown = (value: unknown): ShownError[] => problemOf(value).errors;
@@ -989,7 +988,6 @@ describe('start contract matrix through the native port and production registry'
           String(toolMessage(rejected.attempt.messages).content),
         );
         expect(feedback.attempt).toBe(`${stage}/3`);
-        expect(feedback.notice !== undefined).toBe(stage === 3);
         expect(hasFallback(feedback)).toBe(false);
         for (const error of rejected.raw.errors ?? []) {
           const visible = shown(feedback).find(
@@ -1284,7 +1282,6 @@ it.each(reportScenarios)(
         ).toBe(false);
       const feedback = problemOf(String(toolMessage(attempt.messages).content));
       expect(feedback.attempt).toBe(`${stage}/3`);
-      expect(feedback.notice !== undefined).toBe(stage === 3);
       // Only the report's outside-node reference has a fallback among this declared catalog.
       expect(hasFallback(feedback)).toBe(
         stage === 3 && fields.includes('notes'),
@@ -2367,7 +2364,7 @@ describe('model-facing rejection text', () => {
   });
 
   it.each([false, true])(
-    'states a missing call by its fault on every reply and the last-correction notice only before the last reply (required=%s)',
+    'states a missing call by its fault on every reply (required=%s)',
     async (required) => {
       const { registry } = registryWith(() => '{}');
       const base = discoveryPlan(registry);
@@ -2387,9 +2384,6 @@ describe('model-facing rejection text', () => {
           priorState: state,
         });
         const delivered = JSON.stringify(model.sendRequest.mock.calls);
-        expect(delivered.includes(LAST_CORRECTION)).toBe(
-          index === MAX_TOOL_PROVIDER_CALLS - 1,
-        );
         // No issue code of a missing call carries a fallback, so none is ever delivered.
         for (const issue of Object.values(ISSUES))
           if ('fallback' in issue)
@@ -3671,7 +3665,6 @@ describe('submit_findings rejection form', () => {
             )?.allowed,
           ).toEqual(sourceColumns);
         expect(rejected.rejection.attempt).toBe(`${stage}/3`);
-        expect(rejected.rejection.notice !== undefined).toBe(stage === 3);
         for (const error of rejected.rejection.errors) {
           if (stage === 1) expect(error).not.toHaveProperty('allowed');
           const issue = ISSUES[error.code];
@@ -4185,7 +4178,7 @@ describe('submit_findings rejection form', () => {
     );
   });
 
-  it('a report column reference gets its historical fallback only at reply 3 with the last-correction notice (D-105)', async () => {
+  it('a report column reference gets its historical fallback only at reply 3 (D-105)', async () => {
     const { send } = hop();
     const replies = [];
     for (let n = 1; n <= 3; n++)
@@ -4198,9 +4191,6 @@ describe('submit_findings rejection form', () => {
       expect(hasFallback(reply.rejection!)).toBe(index === 2);
       expect(reply.rejection!.resend).toContain('column_flow');
       expect(reply.rejection!.resend.includes('sections')).toBe(index === 2);
-      expect(reply.rejection!.notice).toBe(
-        index === 2 ? LAST_CORRECTION : undefined,
-      );
       expect(
         reply.lines.filter(
           (line) =>

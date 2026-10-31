@@ -181,7 +181,7 @@ const faulty = (focus: string) => ({
 
 type ShownError = ToolProblem['errors'][number];
 type Problem = ToolProblem;
-const PROBLEM_KEYS = ['attempt', 'code', 'errors', 'notice', 'resend'];
+const PROBLEM_KEYS = ['attempt', 'code', 'errors', 'resend'];
 const shown = (problem: Problem): ShownError[] => problem.errors;
 
 async function reply(

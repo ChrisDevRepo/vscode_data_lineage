@@ -43,7 +43,6 @@ import {
 } from '../../../src/ai/tools/toolSchemas';
 import {
   ISSUES,
-  LAST_CORRECTION,
   renderProblem,
 } from '../../../src/ai/support/toolErrorEnvelope';
 import {
@@ -386,7 +385,6 @@ function renderAll(): Map<string, string> {
   json('issues', ISSUES);
   const { input, rejection } = ctRun.hops[0].refusal!;
   json('rejection-problem', {
-    lastCorrection: LAST_CORRECTION,
     stages: ([1, 2, 3] as const).map((stage) =>
       JSON.parse(renderProblem(rejection, stage, input, 'hop_commit')),
     ),

@@ -577,15 +577,12 @@ describe('tool-error-envelope', () => {
     });
     for (const stage of [1, 2, 3] as const) {
       const content = renderProblem(rejection, stage);
-      expect(Object.keys(JSON.parse(content)).sort()).toEqual(
-        [
-          'attempt',
-          'code',
-          'errors',
-          'resend',
-          ...(stage === 3 ? ['notice'] : []),
-        ].sort(),
-      );
+      expect(Object.keys(JSON.parse(content)).sort()).toEqual([
+        'attempt',
+        'code',
+        'errors',
+        'resend',
+      ]);
       expect(content).not.toMatch(/SENTINEL/);
     }
   });

@@ -11,10 +11,6 @@ type IssueCategory =
   | 'protocol'
   | 'stage';
 
-/** The top-level `notice` at feedback 3. */
-export const LAST_CORRECTION =
-  'This is the last correction before this hop ends.';
-
 /** The text field a fallback writes its fact into; a rendered fallback adds it to `resend`. */
 const FALLBACK_FIELD = 'sections';
 
@@ -501,14 +497,13 @@ export function readToolErrorText(text: string): ToolRejection | null {
   }
 }
 
-/** Feedback stage of one hop (D-105): 1 states every fault, 2 adds the allowed values, 3 adds eligible reference fallbacks and the last-correction notice. */
+/** Feedback stage of one hop (D-105): 1 states every fault, 2 adds the allowed values, 3 adds eligible reference fallbacks. */
 export type FeedbackStage = 1 | 2 | 3;
 
 /** The model-visible rejection: one flat list of coded faults with table-owned messages and staged metadata. */
 export interface ToolProblem {
   code: string;
   attempt: `${FeedbackStage}/3`;
-  notice?: string;
   errors: Array<{
     path: string;
     code: IssueCode;
@@ -632,7 +627,6 @@ export function renderProblem(
   const problem: ToolProblem = {
     code: rejection.code,
     attempt: `${stage}/3`,
-    ...(stage === 3 ? { notice: LAST_CORRECTION } : {}),
     errors,
     resend: [
       ...new Set([
