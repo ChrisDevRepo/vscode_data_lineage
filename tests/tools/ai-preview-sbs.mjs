@@ -50,14 +50,25 @@ function turns(dir) {
     });
 }
 
+// A null column (no MAIN run) is the only intended empty column; any other column without a result is incomplete input.
+const emptyColumns = [];
 const renders = cases.flatMap((row) =>
-  Object.entries(row.columns).flatMap(([column, dir]) =>
-    turns(dir).map(({ turn, file }) => ({
+  Object.entries(row.columns).flatMap(([column, dir]) => {
+    const found = turns(dir);
+    if (dir !== null && !found.length)
+      emptyColumns.push(`${row.id}__${column}: ${dir}`);
+    return found.map(({ turn, file }) => ({
       key: `${row.id}__${column}__${turn}`,
       presentResult: file,
-    })),
-  ),
+    }));
+  }),
 );
+if (!renders.length || emptyColumns.length) {
+  for (const column of emptyColumns)
+    console.error(`INCOMPLETE ${column}: no present-result.json`);
+  if (!renders.length) console.error('INCOMPLETE: no results to render.');
+  process.exit(2);
+}
 
 if (!process.argv.includes('--report-only')) {
   for (const dir of ['renders', 'png'])
@@ -91,10 +102,13 @@ if (!process.argv.includes('--report-only')) {
     stdio: 'inherit',
     env: { ...process.env, DLV_AI_PREVIEW_MANIFEST: manifest },
   });
-  if (run.status !== 0) console.error(`VS Code host exited ${run.status}.`);
+  if (run.status !== 0) {
+    console.error(`INCOMPLETE: VS Code host exited ${run.status}.`);
+    process.exit(2);
+  }
 }
 
-/** Column legs `obj.col->obj.col` the result's findings imply between rendered objects: a finding whose hop object is neither endpoint is drawn through it (src/engine/columnTraceView.ts). */
+/** Column legs `obj.col->obj.col` the result's findings imply between rendered objects: a finding whose hop object is neither endpoint is drawn through it. Deliberately an independent oracle of src/engine/columnTraceView.ts, so a drawing regression there shows as a missing leg. */
 function declaredLegs(artifact, rendered) {
   const legs = new Set();
   for (const e of artifact.aiMetadata?.columnAspect?.edges ?? []) {

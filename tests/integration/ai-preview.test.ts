@@ -219,8 +219,12 @@ suite('AI preview side by side — real webview', () => {
     mkdirSync(join(manifest.out, 'renders'), { recursive: true });
     mkdirSync(join(manifest.out, 'png'), { recursive: true });
     let previousHtml: string | null = null;
+    let previousDescription: string | null = null;
     for (const render of manifest.renders) {
       const artifact = JSON.parse(readFileSync(render.presentResult, 'utf8'));
+      // The same description renders the same HTML, so only a new description is awaited as a change.
+      const description = String(artifact.aiMetadata?.description ?? '');
+      const sameDescription = description === previousDescription;
       const pageErrors: string[] = [];
       const onConsole = (message: { type(): string; text(): string }) => {
         if (message.type() === 'error') pageErrors.push(message.text());
@@ -241,7 +245,7 @@ suite('AI preview side by side — real webview', () => {
             .first()
             .innerHTML({ timeout: 100 })
             .catch(() => undefined);
-          if (html !== undefined && html !== previousHtml)
+          if (html !== undefined && (sameDescription || html !== previousHtml))
             return { frame, html };
         }
         return undefined;
@@ -259,6 +263,7 @@ suite('AI preview side by side — real webview', () => {
       } else {
         const frame: Frame = found.frame;
         previousHtml = found.html;
+        previousDescription = description;
         // Let the graph layout settle before reading it.
         let last = '';
         await waitFor(async () => {
