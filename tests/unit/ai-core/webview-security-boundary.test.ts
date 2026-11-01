@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
-/** Security boundary: untrusted AI markup stays inert, and webview policy denies ambient script/network/form access. */
+/**
+ * Security boundary: untrusted AI markup stays inert, and webview policy denies ambient
+ * script/network/form access.
+ */
 import { describe, expect, it } from 'vitest';
 import DOMPurify from 'dompurify';
 import { renderAiMarkdown } from '../../../src/components/markdown/renderAiMarkdown';

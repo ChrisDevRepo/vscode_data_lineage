@@ -214,7 +214,8 @@ export function findSites(file, text) {
         ts.isCallExpression(parent) &&
         LOG_CALL.test(parent.expression.getText(source)),
     );
-  // Scanner tokens preserve literal contents and identifier boundaries while discarding layout trivia.
+  // Scanner tokens preserve literal contents and identifier boundaries while discarding layout
+  // trivia.
   const tokens = (value) => {
     const scanner = ts.createScanner(
       ts.ScriptTarget.Latest,

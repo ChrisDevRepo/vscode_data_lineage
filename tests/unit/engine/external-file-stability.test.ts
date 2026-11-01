@@ -1,4 +1,7 @@
-/** External file references keep stable ids across reloads, refuse ids owned by catalog objects, and keep the exact URL text. */
+/**
+ * External file references keep stable ids across reloads, refuse ids owned by catalog objects, and
+ * keep the exact URL text.
+ */
 import { beforeAll, describe, expect, it } from 'vitest';
 import { buildModel } from '../../../src/engine/modelBuilder';
 import { createSavedReferenceResolver } from '../../../src/engine/shared/nodeIdResolution';

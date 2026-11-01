@@ -1,4 +1,7 @@
-/** Bridge frame boundary: a frame from the other side is validated before use; a version skew or a malformed payload is rejected. */
+/**
+ * Bridge frame boundary: a frame from the other side is validated before use; a version skew or a
+ * malformed payload is rejected.
+ */
 import { describe, expect, it } from 'vitest';
 
 import {

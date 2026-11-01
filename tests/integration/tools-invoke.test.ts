@@ -2,7 +2,9 @@ import * as assert from 'node:assert';
 import * as vscode from 'vscode';
 import { announceLaneTier } from './laneTier';
 
-/** Drives every externally contributed lineage tool through `vscode.lm.invokeTool` in a host with no model provider fixture. */
+/** Drives every externally contributed lineage tool through `vscode.lm.invokeTool` in a host with
+ * no model provider fixture.
+ */
 suite('Tool surface — invokeTool, no model, no CDP', () => {
   const EXTENSION_ID = 'datahelper-chwagner.data-lineage-viz';
 
@@ -60,7 +62,8 @@ suite('Tool surface — invokeTool, no model, no CDP', () => {
     // rather than a context key — the tool answering with data is the condition that matters.
     const deadline = Date.now() + 60_000;
     while (Date.now() < deadline) {
-      // A rejection reaches a vscode.lm caller as a thrown error; only the no-project one means "not yet".
+      // A rejection reaches a vscode.lm caller as a thrown error; only the no-project one means
+      // "not yet".
       const loaded = await invoke('lineage_search_objects', {
         query: 'Sales',
       }).then(

@@ -10,7 +10,9 @@ function valueType(value) {
   return typeof value;
 }
 
-/** Structure of a templates document: `{ templateKey: { field: valueType } }` with keys sorted, `schemaVersion` excluded, prose ignored. */
+/** Structure of a templates document: `{ templateKey: { field: valueType } }` with keys sorted,
+ * `schemaVersion` excluded, prose ignored.
+ */
 export function templateStructure(text) {
   const doc = load(text);
   if (doc === null || typeof doc !== 'object' || Array.isArray(doc)) {
@@ -64,6 +66,10 @@ export function structureDiff(before, after) {
   return lines;
 }
 
-/** The breaking subset of a {@link structureDiff} result: removals and retypes — every change where a previous release's overlay no longer fits the current shape. A key rename appears here as the removal of the old key. Additions (`+` lines) are backward compatible: an older overlay merges over the built-in file, which fills the keys the overlay lacks, so they never force a bump. */
+/** The breaking subset of a {@link structureDiff} result: removals and retypes — every change where
+ * a previous release's overlay no longer fits the current shape. A key rename appears here as the
+ * removal of the old key. Additions (`+` lines) are backward compatible: an older overlay merges
+ * over the built-in file, which fills the keys the overlay lacks, so they never force a bump.
+ */
 export const breakingStructureChanges = (diff) =>
   diff.filter((line) => line.startsWith('-') || line.startsWith('~'));

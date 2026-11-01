@@ -59,7 +59,8 @@ export function createHeadlessLogger(
       logFilePath = path;
     },
     // `append` is line-oriented here: the production logger only ever appends whole lines, and
-    // reconstructing partial writes would reorder them against the timestamps that make the file useful.
+    // reconstructing partial writes would reorder them against the timestamps that make the file
+    // useful.
     append: (value) => {
       write('info', value, []);
     },

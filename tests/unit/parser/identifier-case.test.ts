@@ -1,4 +1,7 @@
-/** Checked identifier metadata preserves case-sensitive twins; legacy and explicit CI stay canonical. */
+/**
+ * Checked identifier metadata preserves case-sensitive twins; legacy and explicit CI stay
+ * canonical.
+ */
 import { describe, expect, it } from 'vitest';
 import { buildModel, normalizeName } from '../../../src/engine/modelBuilder';
 import { resolveModelNodeId } from '../../../src/engine/shared/nodeIdResolution';

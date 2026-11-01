@@ -1,4 +1,7 @@
-/** AI view metadata at the webview boundary: transform classes map to one lineage direction, and the strict write schema rejects unrecognised verdicts and malformed column descriptors. */
+/**
+ * AI view metadata at the webview boundary: transform classes map to one lineage direction, and the
+ * strict write schema rejects unrecognised verdicts and malformed column descriptors.
+ */
 import { describe, it, expect } from 'vitest';
 import {
   COLUMN_TRANSFORM_CLASSES,

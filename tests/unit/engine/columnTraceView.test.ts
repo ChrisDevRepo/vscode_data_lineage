@@ -1,4 +1,8 @@
-/** Column trace view: metadata display names, row shapes and value states, edge classification, legs routed through the analysing hop, the directed column thread, and a row for every requested column. */
+/**
+ * Column trace view: metadata display names, row shapes and value states, edge classification, legs
+ * routed through the analysing hop, the directed column thread, and a row for every requested
+ * column.
+ */
 
 import { describe, it, expect } from 'vitest';
 import {
@@ -222,7 +226,11 @@ describe('buildColumnTraceView — routing through the analysing hop', () => {
   });
 });
 
-/** The AI badge and note draw above and below the card through `NodeToolbar`, outside the box Dagre measures. At the default separation of 30 their ~32px band does not fit, and one node's note lands on the next node's badge — so the band is carried by the vertical separation instead. */
+/**
+ * The AI badge and note draw above and below the card through `NodeToolbar`, outside the box Dagre
+ * measures. At the default separation of 30 their ~32px band does not fit, and one node's note
+ * lands on the next node's badge — so the band is carried by the vertical separation instead.
+ */
 describe('columnTraceView AI annotation band', () => {
   const objects = mkObjects(mkObj('dbo.s1'), mkObj('dbo.s2'), mkObj('dbo.t'));
   const relations = [
@@ -246,10 +254,15 @@ describe('columnTraceView AI annotation band', () => {
   });
 });
 
-/** Lane for the column thread a click pins: the clicked column's trace cone — what it is derived from and what is derived from it — never a sibling input that merely shares an output with it. */
+/**
+ * Lane for the column thread a click pins: the clicked column's trace cone — what it is derived
+ * from and what is derived from it — never a sibling input that merely shares an output with it.
+ */
 describe('columnThread — directed trace cone', () => {
-  // SalesStaging.OrderQty -> vwConsolidatedSales.Qty and PriceMaster.ListPrice -> vwPriceList.UnitPrice,
-  // both feeding FactSalesReport.TotalRevenue through the spBuildSalesReport hop (ports Qty, UnitPrice, TotalRevenue).
+  // SalesStaging.OrderQty -> vwConsolidatedSales.Qty and PriceMaster.ListPrice ->
+  // vwPriceList.UnitPrice,
+  // both feeding FactSalesReport.TotalRevenue through the spBuildSalesReport hop (ports Qty,
+  // UnitPrice, TotalRevenue).
   const index = buildColumnThreadIndex(
     build(
       [

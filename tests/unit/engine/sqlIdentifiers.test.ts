@@ -1,4 +1,7 @@
-/** Identifier-normalization tests for `src/utils/sql.ts`: the delimiter strip and the qualified-name split must agree with T-SQL, where `]]` inside a bracketed name is one literal `]`. */
+/**
+ * Identifier-normalization tests for `src/utils/sql.ts`: the delimiter strip and the qualified-name
+ * split must agree with T-SQL, where `]]` inside a bracketed name is one literal `]`.
+ */
 import { describe, expect, it } from 'vitest';
 import { splitSqlName, stripBrackets } from '../../../src/utils/sql';
 import { sqlIdentifierComparisonKey } from '../../../src/engine/shared/sqlIdentifier';

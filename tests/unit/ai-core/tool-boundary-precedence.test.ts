@@ -84,7 +84,10 @@ it('keeps tool payloads in results and hop evidence while host logs contain meta
   expect(logs).toContain('code=invalid_input');
 });
 
-/** A rejected commit leaves the navigation state untouched: no queued work, visit, removal, column edge or scope change. */
+/**
+ * A rejected commit leaves the navigation state untouched: no queued work, visit, removal, column
+ * edge or scope change.
+ */
 const expectUncommitted = (
   before: ReturnType<NavigationEngine['toJSON']>,
   after: ReturnType<NavigationEngine['toJSON']>,

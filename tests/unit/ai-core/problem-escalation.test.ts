@@ -1,4 +1,7 @@
-/** One flat `{code, attempt, errors, resend}` problem per rejection, escalated over three corrections, then the hop terminates. */
+/**
+ * One flat `{code, attempt, errors, resend}` problem per rejection, escalated over three
+ * corrections, then the hop terminates.
+ */
 import { describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
 import { HumanMessage, ToolMessage } from '@langchain/core/messages';
@@ -56,7 +59,10 @@ function nativePort(parts: () => vscode.LanguageModelToolCallPart[]) {
   );
 }
 
-/** The real submit_findings handler, registry and instruction plan bound to the engine's current hop. */
+/**
+ * The real submit_findings handler, registry and instruction plan bound to the engine's current
+ * hop.
+ */
 function hopOf(session: AiSession, epoch: number, engine: NavigationEngine) {
   const model = session.model!;
   const services = {
@@ -130,7 +136,10 @@ function bbSession(
   return { session, epoch, engine };
 }
 
-/** A real BB hop at a view reading one table, driven through the real submit_findings handler and the dispatcher. */
+/**
+ * A real BB hop at a view reading one table, driven through the real submit_findings handler and
+ * the dispatcher.
+ */
 function bbHop() {
   const source = makeNode({
     id: '[dbo].[Source]',
@@ -154,7 +163,10 @@ function bbHop() {
   return { focus, source, ...hopOf(session, epoch, engine) };
 }
 
-/** Faults: `summary` required and missing; `badge_label` optional and too short; `questions.0.nodeId` not a served neighbor. */
+/**
+ * Faults: `summary` required and missing; `badge_label` optional and too short;
+ * `questions.0.nodeId` not a served neighbor.
+ */
 const faulty = (focus: string) => ({
   focus_node_id: focus,
   sections: { technical: 'Report selects Value from Source unchanged.' },
@@ -229,7 +241,8 @@ describe('Feedback stages through the dispatcher and the real submit_findings ha
       }
       const at = (path: string) =>
         shown(problem!).find((error) => error.path === path)!;
-      // Every fault in every feedback, each at its path with its code; a repeated call is also named a resend.
+      // Every fault in every feedback, each at its path with its code; a repeated call is also
+      // named a resend.
       expect(shown(problem!).map(({ path, code }) => ({ path, code }))).toEqual(
         [
           ...(stage > 1 ? [{ path: '', code: 'identical_resend' }] : []),
@@ -252,7 +265,8 @@ describe('Feedback stages through the dispatcher and the real submit_findings ha
       else
         for (const error of shown(problem!))
           expect(error).not.toHaveProperty('allowed');
-      // A fallback belongs only to an issue whose fact no structured field holds; text, a missing field and a neighbor decision get none at any stage.
+      // A fallback belongs only to an issue whose fact no structured field holds; text, a missing
+      // field and a neighbor decision get none at any stage.
       for (const error of problem!.errors)
         for (const issue of Object.values(ISSUES))
           if ('fallback' in issue)

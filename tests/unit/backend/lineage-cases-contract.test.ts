@@ -1,5 +1,12 @@
-// Owner: src/ai/sm/columnTracer.ts and smBase.ts served schemas; contract tests at the supplied-message boundary.
-/** Contract tests: the `tests/cases/lineage-cases.yaml` catalog shape and its column-flow rows (ids, columns, edges and rejection kinds per row), and what the model is served (the `out_col` enum, the procedure `out_node` requirement, the engine-qualified task endpoints, and the `questions`/`prune_neighbors` shape of a hop whose neighbors are all closed). Multi-hop runs live in lineage-cases-functional.test.ts. */
+// Owner: src/ai/sm/columnTracer.ts and smBase.ts served schemas; contract tests at the
+// supplied-message boundary.
+/**
+ * Contract tests: the `tests/cases/lineage-cases.yaml` catalog shape and its column-flow rows (ids,
+ * columns, edges and rejection kinds per row), and what the model is served (the `out_col` enum,
+ * the procedure `out_node` requirement, the engine-qualified task endpoints, and the
+ * `questions`/`prune_neighbors` shape of a hop whose neighbors are all closed). Multi-hop runs live
+ * in lineage-cases-functional.test.ts.
+ */
 import { validateToolCandidate } from '../../../src/ai/support/toolValidation';
 import { describe, expect, it } from 'vitest';
 import { submitFindingsSchemaForMode } from '../../../src/ai/tools/toolSchemas';
@@ -144,7 +151,8 @@ describe('out_col enum is the arriving columns', () => {
     expect(validateToolCandidate(schema, flow('X')).success).toBe(true);
     const bad = validateToolCandidate(schema, flow('Y'));
     expect(bad.success).toBe(false);
-    // The declared-but-not-arriving Y is refused at its own path, and the refusal lists exactly the arriving columns.
+    // The declared-but-not-arriving Y is refused at its own path, and the refusal lists exactly the
+    // arriving columns.
     expect(bad.success ? [] : bad.rejection.errors).toEqual([
       { path: 'column_flow.0.out_col', code: 'unknown_column', values: ['X'] },
     ]);
@@ -153,8 +161,10 @@ describe('out_col enum is the arriving columns', () => {
 
 /**
  * A hop must not serve an entry that nothing can
- * satisfy (the `z.never` / `{"not":{}}` id). The hop below has one neighbor, already visited: it can be neither questioned nor pruned.
- * Expected values are read off that rule, not off the producer: both lists take zero entries, each id stays a plain string, and an
+ * satisfy (the `z.never` / `{"not":{}}` id). The hop below has one neighbor, already visited: it
+ * can be neither questioned nor pruned.
+ * Expected values are read off that rule, not off the producer: both lists take zero entries, each
+ * id stays a plain string, and an
  * entry is refused once, as a size fault on the list itself.
  */
 describe('a hop whose only neighbor is closed serves satisfiable questions and prune_neighbors', () => {

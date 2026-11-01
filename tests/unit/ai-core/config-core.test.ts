@@ -18,7 +18,8 @@ describe('parseAiOutputTemplatesYaml (assets/aiOutputTemplates.yaml)', () => {
     );
   });
 
-  // Hand-written from the template contract; the loader's own key list is the subject, not the oracle.
+  // Hand-written from the template contract; the loader's own key list is the subject, not the
+  // oracle.
   const NON_EMPTY_KEYS = [
     'discovery_chat',
     'summary',

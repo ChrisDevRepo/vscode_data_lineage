@@ -1,4 +1,8 @@
-/** Pins the `dataLineageViz.maxNodes` contract: a selection at or below the limit keeps every object and edge; a selection over it is refused outright with the exact count, limit and message, never cut short; search still sees objects the canvas does not draw. */
+/**
+ * Pins the `dataLineageViz.maxNodes` contract: a selection at or below the limit keeps every object
+ * and edge; a selection over it is refused outright with the exact count, limit and message, never
+ * cut short; search still sees objects the canvas does not draw.
+ */
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import { extractDacpac } from '../../../src/engine/dacpacExtractor';

@@ -195,7 +195,8 @@ describe('buildExpandedSchemaViewGraph', () => {
   });
 
   it('bridges expanded objects to clusters and joins clusters by one counted edge per pair, never a self-loop', () => {
-    // ops→orders and orders→audit are bridges; audit⇄ops (two edges) and audit→ref are cluster pairs.
+    // ops→orders and orders→audit are bridges; audit⇄ops (two edges) and audit→ref are cluster
+    // pairs.
     expect(edgesOf(salesExpanded())).toEqual([
       '[sales].[customer]→[sales].[orders]',
       '[sales].[orders]→cluster:audit 1',

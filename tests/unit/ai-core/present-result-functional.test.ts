@@ -1,4 +1,7 @@
-/** Owns handlers/presentResult.ts functional CT coverage, origin closure and committed graph amendments. */
+/**
+ * Owns handlers/presentResult.ts functional CT coverage, origin closure and committed graph
+ * amendments.
+ */
 import { describe, expect, it, vi } from 'vitest';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import { buildGraphologyGraph } from '../../../src/engine/graphBuilder';
@@ -36,7 +39,10 @@ function completedWorld(model: DatabaseModel, resultGraph: ResultGraph) {
   return { session, services, deliverPreview };
 }
 
-/** A report call with the origin highlighted and one Sources section; `extra` overrides or adds fields. */
+/**
+ * A report call with the origin highlighted and one Sources section; `extra` overrides or adds
+ * fields.
+ */
 const sourcesReport = (
   origin: string,
   nodeIds: string[],

@@ -69,7 +69,11 @@ const lineageEngineTests = [
   'tests/unit/engine/traversal-edge-cases.test.ts',
 ];
 
-/** Deterministic contracts that stay on the gate: backend graph structure, malformed input, schema repair, secret redaction, cancellation, tool registration/dispatch, identifier boundaries, template structure, escaping, and the operator-runner secret boundary. Every other unit test file fails classification. */
+/** Deterministic contracts that stay on the gate: backend graph structure, malformed input, schema
+ * repair, secret redaction, cancellation, tool registration/dispatch, identifier boundaries,
+ * template structure, escaping, and the operator-runner secret boundary. Every other unit test file
+ * fails classification.
+ */
 export const runtimeContractTests = [
   'tests/unit/engine/settings-manifest.test.ts',
   'tests/unit/engine/logging-redaction.test.ts',

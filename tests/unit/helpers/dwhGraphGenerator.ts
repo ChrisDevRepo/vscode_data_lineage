@@ -1,4 +1,7 @@
-/** Seeded, deterministic generator of an asymmetric lineage graph — the single generator every large-graph test consumer builds on, tracked and gitignored alike. */
+/**
+ * Seeded, deterministic generator of an asymmetric lineage graph — the single generator every
+ * large-graph test consumer builds on, tracked and gitignored alike.
+ */
 
 import type {
   CatalogEntry,
@@ -93,7 +96,9 @@ const TYPE_PREFIX: Record<Exclude<ObjectType, 'external'>, string> = {
 interface DwhProfile {
   /** Exact schema count; default scales with `objectCount`. */
   schemaCount?: number;
-  /** Exact count of objects (procedures, taken from the tail) that carry an external file reference. */
+  /**
+   * Exact count of objects (procedures, taken from the tail) that carry an external file reference.
+   */
   externalRefCount?: number;
 }
 
@@ -101,7 +106,10 @@ interface DwhProfile {
 export interface GenerateDwhModelParams {
   /** Total count of real (tracked) objects — tables, views, procedures, functions. */
   objectCount: number;
-  /** Seed driving every random choice; same `(objectCount, seed, profile)` always yields the same model. */
+  /**
+   * Seed driving every random choice; same `(objectCount, seed, profile)` always yields the same
+   * model.
+   */
   seed: number;
   /** Asymmetry tuning; omit for the default profile. */
   profile?: DwhProfile;
@@ -124,7 +132,10 @@ interface GenObj {
   externalUrl?: string;
   isHub: boolean;
   isIsolated: boolean;
-  /** Loose 0-4 layer used only to bias edges toward a mostly-forward direction (see {@link generateEdges}). */
+  /**
+   * Loose 0-4 layer used only to bias edges toward a mostly-forward direction (see
+   * {@link generateEdges}).
+   */
   layer: number;
 }
 
@@ -227,7 +238,15 @@ const CROSS_SCHEMA_SHARE = 0.45;
 /** Extra partners per hub, independent of graph size. */
 const HUB_PARTNERS = 25;
 
-/** Directed edge set: roughly `round(objectCount * edgesPerNodeTarget)` edges from uniform random pairs, rejection-sampled (never filtering the full eligible pool — cheap at any N) toward a schema-crossing pair per `CROSS_SCHEMA_SHARE`, and — strictly, `source.layer <= target.layer` — toward the loose 0-4 layer order. Layer-monotonic edges keep the graph a near-DAG instead of densely cyclic: `dagre`'s default ranker (network-simplex) is cheap on a near-DAG and pathologically slow once feedback edges are common, so this is a performance property, not just a realism one. */
+/**
+ * Directed edge set: roughly `round(objectCount * edgesPerNodeTarget)` edges from uniform random
+ * pairs, rejection-sampled (never filtering the full eligible pool — cheap at any N) toward a
+ * schema-crossing pair per `CROSS_SCHEMA_SHARE`, and — strictly, `source.layer <= target.layer` —
+ * toward the loose 0-4 layer order. Layer-monotonic edges keep the graph a near-DAG instead of
+ * densely cyclic: `dagre`'s default ranker (network-simplex) is cheap on a near-DAG and
+ * pathologically slow once feedback edges are common, so this is a performance property, not just a
+ * realism one.
+ */
 function generateEdges(
   rng: Rng,
   eligible: GenObj[],
@@ -262,7 +281,11 @@ function generateEdges(
   return edges;
 }
 
-/** Bounded, N-independent extra in/out-degree for each designated hub, so a handful of objects read as clearly busier than average without their degree scaling with the graph size. Direction follows the same layer-monotonic rule as {@link generateEdges}, to stay a near-DAG. */
+/**
+ * Bounded, N-independent extra in/out-degree for each designated hub, so a handful of objects read
+ * as clearly busier than average without their degree scaling with the graph size. Direction
+ * follows the same layer-monotonic rule as {@link generateEdges}, to stay a near-DAG.
+ */
 function addHubEdges(
   rng: Rng,
   eligible: GenObj[],

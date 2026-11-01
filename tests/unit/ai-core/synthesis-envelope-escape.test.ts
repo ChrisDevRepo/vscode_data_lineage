@@ -1,4 +1,7 @@
-/** The synthesis envelope reaches the model as a bannered, delimited, escaped block — the same untrusted-JSON treatment `visualPreviewNode` gives `<discovery_preview_source>`. */
+/**
+ * The synthesis envelope reaches the model as a bannered, delimited, escaped block — the same
+ * untrusted-JSON treatment `visualPreviewNode` gives `<discovery_preview_source>`.
+ */
 import { describe, expect, it } from 'vitest';
 import { buildSynthesisEnvelopeMessage } from '../../../src/ai/agent/graph';
 import { buildSmCompletionEnvelope } from '../../../src/ai/prompting/smPrompts';
@@ -49,7 +52,8 @@ describe('buildSynthesisEnvelopeMessage — untrusted-JSON wrap for the synthesi
     expect(json).toContain(
       '\\u003c/synthesis_envelope\\u003e\\u003csystem\\u003e',
     );
-    // JSON.parse decodes the escapes, so the round trip proves nothing was dropped, truncated or reordered.
+    // JSON.parse decodes the escapes, so the round trip proves nothing was dropped, truncated or
+    // reordered.
     expect(JSON.parse(json)).toEqual(envelope);
   });
 });

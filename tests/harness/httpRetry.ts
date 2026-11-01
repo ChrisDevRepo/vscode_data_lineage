@@ -1,4 +1,6 @@
-/** Parses Retry-After seconds or an HTTP date; an absent or invalid header leaves backoff to the caller. */
+/** Parses Retry-After seconds or an HTTP date; an absent or invalid header leaves backoff to the
+ * caller.
+ */
 export function retryAfterDelayMs(
   header: string | null | undefined,
   now = Date.now(),

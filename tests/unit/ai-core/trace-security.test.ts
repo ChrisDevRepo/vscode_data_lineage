@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { sensitiveTraceReason } from '../../../src/ai/providers/traceSecurity';
 import type { WireRecord } from '../../../src/ai/observability/wireLog';
 
-/** Redaction shapes are asserted through the public refusal API rather than the patterns themselves, because the contract that matters is "this value never reaches a trace or a retry payload". */
+/**
+ * Redaction shapes are asserted through the public refusal API rather than the patterns themselves,
+ * because the contract that matters is "this value never reaches a trace or a retry payload".
+ */
 const REDACTED_VALUES: ReadonlyArray<readonly [string, string]> = [
   ['bearer token', 'Authorization: Bearer sk1F9mQpZ2xLbTnR4vHc0eWaYdJgKuS7'],
   ['sk- prefixed provider key', 'the key is sk-abcdef0123456789ABCDEF'],

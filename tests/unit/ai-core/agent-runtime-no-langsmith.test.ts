@@ -32,7 +32,8 @@ describe('AgentRuntime LangSmith egress boundary', () => {
   });
 
   it('fails closed before graph or transport when ambient tracing is enabled', async () => {
-    // Every timer the run schedules is flushed below, so delayed (batched) egress is observed without a sleep.
+    // Every timer the run schedules is flushed below, so delayed (batched) egress is observed
+    // without a sleep.
     vi.useFakeTimers();
     const fetchSpy = vi.fn(async () => {
       throw new Error('unexpected fetch');

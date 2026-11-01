@@ -1,4 +1,5 @@
-// Owns analyzeRemoval: pruning shares one fixed-leg policy across AI and GUI, including closed-anchor protection and cycles.
+// Owns analyzeRemoval: pruning shares one fixed-leg policy across AI and GUI, including
+// closed-anchor protection and cycles.
 import { describe, expect, it } from 'vitest';
 import { makeGraph } from '../helpers/modelFixtures';
 import {

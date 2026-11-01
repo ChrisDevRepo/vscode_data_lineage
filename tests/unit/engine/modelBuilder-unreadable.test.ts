@@ -1,4 +1,7 @@
-/** A module without a readable definition is loaded without edges and marked; the catalog cannot give the direction. */
+/**
+ * A module without a readable definition is loaded without edges and marked; the catalog cannot
+ * give the direction.
+ */
 import { beforeAll, describe, expect, it } from 'vitest';
 import { buildModel } from '../../../src/engine/modelBuilder';
 import { loadParseRules } from '../helpers/testUtils';

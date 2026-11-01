@@ -1,4 +1,7 @@
-/** Shortest path between two objects: the directed path, retried in reverse when the endpoints are given against the edges. */
+/**
+ * Shortest path between two objects: the directed path, retried in reverse when the endpoints are
+ * given against the edges.
+ */
 
 import { describe, expect, it } from 'vitest';
 import { computeShortestPath } from '../../../src/engine/graphBuilder';

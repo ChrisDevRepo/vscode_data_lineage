@@ -306,7 +306,9 @@ export function aiRunStatus(turns: readonly Record<string, unknown>[]): string {
   );
 }
 
-/** Checks one finished turn against its catalog row. Terminal status and the rejection ceiling apply to every turn; gate rounds apply to the first. Only measurable run facts are checked; answer content is not graded here.
+/** Checks one finished turn against its catalog row. Terminal status and the rejection ceiling
+ * apply to every turn; gate rounds apply to the first. Only measurable run facts are checked;
+ * answer content is not graded here.
  * @public Also checked by the wrapping runners' tests.
  */
 export function turnChecks(
@@ -417,13 +419,17 @@ export function turnChecks(
   return failures;
 }
 
-/** Extension points for a wrapping runner, for example one that compares or uploads captures; this runner uses none.
+/** Extension points for a wrapping runner, for example one that compares or uploads captures; this
+ * runner uses none.
  * @public
  */
 export interface HeadlessHooks {
-  /** Called after option parsing and before any service call; a throw is a configuration error (exit 4). */
+  /** Called after option parsing and before any service call; a throw is a configuration error
+   * (exit 4).
+   */
   readonly prepare?: (result: Record<string, unknown>) => void;
-  /** Called once before the first turn; its observer's fields are merged into each recorded turn. */
+  /** Called once before the first turn; its observer's fields are merged into each recorded turn.
+   */
   readonly observeRun?: (input: {
     readonly run: AiRun;
     readonly fixtureHash: string;

@@ -1,4 +1,5 @@
-/** Loads public DACPAC data and production parse rules/templates into a headless runtime session. */
+/** Loads public DACPAC data and production parse rules/templates into a headless runtime session.
+ */
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
@@ -36,7 +37,11 @@ export interface HarnessSessionOptions {
   readonly outputTemplatesPath?: string;
   /** The lane model's input window, in tokens. */
   readonly contextWindow: number;
-  /** Injection-probe payloads: appended to the stored DDL of the named node after {@link populateColumnStore} runs, so the hop loop's `store.getDdl` read (`src/ai/sm/smBase.ts`) returns the tampered body — the same channel `<hop_context>` carries to the model, behind the untrusted-content banner in `src/ai/agent/stagePrompts.ts`. */
+  /** Injection-probe payloads: appended to the stored DDL of the named node after
+   * {@link populateColumnStore} runs, so the hop loop's `store.getDdl` read (`src/ai/sm/smBase.ts`)
+   * returns the tampered body — the same channel `<hop_context>` carries to the model, behind the
+   * untrusted-content banner in `src/ai/agent/stagePrompts.ts`.
+   */
   readonly ddlOverrides?: ReadonlyArray<{
     readonly nodeId: string;
     readonly appendComment: string;
@@ -72,7 +77,8 @@ export async function loadHarnessParseRules(
   loadRules(parseParseRulesYaml(await readFile(path, 'utf8')));
 }
 
-/** Builds one fully loaded session: parse rules, dacpac model, column store, bare graph, templates. */
+/** Builds one fully loaded session: parse rules, dacpac model, column store, bare graph, templates.
+ */
 export async function createHarnessSession(
   options: HarnessSessionOptions,
 ): Promise<HarnessSession> {

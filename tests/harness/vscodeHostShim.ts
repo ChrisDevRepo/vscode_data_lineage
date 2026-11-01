@@ -2,7 +2,8 @@
 import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 
-/** Thrown when production code reaches a `vscode` member the headless harness does not implement. */
+/** Thrown when production code reaches a `vscode` member the headless harness does not implement.
+ */
 class HarnessShimError extends Error {
   public constructor(member: string) {
     super(
@@ -16,7 +17,8 @@ class HarnessShimError extends Error {
 
 let logSink: (line: string) => void = () => {};
 
-/** Routes shim-observed activity (notifications, ad-hoc output channels) into the run's `host.log`. */
+/** Routes shim-observed activity (notifications, ad-hoc output channels) into the run's `host.log`.
+ */
 export function setShimLogSink(sink: (line: string) => void): void {
   logSink = sink;
 }

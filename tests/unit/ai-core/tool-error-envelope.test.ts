@@ -1,4 +1,9 @@
-/** Deterministic production tool-error-envelope contract: the one rejection record, native Ajv issue mapping and the one renderer. Tests assert paths, issue codes, backend values and the stage; every rendered sentence is a table string (see rejection-render.test.ts). */
+/**
+ * Deterministic production tool-error-envelope contract: the one rejection
+ * record, native Ajv issue mapping and the one renderer. Tests assert paths,
+ * issue codes, backend values and the stage; every rendered sentence is a
+ * table string (see rejection-render.test.ts).
+ */
 import {
   ISSUES,
   makeRejection,

@@ -1,4 +1,7 @@
-/** Rejects malformed or unknown SQL references at their owning field; whole-list correction retains report content and controls. */
+/**
+ * Rejects malformed or unknown SQL references at their owning field; whole-list correction retains
+ * report content and controls.
+ */
 import { describe, expect, it, vi } from 'vitest';
 import { expandEvidenceRefs } from '../../../src/ai/tools/presentResult';
 import { AiSession } from '../../../src/ai/session/session';

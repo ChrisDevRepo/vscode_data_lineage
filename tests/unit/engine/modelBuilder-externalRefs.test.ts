@@ -1,4 +1,8 @@
-/** Virtual external nodes built by `modelBuilder` from SQL bodies: OPENROWSET and COPY INTO / BULK INSERT file references, three-part cross-database references, and the CETAS external-table target. */
+/**
+ * Virtual external nodes built by `modelBuilder` from SQL bodies: OPENROWSET and COPY INTO / BULK
+ * INSERT file references, three-part cross-database references, and the CETAS external-table
+ * target.
+ */
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import { buildModel } from '../../../src/engine/modelBuilder';
@@ -17,7 +21,10 @@ const table = (fullName: string): BuildObject =>
 
 type Built = ReturnType<typeof buildModel>;
 
-/** Names a node by what the SQL says: a file by its URL, a database reference by its database and object, a local object by its id. Virtual ids are hashes, so tests never spell them. */
+/**
+ * Names a node by what the SQL says: a file by its URL, a database reference by its database and
+ * object, a local object by its id. Virtual ids are hashes, so tests never spell them.
+ */
 const label = (built: Built, id: string): string => {
   const node = built.nodes.find((candidate) => candidate.id === id);
   if (node?.externalType === 'file') return `file ${node.externalUrl}`;

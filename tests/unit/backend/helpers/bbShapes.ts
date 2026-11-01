@@ -35,7 +35,10 @@ export interface BbWorld {
   leads: () => string[];
 }
 
-/** Builds a model from `types` and `edges` (`[source, target]`: target reads source, or a procedure source writes target) and starts a BB exploration at `origin`. */
+/**
+ * Builds a model from `types` and `edges` (`[source, target]`: target reads source, or a procedure
+ * source writes target) and starts a BB exploration at `origin`.
+ */
 export function world(
   types: Record<string, ObjectType>,
   edges: Array<[string, string]>,
@@ -125,7 +128,10 @@ function submit(
   });
 }
 
-/** Runs the hop loop to its end with `script` per focus and returns the dispatch order; throws on a rejected hop. */
+/**
+ * Runs the hop loop to its end with `script` per focus and returns the dispatch order; throws on a
+ * rejected hop.
+ */
 export function drain(
   engine: NavigationEngine,
   graph: BbWorld['graph'],
@@ -197,7 +203,9 @@ export function drain(
   throw new Error('hop loop did not end');
 }
 
-/** The delivered object graph: sorted node ids, `source>target` edges and the pruned ids on record. */
+/**
+ * The delivered object graph: sorted node ids, `source>target` edges and the pruned ids on record.
+ */
 export function delivered(engine: NavigationEngine): {
   nodes: string[];
   edges: string[];
@@ -214,7 +222,10 @@ export function delivered(engine: NavigationEngine): {
   };
 }
 
-/** Connectivity invariant over delivered edges, independent of the engine's own walks. Missing nodes and edges require separate comparisons against fixture expectations. */
+/**
+ * Connectivity invariant over delivered edges, independent of the engine's own walks. Missing nodes
+ * and edges require separate comparisons against fixture expectations.
+ */
 export function withoutDirectedPath(
   engine: NavigationEngine,
   origin: string,

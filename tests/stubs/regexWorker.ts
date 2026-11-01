@@ -1,4 +1,6 @@
-/** Executes the real compiled search worker in Vitest, without depending on a prior extension build. */
+/** Executes the real compiled search worker in Vitest, without depending on a prior extension
+ * build.
+ */
 import { afterAll, vi } from 'vitest';
 
 vi.mock('node:worker_threads', async (importOriginal) => {

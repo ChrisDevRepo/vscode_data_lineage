@@ -1,4 +1,7 @@
-/** Shared fixtures and catalog rows for the lineage-cases contract and functional suites (tests/cases/lineage-cases.yaml). */
+/**
+ * Shared fixtures and catalog rows for the lineage-cases contract and functional suites
+ * (tests/cases/lineage-cases.yaml).
+ */
 import { createRequire } from 'node:module';
 import { expect } from 'vitest';
 import { ColumnTracer } from '../../../../src/ai/sm/columnTracer';

@@ -1,4 +1,7 @@
-/** Shared test utilities for all unit test files. NOT a test file itself — imported by tests/unit/*.test.ts files. */
+/**
+ * Shared test utilities for all unit test files. NOT a test file itself — imported by
+ * tests/unit/*.test.ts files.
+ */
 
 import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
@@ -27,7 +30,10 @@ export function rootPath(...segments: string[]): string {
 
 // ─── End-to-end dacpac helpers ────────────────────────────────────────────────
 
-/** Full end-to-end: dacpac → DatabaseModel (Node.js, no VS Code needed). Uses the AI dacpac (superset of AdventureWorks + [ai] schema). */
+/**
+ * Full end-to-end: dacpac → DatabaseModel (Node.js, no VS Code needed). Uses the AI dacpac
+ * (superset of AdventureWorks + [ai] schema).
+ */
 export async function loadAdventureWorksModel(): Promise<DatabaseModel> {
   loadParseRules();
   const buffer = readFileSync(testPath('AdventureWorks2025_AI.dacpac'));

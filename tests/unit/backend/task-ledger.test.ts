@@ -1,5 +1,10 @@
 // Owner: src/ai/sm/taskLedger.ts; component tests of the task ledger and its agenda hand-off.
-/** Component tests: TaskLedger task identity (SQL literal questions, qualified source references, inherited versus assigned tasks, case sensitivity) and ownership of the references it stores, with the AgendaManager it feeds. Moved out of lineage-cases-functional.test.ts, which runs whole navigations. */
+/**
+ * Component tests: TaskLedger task identity (SQL literal questions, qualified source references,
+ * inherited versus assigned tasks, case sensitivity) and ownership of the references it stores,
+ * with the AgendaManager it feeds. Moved out of lineage-cases-functional.test.ts, which runs whole
+ * navigations.
+ */
 import { describe, expect, it } from 'vitest';
 import { AgendaManager } from '../../../src/ai/sm/agendaManager';
 import { TaskLedger } from '../../../src/ai/sm/taskLedger';

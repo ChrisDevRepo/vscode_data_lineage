@@ -1,4 +1,7 @@
-/** Saved project store boundary: workspace state is untrusted, so malformed input yields an empty store and malformed project entries are dropped. */
+/**
+ * Saved project store boundary: workspace state is untrusted, so malformed input yields an empty
+ * store and malformed project entries are dropped.
+ */
 import { describe, it, expect } from 'vitest';
 import {
   createProject,

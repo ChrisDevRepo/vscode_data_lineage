@@ -158,7 +158,9 @@ for (const step of STEPS) {
   });
 }
 
-/** Machine-readable verdicts: step outcomes plus test counts from this run's unit reports (null if one is missing). */
+/** Machine-readable verdicts: step outcomes plus test counts from this run's unit reports (null if
+ * one is missing).
+ */
 const totals = unitReports.every((file) => existsSync(file))
   ? unitReports
       .map((file) => JSON.parse(readFileSync(file, 'utf8')))

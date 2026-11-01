@@ -19,7 +19,10 @@ interface OpenAiToolCall {
   readonly id: string;
   readonly type: 'function';
   readonly function: { readonly name: string; readonly arguments: string };
-  /** Provider-specific payload sitting beside the call, e.g. Gemini 3's `thought_signature` under `google`. Opaque: never read, only carried from a response back onto the same call id when that assistant turn is replayed. Present only on lanes that sent one. */
+  /** Provider-specific payload sitting beside the call, e.g. Gemini 3's `thought_signature` under
+   * `google`. Opaque: never read, only carried from a response back onto the same call id when that
+   * assistant turn is replayed. Present only on lanes that sent one.
+   */
   readonly extra_content?: Record<string, unknown>;
 }
 
@@ -147,7 +150,9 @@ function messageText(content: MessageContent): string {
   return text;
 }
 
-/** One opaque Responses reasoning item with the call it preceded in `output` (`before` is that `call_id`; absent when text or nothing followed). */
+/** One opaque Responses reasoning item with the call it preceded in `output` (`before` is that
+ * `call_id`; absent when text or nothing followed).
+ */
 export interface ResponsesReasoning {
   readonly before?: string;
   readonly item: {
@@ -172,7 +177,8 @@ export type ResponsesInputItem =
       readonly output: string;
     };
 
-/** Re-renders projected chat messages as Responses `input` items; call ids pair calls with outputs. */
+/** Re-renders projected chat messages as Responses `input` items; call ids pair calls with outputs.
+ */
 export function toResponsesInput(
   messages: readonly OpenAiChatMessage[],
 ): ResponsesInputItem[] {
@@ -293,11 +299,15 @@ export function suspectsToolCallAsText(text: string): boolean {
 /** A fenced ```json (or bare ```) code block wrapping exactly one JSON value. */
 const FENCED_JSON_BLOCK = /```(?:json)?\s*\n([\s\S]*?)\n```/;
 
-/** One `<parameter=name>` pair of the Hermes/XML tool-call envelope; the closing tag is the bare `</parameter>`. */
+/** One `<parameter=name>` pair of the Hermes/XML tool-call envelope; the closing tag is the bare
+ * `</parameter>`.
+ */
 const XML_TOOL_PARAMETER =
   /<parameter=([A-Za-z0-9_]+)>\n?([\s\S]*?)\n?<\/parameter>/g;
 
-/** Reads a text-only generation as the record a tool call would carry — fenced JSON, the whole body as JSON, or the Hermes/XML `<parameter=…>` envelope — without judging it against any schema. */
+/** Reads a text-only generation as the record a tool call would carry — fenced JSON, the whole body
+ * as JSON, or the Hermes/XML `<parameter=…>` envelope — without judging it against any schema.
+ */
 function readProseToolCandidate(text: string): Record<string, unknown> | null {
   const match = FENCED_JSON_BLOCK.exec(text);
   let candidate: unknown;

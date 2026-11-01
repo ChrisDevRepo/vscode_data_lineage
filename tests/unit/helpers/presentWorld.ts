@@ -5,7 +5,10 @@ import { executePresentResult } from '../../../src/ai/tools/handlers/presentResu
 import type { ToolServices } from '../../../src/ai/tools/handlers/toolServices';
 import { makeGraph, makeIndexedModel, makeNode } from './modelFixtures';
 
-/** A session holding a two-node result graph (plus an optional in-scope third object), and `send` to drive the production `executePresentResult` handler against it. */
+/**
+ * A session holding a two-node result graph (plus an optional in-scope third object), and `send` to
+ * drive the production `executePresentResult` handler against it.
+ */
 export function draftWorld(
   options: { inScope?: boolean; synthesis?: boolean } = {},
 ) {

@@ -8,7 +8,8 @@ import { loadTestEnv } from './load-test-env.mjs';
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const require = createRequire(import.meta.url);
 
-/** Compiles the harness into out/test-headless and serves `vscode` from its shim; returns the compiled cli module.
+/** Compiles the harness into out/test-headless and serves `vscode` from its shim; returns the
+ * compiled cli module.
  * @public Also used by wrapping runners that add evidence through the cli hooks.
  */
 export function loadHarness() {

@@ -1,6 +1,9 @@
 import { validateToolCandidate } from '../../../src/ai/support/toolValidation';
 // Owner: src/ai/sm/columnTracer.ts and tools/toolSchemas.ts; qualified function task contracts.
-/** Caller provenance is offered only on eligible neighboring functions; ordinary questions remain unchanged. */
+/**
+ * Caller provenance is offered only on eligible neighboring functions; ordinary questions remain
+ * unchanged.
+ */
 import Ajv from 'ajv/dist/2020';
 import { describe, expect, it } from 'vitest';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';

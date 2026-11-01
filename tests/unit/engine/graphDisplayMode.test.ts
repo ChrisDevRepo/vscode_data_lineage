@@ -1,4 +1,7 @@
-/** Graph display mode: initial mode, Schema View versus Object View by object count, and the render-limit fallback notice. */
+/**
+ * Graph display mode: initial mode, Schema View versus Object View by object count, and the
+ * render-limit fallback notice.
+ */
 
 import { describe, expect, it } from 'vitest';
 import {

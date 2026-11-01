@@ -1,4 +1,9 @@
-/** Owns synthetic traceNodeWithLevels membership, depth and edge contracts, plus the `bfsReachable` and `findShortestPathOrdered` cases; `directed-removal-policy.test.ts` owns `analyzeRemoval`. The graph shapes stress termination and dedup (cycles, diamonds, missing origins, depth caps): a regression that revisited a node would hang the extension rather than fail a test. */
+/**
+ * Owns synthetic traceNodeWithLevels membership, depth and edge contracts, plus the `bfsReachable`
+ * and `findShortestPathOrdered` cases; `directed-removal-policy.test.ts` owns `analyzeRemoval`. The
+ * graph shapes stress termination and dedup (cycles, diamonds, missing origins, depth caps): a
+ * regression that revisited a node would hang the extension rather than fail a test.
+ */
 
 import { describe, expect, it } from 'vitest';
 import { traceNodeWithLevels } from '../../../src/engine/graphBuilder';

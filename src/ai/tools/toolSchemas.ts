@@ -1000,7 +1000,8 @@ function finalizeSubmitFindingsSchema(
             .describe(schema.shape.sections.description ?? ''),
         })
         .strict()
-    : // Composition already supplied held values; archived sections may stay omitted, but every committed finding needs its summary.
+    : // Composition already supplied held values; archived sections may stay omitted, but every
+      // committed finding needs its summary.
       schema.safeExtend({
         summary: schema.shape.summary
           .unwrap()

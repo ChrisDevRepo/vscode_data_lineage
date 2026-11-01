@@ -1,4 +1,7 @@
-/** Dacpac extraction: declared objects, edges, constraints, platform, two-phase schema selection and import errors. */
+/**
+ * Dacpac extraction: declared objects, edges, constraints, platform, two-phase schema selection and
+ * import errors.
+ */
 
 import { readFileSync } from 'fs';
 import JSZip from 'jszip';

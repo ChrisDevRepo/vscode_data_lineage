@@ -1,4 +1,8 @@
-/** Owns graph construction, layout failures and annotation spacing. Synthetic trace membership/depth contracts live in traversal-edge-cases.test.ts; the SDK-style DACPAC test here retains extraction-to-trace integrity coverage. */
+/**
+ * Owns graph construction, layout failures and annotation spacing. Synthetic trace membership/depth
+ * contracts live in traversal-edge-cases.test.ts; the SDK-style DACPAC test here retains
+ * extraction-to-trace integrity coverage.
+ */
 
 import { readFileSync } from 'fs';
 import dagre from '@dagrejs/dagre';
@@ -145,7 +149,10 @@ describe('dagreLayout — AI badge/footnote band', () => {
     });
   }
 
-  /** Vertical space between the two nodes' real boxes, independent of which one dagre stacked on top. */
+  /**
+   * Vertical space between the two nodes' real boxes, independent of which one dagre stacked on
+   * top.
+   */
   function realGap(positions: Map<string, { x: number; y: number }>): number {
     const a = positions.get('a')!;
     const b = positions.get('b')!;

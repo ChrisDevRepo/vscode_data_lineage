@@ -8,14 +8,20 @@ import type {
   SchemaInfo,
 } from '../../../src/engine/types';
 
-/** Build a LineageNode fixture. `fullName` defaults to `id` — these synthetic graphs use flat, already-qualified ids for both — unless explicitly overridden. */
+/**
+ * Build a LineageNode fixture. `fullName` defaults to `id` — these synthetic graphs use flat,
+ * already-qualified ids for both — unless explicitly overridden.
+ */
 export function makeNode(
   node: Omit<LineageNode, 'fullName'> & Partial<Pick<LineageNode, 'fullName'>>,
 ): LineageNode {
   return { fullName: node.id, ...node };
 }
 
-/** Build a `LineageEdge[]` fixture from `[source, target]` pairs. Every synthetic edge is tagged `'body'`; callers supply explicit execution edges when testing calls. */
+/**
+ * Build a `LineageEdge[]` fixture from `[source, target]` pairs. Every synthetic edge is tagged
+ * `'body'`; callers supply explicit execution edges when testing calls.
+ */
 function makeEdges(
   pairs: ReadonlyArray<readonly [string, string]>,
 ): LineageEdge[] {
@@ -30,7 +36,10 @@ const ZERO_TYPE_COUNTS: Record<ObjectType, number> = {
   external: 0,
 };
 
-/** Build a minimal `SchemaInfo[]` fixture from bare schema names. `nodeCount`/`types` default to zero; callers fill them when testing schema counts. */
+/**
+ * Build a minimal `SchemaInfo[]` fixture from bare schema names. `nodeCount`/`types` default to
+ * zero; callers fill them when testing schema counts.
+ */
 function makeSchemas(names: ReadonlyArray<string>): SchemaInfo[] {
   return names.map((name) => ({
     name,
@@ -39,7 +48,10 @@ function makeSchemas(names: ReadonlyArray<string>): SchemaInfo[] {
   }));
 }
 
-/** Build a full `DatabaseModel` fixture from nodes + `[source, target]` edge pairs + schema names. `catalog`/`neighborIndex` default to empty (see module doc). */
+/**
+ * Build a full `DatabaseModel` fixture from nodes + `[source, target]` edge pairs + schema names.
+ * `catalog`/`neighborIndex` default to empty (see module doc).
+ */
 export function makeModel(
   nodes: LineageNode[],
   edgePairs: ReadonlyArray<readonly [string, string]>,

@@ -106,7 +106,9 @@ function buildProviderRequest(request, config) {
   };
 }
 
-/** The headless port's Responses codec (`responsesRequestBody`, `readResponse`), passed in by the caller; this file keeps no second Responses implementation. */
+/** The headless port's Responses codec (`responsesRequestBody`, `readResponse`), passed in by the
+ * caller; this file keeps no second Responses implementation.
+ */
 function responsesWire(config) {
   if (!config.responsesWire)
     throw new Error('A Responses endpoint needs the harness Responses wire.');

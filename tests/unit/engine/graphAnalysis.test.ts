@@ -491,7 +491,10 @@ const CONFIG: AnalysisConfig = {
   longestPathMinNodes: 2,
 };
 
-/** One hub (`H`, degree 4), one 2-node island (`I1`→`I2`), one orphan (`O`), one cycle (`C1`→`C2`→`C1`) and a chain long enough for the longest-path analysis. */
+/**
+ * One hub (`H`, degree 4), one 2-node island (`I1`→`I2`), one orphan (`O`), one cycle
+ * (`C1`→`C2`→`C1`) and a chain long enough for the longest-path analysis.
+ */
 function mixedGraph(): Graph {
   return makeGraph(
     [

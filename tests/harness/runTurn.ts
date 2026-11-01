@@ -1,4 +1,6 @@
-/** Runs the production runtime with a simulated gate policy and writes ignored diagnostic artifacts. */
+/** Runs the production runtime with a simulated gate policy and writes ignored diagnostic
+ * artifacts.
+ */
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -157,7 +159,8 @@ export interface HarnessTurnOptions {
   readonly runDir: string;
   readonly logger: HeadlessLogChannel;
   readonly requestId?: string;
-  /** Ordered consent policies; a conditional Change reuses its approval row for the revised gate. */
+  /** Ordered consent policies; a conditional Change reuses its approval row for the revised gate.
+   */
   readonly gate?: readonly GateRoundPolicy[];
   /** Declared test-case lens/border; a reference is diagnostic only. */
   readonly requiredApproval?: Partial<ApprovalWorkload>;
@@ -178,7 +181,9 @@ export interface HarnessGateDecision {
   readonly decision: 'approve' | 'deny' | 'refine';
   /** The refine instruction sent, present only when `decision` is `'refine'`. */
   readonly instruction?: string;
-  /** Case expectation evaluated on this proposal. A configured mismatch requests Change once; a remaining mismatch stays recorded when approval continues. */
+  /** Case expectation evaluated on this proposal. A configured mismatch requests Change once; a
+   * remaining mismatch stays recorded when approval continues.
+   */
   readonly expectation?: { readonly expr: string; readonly ok: boolean };
   readonly requiredApproval?: {
     readonly expected: Partial<ApprovalWorkload>;
@@ -212,7 +217,8 @@ function writeArtifact(
   artifacts[name] = path;
 }
 
-/** Executes one turn and dumps `sm-state.json`, `answer.md`, `present-result.json`, `hop-log.json`. */
+/** Executes one turn and dumps `sm-state.json`, `answer.md`, `present-result.json`, `hop-log.json`.
+ */
 export async function runHarnessTurn(
   options: HarnessTurnOptions,
 ): Promise<HarnessTurnResult> {

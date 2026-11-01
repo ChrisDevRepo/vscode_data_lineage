@@ -1,5 +1,9 @@
-// Owner: src/ai/sm/smBase.ts and engine/graphGuards.ts; BB navigation and prune functional contracts.
-/** Object-level (BB) pruning: a prune that would disconnect analysis from the origin is rejected, and an object another unpruned route reaches stays. */
+// Owner: src/ai/sm/smBase.ts and engine/graphGuards.ts; BB navigation and prune functional
+// contracts.
+/**
+ * Object-level (BB) pruning: a prune that would disconnect analysis from the origin is rejected,
+ * and an object another unpruned route reaches stays.
+ */
 import { describe, expect, it } from 'vitest';
 import {
   delivered,
@@ -18,7 +22,8 @@ const v = (...ids: string[]): Record<string, ObjectType> =>
 describe('BB lineage: a prune without support is rejected at submission', () => {
   // Both sides open. d reads the origin's downstream table and is dispatched before s, the origin's
   // upstream source; d routes u, which lies upstream of the origin only through s. A prune of s by
-  // d would disconnect u, so d's submission is rejected and nothing is enqueued for s on its behalf.
+  // d would disconnect u, so d's submission is rejected and nothing is enqueued for s on its
+  // behalf.
   const types: Record<string, ObjectType> = {
     o: 'view',
     t: 'table',
@@ -58,7 +63,8 @@ describe('BB lineage: a prune without support is rejected at submission', () => 
 describe('BB lineage: a prune is plain reachability', () => {
   // Cycle o -> x -> s -> o, both directions. The origin prunes x on its downstream side, but s, the
   // origin's upstream neighbour, routes x on the other side. The unpruned path o <- s <- x still
-  // reaches x, so x stays and gets its hop: no sender's vote removes an object another route reaches.
+  // reaches x, so x stays and gets its hop: no sender's vote removes an object another route
+  // reaches.
   it('an object another unpruned route reaches stays although one side pruned it', () => {
     const w = world(
       v('o', 's', 'x'),

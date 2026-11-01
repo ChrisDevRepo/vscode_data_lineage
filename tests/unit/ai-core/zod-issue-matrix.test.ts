@@ -1,5 +1,9 @@
-// Owner: src/ai/support/toolErrorEnvelope.ts with real tools/toolSchemas.ts; rejection diagnostic contracts.
-/** Real canonical tool schemas preserve each fault path, issue code and metadata values. Messages belong to the issue-code table. */
+// Owner: src/ai/support/toolErrorEnvelope.ts with real tools/toolSchemas.ts; rejection diagnostic
+// contracts.
+/**
+ * Real canonical tool schemas preserve each fault path, issue code and metadata values. Messages
+ * belong to the issue-code table.
+ */
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { validateToolCandidate } from '../../../src/ai/support/toolValidation';

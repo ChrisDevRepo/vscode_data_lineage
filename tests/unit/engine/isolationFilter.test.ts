@@ -1,4 +1,7 @@
-/** Pins `applyIsolationFilter` (Hide Isolated Nodes): flag on drops every degree-zero node and any dangling edge; flag off passes the model through untouched. */
+/**
+ * Pins `applyIsolationFilter` (Hide Isolated Nodes): flag on drops every degree-zero node and any
+ * dangling edge; flag off passes the model through untouched.
+ */
 
 import { describe, it, expect } from 'vitest';
 import { applyIsolationFilter } from '../../../src/engine/modelFilters';

@@ -1,4 +1,7 @@
-/** Owns presentResult.ts coverage APIs: highlights cover bare nodes; only sections render detail slots. */
+/**
+ * Owns presentResult.ts coverage APIs: highlights cover bare nodes; only sections render detail
+ * slots.
+ */
 import { assert, describe, expect, it } from 'vitest';
 import {
   findBareNonPrunedNodes,

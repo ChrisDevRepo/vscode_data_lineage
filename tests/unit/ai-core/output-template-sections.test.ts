@@ -129,7 +129,8 @@ describe('readAiOutputSections', () => {
   );
 });
 
-// Static contract check: keep the call unexecuted; the tests typecheck fails if sections becomes optional.
+// Static contract check: keep the call unexecuted; the tests typecheck fails if sections becomes
+// optional.
 void (() => {
   // @ts-expect-error -- sections is required
   resolveStagePrompt(builtInTemplates, 'synthesis', 'both', 5, false, {

@@ -1,4 +1,7 @@
-/** Canonical CI/CS identities survive discovery, focus-template routing, recall and presentation repair. */
+/**
+ * Canonical CI/CS identities survive discovery, focus-template routing, recall and presentation
+ * repair.
+ */
 import { describe, expect, it } from 'vitest';
 import { draftWorld } from '../helpers/presentWorld';
 import { renderProblem } from '../../../src/ai/support/toolErrorEnvelope';

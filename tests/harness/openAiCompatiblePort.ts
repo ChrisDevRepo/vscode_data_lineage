@@ -91,9 +91,14 @@ interface OpenAiRequestTuning {
 export interface OpenAiCompatiblePortConfig {
   /** API root including the version prefix, e.g. `https://api.fireworks.ai/inference/v1`. */
   readonly baseUrl: string;
-  /** Request wire: `chat_completions` (default) or the OpenAI Responses API (`/v1/responses`), which reasoning models need to combine function tools with reasoning effort. Same port, same decode, normalize and trace path for both. */
+  /** Request wire: `chat_completions` (default) or the OpenAI Responses API (`/v1/responses`),
+   * which reasoning models need to combine function tools with reasoning effort. Same port, same
+   * decode, normalize and trace path for both.
+   */
   readonly wire?: 'chat_completions' | 'responses';
-  /** Complete request URL, replacing `${baseUrl}/chat/completions` when set. Needed for an endpoint that `baseUrl` cannot express, such as an Azure deployment URL with an `api-version` query. */
+  /** Complete request URL, replacing `${baseUrl}/chat/completions` when set. Needed for an endpoint
+   * that `baseUrl` cannot express, such as an Azure deployment URL with an `api-version` query.
+   */
   readonly chatCompletionsUrl?: string;
   readonly model: string;
   /** Sent only in the configured authentication header; never logged or traced. */
@@ -154,7 +159,9 @@ const TRANSIENT_TRANSPORT_ERROR_CODES = new Set([
   'ECONNREFUSED',
   'ENOTFOUND',
 ]);
-/** Response headers a failed request's verbose trace keeps: rate-limit state and the provider's request id, which a provider's support needs to find the request. None carries a credential. */
+/** Response headers a failed request's verbose trace keeps: rate-limit state and the provider's
+ * request id, which a provider's support needs to find the request. None carries a credential.
+ */
 const DIAGNOSTIC_RESPONSE_HEADERS = [
   'retry-after',
   'x-request-id',
@@ -184,7 +191,8 @@ const TRANSIENT_TRANSPORT_HTTP_STATUSES = new Set([429, 502, 503, 504]);
 const MAX_TRANSPORT_ATTEMPTS = 3;
 const TRANSPORT_RETRY_BASE_DELAY_MS = 500;
 const TRANSPORT_RETRY_MAX_DELAY_MS = 5_000;
-/** Full jitter fraction added on top of the exponential base, avoiding synchronized retry storms. */
+/** Full jitter fraction added on top of the exponential base, avoiding synchronized retry storms.
+ */
 const TRANSPORT_RETRY_JITTER_FRACTION = 0.25;
 
 /** The error code a connection-level `fetch` rejection carries, on itself or on `.cause`. */
@@ -204,7 +212,11 @@ function errorCode(error: unknown): string | undefined {
 }
 
 /** Bounded exponential backoff with full jitter, capped at {@link TRANSPORT_RETRY_MAX_DELAY_MS}. */
-/** The transient status of an upstream failure delivered inside HTTP 200: `choices[0].finish_reason` is `"error"`, `choices[0].error.code` is in {@link TRANSIENT_TRANSPORT_HTTP_STATUSES}, and the choice carries no text and no tool call. A choice with any model output is never reported, so a retry cannot replace a measured answer. */
+/** The transient status of an upstream failure delivered inside HTTP 200:
+ * `choices[0].finish_reason` is `"error"`, `choices[0].error.code` is in
+ * {@link TRANSIENT_TRANSPORT_HTTP_STATUSES}, and the choice carries no text and no tool call. A
+ * choice with any model output is never reported, so a retry cannot replace a measured answer.
+ */
 function transientEnvelopeStatus(body: unknown): number | undefined {
   const choices = asRecord(body)?.choices;
   const choice = asRecord(Array.isArray(choices) ? choices[0] : undefined);
@@ -287,16 +299,29 @@ export class OpenAiCompatiblePort implements ModelPort {
   /** Every completed generation, in call order — the run summary's measurement rows. */
   public readonly generations: OpenAiGenerationSummary[] = [];
 
-  /** Turn-scoped opaque reasoning cache, keyed by every tool-call id the generation emitted and by its text. Port-owned so the provider-specific field never reaches graph history. */
+  /** Turn-scoped opaque reasoning cache, keyed by every tool-call id the generation emitted and by
+   * its text. Port-owned so the provider-specific field never reaches graph history.
+   */
   private readonly reasoningDetails = new Map<string, readonly unknown[]>();
 
-  /** Per-call `extra_content` cache, keyed by call id. Port-owned for the same reason as {@link reasoningDetails}: a LangChain `ToolCall` is `{id, name, args, type}` and has nowhere to carry a provider extra, so it is kept beside the message rather than inside it. Instance-scoped, so it lives no longer than the port — one run's captured signature never reaches another run. */
+  /** Per-call `extra_content` cache, keyed by call id. Port-owned for the same reason as
+   * {@link reasoningDetails}: a LangChain `ToolCall` is `{id, name, args, type}` and has nowhere to
+   * carry a provider extra, so it is kept beside the message rather than inside it.
+   * Instance-scoped, so it lives no longer than the port — one run's captured signature never
+   * reaches another run.
+   */
   private readonly toolExtraContent = new Map<
     string,
     Record<string, unknown>
   >();
 
-  /** Per-turn `extra_content` fallback, keyed by every tool-call id one response emitted, holding the FIRST `extra_content` that response carried. A provider that signs only the first call of a parallel tool-call group leaves its siblings with none of their own; when such a sibling is replayed alone, the request still needs a signature for that assistant turn or the provider answers HTTP 400. Populated only for ids that arrived together in one {@link readCompletion} call, so a lookup can never cross into a different turn. */
+  /** Per-turn `extra_content` fallback, keyed by every tool-call id one response emitted, holding
+   * the FIRST `extra_content` that response carried. A provider that signs only the first call of a
+   * parallel tool-call group leaves its siblings with none of their own; when such a sibling is
+   * replayed alone, the request still needs a signature for that assistant turn or the provider
+   * answers HTTP 400. Populated only for ids that arrived together in one {@link readCompletion}
+   * call, so a lookup can never cross into a different turn.
+   */
   private readonly toolExtraContentTurn = new Map<
     string,
     Record<string, unknown>
@@ -305,7 +330,8 @@ export class OpenAiCompatiblePort implements ModelPort {
   private readonly fetchImpl: FetchLike;
   private closeTransport?: () => Promise<void>;
 
-  /** Close only the transport this port owns; injected fetch implementations remain caller-owned. */
+  /** Close only the transport this port owns; injected fetch implementations remain caller-owned.
+   */
   public async close(): Promise<void> {
     await this.closeTransport?.();
   }
@@ -338,12 +364,16 @@ export class OpenAiCompatiblePort implements ModelPort {
     );
   }
 
-  /** {@inheritDoc SingleGenerationModelPort.getNumTokens} — no live model to ask off the VS Code host, so this lane keeps LangChain's own chars/4 approximation ({@link estimateTokens}) rather than a second counter implementation. */
+  /** {@inheritDoc SingleGenerationModelPort.getNumTokens} — no live model to ask off the VS Code
+   * host, so this lane keeps LangChain's own chars/4 approximation ({@link estimateTokens}) rather
+   * than a second counter implementation.
+   */
   public async getNumTokens(content: MessageContent): Promise<number> {
     return estimateTokens(messageContentToText(content).length);
   }
 
-  /** Executes one tool-capable generation and validates emitted calls against the supplied tools. */
+  /** Executes one tool-capable generation and validates emitted calls against the supplied tools.
+   */
   public async generateToolTurn(
     input: ToolGenerationInput,
   ): Promise<ToolGenerationResult> {
@@ -499,7 +529,8 @@ export class OpenAiCompatiblePort implements ModelPort {
       .trim();
   }
 
-  /** Performs the one provider request behind every entry point and records what crossed the wire. */
+  /** Performs the one provider request behind every entry point and records what crossed the wire.
+   */
   private async collectGeneration(
     history: readonly BaseMessage[],
     system: string | undefined,
@@ -840,7 +871,8 @@ export class OpenAiCompatiblePort implements ModelPort {
           }
         } else {
           if (error instanceof ModelPortError) throw error;
-          // The thrown error and its causes reach callers' own diagnostics, so each message is cleaned at its source.
+          // The thrown error and its causes reach callers' own diagnostics, so each message is
+          // cleaned at its source.
           for (
             let link: unknown = error;
             link instanceof Error;
@@ -863,7 +895,9 @@ export class OpenAiCompatiblePort implements ModelPort {
     }
   }
 
-  /** Removes the configured literal key and `redact` values, even when a provider echoes an unfamiliar key format. */
+  /** Removes the configured literal key and `redact` values, even when a provider echoes an
+   * unfamiliar key format.
+   */
   private redact(text: string): string {
     return [this.config.apiKey, ...(this.config.redact ?? [])]
       .filter(Boolean)
@@ -914,7 +948,10 @@ export class OpenAiCompatiblePort implements ModelPort {
     return text ? this.reasoningDetails.get(`text:${text}`) : undefined;
   }
 
-  /** Caches each tool call's `extra_content`, keyed by its own call id, and separately caches the response's FIRST `extra_content`, keyed by every call id the response emitted, as the per-turn fallback an unsigned sibling resolves through. */
+  /** Caches each tool call's `extra_content`, keyed by its own call id, and separately caches the
+   * response's FIRST `extra_content`, keyed by every call id the response emitted, as the per-turn
+   * fallback an unsigned sibling resolves through.
+   */
   private rememberToolExtraContent(collected: ReadCompletion): void {
     const calls = collected.parts.filter(
       (part): part is Extract<PortGenerationPart, { type: 'tool-call' }> =>
@@ -950,7 +987,8 @@ interface ReadCompletion {
   readonly reasoningDetails?: readonly unknown[];
 }
 
-/** Decodes one `/chat/completions` body into ordered parts, keeping unusable arguments as evidence. */
+/** Decodes one `/chat/completions` body into ordered parts, keeping unusable arguments as evidence.
+ */
 function readCompletion(body: unknown): ReadCompletion {
   const root = asRecord(body);
   const choices = Array.isArray(root?.choices) ? root.choices : undefined;
@@ -1051,7 +1089,8 @@ function toolCallPart(
   };
 }
 
-/** One stateless Responses request body from projected chat messages and chat-shaped function tools; the native test provider reuses it.
+/** One stateless Responses request body from projected chat messages and chat-shaped function
+ * tools; the native test provider reuses it.
  * @public
  */
 export function responsesRequestBody(
@@ -1085,7 +1124,8 @@ export function responsesRequestBody(
   };
 }
 
-/** Decodes one `/responses` body into the same ordered parts as {@link readCompletion}; the native test provider reuses it.
+/** Decodes one `/responses` body into the same ordered parts as {@link readCompletion}; the native
+ * test provider reuses it.
  * @public
  */
 export function readResponse(body: unknown): ReadCompletion {
@@ -1265,7 +1305,8 @@ function httpError(
         : status === 404
           ? 'model_not_found'
           : 'provider_error';
-  // The body may echo the Authorization header on a 401; `sanitizeProviderError` redacts and caps it.
+  // The body may echo the Authorization header on a 401; `sanitizeProviderError` redacts and caps
+  // it.
   const detail = sanitizeProviderError(rawBody);
   return new ModelPortError(
     code,
@@ -1289,7 +1330,9 @@ function describeUsage(usage: TokenUsage | undefined): string {
   );
 }
 
-/** The shared model-port view of one decoded call: its object arguments, or the raw text that was none. */
+/** The shared model-port view of one decoded call: its object arguments, or the raw text that was
+ * none.
+ */
 function emittedCall(
   part: Extract<PortGenerationPart, { type: 'tool-call' }>,
 ): EmittedToolCall {

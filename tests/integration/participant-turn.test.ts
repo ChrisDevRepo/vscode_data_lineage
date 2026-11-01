@@ -68,7 +68,8 @@ suite('Participant turn — public API, no CDP', () => {
     );
   }
 
-  // Open Demo on an already open panel reloads the demo without awaiting it, and that reload supersedes a running turn; load it once per suite.
+  // Open Demo on an already open panel reloads the demo without awaiting it, and that reload
+  // supersedes a running turn; load it once per suite.
   let demoOpened = false;
   async function openDemoOnce(): Promise<void> {
     if (!demoOpened) {
@@ -82,7 +83,8 @@ suite('Participant turn — public API, no CDP', () => {
     const deadline = Date.now() + 60_000;
     let lastProbe = '';
     while (Date.now() < deadline) {
-      // A rejection reaches a vscode.lm caller as a thrown error; only the no-project one means "not yet".
+      // A rejection reaches a vscode.lm caller as a thrown error; only the no-project one means
+      // "not yet".
       const result = await Promise.resolve(
         vscode.lm.invokeTool('lineage_search_objects', {
           input: { query: 'Sales' },
