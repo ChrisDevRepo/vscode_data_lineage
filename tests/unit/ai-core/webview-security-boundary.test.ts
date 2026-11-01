@@ -15,6 +15,30 @@ describe('AI description HTML boundary', () => {
     expect(host.textContent).toContain('<script>');
   });
 
+  it.each([
+    [
+      '<a href="https://example.com" style="position:fixed;inset:0">x</a>',
+      '<a href="https://example.com"',
+    ],
+    ['inline <form><input></form> tag', '<form><input></form>'],
+    ['### Objects [<style>*{display:none}</style>](#focus-node:x)', '<style>'],
+  ])('renders raw HTML in %j as inert text', (markdown, literal) => {
+    const host = document.createElement('div');
+    host.innerHTML = renderAiMarkdown(markdown);
+    expect(
+      host.querySelector(
+        'a:not([href^="#focus-node:"]), form, input, style, [style]',
+      ),
+    ).toBeNull();
+    expect(host.textContent).toContain(literal);
+  });
+
+  it('drops javascript: hrefs', () => {
+    const host = document.createElement('div');
+    host.innerHTML = renderAiMarkdown('[click](javascript:alert(1))');
+    expect(host.querySelector('a')?.getAttribute('href') ?? null).toBeNull();
+  });
+
   it('keeps only section ids without changing the shared sanitizer', () => {
     const host = document.createElement('div');
     host.innerHTML = renderAiMarkdown(
