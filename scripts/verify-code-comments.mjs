@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 /**
- * Verifies that all code comments across the codebase follow state-of-the-art TSDoc
- * and repo style guidelines:
+ * Checks comments under src, tests and scripts:
  * - Exported declarations must have TSDoc comments.
- * - Comments must not contain chatty conversational phrasing, personal pronouns (I, we, you),
- *   narration, history markers, author/date tags, or commented-out code.
- * - TSDoc must not use redundant JSDoc type annotations like `@param {string}`.
+ * - Comments must not contain chatty phrasing, personal pronouns,
+ *   narration, history markers, author or date tags, or commented-out code.
+ * - TSDoc must not repeat a type annotation in braces on param or return tags.
  */
 
 import fs from 'node:fs';
@@ -13,10 +12,12 @@ import path from 'node:path';
 import ts from 'typescript';
 
 const REPO_ROOT = process.cwd();
-const SCAN_DIR = path.join(REPO_ROOT, 'src');
+const SCAN_DIRS = ['src', 'tests', 'scripts'].map((dir) =>
+  path.join(REPO_ROOT, dir),
+);
 
 /**
- * Returns all TypeScript source files under the given directory.
+ * Returns code files under the given directory.
  */
 function getSourceFiles(dir) {
   const results = [];
@@ -25,14 +26,31 @@ function getSourceFiles(dir) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       results.push(...getSourceFiles(fullPath));
-    } else if (
-      (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) &&
-      !entry.name.endsWith('.d.ts')
-    ) {
+    } else if (isCodeFile(entry.name)) {
       results.push(fullPath);
     }
   }
   return results;
+}
+
+/** True for TypeScript and JavaScript sources. Declaration files are excluded. */
+function isCodeFile(name) {
+  if (
+    name.endsWith('.d.ts') ||
+    name.endsWith('.d.mts') ||
+    name.endsWith('.d.cts')
+  ) {
+    return false;
+  }
+  return (
+    name.endsWith('.ts') ||
+    name.endsWith('.tsx') ||
+    name.endsWith('.mts') ||
+    name.endsWith('.cts') ||
+    name.endsWith('.mjs') ||
+    name.endsWith('.cjs') ||
+    name.endsWith('.js')
+  );
 }
 
 // Patterns that indicate chatty, narrative, or non-TSDoc comment styles.
@@ -129,7 +147,7 @@ const CHATTY_PATTERNS = [
 ];
 
 let totalIssues = 0;
-const files = getSourceFiles(SCAN_DIR);
+const files = SCAN_DIRS.flatMap((dir) => getSourceFiles(dir));
 
 const issuesByFile = new Map();
 

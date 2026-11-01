@@ -106,6 +106,8 @@ export function approvalWorkload(
     passNodeIds: sorted(init.passNodeIds),
   };
 }
+
+/** Return shape of the workload dimensions compared against a stored baseline. */
 export type ApprovalWorkload = ReturnType<typeof approvalWorkload>;
 
 /** Reports the binding dimensions that differ, without changing either proposal.

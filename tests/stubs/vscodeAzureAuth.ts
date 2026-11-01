@@ -2,12 +2,15 @@
 
 import * as vscode from 'vscode';
 
+/** Provider id the stubbed auth library reports, fixed to Microsoft. */
 export const getConfiguredAuthProviderId = (): string => 'microsoft';
 
+/** Azure SQL hostname suffix tests use to recognize an Azure server. */
 export const getConfiguredAzureEnv = (): {
   sqlServerHostnameSuffix?: string;
 } => ({ sqlServerHostnameSuffix: '.database.windows.net' });
 
+/** Resolves a session via mockable vscode authentication and the library scope shape. */
 export async function getSessionFromVSCode(
   resource: string,
   tenantId?: string,
@@ -23,6 +26,7 @@ export async function getSessionFromVSCode(
   );
 }
 
+/** Subscription provider that lists no directory, as this stub does not sign in. */
 export class VSCodeAzureSubscriptionProvider {
   async getTenants(): Promise<
     Array<{ tenantId?: string; displayName?: string; defaultDomain?: string }>
@@ -31,6 +35,7 @@ export class VSCodeAzureSubscriptionProvider {
   }
 }
 
+/** Tenant fields callers read from the real azure-auth library. */
 export type AzureTenant = {
   tenantId?: string;
   displayName?: string;

@@ -6,6 +6,7 @@ import {
 } from '../../../../src/ai/support/tokenBudget';
 import type { SerializedFilterState } from '../../../../src/engine/shared/bridgeContract';
 
+/** Knobs a handler test passes when building services without a tool registry. */
 export interface StubToolServicesOptions {
   readonly session: unknown;
   readonly model: unknown;

@@ -2,7 +2,7 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-/** The subset of `vscode.LogOutputChannel` the production logger actually calls. */
+/** The subset of `vscode.LogOutputChannel` the production logger calls. */
 export interface HeadlessLogChannel {
   readonly name: string;
   /** Redirects subsequent diagnostics without changing a frozen evidence log. */

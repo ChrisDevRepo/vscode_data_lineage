@@ -17,6 +17,7 @@ import {
 import { buildColumnTraceView } from '../../../../src/engine/columnTraceView';
 import { DEFAULT_CONFIG } from '../../../../src/engine/types';
 
+/** CJS catalog loader bound for ESM suites that share lineage-cases.yaml. */
 export const { loadCases } = createRequire(import.meta.url)(
   '../../../cases/loadCases.cjs',
 ) as {
@@ -110,16 +111,20 @@ interface SelfPruneCase {
   };
 }
 
+/** Full scripted catalog so contract and functional suites read the same rows. */
 export const scriptedCatalog = loadCases('scripted');
 
+/** Scripted rows that carry no contract tag, the default column-flow cases. */
 export const scriptedCases = scriptedCatalog.filter(
   (row) => row.contract === undefined,
 ) as unknown as LineageCase[];
 
+/** Catalog rows tagged stored-arrival for the arrival contract suite. */
 export const storedArrivalCases = scriptedCatalog.filter(
   (row) => row.contract === 'stored-arrival',
 ) as unknown as StoredArrivalCase[];
 
+/** Self-prune rows expanded once per mode so each mode is asserted on its own. */
 export const selfPruneCases = (
   scriptedCatalog.filter(
     (row) => row.contract === 'self-prune',
@@ -132,15 +137,18 @@ export const selfPruneCases = (
   })),
 );
 
+/** Column shape synthetic model nodes need when a case names a column. */
 export function column(name: string) {
   return { name, type: 'int', nullable: 'NULL' as const, extra: '' };
 }
 
+/** Depth intent for a full upstream trace and no downstream expansion. */
 export const upstreamAll = {
   upstream: { levels: 'all' as const, exactness: 'exact' as const },
   downstream: { levels: 0, exactness: 'exact' as const },
 };
 
+/** Builds a navigation engine on a synthetic graph, with no database. */
 export function engineFor(
   nodes: LineageNode[],
   pairs: ReadonlyArray<readonly [string, string]>,
@@ -226,6 +234,7 @@ function run(row: LineageCase, upstream: readonly FlowColumn[]) {
   return result;
 }
 
+/** Checks one case expectation against the column-tracer result for that row. */
 export function check(row: LineageCase, upstream: readonly FlowColumn[]) {
   const result = run(row, upstream);
   const wanted = row.expect;

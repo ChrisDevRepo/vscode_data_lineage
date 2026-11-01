@@ -5,7 +5,7 @@
  * With `--check`, writes nothing and exits 1 when the committed file differs from the generated
  * one (the gate runs this after its build step).
  *
- * The package set is read from what the bundlers actually emit: the sourcemaps of the esbuild
+ * The package set is read from what the bundlers emit: the sourcemaps of the esbuild
  * extension bundles (`out/*.js.map`) and the module list of a Vite webview build
  * (in memory, `write: false`). Dev tooling that never reaches a shipped bundle is not listed.
  * Everything above the `BEGIN GENERATED` marker (the vendored-code section) is kept.

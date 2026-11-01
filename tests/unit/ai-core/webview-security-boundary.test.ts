@@ -42,7 +42,7 @@ describe('webview CSP security boundary', () => {
       }),
   );
 
-  // Our policy choice; the webview host enforces it.
+  // Policy the product chooses; the webview host enforces it.
   it('denies by default, allows scripts only by nonce or webview source, and forbids connections and forms', () => {
     expect(policy.get('default-src')).toEqual(["'none'"]);
     expect(policy.has('connect-src')).toBe(false);

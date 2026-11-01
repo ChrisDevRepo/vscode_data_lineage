@@ -88,6 +88,11 @@ const STEPS = [
   },
   { name: 'markdown facts', cmd: nodeBin, args: ['scripts/verify-docs.mjs'] },
   {
+    name: 'comment scan coverage',
+    cmd: nodeBin,
+    args: ['--test', 'tests/tools/verify-code-comments.test.mjs'],
+  },
+  {
     name: 'code comments',
     cmd: nodeBin,
     args: ['scripts/verify-code-comments.mjs'],

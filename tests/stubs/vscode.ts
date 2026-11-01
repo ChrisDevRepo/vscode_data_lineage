@@ -1,12 +1,15 @@
+/** Role enum tests use to build language-model messages without the extension host. */
 export enum LanguageModelChatMessageRole {
   User = 1,
   Assistant = 2,
 }
 
+/** Text part of a language-model message in the vscode stub tests import. */
 export class LanguageModelTextPart {
   constructor(public readonly value: string) {}
 }
 
+/** Tool-call part so a test can replay a model turn that invoked a tool. */
 export class LanguageModelToolCallPart {
   constructor(
     public readonly callId: string,
@@ -15,6 +18,7 @@ export class LanguageModelToolCallPart {
   ) {}
 }
 
+/** Tool-result part so a test can pass a tool reply into the next model turn. */
 export class LanguageModelToolResultPart {
   constructor(
     public readonly callId: string,
@@ -22,6 +26,7 @@ export class LanguageModelToolResultPart {
   ) {}
 }
 
+/** Message type with User and Assistant factories the product calls on vscode. */
 export class LanguageModelChatMessage {
   public static User(
     content: string | readonly LanguageModelChatMessagePart[],
@@ -65,8 +70,10 @@ function toParts(
     : content;
 }
 
+/** Auto and Required modes product code reads when sending a tool-capable request. */
 export const LanguageModelChatToolMode = { Auto: 0, Required: 1 } as const;
 
+/** Token source a test cancels without the real vscode cancellation implementation. */
 export class CancellationTokenSource {
   private cancelled = false;
   private readonly listeners = new Set<() => void>();
