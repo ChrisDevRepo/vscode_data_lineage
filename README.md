@@ -11,7 +11,7 @@ natural language.
 
 Import from `.dacpac` files or connect directly to SQL Server, Azure SQL, Fabric Data Warehouse, or Synapse Dedicated SQL Pool.
 
-[![Data Lineage Viz — search, trace, and preview DDL](docs/images/viz-search-screenshot.png)](https://www.youtube.com/watch?v=2Ybg2daCrB0)
+[![Data Lineage Viz — search, trace, and preview DDL](images/viz-search-screenshot.png)](https://www.youtube.com/watch?v=2Ybg2daCrB0)
 
 ▶ **[Watch the demo](https://www.youtube.com/watch?v=2Ybg2daCrB0)**
 
@@ -40,7 +40,7 @@ Once your model loads, the visual graph is ready to use — no Copilot required:
 - **See the blast radius** — spot hubs, islands, orphans, and circular dependencies before you change anything.
 - **Read the SQL** — right-click an object to open its DDL or table details; full-text search across procedure and view bodies.
 
-![Interactive dependency graph with schema-coloured nodes](docs/images/viz-screenshot.png)
+![Interactive dependency graph with schema-coloured nodes](images/viz-screenshot.png)
 
 ## Optional AI lineage with `@lineage`
 
@@ -60,7 +60,7 @@ bookmarks, ask about what is on screen (*"explain this trace"*, or `#lineageView
 recall what an earlier analysis found from its saved AI bookmark, and — where the
 metadata allows — follow column mappings or explain SQL logic.
 
-![AI lineage analysis — annotated graph with column mappings and join paths](docs/images/viz-ai-screenshot.png)
+![AI lineage analysis — annotated graph with column mappings and join paths](images/viz-ai-screenshot.png)
 
 `@lineage` has three user-visible paths:
 

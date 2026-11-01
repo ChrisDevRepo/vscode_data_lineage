@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Data Lineage Viz - VS Code Extension</title>
+  <meta name="description" content="Visualize SQL object dependencies from .dacpac files or by importing from SQL Server, Azure SQL, Fabric DW, and Synapse Dedicated SQL Pool databases.">
+  <meta name="keywords" content="dacpac, sql server, azure sql, fabric, synapse, lineage, dependencies, visualization, vscode extension, database, data lineage">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #1f2937; line-height: 1.6; }
+    a { color: #2563eb; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .hero {
+      min-height: 50vh; display: flex; align-items: center; justify-content: center;
+      text-align: center; padding: 4rem 1.5rem 3rem;
+      background: linear-gradient(135deg, #eff6ff 0%, #f5f3ff 100%);
+    }
+    .hero h1 { font-size: 2.5rem; font-weight: 800; color: #0f172a; margin-bottom: .5rem; }
+    .hero .subtitle { font-size: 1.1rem; color: #475569; max-width: 520px; margin: 0 auto 2rem; }
+    .hero .icons { display: flex; gap: .5rem; justify-content: center; margin-bottom: 1.5rem; }
+    .hero .icons span {
+      width: 2.25rem; height: 2.25rem; display: flex; align-items: center; justify-content: center;
+      border-radius: .5rem; font-size: 1.1rem;
+    }
+    .btn-row { display: flex; gap: .75rem; justify-content: center; flex-wrap: wrap; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
+      padding: .65rem 1.4rem; border-radius: .5rem; font-weight: 600; font-size: .9rem;
+      transition: opacity .15s; min-width: 180px;
+    }
+    .btn:hover { text-decoration: none; opacity: .85; }
+    .btn-primary { background: #2563eb; color: #fff; }
+    .btn-dark { background: #0f172a; color: #fff; }
+
+    .screenshot { max-width: 900px; margin: 2.5rem auto 0; border-radius: .75rem; overflow: hidden; box-shadow: 0 20px 40px rgba(0,0,0,.12); border: 1px solid #e2e8f0; }
+    .screenshot img { width: 100%; display: block; }
+
+    .showcase {
+      max-width: 960px; margin: 0 auto; padding: 4rem 1.5rem 2rem;
+    }
+    .showcase h2 { font-size: 1.5rem; font-weight: 800; color: #0f172a; text-align: center; margin-bottom: .5rem; }
+    .showcase .section-subtitle { font-size: .95rem; color: #64748b; text-align: center; margin-bottom: 2rem; }
+    .showcase-grid { display: grid; grid-template-columns: 1fr; gap: 2.5rem; }
+    .showcase-item { display: flex; flex-direction: column; gap: .75rem; }
+    .showcase-item .caption { font-size: .95rem; font-weight: 600; color: #334155; }
+    .showcase-item .caption-detail { font-size: .85rem; color: #64748b; }
+    .showcase-item img {
+      width: 100%; border-radius: .75rem; border: 1px solid #e2e8f0;
+      box-shadow: 0 8px 24px rgba(0,0,0,.08);
+    }
+
+    .features {
+      max-width: 960px; margin: 0 auto; padding: 3rem 1.5rem 4rem;
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1.5rem;
+    }
+    .feature { padding: .25rem; }
+    .feature h3 { font-size: .95rem; font-weight: 700; margin-bottom: .35rem; color: #1e293b; }
+    .feature p { font-size: .85rem; color: #64748b; line-height: 1.5; }
+    .feature .icon { font-size: 1.4rem; margin-bottom: .5rem; display: block; }
+
+    .divider { border: none; border-top: 1px solid #e5e7eb; max-width: 800px; margin: 0 auto; }
+
+    footer {
+      text-align: center; padding: 2rem 1.5rem; border-top: 1px solid #e5e7eb;
+      font-size: .8rem; color: #94a3b8;
+    }
+    footer a { color: #64748b; }
+  </style>
+</head>
+<body>
+
+  <section class="hero">
+    <div>
+      <div class="icons">
+        <img src="images/logo.png" alt="Data Lineage Viz Logo" style="height: 3rem; width: auto;">
+      </div>
+      <h1>Data Lineage Viz</h1>
+      <p class="subtitle">
+        See how tables, views, stored procedures, and functions connect — right inside VS Code. Import from .dacpac files or connect directly to SQL Server, Azure SQL, Fabric DW, or Synapse Dedicated SQL Pool. Includes <strong>@lineage</strong> AI and Schema View.
+      </p>
+      <p style="font-size:.8rem;color:#94a3b8;margin-bottom:1.5rem;">Supports SQL Server 2016+ &middot; Azure SQL Database &middot; Fabric Data Warehouse &middot; Synapse Dedicated SQL Pool</p>
+      <div class="btn-row">
+        <a href="https://youtu.be/5yr0yRZAa98" class="btn btn-dark">
+          &#9654; Watch Demo
+        </a>
+        <a href="https://marketplace.visualstudio.com/items?itemName=datahelper-chwagner.data-lineage-viz" class="btn btn-primary">
+          Install from Marketplace
+        </a>
+        <a href="https://github.com/ChrisDevRepo/vscode_data_lineage" class="btn btn-dark">
+          GitHub
+        </a>
+      </div>
+      <div class="screenshot">
+        <img src="images/viz-screenshot.png" alt="Data Lineage Viz — interactive dependency graph with schema-colored nodes">
+      </div>
+    </div>
+  </section>
+
+  <section class="showcase">
+    <h2>See It in Action</h2>
+    <p class="section-subtitle">Search SQL bodies, trace dependencies, and preview DDL — all without leaving VS Code.</p>
+    <div class="showcase-grid">
+      <div class="showcase-item">
+        <span class="caption">Detail Search &amp; DDL Preview</span>
+        <span class="caption-detail">Full-text search across stored procedures, views, and functions. Click a result to zoom to the node and view its DDL side-by-side.</span>
+        <img src="images/viz-search-screenshot.png" alt="Detail Search panel with DDL viewer and schema filter">
+      </div>
+      <div class="showcase-item">
+        <span class="caption">AI-Powered Lineage Analysis</span>
+        <span class="caption-detail">Ask <strong>@lineage</strong> in VS Code Chat how sales are calculated. Explore SQL logic and request a graph preview; AI column mappings are best-effort findings.</span>
+        <img src="images/viz-ai-screenshot.png" alt="AI lineage view showing sales calculation lineage with annotated steps">
+      </div>
+    </div>
+  </section>
+
+  <section style="background:linear-gradient(135deg,#0f172a 0%,#1e1b4b 60%,#312e81 100%);padding:4rem 1.5rem;text-align:center;">
+    <div style="max-width:720px;margin:0 auto;">
+      <div style="display:inline-flex;align-items:center;gap:.5rem;background:rgba(99,102,241,.25);border:1px solid rgba(165,180,252,.4);border-radius:9999px;padding:.3rem .9rem;margin-bottom:1.5rem;">
+        <span style="font-size:.75rem;font-weight:800;letter-spacing:.08em;color:#a5b4fc;text-transform:uppercase;">AI analysis</span>
+        <span style="font-size:.9rem;">&#10024;</span>
+      </div>
+      <h2 style="font-size:2rem;font-weight:800;color:#fff;margin-bottom:.75rem;line-height:1.2;">
+        Ask <span style="color:#a5b4fc;">@lineage</span> in VS Code Chat
+      </h2>
+      <p style="font-size:1rem;color:#94a3b8;max-width:560px;margin:0 auto 2rem;">
+        Trace how your database objects connect — from source tables to reporting views. The AI assistant works from your <em style="color:#c7d2fe;">own data model</em> and can go further, analyzing column mappings and SQL logic from the available metadata.
+      </p>
+
+      <div style="background:#0f172a;border:1px solid #334155;border-radius:.75rem;overflow:hidden;text-align:left;max-width:580px;margin:0 auto 2rem;box-shadow:0 25px 60px rgba(0,0,0,.5);">
+        <div style="background:#1e293b;padding:.6rem 1rem;display:flex;align-items:center;gap:.5rem;border-bottom:1px solid #334155;">
+          <span style="width:.6rem;height:.6rem;border-radius:50%;background:#ef4444;display:inline-block;"></span>
+          <span style="width:.6rem;height:.6rem;border-radius:50%;background:#f59e0b;display:inline-block;"></span>
+          <span style="width:.6rem;height:.6rem;border-radius:50%;background:#22c55e;display:inline-block;"></span>
+          <span style="font-size:.75rem;color:#64748b;margin-left:.5rem;">GitHub Copilot Chat</span>
+        </div>
+        <div style="padding:1.25rem 1.5rem;font-family:'Consolas','Fira Code',monospace;font-size:.82rem;line-height:2.2;color:#e2e8f0;">
+          <div><span style="color:#818cf8;font-weight:700;">@lineage</span> <span style="color:#e2e8f0;">trace from Sales.SalesOrderDetail upstream to the source tables</span></div>
+          <div><span style="color:#818cf8;font-weight:700;">@lineage</span> <span style="color:#e2e8f0;">how is sales calculated &mdash; show me the lineage up to source in the app</span></div>
+          <div><span style="color:#818cf8;font-weight:700;">@lineage</span> <span style="color:#e2e8f0;">which objects are hubs with the most connections?</span></div>
+        </div>
+      </div>
+
+      <div style="max-width:580px;margin:0 auto 2rem;border-radius:.75rem;overflow:hidden;border:1px solid #334155;box-shadow:0 15px 40px rgba(0,0,0,.4);">
+        <img src="images/viz-ai-screenshot.png" alt="AI lineage view showing sales calculation trace with annotated steps and column mappings" style="width:100%;display:block;">
+      </div>
+
+      <div style="display:flex;flex-wrap:wrap;gap:1rem;justify-content:center;">
+        <div style="display:flex;align-items:center;gap:.5rem;color:#94a3b8;font-size:.85rem;">
+          <span style="color:#22c55e;">&#10003;</span> Traces your actual data model
+        </div>
+        <div style="display:flex;align-items:center;gap:.5rem;color:#94a3b8;font-size:.85rem;">
+          <span style="color:#22c55e;">&#10003;</span> Save graph previews as bookmarks
+        </div>
+        <div style="display:flex;align-items:center;gap:.5rem;color:#94a3b8;font-size:.85rem;">
+          <span style="color:#22c55e;">&#10003;</span> AI assistant analyzes column mappings and SQL logic
+        </div>
+        <div style="display:flex;align-items:center;gap:.5rem;color:#94a3b8;font-size:.85rem;">
+          <span style="color:#22c55e;">&#10003;</span> Requires a VS Code chat model provider &amp; VS Code 1.101+
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider">
+
+  <section class="features">
+    <div class="feature">
+      <div class="icon">&#10024;</div>
+      <h3>VS Code Chat (@lineage)</h3>
+      <p>Trace dependencies and create bookmarked graph views from your actual data model. The AI assistant can go further — analyzing column mappings and SQL logic from the available metadata.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">&#128193;</div>
+      <h3>Data Sources</h3>
+      <p>Open a .dacpac or import from a database connection. Choose schemas to load their object dependencies.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">&#128269;</div>
+      <h3>Search &amp; Navigate</h3>
+      <p>Find any object instantly with autocomplete. Minimap and schema color coding keep you oriented on large graphs.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">&#128268;</div>
+      <h3>Trace &amp; Find Path</h3>
+      <p>Follow dependencies upstream or downstream. Find the shortest path between any two nodes.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">&#128202;</div>
+      <h3>Detect Graph Patterns</h3>
+      <p>Spot islands, orphans, hubs, and cycles at a glance. Explore the loaded dependency structure before making changes.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">&#128196;</div>
+      <h3>DDL &amp; SQL Search</h3>
+      <p>Double-click an object to inspect available columns and SQL. Search SQL bodies across procedures, views, and functions.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">&#128200;</div>
+      <h3>Schema View</h3>
+      <p>Group large graphs by schema, then expand selected schemas to inspect their objects.</p>
+    </div>
+    <div class="feature">
+      <div class="icon">&#128230;</div>
+      <h3>Export &amp; Customize</h3>
+      <p>Export to Draw.io for documentation. Override parse rules and import queries with plain YAML — no code changes needed.</p>
+    </div>
+  </section>
+
+  <footer>
+    <p>MIT License &middot; &copy; 2025–2026 <a href="https://www.linkedin.com/in/christian-wagner-11aa8614b">Christian Wagner</a></p>
+  </footer>
+
+</body>
+</html>
