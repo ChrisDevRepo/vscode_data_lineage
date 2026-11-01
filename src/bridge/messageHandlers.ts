@@ -106,6 +106,7 @@ import { readDeclaredNumericSetting } from '../configCore';
 import { buildWebviewCsp } from '../utils/cspBuilder';
 import { getNonce } from '../utils/getNonce';
 import { errorMessage } from '../utils/errorMessage';
+import { quoteIdentifier } from '../utils/sql';
 
 /**
  * Maps each main-panel message type to a handler whose `msg` parameter is narrowed to the matching
@@ -2003,7 +2004,14 @@ async function handleTableStatsRequestHost(
         failure.error,
         failure.target,
         logger,
-        connectionErrorHooks(dbEnv, failure.target.connectionId, undefined),
+        {
+          ...connectionErrorHooks(
+            dbEnv,
+            failure.target.connectionId,
+            undefined,
+          ),
+          grant: `SELECT ON ${quoteIdentifier(schema)}.${quoteIdentifier(objectName)}`,
+        },
       );
       void postToDetail(
         panel,

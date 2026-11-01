@@ -73,6 +73,8 @@ export interface ConnectionErrorHooks {
   chooseDatabase?: () => Promise<string | undefined>;
   /** Reveals the extension's log. */
   showLog?: () => void;
+  /** The permission clause the failed operation needs; `VIEW DEFINITION` when absent. */
+  grant?: string;
 }
 
 /** Button labels, one per action id. */
@@ -179,9 +181,9 @@ function classify(err: unknown): ErrorKind {
   return 'other';
 }
 
-function grantStatement(user: string | undefined): string {
+function grantStatement(grant: string, user: string | undefined): string {
   const principal = user ? quoteIdentifier(user) : '[user_or_group]';
-  return `GRANT VIEW DEFINITION TO ${principal};`;
+  return `GRANT ${grant} TO ${principal};`;
 }
 
 /** Describes a connection or query failure for the user. */
@@ -268,7 +270,9 @@ export function describeConnectionError(
     retry: () => make('retry', () => retry()),
     copyGrantStatement: () =>
       make('copyGrantStatement', async () => {
-        await vscode.env.clipboard.writeText(grantStatement(target.user));
+        await vscode.env.clipboard.writeText(
+          grantStatement(hooks.grant ?? 'VIEW DEFINITION', target.user),
+        );
         void vscode.window.showInformationMessage(
           'GRANT statement copied to the clipboard.',
         );
@@ -373,7 +377,7 @@ export function reportConnectionError(
   answered: Promise<void>;
 } {
   const { message, actions } = describeConnectionError(err, target, hooks);
-  logger.info('Database connection failed');
+  logger.info('Database request failed');
   logger.debug(
     `Connection error on ${target.name} — code=${errorCode(err) ?? '-'} number=${errorNumber(err) ?? '-'} raw="${redactSecrets(errorMessage(err))}"`,
   );
