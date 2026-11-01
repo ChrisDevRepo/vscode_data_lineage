@@ -192,8 +192,6 @@ interface AgentGraphDeps {
   readonly requestId?: string;
   /** Optional logger for active-loop diagnostics. */
   readonly logger?: Logger;
-  /** Wait before the one transport-interruption retry of a generation. */
-  readonly transportRetryDelayMs?: number;
   /** Optional sink for rejections the attempt executor raises without dispatching a tool. */
   readonly traceSyntheticRejection?: SyntheticRejectionTrace;
 }
@@ -435,10 +433,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       deps,
       `[AI] transport-retry phase=${phase} ${formatProviderErrorDiagnostic(failure)}`,
     );
-    await abortableDelay(
-      deps.transportRetryDelayMs ?? TRANSPORT_RETRY_DELAY_MS,
-      deps.signal,
-    );
+    await abortableDelay(TRANSPORT_RETRY_DELAY_MS, deps.signal);
     return attempt();
   };
 

@@ -669,7 +669,11 @@ export function renderProblemReport(
           : '';
       if (fallback) fallbackShown = true;
       const message = `${issue.label}. ${issue.correction}${fallback ? ` ${fallback}` : ''}`;
-      const sent = valueAt(input, error.path);
+      // An unknown key is ranked by its name, every other issue by the value sent.
+      const sent =
+        error.code === 'unknown_key'
+          ? error.path.split('.').at(-1)
+          : valueAt(input, error.path);
       const allowed =
         error.values && (stage >= 2 || issue.category === 'required')
           ? [...error.values].sort(

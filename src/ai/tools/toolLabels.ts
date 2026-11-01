@@ -16,12 +16,6 @@ export function getToolInvocationLabel(name: string, input: unknown): string {
     }
     case 'lineage_search_objects':
       return `Searching for "${(inp?.query as string | undefined) ?? ''}"…`;
-    case 'lineage_get_scope_bundle':
-      return `Bundling scope for ${(inp?.origin as string | undefined) ?? '…'}…`;
-    case 'lineage_start_exploration':
-      return 'Starting exploration…';
-    case 'lineage_present_result':
-      return 'Creating AI lineage view…';
     case 'lineage_get_object_detail':
       return `Loading detail for ${(inp?.id as string | undefined) ?? '…'}…`;
     case 'lineage_detect_graph_patterns':
@@ -32,22 +26,6 @@ export function getToolInvocationLabel(name: string, input: unknown): string {
       const ids = inp?.ids as unknown[] | undefined;
       const n = ids?.length ?? 0;
       return `Inspecting ${n} neighbor${n === 1 ? '' : 's'} for pruning…`;
-    }
-    case 'lineage_submit_findings': {
-      const focus =
-        (inp?.focus_node_id as string | undefined)
-          ?.split('.')
-          .pop()
-          ?.replace(/[\[\]]/g, '') ?? 'node';
-      return `Analyzing ${focus}…`;
-    }
-    case 'lineage_prune_current': {
-      const focus =
-        (inp?.focus_node_id as string | undefined)
-          ?.split('.')
-          .pop()
-          ?.replace(/[\[\]]/g, '') ?? 'node';
-      return `Removing irrelevant candidate ${focus}…`;
     }
     default:
       return `Invoking ${name.replace('lineage_', '')}…`;

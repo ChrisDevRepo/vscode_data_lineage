@@ -66,8 +66,6 @@ interface AgentRuntimeDeps {
   readonly priorMessages?: readonly ModelMessage[];
   /** Optional logger for graph-attempt diagnostics; forwarded to the graph. Off when undefined. */
   readonly logger?: Logger;
-  /** Delay before the one transport-retry; see the graph's `transportRetryDelayMs`. */
-  readonly transportRetryDelayMs?: number;
   /** Optional trace sink for rejections raised without a tool dispatch; forwarded to the graph. */
   readonly traceSyntheticRejection?: SyntheticRejectionTrace;
 }
@@ -135,7 +133,6 @@ export class AgentRuntime {
       logger: deps.logger,
       requestId: deps.requestId ?? deps.threadId,
       traceSyntheticRejection: deps.traceSyntheticRejection,
-      transportRetryDelayMs: deps.transportRetryDelayMs,
     });
   }
 
@@ -160,9 +157,12 @@ export class AgentRuntime {
         ...(gateDecision ? { gateDecision } : {}),
       };
       assertExternalTracingDisabled();
+      // An approval turn builds the pending proposal's engine inside the graph; size by its scope.
       const recursionLimit = turnRecursionLimit(
         this.maxRounds,
-        session.stateMachine?.scopeSize ?? 0,
+        session.pendingExploration?.summary.scopeCount ??
+          session.stateMachine?.scopeSize ??
+          0,
       );
       const result = await this.graph.invoke(input as never, {
         callbacks: [],

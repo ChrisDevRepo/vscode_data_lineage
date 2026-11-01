@@ -15,21 +15,11 @@ import {
 } from './toolErrorEnvelope';
 import { REJECTION_CODES } from './rejectionCodes';
 
-/** Canonical admission never coerces, fills defaults, or removes submitted fields. */
-const validator = new Ajv2020({
-  allErrors: true,
-  strict: false,
-  strictSchema: true,
-  verbose: true,
-  coerceTypes: false,
-  useDefaults: false,
-  removeAdditional: false,
-});
 /**
  * Annotations Ajv carries without code; the domain rules and fact receipts they name run after
  * validation.
  */
-validator.addVocabulary([
+const TOOL_VOCABULARY = [
   'toolIssue',
   'toolValidated',
   'toolFields',
@@ -42,7 +32,25 @@ validator.addVocabulary([
   'toolArrayFact',
   'toolObjectFact',
   'toolStringFact',
-]);
+];
+
+/**
+ * Canonical admission never coerces, fills defaults, or removes submitted fields. One instance per
+ * compiled schema: an Ajv instance keeps every schema it compiled, even after `removeSchema`.
+ */
+function newValidator(): Ajv2020 {
+  const ajv = new Ajv2020({
+    allErrors: true,
+    strict: false,
+    strictSchema: true,
+    verbose: true,
+    coerceTypes: false,
+    useDefaults: false,
+    removeAdditional: false,
+  });
+  ajv.addVocabulary(TOOL_VOCABULARY);
+  return ajv;
+}
 /** Per-call fact receipts, called after validation; never part of the compiled validator. */
 export interface ToolFactContext {
   nativeIssue?: (
@@ -404,8 +412,7 @@ export function validateToolCandidate<S extends z.ZodType>(
   let entry = compiled.get(schema);
   if (!entry) {
     const json = canonicalSchema(schema);
-    entry = { json, check: validator.compile(json) };
-    validator.removeSchema(json); // Ajv would keep every compiled schema for good; the WeakMap owns the validator's lifetime.
+    entry = { json, check: newValidator().compile(json) };
     compiled.set(schema, entry);
   }
   const { json, check } = entry;

@@ -465,11 +465,6 @@ export class NavigationEngine implements IHopStateMachine {
   /** Stable tasks currently being answered by the focus node's single hop. */
   protected currentFocusTaskIds: string[] = [];
   protected hopCount = 0;
-  /**
-   * Hops whose findings were committed; {@link hopCount} also counts a dispatched focus not yet
-   * submitted.
-   */
-  private committedHops = 0;
   /** Why the engine entered `error` on a live invariant failure, phrased for the user. */
   private _errorReason: string | null = null;
   /**
@@ -1160,14 +1155,6 @@ export class NavigationEngine implements IHopStateMachine {
    */
   public get errorReason(): string | null {
     return this._status === 'error' ? this._errorReason : null;
-  }
-
-  /**
-   * Hops whose findings this engine committed, excluding a dispatched focus still awaiting
-   * findings.
-   */
-  public get submittedHopCount(): number {
-    return this.committedHops;
   }
 
   /** Gets the active column-tracing aspect, if any. */
@@ -2958,7 +2945,6 @@ export class NavigationEngine implements IHopStateMachine {
 
   /** Starts the bookkeeping shared by every committed hop decision. */
   private beginHopCommit(columnFlowEntries: number): void {
-    this.committedHops++;
     this.lastRoutedNew = 0;
     this.lastRoutedRejected = 0;
     this.lastRoutedDeferred = 0;

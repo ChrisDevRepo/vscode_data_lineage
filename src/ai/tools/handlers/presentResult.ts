@@ -620,7 +620,10 @@ export async function executePresentResult(
               })),
             )
           : retainableSections
-            ? [...retainedRows.values()]
+            ? [...retainedRows.values()].map((section) => ({
+                ...section,
+                node_ids: section.node_ids.map(bind),
+              }))
             : fields.sections!.map((section) => ({
                 label: section.label,
                 node_ids: section.node_ids!.map(bind),

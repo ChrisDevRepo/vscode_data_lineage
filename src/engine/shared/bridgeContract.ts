@@ -986,6 +986,14 @@ export const DetailPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   WebviewWarningMessageSchema,
 ]);
 
+/**
+ * Every webview-to-host message; types the webview `postMessage` in `src/types/global.d.ts`.
+ * @public
+ */
+export type WebviewToExtensionMsg =
+  | MainPanelToExtensionMsg
+  | z.infer<typeof DetailPanelToExtensionMsgSchema>;
+
 /** Zod schema for messages sent from the extension host **to the detail-panel webview**. */
 export const ExtensionToDetailMsgSchema = z.discriminatedUnion('type', [
   z.object({
