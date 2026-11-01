@@ -6,7 +6,7 @@
 // dependency graph — but this project must not carry LangSmith client code anywhere: no
 // telemetry integration exists, and prompts / graph state must never leave the extension
 // host. The root package.json `overrides` entry pins `langsmith` to this stub, so the real
-// client is never installed, bundled, or shipped. `tests/tools/assert-no-langsmith.mjs`
+// client is never installed, bundled, or shipped. `tests/tools/assert-invariants.mjs`
 // (wired into `npm run gate`) asserts the marker below is present in the bundle and that
 // real-client signatures are absent.
 //

@@ -23,6 +23,8 @@ The newest version heading collects changes until that version ships.
 - Updating a legacy bookmark keeps current selections; SQL identifiers with equivalent quoting, casing or Unicode format characters bind to the right objects.
 - Functions without declared columns now get column-trace edges; exploration depth is strict only when the user states a level count or complete chain, otherwise it starts at about 3 levels.
 - DACPAC references keep local objects local when database identity is known or unambiguous; references to another database remain external. Reconnecting by server matches a saved connection written with a `tcp:` prefix.
+- A permission error while reading table statistics suggests `GRANT SELECT` on that table instead of `GRANT VIEW DEFINITION`.
+- The AI view banner counts every object in the result, including objects past the render limit; math after an escaped dollar sign (`\$`) renders.
 
 ### Known issues
 - In a deep analysis, a chat model can answer its last correction request in text instead of resubmitting its findings; the analysis then stops at that object without a result. Ask again, or exclude the object from the scope.

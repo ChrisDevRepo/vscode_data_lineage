@@ -51,7 +51,7 @@ tmpclaude-*
 # vsce ignores .gitignore, so a gitignored file at repo root still ships unless listed here.
 debug.log
 # Scratch files any tool drops beside the manifest. vsce ignores .gitignore, so untracked is not
-# the same as unpackaged; assert-package-contents.mjs rejects the same suffix as a backstop.
+# the same as unpackaged.
 *.tmp
 **/*.tmp
 
@@ -75,9 +75,8 @@ debug.log
 dist/assets/KaTeX_*.ttf
 
 # Agent instructions and skills are development documentation (gitignored files are still
-# considered by vsce, so each needs its own entry). None of these belong in a VSIX. Keep this
-# list in step with the agent-file block in .gitignore and the forbidden patterns in
-# tests/tools/assert-package-contents.mjs — .gitignore alone excludes nothing from a VSIX.
+# considered by vsce, so each needs its own entry). None of these belong in a VSIX; only this
+# list excludes them.
 CODEX*
 .CODEX*
 codex.md

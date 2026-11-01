@@ -2,9 +2,9 @@
 /**
  * Repairs the `langsmith` dependency install after `npm install` / `npm ci`.
  *
- * Why this exists: the repo's LangSmith containment (see docs/ARCHITECTURE.md §History, privacy,
- * and no-egress boundary) replaces the transitive `langsmith` dependency of `@langchain/core`
- * with the inert local stub in `stubs/langsmith/` via the root package.json `overrides` field.
+ * Why this exists: the repo's LangSmith containment (see docs/DEVELOPER_GUIDE.md) replaces the
+ * transitive `langsmith` dependency of `@langchain/core` with the inert local stub in
+ * `stubs/langsmith/` via the root package.json `overrides` field.
  * npm declares that replacement as a symlink `node_modules/langsmith ->
  * node_modules/@langchain/core/stubs/langsmith`, but several npm 10.x releases fail to
  * materialize the symlink target — leaving `node_modules/langsmith` dangling, which fails
