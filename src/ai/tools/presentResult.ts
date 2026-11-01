@@ -416,7 +416,8 @@ function fenceLineSpan(text: string, fence: LocatedSqlFence): [number, number] {
 function precedingListContentIndent(text: string, lineStart: number): string {
   let end = lineStart;
   while (end > 0) {
-    const start = text.lastIndexOf('\n', end - 2) + 1;
+    // lastIndexOf clamps a negative start to 0, which would find a leading '\n' forever.
+    const start = end < 2 ? 0 : text.lastIndexOf('\n', end - 2) + 1;
     const line = text.slice(start, end - 1);
     if (line.trim() !== '') {
       const marker = /^(\s*)(?:[-*+]|\d+[.)])\s+/.exec(line);
