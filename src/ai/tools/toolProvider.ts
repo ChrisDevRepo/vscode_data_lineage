@@ -36,9 +36,9 @@ import {
   GetContextInputSchema,
   GetScreenStateInputSchema,
 } from '../tools/toolSchemas';
-import { DEFAULT_CONFIG, type DatabaseModel } from '../../engine/types';
+import { DEFAULT_CONFIG, type DatabaseModel } from '../../engine/shared/types';
 import { readDeclaredNumericSetting } from '../../configCore';
-import { type SerializedFilterState } from '../../engine/projectStore';
+import { type SerializedFilterState } from '../../engine/shared/bridgeContract';
 import {
   getAllowedLmToolNames,
   activeModeOf,

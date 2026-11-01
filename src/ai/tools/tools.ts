@@ -12,11 +12,11 @@ import {
   type ObjectType,
   type AnalysisType,
   type NeighborIndex,
-} from '../../engine/types';
+} from '../../engine/shared/types';
 import { resolveModelNodeId } from '../support/modelReferences';
 import { schemaKey } from '../../utils/sql';
-import { runAnalysis as runGraphAnalysis } from '../../engine/graphAnalysis';
-import { ColumnStore } from '../../engine/columnStore';
+import { runAnalysis as runGraphAnalysis } from '../../engine/shared/graphAnalysis';
+import { ColumnStore } from '../../engine/shared/columnStore';
 import { applyIsolationFilter } from '../../engine/shared/modelFilters';
 import {
   searchCatalog,
@@ -31,7 +31,7 @@ import {
   executeIsolatedRegexSearch,
   RegexSearchExecutionError,
 } from '../support/isolatedRegexSearch';
-import type { SerializedFilterState } from '../../engine/projectStore';
+import type { SerializedFilterState } from '../../engine/shared/bridgeContract';
 import {
   strip,
   edgeApiType,
@@ -977,7 +977,7 @@ export async function searchDdl(
   query: string,
   budget: TurnTokenBudget,
   types?: ('view' | 'procedure' | 'function')[],
-  store?: import('../../engine/columnStore').ColumnStore,
+  store?: import('../../engine/shared/columnStore').ColumnStore,
   onDebug?: (msg: string) => void,
   signal?: AbortSignal,
 ): Promise<object> {

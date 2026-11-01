@@ -6,10 +6,10 @@ import {
   modelUserMessage,
   type ModelMessage,
 } from '../model/modelPort';
-import type { DatabaseModel } from '../../engine/types';
+import type { DatabaseModel } from '../../engine/shared/types';
 import { getGlobalSingleton } from '../../utils/globalSingleton';
-import type { SerializedFilterState } from '../../engine/projectStore';
-import { ColumnStore } from '../../engine/columnStore';
+import type { SerializedFilterState } from '../../engine/shared/bridgeContract';
+import { ColumnStore } from '../../engine/shared/columnStore';
 import { AiMemoryManager } from '../session/memoryManager';
 import {
   type ResultGraph,

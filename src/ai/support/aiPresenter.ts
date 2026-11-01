@@ -5,8 +5,8 @@ import type {
   SchemaInfo,
   NeighborIndex,
   ForeignKeyInfo,
-} from '../../engine/types';
-import type { SerializedFilterState } from '../../engine/projectStore';
+} from '../../engine/shared/types';
+import type { SerializedFilterState } from '../../engine/shared/bridgeContract';
 
 /** Prunes null, undefined, false, empty strings, and empty arrays from a record. */
 export function strip<T extends Record<string, unknown>>(obj: T): Partial<T> {

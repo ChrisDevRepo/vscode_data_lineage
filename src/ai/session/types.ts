@@ -1,5 +1,5 @@
 import type { ColumnEdge, SmNodeState, SmState } from '../sm/smTypes';
-import type { AIViewMetadata } from '../../engine/projectStore';
+import type { AIViewMetadata } from '../../engine/shared/bridgeContract';
 
 /** Canonical bounded BFS captured by `lineage_get_scope_bundle` for one host turn. */
 export interface DiscoveryScopeArtifact {

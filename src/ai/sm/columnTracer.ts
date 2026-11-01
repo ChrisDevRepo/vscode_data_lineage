@@ -5,11 +5,11 @@ import {
   HopFinding,
   InvalidRoute,
 } from './smTypes';
-import type { DatabaseModel, LineageNode } from '../../engine/types';
+import type { DatabaseModel, LineageNode } from '../../engine/shared/types';
 import { resolveModelNodeId } from '../support/modelReferences';
 import { edgeApiType } from '../support/aiPresenter';
 import { getNodeColumns } from '../support/graphUtils';
-import { ColumnStore } from '../../engine/columnStore';
+import { ColumnStore } from '../../engine/shared/columnStore';
 import { isIndirectOnly } from '../../engine/shared/bridgeContract';
 import { normalizeColName, schemaKey } from '../../utils/sql';
 import { DirectedGraph } from 'graphology';

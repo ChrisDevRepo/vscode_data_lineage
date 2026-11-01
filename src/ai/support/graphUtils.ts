@@ -8,7 +8,7 @@ import type {
   DatabaseModel,
   LineageNode,
   ObjectType,
-} from '../../engine/types';
+} from '../../engine/shared/types';
 
 /** The two high-fidelity reads these accessors take from the engine's column store. */
 interface NodeSnapshotStore {

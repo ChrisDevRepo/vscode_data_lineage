@@ -1,6 +1,6 @@
 /** AI Memory Manager — per-hop working memory for the navigation engine. */
 
-import type { LineageNode } from '../../engine/types';
+import type { LineageNode } from '../../engine/shared/types';
 
 /** Node summaries carried forward in the `<short_term_memory>` window. */
 const RECENT_SUMMARY_WINDOW = 3;

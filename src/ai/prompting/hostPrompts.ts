@@ -7,8 +7,11 @@ import {
   type GeneralPromptContext,
   type PromptPhase,
 } from './prompts';
-import { UNKNOWN_DB_PLATFORM, type DatabaseModel } from '../../engine/types';
-import type { SerializedFilterState } from '../../engine/projectStore';
+import {
+  UNKNOWN_DB_PLATFORM,
+  type DatabaseModel,
+} from '../../engine/shared/types';
+import type { SerializedFilterState } from '../../engine/shared/bridgeContract';
 import type { AiGateRefine } from '../../engine/shared/bridgeContract';
 import { describeScreen } from '../tools/screenStatePresenter';
 import { escapePromptText } from '../support/text';

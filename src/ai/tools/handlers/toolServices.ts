@@ -2,8 +2,8 @@
 import type Graph from 'graphology';
 import type { AiSession } from '../../session/session';
 import type { Logger } from '../../../utils/log';
-import type { DatabaseModel, LineageNode } from '../../../engine/types';
-import type { SerializedFilterState } from '../../../engine/projectStore';
+import type { DatabaseModel, LineageNode } from '../../../engine/shared/types';
+import type { SerializedFilterState } from '../../../engine/shared/bridgeContract';
 import type { StoredRunReader } from '../../session/runStore';
 import type { ModelPort } from '../../model/modelPort';
 import type { TurnTokenBudget } from '../../support/tokenBudget';

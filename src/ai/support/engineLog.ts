@@ -1,4 +1,4 @@
-import type { LogFn } from '../../engine/graphGuards';
+import type { LogFn } from '../../engine/shared/removal';
 import type { Logger } from '../../utils/log';
 
 /** Adapter from the host {@link Logger} to the engine's injected {@link LogFn}. */

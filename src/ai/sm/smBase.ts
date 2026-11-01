@@ -11,8 +11,8 @@ import {
 import type Graph from 'graphology';
 import { bidirectional } from 'graphology-shortest-path/unweighted';
 import { bfsFromNode } from 'graphology-traversal';
-import type { DatabaseModel, LineageNode } from '../../engine/types';
-import type { ColumnStore } from '../../engine/columnStore';
+import type { DatabaseModel, LineageNode } from '../../engine/shared/types';
+import type { ColumnStore } from '../../engine/shared/columnStore';
 import { isIndirectOnly } from '../../engine/shared/bridgeContract';
 import {
   bothSidesClosed,
@@ -20,7 +20,7 @@ import {
   resolveDepthBorder,
   type DepthSideValue,
 } from '../../engine/shared/explorationDepthContract';
-import type { SerializedFilterState } from '../../engine/projectStore';
+import type { SerializedFilterState } from '../../engine/shared/bridgeContract';
 import {
   buildEdgeTypeMap,
   buildHopFocusNode,
@@ -37,7 +37,7 @@ import {
   analyzeRemoval,
   type LogFn,
   type RemovalAnalysis,
-} from '../../engine/graphGuards';
+} from '../../engine/shared/removal';
 import { trunc, LOG_TRUNC_CONTENT } from '../../utils/log';
 import {
   compileExclusionMatcher,
