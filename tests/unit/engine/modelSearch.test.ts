@@ -11,6 +11,8 @@ import {
   searchObjects,
   validateSearchObjectsQuery,
 } from '../../../src/ai/tools/tools';
+import { executeIsolatedRegexSearch } from '../../../src/ai/support/isolatedRegexSearch';
+import { DEFAULT_TURN_TOKEN_BUDGET } from '../../../src/ai/support/tokenBudget';
 import { makeIndexedModel, makeNode } from '../helpers/modelFixtures';
 
 const column = (name: string, type = 'int'): ColumnDef => ({
@@ -222,3 +224,23 @@ describe('lineage_search_objects query contract', () => {
     ]);
   });
 });
+
+it('stops a backtracking (a+)+x search at the worker deadline', async () => {
+  await expect(
+    executeIsolatedRegexSearch({
+      kind: 'ddl',
+      pattern: '(a+)+x',
+      nodes: [
+        {
+          id: 'dbo.minified',
+          name: 'Minified',
+          schema: 'dbo',
+          type: 'view',
+          bodyScript: 'a'.repeat(50_000),
+        },
+      ],
+      budget: DEFAULT_TURN_TOKEN_BUDGET,
+      rowChars: 60,
+    }),
+  ).rejects.toMatchObject({ reason: 'deadline' });
+}, 20_000);

@@ -640,6 +640,10 @@ if (
   process.argv[1] &&
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
+  if (!['source', 'build', 'all'].includes(stage)) {
+    console.error(`Unknown stage "${stage}". Use source, build or all.`);
+    process.exit(2);
+  }
   main().catch((err) => {
     console.error(`FAIL  ${err.message}`);
     process.exit(1);

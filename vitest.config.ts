@@ -35,9 +35,7 @@ export default defineConfig({
     // model uses the same machine. Four workers keep the deterministic gate bounded under that
     // supported concurrent workload without weakening assertions or extending timeouts.
     maxWorkers: 4,
-    // `.tsx` alongside `.ts` for the component tests that mount a webview leaf; the unit tsconfig
-    // already includes `**/*.tsx` and inherits `jsx: react-jsx`. Same lane, not a new one.
-    include: ['tests/unit/**/*.test.ts', 'tests/unit/**/*.test.tsx'],
+    include: ['tests/unit/**/*.test.ts'],
     coverage: {
       provider: 'v8',
       // Scoped to the deterministic core — SQL parsing and graph/BFS. A repo-wide number

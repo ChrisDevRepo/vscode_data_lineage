@@ -884,7 +884,6 @@
     "test:lineage": "node tests/tools/run-lane.mjs lineage",
     "test:runtime": "node tests/tools/run-lane.mjs runtime",
     "test:parser": "node tests/tools/run-vitest.mjs run tests/unit/parser",
-    "test:bfs": "node tests/tools/run-lane.mjs lineage",
     "coverage:core": "node tests/tools/run-lane.mjs core --coverage",
     "typecheck": "tsc --noEmit",
     "typecheck:tests": "tsc -p tests/unit/tsconfig.json --noEmit",

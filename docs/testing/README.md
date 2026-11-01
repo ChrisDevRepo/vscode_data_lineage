@@ -11,7 +11,7 @@ These need no database, model provider or display. Parser and lineage scenarios 
 | `npm test` | Parser, lineage and the deterministic AI/trust contracts in `tests/tools/unit-lanes.mjs` |
 | `npm run test:core` | Parser and lineage |
 | `npm run test:parser` | Parser only |
-| `npm run test:lineage` | Lineage only (`test:bfs` is the same lane) |
+| `npm run test:lineage` | Lineage only |
 | `npm run test:runtime` | Backend graph contracts, tool registration/dispatch, identifier boundaries, schema, redaction (including the operator runner's secret boundary), cancellation, templates and `scripted` catalog rows |
 | `npm run typecheck`, `npm run typecheck:tests`, `npm run lint`, `npm run format:check`, `npm run knip` | TypeScript, lint, formatting and unused-code checks |
 | `npm run gate` | Everything above, plus coverage floors, build and repository checks; CI runs this |

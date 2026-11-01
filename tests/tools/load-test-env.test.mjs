@@ -36,16 +36,47 @@ test('provider profiles resolve from environment and precedence', () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
 
-  assert.throws(
-    () =>
-      loadTestEnv({
-        env: { AI_TEST_PROVIDER: 'azure', AZURE_MODEL: 'm' },
-        envFile: join(tmpdir(), 'missing'),
-        requireAiProvider: true,
-      }),
-    /missing AI_TEST_ENDPOINT/,
-  );
+test('selected profiles reject bad input without echoing secrets', () => {
+  const cases = [
+    [
+      {
+        AI_TEST_PROVIDER: 'azure',
+        AZURE_API: 'do-not-print',
+        AZURE_MODEL: 'm',
+      },
+      /missing AI_TEST_ENDPOINT/u,
+    ],
+    [
+      {
+        AI_TEST_PROVIDER: 'openrouter',
+        OPENROUTER_URL: 'not-a-url',
+        OPENROUTER_API: 'do-not-print',
+        OPENROUTER_MODEL: 'm',
+      },
+      /must be an absolute HTTP\(S\) URL/u,
+    ],
+    [
+      { AI_TEST_PROVIDER: 'typo-provider', AI_TEST_API_KEY: 'do-not-print' },
+      /Unsupported AI_TEST_PROVIDER/u,
+    ],
+  ];
+  for (const [env, message] of cases) {
+    assert.throws(
+      () =>
+        loadTestEnv({
+          env,
+          envFile: join(tmpdir(), 'missing'),
+          requireAiProvider: true,
+        }),
+      (err) => {
+        assert.match(err.message, message);
+        assert.doesNotMatch(err.message, /do-not-print/u);
+        return true;
+      },
+    );
+  }
 });
 
 test('loadTestEnv keeps a configured AI test timeout', () => {

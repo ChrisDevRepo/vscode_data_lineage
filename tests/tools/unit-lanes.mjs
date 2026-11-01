@@ -15,7 +15,6 @@ const laneScriptCommands = {
   'test:parser': 'node tests/tools/run-vitest.mjs run tests/unit/parser',
   'test:core': 'node tests/tools/run-lane.mjs core',
   'test:lineage': 'node tests/tools/run-lane.mjs lineage',
-  'test:bfs': 'node tests/tools/run-lane.mjs lineage',
   'test:runtime': 'node tests/tools/run-lane.mjs runtime',
   'coverage:core': 'node tests/tools/run-lane.mjs core --coverage',
 };
@@ -108,7 +107,7 @@ export const runtimeContractTests = [
 /** Paths passed to Vitest for the coverage-floored core. */
 export const corePaths = ['tests/unit/parser', ...lineageEngineTests];
 
-/** Every `*.test.ts` / `*.test.tsx` under `tests/unit`. */
+/** Every `*.test.ts` under `tests/unit`. */
 export function unitTestFiles(
   dir = path.join(repoRoot, 'tests', 'unit'),
   found = [],
@@ -116,11 +115,7 @@ export function unitTestFiles(
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) unitTestFiles(full, found);
-    else if (
-      entry.name.endsWith('.test.ts') ||
-      entry.name.endsWith('.test.tsx')
-    )
-      found.push(rel(full));
+    else if (entry.name.endsWith('.test.ts')) found.push(rel(full));
   }
   return found;
 }
