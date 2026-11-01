@@ -908,12 +908,12 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('load-demo') }),
   z.object({
     type: z.literal('dacpac-visualize'),
-    schemas: z.array(z.string()).max(MAX_ID_LIST_LENGTH),
+    schemas: z.array(z.string()),
     projectName: z.string().optional(),
   }),
   z.object({
     type: z.literal('db-visualize'),
-    schemas: z.array(z.string()).max(MAX_ID_LIST_LENGTH),
+    schemas: z.array(z.string()),
     projectName: z.string().optional(),
   }),
   z.object({

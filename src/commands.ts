@@ -333,7 +333,8 @@ export function registerCommands(
     vscode.commands.registerCommand(
       'dataLineageViz.openExternalProject',
       async (uri: vscode.Uri) => {
-        configLogger.info(`Forcing project load from: ${uri.fsPath}`);
+        configLogger.info('Forcing project load');
+        configLogger.debug(`Forced project path: ${uri.fsPath}`);
         // Supersedes a panel load in flight and tells the webview this import is current.
         const loadToken = beginActivePanelLoad();
         try {
@@ -374,8 +375,9 @@ export function registerCommands(
           }
 
           configLogger.info(
-            `Model forced: ${model.nodes.length} nodes, ${model.edges.length} edges, project: ${sess.projectName}`,
+            `Model forced: ${model.nodes.length} nodes, ${model.edges.length} edges`,
           );
+          configLogger.debug(`Forced project: ${sess.projectName}`);
         } catch (err) {
           const msg = errorMessage(err);
           notifyError(
