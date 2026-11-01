@@ -3485,7 +3485,6 @@ export class NavigationEngine implements IHopStateMachine {
     const stagedColumnFlowEntries = this.tracer
       ? (finding.column_flow?.length ?? 0)
       : 0;
-    const traceDirection = this.columnTraceDirection();
     const carryByNode = new Map<string, Set<string>>();
     const routeContexts: ValidatedHop['routeContexts'] = new Map();
     const flowQuestionByNode = new Map<string, string>();
@@ -3607,7 +3606,9 @@ export class NavigationEngine implements IHopStateMachine {
         'downstream',
         endpointKey,
       ).flowing;
-      if (traceDirection === 'upstream') {
+      // Like the downstream forward below, upstream carry follows the attached suppliers whatever
+      // side the arriving task came from: a cycle can reach a node on its downstream leg first.
+      if (this.effectiveDirection() !== 'downstream') {
         for (const [index, entry] of finding.column_flow.entries()) {
           if (
             entrySides &&
@@ -4228,6 +4229,16 @@ export class NavigationEngine implements IHopStateMachine {
           routeRequests.push({ nodeId: id, question: '' });
       }
     }
+    // A caller-bound supplier is no neighbor of the function, so no outcome is owed; its attached
+    // column still continues.
+    for (const id of continuationQuestions.keys())
+      if (
+        !neighbors.has(id) &&
+        !requested.has(id) &&
+        !this.visited.has(id) &&
+        !this.removedSet.has(id)
+      )
+        routeRequests.push({ nodeId: id, question: '' });
 
     return {
       invalidRoutes,
