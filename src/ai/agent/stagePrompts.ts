@@ -219,7 +219,6 @@ export function buildActiveHopInstruction(
   const captureRecipe = resolveStage(sess, 'active', isCtMode, {
     scope: 'per_focus',
     focusKind: nonBodied ? 'non_bodied' : 'bodied',
-    writeSections: true,
   });
   const focus = buildWorkerHopMessage(engine.peekHopContext(), focusId);
   const recentRejections = sess.memory

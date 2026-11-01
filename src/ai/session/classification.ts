@@ -1,14 +1,7 @@
 /** Mission-type classification — selects which capture angles fire. */
 
-import { z } from 'zod';
-
-/** Zod enum for the mission-type classification value.
- * @public
- */
-export const ClassificationSchema = z.enum(['business', 'technical', 'both']);
-
 /** Resolved mission-type classification value. */
-export type ClassificationValue = z.infer<typeof ClassificationSchema>;
+export type ClassificationValue = 'business' | 'technical' | 'both';
 
 /**
  * Short human-readable label per classification value. Used inside confirm-SM-start messages,

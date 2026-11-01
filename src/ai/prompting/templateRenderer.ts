@@ -166,10 +166,6 @@ export type StageRenderScope =
   | {
       readonly scope: 'per_focus';
       readonly focusKind: 'bodied' | 'non_bodied';
-      /**
-       * False only when all kept section angles are valid and held; evidence limits still render.
-       */
-      readonly writeSections?: boolean;
     };
 
 /**
@@ -252,15 +248,6 @@ export function resolveStagePrompt(
       continue;
     }
     if (render.scope === 'per_focus') {
-      if (
-        render.writeSections === false &&
-        (key === 'shared_capture' ||
-          key === 'structural_summary' ||
-          CAPTURE_ANGLE[key])
-      ) {
-        gatedOut.push({ key, reason: 'focus_scope' });
-        continue;
-      }
       if (key === 'structural_summary' && render.focusKind !== 'non_bodied') {
         gatedOut.push({ key, reason: 'focus_scope' });
         continue;
@@ -313,9 +300,7 @@ export function resolveStagePrompt(
     discover: '### Output templates (discovery)',
     active:
       render.scope === 'per_focus'
-        ? render.writeSections === false
-          ? '### Evidence limits'
-          : captureRecipeHeader(classification)
+        ? captureRecipeHeader(classification)
         : '### Active-phase templates (write each key to its target field)',
     synthesis: '### Output templates (synthesis)',
   };

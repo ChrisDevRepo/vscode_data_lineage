@@ -38,15 +38,12 @@ export class ColumnTracer {
   /**
    * Arrays are copied, never aliased, so the frozen target set cannot be edited in place.
    * @param targetColumns - Columns requested at the start of the trace.
-   * @param initialAspect - Existing aspect to continue from instead of a fresh one; the engine
-   * always starts fresh.
    */
   constructor(
     targetColumns: string[],
-    initialAspect?: ColumnAspect,
     private readonly identifierCaseSensitive = false,
   ) {
-    this.aspect = initialAspect ?? {
+    this.aspect = {
       target_columns: [...targetColumns],
       active_columns: [...targetColumns],
       edges: [],

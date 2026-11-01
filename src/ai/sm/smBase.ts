@@ -2321,7 +2321,6 @@ export class NavigationEngine implements IHopStateMachine {
     ) {
       this.tracer = new ColumnTracer(
         effectiveTargetColumns,
-        undefined,
         this.model.identifierCaseSensitive,
       );
       initialActiveColumns = resolvedActiveColumns;
