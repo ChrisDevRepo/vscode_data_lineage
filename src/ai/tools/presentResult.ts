@@ -771,7 +771,7 @@ export function findBareNonPrunedNodes(
 /**
  * The detail-slot node ids a present call must link from `sections[].node_ids[]`: the slots whose
  * node is in the rendered set. The synthesis prompt states the rule, the envelope's `detail_slots`
- * carry exactly these nodes, and {@link findUnrenderedDetailSlotIds} enforces it.
+ * carry exactly these nodes, and {@link unplacedDetailSlotIds} enforces it.
  */
 export function requiredDetailSlotIds(
   slotNodeIds: readonly string[],
@@ -806,18 +806,6 @@ export function requiredCtChainNodeIds(
   );
   return renderedNodeIds.filter(
     (id) => chain.has(keyOf(id)) && !exempt.has(keyOf(id)),
-  );
-}
-
-/** Reports which delivered `detail_slots[]` reached no rendered section. */
-export function findUnrenderedDetailSlotIds(
-  slotNodeIds: readonly string[],
-  input: PresentResultInput,
-): string[] {
-  if (!input.sections?.length) return [];
-  return unplacedDetailSlotIds(
-    slotNodeIds,
-    new Set(input.sections.flatMap((section) => section.node_ids)),
   );
 }
 

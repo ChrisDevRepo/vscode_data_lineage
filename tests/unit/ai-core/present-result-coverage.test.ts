@@ -2,7 +2,7 @@
 import { assert, describe, expect, it } from 'vitest';
 import {
   findBareNonPrunedNodes,
-  findUnrenderedDetailSlotIds,
+  unplacedDetailSlotIds,
   type PresentResultInput,
 } from '../../../src/ai/tools/presentResult';
 
@@ -143,7 +143,12 @@ describe('presentation coverage contracts', () => {
     const result =
       row.api === 'bare'
         ? findBareNonPrunedNodes({ node_states: row.states }, input, row.ids)
-        : findUnrenderedDetailSlotIds(row.ids, input);
+        : input.sections?.length
+          ? unplacedDetailSlotIds(
+              row.ids,
+              new Set(input.sections.flatMap((section) => section.node_ids)),
+            )
+          : [];
     assert(result, 'The supplied reference containers are known');
     expect(result.slice().sort()).toEqual(row.expected.slice().sort());
     expect(
