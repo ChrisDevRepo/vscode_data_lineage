@@ -14,17 +14,16 @@ describe('sqlIdentifierComparisonKey', () => {
   // T-SQL identity: an escaped delimiter is one literal character, so the
   // bracketed and the double-quoted spelling of each name must agree.
   it.each([
-    ['[a]]b]', '"a]b"'],
-    ['"a""b"', '[a"b]'],
-    ['[]]]', '"]"'],
-    ['""""', '["]'],
-    ['[dbo].[a]]b]', 'dbo."a]b"'],
+    ['[a]]b]', '"a]b"', '["a]b"]'],
+    ['"a""b"', '[a"b]', '["a\\"b"]'],
+    ['[]]]', '"]"', '[\"]\"]'],
+    ['""""', '["]', '["\\\""]'],
+    ['[dbo].[a]]b]', 'dbo."a]b"', '["dbo","a]b"]'],
   ])(
     'reads escaped delimiters as identifier content: %s is %s',
-    (escaped, other) => {
-      const key = sqlIdentifierComparisonKey(escaped);
-      expect(key).not.toBeNull();
-      expect(key).toBe(sqlIdentifierComparisonKey(other));
+    (escaped, other, canonical) => {
+      expect(sqlIdentifierComparisonKey(escaped)).toBe(canonical);
+      expect(sqlIdentifierComparisonKey(other)).toBe(canonical);
     },
   );
   it.each([
@@ -41,14 +40,14 @@ describe('sqlIdentifierComparisonKey', () => {
     },
   );
   it('ignores delimiters, outside whitespace and case only where the source allows', () => {
-    expect(sqlIdentifierComparisonKey('[dbo].[Foo]')).toBe(
-      sqlIdentifierComparisonKey(' dbo . foo '),
-    );
-    expect(sqlIdentifierComparisonKey('[dbo].[Foo]', true)).not.toBe(
-      sqlIdentifierComparisonKey('dbo.foo', true),
-    );
+    expect(sqlIdentifierComparisonKey('[dbo].[Foo]')).toBe('["dbo","foo"]');
+    expect(sqlIdentifierComparisonKey(' dbo . foo ')).toBe('["dbo","foo"]');
     expect(sqlIdentifierComparisonKey('[dbo].[Foo]', true)).toBe(
-      sqlIdentifierComparisonKey('"dbo"."Foo"', true),
+      '["dbo","Foo"]',
+    );
+    expect(sqlIdentifierComparisonKey('dbo.foo', true)).toBe('["dbo","foo"]');
+    expect(sqlIdentifierComparisonKey('"dbo"."Foo"', true)).toBe(
+      '["dbo","Foo"]',
     );
   });
 });
