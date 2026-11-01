@@ -44,21 +44,50 @@ const anchorCache = new Map();
 const anchorsOf = (file) => {
   if (!anchorCache.has(file)) {
     const text = readFileSync(file, 'utf8').replace(/^```[\s\S]*?^```/gm, '');
-    anchorCache.set(
-      file,
-      new Set([...text.matchAll(/^#+\s+(.*)$/gm)].map((m) => slug(m[1]))),
-    );
+    // Later copies of a heading use GitHub ids: slug-1, slug-2, ...
+    const occurrences = new Map();
+    const anchors = new Set();
+    for (const match of text.matchAll(/^#+\s+(.*)$/gm)) {
+      const base = slug(match[1]);
+      let id = base;
+      while (occurrences.has(id)) {
+        const n = (occurrences.get(base) ?? 0) + 1;
+        occurrences.set(base, n);
+        id = `${base}-${n}`;
+      }
+      occurrences.set(id, 0);
+      anchors.add(id);
+    }
+    anchorCache.set(file, anchors);
   }
   return anchorCache.get(file);
 };
+
+const PREFIX = 'dataLineageViz.';
+/** First segment of a dotted setting, such as `tableStatistics` or `ai`. */
+const settingGroups = new Set(
+  [...settings]
+    .filter((key) => key.startsWith(PREFIX))
+    .map((key) => key.slice(PREFIX.length).split('.')[0])
+    .filter((head) =>
+      [...settings].some((key) => key.startsWith(`${PREFIX}${head}.`)),
+    ),
+);
+const settingKnown = (key) =>
+  settings.has(key) || [...settings].some((item) => item.startsWith(`${key}.`));
 
 const problems = [];
 for (const file of files) {
   const text = readFileSync(file, 'utf8');
   for (const [, target, anchor] of text.matchAll(
-    /\]\(([^)#\s]+)(#[^)]*)?\)/g,
+    /\]\(([^)#\s]*)(#[^)]*)?\)/g,
   )) {
-    if (/^(https?:|mailto:)/.test(target)) continue;
+    if (!target && anchor) {
+      if (!anchorsOf(file).has(anchor.slice(1)))
+        problems.push(`${file}: broken anchor ${anchor}`);
+      continue;
+    }
+    if (!target || /^(https?:|mailto:)/.test(target)) continue;
     const resolved = join(dirname(file), target);
     if (!existsSync(resolved)) problems.push(`${file}: broken link ${target}`);
     else if (
@@ -82,9 +111,15 @@ for (const file of files) {
   }
   if (file !== 'CHANGELOG.md') {
     for (const [, key] of text.matchAll(/`(dataLineageViz\.[\w.]+)`/g)) {
-      const known =
-        settings.has(key) || [...settings].some((s) => s.startsWith(`${key}.`));
-      if (!known) problems.push(`${file}: unknown setting ${key}`);
+      if (!settingKnown(key)) problems.push(`${file}: unknown setting ${key}`);
+    }
+    // A dotted name under a known group is a setting too (`tableStatistics.maxColumns`).
+    // A one-word backtick is left alone: docs also use it for names that are not settings.
+    for (const [, key] of text.matchAll(/`([\w-]+(?:\.[\w-]+)+)`/g)) {
+      if (key.startsWith(PREFIX) || !settingGroups.has(key.split('.')[0]))
+        continue;
+      if (!settingKnown(`${PREFIX}${key}`))
+        problems.push(`${file}: unknown setting ${key}`);
     }
   }
 }
