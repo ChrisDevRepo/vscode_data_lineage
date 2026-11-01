@@ -38,9 +38,6 @@ stubs/**
 docs/**
 CONTRIBUTING.md
 
-# Internal test and documentation infrastructure (must not leak into VSIX)
-**/*internal*/**
-
 # Environment files (must never be packaged)
 .env
 .env.*
@@ -89,7 +86,7 @@ codex.md
 .continue/**
 .aider*
 
-# A dacpac at the repo root is an internal model staged for a lane run (see .gitignore); the
+# A dacpac at the repo root is a local model staged for a lane run (see .gitignore); the
 # shipped fixture is assets/demo.dacpac only. vsce globs do not cross `/`, so this is root-only.
 *.dacpac
 

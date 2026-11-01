@@ -12,7 +12,7 @@ These need no database, model provider or display. Parser and lineage scenarios 
 | `npm run test:core` | Parser and lineage |
 | `npm run test:parser` | Parser only |
 | `npm run test:lineage` | Lineage only |
-| `npm run test:runtime` | Backend graph contracts, tool registration/dispatch, identifier boundaries, schema, redaction (including the operator runner's secret boundary), cancellation, templates and `scripted` catalog rows |
+| `npm run test:runtime` | Backend graph contracts, tool registration/dispatch, identifier boundaries, schema, redaction (including the operator runner's secret boundary), cancellation and templates |
 | `npm run typecheck`, `npm run typecheck:tests`, `npm run lint`, `npm run format:check`, `npm run knip` | TypeScript, lint, formatting and unused-code checks |
 | `npm run gate` | Everything above, plus coverage floors, build and repository checks; CI runs this |
 
@@ -22,7 +22,7 @@ The gate prints `PASS`, `FAIL` and `SKIP` per step and exits nonzero on any `FAI
 
 ## Where tests live
 
-`tests/unit/` holds the Vitest suites, `tests/cases/` the shared case catalogs (parser rows in `tests/cases/parser/exact-edges.yaml`, AI scenarios in `tests/cases/lineage-cases.yaml`), `tests/integration/` the VS Code host lanes, `tests/harness/` the optional headless runner and `tests/tools/` the lane runners. The gate runs the core and runtime lanes once each; `npm test` is their aggregate. Add a check as one row in an existing file or catalog.
+`tests/unit/` holds the Vitest suites, `tests/cases/` the shared case catalogs (parser rows in `tests/cases/parser/exact-edges.yaml`, headless demo rows in `tests/cases/lineage-cases.yaml`), `tests/integration/` the VS Code host lanes, `tests/harness/` the optional headless runner and `tests/tools/` the lane runners. The gate runs the core and runtime lanes once each; `npm test` is their aggregate. Add a check as one row in an existing file or catalog.
 
 ## What these checks establish
 
