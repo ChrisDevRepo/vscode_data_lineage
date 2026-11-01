@@ -165,12 +165,12 @@ interface ToolAttemptCall extends ToolOutcomeIdentity {
 }
 
 /**
- * Original messages, system, tools and choice, held for one phase or hop. A later attempt appends
- * transcript only, so this prefix stays byte-stable.
+ * Original messages, system and choice, held for one phase or hop. Tool cards resolve from the live
+ * registry, so a correction's card requires only the fields to resend.
  */
 type ToolAttemptPrefix = Pick<
   ToolGenerationInput,
-  'messages' | 'system' | 'tools' | 'toolChoice' | 'instructionContext'
+  'messages' | 'system' | 'toolChoice' | 'instructionContext'
 >;
 
 /** Graph-visible outcome of exactly one generation and one ordered dispatch batch. */
@@ -408,8 +408,7 @@ function renderObservationResultContent(result: string): string {
 }
 
 /**
- * The native phase/hop transcript is appended whole, preserving the earlier request as a cacheable
- * prefix.
+ * The native phase/hop transcript is appended whole after the earlier messages.
  */
 export function renderToolAttemptContext(
   state: ToolPhaseAttemptState,
@@ -794,13 +793,13 @@ export async function executeToolAttempt(
   const prefix = priorState?.prefix ?? {
     messages: plan.input.messages,
     system: plan.input.system,
-    tools: modelToolDefinitions(plan.input.registry),
     toolChoice: plan.input.toolChoice,
     instructionContext: plan.context,
   };
   const result = await executeToolGenerationAttempt(model, {
     ...plan.input,
     ...prefix,
+    tools: modelToolDefinitions(plan.input.registry),
     messages: [
       ...prefix.messages,
       ...(priorState ? renderToolAttemptContext(priorState) : []),
