@@ -25,6 +25,7 @@ import {
 } from '../engine/traceScope';
 import { directNeighborIds } from '../engine/graphGuards';
 import { traceSizeByDepth } from '../engine/graphDisplayMode';
+import { notifyUser } from '../utils/notify';
 
 interface UseInteractiveTraceReturn {
   trace: TraceState;
@@ -558,6 +559,7 @@ export function useInteractiveTrace(
       nodes,
       edges,
       graph: tGraph,
+      notice,
     } = applyTraceToFlow(
       flowNodes,
       flowEdges,
@@ -566,6 +568,7 @@ export function useInteractiveTrace(
       model,
       synthesize,
     );
+    if (notice) notifyUser(notice);
     return {
       tracedNodes: nodes as FlowNode<CustomNodeData>[],
       tracedEdges: edges,

@@ -2,7 +2,5 @@
 
 /** Dispatches a warning notification to the VS Code host. */
 export function notifyUser(text: string): void {
-  if (typeof window !== 'undefined') {
-    window.vscode?.postMessage({ type: 'show-warning', text });
-  }
+  window.vscode?.postMessage({ type: 'show-warning', text });
 }

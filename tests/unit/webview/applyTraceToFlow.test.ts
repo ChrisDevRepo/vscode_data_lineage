@@ -54,6 +54,24 @@ describe('applyTraceToFlow — passthrough', () => {
       }),
     );
     expect(result.nodes).toEqual([]);
+    expect(result.notice).toBe(
+      'Traced nodes are not visible in the current view.',
+    );
+  });
+
+  it('returns the no-result notice for a trace that produced no nodes', () => {
+    expect(applyTraceToFlow(nodes, edges, traceState()).notice).toBe(
+      'Trace produced no results.',
+    );
+  });
+
+  it('returns no notice for a visible trace', () => {
+    const result = applyTraceToFlow(
+      nodes,
+      edges,
+      traceState({ tracedNodeIds: new Set(['A']) }),
+    );
+    expect(result.notice).toBeUndefined();
   });
 });
 

@@ -33,7 +33,6 @@ import {
   type SchemaProjectionEdge,
   type SchemaProjectionNode,
 } from './schemaProjection';
-import { notifyUser } from '../utils/notify';
 import { errorMessage } from '../utils/errorMessage';
 
 /** Receives a diagnostic line raised while a graph is built or laid out. */
@@ -447,7 +446,10 @@ function layoutTraceFlow(
   });
 }
 
-/** Applies active trace state to the visual graph, filtering and re-layouting as needed. */
+/**
+ * Applies active trace state to the visual graph, filtering and re-layouting as needed. `notice`
+ * is the user-facing warning for an empty or invisible trace; the webview shows it.
+ */
 export function applyTraceToFlow(
   flowNodes: FlowNode[],
   flowEdges: FlowEdge[],
@@ -455,7 +457,7 @@ export function applyTraceToFlow(
   config: ExtensionConfig = DEFAULT_CONFIG,
   model?: DatabaseModel | null,
   synthesizeOutOfFilter?: boolean,
-): { nodes: FlowNode[]; edges: FlowEdge[]; graph?: Graph } {
+): { nodes: FlowNode[]; edges: FlowEdge[]; graph?: Graph; notice?: string } {
   if (
     trace.mode === 'none' ||
     trace.mode === 'configuring' ||
@@ -465,8 +467,11 @@ export function applyTraceToFlow(
   }
   if (trace.tracedNodeIds.size === 0) {
     logTraceWarn(`applyTraceToFlow: tracedNodeIds empty, mode=${trace.mode}`);
-    notifyUser('Trace produced no results.');
-    return { nodes: flowNodes, edges: flowEdges };
+    return {
+      nodes: flowNodes,
+      edges: flowEdges,
+      notice: 'Trace produced no results.',
+    };
   }
 
   const { nodes: filteredNodes, edges: filteredEdges } = projectFlowToTrace(
@@ -475,11 +480,12 @@ export function applyTraceToFlow(
     trace,
   );
 
+  let notice: string | undefined;
   if (filteredNodes.length === 0 && flowNodes.length > 0) {
     logTraceWarn(
       `applyTraceToFlow: 0 match for ${trace.tracedNodeIds.size} ids (mode=${trace.mode})`,
     );
-    notifyUser('Traced nodes are not visible in the current view.');
+    notice = 'Traced nodes are not visible in the current view.';
   }
 
   const synth = isSynthesizingMode(trace, synthesizeOutOfFilter);
@@ -533,7 +539,7 @@ export function applyTraceToFlow(
     style: { ...e.style, strokeWidth: 1.8 },
   }));
 
-  return { nodes, edges, graph: traceGraph };
+  return { nodes, edges, graph: traceGraph, notice };
 }
 
 /** Input to {@link dagreLayout}. */
