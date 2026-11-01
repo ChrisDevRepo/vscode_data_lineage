@@ -896,7 +896,7 @@ export function inspectPresentResult(
       return;
     const code: IssueCode =
       state === 'not_in_model'
-        ? 'report_not_found'
+        ? 'not_found'
         : state === 'out_of_scope'
           ? 'result_out_of_scope'
           : stage === 'completed'

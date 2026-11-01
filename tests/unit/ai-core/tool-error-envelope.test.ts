@@ -119,8 +119,10 @@ describe('tool-error-envelope', () => {
             false,
           );
         const third = render(rejection, 3, undefined, effect);
+        const own = (ISSUES[code] as { fallback?: string }).fallback;
         expect(at(third, path)?.message).toContain(
-          (ISSUES[code] as { fallback?: string }).fallback,
+          own ??
+            'write that information in sections instead, highlighted with a callout naming the unresolved issue.',
         );
         expect(third.resend).toContain('sections');
       }

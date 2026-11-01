@@ -98,7 +98,6 @@ export const ISSUES = {
       'Add each listed id to the node_ids of the section that describes it.',
   },
   not_found: OBJECT_IDENTITY_ISSUE,
-  report_not_found: { ...OBJECT_IDENTITY_ISSUE, ...REPORT_REFERENCE_FALLBACK },
   out_of_scope: {
     category: 'reference',
     label: 'outside the approved scope',
@@ -126,7 +125,7 @@ export const ISSUES = {
     correction: 'Name a direct neighbor of the current object.',
   },
   unknown_target_column: COLUMN_IDENTITY_ISSUE,
-  unknown_column: { ...COLUMN_IDENTITY_ISSUE, ...REPORT_REFERENCE_FALLBACK },
+  unknown_column: COLUMN_IDENTITY_ISSUE,
   closed_neighbor: {
     category: 'reference',
     label: 'neighbor already pruned or visited',
@@ -151,13 +150,11 @@ export const ISSUES = {
     correction: 'Use the id of the current object.',
   },
   not_in_result: {
-    ...REPORT_REFERENCE_FALLBACK,
     category: 'reference',
     label: 'not in the result graph, which is fixed at this stage',
     correction: 'Name a node id of the result graph.',
   },
   addable_to_result: {
-    ...REPORT_REFERENCE_FALLBACK,
     category: 'reference',
     label: 'not in the result graph',
     correction:
