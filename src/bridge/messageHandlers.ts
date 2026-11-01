@@ -46,10 +46,8 @@ import {
 } from '../engine/connectionManager';
 import { type DbSession } from '../engine/db/dbSession';
 import {
-  isDbConnectionError,
-  isDriverError,
+  connectionFailure,
   reportConnectionError,
-  targetFromSession,
 } from '../engine/db/connectionErrors';
 import { redactSecrets } from '../utils/redact';
 import { type SimpleExecuteResult } from '../types/database';
@@ -1778,12 +1776,8 @@ async function withDbProgressHost(
         }
       } catch (err) {
         if (load.token.isCancellationRequested) return;
-        const target = isDbConnectionError(err)
-          ? err.target
-          : session && isDriverError(err)
-            ? targetFromSession(session)
-            : undefined;
-        if (target) {
+        const failure = connectionFailure(err, session);
+        if (failure) {
           const retry = (patch?: Partial<StoredConnectionInfo>) =>
             withDbProgressHost(
               host,
@@ -1795,10 +1789,10 @@ async function withDbProgressHost(
               onCancel,
             );
           const reported = reportConnectionError(
-            isDbConnectionError(err) ? err.original : err,
-            target,
+            failure.error,
+            failure.target,
             Logger.create(env.outputChannel, 'DB'),
-            connectionErrorHooks(env, target.connectionId, retry),
+            connectionErrorHooks(env, failure.target.connectionId, retry),
           );
           host.postMessage({
             type: 'db-error',
@@ -2003,17 +1997,13 @@ async function handleTableStatsRequestHost(
       logger,
     );
   } catch (err) {
-    const target = isDbConnectionError(err)
-      ? err.target
-      : session && isDriverError(err)
-        ? targetFromSession(session)
-        : undefined;
-    if (target) {
+    const failure = connectionFailure(err, session);
+    if (failure) {
       const reported = reportConnectionError(
-        isDbConnectionError(err) ? err.original : err,
-        target,
+        failure.error,
+        failure.target,
         logger,
-        connectionErrorHooks(dbEnv, target.connectionId, undefined),
+        connectionErrorHooks(dbEnv, failure.target.connectionId, undefined),
       );
       void postToDetail(
         panel,

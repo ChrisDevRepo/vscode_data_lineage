@@ -143,7 +143,7 @@ function errorNumber(err: unknown): number | undefined {
 }
 
 /** Whether an error came from the SQL driver rather than from this extension's own logic. */
-export function isDriverError(err: unknown): boolean {
+function isDriverError(err: unknown): boolean {
   return (
     errorNumber(err) !== undefined || /^E[A-Z]+$/.test(errorCode(err) ?? '')
   );
@@ -393,9 +393,19 @@ export function reportConnectionError(
   return { message, actions, answered };
 }
 
-/** Builds the error target for a session that is already open. */
-export function targetFromSession(session: DbSession): ConnectionErrorTarget {
-  return targetFromStored(session.connectionInfo);
+/**
+ * The error and target to report for a failed connect, or for a driver error on an open session;
+ * `undefined` for any other error.
+ */
+export function connectionFailure(
+  err: unknown,
+  session: DbSession | undefined,
+): { error: unknown; target: ConnectionErrorTarget } | undefined {
+  if (err instanceof DbConnectionError)
+    return { error: err.original, target: err.target };
+  return session && isDriverError(err)
+    ? { error: err, target: targetFromStored(session.connectionInfo) }
+    : undefined;
 }
 
 /** Builds the error target for a stored connection record. @internal */
@@ -421,9 +431,4 @@ export function targetFromStored(
     connectionId: info.connectionId,
     tenantId: info.tenantId,
   };
-}
-
-/** Narrows an error to the connect failure {@link DbConnectionError}. */
-export function isDbConnectionError(err: unknown): err is DbConnectionError {
-  return err instanceof DbConnectionError;
 }
