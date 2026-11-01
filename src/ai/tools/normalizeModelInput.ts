@@ -66,11 +66,7 @@ type SchemaDef = {
 
 /** A new schema instance with its own definition, keeping description and metadata. */
 function duplicateSchema<T extends ZodType>(schema: T, def: object): T {
-  let next = schema.clone(def as never) as T;
-  if (schema.description) next = next.describe(schema.description) as T;
-  const meta = schema.meta();
-  if (meta && Object.keys(meta).length > 0) next = next.meta(meta) as T;
-  return next;
+  return schema.clone(def as never, { parent: true }) as T;
 }
 
 /**

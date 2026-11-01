@@ -4,7 +4,6 @@
  */
 import { createRequire } from 'node:module';
 import { expect } from 'vitest';
-import { ColumnTracer } from '../../../../src/ai/sm/columnTracer';
 import type {
   ColumnEdge,
   ColumnFlowEntry,
@@ -14,7 +13,6 @@ import type { LineageNode, ObjectType } from '../../../../src/engine/types';
 import {
   makeGraph,
   makeIndexedModel,
-  makeModel,
   makeNode,
 } from '../../helpers/modelFixtures';
 import { buildColumnTraceView } from '../../../../src/engine/columnTraceView';
@@ -42,9 +40,9 @@ interface CaseNode {
 
 interface CaseExpect {
   readonly edges?: readonly string[];
+  readonly delivered_edges?: readonly string[];
   readonly invalid?: readonly unknown[];
-  readonly invalid_kind?: string;
-  readonly reason_contains?: string;
+  readonly issue_code?: string;
 }
 
 interface LineageCase {
@@ -200,7 +198,8 @@ export function columnViewFor(
   });
 }
 
-function run(row: LineageCase, upstream: readonly FlowColumn[]) {
+/** Exercises a catalog finding through model admission and records only committed edges. @public */
+export function run(row: LineageCase, upstream: readonly FlowColumn[]) {
   const nodes = row.nodes.map((node) =>
     makeNode({
       id: node.id,
@@ -208,36 +207,62 @@ function run(row: LineageCase, upstream: readonly FlowColumn[]) {
       name: node.id,
       type: node.type,
       columns: (node.columns ?? []).map(column),
+      ...(node.type === 'view' ||
+      node.type === 'function' ||
+      node.type === 'procedure'
+        ? { bodyScript: 'SELECT 1;' }
+        : {}),
     }),
   );
-  const result = new ColumnTracer([...row.active]).validateColumnFlow(
-    row.focus,
-    {
-      summary: 's',
-      sections: [],
-      column_flow: [
-        { out_col: row.out, upstream_columns: upstream },
-        ...(row.extra ?? []).map((entry) => ({
-          out_col: entry.out,
-          upstream_columns: entry.upstream ?? [],
-        })),
-      ],
-    } as never,
-    new Map<string, LineageNode>(nodes.map((node) => [node.id, node])),
-    makeModel(nodes, [], ['dbo']),
-    null,
-    undefined,
-    undefined,
-    row.direction,
-    undefined,
-    [],
-    [],
-    row.roots ?? [],
-  );
-  return result;
+  const pairs: Array<[string, string]> = nodes
+    .filter((node) => node.id !== row.focus)
+    .flatMap(
+      (node) =>
+        [
+          [node.id, row.focus],
+          [row.focus, node.id],
+        ] as Array<[string, string]>,
+    );
+  const engine = engineFor(nodes, pairs);
+  engine.classification = 'technical';
+  expect(
+    engine.init({
+      origin: row.focus,
+      question: 'Trace the declared columns.',
+      analysisMode: 'ct',
+      targetColumns: row.roots?.map((root) => root.col) ?? [...row.active],
+      direction: row.direction,
+      depthIntent: {
+        upstream: { levels: 'all', exactness: 'exact' },
+        downstream: { levels: 'all', exactness: 'exact' },
+      },
+    }),
+  ).toHaveProperty('ok', true);
+  engine.getHopContext();
+  const result = engine.submitModelFindings({
+    focus_node_id: row.focus,
+    summary: 'Declared column relationships.',
+    sections: { technical: 'Supplied SQL relationships.' },
+    column_flow: [
+      { out_col: row.out, upstream_columns: upstream },
+      ...(row.extra ?? []).map((entry) => ({
+        out_col: entry.out,
+        upstream_columns: entry.upstream ?? [],
+      })),
+    ],
+  });
+  if (row.expect.delivered_edges)
+    expect(engine.getHopContext()).toHaveProperty('done', true);
+  return {
+    invalidRoutes: 'errors' in result ? result.errors : [],
+    stagedEdges: engine.columnAspect?.edges ?? [],
+    deliveredEdges: row.expect.delivered_edges
+      ? (engine.getResult().columnAspect?.edges ?? [])
+      : [],
+  };
 }
 
-/** Checks one case expectation against the column-tracer result for that row. */
+/** Checks one catalog row against admitted findings and committed edges. */
 export function check(row: LineageCase, upstream: readonly FlowColumn[]) {
   const result = run(row, upstream);
   const wanted = row.expect;
@@ -245,9 +270,13 @@ export function check(row: LineageCase, upstream: readonly FlowColumn[]) {
     expect(result.stagedEdges.map((edge) => edge.from_col)).toEqual(
       wanted.edges,
     );
+  if (wanted.delivered_edges)
+    expect(result.deliveredEdges.map((edge) => edge.from_col)).toEqual(
+      wanted.delivered_edges,
+    );
   if (wanted.invalid) expect(result.invalidRoutes).toEqual(wanted.invalid);
-  if (wanted.invalid_kind)
-    expect(result.invalidRoutes[0]?.kind).toBe(wanted.invalid_kind);
-  if (wanted.reason_contains)
-    expect(result.invalidRoutes[0]?.reason).toContain(wanted.reason_contains);
+  if (wanted.issue_code)
+    expect(result.invalidRoutes).toContainEqual(
+      expect.objectContaining({ code: wanted.issue_code }),
+    );
 }

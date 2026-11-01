@@ -328,7 +328,7 @@ cases:
       - { node: bare, col: "1.5" }
     expect:
       edges: []
-      invalid_kind: bad_contributor_col
+      issue_code: unknown_column
 
   - id: ct-row-role-stored-as-declared
     runners: [scripted]
@@ -405,7 +405,7 @@ cases:
     upstream:
       - { node: src, col: Missing, transforms: [filter] }
     expect:
-      invalid_kind: bad_contributor_col
+      issue_code: unknown_column
 
   - id: ct-detached-entry-stages-no-edge
     runners: [scripted]
@@ -420,8 +420,8 @@ cases:
     upstream:
       - { node: src, col: Amount }
     expect:
-      edges: [Amount]
-      invalid: []
+      edges: []
+      issue_code: unknown_column
 
   - id: ct-extra-sibling-many-to-many
     runners: [scripted]
@@ -440,8 +440,8 @@ cases:
         upstream:
           - { node: src, col: Other, note: "Sibling stays in the narrative." }
     expect:
-      edges: [Amount, Other]
-      invalid: []
+      edges: []
+      issue_code: unknown_column
 
   - id: headless-summary
     runners: [headless]

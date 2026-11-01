@@ -35,9 +35,7 @@ describe('lineage case catalog', () => {
       expect(
         keys.length > 0 &&
           keys.every((key) =>
-            ['edges', 'invalid', 'invalid_kind', 'reason_contains'].includes(
-              key,
-            ),
+            ['edges', 'delivered_edges', 'invalid', 'issue_code'].includes(key),
           ),
         row.id,
       ).toBe(true);

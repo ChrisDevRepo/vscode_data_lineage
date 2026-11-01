@@ -2,7 +2,6 @@ import {
   ColumnAspect,
   ColumnFlowEntry,
   ColumnEdge,
-  HopFinding,
   InvalidRoute,
 } from './smTypes';
 import type { DatabaseModel, LineageNode } from '../../engine/shared/types';
@@ -516,77 +515,6 @@ export class ColumnTracer {
       }
     }
     return { invalidRoutes, stagedEdges, entrySides };
-  }
-
-  /**
-   * Direct typed callers use the same supplier, target, edge, cardinality and attachment owners.
-   */
-  validateColumnFlow(
-    focusId: string,
-    finding: Pick<HopFinding, 'column_flow'>,
-    nodeMap: Map<string, LineageNode>,
-    model: DatabaseModel,
-    store: ColumnStore | null,
-    log: TracerLogFn | undefined,
-    removedSet: ReadonlySet<string> | undefined,
-    _traceDirection: 'upstream' | 'downstream',
-    incomingRefs?: readonly { node: string; col: string }[],
-    callerTargets: readonly { node: string; col: string }[] = [],
-    incomingDownstreamRefs: readonly { node: string; col: string }[] = [],
-    roots: readonly { node: string; col: string }[] = [],
-    contributorIds?: ReadonlySet<string>,
-  ): ReturnType<ColumnTracer['finishColumnFlow']> {
-    const flow = finding.column_flow ?? [],
-      stagedEdges: ColumnEdge[] = [],
-      entryEdges = new Map<number, ColumnEdge[]>();
-    const invalidRoutes: InvalidRoute[] = [];
-    for (const [index, entry] of flow.entries()) {
-      const path = `column_flow.${index}`,
-        suppliers: VerifiedColumnSupplier[] = [];
-      for (const [refIndex, ref] of entry.upstream_columns.entries()) {
-        const refPath = `${path}.upstream_columns.${refIndex}`;
-        const checked = this.validateColumnSupplier(
-          focusId,
-          ref,
-          refPath,
-          nodeMap,
-          store,
-          removedSet,
-          contributorIds,
-          log,
-        );
-        if ('invalidRoute' in checked) invalidRoutes.push(checked.invalidRoute);
-        else suppliers.push({ ref, path: refPath, neighbor: checked.neighbor });
-      }
-      const prepared = this.prepareColumnEntry(
-        focusId,
-        entry,
-        suppliers,
-        path,
-        nodeMap,
-        model,
-        store,
-        log,
-        callerTargets,
-        removedSet,
-        contributorIds,
-      );
-      invalidRoutes.push(...prepared.invalidRoutes);
-      stagedEdges.push(...prepared.stagedEdges);
-      entryEdges.set(index, prepared.stagedEdges);
-    }
-    return this.finishColumnFlow(
-      focusId,
-      flow,
-      invalidRoutes,
-      stagedEdges,
-      entryEdges,
-      nodeMap,
-      model,
-      incomingRefs,
-      incomingDownstreamRefs,
-      roots,
-    );
   }
 }
 

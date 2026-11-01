@@ -14,6 +14,7 @@ import {
   NODE_HEIGHT,
   buildGraph,
   buildGraphNoLayout,
+  computeShortestPath,
   dagreLayout,
   getGraphMetrics,
   hasCachedLayout,
@@ -23,7 +24,11 @@ import {
   traceNodeWithLevels,
 } from '../../../src/engine/graphBuilder';
 import { DEFAULT_CONFIG, type DatabaseModel } from '../../../src/engine/types';
-import { makeIndexedModel, makeNode } from '../helpers/modelFixtures';
+import {
+  makeGraph,
+  makeIndexedModel,
+  makeNode,
+} from '../helpers/modelFixtures';
 import { loadAdventureWorksModel, testPath } from '../helpers/testUtils';
 
 describe('buildGraph', () => {
@@ -227,5 +232,31 @@ describe('layout worker seam — buildGraphNoLayout, objectLayoutInputForGraph, 
       x: 1001,
       y: 2000,
     });
+  });
+});
+
+/** `A → B → C`, plus `D` joining at `C`, and an unreachable `Z`. */
+function chain() {
+  return makeGraph(
+    [{ id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'D' }, { id: 'Z' }],
+    [
+      ['A', 'B'],
+      ['B', 'C'],
+      ['D', 'C'],
+    ],
+  );
+}
+
+describe('computeShortestPath', () => {
+  it('returns every node and edge along a directed path', () => {
+    const result = computeShortestPath(chain(), 'A', 'C');
+    expect([...result!.nodeIds]).toEqual(['A', 'B', 'C']);
+    expect(result!.edgeIds).toEqual(new Set(['A→B', 'B→C']));
+  });
+
+  it('finds the path when the endpoints are given in reverse (bidirectional retry)', () => {
+    const result = computeShortestPath(chain(), 'C', 'A');
+    expect(result?.nodeIds).toEqual(new Set(['A', 'B', 'C']));
+    expect(result?.edgeIds).toEqual(new Set(['A→B', 'B→C']));
   });
 });

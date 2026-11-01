@@ -63,11 +63,6 @@ export interface LineageEdge {
    * - `exec`: Referenced in an EXEC/EXECUTE call.
    */
   type: 'body' | 'exec';
-  /**
-   * Set on a procedure write edge whose every mutation of the target is DELETE/TRUNCATE (no column
-   * data).
-   */
-  deleteOnly?: true;
 }
 
 /** Summary information for a single SQL schema. */

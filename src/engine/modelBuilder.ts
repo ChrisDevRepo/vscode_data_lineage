@@ -278,16 +278,11 @@ function addEdge(
   source: string,
   target: string,
   type: 'body' | 'exec',
-  deleteOnly = false,
 ) {
   const key = `${source}→${target}`;
   if (!edgeKeys.has(key)) {
     edgeKeys.add(key);
-    edges.push(
-      deleteOnly
-        ? { source, target, type, deleteOnly: true }
-        : { source, target, type },
-    );
+    edges.push({ source, target, type });
   }
 }
 
@@ -695,15 +690,7 @@ function processSpEdges(
         );
         if (mutation === 'read')
           addEdge(ctx.edges, ctx.edgeKeys, depId, sourceId, 'body');
-        else
-          addEdge(
-            ctx.edges,
-            ctx.edgeKeys,
-            sourceId,
-            depId,
-            'body',
-            mutation === 'delete',
-          );
+        else addEdge(ctx.edges, ctx.edgeKeys, sourceId, depId, 'body');
       } else {
         addEdge(ctx.edges, ctx.edgeKeys, depId, sourceId, 'body');
       }
@@ -941,14 +928,13 @@ function resolveFileAndDatabaseReferences(
     node: LineageNode,
     source: string,
     target: string,
-    deleteOnly = false,
   ): void => {
     if (externalRefsEnabled) {
       if (!nodeIds.has(node.id)) {
         nodeIds.add(node.id);
         nodes.push(node);
       }
-      addEdge(edges, edgeKeys, source, target, 'body', deleteOnly);
+      addEdge(edges, edgeKeys, source, target, 'body');
     }
   };
 
@@ -987,12 +973,10 @@ function resolveFileAndDatabaseReferences(
     sourceId: string,
     localId: string,
     isWrite: boolean,
-    deleteOnly = false,
   ): void => {
     const resolved = normalizeName(localId, identifierCaseSensitive);
     if (!nodeIds.has(resolved) || resolved === sourceId) return;
-    if (isWrite)
-      addEdge(edges, edgeKeys, sourceId, resolved, 'body', deleteOnly);
+    if (isWrite) addEdge(edges, edgeKeys, sourceId, resolved, 'body');
     else addEdge(edges, edgeKeys, resolved, sourceId, 'body');
   };
 
@@ -1003,7 +987,6 @@ function resolveFileAndDatabaseReferences(
     crossDbId: string,
     sourceId: string,
     isWrite = false,
-    deleteOnly = false,
   ): void => {
     addVirtualEdge(
       {
@@ -1017,7 +1000,6 @@ function resolveFileAndDatabaseReferences(
       },
       isWrite ? sourceId : crossDbId,
       isWrite ? crossDbId : sourceId,
-      deleteOnly,
     );
   };
 
@@ -1085,18 +1067,10 @@ function resolveFileAndDatabaseReferences(
           : 'read';
       const isWrite = mutation !== 'read';
       if (isLocalRef(db, localId)) {
-        addLocalEdge(sourceId, localId, isWrite, mutation === 'delete');
+        addLocalEdge(sourceId, localId, isWrite);
         continue;
       }
-      addCrossDbEdge(
-        db,
-        schema,
-        object,
-        crossDbId,
-        sourceId,
-        isWrite,
-        mutation === 'delete',
-      );
+      addCrossDbEdge(db, schema, object, crossDbId, sourceId, isWrite);
     }
   }
 }

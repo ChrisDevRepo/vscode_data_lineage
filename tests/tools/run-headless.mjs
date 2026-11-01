@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 
 /** Compiles the harness into out/test-headless and serves `vscode` from its shim; returns the
  * compiled cli module.
- * @public Also used by wrapping runners that add evidence through the cli hooks.
+ * @public
  */
 export function loadHarness() {
   process.chdir(root);

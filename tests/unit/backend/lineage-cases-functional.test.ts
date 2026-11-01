@@ -133,9 +133,11 @@ describe('stored-column arrival admission and delivery', () => {
     };
     const admitted = engine.submitFindings({ ...submission });
     expect(admitted, JSON.stringify(admitted)).toHaveProperty('ok', true);
-    const pending = engine.investigationTasks.find(
-      (task) => task.nodeId === sink && task.status === 'pending',
-    )!;
+    const pending = engine
+      .toJSON()
+      .engineInternals.investigationTasks.find(
+        (task) => task.nodeId === sink && task.status === 'pending',
+      )!;
     expect(pending).toMatchObject(
       row.expect.sink_mode === 'ct'
         ? { kind: 'column_lineage', activeColumns: row.expect.sink_columns }

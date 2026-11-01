@@ -272,7 +272,7 @@ it.each(
       ]),
     );
     expectUncommitted(before, engine.toJSON());
-    expect(engine.getDetailSlots()).toEqual([]);
+    expect(Object.values(engine.toJSON().memory.detailSlots)).toEqual([]);
     const heldRetry = JSON.parse(
       executeSubmitFindings({ focus_node_id: ORIGIN }, services),
     );

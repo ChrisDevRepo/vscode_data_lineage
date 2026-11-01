@@ -888,32 +888,6 @@ export function buildAiToolRegistry(
       execute: async (input: unknown) => {
         handler.signal?.throwIfAborted();
         const sess = getSession();
-        let dispatched = input;
-        if (
-          typeof input === 'object' &&
-          input !== null &&
-          !Array.isArray(input)
-        ) {
-          const { call } = classifyToolCall(
-            {
-              callId: '',
-              toolName: def.name,
-              args: input as Record<string, unknown>,
-            },
-            new Map([
-              [
-                def.name,
-                {
-                  name: def.name,
-                  description: '',
-                  inputSchema: projectInputSchema(def.inputSchema),
-                },
-              ],
-            ]),
-            (message) => outputChannel.debug(message),
-          );
-          if (call.valid) dispatched = call.input;
-        }
         const receipt = {
           input: redactMissionBriefForLog(input),
           generation:
@@ -946,7 +920,7 @@ export function buildAiToolRegistry(
           const offPolicy = handler.authorizeTool(def.name, input);
           if (offPolicy) return offPolicy;
           const result = await toolInputReceipt.run(receipt, () =>
-            execute(dispatched),
+            execute(input),
           );
           if (turnLease)
             assertActiveTurnLease(turnLease, getSession().turnEpoch);

@@ -5,7 +5,6 @@
 import { z } from 'zod';
 import { ingestToolInput } from '../support/toolIngestion';
 export { normalizePresentSectionLabel } from '../support/toolValidation';
-import { findingShapeIssues } from '../support/findingShape';
 import {
   captureToolFact,
   type ToolFactContext,
@@ -947,24 +946,8 @@ export function findingAdmissionFacts(schema: z.ZodType) {
   };
 }
 
-/** Enforces the fresh kept shape of one flat `submit_findings` payload. */
-function refineSubmitFindingsShape(
-  value: FlatSubmitFindings,
-  ctx: z.RefinementCtx,
-  fresh: boolean,
-  classification?: ClassificationValue,
-): void {
-  for (const error of findingShapeIssues(value, fresh, classification))
-    ctx.addIssue({
-      code: 'custom',
-      path: error.path.split('.'),
-      params: { issue: error.code },
-    });
-}
-
 /**
- * Converts a validated flat `submit_findings` payload to the {@link HopFinding} union the engine
- * consumes.
+ * Converts a validated flat `submit_findings` payload to the engine's {@link HopFindingKept}.
  */
 export function toHopFinding(value: FlatSubmitFindings): HopFindingKept {
   const kept: HopFindingKept = {
@@ -1480,28 +1463,17 @@ export function submitFindingsSchemaForMode(
  * field schemas and content requirements with wire admission while retaining section arrays. No
  * normalization, held-content merge or engine mutation occurs here.
  */
-function internalKeptFindingSchema(
-  mode: 'bb' | 'ct',
-  classification?: ClassificationValue,
-  freshSubmission = false,
-  hop?: SubmitFindingsHopColumns,
-  requireColumnFlow = true,
-) {
+function internalKeptFindingSchema(mode: 'bb' | 'ct') {
   const base = mode === 'ct' ? HopFindingCtBaseSchema : HopFindingBaseSchema;
-  const angles = classification
-    ? CLASSIFICATION_KEPT_ANGLES[classification]
-    : CLASSIFICATION_KEPT_ANGLES.both;
+  const angles = CLASSIFICATION_KEPT_ANGLES.both;
   const section = z
     .object({ angle: z.enum(angles), text: nonWhitespaceText })
     .strict();
-  const flow = hop ? columnFlowSchemaForHop(hop) : ColumnFlowSchema;
   return base
     .extend({
       summary: HopFindingBaseSchema.shape.summary.unwrap(),
       sections: z.array(section),
-      ...(mode === 'ct'
-        ? { column_flow: requireColumnFlow ? flow : flow.optional() }
-        : {}),
+      ...(mode === 'ct' ? { column_flow: ColumnFlowSchema.optional() } : {}),
     })
     .strict()
     .superRefine((value, ctx) => {
@@ -1516,17 +1488,6 @@ function internalKeptFindingSchema(
           });
         seen.add(entry.angle);
       });
-      refineSubmitFindingsShape(
-        {
-          ...value,
-          sections: Object.fromEntries(
-            value.sections.map((entry) => [entry.angle, entry.text]),
-          ),
-        } as FlatSubmitFindings,
-        ctx,
-        freshSubmission,
-        classification,
-      );
     });
 }
 
@@ -1535,7 +1496,7 @@ function internalKeptFindingSchema(
  * flow.
  */
 export function heldHopFindingSchemaForMode(mode: 'bb' | 'ct') {
-  return internalKeptFindingSchema(mode, undefined, false, undefined, false);
+  return internalKeptFindingSchema(mode);
 }
 
 /** Zod schema for `get_neighbor_columns` tool input. */

@@ -1449,7 +1449,7 @@ cases:
       metadata: [dbo.T]
       edges:
         - {source: "[dbo].[T]", target: "[gen].[Subject]", type: body}
-        - {source: "[gen].[Subject]", target: "[dbo].[T]", type: body, deleteOnly: true}
+        - {source: "[gen].[Subject]", target: "[dbo].[T]", type: body}
   - id: delete-target-alias-without-as
     sql: "DELETE FROM T FROM dbo.T T WHERE T.ID = 1;"
     sources: [dbo.T]
@@ -1520,7 +1520,7 @@ cases:
       metadata: [dbo.T]
       edges:
         - {source: "[dbo].[T]", target: "[gen].[Subject]", type: body}
-        - {source: "[gen].[Subject]", target: "[dbo].[T]", type: body, deleteOnly: true}
+        - {source: "[gen].[Subject]", target: "[dbo].[T]", type: body}
         - {source: "[dbo].[Other]", target: "[gen].[Subject]", type: body}
   - id: cs-update-top
     description: Case-sensitive target identity — update-top
@@ -1660,7 +1660,7 @@ cases:
     case_modes: [ci, cs]
     sources: ['[@warehouse].[Target]']
     mutations: [{parts: ['@warehouse', Target], kind: delete}]
-    graph: {tables: ['[@warehouse].[Target]'], metadata: ['[@warehouse].[Target]'], edges: [{source: '[@warehouse].[Target]', target: '[gen].[Subject]', type: body}, {source: '[gen].[Subject]', target: '[@warehouse].[Target]', type: body, deleteOnly: true}]}
+    graph: {tables: ['[@warehouse].[Target]'], metadata: ['[@warehouse].[Target]'], edges: [{source: '[@warehouse].[Target]', target: '[gen].[Subject]', type: body}, {source: '[gen].[Subject]', target: '[@warehouse].[Target]', type: body}]}
   - id: mutation-at-schema-double-quote-write
     description: A delimited @-prefixed schema is an ordinary identifier, not a variable
     sql: UPDATE "@warehouse"."Target" SET ID=1;
@@ -1674,7 +1674,7 @@ cases:
     case_modes: [ci, cs]
     sources: ['[@warehouse].[Target]']
     mutations: [{parts: ['@warehouse', Target], kind: delete}]
-    graph: {tables: ['[@warehouse].[Target]'], metadata: ['[@warehouse].[Target]'], edges: [{source: '[@warehouse].[Target]', target: '[gen].[Subject]', type: body}, {source: '[gen].[Subject]', target: '[@warehouse].[Target]', type: body, deleteOnly: true}]}
+    graph: {tables: ['[@warehouse].[Target]'], metadata: ['[@warehouse].[Target]'], edges: [{source: '[@warehouse].[Target]', target: '[gen].[Subject]', type: body}, {source: '[gen].[Subject]', target: '[@warehouse].[Target]', type: body}]}
   - id: mutation-table-variable
     description: Table variables do not hide a qualified @-prefixed object
     sql: DECLARE @rows TABLE(ID int); UPDATE @rows SET ID=1; DELETE FROM @rows; UPDATE dbo.[@Target] SET ID=1;
@@ -1727,7 +1727,7 @@ cases:
     case_modes: [ci, cs]
     sources: [dbo.Source, dbo.TargetC]
     mutations: [{parts: [dbo, TargetC], kind: delete}]
-    graph: {tables: [dbo.Source, dbo.TargetC], metadata: [dbo.TargetC], edges: [{source: '[dbo].[Source]', target: '[gen].[Subject]', type: body}, {source: '[dbo].[TargetC]', target: '[gen].[Subject]', type: body}, {source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body, deleteOnly: true}]}
+    graph: {tables: [dbo.Source, dbo.TargetC], metadata: [dbo.TargetC], edges: [{source: '[dbo].[Source]', target: '[gen].[Subject]', type: body}, {source: '[dbo].[TargetC]', target: '[gen].[Subject]', type: body}, {source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body}]}
   - id: mutation-inert-line-comment
     description: Inert SQL cannot turn a real read into a write
     sql: SELECT ID FROM dbo.TargetC; -- UPDATE dbo.TargetC SET ID=1;
@@ -1751,25 +1751,25 @@ cases:
     sql: DELETE FROM dbo.TargetC; /* INSERT INTO dbo.TargetC(ID) VALUES(1); */
     case_modes: [ci, cs]
     sources: [dbo.TargetC]
-    graph: {tables: [dbo.TargetC], metadata: [dbo.TargetC], edges: [{source: '[dbo].[TargetC]', target: '[gen].[Subject]', type: body}, {source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body, deleteOnly: true}]}
+    graph: {tables: [dbo.TargetC], metadata: [dbo.TargetC], edges: [{source: '[dbo].[TargetC]', target: '[gen].[Subject]', type: body}, {source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body}]}
   - id: mutation-quoted-delete
-    description: Quoted row-removal statements retain delete-only metadata
+    description: Quoted row-removal statements retain write direction
     sql: DELETE FROM "dbo"."TargetC";
     case_modes: [ci, cs]
     sources: [dbo.TargetC]
-    graph: {tables: [dbo.TargetC], metadata: [dbo.TargetC], edges: [{source: '[dbo].[TargetC]', target: '[gen].[Subject]', type: body}, {source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body, deleteOnly: true}]}
+    graph: {tables: [dbo.TargetC], metadata: [dbo.TargetC], edges: [{source: '[dbo].[TargetC]', target: '[gen].[Subject]', type: body}, {source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body}]}
   - id: mutation-quoted-truncate
-    description: Quoted row-removal statements retain delete-only metadata
+    description: Quoted row-removal statements retain write direction
     sql: TRUNCATE TABLE "dbo"."TargetC";
     case_modes: [ci, cs]
     sources: []
-    graph: {tables: [dbo.TargetC], metadata: [dbo.TargetC], edges: [{source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body, deleteOnly: true}]}
+    graph: {tables: [dbo.TargetC], metadata: [dbo.TargetC], edges: [{source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body}]}
   - id: mutation-alias-twin-delete
     description: Target alias resolves the physical table instead of its catalog namesake
     sql: DELETE victim FROM dbo.TargetC AS victim JOIN dbo.victim AS other ON other.ID=victim.ID;
     case_modes: [ci, cs]
     sources: [dbo.TargetC, dbo.victim]
-    graph: {tables: [dbo.TargetC, dbo.victim], metadata: [dbo.TargetC, dbo.victim], edges: [{source: '[dbo].[TargetC]', target: '[gen].[Subject]', type: body}, {source: '[dbo].[victim]', target: '[gen].[Subject]', type: body}, {source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body, deleteOnly: true}]}
+    graph: {tables: [dbo.TargetC, dbo.victim], metadata: [dbo.TargetC, dbo.victim], edges: [{source: '[dbo].[TargetC]', target: '[gen].[Subject]', type: body}, {source: '[dbo].[victim]', target: '[gen].[Subject]', type: body}, {source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body}]}
   - id: mutation-alias-twin-update
     description: Target alias resolves the physical table instead of its catalog namesake
     sql: UPDATE victim SET ID=1 FROM dbo.TargetC AS victim JOIN dbo.victim AS other ON other.ID=victim.ID;
@@ -1789,13 +1789,13 @@ cases:
     case_modes: [ci, cs]
     sources: [dbo.TargetC]
     cross_db_sources: [ArchiveDb.dbo.TargetC]
-    graph: {tables: [dbo.TargetC], metadata: [dbo.TargetC, ArchiveDb.dbo.TargetC], edges: [{source: '[dbo].[TargetC]', target: '[gen].[Subject]', type: body}, {source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body, deleteOnly: true}, {source: '[ArchiveDb].[dbo].[TargetC]', target: '[gen].[Subject]', type: body}]}
+    graph: {tables: [dbo.TargetC], metadata: [dbo.TargetC, ArchiveDb.dbo.TargetC], edges: [{source: '[dbo].[TargetC]', target: '[gen].[Subject]', type: body}, {source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body}, {source: '[ArchiveDb].[dbo].[TargetC]', target: '[gen].[Subject]', type: body}]}
   - id: mutation-current-database-metadata
-    description: Current-database metadata resolves to the local delete-only target
+    description: Current-database metadata resolves to the local removal target
     sql: DELETE FROM dbo.TargetC;
     case_modes: [ci, cs]
     sources: [dbo.TargetC]
-    graph: {tables: [dbo.TargetC], metadata: [LocalDb.dbo.TargetC], edges: [{source: '[dbo].[TargetC]', target: '[gen].[Subject]', type: body}, {source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body, deleteOnly: true}]}
+    graph: {tables: [dbo.TargetC], metadata: [LocalDb.dbo.TargetC], edges: [{source: '[dbo].[TargetC]', target: '[gen].[Subject]', type: body}, {source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body}]}
   - id: mutation-delete-output-into
     description: DELETE OUTPUT INTO retains both removal and data production
     sql: DELETE FROM dbo.TargetC OUTPUT deleted.ID INTO dbo.Archive(ID);
@@ -1803,7 +1803,7 @@ cases:
     sources: [dbo.TargetC]
     targets: [dbo.Archive]
     mutations: [{parts: [dbo, TargetC], kind: delete}, {parts: [dbo, Archive], kind: write}]
-    graph: {tables: [dbo.TargetC, dbo.Archive], metadata: [dbo.TargetC, dbo.Archive], edges: [{source: '[dbo].[TargetC]', target: '[gen].[Subject]', type: body}, {source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body, deleteOnly: true}, {source: '[gen].[Subject]', target: '[dbo].[Archive]', type: body}]}
+    graph: {tables: [dbo.TargetC, dbo.Archive], metadata: [dbo.TargetC, dbo.Archive], edges: [{source: '[dbo].[TargetC]', target: '[gen].[Subject]', type: body}, {source: '[gen].[Subject]', target: '[dbo].[TargetC]', type: body}, {source: '[gen].[Subject]', target: '[dbo].[Archive]', type: body}]}
   - id: mutation-omitted-schema
     description: An omitted remote schema cannot mutate a qualified local decoy
     sql: DELETE ArchiveDb..TargetC; SELECT ID FROM ArchiveDb.TargetC;

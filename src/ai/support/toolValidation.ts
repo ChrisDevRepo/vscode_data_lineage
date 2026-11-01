@@ -1,7 +1,6 @@
 import Ajv2020 from 'ajv/dist/2020';
 import type { ErrorObject, ValidateFunction } from 'ajv';
 import { findingShapeIssues } from './findingShape';
-import type { ClassificationValue } from '../session/classification';
 import { bothSidesClosed } from '../../engine/shared/explorationDepthContract';
 import { z } from 'zod';
 import {
@@ -164,10 +163,7 @@ const DOMAIN_RULES: Record<
     );
   },
   toolFindingShape: (
-    {
-      fresh,
-      classification,
-    }: { fresh: boolean; classification?: ClassificationValue },
+    { fresh }: { fresh: boolean },
     value: unknown,
     path: string,
     valid,
@@ -176,10 +172,8 @@ const DOMAIN_RULES: Record<
       ? findingShapeIssues(
           {
             summary: valid('summary') ? value.summary : undefined,
-            sections: valid('sections') ? value.sections : undefined,
           },
           fresh,
-          classification,
         ).map((error) => ({ ...error, path: child(path, error.path) }))
       : [],
   toolDepthOpen: (_setting: never, value: unknown, path: string) => {

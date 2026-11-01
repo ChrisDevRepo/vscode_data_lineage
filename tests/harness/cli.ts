@@ -424,6 +424,8 @@ export function turnChecks(
  * @public
  */
 export interface HeadlessHooks {
+  /** Additional credential values removed from provider diagnostics. */
+  readonly secrets?: readonly string[];
   /** Called after option parsing and before any service call; a throw is a configuration error
    * (exit 4).
    */
@@ -637,7 +639,7 @@ export async function main(
             ? ('responses' as const)
             : ('chat_completions' as const),
           apiKey: process.env.AI_TEST_API_KEY!,
-          redact: harnessSecrets(),
+          redact: [...harnessSecrets(), ...(hooks.secrets ?? [])],
           model: provider!.model,
           laneId: provider!.provider,
           requestTimeoutMs: options.requestTimeoutMs,
@@ -753,7 +755,7 @@ export async function main(
       diagnostic,
       (_key, value: unknown) => {
         if (typeof value !== 'string') return value;
-        for (const secret of harnessSecrets())
+        for (const secret of [...harnessSecrets(), ...(hooks.secrets ?? [])])
           value = redactSecret(value as string, secret);
         return value;
       },

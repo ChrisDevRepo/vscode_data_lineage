@@ -230,11 +230,8 @@ export interface HopFindingKept {
   column_flow?: ColumnFlowEntry[];
 }
 
-/** A single finding for a focus node. Off-path neighbors leave through `prune_neighbors`. */
-export type HopFinding = HopFindingKept;
-
 /** Data structure used by the AI to submit its findings after analyzing a hop. */
-export type HopSubmission = HopFinding;
+export type HopSubmission = HopFindingKept;
 
 /** A qualified object-column endpoint, retaining its owning object. */
 export interface ScalarReturnTarget {
@@ -808,22 +805,4 @@ export interface InvalidRoute {
   allowed_values?: string[];
   /** Object qualifier for column choices. */
   when?: { node: string };
-}
-
-/**
- * Parts of a rejected `lineage_submit_findings` call held for retry. A sent list replaces the held
- * list whole.
- */
-export interface HeldSubmissionParts {
-  readonly sections: readonly string[];
-  readonly summary: boolean;
-  /**
-   * Names of the other held fields (`badge_label`, `prune_neighbors`, `questions`, `column_flow`).
-   */
-  readonly fields: readonly string[];
-  /**
-   * Faulty parts the draft's faults name and required parts it lacks; the rejection itself also
-   * lists alternative outcome fields.
-   */
-  readonly resend: readonly string[];
 }

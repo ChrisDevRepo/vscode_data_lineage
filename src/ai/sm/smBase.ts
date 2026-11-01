@@ -1,4 +1,4 @@
-import type { InvalidRoute, DepthIntent, HeldSubmissionParts } from './smTypes';
+import type { InvalidRoute, DepthIntent } from './smTypes';
 import { buildRouteValidationRejection } from './smRouteValidation';
 import { missingSectionParts } from '../interaction/rules/submitFindingsRules';
 import {
@@ -49,7 +49,6 @@ import { errorMessage } from '../../utils/errorMessage';
 import {
   AiMemoryManager,
   STORAGE_TRAVERSED_PLACEHOLDER_SUMMARY,
-  type DetailSlot,
   type IncomingQuestion,
   type WorkingMemory,
 } from '../session/memoryManager';
@@ -263,8 +262,6 @@ function hasPart(finding: HopFindingKept, part: string): boolean {
   return finding[part as HeldField] !== undefined;
 }
 
-const angleKey = (section: { angle?: string }): string => section.angle ?? '';
-
 /** Defines the core interface for the state machine handling exploration modes. */
 export interface IHopStateMachine {
   readonly status: SmStatus;
@@ -277,7 +274,6 @@ export interface IHopStateMachine {
   readonly currentHopAnalysisMode: 'bb' | 'ct';
   /** Out-of-approved-scope routes deferred during the SM session. */
   readonly deferredQuestions: ReadonlyArray<DeferredQuestion>;
-  readonly investigationTasks: ReadonlyArray<InvestigationTask>;
   /** Valuable out-of-scope routes available for a later exploration proposal. */
   readonly pendingLeads: ReadonlyArray<PendingLead>;
   /** Neighbours removed by a resolved AI prune, with the sender's reason. */
@@ -313,9 +309,6 @@ export interface IHopStateMachine {
   readonly currentHop: number;
 
   getHopDiagnostics(): DiagnosticsSnapshot;
-
-  /** Every captured detail slot, in insertion order. */
-  getDetailSlots(): DetailSlot[];
 }
 
 /**
@@ -801,31 +794,6 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Read-only held-part metadata for this focus/hop/mode, all derived from its `ToolDraft`; owed
-   * parts are the declared parts the draft's faults name plus the required parts it lacks. `null`
-   * when no safe draft is held.
-   */
-  public heldPartsOfCurrentFocus(): HeldSubmissionParts | null {
-    const held = this.heldDraftOfCurrentFocus();
-    return held
-      ? {
-          sections: held.sections.map(angleKey),
-          summary: held.summary.trim().length > 0,
-          fields: HELD_FIELDS.filter(
-            (field): field is Exclude<HeldField, 'summary'> =>
-              field !== 'summary' && held[field] !== undefined,
-          ),
-          resend: [
-            ...new Set([
-              ...this.failedParts(this.heldFindingDraft.faultPaths),
-              ...this.missingRequiredParts(held),
-            ]),
-          ],
-        }
-      : null;
-  }
-
-  /**
    * Projection of unresolved scope-boundary leads; feeds the follow-up suggestions after synthesis.
    */
   public get deferredQuestions(): ReadonlyArray<DeferredQuestion> {
@@ -862,11 +830,6 @@ export class NavigationEngine implements IHopStateMachine {
         fromFocusNodeId: lead.fromNodeId,
         reason: lead.valueToUser,
       }));
-  }
-
-  /** Read-only typed task ledger used by prompts and diagnostics. */
-  public get investigationTasks(): ReadonlyArray<InvestigationTask> {
-    return this.taskLedger.investigationTasks;
   }
 
   /** Unresolved scope-boundary leads offered after the run. */
@@ -1138,11 +1101,6 @@ export class NavigationEngine implements IHopStateMachine {
    */
   public get pendingLineageQuestions(): string[] {
     return this._pendingLineageQuestions;
-  }
-
-  /** Returns every captured detail slot in insertion order. */
-  public getDetailSlots(): DetailSlot[] {
-    return this.memory.getResult().detail_slots;
   }
 
   /** Gets the operational status. */
@@ -2023,8 +1981,7 @@ export class NavigationEngine implements IHopStateMachine {
 
   /**
    * Admission of `get_neighbor_columns` ids, built once per call: `allowed` lists the in-scope
-   * neighbors of the current focus and `admits` reports whether an id is one of them. Equivalent
-   * spellings are bound before dispatch.
+   * neighbors of the current focus and `admits` checks a canonical id against that set.
    */
   public neighborIdAdmission(): {
     allowed: string[];
@@ -2032,10 +1989,7 @@ export class NavigationEngine implements IHopStateMachine {
   } {
     const allowed = this.neighborColumnIds;
     const allowedSet = new Set(allowed);
-    return {
-      allowed,
-      admits: (id) => allowedSet.has(id),
-    };
+    return { allowed, admits: (id) => allowedSet.has(id) };
   }
 
   /** In-scope neighbor ids available for column lookup, including visited evidence. */
@@ -3603,42 +3557,29 @@ export class NavigationEngine implements IHopStateMachine {
         'downstream',
         endpointKey,
       ).flowing;
-      // Like the downstream forward below, upstream carry follows the attached suppliers whatever
-      // side the arriving task came from: a cycle can reach a node on its downstream leg first.
+      // New attachment can unlock a supplier recorded at an earlier hop; visit-once routing
+      // continues its column without dispatching the authoring node again.
       if (this.effectiveDirection() !== 'downstream') {
-        for (const [index, entry] of finding.column_flow.entries()) {
+        const priorAttachment = columnAttachment(
+          this.columnRoots(),
+          this.tracer.edges.filter((edge) => !isIndirectOnly(edge.transforms)),
+          'upstream',
+          endpointKey,
+        ).endpoints;
+        for (const edge of closureEdges) {
+          const key = endpointKey(edge.from_node, edge.from_col);
           if (
-            entrySides &&
-            !entrySides.some((side) => side.index === index && side.upstream)
+            !attachedUpstream.has(key) ||
+            (edge.hop !== this.hopCount && priorAttachment.has(key))
           )
             continue;
-          if (
-            !resolveColumnFlowTarget(
-              entry,
-              focusId,
-              this.nodeMap,
-              this.identifierCaseSensitive,
-            )
-          )
-            continue;
-          for (const ref of entry.upstream_columns) {
-            const nid = resolveModelNodeId(
-              ref.node,
-              this.nodeMap,
-              this.identifierCaseSensitive,
+          const nid = edge.from_node;
+          addCarry(nid, { node: nid, col: edge.from_col }, 'upstream');
+          if (!flowQuestionByNode.has(nid)) {
+            flowQuestionByNode.set(
+              nid,
+              `Trace ${nid}.${edge.from_col} as upstream input for ${edge.hop_node}.${edge.to_col}.`,
             );
-            if (
-              nid === null ||
-              !attachedUpstream.has(endpointKey(nid, ref.col))
-            )
-              continue;
-            addCarry(nid, { node: nid, col: ref.col }, 'upstream');
-            if (!flowQuestionByNode.has(nid)) {
-              flowQuestionByNode.set(
-                nid,
-                `Trace ${nid}.${ref.col} as upstream input for ${focusId}.${entry.out_col}.`,
-              );
-            }
           }
         }
       }

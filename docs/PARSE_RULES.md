@@ -83,7 +83,7 @@ Temp tables (`#local`, `##global`), table variables (`@name`; a delimited `[@war
 
 ### DELETE and TRUNCATE classification
 
-The shipped target rules do not treat a deletion as data flowing into a table. When metadata supplies a table dependency, a separate mutation scan classifies `DELETE` and `TRUNCATE TABLE` as a procedure→table edge marked `deleteOnly`, provided the body has no data-producing write to the same target. A parsed source can also retain a table→procedure read edge. A `MERGE` is a data-producing write even when its only action is `WHEN MATCHED THEN DELETE`, so its edge is not marked `deleteOnly`.
+The shipped target rules do not treat a deletion as data flowing into a table. When metadata supplies a table dependency, a separate mutation scan classifies `DELETE` and `TRUNCATE TABLE` as a procedure→table write edge. A parsed source can also retain a table→procedure read edge. A `MERGE` also produces a write edge, including when its only action is `WHEN MATCHED THEN DELETE`.
 
 ## Known boundaries
 
@@ -97,7 +97,7 @@ These constructs can lose references in SQL-body parsing, or are left unresolved
 | `ALTER TABLE dbo.A SWITCH PARTITION n TO dbo.B` | Neither table is captured. | Partition switching is DDL, not DML; no edge is modelled either way |
 | ANSI-89 comma list whose member is followed by `TABLESAMPLE`, or that continues with a comma after a `JOIN ... ON` condition or an `APPLY` | The list ends at that member, so tables after it are lost (table-variable members are not tables). | Legacy bodies on any platform |
 | `DELETE T FROM dbo.T AS T` with an ambiguous alias, or a `DELETE` whose target is only a CTE | The alias stays unresolved; the CTE is not traced to invent a mutation target. | Any platform |
-| `WITH d AS (SELECT ... FROM dbo.T) DELETE FROM d` | `dbo.T` is read as a source; the delete-only write is not marked because the statement names only the CTE. | Any platform with CTEs |
+| `WITH d AS (SELECT ... FROM dbo.T) DELETE FROM d`                                                                                                                  | `dbo.T` is read as a source; no write edge is added because the statement names only the CTE.                                                                                                                                                                                                                                                                    | Any platform with CTEs                                                                 |
 | Schema-less `EXEC uspA`, `FROM T`, `db..T` | Not captured; only schema-qualified names resolve. | By design: the parser does not choose a schema |
 | `EXEC db.schema.proc` / `EXEC server.db.schema.proc` | The cross-database call is not captured; cross-database reads and writes are. | SQL Server, Azure SQL Managed Instance |
 | `alias.method(...)` on an xml, spatial or hierarchyid column, such as `x.value(...)` or `g.STDistance(...)` | Captured as a two-part reference that becomes an edge only if the catalog holds that schema-qualified object. | By design: the text does not distinguish `column.method()` from `schema.function()` |
@@ -133,7 +133,7 @@ When the rules miss a dependency that the `.dacpac` or catalog does report, the 
 |---|---|---|
 | Procedure | Call | A procedure referencing another procedure through metadata almost always `EXEC`s it. |
 | Function | Read | A procedure referencing a function through metadata almost always reads from it. |
-| Table / external table | Read or write | The procedure body is checked for a captured write of that table; a table that is only deleted from or truncated becomes a delete-only write; otherwise the reference is a read. |
+| Table / external table | Read or write | The procedure body is checked for a captured write of that table; a table that is only deleted from or truncated is also a write; otherwise the reference is a read. |
 | View | Read | Metadata-only view references are reads. |
 
 The fallback supplements the rules; it does not make static parsing complete. Unresolved schema-qualified references are left out of the graph and listed in Debug diagnostics, once per object even when both the catalog rows and the SQL body name them. The catalog spelling is kept, and an `EXEC` of it in the body adds the marker ` (exec)`; for example, `[dbo].[uspLogError] (exec)`.

@@ -74,7 +74,6 @@ interface EdgeCase {
       source: string;
       target: string;
       type: 'body' | 'exec';
-      deleteOnly?: true;
     }>;
   };
   sources?: string[];
