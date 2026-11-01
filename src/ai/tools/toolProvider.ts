@@ -692,6 +692,7 @@ class ToolHandler implements ToolServices {
       }
 
       const model = this.requireModel();
+      const admission = engine.neighborIdAdmission();
       const outcome = ingestToolInput({
         input,
         schema: GetNeighborColumnsInputSchema,
@@ -701,8 +702,7 @@ class ToolHandler implements ToolServices {
             [
               'neighborId',
               (value, pointer) =>
-                typeof value === 'string' &&
-                engine.validateNeighborIds([value]).length > 0
+                typeof value === 'string' && !admission.admits(value)
                   ? makeRejection({
                       code: REJECTION_CODES.invalidInput,
                       reason:
@@ -710,7 +710,7 @@ class ToolHandler implements ToolServices {
                       errors: at(
                         'not_neighbor',
                         [pointer.slice(1).split('/').join('.')],
-                        engine.neighborColumnIds,
+                        admission.allowed,
                       ),
                     })
                   : null,

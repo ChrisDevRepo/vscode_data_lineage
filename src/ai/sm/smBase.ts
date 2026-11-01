@@ -2035,18 +2035,23 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Validates that the given node ids are legitimate targets for neighbor-column inspection (the
-   * `get_neighbor_columns` tool).
+   * Admission of `get_neighbor_columns` ids, built once per call: `allowed` lists the in-scope
+   * neighbors of the current focus and `admits` reports whether an id resolves to one of them.
    */
-  public validateNeighborIds(ids: string[]): string[] {
-    const allowed = new Set(this.neighborColumnIds);
-    return ids.filter(
-      (id) =>
-        !allowed.has(
+  public neighborIdAdmission(): {
+    allowed: string[];
+    admits: (id: string) => boolean;
+  } {
+    const allowed = this.neighborColumnIds;
+    const allowedSet = new Set(allowed);
+    return {
+      allowed,
+      admits: (id) =>
+        allowedSet.has(
           resolveModelNodeId(id, this.nodeMap, this.identifierCaseSensitive) ??
             '',
         ),
-    );
+    };
   }
 
   /** In-scope neighbor ids available for column lookup, including visited evidence. */

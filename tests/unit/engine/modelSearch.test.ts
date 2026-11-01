@@ -7,7 +7,10 @@ import {
   type SearchableNode,
 } from '../../../src/utils/modelSearch';
 import type { ColumnDef } from '../../../src/engine/types';
-import { searchObjects } from '../../../src/ai/tools/tools';
+import {
+  searchObjects,
+  validateSearchObjectsQuery,
+} from '../../../src/ai/tools/tools';
 import { makeIndexedModel, makeNode } from '../helpers/modelFixtures';
 
 const column = (name: string, type = 'int'): ColumnDef => ({
@@ -191,9 +194,9 @@ describe('lineage_search_objects query contract', () => {
   it.each(['substring', 'regex'] as const)(
     'an empty %s query without schemas is rejected as too short',
     async (mode) => {
-      expect(
-        errorCode(await searchObjects(model, '', undefined, undefined, mode)),
-      ).toBe('query_too_short');
+      expect(errorCode(validateSearchObjectsQuery({ query: '', mode }))).toBe(
+        'query_too_short',
+      );
     },
   );
 
@@ -202,7 +205,13 @@ describe('lineage_search_objects query contract', () => {
       ids(await searchObjects(model, '%', undefined, ['dbo'], 'regex')),
     ).toEqual(['[dbo].[b%]']);
     expect(
-      errorCode(await searchObjects(model, '*', undefined, ['dbo'], 'regex')),
+      errorCode(
+        validateSearchObjectsQuery({
+          query: '*',
+          schemas: ['dbo'],
+          mode: 'regex',
+        }),
+      ),
     ).toBe('invalid_regex');
   });
 

@@ -272,16 +272,28 @@ export function validateSearchObjectsQuery(input: {
 }): ToolRejection | null {
   if (typeof input.query !== 'string') return null;
   const isRegex = input.mode === 'regex';
-  const appliedSchemaFilter =
-    Array.isArray(input.schemas) && input.schemas.length > 0;
-  const listAllInSchemas =
-    appliedSchemaFilter &&
-    (input.query.length === 0 ||
-      (!isRegex && WILDCARD_ALL_TOKENS.has(input.query)));
-  return listAllInSchemas ? null : validateQuery(input.query, isRegex);
+  return listsAllInSchemas(input.query, input.schemas, isRegex)
+    ? null
+    : validateQuery(input.query, isRegex);
 }
 
-/** Searches for objects in the model by name or column name. */
+/** Whether the query lists everything in the requested schemas instead of naming something. */
+function listsAllInSchemas(
+  query: string,
+  schemas: unknown,
+  isRegex: boolean,
+): boolean {
+  return (
+    Array.isArray(schemas) &&
+    schemas.length > 0 &&
+    (query.length === 0 || (!isRegex && WILDCARD_ALL_TOKENS.has(query)))
+  );
+}
+
+/**
+ * Searches for objects in the model by name or column name. The query must already be admitted by
+ * {@link validateSearchObjectsQuery}.
+ */
 export async function searchObjects(
   model: DatabaseModel,
   query: string,
@@ -294,13 +306,8 @@ export async function searchObjects(
 ) {
   const isRegex = mode === 'regex';
   const appliedSchemaFilter = schemas?.length ? [...schemas] : null;
-  const listAllInSchemas =
-    appliedSchemaFilter !== null &&
-    (query.length === 0 || (!isRegex && WILDCARD_ALL_TOKENS.has(query)));
+  const listAllInSchemas = listsAllInSchemas(query, schemas, isRegex);
   const effectiveQuery = listAllInSchemas ? '' : query;
-
-  const rejection = validateSearchObjectsQuery({ query, schemas, mode });
-  if (rejection) return rejection;
 
   const typeSet = types?.length ? new Set<ObjectType>(types) : undefined;
   const requestedSchemaKeys = appliedSchemaFilter
@@ -834,7 +841,7 @@ export function getNeighborColumns(
     const node = nodeMap.get(resolvedId);
     if (!node)
       throw new Error(
-        'get_neighbor_columns received an id outside the model; validate ids with NavigationEngine.validateNeighborIds first',
+        'get_neighbor_columns received an id outside the model; admit ids with NavigationEngine.neighborIdAdmission first',
       );
     const cols = getNodeColumns(resolvedId, nodeMap, store);
     const foreignKeys = presentForeignKeys(node.fks);
@@ -961,7 +968,10 @@ export function validateDdlQuery(query: string): ToolRejection | null {
   return null;
 }
 
-/** Searches the DDL/source code of scriptable objects with a regular expression. */
+/**
+ * Searches the DDL/source code of scriptable objects with a regular expression. The pattern must
+ * already be admitted by {@link validateDdlQuery}.
+ */
 export async function searchDdl(
   model: DatabaseModel,
   query: string,
@@ -971,9 +981,6 @@ export async function searchDdl(
   onDebug?: (msg: string) => void,
   signal?: AbortSignal,
 ): Promise<object> {
-  const rejection = validateDdlQuery(query);
-  if (rejection) return rejection;
-
   const ddlTypes: ObjectType[] = types ? types : [...SCRIPT_TYPES];
   const typeSet = new Set<ObjectType>(ddlTypes);
 
