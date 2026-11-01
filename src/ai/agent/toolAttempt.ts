@@ -26,13 +26,11 @@ import type {
 } from '../model/modelPort';
 import {
   buildToolExecutionError,
-  ISSUES,
-  type ToolProblem,
   type FeedbackStage,
   at,
   makeRejection,
   readToolErrorText,
-  renderProblem,
+  renderProblemReport,
   type ToolRejection,
 } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
@@ -532,18 +530,20 @@ interface RecordedToolOutcome {
    * documented side channel, never sent to the provider) for diagnostics and replay tooling.
    */
   readonly artifact?: ToolRejection;
+  /** Whether {@link resultText} carries the stage-3 fallback guidance, as rendered. */
+  readonly fallback?: boolean;
 }
 
 /**
  * Renders one rejection at the feedback stage of the reply it answers: the nth rejected reply of
  * the step gets stage n, capped at 3; without step state, or for a backend fault, at least stage 2.
  */
-function rejectionText(
+function renderRejection(
   rejection: ToolRejection,
   priorState?: ToolPhaseAttemptState,
   input?: unknown,
   effect?: ToolDefinition['effect'],
-): string {
+): Pick<RecordedToolOutcome, 'resultText' | 'fallback'> {
   const reply = priorState
     ? 1 + Math.max(priorState.noProgressCalls, priorState.rejectedTerminalCalls)
     : 2;
@@ -553,7 +553,13 @@ function rejectionText(
       ? Math.max(2, reply)
       : reply,
   ) as FeedbackStage;
-  return renderProblem(rejection, stage, input, effect);
+  const { text, fallback } = renderProblemReport(
+    rejection,
+    stage,
+    input,
+    effect,
+  );
+  return { resultText: text, fallback };
 }
 
 function recordToolOutcome(
@@ -595,12 +601,7 @@ function recordToolOutcome(
       const refusal = readToolErrorText(outcome.detail.result);
       if (refusal)
         return {
-          resultText: rejectionText(
-            refusal,
-            priorState,
-            call.input,
-            call.effect,
-          ),
+          ...renderRejection(refusal, priorState, call.input, call.effect),
           status: 'error',
           artifact: refusal,
         };
@@ -648,7 +649,7 @@ function recordToolOutcome(
         : {}),
     });
     return {
-      resultText: rejectionText(rejection, priorState, call.input, call.effect),
+      ...renderRejection(rejection, priorState, call.input, call.effect),
       status: 'error',
       rejection: recorded,
       artifact: rejection,
@@ -667,12 +668,7 @@ function recordToolOutcome(
     status: 'not_evaluated',
   });
   return {
-    resultText: rejectionText(
-      outcome.rejection,
-      priorState,
-      call.input,
-      call.effect,
-    ),
+    ...renderRejection(outcome.rejection, priorState, call.input, call.effect),
     status: 'error',
     artifact: outcome.rejection,
   };
@@ -714,12 +710,8 @@ function logToolOutcome(
     | 'refused'
     | 'not_evaluated',
   rejection?: Pick<ToolRejection, 'code' | 'issuePaths' | 'reason'>,
-  resultText?: string,
+  fallback?: boolean,
 ): void {
-  const problem =
-    status === 'rejected' && resultText
-      ? (JSON.parse(resultText) as ToolProblem)
-      : undefined;
   input.debugLog?.(
     `[ToolOutcome] source=${source}` +
       ` phase=${safeLogIdentifier(input.phase, 'unknown')}` +
@@ -731,10 +723,7 @@ function logToolOutcome(
           ` issuePaths=${rejectionPathsForLog(rejection.issuePaths)}` +
           ` reason=${sanitizeForLog(rejection.reason)}`
         : '') +
-      (problem?.attempt === '3/3' &&
-      problem.errors.some((error) => 'fallback' in ISSUES[error.code])
-        ? ' fallback=true'
-        : ''),
+      (fallback ? ' fallback=true' : ''),
   );
 }
 
@@ -856,7 +845,7 @@ export function noCallCorrectionText(
   rejection: ToolRejection,
   priorState?: ToolPhaseAttemptState,
 ): string {
-  return rejectionText(rejection, priorState);
+  return renderRejection(rejection, priorState).resultText;
 }
 
 /** Builds, records, logs, and traces one synthesized (no-call) rejection. */
@@ -1102,7 +1091,7 @@ async function dispatchToolCallBatch(
         call,
         'rejected',
         rejection,
-        outcome.resultText,
+        outcome.fallback,
       );
       input.sink.status('tool', 'Checking and correcting the analysis…');
       continue;
@@ -1246,7 +1235,7 @@ async function dispatchToolCallBatch(
         call,
         'rejected',
         outcome.rejection,
-        outcome.resultText,
+        outcome.fallback,
       );
       input.sink.status('tool', 'Checking and correcting the analysis…');
       if (outcome.rejection!.code === REJECTION_CODES.backendFault)
@@ -1324,7 +1313,7 @@ async function dispatchToolCallBatch(
               ? 'refused'
               : 'accepted',
         undefined,
-        outcome.resultText,
+        outcome.fallback,
       );
     }
 

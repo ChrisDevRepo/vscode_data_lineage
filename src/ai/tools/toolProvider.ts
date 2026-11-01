@@ -85,7 +85,7 @@ import { executeStartExploration } from './handlers/startExploration';
 import { executeSubmitFindings } from './handlers/submitFindings';
 import { executePruneCurrent } from './handlers/pruneCurrent';
 import { executePresentResult } from './handlers/presentResult';
-import type { ModelPort } from '../model/modelPort';
+import { classifyToolCall, type ModelPort } from '../model/modelPort';
 import { tokenToAbortSignal } from '../providers/cancellation';
 import { RegexSearchExecutionError } from '../support/isolatedRegexSearch';
 import { REJECTION_CODES } from '../support/rejectionCodes';
@@ -930,7 +930,21 @@ export function createExternalToolSource(
           caller: 'external',
         },
       );
-      return registry.invoke(name, input);
+      const tool = registry.get(name);
+      if (
+        !tool ||
+        typeof input !== 'object' ||
+        input === null ||
+        Array.isArray(input)
+      )
+        return registry.invoke(name, input);
+      // An external caller is a model boundary too: the same one normalization step runs first.
+      const { call } = classifyToolCall(
+        { callId: '', toolName: name, args: input as Record<string, unknown> },
+        new Map([[name, { ...tool, description: '' }]]),
+        (message) => outputChannel.debug(message),
+      );
+      return registry.invoke(name, call.input);
     },
   };
 }

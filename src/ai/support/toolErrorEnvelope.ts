@@ -623,6 +623,16 @@ export function renderProblem(
   input?: unknown,
   effect?: ToolDefinition['effect'],
 ): string {
+  return renderProblemReport(rejection, stage, input, effect).text;
+}
+
+/** {@link renderProblem} plus whether the rendered text carries the stage-3 fallback guidance. */
+export function renderProblemReport(
+  rejection: ToolRejection,
+  stage: FeedbackStage,
+  input?: unknown,
+  effect?: ToolDefinition['effect'],
+): { readonly text: string; readonly fallback: boolean } {
   const merged = mergeToolErrors(rejection.errors, false);
   // An absent parent covers its descendants; children under a present or mistyped parent still
   // explain the expected structure.
@@ -687,7 +697,7 @@ export function renderProblem(
       ]),
     ],
   };
-  return JSON.stringify(problem);
+  return { text: JSON.stringify(problem), fallback: fallbackShown };
 }
 
 /** Faults with one issue code at each path; the call itself when no path is given. */
