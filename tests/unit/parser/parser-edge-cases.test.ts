@@ -64,16 +64,15 @@ describe('cross-database references', () => {
 
 describe('CLR method calls are not cross-database references', () => {
   it('XML value() and nodes() methods produce no cross-database source', () => {
-    // Only the cross-database claim is pinned. `xmlcol.nodes(...)` has the same
-    // shape as a schema-qualified TVF, so the local source list is ambiguous by
-    // syntax; see findings A.md (open item).
+    // `xmlcol.nodes(...)` has the shape of a schema-qualified TVF, so it is kept as a
+    // two-part local reference, as the parse rules document.
     const parsed = captures(`
       SELECT x.n.value('text()[1]', 'nvarchar(100)') AS Val
       FROM dbo.XmlTable CROSS APPLY xmlcol.nodes('/root/item') x(n)`);
     expect(parsed.crossDbSources).toEqual([]);
     expect(parsed.crossDbTargets).toEqual([]);
     expect(parsed.targets).toEqual([]);
-    expect(parsed.sources).toContain('[dbo].[xmltable]');
+    expect(parsed.sources).toEqual(['[dbo].[xmltable]', '[xmlcol].[nodes]']);
   });
 
   it('still captures a cross-database table-valued function reached through CROSS APPLY', () => {
