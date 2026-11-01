@@ -182,7 +182,7 @@ const DOMAIN_RULES: Record<
         { levels: upstream.levels },
         { levels: downstream.levels },
       )
-      ? [{ path, code: 'invalid' }]
+      ? [{ path, code: 'depth_zero' }]
       : [];
   },
 };

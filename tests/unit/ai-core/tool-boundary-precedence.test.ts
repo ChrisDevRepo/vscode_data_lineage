@@ -478,4 +478,40 @@ describe('lineage_start_exploration boundary', () => {
     expect(result.errors).toEqual([{ path: '', code: 'awaiting_approval' }]);
     expect(session.stateMachine).toBeNull();
   });
+
+  it('rejects a fresh start with both depth sides 0 with the explicit depth_zero issue', async () => {
+    const node = makeNode({
+      id: ORIGIN,
+      schema: 'hop',
+      name: 'origin',
+      type: 'view',
+    });
+    const session = new AiSession();
+    session.model = makeModel([node], [], ['hop']);
+    session.graph = makeGraph([node], []);
+    session.beginTurn();
+    session.enterLmStage({ kind: 'sm_entry' }, session.turnEpoch);
+    const registry = buildAiToolRegistry(
+      () => session,
+      { debug() {}, info() {}, warn() {}, error() {} } as never,
+      () => undefined,
+    );
+    const result = JSON.parse(
+      String(
+        await registry.invoke('lineage_start_exploration', {
+          origin: ORIGIN,
+          analysisMode: 'bb',
+          classification: 'business',
+          depth: {
+            upstream: { levels: 0, exactness: 'exact' },
+            downstream: { levels: 0, exactness: 'exact' },
+          },
+        }),
+      ),
+    );
+    expect(result.errors, JSON.stringify(result)).toEqual([
+      { path: 'depth', code: 'depth_zero' },
+    ]);
+    expect(session.stateMachine).toBeNull();
+  });
 });
