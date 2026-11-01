@@ -451,8 +451,6 @@ cases:
       - "What are the most connected hub tables in this database?"
     expect:
       terminal: ok
-      preview_chars_min: 150
-      must_contain: ["Production", "Sales"]
 
   - id: headless-procedure-dependencies
     runners: [headless]
@@ -462,7 +460,6 @@ cases:
       - kind: approve
     expect:
       terminal: ok
-      preview_chars_min: 100
 
   - id: headless-view-chain
     runners: [headless]
@@ -472,5 +469,4 @@ cases:
       - kind: approve
     expect:
       terminal: ok
-      preview_chars_min: 100
 

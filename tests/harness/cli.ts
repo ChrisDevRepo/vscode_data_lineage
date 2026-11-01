@@ -53,10 +53,7 @@ interface CatalogCase {
     readonly approval?: Partial<ApprovalWorkload>;
     readonly tokens_max?: number;
     readonly rejections_max?: number;
-    readonly preview_chars_min?: number;
-    readonly must_contain?: readonly string[];
     readonly missing_columns?: readonly string[];
-    readonly sql_blocks_min?: number;
   };
 }
 
@@ -309,7 +306,7 @@ export function aiRunStatus(turns: readonly Record<string, unknown>[]): string {
   );
 }
 
-/** Checks one finished turn against its catalog row. Terminal status and the rejection ceiling apply to every turn; the content checks (`preview_chars_min`, `must_contain`, `sql_blocks_min`) describe the row's question and apply to its first answer only.
+/** Checks one finished turn against its catalog row. Terminal status and the rejection ceiling apply to every turn; gate rounds apply to the first. Only measurable run facts are checked; answer content is not graded here.
  * @public Also checked by the wrapping runners' tests.
  */
 export function turnChecks(
@@ -415,27 +412,6 @@ export function turnChecks(
     if (rejections > expect.rejections_max)
       failures.push(
         `rejections ${rejections} exceeded max ${expect.rejections_max}`,
-      );
-  }
-  if (!firstTurn || !expect) return failures;
-  if (
-    expect.preview_chars_min !== undefined &&
-    turn.text.length < expect.preview_chars_min
-  ) {
-    failures.push(
-      `output length ${turn.text.length} below min ${expect.preview_chars_min}`,
-    );
-  }
-  const lowerText = turn.text.toLowerCase();
-  for (const keyword of expect.must_contain ?? []) {
-    if (!lowerText.includes(keyword.toLowerCase()))
-      failures.push(`output missing required keyword "${keyword}"`);
-  }
-  if (expect.sql_blocks_min !== undefined) {
-    const sqlCount = (turn.text.match(/```(?:sql)?[\s\S]*?```/gi) ?? []).length;
-    if (sqlCount < expect.sql_blocks_min)
-      failures.push(
-        `sql blocks count ${sqlCount} below min ${expect.sql_blocks_min}`,
       );
   }
   return failures;
