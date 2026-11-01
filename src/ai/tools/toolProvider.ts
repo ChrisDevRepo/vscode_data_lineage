@@ -691,7 +691,6 @@ class ToolHandler implements ToolServices {
         );
       }
 
-      const model = this.requireModel();
       const admission = engine.neighborIdAdmission();
       const outcome = ingestToolInput({
         input,
@@ -722,7 +721,11 @@ class ToolHandler implements ToolServices {
             ? () =>
                 this.logAndReturn(
                   'lineage_get_neighbor_columns',
-                  getNeighborColumns(model, parsed.data.ids, sess.columnStore),
+                  getNeighborColumns(
+                    this.requireModel(),
+                    parsed.data.ids,
+                    sess.columnStore,
+                  ),
                   input,
                 )
             : undefined,
