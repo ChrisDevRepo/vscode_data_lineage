@@ -1,8 +1,8 @@
-# One catalog. The scripted, headless, Electron, and Playwright runners each loop
-# the rows tagged for them. Prompts, commands, and expected results live only here.
+# One catalog. The scripted and headless runners each loop the rows tagged for
+# them. Prompts and expected results live only here.
 # Scripted rows test backend contracts with supplied mappings, not model inference.
 # Rows with contract: stored-arrival share the producer/table/receiver fixture.
-# Host expect fields are graph, phase, and terminal (turn outcome ok, error, or cancelled).
+# The headless expect field terminal is the turn outcome: ok, error, or cancelled.
 # Prompt sentences are not scripted rows.
 cases:
   # Shared topology/expectations exercise the same command in both modes.
@@ -442,18 +442,6 @@ cases:
     expect:
       edges: [Amount, Other]
       invalid: []
-
-  - id: playwright-open-demo
-    runners: [playwright]
-    command: "Data Lineage: Open Demo"
-    expect:
-      graph: true
-
-  - id: electron-fixture-trace
-    runners: [electron]
-    prompt: "@lineage /trace [dbo].[ufnGetProductDealerPrice]"
-    expect:
-      phase: awaiting_gate
 
   - id: headless-summary
     runners: [headless]

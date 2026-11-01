@@ -62,13 +62,8 @@ interface CatalogRow {
   readonly contract?: 'stored-arrival' | 'self-prune';
   readonly runners?: readonly string[];
   readonly prompt?: string;
-  readonly command?: string;
   readonly dacpac?: string;
-  readonly expect?: CaseExpect & {
-    graph?: boolean;
-    terminal?: string;
-    phase?: string;
-  };
+  readonly expect?: CaseExpect & { terminal?: string };
 }
 
 interface StoredArrivalCase {

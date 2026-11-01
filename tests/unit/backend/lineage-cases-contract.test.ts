@@ -18,7 +18,7 @@ import {
 } from './helpers/lineageCaseHarness';
 
 describe('lineage case catalog', () => {
-  it('gives Playwright, Electron, and headless their own rows and expected output', () => {
+  it('gives headless its own rows and expected output', () => {
     const rows = loadCases();
     expect(new Set(rows.map((row) => row.id)).size).toBe(rows.length);
     expect(scriptedCases.length).toBeGreaterThan(0);
@@ -66,27 +66,16 @@ describe('lineage case catalog', () => {
       ),
     ).toBe(true);
     expect(
-      loadCases('scripted').some((row) => row.runners?.includes('playwright')),
+      loadCases('scripted').some((row) => row.runners?.includes('headless')),
     ).toBe(false);
-    for (const runner of ['playwright', 'electron', 'headless'] as const) {
-      const rows = loadCases(runner);
-      expect(rows.length).toBeGreaterThan(0);
-      for (const row of rows) {
-        expect(row.runners).toEqual([runner]);
-        expect(row.id.length).toBeGreaterThan(0);
-        if (runner === 'playwright') {
-          expect(row.command?.length).toBeGreaterThan(0);
-          expect(row.expect?.graph).toBe(true);
-        } else {
-          expect(row.prompt?.length).toBeGreaterThan(0);
-        }
-        if (runner === 'electron')
-          expect(row.expect?.phase?.length).toBeGreaterThan(0);
-        if (runner === 'headless') {
-          expect(row.dacpac?.length).toBeGreaterThan(0);
-          expect(['ok', 'error', 'cancelled']).toContain(row.expect?.terminal);
-        }
-      }
+    const headless = loadCases('headless');
+    expect(headless.length).toBeGreaterThan(0);
+    for (const row of headless) {
+      expect(row.runners).toEqual(['headless']);
+      expect(row.id.length).toBeGreaterThan(0);
+      expect(row.prompt?.length).toBeGreaterThan(0);
+      expect(row.dacpac?.length).toBeGreaterThan(0);
+      expect(['ok', 'error', 'cancelled']).toContain(row.expect?.terminal);
     }
   });
 

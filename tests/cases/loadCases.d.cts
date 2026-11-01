@@ -4,9 +4,8 @@ export interface CatalogCase {
   story?: string;
   runners?: string[];
   prompt?: string;
-  command?: string;
   dacpac?: string;
-  expect?: { graph?: boolean; terminal?: string; phase?: string };
+  expect?: { terminal?: string };
 }
 
 /** Rows from tests/cases/lineage-cases.yaml tagged for one runner. */

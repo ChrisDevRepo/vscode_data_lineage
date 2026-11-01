@@ -6,8 +6,8 @@ const { load } = require('js-yaml');
 const casesPath = path.join(__dirname, 'lineage-cases.yaml');
 
 /**
- * @param {string} [runner] `scripted`, `headless`, `electron`, or `playwright`. Omit to return every row.
- * @returns {Array<{ id: string, runners?: string[], prompt?: string, command?: string, dacpac?: string, expect?: Record<string, unknown> }>}
+ * @param {string} [runner] `scripted` or `headless`. Omit to return every row.
+ * @returns {Array<{ id: string, runners?: string[], prompt?: string, dacpac?: string, expect?: Record<string, unknown> }>}
  */
 function loadCases(runner) {
   const doc = load(readFileSync(casesPath, 'utf8'));
