@@ -5,6 +5,10 @@ import {
   COLUMN_TRANSFORM_DIRECTION,
   ExtensionToWebviewMsgSchema,
 } from '../../../src/engine/shared/bridgeContract';
+import {
+  createProject,
+  migrateProjectStore,
+} from '../../../src/engine/projectStore';
 
 /** Field paths a refused parse names; [] when the parse succeeds. */
 function rejectedPaths(result: {
@@ -24,19 +28,60 @@ const baseAiMetadata = {
 };
 
 describe('AIViewMetadata.nodeVerdicts', () => {
-  it('rejects an unrecognised verdict value on the strict write schema', () => {
-    const msg = {
-      type: 'ai-view-preview',
-      name: 'Trace',
-      nodeIds: ['[dbo].[FactSales]'],
-      aiMetadata: {
-        ...baseAiMetadata,
-        nodeVerdicts: [{ nodeId: '[dbo].[FactSales]', verdict: 'contracted' }],
-      },
-    };
-    expect(rejectedPaths(ExtensionToWebviewMsgSchema.safeParse(msg))).toEqual([
-      'aiMetadata.nodeVerdicts.0.verdict',
-    ]);
+  it('keeps a saved bookmark that still carries nodeVerdicts and omits the key from the loaded view', () => {
+    const project = createProject('Saved', {
+      type: 'dacpac',
+      path: '/data/aw.dacpac',
+      displayName: 'AW',
+      schemas: ['dbo'],
+    });
+    const loaded = migrateProjectStore({
+      schemaVersion: 1,
+      lastOpenedId: project.id,
+      projects: [
+        {
+          ...project,
+          filterProfiles: [
+            {
+              id: 'v1',
+              name: 'AI view',
+              createdAt: '2026-01-01T00:00:00.000Z',
+              filter: {
+                schemas: [],
+                types: [],
+                hideIsolated: false,
+                focusSchemas: [],
+                showExternalRefs: false,
+                externalRefTypes: [],
+              },
+              aiMetadata: {
+                ...baseAiMetadata,
+                nodeVerdicts: [
+                  { nodeId: '[dbo].[FactSales]', verdict: 'prune' },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    });
+    const view = loaded.projects[0]?.filterProfiles?.[0];
+    expect(loaded.projects).toHaveLength(1);
+    expect(view?.aiMetadata).toBeDefined();
+    expect(view?.aiMetadata).not.toHaveProperty('nodeVerdicts');
+    expect(
+      rejectedPaths(
+        ExtensionToWebviewMsgSchema.safeParse({
+          type: 'ai-view-preview',
+          name: 'Trace',
+          nodeIds: ['[dbo].[FactSales]'],
+          aiMetadata: {
+            ...baseAiMetadata,
+            nodeVerdicts: [{ nodeId: '[dbo].[FactSales]', verdict: 'prune' }],
+          },
+        }),
+      ),
+    ).not.toEqual([]);
   });
 });
 

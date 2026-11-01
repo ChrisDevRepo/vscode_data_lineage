@@ -63,9 +63,6 @@ export function reconcileAiView(
       nodeIds: mapIds(group.nodeIds),
     })),
     badges: remapNodeText(metadata.badges),
-    ...(metadata.nodeVerdicts
-      ? { nodeVerdicts: remapNodeText(metadata.nodeVerdicts) }
-      : {}),
     ...(metadata.notes ? { notes: remapNodeText(metadata.notes) } : {}),
     ...(metadata.columnAspect
       ? {

@@ -412,13 +412,6 @@ const ColumnAspectSchema = z
   })
   .strict();
 
-const NodeVerdictSchema = z
-  .object({
-    nodeId: z.string(),
-    verdict: z.enum(['analyze', 'passthrough', 'prune']),
-  })
-  .strict();
-
 /** Zod schema defining AI-generated metadata for enhancing the lineage graph UI. */
 const AIViewMetadataSchema = z
   .object({
@@ -440,11 +433,6 @@ const AIViewMetadataSchema = z
      * result node can show column flow data. Only present during CT sessions.
      */
     columnAspect: ColumnAspectSchema.optional(),
-    /**
-     * Per-node CT verdict, so the webview can mark column lines without an AI-contract change. Only
-     * present during CT sessions.
-     */
-    nodeVerdicts: z.array(NodeVerdictSchema).optional(),
   })
   .strict();
 
@@ -610,7 +598,6 @@ const AIViewMetadataReadSchema = z.object({
       edges: z.array(z.object(ColumnAspectEdgeSchema.shape)),
     })
     .optional(),
-  nodeVerdicts: z.array(z.object(NodeVerdictSchema.shape)).optional(),
 });
 
 const FilterProfileReadSchema = z.object({

@@ -1,7 +1,6 @@
 /** Executes validation, assembly, and persistence for `lineage_present_result`. */
 import { type AiSession } from '../../session/session';
 import { trunc } from '../../../utils/log';
-import { schemaKey } from '../../../utils/sql';
 import {
   inspectPresentResult,
   completePresentResult,
@@ -97,20 +96,6 @@ function mergeAmendedNotes(
       byNode.set(note.nodeId, note.summary);
   for (const note of supplied) byNode.set(note.node_id, note.caption);
   return [...byNode].map(([nodeId, text]) => ({ nodeId, text }));
-}
-
-function buildColumnAspectNodeVerdicts(
-  nodeIds: readonly string[],
-  columnAspect: NonNullable<ResultGraph['columnAspect']>,
-  nodeStates: ResultGraph['node_states'],
-  identifierCaseSensitive = false,
-) {
-  const key = (id: string): string => schemaKey(id, identifierCaseSensitive);
-  const referenced = new Set(nodeIds.map(key));
-  for (const e of columnAspect.edges) referenced.add(key(e.hop_node));
-  return (nodeStates ?? [])
-    .filter((ns) => referenced.has(key(ns.nodeId)))
-    .map((ns) => ({ nodeId: ns.nodeId, verdict: ns.action }));
 }
 
 function captureCheckpoint(
@@ -756,12 +741,6 @@ export async function executePresentResult(
                       ...(e.note ? { note: e.note } : {}),
                     })),
                   },
-                  nodeVerdicts: buildColumnAspectNodeVerdicts(
-                    validation.node_ids,
-                    resultGraph.columnAspect,
-                    resultGraph.node_states,
-                    model.identifierCaseSensitive,
-                  ),
                 }
               : {}),
           };

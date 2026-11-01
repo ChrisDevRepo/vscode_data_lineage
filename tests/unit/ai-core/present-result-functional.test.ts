@@ -193,6 +193,10 @@ it('retains frozen asked columns from the completed engine through result storag
     edges: [],
     requested: expected,
   });
+  expect(session.presentationArtifact?.aiMetadata).not.toHaveProperty(
+    'nodeVerdicts',
+  );
+  expect(answer).not.toHaveProperty('nodeVerdicts');
   expect(session.presentationArtifact?.aiMetadata.description).toContain(
     '## Column Chain',
   );
