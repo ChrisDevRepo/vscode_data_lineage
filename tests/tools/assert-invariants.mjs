@@ -577,6 +577,7 @@ async function checkPackageContents() {
     'out/regexSearch.worker.js',
     'dist/index.html',
     'dist/assets/index.js',
+    'images/logo.png',
     'assets/defaultParseRules.yaml',
     'assets/dmvQueries.yaml',
     'assets/aiOutputTemplates.yaml',
