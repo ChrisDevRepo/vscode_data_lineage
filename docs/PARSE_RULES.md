@@ -1,8 +1,6 @@
 # Parse rules
 
-Regex rules read dependencies from SQL bodies. Stored procedures get their reads, writes and calls from them; views and functions use them to add to the dependencies the `.dacpac` or catalog reports. Tables have no SQL body to parse.
-
-Parsing builds object-level lineage locally and does not require an AI provider or database connection when importing a `.dacpac`. It does not compute deterministic column lineage; optional AI tracing interprets SQL in response to a user question.
+Regex rules read dependencies from SQL bodies. Stored procedures get their reads, writes and calls from them; views and functions use them to add to the dependencies the `.dacpac` or catalog reports. Tables have no SQL body to parse. Parsing builds object-level lineage locally and needs no AI provider or database connection for a `.dacpac`. It does not compute deterministic column lineage; optional AI tracing interprets SQL on request.
 
 The built-in rules are in [`assets/defaultParseRules.yaml`](../assets/defaultParseRules.yaml). That file is the source of truth for rule names and patterns.
 
@@ -10,8 +8,7 @@ The built-in rules are in [`assets/defaultParseRules.yaml`](../assets/defaultPar
 
 1. Run **Data Lineage: Create Parse Rules** from the Command Palette. It copies the built-in YAML to `parseRules.yaml` in the first workspace folder; an existing file is opened, not overwritten.
 2. Set `dataLineageViz.parseRulesFile` to that file in VS Code Settings.
-3. Edit, add or disable rules.
-4. Reload the window, then reload the model. Rules are read on activation and when the setting changes.
+3. Edit, add or disable rules, then reload the window and the model. Rules are read on activation and when the setting changes.
 
 The custom file replaces the built-in rules; there is no merge and no version check. Compare it with the shipped YAML after an upgrade.
 
@@ -86,9 +83,7 @@ Temp tables (`#local`, `##global`), table variables (`@name`; a delimited `[@war
 
 ### DELETE and TRUNCATE classification
 
-The shipped target rules do not treat a deletion as data flowing into a table. When metadata supplies a table dependency, a separate mutation scan classifies `DELETE` and `TRUNCATE TABLE` as a procedure→table edge marked `deleteOnly`, provided the body has no data-producing write to the same target. A parsed source can also retain a table→procedure read edge.
-
-A `MERGE` is a data-producing write even when its only action is `WHEN MATCHED THEN DELETE`, so its edge is not marked `deleteOnly`.
+The shipped target rules do not treat a deletion as data flowing into a table. When metadata supplies a table dependency, a separate mutation scan classifies `DELETE` and `TRUNCATE TABLE` as a procedure→table edge marked `deleteOnly`, provided the body has no data-producing write to the same target. A parsed source can also retain a table→procedure read edge. A `MERGE` is a data-producing write even when its only action is `WHEN MATCHED THEN DELETE`, so its edge is not marked `deleteOnly`.
 
 ## Known boundaries
 
@@ -98,12 +93,10 @@ These constructs can lose references in SQL-body parsing, or are left unresolved
 |---|---|---|
 | Dynamic SQL (`EXEC(@sql)`, `sp_executesql`) | SQL assembled or held in strings is not parsed for object dependencies: the cleansing pass neutralises string literals and does not evaluate variables or concatenation. Static statements elsewhere in the same body can still contribute edges. The output log warns `Dynamic SQL not fully supported` with the module count; the debug log names the modules. | Any supported platform; the extension does not execute a body to discover dependencies |
 | Cursors (`DECLARE c CURSOR FOR ...`, `FETCH`, cursor variables) | Not analysed as cursors. Tables in the cursor query and in the loop are read and written like any other statement. The output log warns `Cursor not fully supported` with the module count; the debug log names the modules. | Any supported platform |
-| `FREETEXTTABLE(dbo.T, ...)` / `CONTAINSTABLE(dbo.T, ...)` | The table is not captured. | Where full-text table functions are available |
-| `OPENDATASOURCE(...)...` | Nothing is captured, including the four-part table name. | Where the SQL dialect supports this syntax |
+| `FREETEXTTABLE(dbo.T, ...)` / `CONTAINSTABLE(dbo.T, ...)`; `OPENDATASOURCE(...)...` | The table is not captured; for `OPENDATASOURCE`, nothing is, including the four-part table name. | Where the dialect supports the syntax |
 | `ALTER TABLE dbo.A SWITCH PARTITION n TO dbo.B` | Neither table is captured. | Partition switching is DDL, not DML; no edge is modelled either way |
 | ANSI-89 comma list whose member is followed by `TABLESAMPLE`, or that continues with a comma after a `JOIN ... ON` condition or an `APPLY` | The list ends at that member, so tables after it are lost (table-variable members are not tables). | Legacy bodies on any platform |
 | `DELETE T FROM dbo.T AS T` with an ambiguous alias, or a `DELETE` whose target is only a CTE | The alias stays unresolved; the CTE is not traced to invent a mutation target. | Any platform |
-| `DELETE` / `TRUNCATE TABLE` | No target edge comes from the shipped regex rules alone. Metadata-backed table dependencies use the mutation classification above; a qualified table after `FROM` can also be captured as a read. | Deletes remove rows rather than supply column values |
 | `WITH d AS (SELECT ... FROM dbo.T) DELETE FROM d` | `dbo.T` is read as a source; the delete-only write is not marked because the statement names only the CTE. | Any platform with CTEs |
 | Schema-less `EXEC uspA`, `FROM T`, `db..T` | Not captured; only schema-qualified names resolve. | By design: the parser does not choose a schema |
 | `EXEC db.schema.proc` / `EXEC server.db.schema.proc` | The cross-database call is not captured; cross-database reads and writes are. | SQL Server, Azure SQL Managed Instance |
@@ -113,7 +106,7 @@ These constructs can lose references in SQL-body parsing, or are left unresolved
 
 ## Out of scope
 
-Lineage covers five object kinds: table, view, function, stored procedure and external object (external table, external file, cross-database reference). Every other kind is not loaded: no node, no edge, no warning. Built-in and function-style features, types, column methods and variables are not database objects and are ignored. Supported platforms are SQL Server, Azure SQL, Fabric Data Warehouse and Synapse Dedicated SQL Pool. In the object catalog every external object, including an external table outside the selected schemas, is listed under the External group rather than its schema.
+Lineage covers five object kinds: table, view, function, stored procedure and external object (external table, external file, cross-database reference). Every other kind is not loaded: no node, no edge, no warning. Built-in and function-style features, types, column methods and variables are not database objects and are ignored. In the object catalog every external object, including an external table outside the selected schemas, is listed under the External group rather than its schema.
 
 | Item | Behaviour | Reason |
 |---|---|---|
@@ -130,8 +123,7 @@ Lineage covers five object kinds: table, view, function, stored procedure and ex
 | `READTEXT`, `WRITETEXT`, `UPDATETEXT` | The `dbo.T.col` operand names no table. | Deprecated statements |
 | Three-part name `db.schema.object` | Local when `db` matches a known current database, such as the connected database. With a known current database, a different database part stays external even when a local object has the same schema and name. File DACPAC package names do not establish database identity; when identity is unknown, a matching local schema/object binds locally, otherwise the reference is external. | A SQLCMD database is named at deployment |
 | Four-part name `server.db.schema.object` | The server part is dropped; the reference is the cross-database `db.schema.object`, in a read or a write. The `EXEC` form is in the table above. | The remote server is not introspected |
-| Synapse serverless SQL pool syntax, such as `OPENROWSET(...) AS r` with `r.filepath()` | Not covered. | Not a supported platform |
-| Babelfish syntax, such as `pg_catalog.varchar` | Not covered. | Not a supported platform |
+| Synapse serverless SQL pool syntax (`OPENROWSET(...) AS r` with `r.filepath()`); Babelfish syntax (`pg_catalog.varchar`) | Not covered. | Not a supported platform |
 
 ## Metadata fallback direction
 
@@ -142,11 +134,9 @@ When the rules miss a dependency that the `.dacpac` or catalog does report, the 
 | Procedure | Call | A procedure referencing another procedure through metadata almost always `EXEC`s it. |
 | Function | Read | A procedure referencing a function through metadata almost always reads from it. |
 | Table / external table | Read or write | The procedure body is checked for a captured write of that table; a table that is only deleted from or truncated becomes a delete-only write; otherwise the reference is a read. |
-| View | Read | Metadata-only view references are treated as reads. |
+| View | Read | Metadata-only view references are reads. |
 
-The fallback supplements the rules; it does not make static parsing complete. Unresolved schema-qualified references are listed in Debug diagnostics and left out of the graph.
-
-Each unresolved reference is listed once per object, even when both the catalog dependency rows and the SQL body name it. The catalog spelling is kept, and an `EXEC` of it in the body adds the marker ` (exec)`; for example, `[dbo].[uspLogError] (exec)`.
+The fallback supplements the rules; it does not make static parsing complete. Unresolved schema-qualified references are left out of the graph and listed in Debug diagnostics, once per object even when both the catalog rows and the SQL body name them. The catalog spelling is kept, and an `EXEC` of it in the body adds the marker ` (exec)`; for example, `[dbo].[uspLogError] (exec)`.
 
 ## Errors and fallback
 
@@ -154,17 +144,13 @@ Each unresolved reference is listed once per object, even when both the catalog 
 |---|---|
 | Invalid rule | Skipped and logged; a warning gives the count whenever any rule is skipped, and the remaining rules run. |
 | `enabled: false` | Skipped without a warning. |
-| Custom file unreadable, invalid YAML or no `rules` list | Built-in rules and a warning. |
-| Custom file with no valid enabled rule | Built-in rules and a warning. |
+| Custom file unreadable, invalid YAML, no `rules` list or no valid enabled rule | Built-in rules and a warning. |
 | Path cannot be resolved | Built-in rules; logged in the Output channel. |
 | Built-in file cannot be read | An error; SQL-body parsing is degraded. |
 
 ## Check a rule change
 
 1. Open **View → Output → Data Lineage Viz** and set the log level to **Debug**.
-2. Reload the model, ideally with only the affected schema selected.
-3. Compare the `[Parse]` entries for the object with its SQL. Dropped references are listed there.
+2. Reload the model, ideally with only the affected schema selected, and compare the `[Parse]` entries for the object with its SQL. Dropped references are listed there.
 
 In a clone of this repository, `npm run test:parser` checks the expected edges per construct.
-
-T-SQL reference: <https://learn.microsoft.com/sql/t-sql/language-reference>
