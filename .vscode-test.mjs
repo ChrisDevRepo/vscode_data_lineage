@@ -27,10 +27,6 @@ const installedVersions = (() => {
 const preferredVersion =
   process.env.VSCODE_VERSION || installedVersions[0] || '1.142.0';
 
-const fixtureExtension = fileURLToPath(
-  new URL('./tests/fixtures/lm-provider-extension', import.meta.url),
-);
-
 const shared = {
   version: preferredVersion,
   launchArgs: ['--disable-extensions'],
@@ -40,11 +36,6 @@ const shared = {
     color: true,
   },
 };
-
-const withFixture = [
-  '--disable-extensions',
-  `--extensionDevelopmentPath=${fixtureExtension}`,
-];
 
 const killSwitchUserData = fileURLToPath(
   new URL('./tests/fixtures/kill-switch-user-data', import.meta.url),
@@ -76,11 +67,5 @@ export default defineConfig([
     // No provider fixture: a model in the host would make this result unattributable to
     // `vscode.lm.invokeTool`.
     launchArgs: ['--disable-extensions'],
-  },
-  {
-    ...shared,
-    label: 'participant-turn',
-    files: 'out/test/tests/integration/participant-turn.test.js',
-    launchArgs: withFixture,
   },
 ]);

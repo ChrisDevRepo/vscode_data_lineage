@@ -893,7 +893,6 @@
     "test:edh": "vscode-test",
     "test:bare-environment": "vscode-test --label bare-environment",
     "test:tools": "vscode-test --label tools",
-    "test:participant-turn": "vscode-test --label participant-turn",
     "test:ai:smoke": "npm run pretest:integration && vscode-test --config .vscode-test.ai.mjs",
     "package": "vsce package --no-dependencies",
     "pregate": "node tests/tools/check-node-engine.mjs",

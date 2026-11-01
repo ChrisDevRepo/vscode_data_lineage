@@ -32,7 +32,7 @@ Deterministic tests verify parser, graph and runtime contracts. A structurally v
 
 | Check | Command | What it verifies |
 |---|---|---|
-| Electron host lanes | `npm run test:edh` | Activation, tool invocation and participant turn through the VS Code API |
+| Electron host lanes | `npm run test:edh` | Activation and tool invocation through the VS Code API |
 | Real-model smoke | `npm run test:ai:smoke` | One live `@lineage` turn against the demo DACPAC |
 | Headless question | `npm run test:ai:headless -- --prompt TEXT` | Asks one question (with optional `--followup` turns) against `assets/demo.dacpac` or `--dacpac FILE`; `--case ID` runs one demo row (`headless-summary`, `headless-procedure-dependencies`, `headless-view-chain`) with its checks (flags: `-- --help`). |
 | Large layout scale | `npm run test:scale` | Layout check for a 1,500-node model |
@@ -41,13 +41,12 @@ Deterministic tests verify parser, graph and runtime contracts. A structurally v
 
 These run the extension in an isolated VS Code host (Extension Development Host) and stay outside `npm test` and the gate. On Linux without a display, prefix the commands with `xvfb-run -a`. Run labels one at a time; never attach to your normal VS Code session.
 
-`npm run test:edh` builds and runs every lane in `.vscode-test.mjs`. To run one lane, run `npm run pretest:integration` first, then `npm run test:bare-environment`, `npm run test:tools`, `npm run test:participant-turn` or `npx vscode-test --label kill-switch`.
+`npm run test:edh` builds and runs every lane in `.vscode-test.mjs`. To run one lane, run `npm run pretest:integration` first, then `npm run test:bare-environment`, `npm run test:tools` or `npx vscode-test --label kill-switch`.
 
 | Lane | What it verifies |
 |---|---|
 | `bare-environment` | Activation without optional host integrations |
 | `tools` | Read-only LM tools respond through `vscode.lm.invokeTool` |
-| `participant-turn` | `@lineage` completes a turn through the chat API (fixed response) |
 | `kill-switch` | Disabling AI leaves the non-AI features working |
 
 ## Live-model settings
