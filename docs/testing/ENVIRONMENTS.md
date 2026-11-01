@@ -16,7 +16,7 @@ Automated harnesses do not establish interactive F5 debugging, visual UX quality
 
 ## Display note
 
-Inspect installed VS Code and `.vscode-test` caches first and reuse a complete compatible host. The runner otherwise downloads its configured VS Code build; Linux also needs Chromium runtime libraries. On a headless Linux host with those libraries and Xvfb installed, use `xvfb-run -a npm run test:edh`. GUI smoke also needs the explicitly started test host and loopback CDP access.
+Inspect installed VS Code and `.vscode-test` caches first and reuse a complete compatible host. The runner otherwise downloads its configured VS Code build; Linux also needs Chromium runtime libraries. On a headless Linux host with those libraries and Xvfb installed, use `xvfb-run -a npm run test:edh`.
 
 Network: npm needs `registry.npmjs.org`; the VS Code test build needs `update.code.visualstudio.com` and its redirect `vscode.download.prss.microsoft.com` (an exact-host allowlist must name both). On Ubuntu 24.04: `apt-get install -y xvfb libgtk-3-0t64 libnss3 libgbm1 libasound2t64 libxss1 libsecret-1-0 libxkbfile1 libatk-bridge2.0-0t64`. Keep the clone path short: VS Code fails with `listen EINVAL` when its profile socket path exceeds 107 characters.
 
