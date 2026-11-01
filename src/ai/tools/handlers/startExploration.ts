@@ -35,7 +35,6 @@ import { composeDiscoverySummaryText } from './discoverySummary';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
 import { checkScopeAdmission } from '../../support/tokenBudget';
 import { buildNodeMap, getNodeColumns } from '../../support/graphUtils';
-import { resolveModelNodeId } from '../../support/modelReferences';
 import { at, makeRejection } from '../../support/toolErrorEnvelope';
 
 /** Validates a fresh or refined exploration proposal and opens its approval gate. */
@@ -171,7 +170,7 @@ export async function executeStartExploration(
           ),
         };
         const references = inspectStartReferences(referenceInput, (value) =>
-          resolveModelNodeId(value, nodes, m.identifierCaseSensitive),
+          nodes.has(value) ? value : null,
         );
         view.add(references.rejection);
         const mode =

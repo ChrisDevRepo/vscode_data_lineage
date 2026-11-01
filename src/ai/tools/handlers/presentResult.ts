@@ -31,7 +31,6 @@ import {
 } from '../../tools/toolSchemas';
 import { edgeApiType } from '../../support/aiPresenter';
 import { prunePreserveOnly } from '../../support/viewPrune';
-import { resolveModelNodeId } from '../../support/modelReferences';
 import {
   at,
   makeRejection,
@@ -170,16 +169,6 @@ export async function executePresentResult(
     const references: PresentReference[] = [];
     const editIds = new Map<string, string>();
     const modelNodeMap = getModelNodeMap(model);
-    const bindings = new Map<string, string>();
-    const bind = (id: string): string => {
-      if (!bindings.has(id))
-        bindings.set(
-          id,
-          resolveModelNodeId(id, modelNodeMap, model.identifierCaseSensitive) ??
-            id,
-        );
-      return bindings.get(id)!;
-    };
     const dot = (path: string): string =>
       path
         .slice(1)
@@ -224,14 +213,14 @@ export async function executePresentResult(
     validated.set(
       'report.sectionNodes',
       captureToolFact(ReportFactSchemas.nodes, (value, path) => {
-        nodeLists.set(dot(path), value.map(bind));
+        nodeLists.set(dot(path), value.slice());
       }),
     );
     validated.set(
       'report.node',
       captureToolFact(ReportFactSchemas.node, (value, path) => {
         const parts = dot(path).split('.'),
-          nodeId = bind(value);
+          nodeId = value;
         if (parts[0] === 'add_node_ids' || parts[0] === 'prune_node_ids')
           editIds.set(parts.join('.'), nodeId);
         else if (
@@ -615,18 +604,18 @@ export async function executePresentResult(
               previewNarrative!.blocks,
               fields.sections!.map((section) => ({
                 label: section.label,
-                node_ids: section.node_ids!.map(bind),
+                node_ids: section.node_ids!.slice(),
                 start: section.start!,
               })),
             )
           : retainableSections
             ? [...retainedRows.values()].map((section) => ({
                 ...section,
-                node_ids: section.node_ids.map(bind),
+                node_ids: section.node_ids.slice(),
               }))
             : fields.sections!.map((section) => ({
                 label: section.label,
-                node_ids: section.node_ids!.map(bind),
+                node_ids: section.node_ids!.slice(),
                 text: section.text!,
               }));
         let renderInput: PresentResultInput = {
@@ -635,12 +624,12 @@ export async function executePresentResult(
           summary: fields.summary!,
           highlight_groups: fields.highlight_groups!.map((group) => ({
             ...group,
-            node_ids: group.node_ids.map(bind),
+            node_ids: group.node_ids.slice(),
           })),
           sections: completedSections!,
           notes: fields.notes?.map((note) => ({
             ...note,
-            node_id: bind(note.node_id),
+            node_id: note.node_id,
           })),
         };
         if (isAmendment)

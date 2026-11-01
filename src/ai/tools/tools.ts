@@ -13,7 +13,6 @@ import {
   type AnalysisType,
   type NeighborIndex,
 } from '../../engine/shared/types';
-import { resolveModelNodeId } from '../support/modelReferences';
 import { schemaKey } from '../../utils/sql';
 import { runAnalysis as runGraphAnalysis } from '../../engine/shared/graphAnalysis';
 import { ColumnStore } from '../../engine/shared/columnStore';
@@ -551,11 +550,9 @@ export function prepareModelObject(
   field: string,
 ): ModelObjectPlan | ToolRejection {
   const nodeMap = getModelNodeMap(model);
-  const id =
-    resolveModelNodeId(raw, nodeMap, model.identifierCaseSensitive) ?? '';
-  const node = nodeMap.get(id);
+  const node = nodeMap.get(raw);
   return node
-    ? { id, node, nodeMap }
+    ? { id: raw, node, nodeMap }
     : makeRejection({
         code: REJECTION_CODES.invalidInput,
         errors: at('not_found', [field]),
@@ -836,14 +833,12 @@ export function getNeighborColumns(
 ): object {
   const nodeMap = getModelNodeMap(model);
   const results = ids.map((id) => {
-    const resolvedId =
-      resolveModelNodeId(id, nodeMap, model.identifierCaseSensitive) ?? '';
-    const node = nodeMap.get(resolvedId);
+    const node = nodeMap.get(id);
     if (!node)
       throw new Error(
         'get_neighbor_columns received an id outside the model; admit ids with NavigationEngine.neighborIdAdmission first',
       );
-    const cols = getNodeColumns(resolvedId, nodeMap, store);
+    const cols = getNodeColumns(id, nodeMap, store);
     const foreignKeys = presentForeignKeys(node.fks);
     return {
       ...strip({

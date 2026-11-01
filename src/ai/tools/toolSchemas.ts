@@ -13,6 +13,7 @@ import {
 import {
   markIdFormSearch,
   markObjectIdField,
+  markServedObjectIdField,
   markColumnField,
 } from './normalizeModelInput';
 import {
@@ -105,14 +106,18 @@ const StartExcludeSchemasSchema = z
   .describe(
     'Schema names excluded from the approved scope. Omit to keep the current list (on a fresh proposal, the schemas the GUI filter hides); a sent list replaces it, so repeat those you keep.',
   );
+const StartReferenceIdSchema = z
+  .string()
+  .meta({ toolValidated: 'start.reference' });
+markServedObjectIdField(StartReferenceIdSchema);
 const StartExcludeNodeIdsSchema = z
-  .array(z.string().meta({ toolValidated: 'start.reference' }))
+  .array(StartReferenceIdSchema)
   .optional()
   .describe(
     'Resolved object IDs to remove, including dependent branches reachable only through them. Omit to keep the current list (on a fresh proposal, the objects the GUI filter excludes); a sent list replaces it.',
   );
 const StartPassNodeIdsSchema = z
-  .array(z.string().meta({ toolValidated: 'start.reference' }))
+  .array(StartReferenceIdSchema)
   .optional()
   .describe(
     'Resolved object IDs to keep as topology-only passthrough nodes without analyzing them; the mapping for objects the user said to ignore or skip. Omit to keep the current list; a sent list replaces it.',
@@ -301,6 +306,7 @@ const StartOriginSchema = z
   .string()
   .min(1)
   .describe('Canonical object ID that anchors a fresh exploration.');
+markServedObjectIdField(StartOriginSchema);
 const StartQuestionSchema = z
   .string()
   .optional()
@@ -407,6 +413,7 @@ const ScopeOriginSchema = z
   .describe(
     'Canonical object ID at the center of the requested lineage scope.',
   );
+markServedObjectIdField(ScopeOriginSchema);
 const ScopeIncludeDdlSchema = z
   .boolean()
   .optional()
@@ -1532,10 +1539,16 @@ export function heldHopFindingSchemaForMode(mode: 'bb' | 'ct') {
 }
 
 /** Zod schema for `get_neighbor_columns` tool input. */
+const NeighborColumnIdSchema = z
+  .string()
+  .min(1)
+  .meta({ toolValidated: 'neighborId' });
+markServedObjectIdField(NeighborColumnIdSchema);
+/** Zod schema for `get_neighbor_columns` tool input. */
 export const GetNeighborColumnsInputSchema = z
   .object({
     ids: z
-      .array(z.string().min(1).meta({ toolValidated: 'neighborId' }))
+      .array(NeighborColumnIdSchema)
       .min(1)
       .describe('Neighbor ids, not the focus.'),
   })
@@ -1555,6 +1568,8 @@ const CursorSchema = z
     'Page cursor: the next_cursor of the previous result, sent unchanged to read the next page of the same list. Omit for the first page.',
   );
 
+const ScreenStateIdSchema = z.string();
+markServedObjectIdField(ScreenStateIdSchema);
 /**
  * `lineage_get_screen_state` input: no field returns the screen card; `ids` or `filter` recalls the
  * stored run.
@@ -1562,7 +1577,7 @@ const CursorSchema = z
 export const GetScreenStateInputSchema = z
   .object({
     ids: z
-      .array(z.string())
+      .array(ScreenStateIdSchema)
       .min(1)
       .max(SCREEN_STATE_MAX_IDS)
       .optional()
@@ -1618,15 +1633,15 @@ export const SearchObjectsInputSchema = z
   });
 markIdFormSearch(SearchObjectsInputSchema);
 
+const ObjectDetailIdSchema = z
+  .string()
+  .meta({ toolStringFact: 'modelObject' })
+  .describe('Canonical object ID returned by a lineage search or scope tool.');
+markServedObjectIdField(ObjectDetailIdSchema);
 /** `lineage_get_object_detail` input. */
 export const GetObjectDetailInputSchema = z
   .object({
-    id: z
-      .string()
-      .meta({ toolStringFact: 'modelObject' })
-      .describe(
-        'Canonical object ID returned by a lineage search or scope tool.',
-      ),
+    id: ObjectDetailIdSchema,
     cursor: CursorSchema.optional(),
   })
   .strict();
@@ -1696,12 +1711,13 @@ const HighlightSchemeSchema = z.enum([
   'fail',
 ]);
 
-/** One model-supplied node id, preserved verbatim and required non-empty. */
+/** One model-supplied node id. Equivalent spellings bind to the one loaded id when served. */
 const NodeIdSchema = z
   .string()
   .regex(/\S/, 'Node ID must not be blank.')
   .min(1, 'Node ID must not be blank.')
   .meta({ toolValidated: 'report.node' });
+markServedObjectIdField(NodeIdSchema);
 
 /**
  * One below-node caption. Its keys share nothing with a `sections[]` item's

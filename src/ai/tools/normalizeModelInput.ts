@@ -39,6 +39,113 @@ export function markObjectIdField(
   objectIdFields.set(schema._zod.def, { ids, identifierCaseSensitive });
 }
 
+/**
+ * Sentinel catalog: the field is an object id, and the ids it admits are attached when the schema
+ * is served for a model or a stored run. An empty catalog respells nothing.
+ */
+const unboundObjectIds = new Map<string, unknown>();
+
+/** Marks a string field whose object-id catalog is supplied by {@link serveObjectIdFields}. */
+export function markServedObjectIdField(schema: ZodType): void {
+  markObjectIdField(schema, unboundObjectIds, false);
+}
+
+const servedObjectIdSchemas = new WeakMap<
+  ZodType,
+  WeakMap<object, { cs: boolean; schema: ZodType }>
+>();
+
+type SchemaDef = {
+  type: string;
+  shape?: Record<string, ZodType>;
+  element?: ZodType;
+  options?: readonly ZodType[];
+  innerType?: ZodType;
+  in?: ZodType;
+};
+
+/** A new schema instance with its own definition, keeping description and metadata. */
+function duplicateSchema<T extends ZodType>(schema: T, def: object): T {
+  let next = schema.clone(def as never) as T;
+  if (schema.description) next = next.describe(schema.description) as T;
+  const meta = schema.meta();
+  if (meta && Object.keys(meta).length > 0) next = next.meta(meta) as T;
+  return next;
+}
+
+/**
+ * Returns `schema` with served object-id fields bound to `ids`. The same pair of schema and
+ * `cacheKey` is reused so the model-facing JSON Schema keeps a stable identity. Fields that are
+ * not served object ids are left untouched.
+ */
+export function serveObjectIdFields<T extends ZodType>(
+  schema: T,
+  ids: Map<string, unknown>,
+  identifierCaseSensitive: boolean,
+  cacheKey: object,
+): T {
+  if (ids.size === 0) return schema;
+  let byKey = servedObjectIdSchemas.get(schema);
+  if (!byKey) {
+    byKey = new WeakMap();
+    servedObjectIdSchemas.set(schema, byKey);
+  }
+  const cached = byKey.get(cacheKey);
+  if (cached && cached.cs === identifierCaseSensitive)
+    return cached.schema as T;
+  const seen = new Map<ZodType, ZodType>();
+  const walk = (current: ZodType): ZodType => {
+    const found = seen.get(current);
+    if (found) return found;
+    const def = current._zod.def as SchemaDef;
+    const marked = objectIdFields.get(current._zod.def);
+    if (marked?.ids === unboundObjectIds) {
+      const bound = duplicateSchema(current, { ...def });
+      markObjectIdField(bound, ids, identifierCaseSensitive);
+      seen.set(current, bound);
+      return bound;
+    }
+    let rebuilt = current;
+    if (def.type === 'object' && def.shape) {
+      let changed = false;
+      const shape = { ...def.shape };
+      for (const [key, child] of Object.entries(def.shape)) {
+        const next = walk(child);
+        if (next !== child) {
+          shape[key] = next;
+          changed = true;
+        }
+      }
+      if (changed) rebuilt = duplicateSchema(current, { ...def, shape });
+    } else if (def.type === 'array' && def.element) {
+      const element = walk(def.element);
+      if (element !== def.element)
+        rebuilt = duplicateSchema(current, { ...def, element });
+    } else if (def.type === 'union' && def.options) {
+      let changed = false;
+      const options = def.options.map((option) => {
+        const next = walk(option);
+        if (next !== option) changed = true;
+        return next;
+      });
+      if (changed) rebuilt = duplicateSchema(current, { ...def, options });
+    } else if (def.innerType) {
+      const innerType = walk(def.innerType);
+      if (innerType !== def.innerType)
+        rebuilt = duplicateSchema(current, { ...def, innerType });
+    } else if (def.type === 'pipe' && def.in) {
+      const input = walk(def.in);
+      if (input !== def.in)
+        rebuilt = duplicateSchema(current, { ...def, in: input });
+    }
+    seen.set(current, rebuilt);
+    return rebuilt;
+  };
+  const served = walk(schema) as T;
+  byKey.set(cacheKey, { cs: identifierCaseSensitive, schema: served });
+  return served;
+}
+
 /** SQL column spellings use the same boundary marker as object ids. */
 export function markColumnField(
   schema: ZodType,

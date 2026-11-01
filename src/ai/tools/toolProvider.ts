@@ -71,11 +71,16 @@ import {
   type TurnTokenBudget,
 } from '../support/tokenBudget';
 import { buildLiveRun, type StoredRunReader } from '../session/runStore';
-import { presentRunRecall, presentScreenState } from './screenStatePresenter';
+import {
+  presentRunRecall,
+  presentScreenState,
+  recallObjectIdCatalog,
+} from './screenStatePresenter';
 import { postToWebview } from '../../bridge/host';
 import { createSavedReferenceResolver } from '../../engine/shared/nodeIdResolution';
 import { cursorOffset } from '../support/text';
 import {
+  getModelNodeMap,
   type AiViewPreviewMessage,
   type ToolCaller,
   type ToolServices,
@@ -86,6 +91,7 @@ import { executeSubmitFindings } from './handlers/submitFindings';
 import { executePruneCurrent } from './handlers/pruneCurrent';
 import { executePresentResult } from './handlers/presentResult';
 import { classifyToolCall, type ModelPort } from '../model/modelPort';
+import { serveObjectIdFields } from './normalizeModelInput';
 import { tokenToAbortSignal } from '../providers/cancellation';
 import { RegexSearchExecutionError } from '../support/isolatedRegexSearch';
 import { REJECTION_CODES } from '../support/rejectionCodes';
@@ -841,19 +847,73 @@ export function buildAiToolRegistry(
   for (const def of TOOL_DEFS) {
     const execute = dispatch[def.name];
     const draft = drafts[def.effect];
-    const projectInputSchema = draft
-      ? (schema: z.ZodType) => draft().modelSchema(schema)
-      : undefined;
+    const withObjectIds = (schema: z.ZodType): z.ZodType => {
+      const session = getSession();
+      if (def.name === 'lineage_get_screen_state') {
+        const catalog = recallObjectIdCatalog({
+          uiState: session.uiState,
+          getStoredRun: host?.getStoredRun,
+          liveRun:
+            session.phase.kind === 'completed'
+              ? buildLiveRun(session.presentationArtifact)
+              : undefined,
+        });
+        return catalog
+          ? serveObjectIdFields(
+              schema,
+              catalog.ids,
+              catalog.identifierCaseSensitive,
+              catalog.cacheKey,
+            )
+          : schema;
+      }
+      const model = session.model;
+      if (!model) return schema;
+      return serveObjectIdFields(
+        schema,
+        getModelNodeMap(model),
+        model.identifierCaseSensitive === true,
+        model,
+      );
+    };
+    const projectInputSchema = (schema: z.ZodType) =>
+      withObjectIds(draft ? draft().modelSchema(schema) : schema);
     let group = { context: '', generation: -1, calls: 0 };
     registry.register({
       ...def,
       projectInputSchema,
       get inputSchema() {
-        return projectInputSchema?.(def.inputSchema) ?? def.inputSchema;
+        return projectInputSchema(def.inputSchema);
       },
       execute: async (input: unknown) => {
         handler.signal?.throwIfAborted();
         const sess = getSession();
+        let dispatched = input;
+        if (
+          typeof input === 'object' &&
+          input !== null &&
+          !Array.isArray(input)
+        ) {
+          const { call } = classifyToolCall(
+            {
+              callId: '',
+              toolName: def.name,
+              args: input as Record<string, unknown>,
+            },
+            new Map([
+              [
+                def.name,
+                {
+                  name: def.name,
+                  description: '',
+                  inputSchema: projectInputSchema(def.inputSchema),
+                },
+              ],
+            ]),
+            (message) => outputChannel.debug(message),
+          );
+          if (call.valid) dispatched = call.input;
+        }
         const receipt = {
           input: redactMissionBriefForLog(input),
           generation:
@@ -886,7 +946,7 @@ export function buildAiToolRegistry(
           const offPolicy = handler.authorizeTool(def.name, input);
           if (offPolicy) return offPolicy;
           const result = await toolInputReceipt.run(receipt, () =>
-            execute(input),
+            execute(dispatched),
           );
           if (turnLease)
             assertActiveTurnLease(turnLease, getSession().turnEpoch);

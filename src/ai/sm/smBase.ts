@@ -2023,7 +2023,8 @@ export class NavigationEngine implements IHopStateMachine {
 
   /**
    * Admission of `get_neighbor_columns` ids, built once per call: `allowed` lists the in-scope
-   * neighbors of the current focus and `admits` reports whether an id resolves to one of them.
+   * neighbors of the current focus and `admits` reports whether an id is one of them. Equivalent
+   * spellings are bound before dispatch.
    */
   public neighborIdAdmission(): {
     allowed: string[];
@@ -2033,11 +2034,7 @@ export class NavigationEngine implements IHopStateMachine {
     const allowedSet = new Set(allowed);
     return {
       allowed,
-      admits: (id) =>
-        allowedSet.has(
-          resolveModelNodeId(id, this.nodeMap, this.identifierCaseSensitive) ??
-            '',
-        ),
+      admits: (id) => allowedSet.has(id),
     };
   }
 

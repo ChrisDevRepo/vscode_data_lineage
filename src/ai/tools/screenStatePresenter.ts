@@ -23,7 +23,6 @@ import {
   type ToolRejection,
 } from '../support/toolErrorEnvelope';
 import { schemaKey } from '../../utils/sql';
-import { resolveModelNodeId } from '../support/modelReferences';
 
 /** Inputs the presenter reads; the two passthrough buffers stay `unknown` by contract. */
 interface ScreenStateInput {
@@ -358,7 +357,11 @@ function optionalNumber(value: unknown): number | undefined {
     : undefined;
 }
 
-function resolveAppliedRun(input: RunRecallInput): StoredAiRun | undefined {
+function resolveAppliedRun(input: {
+  readonly uiState: unknown;
+  readonly getStoredRun?: StoredRunReader;
+  readonly liveRun?: StoredAiRun;
+}): StoredAiRun | undefined {
   const entry = asRecord(screenStateParts(input.uiState).extras?.bookmark);
   const id = asString(entry?.id);
   const bookmarked =
@@ -406,18 +409,7 @@ function recallIds(
   const slots = asRecord(asRecord(snapshot?.memory)?.detailSlots) ?? {};
   const hashes = storedHashes(run);
   const stale = new Set(staleIds(run, input.getDdl));
-  const known = new Map(
-    [...states.keys(), ...Object.keys(slots), ...Object.keys(hashes)].map(
-      (id) => [id, true],
-    ),
-  );
-  return (input.ids ?? []).map((raw) => {
-    const id =
-      resolveModelNodeId(
-        raw,
-        known,
-        snapshot?.identifierCaseSensitive === true,
-      ) ?? raw;
+  return (input.ids ?? []).map((id) => {
     const state = states.get(id);
     const slot = asRecord(slots[id]);
     if (!state && !slot && hashes[id] === undefined)
@@ -505,6 +497,40 @@ function recallStale(
     id,
     stored_hash_known: hashes[id] !== UNKNOWN_DDL_HASH,
   }));
+}
+
+/**
+ * Object ids a stored-run recall admits, with the case policy saved on that run. Dispatch binds
+ * spellings before the recall reads them.
+ */
+export function recallObjectIdCatalog(input: {
+  readonly uiState: unknown;
+  readonly getStoredRun?: StoredRunReader;
+  readonly liveRun?: StoredAiRun;
+}):
+  | {
+      readonly ids: Map<string, unknown>;
+      readonly identifierCaseSensitive: boolean;
+      readonly cacheKey: object;
+    }
+  | undefined {
+  const run = resolveAppliedRun(input);
+  if (!run) return undefined;
+  const snapshot = asRecord(run.snapshot);
+  const slots = asRecord(asRecord(snapshot?.memory)?.detailSlots) ?? {};
+  const hashes = storedHashes(run);
+  const ids = new Map<string, unknown>(
+    [
+      ...nodeStatesOf(run).map((state) => asString(state.nodeId) as string),
+      ...Object.keys(slots),
+      ...Object.keys(hashes),
+    ].map((id) => [id, true]),
+  );
+  return {
+    ids,
+    identifierCaseSensitive: snapshot?.identifierCaseSensitive === true,
+    cacheKey: snapshot ?? run,
+  };
 }
 
 /** Answers one recall query against the run stored with the applied bookmark. */
