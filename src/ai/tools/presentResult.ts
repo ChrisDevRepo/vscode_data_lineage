@@ -466,7 +466,7 @@ function placeFenceBlock(
 }
 
 /**
- * Expands evidence references in one rendered text field: a ```sql fence whose info string
+ * Places closed SQL blocks and expands evidence references: a ```sql fence whose info string
  * ends in a served id (```` ```sql S7 ```` closed with no body, or
  * the one-line ```` ```sql S7``` ````) is replaced by the captured block.
  */
@@ -503,15 +503,18 @@ export function expandEvidenceRefs(
   let cursor = 0;
   for (const fence of fences) {
     const id = EVIDENCE_ID_INFO.exec(fence.info)?.[1];
-    if (!id) continue;
-    const block = blocks.get(id);
+    const block = id ? blocks.get(id) : undefined;
     if (fence.lines.length > 0) {
-      const info = fence.info.slice(0, fence.info.lastIndexOf(id)).trimEnd();
+      const info = id
+        ? fence.info.slice(0, fence.info.lastIndexOf(id)).trimEnd()
+        : fence.info;
       const extent = fenceExtent(text, fence);
       if (extent.ownLine) {
-        const infoStart = fence.start + '```sql'.length;
-        out += text.slice(cursor, infoStart) + info;
-        cursor = infoStart + fence.info.length;
+        if (id) {
+          const infoStart = fence.start + '```sql'.length;
+          out += text.slice(cursor, infoStart) + info;
+          cursor = infoStart + fence.info.length;
+        }
       } else {
         const placed = placeFenceBlock(text, cursor, fence, extent, [
           `\`\`\`sql${info}`,
@@ -521,7 +524,12 @@ export function expandEvidenceRefs(
         out += placed.out;
         cursor = placed.cursor;
       }
-      normalized.push(`${id} dropped from a fence that carries its own SQL`);
+      if (id)
+        normalized.push(`${id} dropped from a fence that carries its own SQL`);
+      else if (!extent.ownLine)
+        normalized.push('SQL fence placed on its own line');
+    } else if (!id) {
+      continue;
     } else if (!block) {
       unknownIds.push(id);
     } else {
