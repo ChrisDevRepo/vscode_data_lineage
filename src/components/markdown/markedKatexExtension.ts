@@ -26,6 +26,9 @@ import { errorMessage } from '../../utils/errorMessage';
 const mathInlineRegExp =
   /(?<![a-zA-Z0-9])(?<dollars>\${1,2})(?!\.|\(["'])((?:\\.|[^\\\n])*?(?:\\.|[^\\\n$]))\k<dollars>(?![a-zA-Z0-9])/;
 
+/** {@link mathInlineRegExp} anchored at `lastIndex`, so lookbehind still sees earlier text. */
+const inlineRule = new RegExp(mathInlineRegExp.source, 'y');
+
 const katexContainerClassName = 'vscode-katex-container';
 const katexContainerLatexAttributeName = 'data-latex';
 const katexErrorClassName = 'ln-ai-formula-error';
@@ -93,10 +96,11 @@ function inlineKatex(
     },
     tokenizer(src: string, tokens: Token[]) {
       // Marked supplies the unconsumed suffix; restore its preceding raw character for the existing
-      // lookbehind.
+      // lookbehind and match at the suffix start.
       const prefix = tokens.at(-1)?.raw.slice(-1) ?? '';
-      const match = mathInlineRegExp.exec(prefix + src);
-      if (match && match.index === prefix.length) {
+      inlineRule.lastIndex = prefix.length;
+      const match = inlineRule.exec(prefix + src);
+      if (match) {
         return {
           type: 'inlineKatex',
           raw: match[0],

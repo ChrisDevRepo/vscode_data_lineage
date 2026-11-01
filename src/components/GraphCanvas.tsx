@@ -2855,7 +2855,7 @@ export function GraphCanvas({
       {aiPreview && onDiscardAiPreview && (
         <AiViewBanner
           name={aiPreview.name}
-          nodeCount={localNodes.length}
+          nodeCount={filteredObjectIds?.size ?? 0}
           onDiscard={onDiscardAiPreview}
           onSaveAsBookmark={
             onSaveAiBookmark ? handleSaveAiAsBookmark : undefined
