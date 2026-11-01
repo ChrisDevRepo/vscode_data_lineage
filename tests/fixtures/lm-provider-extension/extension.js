@@ -184,10 +184,6 @@ function activate(context) {
             ? 'required'
             : 'auto',
       };
-      if (process.env.DLV_CHAT_UI_FIXTURE === '1') {
-        await require('./chat-ui-provider').respond(request, progress);
-        return;
-      }
       if (process.env.AI_TEST_REAL_PROVIDER === '1') {
         await callLiveProvider(request, progress, token, transports);
         return;
@@ -236,7 +232,6 @@ function activate(context) {
     vscode.lm.registerLanguageModelChatProvider(VENDOR, provider),
   );
   return {
-    uiRequests: require('./chat-ui-provider').requests,
     setInterruption(value) {
       interruption = value;
     },

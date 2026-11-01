@@ -7,7 +7,7 @@
     "outDir": "out/test",
     "rootDir": ".",
     "types": ["node", "mocha"],
-    "lib": ["ES2022"],
+    "lib": ["ES2022", "DOM"],
     "declaration": false,
     "declarationMap": false,
     "sourceMap": true,

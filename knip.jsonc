@@ -17,7 +17,6 @@
     // Extension-host and CommonJS transport APIs loaded by host staging and contract checks.
     "tests/fixtures/lm-provider-extension/extension.js",
     "tests/fixtures/lm-provider-extension/live-provider-adapter.js",
-    "tests/fixtures/lm-provider-extension/chat-ui-provider.js",
   ],
   "project": [
     "src/**/*.{ts,tsx,css}",
@@ -28,5 +27,6 @@
   // Exports tagged @internal are test seams, not product API.
   "tags": ["-internal"],
   // VS Code supplies this module; @types/vscode provides the build-time API.
-  "ignoreDependencies": ["@types/vscode"],
+  // @vscode/test-cli resolves @vscode/test-electron at runtime without declaring it.
+  "ignoreDependencies": ["@types/vscode", "@vscode/test-electron"],
 }

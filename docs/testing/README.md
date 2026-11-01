@@ -33,8 +33,6 @@ Deterministic tests verify parser, graph and runtime contracts. A structurally v
 | Check | Command | What it verifies |
 |---|---|---|
 | Electron host lanes | `npm run test:edh` | Activation, tool invocation and participant turn through the VS Code API |
-| Playwright GUI smoke | `npm run test:gui:host`, then `npm run test:gui:smoke` | Opens the demo in an isolated VS Code host and checks the graph renders |
-| Playwright chat UI | `npx vscode-test --config .vscode-test.chat-ui.mjs` | Native chat confirmations, approval/cancellation and scope revisions |
 | Real-model smoke | `npm run test:ai:smoke` | One live `@lineage` turn against the demo DACPAC |
 | Headless question | `npm run test:ai:headless -- --prompt TEXT` | Asks one question (with optional `--followup` turns) against `assets/demo.dacpac` or `--dacpac FILE`; `--case ID` runs one demo row (`headless-summary`, `headless-procedure-dependencies`, `headless-view-chain`) with its checks (flags: `-- --help`). |
 | Large layout scale | `npm run test:scale` | Layout check for a 1,500-node model |
@@ -51,8 +49,6 @@ These run the extension in an isolated VS Code host (Extension Development Host)
 | `tools` | Read-only LM tools respond through `vscode.lm.invokeTool` |
 | `participant-turn` | `@lineage` completes a turn through the chat API (fixed response) |
 | `kill-switch` | Disabling AI leaves the non-AI features working |
-
-Native chat UI runs with `npx vscode-test --config .vscode-test.chat-ui.mjs` after `npm run pretest:integration`. It uses the `electron-fixture-trace` prompt from `tests/cases/lineage-cases.yaml` and checks chat input, plan approval and cancellation in `tests/integration/chat-ui.test.ts` with scripted responses. Keep reports, screenshots and traces out of git.
 
 ## Live-model settings
 
