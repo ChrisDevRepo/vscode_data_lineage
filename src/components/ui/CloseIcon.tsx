@@ -1,16 +1,20 @@
 interface CloseIconProps {
   className?: string;
+  strokeWidth?: number;
 }
 
 /** Renders the close icon used in dismiss controls. */
-export function CloseIcon({ className = 'w-4 h-4' }: CloseIconProps) {
+export function CloseIcon({
+  className = 'w-4 h-4',
+  strokeWidth = 2,
+}: CloseIconProps) {
   return (
     <svg
       className={className}
       fill="none"
       viewBox="0 0 24 24"
       stroke="currentColor"
-      strokeWidth={2}
+      strokeWidth={strokeWidth}
     >
       <path
         strokeLinecap="round"

@@ -2040,6 +2040,74 @@ export function App() {
     [vscodeApi],
   );
 
+  const renderSurface = useMemo(
+    () =>
+      showRenderLimitNotice
+        ? { nodes: [], edges: [] }
+        : displayMode === 'scoped'
+          ? { nodes: tracedNodes, edges: tracedEdges }
+          : displayMode === 'schemaExpanded' && expandedSchemaViewGraph
+            ? {
+                nodes: expandedSchemaViewGraph.flowNodes,
+                edges: expandedSchemaViewGraph.flowEdges,
+              }
+            : displayMode === 'schemaOverview'
+              ? { nodes: schemaNodes, edges: schemaEdges }
+              : { nodes: flowNodes, edges: flowEdges },
+    [
+      showRenderLimitNotice,
+      displayMode,
+      tracedNodes,
+      tracedEdges,
+      expandedSchemaViewGraph,
+      schemaNodes,
+      schemaEdges,
+      flowNodes,
+      flowEdges,
+    ],
+  );
+  const renderNodes = renderSurface.nodes;
+  const renderEdges = renderSurface.edges;
+
+  /** Memoized so the canvas render-state effect only re-posts when the snapshot changes. */
+  const graphErrorContext = useMemo(
+    () => ({
+      projectId: activeProjectId,
+      sourceName,
+      displayMode,
+      graphMode,
+      traceMode: trace.mode,
+      expandedSchemas: serializeExpandedSchemas(
+        expandedSchemaView?.expandedSchemas,
+      ),
+      renderedNodeCount: renderNodes.length,
+      renderedEdgeCount: renderEdges.length,
+      filteredCount,
+      renderLimitHit,
+      connectivity: summarizeRenderedConnectivity(
+        renderNodes.map((n) => ({
+          id: n.id,
+          label:
+            (n.data as { schemaName?: string; label?: string })?.schemaName ??
+            (n.data as { schemaName?: string; label?: string })?.label,
+        })),
+        renderEdges.map((e) => ({ source: e.source, target: e.target })),
+      ),
+    }),
+    [
+      activeProjectId,
+      sourceName,
+      displayMode,
+      graphMode,
+      trace.mode,
+      expandedSchemaView?.expandedSchemas,
+      renderNodes,
+      renderEdges,
+      filteredCount,
+      renderLimitHit,
+    ],
+  );
+
   if (view === 'start') {
     return (
       <StartScreen
@@ -2089,21 +2157,6 @@ export function App() {
     );
   }
 
-  const renderSurface = showRenderLimitNotice
-    ? { nodes: [], edges: [] }
-    : displayMode === 'scoped'
-      ? { nodes: tracedNodes, edges: tracedEdges }
-      : displayMode === 'schemaExpanded' && expandedSchemaViewGraph
-        ? {
-            nodes: expandedSchemaViewGraph.flowNodes,
-            edges: expandedSchemaViewGraph.flowEdges,
-          }
-        : displayMode === 'schemaOverview'
-          ? { nodes: schemaNodes, edges: schemaEdges }
-          : { nodes: flowNodes, edges: flowEdges };
-  const renderNodes = renderSurface.nodes;
-  const renderEdges = renderSurface.edges;
-
   const graphErrorResetKey = JSON.stringify({
     project: activeProjectId,
     source: sourceName,
@@ -2116,29 +2169,6 @@ export function App() {
     ),
     showExpandedSchemaClusters,
   });
-  const graphErrorContext = {
-    projectId: activeProjectId,
-    sourceName,
-    displayMode,
-    graphMode,
-    traceMode: trace.mode,
-    expandedSchemas: serializeExpandedSchemas(
-      expandedSchemaView?.expandedSchemas,
-    ),
-    renderedNodeCount: renderNodes.length,
-    renderedEdgeCount: renderEdges.length,
-    filteredCount,
-    renderLimitHit,
-    connectivity: summarizeRenderedConnectivity(
-      renderNodes.map((n) => ({
-        id: n.id,
-        label:
-          (n.data as { schemaName?: string; label?: string })?.schemaName ??
-          (n.data as { schemaName?: string; label?: string })?.label,
-      })),
-      renderEdges.map((e) => ({ source: e.source, target: e.target })),
-    ),
-  };
 
   const renderLimitNotice =
     showRenderLimitNotice && renderLimitFallback ? (

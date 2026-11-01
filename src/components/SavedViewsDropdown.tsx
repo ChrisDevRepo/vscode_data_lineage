@@ -347,7 +347,10 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                               onClick={() => setConfirmDeleteId(profile.id)}
                               aria-label={`Delete ${profile.name}`}
                             >
-                              <CloseIcon className="w-3 h-3" />
+                              <CloseIcon
+                                className="w-3 h-3"
+                                strokeWidth={1.5}
+                              />
                             </button>
                           </Tooltip>
                         </div>

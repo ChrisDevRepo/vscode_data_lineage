@@ -134,7 +134,7 @@ export const ModeBanner = memo(function ModeBanner({
             className="ln-mode-banner__close"
             aria-label="Close"
           >
-            <CloseIcon />
+            <CloseIcon strokeWidth={1.5} />
           </button>
         </Tooltip>
       </div>

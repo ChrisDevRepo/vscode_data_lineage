@@ -296,7 +296,7 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
                             className="shrink-0 w-4 h-4 flex items-center justify-center rounded-sm transition-colors ln-text-muted hover:opacity-80"
                             aria-label={`Remove exclusion pattern: ${pattern}`}
                           >
-                            <CloseIcon className="w-3 h-3" />
+                            <CloseIcon className="w-3 h-3" strokeWidth={2.5} />
                           </button>
                         </Tooltip>
                       </div>

@@ -342,7 +342,7 @@ export const StartScreen = memo(function StartScreen({
                         setConfirmDeleteId(project.id);
                       }}
                     >
-                      <CloseIcon />
+                      <CloseIcon strokeWidth={1.5} />
                     </Button>
                   </Tooltip>
                 )}

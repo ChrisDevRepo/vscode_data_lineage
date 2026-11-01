@@ -2685,7 +2685,6 @@ export function GraphCanvas({
     trace.manualAddedNodeIds,
     trace.manualPrunedNodeIds,
     trace.tracedNodeIds,
-    trace.tracedNodeIds.size,
     vscodeApi,
   ]);
 
