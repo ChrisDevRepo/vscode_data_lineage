@@ -90,15 +90,11 @@ const TYPE_PREFIX: Record<Exclude<ObjectType, 'external'>, string> = {
 };
 
 /** Tuning knobs layered on top of the default asymmetric shape. */
-export interface DwhProfile {
+interface DwhProfile {
   /** Exact schema count; default scales with `objectCount`. */
   schemaCount?: number;
   /** Exact count of objects (procedures, taken from the tail) that carry an external file reference. */
   externalRefCount?: number;
-  /** Target fraction of edges forced across a schema boundary; default 0.45. */
-  crossSchemaShare?: number;
-  /** Multiplier on how often an edge is biased toward a hub object; default 1. */
-  hubBoost?: number;
 }
 
 /** Parameters for {@link generateDwhModel}. */
@@ -111,28 +107,11 @@ export interface GenerateDwhModelParams {
   profile?: DwhProfile;
 }
 
-/** A node whose degree makes it a structural hub of the generated graph. */
-interface HubEntry {
-  id: string;
-  total: number;
-}
-
-/** Structural statistics computed over a {@link generateDwhModel} result. */
-interface DwhStats {
-  nodeCount: number;
-  edgeCount: number;
-  edgesPerNode: number;
-  byType: Record<ObjectType, number>;
-  schemaDistribution: { name: string; count: number }[];
-  crossSchemaEdgeShare: number;
-  isolatedCount: number;
-  hubs: HubEntry[];
-}
-
 /** Result of {@link generateDwhModel}. */
 export interface GenerateDwhModelResult {
   model: DatabaseModel;
-  stats: DwhStats;
+  /** Ids of the designated hub objects. */
+  hubIds: string[];
 }
 
 interface GenObj {
@@ -243,12 +222,16 @@ function buildObjects(
   return objs;
 }
 
-/** Directed edge set: roughly `round(objectCount * edgesPerNodeTarget)` edges from uniform random pairs, rejection-sampled (never filtering the full eligible pool — cheap at any N) toward a schema-crossing pair per `crossSchemaShare`, and — strictly, `source.layer <= target.layer` — toward the loose 0-4 layer order. Layer-monotonic edges keep the graph a near-DAG instead of densely cyclic: `dagre`'s default ranker (network-simplex) is cheap on a near-DAG and pathologically slow once feedback edges are common, so this is a performance property, not just a realism one. */
+/** Fraction of edges forced across a schema boundary. */
+const CROSS_SCHEMA_SHARE = 0.45;
+/** Extra partners per hub, independent of graph size. */
+const HUB_PARTNERS = 25;
+
+/** Directed edge set: roughly `round(objectCount * edgesPerNodeTarget)` edges from uniform random pairs, rejection-sampled (never filtering the full eligible pool — cheap at any N) toward a schema-crossing pair per `CROSS_SCHEMA_SHARE`, and — strictly, `source.layer <= target.layer` — toward the loose 0-4 layer order. Layer-monotonic edges keep the graph a near-DAG instead of densely cyclic: `dagre`'s default ranker (network-simplex) is cheap on a near-DAG and pathologically slow once feedback edges are common, so this is a performance property, not just a realism one. */
 function generateEdges(
   rng: Rng,
   eligible: GenObj[],
   edgeCount: number,
-  crossSchemaShare: number,
 ): LineageEdge[] {
   const edgeSet = new Set<string>();
   const edges: LineageEdge[] = [];
@@ -271,7 +254,7 @@ function generateEdges(
       if (source.layer > target.layer) continue;
       const crossOk =
         attempt >= 6 ||
-        (source.schema !== target.schema) === rng() < crossSchemaShare;
+        (source.schema !== target.schema) === rng() < CROSS_SCHEMA_SHARE;
       if (!crossOk) continue;
       added = tryAdd(source, target);
     }
@@ -284,15 +267,14 @@ function addHubEdges(
   rng: Rng,
   eligible: GenObj[],
   hubs: GenObj[],
-  hubBoost: number,
 ): LineageEdge[] {
   const extra: LineageEdge[] = [];
-  const perHub = clamp(Math.round(25 * hubBoost), 10, 60);
+
   for (const hub of hubs) {
     const partners = shuffle(
       rng,
       eligible.filter((o) => o.id !== hub.id),
-    ).slice(0, perHub);
+    ).slice(0, HUB_PARTNERS);
     for (const p of partners) {
       const [source, target] = p.layer <= hub.layer ? [p, hub] : [hub, p];
       extra.push({ source: source.id, target: target.id, type: 'body' });
@@ -316,8 +298,6 @@ export function generateDwhModel(
     0,
     objectCount,
   );
-  const crossSchemaShare = clamp(profile.crossSchemaShare ?? 0.45, 0, 1);
-  const hubBoost = profile.hubBoost ?? 1;
 
   const rng = mulberry32(seed);
   const schemaCount = clamp(
@@ -346,8 +326,8 @@ export function generateDwhModel(
   const eligible = nonExternal.filter((o) => !o.isIsolated);
   const edgesPerNodeTarget = 2.5 + rng() * 1.0;
   const edgeCount = Math.round(objectCount * edgesPerNodeTarget);
-  const baseEdges = generateEdges(rng, eligible, edgeCount, crossSchemaShare);
-  const hubEdges = addHubEdges(rng, eligible, hubs, hubBoost);
+  const baseEdges = generateEdges(rng, eligible, edgeCount);
+  const hubEdges = addHubEdges(rng, eligible, hubs);
   const seen = new Set(baseEdges.map((e) => `${e.source}->${e.target}`));
   const edges = baseEdges;
   for (const e of hubEdges) {
@@ -431,55 +411,5 @@ export function generateDwhModel(
     neighborIndex,
     source: 'dacpac',
   };
-  const stats = computeStats(model, objs);
-  return { model, stats };
-}
-
-function computeStats(model: DatabaseModel, objs: GenObj[]): DwhStats {
-  const byId = new Map(model.nodes.map((n) => [n.id, n]));
-  const inDeg = new Map<string, number>();
-  const outDeg = new Map<string, number>();
-  for (const n of model.nodes) {
-    inDeg.set(n.id, 0);
-    outDeg.set(n.id, 0);
-  }
-  let crossSchema = 0;
-  let realEdgeCount = 0;
-  for (const e of model.edges) {
-    outDeg.set(e.source, (outDeg.get(e.source) ?? 0) + 1);
-    inDeg.set(e.target, (inDeg.get(e.target) ?? 0) + 1);
-    const s = byId.get(e.source);
-    const t = byId.get(e.target);
-    if (s && t && s.type !== 'external' && t.type !== 'external') {
-      realEdgeCount++;
-      if (s.schema !== t.schema) crossSchema++;
-    }
-  }
-
-  const byType = emptyTypeCounts();
-  for (const n of model.nodes) if (n.type !== 'external') byType[n.type]++;
-
-  const hubIds = objs.filter((o) => o.isHub).map((o) => o.id);
-  const hubs: HubEntry[] = hubIds
-    .map((id) => ({ id, total: (inDeg.get(id) ?? 0) + (outDeg.get(id) ?? 0) }))
-    .sort((a, b) => b.total - a.total);
-
-  const isolatedCount = model.nodes.filter(
-    (n) => (inDeg.get(n.id) ?? 0) + (outDeg.get(n.id) ?? 0) === 0,
-  ).length;
-
-  return {
-    nodeCount: model.nodes.length,
-    edgeCount: model.edges.length,
-    edgesPerNode:
-      model.nodes.length > 0 ? model.edges.length / model.nodes.length : 0,
-    byType,
-    schemaDistribution: model.schemas.map((s) => ({
-      name: s.name,
-      count: s.nodeCount,
-    })),
-    crossSchemaEdgeShare: realEdgeCount > 0 ? crossSchema / realEdgeCount : 0,
-    isolatedCount,
-    hubs,
-  };
+  return { model, hubIds: hubs.map((h) => h.id) };
 }

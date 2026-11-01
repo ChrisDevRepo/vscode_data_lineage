@@ -35,10 +35,6 @@ const git = async (args) =>
 // ── 1. Output Truncation Invariants ──────────────────────────────────────────
 
 const SRC_ROOT = 'src';
-const DEFAULT_BASELINE = path.join(
-  repoRoot,
-  'tests/tools/output-truncation-baseline.json',
-);
 const ELLIPSIS = /…|\\u2026|\.\.\.['"`]/;
 const CUT_MARKERS = /truncated to|\[truncated|…\[\+|\\u2026 ?\[\+/;
 const CUT_HELPERS =
@@ -366,21 +362,14 @@ export function scanTree() {
 
 function checkNoOutputTruncation() {
   const sites = scanTree();
-  const { fresh, stale } = compare(
-    sites,
-    JSON.parse(readFileSync(DEFAULT_BASELINE, 'utf8')),
-  );
+  // Zero sites are allowed outside ALLOWLIST.
+  const { fresh } = compare(sites, []);
   for (const s of fresh)
     console.error(
       `FAIL  ${s.file}:${s.line}  new output truncation: ${s.text}`,
     );
-  for (const s of stale)
-    console.error(`FAIL  ${s.file}  stale baseline entry: ${s.text}`);
-  if (fresh.length > 0 || stale.length > 0)
-    throw new Error('Output truncation invariant failed.');
-  console.log(
-    `PASS  no new output truncation (${sites.length} baseline sites).`,
-  );
+  if (fresh.length > 0) throw new Error('Output truncation invariant failed.');
+  console.log('PASS  no output truncation sites.');
 }
 
 // ── 2. Layer Direction Invariant ─────────────────────────────────────────────

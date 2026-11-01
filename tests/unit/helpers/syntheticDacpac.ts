@@ -2,7 +2,7 @@
 
 import JSZip from 'jszip';
 import type { DatabaseModel, ObjectType } from '../../../src/engine/types';
-import { generateDwhModel, type DwhProfile } from './dwhGraphGenerator';
+import { generateDwhModel } from './dwhGraphGenerator';
 
 /** Parameters for {@link buildSyntheticDacpac}. */
 export interface SyntheticDacpacParams {
@@ -14,8 +14,6 @@ export interface SyntheticDacpacParams {
   externalRefCount?: number;
   /** Seed forwarded to {@link generateDwhModel}; defaults to a fixed constant for reproducibility. */
   seed?: number;
-  /** Realism tuning forwarded to {@link generateDwhModel}, beyond `schemaCount`/`externalRefCount`. */
-  profile?: Omit<DwhProfile, 'schemaCount' | 'externalRefCount'>;
 }
 
 /** Ground truth a test asserts an extraction result against. */
@@ -129,7 +127,6 @@ export async function buildSyntheticDacpac(
     schemaCount,
     externalRefCount = 0,
     seed = DEFAULT_SEED,
-    profile,
   } = params;
   if (schemaCount < 1) throw new Error('schemaCount must be at least 1');
   if (externalRefCount > objectCount)
@@ -138,7 +135,7 @@ export async function buildSyntheticDacpac(
   const { model } = generateDwhModel({
     objectCount,
     seed,
-    profile: { ...profile, schemaCount, externalRefCount },
+    profile: { schemaCount, externalRefCount },
   });
 
   const { xml, edgeCount } = serializeDwhModelToXml(model);
