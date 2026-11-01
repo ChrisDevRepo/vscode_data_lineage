@@ -647,7 +647,7 @@ function extractColumnsFromXml(
                     (n): n is string =>
                       !!n &&
                       normalizeColName(
-                        stripBrackets(splitSqlName(n).pop() ?? ''),
+                        lastNamePart(n),
                         identifierCaseSensitive,
                       ) === normalizeColName(bareName, identifierCaseSensitive),
                   );
@@ -911,6 +911,14 @@ function collectDeps(el: XmlElement, deps: string[]): void {
   }
 }
 
+/** Returns nested implementation elements under `FunctionBody` relationships. */
+function functionImplementations(el: XmlElement): XmlElement[] {
+  return asArray(el.Relationship)
+    .filter((rel) => rel['@_Name'] === 'FunctionBody')
+    .flatMap((rel) => asArray(rel.Entry))
+    .flatMap((entry) => asArray(entry.Element));
+}
+
 /** Retrieves the full SQL body script for an element, synthesizing a header if necessary. */
 function getBodyScript(
   el: XmlElement,
@@ -927,19 +935,14 @@ function getBodyScript(
   // DACPAC scalar-function signatures belong to the implementation, not the
   // function element. Read its own header and body together, without rebuilding SQL.
   if (type.includes('Function')) {
-    for (const rel of asArray(el.Relationship)) {
-      if (rel['@_Name'] !== 'FunctionBody') continue;
-      for (const entry of asArray(rel.Entry)) {
-        for (const implementation of asArray(entry.Element)) {
-          const header = getScriptHeader(implementation);
-          const implementationBody = getDirectBodyScript(
-            implementation,
-            'SqlScriptFunctionImplementation',
-          );
-          if (header && implementationBody)
-            return `${header}\n${implementationBody}`;
-        }
-      }
+    for (const implementation of functionImplementations(el)) {
+      const header = getScriptHeader(implementation);
+      const implementationBody = getDirectBodyScript(
+        implementation,
+        'SqlScriptFunctionImplementation',
+      );
+      if (header && implementationBody)
+        return `${header}\n${implementationBody}`;
     }
   }
 
@@ -975,8 +978,7 @@ function getSqlKeyword(type: string): string | undefined {
 
 /** Extracts the raw script content from dacpac properties or function body elements. */
 function getDirectBodyScript(el: XmlElement, type: string): string | undefined {
-  const props = asArray(el.Property);
-  for (const prop of props) {
+  for (const prop of asArray(el.Property)) {
     const pName = prop['@_Name'];
     if (pName === 'BodyScript' || pName === 'QueryScript') {
       return extractPropertyValue(prop);
@@ -984,21 +986,9 @@ function getDirectBodyScript(el: XmlElement, type: string): string | undefined {
   }
 
   if (type.includes('Function')) {
-    const rels = asArray(el.Relationship);
-    for (const rel of rels) {
-      if (rel['@_Name'] === 'FunctionBody') {
-        const entries = asArray(rel.Entry);
-        for (const entry of entries) {
-          const innerEls = asArray(entry.Element);
-          for (const inner of innerEls) {
-            const innerProps = asArray(inner.Property);
-            for (const p of innerProps) {
-              if (p['@_Name'] === 'BodyScript') {
-                return extractPropertyValue(p);
-              }
-            }
-          }
-        }
+    for (const inner of functionImplementations(el)) {
+      for (const p of asArray(inner.Property)) {
+        if (p['@_Name'] === 'BodyScript') return extractPropertyValue(p);
       }
     }
   }

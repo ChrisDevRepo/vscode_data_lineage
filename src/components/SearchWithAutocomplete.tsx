@@ -16,6 +16,7 @@ import {
 import { useAutocomplete } from '../hooks/useAutocomplete';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import { SuggestionList } from './ui/SuggestionList';
+import { CloseIcon } from './ui/CloseIcon';
 import { Tooltip } from './ui/Tooltip';
 import { disabledControl } from './ui/disabledControl';
 import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
@@ -180,20 +181,7 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
           className="absolute right-0 top-0 h-9 w-9 flex items-center justify-center ln-text-muted hover:opacity-70"
           aria-label="Clear search"
         >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-            strokeWidth="2"
-            stroke="currentColor"
-            className="w-4 h-4"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M6 18 18 6M6 6l12 12"
-            />
-          </svg>
+          <CloseIcon />
         </button>
       ) : (
         <div className="absolute right-0 top-0 h-9 w-9 flex items-center justify-center pointer-events-none ln-text-placeholder">

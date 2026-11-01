@@ -804,20 +804,18 @@ export async function executePresentResult(
               nodeId: n.nodeId,
               summary: n.text,
             }));
-            {
-              resultGraph.description = validation.description ?? undefined;
-              resultGraph.summary = validation.summary ?? undefined;
-              resultGraph.title = renderInput.title ?? undefined;
-              resultGraph.intro = renderInput.intro ?? undefined;
-              resultGraph.closing = renderInput.closing ?? undefined;
-              if (Array.isArray(renderInput.sections)) {
-                resultGraph.sections = renderInput.sections.map((sec) => ({
-                  label: sec.label,
-                  node_ids: sec.node_ids,
-                  text: sec.text,
-                }));
-                resultGraph.sectionsRunId = sess.explorationRunId ?? undefined;
-              }
+            resultGraph.description = validation.description ?? undefined;
+            resultGraph.summary = validation.summary ?? undefined;
+            resultGraph.title = renderInput.title ?? undefined;
+            resultGraph.intro = renderInput.intro ?? undefined;
+            resultGraph.closing = renderInput.closing ?? undefined;
+            if (Array.isArray(renderInput.sections)) {
+              resultGraph.sections = renderInput.sections.map((sec) => ({
+                label: sec.label,
+                node_ids: sec.node_ids,
+                text: sec.text,
+              }));
+              resultGraph.sectionsRunId = sess.explorationRunId ?? undefined;
             }
           };
 

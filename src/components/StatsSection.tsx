@@ -309,9 +309,7 @@ function StatsResults({ stats, mode }: { stats: TableStats; mode: StatsMode }) {
         <div
           style={hdrStyle}
           onClick={() => {
-            if (sort.key === 'ordinal') toggleSort('name');
-            else if (sort.key === 'name') toggleSort('ordinal');
-            else toggleSort('ordinal');
+            toggleSort(sort.key === 'ordinal' ? 'name' : 'ordinal');
           }}
         >
           Column{sort.key === 'name' && <SortArrow dir={sort.dir} />}

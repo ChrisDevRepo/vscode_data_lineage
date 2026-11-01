@@ -34,9 +34,6 @@ export function getToolInvocationLabel(name: string, input: unknown): string {
       return `Inspecting ${n} neighbor${n === 1 ? '' : 's'} for pruning…`;
     }
     case 'lineage_submit_findings': {
-      if (Array.isArray(input)) {
-        return `Analyzing batch of ${input.length} objects…`;
-      }
       const focus =
         (inp?.focus_node_id as string | undefined)
           ?.split('.')

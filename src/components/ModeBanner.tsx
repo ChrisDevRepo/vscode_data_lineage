@@ -6,6 +6,7 @@ import {
   type ReactNode,
   type ReactElement,
 } from 'react';
+import { CloseIcon } from './ui/CloseIcon';
 import { Tooltip } from './ui/Tooltip';
 
 /** Visual variants of {@link ModeBanner}. */
@@ -133,19 +134,7 @@ export const ModeBanner = memo(function ModeBanner({
             className="ln-mode-banner__close"
             aria-label="Close"
           >
-            <svg
-              className="w-4 h-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={1.5}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M6 18 18 6M6 6l12 12"
-              />
-            </svg>
+            <CloseIcon />
           </button>
         </Tooltip>
       </div>

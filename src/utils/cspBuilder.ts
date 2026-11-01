@@ -1,5 +1,4 @@
-/** Utility for constructing Content-Security-Policy (CSP) strings for VS Code webviews. */
-
+/** Options for constructing Content-Security-Policy (CSP) strings for VS Code webviews. */
 export interface CspOptions {
   nonce: string;
   cspSource: string;

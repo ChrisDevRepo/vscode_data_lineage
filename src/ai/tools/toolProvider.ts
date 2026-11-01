@@ -14,11 +14,13 @@ import { Logger, trunc, LOG_TRUNC_JSON } from '../../utils/log';
 import {
   getContext,
   searchObjects,
+  validateSearchObjectsQuery,
   executeObjectDetail,
   prepareModelObject,
   type ModelObjectPlan,
   runAnalysis,
   searchDdl,
+  validateDdlQuery,
   prepareScopeBundle,
   executeScopeBundle,
   getNeighborColumns,
@@ -355,10 +357,25 @@ class ToolHandler implements ToolServices {
 
   public async searchObjects(input: unknown) {
     try {
-      const parsed = parseToolInput(SearchObjectsInputSchema, input);
-      if (!parsed.ok)
-        return this.logAndReturn('lineage_search_objects', parsed.error, input);
-      const { query, types, schemas, mode, cursor } = parsed.data;
+      const outcome = ingestToolInput({
+        input,
+        schema: SearchObjectsInputSchema,
+        context: '',
+        facts: {
+          validated: new Map([
+            [
+              'searchQuery',
+              (value) =>
+                validateSearchObjectsQuery(value as Record<string, unknown>),
+            ],
+          ]),
+        },
+        inspect: ({ parsed }) =>
+          parsed.success ? () => parsed.data : undefined,
+      });
+      if ('code' in outcome)
+        return this.logAndReturn('lineage_search_objects', outcome, input);
+      const { query, types, schemas, mode, cursor } = outcome;
       return this.logAndReturn(
         'lineage_search_objects',
         await searchObjects(
@@ -608,10 +625,25 @@ class ToolHandler implements ToolServices {
 
   public async searchDdl(input: unknown) {
     try {
-      const parsed = parseToolInput(SearchDdlInputSchema, input);
-      if (!parsed.ok)
-        return this.logAndReturn('lineage_search_ddl', parsed.error, input);
-      const { query, types } = parsed.data;
+      const outcome = ingestToolInput({
+        input,
+        schema: SearchDdlInputSchema,
+        context: '',
+        facts: {
+          validated: new Map([
+            [
+              'ddlQuery',
+              (value) =>
+                typeof value === 'string' ? validateDdlQuery(value) : null,
+            ],
+          ]),
+        },
+        inspect: ({ parsed }) =>
+          parsed.success ? () => parsed.data : undefined,
+      });
+      if ('code' in outcome)
+        return this.logAndReturn('lineage_search_ddl', outcome, input);
+      const { query, types } = outcome;
       return this.logAndReturn(
         'lineage_search_ddl',
         await searchDdl(
@@ -659,41 +691,45 @@ class ToolHandler implements ToolServices {
         );
       }
 
-      const parsed = parseToolInput(GetNeighborColumnsInputSchema, input);
-      if (!parsed.ok)
-        return this.logAndReturn(
-          'lineage_get_neighbor_columns',
-          parsed.error,
-          input,
-        );
-
       const model = this.requireModel();
-      const ids = parsed.data.ids;
-      const invalidIds = engine.validateNeighborIds(ids);
-      if (invalidIds.length > 0) {
-        return this.logAndReturn(
-          'lineage_get_neighbor_columns',
-          makeRejection({
-            code: REJECTION_CODES.invalidInput,
-            reason:
-              'Not a direct neighbor of the current object, or outside the scope.',
-            errors: at(
-              'not_neighbor',
-              ids.flatMap((id, index) =>
-                invalidIds.includes(id) ? [`ids.${index}`] : [],
-              ),
-              engine.neighborColumnIds,
-            ),
-          }),
-          input,
-        );
-      }
-
-      return this.logAndReturn(
-        'lineage_get_neighbor_columns',
-        getNeighborColumns(model, ids, sess.columnStore),
+      const outcome = ingestToolInput({
         input,
-      );
+        schema: GetNeighborColumnsInputSchema,
+        context: '',
+        facts: {
+          validated: new Map([
+            [
+              'neighborId',
+              (value, pointer) =>
+                typeof value === 'string' &&
+                engine.validateNeighborIds([value]).length > 0
+                  ? makeRejection({
+                      code: REJECTION_CODES.invalidInput,
+                      reason:
+                        'Not a direct neighbor of the current object, or outside the scope.',
+                      errors: at(
+                        'not_neighbor',
+                        [pointer.slice(1).split('/').join('.')],
+                        engine.neighborColumnIds,
+                      ),
+                    })
+                  : null,
+            ],
+          ]),
+        },
+        inspect: ({ parsed }) =>
+          parsed.success
+            ? () =>
+                this.logAndReturn(
+                  'lineage_get_neighbor_columns',
+                  getNeighborColumns(model, parsed.data.ids, sess.columnStore),
+                  input,
+                )
+            : undefined,
+      });
+      return typeof outcome === 'string'
+        ? outcome
+        : this.logAndReturn('lineage_get_neighbor_columns', outcome, input);
     } catch (err) {
       return this.toolError('get_neighbor_columns', err);
     }

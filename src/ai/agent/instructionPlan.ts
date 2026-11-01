@@ -12,7 +12,6 @@ import type { ClassificationValue } from '../session/classification';
 import type { TurnEventSink } from '../runtime/turnEventSink';
 import {
   filterRegistry,
-  overrideRegistrySchemas,
   resolveRegistrySchemas,
   type IToolRegistry,
 } from '../tools/registry';
@@ -406,11 +405,10 @@ export function compileInstructionPlan<T>(
       ),
     );
   }
-  let registry = schemaOverrides.size
-    ? overrideRegistrySchemas(filteredRegistry, schemaOverrides)
-    : filteredRegistry;
-  if (liveResolvers.size)
-    registry = resolveRegistrySchemas(registry, liveResolvers);
+  const registry =
+    schemaOverrides.size || liveResolvers.size
+      ? resolveRegistrySchemas(filteredRegistry, liveResolvers, schemaOverrides)
+      : filteredRegistry;
   const toolNames = registry.getTools().map((tool) => tool.name);
   if (input.requiredTerminalTool && !registry.has(input.requiredTerminalTool)) {
     throw new Error(

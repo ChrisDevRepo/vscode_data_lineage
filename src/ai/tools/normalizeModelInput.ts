@@ -9,7 +9,7 @@ const admits = (schema: ZodType, value: unknown): boolean =>
   validateToolCandidate(schema, value).success;
 
 /** One lossless format fix: same data, different spelling, exactly one possible result. */
-export interface ModelInputFix {
+interface ModelInputFix {
   readonly path: string;
   readonly before: string;
   readonly after: unknown;

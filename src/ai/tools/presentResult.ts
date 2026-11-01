@@ -837,7 +837,7 @@ export interface PresentReference {
   nodeId: string;
 }
 /** Admitted original-position links and whether all coverage dependencies are known. */
-export interface PresentReferenceFacts {
+interface PresentReferenceFacts {
   references: readonly PresentReference[];
   coverageKnown: boolean;
 }

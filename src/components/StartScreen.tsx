@@ -4,6 +4,7 @@ import { Tooltip } from './ui/Tooltip';
 import { WizardPanel } from './ui/WizardPanel';
 import { StatusMessage } from './ui/StatusMessage';
 import { Spinner } from './ui/Spinner';
+import { CloseIcon } from './ui/CloseIcon';
 import { useReturnFocus } from '../hooks/useReturnFocus';
 import type { Project, FilterProfile } from '../engine/projectStore';
 
@@ -341,7 +342,7 @@ export const StartScreen = memo(function StartScreen({
                         setConfirmDeleteId(project.id);
                       }}
                     >
-                      <IconClose />
+                      <CloseIcon />
                     </Button>
                   </Tooltip>
                 )}
@@ -431,22 +432,3 @@ export const StartScreen = memo(function StartScreen({
     </WizardPanel>
   );
 });
-
-function IconClose() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      fill="none"
-      viewBox="0 0 24 24"
-      strokeWidth={1.5}
-      stroke="currentColor"
-      className="w-4 h-4"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M6 18 18 6M6 6l12 12"
-      />
-    </svg>
-  );
-}

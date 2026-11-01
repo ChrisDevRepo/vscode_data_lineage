@@ -35,20 +35,20 @@ const DEFAULT_DETAIL_CONFIG: DetailConfig = {
 };
 
 /** VS Code API acquired once for the detail webview lifecycle. */
-const _vscodeApi = acquireVsCodeApi();
+const vscodeApi = acquireVsCodeApi();
 
-window.vscode = _vscodeApi;
+window.vscode = vscodeApi;
 
 window.addEventListener('unhandledrejection', (event) => {
   const msg =
     event.reason instanceof Error ? event.reason.message : String(event.reason);
-  _vscodeApi.postMessage({
+  vscodeApi.postMessage({
     type: 'error',
     error: `[Detail] Unhandled rejection: ${msg}`,
   });
 });
 window.addEventListener('error', (event) => {
-  _vscodeApi.postMessage({
+  vscodeApi.postMessage({
     type: 'error',
     error: `[Detail] Uncaught error: ${event.message}`,
   });
@@ -56,7 +56,6 @@ window.addEventListener('error', (event) => {
 
 /** Coordinates detail-webview messages, DDL/column views, and profiling state. */
 export function DetailApp() {
-  const vscodeApi = useRef(_vscodeApi);
   const nodeRef = useRef<LineageNode | undefined>(undefined);
   const [detail, setDetail] = useState<DetailState | null>(null);
   const [statsState, setStatsState] = useState<TableStatsState>({
@@ -69,12 +68,12 @@ export function DetailApp() {
       const frame = validateBridgeFrame(ExtensionToDetailMsgSchema, e.data);
       if (!frame.ok) {
         if (frame.reason === 'version') {
-          vscodeApi.current.postMessage({
+          vscodeApi.postMessage({
             type: 'error',
             error: `[Detail] Bridge protocol mismatch on "${frame.msgType}": host sent v${String(frame.version)}, webview expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window.`,
           });
         } else if (frame.reason === 'parse') {
-          vscodeApi.current.postMessage({
+          vscodeApi.postMessage({
             type: 'error',
             error: `[Detail] Parse rejected host message "${frame.msgType}": ${JSON.stringify(frame.issues)}`,
           });
@@ -110,7 +109,7 @@ export function DetailApp() {
       }
     }
     window.addEventListener('message', handler);
-    vscodeApi.current.postMessage({ type: 'detail-ready' });
+    vscodeApi.postMessage({ type: 'detail-ready' });
     return () => window.removeEventListener('message', handler);
   }, []);
 
@@ -137,7 +136,7 @@ export function DetailApp() {
   const hasColumnsAndDdl = !!(node.columns?.length && node.bodyScript);
 
   function handleRequestStats(mode: StatsMode) {
-    vscodeApi.current.postMessage({
+    vscodeApi.postMessage({
       type: 'table-stats-request',
       schema: node.schema,
       objectName: node.name,
@@ -148,7 +147,7 @@ export function DetailApp() {
   }
 
   function handleClose() {
-    vscodeApi.current.postMessage({ type: 'close-detail' });
+    vscodeApi.postMessage({ type: 'close-detail' });
   }
 
   if (isTable) {

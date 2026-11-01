@@ -58,8 +58,9 @@ export async function migrateFromWorkspaceState(
           schemas: [],
         };
       } catch (err) {
+        logger.debug(`Unmigratable legacy connection source: "${sourceName}"`);
         logger.warn(
-          `Legacy connection "${sourceName}" failed validation and was not migrated: ${errorMessage(err)}`,
+          `Legacy connection failed validation and was not migrated: ${errorMessage(err)}`,
         );
       }
     }
@@ -85,7 +86,8 @@ export async function migrateFromWorkspaceState(
   });
   const updated = updateProject(store, project);
   await context.globalState.update(PROJECT_STORE_KEY, updated);
-  logger.info(`Migrated legacy connection to project "${name}"`);
+  logger.info('Migrated legacy connection to project store');
+  logger.debug(`Migrated legacy project: "${name}"`);
 
   await clearLegacyKeys();
 }

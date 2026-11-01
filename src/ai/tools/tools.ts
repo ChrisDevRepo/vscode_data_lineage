@@ -264,6 +264,23 @@ function validateQuery(query: string, isRegex: boolean): ToolRejection | null {
   return null;
 }
 
+/** Validates the `query` of a `lineage_search_objects` input against its schema filter and mode. */
+export function validateSearchObjectsQuery(input: {
+  query?: unknown;
+  schemas?: unknown;
+  mode?: unknown;
+}): ToolRejection | null {
+  if (typeof input.query !== 'string') return null;
+  const isRegex = input.mode === 'regex';
+  const appliedSchemaFilter =
+    Array.isArray(input.schemas) && input.schemas.length > 0;
+  const listAllInSchemas =
+    appliedSchemaFilter &&
+    (input.query.length === 0 ||
+      (!isRegex && WILDCARD_ALL_TOKENS.has(input.query)));
+  return listAllInSchemas ? null : validateQuery(input.query, isRegex);
+}
+
 /** Searches for objects in the model by name or column name. */
 export async function searchObjects(
   model: DatabaseModel,
@@ -282,10 +299,8 @@ export async function searchObjects(
     (query.length === 0 || (!isRegex && WILDCARD_ALL_TOKENS.has(query)));
   const effectiveQuery = listAllInSchemas ? '' : query;
 
-  if (!listAllInSchemas) {
-    const rejection = validateQuery(query, isRegex);
-    if (rejection) return rejection;
-  }
+  const rejection = validateSearchObjectsQuery({ query, schemas, mode });
+  if (rejection) return rejection;
 
   const typeSet = types?.length ? new Set<ObjectType>(types) : undefined;
   const requestedSchemaKeys = appliedSchemaFilter
@@ -925,16 +940,8 @@ const MIN_SEARCH_DDL_ROW_CHARS = JSON.stringify({
  */
 const LONG_LINE_HINT = `These lines match but are longer than ${SEARCH_LINE_MAX_CHARS} characters, so no row shows them. Read the object's DDL with lineage_get_object_detail and go to the line number; match_offset is where the match starts within the line.`;
 
-/** Searches the DDL/source code of scriptable objects with a regular expression. */
-export async function searchDdl(
-  model: DatabaseModel,
-  query: string,
-  budget: TurnTokenBudget,
-  types?: ('view' | 'procedure' | 'function')[],
-  store?: import('../../engine/columnStore').ColumnStore,
-  onDebug?: (msg: string) => void,
-  signal?: AbortSignal,
-): Promise<object> {
+/** Validates a `lineage_search_ddl` regex pattern against the length cap and compiler. */
+export function validateDdlQuery(query: string): ToolRejection | null {
   if (query.length > REGEX_MAX_LENGTH) {
     return makeRejection({
       code: REJECTION_CODES.invalidInput,
@@ -951,6 +958,21 @@ export async function searchDdl(
       reason: regexRejectHint(query, compiled),
     });
   }
+  return null;
+}
+
+/** Searches the DDL/source code of scriptable objects with a regular expression. */
+export async function searchDdl(
+  model: DatabaseModel,
+  query: string,
+  budget: TurnTokenBudget,
+  types?: ('view' | 'procedure' | 'function')[],
+  store?: import('../../engine/columnStore').ColumnStore,
+  onDebug?: (msg: string) => void,
+  signal?: AbortSignal,
+): Promise<object> {
+  const rejection = validateDdlQuery(query);
+  if (rejection) return rejection;
 
   const ddlTypes: ObjectType[] = types ? types : [...SCRIPT_TYPES];
   const typeSet = new Set<ObjectType>(ddlTypes);

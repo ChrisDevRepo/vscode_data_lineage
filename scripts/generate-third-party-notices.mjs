@@ -62,7 +62,8 @@ function licenseText(dir) {
   const file = fs
     .readdirSync(dir)
     .find((f) => /^(licen[sc]e|copying)(\..*)?$/i.test(f));
-  // Normalise CRLF and trailing blanks so the output is stable across checkouts and `--check` holds.
+  // Normalise CRLF and trailing blanks so the output is stable across checkouts and
+  // `--check` holds.
   return file
     ? fs
         .readFileSync(path.join(dir, file), 'utf8')
@@ -72,7 +73,10 @@ function licenseText(dir) {
     : null;
 }
 
-/** Packages the root package.json overrides to a repo-owned `file:` stub; these are not third-party. */
+/**
+ * Packages the root package.json overrides to a repo-owned `file:` stub; these are not
+ * third-party.
+ */
 const rootPkg = JSON.parse(
   fs.readFileSync(path.join(root, 'package.json'), 'utf8'),
 );

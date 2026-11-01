@@ -1932,14 +1932,14 @@ export function App() {
     ],
   );
 
-  /** Saves the result of an interactive trace as a permanent bookmark. */
-  const handleSaveTraceAsBookmark = useCallback(
-    (name: string, nodeIds: string[]) => {
+  /** Saves an allowlist-scoped result (interactive trace or structural analysis) as a bookmark. */
+  const saveAllowlistBookmark = useCallback(
+    (source: 'trace' | 'analysis', name: string, nodeIds: string[]) => {
       const profile: FilterProfile = {
         id: crypto.randomUUID(),
         name,
         createdAt: new Date().toISOString(),
-        source: 'trace',
+        source,
         filter: {
           ...serializeFilter(filter),
           allowlistNodeIds: nodeIds,
@@ -1950,22 +1950,16 @@ export function App() {
     [filter, persistFilterProfile],
   );
 
-  /** Saves the result of a structural analysis as a permanent bookmark. */
+  const handleSaveTraceAsBookmark = useCallback(
+    (name: string, nodeIds: string[]) =>
+      saveAllowlistBookmark('trace', name, nodeIds),
+    [saveAllowlistBookmark],
+  );
+
   const handleSaveAnalysisBookmark = useCallback(
-    (name: string, nodeIds: string[]) => {
-      const profile: FilterProfile = {
-        id: crypto.randomUUID(),
-        name,
-        createdAt: new Date().toISOString(),
-        source: 'analysis',
-        filter: {
-          ...serializeFilter(filter),
-          allowlistNodeIds: nodeIds,
-        },
-      };
-      persistFilterProfile(profile, { activateProfile: true });
-    },
-    [filter, persistFilterProfile],
+    (name: string, nodeIds: string[]) =>
+      saveAllowlistBookmark('analysis', name, nodeIds),
+    [saveAllowlistBookmark],
   );
 
   /** Saves a transient AI preview as a permanent bookmark. */

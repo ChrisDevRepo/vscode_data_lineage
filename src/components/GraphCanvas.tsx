@@ -1738,7 +1738,7 @@ export function GraphCanvas({
           );
         },
       ),
-    [fitView, flowNodes, flowEdges, getNodes, getEdges, columnViewActive],
+    [fitView, flowNodes, flowEdges, getNodes, getEdges],
   );
   const fitGraph = useRebuildResumableFit(
     isRebuilding,
@@ -2676,9 +2676,17 @@ export function GraphCanvas({
     });
   }, [
     graphErrorResetKey,
+    graphErrorContext,
     highlightedNodeId,
     traceControlsByNode,
+    trace.mode,
+    trace.selectedNodeId,
+    trace.baseNodeIds,
+    trace.manualAddedNodeIds,
+    trace.manualPrunedNodeIds,
+    trace.tracedNodeIds,
     trace.tracedNodeIds.size,
+    vscodeApi,
   ]);
 
   return (

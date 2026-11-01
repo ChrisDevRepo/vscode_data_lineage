@@ -816,10 +816,7 @@ export function findingAdmissionFacts(schema: z.ZodType) {
   >();
   const columns = new Map<string, string>(),
     outColumns = new Map<string, string>();
-  const suppliers = new Map<
-    string,
-    ColumnFlowEntry['upstream_columns'][number]
-  >();
+  const suppliers = new Map<string, z.output<typeof ColumnRefSchema>>();
   const references = new Map<string, string>(),
     identities = new Map<string, string>(),
     arrays = new Map<string, number>(),
@@ -1537,7 +1534,7 @@ export function heldHopFindingSchemaForMode(mode: 'bb' | 'ct') {
 export const GetNeighborColumnsInputSchema = z
   .object({
     ids: z
-      .array(z.string().min(1))
+      .array(z.string().min(1).meta({ toolValidated: 'neighborId' }))
       .min(1)
       .describe('Neighbor ids, not the focus.'),
   })
@@ -1613,7 +1610,11 @@ export const SearchObjectsInputSchema = z
       ),
     cursor: CursorSchema.optional(),
   })
-  .strict();
+  .strict()
+  .meta({
+    toolFields: ['query', 'schemas', 'mode'],
+    toolValidated: 'searchQuery',
+  });
 markIdFormSearch(SearchObjectsInputSchema);
 
 /** `lineage_get_object_detail` input. */
@@ -1660,6 +1661,7 @@ export const SearchDdlInputSchema = z
   .object({
     query: z
       .string()
+      .meta({ toolValidated: 'ddlQuery' })
       .describe(
         'Regular expression against SQL body text; case-insensitive; `^` and `$` match per line.',
       ),

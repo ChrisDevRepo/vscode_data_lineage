@@ -24,6 +24,7 @@ import {
 import { pickAccount, signInForSql } from './entraSignIn';
 import { redactSecrets } from '../../utils/redact';
 import { errorMessage } from '../../utils/errorMessage';
+import { quoteIdentifier } from '../../utils/sql';
 
 /** The error target of a saved connection opened on `database`. */
 export function builtInTarget(
@@ -178,11 +179,8 @@ function classify(err: unknown): ErrorKind {
   return 'other';
 }
 
-const bracket = (identifier: string): string =>
-  `[${identifier.replace(/\]/g, ']]')}]`;
-
 function grantStatement(user: string | undefined): string {
-  const principal = user ? bracket(user) : '[user_or_group]';
+  const principal = user ? quoteIdentifier(user) : '[user_or_group]';
   return `GRANT VIEW DEFINITION TO ${principal};`;
 }
 

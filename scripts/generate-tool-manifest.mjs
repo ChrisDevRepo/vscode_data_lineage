@@ -9,14 +9,14 @@
  *
  * Two rules shape the output:
  *
- * 1. **External subset.** `registerAiTools` binds exactly `EXTERNAL_TOOL_DEFS` — the tools the core policy allows callers
- *    without a chat turn (`EXTERNAL_TOOL_NAMES` in `toolPolicy.ts`). A
- *    contributed entry with no `registerTool` binding is a broken tool, not an unused one — the
- *    manifest therefore carries exactly the tools that get bound.
- * 2. **Presentation fields are manifest-owned**, except `displayName`, which is the catalog `title`.
- *    `toolReferenceName`, `canBeReferencedInPrompt`, `icon`, and `when` exist only in the manifest;
- *    they are carried over from the current entry (in its existing key order) so regeneration is a
- *    no-op diff.
+ * 1. **External subset.** `registerAiTools` binds exactly `EXTERNAL_TOOL_DEFS` — the tools
+ *    the core policy allows callers without a chat turn (`EXTERNAL_TOOL_NAMES` in
+ *    `toolPolicy.ts`). A contributed entry with no `registerTool` binding is a broken tool,
+ *    not an unused one — the manifest therefore carries exactly the tools that get bound.
+ * 2. **Presentation fields are manifest-owned**, except `displayName`, which is the catalog
+ *    `title`. `toolReferenceName`, `canBeReferencedInPrompt`, `icon`, and `when` exist only
+ *    in the manifest; they are carried over from the current entry (in its existing key order)
+ *    so regeneration is a no-op diff.
  *
  * Usage:
  *   node scripts/generate-tool-manifest.mjs           # rewrite package.json in place

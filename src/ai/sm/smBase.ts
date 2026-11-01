@@ -4228,7 +4228,7 @@ export class NavigationEngine implements IHopStateMachine {
                 : []),
               ...(offerFlow ? ['column_flow'] : []),
             ],
-            reason: `This neighbor has no authored outcome. ${ct && !offerFlow ? 'Keep / question it in questions, or prune it in prune_neighbors if allowed' : 'Map its value in column_flow (CT), prune it in prune_neighbors if allowed, or keep / question it in questions'}. Send the complete list for any action field you change, including entries you keep.`,
+            reason: 'This neighbor has no authored outcome.',
           });
           continue;
         }

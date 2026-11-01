@@ -10,8 +10,6 @@ interface BookmarkInfoCardProps {
   staleNodeNames: string[];
 }
 
-const SOURCE_DESCRIPTIONS = BOOKMARK_SOURCE_DESCRIPTIONS;
-
 /**
  * Formats an ISO date string into a localized short date and time format. Example: "Mar 29, 2026,
  * 12:15"
@@ -91,7 +89,7 @@ export const BookmarkInfoCard = memo(function BookmarkInfoCard({
               Source
             </span>
             <span className="text-[10px] ln-text">
-              {SOURCE_DESCRIPTIONS[source]}
+              {BOOKMARK_SOURCE_DESCRIPTIONS[source]}
             </span>
           </div>
 

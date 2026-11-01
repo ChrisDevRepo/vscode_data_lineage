@@ -570,10 +570,11 @@ export function createMessageHandlers(
           sess.projectName = project.name;
           sess.isDbSession = project.connection.type === 'database';
         }
+        host.log('info', 'Bridge', 'Restoring session for project');
         host.log(
-          'info',
+          'debug',
           'Bridge',
-          `Restoring session for project: ${sess.projectName}`,
+          `Restored session project: ${sess.projectName}`,
         );
         host.postMessage({
           type: 'dacpac-model',
@@ -723,7 +724,8 @@ export function createMessageHandlers(
       });
       if (token.isCancellationRequested) return;
       if (uris && uris.length > 0) {
-        host.log('info', 'Bridge', `Selected dacpac: ${uris[0].fsPath}`);
+        host.log('info', 'Bridge', 'Selected dacpac');
+        host.log('debug', 'Bridge', `Selected dacpac: ${uris[0].fsPath}`);
         const config = readExtensionConfig(host);
         let extracted: Awaited<ReturnType<typeof extractSchemaPreview>>;
         try {
@@ -735,7 +737,8 @@ export function createMessageHandlers(
         } catch (err) {
           if (token.isCancellationRequested) return;
           const reason = errorMessage(err);
-          host.log('error', 'Dacpac', `Open ${uris[0].fsPath}`, err);
+          host.log('debug', 'Dacpac', `Failed dacpac path: ${uris[0].fsPath}`);
+          host.log('error', 'Dacpac', 'Open dacpac', err);
           host.postMessage({
             type: 'db-error',
             message: `Could not open ${path.basename(uris[0].fsPath)}: ${reason}`,
@@ -852,20 +855,21 @@ export function createMessageHandlers(
             err instanceof vscode.FileSystemError &&
             err.code === 'FileNotFound'
           ) {
+            host.log('warn', 'Bridge', 'Dacpac file not found');
             host.log(
-              'warn',
+              'debug',
               'Bridge',
-              `Dacpac file not found: ${project.connection.path}`,
+              `Missing dacpac path: ${project.connection.path}`,
             );
             host.postMessage({ type: 'last-dacpac-gone' });
           } else {
             const reason = errorMessage(err);
             host.log(
-              'error',
+              'debug',
               'Bridge',
-              `Load project ${project.connection.path}`,
-              err,
+              `Failed project dacpac path: ${project.connection.path}`,
             );
+            host.log('error', 'Bridge', 'Load project', err);
             host.postMessage({
               type: 'db-error',
               message: `Could not load ${project.connection.displayName}: ${reason}`,
@@ -1168,7 +1172,7 @@ export function createMessageHandlers(
         const store = loadProjectStore(context);
         const updated = addFilterProfile(store, msg.projectId, msg.profile);
         await saveProjectStore(context, updated);
-        logger.info(`Successfully saved filter view: "${msg.profile?.name}"`);
+        logger.info('Saved filter view');
         postProjectsList(host, updated);
         try {
           const sess = getSession();
@@ -1192,12 +1196,11 @@ export function createMessageHandlers(
             );
           }
         } catch (runErr) {
-          logger.warn(
-            `Failed to store AI run memory for "${msg.profile?.name}": ${errorMessage(runErr)}`,
-          );
+          logger.debug(`AI run memory view: "${msg.profile?.name}"`);
+          logger.warn(`Failed to store AI run memory: ${errorMessage(runErr)}`);
         }
       } catch (err) {
-        logger.error(`Failed to save filter view: "${msg.profile?.name}"`, err);
+        logger.error('Failed to save filter view', err);
         throw err;
       }
     },
@@ -1900,7 +1903,7 @@ async function handleTableStatsRequestHost(
       outputChannel,
       {
         ms: timeoutMs,
-        message: `Row count query for ${schema}.${objectName} timed out after ${timeoutSec}s.`,
+        message: `Row count query timed out after ${timeoutSec}s.`,
       },
     );
     const rowCount =
@@ -1939,7 +1942,7 @@ async function handleTableStatsRequestHost(
 
     const profilingTimeout = {
       ms: timeoutMs,
-      message: `Profiling query for ${schema}.${objectName} timed out after ${timeoutSec}s.`,
+      message: `Profiling query timed out after ${timeoutSec}s.`,
     };
     let sampled = rowCount > sampleThreshold && sampleThreshold >= 0;
     let profilingResult;
@@ -1972,9 +1975,7 @@ async function handleTableStatsRequestHost(
       sampled = false;
     }
     if (!profilingResult.rows.length) {
-      throw new Error(
-        `Profiling query returned no rows for ${schema}.${objectName}`,
-      );
+      throw new Error('Profiling query returned no rows');
     }
     const resultRow = profilingRowFromResult(profilingResult);
 
@@ -2002,12 +2003,17 @@ async function handleTableStatsRequestHost(
       logger,
     );
   } catch (err) {
-    if (isDbConnectionError(err)) {
+    const target = isDbConnectionError(err)
+      ? err.target
+      : session && isDriverError(err)
+        ? targetFromSession(session)
+        : undefined;
+    if (target) {
       const reported = reportConnectionError(
-        err.original,
-        err.target,
+        isDbConnectionError(err) ? err.original : err,
+        target,
         logger,
-        connectionErrorHooks(dbEnv, err.target.connectionId, undefined),
+        connectionErrorHooks(dbEnv, target.connectionId, undefined),
       );
       void postToDetail(
         panel,
@@ -2035,11 +2041,7 @@ async function handleTableStatsRequestHost(
       await session
         .dispose()
         .catch((err: unknown) =>
-          host.log(
-            'warn',
-            'Stats',
-            `Disconnect failed: ${redactSecrets(errorMessage(err))}`,
-          ),
+          host.log('warn', 'Stats', `Disconnect failed: ${errorMessage(err)}`),
         );
     }
   }

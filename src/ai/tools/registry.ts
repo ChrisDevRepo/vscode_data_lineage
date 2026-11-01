@@ -151,17 +151,6 @@ export function trackInFlightDispatch<O>(
   };
 }
 
-/** Returns a read-only registry view with provider schemas replaced for selected visible tools. */
-export function overrideRegistrySchemas<O>(
-  reg: IToolRegistry<O>,
-  overrides: ReadonlyMap<string, z.ZodType>,
-): IToolRegistry<O> {
-  return resolveRegistrySchemas(
-    reg,
-    new Map([...overrides].map(([name, schema]) => [name, () => schema])),
-  );
-}
-
 /**
  * Returns a read-only registry view whose provider schemas are resolved on every access; dispatch
  * stays with the backing registry.
@@ -169,14 +158,16 @@ export function overrideRegistrySchemas<O>(
 export function resolveRegistrySchemas<O>(
   reg: IToolRegistry<O>,
   resolvers: ReadonlyMap<string, () => z.ZodType>,
+  overrides?: ReadonlyMap<string, z.ZodType>,
 ): IToolRegistry<O> {
   const projected = (tool: RegisteredTool<O>): RegisteredTool<O> => {
     const resolve = resolvers.get(tool.name);
-    if (!resolve) return tool;
+    const override = overrides?.get(tool.name);
+    if (!resolve && !override) return tool;
     return {
       ...tool,
       get inputSchema(): z.ZodType {
-        const schema = resolve();
+        const schema = resolve ? resolve() : override!;
         return tool.projectInputSchema?.(schema) ?? schema;
       },
     };

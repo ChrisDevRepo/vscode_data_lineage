@@ -23,9 +23,9 @@ type TracerLogFn = (
 ) => void;
 
 /** Native-valid destination fields used to prepare one column entry. */
-export type ColumnFlowHeader = Pick<ColumnFlowEntry, 'out_node' | 'out_col'>;
+type ColumnFlowHeader = Pick<ColumnFlowEntry, 'out_node' | 'out_col'>;
 /** One authored supplier checked against the current model at its original path. */
-export interface VerifiedColumnSupplier {
+interface VerifiedColumnSupplier {
   ref: ColumnFlowEntry['upstream_columns'][number];
   neighbor: LineageNode;
   path: string;

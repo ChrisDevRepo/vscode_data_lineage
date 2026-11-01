@@ -18,9 +18,6 @@ interface BookmarkBannerProps {
   onToggleColumnView?: (columnView: boolean) => void;
 }
 
-const SOURCE_LABELS = BOOKMARK_SOURCE_LABELS;
-const SOURCE_COLORS = BOOKMARK_SOURCE_COLORS;
-
 const BOOKMARK_ICON =
   'M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z';
 
@@ -35,8 +32,8 @@ export const BookmarkBanner = memo(function BookmarkBanner({
   onToggleColumnView,
 }: BookmarkBannerProps) {
   const source = profile.source ?? 'user';
-  const label = SOURCE_LABELS[source];
-  const chipColor = SOURCE_COLORS[source];
+  const label = BOOKMARK_SOURCE_LABELS[source];
+  const chipColor = BOOKMARK_SOURCE_COLORS[source];
 
   const viewToggle =
     columnViewAvailable && onToggleColumnView ? (

@@ -134,7 +134,7 @@ export function useDacpacLoader(
       );
       if (!frame.ok) {
         if (frame.reason === 'version') {
-          window.vscode?.postMessage({
+          vscodeApi.postMessage({
             type: 'error',
             error: `[Bridge] Protocol mismatch on "${frame.msgType}": host sent v${String(frame.version)}, webview expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window.`,
           });

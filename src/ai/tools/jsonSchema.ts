@@ -32,6 +32,7 @@ export function toModelJsonSchema(schema: z.ZodType): JsonSchemaNode {
       'toolArrayFact',
       'toolObjectFact',
       'toolGroups',
+      'toolFields',
       'toolValidated',
       'toolDepthOpen',
       'toolIssue',

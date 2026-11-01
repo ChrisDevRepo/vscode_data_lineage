@@ -390,16 +390,20 @@ function checkLayerDirection() {
           .normalize(path.join(path.dirname(file), m[1]))
           .split(path.sep)
           .join('/');
-        if (resolved.includes('src/components'))
+        if (/src\/(?:components|hooks|contexts|detail)(?:\/|$)/.test(resolved))
           offenders.push(`${file}:${idx + 1}  import '${m[1]}'`);
       }
     });
   }
   if (offenders.length > 0) {
     for (const off of offenders) console.error(`FAIL  ${off}`);
-    throw new Error('src/engine/** must never import from src/components/**.');
+    throw new Error(
+      'src/engine/** must never import from src/{components,hooks,contexts,detail}/**.',
+    );
   }
-  console.log('PASS  src/engine/** never imports from src/components/**.');
+  console.log(
+    'PASS  src/engine/** never imports from src/{components,hooks,contexts,detail}/**.',
+  );
 }
 
 // ── 3. No Tracked Scratch Files ──────────────────────────────────────────────
