@@ -1,9 +1,9 @@
-/** Compile fresh, isolate the VS Code shim, then run an explicitly selected optional service check. */
+/** Compile fresh, isolate the VS Code shim, then run the optional one-question AI check. */
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { loadTestEnv, prepareDatabaseToken } from './load-test-env.mjs';
+import { loadTestEnv } from './load-test-env.mjs';
 
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const require = createRequire(import.meta.url);
@@ -38,21 +38,10 @@ export function loadHarness() {
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const [kind, ...args] = process.argv.slice(2);
-  if (!['ai', 'db'].includes(kind)) throw new Error('Choose ai or db.');
+  if (kind !== 'ai') throw new Error('Choose ai.');
   process.chdir(root);
   if (!args.includes('--help')) loadTestEnv();
-  const { main, parseOptions } = loadHarness();
-  if (kind === 'db' && !args.includes('--help')) {
-    try {
-      const options = parseOptions(kind, args);
-      await prepareDatabaseToken(process.env, undefined, options.timeoutMs);
-    } catch (error) {
-      console.error(
-        `FAIL: database test setup: ${error instanceof Error ? error.message : 'invalid configuration'}`,
-      );
-      process.exit(2);
-    }
-  }
+  const { main } = loadHarness();
   try {
     process.exitCode = await main(kind, args);
   } catch {

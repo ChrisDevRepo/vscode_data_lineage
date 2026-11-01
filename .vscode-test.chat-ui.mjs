@@ -34,9 +34,7 @@ export default defineConfig({
   env: {
     DLV_CHAT_UI_PROFILE: profile,
     DLV_CHAT_UI_FIXTURE: '1',
-    DLV_CHAT_UI_REAL: undefined,
     AI_TEST_REAL_PROVIDER: undefined,
-    DLV_CHAT_UI_REPLAY_TRACE: undefined,
     PLAYWRIGHT_CDP_PORT: cdpPort,
   },
   mocha: {

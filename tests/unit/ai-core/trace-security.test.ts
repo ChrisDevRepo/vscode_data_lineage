@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { sensitiveTraceReason } from '../../../src/ai/providers/traceSecurity';
-import {
-  type GenerationRecord,
-  type ProviderRawRecord,
-} from '../../../src/ai/observability/wireLog';
+import type { WireRecord } from '../../../src/ai/observability/wireLog';
 
 /** Redaction shapes are asserted through the public refusal API rather than the patterns themselves, because the contract that matters is "this value never reaches a trace or a retry payload". */
 const REDACTED_VALUES: ReadonlyArray<readonly [string, string]> = [
@@ -113,7 +110,7 @@ describe('trace security redaction', () => {
   });
 
   /** The trace records added for the headless live-provider lane, held against the same guard. */
-  const generation: GenerationRecord = {
+  const generation = {
     type: 'generation',
     requestId: 'request-1',
     generation: 3,
@@ -122,8 +119,8 @@ describe('trace security redaction', () => {
     finishReason: 'tool_calls',
     latencyMs: 4210,
     usage: { inputTokens: 12_000, outputTokens: 480, totalTokens: 12_480 },
-  };
-  const providerRaw: ProviderRawRecord = {
+  } satisfies WireRecord;
+  const providerRaw = {
     type: 'provider-raw',
     requestId: 'request-1',
     generation: 3,
@@ -134,7 +131,7 @@ describe('trace security redaction', () => {
       model: 'deepseek/deepseek-chat',
       messages: [{ role: 'system', content: 'Trace lineage.' }],
     },
-  };
+  } satisfies WireRecord;
 
   it.each([
     [

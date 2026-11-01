@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import test from 'node:test';
-import { loadTestEnv, prepareDatabaseToken } from './load-test-env.mjs';
+import { loadTestEnv } from './load-test-env.mjs';
 import {
   assertLoopbackPortAvailable,
   buildLaunchArgs,
@@ -13,49 +13,6 @@ import {
   parseCdpPort,
   validateGuiSession,
 } from './gui-test-host.mjs';
-
-test('database token setup handles tokens and credential validation', async () => {
-  const base = {
-    DB_TEST_AUTH_TYPE: 'entraId',
-    DB_TEST_CLIENT_ID: 'c',
-    DB_TEST_TENANT_ID: 't',
-    DB_TEST_USER: 'u',
-    DB_TEST_PASSWORD: 'p',
-  };
-  let acquisitions = 0;
-  const acquire = async () => {
-    acquisitions++;
-    return { token: 'in-memory-token' };
-  };
-  for (const env of [
-    { ...base, DB_TEST_AUTH_TYPE: 'sqlLogin' },
-    { ...base, DB_TEST_TOKEN: 'existing' },
-  ]) {
-    const token = env.DB_TEST_TOKEN;
-    await prepareDatabaseToken(env, acquire);
-    assert.equal(env.DB_TEST_TOKEN, token);
-    assert.equal(acquisitions, 0);
-  }
-  const env = { ...base };
-  await prepareDatabaseToken(env, acquire);
-  assert.equal(env.DB_TEST_TOKEN, 'in-memory-token');
-  assert.equal(acquisitions, 1);
-  await assert.rejects(
-    prepareDatabaseToken({ ...base, DB_TEST_PASSWORD: '' }, acquire),
-    /DB_TEST_PASSWORD/,
-  );
-  assert.equal(acquisitions, 1);
-});
-
-test('cached CLI database setup executes launcher safely', async () => {
-  const env = {
-    DB_TEST_AUTH_TYPE: 'entraId',
-    DB_TEST_AZURE_CLI_COMMAND: JSON.stringify(['cli-launcher', 'az']),
-  };
-  const execute = async () => ({ stdout: 'synthetic-token\n' });
-  await prepareDatabaseToken(env, undefined, 1000, execute);
-  assert.equal(env.DB_TEST_TOKEN, 'synthetic-token');
-});
 
 test('provider profiles resolve from environment and precedence', () => {
   const env = {

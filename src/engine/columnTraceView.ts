@@ -116,15 +116,12 @@ interface ColumnTraceView {
   portBridges: ColumnTracePortBridge[];
 }
 
-/** One recorded column relation, as it arrives on the wire. */
-export type ColumnTraceRelation = ColumnAspectEdge;
-
 /** Input to {@link buildColumnTraceView}. */
 export interface ColumnTraceViewInput {
   /** Checked model catalog policy; missing metadata retains CI. */
   identifierCaseSensitive?: boolean;
   /** Recorded column relations from `AIViewMetadata.columnAspect.edges`. */
-  relations: ColumnTraceRelation[];
+  relations: ColumnAspectEdge[];
   /** Frozen asked identities, retained as rows without inventing relations. */
   requested?: { node: string; columns: readonly string[] };
   /** Object identity per presented node, keyed by schemaKey under the source policy. */

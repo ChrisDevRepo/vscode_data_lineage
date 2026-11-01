@@ -63,7 +63,9 @@ export interface HarnessSession {
   readonly budget: TurnTokenBudget;
 }
 
-/** Loads production parser rules before either database or DACPAC model construction. */
+/** Loads production parser rules before either database or DACPAC model construction.
+ * @public Also used by wrapping runners.
+ */
 export async function loadHarnessParseRules(
   path = repoPath('assets', 'defaultParseRules.yaml'),
 ): Promise<void> {

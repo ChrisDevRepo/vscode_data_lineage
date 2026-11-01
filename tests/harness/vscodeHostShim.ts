@@ -94,7 +94,9 @@ function createOutputChannel(name: string): Record<string, unknown> {
   };
 }
 
-/** File URIs supplied by the headless runner to production asset loaders. */
+/** File URIs supplied by the headless runner to production asset loaders.
+ * @public Also used by wrapping runners.
+ */
 export const Uri = HarnessUri;
 
 const implemented: Record<string, unknown> = {
@@ -114,30 +116,6 @@ const implemented: Record<string, unknown> = {
     showWarningMessage: record('warning'),
     showInformationMessage: record('information'),
     createOutputChannel,
-  },
-  authentication: {
-    getSession: async (
-      _providerId: string,
-      scopes: readonly string[] = [],
-      _options?: { createIfNone?: boolean },
-    ) => {
-      const directToken = process.env.DB_TEST_TOKEN;
-      if (directToken) {
-        logSink(
-          '[shim] Used direct access token for Microsoft Entra ID authentication',
-        );
-        return {
-          id: 'headless-entra-token-session',
-          accessToken: directToken,
-          account: {
-            id: process.env.DB_TEST_USER ?? 'headless-entra-user',
-            label: process.env.DB_TEST_USER ?? 'headless-entra-user',
-          },
-          scopes: Array.isArray(scopes) ? scopes : [],
-        };
-      }
-      return undefined;
-    },
   },
 };
 

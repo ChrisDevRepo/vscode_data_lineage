@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { databaseConfig } from '../../harness/cli';
 import { redactSecret } from '../../harness/harnessSecrets';
 import { OpenAiCompatiblePort } from '../../harness/openAiCompatiblePort';
 import { modelUserMessage } from '../../../src/ai/model/modelPort';
@@ -7,17 +6,6 @@ import { modelUserMessage } from '../../../src/ai/model/modelPort';
 const secret = 'synthetic-secret';
 
 describe('operator secret boundary', () => {
-  it('does not put the database password on the connection object', () => {
-    const config = databaseConfig({
-      DB_TEST_SERVER: 'localhost',
-      DB_TEST_DATABASE: 'synthetic',
-      DB_TEST_USER: 'reader',
-      DB_TEST_PASSWORD: 'synthetic-password',
-    });
-    expect(config).not.toHaveProperty('password');
-    expect(JSON.stringify(config)).not.toContain('synthetic-password');
-  });
-
   it.each([
     [
       'replaces the secret wherever it appears',

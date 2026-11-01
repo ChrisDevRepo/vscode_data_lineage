@@ -7,11 +7,11 @@ import {
   columnRowKey,
   columnThread,
   resolveColumnLineState,
-  type ColumnTraceRelation,
   type ColumnTraceViewInput,
   type ColumnTraceViewObject,
   COLUMN_AI_ANNOTATION_BAND,
 } from '../../../src/engine/columnTraceView';
+import type { ColumnAspectEdge } from '../../../src/engine/shared/bridgeContract';
 import { DEFAULT_CONFIG } from '../../../src/engine/types';
 import { normalizeColName } from '../../../src/utils/sql';
 
@@ -39,13 +39,13 @@ function rel(
   fromCol: string,
   toNode: string,
   toCol: string,
-  extra: Partial<ColumnTraceRelation> = {},
-): ColumnTraceRelation {
+  extra: Partial<ColumnAspectEdge> = {},
+): ColumnAspectEdge {
   return { hopNode, fromNode, fromCol, toNode, toCol, ...extra };
 }
 
 function build(
-  relations: ColumnTraceRelation[],
+  relations: ColumnAspectEdge[],
   objects: Map<string, ColumnTraceViewObject>,
   extra: Partial<ColumnTraceViewInput> = {},
 ): View {

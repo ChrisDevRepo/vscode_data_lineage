@@ -22,7 +22,7 @@ The gate prints `PASS`, `FAIL` and `SKIP` per step and exits nonzero on any `FAI
 
 ## Where tests live
 
-`tests/unit/` holds the Vitest suites, `tests/cases/` the shared case catalogs (parser rows in `tests/cases/parser/exact-edges.yaml`, AI scenarios in `tests/cases/lineage-cases.yaml`), `tests/integration/` the VS Code host lanes, `tests/harness/` the optional service runners and `tests/tools/` the lane runners. The gate runs the core and runtime lanes once each; `npm test` is their aggregate. Add a check as one row in an existing file or catalog.
+`tests/unit/` holds the Vitest suites, `tests/cases/` the shared case catalogs (parser rows in `tests/cases/parser/exact-edges.yaml`, AI scenarios in `tests/cases/lineage-cases.yaml`), `tests/integration/` the VS Code host lanes, `tests/harness/` the optional headless runner and `tests/tools/` the lane runners. The gate runs the core and runtime lanes once each; `npm test` is their aggregate. Add a check as one row in an existing file or catalog.
 
 ## What these checks establish
 
@@ -32,7 +32,6 @@ Deterministic tests verify parser, graph and runtime contracts. A structurally v
 
 | Check | Command | What it verifies |
 |---|---|---|
-| Database metadata smoke | `npm run test:db:smoke` | Read-only discovery/import against local SQL Server, with the imported column expression dependencies compared to an independent `sys.sql_expression_dependencies` read; Azure/Entra only with an explicitly selected available manual profile |
 | Electron host lanes | `npm run test:edh` | Activation, tool invocation and participant turn through the VS Code API |
 | Playwright GUI smoke | `npm run test:gui:host`, then `npm run test:gui:smoke` | Opens the demo in an isolated VS Code host and checks the graph renders |
 | Playwright chat UI | `npx vscode-test --config .vscode-test.chat-ui.mjs` | Native chat confirmations, approval/cancellation and scope revisions |
@@ -55,11 +54,11 @@ These run the extension in an isolated VS Code host (Extension Development Host)
 
 Native chat UI runs with `npx vscode-test --config .vscode-test.chat-ui.mjs` after `npm run pretest:integration`. It uses the `electron-fixture-trace` prompt from `tests/cases/lineage-cases.yaml` and checks chat input, plan approval and cancellation in `tests/integration/chat-ui.test.ts` with scripted responses. Keep reports, screenshots and traces out of git.
 
-## Live-model and database settings
+## Live-model settings
 
 Copy [`.env.example`](../../.env.example) into the local environment file the harness reads, and fill only the section you need. Leave that file, traces, and answers untracked. `AI_TEST_PROVIDER` is required (`azure`, `fireworks`, `openrouter` or `openai-compatible`); there is no default. `AI_TEST_API_KEY` must be non-empty (any placeholder for a keyless local server). For Azure, `AI_TEST_MODEL` is the deployment name. These settings configure test harnesses only; the extension itself uses the VS Code chat model.
 
-`AI_TEST_TIMEOUT_MS` sets the AI budget (default: two hours), covering the whole headless run or the real-model smoke. `AI_TEST_REQUEST_TIMEOUT_MS` bounds each provider request and defaults to that budget. Increase these settings for slower local models; headless `--timeout-ms` and `--request-timeout-ms` override their respective settings. Database smoke retains its five-minute default. For Entra ID database checks, set `DB_TEST_AUTH_TYPE=entraId`. The runner reuses a supplied `DB_TEST_TOKEN`, uses an explicitly configured noninteractive client login, or obtains an Azure SQL token from the already signed-in Azure CLI. It never starts interactive login or saves a token. Native Windows and WSL CLI launchers are supported; see [Test environments](ENVIRONMENTS.md) for precedence and a nonstandard CLI launcher. The default is SQL login.
+`AI_TEST_TIMEOUT_MS` sets the AI budget (default: two hours), covering the whole headless run or the real-model smoke. `AI_TEST_REQUEST_TIMEOUT_MS` bounds each provider request and defaults to that budget. Increase these settings for slower local models; headless `--timeout-ms` and `--request-timeout-ms` override their respective settings.
 
 Generated answers, metrics and traces stay untracked. Completion is runtime evidence, not answer-quality evidence.
 

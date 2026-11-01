@@ -7,38 +7,6 @@ const {
 
 const VENDOR = 'lineage-test';
 const MODEL_ID = 'lineage-smoke-model';
-let replay;
-let replayIndex = 0;
-function replayAnalysis(request, progress) {
-  const path = process.env.DLV_CHAT_UI_REPLAY_TRACE;
-  if (!path) return false;
-  replay ??= require('node:fs')
-    .readFileSync(path, 'utf8')
-    .trim()
-    .split('\n')
-    .map((line) => JSON.parse(line))
-    .filter(
-      (row) => row.type === 'wire-response' && row.phase !== 'suggestions',
-    );
-  if (replayIndex === replay.length) {
-    if (request.tools.length)
-      throw new Error(
-        'Recorded analysis exhausted before a tool-free suggestion request.',
-      );
-    return false;
-  }
-  const response = replay[replayIndex++];
-  for (const call of response.toolCalls ?? []) {
-    if (!request.tools.some((tool) => tool.name === call.name))
-      throw new Error(`Recorded ${call.name} is not offered during replay.`);
-    progress.report(
-      new vscode.LanguageModelToolCallPart(call.callId, call.name, call.input),
-    );
-  }
-  if (response.text)
-    progress.report(new vscode.LanguageModelTextPart(response.text));
-  return true;
-}
 
 function normalizePart(part) {
   if (part instanceof vscode.LanguageModelTextPart)
@@ -61,32 +29,12 @@ function normalizePart(part) {
   return { type: part?.constructor?.name ?? typeof part };
 }
 
-function liveProviderProfile() {
-  const configured = process.env.DLV_CHAT_UI_PROVIDER_PROFILE;
-  if (!configured && process.env.DLV_CHAT_UI_REAL === '1')
-    throw new Error(
-      'Native AI verification requires its launcher provider profile.',
-    );
-  return configured
-    ? JSON.parse(configured)
-    : {
-        provider: process.env.AI_TEST_PROVIDER?.trim().toLowerCase(),
-        model: process.env.AI_TEST_MODEL,
-        reasoningEffort: process.env.AI_TEST_REASONING_EFFORT,
-      };
-}
-
-async function callLiveProvider(
-  request,
-  progress,
-  token,
-  transports,
-  uiResponses,
-) {
-  const requestIndex = require('./chat-ui-provider').requests.length;
+async function callLiveProvider(request, progress, token, transports) {
   const endpoint = process.env.AI_TEST_ENDPOINT;
   const apiKey = process.env.AI_TEST_API_KEY;
-  const { model, provider, reasoningEffort } = liveProviderProfile();
+  const model = process.env.AI_TEST_MODEL;
+  const provider = process.env.AI_TEST_PROVIDER?.trim().toLowerCase();
+  const reasoningEffort = process.env.AI_TEST_REASONING_EFFORT;
   if (!endpoint || !apiKey || !model || !provider) {
     throw new Error(
       'AI smoke requires AI_TEST_PROVIDER, AI_TEST_ENDPOINT, AI_TEST_API_KEY, and AI_TEST_MODEL.',
@@ -105,9 +53,7 @@ async function callLiveProvider(
     );
   let transport = transports.get(timeoutMs);
   if (!transport) {
-    transport = createProviderFetch(timeoutMs, {
-      captureTiming: process.env.DLV_CHAT_UI_REAL === '1',
-    });
+    transport = createProviderFetch(timeoutMs);
     transports.set(timeoutMs, transport);
   }
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -121,7 +67,6 @@ async function callLiveProvider(
         model,
         provider,
         reasoningEffort,
-        ...(process.env.DLV_CHAT_UI_REAL === '1' ? { temperature: 0.1 } : {}),
         // The headless port's Responses codec, compiled by `pretest:integration`.
         ...(isResponsesEndpoint(endpoint)
           ? {
@@ -132,12 +77,6 @@ async function callLiveProvider(
       transport,
       controller.signal,
     );
-    if (process.env.DLV_CHAT_UI_REAL === '1')
-      uiResponses.push({
-        requestIndex,
-        usage: response.usage ?? null,
-        timing: response.timing ?? null,
-      });
     if (token.isCancellationRequested) return;
     for (const call of response.toolCalls) {
       progress.report(
@@ -171,7 +110,6 @@ function hasToolResult(request, callId) {
 
 function activate(context) {
   const transports = new Map();
-  const uiResponses = [];
   context.subscriptions.push({
     dispose: () => {
       for (const transport of transports.values())
@@ -181,7 +119,6 @@ function activate(context) {
       transports.clear();
     },
   });
-  const uiErrors = [];
   let interruption;
   const provider = {
     provideLanguageModelChatInformation() {
@@ -191,10 +128,8 @@ function activate(context) {
           name: 'Lineage Smoke Model',
           family: MODEL_ID,
           version: '1.0.0',
-          maxInputTokens:
-            process.env.DLV_CHAT_UI_REAL === '1' ? 128_000 : 32_000,
-          maxOutputTokens:
-            process.env.DLV_CHAT_UI_REAL === '1' ? 16_384 : 4_000,
+          maxInputTokens: 32_000,
+          maxOutputTokens: 4_000,
           capabilities: { toolCalling: true },
         },
       ];
@@ -249,31 +184,12 @@ function activate(context) {
             ? 'required'
             : 'auto',
       };
-      if (process.env.DLV_CHAT_UI_REAL === '1')
-        require('./chat-ui-provider').requests.push(request);
       if (process.env.DLV_CHAT_UI_FIXTURE === '1') {
         await require('./chat-ui-provider').respond(request, progress);
         return;
       }
       if (process.env.AI_TEST_REAL_PROVIDER === '1') {
-        if (replayAnalysis(request, progress)) return;
-        const requestIndex = require('./chat-ui-provider').requests.length;
-        try {
-          await callLiveProvider(
-            request,
-            progress,
-            token,
-            transports,
-            uiResponses,
-          );
-        } catch (error) {
-          if (process.env.DLV_CHAT_UI_REAL === '1')
-            uiErrors.push({
-              requestIndex,
-              message: error instanceof Error ? error.message : String(error),
-            });
-          throw error;
-        }
+        await callLiveProvider(request, progress, token, transports);
         return;
       }
 
@@ -321,9 +237,6 @@ function activate(context) {
   );
   return {
     uiRequests: require('./chat-ui-provider').requests,
-    uiResponses,
-    uiErrors,
-    providerProfile: liveProviderProfile(),
     setInterruption(value) {
       interruption = value;
     },

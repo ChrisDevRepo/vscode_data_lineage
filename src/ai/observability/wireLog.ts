@@ -117,18 +117,6 @@ export type WireRecord = WireEvent & {
   readonly phase?: string;
 };
 
-/** The per-generation measurement row: model identity, stop reason, latency, and usage. */
-export type GenerationRecord = Extract<
-  WireRecord,
-  { readonly type: 'generation' }
->;
-
-/** One verbatim provider HTTP body, emitted only while the trace runs verbose. */
-export type ProviderRawRecord = Extract<
-  WireRecord,
-  { readonly type: 'provider-raw' }
->;
-
 /** Digests one system instruction into the stable identifier the non-verbose trace records. */
 export function systemPromptHash(system: string): string {
   return createHash('sha256').update(system, 'utf8').digest('hex');

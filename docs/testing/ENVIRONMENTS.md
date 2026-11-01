@@ -7,13 +7,8 @@ What a machine needs for each test tier. Commands are the same on every OS and a
 | Deterministic | `npm ci`, `npm test`, `npm run gate`, `npm run package` | Node.js 22.x ≥22.22.2, 24.x ≥24.15, or ≥26, npm `>=10`, Git. |
 | VS Code Electron | `npm run test:edh`, `npm run test:gui:host` with `npm run test:gui:smoke`, chat-UI fixture lane | A graphical display, or `xvfb-run -a` on headless Linux. |
 | Live model | `npm run test:ai:smoke`, `npm run test:ai:headless`, chat-UI `live` | `AI_TEST_*` settings and access to the configured hosted or local model endpoint. |
-| Database smoke | `npm run test:db:smoke` | Local SQL Server with disposable fixture data and `DB_TEST_AUTH_TYPE=sqlLogin`; set `DB_TEST_SERVER`, `DB_TEST_PORT`, `DB_TEST_DATABASE`, `DB_TEST_USER` and `DB_TEST_PASSWORD`. Azure SQL requires an explicitly selected manual profile when available. |
 
 Settings come from the process environment or an untracked local environment file copied from [`.env.example`](../../.env.example). A non-empty process value wins. Behind an HTTP proxy on Node 22.21+ or 24, set `NODE_USE_ENV_PROXY=1` before launching the test process so fetch-based provider requests use it; setting it later through `.env` is too late. Keep credentials in that file, not command arguments.
-
-Database checks use a local SQL Server installation; keep TLS verification enabled. For a manual Azure SQL check, `DB_TEST_AUTH_TYPE=entraId` can use an existing token or signed-in Azure CLI; the runner never starts interactive login.
-
-A supplied `DB_TEST_TOKEN` takes precedence. If `DB_TEST_CLIENT_ID` is explicitly set, the runner instead requires `DB_TEST_TENANT_ID`, `DB_TEST_USER` and `DB_TEST_PASSWORD` for the existing noninteractive test-account path. Invalid explicit client configuration fails rather than silently selecting another identity. Without either, it uses native Azure CLI, the Windows CLI launcher on Windows, or the Windows launcher discovered from WSL when native CLI is absent. For a nonstandard installation, `DB_TEST_AZURE_CLI_COMMAND` is a JSON array of executable and launcher arguments (for example `["az"]`); token-request arguments are appended and execution uses no shell. Missing CLI, expired cached sign-in or unavailable credentials fail before querying. The runner does not parse token-cache files, save tokens or perform interactive account setup.
 
 ## Coverage limits
 
