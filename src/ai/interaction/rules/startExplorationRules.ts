@@ -111,7 +111,7 @@ export function inspectTargetColumns(
       resend: ['analysisMode'],
       reason: `targetColumns must match declared columns of the origin under its identifier comparison policy${declaredNames.length > 0 ? '' : '; the origin declares no columns of its own'}.`,
       errors: at(
-        'unknown_target_column',
+        'unknown_column',
         supplied.flatMap(([index, column]) =>
           offending.includes(column) ? [`targetColumns.${index}`] : [],
         ),

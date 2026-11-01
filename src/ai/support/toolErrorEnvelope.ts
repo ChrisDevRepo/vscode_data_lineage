@@ -17,12 +17,6 @@ type IssueCategory =
 /** The text field a fallback writes its fact into; a rendered fallback adds it to `resend`. */
 const FALLBACK_FIELD = 'sections';
 
-/** Column identity text is shared by every tool that names a column. */
-const COLUMN_IDENTITY_ISSUE = {
-  category: 'reference',
-  label: 'not a declared column of that object',
-  correction: 'Name a column declared on that object.',
-} as const;
 const REPORT_REFERENCE_FALLBACK =
   'If you cannot correct it, write that information in the detail memory instead, highlighted with a callout naming the unresolved issue.';
 const COLUMN_REFERENCE_FALLBACK = `If you cannot correct it, write that information in ${FALLBACK_FIELD} instead, highlighted with a callout naming the unresolved issue.`;
@@ -122,8 +116,11 @@ export const ISSUES = {
     label: 'not a neighbor of the current object',
     correction: 'Name a direct neighbor of the current object.',
   },
-  unknown_target_column: COLUMN_IDENTITY_ISSUE,
-  unknown_column: COLUMN_IDENTITY_ISSUE,
+  unknown_column: {
+    category: 'reference',
+    label: 'not a declared column of that object',
+    correction: 'Name a column declared on that object.',
+  },
   closed_neighbor: {
     category: 'reference',
     label: 'neighbor already pruned or visited',
