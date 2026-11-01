@@ -223,19 +223,37 @@ export function getContext(
 }
 
 /**
- * Bare tokens that mean "match everything" in whichever wildcard idiom a caller reaches for — SQL
- * `%`, shell/glob `*`, regex `.*` — independent of the `mode` sent alongside them.
+ * Bare tokens that mean "match everything" in the SQL `%`, shell/glob `*` and regex `.*` idioms.
+ * Outside regex mode they list the requested schemas; in regex mode the pattern is used verbatim.
  */
 const WILDCARD_ALL_TOKENS = new Set(['*', '.*', '%']);
 
-/** Validates a substring-mode search query for sanity. */
-function validateQuery(query: string): ToolRejection | null {
+/** Validates a query: a regex pattern is used verbatim; a substring query must name something. */
+function validateQuery(query: string, isRegex: boolean): ToolRejection | null {
   const trimmed = query.trim();
-  if (trimmed.length < 1) {
+  if ((isRegex ? query : trimmed).length < 1) {
     return makeRejection({
       code: REJECTION_CODES.invalidInput,
       errors: at('query_too_short', ['query']),
     });
+  }
+  if (query.length > REGEX_MAX_LENGTH) {
+    return makeRejection({
+      code: REJECTION_CODES.invalidInput,
+      errors: at('invalid_regex', ['query']),
+      reason: `Longer than ${REGEX_MAX_LENGTH} characters.`,
+    });
+  }
+  if (isRegex) {
+    const compiled = compileSearchRegex(query);
+    return compiled.ok
+      ? null
+      : makeRejection({
+          code: REJECTION_CODES.invalidInput,
+          errors: at('invalid_regex', ['query']),
+          resend: ['mode'],
+          reason: regexRejectHint(query, compiled),
+        });
   }
   if (/^["'`.*?+^$]+$/.test(trimmed)) {
     return makeRejection({
@@ -259,37 +277,13 @@ export async function searchObjects(
 ) {
   const isRegex = mode === 'regex';
   const appliedSchemaFilter = schemas?.length ? [...schemas] : null;
-  const isWildcardAllQuery =
-    (appliedSchemaFilter?.length ?? 0) > 0 && WILDCARD_ALL_TOKENS.has(query);
-
-  if (!isWildcardAllQuery && query.length > REGEX_MAX_LENGTH) {
-    return makeRejection({
-      code: REJECTION_CODES.invalidInput,
-      errors: at('invalid_regex', ['query']),
-      reason: `Longer than ${REGEX_MAX_LENGTH} characters.`,
-    });
-  }
-
-  const effectiveQuery = isWildcardAllQuery ? '' : query;
-  if (isRegex && !isWildcardAllQuery) {
-    const compiled = compileSearchRegex(effectiveQuery);
-    if (!compiled.ok) {
-      return makeRejection({
-        code: REJECTION_CODES.invalidInput,
-        errors: at('invalid_regex', ['query']),
-        resend: ['mode'],
-        reason: regexRejectHint(effectiveQuery, compiled),
-      });
-    }
-  }
   const listAllInSchemas =
-    isWildcardAllQuery ||
-    (!isRegex &&
-      effectiveQuery.length === 0 &&
-      (appliedSchemaFilter?.length ?? 0) > 0);
+    appliedSchemaFilter !== null &&
+    (query.length === 0 || (!isRegex && WILDCARD_ALL_TOKENS.has(query)));
+  const effectiveQuery = listAllInSchemas ? '' : query;
 
-  if (!isRegex && !listAllInSchemas) {
-    const rejection = validateQuery(query);
+  if (!listAllInSchemas) {
+    const rejection = validateQuery(query, isRegex);
     if (rejection) return rejection;
   }
 
