@@ -93,7 +93,7 @@ For the full feature catalogue, settings, and customisation paths see [`docs/FEA
 The lineage graph is built from database DDL/catalog metadata only. The following are out of scope:
 
 - **External ingestion pipelines** — ADF, SSIS, Spark, Fabric Dataflow, or any ETL/ELT process that writes *into* the database from an external source. Target tables appear as leaves; the upstream pipeline does not.
-- **Cross-database / cross-server flow** — fully qualified three- or four-part references can surface as virtual external nodes, but the remote database internals are not introspected.
+- **Cross-database / cross-server flow** — fully qualified three- or four-part references can surface as virtual external nodes, but the remote database internals are not introspected. SQLCMD variables in a `.dacpac` (a database reference such as `[$(OtherDb)]`) are not supported: the variable is not resolved to a database.
 - **Dynamic SQL** — `EXEC(@sql)` and `sp_executesql` cannot be analysed statically.
 - **Unqualified references** — references without a schema prefix are ambiguous; metadata may resolve some known dependencies, but dynamic/default-schema cases are not guaranteed.
 - **Triggers, synonyms and other object kinds** — only tables, views, functions, stored procedures and external objects are loaded. Triggers, synonyms, CLR modules, extended stored procedures, sequences and user-defined types are not: they do not appear as nodes, and references made through them do not become edges.
