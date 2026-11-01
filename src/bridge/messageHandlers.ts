@@ -81,7 +81,7 @@ import {
   writeStoredRun,
 } from '../ai/session/runStore';
 import { populateColumnStore } from '../engine/modelBuilder';
-import { ColumnStore } from '../engine/columnStore';
+import { ColumnStore } from '../engine/shared/columnStore';
 import {
   summarizeModelConnectivity,
   formatModelConnectivity,

@@ -17,16 +17,14 @@ type IssueCategory =
 /** The text field a fallback writes its fact into; a rendered fallback adds it to `resend`. */
 const FALLBACK_FIELD = 'sections';
 
-/** Column identity text is shared; report references alone offer the final fallback. */
+/** Column identity text is shared by every tool that names a column. */
 const COLUMN_IDENTITY_ISSUE = {
   category: 'reference',
   label: 'not a declared column of that object',
   correction: 'Name a column declared on that object.',
 } as const;
-const REPORT_REFERENCE_FALLBACK = {
-  fallback:
-    'If you cannot correct it, write that information in the detail memory instead, highlighted with a callout naming the unresolved issue.',
-} as const;
+const REPORT_REFERENCE_FALLBACK =
+  'If you cannot correct it, write that information in the detail memory instead, highlighted with a callout naming the unresolved issue.';
 const COLUMN_REFERENCE_FALLBACK = `If you cannot correct it, write that information in ${FALLBACK_FIELD} instead, highlighted with a callout naming the unresolved issue.`;
 const OBJECT_IDENTITY_ISSUE = {
   category: 'reference',
@@ -662,7 +660,7 @@ export function renderProblemReport(
             ? issue.fallback
             : effect === 'hop_commit'
               ? COLUMN_REFERENCE_FALLBACK
-              : REPORT_REFERENCE_FALLBACK.fallback
+              : REPORT_REFERENCE_FALLBACK
           : '';
       if (fallback) fallbackShown = true;
       const message = `${issue.label}. ${issue.correction}${fallback ? ` ${fallback}` : ''}`;

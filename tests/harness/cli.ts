@@ -53,7 +53,6 @@ interface CatalogCase {
     readonly approval?: Partial<ApprovalWorkload>;
     readonly tokens_max?: number;
     readonly rejections_max?: number;
-    readonly missing_columns?: readonly string[];
   };
 }
 
@@ -83,8 +82,8 @@ const HELP = `Optional testing toolset; it records checks and does not grade ans
                             [--effort LEVEL] [--timeout-ms N] [--request-timeout-ms N]
 --prompt asks one question (default fixture assets/demo.dacpac); --followup adds ordered
 follow-up turns. --case runs one headless row of tests/cases/lineage-cases.yaml and checks
-every turn against the row's expect.terminal and rejections_max, and its first answer against
-its content checks. A failed check is recorded in run.json and exits 2.
+every turn against the row's expect.terminal and rejections_max, and its first turn against
+its gate rounds. A failed check is recorded in run.json and exits 2.
 --timeout-ms bounds the entire run; --request-timeout-ms independently bounds each
 provider request. AI_TEST_TIMEOUT_MS and AI_TEST_REQUEST_TIMEOUT_MS set defaults;
 AI defaults to two hours with requests bounded by the same budget.

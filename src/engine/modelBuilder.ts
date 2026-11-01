@@ -22,7 +22,7 @@ import {
   schemaKey,
 } from '../utils/sql';
 import { trunc, sanitizeForLog } from '../utils/log';
-import { ColumnStore } from './columnStore';
+import { ColumnStore } from './shared/columnStore';
 import {
   SYSTEM_SCHEMAS,
   XML_METHODS,
