@@ -3303,6 +3303,8 @@ export class NavigationEngine implements IHopStateMachine {
       if (keys.has('out_node') && !facts.references.has(`${row}/out_node`))
         complete = false;
     }
+    // At a procedure an entry pairs only through its out_node; without one it has no destination.
+    const atProcedure = this.nodeMap.get(focusId)?.type === 'procedure';
     for (const [path, raw] of facts.references) {
       const nid = resolveModelNodeId(
           raw,
@@ -3315,12 +3317,8 @@ export class NavigationEngine implements IHopStateMachine {
         continue;
       }
       if (!this.graph.areNeighbors(focusId, nid)) continue;
-      // At a procedure an entry pairs only through its out_node; without one it maps no neighbor.
       const row = rowOf(path);
-      if (
-        this.nodeMap.get(focusId)?.type !== 'procedure' ||
-        facts.references.has(`${row}/out_node`)
-      )
+      if (!atProcedure || facts.references.has(`${row}/out_node`))
         mentioned.add(nid);
       if (this.admitsColumnReference(nid, node, focusId)) continue;
       const { border, depthBreach } = this.admitsRoute(nid, node, focusId);
@@ -3355,7 +3353,7 @@ export class NavigationEngine implements IHopStateMachine {
         keys = facts.rows.get(row),
         out_node = facts.references.get(`${row}/out_node`);
       if (headers.has(row) || !keys) continue;
-      if (!keys.has('out_node') || out_node !== undefined)
+      if ((!keys.has('out_node') && !atProcedure) || out_node !== undefined)
         headers.set(row, {
           out_col,
           ...(out_node !== undefined ? { out_node } : {}),
