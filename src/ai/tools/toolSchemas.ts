@@ -19,6 +19,8 @@ import {
   MAX_ID_LIST_LENGTH,
   SCREEN_STATE_MAX_IDS,
   ColumnTransformClassSchema,
+  IndirectFactSchema,
+  type IndirectFact,
 } from '../../engine/shared/bridgeContract';
 import { ExplorationDepthSelectionSchema } from '../../engine/shared/explorationDepthContract';
 import { type ToolRejection } from '../support/toolErrorEnvelope';
@@ -648,6 +650,35 @@ const ColumnRefSchema = z
     'One source column entry inside upstream_columns: fields node, col, transforms, note.',
   );
 
+/**
+ * `indirect_columns`; a hop narrows `node` to its served supplier set. The column check reads a
+ * valid `node`/`col` pair whatever the entry's other faults.
+ */
+const indirectColumnsSchema = (
+  node: z.ZodType<string> = IndirectFactSchema.shape.node,
+) =>
+  z
+    .array(
+      IndirectFactSchema.extend({
+        node: node.describe(ColumnRefSchema.shape.node.description ?? ''),
+        col: IndirectFactSchema.shape.col.describe(
+          ColumnRefSchema.shape.col.description ?? '',
+        ),
+        usage: IndirectFactSchema.shape.usage.describe(
+          'join: key relating rows of two objects. filter: predicate selecting contributing, updated or deleted rows, or a CASE condition choosing the value’s branch. arrange: grouping, partition or ordering key.',
+        ),
+        detail: IndirectFactSchema.shape.detail.describe(
+          'Optional clause keyword, e.g. LEFT JOIN, HAVING, PARTITION BY.',
+        ),
+      })
+        .strict()
+        .meta({ toolGroups: [{ name: 'indirect', fields: ['node', 'col'] }] }),
+    )
+    .optional()
+    .describe(
+      'Optional. Neighbor columns this SQL uses to decide which rows reach out_col or how they are arranged; one entry per column and usage. An entry does not map its neighbor.',
+    );
+
 /** One closed `column_flow` entry; provider projection and runtime parsing reject surplus keys. */
 const OUT_COL_DESCRIPTION =
   "Output column resolved from this hop\'s column task; for a procedure, the column it writes to out_node.";
@@ -780,6 +811,7 @@ const HopFindingCtBaseSchema = HopFindingBaseSchema.omit({
 })
   .extend({
     column_flow: ColumnFlowSchema,
+    indirect_columns: indirectColumnsSchema(),
     summary,
     badge_label,
     prune_neighbors: prune_neighbors.describe(PRUNE_NEIGHBORS_DESCRIPTION),
@@ -800,6 +832,7 @@ const HopFindingCtBaseSchema = HopFindingBaseSchema.omit({
  */
 type FlatSubmitFindings = z.output<typeof HopFindingBaseSchema> & {
   column_flow?: z.output<typeof ColumnFlowSchema>;
+  indirect_columns?: IndirectFact[];
 };
 
 const FINDING_DECISION_FIELDS = [
@@ -823,6 +856,7 @@ export function findingAdmissionFacts(schema: z.ZodType) {
   const columns = new Map<string, string>(),
     outColumns = new Map<string, string>();
   const suppliers = new Map<string, z.output<typeof ColumnRefSchema>>();
+  const indirect = new Map<string, Pick<IndirectFact, 'node' | 'col'>>();
   const references = new Map<string, string>(),
     identities = new Map<string, string>(),
     arrays = new Map<string, number>(),
@@ -899,6 +933,15 @@ export function findingAdmissionFacts(schema: z.ZodType) {
         }),
       ],
       [
+        'indirect',
+        captureToolFact(
+          IndirectFactSchema.pick({ node: true, col: true }),
+          (value, path) => {
+            indirect.set(path, value);
+          },
+        ),
+      ],
+      [
         'questions',
         captureToolFact(HopFindingCtBaseSchema.shape.questions, (value) => {
           fields.questions = value;
@@ -928,6 +971,7 @@ export function findingAdmissionFacts(schema: z.ZodType) {
     columns,
     outColumns,
     suppliers,
+    indirect,
     references,
     identities,
     arrays,
@@ -960,6 +1004,8 @@ export function toHopFinding(value: FlatSubmitFindings): HopFindingKept {
     kept.prune_neighbors = value.prune_neighbors;
   if (value.questions !== undefined) kept.questions = value.questions;
   if (value.column_flow !== undefined) kept.column_flow = value.column_flow;
+  if (value.indirect_columns !== undefined)
+    kept.indirect_columns = value.indirect_columns;
   return kept;
 }
 
@@ -1189,10 +1235,10 @@ function columnRefSchemaForHop(hop: SubmitFindingsHopColumns) {
  * Projects {@link ColumnFlowSchema} onto one hop: declared output columns and the permitted pair
  * endpoints.
  */
-function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
-  const outNodes = hop.columnSourceNodeIds?.filter(
-    (id) => id !== hop.focusNodeId,
-  );
+function columnFlowSchemaForHop(
+  hop: SubmitFindingsHopColumns,
+  outNodes: readonly string[] | undefined,
+) {
   const outCol = !hop.outCols?.length
     ? ColumnFlowEntrySchema.shape.out_col
     : suppliedValueSchema(hop.outCols, hop.identifierCaseSensitive).describe(
@@ -1331,10 +1377,21 @@ export function submitFindingsSchemaForMode(
         ).describe(NeighborQuestionSchema.shape.nodeId.description ?? ''),
       })
     : NeighborQuestionSchema;
-  if (mode === 'ct' && hop)
+  if (mode === 'ct' && hop) {
+    const outNodes = hop.columnSourceNodeIds?.filter(
+      (id) => id !== hop.focusNodeId,
+    );
     narrowed = narrowed
-      .extend({ column_flow: columnFlowSchemaForHop(hop) })
+      .extend({
+        column_flow: columnFlowSchemaForHop(hop, outNodes),
+        ...(outNodes && {
+          indirect_columns: indirectColumnsSchema(
+            objectIdSchema(outNodes, hop.identifierCaseSensitive),
+          ),
+        }),
+      })
       .strict() as typeof HopFindingCtBaseSchema;
+  }
   const prunableIds =
     hop?.neighbors?.filter((n) => n.can_prune).map((n) => n.id) ?? [];
   if (hop?.neighbors)
@@ -2043,6 +2100,7 @@ export const SubmitFindingsModelSchema = z
       .optional()
       .describe(QUESTIONS_DESCRIPTION),
     column_flow: ColumnFlowSchema.optional(),
+    indirect_columns: HopFindingCtBaseSchema.shape.indirect_columns,
     badge_label: z
       .string()
       .max(SUBMIT_FINDINGS_BADGE_LABEL_MAX)

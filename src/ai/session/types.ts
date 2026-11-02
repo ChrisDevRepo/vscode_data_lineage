@@ -1,4 +1,4 @@
-import type { ColumnEdge, SmNodeState, SmState } from '../sm/smTypes';
+import type { ColumnAspect, SmNodeState, SmState } from '../sm/smTypes';
 import type { AIViewMetadata } from '../../engine/shared/bridgeContract';
 
 /** Canonical bounded BFS captured by `lineage_get_scope_bundle` for one host turn. */
@@ -74,8 +74,7 @@ export interface ResultGraph {
    */
   sectionsRunId?: string;
   /** Column lineage chain from a CT session. */
-  columnAspect?: {
-    edges: ColumnEdge[];
+  columnAspect?: Pick<ColumnAspect, 'edges' | 'indirect'> & {
     requested?: { node: string; columns: string[] };
   };
 }

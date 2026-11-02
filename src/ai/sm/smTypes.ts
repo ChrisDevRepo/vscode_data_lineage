@@ -4,7 +4,10 @@ import type {
   DetailSlot,
   MemoryStateSnapshot,
 } from '../session/memoryManager';
-import type { ColumnTransformClass } from '../../engine/shared/bridgeContract';
+import type {
+  ColumnTransformClass,
+  IndirectFact,
+} from '../../engine/shared/bridgeContract';
 import type { DepthSideValue } from '../../engine/shared/explorationDepthContract';
 import type { ToolRejection } from '../support/toolErrorEnvelope';
 
@@ -73,6 +76,8 @@ export interface ColumnAspect {
    * not establish complete SQL provenance.
    */
   edges: ColumnEdge[];
+  /** Indirect facts with the step node that uses each; never edges, never traced. */
+  indirect?: Array<IndirectFact & { hopNode: string }>;
 }
 
 /** Structured attribution of data flow for a specific output column. */
@@ -224,6 +229,8 @@ export interface HopFindingKept {
    * ignored when the column aspect is inactive.
    */
   column_flow?: ColumnFlowEntry[];
+  /** CT indirect columns of this step; they map, route and protect no neighbor. */
+  indirect_columns?: IndirectFact[];
 }
 
 /** Data structure used by the AI to submit its findings after analyzing a hop. */

@@ -656,7 +656,8 @@ export function renderProblemReport(
       const reference =
         (error.category ?? issue.category) === 'reference' &&
         (effect === 'presentation_commit' ||
-          (effect === 'hop_commit' && /^column_flow(?:\.|$)/.test(error.path)));
+          (effect === 'hop_commit' &&
+            /^(?:column_flow|indirect_columns)(?:\.|$)/.test(error.path)));
       const fallback =
         stage === 3 && reference
           ? 'fallback' in issue

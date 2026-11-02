@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import type { HopFindingKept, SmNodeState, SmState } from './smTypes';
-import { ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
+import {
+  ColumnTransformClassSchema,
+  IndirectFactSchema,
+} from '../../engine/shared/bridgeContract';
 import { bothSidesClosed } from '../../engine/shared/explorationDepthContract';
 import {
   ColumnFlowSchema,
@@ -137,6 +140,9 @@ const ColumnAspectSchema = z
     target_columns: NonEmptyStrings,
     active_columns: z.array(NonEmptyString),
     edges: z.array(ColumnEdgeSchema),
+    indirect: z
+      .array(IndirectFactSchema.extend({ hopNode: NonEmptyString }))
+      .optional(),
   })
   .strict();
 

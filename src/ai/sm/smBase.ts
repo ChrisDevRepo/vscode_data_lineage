@@ -225,6 +225,7 @@ const HELD_FIELDS = [
   'prune_neighbors',
   'questions',
   'column_flow',
+  'indirect_columns',
 ] as const;
 type HeldField = (typeof HELD_FIELDS)[number];
 
@@ -760,7 +761,8 @@ export class NavigationEngine implements IHopStateMachine {
           (field === 'sections' ||
             field === 'focus_node_id' ||
             HELD_FIELDS.some((held) => held === field)) &&
-          (field !== 'column_flow' || this.currentHopAnalysisMode === 'ct'),
+          (!['column_flow', 'indirect_columns'].includes(field) ||
+            this.currentHopAnalysisMode === 'ct'),
       ),
     ];
   }
@@ -3253,6 +3255,20 @@ export class NavigationEngine implements IHopStateMachine {
       if ('invalidRoute' in checked) invalidRoutes.push(checked.invalidRoute);
       else verified.set(prefix, checked.neighbor);
     }
+    // An indirect fact needs only its column checked; it never maps, routes or stages an edge.
+    for (const [path, fact] of facts.indirect) {
+      const checked = this.tracer.validateColumnSupplier(
+        focusId,
+        fact,
+        paths(path),
+        this.nodeMap,
+        this.store ?? null,
+        this.removedSet,
+        contributors,
+        log,
+      );
+      if ('invalidRoute' in checked) invalidRoutes.push(checked.invalidRoute);
+    }
     for (const [row, keys] of facts.rows) {
       const supplierCount = facts.arrays.get(`${row}/upstream_columns`);
       if (
@@ -4279,6 +4295,13 @@ export class NavigationEngine implements IHopStateMachine {
     this.lastHopSummaryChars = stagedSummaryChars;
     this.archiveChars += this.lastHopDetailChars + this.lastHopSummaryChars;
 
+    if (this.tracer && finding.indirect_columns?.length)
+      (this.tracer.state.indirect ??= []).push(
+        ...finding.indirect_columns.map((fact) => ({
+          ...fact,
+          hopNode: focusId,
+        })),
+      );
     if (this.tracer && stagedColumnEdges.length > 0) {
       this.tracer.edges.push(...stagedColumnEdges);
       lineageQuestionsByNode = this.tracer.getColumnLineageQuestionsByNode(

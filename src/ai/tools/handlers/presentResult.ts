@@ -728,6 +728,7 @@ export async function executePresentResult(
                       ...(e.transforms ? { transforms: e.transforms } : {}),
                       ...(e.note ? { note: e.note } : {}),
                     })),
+                    indirect: resultGraph.columnAspect.indirect,
                   },
                 }
               : {}),

@@ -53,6 +53,17 @@ export function reconcileAiView(
       const nodeId = canonicalize(item.nodeId);
       return nodeId ? [{ ...item, nodeId }] : [];
     });
+  /** Canonical ids at `keys`; a saved view omits an item with an unresolved id. */
+  const remapIds = <T extends Record<K, string>, K extends keyof T>(
+    item: T,
+    keys: readonly K[],
+  ): T[] => {
+    const ids = keys.map((key) => canonicalize(item[key]));
+    if (savedResolver && ids.includes(null)) return [];
+    const remapped = { ...item };
+    keys.forEach((key, i) => (remapped[key] = (ids[i] ?? item[key]) as T[K]));
+    return [remapped];
+  };
 
   const requested = metadata.columnAspect?.requested;
   const requestedNode = requested ? canonicalize(requested.node) : null;
@@ -75,20 +86,13 @@ export function reconcileAiView(
                   },
                 }
               : {}),
-            edges: metadata.columnAspect.edges.flatMap((edge) => {
-              const hopNode = canonicalize(edge.hopNode),
-                fromNode = canonicalize(edge.fromNode),
-                toNode = canonicalize(edge.toNode);
-              if (savedResolver && (!hopNode || !fromNode || !toNode))
-                return [];
-              return [
-                {
-                  ...edge,
-                  hopNode: hopNode ?? edge.hopNode,
-                  fromNode: fromNode ?? edge.fromNode,
-                  toNode: toNode ?? edge.toNode,
-                },
-              ];
+            edges: metadata.columnAspect.edges.flatMap((edge) =>
+              remapIds(edge, ['hopNode', 'fromNode', 'toNode']),
+            ),
+            ...(metadata.columnAspect.indirect && {
+              indirect: metadata.columnAspect.indirect.flatMap((fact) =>
+                remapIds(fact, ['hopNode', 'node']),
+              ),
             }),
           },
         }

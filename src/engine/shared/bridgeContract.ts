@@ -401,6 +401,22 @@ const ColumnAspectEdgeSchema = z
 /** Inferred shape of {@link ColumnAspectEdgeSchema}. */
 export type ColumnAspectEdge = z.infer<typeof ColumnAspectEdgeSchema>;
 
+/**
+ * One indirect column of a step: it decides which rows reach the output or how they are arranged.
+ * Never an edge.
+ */
+export const IndirectFactSchema = z
+  .object({
+    node: z.string(),
+    col: z.string().min(1),
+    usage: z.enum(['join', 'filter', 'arrange']),
+    detail: z.string().max(200).optional(),
+  })
+  .strict();
+
+/** Inferred shape of {@link IndirectFactSchema}. */
+export type IndirectFact = z.infer<typeof IndirectFactSchema>;
+
 const ColumnAspectSchema = z
   .object({
     /** Frozen asked identities for preview rows; absent in older saved views. */
@@ -409,6 +425,10 @@ const ColumnAspectSchema = z
       .strict()
       .optional(),
     edges: z.array(ColumnAspectEdgeSchema),
+    /** Indirect facts, each with the step node that uses it. */
+    indirect: z
+      .array(IndirectFactSchema.extend({ hopNode: z.string() }))
+      .optional(),
   })
   .strict();
 

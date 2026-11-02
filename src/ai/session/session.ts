@@ -986,6 +986,7 @@ export class AiSession {
         ? {
             columnAspect: {
               edges: fullResult.columnAspect.edges,
+              indirect: fullResult.columnAspect.indirect,
               requested: {
                 node: fullResult.originNodeId,
                 columns: [...fullResult.columnAspect.target_columns],
