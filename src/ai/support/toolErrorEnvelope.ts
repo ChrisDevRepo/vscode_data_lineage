@@ -102,7 +102,7 @@ export const ISSUES = {
     category: 'reference',
     label: 'column outside the approved scope',
     correction:
-      'Remove the outside column or its entry if it is the sole supplier or out_node; use column_flow: [] if none remain, never upstream_columns: []. Ask the outside object in questions and record the fact in sections.',
+      'Remove the outside column or its entry if it is the sole supplier or output destination; use column_flow: [] if none remain, never upstream_columns: []. Ask the outside object in questions and record the fact in sections.',
     fallback:
       'If no in-scope supplier can express the fact, write it in sections instead, highlighted with a callout naming the unresolved supplier and columns.',
   },
@@ -227,7 +227,8 @@ export const ISSUES = {
   prune_target: {
     category: 'value',
     label: 'this neighbor cannot be pruned here',
-    correction: 'Prune only a neighbor the schema lists as prunable.',
+    correction:
+      'Prune only a neighbor the schema lists as prunable that no column mapping or committed analysis keeps.',
   },
   prunes_origin: {
     category: 'value',

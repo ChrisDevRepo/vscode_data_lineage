@@ -67,7 +67,7 @@ export const TOOL_DEFS = [
     effect: 'read',
     userDescription: 'Search for database objects by name or column.',
     modelDescription:
-      'Search database objects by name or column (substring or regex). Returns object IDs, metadata, per-kind `by_type` counts, `in_user_filter`, and `name_match` (`unique` or `ambiguous` ids for an exact name, in-filter first). When an in-filter search is empty but out-of-filter hits exist, widen `schemas` on the next call. Use lineage_search_ddl to grep SQL bodies.',
+      'Search database objects by name or column (substring or regex). Returns object IDs, metadata, per-kind `by_type` counts, `in_user_filter`, and `name_match` (`unique` or `ambiguous` ids for an exact name, in-filter first). When an in-filter search is empty but out-of-filter hits exist, widen `schemas` on the next call.',
     progressLabel: 'Searching database objects…',
   },
   {
@@ -136,7 +136,7 @@ export const TOOL_DEFS = [
     effect: 'read',
     userDescription: 'Get full details for a specific database object.',
     modelDescription:
-      'Primary single-object lookup. Use this when the user asks about one specific object (DDL, columns, direct neighbors). For graph-scope lineage questions, prefer lineage_get_scope_bundle instead of chaining repeated per-node detail calls.',
+      'Primary single-object lookup. Use this when the user asks about one specific object (DDL, columns, direct neighbors).',
     progressLabel: 'Fetching object details…',
   },
   {
