@@ -685,7 +685,7 @@ const ColumnFlowEntrySchema = z
  * The engine owns the dispatched hop; a sent id only guards against a stale or misdirected call.
  */
 const FOCUS_NODE_ID_DESCRIPTION =
-  'Optional. Omit for the current hop; if sent, it must equal focus_node.id from <hop_context>.';
+  'If sent, it must equal focus_node.id from <hop_context>.';
 
 /** Reason-only removal of an irrelevant SQL node reached through a storage carrier. */
 export const PruneCurrentInputSchema = z

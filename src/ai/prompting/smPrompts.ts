@@ -171,19 +171,21 @@ function buildCtSynthesisBlock(
   nodeEdges: ReadonlyArray<[string, string, string]>,
   presentedNodeIds: ReadonlySet<string>,
 ): string {
-  const lines = ['## Column Trace Chain'];
+  const sources = new Map<string, string[]>();
   for (const e of edges) {
+    const target = `  ${e.to_node}.${e.to_col} (hop ${e.hop}) ←`;
     const metadata = [
       ...(e.transforms?.length
         ? [`transforms: ${e.transforms.join(', ')}`]
         : []),
       ...(e.note ? [`expression: ${escapePromptText(e.note)}`] : []),
     ];
-    lines.push(
-      `  ${e.from_node}.${e.from_col} → ${e.to_node}.${e.to_col} (hop ${e.hop})${metadata.length ? ` — ${metadata.join('; ')}` : ''}`,
-    );
+    sources.set(target, [
+      ...(sources.get(target) ?? []),
+      `    ${e.from_node}.${e.from_col}${metadata.length ? ` — ${metadata.join('; ')}` : ''}`,
+    ]);
   }
-  lines.push('');
+  const lines = ['## Column Trace Chain', ...[...sources].flat(2), ''];
   const directionEdges =
     nodeEdges.length > 0
       ? asFlowEdges(nodeEdges)
@@ -252,17 +254,11 @@ function computeNodeFlowFacts(
   return facts;
 }
 
-/**
- * Renders one node's flow facts as `inputs: …; outputs: …`; an absent entry or empty list renders
- * `(none)`.
- */
-function renderFlowFactsFragment(
-  facts: NodeFlowFacts | undefined,
-  labels: readonly [string, string] = ['inputs:', 'outputs:'],
-): string {
+/** Renders one node's flow facts; an absent entry or empty list renders `(none)`. */
+function renderFlowFactsFragment(facts: NodeFlowFacts | undefined): string {
   const list = (arr: string[] | undefined): string =>
     arr && arr.length > 0 ? arr.join(', ') : '(none)';
-  return `${labels[0]} ${list(facts?.writtenBy)}; ${labels[1]} ${list(facts?.readBy)}`;
+  return `written by ${list(facts?.writtenBy)}; read by ${list(facts?.readBy)}`;
 }
 
 /**
@@ -297,7 +293,7 @@ function buildPassthroughFlowFacts(
       .filter(Boolean)
       .join(', ');
     const prefix = descriptor ? ` — ${descriptor}` : '';
-    return `- ${n.id}${prefix}: ${renderFlowFactsFragment(flowFacts.get(n.id), ['written by', 'read by'])}`;
+    return `- ${n.id}${prefix}: ${renderFlowFactsFragment(flowFacts.get(n.id))}`;
   };
   const dispositioned = qualifying.filter((n) => actionById.has(n.id));
   const undispositioned = qualifying.filter((n) => !actionById.has(n.id));
@@ -403,25 +399,6 @@ function buildCapturedFormulaFacts(
   ].join('\n');
 }
 
-/** Renders engine flow facts for every analyzed node the render keeps. */
-function buildAnalyzedFlowFacts(
-  result: SmResult,
-  presented: ReadonlySet<string>,
-  identifierCaseSensitive = false,
-): string {
-  const lc = (s: string): string => schemaKey(s, identifierCaseSensitive);
-  const flowFacts = computeNodeFlowFacts(result.edges, identifierCaseSensitive);
-  const lines = result.detail_slots
-    .filter((slot) => presented.has(slot.nodeId))
-    .map(
-      (slot) =>
-        `- ${lc(slot.nodeId)} — ${slot.type}: ${renderFlowFactsFragment(flowFacts.get(lc(slot.nodeId)))}`,
-    );
-  return lines.length > 0
-    ? ['Analyzed nodes (engine flow facts):', ...lines].join('\n')
-    : '';
-}
-
 /**
  * The tool-result envelope delivered to synthesis when SM exploration completes — "the last tool
  * result" the synthesis system prompt reads.
@@ -504,12 +481,6 @@ export function buildSmCompletionEnvelope(
         ? '\n' +
           buildBbSynthesisBlock(result.originNodeId, result.edges, presented)
         : '';
-  const analyzedFacts = buildAnalyzedFlowFacts(
-    result,
-    presented,
-    identifierCaseSensitive,
-  );
-  const analyzedBlock = analyzedFacts ? '\n' + analyzedFacts : '';
   const passthroughFacts = buildPassthroughFlowFacts(
     result,
     identifierCaseSensitive,
@@ -565,7 +536,6 @@ export function buildSmCompletionEnvelope(
     synthesis_reminder:
       buildSynthesisReminder(userQuestion) +
       flowBlock +
-      analyzedBlock +
       passthroughBlock +
       formulaBlock +
       mustLinkBlock +

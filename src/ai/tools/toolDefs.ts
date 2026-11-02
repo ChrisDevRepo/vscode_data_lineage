@@ -114,7 +114,7 @@ export const TOOL_DEFS = [
     userDescription:
       'Remove the current irrelevant SQL node reached through a storage carrier.',
     modelDescription:
-      'Alternative to submit_findings for SQL hops reached via auto-forwarded storage carriers. Hard-cuts the current node and unreachable unvisited descendants when SQL confirms it is irrelevant to the investigation (lists node in `pruned` and cut nodes in `cut_ids`). Rejected if committed analysis or column mappings depend on this node.',
+      'Instead of submit_findings, for a SQL hop reached through storage whose SQL shows it is irrelevant to the investigation: removes this node and the unvisited nodes only it led to. Rejected if committed analysis or column mappings depend on it.',
   },
   {
     name: 'lineage_present_result',

@@ -141,7 +141,8 @@ export function buildHopFocusNode(
   const ddl = getNodeDdl(node.id, nodeMap, store);
   const cols = getNodeColumns(node.id, nodeMap, store);
   if (SCRIPT_TYPES.has(node.type) && ddl) {
-    focusNode.ddl = ddl;
+    // Blank lines carry no evidence; a hop serves no line numbers they would shift.
+    focusNode.ddl = ddl.replace(/\n\s*(?=\n)/g, '');
   } else if (cols?.length) {
     focusNode.cols = cols.map((c) => presentColumnCompact(c));
   }
