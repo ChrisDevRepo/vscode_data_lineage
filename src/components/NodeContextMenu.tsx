@@ -17,7 +17,7 @@ import {
   FloatingFocusManager,
   FloatingPortal,
 } from '@floating-ui/react';
-import type { ObjectType } from '../engine/types';
+import type { ObjectType } from '../engine/shared/types';
 import type { RemoveAction } from '../engine/modeCapabilities';
 import { disabledControl } from './ui/disabledControl';
 import { escapeRegexLiteral, quoteIdentifier } from '../utils/sql';

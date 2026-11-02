@@ -11,7 +11,7 @@ import type {
   LineageNode,
   LineageEdge,
   ParseStats,
-} from '../../../src/engine/types';
+} from '../../../src/engine/shared/types';
 
 const node = (schema: string, name: string): LineageNode => ({
   id: `${schema}.${name}`.toLowerCase(),

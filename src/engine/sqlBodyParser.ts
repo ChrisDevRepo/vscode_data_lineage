@@ -14,7 +14,7 @@ import {
   PASS1_CLEANSE_RE,
   NAME_PERIOD_SPACING_RE,
 } from './shared/sqlRegex';
-import type { ExternalRef } from './types';
+import type { ExternalRef } from './shared/types';
 import { errorMessage } from '../utils/errorMessage';
 
 interface ParsedDependencies {

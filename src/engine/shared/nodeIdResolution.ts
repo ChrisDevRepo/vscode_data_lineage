@@ -6,7 +6,7 @@ import {
   splitSqlName,
   stripBrackets,
 } from '../../utils/sql';
-import type { DatabaseModel } from '../types';
+import type { DatabaseModel } from './types';
 
 /** Resolves a user/model-supplied node id against a canonical node map. */
 export function resolveModelNodeId(

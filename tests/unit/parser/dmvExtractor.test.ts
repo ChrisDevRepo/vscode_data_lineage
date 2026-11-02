@@ -7,7 +7,7 @@ import {
   buildModelFromDmv,
   validateQueryResult,
 } from '../../../src/engine/dmvExtractor';
-import { formatColumnType } from '../../../src/engine/types';
+import { formatColumnType } from '../../../src/engine/shared/types';
 import type { DmvResults } from '../../../src/engine/dmvExtractor';
 import type {
   SimpleExecuteResult,

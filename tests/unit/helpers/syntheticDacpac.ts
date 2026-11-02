@@ -4,7 +4,10 @@
  */
 
 import JSZip from 'jszip';
-import type { DatabaseModel, ObjectType } from '../../../src/engine/types';
+import type {
+  DatabaseModel,
+  ObjectType,
+} from '../../../src/engine/shared/types';
 import { generateDwhModel } from './dwhGraphGenerator';
 
 /** Parameters for {@link buildSyntheticDacpac}. */

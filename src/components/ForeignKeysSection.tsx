@@ -1,4 +1,4 @@
-import type { ForeignKeyInfo } from '../engine/types';
+import type { ForeignKeyInfo } from '../engine/shared/types';
 import { highlightText } from './highlight';
 import { Tooltip } from './ui/Tooltip';
 

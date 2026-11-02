@@ -50,8 +50,8 @@ import type {
   AnalysisMode,
   AnalysisType,
   GraphMode,
-} from '../engine/types';
-import { DEFAULT_CONFIG } from '../engine/types';
+} from '../engine/shared/types';
+import { DEFAULT_CONFIG } from '../engine/shared/types';
 import { runAnalysis } from '../engine/graphAnalysis';
 import { scopeModelForVisualize } from '../engine/modelFilters';
 import { refuseOverObjectLimit } from '../utils/objectLimitGuard';

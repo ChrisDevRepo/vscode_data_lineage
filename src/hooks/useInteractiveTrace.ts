@@ -8,7 +8,7 @@ import {
   AnalysisType,
   DatabaseModel,
   type CustomNodeData,
-} from '../engine/types';
+} from '../engine/shared/types';
 import {
   traceNodeWithLevels,
   applyTraceToFlow,

@@ -12,7 +12,7 @@ import {
 import {
   DEFAULT_CONFIG,
   type ExtensionConfig,
-} from '../../../src/engine/types';
+} from '../../../src/engine/shared/types';
 
 const config: ExtensionConfig = {
   ...DEFAULT_CONFIG,

@@ -3,8 +3,8 @@
 import type { Edge as FlowEdge, Node as FlowNode } from '@xyflow/react';
 import { describe, expect, it } from 'vitest';
 import { applyTraceToFlow } from '../../../src/engine/graphBuilder';
-import { DEFAULT_CONFIG } from '../../../src/engine/types';
-import type { TraceState } from '../../../src/engine/types';
+import { DEFAULT_CONFIG } from '../../../src/engine/shared/types';
+import type { TraceState } from '../../../src/engine/shared/types';
 
 function traceState(overrides: Partial<TraceState> = {}): TraceState {
   return {

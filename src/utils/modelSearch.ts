@@ -1,4 +1,4 @@
-import type { ObjectType, ColumnDef } from '../engine/types';
+import type { ObjectType, ColumnDef } from '../engine/shared/types';
 import {
   SQL_CODE,
   SQL_LITERAL,

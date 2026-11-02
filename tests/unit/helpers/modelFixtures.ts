@@ -6,7 +6,7 @@ import type {
   LineageNode,
   ObjectType,
   SchemaInfo,
-} from '../../../src/engine/types';
+} from '../../../src/engine/shared/types';
 
 /**
  * Build a LineageNode fixture. `fullName` defaults to `id` — these synthetic graphs use flat,

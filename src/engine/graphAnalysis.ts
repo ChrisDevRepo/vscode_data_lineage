@@ -17,7 +17,7 @@ import {
   type AnalysisResult,
   type AnalysisGroup,
   type AnalysisConfig,
-} from './types';
+} from './shared/types';
 
 /** Detects isolated subgraphs (islands) that are disconnected from the rest of the graph. */
 export function analyzeIslands(graph: Graph, maxSize: number): AnalysisResult {

@@ -12,7 +12,7 @@ import type {
   SimpleExecuteResult,
 } from '../../types/database';
 import { Logger } from '../../utils/log';
-import { DEFAULT_CONFIG } from '../types';
+import { DEFAULT_CONFIG } from '../shared/types';
 import {
   StoredConnectionInfoSchema,
   type StoredConnectionInfo,

@@ -1,7 +1,7 @@
 import {
   type DatabaseModel,
   type TraceAffordanceSideSnapshot,
-} from '../engine/types';
+} from '../engine/shared/types';
 import {
   type RenderStateSnapshot,
   type ScreenStateExtras,

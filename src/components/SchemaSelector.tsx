@@ -1,5 +1,5 @@
 import { memo, useMemo, useState } from 'react';
-import type { SchemaInfo } from '../engine/types';
+import type { SchemaInfo } from '../engine/shared/types';
 import {
   createSchemaColorMap,
   getSchemaDisplayColor,

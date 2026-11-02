@@ -9,7 +9,11 @@ import {
   shift,
   autoUpdate,
 } from '@floating-ui/react';
-import type { CatalogEntry, NeighborIndex, ParseStats } from '../engine/types';
+import type {
+  CatalogEntry,
+  NeighborIndex,
+  ParseStats,
+} from '../engine/shared/types';
 import { TYPE_COLORS } from '../utils/schemaColors';
 import { schemaKey } from '../utils/sql';
 import { Tooltip } from './ui/Tooltip';

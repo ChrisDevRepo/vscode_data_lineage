@@ -1,4 +1,4 @@
-import type { ObjectType } from '../engine/types';
+import type { ObjectType } from '../engine/shared/types';
 import { schemaKey } from './sql';
 
 /**

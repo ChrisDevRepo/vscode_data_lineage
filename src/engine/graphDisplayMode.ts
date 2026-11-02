@@ -4,7 +4,7 @@ import {
   type ExtensionConfig,
   type FilterState,
   type GraphMode,
-} from './types';
+} from './shared/types';
 import { traceNodeIdsWithLevels } from './graphBuilder';
 
 type GraphDisplayMode =

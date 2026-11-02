@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { NeighborSide } from '../engine/graphGuards';
-import type { TraceNeighborOption, TraceNodeControls } from '../engine/types';
+import type {
+  TraceNeighborOption,
+  TraceNodeControls,
+} from '../engine/shared/types';
 
 /** Action of the interactive trace node controls. */
 export type TraceNeighborAction = 'add' | 'prune';

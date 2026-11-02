@@ -7,7 +7,11 @@ import {
 } from '@floating-ui/react';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import { useDropdown } from '../hooks/useDropdown';
-import type { ObjectType, AnalysisType, GraphMode } from '../engine/types';
+import type {
+  ObjectType,
+  AnalysisType,
+  GraphMode,
+} from '../engine/shared/types';
 import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
 import { ANALYSIS_TYPE_INFO, ALL_ANALYSIS_TYPES } from '../utils/analysisInfo';

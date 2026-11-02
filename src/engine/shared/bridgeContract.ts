@@ -5,7 +5,7 @@ import {
   type ExtensionConfig,
   type SchemaPreview,
   type TraceAffordanceSnapshot,
-} from '../types';
+} from './types';
 
 const ObjectTypeSchema = z.enum(OBJECT_TYPES);
 
@@ -93,7 +93,7 @@ export const AiGateRefineSchema = z
 /** The edited-scope payload of a revision-bound refine gate decision. */
 export type AiGateRefine = z.infer<typeof AiGateRefineSchema>;
 
-/** Zod schema mirroring the runtime `ColumnDef` shape (`src/engine/types.ts`). */
+/** Zod schema mirroring the runtime `ColumnDef` shape (`src/engine/shared/types.ts`). */
 const ColumnDefSchema = z.object({
   name: z.string(),
   type: z.string(),

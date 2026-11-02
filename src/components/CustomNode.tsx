@@ -21,7 +21,7 @@ import type {
   CustomNodeData,
   TraceNeighborOption,
   TraceNodeControls,
-} from '../engine/types';
+} from '../engine/shared/types';
 import type { NeighborSide } from '../engine/graphGuards';
 
 /** Whether the canvas zoom is low enough that a node should render as a plain, undecorated box. */

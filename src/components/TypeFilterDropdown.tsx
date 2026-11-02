@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import type { ObjectType } from '../engine/types';
+import type { ObjectType } from '../engine/shared/types';
 import { TYPE_LABELS, TYPE_COLORS } from '../utils/schemaColors';
 import { ToolbarDropdown } from './ui/ToolbarDropdown';
 

@@ -1,4 +1,4 @@
-import type { DatabaseModel } from '../engine/types';
+import type { DatabaseModel } from '../engine/shared/types';
 import {
   checkObjectLimit,
   formatObjectLimitMessage,

@@ -1,6 +1,6 @@
 /** Deterministic large-graph fixture shared by backend correctness and optional layout checks. */
 
-import type { DatabaseModel } from '../../../src/engine/types';
+import type { DatabaseModel } from '../../../src/engine/shared/types';
 import { generateDwhModel } from './dwhGraphGenerator';
 
 const FIXED_SEED = 20260923;

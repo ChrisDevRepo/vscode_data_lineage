@@ -1,4 +1,4 @@
-import type { ColumnDef } from '../engine/types';
+import type { ColumnDef } from '../engine/shared/types';
 import { highlightText } from './highlight';
 import { Tooltip } from './ui/Tooltip';
 

@@ -17,7 +17,7 @@ import {
   enrichColumnsWithConstraints,
   createEmptySchemaInfo,
   UNKNOWN_DB_PLATFORM,
-} from './types';
+} from './shared/types';
 import { buildModel, normalizeName } from './modelBuilder';
 import type { SimpleExecuteResult, DbCellValue } from '../types/database';
 import { quoteIdentifier, schemaKey } from '../utils/sql';

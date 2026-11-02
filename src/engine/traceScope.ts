@@ -1,7 +1,7 @@
 /** Pure helpers for interactive trace scope edits. */
 
 import type Graph from 'graphology';
-import type { DatabaseModel, LineageEdge, TraceState } from './types';
+import type { DatabaseModel, LineageEdge, TraceState } from './shared/types';
 import { bfsFromNode } from 'graphology-traversal';
 import { buildGraphologyGraph } from './graphBuilder';
 import { analyzeRemoval, bfsReachable, type RemovalSide } from './graphGuards';

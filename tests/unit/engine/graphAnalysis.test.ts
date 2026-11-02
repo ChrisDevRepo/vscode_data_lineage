@@ -11,7 +11,10 @@ import {
   analyzeOrphans,
   runAnalysis,
 } from '../../../src/engine/graphAnalysis';
-import type { AnalysisConfig, AnalysisType } from '../../../src/engine/types';
+import type {
+  AnalysisConfig,
+  AnalysisType,
+} from '../../../src/engine/shared/types';
 import { makeGraph } from '../helpers/modelFixtures';
 
 const emptyGraph = () => new Graph({ type: 'directed', multi: false });

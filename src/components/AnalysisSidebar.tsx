@@ -4,7 +4,7 @@ import type {
   AnalysisMode,
   AnalysisType,
   AnalysisGroup,
-} from '../engine/types';
+} from '../engine/shared/types';
 import { SidePanel } from './SidePanel';
 import { Tooltip } from './ui/Tooltip';
 import { ANALYSIS_TYPE_INFO, ALL_ANALYSIS_TYPES } from '../utils/analysisInfo';

@@ -1,5 +1,9 @@
 import { memo } from 'react';
-import type { ColumnDef, ForeignKeyInfo, ObjectType } from '../engine/types';
+import type {
+  ColumnDef,
+  ForeignKeyInfo,
+  ObjectType,
+} from '../engine/shared/types';
 import type { TableStats, StatsMode } from '../engine/profilingEngine';
 import { TYPE_COLORS } from '../utils/schemaColors';
 import { CloseIcon } from './ui/CloseIcon';

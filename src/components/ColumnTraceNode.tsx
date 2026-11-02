@@ -37,7 +37,7 @@ import {
   TraceNeighborPickerToolbar,
 } from './CustomNode';
 import { useTraceNeighborPicker } from '../hooks/useTraceNeighborPicker';
-import type { ColumnTraceNodeData, ObjectType } from '../engine/types';
+import type { ColumnTraceNodeData, ObjectType } from '../engine/shared/types';
 
 function lineStateColor(state: ColumnLineState | undefined): string {
   if (state === 'transformation') return 'var(--ln-ai-bu)';

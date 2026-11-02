@@ -1,5 +1,5 @@
 import { useState, useMemo, useDeferredValue, memo } from 'react';
-import type { ObjectType, ColumnDef } from '../engine/types';
+import type { ObjectType, ColumnDef } from '../engine/shared/types';
 import { SidePanel } from './SidePanel';
 import { searchBodyScripts, searchColumns } from '../utils/modelSearch';
 import { highlightText } from './highlight';

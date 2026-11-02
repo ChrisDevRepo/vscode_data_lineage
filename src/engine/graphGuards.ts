@@ -3,7 +3,7 @@
 import type Graph from 'graphology';
 import { bidirectional } from 'graphology-shortest-path';
 import { bfsFromNode } from 'graphology-traversal';
-import type { DatabaseModel } from './types';
+import type { DatabaseModel } from './shared/types';
 
 type ShortestPathDirection = 'source_to_target' | 'target_to_source';
 

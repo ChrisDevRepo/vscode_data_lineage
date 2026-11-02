@@ -1,4 +1,4 @@
-import type { DatabaseModel } from './types';
+import type { DatabaseModel } from './shared/types';
 import { groupByWeaklyConnected } from './unionFind';
 
 /** A weakly-connected group of schemas in the model's schema-level graph. */

@@ -1,6 +1,6 @@
 /** Project store — named sessions with connection + schema selection + saved filter views. */
 
-import type { FilterState } from './types';
+import type { FilterState } from './shared/types';
 import {
   ProjectReadSchema,
   type DacpacConnection,

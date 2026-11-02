@@ -6,7 +6,7 @@ import {
   searchColumns,
   type SearchableNode,
 } from '../../../src/utils/modelSearch';
-import type { ColumnDef } from '../../../src/engine/types';
+import type { ColumnDef } from '../../../src/engine/shared/types';
 
 const column = (name: string, type = 'int'): ColumnDef => ({
   name,

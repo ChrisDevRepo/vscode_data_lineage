@@ -23,7 +23,10 @@ import {
   setGraphLogSink,
   traceNodeWithLevels,
 } from '../../../src/engine/graphBuilder';
-import { DEFAULT_CONFIG, type DatabaseModel } from '../../../src/engine/types';
+import {
+  DEFAULT_CONFIG,
+  type DatabaseModel,
+} from '../../../src/engine/shared/types';
 import {
   makeGraph,
   makeIndexedModel,

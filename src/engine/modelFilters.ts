@@ -3,7 +3,7 @@
  * Filters a DatabaseModel by exclusion patterns, isolation and node allowlists.
  */
 
-import { DatabaseModel } from './types';
+import { DatabaseModel } from './shared/types';
 import { compileExclusionMatcher, schemaKey } from '../utils/sql';
 import { computeSchemas } from './shared/modelSchemas';
 import { errorMessage } from '../utils/errorMessage';

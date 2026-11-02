@@ -1,4 +1,4 @@
-import type { TraceState } from './types';
+import type { TraceState } from './shared/types';
 
 /** UI mode policy inputs derived by the app shell. */
 export interface ModeCapabilityInput {

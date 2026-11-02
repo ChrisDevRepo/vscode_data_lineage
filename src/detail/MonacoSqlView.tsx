@@ -4,7 +4,7 @@ import * as monacoEditor from 'monaco-editor/editor/editor.api';
 import 'monaco-editor/languages/definitions/sql/register';
 import 'monaco-editor/features/folding/register';
 import type * as Monaco from 'monaco-editor';
-import type { LineageNode } from '../engine/types';
+import type { LineageNode } from '../engine/shared/types';
 
 /** Configures the React loader with the core editor and SQL tokenizer only. */
 loader.config({ monaco: monacoEditor });

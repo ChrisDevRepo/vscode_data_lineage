@@ -1,5 +1,5 @@
 /** Isolated-node filtering shared by the extension host, the AI subsystem and the webview. */
-import { DatabaseModel } from '../types';
+import { DatabaseModel } from './types';
 
 /** Filters the model by removing isolated nodes (nodes with a total degree of zero). */
 export function applyIsolationFilter(

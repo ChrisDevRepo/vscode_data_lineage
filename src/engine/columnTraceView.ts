@@ -10,7 +10,7 @@ import type {
   ColumnAspectEdge,
   ColumnTransformClass,
 } from './shared/bridgeContract';
-import type { ExtensionConfig } from './types';
+import type { ExtensionConfig } from './shared/types';
 
 /** Whether the value arriving at a relation's target is the value that left its source. */
 export type ColumnLineState = 'passthrough' | 'transformation' | 'unknown';

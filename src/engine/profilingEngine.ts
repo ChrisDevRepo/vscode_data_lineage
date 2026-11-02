@@ -3,7 +3,7 @@
  * Generates type-aware single-pass profiling SQL and parses its results.
  */
 
-import { ENGINE_EDITION_FABRIC, type ColumnDef } from './types';
+import { ENGINE_EDITION_FABRIC, type ColumnDef } from './shared/types';
 import type { SimpleExecuteResult } from '../types/database';
 import { quoteIdentifier } from '../utils/sql';
 

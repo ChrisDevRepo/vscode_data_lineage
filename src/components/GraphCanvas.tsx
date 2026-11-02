@@ -52,7 +52,7 @@ import type {
   TraceNeighborOption,
   TraceNodeControls,
   TraceSideControls,
-} from '../engine/types';
+} from '../engine/shared/types';
 import { ColumnTraceEdge, type ColumnTraceEdgeData } from './ColumnTraceEdge';
 import { Legend } from './Legend';
 import { deriveLegendSchemas, deriveLegendColorMap } from './legendDerivation';
@@ -79,7 +79,7 @@ import type {
   DatabaseModel,
   AnalysisMode,
   AnalysisType,
-} from '../engine/types';
+} from '../engine/shared/types';
 import type { FilterProfile, AIViewMetadata } from '../engine/projectStore';
 import {
   getSchemaColor,

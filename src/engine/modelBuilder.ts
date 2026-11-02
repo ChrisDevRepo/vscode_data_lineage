@@ -13,7 +13,7 @@ import {
   ExtractedDependency,
   CatalogEntry,
   NeighborIndex,
-} from './types';
+} from './shared/types';
 import { parseSqlBody, extractExternalRefs } from './sqlBodyParser';
 import {
   quoteIdentifier,

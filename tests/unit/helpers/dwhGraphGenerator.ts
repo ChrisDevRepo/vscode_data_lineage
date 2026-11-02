@@ -11,7 +11,7 @@ import type {
   NeighborIndex,
   ObjectType,
   SchemaInfo,
-} from '../../../src/engine/types';
+} from '../../../src/engine/shared/types';
 
 type Rng = () => number;
 

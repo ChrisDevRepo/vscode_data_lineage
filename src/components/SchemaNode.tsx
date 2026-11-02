@@ -1,6 +1,6 @@
 import React, { memo } from 'react';
 import { Handle, Position, NodeToolbar, type NodeProps } from '@xyflow/react';
-import type { SchemaNodeData, ObjectType } from '../engine/types';
+import type { SchemaNodeData, ObjectType } from '../engine/shared/types';
 import { SCHEMA_NODE_WIDTH, SCHEMA_NODE_HEIGHT } from '../engine/graphBuilder';
 import { TYPE_COLORS, getReadableTextColor } from '../utils/schemaColors';
 

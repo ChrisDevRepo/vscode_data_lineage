@@ -2,7 +2,7 @@ import {
   createEmptySchemaInfo,
   type LineageNode,
   type SchemaInfo,
-} from '../types';
+} from './types';
 import { schemaKey } from '../../utils/sql';
 
 /** Computes architectural schema metrics from the resolved node list. */

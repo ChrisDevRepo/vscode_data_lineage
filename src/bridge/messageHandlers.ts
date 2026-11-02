@@ -22,7 +22,7 @@ import {
   type ExtensionConfig,
   type LayoutConfig,
   type OverviewConfig,
-} from '../engine/types';
+} from '../engine/shared/types';
 import {
   extractDacpac,
   extractSchemaPreview,

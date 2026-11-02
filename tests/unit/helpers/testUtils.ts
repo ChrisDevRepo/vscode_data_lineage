@@ -10,7 +10,7 @@ import * as yaml from 'js-yaml';
 import { loadRules } from '../../../src/engine/sqlBodyParser';
 import type { RawParseRulesConfig } from '../../../src/engine/sqlBodyParser';
 import { extractDacpac } from '../../../src/engine/dacpacExtractor';
-import type { DatabaseModel } from '../../../src/engine/types';
+import type { DatabaseModel } from '../../../src/engine/shared/types';
 
 // ─── Directory resolution ────────────────────────────────────────────────────
 

@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildModel, normalizeName } from '../../../src/engine/modelBuilder';
 import { resolveModelNodeId } from '../../../src/engine/shared/nodeIdResolution';
-import type { ExtractedObject } from '../../../src/engine/types';
+import type { ExtractedObject } from '../../../src/engine/shared/types';
 import JSZip from 'jszip';
 import {
   extractDacpac,

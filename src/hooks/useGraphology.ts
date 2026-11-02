@@ -7,7 +7,7 @@ import {
   ExtensionConfig,
   DEFAULT_CONFIG,
   type CustomNodeData,
-} from '../engine/types';
+} from '../engine/shared/types';
 import {
   buildGraph,
   buildGraphNoLayout,

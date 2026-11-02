@@ -7,7 +7,7 @@ import {
   buildSchemaGraph,
 } from '../../../src/engine/graphBuilder';
 import { projectSchemaQuotient } from '../../../src/engine/schemaProjection';
-import { type DatabaseModel } from '../../../src/engine/types';
+import { type DatabaseModel } from '../../../src/engine/shared/types';
 import { loadAdventureWorksModel } from '../helpers/testUtils';
 
 const node = (

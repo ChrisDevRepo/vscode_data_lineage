@@ -7,7 +7,7 @@ import type {
   GraphMode,
   TraceNodeControls,
   TraceState,
-} from './types';
+} from './shared/types';
 
 /**
  * Per-node display state that depends on the current selection, trace, and AI overlay rather than

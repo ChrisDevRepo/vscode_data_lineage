@@ -16,7 +16,7 @@ import {
   COLUMN_AI_ANNOTATION_BAND,
 } from '../../../src/engine/columnTraceView';
 import type { ColumnAspectEdge } from '../../../src/engine/shared/bridgeContract';
-import { DEFAULT_CONFIG } from '../../../src/engine/types';
+import { DEFAULT_CONFIG } from '../../../src/engine/shared/types';
 import { normalizeColName } from '../../../src/utils/sql';
 
 type View = ReturnType<typeof buildColumnTraceView>;

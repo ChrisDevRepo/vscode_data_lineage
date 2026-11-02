@@ -1,4 +1,4 @@
-import type { DatabaseModel } from '../engine/types';
+import type { DatabaseModel } from '../engine/shared/types';
 import type { AIViewMetadata, FilterProfile } from '../engine/projectStore';
 import {
   createSavedReferenceResolver,

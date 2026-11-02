@@ -1,7 +1,7 @@
 /** Scale correctness at the supported render ceiling; no machine-dependent latency threshold. */
 import { expect, it } from 'vitest';
 import { buildGraph } from '../../src/engine/graphBuilder';
-import { DEFAULT_CONFIG } from '../../src/engine/types';
+import { DEFAULT_CONFIG } from '../../src/engine/shared/types';
 import { buildLargeModel } from '../unit/helpers/largeGraphFixture';
 
 it('lays out 1500 nodes without losing objects or reciprocal edge pairs', () => {

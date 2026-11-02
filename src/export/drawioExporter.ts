@@ -1,6 +1,6 @@
 import { XMLBuilder } from 'fast-xml-parser';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
-import type { CustomNodeData, SchemaNodeData } from '../engine/types';
+import type { CustomNodeData, SchemaNodeData } from '../engine/shared/types';
 import {
   TYPE_COLORS,
   createSchemaColorMap,

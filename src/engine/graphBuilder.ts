@@ -16,7 +16,7 @@ import {
   DEFAULT_CONFIG,
   SchemaNodeData,
   ObjectType,
-} from './types';
+} from './shared/types';
 import {
   createSchemaColorMap,
   getExternalNodeColor,

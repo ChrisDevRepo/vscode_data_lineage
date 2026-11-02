@@ -1,5 +1,5 @@
 import Graph from 'graphology';
-import { OBJECT_TYPES, type ObjectType } from './types';
+import { OBJECT_TYPES, type ObjectType } from './shared/types';
 
 const OBJECT_TYPE_SET: ReadonlySet<string> = new Set(OBJECT_TYPES);
 import {

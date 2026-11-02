@@ -1,4 +1,4 @@
-import type { AnalysisType } from '../engine/types';
+import type { AnalysisType } from '../engine/shared/types';
 
 /** Represents display metadata for a specific graph analysis type. */
 export interface AnalysisTypeInfo {

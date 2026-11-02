@@ -21,7 +21,7 @@ import type {
   TraceTreeLevel,
   TraceTreeSide,
 } from '../engine/traceTree';
-import type { ObjectType } from '../engine/types';
+import type { ObjectType } from '../engine/shared/types';
 import { TYPE_COLORS } from '../utils/schemaColors';
 import { SidePanel } from './SidePanel';
 import { TRACE_ICON } from './TracedFilterBanner';

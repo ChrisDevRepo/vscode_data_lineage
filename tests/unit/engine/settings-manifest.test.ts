@@ -3,7 +3,7 @@
 import { readFileSync } from 'fs';
 import { describe, it, expect } from 'vitest';
 import { rootPath } from '../helpers/testUtils';
-import { DEFAULT_CONFIG } from '../../../src/engine/types';
+import { DEFAULT_CONFIG } from '../../../src/engine/shared/types';
 import { DEFAULT_AI_ENABLED } from '../../../src/configCore';
 import { DEFAULT_MAX_ROUNDS } from '../../../src/ai/core/agentCore';
 import {

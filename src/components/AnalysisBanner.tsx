@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import type { AnalysisMode } from '../engine/types';
+import type { AnalysisMode } from '../engine/shared/types';
 import {
   ANALYSIS_TYPE_INFO,
   ANALYSIS_TYPE_LABELS,

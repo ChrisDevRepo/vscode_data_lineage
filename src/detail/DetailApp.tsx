@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import type { LineageNode } from '../engine/types';
-import { DEFAULT_CONFIG } from '../engine/types';
+import type { LineageNode } from '../engine/shared/types';
+import { DEFAULT_CONFIG } from '../engine/shared/types';
 import type { TableStatsState } from '../components/TableDetailPanel';
 import type { StatsMode } from '../engine/profilingEngine';
 import { TableDetailPanel } from '../components/TableDetailPanel';

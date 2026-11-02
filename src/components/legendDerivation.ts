@@ -3,7 +3,7 @@ import type {
   SchemaNodeData,
   GraphMode,
   TraceState,
-} from '../engine/types';
+} from '../engine/shared/types';
 import { schemaKey } from '../utils/sql';
 import { getSchemaColor, type SchemaColorMap } from '../utils/schemaColors';
 

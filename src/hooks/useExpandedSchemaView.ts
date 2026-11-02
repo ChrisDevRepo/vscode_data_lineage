@@ -15,7 +15,7 @@ import type {
   DatabaseModel,
   ExtensionConfig,
   GraphMode,
-} from '../engine/types';
+} from '../engine/shared/types';
 import { notifyUser } from '../utils/notify';
 
 /** UI state that tracks which schemas are expanded in Expanded Schema View. */

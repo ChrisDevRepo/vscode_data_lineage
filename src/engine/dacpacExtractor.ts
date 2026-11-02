@@ -26,7 +26,7 @@ import {
   enrichColumnsWithConstraints,
   createEmptySchemaInfo,
   DEFAULT_CONFIG,
-} from './types';
+} from './shared/types';
 import { buildModel, parseName, normalizeName } from './modelBuilder';
 import {
   quoteIdentifier,

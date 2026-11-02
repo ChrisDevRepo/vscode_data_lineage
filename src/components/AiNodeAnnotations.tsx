@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
 import { Tooltip } from './ui/Tooltip';
-import type { AiBadge } from '../engine/types';
+import type { AiBadge } from '../engine/shared/types';
 
 /** Gap, in pixels, kept between the node box and the AI badge or footnote rendered outside it. */
 const AI_ANNOTATION_NODE_GAP = 6;

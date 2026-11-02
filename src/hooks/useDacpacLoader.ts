@@ -5,13 +5,13 @@ import type {
   SchemaInfo,
   SchemaPreview,
   ExtensionConfig,
-} from '../engine/types';
+} from '../engine/shared/types';
 import {
   BRIDGE_PROTOCOL_VERSION,
   ExtensionToWebviewMsgSchema,
   validateBridgeFrame,
 } from '../engine/shared/bridgeContract';
-import { DEFAULT_CONFIG } from '../engine/types';
+import { DEFAULT_CONFIG } from '../engine/shared/types';
 
 type StatusMessage = {
   text: string;

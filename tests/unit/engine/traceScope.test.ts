@@ -9,7 +9,7 @@ import type {
   DatabaseModel,
   LineageEdge,
   LineageNode,
-} from '../../../src/engine/types';
+} from '../../../src/engine/shared/types';
 import { describe, expect, it } from 'vitest';
 
 describe('Trace Scope Safety Tests', () => {

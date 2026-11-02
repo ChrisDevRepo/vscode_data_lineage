@@ -8,7 +8,7 @@ import {
   size,
   autoUpdate,
 } from '@floating-ui/react';
-import type { ObjectType } from '../engine/types';
+import type { ObjectType } from '../engine/shared/types';
 import { filterSuggestions } from '../utils/autocomplete';
 import { useAutocomplete } from '../hooks/useAutocomplete';
 import { SuggestionList } from './ui/SuggestionList';
