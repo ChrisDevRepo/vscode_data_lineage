@@ -109,7 +109,6 @@ export function approvalWorkload(
   };
 }
 
-/** Return shape of the workload dimensions used to compare approvals. */
 export type ApprovalWorkload = ReturnType<typeof approvalWorkload>;
 
 /** Reports the binding dimensions that differ, without changing either proposal.

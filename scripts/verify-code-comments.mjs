@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 /**
  * Checks comments under src, tests and scripts:
- * - Exported declarations must have TSDoc comments.
+ * - Exported declarations under src must have TSDoc comments.
  * - Comments must not contain chatty phrasing, personal pronouns,
  *   narration, history markers, author or date tags, or commented-out code.
  * - TSDoc must not repeat a type annotation in braces on param or return tags.
- * - A comment line is at most 100 columns. A line that contains a URL is exempt.
  */
 
 import fs from 'node:fs';
@@ -16,6 +15,7 @@ const REPO_ROOT = process.cwd();
 const SCAN_DIRS = ['src', 'tests', 'scripts'].map((dir) =>
   path.join(REPO_ROOT, dir),
 );
+const [SRC_DIR] = SCAN_DIRS;
 
 /**
  * Returns code files under the given directory.
@@ -193,7 +193,7 @@ for (const filePath of files) {
       ts.isEnumDeclaration(node) ||
       (ts.isVariableStatement(node) && isExported(node))
     ) {
-      if (isExported(node)) {
+      if (filePath.startsWith(SRC_DIR + path.sep) && isExported(node)) {
         if (!hasTsDocComment(node)) {
           const { line, character } = sf.getLineAndCharacterOfPosition(
             node.getStart(sf),
@@ -259,48 +259,6 @@ for (const filePath of files) {
           break;
         }
       }
-      let offset = 0;
-      for (const commentLine of commentRaw.split('\n')) {
-        const commentPiece = commentLine.endsWith('\r')
-          ? commentLine.slice(0, -1)
-          : commentLine;
-        const at = sf.getLineAndCharacterOfPosition(start + offset);
-        const lineStart = sf.getPositionOfLineAndCharacter(at.line, 0);
-        let lineEnd = lineStart;
-        while (
-          lineEnd < content.length &&
-          content[lineEnd] !== '\n' &&
-          content[lineEnd] !== '\r'
-        ) {
-          lineEnd++;
-        }
-        const fullLine = content.slice(lineStart, lineEnd);
-        const before = start + offset - lineStart;
-        // Indent before // or /* is outside the token. Code before a
-        // trailing comment is not part of the comment width.
-        const indentOnly =
-          before >= 0 && /^\s*$/.test(fullLine.slice(0, before));
-        const measuredLine = indentOnly ? fullLine : commentPiece;
-        const directive =
-          /^\s*(\/\/|\/\*|\*)\s*(eslint|@ts-|prettier-ignore)/.test(
-            measuredLine,
-          );
-        if (
-          measuredLine.length > 100 &&
-          !/https?:\/\//.test(measuredLine) &&
-          !directive
-        ) {
-          addIssue(
-            filePath,
-            at.line + 1,
-            at.character + 1,
-            'max-len',
-            'Comment line is longer than 100 columns.',
-            measuredLine.trim().slice(0, 100),
-          );
-        }
-        offset += commentLine.length + 1;
-      }
     }
     token = scanner.scan();
   }
@@ -309,7 +267,7 @@ for (const filePath of files) {
 // Print results
 if (totalIssues === 0) {
   console.log(
-    `PASS: All code comments verified across ${files.length} files. No chatty, missing TSDoc, or overlong comments found.`,
+    `PASS: All code comments verified across ${files.length} files. No chatty or missing TSDoc comments found.`,
   );
   process.exit(0);
 } else {

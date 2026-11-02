@@ -42,7 +42,6 @@ const CUT_HELPERS =
 const LOG_CALL =
   /(?:^|\.)(?:debug|info|warn|error|trace|log|debugLog|onDebugLog|debugLogger)$/;
 
-/** Known truncation sites the output scan may keep instead of failing the gate. */
 export const ALLOWLIST = [
   {
     file: 'src/ai/prompting/scopeSummaryRenderer.ts',
@@ -343,7 +342,6 @@ export function findSites(file, text) {
   });
 }
 
-/** Splits truncation sites into fresh and stale sets against a baseline. */
 export function compare(sites, baseline) {
   const key = (e) => `${e.file}\u0000${e.text}`;
   const known = new Set(baseline.map(key));
@@ -354,7 +352,6 @@ export function compare(sites, baseline) {
   };
 }
 
-/** Walks src for truncation sites the output invariant checks. */
 export function scanTree() {
   return listTsFiles(path.join(repoRoot, SRC_ROOT)).flatMap((f) =>
     findSites(

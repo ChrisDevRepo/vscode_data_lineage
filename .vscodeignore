@@ -38,6 +38,9 @@ stubs/**
 docs/**
 CONTRIBUTING.md
 
+# Internal test and documentation infrastructure (must not leak into VSIX)
+**/*internal*/**
+
 # Environment files (must never be packaged)
 .env
 .env.*

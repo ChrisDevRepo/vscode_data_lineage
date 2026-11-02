@@ -17,7 +17,6 @@ The newest version heading collects changes until that version ships.
 - **Breaking:** the SQL Server (mssql) extension integration and the `dataLineageViz.database.connectionProvider` setting. Databases connect only through built-in connections (**Data Lineage: Add Database Connection**). Passwords saved in the mssql extension are not used: a project saved with an mssql connection reopens through a matching built-in connection, or through the connection picker, where adding a connection starts from the saved server, user and database and you enter the password again.
 
 ### Fixed
-- Malformed provider tool responses stop before empty arguments can enter the retry history.
 - Closed multiline SQL blocks in an AI report keep later headings and formulas visible, including blocks without an evidence reference.
 - A formula the AI preview cannot render is shown as its source, marked as an error, with the reason on hover. Formulas that name a temporary table (`#Name`) render.
 - AI analysis reports independent scope and input faults together, with clear repair choices, and keeps valid text and column mappings while a repair is pending.

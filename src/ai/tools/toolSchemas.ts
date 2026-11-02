@@ -1014,7 +1014,7 @@ function finalizeSubmitFindingsSchema(
   );
   const validated = declared
     .meta({
-      toolFindingShape: { fresh, classification },
+      toolFindingShape: { fresh },
       toolObjectFact: 'findingPresence',
     })
     .describe(
@@ -1025,7 +1025,7 @@ function finalizeSubmitFindingsSchema(
     .filter(([, field]) => !field.isOptional())
     .map(([key]) => key);
   return validated.meta({
-    toolFindingShape: { fresh, classification },
+    toolFindingShape: { fresh },
     toolObjectFact: 'findingPresence',
     required: [...required, 'summary', 'sections'],
   });

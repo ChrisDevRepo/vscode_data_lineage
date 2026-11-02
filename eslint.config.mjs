@@ -25,7 +25,7 @@ export default tseslint.config(
   },
   {
     // Prettier owns code layout and never wraps comments, so only comment lines are limited.
-    files: ['src/**/*.{ts,tsx}'],
+    files: ['{src,tests,scripts}/**/*.{ts,tsx,js,mjs,cjs}'],
     rules: {
       'max-len': [
         'error',

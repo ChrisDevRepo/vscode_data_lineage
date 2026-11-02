@@ -41,6 +41,8 @@ export interface ToolContract<TSchema extends z.ZodType = z.ZodType> {
   readonly effect: ToolEffect;
   /** Manifest grouping labels retained for registration parity. */
   readonly tags?: readonly string[];
+  /** Catalog that served object-id fields admit: the stored run's ids instead of the model's. */
+  readonly objectIds?: 'stored_run';
 }
 
 /** The canonical tool catalog, in registration order. */
@@ -178,6 +180,7 @@ export const TOOL_DEFS = [
     inputSchema: GetScreenStateInputSchema,
     tags: ['lineage', 'lineage-research'],
     effect: 'read',
+    objectIds: 'stored_run',
     userDescription:
       'Shows what is currently on screen: active trace, analysis, or applied bookmark.',
     modelDescription:

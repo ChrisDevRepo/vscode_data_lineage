@@ -19,7 +19,8 @@ const FALLBACK_FIELD = 'sections';
 
 const REPORT_REFERENCE_FALLBACK =
   'If you cannot correct it, write that information in the detail memory instead, highlighted with a callout naming the unresolved issue.';
-const COLUMN_REFERENCE_FALLBACK = `If you cannot correct it, write that information in ${FALLBACK_FIELD} instead, highlighted with a callout naming the unresolved issue.`;
+/** Stage-3 fallback for a column reference fault without its own issue fallback. */
+export const COLUMN_REFERENCE_FALLBACK = `If you cannot correct it, write that information in ${FALLBACK_FIELD} instead, highlighted with a callout naming the unresolved issue.`;
 const OBJECT_IDENTITY_ISSUE = {
   category: 'reference',
   label: 'not an object in the loaded model',
@@ -47,6 +48,7 @@ export const ISSUES = {
     category: 'shape',
     label: 'not a field of this object',
     correction: 'Use only field names the schema defines for this object.',
+    ranksKey: true,
   },
   never: {
     category: 'shape',
@@ -367,6 +369,8 @@ export const ISSUES = {
     label: string;
     correction: string;
     fallback?: string;
+    /** Allowed values rank against the key name sent instead of the value sent. */
+    ranksKey?: true;
   }
 >;
 
@@ -661,9 +665,8 @@ export function renderProblemReport(
           : '';
       if (fallback) fallbackShown = true;
       const message = `${issue.label}. ${issue.correction}${fallback ? ` ${fallback}` : ''}`;
-      // An unknown key is ranked by its name, every other issue by the value sent.
       const sent =
-        error.code === 'unknown_key'
+        'ranksKey' in issue
           ? error.path.split('.').at(-1)
           : valueAt(input, error.path);
       const allowed =

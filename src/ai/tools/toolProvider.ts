@@ -842,42 +842,45 @@ export function buildAiToolRegistry(
     session_start: () => getSession().startExplorationDraft,
     presentation_commit: () => getSession().presentResultRepairDraft,
   };
+  const objectIdCatalogs = {
+    model: ({ model }: AiSession) =>
+      model
+        ? {
+            ids: getModelNodeMap(model),
+            identifierCaseSensitive: model.identifierCaseSensitive === true,
+            cacheKey: model,
+          }
+        : undefined,
+    stored_run: (session: AiSession) =>
+      recallObjectIdCatalog({
+        uiState: session.uiState,
+        getStoredRun: host?.getStoredRun,
+        liveRun:
+          session.phase.kind === 'completed'
+            ? buildLiveRun(session.presentationArtifact)
+            : undefined,
+      }),
+  };
   const registry = new ToolRegistry<LineageToolOutput>();
   const serialize = host?.serialize ?? createEffectSerializer();
   for (const def of TOOL_DEFS) {
     const execute = dispatch[def.name];
     const draft = drafts[def.effect];
-    const withObjectIds = (schema: z.ZodType): z.ZodType => {
-      const session = getSession();
-      if (def.name === 'lineage_get_screen_state') {
-        const catalog = recallObjectIdCatalog({
-          uiState: session.uiState,
-          getStoredRun: host?.getStoredRun,
-          liveRun:
-            session.phase.kind === 'completed'
-              ? buildLiveRun(session.presentationArtifact)
-              : undefined,
-        });
-        return catalog
-          ? serveObjectIdFields(
-              schema,
-              catalog.ids,
-              catalog.identifierCaseSensitive,
-              catalog.cacheKey,
-            )
-          : schema;
-      }
-      const model = session.model;
-      if (!model) return schema;
-      return serveObjectIdFields(
-        schema,
-        getModelNodeMap(model),
-        model.identifierCaseSensitive === true,
-        model,
-      );
+    const projectInputSchema = (input: z.ZodType): z.ZodType => {
+      const schema = draft ? draft().modelSchema(input) : input;
+      const catalog =
+        objectIdCatalogs[(def as ToolContract).objectIds ?? 'model'](
+          getSession(),
+        );
+      return catalog
+        ? serveObjectIdFields(
+            schema,
+            catalog.ids,
+            catalog.identifierCaseSensitive,
+            catalog.cacheKey,
+          )
+        : schema;
     };
-    const projectInputSchema = (schema: z.ZodType) =>
-      withObjectIds(draft ? draft().modelSchema(schema) : schema);
     let group = { context: '', generation: -1, calls: 0 };
     registry.register({
       ...def,

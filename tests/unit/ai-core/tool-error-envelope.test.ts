@@ -5,6 +5,7 @@
  * table string (see rejection-render.test.ts).
  */
 import {
+  COLUMN_REFERENCE_FALLBACK,
   ISSUES,
   makeRejection,
   combineToolRejections,
@@ -97,9 +98,12 @@ describe('tool-error-envelope', () => {
   });
 
   describe('Fallback: contextual reference and typed effect, only with the third rejection', () => {
-    const fallbacks = Object.values(ISSUES).flatMap((issue) =>
-      'fallback' in issue ? [issue.fallback] : [],
-    );
+    const fallbacks = [
+      COLUMN_REFERENCE_FALLBACK,
+      ...Object.values(ISSUES).flatMap((issue) =>
+        'fallback' in issue ? [issue.fallback] : [],
+      ),
+    ];
     const hasFallback = (problem: Problem) =>
       problem.errors.some((error) =>
         fallbacks.some((fallback) => error.message.includes(fallback)),
@@ -126,8 +130,7 @@ describe('tool-error-envelope', () => {
         const third = render(rejection, 3, undefined, effect);
         const own = (ISSUES[code] as { fallback?: string }).fallback;
         expect(at(third, path)?.message).toContain(
-          own ??
-            'write that information in sections instead, highlighted with a callout naming the unresolved issue.',
+          own ?? COLUMN_REFERENCE_FALLBACK,
         );
         expect(third.resend).toContain('sections');
       }
