@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
-import { ToolDraft } from './toolDraft';
+import { ToolDraft, shape } from './toolDraft';
 import { REJECTION_CODES } from './rejectionCodes';
 import {
   at,
@@ -113,7 +113,9 @@ export function ingestToolInput<S extends z.ZodType, R>(options: {
     problem.resend = [
       ...new Set([
         ...(problem.resend ?? []),
-        ...paths.map((path) => path.split('.')[0]).filter(Boolean),
+        ...paths
+          .map((path) => path.split('.')[0])
+          .filter((root) => Object.keys(shape(schema)).includes(root)),
       ]),
     ];
     options.rejected?.(problem, view);

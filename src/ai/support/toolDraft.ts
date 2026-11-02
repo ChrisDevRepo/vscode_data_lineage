@@ -3,7 +3,10 @@ import { isDeepStrictEqual } from 'node:util';
 
 const object = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
-const shape = (schema: z.ZodType | undefined): Record<string, z.ZodType> => {
+/** Root fields of an object schema, through optional and nullable wrappers. */
+export const shape = (
+  schema: z.ZodType | undefined,
+): Record<string, z.ZodType> => {
   while (schema instanceof z.ZodOptional || schema instanceof z.ZodNullable)
     schema = schema.unwrap() as z.ZodType;
   return schema instanceof z.ZodObject
