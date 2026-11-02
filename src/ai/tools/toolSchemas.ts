@@ -709,7 +709,7 @@ export const PruneCurrentInputSchema = z
 
 const COLUMN_FLOW_DESCRIPTION =
   'SQL-proved outputs related to the arriving columns in <current_task>, with their contributing columns. ' +
-  'Reference `can_map: true` neighbors in <hop_context>, plus a procedure focus as the origin of a value it creates. [] when nothing feeds the arriving columns.';
+  'Reference `can_map: true` neighbors in <hop_context>, plus a procedure focus as the origin of a value it creates; omit an output fed only from an out-of-scope neighbor, ask that neighbor in questions and name the source in sections. [] when nothing feeds the arriving columns.';
 
 /**
  * Base flow grammar before hop-specific metadata admission; diagnostics reuse its structural
