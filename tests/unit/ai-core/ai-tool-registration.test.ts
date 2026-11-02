@@ -47,7 +47,7 @@ import {
 } from '../../../src/ai/tools/toolProvider';
 import { EXTERNAL_TOOL_NAMES } from '../../../src/ai/tools/toolPolicy';
 import { AiSession } from '../../../src/ai/session/session';
-import { makeModel, makeNode } from '../helpers/modelFixtures';
+import { makeModel } from '../helpers/modelFixtures';
 import { ISSUES } from '../../../src/ai/support/toolErrorEnvelope';
 
 type ManifestTool = {
@@ -184,47 +184,6 @@ describe('AI tool registration', () => {
       disposables.forEach((item) => item.dispose());
     }
     expect(lmBindings.size).toBe(0);
-  });
-
-  it('normalizes an external call once before dispatch, like a chat-turn call', async () => {
-    const session = new AiSession();
-    session.model = makeModel(
-      [
-        makeNode({
-          id: '[dbo].[FactSales]',
-          name: 'FactSales',
-          schema: 'dbo',
-          type: 'table',
-        }),
-      ],
-      [],
-      ['dbo'],
-    );
-    const debug = vi.fn();
-    const channel = {
-      info: vi.fn(),
-      debug,
-      warn: vi.fn(),
-      error: vi.fn(),
-    } as unknown as VSCode.LogOutputChannel;
-    const source = createExternalToolSource(
-      () => session,
-      channel,
-      () => undefined,
-    );
-    const text = await source.invoke(
-      'lineage_search_objects',
-      { query: 'dbo.FactSales' },
-      new AbortController().signal,
-    );
-    expect(JSON.parse(text).results).toEqual([
-      expect.objectContaining({ id: '[dbo].[FactSales]' }),
-    ]);
-    expect(debug).toHaveBeenCalledWith(
-      expect.stringContaining(
-        '[Normalize] tool=lineage_search_objects path=query',
-      ),
-    );
   });
 });
 

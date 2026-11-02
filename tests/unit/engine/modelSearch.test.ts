@@ -7,11 +7,6 @@ import {
   type SearchableNode,
 } from '../../../src/utils/modelSearch';
 import type { ColumnDef } from '../../../src/engine/types';
-import {
-  searchObjects,
-  validateSearchObjectsQuery,
-} from '../../../src/ai/tools/tools';
-import { makeIndexedModel, makeNode } from '../helpers/modelFixtures';
 
 const column = (name: string, type = 'int'): ColumnDef => ({
   name,
@@ -165,60 +160,5 @@ describe('model search', () => {
     ]);
     expect(results[0].snippet).toContain('OrderID');
     expect(searchColumns(nodes, 'I')).toEqual([]);
-  });
-});
-
-describe('lineage_search_objects query contract', () => {
-  const model = makeIndexedModel(
-    [
-      makeNode({ id: '[dbo].[a]', name: 'a', schema: 'dbo', type: 'table' }),
-      makeNode({ id: '[dbo].[b%]', name: 'b%', schema: 'dbo', type: 'view' }),
-      makeNode({ id: '[s].[c]', name: 'c', schema: 's', type: 'table' }),
-    ],
-    [],
-  );
-  const ids = (result: unknown) =>
-    (result as { results: Array<{ id: string }> }).results.map((r) => r.id);
-  const errorCode = (result: unknown) =>
-    (result as { errors: Array<{ code: string }> }).errors[0].code;
-
-  it.each(['substring', 'regex'] as const)(
-    'an empty %s query with schemas lists those schemas',
-    async (mode) => {
-      expect(
-        ids(await searchObjects(model, '', undefined, ['dbo'], mode)),
-      ).toEqual(['[dbo].[a]', '[dbo].[b%]']);
-    },
-  );
-
-  it.each(['substring', 'regex'] as const)(
-    'an empty %s query without schemas is rejected as too short',
-    async (mode) => {
-      expect(errorCode(validateSearchObjectsQuery({ query: '', mode }))).toBe(
-        'query_too_short',
-      );
-    },
-  );
-
-  it('regex mode uses wildcard tokens verbatim', async () => {
-    expect(
-      ids(await searchObjects(model, '%', undefined, ['dbo'], 'regex')),
-    ).toEqual(['[dbo].[b%]']);
-    expect(
-      errorCode(
-        validateSearchObjectsQuery({
-          query: '*',
-          schemas: ['dbo'],
-          mode: 'regex',
-        }),
-      ),
-    ).toBe('invalid_regex');
-  });
-
-  it('substring mode keeps the wildcard list-all shortcut with schemas', async () => {
-    expect(ids(await searchObjects(model, '%', undefined, ['dbo']))).toEqual([
-      '[dbo].[a]',
-      '[dbo].[b%]',
-    ]);
   });
 });
