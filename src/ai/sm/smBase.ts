@@ -3035,8 +3035,12 @@ export class NavigationEngine implements IHopStateMachine {
     const archivedAngles = this.memory.getArchivedAngles(currentFocusId ?? '');
     const schema = this.canonicalFindingSchema(modelBoundary);
     const admission = findingAdmissionFacts(schema);
+    // Only another string id or an explicit null unbinds the call; any other value is a plain
+    // type fault, so the other sent fields are held under the dispatched hop.
     const bound =
-      raw.focus_node_id === undefined || raw.focus_node_id === currentFocusId;
+      typeof raw.focus_node_id === 'string'
+        ? raw.focus_node_id === currentFocusId
+        : raw.focus_node_id !== null;
     const authored =
       input && typeof input === 'object' && !Array.isArray(input)
         ? {
