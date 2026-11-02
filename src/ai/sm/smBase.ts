@@ -1590,12 +1590,17 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Neighbour ids a `column_flow` mapping may name at this focus: the served
-   * `upstream_columns.node` and `out_node` enums.
+   * Neighbour ids a `column_flow` mapping may name at this focus: the served enum ids inside the
+   * approved scope (`can_map`). The enum also serves the others, so naming one is refused by the
+   * scope check as `column_out_of_scope`, not by the schema.
    */
   private mappableNeighborIds(focusId: string): Set<string> {
     return new Set(
-      this.graph.hasNode(focusId) ? this.columnSourceNodeIds(focusId) : [],
+      this.graph.hasNode(focusId)
+        ? this.columnSourceNodeIds(focusId).filter((id) =>
+            this.admitsColumnReference(id, this.nodeMap.get(id)!, focusId),
+          )
+        : [],
     );
   }
 
@@ -1637,12 +1642,7 @@ export class NavigationEngine implements IHopStateMachine {
     return [...this.columnContributorIds(focusId)]
       .filter((id) => {
         const node = this.nodeMap.get(id);
-        if (
-          !node ||
-          this.removedSet.has(id) ||
-          !this.admitsColumnReference(id, node, focusId)
-        )
-          return false;
+        if (!node || this.removedSet.has(id)) return false;
         return (
           (getNodeColumns(id, this.nodeMap, this.store ?? undefined)?.length ??
             0) > 0 ||
@@ -3298,6 +3298,14 @@ export class NavigationEngine implements IHopStateMachine {
           id: nid,
           path: paths(path),
           alternatives: ['questions', 'sections'],
+          // The served enum of this field, kept inside the approved scope.
+          allowed_values: (
+            this.hopSubmitColumns.columnSourceNodeIds ?? []
+          ).filter(
+            (id) =>
+              !(id === focusId && path.endsWith('/out_node')) &&
+              this.admitsColumnReference(id, this.nodeMap.get(id)!, focusId),
+          ),
           reason: `The object is out of scope (${outside}).`,
         });
     }
