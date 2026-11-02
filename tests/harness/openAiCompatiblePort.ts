@@ -266,10 +266,8 @@ type PortGenerationPart =
       readonly type: 'tool-call';
       readonly callId: string;
       readonly toolName: string;
-      /** Parsed object arguments; absent when the arguments were empty or no JSON object. */
-      readonly input?: Record<string, unknown>;
-      /** Content-free JSON syntax category and zero-based character offset. */
-      readonly argumentsDiagnostic?: string;
+      /** Parsed object arguments admitted by the provider-response decoder. */
+      readonly input: Record<string, unknown>;
       readonly rawArguments: string;
       /** The call's opaque `extra_content`, verbatim, when the provider sent one. */
       readonly extraContent?: Record<string, unknown>;
@@ -420,10 +418,6 @@ export class OpenAiCompatiblePort implements ModelPort {
           content.push({ type: 'text', text: part.text });
           continue;
         }
-        if (part.argumentsDiagnostic && definitionsByName.has(part.toolName))
-          this.options.debugLog?.(
-            `[AI] tool-arguments ${part.argumentsDiagnostic}`,
-          );
         const { call, replayInput } = classifyToolCall(
           emittedCall(part),
           definitionsByName,
@@ -695,8 +689,7 @@ export class OpenAiCompatiblePort implements ModelPort {
         toolCalls: toolCallParts.map((part) => ({
           callId: part.callId,
           name: part.toolName,
-          // The unusable string itself when the arguments would not parse — that IS the evidence.
-          input: part.input ?? part.rawArguments,
+          input: part.input,
         })),
         finishReason: collected.rawFinishReason,
         ...(collected.usage ? { usage: collected.usage } : {}),
@@ -987,7 +980,7 @@ interface ReadCompletion {
   readonly reasoningDetails?: readonly unknown[];
 }
 
-/** Decodes one `/chat/completions` body into ordered parts, keeping unusable arguments as evidence.
+/** Decodes one `/chat/completions` body into representable ordered native parts.
  */
 function readCompletion(body: unknown): ReadCompletion {
   const root = asRecord(body);
@@ -1078,14 +1071,22 @@ function toolCallPart(
   args: unknown,
   extraContent?: Record<string, unknown>,
 ): PortGenerationPart {
-  const rawArguments = typeof args === 'string' ? args : '';
+  if (typeof args !== 'string') {
+    throw new ModelPortError(
+      'unsupported_response',
+      'Provider tool call arguments were not a string.',
+      undefined,
+      true,
+    );
+  }
+  const rawArguments = args;
   return {
     type: 'tool-call',
     callId,
     toolName,
     rawArguments,
     ...(extraContent ? { extraContent } : {}),
-    ...parseArguments(rawArguments),
+    input: parseArguments(rawArguments),
   };
 }
 
@@ -1238,46 +1239,29 @@ function responsesToolChoice(choice: unknown): unknown {
   return typeof named === 'string' ? { type: 'function', name: named } : choice;
 }
 
-function parseArguments(
-  serialized: string,
-):
-  | { readonly input: Record<string, unknown> }
-  | { readonly argumentsDiagnostic?: string } {
-  if (!serialized.trim()) return {};
+/** Decodes the native HTTP tool-call envelope; field admission belongs to the shared normalizer. */
+function parseArguments(serialized: string): Record<string, unknown> {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(serialized);
-  } catch (error) {
-    // Parser messages may quote input; expose only a fixed category and numeric offset.
-    const message = error instanceof Error ? error.message : '';
-    const positionText = /\bposition (\d+)\b/.exec(message)?.[1];
-    const position =
-      positionText === undefined
-        ? /end of JSON input/i.test(message)
-          ? serialized.length
-          : undefined
-        : Number(positionText);
-    const offset =
-      position !== undefined &&
-      Number.isSafeInteger(position) &&
-      position >= 0 &&
-      position <= serialized.length
-        ? position
-        : undefined;
-    const category =
-      offset === serialized.length
-        ? 'incomplete value'
-        : offset !== undefined &&
-            /[}\]]/.test(serialized[offset] ?? '') &&
-            /,\s*$/.test(serialized.slice(0, offset))
-          ? 'trailing comma'
-          : 'invalid encoding';
-    return {
-      argumentsDiagnostic: `Invalid JSON syntax: ${category}${offset === undefined ? '' : ` at character ${offset}`}.`,
-    };
+    // The native test provider treats an empty arguments string as an empty object.
+    parsed = JSON.parse(serialized || '{}');
+  } catch {
+    throw new ModelPortError(
+      'unsupported_response',
+      'Provider tool call arguments contained invalid JSON.',
+      undefined,
+      true,
+    );
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-  return { input: parsed as Record<string, unknown> };
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new ModelPortError(
+      'unsupported_response',
+      'Provider tool call arguments were not a JSON object.',
+      undefined,
+      true,
+    );
+  }
+  return parsed as Record<string, unknown>;
 }
 
 /** Reads `message.content`, tolerating the array form some servers return. */
@@ -1337,9 +1321,7 @@ function emittedCall(
   part: Extract<PortGenerationPart, { type: 'tool-call' }>,
 ): EmittedToolCall {
   const { callId, toolName } = part;
-  return part.input
-    ? { callId, toolName, args: part.input }
-    : { callId, toolName, malformedArgs: part.rawArguments };
+  return { callId, toolName, args: part.input };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
