@@ -30,13 +30,14 @@ Package with `npm run package` and inspect the VSIX before install. Data boundar
 
 ## How to change code
 
-- Change the layer that owns the contract. Engine, chat runtime, and webview stay separated as above.
-- Validate untrusted input at the boundary with the existing schema. Leave invalid model input rejected.
-- Follow strict TypeScript and the layering above.
+- **Goals:** fix bugs, keep the code secure and stable, simplify, and reduce the code over time. Grow the line count only for one of these, prefer deleting or merging to adding, and keep every feature.
+- **Follow the defined design:** the layering and boundaries above and in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), the prompt, schema and template owners in [`docs/AI_PROMPTS.md`](docs/AI_PROMPTS.md), and strict TypeScript. Change the component that owns the contract.
+- **No hacks:** no workaround, special case, new guard, extra retry or second validator, and no bypass of the architecture. Add a missing capability to the component that owns it.
+- **The backend checks and stores:** it validates what the model sends and records it. It never interprets, repairs, completes or drops model content, and adds nothing the model did not send.
+- **Standard messaging middleware:** tool calls and webview messages are schema-checked at the boundary. An invalid tool call is rejected through the one rejection path (`renderProblem` in `src/ai/support/toolErrorEnvelope.ts`) with a specific correction for the model to resend; invalid model input stays rejected.
 - Leave `package.json` and the lockfile versions unchanged unless the user asks.
 - `CHANGELOG.md` is the release record: keep shipped sections unchanged and list user-visible changes under the version in `package.json`.
-- Add a permanent test only for parsing, lineage, an AI middleware contract, or a security boundary. Use the AdventureWorks demo or synthetic SQL. Leave customer database content out of the repository.
-- Keep the repository small: prefer deleting or merging to adding. Grow the line count only for stability, a bug fix, security, or simplicity, and keep one test per contract rule instead of variants of it.
+- Add a permanent test only for parsing, lineage, an AI middleware contract, or a security boundary, one test per contract rule. Use the AdventureWorks demo or synthetic SQL. Leave customer database content out of the repository.
 - When you change behavior that a markdown file describes, update that file so it stays true.
 - Leave credentials, customer database content, raw conversations, and generated run output out of tracked files.
 
