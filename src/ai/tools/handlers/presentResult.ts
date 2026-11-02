@@ -540,10 +540,6 @@ export async function executePresentResult(
                 repairFields: [repairField],
                 paths: [path],
               });
-            for (const entry of expanded.normalized)
-              s.logger.debug(
-                `presentResult normalization: evidence reference ${entry} — ${path}`,
-              );
             expandedTexts.set(path, expanded.text);
           }
           const coverage = evidenceCoverage(evidenceBlocks, [

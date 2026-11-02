@@ -364,11 +364,6 @@ interface FenceExtent {
   readonly from: number;
   /** End of the fence, or just past the `)` that wraps it. */
   readonly to: number;
-  /**
-   * Nothing but the container prefix precedes `from` and nothing but whitespace follows `to` on the
-   * line.
-   */
-  readonly ownLine: boolean;
 }
 
 /**
@@ -386,27 +381,7 @@ function fenceExtent(text: string, fence: LocatedSqlFence): FenceExtent {
   const wrapped = open !== null && close !== null;
   const from = wrapped ? fence.start - open[0].length : fence.start;
   const to = wrapped ? fence.end + close[0].length : fence.end;
-  return {
-    lineStart,
-    lineEnd,
-    from,
-    to,
-    ownLine:
-      text.slice(lineStart, from) === fence.container &&
-      text.slice(to, lineEnd).trim() === '',
-  };
-}
-
-/**
- * The span of the whole lines a fence occupies — container prefix and one newline included — when
- * nothing else shares them; otherwise the fence alone, with a wrapping `( )` pair.
- */
-function fenceLineSpan(text: string, fence: LocatedSqlFence): [number, number] {
-  const { lineStart, lineEnd, from, to, ownLine } = fenceExtent(text, fence);
-  if (!ownLine) return [from, to];
-  return lineEnd === text.length
-    ? [Math.max(0, lineStart - 1), text.length]
-    : [lineStart, lineEnd + 1];
+  return { lineStart, lineEnd, from, to };
 }
 
 /**
@@ -468,7 +443,8 @@ function placeFenceBlock(
 /**
  * Expands evidence references in one rendered text field: a ```sql fence whose info string
  * ends in a served id (```` ```sql S7 ```` closed with no body, or
- * the one-line ```` ```sql S7``` ````) is replaced by the captured block.
+ * the one-line ```` ```sql S7``` ````) is replaced by the captured block. A fence that carries its
+ * own SQL stays as written, id included.
  */
 export function expandEvidenceRefs(
   text: string,
@@ -476,7 +452,6 @@ export function expandEvidenceRefs(
 ): {
   text: string;
   unknownIds: string[];
-  normalized: string[];
   malformedRefs: string[];
 } {
   const fences = [...locateSqlFences(text)];
@@ -492,66 +467,30 @@ export function expandEvidenceRefs(
         EVIDENCE_ID_INFO.exec(marker[1])?.[1] ?? 'unlabelled SQL',
       );
   }
-  const shown = new Set(
-    fences
-      .filter((fence) => fence.lines.length > 0)
-      .map((fence) => fenceBodyKey(fence.lines)),
-  );
   const unknownIds: string[] = [];
-  const normalized: string[] = [];
   let out = '';
   let cursor = 0;
   for (const fence of fences) {
     const id = EVIDENCE_ID_INFO.exec(fence.info)?.[1];
-    if (!id) continue;
+    if (!id || fence.lines.length > 0) continue;
     const block = blocks.get(id);
-    if (fence.lines.length > 0) {
-      const info = fence.info.slice(0, fence.info.lastIndexOf(id)).trimEnd();
-      const extent = fenceExtent(text, fence);
-      if (extent.ownLine) {
-        const infoStart = fence.start + '```sql'.length;
-        out += text.slice(cursor, infoStart) + info;
-        cursor = infoStart + fence.info.length;
-      } else {
-        const placed = placeFenceBlock(text, cursor, fence, extent, [
-          `\`\`\`sql${info}`,
-          ...fence.lines,
-          '```',
-        ]);
-        out += placed.out;
-        cursor = placed.cursor;
-      }
-      normalized.push(`${id} dropped from a fence that carries its own SQL`);
-    } else if (!block) {
+    if (!block) {
       unknownIds.push(id);
-    } else {
-      const blockLines = block.raw.split('\n');
-      const key = fenceBodyKey(blockLines.slice(1, -1));
-      if (shown.has(key)) {
-        const [from, to] = fenceLineSpan(text, fence);
-        out += text.slice(cursor, Math.max(cursor, from));
-        cursor = to;
-        normalized.push(
-          `${id} not rendered — the section already shows that SQL`,
-        );
-        continue;
-      }
-      shown.add(key);
-      const placed = placeFenceBlock(
-        text,
-        cursor,
-        fence,
-        fenceExtent(text, fence),
-        blockLines,
-      );
-      out += placed.out;
-      cursor = placed.cursor;
+      continue;
     }
+    const placed = placeFenceBlock(
+      text,
+      cursor,
+      fence,
+      fenceExtent(text, fence),
+      block.raw.split('\n'),
+    );
+    out += placed.out;
+    cursor = placed.cursor;
   }
   return {
     text: out + text.slice(cursor),
     unknownIds,
-    normalized,
     malformedRefs,
   };
 }
