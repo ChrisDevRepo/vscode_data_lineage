@@ -709,8 +709,6 @@ export function prepareScopeBundle(
       ...admission.detail,
       scope_proposal: {
         origin: originNode.id,
-        direction,
-        depth: singleDepth,
         upstream_depth: upstreamDepth,
         downstream_depth: downstreamDepth,
       },

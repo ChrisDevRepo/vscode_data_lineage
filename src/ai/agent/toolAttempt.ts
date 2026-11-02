@@ -47,6 +47,7 @@ import { InternalInvariantError } from '../support/internalInvariant';
 import { isCancellationOutcome } from '../support/cancellation';
 import { safeIdentifier } from '../support/logIdentifier';
 import type { ToolControlSignal } from '../session/sessionPhase';
+import type { ScopeProposal } from './discoveryCapture';
 
 /**
  * The stored stand-in for an accepted result that does not fit the evidence share: a "too big"
@@ -199,6 +200,8 @@ export interface ToolAttemptResult {
   readonly text: string;
   /** The user's refusal text when a successful call ended the request at admission. */
   readonly refusal?: string;
+  /** The scope proposal of the call that rerouted this attempt. */
+  readonly reroute?: ScopeProposal;
   readonly error?: string;
   /** Secret-sanitized diagnostic retained for tracing and logs. */
   readonly providerError?: ProviderErrorDiagnostic;
@@ -223,7 +226,10 @@ interface ToolGenerationAttemptInput {
    */
   readonly takeControlSignal?: () => ToolControlSignal | null;
   /** Recognizes a successful registry result that changes graph route. */
-  readonly detectReroute?: (toolName: string, resultText: string) => boolean;
+  readonly detectReroute?: (
+    toolName: string,
+    resultText: string,
+  ) => ScopeProposal | null;
   readonly isPhaseComplete?: () => boolean;
   readonly toolChoice?: ModelToolChoice;
   /** Tool whose successful dispatch closes the phase batch. */
@@ -928,7 +934,8 @@ interface ToolCallDispatchLoopResult {
    */
   readonly toolMessages: ModelMessage[];
   readonly gate: boolean;
-  readonly reroute: boolean;
+  /** The scope proposal of the call that rerouted the batch. */
+  readonly reroute: ScopeProposal | null;
   readonly refusal: string | null;
   readonly phaseComplete: boolean;
   readonly cancelled: boolean;
@@ -953,7 +960,7 @@ async function dispatchToolCallBatch(
   const rejections: ToolAttemptRejection[] = [];
   const toolMessages: ModelMessage[] = [];
   let gate = false;
-  let reroute = false;
+  let reroute: ScopeProposal | null = null;
   let refusal: string | null = null;
   let phaseComplete = false;
   let cancelled = false;
@@ -1194,10 +1201,10 @@ async function dispatchToolCallBatch(
     const signal = input.takeControlSignal?.() ?? null;
     const detectedGate = signal?.kind === 'gate';
     const detectedReroute =
-      input.detectReroute?.(call.toolName, resultText) ?? false;
+      input.detectReroute?.(call.toolName, resultText) ?? null;
     const detectedRefusal = signal?.kind === 'refused' ? signal.reason : null;
     const controlSuccess =
-      detectedGate || detectedReroute || detectedRefusal !== null;
+      detectedGate || detectedReroute !== null || detectedRefusal !== null;
     const resultRejection = controlSuccess
       ? null
       : rejectionFromResult(resultText);
@@ -1306,7 +1313,7 @@ async function dispatchToolCallBatch(
         call,
         detectedGate
           ? 'gate'
-          : detectedReroute
+          : detectedReroute !== null
             ? 'reroute'
             : detectedRefusal !== null || refused
               ? 'refused'
@@ -1317,7 +1324,7 @@ async function dispatchToolCallBatch(
     }
 
     if (detectedGate) gate = true;
-    if (detectedReroute) reroute = true;
+    if (detectedReroute !== null) reroute = detectedReroute;
     if (detectedRefusal !== null) refusal = detectedRefusal;
     if (terminalSuccess) phaseComplete = true;
     if (!isError && (controlSuccess || terminalSuccess)) {
@@ -1489,7 +1496,7 @@ async function executeToolGenerationAttempt(
       ? 'gate'
       : refusal !== null
         ? 'refused'
-        : reroute
+        : reroute !== null
           ? 'reroute'
           : phaseComplete
             ? 'phase_complete'
@@ -1508,5 +1515,6 @@ async function executeToolGenerationAttempt(
     messages,
     text: generated.text,
     ...(refusal !== null ? { refusal } : {}),
+    ...(reroute !== null ? { reroute } : {}),
   };
 }

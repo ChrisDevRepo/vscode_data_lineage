@@ -123,6 +123,17 @@ export function buildGateRefineSystemPrompt(ctx: StagePromptContext): string {
   return [base, directive].join('\n\n');
 }
 
+/** Builds the user message that hands an over-budget discovery scope to the SM-entry turn. */
+export function buildScopeProposalPrompt(
+  proposal: Record<string, unknown>,
+): string {
+  return [
+    'This scope is over the discovery budget, so a chat answer cannot cover it; the user is offered a hop-by-hop exploration of it instead.',
+    `<scope_proposal>${escapePromptText(JSON.stringify(proposal))}</scope_proposal>`,
+    'Propose this scope with `lineage_start_exploration`: its origin is a resolved id, so use it as `origin` without searching for it, and its depths as the starting depth, approximate unless the user stated them.',
+  ].join('\n');
+}
+
 /** Builds the revision-bound user message used only to revise an interrupted approval proposal. */
 export function buildGateRefinePrompt(
   scopeSummaryMd: string,

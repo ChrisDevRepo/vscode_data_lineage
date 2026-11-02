@@ -20,15 +20,19 @@ const OBJECT_DETAIL_TOOL = 'lineage_get_object_detail';
 /** The one tool whose over-budget rejection means "this scope is too large to answer inline". */
 const SCOPE_BUNDLE_TOOL = 'lineage_get_scope_bundle';
 
+const ScopeProposalView = z
+  .object({ origin: z.string().trim().min(1) })
+  .loose();
+
+/** The scope an over-budget scope bundle proposes, as the tool returned it. */
+export type ScopeProposal = z.infer<typeof ScopeProposalView>;
+
 const NodeCountsView = z.object({ nodes: z.number() }).loose();
 
 const BudgetDetailView = z
   .object({
     counts: NodeCountsView.optional(),
-    scope_proposal: z
-      .object({ origin: z.string().trim().min(1) })
-      .loose()
-      .optional(),
+    scope_proposal: ScopeProposalView.optional(),
   })
   .loose();
 
@@ -78,17 +82,27 @@ export function captureDiscoveryWalkFromObservations(
   return { walkCount: distinct.size, origin: inspected[0], answer };
 }
 
-/** Whether one tool result means "this scope is too large to answer inline — reroute to SM". */
+/**
+ * The scope proposal of an over-budget `lineage_get_scope_bundle` result, which reroutes the turn
+ * to SM entry; null for every other result.
+ */
 export function detectOverBudgetFromResult(
   toolName: string,
   resultText: string,
-): boolean {
-  if (toolName !== SCOPE_BUNDLE_TOOL) return false;
+): ScopeProposal | null {
+  if (toolName !== SCOPE_BUNDLE_TOOL) return null;
+  let raw: unknown;
   try {
-    return OverBudgetResultView.safeParse(JSON.parse(resultText)).success;
+    raw = JSON.parse(resultText);
   } catch {
-    return false;
+    return null;
   }
+  const view = OverBudgetResultView.safeParse(raw);
+  if (!view.success) return null;
+  return (
+    view.data.detail?.find((detail) => detail.scope_proposal)?.scope_proposal ??
+    null
+  );
 }
 
 /**

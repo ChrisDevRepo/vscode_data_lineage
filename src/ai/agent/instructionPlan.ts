@@ -18,6 +18,7 @@ import {
 import { getAllowedLmToolNames, type ChatLmStage } from '../tools/toolPolicy';
 import { presentResultSchemaForPhase } from '../tools/toolSchemas';
 import type { ToolControlSignal } from '../session/sessionPhase';
+import type { ScopeProposal } from './discoveryCapture';
 
 /** Model-call phase labels emitted by the production LangGraph runtime. */
 export type InstructionPhase =
@@ -111,7 +112,10 @@ interface ConversePlanInput {
   readonly signal?: AbortSignal;
   readonly takeControlSignal?: () => ToolControlSignal | null;
   readonly isPhaseComplete?: () => boolean;
-  readonly detectReroute?: (toolName: string, resultText: string) => boolean;
+  readonly detectReroute?: (
+    toolName: string,
+    resultText: string,
+  ) => ScopeProposal | null;
   readonly toolChoice?: ModelToolChoice;
   readonly requiredTerminalTool?: string;
   readonly onToolResult?: (

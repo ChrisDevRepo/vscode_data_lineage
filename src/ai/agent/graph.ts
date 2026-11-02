@@ -32,6 +32,7 @@ import {
   buildGateRefinePrompt,
   buildGateRefineSystemPrompt,
   buildHostStageSystemPrompt,
+  buildScopeProposalPrompt,
   buildSmEntrySystemPrompt,
   buildVisualPreviewSystemPrompt,
   deriveStagePromptContext,
@@ -59,6 +60,7 @@ import { selectInitialAgentStage } from './entryRouting';
 import {
   captureDiscoveryWalkFromObservations,
   detectOverBudgetFromResult,
+  type ScopeProposal,
   queueDiscoveryBudgetNotice,
 } from './discoveryCapture';
 import {
@@ -1038,12 +1040,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (res.stop === 'gate') {
       return { toolAttempt: null, phase: 'gate' };
     }
-    if (res.stop === 'reroute')
-      return {
-        executionTrigger: 'discovery_budget',
-        toolAttempt: null,
-        phase: 'sm_entry',
-      };
+    if (res.reroute) return rerouteToSmEntry(res.reroute);
     if (res.stop === 'continue')
       return { toolAttempt: nextAttempt, phase: 'discover' };
     if (res.stop !== 'final')
@@ -1180,6 +1177,14 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       phase: 'done',
     };
   };
+
+  /** Hands an over-budget discovery scope to SM entry, which proposes it at the consent gate. */
+  const rerouteToSmEntry = (proposal: ScopeProposal): AgentStateUpdate => ({
+    executionTrigger: 'discovery_budget',
+    messages: [modelUserMessage(buildScopeProposalPrompt(proposal))],
+    toolAttempt: null,
+    phase: 'sm_entry',
+  });
 
   const smEntryNode = async (
     state: AgentStateType,
@@ -1908,12 +1913,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     sess.bufferFollowUpProse(res.text);
     if (res.stop === 'gate') return { toolAttempt: null, phase: 'gate' };
     if (res.stop === 'refused') return refusedTerminal(res.refusal);
-    if (res.stop === 'reroute')
-      return {
-        executionTrigger: 'discovery_budget',
-        toolAttempt: null,
-        phase: 'sm_entry',
-      };
+    if (res.reroute) return rerouteToSmEntry(res.reroute);
     if (res.stop === 'continue')
       return { toolAttempt: nextAttempt, phase: 'follow_up' };
     if (res.stop !== 'final' && res.stop !== 'phase_complete') {
