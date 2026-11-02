@@ -632,8 +632,8 @@ const ColumnRefSchema = z
       .describe(
         'Classify this source column’s own role end to end: a column that reaches out_col only as a join, filter, grouping, partition or ordering key keeps only those roles, even inside an expression; omit when SQL does not determine it. ' +
           'pass_through: unchanged value. compute: expression input. aggregate: value summarised by an aggregate. ' +
-          'combine: join, grouping, partition or ordering key. filter: predicate ' +
-          'selecting contributing, updated or deleted rows. Grouping, partition and ordering keys are not aggregate value inputs; ' +
+          'combine: join, grouping, partition or ordering key. filter: predicate selecting contributing, ' +
+          'updated or deleted rows, or a CASE condition choosing the value’s branch. Grouping, partition and ordering keys are not aggregate value inputs; ' +
           'display-only sorting contributes no role.',
       ),
     note: z
