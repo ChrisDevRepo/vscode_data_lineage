@@ -53,8 +53,8 @@ export class ToolDraft<T extends object> {
 
   /**
    * Serves exactly what {@link apply} composes: complete held root fields may be omitted, and a
-   * held object accepts a patch whose every leaf is a named fault. Everything else keeps its
-   * canonical schema.
+   * held object accepts a patch whose every leaf is a named fault. A complete held field is served
+   * without its bare "Required." presence prefix. Everything else keeps its canonical schema.
    */
   public modelSchema<S extends z.ZodType>(schema: S): S {
     if (!this.value || Object.keys(this.value).length === 0) return schema;
@@ -132,7 +132,20 @@ export class ToolDraft<T extends object> {
         properties: Object.fromEntries(
           Object.entries(owned).map(([key, field]) => {
             const named = patch(field, held[key], key);
-            return [key, named ? { anyOf: [field, named] } : field];
+            // Shared descriptions mark bare presence with a leading "Required. "; a held field is
+            // not required on this card, so only that prefix is dropped and the rest stays.
+            const served =
+              complete(field, held[key]) &&
+              typeof field.description === 'string'
+                ? {
+                    ...field,
+                    description: field.description.replace(
+                      /^Required\.\s+/,
+                      '',
+                    ),
+                  }
+                : field;
+            return [key, named ? { anyOf: [served, named] } : served];
           }),
         ),
       },
