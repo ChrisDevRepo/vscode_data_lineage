@@ -425,7 +425,8 @@ export function isConsentGateRejection(code: string): boolean {
 
 /**
  * Whether a rejection-shaped result is an admission refusal: the request ends with the reason shown
- * to the user, so it is a control outcome like a consent gate, not a correction the model owes.
+ * to the user or reroutes to exploration entry, so it is a control outcome like a consent gate, not
+ * a correction the model owes.
  */
 export function isAdmissionRefusal(code: string): boolean {
   return code === REJECTION_CODES.overActiveScopeBudget;

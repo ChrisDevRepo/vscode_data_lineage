@@ -11,8 +11,9 @@ export const REJECTION_CODES = {
    */
   actionRequired: 'action_required',
   /**
-   * A proposal or scope change exceeded `ai.maxRounds` or `ai.maxTraceColumns` at admission; no
-   * approval card is opened.
+   * A proposal or scope change exceeded `ai.maxRounds` or `ai.maxTraceColumns` at admission, and no
+   * approval card is opened; or a scope bundle exceeded the discovery budget, and the turn reroutes
+   * to exploration entry.
    */
   overActiveScopeBudget: 'over_active_scope_budget',
   /**

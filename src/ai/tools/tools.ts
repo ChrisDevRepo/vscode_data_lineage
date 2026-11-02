@@ -705,6 +705,7 @@ export function prepareScopeBundle(
     admission: DiscoveryBudgetRejection,
   ): ToolRejection => ({
     ...admission,
+    code: REJECTION_CODES.overActiveScopeBudget,
     detail: {
       ...admission.detail,
       scope_proposal: {
