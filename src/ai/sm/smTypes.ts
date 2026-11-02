@@ -178,10 +178,6 @@ export interface HopContext {
   /** Implementation-specific state carried across hops. */
   working_memory?: unknown;
   /**
-   * Metadata of storage objects traversed before this SQL hop, without inferred column mappings.
-   */
-  storage_context?: ReadonlyArray<Record<string, unknown>>;
-  /**
    * Canonical mission statement, AI-composed at discovery and delivered verbatim every hop;
    * survives sliding-memory wipes.
    */

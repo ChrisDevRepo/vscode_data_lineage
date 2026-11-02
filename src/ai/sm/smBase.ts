@@ -2578,7 +2578,6 @@ export class NavigationEngine implements IHopStateMachine {
       agenda_remaining: this._agenda.length,
       focus_node: focusNode,
       ...this.scalarReturnContext(),
-      storage_context: this.currentStorageContext,
       neighbors: this.buildNeighborList(entry.nodeId),
       working_memory: workingMemory,
     };
@@ -2674,7 +2673,6 @@ export class NavigationEngine implements IHopStateMachine {
       agenda_remaining: this._agenda.length,
       focus_node: focusNode,
       ...this.scalarReturnContext(),
-      storage_context: this.currentStorageContext,
       neighbors: this.buildNeighborList(focusId),
       current_task:
         this.currentFocusQuestion ?? this._lastCurrentTask ?? undefined,
@@ -2751,40 +2749,6 @@ export class NavigationEngine implements IHopStateMachine {
     )
       return undefined;
     return tasks[0]!.passthroughFromNodeId;
-  }
-
-  /**
-   * Available storage definitions on this route, retained as metadata without inventing loading SQL
-   * or column edges.
-   */
-  public get currentStorageContext(): ReadonlyArray<Record<string, unknown>> {
-    const ids = new Set(
-      this.getCurrentTasks().flatMap((task) => [
-        ...(task.passthroughFromNodeId ? [task.passthroughFromNodeId] : []),
-        ...(this.qualifiedTaskRefs(task) ?? []).map((ref) => ref.node),
-      ]),
-    );
-    return [...ids].flatMap((id) => {
-      const node = this.nodeMap.get(id);
-      if (!node || SCRIPT_TYPES.has(node.type)) return [];
-      const ddl = getNodeDdl(id, this.nodeMap, this.store ?? undefined);
-      return [
-        {
-          ...buildHopFocusNode(
-            node,
-            this.nodeMap,
-            buildUnrelatedMap(this.model),
-            this.store ?? undefined,
-            this.model.neighborIndex,
-            this.edgeTypeMap,
-            this.identifierCaseSensitive,
-          ),
-          columns:
-            getNodeColumns(id, this.nodeMap, this.store ?? undefined) ?? [],
-          ...(ddl ? { ddl } : {}),
-        },
-      ];
-    });
   }
 
   /**

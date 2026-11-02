@@ -114,7 +114,7 @@ function buildDiscoveryPrompt(): string {
 function buildActivePhasePrompt(analysisMode: 'bb' | 'ct'): string {
   return [
     '# Active hop',
-    "This hop reads one SQL object, `focus_node` in `<hop_context>`, against `<current_task>`. Read its `ddl`, where present, the way a reviewer reads code. Neighbors carry no SQL; a question about a neighbor's logic belongs to its own hop. `<short_term_memory>` is context from earlier hops, not evidence for this one. `storage_context` carries related table metadata and stored DDL, not loading SQL.",
+    "This hop reads one SQL object, `focus_node` in `<hop_context>`, against `<current_task>`. Read its `ddl`, where present, the way a reviewer reads code. Neighbors carry no SQL; a question about a neighbor's logic belongs to its own hop. `<short_term_memory>` is context from earlier hops, not evidence for this one.",
     "Answer each `<sub_question>` from the focus's own evidence in its corresponding section, or state that this hop cannot answer it.",
     'Ground claims in supplied evidence: do not infer execution counts, uniqueness, validity policy or business obligations without evidence; check numeric limits against declared precision and scale.',
     '',
