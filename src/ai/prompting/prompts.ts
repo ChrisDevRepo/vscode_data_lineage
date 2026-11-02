@@ -571,7 +571,7 @@ export function buildCurrentTaskBlock(
     lines.push(
       `  <column_trace>`,
       `    Active columns: [${columnTraceColumns.map(escapePromptText).join(', ')}]`,
-      `    These are the incoming column tasks. Record their real contributors and resolved outputs in \`column_flow\`, including downstream renames proved by the SQL; keep unrelated column analysis in \`sections\`.`,
+      `    These are the incoming column tasks. Record their real contributors and resolved outputs in \`column_flow\`, including downstream renames proved by the SQL and other output columns the question names that a contributor feeds; keep unrelated column analysis in \`sections\`.`,
       `  </column_trace>`,
     );
   }
