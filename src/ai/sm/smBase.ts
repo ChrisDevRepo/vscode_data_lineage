@@ -158,8 +158,6 @@ export interface HopNeighborDisclosure extends HopNeighbor {
    * outside both closures of the origin. Never visited; a prune on it is a no-op.
    */
   out_of_direction?: boolean;
-  /** An open target can receive an in-scope subquestion or an out-of-scope deferred proposal. */
-  can_question: boolean;
   /** A queued, visited, removed or protected target cannot be neighbor-pruned. */
   can_prune: boolean;
   /** A `column_flow` mapping may name this neighbour (CT hops only). */
@@ -5138,7 +5136,7 @@ export class NavigationEngine implements IHopStateMachine {
       this.currentHopAnalysisMode === 'ct'
         ? this.mappableNeighborIds(focusId)
         : null;
-    return this.neighborChoices(focusId).map(({ id: nid, ...capabilities }) => {
+    return this.neighborChoices(focusId).map(({ id: nid, can_prune }) => {
       const n = this.nodeMap.get(nid)!;
       const boundary = this.visited.has(nid) ? 'cycle' : 'none';
       const edgeDirection = inSet.has(nid) ? 'upstream' : 'downstream';
@@ -5168,7 +5166,7 @@ export class NavigationEngine implements IHopStateMachine {
         edge_type: edgeVerb.get(nid) ?? 'read',
         boundary,
         ...(cols?.length ? { cols } : {}),
-        ...capabilities,
+        can_prune,
         ...(mappable ? { can_map: mappable.has(nid) } : {}),
         ...(this.isCarrierInto(nid, focusId) ? { prune_protected: true } : {}),
         ...(this.visited.has(nid) ? { already_visited: true } : {}),
@@ -5196,7 +5194,7 @@ export class NavigationEngine implements IHopStateMachine {
    */
   private neighborChoices(
     focusId: string,
-  ): Array<Pick<HopNeighborDisclosure, 'id' | 'can_question' | 'can_prune'>> {
+  ): NonNullable<SubmitFindingsHopColumns['neighbors']> {
     const ids = this.graph.hasNode(focusId)
       ? this.graph.neighbors(focusId)
       : [];

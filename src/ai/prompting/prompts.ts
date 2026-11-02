@@ -124,7 +124,7 @@ function buildActivePhasePrompt(analysisMode: 'bb' | 'ct'): string {
         : ''),
     'After a rejection, saved content stays held; resend the requested fields; a resent field replaces its held value.',
     'Neighbor decisions in `prune_neighbors` and `questions`, as their fields describe.',
-    'Flags on `neighbors[]` are committed: `already_visited` and `already_removed` neighbors take no decision; neighbors with `can_prune: false` are not pruned. `can_question` never widens scope.',
+    'Flags on `neighbors[]` are committed: `already_visited` and `already_removed` neighbors take no decision; neighbors with `can_prune: false` are not pruned.',
   ].join('\n');
 }
 
