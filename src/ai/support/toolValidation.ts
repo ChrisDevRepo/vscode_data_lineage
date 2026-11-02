@@ -355,8 +355,16 @@ function rejection(
         values: string[] | undefined;
       if (parentSchema?.toolIssue && parentSchema.toolIssue in ISSUES)
         code = parentSchema.toolIssue as IssueCode;
-      else if (keyword === 'required') code = 'missing';
-      else if (keyword === 'additionalProperties') {
+      else if (keyword === 'required') {
+        code = 'missing';
+        // A missing closed-set field lists its served values at once.
+        const field = parentSchema?.properties?.[params.missingProperty];
+        values = Array.isArray(field?.enum)
+          ? field.enum.map(String)
+          : field && 'const' in field
+            ? [String(field.const)]
+            : undefined;
+      } else if (keyword === 'additionalProperties') {
         code = 'unknown_key';
         values = Object.keys(parentSchema?.properties ?? {});
       } else if (keyword === 'type') {
