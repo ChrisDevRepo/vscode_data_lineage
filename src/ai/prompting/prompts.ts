@@ -184,7 +184,7 @@ export function buildDiscoveryFinalAnswerTask(): string {
 function buildSynthesisPrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
   const isCt = analysisMode === 'ct';
   const evidence =
-    "Evidence, in the last tool result: `detail_slots[]` — what each analyzed node does; `node_states[]` — each node's action and why; `synthesis_reminder` — engine facts: flow roles, edge direction, kept nodes without a detail slot and captured formulas" +
+    "Evidence, in `<synthesis_envelope>`: `detail_slots[]` — what each analyzed node does; `node_states[]` — each node's action and why; `synthesis_reminder` — engine facts: flow roles, edge direction, kept nodes without a detail slot and captured formulas" +
     (isCt ? ', plus the Column Trace Chain.' : '.');
   return [
     '## Task: write the report beside the graph',
