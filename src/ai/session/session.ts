@@ -849,6 +849,9 @@ export class AiSession {
     const priorMemory = this.memory.toJSON();
     try {
       built.publishMemoryTo(this.memory);
+      // A new exploration replaces any earlier result; it never extends it.
+      this.resultGraph = null;
+      this.resetPresentResultLifecycle();
       this.stateMachine = built;
       this.explorationCounter += 1;
       this.explorationRunId = `${this.id}:e${this.explorationCounter}`;
@@ -966,22 +969,13 @@ export class AiSession {
       ? 'column_trace'
       : 'blackboard';
 
-    const prior = this.resultGraph;
     this.resultGraph = {
       nodeIds: fullResult.fullNodes.map((n) => n.id),
       evidenceNodeIds: fullResult.fullNodes.map((n) => n.id),
       edges: fullResult.edges,
       source: sourceMode,
       originNodeId: fullResult.originNodeId,
-      notes: prior?.notes,
       node_states: fullResult.node_states,
-      description: prior?.description,
-      summary: prior?.summary,
-      title: prior?.title,
-      intro: prior?.intro,
-      closing: prior?.closing,
-      sections: prior?.sections,
-      sectionsRunId: prior?.sectionsRunId,
       ...(fullResult.columnAspect
         ? {
             columnAspect: {
