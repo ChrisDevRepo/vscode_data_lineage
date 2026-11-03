@@ -542,6 +542,19 @@ export const GATE_CARD_HEADER = '\n\n---\n**Confirm exploration**\n\n';
 export const HOLD_GATE_NOTICE =
   '\n\nApprove, change or cancel with the buttons below, or reply here.';
 
+/** Card line while a completed analysis is shown: approving replaces it (fresh exploration). */
+export const REPLACE_ANALYSIS_NOTICE =
+  '\n\nThis question goes beyond the current analysis. Approving starts a new one and clears the current preview and its findings.';
+
+/** The pending approval card as the chat shows it, ahead of its buttons. */
+export function gateCardMd(
+  proposal: Parameters<typeof renderScopeCardMd>[0],
+  replacesAnalysis: boolean,
+): string {
+  const notice = replacesAnalysis ? REPLACE_ANALYSIS_NOTICE : '';
+  return `${GATE_CARD_HEADER}${renderScopeCardMd(proposal)}${notice}${HOLD_GATE_NOTICE}\n\n`;
+}
+
 /**
  * Chat line for a typed gate reply whose reading failed: no action is taken on the user's behalf.
  */

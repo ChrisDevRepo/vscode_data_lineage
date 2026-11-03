@@ -13,6 +13,7 @@ import {
 import {
   GATE_CARD_HEADER,
   HOLD_GATE_NOTICE,
+  REPLACE_ANALYSIS_NOTICE,
   UNREAD_GATE_REPLY,
 } from '../prompting/scopeSummaryRenderer';
 
@@ -146,6 +147,8 @@ function neutralizeGateCardArtifacts(markdown: string): string {
     .split(GATE_CARD_HEADER)
     .join(GATE_CARD_REPLAY_LEAD_IN)
     .split(HOLD_GATE_NOTICE)
+    .join('')
+    .split(REPLACE_ANALYSIS_NOTICE)
     .join('')
     .split(UNREAD_GATE_REPLY)
     .join('');

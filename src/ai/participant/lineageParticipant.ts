@@ -21,9 +21,7 @@ import { TurnEventSink, type TurnEvent } from '../runtime/turnEventSink';
 import type { AiSession } from '../session/session';
 import {
   renderFullPlanMd,
-  renderScopeCardMd,
-  GATE_CARD_HEADER,
-  HOLD_GATE_NOTICE,
+  gateCardMd,
 } from '../prompting/scopeSummaryRenderer';
 import {
   sanitizeDescriptionForChat,
@@ -469,7 +467,7 @@ export class LineageParticipant {
         if (!proposal) return;
         this.cardRequestId = requestId;
         stream.markdown(
-          `${GATE_CARD_HEADER}${renderScopeCardMd(proposal)}${HOLD_GATE_NOTICE}\n\n`,
+          gateCardMd(proposal, this.getSession().resultGraph != null),
         );
         this.writeGateButtons(stream, event.proposalId);
         return;
