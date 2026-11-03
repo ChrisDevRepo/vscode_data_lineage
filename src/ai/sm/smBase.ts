@@ -159,8 +159,8 @@ export interface HopNeighborDisclosure extends HopNeighbor {
   out_of_direction?: boolean;
   /** A queued, visited, removed or protected target cannot be neighbor-pruned. */
   can_prune: boolean;
-  /** A `column_flow` mapping may name this neighbour (CT hops only). */
-  can_map?: boolean;
+  /** Served only as `true`: a `column_flow` mapping may name this neighbour (CT hops only). */
+  can_map?: true;
 }
 
 /** Working memory plus a traversal-map snapshot that grounds routing. */
@@ -1592,8 +1592,8 @@ export class NavigationEngine implements IHopStateMachine {
 
   /**
    * Neighbour ids a `column_flow` mapping may name at this focus: the served enum ids inside the
-   * approved scope (`can_map`). The enum also serves the others, so naming one is refused by the
-   * scope check as `column_out_of_scope`, not by the schema.
+   * approved scope (`can_map: true`; absent means not mappable). The enum also serves the others,
+   * so naming one is refused by the scope check as `column_out_of_scope`, not by the schema.
    */
   private mappableNeighborIds(focusId: string): Set<string> {
     return new Set(
@@ -5157,7 +5157,7 @@ export class NavigationEngine implements IHopStateMachine {
         boundary,
         ...(cols?.length ? { cols } : {}),
         can_prune,
-        ...(mappable ? { can_map: mappable.has(nid) } : {}),
+        ...(mappable?.has(nid) ? { can_map: true } : {}),
         ...(this.isCarrierInto(nid, focusId) ? { prune_protected: true } : {}),
         ...(this.visited.has(nid) ? { already_visited: true } : {}),
         ...(this.removedSet.has(nid) ? { already_removed: true } : {}),
