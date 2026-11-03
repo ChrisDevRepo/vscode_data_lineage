@@ -661,7 +661,7 @@ const indirectColumnsSchema = (
       IndirectFactSchema.extend({
         node,
         usage: IndirectFactSchema.shape.usage.describe(
-          'join: key relating rows of two objects. filter: predicate selecting contributing, updated or deleted rows, or a CASE condition choosing the value’s branch. arrange: grouping, partition or ordering key.',
+          'join: key relating rows of two objects. filter: predicate, in WHERE or ON, selecting contributing, updated or deleted rows, or a CASE condition choosing the value’s branch. arrange: grouping, partition or ordering key.',
         ),
         detail: IndirectFactSchema.shape.detail.describe(
           'Clause keyword, e.g. LEFT JOIN.',
