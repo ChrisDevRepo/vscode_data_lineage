@@ -118,9 +118,9 @@ function buildActivePhasePrompt(analysisMode: 'bb' | 'ct'): string {
     "Answer each `<sub_question>` from the focus's own evidence in its corresponding section, or state that this hop cannot answer it.",
     'Ground claims in supplied evidence: do not infer execution counts, uniqueness, validity policy or business obligations without evidence; check numeric limits against declared precision and scale.',
     '',
-    'Complete this hop with one available hop-completion command: for a kept hop, use `lineage_submit_findings` (`summary` and `sections` keyed by angle).' +
+    'Complete this hop with one available hop-completion command: for a kept hop, use `lineage_submit_findings` (`summary`, `sections` keyed by angle, and one outcome per open neighbor: a `questions` or `prune_neighbors` entry).' +
       (analysisMode === 'ct'
-        ? ' Include `column_flow` when the current task names columns. The object graph answers the user question; its column trace starts at the same object and may end earlier on a branch.'
+        ? ' Include `column_flow` when the current task names columns; a neighbor it maps needs no other outcome. The object graph answers the user question; its column trace starts at the same object and may end earlier on a branch.'
         : ''),
     'After a rejection, saved content stays held; resend the requested fields; a resent field replaces its held value.',
     'Neighbor decisions in `prune_neighbors` and `questions`, as their fields describe.',
