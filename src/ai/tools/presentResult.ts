@@ -15,7 +15,9 @@ import {
 } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import {
-  describeIndirectFacts,
+  groupIndirectFacts,
+  indirectFactLine,
+  INDIRECT_LABEL,
   FOCUS_NODE_HREF_PREFIX,
   type ColumnTransformClass,
   type StepIndirectFact,
@@ -673,17 +675,17 @@ export function buildColumnChainPreface(
       (fact) => schemaKey(fact.hopNode, identifierCaseSensitive) === step,
     );
     if (facts.length === 0) return [];
-    const cells = describeIndirectFacts(facts).map((usage) =>
-      usage.lines.map(columnChainCode).join(', '),
+    const cells = groupIndirectFacts(facts).map((group) =>
+      group.facts.map((f) => columnChainCode(indirectFactLine(f))).join(', '),
     );
     return `| ${columnChainCode(edge.hop_node)} | ${edge.hop} | ${cells.join(' | ')} |`;
   });
   if (stepRows.length)
     parts.push(
       [
-        '**Indirect columns** · ⋈ join · σ filter · γ group/partition/order',
+        '**Indirect columns**',
         '',
-        '| Step | Hop | ⋈ join | σ filter | γ arrange |',
+        `| Step | Hop | ${Object.values(INDIRECT_LABEL).join(' | ')} |`,
         '| --- | ---: | --- | --- | --- |',
         ...stepRows,
       ].join('\n'),

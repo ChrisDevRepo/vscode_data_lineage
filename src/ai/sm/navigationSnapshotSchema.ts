@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { HopFindingKept, SmNodeState, SmState } from './smTypes';
 import {
   ColumnTransformClassSchema,
-  IndirectFactSchema,
+  StepIndirectFactSchema,
 } from '../../engine/shared/bridgeContract';
 import { bothSidesClosed } from '../../engine/shared/explorationDepthContract';
 import {
@@ -140,9 +140,7 @@ const ColumnAspectSchema = z
     target_columns: NonEmptyStrings,
     active_columns: z.array(NonEmptyString),
     edges: z.array(ColumnEdgeSchema),
-    indirect: z
-      .array(IndirectFactSchema.extend({ hopNode: NonEmptyString }))
-      .optional(),
+    indirect: z.array(StepIndirectFactSchema).optional(),
   })
   .strict();
 

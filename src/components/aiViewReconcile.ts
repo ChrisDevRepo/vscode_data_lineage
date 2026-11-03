@@ -1,6 +1,10 @@
 import type { DatabaseModel } from '../engine/shared/types';
 import type { AIViewMetadata, FilterProfile } from '../engine/projectStore';
-import type { ColumnTransformClass } from '../engine/shared/bridgeContract';
+import type {
+  ColumnAspectEdge,
+  ColumnTransformClass,
+  StepIndirectFact,
+} from '../engine/shared/bridgeContract';
 import {
   createSavedReferenceResolver,
   resolveModelNodeId,
@@ -16,14 +20,43 @@ export interface ReconciledAiView {
   metadata: AIViewMetadata;
 }
 
-/** An older saved edge whose every role is `combine` or `filter`: no value crosses it. */
-const legacyIndirectOnly = (transforms?: readonly ColumnTransformClass[]) =>
-  !!transforms?.length &&
-  transforms.every((c) => c === 'combine' || c === 'filter');
+/** Older saved roles that become a step fact: `filter`, and `combine` as group/order. */
+const LEGACY_USAGE: Partial<
+  Record<ColumnTransformClass, StepIndirectFact['usage']>
+> = { filter: 'filter', combine: 'arrange' };
+
+/** Splits an older saved edge: `filter` and `combine` roles become facts, direct roles stay. */
+function splitLegacyRoles(edge: ColumnAspectEdge): {
+  edge: ColumnAspectEdge | null;
+  facts: StepIndirectFact[];
+} {
+  const roles = edge.transforms ?? [];
+  const facts = roles.flatMap((role) => {
+    const usage = LEGACY_USAGE[role];
+    return usage
+      ? [
+          {
+            hopNode: edge.hopNode,
+            node: edge.fromNode,
+            col: edge.fromCol,
+            usage,
+          },
+        ]
+      : [];
+  });
+  const direct = roles.filter((role) => !LEGACY_USAGE[role]);
+  const keep =
+    facts.length === 0
+      ? edge
+      : direct.length > 0
+        ? { ...edge, transforms: direct }
+        : null;
+  return { edge: keep, facts };
+}
 
 /**
  * Canonicalizes AI-preview references; saved views use `savedResolver` instead. Unresolved
- * saved-edge endpoints and legacy indirect-only edges are omitted.
+ * saved-edge endpoints are omitted; legacy `filter` and `combine` roles become step facts.
  */
 export function reconcileAiView(
   nodeIds: string[],
@@ -71,6 +104,11 @@ export function reconcileAiView(
     return [remapped];
   };
 
+  const split = (metadata.columnAspect?.edges ?? []).map(splitLegacyRoles);
+  const indirect = [
+    ...(metadata.columnAspect?.indirect ?? []),
+    ...split.flatMap(({ facts }) => facts),
+  ];
   const requested = metadata.columnAspect?.requested;
   const requestedNode = requested ? canonicalize(requested.node) : null;
   const reconciled: AIViewMetadata = {
@@ -92,13 +130,11 @@ export function reconcileAiView(
                   },
                 }
               : {}),
-            edges: metadata.columnAspect.edges.flatMap((edge) =>
-              legacyIndirectOnly(edge.transforms)
-                ? []
-                : remapIds(edge, ['hopNode', 'fromNode', 'toNode']),
+            edges: split.flatMap(({ edge }) =>
+              edge ? remapIds(edge, ['hopNode', 'fromNode', 'toNode']) : [],
             ),
-            ...(metadata.columnAspect.indirect && {
-              indirect: metadata.columnAspect.indirect.flatMap((fact) =>
+            ...(indirect.length > 0 && {
+              indirect: indirect.flatMap((fact) =>
                 remapIds(fact, ['hopNode', 'node']),
               ),
             }),

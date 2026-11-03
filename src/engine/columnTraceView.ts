@@ -6,13 +6,11 @@
 
 import { AI_BADGE_BAND, AI_NOTE_BAND, dagreLayout } from './graphBuilder';
 import { normalizeColName, schemaKey } from '../utils/sql';
-import {
-  describeIndirectFacts,
-  indirectFactLine,
-} from './shared/bridgeContract';
+import { IndirectFactSchema } from './shared/bridgeContract';
 import type {
   ColumnAspectEdge,
   ColumnTransformClass,
+  IndirectFact,
   StepIndirectFact,
 } from './shared/bridgeContract';
 import type { ExtensionConfig } from './shared/types';
@@ -23,10 +21,15 @@ export type ColumnLineState = 'passthrough' | 'transformation' | 'unknown';
 /** Structural shape of a row, derived from the relation set alone. */
 type ColumnRowShape = 'renamed' | 'incoming' | 'outgoing' | 'terminal';
 
+/** Usage of an indirect column: a join key, a filter column or a group/order column. */
+type IndirectUsage = IndirectFact['usage'];
+
 /** One row inside a column-trace node: a traced column, or a port on a transform node. */
 export interface ColumnTraceRow {
   /** Extracted column name, or the recorded/borrowed transform-port name. */
   name: string;
+  /** Indirect roles the column plays at a step, in display order; beside any direct role. */
+  usage?: IndirectUsage[];
   shape?: ColumnRowShape;
   /** Contributing upstream (`incoming`) or feeding downstream (`outgoing`) column count. */
   contributors?: number;
@@ -60,14 +63,12 @@ export interface ColumnTraceViewNode extends ColumnTraceViewObject {
   /** Node height in canvas units, derived from the row count. */
   height: number;
   position: { x: number; y: number };
-  /** Indirect facts of the step this node is, whether or not their object is drawn. */
-  stepFacts?: ColumnTraceIndirectFact[];
-  /** The object's own filter and arrange facts; join keys stay on the step. */
-  ownFacts?: ColumnTraceIndirectFact[];
+  /**
+   * Facts of this step with no row of their own to sit on: those on an object that is not drawn,
+   * or every fact of a transform hub.
+   */
+  localFacts?: StepIndirectFact[];
 }
-
-/** An indirect fact with its column's declared SQL type from the extracted model, never the AI. */
-export type ColumnTraceIndirectFact = StepIndirectFact & { dataType?: string };
 
 /** A per-column edge in the column-trace view, addressing row handles rather than nodes. */
 export interface ColumnTraceViewEdge {
@@ -106,6 +107,17 @@ interface ColumnTraceViewObjectEdge {
   sourceHandle?: string;
   /** Handle on the target node: its first row's handle, absent on a node without rows. */
   targetHandle?: string;
+  /** Key columns of the neighbor that join it to the step, when the edge carries `join` facts. */
+  columns?: string[];
+}
+
+/** An indirect column that points at the step using it. */
+interface ColumnTraceIndirectLink {
+  /** Node and column the fact names. */
+  nodeId: string;
+  column: string;
+  /** Step node that uses it. */
+  stepId: string;
 }
 
 /** Two ports of one node the same relation passes between — the hop's inside link. */
@@ -124,6 +136,8 @@ interface ColumnTraceView {
   nodes: ColumnTraceViewNode[];
   edges: ColumnTraceViewEdge[];
   objectEdges: ColumnTraceViewObjectEdge[];
+  /** Drawn indirect columns with the drawn step using them; the thread follows these. */
+  indirectLinks: ColumnTraceIndirectLink[];
   /** Inside-the-hop port links, drawn as nothing and traversed like an edge. */
   portBridges: ColumnTracePortBridge[];
 }
@@ -136,13 +150,8 @@ export interface ColumnTraceViewInput {
   relations: ColumnAspectEdge[];
   /** Frozen asked identities, retained as rows without inventing relations. */
   requested?: { node: string; columns: readonly string[] };
-  /** Stored indirect facts from `AIViewMetadata.columnAspect.indirect`; never edges or rows. */
+  /** Stored indirect facts from `AIViewMetadata.columnAspect.indirect`. */
   indirect?: readonly StepIndirectFact[];
-  /**
-   * Declared column types of every model object, keyed by {@link schemaKey} then
-   * {@link normalizeColName}; types an indirect fact whose object is not drawn.
-   */
-  columnTypesByNode?: ReadonlyMap<string, ReadonlyMap<string, string>>;
   /** Object identity per presented node, keyed by schemaKey under the source policy. */
   objects: Map<string, ColumnTraceViewObject>;
   /** Dependency edges of the object view between presented objects, by node id. */
@@ -184,8 +193,8 @@ export const COLUMN_NODE_HEADER_HEIGHT = 28;
 /** Height of one column row. */
 export const COLUMN_ROW_HEIGHT = 22;
 
-/** Height of one indirect-column line beneath a card's direct rows. */
-export const COLUMN_INDIRECT_ROW_HEIGHT = 18;
+/** Height of the one-line summary of a step's local facts, beneath its rows or hub name. */
+export const COLUMN_FACT_LINE_HEIGHT = 14;
 
 /** Card border width of a column-trace node. */
 export const COLUMN_NODE_BORDER_WIDTH = 2;
@@ -232,7 +241,11 @@ export interface ColumnThreadIndex {
 export function buildColumnThreadIndex(
   view: Pick<
     ColumnTraceView,
-    'edges' | 'portBridges' | 'identifierCaseSensitive'
+    | 'nodes'
+    | 'edges'
+    | 'portBridges'
+    | 'indirectLinks'
+    | 'identifierCaseSensitive'
   >,
 ): ColumnThreadIndex {
   const index: ColumnThreadIndex = { down: new Map(), up: new Map() };
@@ -257,6 +270,13 @@ export function buildColumnThreadIndex(
         view.identifierCaseSensitive,
       ),
     );
+  const steps = new Map(view.nodes.map((node) => [node.id, node]));
+  for (const { nodeId, column, stepId } of view.indirectLinks)
+    for (const row of steps.get(stepId)?.rows ?? []) {
+      const from = columnRowKey(nodeId, column, view.identifierCaseSensitive);
+      const to = columnRowKey(stepId, row.name, view.identifierCaseSensitive);
+      if (from !== to) link(from, to);
+    }
   for (const bridge of view.portBridges)
     link(
       columnRowKey(
@@ -364,6 +384,8 @@ interface NodeAccumulator {
   inbound: Map<string, RowRelation[]>;
   /** Normalised row key to the distinct downstream tuples it feeds. */
   outbound: Map<string, Set<string>>;
+  /** Normalised row key to the indirect usages it plays at a step. */
+  usage: Map<string, Set<IndirectUsage>>;
 }
 
 function pushInbound(
@@ -434,6 +456,11 @@ function buildRows(
     const row: ColumnTraceRow = { name };
     if (shape) row.shape = shape;
     if (contributors !== undefined) row.contributors = contributors;
+    const usage = acc.usage.get(rowKey);
+    if (usage)
+      row.usage = IndirectFactSchema.shape.usage.options.filter((u) =>
+        usage.has(u),
+      );
     const dataType = acc.object.columnTypes?.get(rowKey);
     if (dataType) row.dataType = dataType;
     return row;
@@ -460,35 +487,6 @@ function withAnnotationBand(
   return { ...config, layout };
 }
 
-/** Per distinct fact in usage order: symbol, column, declared type and full line. */
-export function indirectColumnLines(
-  facts: readonly ColumnTraceIndirectFact[],
-): {
-  usage: string;
-  symbol: string;
-  column: string;
-  dataType?: string;
-  line: string;
-}[] {
-  const seen = new Set<string>();
-  return describeIndirectFacts(facts).flatMap(({ usage, symbol }) =>
-    facts.flatMap((fact) => {
-      const line = indirectFactLine(fact);
-      if (fact.usage !== usage || seen.has(`${usage} ${line}`)) return [];
-      seen.add(`${usage} ${line}`);
-      return [
-        {
-          usage,
-          symbol,
-          column: fact.col,
-          ...(fact.dataType ? { dataType: fact.dataType } : {}),
-          line,
-        },
-      ];
-    }),
-  );
-}
-
 /** Whether an object draws as a transform hub rather than a column card. */
 function isColumnTraceTransformNode(object: ColumnTraceViewObject): boolean {
   if (object.objectType === 'procedure') return true;
@@ -513,6 +511,7 @@ export function buildColumnTraceView(
         rowNames: new Map(),
         inbound: new Map(),
         outbound: new Map(),
+        usage: new Map(),
       };
       nodeAccs.set(key, acc);
     }
@@ -663,27 +662,58 @@ export function buildColumnTraceView(
 
   const keyOf = (id: string): string =>
     schemaKey(id, input.identifierCaseSensitive);
-  const facts: ColumnTraceIndirectFact[] = (input.indirect ?? []).map((f) => {
-    const dataType = input.columnTypesByNode
-      ?.get(keyOf(f.node))
-      ?.get(normalizeColName(f.col, input.identifierCaseSensitive));
-    return dataType ? { ...f, dataType } : f;
-  });
+  const localFacts = new Map<string, StepIndirectFact[]>();
+  const indirectLinks: ColumnTraceIndirectLink[] = [];
+  const joinColumns = new Map<
+    NodeAccumulator,
+    Map<NodeAccumulator, Set<string>>
+  >();
+  const seenFacts = new Set<string>();
+  for (const fact of input.indirect ?? []) {
+    const stepAcc = nodeAccs.get(keyOf(fact.hopNode));
+    if (!stepAcc) continue;
+    const identity = JSON.stringify([
+      keyOf(fact.hopNode),
+      keyOf(fact.node),
+      normalizeColName(fact.col, input.identifierCaseSensitive),
+      fact.usage,
+    ]);
+    if (seenFacts.has(identity)) continue;
+    seenFacts.add(identity);
+    const acc = nodeAccs.get(keyOf(fact.node));
+    const onRow = acc && !isColumnTraceTransformNode(acc.object);
+    if (!onRow || isColumnTraceTransformNode(stepAcc.object)) {
+      const facts = localFacts.get(keyOf(fact.hopNode));
+      if (facts) facts.push(fact);
+      else localFacts.set(keyOf(fact.hopNode), [fact]);
+    }
+    if (!onRow) continue;
+    const rowKey = touchRow(acc, fact.col, input.identifierCaseSensitive);
+    const column = acc.rowNames.get(rowKey)!;
+    const usage = acc.usage.get(rowKey);
+    if (usage) usage.add(fact.usage);
+    else acc.usage.set(rowKey, new Set([fact.usage]));
+    if (acc === stepAcc) continue;
+    indirectLinks.push({
+      nodeId: acc.object.id,
+      column,
+      stepId: stepAcc.object.id,
+    });
+    if (fact.usage !== 'join') continue;
+    const steps =
+      joinColumns.get(acc) ?? new Map<NodeAccumulator, Set<string>>();
+    joinColumns.set(acc, steps);
+    const columns = steps.get(stepAcc) ?? new Set<string>();
+    steps.set(stepAcc, columns);
+    columns.add(column);
+  }
   const nodes: ColumnTraceViewNode[] = Array.from(nodeAccs.values()).map(
     (acc) => {
       const rows = buildRows(acc, input.identifierCaseSensitive);
       const isTransform = isColumnTraceTransformNode(acc.object);
-      const self = keyOf(acc.object.id);
-      const stepFacts = facts.filter((f) => keyOf(f.hopNode) === self);
-      const ownFacts = facts.filter(
-        (f) => f.usage !== 'join' && keyOf(f.node) === self,
-      );
-      const indirectLines = isTransform
-        ? 0
-        : indirectColumnLines([...stepFacts, ...ownFacts]).length;
+      const local = localFacts.get(keyOf(acc.object.id));
       return {
-        ...(stepFacts.length > 0 ? { stepFacts } : {}),
-        ...(ownFacts.length > 0 ? { ownFacts } : {}),
+        ...(local ? { localFacts: local } : {}),
         id: acc.object.id,
         label: acc.object.label,
         schema: acc.object.schema,
@@ -691,12 +721,13 @@ export function buildColumnTraceView(
         isTransformNode: isTransform,
         rows,
         width: isTransform ? COLUMN_TRANSFORM_NODE_WIDTH : COLUMN_NODE_WIDTH,
-        height: isTransform
-          ? COLUMN_TRANSFORM_NODE_HEIGHT
-          : COLUMN_NODE_HEADER_HEIGHT +
-            rows.length * COLUMN_ROW_HEIGHT +
-            indirectLines * COLUMN_INDIRECT_ROW_HEIGHT +
-            2 * COLUMN_NODE_BORDER_WIDTH,
+        height:
+          (isTransform
+            ? COLUMN_TRANSFORM_NODE_HEIGHT
+            : COLUMN_NODE_HEADER_HEIGHT +
+              rows.length * COLUMN_ROW_HEIGHT +
+              2 * COLUMN_NODE_BORDER_WIDTH) +
+          (local ? COLUMN_FACT_LINE_HEIGHT : 0),
         position: { x: 0, y: 0 },
       };
     },
@@ -806,6 +837,40 @@ export function buildColumnTraceView(
   }
 
   const objectEdges: ColumnTraceViewObjectEdge[] = [];
+  const firstRow = (acc: NodeAccumulator) =>
+    acc.rowKeys.length > 0 ? acc.rowNames.get(acc.rowKeys[0]) : undefined;
+  const pushObjectEdge = (
+    from: NodeAccumulator,
+    to: NodeAccumulator,
+    sourceRow = firstRow(from),
+    columns?: Set<string>,
+  ): void => {
+    const targetRow = firstRow(to);
+    objectEdges.push({
+      id: `object::${from.object.id}->${to.object.id}`,
+      source: from.object.id,
+      target: to.object.id,
+      ...(sourceRow !== undefined
+        ? {
+            sourceHandle: columnHandleId(
+              sourceRow,
+              'source',
+              input.identifierCaseSensitive,
+            ),
+          }
+        : {}),
+      ...(targetRow !== undefined
+        ? {
+            targetHandle: columnHandleId(
+              targetRow,
+              'target',
+              input.identifierCaseSensitive,
+            ),
+          }
+        : {}),
+      ...(columns ? { columns: [...columns] } : {}),
+    });
+  };
   // A rendered column leg covers only its directed object pair, including each leg through a
   // procedure.
   const seenObjectEdges = new Set(
@@ -830,34 +895,17 @@ export function buildColumnTraceView(
     ]);
     if (seenObjectEdges.has(pair)) continue;
     seenObjectEdges.add(pair);
-    const firstRow = (acc: NodeAccumulator) =>
-      acc.rowKeys.length > 0 ? acc.rowNames.get(acc.rowKeys[0]) : undefined;
-    const sourceRow = firstRow(sourceAcc);
-    const targetRow = firstRow(targetAcc);
-    objectEdges.push({
-      id: `object::${sourceAcc.object.id}->${targetAcc.object.id}`,
-      source: sourceAcc.object.id,
-      target: targetAcc.object.id,
-      ...(sourceRow !== undefined
-        ? {
-            sourceHandle: columnHandleId(
-              sourceRow,
-              'source',
-              input.identifierCaseSensitive,
-            ),
-          }
-        : {}),
-      ...(targetRow !== undefined
-        ? {
-            targetHandle: columnHandleId(
-              targetRow,
-              'target',
-              input.identifierCaseSensitive,
-            ),
-          }
-        : {}),
-    });
+    pushObjectEdge(sourceAcc, targetAcc);
   }
+
+  for (const [from, steps] of joinColumns)
+    for (const [to, columns] of steps) {
+      const existing = objectEdges.find(
+        (e) => e.source === from.object.id && e.target === to.object.id,
+      );
+      if (existing) existing.columns = [...columns];
+      else pushObjectEdge(from, to, [...columns][0], columns);
+    }
 
   const boxes = new Map(
     nodes.map((n) => [n.id, { width: n.width, height: n.height }]),
@@ -881,6 +929,7 @@ export function buildColumnTraceView(
     nodes,
     edges,
     objectEdges,
+    indirectLinks,
     portBridges,
     identifierCaseSensitive: input.identifierCaseSensitive,
   };

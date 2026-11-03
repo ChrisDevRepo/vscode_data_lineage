@@ -1236,7 +1236,6 @@ export function GraphCanvas({
       return buildColumnTraceView({
         requested,
         indirect: aspect.indirect,
-        columnTypesByNode,
         identifierCaseSensitive: model?.identifierCaseSensitive,
         relations,
         objects,
@@ -2389,7 +2388,17 @@ export function GraphCanvas({
         edge.target === highlightedNodeId;
 
       const objectEdges = columnTraceView.objectEdges.map((edge) => {
-        const lit = !hoveredColumnPath && litBySelection(edge);
+        const lit = hoveredColumnPath
+          ? !!edge.columns?.some((column) =>
+              hoveredColumnPath.has(
+                columnRowKey(
+                  edge.source,
+                  column,
+                  model?.identifierCaseSensitive,
+                ),
+              ),
+            )
+          : litBySelection(edge);
         return {
           id: edge.id,
           type: 'columnTraceEdge',
@@ -2410,6 +2419,7 @@ export function GraphCanvas({
             sourceColumn: '',
             targetColumn: '',
             objectLevel: true,
+            ...(edge.columns ? { joinColumns: edge.columns } : {}),
           } satisfies ColumnTraceEdgeData,
         };
       });

@@ -394,25 +394,41 @@ export const IndirectFactSchema = z
 export type IndirectFact = z.infer<typeof IndirectFactSchema>;
 
 /** An indirect fact with the step node that uses it, as stored on the column aspect. */
-export type StepIndirectFact = IndirectFact & { hopNode: string };
+export const StepIndirectFactSchema = IndirectFactSchema.extend({
+  hopNode: z.string().min(1),
+});
 
-const INDIRECT_SYMBOL = { join: '⋈', filter: 'σ', arrange: 'γ' } as const;
+/** Inferred shape of {@link StepIndirectFactSchema}. */
+export type StepIndirectFact = z.infer<typeof StepIndirectFactSchema>;
+
+/** Plain-word label of each usage; the stored `arrange` reads group/order. */
+export const INDIRECT_LABEL = {
+  join: 'join',
+  filter: 'filter',
+  arrange: 'group/order',
+} as const;
 
 /** A fact's `node.column — detail` line, verbatim. */
 export const indirectFactLine = (f: IndirectFact): string =>
   `${f.node}.${f.col}${f.detail ? ` — ${f.detail}` : ''}`;
 
-/** Per usage in display order: its symbol and distinct `node.column — detail` lines, verbatim. */
-export function describeIndirectFacts(facts: readonly IndirectFact[]) {
-  return IndirectFactSchema.shape.usage.options.map((usage) => ({
-    usage,
-    symbol: INDIRECT_SYMBOL[usage],
-    lines: [
-      ...new Set(
-        facts.filter((fact) => fact.usage === usage).map(indirectFactLine),
-      ),
-    ],
-  }));
+/** Per usage in display order: its plain-word label and its facts, distinct by line. */
+export function groupIndirectFacts<T extends IndirectFact>(
+  facts: readonly T[],
+) {
+  return IndirectFactSchema.shape.usage.options.map((usage) => {
+    const seen = new Set<string>();
+    return {
+      usage,
+      label: INDIRECT_LABEL[usage],
+      facts: facts.filter((fact) => {
+        const line = indirectFactLine(fact);
+        if (fact.usage !== usage || seen.has(line)) return false;
+        seen.add(line);
+        return true;
+      }),
+    };
+  });
 }
 
 const ColumnAspectSchema = z
@@ -424,9 +440,7 @@ const ColumnAspectSchema = z
       .optional(),
     edges: z.array(ColumnAspectEdgeSchema),
     /** Indirect facts, each with the step node that uses it. */
-    indirect: z
-      .array(IndirectFactSchema.extend({ hopNode: z.string() }))
-      .optional(),
+    indirect: z.array(StepIndirectFactSchema).optional(),
   })
   .strict();
 

@@ -50,6 +50,8 @@ export interface ColumnTraceEdgeData extends Record<string, unknown> {
    * no column value crosses it, and never marked with a chip.
    */
   objectLevel?: boolean;
+  /** Join key columns an object-level edge stands for; named in its tooltip. */
+  joinColumns?: string[];
 }
 
 /** Display name of each value-changing class, as the tooltip's first line spells it. */
@@ -185,6 +187,7 @@ export const ColumnTraceEdge = memo(function ColumnTraceEdge({
     transforms,
     note,
     objectLevel,
+    joinColumns,
   } = (data ?? {}) as ColumnTraceEdgeData;
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
@@ -210,6 +213,7 @@ export const ColumnTraceEdge = memo(function ColumnTraceEdge({
 
   return (
     <>
+      {joinColumns && <title>{`join: ${joinColumns.join(', ')}`}</title>}
       <BaseEdge
         path={edgePath}
         markerEnd={markerEnd}

@@ -14,10 +14,8 @@ import {
   COLUMN_NODE_HEADER_HEIGHT,
   COLUMN_NODE_BORDER_WIDTH,
   COLUMN_ROW_HEIGHT,
-  COLUMN_INDIRECT_ROW_HEIGHT,
+  COLUMN_FACT_LINE_HEIGHT,
   COLUMN_ROW_DIM_OPACITY,
-  indirectColumnLines,
-  type ColumnTraceIndirectFact,
   COLUMN_TRANSFORM_NODE_WIDTH,
   COLUMN_TRANSFORM_CIRCLE_DIAMETER,
   COLUMN_TRANSFORM_NAME_STRIP_HEIGHT,
@@ -42,7 +40,9 @@ import {
 import { useTraceNeighborPicker } from '../hooks/useTraceNeighborPicker';
 import { Tooltip } from './ui/Tooltip';
 import {
-  describeIndirectFacts,
+  groupIndirectFacts,
+  indirectFactLine,
+  INDIRECT_LABEL,
   type StepIndirectFact,
 } from '../engine/shared/bridgeContract';
 import type { ColumnTraceNodeData, ObjectType } from '../engine/shared/types';
@@ -100,7 +100,7 @@ function portHandleStyle(
   const { cx, cy, radius, portY } = transformPortGeometry(
     view.rows.length,
     width,
-    height,
+    height - (view.localFacts ? COLUMN_FACT_LINE_HEIGHT : 0),
   );
   const y = portY(index);
   const dx = Math.sqrt(Math.max(radius * radius - (y - cy) ** 2, 0));
@@ -160,13 +160,15 @@ function ColumnTraceRowLine({
     transition: ROW_TRANSITION,
   };
 
-  const ariaLabel = `${nodeTitle} column ${row.name}${row.dataType ? `, ${row.dataType}` : ''}`;
+  const usage = row.usage?.map((u) => INDIRECT_LABEL[u]).join(' · ');
+  const ariaLabel = `${nodeTitle} column ${row.name}${row.dataType ? `, ${row.dataType}` : ''}${usage ? `, ${usage}` : ''}`;
 
   return (
     <div
       ref={(el) => registerRef(row.name, el)}
       style={style}
       role="listitem"
+      data-usage={row.usage?.join(' ')}
       tabIndex={isTabStop ? 0 : -1}
       aria-label={ariaLabel}
       onKeyDown={(event) => {
@@ -217,6 +219,19 @@ function ColumnTraceRowLine({
       >
         {row.name}
       </span>
+      {usage && (
+        <span
+          className="text-[9px]"
+          style={{
+            color: 'var(--ln-fg-muted)',
+            flexShrink: 0,
+            fontStyle: 'italic',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {usage}
+        </span>
+      )}
       {row.dataType && (
         <span
           className="text-[9px]"
@@ -233,96 +248,49 @@ function ColumnTraceRowLine({
   );
 }
 
-/** Symbol-and-count badge per usage; its label and tooltip name the usage and each fact. */
-function IndirectBadges({ facts }: { facts: readonly StepIndirectFact[] }) {
-  return describeIndirectFacts(facts).map(
-    ({ usage, symbol, lines }) =>
-      lines.length > 0 && (
-        <Tooltip
-          key={usage}
-          content={[usage, ...lines].join('\n')}
-          multiline
-          asChild
-        >
-          <span
-            role="img"
-            aria-label={`${usage} ${lines.length}: ${lines.join(', ')}`}
-            className="text-[9px]"
-            style={{ color: 'var(--ln-fg-muted)', flexShrink: 0 }}
-          >
-            {symbol}
-            {lines.length}
-          </span>
-        </Tooltip>
-      ),
-  );
-}
-
-/** A row-less card's handles at its header's middle, above any indirect lines. */
-const headerHandleStyle = { top: COLUMN_NODE_HEADER_HEIGHT / 2 };
-
-/**
- * A card's indirect lines beneath its direct rows: column, declared type and symbol at the right
- * edge, no handles; the full `object.column — detail` line shows in the tooltip.
- */
-function IndirectRows({
+/** One muted, ellipsized line of word counts (`join 2 · filter 1`); the tooltip lists each fact. */
+function FactSummary({
   facts,
+  style,
 }: {
-  facts: readonly ColumnTraceIndirectFact[];
+  facts: readonly StepIndirectFact[];
+  style?: CSSProperties;
 }) {
-  const lines = indirectColumnLines(facts);
-  if (lines.length === 0) return null;
+  const groups = groupIndirectFacts(facts).filter(
+    (group) => group.facts.length > 0,
+  );
+  const text = groups
+    .map(({ label, facts: f }) => `${label} ${f.length}`)
+    .join(' · ');
+  const full = groups
+    .flatMap(({ label, facts: f }) => [label, ...f.map(indirectFactLine)])
+    .join('\n');
   return (
-    <div role="group" aria-label="Indirect columns" style={{ flexShrink: 0 }}>
-      {lines.map(({ usage, symbol, column, dataType, line }, i) => {
-        const full = `${usage}: ${line}${dataType ? ` (${dataType})` : ''}`;
-        return (
-          <Tooltip key={`${usage} ${line}`} content={full} asChild>
-            <div
-              data-usage={usage}
-              className="text-[9px]"
-              style={{
-                boxSizing: 'border-box',
-                borderTop:
-                  i === 0 ? '1px dashed var(--ln-border-light)' : undefined,
-                height: COLUMN_INDIRECT_ROW_HEIGHT,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '0 8px',
-                color: 'var(--ln-fg-muted)',
-              }}
-            >
-              <span
-                style={{
-                  flex: 1,
-                  fontStyle: 'italic',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                <span className="sr-only">{full}</span>
-                <span aria-hidden="true">{column}</span>
-              </span>
-              {dataType && (
-                <span
-                  aria-hidden="true"
-                  style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
-                >
-                  {dataType}
-                </span>
-              )}
-              <span aria-hidden="true" style={{ flexShrink: 0 }}>
-                {symbol}
-              </span>
-            </div>
-          </Tooltip>
-        );
-      })}
-    </div>
+    <Tooltip content={full} multiline asChild>
+      <div
+        role="img"
+        aria-label={`Indirect columns: ${text}`}
+        className="text-[9px]"
+        style={{
+          boxSizing: 'border-box',
+          height: COLUMN_FACT_LINE_HEIGHT,
+          padding: '0 8px',
+          flexShrink: 0,
+          color: 'var(--ln-fg-muted)',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          ...style,
+        }}
+      >
+        {text}
+      </div>
+    </Tooltip>
   );
 }
+
+/** A row-less card's handles at its header's middle. */
+const headerHandleStyle = { top: COLUMN_NODE_HEADER_HEIGHT / 2 };
 
 /** Process cog in the Lucide "settings" silhouette, lightly filled so it reads at 18px. */
 function GearGlyph() {
@@ -358,11 +326,9 @@ function TransformNodeBody({
   strokeColor,
   boxShadow,
   schemaColor,
-  facts,
 }: {
   view: ColumnTraceNodeData['view'];
   nodeTitle: string;
-  facts: readonly StepIndirectFact[];
   /** Circle stroke — the schema colour, or the highlight colour while the node is selected. */
   strokeColor: string;
   /** Selection glow, drawn on the circle; no card box surrounds it. */
@@ -372,10 +338,11 @@ function TransformNodeBody({
 }) {
   const width = view.width || COLUMN_TRANSFORM_NODE_WIDTH;
   const height = view.height || COLUMN_TRANSFORM_NODE_HEIGHT;
+  const factLine = view.localFacts ? COLUMN_FACT_LINE_HEIGHT : 0;
   const { cx, cy, radius } = transformPortGeometry(
     view.rows.length,
     width,
-    height,
+    height - factLine,
   );
 
   return (
@@ -406,7 +373,7 @@ function TransformNodeBody({
           position: 'absolute',
           left: 0,
           right: 0,
-          bottom: 0,
+          bottom: factLine,
           height: COLUMN_TRANSFORM_NAME_STRIP_HEIGHT,
           display: 'flex',
           alignItems: 'center',
@@ -427,8 +394,19 @@ function TransformNodeBody({
         >
           {nodeTitle}
         </span>
-        <IndirectBadges facts={facts} />
       </div>
+      {view.localFacts && (
+        <FactSummary
+          facts={view.localFacts}
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            textAlign: 'center',
+          }}
+        />
+      )}
     </>
   );
 }
@@ -492,7 +470,6 @@ function ColumnTraceNodeComponent({
     data.schemaColor ??
     getSchemaColor(view.schema, undefined, data.identifierCaseSensitive);
   const nodeTitle = `${view.schema}.${view.label}`;
-  const facts = [...(view.stepFacts ?? []), ...(view.ownFacts ?? [])];
 
   const rowsBlockHeight = view.rows.length * COLUMN_ROW_HEIGHT;
 
@@ -588,7 +565,6 @@ function ColumnTraceNodeComponent({
               strokeColor={highlighted ? highlightColor : schemaColor}
               boxShadow={boxShadow}
               schemaColor={schemaColor}
-              facts={facts}
             />
           ) : (
             <>
@@ -660,7 +636,7 @@ function ColumnTraceNodeComponent({
                   />
                 ))}
               </div>
-              <IndirectRows facts={facts} />
+              {view.localFacts && <FactSummary facts={view.localFacts} />}
             </>
           )}
 
