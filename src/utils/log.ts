@@ -141,7 +141,6 @@ export function trunc(val: string | unknown[], max: number): string {
 /** Normalizes a string for single-line display in the Output Channel. */
 export function sanitizeForLog(s: string): string {
   return s
-    .replace(/\\[nrt]/g, ' ')
     .replace(/[\u0000-\u001F\u007F]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
