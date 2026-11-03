@@ -192,7 +192,7 @@ function buildCtSynthesisBlock(
       `    ${e.from_node}.${e.from_col}${metadata.length ? ` — ${metadata.join('; ')}` : ''}`,
     ]);
   }
-  // Like the preview: facts of chain steps only, each distinct line once.
+  // Like the preview: chain steps first, then steps with facts and no direct pair; lines once.
   const stepKey = (id: string) => schemaKey(id, identifierCaseSensitive);
   const steps = new Map(
     edges.map((e) => [
@@ -200,12 +200,17 @@ function buildCtSynthesisBlock(
       { step: e.hop_node, facts: new Set<string>() },
     ]),
   );
-  for (const f of indirect ?? [])
-    steps
-      .get(stepKey(f.hopNode))
-      ?.facts.add(
-        `${f.node}.${f.col} ${f.usage}${f.detail ? ` (${escapePromptText(f.detail)})` : ''}`,
-      );
+  for (const f of indirect ?? []) {
+    const key = stepKey(f.hopNode);
+    const entry = steps.get(key) ?? {
+      step: f.hopNode,
+      facts: new Set<string>(),
+    };
+    steps.set(key, entry);
+    entry.facts.add(
+      `${f.node}.${f.col} ${f.usage}${f.detail ? ` (${escapePromptText(f.detail)})` : ''}`,
+    );
+  }
   const lines = [
     '## Column Trace Chain',
     ...[...sources].flat(2),
@@ -491,7 +496,9 @@ export function buildSmCompletionEnvelope(
   const presentedNodeIds = result.fullNodes.map((node) => node.id);
   const presented = new Set(presentedNodeIds);
   const flowBlock =
-    result.columnAspect && result.columnAspect.edges.length > 0
+    result.columnAspect &&
+    (result.columnAspect.edges.length > 0 ||
+      result.columnAspect.indirect?.length)
       ? '\n' +
         buildCtSynthesisBlock(
           result.originNodeId,
