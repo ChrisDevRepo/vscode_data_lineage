@@ -148,7 +148,7 @@ export interface HopNeighbor {
   depth_from_origin?: number;
   /**
    * The one served border flag: whether the neighbor lies inside the approved scope (border and
-   * depth), the verdict the route, question and column scope checks apply.
+   * depth), the verdict the column scope check applies; `false` also means no route is admitted.
    */
   in_approved_scope: boolean;
 }
