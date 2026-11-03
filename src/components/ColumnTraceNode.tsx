@@ -274,46 +274,52 @@ function IndirectRows({
   if (lines.length === 0) return null;
   return (
     <div role="group" aria-label="Indirect columns" style={{ flexShrink: 0 }}>
-      {lines.map(({ usage, symbol, column, dataType, line }, i) => (
-        <Tooltip key={`${usage} ${line}`} content={`${usage}: ${line}`} asChild>
-          <div
-            data-usage={usage}
-            className="text-[9px]"
-            style={{
-              boxSizing: 'border-box',
-              borderTop:
-                i === 0 ? '1px dashed var(--ln-border-light)' : undefined,
-              height: COLUMN_INDIRECT_ROW_HEIGHT,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              padding: '0 8px',
-              color: 'var(--ln-fg-muted)',
-            }}
-          >
-            <span
+      {lines.map(({ usage, symbol, column, dataType, line }, i) => {
+        const full = `${usage}: ${line}${dataType ? ` (${dataType})` : ''}`;
+        return (
+          <Tooltip key={`${usage} ${line}`} content={full} asChild>
+            <div
+              data-usage={usage}
+              className="text-[9px]"
               style={{
-                flex: 1,
-                fontStyle: 'italic',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
+                boxSizing: 'border-box',
+                borderTop:
+                  i === 0 ? '1px dashed var(--ln-border-light)' : undefined,
+                height: COLUMN_INDIRECT_ROW_HEIGHT,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '0 8px',
+                color: 'var(--ln-fg-muted)',
               }}
             >
-              <span className="sr-only">{`${usage}: ${line}`}</span>
-              <span aria-hidden="true">{column}</span>
-            </span>
-            {dataType && (
-              <span style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>
-                {dataType}
+              <span
+                style={{
+                  flex: 1,
+                  fontStyle: 'italic',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                <span className="sr-only">{full}</span>
+                <span aria-hidden="true">{column}</span>
               </span>
-            )}
-            <span aria-hidden="true" style={{ flexShrink: 0 }}>
-              {symbol}
-            </span>
-          </div>
-        </Tooltip>
-      ))}
+              {dataType && (
+                <span
+                  aria-hidden="true"
+                  style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
+                >
+                  {dataType}
+                </span>
+              )}
+              <span aria-hidden="true" style={{ flexShrink: 0 }}>
+                {symbol}
+              </span>
+            </div>
+          </Tooltip>
+        );
+      })}
     </div>
   );
 }

@@ -57,6 +57,10 @@ interface GateButtonRequest {
  */
 const PARTICIPANT_MENTION = '@lineage ';
 
+/** Short notice after Change scope: the click only prefills the chat input. */
+const CHANGE_SCOPE_HINT =
+  'Type your scope change after @lineage and press Enter.';
+
 /** Natural user request submitted by the combined follow-up badge. */
 const NEXT_QUESTIONS_TRIGGER = 'What could I explore next?';
 
@@ -128,6 +132,8 @@ export class LineageParticipant {
                     blockOnResponse: true,
                   },
             );
+            if (action === 'change')
+              void vscode.window.showInformationMessage(CHANGE_SCOPE_HINT);
           } finally {
             if (this.buttonRequest === submitted) this.buttonRequest = null;
             this.gateCommandBusy = false;
