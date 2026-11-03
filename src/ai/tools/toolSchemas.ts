@@ -661,10 +661,10 @@ const indirectColumnsSchema = (
       IndirectFactSchema.extend({
         node,
         usage: IndirectFactSchema.shape.usage.describe(
-          'join: key relating rows of two objects. filter: predicate, in WHERE or ON, selecting contributing, updated or deleted rows, or a CASE condition choosing the value’s branch. arrange: grouping, partition or ordering key.',
+          'join: column in a join condition (JOIN or MERGE ON, APPLY correlation), keys and extra predicates alike. filter: column in a WHERE, HAVING or EXISTS/IN predicate selecting contributing, updated or deleted rows, or in a CASE/IIF condition choosing the value’s branch. arrange: grouping, partition or ordering key.',
         ),
         detail: IndirectFactSchema.shape.detail.describe(
-          'Clause keyword, e.g. LEFT JOIN.',
+          'The clause as written: keyword or short SQL text, e.g. LEFT JOIN, PARTITION BY.',
         ),
       })
         .strict()
@@ -681,7 +681,7 @@ const OUT_COL_DESCRIPTION =
 const OUT_NODE_DESCRIPTION =
   'Table from <hop_context> that this procedure writes out_col to. For a write to an object not listed, omit the entry and name the write in sections.';
 const UPSTREAM_DESCRIPTION =
-  'At a bodied focus, record the real source columns whose value flows into out_col: operands of its expression, an aggregate’s argument, each set-operation branch’s column at that position, caller-bound value inputs. Record a column used only to join, filter, group, partition or order rows, even inside an expression, in indirect_columns instead. ' +
+  'At a bodied focus, record the real source columns whose value flows into out_col: operands of its expression (CASE results, COALESCE/ISNULL arguments), an aggregate’s argument, each set-operation branch’s column at that position, caller-bound value inputs. Record a column used only to join, filter, group, partition or order rows, even inside an expression, in indirect_columns instead. ' +
   'Exclude the entry’s own out_node column, unused expressions and columns only copied alongside out_col (SELECT *, the rest of a column list). Resolve parameters and computed aliases to their source columns.';
 /** At a procedure, a created value is the pair procedure.col -> out_node.out_col. */
 const PROCEDURE_UPSTREAM_DESCRIPTION = `${UPSTREAM_DESCRIPTION} A value this procedure creates lists this procedure with the column its task names, else out_col; [] records no pair.`;
