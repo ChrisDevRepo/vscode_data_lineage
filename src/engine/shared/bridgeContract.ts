@@ -338,8 +338,8 @@ const AINodeTextSchema = z
   })
   .strict();
 
-/** Column-transform classes carried on a column-lineage edge. */
-export const COLUMN_TRANSFORM_CLASSES = [
+/** Column-transform classes of a column edge; `combine` and `filter` are legacy, read only. */
+const COLUMN_TRANSFORM_CLASSES = [
   'pass_through',
   'compute',
   'aggregate',
@@ -349,30 +349,6 @@ export const COLUMN_TRANSFORM_CLASSES = [
 
 /** One column-transform class from {@link COLUMN_TRANSFORM_CLASSES}. */
 export type ColumnTransformClass = (typeof COLUMN_TRANSFORM_CLASSES)[number];
-
-/**
- * Whether a transform class carries the upstream value into the output (DIRECT) or only shaped
- * which rows appear (INDIRECT).
- */
-export const COLUMN_TRANSFORM_DIRECTION: Readonly<
-  Record<ColumnTransformClass, 'DIRECT' | 'INDIRECT'>
-> = {
-  pass_through: 'DIRECT',
-  compute: 'DIRECT',
-  aggregate: 'DIRECT',
-  combine: 'INDIRECT',
-  filter: 'INDIRECT',
-};
-
-/** Whether a classified column only shaped which rows appear — every class is INDIRECT. */
-export function isIndirectOnly(
-  transforms: readonly ColumnTransformClass[] | undefined,
-): boolean {
-  return (
-    !!transforms?.length &&
-    transforms.every((c) => COLUMN_TRANSFORM_DIRECTION[c] === 'INDIRECT')
-  );
-}
 
 /** Zod form of {@link COLUMN_TRANSFORM_CLASSES}, shared by every schema that carries the field. */
 export const ColumnTransformClassSchema = z.enum(COLUMN_TRANSFORM_CLASSES);

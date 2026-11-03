@@ -1,5 +1,6 @@
 import type { DatabaseModel } from '../engine/shared/types';
 import type { AIViewMetadata, FilterProfile } from '../engine/projectStore';
+import type { ColumnTransformClass } from '../engine/shared/bridgeContract';
 import {
   createSavedReferenceResolver,
   resolveModelNodeId,
@@ -15,9 +16,14 @@ export interface ReconciledAiView {
   metadata: AIViewMetadata;
 }
 
+/** An older saved edge whose every role is `combine` or `filter`: no value crosses it. */
+const legacyIndirectOnly = (transforms?: readonly ColumnTransformClass[]) =>
+  !!transforms?.length &&
+  transforms.every((c) => c === 'combine' || c === 'filter');
+
 /**
  * Canonicalizes AI-preview references; saved views use `savedResolver` instead. Unresolved
- * saved-edge endpoints are omitted.
+ * saved-edge endpoints and legacy indirect-only edges are omitted.
  */
 export function reconcileAiView(
   nodeIds: string[],
@@ -87,7 +93,9 @@ export function reconcileAiView(
                 }
               : {}),
             edges: metadata.columnAspect.edges.flatMap((edge) =>
-              remapIds(edge, ['hopNode', 'fromNode', 'toNode']),
+              legacyIndirectOnly(edge.transforms)
+                ? []
+                : remapIds(edge, ['hopNode', 'fromNode', 'toNode']),
             ),
             ...(metadata.columnAspect.indirect && {
               indirect: metadata.columnAspect.indirect.flatMap((fact) =>
