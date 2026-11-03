@@ -681,9 +681,9 @@ export function buildColumnChainPreface(
   if (stepRows.length)
     parts.push(
       [
-        '**Indirect columns** · ⋈ join · ▽ filter · ⇅ group/partition/order',
+        '**Indirect columns** · ⋈ join · σ filter · γ group/partition/order',
         '',
-        '| Step | Hop | ⋈ join | ▽ filter | ⇅ arrange |',
+        '| Step | Hop | ⋈ join | σ filter | γ arrange |',
         '| --- | ---: | --- | --- | --- |',
         ...stepRows,
       ].join('\n'),

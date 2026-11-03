@@ -396,7 +396,7 @@ export type IndirectFact = z.infer<typeof IndirectFactSchema>;
 /** An indirect fact with the step node that uses it, as stored on the column aspect. */
 export type StepIndirectFact = IndirectFact & { hopNode: string };
 
-const INDIRECT_SYMBOL = { join: '⋈', filter: '▽', arrange: '⇅' } as const;
+const INDIRECT_SYMBOL = { join: '⋈', filter: 'σ', arrange: 'γ' } as const;
 
 /** Per usage in display order: its symbol and distinct `node.column — detail` lines, verbatim. */
 export function describeIndirectFacts(facts: readonly IndirectFact[]) {

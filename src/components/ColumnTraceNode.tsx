@@ -14,7 +14,9 @@ import {
   COLUMN_NODE_HEADER_HEIGHT,
   COLUMN_NODE_BORDER_WIDTH,
   COLUMN_ROW_HEIGHT,
+  COLUMN_INDIRECT_ROW_HEIGHT,
   COLUMN_ROW_DIM_OPACITY,
+  indirectColumnLines,
   COLUMN_TRANSFORM_NODE_WIDTH,
   COLUMN_TRANSFORM_CIRCLE_DIAMETER,
   COLUMN_TRANSFORM_NAME_STRIP_HEIGHT,
@@ -255,6 +257,54 @@ function IndirectBadges({ facts }: { facts: readonly StepIndirectFact[] }) {
   );
 }
 
+/** A row-less card's handles at its header's middle, above any indirect lines. */
+const headerHandleStyle = { top: COLUMN_NODE_HEADER_HEIGHT / 2 };
+
+/** A card's indirect lines beneath its direct rows, symbol at the right edge, no handles. */
+function IndirectRows({ facts }: { facts: readonly StepIndirectFact[] }) {
+  const lines = indirectColumnLines(facts);
+  if (lines.length === 0) return null;
+  return (
+    <div role="group" aria-label="Indirect columns" style={{ flexShrink: 0 }}>
+      {lines.map(({ usage, symbol, line }, i) => (
+        <div
+          key={`${usage} ${line}`}
+          data-usage={usage}
+          title={`${usage}: ${line}`}
+          className="text-[9px]"
+          style={{
+            boxSizing: 'border-box',
+            borderTop:
+              i === 0 ? '1px dashed var(--ln-border-light)' : undefined,
+            height: COLUMN_INDIRECT_ROW_HEIGHT,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '0 8px',
+            color: 'var(--ln-fg-muted)',
+          }}
+        >
+          <span
+            style={{
+              flex: 1,
+              fontStyle: 'italic',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <span className="sr-only">{usage}: </span>
+            {line}
+          </span>
+          <span aria-hidden="true" style={{ flexShrink: 0 }}>
+            {symbol}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** Process cog in the Lucide "settings" silhouette, lightly filled so it reads at 18px. */
 function GearGlyph() {
   return (
@@ -423,10 +473,7 @@ function ColumnTraceNodeComponent({
     data.schemaColor ??
     getSchemaColor(view.schema, undefined, data.identifierCaseSensitive);
   const nodeTitle = `${view.schema}.${view.label}`;
-  const facts = [
-    ...(view.stepFacts ?? []),
-    ...((data.highlighted && view.ownFacts) || []),
-  ];
+  const facts = [...(view.stepFacts ?? []), ...(view.ownFacts ?? [])];
 
   const rowsBlockHeight = view.rows.length * COLUMN_ROW_HEIGHT;
 
@@ -558,7 +605,6 @@ function ColumnTraceNodeComponent({
                 >
                   {nodeTitle}
                 </span>
-                <IndirectBadges facts={facts} />
                 <span
                   className="text-[8px]"
                   style={{ color: 'var(--ln-fg-muted)', flexShrink: 0 }}
@@ -595,6 +641,7 @@ function ColumnTraceNodeComponent({
                   />
                 ))}
               </div>
+              <IndirectRows facts={facts} />
             </>
           )}
 
@@ -607,7 +654,7 @@ function ColumnTraceNodeComponent({
                 style={
                   view.isTransformNode
                     ? portHandleStyle(view, 0, 'target')
-                    : undefined
+                    : headerHandleStyle
                 }
               />
               <Handle
@@ -617,7 +664,7 @@ function ColumnTraceNodeComponent({
                 style={
                   view.isTransformNode
                     ? portHandleStyle(view, 0, 'source')
-                    : undefined
+                    : headerHandleStyle
                 }
               />
             </>

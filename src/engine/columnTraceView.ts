@@ -6,6 +6,7 @@
 
 import { AI_BADGE_BAND, AI_NOTE_BAND, dagreLayout } from './graphBuilder';
 import { normalizeColName, schemaKey } from '../utils/sql';
+import { describeIndirectFacts } from './shared/bridgeContract';
 import type {
   ColumnAspectEdge,
   ColumnTransformClass,
@@ -58,7 +59,7 @@ export interface ColumnTraceViewNode extends ColumnTraceViewObject {
   position: { x: number; y: number };
   /** Indirect facts of the step this node is, whether or not their object is drawn. */
   stepFacts?: StepIndirectFact[];
-  /** The object's own filter and arrange facts, shown on selection; join keys stay on the step. */
+  /** The object's own filter and arrange facts; join keys stay on the step. */
   ownFacts?: StepIndirectFact[];
 }
 
@@ -171,6 +172,9 @@ export const COLUMN_NODE_HEADER_HEIGHT = 28;
 
 /** Height of one column row. */
 export const COLUMN_ROW_HEIGHT = 22;
+
+/** Height of one indirect-column line beneath a card's direct rows. */
+export const COLUMN_INDIRECT_ROW_HEIGHT = 18;
 
 /** Card border width of a column-trace node. */
 export const COLUMN_NODE_BORDER_WIDTH = 2;
@@ -445,6 +449,15 @@ function withAnnotationBand(
   return { ...config, layout };
 }
 
+/** One `node.column — detail` line and its symbol per distinct fact, in usage order. */
+export function indirectColumnLines(
+  facts: readonly StepIndirectFact[],
+): { usage: string; symbol: string; line: string }[] {
+  return describeIndirectFacts(facts).flatMap(({ usage, symbol, lines }) =>
+    lines.map((line) => ({ usage, symbol, line })),
+  );
+}
+
 /** Whether an object draws as a transform hub rather than a column card. */
 function isColumnTraceTransformNode(object: ColumnTraceViewObject): boolean {
   if (object.objectType === 'procedure') return true;
@@ -629,6 +642,9 @@ export function buildColumnTraceView(
       const ownFacts = facts.filter(
         (f) => f.usage !== 'join' && keyOf(f.node) === self,
       );
+      const indirectLines = isTransform
+        ? 0
+        : indirectColumnLines([...stepFacts, ...ownFacts]).length;
       return {
         ...(stepFacts.length > 0 ? { stepFacts } : {}),
         ...(ownFacts.length > 0 ? { ownFacts } : {}),
@@ -643,6 +659,7 @@ export function buildColumnTraceView(
           ? COLUMN_TRANSFORM_NODE_HEIGHT
           : COLUMN_NODE_HEADER_HEIGHT +
             rows.length * COLUMN_ROW_HEIGHT +
+            indirectLines * COLUMN_INDIRECT_ROW_HEIGHT +
             2 * COLUMN_NODE_BORDER_WIDTH,
         position: { x: 0, y: 0 },
       };
