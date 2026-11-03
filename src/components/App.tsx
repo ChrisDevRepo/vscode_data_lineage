@@ -1442,6 +1442,9 @@ export function App() {
       };
   }, [isModeLocked, restoreViewSnapshot, preserveViewportOnNextGraphChange]);
 
+  const discardAiPreviewRef = useRef(handleDiscardAiPreview);
+  discardAiPreviewRef.current = handleDiscardAiPreview;
+
   /** Exits the active advanced bookmark view and restores previous filters. */
   const handleExitAdvancedBookmark = useCallback(() => {
     setActiveAdvancedProfile(null);
@@ -1651,6 +1654,8 @@ export function App() {
         }
       } else if (msg.type === 'reload-source') {
         reloadSourceRef.current();
+      } else if (msg.type === 'ai-view-clear') {
+        if (aiPreviewRef.current) discardAiPreviewRef.current();
       } else if (msg.type === 'ai-view-preview') {
         const renderModel = modelRef.current;
         let resolvedIds = msg.nodeIds;

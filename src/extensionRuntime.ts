@@ -211,6 +211,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
     } else if (aiEnabled) {
       context.subscriptions.push(...registerAiTools(externalTools));
 
+      const aiLogger = Logger.create(outputChannel, 'AI');
       lineageRuntime = new LineageRuntime({
         getSession,
         createRegistry: (lease, model) =>
@@ -226,8 +227,13 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
               budget: model.budget,
             },
           ),
-        logger: Logger.create(outputChannel, 'AI'),
+        logger: aiLogger,
         traceWriter,
+        clearPreview: () => {
+          const panel = getActivePanel();
+          if (panel)
+            void postToWebview(panel, { type: 'ai-view-clear' }, aiLogger);
+        },
       });
 
       participant = new LineageParticipant(

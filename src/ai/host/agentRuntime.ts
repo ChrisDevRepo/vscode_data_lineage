@@ -68,6 +68,8 @@ interface AgentRuntimeDeps {
   readonly logger?: Logger;
   /** Optional trace sink for rejections raised without a tool dispatch; forwarded to the graph. */
   readonly traceSyntheticRejection?: SyntheticRejectionTrace;
+  /** Optional AI preview clear; forwarded to the graph. */
+  readonly clearPreview?: () => void;
 }
 
 /** Environment flags that make LangChain construct a LangSmith tracer. */
@@ -133,6 +135,7 @@ export class AgentRuntime {
       logger: deps.logger,
       requestId: deps.requestId ?? deps.threadId,
       traceSyntheticRejection: deps.traceSyntheticRejection,
+      clearPreview: deps.clearPreview,
     });
   }
 

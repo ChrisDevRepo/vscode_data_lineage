@@ -196,6 +196,8 @@ interface AgentGraphDeps {
   readonly logger?: Logger;
   /** Optional sink for rejections the attempt executor raises without dispatching a tool. */
   readonly traceSyntheticRejection?: SyntheticRejectionTrace;
+  /** Clears the AI preview on the canvas; an approved exploration replaces the earlier result. */
+  readonly clearPreview?: () => void;
 }
 
 /** Sends graph diagnostics with the immutable host request identity. */
@@ -1448,6 +1450,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       );
       return fail(`Approved exploration could not start: ${activation.reason}`);
     }
+    deps.clearPreview?.();
     const engine = activation.engine as NavigationEngine;
     if (cachedDiscoverySummary)
       engine.setDiscoverySummary(cachedDiscoverySummary);

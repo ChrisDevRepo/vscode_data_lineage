@@ -70,6 +70,8 @@ interface LineageRuntimeDeps {
   readonly maxRounds?: number;
   /** Optional trace writer receiving this runtime's lifecycle and tool records. */
   readonly traceWriter?: AiTraceWriter;
+  /** Optional AI preview clear; forwarded to the agent runtime. */
+  readonly clearPreview?: () => void;
 }
 
 /** Single production facade for native lineage turns. */
@@ -200,6 +202,7 @@ export class LineageRuntime {
         input.request.priorMessages ?? session.getDiscoveryHistory(),
       logger: this.deps.logger,
       traceSyntheticRejection,
+      clearPreview: this.deps.clearPreview,
     });
     this.active.add(requestKey);
     this.writeLifecycle({

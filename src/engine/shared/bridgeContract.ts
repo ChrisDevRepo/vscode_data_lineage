@@ -868,6 +868,7 @@ export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
     nodeIds: z.array(z.string()),
     aiMetadata: AIViewMetadataSchema,
   }),
+  z.object({ type: z.literal('ai-view-clear') }),
   z.object({
     type: z.literal('error'),
     error: z.string(),
