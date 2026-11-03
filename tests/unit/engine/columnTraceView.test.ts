@@ -260,9 +260,8 @@ describe('columnTraceView AI annotation band', () => {
  */
 describe('columnThread — directed trace cone', () => {
   // SalesStaging.OrderQty -> vwConsolidatedSales.Qty and PriceMaster.ListPrice ->
-  // vwPriceList.UnitPrice,
-  // both feeding FactSalesReport.TotalRevenue through the spBuildSalesReport hop (ports Qty,
-  // UnitPrice, TotalRevenue).
+  // vwPriceList.UnitPrice, both feeding FactSalesReport.TotalRevenue through the
+  // spBuildSalesReport hop (ports Qty, UnitPrice, TotalRevenue).
   const index = buildColumnThreadIndex(
     build(
       [

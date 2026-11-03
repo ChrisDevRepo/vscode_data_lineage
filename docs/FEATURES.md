@@ -123,7 +123,7 @@ A deep analysis must fit `dataLineageViz.ai.maxRounds` and, for column traces, `
 
 The assistant sees the trace, analysis or bookmark on screen; type `#lineageView` to attach it explicitly.
 
-When a run finds column mappings, the preview offers an **Objects / Detail** switch to show them.
+When a run finds column mappings, the preview offers an **Objects / Detail** switch to show them. Indirect columns show as muted `join`, `filter` or `group/order` labels on their own card row, a join as a dotted link with its keys in the tooltip, and a procedure or function shows one count line.
 
 ### Depth
 

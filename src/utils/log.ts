@@ -80,13 +80,10 @@ export class Logger {
   }
 }
 
-/**
- * Truncation cap for content text (prompts, questions, reasoning, SQL previews) — logging.md
- * truncation table.
- */
+/** Truncation cap for content text (prompts, questions, reasoning, SQL previews). */
 export const LOG_TRUNC_CONTENT = 200;
 
-/** Truncation cap for JSON payloads (tool I/O, webview messages) — logging.md truncation table. */
+/** Truncation cap for JSON payloads (tool I/O, webview messages). */
 export const LOG_TRUNC_JSON = 300;
 
 /** Items shown when a log line previews a list. */

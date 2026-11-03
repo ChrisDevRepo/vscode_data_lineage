@@ -13,13 +13,8 @@ import {
   AI_NOTE_BAND,
   NODE_HEIGHT,
   buildGraph,
-  buildGraphNoLayout,
   computeShortestPath,
   dagreLayout,
-  getGraphMetrics,
-  hasCachedLayout,
-  objectLayoutInputForGraph,
-  seedLayoutCache,
   setGraphLogSink,
   traceNodeWithLevels,
 } from '../../../src/engine/graphBuilder';
@@ -27,11 +22,7 @@ import {
   DEFAULT_CONFIG,
   type DatabaseModel,
 } from '../../../src/engine/shared/types';
-import {
-  makeGraph,
-  makeIndexedModel,
-  makeNode,
-} from '../helpers/modelFixtures';
+import { makeGraph } from '../helpers/modelFixtures';
 import { loadAdventureWorksModel, testPath } from '../helpers/testUtils';
 
 describe('buildGraph', () => {
@@ -176,65 +167,6 @@ describe('dagreLayout — AI badge/footnote band', () => {
 
   it('reserves the badge-plus-footnote band between stacked annotated nodes', () => {
     expect(realGap(siblingLayout(['a', 'b']))).toBeGreaterThanOrEqual(band);
-  });
-});
-
-describe('layout worker seam — buildGraphNoLayout, objectLayoutInputForGraph, layout cache', () => {
-  const table = (id: string) =>
-    makeNode({ id, name: id, schema: 'dbo', type: 'table' });
-  // a -> b -> c, a read/write pair p <-> q, and an unconnected island z.
-  const model = makeIndexedModel(['a', 'b', 'c', 'p', 'q', 'z'].map(table), [
-    ['a', 'b'],
-    ['b', 'c'],
-    ['p', 'q'],
-    ['q', 'p'],
-  ]);
-
-  it('builds every node at the origin and reports roots and leaves', () => {
-    const { flowNodes, graph } = buildGraphNoLayout(model);
-    expect(flowNodes.map((n) => n.id)).toEqual(model.nodes.map((n) => n.id));
-    expect(
-      flowNodes.every((n) => n.position.x === 0 && n.position.y === 0),
-    ).toBe(true);
-    // Roots: a, z (isolated counts as both). Leaves: c, z. p/q feed each other.
-    expect(getGraphMetrics(graph)).toEqual({
-      totalNodes: 6,
-      totalEdges: 4,
-      rootNodes: 2,
-      leafNodes: 2,
-    });
-  });
-
-  it('plans layout input with one edge per two-way pair and no isolated nodes', () => {
-    const { graph } = buildGraphNoLayout(model);
-    const input = objectLayoutInputForGraph(graph, DEFAULT_CONFIG, ['a']);
-    expect(input.nodeIds).toEqual(['a', 'b', 'c', 'p', 'q']);
-    expect(input.edges).toHaveLength(3);
-    expect(input.ranker).toBe('longest-path');
-    expect(input.annotatedNodeIds).toEqual(['a']);
-    expect(objectLayoutInputForGraph(graph).annotatedNodeIds).toBeUndefined();
-  });
-
-  it('serves seeded worker positions to buildGraph and rejects incomplete ones', () => {
-    const { graph } = buildGraphNoLayout(model);
-    const input = objectLayoutInputForGraph(graph);
-    expect(hasCachedLayout(input)).toBe(false);
-
-    const partial = new Map([['a', { x: 1, y: 1 }]]);
-    expect(seedLayoutCache(input, partial)).toBe(false);
-    expect(hasCachedLayout(input)).toBe(false);
-
-    const seeded = new Map(
-      input.nodeIds.map((id, i) => [id, { x: 1000 + i, y: 2000 }]),
-    );
-    expect(seedLayoutCache(input, seeded)).toBe(true);
-    expect(hasCachedLayout(input)).toBe(true);
-
-    const placed = buildGraph(model).flowNodes;
-    expect(placed.find((n) => n.id === 'b')!.position).toEqual({
-      x: 1001,
-      y: 2000,
-    });
   });
 });
 

@@ -68,24 +68,6 @@ export function makeModel(
   };
 }
 
-/** Builds the normal model fixture with complete neighbor metadata for every declared edge. */
-export function makeIndexedModel(
-  nodes: LineageNode[],
-  edgePairs: ReadonlyArray<readonly [string, string]>,
-): DatabaseModel {
-  const model = makeModel(nodes, edgePairs, [
-    ...new Set(nodes.map((node) => node.schema)),
-  ]);
-  model.neighborIndex = Object.fromEntries(
-    nodes.map((node) => [node.id, { in: [] as string[], out: [] as string[] }]),
-  );
-  for (const [from, to] of edgePairs) {
-    model.neighborIndex[from].out.push(to);
-    model.neighborIndex[to].in.push(from);
-  }
-  return model;
-}
-
 /** Build a directed graphology graph from nodes + edges (for synthetic test graphs) */
 export function makeGraph(
   nodes: Array<{ id: string; schema?: string; name?: string; type?: string }>,

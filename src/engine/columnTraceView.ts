@@ -669,6 +669,14 @@ export function buildColumnTraceView(
     Map<NodeAccumulator, Set<string>>
   >();
   const seenFacts = new Set<string>();
+  /** Marks the fact's usage on its column row; returns the row's column name. */
+  const markUsage = (acc: NodeAccumulator, fact: StepIndirectFact): string => {
+    const rowKey = touchRow(acc, fact.col, input.identifierCaseSensitive);
+    const usage = acc.usage.get(rowKey);
+    if (usage) usage.add(fact.usage);
+    else acc.usage.set(rowKey, new Set([fact.usage]));
+    return acc.rowNames.get(rowKey)!;
+  };
   for (const fact of input.indirect ?? []) {
     const stepAcc = nodeAccs.get(keyOf(fact.hopNode));
     if (!stepAcc) continue;
@@ -687,18 +695,16 @@ export function buildColumnTraceView(
       if (facts) facts.push(fact);
       else localFacts.set(keyOf(fact.hopNode), [fact]);
     }
-    if (!onRow) continue;
-    const rowKey = touchRow(acc, fact.col, input.identifierCaseSensitive);
-    const column = acc.rowNames.get(rowKey)!;
-    const usage = acc.usage.get(rowKey);
-    if (usage) usage.add(fact.usage);
-    else acc.usage.set(rowKey, new Set([fact.usage]));
+    if (!acc) continue;
+    // A hub neighbor has no row for the key, but its join still draws the dotted line.
+    const column = onRow ? markUsage(acc, fact) : fact.col;
     if (acc === stepAcc) continue;
-    indirectLinks.push({
-      nodeId: acc.object.id,
-      column,
-      stepId: stepAcc.object.id,
-    });
+    if (onRow)
+      indirectLinks.push({
+        nodeId: acc.object.id,
+        column,
+        stepId: stepAcc.object.id,
+      });
     if (fact.usage !== 'join') continue;
     const steps =
       joinColumns.get(acc) ?? new Map<NodeAccumulator, Set<string>>();
@@ -904,7 +910,14 @@ export function buildColumnTraceView(
         (e) => e.source === from.object.id && e.target === to.object.id,
       );
       if (existing) existing.columns = [...columns];
-      else pushObjectEdge(from, to, [...columns][0], columns);
+      // A hub has no key rows, so its line leaves from the hub's own handle.
+      else
+        pushObjectEdge(
+          from,
+          to,
+          isColumnTraceTransformNode(from.object) ? undefined : [...columns][0],
+          columns,
+        );
     }
 
   const boxes = new Map(
