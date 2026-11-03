@@ -1427,12 +1427,6 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
         candidate.classification = proposal.classification;
         const initialized = candidate.init(proposal.init);
         if ('code' in initialized) return initialized;
-        // A card approved after a completed walk extends that walk's preview.
-        if (sess.stateMachine?.status === 'complete' && sess.resultGraph)
-          candidate.continueFrom(
-            sess.stateMachine as NavigationEngine,
-            sess.resultGraph.nodeIds,
-          );
         logGraphDebug(
           deps,
           `[AI] [Proposal] approved revision=${proposal.revision} origin=${sanitizeForLog(proposal.init.origin)} depth=${sanitizeForLog(JSON.stringify(proposal.init.depthIntent))}`,

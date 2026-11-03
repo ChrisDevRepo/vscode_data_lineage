@@ -655,43 +655,6 @@ export class NavigationEngine implements IHopStateMachine {
     }
   }
 
-  /**
-   * Continues a completed earlier walk after its follow-up card is approved: call right after
-   * {@link init}. Objects the earlier walk visited stay visited, so they are never dispatched
-   * again; their states and detail slots stay, and the result keeps the earlier preview's start
-   * node, nodes and column rows.
-   */
-  public continueFrom(
-    earlier: NavigationEngine,
-    previewNodeIds: readonly string[],
-  ): void {
-    const { originNodeId, columnAspect } = earlier.getResult();
-    this.startNodeId = originNodeId;
-    this.earlierColumns = columnAspect;
-    for (const id of earlier.visited) {
-      this.visited.add(id);
-      const state = earlier.nodeStates.get(id);
-      if (state) this.nodeStates.set(id, state);
-    }
-    const { detailSlots, slotCount } = earlier.memory.toJSON();
-    this.memory.restoreFromJSON({
-      ...this.memory.toJSON(),
-      detailSlots,
-      slotCount,
-    });
-    this.earlierWalk = new Set(earlier.visited);
-    this.earlierPreview = new Set(previewNodeIds);
-  }
-
-  /** Objects an earlier walk of this preview visited; see {@link continueFrom}. */
-  private earlierWalk: ReadonlySet<string> = new Set();
-  /** Nodes of the earlier preview this walk extends; see {@link continueFrom}. */
-  private earlierPreview: ReadonlySet<string> = new Set();
-  /** Start node of the earlier preview this walk extends; see {@link continueFrom}. */
-  private startNodeId: string | null = null;
-  /** Column rows of the earlier preview this walk extends; see {@link continueFrom}. */
-  private earlierColumns: ColumnAspect | null = null;
-
   /** Publishes this engine's memory while preserving the session memory object identity. */
   public publishMemoryTo(target: AiMemoryManager): void {
     target.restoreFromJSON(this.memory.toJSON());
@@ -5287,23 +5250,18 @@ export class NavigationEngine implements IHopStateMachine {
         direction === 'bidirectional' ? 'both' : direction,
         this.log,
       ) ?? null;
-    // Earlier walked objects render as the earlier preview left them, follow-up edits included.
-    const rendered = new Set([
-      ...this.earlierPreview,
-      ...nodeStates
-        .filter(
-          (state) =>
-            state.action !== 'prune' && !this.earlierWalk.has(state.nodeId),
-        )
+    const rendered = new Set(
+      nodeStates
+        .filter((state) => state.action !== 'prune')
         .map((state) => state.nodeId),
-    ]);
+    );
     for (const edge of columnAspect?.edges ?? []) {
       rendered.add(edge.from_node);
       rendered.add(edge.to_node);
     }
     return {
       status: 'complete',
-      originNodeId: this.startNodeId ?? this.originNodeId!,
+      originNodeId: this.originNodeId!,
       fullNodes: Array.from(rendered, (id) => {
         const n = this.nodeMap.get(id)!;
         return { id: n.id, s: n.schema, n: n.name, t: n.type };
@@ -5319,25 +5277,7 @@ export class NavigationEngine implements IHopStateMachine {
         .getResult()
         .detail_slots.filter((slot) => rendered.has(slot.nodeId)),
       node_states: nodeStates,
-      columnAspect: this.startNodeId
-        ? this.extendColumns(columnAspect)
-        : columnAspect,
-    };
-  }
-
-  /**
-   * The earlier preview's column rows followed by this walk's; the requested columns stay those of
-   * the start node.
-   */
-  private extendColumns(walk: ColumnAspect | null): ColumnAspect | null {
-    const earlier = this.earlierColumns;
-    if (!earlier && !walk) return null;
-    const indirect = [...(earlier?.indirect ?? []), ...(walk?.indirect ?? [])];
-    return {
-      target_columns: earlier?.target_columns ?? [],
-      active_columns: [],
-      edges: [...(earlier?.edges ?? []), ...(walk?.edges ?? [])],
-      ...(indirect.length ? { indirect } : {}),
+      columnAspect,
     };
   }
 
