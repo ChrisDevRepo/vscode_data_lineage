@@ -417,6 +417,26 @@ export const IndirectFactSchema = z
 /** Inferred shape of {@link IndirectFactSchema}. */
 export type IndirectFact = z.infer<typeof IndirectFactSchema>;
 
+/** An indirect fact with the step node that uses it, as stored on the column aspect. */
+export type StepIndirectFact = IndirectFact & { hopNode: string };
+
+const INDIRECT_SYMBOL = { join: '⋈', filter: '▽', arrange: '⇅' } as const;
+
+/** Per usage in display order: its symbol and distinct `node.column — detail` lines, verbatim. */
+export function describeIndirectFacts(facts: readonly IndirectFact[]) {
+  return IndirectFactSchema.shape.usage.options.map((usage) => ({
+    usage,
+    symbol: INDIRECT_SYMBOL[usage],
+    lines: [
+      ...new Set(
+        facts
+          .filter((fact) => fact.usage === usage)
+          .map((f) => `${f.node}.${f.col}${f.detail ? ` — ${f.detail}` : ''}`),
+      ),
+    ],
+  }));
+}
+
 const ColumnAspectSchema = z
   .object({
     /** Frozen asked identities for preview rows; absent in older saved views. */

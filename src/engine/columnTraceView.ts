@@ -9,6 +9,7 @@ import { normalizeColName, schemaKey } from '../utils/sql';
 import type {
   ColumnAspectEdge,
   ColumnTransformClass,
+  StepIndirectFact,
 } from './shared/bridgeContract';
 import type { ExtensionConfig } from './shared/types';
 
@@ -55,6 +56,10 @@ export interface ColumnTraceViewNode extends ColumnTraceViewObject {
   /** Node height in canvas units, derived from the row count. */
   height: number;
   position: { x: number; y: number };
+  /** Indirect facts of the step this node is, whether or not their object is drawn. */
+  stepFacts?: StepIndirectFact[];
+  /** The object's own filter and arrange facts, shown on selection; join keys stay on the step. */
+  ownFacts?: StepIndirectFact[];
 }
 
 /** A per-column edge in the column-trace view, addressing row handles rather than nodes. */
@@ -124,6 +129,8 @@ export interface ColumnTraceViewInput {
   relations: ColumnAspectEdge[];
   /** Frozen asked identities, retained as rows without inventing relations. */
   requested?: { node: string; columns: readonly string[] };
+  /** Stored indirect facts from `AIViewMetadata.columnAspect.indirect`; never edges or rows. */
+  indirect?: readonly StepIndirectFact[];
   /** Object identity per presented node, keyed by schemaKey under the source policy. */
   objects: Map<string, ColumnTraceViewObject>;
   /** Dependency edges of the object view between presented objects, by node id. */
@@ -610,11 +617,21 @@ export function buildColumnTraceView(
 
   for (const object of input.objects.values()) getAcc(object);
 
+  const facts = input.indirect ?? [];
+  const keyOf = (id: string): string =>
+    schemaKey(id, input.identifierCaseSensitive);
   const nodes: ColumnTraceViewNode[] = Array.from(nodeAccs.values()).map(
     (acc) => {
       const rows = buildRows(acc, input.identifierCaseSensitive);
       const isTransform = isColumnTraceTransformNode(acc.object);
+      const self = keyOf(acc.object.id);
+      const stepFacts = facts.filter((f) => keyOf(f.hopNode) === self);
+      const ownFacts = facts.filter(
+        (f) => f.usage !== 'join' && keyOf(f.node) === self,
+      );
       return {
+        ...(stepFacts.length > 0 ? { stepFacts } : {}),
+        ...(ownFacts.length > 0 ? { ownFacts } : {}),
         id: acc.object.id,
         label: acc.object.label,
         schema: acc.object.schema,

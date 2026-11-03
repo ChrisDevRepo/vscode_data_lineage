@@ -659,6 +659,7 @@ export async function executePresentResult(
               resultGraph.columnAspect.edges,
               resultGraph.columnAspect.requested,
               model.identifierCaseSensitive,
+              resultGraph.columnAspect.indirect,
             )
           : undefined;
         const assembled = renderInput.sections?.length

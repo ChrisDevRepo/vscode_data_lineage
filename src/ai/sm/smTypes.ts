@@ -7,6 +7,7 @@ import type {
 import type {
   ColumnTransformClass,
   IndirectFact,
+  StepIndirectFact,
 } from '../../engine/shared/bridgeContract';
 import type { DepthSideValue } from '../../engine/shared/explorationDepthContract';
 import type { ToolRejection } from '../support/toolErrorEnvelope';
@@ -77,7 +78,7 @@ export interface ColumnAspect {
    */
   edges: ColumnEdge[];
   /** Indirect facts with the step node that uses each; never edges, never traced. */
-  indirect?: Array<IndirectFact & { hopNode: string }>;
+  indirect?: StepIndirectFact[];
 }
 
 /** Structured attribution of data flow for a specific output column. */

@@ -37,6 +37,11 @@ import {
   TraceNeighborPickerToolbar,
 } from './CustomNode';
 import { useTraceNeighborPicker } from '../hooks/useTraceNeighborPicker';
+import { Tooltip } from './ui/Tooltip';
+import {
+  describeIndirectFacts,
+  type StepIndirectFact,
+} from '../engine/shared/bridgeContract';
 import type { ColumnTraceNodeData, ObjectType } from '../engine/shared/types';
 
 function lineStateColor(state: ColumnLineState | undefined): string {
@@ -225,6 +230,31 @@ function ColumnTraceRowLine({
   );
 }
 
+/** Symbol-and-count badge per usage; its label and tooltip name the usage and each fact. */
+function IndirectBadges({ facts }: { facts: readonly StepIndirectFact[] }) {
+  return describeIndirectFacts(facts).map(
+    ({ usage, symbol, lines }) =>
+      lines.length > 0 && (
+        <Tooltip
+          key={usage}
+          content={[usage, ...lines].join('\n')}
+          multiline
+          asChild
+        >
+          <span
+            role="img"
+            aria-label={`${usage} ${lines.length}: ${lines.join(', ')}`}
+            className="text-[9px]"
+            style={{ color: 'var(--ln-fg-muted)', flexShrink: 0 }}
+          >
+            {symbol}
+            {lines.length}
+          </span>
+        </Tooltip>
+      ),
+  );
+}
+
 /** Process cog in the Lucide "settings" silhouette, lightly filled so it reads at 18px. */
 function GearGlyph() {
   return (
@@ -259,9 +289,11 @@ function TransformNodeBody({
   strokeColor,
   boxShadow,
   schemaColor,
+  facts,
 }: {
   view: ColumnTraceNodeData['view'];
   nodeTitle: string;
+  facts: readonly StepIndirectFact[];
   /** Circle stroke — the schema colour, or the highlight colour while the node is selected. */
   strokeColor: string;
   /** Selection glow, drawn on the circle; no card box surrounds it. */
@@ -310,6 +342,7 @@ function TransformNodeBody({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
+          gap: 4,
           padding: '0 4px',
         }}
       >
@@ -325,6 +358,7 @@ function TransformNodeBody({
         >
           {nodeTitle}
         </span>
+        <IndirectBadges facts={facts} />
       </div>
     </>
   );
@@ -389,6 +423,10 @@ function ColumnTraceNodeComponent({
     data.schemaColor ??
     getSchemaColor(view.schema, undefined, data.identifierCaseSensitive);
   const nodeTitle = `${view.schema}.${view.label}`;
+  const facts = [
+    ...(view.stepFacts ?? []),
+    ...((data.highlighted && view.ownFacts) || []),
+  ];
 
   const rowsBlockHeight = view.rows.length * COLUMN_ROW_HEIGHT;
 
@@ -484,6 +522,7 @@ function ColumnTraceNodeComponent({
               strokeColor={highlighted ? highlightColor : schemaColor}
               boxShadow={boxShadow}
               schemaColor={schemaColor}
+              facts={facts}
             />
           ) : (
             <>
@@ -519,6 +558,7 @@ function ColumnTraceNodeComponent({
                 >
                   {nodeTitle}
                 </span>
+                <IndirectBadges facts={facts} />
                 <span
                   className="text-[8px]"
                   style={{ color: 'var(--ln-fg-muted)', flexShrink: 0 }}

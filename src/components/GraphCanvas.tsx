@@ -1235,6 +1235,7 @@ export function GraphCanvas({
         return null;
       return buildColumnTraceView({
         requested,
+        indirect: aspect.indirect,
         identifierCaseSensitive: model?.identifierCaseSensitive,
         relations,
         objects,

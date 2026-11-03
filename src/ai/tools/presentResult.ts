@@ -15,8 +15,10 @@ import {
 } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import {
+  describeIndirectFacts,
   FOCUS_NODE_HREF_PREFIX,
   type ColumnTransformClass,
+  type StepIndirectFact,
 } from '../../engine/shared/bridgeContract';
 import type { DetailSlot } from '../session/memoryManager';
 import type { z } from 'zod';
@@ -590,6 +592,8 @@ export function orderAndAssemble(
 type ColumnChainEdge = {
   /** 1-based hop index the edge was traced at. */
   hop: number;
+  /** Step node the edge was traced through. */
+  hop_node: string;
   /** Source node id. */
   from_node: string;
   /** Source column name. */
@@ -602,15 +606,19 @@ type ColumnChainEdge = {
   transforms?: readonly ColumnTransformClass[];
 };
 
-/** Formats recorded column relations and retains asked identities without inventing a mapping. */
+/** Formats recorded relations, asked identities and step indirect facts without inventing any. */
 export function buildColumnChainPreface(
   edges: readonly ColumnChainEdge[],
   requested?: { readonly node: string; readonly columns: readonly string[] },
   identifierCaseSensitive = false,
+  indirect?: readonly StepIndirectFact[],
 ): string | undefined {
   if (edges.length === 0 && !requested?.columns.length) return undefined;
   const outputs = new Map<string, ColumnChainEdge[]>();
+  const steps = new Map<string, ColumnChainEdge>();
   for (const edge of [...edges].sort((a, b) => a.hop - b.hop)) {
+    const step = schemaKey(edge.hop_node, identifierCaseSensitive);
+    if (!steps.has(step)) steps.set(step, edge);
     const key = JSON.stringify([edge.to_node, edge.to_col]);
     const group = outputs.get(key);
     if (group) group.push(edge);
@@ -660,6 +668,26 @@ export function buildColumnChainPreface(
         ].join('\n'),
       );
   }
+  const stepRows = [...steps].flatMap(([step, edge]) => {
+    const facts = (indirect ?? []).filter(
+      (fact) => schemaKey(fact.hopNode, identifierCaseSensitive) === step,
+    );
+    if (facts.length === 0) return [];
+    const cells = describeIndirectFacts(facts).map((usage) =>
+      usage.lines.map(columnChainCode).join(', '),
+    );
+    return `| ${columnChainCode(edge.hop_node)} | ${edge.hop} | ${cells.join(' | ')} |`;
+  });
+  if (stepRows.length)
+    parts.push(
+      [
+        '**Indirect columns** · ⋈ join · ▽ filter · ⇅ group/partition/order',
+        '',
+        '| Step | Hop | ⋈ join | ▽ filter | ⇅ arrange |',
+        '| --- | ---: | --- | --- | --- |',
+        ...stepRows,
+      ].join('\n'),
+    );
   return parts.join('\n\n');
 }
 
@@ -670,7 +698,7 @@ function columnChainCode(value: string): string {
     ...[...value.matchAll(/`+/g)].map((match) => match[0].length),
   );
   const fence = '`'.repeat(longestRun + 1);
-  const content = value.replace(/\|/g, '\\|');
+  const content = value.replace(/\|/g, '\\|').replace(/\r\n?|\n/g, ' ');
   const padding = longestRun > 0 ? ' ' : '';
   return `${fence}${padding}${content}${padding}${fence}`;
 }
