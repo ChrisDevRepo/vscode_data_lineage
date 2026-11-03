@@ -7,7 +7,12 @@ import {
   requiredCtChainNodeIds,
   requiredDetailSlotIds,
 } from '../tools/presentResult';
-import type { ColumnEdge, DeferredQuestion, SmResult } from '../sm/smTypes';
+import type {
+  ColumnAspect,
+  ColumnEdge,
+  DeferredQuestion,
+  SmResult,
+} from '../sm/smTypes';
 import { schemaKey } from '../../utils/sql';
 
 /**
@@ -164,12 +169,14 @@ function buildBbSynthesisBlock(
   ].join('\n');
 }
 
-/** Renders the CT-specific synthesis evidence block from validated column edges. */
+/** Renders the CT-specific synthesis evidence block from validated column edges and step facts. */
 function buildCtSynthesisBlock(
   originNodeId: string,
   edges: readonly ColumnEdge[],
+  indirect: ColumnAspect['indirect'],
   nodeEdges: ReadonlyArray<[string, string, string]>,
   presentedNodeIds: ReadonlySet<string>,
+  identifierCaseSensitive: boolean,
 ): string {
   const sources = new Map<string, string[]>();
   for (const e of edges) {
@@ -185,7 +192,31 @@ function buildCtSynthesisBlock(
       `    ${e.from_node}.${e.from_col}${metadata.length ? ` — ${metadata.join('; ')}` : ''}`,
     ]);
   }
-  const lines = ['## Column Trace Chain', ...[...sources].flat(2), ''];
+  // Like the preview: facts of chain steps only, each distinct line once.
+  const stepKey = (id: string) => schemaKey(id, identifierCaseSensitive);
+  const steps = new Map(
+    edges.map((e) => [
+      stepKey(e.hop_node),
+      { step: e.hop_node, facts: new Set<string>() },
+    ]),
+  );
+  for (const f of indirect ?? [])
+    steps
+      .get(stepKey(f.hopNode))
+      ?.facts.add(
+        `${f.node}.${f.col} ${f.usage}${f.detail ? ` (${escapePromptText(f.detail)})` : ''}`,
+      );
+  const lines = [
+    '## Column Trace Chain',
+    ...[...sources].flat(2),
+    ...[...steps.values()]
+      .filter(({ facts }) => facts.size > 0)
+      .map(
+        ({ step, facts }) =>
+          `  ${step} indirect columns: ${[...facts].join('; ')}`,
+      ),
+    '',
+  ];
   const directionEdges =
     nodeEdges.length > 0
       ? asFlowEdges(nodeEdges)
@@ -295,18 +326,9 @@ function buildPassthroughFlowFacts(
     const prefix = descriptor ? ` — ${descriptor}` : '';
     return `- ${n.id}${prefix}: ${renderFlowFactsFragment(flowFacts.get(n.id))}`;
   };
-  const dispositioned = qualifying.filter((n) => actionById.has(n.id));
-  const undispositioned = qualifying.filter((n) => !actionById.has(n.id));
-
   return [
     "Kept nodes without a detail slot (engine flow facts). Document each in the section of its writer or reader — what it holds for this flow, the predicate it is read or written under, the row grain it lands at, from that writer's or reader's captured SQL — and give it a `sections[].node_ids` or `notes[].node_id` entry:",
-    ...dispositioned.map(renderLine),
-    ...(undispositioned.length > 0
-      ? [
-          'In scope without a detail slot — describe indirect-only suppliers through their recorded dashed edges; give each a section link or a note:',
-          ...undispositioned.map(renderLine),
-        ]
-      : []),
+    ...qualifying.map(renderLine),
   ].join('\n');
 }
 
@@ -474,8 +496,10 @@ export function buildSmCompletionEnvelope(
         buildCtSynthesisBlock(
           result.originNodeId,
           result.columnAspect.edges,
+          result.columnAspect.indirect,
           result.edges,
           presented,
+          identifierCaseSensitive,
         )
       : result.edges.length > 0
         ? '\n' +

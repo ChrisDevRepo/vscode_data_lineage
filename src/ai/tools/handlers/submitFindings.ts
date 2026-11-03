@@ -1,25 +1,14 @@
 /** Executes active-hop submissions for the `lineage_submit_findings` tool. */
 import type { ColumnEdge } from '../../sm/smTypes';
-import { COLUMN_TRANSFORM_DIRECTION } from '../../../engine/shared/bridgeContract';
 import type { ToolServices } from './toolServices';
 import { acknowledgeCommittedHop, activeHopEngine } from './hopCommit';
 
-/**
- * Hop-log counters over committed column refs, including held flow: missing notes and mixed
- * INDIRECT/DIRECT classes.
- */
+/** Hop-log counters over committed column refs, including held flow: missing notes. */
 function columnRefSuffix(
-  columnRefs: readonly Pick<ColumnEdge, 'transforms' | 'note'>[] | undefined,
+  columnRefs: readonly Pick<ColumnEdge, 'note'>[] | undefined,
 ): string {
   const refs = columnRefs ?? [];
-  const noNote = refs.filter((ref) => !ref.note).length;
-  const mixed = refs.filter((ref) => {
-    const rowRoles = (ref.transforms ?? []).filter(
-      (role) => COLUMN_TRANSFORM_DIRECTION[role] === 'INDIRECT',
-    ).length;
-    return rowRoles > 0 && rowRoles < (ref.transforms ?? []).length;
-  }).length;
-  return ` refs=${refs.length} refs_no_note=${noNote} role_mixed=${mixed}`;
+  return ` refs=${refs.length} refs_no_note=${refs.filter((ref) => !ref.note).length}`;
 }
 
 /** Validates and submits findings for the current exploration focus. */

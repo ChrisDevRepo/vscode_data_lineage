@@ -632,10 +632,9 @@ const ColumnRefSchema = z
       .array(ColumnTransformClassSchema)
       .optional()
       .describe(
-        'Classify this source column’s own role end to end: a column that reaches out_col only as a join, filter, grouping, partition or ordering key keeps only those roles, even inside an expression; omit when SQL does not determine it. ' +
+        'Classify this source column’s role; omit when SQL does not determine it. ' +
           'pass_through: unchanged value. compute: expression input. aggregate: value summarised by an aggregate. ' +
-          'combine: join, grouping, partition or ordering key. filter: predicate selecting contributing, ' +
-          'updated or deleted rows, or a CASE condition choosing the value’s branch. Grouping, partition and ordering keys are not aggregate value inputs; ' +
+          'Grouping, partition and ordering keys are not aggregate value inputs; ' +
           'display-only sorting contributes no role.',
       ),
     note: z
@@ -660,15 +659,12 @@ const indirectColumnsSchema = (
   z
     .array(
       IndirectFactSchema.extend({
-        node: node.describe(ColumnRefSchema.shape.node.description ?? ''),
-        col: IndirectFactSchema.shape.col.describe(
-          ColumnRefSchema.shape.col.description ?? '',
-        ),
+        node,
         usage: IndirectFactSchema.shape.usage.describe(
           'join: key relating rows of two objects. filter: predicate selecting contributing, updated or deleted rows, or a CASE condition choosing the value’s branch. arrange: grouping, partition or ordering key.',
         ),
         detail: IndirectFactSchema.shape.detail.describe(
-          'Optional clause keyword, e.g. LEFT JOIN, HAVING, PARTITION BY.',
+          'Clause keyword, e.g. LEFT JOIN.',
         ),
       })
         .strict()
@@ -676,7 +672,7 @@ const indirectColumnsSchema = (
     )
     .optional()
     .describe(
-      'Optional. Neighbor columns this SQL uses to decide which rows reach out_col or how they are arranged; one entry per column and usage. An entry does not map its neighbor.',
+      'Neighbor columns that decide which rows reach out_col or how they are arranged. An entry does not map its neighbor.',
     );
 
 /** One closed `column_flow` entry; provider projection and runtime parsing reject surplus keys. */
@@ -685,7 +681,7 @@ const OUT_COL_DESCRIPTION =
 const OUT_NODE_DESCRIPTION =
   'Table from <hop_context> that this procedure writes out_col to. For a write to an object not listed, omit the entry and name the write in sections.';
 const UPSTREAM_DESCRIPTION =
-  'At a bodied focus, record the real source columns whose value flows into out_col: operands of its expression, an aggregate’s argument, each set-operation branch’s column at that position, caller-bound value inputs. Columns used only to join, filter, group, partition or order its rows are recorded with their indirect roles. ' +
+  'At a bodied focus, record the real source columns whose value flows into out_col: operands of its expression, an aggregate’s argument, each set-operation branch’s column at that position, caller-bound value inputs. Record a column used only to join, filter, group, partition or order rows, even inside an expression, in indirect_columns instead. ' +
   'Exclude the entry’s own out_node column, unused expressions and columns only copied alongside out_col (SELECT *, the rest of a column list). Resolve parameters and computed aliases to their source columns.';
 /** At a procedure, a created value is the pair procedure.col -> out_node.out_col. */
 const PROCEDURE_UPSTREAM_DESCRIPTION = `${UPSTREAM_DESCRIPTION} A value this procedure creates lists this procedure with the column its task names, else out_col; [] records no pair.`;
@@ -1217,7 +1213,10 @@ const FLOW_HEADER_FACT = {
   toolGroups: [{ name: 'flowHeader', fields: ['out_col', 'out_node'] }],
 };
 
-/** The same supplier owner is used by full submissions and held tuple corrections. */
+/**
+ * The same supplier owner is used by full submissions and held tuple corrections. It serves the
+ * direct classes only; saved findings still read the legacy indirect ones.
+ */
 function columnRefSchemaForHop(hop: SubmitFindingsHopColumns) {
   return hop.columnSourceNodeIds
     ? ColumnRefSchema.extend({
@@ -1225,6 +1224,10 @@ function columnRefSchemaForHop(hop: SubmitFindingsHopColumns) {
           objectIdSchema(hop.columnSourceNodeIds, hop.identifierCaseSensitive),
           'flowReference',
         ),
+        transforms: z
+          .array(ColumnTransformClassSchema.exclude(['combine', 'filter']))
+          .optional()
+          .describe(ColumnRefSchema.shape.transforms.description ?? ''),
       })
         .strict()
         .meta(SUPPLIER_FACT)

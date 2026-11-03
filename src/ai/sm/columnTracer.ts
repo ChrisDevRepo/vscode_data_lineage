@@ -9,7 +9,6 @@ import { resolveModelNodeId } from '../support/modelReferences';
 import { edgeApiType } from '../support/aiPresenter';
 import { getNodeColumns } from '../support/graphUtils';
 import { ColumnStore } from '../../engine/shared/columnStore';
-import { isIndirectOnly } from '../../engine/shared/bridgeContract';
 import { normalizeColName, schemaKey } from '../../utils/sql';
 import { DirectedGraph } from 'graphology';
 import { bfsFromNode } from 'graphology-traversal';
@@ -125,7 +124,6 @@ export class ColumnTracer {
   ): Array<{ node: string; col: string }> {
     const endpoints = new Map<string, { node: string; col: string }>();
     for (const e of this.aspect.edges) {
-      if (isIndirectOnly(e.transforms)) continue;
       const node = traceDirection === 'downstream' ? e.to_node : e.from_node;
       const col = traceDirection === 'downstream' ? e.to_col : e.from_col;
       if (!col || node !== candidateNodeId) continue;
@@ -152,7 +150,6 @@ export class ColumnTracer {
         e.hop_node === focusId &&
         e.hop === hopCount &&
         e.from_node !== e.hop_node &&
-        !isIndirectOnly(e.transforms) &&
         continuations
           .get(e.from_node)
           ?.some(
@@ -433,12 +430,10 @@ export class ColumnTracer {
       nodeMap,
       model.identifierCaseSensitive,
     );
-    const committedRefs = this.aspect.edges
-      .filter((edge) => !isIndirectOnly(edge.transforms))
-      .flatMap((edge) => [
-        { node: edge.from_node, col: edge.from_col },
-        { node: edge.to_node, col: edge.to_col },
-      ]);
+    const committedRefs = this.aspect.edges.flatMap((edge) => [
+      { node: edge.from_node, col: edge.from_col },
+      { node: edge.to_node, col: edge.to_col },
+    ]);
     const anchors = new Map(
       (incomingRefs ?? committedRefs).map((ref) => [
         endpointKey(ref.node, ref.col),

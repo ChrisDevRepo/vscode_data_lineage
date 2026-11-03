@@ -13,7 +13,6 @@ import { bidirectional } from 'graphology-shortest-path/unweighted';
 import { bfsFromNode } from 'graphology-traversal';
 import type { DatabaseModel, LineageNode } from '../../engine/shared/types';
 import type { ColumnStore } from '../../engine/shared/columnStore';
-import { isIndirectOnly } from '../../engine/shared/bridgeContract';
 import {
   bothSidesClosed,
   directionFromDepth,
@@ -3530,9 +3529,7 @@ export class NavigationEngine implements IHopStateMachine {
       });
     if (this.tracer && finding.column_flow) {
       // A column is carried only when the one closure of the requested outputs holds it.
-      const closureEdges = [...this.tracer.edges, ...stagedColumnEdges].filter(
-        (edge) => !isIndirectOnly(edge.transforms),
-      );
+      const closureEdges = [...this.tracer.edges, ...stagedColumnEdges];
       const attachedUpstream = columnAttachment(
         this.columnRoots(),
         closureEdges,
@@ -3550,7 +3547,7 @@ export class NavigationEngine implements IHopStateMachine {
       if (this.effectiveDirection() !== 'downstream') {
         const priorAttachment = columnAttachment(
           this.columnRoots(),
-          this.tracer.edges.filter((edge) => !isIndirectOnly(edge.transforms)),
+          this.tracer.edges,
           'upstream',
           endpointKey,
         ).endpoints;
@@ -3590,9 +3587,7 @@ export class NavigationEngine implements IHopStateMachine {
             continue;
           if (
             focusId !== this.originNodeId &&
-            entry.upstream_columns.every((ref) =>
-              isIndirectOnly(ref.transforms),
-            )
+            entry.upstream_columns.length === 0
           ) {
             continue;
           }
