@@ -615,7 +615,8 @@ export function buildColumnChainPreface(
   identifierCaseSensitive = false,
   indirect?: readonly StepIndirectFact[],
 ): string | undefined {
-  if (edges.length === 0 && !requested?.columns.length) return undefined;
+  if (edges.length === 0 && !requested?.columns.length && !indirect?.length)
+    return undefined;
   const outputs = new Map<string, ColumnChainEdge[]>();
   const steps = new Map<string, ColumnChainEdge>();
   for (const edge of [...edges].sort((a, b) => a.hop - b.hop)) {
@@ -670,15 +671,33 @@ export function buildColumnChainPreface(
         ].join('\n'),
       );
   }
-  const stepRows = [...steps].flatMap(([step, edge]) => {
-    const facts = (indirect ?? []).filter(
-      (fact) => schemaKey(fact.hopNode, identifierCaseSensitive) === step,
-    );
-    if (facts.length === 0) return [];
+  const factsByStep = new Map<string, StepIndirectFact[]>();
+  for (const fact of indirect ?? []) {
+    const step = schemaKey(fact.hopNode, identifierCaseSensitive);
+    const group = factsByStep.get(step);
+    if (group) group.push(fact);
+    else factsByStep.set(step, [fact]);
+  }
+  // Chain steps first in hop order, then steps with facts and no direct pair (no hop is invented).
+  const stepRows = [
+    ...[...steps].map(([step, edge]) => ({
+      facts: factsByStep.get(step),
+      node: edge.hop_node,
+      hop: String(edge.hop),
+    })),
+    ...[...factsByStep]
+      .filter(([step]) => !steps.has(step))
+      .map(([, facts]) => ({
+        facts,
+        node: facts[0]!.hopNode,
+        hop: '',
+      })),
+  ].flatMap(({ facts, node, hop }) => {
+    if (!facts?.length) return [];
     const cells = groupIndirectFacts(facts).map((group) =>
       group.facts.map((f) => columnChainCode(indirectFactLine(f))).join(', '),
     );
-    return `| ${columnChainCode(edge.hop_node)} | ${edge.hop} | ${cells.join(' | ')} |`;
+    return `| ${columnChainCode(node)} | ${hop} | ${cells.join(' | ')} |`;
   });
   if (stepRows.length)
     parts.push(
