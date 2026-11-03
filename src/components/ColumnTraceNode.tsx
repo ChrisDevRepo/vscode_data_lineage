@@ -17,6 +17,7 @@ import {
   COLUMN_INDIRECT_ROW_HEIGHT,
   COLUMN_ROW_DIM_OPACITY,
   indirectColumnLines,
+  type ColumnTraceIndirectFact,
   COLUMN_TRANSFORM_NODE_WIDTH,
   COLUMN_TRANSFORM_CIRCLE_DIAMETER,
   COLUMN_TRANSFORM_NAME_STRIP_HEIGHT,
@@ -260,46 +261,58 @@ function IndirectBadges({ facts }: { facts: readonly StepIndirectFact[] }) {
 /** A row-less card's handles at its header's middle, above any indirect lines. */
 const headerHandleStyle = { top: COLUMN_NODE_HEADER_HEIGHT / 2 };
 
-/** A card's indirect lines beneath its direct rows, symbol at the right edge, no handles. */
-function IndirectRows({ facts }: { facts: readonly StepIndirectFact[] }) {
+/**
+ * A card's indirect lines beneath its direct rows: column, declared type and symbol at the right
+ * edge, no handles; the full `object.column — detail` line shows in the tooltip.
+ */
+function IndirectRows({
+  facts,
+}: {
+  facts: readonly ColumnTraceIndirectFact[];
+}) {
   const lines = indirectColumnLines(facts);
   if (lines.length === 0) return null;
   return (
     <div role="group" aria-label="Indirect columns" style={{ flexShrink: 0 }}>
-      {lines.map(({ usage, symbol, line }, i) => (
-        <div
-          key={`${usage} ${line}`}
-          data-usage={usage}
-          title={`${usage}: ${line}`}
-          className="text-[9px]"
-          style={{
-            boxSizing: 'border-box',
-            borderTop:
-              i === 0 ? '1px dashed var(--ln-border-light)' : undefined,
-            height: COLUMN_INDIRECT_ROW_HEIGHT,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            padding: '0 8px',
-            color: 'var(--ln-fg-muted)',
-          }}
-        >
-          <span
+      {lines.map(({ usage, symbol, column, dataType, line }, i) => (
+        <Tooltip key={`${usage} ${line}`} content={`${usage}: ${line}`} asChild>
+          <div
+            data-usage={usage}
+            className="text-[9px]"
             style={{
-              flex: 1,
-              fontStyle: 'italic',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
+              boxSizing: 'border-box',
+              borderTop:
+                i === 0 ? '1px dashed var(--ln-border-light)' : undefined,
+              height: COLUMN_INDIRECT_ROW_HEIGHT,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '0 8px',
+              color: 'var(--ln-fg-muted)',
             }}
           >
-            <span className="sr-only">{usage}: </span>
-            {line}
-          </span>
-          <span aria-hidden="true" style={{ flexShrink: 0 }}>
-            {symbol}
-          </span>
-        </div>
+            <span
+              style={{
+                flex: 1,
+                fontStyle: 'italic',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <span className="sr-only">{`${usage}: ${line}`}</span>
+              <span aria-hidden="true">{column}</span>
+            </span>
+            {dataType && (
+              <span style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>
+                {dataType}
+              </span>
+            )}
+            <span aria-hidden="true" style={{ flexShrink: 0 }}>
+              {symbol}
+            </span>
+          </div>
+        </Tooltip>
       ))}
     </div>
   );

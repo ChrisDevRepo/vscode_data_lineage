@@ -6,7 +6,10 @@
 
 import { AI_BADGE_BAND, AI_NOTE_BAND, dagreLayout } from './graphBuilder';
 import { normalizeColName, schemaKey } from '../utils/sql';
-import { describeIndirectFacts } from './shared/bridgeContract';
+import {
+  describeIndirectFacts,
+  indirectFactLine,
+} from './shared/bridgeContract';
 import type {
   ColumnAspectEdge,
   ColumnTransformClass,
@@ -58,10 +61,13 @@ export interface ColumnTraceViewNode extends ColumnTraceViewObject {
   height: number;
   position: { x: number; y: number };
   /** Indirect facts of the step this node is, whether or not their object is drawn. */
-  stepFacts?: StepIndirectFact[];
+  stepFacts?: ColumnTraceIndirectFact[];
   /** The object's own filter and arrange facts; join keys stay on the step. */
-  ownFacts?: StepIndirectFact[];
+  ownFacts?: ColumnTraceIndirectFact[];
 }
+
+/** An indirect fact with its column's declared SQL type from the extracted model, never the AI. */
+export type ColumnTraceIndirectFact = StepIndirectFact & { dataType?: string };
 
 /** A per-column edge in the column-trace view, addressing row handles rather than nodes. */
 export interface ColumnTraceViewEdge {
@@ -132,6 +138,11 @@ export interface ColumnTraceViewInput {
   requested?: { node: string; columns: readonly string[] };
   /** Stored indirect facts from `AIViewMetadata.columnAspect.indirect`; never edges or rows. */
   indirect?: readonly StepIndirectFact[];
+  /**
+   * Declared column types of every model object, keyed by {@link schemaKey} then
+   * {@link normalizeColName}; types an indirect fact whose object is not drawn.
+   */
+  columnTypesByNode?: ReadonlyMap<string, ReadonlyMap<string, string>>;
   /** Object identity per presented node, keyed by schemaKey under the source policy. */
   objects: Map<string, ColumnTraceViewObject>;
   /** Dependency edges of the object view between presented objects, by node id. */
@@ -449,12 +460,32 @@ function withAnnotationBand(
   return { ...config, layout };
 }
 
-/** One `node.column — detail` line and its symbol per distinct fact, in usage order. */
+/** Per distinct fact in usage order: symbol, column, declared type and full line. */
 export function indirectColumnLines(
-  facts: readonly StepIndirectFact[],
-): { usage: string; symbol: string; line: string }[] {
-  return describeIndirectFacts(facts).flatMap(({ usage, symbol, lines }) =>
-    lines.map((line) => ({ usage, symbol, line })),
+  facts: readonly ColumnTraceIndirectFact[],
+): {
+  usage: string;
+  symbol: string;
+  column: string;
+  dataType?: string;
+  line: string;
+}[] {
+  const seen = new Set<string>();
+  return describeIndirectFacts(facts).flatMap(({ usage, symbol }) =>
+    facts.flatMap((fact) => {
+      const line = indirectFactLine(fact);
+      if (fact.usage !== usage || seen.has(`${usage} ${line}`)) return [];
+      seen.add(`${usage} ${line}`);
+      return [
+        {
+          usage,
+          symbol,
+          column: fact.col,
+          ...(fact.dataType ? { dataType: fact.dataType } : {}),
+          line,
+        },
+      ];
+    }),
   );
 }
 
@@ -630,9 +661,14 @@ export function buildColumnTraceView(
 
   for (const object of input.objects.values()) getAcc(object);
 
-  const facts = input.indirect ?? [];
   const keyOf = (id: string): string =>
     schemaKey(id, input.identifierCaseSensitive);
+  const facts: ColumnTraceIndirectFact[] = (input.indirect ?? []).map((f) => {
+    const dataType = input.columnTypesByNode
+      ?.get(keyOf(f.node))
+      ?.get(normalizeColName(f.col, input.identifierCaseSensitive));
+    return dataType ? { ...f, dataType } : f;
+  });
   const nodes: ColumnTraceViewNode[] = Array.from(nodeAccs.values()).map(
     (acc) => {
       const rows = buildRows(acc, input.identifierCaseSensitive);

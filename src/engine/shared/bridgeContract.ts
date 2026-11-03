@@ -398,6 +398,10 @@ export type StepIndirectFact = IndirectFact & { hopNode: string };
 
 const INDIRECT_SYMBOL = { join: '⋈', filter: 'σ', arrange: 'γ' } as const;
 
+/** A fact's `node.column — detail` line, verbatim. */
+export const indirectFactLine = (f: IndirectFact): string =>
+  `${f.node}.${f.col}${f.detail ? ` — ${f.detail}` : ''}`;
+
 /** Per usage in display order: its symbol and distinct `node.column — detail` lines, verbatim. */
 export function describeIndirectFacts(facts: readonly IndirectFact[]) {
   return IndirectFactSchema.shape.usage.options.map((usage) => ({
@@ -405,9 +409,7 @@ export function describeIndirectFacts(facts: readonly IndirectFact[]) {
     symbol: INDIRECT_SYMBOL[usage],
     lines: [
       ...new Set(
-        facts
-          .filter((fact) => fact.usage === usage)
-          .map((f) => `${f.node}.${f.col}${f.detail ? ` — ${f.detail}` : ''}`),
+        facts.filter((fact) => fact.usage === usage).map(indirectFactLine),
       ),
     ],
   }));
