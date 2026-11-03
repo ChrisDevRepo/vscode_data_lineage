@@ -125,6 +125,11 @@ function buildActivePhasePrompt(analysisMode: 'bb' | 'ct'): string {
     'After a rejection, saved content stays held; resend the requested fields; a resent field replaces its held value.',
     'Neighbor decisions in `prune_neighbors` and `questions`, as their fields describe.',
     'Flags on `neighbors[]` are committed: `already_visited` and `already_removed` neighbors take no decision; neighbors with `can_prune: false` are not pruned.',
+    'A neighbor with `in_approved_scope: false` lies outside the approved scope: this run does not analyze it' +
+      (analysisMode === 'ct'
+        ? ', and `column_flow` does not name it (drop a pair with it; omit an entry left with no pair)'
+        : '') +
+      '. State a relevant fact about it in `sections`; further work on it is a `questions` follow-up.',
   ].join('\n');
 }
 

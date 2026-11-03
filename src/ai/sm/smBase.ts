@@ -144,23 +144,14 @@ type ActionMentions = Partial<
 
 /** A hop neighbour plus the engine decisions already taken about it. */
 export interface HopNeighborDisclosure extends HopNeighbor {
-  /** A neighbor already passed through on the route into this focus (visit-once). */
-  prune_protected?: boolean;
   /** Already analyzed on an earlier hop; a prune cannot remove committed analysis. */
   already_visited?: boolean;
   /** Already pruned on an earlier hop; a removed node stays removed. */
   already_removed?: boolean;
   /** Columns a committed `column_flow` edge attributes to this neighbour, as evidence only. */
   attributed_columns?: string[];
-  /**
-   * Unreachable from the origin in the approved direction (BB and CT); in a bidirectional session,
-   * outside both closures of the origin. Never visited; a prune on it is a no-op.
-   */
-  out_of_direction?: boolean;
   /** A queued, visited, removed or protected target cannot be neighbor-pruned. */
   can_prune: boolean;
-  /** Served only as `true`: a `column_flow` mapping may name this neighbour (CT hops only). */
-  can_map?: true;
 }
 
 /** Working memory plus a traversal-map snapshot that grounds routing. */
@@ -1592,7 +1583,7 @@ export class NavigationEngine implements IHopStateMachine {
 
   /**
    * Neighbour ids a `column_flow` mapping may name at this focus: the served enum ids inside the
-   * approved scope (`can_map: true`; absent means not mappable). The enum also serves the others,
+   * approved scope (`in_approved_scope: true`). The enum also serves the others,
    * so naming one is refused by the scope check as `column_out_of_scope`, not by the schema.
    */
   private mappableNeighborIds(focusId: string): Set<string> {
@@ -5122,13 +5113,8 @@ export class NavigationEngine implements IHopStateMachine {
       const verb = edgeApiType(e.type, this.nodeMap.get(e.source)?.type ?? '');
       if (verb !== 'read' || !edgeVerb.has(other)) edgeVerb.set(other, verb);
     }
-    const mappable =
-      this.currentHopAnalysisMode === 'ct'
-        ? this.mappableNeighborIds(focusId)
-        : null;
     return this.neighborChoices(focusId).map(({ id: nid, can_prune }) => {
       const n = this.nodeMap.get(nid)!;
-      const boundary = this.visited.has(nid) ? 'cycle' : 'none';
       const edgeDirection = inSet.has(nid) ? 'upstream' : 'downstream';
       // A table the focus writes carries its column constraints: the focus SQL alone cannot show
       // whether a value it inserts is accepted, e.g. a NULL into a NOT NULL column.
@@ -5154,26 +5140,18 @@ export class NavigationEngine implements IHopStateMachine {
         t: n.type,
         edge_direction: edgeDirection,
         edge_type: edgeVerb.get(nid) ?? 'read',
-        boundary,
         ...(cols?.length ? { cols } : {}),
         can_prune,
-        ...(mappable?.has(nid) ? { can_map: true } : {}),
-        ...(this.isCarrierInto(nid, focusId) ? { prune_protected: true } : {}),
         ...(this.visited.has(nid) ? { already_visited: true } : {}),
         ...(this.removedSet.has(nid) ? { already_removed: true } : {}),
         ...(attributedColumns.length
           ? { attributed_columns: attributedColumns }
           : {}),
-        ...(!this.isReachableInApprovedDirection(nid)
-          ? { out_of_direction: true }
-          : {}),
+        in_approved_scope: this.admitsColumnReference(nid, n, focusId),
       };
 
       const d = this.depthFromOrigin.get(nid);
       if (d !== undefined) neighbor.depth_from_origin = d;
-      neighbor.in_budget = this.scopeNodeIds.has(nid);
-
-      neighbor.in_approved_scope = this.admitsRoute(nid, n, focusId).admitted;
       return neighbor;
     });
   }

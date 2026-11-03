@@ -33,9 +33,6 @@ export type HopProgress = {
   added: number;
 };
 
-/** Whether a hop neighbor was already visited (`cycle`) or not (`none`). */
-type BoundaryFlag = 'none' | 'cycle';
-
 /** Engine-owned lifecycle action for a node in an SM result. */
 export type SmNodeAction = 'analyze' | 'passthrough' | 'prune';
 
@@ -142,8 +139,6 @@ export interface HopNeighbor {
   edge_direction: 'upstream' | 'downstream';
   /** The type of dependency (e.g., 'SELECT', 'INSERT', 'FK'). */
   edge_type: string;
-  /** `cycle` when the neighbor was already visited on an earlier hop, `none` otherwise. */
-  boundary: BoundaryFlag;
   /**
    * For a table the focus writes, every column as `name, type, nullability[, PK|UQ|CK]`, the same
    * compact form a table focus carries. Otherwise, in a column trace, the neighbor's column names.
@@ -151,13 +146,11 @@ export interface HopNeighbor {
   cols?: string[];
   /** Depth from origin (always surfaced when a depth budget is set). */
   depth_from_origin?: number;
-  /** False when this node is beyond the active depth budget. Always surfaced when budget is set. */
-  in_budget?: boolean;
   /**
-   * Whether a route to this node would be admitted (approved border and depth); the verdict the
-   * prune and route validators apply.
+   * The one served border flag: whether the neighbor lies inside the approved scope (border and
+   * depth), the verdict the route, question and column scope checks apply.
    */
-  in_approved_scope?: boolean;
+  in_approved_scope: boolean;
 }
 
 /** Enriched node JSON shipped to the AI; the keys vary with node type and DDL truncation. */
