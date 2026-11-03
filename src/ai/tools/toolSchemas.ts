@@ -681,7 +681,7 @@ const OUT_COL_DESCRIPTION =
 const OUT_NODE_DESCRIPTION =
   'Table from <hop_context> that this procedure writes out_col to. For a write to an object not listed, omit the entry and name the write in sections.';
 const UPSTREAM_DESCRIPTION =
-  'At a bodied focus, record the real source columns whose value flows into out_col: operands of its expression, an aggregate’s argument, each set-operation branch’s column at that position, caller-bound value inputs. A column that impacts out_col without its value being derived into it is indirect: record it in indirect_columns instead. ' +
+  'At a bodied focus, record the real source columns whose value lands in out_col as is, computed or aggregated: each set-operation branch’s column at that position, caller-bound value inputs, a CASE’s THEN/ELSE results. A column that only decides which rows or which CASE branch out_col gets is indirect: record it in indirect_columns instead. ' +
   'Exclude the entry’s own out_node column, unused expressions and columns only copied alongside out_col (SELECT *, the rest of a column list). Resolve parameters and computed aliases to their source columns.';
 /** At a procedure, a created value is the pair procedure.col -> out_node.out_col. */
 const PROCEDURE_UPSTREAM_DESCRIPTION = `${UPSTREAM_DESCRIPTION} A value this procedure creates lists this procedure with the column its task names, else out_col; [] records no pair.`;
