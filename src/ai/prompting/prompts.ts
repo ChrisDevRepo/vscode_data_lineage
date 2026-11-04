@@ -120,15 +120,13 @@ function buildActivePhasePrompt(analysisMode: 'bb' | 'ct'): string {
     '',
     'Complete this hop with one available hop-completion command: for a kept hop, use `lineage_submit_findings` (`summary`, `sections` keyed by angle, and one outcome per open neighbor: a `questions` or `prune_neighbors` entry).' +
       (analysisMode === 'ct'
-        ? ' Include `column_flow` when the current task names columns; a neighbor it maps needs no other outcome. The object graph answers the user question; its column trace starts at the same object and may end earlier on a branch.'
+        ? ' Include `column_flow` when the current task names columns; a neighbor it maps needs no other outcome. The object graph answers the user question; the column trace may end earlier on a branch.'
         : ''),
     'After a rejection, saved content stays held; resend the requested fields; a resent field replaces its held value.',
     'Neighbor decisions in `prune_neighbors` and `questions`, as their fields describe.',
     'Flags on `neighbors[]` are committed: `already_visited` and `already_removed` neighbors take no decision; neighbors with `can_prune: false` are not pruned.',
     'A neighbor with `in_approved_scope: false` lies outside the approved scope: this run does not analyze it' +
-      (analysisMode === 'ct'
-        ? ', and `column_flow` does not name it (drop a pair with it; omit an entry left with no pair)'
-        : '') +
+      (analysisMode === 'ct' ? ', and `column_flow` does not name it' : '') +
       '. State a relevant fact about it in `sections`; further work on it is a `questions` follow-up.',
   ].join('\n');
 }

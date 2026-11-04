@@ -672,7 +672,7 @@ const indirectColumnsSchema = (
     )
     .optional()
     .describe(
-      'Indirect lineage: columns of a neighbor or of the written table itself whose value is not derived into a traced column but impacts it. Report one only when it bears on the question and the traced columns. An entry does not map its neighbor.',
+      'Columns of a neighbor or of the written table whose value does not land in a traced column but impacts it. Report one only when it bears on the question and the traced columns. An entry does not map its neighbor.',
     );
 
 /** One closed `column_flow` entry; provider projection and runtime parsing reject surplus keys. */
