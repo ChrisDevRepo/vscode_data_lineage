@@ -13,6 +13,7 @@ import type {
   DeferredQuestion,
   SmResult,
 } from '../sm/smTypes';
+import { INDIRECT_LABEL } from '../../engine/shared/bridgeContract';
 import { schemaKey } from '../../utils/sql';
 
 /**
@@ -208,7 +209,7 @@ function buildCtSynthesisBlock(
     };
     steps.set(key, entry);
     entry.facts.add(
-      `${f.node}.${f.col} ${f.usage}${f.detail ? ` (${escapePromptText(f.detail)})` : ''}`,
+      `${f.node}.${f.col} ${INDIRECT_LABEL[f.usage]}${f.detail ? ` (${escapePromptText(f.detail)})` : ''}`,
     );
   }
   const lines = [
