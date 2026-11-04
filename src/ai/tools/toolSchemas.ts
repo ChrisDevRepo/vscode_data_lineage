@@ -629,7 +629,7 @@ const ColumnRefSchema = z
       'Source column name on that node.',
     ),
     transforms: z
-      .array(ColumnTransformClassSchema)
+      .array(ColumnTransformClassSchema.exclude(['combine', 'filter']))
       .optional()
       .describe(
         'Classify this source column’s role; omit when SQL does not determine it. ' +
@@ -1224,10 +1224,6 @@ function columnRefSchemaForHop(hop: SubmitFindingsHopColumns) {
           objectIdSchema(hop.columnSourceNodeIds, hop.identifierCaseSensitive),
           'flowReference',
         ),
-        transforms: z
-          .array(ColumnTransformClassSchema.exclude(['combine', 'filter']))
-          .optional()
-          .describe(ColumnRefSchema.shape.transforms.description ?? ''),
       })
         .strict()
         .meta(SUPPLIER_FACT)
