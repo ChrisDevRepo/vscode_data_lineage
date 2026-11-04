@@ -671,7 +671,6 @@
             },
             "cursor": {
               "type": "string",
-              "pattern": "^\\d+$",
               "description": "Page cursor: the next_cursor of the previous result, sent unchanged to read the next page of the same list. Omit for the first page."
             }
           },
@@ -703,7 +702,6 @@
             },
             "cursor": {
               "type": "string",
-              "pattern": "^\\d+$",
               "description": "Page cursor: the next_cursor of the previous result, sent unchanged to read the next page of the same list. Omit for the first page."
             }
           },
@@ -862,7 +860,6 @@
             },
             "cursor": {
               "type": "string",
-              "pattern": "^\\d+$",
               "description": "Page cursor: the next_cursor of the previous result, sent unchanged to read the next page of the same list. Omit for the first page."
             }
           },

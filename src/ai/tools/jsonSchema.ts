@@ -17,6 +17,8 @@ export function toModelJsonSchema(schema: z.ZodType): JsonSchemaNode {
   const fragment = structuredClone(raw);
   const project = (node: unknown): void => {
     if (!node || typeof node !== 'object') return;
+    // `pattern` is outside the common vendor keyword subset; admission enforces it.
+    if ('pattern' in node) delete node.pattern;
     if ('toolDisplay' in node) {
       Object.assign(node, node.toolDisplay);
       delete node.toolDisplay;
@@ -39,6 +41,17 @@ export function toModelJsonSchema(schema: z.ZodType): JsonSchemaNode {
     ])
       delete (node as Record<string, unknown>)[key];
     Object.values(node).forEach(project);
+    const members = (node as { allOf?: unknown[] }).allOf;
+    if (Array.isArray(members)) {
+      const kept = members.filter(
+        (member) =>
+          !member ||
+          typeof member !== 'object' ||
+          Object.keys(member).length > 0,
+      );
+      if (kept.length) (node as { allOf?: unknown[] }).allOf = kept;
+      else delete (node as { allOf?: unknown[] }).allOf;
+    }
   };
   project(fragment);
   delete fragment.$schema;
