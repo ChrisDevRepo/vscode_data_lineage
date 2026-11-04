@@ -38,6 +38,7 @@ import { toolCallNotationFault } from '../support/toolCallNotation';
 import { storedEvidenceKindBytes } from '../support/tokenBudget';
 import { sensitiveTraceReason } from '../providers/traceSecurity';
 import type { ToolDefinition, IToolRegistry } from '../tools/registry';
+import { toModelJsonSchema } from '../tools/jsonSchema';
 import type {
   ConverseInstructionPlan,
   InstructionPhase,
@@ -490,6 +491,15 @@ function rejectionFromInvalid(
 ): ToolOutcomeData {
   const issuePaths = call.issuePaths ?? [];
   const tools = registry.getTools().map((tool) => tool.name);
+  // Arguments that are not one JSON object hold nothing, so the correction resends every field its
+  // live card requires; held fields are optional on that card, so none is asked for again.
+  const definition = registry.get(call.toolName);
+  const resend =
+    call.code === 'type' && issuePaths.length === 0 && definition
+      ? ((toModelJsonSchema(definition.inputSchema).required as
+          | string[]
+          | undefined) ?? [])
+      : undefined;
   const errors = at(
     call.code,
     issuePaths.length ? issuePaths : [''],
@@ -506,6 +516,7 @@ function rejectionFromInvalid(
       reason: call.reason,
       errors,
       ...(issuePaths.length > 0 ? { issuePaths: [...issuePaths] } : {}),
+      ...(resend ? { resend } : {}),
       ...(call.code === 'off_policy'
         ? { detail: { allowedTools: tools } }
         : {}),
