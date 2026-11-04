@@ -227,9 +227,36 @@ export interface ToolGenerationInput {
 export const TOOL_ARGUMENTS_NOT_OBJECT_REASON =
   'Tool arguments were not a JSON object; send the required fields as one JSON object.';
 
+/** Reason of the `json_syntax` fault for argument text that does not parse as JSON. */
+const TOOL_ARGUMENTS_SYNTAX_REASON =
+  'Tool arguments were not parseable JSON; send the required fields as one complete JSON object.';
+
 /** Reason of the `type` fault for a call whose arguments were empty text. */
 const TOOL_ARGUMENTS_EMPTY_REASON =
   'Tool arguments were empty; send the required fields as a JSON object.';
+
+/**
+ * The one fault of argument text that was no JSON object: `json_syntax` for text that opens an
+ * object or array and does not parse (malformed or cut off), otherwise `type`.
+ */
+function malformedArgumentsFault(text: string): {
+  readonly code: 'type' | 'json_syntax';
+  readonly reason: string;
+} {
+  if (/^\s*[{[]/.test(text)) {
+    try {
+      JSON.parse(text);
+    } catch {
+      return { code: 'json_syntax', reason: TOOL_ARGUMENTS_SYNTAX_REASON };
+    }
+  }
+  return {
+    code: 'type',
+    reason: text.trim()
+      ? TOOL_ARGUMENTS_NOT_OBJECT_REASON
+      : TOOL_ARGUMENTS_EMPTY_REASON,
+  };
+}
 
 /**
  * A registered native tool call ready for argument validation.
@@ -260,7 +287,7 @@ interface InvalidGeneratedToolCall {
   /** Issue code of the rejection. */
   readonly code: Extract<
     IssueCode,
-    'type' | 'tool_call_notation' | 'off_policy'
+    'type' | 'json_syntax' | 'tool_call_notation' | 'off_policy'
   >;
   /** Human-readable rejection prose returned to the model for repair. */
   readonly reason: string;
@@ -309,12 +336,8 @@ export function classifyToolCall(
   if (!definition)
     return reject('off_policy', 'Tool is not available in this phase.');
   if ('malformedArgs' in emitted) {
-    return reject(
-      'type',
-      emitted.malformedArgs.trim()
-        ? TOOL_ARGUMENTS_NOT_OBJECT_REASON
-        : TOOL_ARGUMENTS_EMPTY_REASON,
-    );
+    const fault = malformedArgumentsFault(emitted.malformedArgs);
+    return reject(fault.code, fault.reason);
   }
   const normalized = normalizeModelInput(definition.inputSchema, emitted.args);
   logFixes(toolName, normalized.fixes, debugLog);
@@ -351,9 +374,10 @@ export function finishStructured<T>(
   const [first] = emitted;
   if (calls.length === 0 && first && 'malformedArgs' in first) {
     if (emitted.length === 1 && !first.malformedArgs.trim()) throw empty();
+    const fault = malformedArgumentsFault(first.malformedArgs);
     throw new StructuredOutputError(
       `${STRUCTURED_OUTPUT_TOOL} arguments were not a JSON object`,
-      at('type', [''], ['object']),
+      fault.code === 'type' ? at('type', [''], ['object']) : at(fault.code),
     );
   }
   const normalized =

@@ -38,6 +38,11 @@ export const ISSUES = {
     correction:
       'Send the value as the JSON type the schema defines for this field.',
   },
+  json_syntax: {
+    category: 'shape',
+    label: 'arguments are malformed or cut-off JSON text',
+    correction: 'Send the fields in resend as one valid JSON object.',
+  },
   json_text: {
     category: 'shape',
     label: 'text instead of a JSON object',

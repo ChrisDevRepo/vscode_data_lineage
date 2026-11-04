@@ -495,7 +495,9 @@ function rejectionFromInvalid(
   // live card requires; held fields are optional on that card, so none is asked for again.
   const definition = registry.get(call.toolName);
   const resend =
-    call.code === 'type' && issuePaths.length === 0 && definition
+    (call.code === 'type' || call.code === 'json_syntax') &&
+    issuePaths.length === 0 &&
+    definition
       ? ((toModelJsonSchema(definition.inputSchema).required as
           | string[]
           | undefined) ?? [])
