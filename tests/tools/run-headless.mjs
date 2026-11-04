@@ -1,5 +1,6 @@
 /** Compile fresh, isolate the VS Code shim, then run the optional one-question AI check. */
 import { spawnSync } from 'node:child_process';
+import { rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -8,8 +9,13 @@ import { loadTestEnv } from './load-test-env.mjs';
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const require = createRequire(import.meta.url);
 
-/** Compiles the harness into out/test-headless and serves `vscode` from its shim; returns the
- * compiled cli module.
+/** This process's own compile output, so parallel runners in one checkout never share files.
+ * @public
+ */
+export const harnessOut = resolve(root, `out/test-headless-${process.pid}`);
+
+/** Compiles the harness into `harnessOut` (removed on exit) and serves `vscode` from its shim;
+ * returns the compiled cli module.
  * @public
  */
 export function loadHarness() {
@@ -20,21 +26,24 @@ export function loadHarness() {
       resolve(root, 'node_modules/typescript/bin/tsc'),
       '-p',
       'tests/harness/tsconfig.json',
+      '--outDir',
+      harnessOut,
     ],
     { cwd: root, stdio: 'inherit', shell: false },
+  );
+  process.on('exit', () =>
+    rmSync(harnessOut, { recursive: true, force: true }),
   );
   if (build.status !== 0) process.exit(build.status ?? 1);
   const Module = require('node:module');
   const originalLoad = Module._load;
-  const shim = require(
-    resolve(root, 'out/test-headless/tests/harness/vscodeHostShim.js'),
-  );
+  const shim = require(resolve(harnessOut, 'tests/harness/vscodeHostShim.js'));
   Module._load = function (request, parent, isMain) {
     return request === 'vscode'
       ? shim
       : originalLoad.call(this, request, parent, isMain);
   };
-  return require(resolve(root, 'out/test-headless/tests/harness/cli.js'));
+  return require(resolve(harnessOut, 'tests/harness/cli.js'));
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
