@@ -67,15 +67,6 @@ function findNode(view: View, id: string) {
   return node;
 }
 
-function findRow(view: View, nodeId: string, colName: string) {
-  const node = findNode(view, nodeId);
-  const row = node.rows.find(
-    (r) => r.name.toLowerCase() === colName.toLowerCase(),
-  );
-  if (!row) throw new Error(`row ${colName} not found on ${nodeId}`);
-  return row;
-}
-
 const legsOf = (view: View) =>
   view.edges.map(
     (e) => `${e.source}.${e.sourceColumn}->${e.target}.${e.targetColumn}`,
@@ -121,47 +112,6 @@ describe('columnTraceView', () => {
         view.edges.map((edge) => [edge.sourceColumn, edge.targetColumn]),
       ).toEqual([['Value', 'Value']]);
       expect(relations).toEqual(original);
-    },
-  );
-
-  it.each([
-    {
-      shape: 'renamed',
-      relations: [rel('dbo.t', 'dbo.s', 'Amt', 'dbo.t', 'Amount')],
-      row: ['dbo.t', 'Amount'],
-    },
-    {
-      shape: 'incoming',
-      contributors: 2,
-      relations: ['dbo.s', 'dbo.s2'].map((from) =>
-        rel('dbo.t', from, 'A', 'dbo.t', 'X'),
-      ),
-      row: ['dbo.t', 'X'],
-    },
-    {
-      shape: 'outgoing',
-      contributors: 2,
-      relations: [
-        rel('dbo.s', 'dbo.s', 'A', 'dbo.t', 'X'),
-        rel('dbo.s', 'dbo.s', 'A', 'dbo.t2', 'Y'),
-      ],
-      row: ['dbo.s', 'A'],
-    },
-    {
-      shape: 'terminal',
-      relations: [rel('dbo.s', 'dbo.s', 'A', 'dbo.t', 'A')],
-      row: ['dbo.s', 'A'],
-    },
-  ])(
-    'derives the $shape row shape from the relations',
-    ({ shape, contributors, relations, row: [nodeId, column] }) => {
-      const objects = mkObjects(
-        ...['dbo.s', 'dbo.s2', 'dbo.t', 'dbo.t2'].map((id) => mkObj(id)),
-      );
-      const row = findRow(build(relations, objects), nodeId, column);
-      expect(row.shape).toBe(shape);
-      if (contributors !== undefined)
-        expect(row.contributors).toBe(contributors);
     },
   );
 

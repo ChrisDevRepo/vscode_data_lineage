@@ -18,9 +18,9 @@ LangChain's transitive `langsmith` dependency is replaced by an inert local stub
 
 | Path | Contents |
 |---|---|
-| [`src/engine/`](../src/engine/) | DACPAC and DMV ingestion, regex SQL parser, model and graph builder, tracing, profiling, display-mode policy, node decoration, column-trace projection. Engine-owned node-data types live here; the webview imports them. |
+| [`src/engine/`](../src/engine/) | DACPAC and DMV ingestion, regex SQL parser, model and graph builder, tracing, profiling, display-mode policy, node decoration, column-trace projection. |
 | [`src/engine/db/`](../src/engine/db/) | Built-in `tedious` connection provider, saved connections, Entra ID sign-in, connection errors. |
-| [`src/engine/shared/`](../src/engine/shared/) | Zod message contract between host and webview (`bridgeContract.ts`), SQL identifier and metadata helpers. |
+| [`src/engine/shared/`](../src/engine/shared/) | Zod message contract between host and webview (`bridgeContract.ts`), lineage and node-data types (`types.ts`) imported by the webview and AI, SQL identifier and metadata helpers. |
 | [`src/bridge/`](../src/bridge/) | Host handlers for webview messages. |
 | [`src/components/`](../src/components/), [`src/hooks/`](../src/hooks/), [`src/contexts/`](../src/contexts/), [`src/detail/`](../src/detail/) | React webview: graph canvas (React Flow), filters, detail panel, AI report column. |
 | [`src/ai/`](../src/ai/) | `@lineage` chat participant, navigation engine, tools, prompts, session state. |

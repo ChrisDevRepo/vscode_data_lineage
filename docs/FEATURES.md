@@ -117,7 +117,7 @@ Type `@lineage` in VS Code Chat to ask a question. It uses exactly the model you
 
 - **Chat answer** (default): it looks up objects, DDL, neighbors and patterns, then answers in chat. `/search` always uses this mode. If a single discovery catalog request exceeds `dataLineageViz.ai.discoveryNodeCap` objects or `dataLineageViz.ai.discoveryTokenBudget` estimated DDL tokens, it offers a deep analysis instead.
 - **Graph preview**: the **Show graph preview** follow-up opens an **AI Preview** in the graph view. It is temporary; click **Save as Bookmark** to keep it. **Data Lineage: Show AI Trace in Graph** reopens it.
-- **Deep analysis**: `/trace`, the **Start deeper hop-by-hop analysis** follow-up, or an over-budget question. You first see the plan; choose **Approve & Proceed**, **Change scope** or **Cancel**. It then walks the scope one object at a time.
+- **Deep analysis**: `/trace`, the **Start deeper hop-by-hop analysis** follow-up, or an over-budget question. You first see the plan; choose **Approve & Proceed**, **Change scope** or **Cancel**. It then walks the scope one object at a time. While an analysis is shown, the plan says that approving starts a new one and clears the current preview and its findings.
 
 A deep analysis must fit `dataLineageViz.ai.maxRounds` and, for column traces, `dataLineageViz.ai.maxTraceColumns`. If not, chat names the setting so you can narrow the scope or raise the limit.
 

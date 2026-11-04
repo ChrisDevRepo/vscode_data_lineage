@@ -110,12 +110,13 @@ export function ingestToolInput<S extends z.ZodType, R>(options: {
       ? (draft?.retain(candidate, paths, schema) ?? [])
       : [];
     problem.errors.push(...at('not_overwritten', overwritten));
+    const roots = new Set(Object.keys(shape(schema)));
     problem.resend = [
       ...new Set([
         ...(problem.resend ?? []),
         ...paths
           .map((path) => path.split('.')[0])
-          .filter((root) => Object.keys(shape(schema)).includes(root)),
+          .filter((root) => roots.has(root)),
       ]),
     ];
     options.rejected?.(problem, view);

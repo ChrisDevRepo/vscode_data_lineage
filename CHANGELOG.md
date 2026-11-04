@@ -5,8 +5,11 @@ The newest version heading collects changes until that version ships.
 
 ## [1.2.6] - Unreleased
 
+### Added
+- The output log warns when a module uses a cursor or dynamic SQL, which are not fully supported; the references the parser captures still load.
+
 ### Changed
-- Improved AI messages and rejection handling.
+- Improved AI messages and rejection handling. Approving a new deep analysis while one is shown clears the current preview and its findings.
 - Enhanced column traces: the AI stores indirect columns, shown apart from direct lineage in the graph, detail view and AI preview.
 
 ### Removed

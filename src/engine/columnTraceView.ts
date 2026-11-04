@@ -18,9 +18,6 @@ import type { ExtensionConfig } from './shared/types';
 /** Whether the value arriving at a relation's target is the value that left its source. */
 export type ColumnLineState = 'passthrough' | 'transformation' | 'unknown';
 
-/** Structural shape of a row, derived from the relation set alone. */
-type ColumnRowShape = 'renamed' | 'incoming' | 'outgoing' | 'terminal';
-
 /** Usage of an indirect column: a join key, a filter column or a group/order column. */
 type IndirectUsage = IndirectFact['usage'];
 
@@ -30,9 +27,6 @@ export interface ColumnTraceRow {
   name: string;
   /** Indirect roles the column plays at a step, in display order; beside any direct role. */
   usage?: IndirectUsage[];
-  shape?: ColumnRowShape;
-  /** Contributing upstream (`incoming`) or feeding downstream (`outgoing`) column count. */
-  contributors?: number;
   /** Declared SQL type from the extracted model, never an AI claim; absent for transform ports. */
   dataType?: string;
 }
@@ -358,18 +352,6 @@ export function resolveRowLineStates(
   return byRow;
 }
 
-/** One inbound relation, reduced to what shape derivation needs from it. */
-interface RowRelation {
-  /** Source-policy comparison key of the node at the other end of the relation. */
-  otherNodeKey: string;
-  /** Normalised column key at the other end of the relation. */
-  otherColKey: string;
-  /** Raw source-column name, for the renamed comparison. */
-  fromColRaw: string;
-  /** Raw target-column name, for the renamed comparison. */
-  toColRaw: string;
-}
-
 /** Per-node accumulator built while walking `input.relations`. */
 interface NodeAccumulator {
   /** Object identity supplied by the caller. */
@@ -380,32 +362,8 @@ interface NodeAccumulator {
    * Normalised row key to metadata display name, or first-seen spelling when metadata is absent.
    */
   rowNames: Map<string, string>;
-  /** Normalised row key to the relations that fed it from upstream. */
-  inbound: Map<string, RowRelation[]>;
-  /** Normalised row key to the distinct downstream tuples it feeds. */
-  outbound: Map<string, Set<string>>;
   /** Normalised row key to the indirect usages it plays at a step. */
   usage: Map<string, Set<IndirectUsage>>;
-}
-
-function pushInbound(
-  map: Map<string, RowRelation[]>,
-  rowKey: string,
-  entry: RowRelation,
-): void {
-  const existing = map.get(rowKey);
-  if (existing) existing.push(entry);
-  else map.set(rowKey, [entry]);
-}
-
-function addOutbound(
-  map: Map<string, Set<string>>,
-  rowKey: string,
-  tupleKey: string,
-): void {
-  const existing = map.get(rowKey);
-  if (existing) existing.add(tupleKey);
-  else map.set(rowKey, new Set([tupleKey]));
 }
 
 function touchRow(
@@ -422,40 +380,9 @@ function touchRow(
 }
 
 /** Derives one node's rows from its accumulated relations. */
-function buildRows(
-  acc: NodeAccumulator,
-  identifierCaseSensitive: boolean | undefined,
-): ColumnTraceRow[] {
+function buildRows(acc: NodeAccumulator): ColumnTraceRow[] {
   return acc.rowKeys.map((rowKey) => {
-    const name = acc.rowNames.get(rowKey)!;
-    const inbound = acc.inbound.get(rowKey) ?? [];
-    const upstreamTuples = new Set(
-      inbound.map((x) => JSON.stringify([x.otherNodeKey, x.otherColKey])),
-    );
-    const downstreamTuples = acc.outbound.get(rowKey) ?? new Set<string>();
-    const renamed = inbound.some(
-      (x) =>
-        normalizeColName(x.fromColRaw, identifierCaseSensitive) !==
-        normalizeColName(x.toColRaw, identifierCaseSensitive),
-    );
-
-    let shape: ColumnRowShape | undefined;
-    let contributors: number | undefined;
-    if (upstreamTuples.size > 1) {
-      shape = 'incoming';
-      contributors = upstreamTuples.size;
-    } else if (downstreamTuples.size > 1) {
-      shape = 'outgoing';
-      contributors = downstreamTuples.size;
-    } else if (renamed) {
-      shape = 'renamed';
-    } else if (inbound.length === 0) {
-      shape = 'terminal';
-    }
-
-    const row: ColumnTraceRow = { name };
-    if (shape) row.shape = shape;
-    if (contributors !== undefined) row.contributors = contributors;
+    const row: ColumnTraceRow = { name: acc.rowNames.get(rowKey)! };
     const usage = acc.usage.get(rowKey);
     if (usage)
       row.usage = IndirectFactSchema.shape.usage.options.filter((u) =>
@@ -509,8 +436,6 @@ export function buildColumnTraceView(
         object,
         rowKeys: [],
         rowNames: new Map(),
-        inbound: new Map(),
-        outbound: new Map(),
         usage: new Map(),
       };
       nodeAccs.set(key, acc);
@@ -562,28 +487,8 @@ export function buildColumnTraceView(
 
     const sourceAcc = getAcc(sourceObj);
     const targetAcc = getAcc(targetObj);
-    const sourceRowKey = touchRow(
-      sourceAcc,
-      relation.fromCol,
-      input.identifierCaseSensitive,
-    );
-    const targetRowKey = touchRow(
-      targetAcc,
-      relation.toCol,
-      input.identifierCaseSensitive,
-    );
-
-    addOutbound(
-      sourceAcc.outbound,
-      sourceRowKey,
-      JSON.stringify([targetKey, targetRowKey]),
-    );
-    pushInbound(targetAcc.inbound, targetRowKey, {
-      otherNodeKey: sourceKey,
-      otherColKey: sourceRowKey,
-      fromColRaw: relation.fromCol,
-      toColRaw: relation.toCol,
-    });
+    touchRow(sourceAcc, relation.fromCol, input.identifierCaseSensitive);
+    touchRow(targetAcc, relation.toCol, input.identifierCaseSensitive);
 
     let viaId: string | undefined;
     if (hopKey !== sourceKey && hopKey !== targetKey) {
@@ -601,17 +506,6 @@ export function buildColumnTraceView(
           relation.toCol,
           input.identifierCaseSensitive,
         );
-        pushInbound(viaAcc.inbound, inRowKey, {
-          otherNodeKey: sourceKey,
-          otherColKey: sourceRowKey,
-          fromColRaw: relation.fromCol,
-          toColRaw: relation.fromCol,
-        });
-        addOutbound(
-          viaAcc.outbound,
-          outRowKey,
-          JSON.stringify([targetKey, targetRowKey]),
-        );
         if (inRowKey !== outRowKey) {
           const bridgeKey = JSON.stringify([hopKey, inRowKey, outRowKey]);
           if (!seenBridges.has(bridgeKey)) {
@@ -622,17 +516,6 @@ export function buildColumnTraceView(
               toColumn: viaAcc.rowNames.get(outRowKey)!,
             });
           }
-          addOutbound(
-            viaAcc.outbound,
-            inRowKey,
-            JSON.stringify([hopKey, outRowKey]),
-          );
-          pushInbound(viaAcc.inbound, outRowKey, {
-            otherNodeKey: hopKey,
-            otherColKey: inRowKey,
-            fromColRaw: relation.fromCol,
-            toColRaw: relation.toCol,
-          });
         }
       }
     }
@@ -715,7 +598,7 @@ export function buildColumnTraceView(
   }
   const nodes: ColumnTraceViewNode[] = Array.from(nodeAccs.values()).map(
     (acc) => {
-      const rows = buildRows(acc, input.identifierCaseSensitive);
+      const rows = buildRows(acc);
       const isTransform = isColumnTraceTransformNode(acc.object);
       const local = localFacts.get(keyOf(acc.object.id));
       return {
@@ -910,12 +793,14 @@ export function buildColumnTraceView(
         (e) => e.source === from.object.id && e.target === to.object.id,
       );
       if (existing) existing.columns = [...columns];
-      // A hub has no key rows, so its line leaves from the hub's own handle.
+      // A hub has no key rows, so its line leaves from its first port (or its own handle).
       else
         pushObjectEdge(
           from,
           to,
-          isColumnTraceTransformNode(from.object) ? undefined : [...columns][0],
+          isColumnTraceTransformNode(from.object)
+            ? firstRow(from)
+            : [...columns][0],
           columns,
         );
     }
