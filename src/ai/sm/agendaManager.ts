@@ -76,15 +76,16 @@ export interface WorklistView {
    * a note written at its hop can still reach. A finished node is never returned.
    */
   successors(nodeId: string): Iterable<string>;
-  /** Directed distance from the origin used as the second tie-break key. */
+  /** Directed distance from the origin, after column work and after an origin or follow-up. */
   distance(entry: AgendaEntry): number;
 }
 
 /**
- * Lexicographic key among ready entries: column class, explicit priority, distance, then node id.
+ * Lexicographic key among ready entries: column work, then an origin or follow-up,
+ * then distance from the origin, then node id.
  */
 interface WorklistRank {
-  /** Ready CT, then a BB prerequisite of pending CT, then ordinary BB. */
+  /** `0` when this arrival has column work, else `1`. */
   readonly columnTier: number;
   /** `0` for an origin or follow-up entry (priority 3), `1` for every other entry. */
   readonly tier: number;
@@ -93,17 +94,9 @@ interface WorklistRank {
 }
 
 /** The dispatch key of one agenda entry under `view`. */
-function worklistRank(
-  entry: AgendaEntry,
-  view: WorklistView,
-  prerequisites: ReadonlySet<string>,
-): WorklistRank {
+function worklistRank(entry: AgendaEntry, view: WorklistView): WorklistRank {
   return {
-    columnTier: hasColumnWork(entry)
-      ? 0
-      : prerequisites.has(entry.nodeId)
-        ? 1
-        : 2,
+    columnTier: hasColumnWork(entry) ? 0 : 1,
     tier: entry.priority === 3 ? 0 : 1,
     distance: view.distance(entry),
     nodeId: entry.nodeId,
@@ -128,16 +121,12 @@ function compareWorklistRank(a: WorklistRank, b: WorklistRank): number {
 
 /**
  * Readiness of the queued node ids — Kahn readiness over the live note graph, with every strongly
- * connected component treated as one unit — plus the queued predecessors pending CT work waits on.
+ * connected component treated as one unit.
  */
 function analyzeWorklist(
   queued: readonly string[],
   successors: (nodeId: string) => Iterable<string>,
-  columnNodes: readonly string[],
-): {
-  ready: string[];
-  prerequisites: ReadonlySet<string>;
-} {
+): { ready: string[] } {
   const live = new Graph({
     type: 'directed',
     allowSelfLoops: false,
@@ -166,30 +155,13 @@ function analyzeWorklist(
     for (const id of members) componentOf.set(id, index);
   });
   const blocked = new Set<number>();
-  const predecessors = new Map<number, Set<number>>();
   live.forEachDirectedEdge((_edge, _attr, from, to) => {
     const target = componentOf.get(to)!;
     const source = componentOf.get(from)!;
-    if (source !== target) {
-      blocked.add(target);
-      const incoming = predecessors.get(target) ?? new Set<number>();
-      incoming.add(source);
-      predecessors.set(target, incoming);
-    }
+    if (source !== target) blocked.add(target);
   });
-  const needed = new Set<number>();
-  const frontierComponents = columnNodes.map((id) => componentOf.get(id)!);
-  for (let i = 0; i < frontierComponents.length; i++) {
-    const component = frontierComponents[i];
-    if (needed.has(component)) continue;
-    needed.add(component);
-    frontierComponents.push(...(predecessors.get(component) ?? []));
-  }
   return {
     ready: queued.filter((id) => !blocked.has(componentOf.get(id)!)),
-    prerequisites: new Set(
-      queued.filter((id) => needed.has(componentOf.get(id)!)),
-    ),
   };
 }
 
@@ -262,17 +234,17 @@ export class AgendaManager {
   /** Removes and returns the next entry in worklist order. */
   public dequeue(view: WorklistView): AgendaEntry | undefined {
     if (this._entries.length === 0) return undefined;
-    const analysis = analyzeWorklist(
-      this._entries.map((entry) => entry.nodeId),
-      (id) => view.successors(id),
-      this._entries.filter(hasColumnWork).map((entry) => entry.nodeId),
+    const ready = new Set(
+      analyzeWorklist(
+        this._entries.map((entry) => entry.nodeId),
+        (id) => view.successors(id),
+      ).ready,
     );
-    const ready = new Set(analysis.ready);
     let nextIdx = -1;
     let best: WorklistRank | undefined;
     this._entries.forEach((entry, index) => {
       if (!ready.has(entry.nodeId)) return;
-      const rank = worklistRank(entry, view, analysis.prerequisites);
+      const rank = worklistRank(entry, view);
       if (!best || compareWorklistRank(rank, best) < 0) {
         best = rank;
         nextIdx = index;
