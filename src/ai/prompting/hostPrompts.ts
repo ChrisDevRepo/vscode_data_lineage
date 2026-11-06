@@ -15,7 +15,6 @@ import type { SerializedFilterState } from '../../engine/shared/bridgeContract';
 import type { AiGateRefine } from '../../engine/shared/bridgeContract';
 import { describeScreen } from '../tools/screenStatePresenter';
 import { escapePromptText } from '../support/text';
-import { ClassificationValueSchema } from '../tools/toolSchemas';
 
 /** The grounding context surfaced in the system prompt's `## Context` block. */
 export type StagePromptContext = GeneralPromptContext;
@@ -99,7 +98,6 @@ export function buildSmEntrySystemPrompt(
   const directive = [
     '## Task: open the exploration',
     "Resolve the object the user named with `lineage_search_objects`. When `name_match` is `unique`, call `lineage_start_exploration` once with its id as `origin`; when `ambiguous`, reply in text naming those ids and asking which, with no tool call; without `name_match`, call it with the id of the object the user named. Set every other field from the user's own words, as its description says: `depth`, exclusions, `classification`, `analysisMode`, a `mission_brief` stating the goal and what counts as relevant, and `scopeNotes` for any constraint no other field holds.",
-    ClassificationValueSchema.description,
     ctLine,
     'The user then reviews your proposal at an approval gate.',
   ]

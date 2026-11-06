@@ -32,7 +32,7 @@ Output templates control the tone, structure and detail of `@lineage` answers, n
 - `sections` (on `business_capture` and `technical_capture` only) is an optional ordered list of bold section labels; `{{sections}}` in `general` expands to them.
 - `stages` and `example` are not read. Unknown keys are skipped with a warning; a key set to a plain string invalidates the whole file.
 
-Common capture coverage lives in `shared_capture`. When business and technical angles are both selected, business is the main explanation and technical adds implementation detail; shared facts, formulas and deciding SQL are recorded once.
+Common capture coverage lives in `shared_capture`. When business and technical angles are both selected, business is the main explanation and technical adds implementation detail; shared facts, formulas and deciding SQL are recorded once. `structural_callouts` provides the single contract for ⚠️ findings across all angles, avoiding duplication within individual capture recipes.
 
 Capture templates run under a fixed structural header you cannot override. Write each instruction to stand alone; do not refer to "above" or "below". Instructions replace presentation guidance, but cannot bypass consent, scope, identity checks or output schemas. Synthesis may rephrase hop findings, so wording needed in the final report belongs in a final-report key.
 
