@@ -681,8 +681,9 @@ const OUT_COL_DESCRIPTION =
 const OUT_NODE_DESCRIPTION =
   'Table from <hop_context> that this procedure writes out_col to. For a write to an object not listed, omit the entry and name the write in sections.';
 const UPSTREAM_DESCRIPTION =
-  'At a bodied focus, record the real source columns whose value lands in out_col as is, computed or aggregated: each UNION branch’s column at that position, caller-bound value inputs, a CASE’s THEN/ELSE results. A column that only decides which rows or which CASE branch out_col gets, even inside an aggregate, is indirect: record it in indirect_columns instead. A CASE with only literal results has no source column; a default constant beside a source column adds no pair. ' +
-  'Exclude the entry’s own out_node column, unused expressions and columns only copied alongside out_col (SELECT *, the rest of a column list). Resolve parameters and computed aliases to their source columns.';
+  'Contributing source columns whose values carry into out_col as-is, computed, or aggregated. ' +
+  'Columns that only condition which rows or branches survive are indirect: record them in indirect_columns. ' +
+  'Resolve parameters and aliases to source columns. Mapping a source column resolves that neighbor.';
 /** At a procedure, a created value is the pair procedure.col -> out_node.out_col. */
 const PROCEDURE_UPSTREAM_DESCRIPTION = `${UPSTREAM_DESCRIPTION} A value this procedure creates lists this procedure with the column its task names, else out_col; [] records no pair.`;
 
@@ -697,7 +698,9 @@ const ColumnFlowEntrySchema = z
     upstream_columns: z
       .array(ColumnRefSchema)
       .meta({ toolArrayFact: 'suppliers' })
-      .describe(`${UPSTREAM_DESCRIPTION} [] means the value originates here.`),
+      .describe(
+        `${UPSTREAM_DESCRIPTION} [] records that the value originates here.`,
+      ),
   })
   .strict()
   .meta({
