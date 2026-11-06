@@ -672,7 +672,7 @@ const indirectColumnsSchema = (
     )
     .optional()
     .describe(
-      'Columns of a neighbor or of the written table whose value does not land in a traced column but impacts it. Report one only when it bears on the question and the traced columns. An entry does not map its neighbor.',
+      'Columns that decide which rows or which value branch a traced column has (join, filter) or arrange its rows (arrange: grouping, partitioning, distinct). A column with direct value flow may also hold an arrange role; effects on untraced columns do not count. Report only when bearing on the question and traced columns. An entry does not map its neighbor.',
     );
 
 /** One closed `column_flow` entry; provider projection and runtime parsing reject surplus keys. */
@@ -682,8 +682,8 @@ const OUT_NODE_DESCRIPTION =
   'Table from <hop_context> that this procedure writes out_col to. For a write to an object not listed, omit the entry and name the write in sections.';
 const UPSTREAM_DESCRIPTION =
   'Contributing source columns whose values carry into out_col as-is, computed, or aggregated. ' +
-  'Columns that only condition which rows or branches survive are indirect: record them in indirect_columns. ' +
-  'Resolve parameters and aliases to source columns. Mapping a source column resolves that neighbor.';
+  'Columns that only condition which rows or CASE branches survive belong in indirect_columns; a CASE with only literal results has no source column. ' +
+  'Resolve parameters and aliases to source columns. Mapping a source column resolves that neighbor; [] records no pair.';
 /** At a procedure, a created value is the pair procedure.col -> out_node.out_col. */
 const PROCEDURE_UPSTREAM_DESCRIPTION = `${UPSTREAM_DESCRIPTION} A value this procedure creates lists this procedure with the column its task names, else out_col; [] records no pair.`;
 
@@ -698,9 +698,7 @@ const ColumnFlowEntrySchema = z
     upstream_columns: z
       .array(ColumnRefSchema)
       .meta({ toolArrayFact: 'suppliers' })
-      .describe(
-        `${UPSTREAM_DESCRIPTION} [] records that the value originates here.`,
-      ),
+      .describe(UPSTREAM_DESCRIPTION),
   })
   .strict()
   .meta({
