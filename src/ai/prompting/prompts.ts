@@ -54,7 +54,7 @@ export function buildGeneralSystemPrompt(ctx: GeneralPromptContext): string {
     '# Data Lineage Assistant',
     '',
     "You are @lineage, the data-lineage assistant in the Data Lineage Viz extension for VS Code. The extension parses SQL objects (tables, views, procedures, functions) into a dependency graph the user sees as a diagram; each object's SQL opens in the editor.",
-    'Use only object ids, columns and relationships that tools returned. The extension draws the graph; describe lineage in tables, lists and prose.',
+    'Use only object ids, columns and relationships that tools returned. The extension draws the graph; describe lineage in tables, lists and prose. You read the lineage graph only and execute nothing: a request for query results, row values, or running a statement gets a short decline, never an exploration.',
     'When calling tools, emit strictly valid raw JSON: use standard double quotes, escape internal backslashes and control newlines, omit trailing commas, and match the served schema types precisely to preserve full SQL and math text.',
     '',
     '## Context',
@@ -80,21 +80,15 @@ export function buildScreenStateSlot(screen: string): string[] {
   ];
 }
 
-/** Guardrail rule declining execution or direct data requests in conversational chat turns. */
-const CHAT_DECLINE_RULE =
-  'You read the lineage graph only and execute nothing: a request for query results, row values, or running a statement gets a short decline, never an exploration.';
-
 /** Builds the phase-specific TS protocol block (non-YAML). */
 export function buildPhasePrompt(
   phase: PromptPhase,
   analysisMode: 'bb' | 'ct' = 'bb',
-  classification?: 'business' | 'technical' | 'both',
 ): string {
   if (phase === 'discover') return buildDiscoveryPrompt();
   if (phase === 'visual_preview') return buildVisualPreviewPrompt();
   if (phase === 'active') return buildActivePhasePrompt(analysisMode);
-  if (phase === 'synthesis')
-    return buildSynthesisPrompt(analysisMode, classification);
+  if (phase === 'synthesis') return buildSynthesisPrompt(analysisMode);
   return buildFollowUpPrompt();
 }
 
@@ -113,7 +107,6 @@ function buildDiscoveryPrompt(): string {
   return [
     '## Task: answer in chat',
     'Facts about this database come from what the read tools returned in this conversation. When those facts already answer the question, or it needs none (a greeting, what you can do, general SQL or data-modelling knowledge), reply directly without a tool call; otherwise choose the tool whose description matches the question. A column trace naming columns on more than one object gets a short reply asking which object to trace first. For lineage — sources, consumers, neighbours — one `lineage_get_scope_bundle` call scoped to the question, with `include_ddl` when the logic matters. When an AI bookmark is applied on screen, a question about it is answered from the stored run (`lineage_get_screen_state`).',
-    CHAT_DECLINE_RULE,
   ].join('\n');
 }
 
@@ -191,10 +184,7 @@ export function buildDiscoveryFinalAnswerTask(): string {
 }
 
 /** Constructs the synthesis-phase task block. */
-function buildSynthesisPrompt(
-  analysisMode: 'bb' | 'ct' = 'bb',
-  classification?: 'business' | 'technical' | 'both',
-): string {
+function buildSynthesisPrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
   const isCt = analysisMode === 'ct';
   const evidence =
     "Evidence, in `<synthesis_envelope>`: `detail_slots[]` — what each analyzed node does; `node_states[]` — each node's action and why; `synthesis_reminder` — engine facts: flow roles, edge direction, kept nodes without a detail slot and captured formulas" +
@@ -217,11 +207,7 @@ function buildSynthesisPrompt(
           '- Keep the explanation concise while preserving important formulas, rules and supported warnings.',
         ]),
     '- Id fields take only ids from `result.scope.node_ids`, except an existing held entry named only for deletion; name other objects in section text.',
-    ...(classification === 'both'
-      ? [
-          '- When business and technical were both captured, state each fact once, under the angle whose question it answers.',
-        ]
-      : []),
+    '- When business and technical were both captured, state each fact once, under the angle whose question it answers.',
     '- DDL and DML establish definitions and SQL behavior, not observed statistics, row counts, elapsed time or performance. Explain a calculation only from its supplied defining expression; do not turn its formula or captured prose into a measured result without matching data or runtime evidence.',
     '- Markdown only; formulas as LaTeX (`$…$` inline, `$$…$$` block); SQL in ```sql fences. ' +
       LATEX_SOURCE_RULE +
@@ -242,7 +228,6 @@ function buildFollowUpPrompt(): string {
     'the per-node archive and the rendered section bodies are not replayed here. Re-derive',
     'any node fact you need with `lineage_get_object_detail` or `lineage_search_ddl` before',
     'quoting it. You can walk the loaded graph or refine the visualization without starting over.',
-    CHAT_DECLINE_RULE,
     '',
     'Adjust the existing graph (default):',
     '- Re-label or regroup sections: rebuild the full `sections[]` list and call',
