@@ -242,7 +242,11 @@ const TOOL_ARGUMENTS_EMPTY_REASON =
 function malformedArgumentsFault(text: string): {
   readonly code: 'type' | 'json_syntax';
   readonly reason: string;
-  readonly parse?: { readonly kind: string; readonly offset?: number };
+  readonly parse?: {
+    readonly kind: string;
+    readonly offset?: number;
+    readonly trailing?: boolean;
+  };
 } {
   if (/^\s*[{[]/.test(text)) {
     try {
@@ -251,6 +255,11 @@ function malformedArgumentsFault(text: string): {
       const syntaxError = error instanceof SyntaxError ? error : undefined;
       const offsetMatch = syntaxError?.message.match(/at position (\d+)/);
       const offset = offsetMatch ? parseInt(offsetMatch[1], 10) : undefined;
+      const trailing = syntaxError
+        ? /unexpected non-whitespace character after JSON/i.test(
+            syntaxError.message,
+          )
+        : false;
       return {
         code: 'json_syntax',
         reason: TOOL_ARGUMENTS_SYNTAX_REASON,
@@ -259,6 +268,7 @@ function malformedArgumentsFault(text: string): {
               parse: {
                 kind: syntaxError.name,
                 ...(offset !== undefined ? { offset } : {}),
+                ...(trailing ? { trailing: true } : {}),
               },
             }
           : {}),
@@ -308,7 +318,11 @@ interface InvalidGeneratedToolCall {
   readonly reason: string;
   /** Paths of the input values that rejected the call, when the producer names them. */
   readonly issuePaths?: readonly string[];
-  readonly parse?: { readonly kind: string; readonly offset?: number };
+  readonly parse?: {
+    readonly kind: string;
+    readonly offset?: number;
+    readonly trailing?: boolean;
+  };
 }
 
 /**

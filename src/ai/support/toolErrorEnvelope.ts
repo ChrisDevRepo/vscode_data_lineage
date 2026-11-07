@@ -402,7 +402,11 @@ export interface ToolError {
   category?: IssueCategory;
   values?: readonly string[];
   /** SyntaxError kind and character offset, when reported. Never the submitted text. */
-  parse?: { readonly kind: string; readonly offset?: number };
+  parse?: {
+    readonly kind: string;
+    readonly offset?: number;
+    readonly trailing?: boolean;
+  };
 }
 
 /**
@@ -476,6 +480,7 @@ const RejectionShape = z
               .object({
                 kind: z.string().min(1),
                 offset: z.number().int().nonnegative().optional(),
+                trailing: z.boolean().optional(),
               })
               .strict()
               .optional(),
@@ -692,10 +697,14 @@ export function renderProblemReport(
             error.parse.offset !== undefined
               ? ` at position ${error.parse.offset}`
               : ''
-          }.`
+          }.${
+            error.parse.trailing
+              ? ' Unexpected duplicate or trailing characters after the JSON object. Close with exactly one "}" and emit no trailing braces.'
+              : ''
+          }`
         : '';
       const syntaxEscalation =
-        stage >= 2 && error.code === 'json_syntax'
+        stage >= 2 && error.code === 'json_syntax' && !error.parse?.trailing
           ? ' Close the JSON object with exactly one "}" and emit no trailing characters, fences, or duplicate braces.'
           : '';
       const message = `${issue.label}. ${issue.correction}${located}${syntaxEscalation}${fallback ? ` ${fallback}` : ''}`;
