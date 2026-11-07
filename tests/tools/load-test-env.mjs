@@ -20,6 +20,7 @@ export const PROVIDER_PROFILES = {
     'AI_TEST_OPENAI_COMPATIBLE_API_KEY',
     'AI_TEST_OPENAI_COMPATIBLE_MODEL',
   ],
+  qwen: ['QWEN_URL', 'QWEN_API', 'QWEN_MODEL'],
 };
 
 /** Loads optional test environment values and resolves a selected AI provider profile. */

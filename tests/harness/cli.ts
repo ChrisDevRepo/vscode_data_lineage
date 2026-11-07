@@ -75,6 +75,7 @@ const AI_PROVIDERS = [
   'fireworks',
   'openrouter',
   'openai-compatible',
+  'qwen',
 ] as const;
 
 const HELP = `Optional testing toolset; it records checks and does not grade answers:
@@ -87,8 +88,8 @@ its gate rounds. A failed check is recorded in run.json and exits 2.
 --timeout-ms bounds the entire run; --request-timeout-ms independently bounds each
 provider request. AI_TEST_TIMEOUT_MS and AI_TEST_REQUEST_TIMEOUT_MS set defaults;
 AI defaults to two hours with requests bounded by the same budget.
-AI requires a hosted provider: AI_TEST_PROVIDER (azure, fireworks, openrouter or
-openai-compatible) with its AI_TEST_ENDPOINT, AI_TEST_API_KEY and AI_TEST_MODEL. There is no
+AI requires a hosted provider: AI_TEST_PROVIDER (azure, fireworks, openrouter,
+openai-compatible or qwen) with its AI_TEST_ENDPOINT, AI_TEST_API_KEY and AI_TEST_MODEL. There is no
 default provider.
 An AI run writes a verbose NDJSON trace, host.log, and per turn answer.md and sm-state.json
 (explorationOpened false when the turn opened no exploration). Nothing is uploaded.
@@ -481,7 +482,7 @@ export async function main(
   try {
     options = parseOptions(args);
     run = aiRun(options);
-    const providerName = process.env.AI_TEST_PROVIDER?.trim();
+    const providerName = process.env.AI_TEST_PROVIDER?.trim().toLowerCase();
     if (!AI_PROVIDERS.includes(providerName as (typeof AI_PROVIDERS)[number])) {
       throw new Error(
         `Set AI_TEST_PROVIDER to a hosted provider: ${AI_PROVIDERS.join(', ')}.`,

@@ -58,9 +58,10 @@ export function buildHostStageSystemPrompt(
   phase: PromptPhase,
   ctx: StagePromptContext,
   analysisMode: 'bb' | 'ct' = 'bb',
+  classification?: 'business' | 'technical' | 'both',
 ): string {
   const base = buildGeneralSystemPrompt(ctx);
-  const phaseSpecific = buildPhasePrompt(phase, analysisMode);
+  const phaseSpecific = buildPhasePrompt(phase, analysisMode, classification);
   return [base, phaseSpecific].filter(Boolean).join('\n\n');
 }
 

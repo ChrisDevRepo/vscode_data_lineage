@@ -46,6 +46,26 @@ test('provider profiles resolve from environment and precedence', () => {
       }),
     /missing AI_TEST_ENDPOINT/,
   );
+
+  const qwenEnv = {
+    AI_TEST_PROVIDER: 'Qwen',
+    QWEN_URL: 'https://qwen.example/compatible-mode/v1',
+    QWEN_API: 'qwen-key',
+    QWEN_MODEL: 'qwen3.8-flash',
+  };
+  const qwenId = loadTestEnv({
+    env: qwenEnv,
+    envFile: join(tmpdir(), 'missing-env'),
+    requireAiProvider: true,
+  });
+  assert.deepEqual(qwenId, { provider: 'qwen', model: 'qwen3.8-flash' });
+  assert.equal(qwenEnv.AI_TEST_PROVIDER, 'qwen');
+  assert.equal(
+    qwenEnv.AI_TEST_ENDPOINT,
+    'https://qwen.example/compatible-mode/v1',
+  );
+  assert.equal(qwenEnv.AI_TEST_API_KEY, 'qwen-key');
+  assert.equal(qwenEnv.AI_TEST_MODEL, 'qwen3.8-flash');
 });
 
 test('loadTestEnv keeps a configured AI test timeout', () => {

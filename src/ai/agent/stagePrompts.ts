@@ -88,8 +88,12 @@ function assemblePhaseSystem(
   ctx: StagePromptContext,
   blocks: ReadonlyArray<string | null | undefined>,
   analysisMode: 'bb' | 'ct' = 'bb',
+  classification?: 'business' | 'technical' | 'both',
 ): string {
-  return [buildHostStageSystemPrompt(stage, ctx, analysisMode), ...blocks]
+  return [
+    buildHostStageSystemPrompt(stage, ctx, analysisMode, classification),
+    ...blocks,
+  ]
     .filter(Boolean)
     .join('\n');
 }
@@ -259,6 +263,7 @@ export function buildSynthesisInstruction(
       ctx,
       [stage.prompt, ...stableContext.blocks],
       analysisMode,
+      sess.classification,
     ),
     templateKeys: stage.shippedKeys,
     memorySections: stableContext.memorySections,
