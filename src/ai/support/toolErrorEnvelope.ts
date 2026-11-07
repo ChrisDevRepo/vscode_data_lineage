@@ -49,6 +49,12 @@ export const ISSUES = {
     correction:
       'Send the value as a JSON object or array, not as a string that holds JSON.',
   },
+  json_parse: {
+    category: 'shape',
+    label: 'JSON parse error',
+    correction:
+      'Send one complete JSON object or array. The text is not valid JSON and is not repaired.',
+  },
   unknown_key: {
     category: 'shape',
     label: 'not a field of this object',
@@ -395,6 +401,8 @@ export interface ToolError {
   /** Domain classification of this particular fault; its fixed issue text stays unchanged. */
   category?: IssueCategory;
   values?: readonly string[];
+  /** SyntaxError kind and character offset, when reported. Never the submitted text. */
+  parse?: { readonly kind: string; readonly offset?: number };
 }
 
 /**
@@ -464,6 +472,13 @@ const RejectionShape = z
               ])
               .optional(),
             values: z.array(z.string()).optional(),
+            parse: z
+              .object({
+                kind: z.string().min(1),
+                offset: z.number().int().nonnegative().optional(),
+              })
+              .strict()
+              .optional(),
           })
           .strict(),
       )
@@ -672,7 +687,14 @@ export function renderProblemReport(
               : REPORT_REFERENCE_FALLBACK
           : '';
       if (fallback) fallbackShown = true;
-      const message = `${issue.label}. ${issue.correction}${fallback ? ` ${fallback}` : ''}`;
+      const located = error.parse
+        ? ` ${error.parse.kind}${
+            error.parse.offset !== undefined
+              ? ` at position ${error.parse.offset}`
+              : ''
+          }.`
+        : '';
+      const message = `${issue.label}. ${issue.correction}${located}${fallback ? ` ${fallback}` : ''}`;
       const sent =
         'ranksKey' in issue
           ? error.path.split('.').at(-1)

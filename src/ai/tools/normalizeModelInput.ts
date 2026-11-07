@@ -2,7 +2,7 @@ import { z, type ZodType } from 'zod';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveModelNodeId } from '../support/modelReferences';
 import { splitSqlName, stripBrackets, normalizeColName } from '../../utils/sql';
-import { validateToolCandidate } from '../support/toolValidation';
+import { syntaxFault, validateToolCandidate } from '../support/toolValidation';
 
 /** Admission by the served JSON Schema decides every normalization step. */
 const admits = (schema: ZodType, value: unknown): boolean =>
@@ -239,10 +239,11 @@ function decodeExact(text: string, expected: string): unknown {
   if (expected === 'boolean')
     return text === 'true' ? true : text === 'false' ? false : undefined;
   if (expected !== 'object' && expected !== 'array') return undefined;
+  const normalized = normalizeJsonStringValues(text);
   let decoded: unknown;
   try {
     decoded = JSON.parse(
-      normalizeJsonStringValues(text),
+      normalized,
       (_key, value: unknown, context?: { source?: string }) => {
         if (
           typeof value === 'number' &&
@@ -262,7 +263,10 @@ function decodeExact(text: string, expected: string): unknown {
         return value;
       },
     );
-  } catch {
+  } catch (error) {
+    // A syntax error stays the sent text so admission can name its kind and offset. A number that
+    // cannot be kept exactly is not a value either. Neither is repaired.
+    if (syntaxFault(error, normalized)) return undefined;
     return undefined;
   }
   const isArray = Array.isArray(decoded);

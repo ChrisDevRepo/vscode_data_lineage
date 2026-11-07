@@ -47,7 +47,8 @@ describe('Canonical tool issue matrix', () => {
       input: { origin: 'dbo.a', direction: 'bidirectional', upstream_depth: 2 },
       faults: [{ path: 'downstream_depth', code: 'missing' }],
     },
-    // JSON-looking text is json_text; plain text for a list is type ('several faults in one call').
+    // Text that decodes as JSON is json_text. A container string that does not
+    // parse is json_parse. Plain text for a list is type ('several faults in one call').
     {
       name: 'valid JSON encoded as a string',
       schema: PresentResultModelSchema,
@@ -58,7 +59,7 @@ describe('Canonical tool issue matrix', () => {
       name: 'text that is not valid JSON',
       schema: PresentResultModelSchema,
       input: { ...render, sections: '[{"label":"Sources","node_ids":["dbo.a"' },
-      faults: [{ path: 'sections', code: 'json_text' }],
+      faults: [{ path: 'sections', code: 'json_parse' }],
     },
     {
       name: 'the same defect across list entries: one fault per entry',
