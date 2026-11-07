@@ -31,6 +31,7 @@ import {
   makeRejection,
   readToolErrorText,
   renderProblemReport,
+  type ToolError,
   type ToolRejection,
 } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
@@ -502,14 +503,14 @@ function rejectionFromInvalid(
           | string[]
           | undefined) ?? [])
       : undefined;
-  const errors = at(
-    call.code,
-    issuePaths.length ? issuePaths : [''],
-    call.code === 'off_policy'
-      ? tools
-      : call.code === 'type'
-        ? ['object']
-        : undefined,
+  const errors: ToolError[] = (issuePaths.length ? issuePaths : ['']).map(
+    (path) => ({
+      path,
+      code: call.code,
+      ...(call.code === 'off_policy' ? { values: tools } : {}),
+      ...(call.code === 'type' ? { values: ['object'] } : {}),
+      ...(call.parse ? { parse: call.parse } : {}),
+    }),
   );
   return {
     status: 'rejected',

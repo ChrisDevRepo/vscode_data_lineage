@@ -242,12 +242,27 @@ const TOOL_ARGUMENTS_EMPTY_REASON =
 function malformedArgumentsFault(text: string): {
   readonly code: 'type' | 'json_syntax';
   readonly reason: string;
+  readonly parse?: { readonly kind: string; readonly offset?: number };
 } {
   if (/^\s*[{[]/.test(text)) {
     try {
       JSON.parse(text);
-    } catch {
-      return { code: 'json_syntax', reason: TOOL_ARGUMENTS_SYNTAX_REASON };
+    } catch (error) {
+      const syntaxError = error instanceof SyntaxError ? error : undefined;
+      const offsetMatch = syntaxError?.message.match(/at position (\d+)/);
+      const offset = offsetMatch ? parseInt(offsetMatch[1], 10) : undefined;
+      return {
+        code: 'json_syntax',
+        reason: TOOL_ARGUMENTS_SYNTAX_REASON,
+        ...(syntaxError
+          ? {
+              parse: {
+                kind: syntaxError.name,
+                ...(offset !== undefined ? { offset } : {}),
+              },
+            }
+          : {}),
+      };
     }
   }
   return {
@@ -293,6 +308,7 @@ interface InvalidGeneratedToolCall {
   readonly reason: string;
   /** Paths of the input values that rejected the call, when the producer names them. */
   readonly issuePaths?: readonly string[];
+  readonly parse?: { readonly kind: string; readonly offset?: number };
 }
 
 /**
@@ -321,7 +337,11 @@ export function classifyToolCall(
 } {
   const { callId, toolName } = emitted;
   const replayInput = 'args' in emitted ? emitted.args : {};
-  const reject = (code: InvalidGeneratedToolCall['code'], reason: string) => ({
+  const reject = (
+    code: InvalidGeneratedToolCall['code'],
+    reason: string,
+    parse?: InvalidGeneratedToolCall['parse'],
+  ) => ({
     replayInput,
     call: {
       valid: false as const,
@@ -330,6 +350,7 @@ export function classifyToolCall(
       input: 'args' in emitted ? emitted.args : emitted.malformedArgs,
       code,
       reason,
+      ...(parse ? { parse } : {}),
     },
   });
   const definition = definitions.get(toolName);
@@ -337,7 +358,7 @@ export function classifyToolCall(
     return reject('off_policy', 'Tool is not available in this phase.');
   if ('malformedArgs' in emitted) {
     const fault = malformedArgumentsFault(emitted.malformedArgs);
-    return reject(fault.code, fault.reason);
+    return reject(fault.code, fault.reason, fault.parse);
   }
   const normalized = normalizeModelInput(definition.inputSchema, emitted.args);
   logFixes(toolName, normalized.fixes, debugLog);

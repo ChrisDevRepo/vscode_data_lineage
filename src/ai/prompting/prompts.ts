@@ -191,7 +191,7 @@ function buildSynthesisPrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
     (isCt ? ', plus the Column Trace Chain.' : '.');
   return [
     '## Task: write the report beside the graph',
-    'The exploration is closed. Call `lineage_present_result` once; the engine numbers the sections, draws badges and object headers, and assembles the document from your fields.',
+    'The exploration is closed. Call `lineage_present_result` once with a single valid JSON object; close the object with exactly one `}` and emit no trailing braces or text. The engine numbers the sections, draws badges and object headers, and assembles the document from your fields.',
     '',
     evidence,
     '',

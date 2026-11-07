@@ -694,7 +694,11 @@ export function renderProblemReport(
               : ''
           }.`
         : '';
-      const message = `${issue.label}. ${issue.correction}${located}${fallback ? ` ${fallback}` : ''}`;
+      const syntaxEscalation =
+        stage >= 2 && error.code === 'json_syntax'
+          ? ' Close the JSON object with exactly one "}" and emit no trailing characters, fences, or duplicate braces.'
+          : '';
+      const message = `${issue.label}. ${issue.correction}${located}${syntaxEscalation}${fallback ? ` ${fallback}` : ''}`;
       const sent =
         'ranksKey' in issue
           ? error.path.split('.').at(-1)
