@@ -520,14 +520,25 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
 
   /**
    * Returns the cumulative attempt state for one phase, or a fresh state when the phase changed.
+   * Retains a bounded sliding window (up to 3) of structural/protocol rejections (ENG-113).
    */
   const attemptStateFor = (
     state: AgentStateType,
     phase: InstructionPhase,
-  ): ToolPhaseAttemptState =>
-    state.toolAttempt?.phase === phase
-      ? state.toolAttempt
-      : initialToolPhaseAttemptState(phase);
+  ): ToolPhaseAttemptState => {
+    if (state.toolAttempt?.phase === phase) return state.toolAttempt;
+    const seedStructural = state.toolAttempt?.rejections
+      ? state.toolAttempt.rejections
+          .filter(
+            (rejection) =>
+              rejection.code === 'json_syntax' ||
+              rejection.code === 'one_call' ||
+              rejection.code === 'tool_call_notation',
+          )
+          .slice(-3)
+      : undefined;
+    return initialToolPhaseAttemptState(phase, seedStructural);
+  };
 
   /**
    * The one attempt-stop policy every self-looping phase applies after {@link recordToolAttempt}:

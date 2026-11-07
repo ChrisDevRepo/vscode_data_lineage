@@ -306,9 +306,13 @@ export interface ToolPhaseAttemptState {
   readonly stopReason: 'no_progress' | 'backend_fault' | null;
 }
 
-/** Creates empty cumulative state for one graph phase/hop. */
+/**
+ * Creates empty cumulative state for one graph phase/hop, optionally seeded with structural
+ * rejections from a prior phase.
+ */
 export function initialToolPhaseAttemptState(
   phase: InstructionPhase,
+  seedRejections?: readonly ToolAttemptRejection[],
 ): ToolPhaseAttemptState {
   return {
     phase,
@@ -316,7 +320,7 @@ export function initialToolPhaseAttemptState(
     noProgressCalls: 0,
     rejectedTerminalCalls: 0,
     observations: [],
-    rejections: [],
+    rejections: seedRejections ? [...seedRejections] : [],
     messages: [],
     stopReason: null,
   };

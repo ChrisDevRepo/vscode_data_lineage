@@ -6,6 +6,7 @@ import {
   type MessageContent,
 } from '@langchain/core/messages';
 import type { ZodType } from 'zod';
+import { jsonrepair, JSONRepairError } from 'jsonrepair';
 import { at, type IssueCode } from '../support/toolErrorEnvelope';
 import { validateToolCandidate } from '../support/toolValidation';
 import { normalizeModelInput } from '../tools/normalizeModelInput';
@@ -246,6 +247,7 @@ function malformedArgumentsFault(text: string): {
     readonly kind: string;
     readonly offset?: number;
     readonly trailing?: boolean;
+    readonly detail?: string;
   };
 } {
   if (/^\s*[{[]/.test(text)) {
@@ -260,6 +262,14 @@ function malformedArgumentsFault(text: string): {
             syntaxError.message,
           )
         : false;
+      let repairDetail: string | undefined;
+      try {
+        jsonrepair(text);
+      } catch (repairErr) {
+        if (repairErr instanceof JSONRepairError) {
+          repairDetail = repairErr.message;
+        }
+      }
       return {
         code: 'json_syntax',
         reason: TOOL_ARGUMENTS_SYNTAX_REASON,
@@ -269,6 +279,7 @@ function malformedArgumentsFault(text: string): {
                 kind: syntaxError.name,
                 ...(offset !== undefined ? { offset } : {}),
                 ...(trailing ? { trailing: true } : {}),
+                ...(repairDetail ? { detail: repairDetail } : {}),
               },
             }
           : {}),
@@ -322,6 +333,7 @@ interface InvalidGeneratedToolCall {
     readonly kind: string;
     readonly offset?: number;
     readonly trailing?: boolean;
+    readonly detail?: string;
   };
 }
 
@@ -372,6 +384,31 @@ export function classifyToolCall(
     return reject('off_policy', 'Tool is not available in this phase.');
   if ('malformedArgs' in emitted) {
     const fault = malformedArgumentsFault(emitted.malformedArgs);
+    if (fault.parse?.trailing) {
+      const trimmed = emitted.malformedArgs.trim();
+      if (
+        (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+        (trimmed.startsWith('[') && trimmed.endsWith(']'))
+      ) {
+        try {
+          const repaired = jsonrepair(emitted.malformedArgs);
+          const parsed = JSON.parse(repaired);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            const normalized = normalizeModelInput(
+              definition.inputSchema,
+              parsed as Record<string, unknown>,
+            );
+            logFixes(toolName, normalized.fixes, debugLog);
+            return {
+              call: { valid: true, callId, toolName, input: normalized.input },
+              replayInput: parsed as Record<string, unknown>,
+            };
+          }
+        } catch {
+          // Fall through to reject
+        }
+      }
+    }
     return reject(fault.code, fault.reason, fault.parse);
   }
   const normalized = normalizeModelInput(definition.inputSchema, emitted.args);

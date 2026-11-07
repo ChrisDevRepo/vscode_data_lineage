@@ -406,6 +406,7 @@ export interface ToolError {
     readonly kind: string;
     readonly offset?: number;
     readonly trailing?: boolean;
+    readonly detail?: string;
   };
 }
 
@@ -692,6 +693,14 @@ export function renderProblemReport(
               : REPORT_REFERENCE_FALLBACK
           : '';
       if (fallback) fallbackShown = true;
+      const isTrailingSyntax =
+        error.code === 'json_syntax' && Boolean(error.parse?.trailing);
+      const label = isTrailingSyntax
+        ? 'arguments contain trailing characters or duplicate braces after the JSON object'
+        : issue.label;
+      const correction = isTrailingSyntax
+        ? 'Emit the JSON object with no trailing characters.'
+        : issue.correction;
       const located = error.parse
         ? ` ${error.parse.kind}${
             error.parse.offset !== undefined
@@ -700,14 +709,22 @@ export function renderProblemReport(
           }.${
             error.parse.trailing
               ? ' Unexpected duplicate or trailing characters after the JSON object. Close with exactly one "}" and emit no trailing braces.'
-              : ''
+              : error.parse.detail
+                ? ` ${error.parse.detail}.`
+                : ''
           }`
         : '';
       const syntaxEscalation =
-        stage >= 2 && error.code === 'json_syntax' && !error.parse?.trailing
-          ? ' Close the JSON object with exactly one "}" and emit no trailing characters, fences, or duplicate braces.'
+        stage >= 2 && error.code === 'json_syntax'
+          ? isTrailingSyntax
+            ? ' Do not append extra "}" or text after the final "}". The JSON object was complete before the extra closing brace.'
+            : ' Close the JSON object with exactly one "}" and emit no trailing characters, fences, or duplicate braces.'
           : '';
-      const message = `${issue.label}. ${issue.correction}${located}${syntaxEscalation}${fallback ? ` ${fallback}` : ''}`;
+      const stage3Escalation =
+        stage >= 3 && isTrailingSyntax
+          ? ' Stop generation immediately after the single closing "}".'
+          : '';
+      const message = `${label}. ${correction}${located}${syntaxEscalation}${stage3Escalation}${fallback ? ` ${fallback}` : ''}`;
       const sent =
         'ranksKey' in issue
           ? error.path.split('.').at(-1)

@@ -1,6 +1,7 @@
 /** Shared OpenAI-compatible ModelPort: production validation with headless HTTP transport. */
 import { retryAfterDelayMs } from './httpRetry';
 import { createProviderFetch } from '../fixtures/lm-provider-extension/live-provider-adapter.js';
+import { jsonrepair } from 'jsonrepair';
 import type { BaseMessage, MessageContent } from '@langchain/core/messages';
 import {
   classifyToolCall,
@@ -1248,33 +1249,51 @@ function parseArguments(
   try {
     parsed = JSON.parse(serialized);
   } catch (error) {
-    // Parser messages may quote input; expose only a fixed category and numeric offset.
     const message = error instanceof Error ? error.message : '';
-    const positionText = /\bposition (\d+)\b/.exec(message)?.[1];
-    const position =
-      positionText === undefined
-        ? /end of JSON input/i.test(message)
-          ? serialized.length
-          : undefined
-        : Number(positionText);
-    const offset =
-      position !== undefined &&
-      Number.isSafeInteger(position) &&
-      position >= 0 &&
-      position <= serialized.length
-        ? position
-        : undefined;
-    const category =
-      offset === serialized.length
-        ? 'incomplete value'
-        : offset !== undefined &&
-            /[}\]]/.test(serialized[offset] ?? '') &&
-            /,\s*$/.test(serialized.slice(0, offset))
-          ? 'trailing comma'
-          : 'invalid encoding';
-    return {
-      argumentsDiagnostic: `Invalid JSON syntax: ${category}${offset === undefined ? '' : ` at character ${offset}`}.`,
-    };
+    const isTrailing = /unexpected non-whitespace character after JSON/i.test(
+      message,
+    );
+    const trimmed = serialized.trim();
+    if (
+      isTrailing &&
+      ((trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+        (trimmed.startsWith('[') && trimmed.endsWith(']')))
+    ) {
+      try {
+        const repaired = jsonrepair(serialized);
+        parsed = JSON.parse(repaired);
+      } catch {
+        // Fall through to diagnostic
+      }
+    }
+    if (!parsed) {
+      // Parser messages may quote input; expose only a fixed category and numeric offset.
+      const positionText = /\bposition (\d+)\b/.exec(message)?.[1];
+      const position =
+        positionText === undefined
+          ? /end of JSON input/i.test(message)
+            ? serialized.length
+            : undefined
+          : Number(positionText);
+      const offset =
+        position !== undefined &&
+        Number.isSafeInteger(position) &&
+        position >= 0 &&
+        position <= serialized.length
+          ? position
+          : undefined;
+      const category =
+        offset === serialized.length
+          ? 'incomplete value'
+          : offset !== undefined &&
+              /[}\]]/.test(serialized[offset] ?? '') &&
+              /,\s*$/.test(serialized.slice(0, offset))
+            ? 'trailing comma'
+            : 'invalid encoding';
+      return {
+        argumentsDiagnostic: `Invalid JSON syntax: ${category}${offset === undefined ? '' : ` at character ${offset}`}.`,
+      };
+    }
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
   return { input: parsed as Record<string, unknown> };
