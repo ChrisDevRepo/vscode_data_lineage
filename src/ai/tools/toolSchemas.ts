@@ -66,7 +66,7 @@ const ScopeNotesValueSchema = z
   );
 
 /** Canonical answer-lens values and primary-intent instruction shared by entry and tool schemas. */
-const ClassificationValueSchema = z
+export const ClassificationValueSchema = z
   .enum(['business', 'technical', 'both'])
   .describe(
     'Choose the answer lens from the primary user intent: "business" for meaning, purpose, impact or business rules, ' +
