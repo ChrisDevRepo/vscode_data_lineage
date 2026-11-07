@@ -1,5 +1,7 @@
 'use strict';
 
+const { jsonrepair } = require('jsonrepair');
+
 function toProviderMessages(messages) {
   const output = [];
   for (const message of messages) {
@@ -294,10 +296,27 @@ function decodeChatCompletion(payload) {
     let input;
     try {
       input = JSON.parse(rawArguments || '{}');
-    } catch {
-      throw new Error(
-        `AI provider tool call ${name} contained invalid JSON arguments.`,
+    } catch (error) {
+      const isTrailing = /unexpected non-whitespace character after JSON/i.test(
+        error.message,
       );
+      const trimmed = (rawArguments || '').trim();
+      if (
+        isTrailing &&
+        ((trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+          (trimmed.startsWith('[') && trimmed.endsWith(']')))
+      ) {
+        try {
+          input = JSON.parse(jsonrepair(rawArguments));
+        } catch {
+          // fall through
+        }
+      }
+      if (!input) {
+        throw new Error(
+          `AI provider tool call ${name} contained invalid JSON arguments.`,
+        );
+      }
     }
     return {
       id,
