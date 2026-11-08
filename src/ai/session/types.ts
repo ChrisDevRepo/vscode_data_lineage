@@ -80,7 +80,7 @@ export interface ResultGraph {
 }
 
 /** Schema version of the AI output-templates contract (the `aiOutputTemplates.yaml` structure). */
-export const AI_TEMPLATE_SCHEMA_VERSION = 2;
+export const AI_TEMPLATE_SCHEMA_VERSION = 3;
 
 /** Collection of Markdown-formatted instructions for AI report generation. */
 export interface AiOutputTemplates {

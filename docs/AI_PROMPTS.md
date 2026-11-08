@@ -15,7 +15,7 @@ Output templates control the tone, structure and detail of `@lineage` answers, n
 | Key | When it is used | What it shapes |
 |---|---|---|
 | `discovery_chat` | Chat answers before or without an exploration | Tone, structure and detail of the answer |
-| `shared_capture` | Each hop on an object with a SQL body, once for all selected angles | Common purpose, transformations, grain and operations coverage |
+| `shared_capture` | Each hop on an object with a SQL body, once for all selected angles | Grain and evidence rules common to the business, technical and callout recipes |
 | `business_capture` | Each hop of a business or combined exploration | What is recorded about an object's business meaning |
 | `technical_capture` | Each hop of a technical or combined exploration | What is recorded about an object's execution |
 | `structural_callouts` | Each hop on an object with a SQL body | Warnings backed by the object's SQL |
@@ -42,7 +42,7 @@ Templates load on activation and whenever `dataLineageViz.ai.outputTemplateFile`
 
 ### Keep `schemaVersion` current
 
-Your file must declare the same `schemaVersion` as [`assets/aiOutputTemplates.yaml`](../assets/aiOutputTemplates.yaml); otherwise the extension warns and uses the built-in templates. A breaking removal, rename or field-type change requires a new version; wording and additive changes do not. To upgrade, move your old file aside, run **Data Lineage: Create AI Output Templates** again, copy your `instruction` edits across and point the setting at the new file.
+Your file must declare the same `schemaVersion` as [`assets/aiOutputTemplates.yaml`](../assets/aiOutputTemplates.yaml); otherwise the extension uses only the built-in templates, none of your file. An older file is reported in the Data Lineage output log as needing manual migration; a newer or missing version also shows a warning notification. A breaking removal, rename or field-type change requires a new version; wording and additive changes do not, except a one-step bump when moving instructions between keys would make an older file serve them twice. To upgrade, move your old file aside, run **Data Lineage: Create AI Output Templates** again, copy your `instruction` edits across and point the setting at the new file. Version 3 moves instructions that `business_capture`, `technical_capture` and `structural_callouts` repeated word for word (the grouping and ranked-row grain rules and the plan-evidence boundary) into `shared_capture`; a version 2 file is ignored, because its empty `shared_capture` and full recipes would serve them twice.
 
 ## Change a prompt or tool description
 

@@ -475,6 +475,17 @@ async function loadAiOutputTemplates(
     const data = await vscode.workspace.fs.readFile(vscode.Uri.file(resolved));
     const parsed = parseAiOutputTemplatesYaml(new TextDecoder().decode(data));
     const customVersion = parsed.schemaVersion;
+    if (
+      typeof customVersion === 'number' &&
+      customVersion < AI_TEMPLATE_SCHEMA_VERSION
+    ) {
+      logger.warn(
+        `Custom AI output templates "${resolved}" declare schemaVersion ${customVersion}, older than this release's ` +
+          `${AI_TEMPLATE_SCHEMA_VERSION}: using only the new built-in templates. Migrate manually: re-scaffold via ` +
+          `"Data Lineage: Create AI Output Templates" and re-apply your edits.`,
+      );
+      return result();
+    }
     if (customVersion !== AI_TEMPLATE_SCHEMA_VERSION) {
       notifyWarning(
         logger,
