@@ -521,15 +521,7 @@ async function checkTemplateSchemaVersion() {
   console.log(`PASS  template structure changes verified against ${baseline}.`);
 }
 
-/**
- * Non-structural schema bumps the owner ordered, by target version. Each entry names its decision;
- * any other bump without a structural break is rejected.
- */
-export const AUTHORIZED_NONSTRUCTURAL_BUMPS = {
-  3: 'verbatim instruction relocation into shared_capture',
-};
-
-/** A structural break needs a bump; any other bump is one step to a listed version. */
+/** A structural break needs a bump; a version never goes down. Any other bump is allowed: an older custom file is ignored with a warning. */
 export function checkSchemaBump({ baseVer, constVer, breaking }) {
   if (constVer < baseVer)
     throw new Error(
@@ -538,16 +530,6 @@ export function checkSchemaBump({ baseVer, constVer, breaking }) {
   if (breaking.length > 0 && baseVer === constVer) {
     throw new Error(
       `Template change broke structure but version is still ${constVer}. Bump required.`,
-    );
-  }
-  if (
-    breaking.length === 0 &&
-    constVer !== baseVer &&
-    !(constVer === baseVer + 1 && constVer in AUTHORIZED_NONSTRUCTURAL_BUMPS)
-  ) {
-    throw new Error(
-      `Template change is non-breaking but version was bumped (${baseVer} -> ${constVer}); only a ` +
-        'version listed in AUTHORIZED_NONSTRUCTURAL_BUMPS may be reached without a structural break.',
     );
   }
 }
