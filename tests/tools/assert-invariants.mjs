@@ -521,7 +521,10 @@ async function checkTemplateSchemaVersion() {
   console.log(`PASS  template structure changes verified against ${baseline}.`);
 }
 
-/** A structural break needs a bump; a version never goes down. Any other bump is allowed: an older custom file is ignored with a warning. */
+/**
+ * A structural break needs a bump; a version never goes down. Any other
+ * bump is allowed: an older custom file is ignored with a warning.
+ */
 export function checkSchemaBump({ baseVer, constVer, breaking }) {
   if (constVer < baseVer)
     throw new Error(
