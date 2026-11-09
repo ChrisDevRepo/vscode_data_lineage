@@ -8,11 +8,13 @@
  *
  *  Modifications: namespace flattened to module exports, VS Code-internal imports replaced with
  *  `marked`/`katex`, local HTML-attribute encoding, contextual inline boundaries, literal `#`, and
- *  a visible error element for formulas KaTeX cannot render.
+ *  a visible error element for formulas KaTeX cannot render, and a `lexMathSpans` export that lists
+ *  the math spans of a text.
  *  See THIRD_PARTY_NOTICES.md.
  *--------------------------------------------------------------------------------------------*/
 import type { KatexOptions } from 'katex';
 import type katex from 'katex';
+import { Marked } from 'marked';
 import type {
   MarkedExtension,
   RendererExtensionFunction,
@@ -151,4 +153,25 @@ export function markedKatexExtension(
       blockKatex(createRenderer(katexInstance, options, true)),
     ],
   };
+}
+
+const noRender: RendererExtensionFunction = () => '';
+const mathLexer = new Marked({ gfm: true, breaks: false }).use({
+  extensions: [inlineKatex(noRender), blockKatex(noRender)],
+});
+
+/**
+ * The math spans the renderer would lex in `src`, as the text between the delimiters (with its
+ * surrounding whitespace). Code fences and code spans hold none.
+ */
+export function lexMathSpans(src: string): string[] {
+  const spans: string[] = [];
+  mathLexer.walkTokens(mathLexer.lexer(src), (token) => {
+    if (token.type === 'inlineKatex' || token.type === 'blockKatex') {
+      const { raw, displayMode } = token as Tokens.Generic;
+      const open = displayMode ? 2 : 1;
+      spans.push(raw.slice(open, raw.lastIndexOf('$') + 1 - open));
+    }
+  });
+  return spans;
 }

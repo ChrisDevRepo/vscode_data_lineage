@@ -97,6 +97,13 @@ export const ISSUES = {
     correction:
       'Give each argument its own field; a text value holds only its own content.',
   },
+  math_escape: {
+    category: 'shape',
+    label:
+      'LaTeX span holds a control character, or \\text{} holds an unescaped _ or \\@',
+    correction:
+      'Resend this field so it decodes to single-backslash LaTeX (`\\text`, `\\_`) with no TAB or other control character; inside `\\text{}` write `\\_` for an underscore and a plain `@`.',
+  },
   unclosed_fence: {
     category: 'shape',
     label: 'SQL fence not closed',

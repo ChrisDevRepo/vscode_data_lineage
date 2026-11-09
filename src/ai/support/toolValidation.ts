@@ -1,6 +1,7 @@
 import Ajv2020 from 'ajv/dist/2020';
 import type { ErrorObject, ValidateFunction } from 'ajv';
 import { findingShapeIssues } from './findingShape';
+import { hasDamagedMath } from './reportMath';
 import { bothSidesClosed } from '../../engine/shared/explorationDepthContract';
 import { z } from 'zod';
 import {
@@ -27,6 +28,7 @@ const TOOL_VOCABULARY = [
   'toolUniqueLabels',
   'toolNoteCaptions',
   'toolFindingShape',
+  'toolReportMath',
   'toolDepthOpen',
   'toolArrayFact',
   'toolObjectFact',
@@ -176,6 +178,10 @@ const DOMAIN_RULES: Record<
           },
           fresh,
         ).map((error) => ({ ...error, path: child(path, error.path) }))
+      : [],
+  toolReportMath: (_setting: never, value: unknown, path: string) =>
+    typeof value === 'string' && hasDamagedMath(value)
+      ? [{ path, code: 'math_escape' }]
       : [],
   toolDepthOpen: (_setting: never, value: unknown, path: string) => {
     const { upstream, downstream } = isRecord(value) ? value : {};
