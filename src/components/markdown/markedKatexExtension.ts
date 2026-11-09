@@ -36,7 +36,8 @@ const katexErrorClassName = 'ln-ai-formula-error';
 /** Matches `#` not already escaped by an odd run of backslashes. */
 const unescapedHashRegExp = /(?<!\\)((?:\\\\)*)#/g;
 
-const blockRule = /^(\${1,2})\n((?:\\[^]|[^\\])+?)\n\1(?:\n|$)/;
+/** Opener alone on its line; the closer may share the last body line (`\end{cases}$$`). */
+const blockRule = /^(\${1,2})\n((?:\\[^]|[^\\])+?)\n?\1(?:\n|$)/;
 
 type MarkedKatexOptions = KatexOptions;
 
