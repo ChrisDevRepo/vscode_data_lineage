@@ -1,7 +1,7 @@
 /**
  * In-host setup shared by every AI test that runs the shipped extension in a real VS Code host
- * through vscode.lm only: the provider fixture, its model, a loaded project and a recording chat stream. GUI
- * suites add their UI on top.
+ * through vscode.lm only: the provider fixture, its model, a loaded project and a recording chat
+ * stream. GUI suites add their UI on top.
  */
 import * as assert from 'node:assert';
 import * as vscode from 'vscode';

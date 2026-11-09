@@ -87,7 +87,7 @@ export class LineageRuntime {
     const session = this.deps.getSession();
     const runFingerprint = fingerprint(`${session.id}:${input.request.id}`);
     const startedAt = performance.now();
-    this.writeLifecycle({
+    void this.writeLifecycle({
       type: 'turn-start',
       requestId: input.request.id,
       runFingerprint,
@@ -103,7 +103,7 @@ export class LineageRuntime {
       onTextDelta: (text) => input.sink.stream(text),
     });
     const outcome = result.status === 'completed' ? 'ok' : result.status;
-    this.writeLifecycle({
+    await this.writeLifecycle({
       type: 'turn-terminal',
       requestId: input.request.id,
       runFingerprint,
@@ -205,7 +205,7 @@ export class LineageRuntime {
       clearPreview: this.deps.clearPreview,
     });
     this.active.add(requestKey);
-    this.writeLifecycle({
+    void this.writeLifecycle({
       type: 'turn-start',
       requestId: input.request.id,
       runFingerprint,
@@ -219,7 +219,9 @@ export class LineageRuntime {
         input.request.gateDecision,
       );
       const failure = runtime.lastFailureDetail;
-      this.writeLifecycle({
+      // The append chain is serial: awaiting the terminal record makes every earlier record durable
+      // before the turn settles, so the host can exit right after the turn without losing the tail.
+      await this.writeLifecycle({
         type: 'turn-terminal',
         requestId: input.request.id,
         runFingerprint,
@@ -248,9 +250,10 @@ export class LineageRuntime {
     record: Parameters<
       NonNullable<LineageRuntimeDeps['traceWriter']>['write']
     >[0],
-  ): void {
-    if (!this.deps.traceWriter) return;
-    void this.deps.traceWriter.write(record).catch(() => {});
+  ): Promise<void> {
+    return (this.deps.traceWriter?.write(record) ?? Promise.resolve()).catch(
+      () => {},
+    );
   }
 
   private writeEvent(
