@@ -30,7 +30,7 @@ export type RuntimeLifecycleRecord =
   | {
       /** First record in every trace file: what produced it. */
       readonly type: 'trace-open';
-      readonly origin: TraceOrigin;
+      readonly origin: 'extension-host';
       readonly verbose: boolean;
     }
   | {
@@ -88,13 +88,8 @@ export type RuntimeLifecycleRecord =
 
 type AiTraceRecord = RuntimeLifecycleRecord | WireRecord;
 
-/** What produced a trace file. */
-type TraceOrigin = 'extension-host' | 'headless-harness';
-
 /** Opt-in switches applied when the session trace is enabled. */
 interface AiTraceOptions {
-  /** Producer stamped into the file's opening record. Defaults to `extension-host`. */
-  readonly origin?: TraceOrigin;
   /** Captures full system-prompt text and verbatim provider request/response bodies. */
   readonly verbose?: boolean;
 }
@@ -114,7 +109,6 @@ export class AiTraceWriter {
   private closed = false;
   private reportedWriteFailure = false;
   private verbose = false;
-  private origin: TraceOrigin = 'extension-host';
 
   public constructor(
     private readonly onWriteFailure?: AiTraceWriteFailureHandler,
@@ -131,7 +125,6 @@ export class AiTraceWriter {
     if (this.filePath) return this.filePath;
     if (this.enabling) return this.enabling;
     this.verbose = options.verbose === true;
-    this.origin = options.origin ?? 'extension-host';
 
     const enabling = this.openTrace(logRoot);
     this.enabling = enabling;
@@ -255,7 +248,7 @@ export class AiTraceWriter {
     this.filePath = filePath;
     this.handle = Promise.resolve(handle);
     void this.enqueue(
-      { type: 'trace-open', origin: this.origin, verbose: this.verbose },
+      { type: 'trace-open', origin: 'extension-host', verbose: this.verbose },
       false,
     ).catch(() => {});
     return filePath;
