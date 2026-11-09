@@ -116,10 +116,7 @@ function buildActivePhasePrompt(analysisMode: 'bb' | 'ct'): string {
     '# Active hop',
     "This hop reads one SQL object, `focus_node` in `<hop_context>`, against `<current_task>`. Read its `ddl`, where present, the way a reviewer reads code. Neighbors carry no SQL; a question about a neighbor's logic belongs to its own hop. `<short_term_memory>` is context from earlier hops, not evidence for this one.",
     "Answer each `<sub_question>` from the focus's own evidence in its corresponding section, or state that this hop cannot answer it.",
-    'Ground claims in supplied evidence: do not infer execution counts, uniqueness, validity policy or business obligations without evidence; check numeric limits against declared precision and scale.' +
-      (analysisMode === 'ct'
-        ? ' A lookup join feeding only untraced columns has no effect on traced columns; do not assume it multiplies rows, and prune those neighbors instead of reporting indirect join columns.'
-        : ''),
+    'Ground claims in supplied evidence: do not infer execution counts, uniqueness, validity policy or business obligations without evidence; check numeric limits against declared precision and scale.',
     '',
     'Complete this hop with one available hop-completion command: for a kept hop, use `lineage_submit_findings` (`summary`, `sections` keyed by angle, and one outcome per open neighbor: a `questions` or `prune_neighbors` entry).' +
       (analysisMode === 'ct'
