@@ -441,10 +441,24 @@ function checkUnitProjectsCoverAll() {
 
 // ── 5. Template Schema Version ───────────────────────────────────────────────
 
-/** An unrun comparison is unverified: exit 77 so the gate reports SKIP, not PASS. */
-function skip(message) {
-  console.log(`SKIP  ${message}`);
-  process.exitCode = 77;
+/**
+ * The baseline for the template diff: newest v* tag, else origin/main. An unrun
+ * comparison is unverified, so a missing baseline is a FAIL, never a skip.
+ * @internal
+ */
+export async function resolveBaseline(run) {
+  try {
+    const tag = (await run(['tag', '--list', 'v*', '--sort=-v:refname']))
+      .split('\n')[0]
+      .trim();
+    const baseline = tag || 'origin/main';
+    await run(['rev-parse', '--verify', '--quiet', baseline]);
+    return baseline;
+  } catch {
+    throw new Error(
+      'Template diff not run: no v* tag or origin/main in this checkout; clone with full history and tags; in CI set actions/checkout depth 0.',
+    );
+  }
 }
 
 async function checkTemplateSchemaVersion() {
@@ -467,21 +481,7 @@ async function checkTemplateSchemaVersion() {
     );
   }
 
-  let baseline = '';
-  try {
-    const tag = (await git(['tag', '--list', 'v*', '--sort=-v:refname']))
-      .split('\n')[0]
-      .trim();
-    baseline = tag || 'origin/main';
-    await git(['rev-parse', '--verify', '--quiet', baseline]);
-  } catch {
-    const ci = (process.env.CI ?? '').trim().toLowerCase();
-    if (ci && ci !== 'false' && ci !== '0')
-      throw new Error(
-        'No v* tag or origin/main in this CI checkout; get them by checking out full history (actions/checkout depth 0).',
-      );
-    return skip('no git baseline tag or origin/main for template diff.');
-  }
+  const baseline = await resolveBaseline(git);
 
   let baselineAsset;
   try {
@@ -489,7 +489,9 @@ async function checkTemplateSchemaVersion() {
       await git(['show', `${baseline}:assets/aiOutputTemplates.yaml`])
     ).replace(/\r\n/g, '\n');
   } catch {
-    return skip(`${baseline} lacks templates asset.`);
+    throw new Error(
+      `Template diff not run: ${baseline} lacks assets/aiOutputTemplates.yaml.`,
+    );
   }
 
   if (baselineAsset === currentAsset) {
@@ -510,7 +512,9 @@ async function checkTemplateSchemaVersion() {
       await git(['show', `${baseline}:src/ai/session/types.ts`])
     ).replace(/\r\n/g, '\n');
   } catch {
-    return skip(`${baseline} lacks types.ts.`);
+    throw new Error(
+      `Template diff not run: ${baseline} lacks src/ai/session/types.ts.`,
+    );
   }
   const baseVerMatch = baselineTypes.match(
     /AI_TEMPLATE_SCHEMA_VERSION\s*=\s*(\d+)/,

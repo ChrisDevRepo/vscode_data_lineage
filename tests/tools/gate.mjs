@@ -8,9 +8,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
-const SKIP_EXIT_CODE = 77;
-const stepOutcome = (status) =>
-  status === 0 ? 'PASS' : status === SKIP_EXIT_CODE ? 'SKIP' : 'FAIL';
+const stepOutcome = (status) => (status === 0 ? 'PASS' : 'FAIL');
 const stepFailureOutput = (step, run) => {
   if (run.output && run.output.trim()) return run.output;
   return (
@@ -168,6 +166,17 @@ const totals = unitReports.every((file) => existsSync(file))
         { passed: 0, failed: 0, skipped: 0 },
       )
   : null;
+if (totals && totals.skipped > 0) {
+  results.push({
+    name: 'unit tests skipped',
+    outcome: 'FAIL',
+    ok: false,
+    logPath: '',
+    note: `${totals.skipped} skipped or todo; a skipped test is unverified`,
+    ms: 0,
+    seconds: '0.0',
+  });
+}
 const head =
   spawnSync('git', ['rev-parse', 'HEAD'], {
     encoding: 'utf8',
@@ -199,11 +208,9 @@ for (const r of results) {
 }
 
 const failed = results.filter((r) => !r.ok);
-const skipped = results.filter((r) => r.outcome === 'SKIP');
 process.stdout.write(`${'='.repeat(width + 18)}\n`);
 process.stdout.write(
-  `${results.length - failed.length - skipped.length}/${results.length} green` +
-    `${skipped.length > 0 ? `, ${skipped.length} skipped (not verified)` : ''}\n`,
+  `${results.length - failed.length}/${results.length} green\n`,
 );
 process.stdout.write(
   'MODEL CALLS: 0 — every step above is deterministic; nothing here infers.\n',
