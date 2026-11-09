@@ -7,7 +7,11 @@ import {
 } from '@langchain/core/messages';
 import type { ZodType } from 'zod';
 import { at, type IssueCode } from '../support/toolErrorEnvelope';
-import { validateToolCandidate } from '../support/toolValidation';
+import {
+  syntaxFault,
+  TRAILING_JSON_KIND,
+  validateToolCandidate,
+} from '../support/toolValidation';
 import { normalizeModelInput } from '../tools/normalizeModelInput';
 import { toolCallNotationFault } from '../support/toolCallNotation';
 import {
@@ -252,23 +256,18 @@ function malformedArgumentsFault(text: string): {
     try {
       JSON.parse(text);
     } catch (error) {
-      const syntaxError = error instanceof SyntaxError ? error : undefined;
-      const offsetMatch = syntaxError?.message.match(/at position (\d+)/);
-      const offset = offsetMatch ? parseInt(offsetMatch[1], 10) : undefined;
-      const trailing = syntaxError
-        ? /unexpected non-whitespace character after JSON/i.test(
-            syntaxError.message,
-          )
-        : false;
+      // json_syntax is the whole argument text; json_parse is one field's string value.
+      const fault = syntaxFault(error, text);
       return {
         code: 'json_syntax',
         reason: TOOL_ARGUMENTS_SYNTAX_REASON,
-        ...(syntaxError
+        ...(fault
           ? {
               parse: {
-                kind: syntaxError.name,
-                ...(offset !== undefined ? { offset } : {}),
-                ...(trailing ? { trailing: true } : {}),
+                ...fault,
+                ...(fault.kind === TRAILING_JSON_KIND
+                  ? { trailing: true }
+                  : {}),
               },
             }
           : {}),

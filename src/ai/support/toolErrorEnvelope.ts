@@ -27,6 +27,18 @@ const OBJECT_IDENTITY_ISSUE = {
   correction: 'Name an object of the loaded model by its id.',
 } as const;
 
+/** Fixed wording of one issue; optional parts are served only where a fault carries them. */
+interface IssueText {
+  readonly label: string;
+  readonly correction: string;
+  /** Appended to the located parser diagnostic. */
+  readonly note?: string;
+  /** Appended from the second attempt. */
+  readonly escalation?: string;
+  /** Appended on the last attempt. */
+  readonly stop?: string;
+}
+
 /**
  * Every issue code's fixed category and verbatim fault/correction text. Fallback wording remains
  * here; contextual category and typed tool effect determine eligibility.
@@ -42,6 +54,18 @@ export const ISSUES = {
     category: 'shape',
     label: 'arguments are malformed or cut-off JSON text',
     correction: 'Send the fields in resend as one valid JSON object.',
+    escalation:
+      ' Close the JSON object with exactly one "}" and emit no trailing characters, fences, or duplicate braces.',
+    // Text that continues after a complete JSON value (`parse.trailing`).
+    trailing: {
+      label:
+        'arguments contain trailing characters or duplicate braces after the JSON object',
+      correction: 'Emit the JSON object with no trailing characters.',
+      note: ' Unexpected duplicate or trailing characters after the JSON object. Close with exactly one "}" and emit no trailing braces.',
+      escalation:
+        ' Do not append extra "}" or text after the final "}". The JSON object was complete before the extra closing brace.',
+      stop: ' Stop generation immediately after the single closing "}".',
+    },
   },
   json_text: {
     category: 'shape',
@@ -376,10 +400,10 @@ export const ISSUES = {
   },
 } as const satisfies Record<
   string,
-  {
+  IssueText & {
     category: IssueCategory;
-    label: string;
-    correction: string;
+    /** Wording served instead when the fault is trailing text after a complete value. */
+    trailing?: IssueText;
     fallback?: string;
     /** Allowed values rank against the key name sent instead of the value sent. */
     ranksKey?: true;
@@ -692,36 +716,18 @@ export function renderProblemReport(
               : REPORT_REFERENCE_FALLBACK
           : '';
       if (fallback) fallbackShown = true;
-      const isTrailingSyntax =
-        error.code === 'json_syntax' && Boolean(error.parse?.trailing);
-      const label = isTrailingSyntax
-        ? 'arguments contain trailing characters or duplicate braces after the JSON object'
-        : issue.label;
-      const correction = isTrailingSyntax
-        ? 'Emit the JSON object with no trailing characters.'
-        : issue.correction;
+      const text: IssueText =
+        error.parse?.trailing && 'trailing' in issue ? issue.trailing : issue;
       const located = error.parse
         ? ` ${error.parse.kind}${
             error.parse.offset !== undefined
               ? ` at position ${error.parse.offset}`
               : ''
-          }.${
-            error.parse.trailing
-              ? ' Unexpected duplicate or trailing characters after the JSON object. Close with exactly one "}" and emit no trailing braces.'
-              : ''
-          }`
+          }.${text.note ?? ''}`
         : '';
-      const syntaxEscalation =
-        stage >= 2 && error.code === 'json_syntax'
-          ? isTrailingSyntax
-            ? ' Do not append extra "}" or text after the final "}". The JSON object was complete before the extra closing brace.'
-            : ' Close the JSON object with exactly one "}" and emit no trailing characters, fences, or duplicate braces.'
-          : '';
-      const stage3Escalation =
-        stage >= 3 && isTrailingSyntax
-          ? ' Stop generation immediately after the single closing "}".'
-          : '';
-      const message = `${label}. ${correction}${located}${syntaxEscalation}${stage3Escalation}${fallback ? ` ${fallback}` : ''}`;
+      const escalation = stage >= 2 ? (text.escalation ?? '') : '';
+      const stop = stage >= 3 ? (text.stop ?? '') : '';
+      const message = `${text.label}. ${text.correction}${located}${escalation}${stop}${fallback ? ` ${fallback}` : ''}`;
       const sent =
         'ranksKey' in issue
           ? error.path.split('.').at(-1)
