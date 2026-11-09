@@ -6,7 +6,11 @@ import {
   type MessageContent,
 } from '@langchain/core/messages';
 import type { ZodType } from 'zod';
-import { at, type IssueCode } from '../support/toolErrorEnvelope';
+import {
+  at,
+  type IssueCode,
+  type ToolError,
+} from '../support/toolErrorEnvelope';
 import {
   syntaxFault,
   TRAILING_JSON_KIND,
@@ -421,29 +425,28 @@ export function finishStructured<T>(
   schema: ZodType<T>,
   debugLog?: (message: string) => void,
 ): T {
-  const emitted = provided.map(
-    (call) => resolveEmitted(call, debugLog).emitted,
-  );
+  const resolved = provided.map((call) => resolveEmitted(call, debugLog));
+  const emitted = resolved.map((call) => call.emitted);
+  const rawInput = resolved.find((call) => call.raw !== undefined)?.raw;
+  const fail = (reason: string, errors: readonly ToolError[]) =>
+    new StructuredOutputError(reason, errors, rawInput);
   const calls = emitted.flatMap((call) => ('args' in call ? [call.args] : []));
   if (
     emitted.some((call) => call.toolName !== STRUCTURED_OUTPUT_TOOL) ||
     (calls.length > 0 && calls.length < emitted.length)
   ) {
-    throw new StructuredOutputError(
+    throw fail(
       `unexpected tool call alongside ${STRUCTURED_OUTPUT_TOOL}`,
       at('one_call'),
     );
   }
   const empty = (): StructuredOutputError =>
-    new StructuredOutputError(
-      `${STRUCTURED_OUTPUT_TOOL} arguments were empty`,
-      at('missing'),
-    );
+    fail(`${STRUCTURED_OUTPUT_TOOL} arguments were empty`, at('missing'));
   const [first] = emitted;
   if (calls.length === 0 && first && 'malformedArgs' in first) {
     if (emitted.length === 1 && !first.malformedArgs.trim()) throw empty();
     const fault = malformedArgumentsFault(first.malformedArgs);
-    throw new StructuredOutputError(
+    throw fail(
       `${STRUCTURED_OUTPUT_TOOL} arguments were not a JSON object`,
       fault.code === 'type' ? at('type', [''], ['object']) : at(fault.code),
     );
@@ -454,26 +457,20 @@ export function finishStructured<T>(
   const payload = normalized?.input;
   const notation = toolCallNotationFault(payload);
   if (notation)
-    throw new StructuredOutputError(
-      notation.reason,
-      at('tool_call_notation', notation.issuePaths),
-    );
+    throw fail(notation.reason, at('tool_call_notation', notation.issuePaths));
   const admitted =
     calls.length === 1 ? validateToolCandidate(schema, payload) : undefined;
   if (admitted?.success) return admitted.data;
   if (calls.length === 1 && Object.keys(calls[0]).length === 0) throw empty();
   if (calls.length > 1)
-    throw new StructuredOutputError(
-      `multiple ${STRUCTURED_OUTPUT_TOOL} tool calls`,
-      at('one_call'),
-    );
+    throw fail(`multiple ${STRUCTURED_OUTPUT_TOOL} tool calls`, at('one_call'));
   if (!admitted)
-    throw new StructuredOutputError(
+    throw fail(
       `missing ${STRUCTURED_OUTPUT_TOOL} tool call`,
       at('no_tool_call', [''], [STRUCTURED_OUTPUT_TOOL]),
     );
   const { errors } = admitted.rejection;
-  throw new StructuredOutputError(
+  throw fail(
     `invalid ${STRUCTURED_OUTPUT_TOOL} fields: ${errors.map((error) => `${error.path}: ${error.code}`).join(', ')}`,
     errors,
   );

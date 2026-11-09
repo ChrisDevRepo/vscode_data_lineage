@@ -18,6 +18,8 @@ export class StructuredOutputError extends Error {
     public readonly reason: string,
     /** The faults the correction renders, by path and issue code. */
     public readonly errors: readonly ToolError[] = at('invalid'),
+    /** The argument text as sent, kept as evidence when it was normalized into the payload. */
+    public readonly rawInput?: string,
   ) {
     super(`Structured output was rejected: ${reason}.`);
     this.name = 'StructuredOutputError';
