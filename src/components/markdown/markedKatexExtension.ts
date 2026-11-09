@@ -155,8 +155,11 @@ export function markedKatexExtension(
   };
 }
 
+/** Marked options shared by the renderer and the math-span lexer. */
+export const AI_MARKED_OPTIONS = { gfm: true, breaks: false } as const;
+
 const noRender: RendererExtensionFunction = () => '';
-const mathLexer = new Marked({ gfm: true, breaks: false }).use({
+const mathLexer = new Marked(AI_MARKED_OPTIONS).use({
   extensions: [inlineKatex(noRender), blockKatex(noRender)],
 });
 

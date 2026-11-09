@@ -111,6 +111,6 @@ For AI changes, also check answers against the loaded SQL and graph.
 
 **Data Lineage: Enable AI Trace Logging for This Session** writes NDJSON under the workspace `tmp/lm-trace/` until the extension host restarts; it needs an open workspace folder. Trace files contain schema, table and column names, prompts, responses, tool payloads and SQL: never commit them and review them before sharing.
 
-Headless test runs export traces as described in [`testing/README.md`](testing/README.md#live-model-settings); the extension in VS Code never uploads traces.
+The live smoke writes local traces as described in [`testing/README.md`](testing/README.md#live-model-settings); the extension in VS Code never uploads traces.
 
 **Data Lineage: Dump AI State Machine** writes the current exploration state to `tmp/sm-dumps/`. It needs an open workspace and an active hop-by-hop exploration.

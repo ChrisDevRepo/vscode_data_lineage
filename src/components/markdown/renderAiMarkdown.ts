@@ -1,7 +1,10 @@
 import DOMPurify, { type DOMPurify as DOMPurifyInstance } from 'dompurify';
 import katex from 'katex';
 import { Marked, type Tokens } from 'marked';
-import { markedKatexExtension } from './markedKatexExtension';
+import {
+  AI_MARKED_OPTIONS,
+  markedKatexExtension,
+} from './markedKatexExtension';
 
 /** Leading text of the engine-assembled `### Objects <links>` footnote line. */
 const OBJECTS_HEADING_PREFIX = 'Objects ';
@@ -17,7 +20,7 @@ const HTML_ESCAPES: Readonly<Record<string, string>> = {
   "'": '&#39;',
 };
 
-const marked = new Marked({ gfm: true, breaks: false })
+const marked = new Marked(AI_MARKED_OPTIONS)
   .use(markedKatexExtension(katex))
   .use({
     renderer: {

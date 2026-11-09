@@ -8,7 +8,7 @@
  * Chat-shaped messages (`toProviderMessages`) as Responses `input` items; call ids pair calls with
  * outputs. A message may carry opaque `reasoning_details` (`{ before?, item }`), which stay
  * directly ahead of the call they preceded: the fixture's messages never do, a replay may.
- * @internal Also read by tools/replay-turn.mjs.
+ * @internal Read by replay tooling.
  */
 function toResponsesInput(messages) {
   return messages.flatMap((message) => {

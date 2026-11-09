@@ -52,11 +52,11 @@ These run the extension in an isolated VS Code host (Extension Development Host)
 
 Copy [`.env.example`](../../.env.example) into the local environment file the harness reads, and fill only the section you need. Leave that file, traces, and answers untracked. `AI_TEST_PROVIDER` is required (`azure`, `fireworks`, `openrouter`, `openai-compatible` or `qwen`); there is no default. `AI_TEST_API_KEY` must be non-empty (any placeholder for a keyless local server). For Azure, `AI_TEST_MODEL` is the deployment name. For the Alibaba Cloud Model Studio provider (`qwen` or `openai-compatible`), supported models include `qwen3.8-flash` and `deepseek-v4.1-flash-1017`; set `QWEN_URL`, `QWEN_API` and `QWEN_MODEL` for `qwen`. `AI_TEST_REASONING_EFFORT` (`low`, `medium`, `high`, `xhigh`, `max` or `off`) sets the reasoning effort; the provider fixture reads it and sets no temperature. These settings configure test harnesses only; the extension itself uses the VS Code chat model.
 
-`AI_TEST_TIMEOUT_MS` sets the AI budget (default: two hours), covering the whole headless host run or the real-model smoke. `AI_TEST_REQUEST_TIMEOUT_MS` bounds each provider request and defaults to that budget. Increase these settings for slower local models. The provider fixture sends each request once: a provider error fails the run.
+`AI_TEST_TIMEOUT_MS` sets the AI budget (default: two hours), covering the whole real-model smoke. `AI_TEST_REQUEST_TIMEOUT_MS` bounds each provider request and defaults to that budget. Increase these settings for slower local models. The provider fixture sends each request once: a provider error fails the run.
 
 Generated answers, metrics and traces stay untracked. Completion is runtime evidence, not answer-quality evidence.
 
-Headless and real-model smoke runs write a local trace, log and answer and upload nothing. Answers and tool artifacts can contain database metadata, so use the AdventureWorks demo or other synthetic input and review captured content. The installed extension never uploads traces.
+The real-model smoke writes a local trace, log and answer and uploads nothing. Answers and tool artifacts can contain database metadata, so use the AdventureWorks demo or other synthetic input and review captured content. The installed extension never uploads traces.
 
 ## Packaging
 
