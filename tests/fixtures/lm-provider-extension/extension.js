@@ -1,7 +1,9 @@
+const { appendFileSync } = require('node:fs');
 const vscode = require('vscode');
 const {
   createProviderFetch,
   sendProviderRequest,
+  tokenUsage,
 } = require('./live-provider-adapter');
 
 const VENDOR = 'lineage-test';
@@ -71,6 +73,14 @@ async function callLiveProvider(request, progress, token, transports) {
       controller.signal,
     );
     if (token.isCancellationRequested) return;
+    // vscode.lm gives the extension no usage, and a usage stream part would be
+    // replayed to the model. The provider owns the wire, so it records each
+    // answered request's exact usage beside the capture.
+    if (process.env.AI_TEST_USAGE_FILE)
+      appendFileSync(
+        process.env.AI_TEST_USAGE_FILE,
+        `${JSON.stringify({ usage: tokenUsage(response.usage), callIds: response.toolCalls.map((call) => call.id) })}\n`,
+      );
     for (const call of response.toolCalls) {
       progress.report(
         new vscode.LanguageModelToolCallPart(call.id, call.name, call.input),

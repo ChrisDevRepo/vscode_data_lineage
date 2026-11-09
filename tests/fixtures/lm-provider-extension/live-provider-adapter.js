@@ -237,6 +237,30 @@ function parseProviderResponse(payload, responses = false) {
   };
 }
 
+/** Exact token counts of a provider `usage` object (Chat Completions or
+ * Responses names); undefined when it reports none. */
+function tokenUsage(usage) {
+  if (!usage || typeof usage !== 'object') return undefined;
+  const count = (value) => (Number.isFinite(value) ? value : undefined);
+  const fields = {
+    inputTokens: count(usage.prompt_tokens ?? usage.input_tokens),
+    outputTokens: count(usage.completion_tokens ?? usage.output_tokens),
+    totalTokens: count(usage.total_tokens),
+    cachedTokens: count(
+      (usage.prompt_tokens_details ?? usage.input_tokens_details)
+        ?.cached_tokens,
+    ),
+    reasoningTokens: count(
+      (usage.completion_tokens_details ?? usage.output_tokens_details)
+        ?.reasoning_tokens,
+    ),
+  };
+  const known = Object.entries(fields).filter(
+    ([, value]) => value !== undefined,
+  );
+  return known.length > 0 ? Object.fromEntries(known) : undefined;
+}
+
 function decodeChatCompletion(payload) {
   const message = payload?.choices?.[0]?.message;
   if (!message || typeof message !== 'object' || Array.isArray(message)) {
@@ -362,4 +386,5 @@ module.exports = {
   isResponsesEndpoint,
   sendProviderRequest,
   toProviderMessages,
+  tokenUsage,
 };
