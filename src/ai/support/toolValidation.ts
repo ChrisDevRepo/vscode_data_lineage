@@ -31,6 +31,7 @@ const TOOL_VOCABULARY = [
   'toolArrayFact',
   'toolObjectFact',
   'toolStringFact',
+  'toolPattern',
 ];
 
 /**
@@ -189,9 +190,23 @@ const DOMAIN_RULES: Record<
   },
 };
 
+const branchChecks = new WeakMap<object, ValidateFunction>();
+/** Native fault count of one branch; compiling it alone relies on zod inlining (no $ref/$defs). */
+function branchFaults(branch: Record<string, unknown>, value: unknown): number {
+  let check = branchChecks.get(branch);
+  if (!check) {
+    check = newValidator().compile(branch);
+    branchChecks.set(branch, check);
+  }
+  check(value);
+  return check.errors?.length ?? 0;
+}
+
 /**
- * Visits annotations through properties, items and allOf only; not anyOf, oneOf, if/then/else, not,
- * $defs or additionalProperties.
+ * Visits annotations through properties, items, allOf and the anyOf/oneOf branches that admit the
+ * value, or when none does, those with the fewest native faults (so independent faults surface in
+ * one pass); `once` visits only the first such branch. Not if/then/else, not, $defs or
+ * additionalProperties.
  */
 function walk(
   node: unknown,
@@ -202,21 +217,32 @@ function walk(
     value: unknown,
     pointer: string,
   ) => void,
+  once = false,
 ): void {
   if (!isRecord(node)) return;
   visit(node, value, pointer);
   for (const member of (node.allOf as unknown[] | undefined) ?? [])
-    walk(member, value, pointer, visit);
+    walk(member, value, pointer, visit, once);
+  const branches = [
+    ...((node.anyOf as unknown[] | undefined) ?? []),
+    ...((node.oneOf as unknown[] | undefined) ?? []),
+  ]
+    .filter(isRecord)
+    .map((branch) => ({ branch, faults: branchFaults(branch, value) }));
+  const fewest = Math.min(...branches.map(({ faults }) => faults));
+  const chosen = branches.filter(({ faults }) => faults === fewest);
+  for (const { branch } of once ? chosen.slice(0, 1) : chosen)
+    walk(branch, value, pointer, visit, once);
   if (Array.isArray(value))
     value.forEach((item, index) =>
-      walk(node.items, item, `${pointer}/${index}`, visit),
+      walk(node.items, item, `${pointer}/${index}`, visit, once),
     );
   else if (isRecord(value))
     for (const [key, schema] of Object.entries(
       isRecord(node.properties) ? node.properties : {},
     )) {
       if (Object.prototype.hasOwnProperty.call(value, key))
-        walk(schema, value[key], `${pointer}/${key}`, visit);
+        walk(schema, value[key], `${pointer}/${key}`, visit, once);
     }
 }
 
@@ -245,6 +271,10 @@ function canonicalSchema(schema: z.ZodType): Record<string, unknown> {
   });
   const visit = (node: unknown): void => {
     if (!node || typeof node !== 'object') return;
+    if ('pattern' in node && typeof node.pattern === 'string') {
+      Object.assign(node, { toolPattern: node.pattern });
+      delete node.pattern;
+    }
     if ('toolDisplay' in node) {
       Object.assign(node, node.toolDisplay);
       delete node.toolDisplay;
@@ -476,10 +506,29 @@ export function validateToolCandidate<S extends z.ZodType>(
     compiled.set(schema, entry);
   }
   const { json, check } = entry;
-  const accepted = check(input),
+  const native = check(input),
     errors = [...(check.errors ?? [])],
     faults: ToolError[] = [],
     problems: ToolRejection[] = [];
+  // Served schemas omit `pattern` (provider compatibility); each regex is checked here instead.
+  walk(json, input, '', (node, value, pointer) => {
+    if (
+      typeof node.toolPattern === 'string' &&
+      typeof value === 'string' &&
+      !new RegExp(node.toolPattern, 'u').test(value)
+    )
+      errors.push({
+        keyword: 'pattern',
+        instancePath: pointer,
+        schemaPath: '',
+        params: { pattern: node.toolPattern },
+        message: `must match pattern "${node.toolPattern}"`,
+        schema: node.toolPattern,
+        parentSchema: node,
+        data: value,
+      });
+  });
+  const accepted = native && !errors.length;
   const failed = errors.map(errorPointer);
   const under = (pointer: string, key?: string) =>
     failed.some((path) =>
@@ -507,38 +556,44 @@ export function validateToolCandidate<S extends z.ZodType>(
   const add = (problem: ToolRejection | null | void) => {
     if (problem) problems.push(problem);
   };
-  walk(json, input, '', (node, value, pointer) => {
-    const fields = node.toolFields as string[] | undefined,
-      names = node.toolValidated as string | string[] | undefined;
-    if (
-      names !== undefined &&
-      (fields
-        ? isRecord(value) &&
-          !failed.includes(pointer) &&
-          !fields.some((key) => under(pointer, key))
-        : !under(pointer))
-    ) {
-      const received =
-        fields && isRecord(value)
-          ? Object.fromEntries(
-              fields
-                .filter((key) =>
-                  Object.prototype.hasOwnProperty.call(value, key),
-                )
-                .map((key) => [key, value[key]]),
-            )
-          : value;
-      for (const name of [names].flat())
-        add(facts.validated?.get(name)?.(received, pointer));
-    }
-    const context = { instancePath: pointer };
-    if (Array.isArray(value) && typeof node.toolArrayFact === 'string')
-      add(facts.arrays?.get(node.toolArrayFact)?.(value, context));
-    if (isRecord(value) && typeof node.toolObjectFact === 'string')
-      add(facts.objects?.get(node.toolObjectFact)?.(value, context));
-    if (typeof value === 'string' && typeof node.toolStringFact === 'string')
-      add(facts.strings?.get(node.toolStringFact)?.(value, context));
-  });
+  walk(
+    json,
+    input,
+    '',
+    (node, value, pointer) => {
+      const fields = node.toolFields as string[] | undefined,
+        names = node.toolValidated as string | string[] | undefined;
+      if (
+        names !== undefined &&
+        (fields
+          ? isRecord(value) &&
+            !failed.includes(pointer) &&
+            !fields.some((key) => under(pointer, key))
+          : !under(pointer))
+      ) {
+        const received =
+          fields && isRecord(value)
+            ? Object.fromEntries(
+                fields
+                  .filter((key) =>
+                    Object.prototype.hasOwnProperty.call(value, key),
+                  )
+                  .map((key) => [key, value[key]]),
+              )
+            : value;
+        for (const name of [names].flat())
+          add(facts.validated?.get(name)?.(received, pointer));
+      }
+      const context = { instancePath: pointer };
+      if (Array.isArray(value) && typeof node.toolArrayFact === 'string')
+        add(facts.arrays?.get(node.toolArrayFact)?.(value, context));
+      if (isRecord(value) && typeof node.toolObjectFact === 'string')
+        add(facts.objects?.get(node.toolObjectFact)?.(value, context));
+      if (typeof value === 'string' && typeof node.toolStringFact === 'string')
+        add(facts.strings?.get(node.toolStringFact)?.(value, context));
+    },
+    true,
+  );
   if (accepted && !faults.length && !problems.length)
     return { success: true, data: input as z.output<S> };
   return {
