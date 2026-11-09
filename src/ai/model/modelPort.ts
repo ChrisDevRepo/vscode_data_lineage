@@ -12,7 +12,10 @@ import {
   TRAILING_JSON_KIND,
   validateToolCandidate,
 } from '../support/toolValidation';
-import { normalizeModelInput } from '../tools/normalizeModelInput';
+import {
+  normalizeArgumentText,
+  normalizeModelInput,
+} from '../tools/normalizeModelInput';
 import { toolCallNotationFault } from '../support/toolCallNotation';
 import {
   STRUCTURED_OUTPUT_TOOL,
@@ -283,6 +286,25 @@ function malformedArgumentsFault(text: string): {
 }
 
 /**
+ * An emitted call whose malformed argument text normalizes to one object (see
+ * `normalizeArgumentText`) becomes an object-argument call; the sent text is returned as `raw`.
+ */
+function resolveEmitted(
+  emitted: EmittedToolCall,
+  debugLog?: (message: string) => void,
+): { readonly emitted: EmittedToolCall; readonly raw?: string } {
+  if (!('malformedArgs' in emitted)) return { emitted };
+  const trailing = normalizeArgumentText(emitted.malformedArgs);
+  if (!trailing) return { emitted };
+  logFixes(emitted.toolName, trailing.fixes, debugLog);
+  const { callId, toolName } = emitted;
+  return {
+    emitted: { callId, toolName, args: trailing.input },
+    raw: emitted.malformedArgs,
+  };
+}
+
+/**
  * A registered native tool call ready for argument validation.
  * @internal
  */
@@ -293,6 +315,8 @@ export interface ValidGeneratedToolCall {
   readonly toolName: string;
   /** Transport-decoded arguments, preserved for the receiving tool's schema admission. */
   readonly input: unknown;
+  /** The argument text exactly as sent, kept as evidence when it was normalized into `input`. */
+  readonly rawInput?: string;
 }
 
 /** A provider tool call rejected before dispatch. */
@@ -341,13 +365,14 @@ export type EmittedToolCall = {
  * `replayInput` is what the transcript replays (`{}` for arguments that were no object).
  */
 export function classifyToolCall(
-  emitted: EmittedToolCall,
+  provided: EmittedToolCall,
   definitions: ReadonlyMap<string, ModelToolDefinition>,
   debugLog?: (message: string) => void,
 ): {
   readonly call: GeneratedToolCall;
   readonly replayInput: Record<string, unknown>;
 } {
+  const { emitted, raw } = resolveEmitted(provided, debugLog);
   const { callId, toolName } = emitted;
   const replayInput = 'args' in emitted ? emitted.args : {};
   const reject = (
@@ -376,7 +401,13 @@ export function classifyToolCall(
   const normalized = normalizeModelInput(definition.inputSchema, emitted.args);
   logFixes(toolName, normalized.fixes, debugLog);
   return {
-    call: { valid: true, callId, toolName, input: normalized.input },
+    call: {
+      valid: true,
+      callId,
+      toolName,
+      input: normalized.input,
+      ...(raw === undefined ? {} : { rawInput: raw }),
+    },
     replayInput,
   };
 }
@@ -386,10 +417,13 @@ export function classifyToolCall(
  * then admitted by Ajv against the served JSON Schema alone.
  */
 export function finishStructured<T>(
-  emitted: readonly EmittedToolCall[],
+  provided: readonly EmittedToolCall[],
   schema: ZodType<T>,
   debugLog?: (message: string) => void,
 ): T {
+  const emitted = provided.map(
+    (call) => resolveEmitted(call, debugLog).emitted,
+  );
   const calls = emitted.flatMap((call) => ('args' in call ? [call.args] : []));
   if (
     emitted.some((call) => call.toolName !== STRUCTURED_OUTPUT_TOOL) ||
