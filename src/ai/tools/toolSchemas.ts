@@ -682,7 +682,7 @@ const OUT_NODE_DESCRIPTION =
   'Table from <hop_context> that this procedure writes out_col to. For a write to an object not listed, omit the entry and name the write in sections.';
 const UPSTREAM_DESCRIPTION =
   'Contributing source columns whose values carry into out_col as-is, computed, or aggregated. ' +
-  'Columns that only condition which rows or CASE branches survive belong in indirect_columns; a CASE with only literal results has no source column. ' +
+  'Columns that only decide which rows or which value branch out_col has belong in indirect_columns; a CASE with only literal results has no source column. ' +
   'Resolve parameters and aliases to source columns. [] records no pair.';
 /** At a procedure, a created value is the pair procedure.col -> out_node.out_col. */
 const PROCEDURE_UPSTREAM_DESCRIPTION = `${UPSTREAM_DESCRIPTION} A value this procedure creates lists this procedure with the column its task names, else out_col.`;

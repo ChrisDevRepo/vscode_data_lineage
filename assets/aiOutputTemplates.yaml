@@ -196,7 +196,7 @@ structural_summary:
 column_trace_capture:
   stages: [active]
   instruction: |
-    Map this hop's column tasks in column_flow: track value-carrying source columns into out_col. Explain calculations, aliases, and grain in sections. Columns only copied alongside out_col are not mapped.
+    Explain calculations, aliases, and grain in sections.
 
 # ── Cross-section rendering at synthesis ─────────────────────────────────────
 # Always-on at synthesis. Describes HOW captured content renders consistently
