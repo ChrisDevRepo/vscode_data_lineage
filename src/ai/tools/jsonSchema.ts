@@ -18,7 +18,8 @@ export function toModelJsonSchema(schema: z.ZodType): JsonSchemaNode {
   const project = (node: unknown): void => {
     if (!node || typeof node !== 'object') return;
     // `pattern` is outside the common vendor keyword subset; admission enforces it.
-    if ('pattern' in node) delete node.pattern;
+    if ('pattern' in node && typeof node.pattern === 'string')
+      delete node.pattern;
     if ('toolDisplay' in node) {
       Object.assign(node, node.toolDisplay);
       delete node.toolDisplay;

@@ -524,6 +524,7 @@ async function checkTemplateSchemaVersion() {
 /**
  * A structural break needs a bump; a version never goes down. Any other
  * bump is allowed: an older custom file is ignored with a warning.
+ * @internal
  */
 export function checkSchemaBump({ baseVer, constVer, breaking }) {
   if (constVer < baseVer)

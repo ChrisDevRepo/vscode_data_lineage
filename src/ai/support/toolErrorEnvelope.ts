@@ -406,7 +406,6 @@ export interface ToolError {
     readonly kind: string;
     readonly offset?: number;
     readonly trailing?: boolean;
-    readonly detail?: string;
   };
 }
 
@@ -709,9 +708,7 @@ export function renderProblemReport(
           }.${
             error.parse.trailing
               ? ' Unexpected duplicate or trailing characters after the JSON object. Close with exactly one "}" and emit no trailing braces.'
-              : error.parse.detail
-                ? ` ${error.parse.detail}.`
-                : ''
+              : ''
           }`
         : '';
       const syntaxEscalation =
