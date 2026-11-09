@@ -1596,6 +1596,13 @@ export class NavigationEngine implements IHopStateMachine {
     );
   }
 
+  /** The `out_node` values the scope check admits: every rejection lists exactly these. */
+  private outNodeScopeIds(focusId: string): string[] {
+    return [...this.mappableNeighborIds(focusId)]
+      .filter((id) => id !== focusId)
+      .sort();
+  }
+
   /**
    * Object-graph ids an `upstream_columns` contributor may name at one hop: the focus's neighbors
    * plus the read suppliers of its declared scalar callers. The served `node` enum and the
@@ -3024,6 +3031,16 @@ export class NavigationEngine implements IHopStateMachine {
         /^column_flow\.\d+\./.test(mapped.path)
       )
         return { ...mapped, category: 'reference' };
+      // A missing out_node lists the in-scope destinations, as a refused one does.
+      if (
+        mapped.code === 'missing' &&
+        mapped.values &&
+        /^column_flow\.\d+\.out_node$/.test(mapped.path)
+      )
+        return {
+          ...mapped,
+          values: this.outNodeScopeIds(currentFocusId ?? ''),
+        };
       if (error.keyword !== 'enum' && error.keyword !== 'const') return;
       const path = error.instancePath.slice(1).split('/').join('.');
       const question =
@@ -3305,13 +3322,11 @@ export class NavigationEngine implements IHopStateMachine {
           path: paths(path),
           alternatives: ['questions', 'sections'],
           // The served enum of this field, kept inside the approved scope.
-          allowed_values: (
-            this.hopSubmitColumns.columnSourceNodeIds ?? []
-          ).filter(
-            (id) =>
-              !(id === focusId && path.endsWith('/out_node')) &&
-              this.admitsColumnReference(id, this.nodeMap.get(id)!, focusId),
-          ),
+          allowed_values: path.endsWith('/out_node')
+            ? this.outNodeScopeIds(focusId)
+            : (this.hopSubmitColumns.columnSourceNodeIds ?? []).filter((id) =>
+                this.admitsColumnReference(id, this.nodeMap.get(id)!, focusId),
+              ),
           reason: `The object is out of scope (${outside}).`,
         });
     }
