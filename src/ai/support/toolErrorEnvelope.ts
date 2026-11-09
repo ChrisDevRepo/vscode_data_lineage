@@ -19,6 +19,12 @@ const FALLBACK_FIELD = 'sections';
 
 const REPORT_REFERENCE_FALLBACK =
   'If you cannot correct it, write that information in the detail memory instead, highlighted with a callout naming the unresolved issue.';
+/** Stage-3 exit for a field without listed values in a call whose accepted fields stay held. */
+const FIELD_ALONE_EXIT =
+  'If it still fails, send this field alone in this call as its schema type; held fields stay held, send the others next.';
+/** Stage-3 exit for a fault whose accepted values are listed. */
+const ALLOWED_VALUE_EXIT =
+  'If it still fails, send exactly what the allowed list gives for this field.';
 /** Stage-3 fallback for a column reference fault without its own issue fallback. */
 export const COLUMN_REFERENCE_FALLBACK = `If you cannot correct it, write that information in ${FALLBACK_FIELD} instead, highlighted with a callout naming the unresolved issue.`;
 const OBJECT_IDENTITY_ISSUE = {
@@ -587,10 +593,7 @@ export function readToolErrorText(text: string): ToolRejection | null {
   }
 }
 
-/**
- * Feedback stage of one hop: 1 states every fault, 2 adds the allowed values, 3 adds eligible
- * reference fallbacks.
- */
+/** Feedback stage of one fault: 1 states it, 2 adds the allowed values, 3 adds its exit. */
 export type FeedbackStage = 1 | 2 | 3;
 
 /**
@@ -668,8 +671,8 @@ function mergeToolErrors(
 }
 
 /**
- * Renders every independent fault once. Required subjects appear immediately, allowed values from
- * feedback 2, and report-reference fallbacks only at feedback 3; submitted values are never echoed.
+ * Renders every independent fault once, each at its own stage: allowed values from feedback 2 and
+ * the fault's exit only at feedback 3; submitted values are never echoed.
  */
 export function renderProblem(
   rejection: ToolRejection,
@@ -687,6 +690,7 @@ export function renderProblemReport(
   input?: unknown,
   effect?: ToolDefinition['effect'],
 ): { readonly text: string; readonly fallback: boolean } {
+  const held = effect === 'presentation_commit' || effect === 'hop_commit';
   const merged = mergeToolErrors(rejection.errors, false);
   // An absent parent covers its descendants; children under a present or mistyped parent still
   // explain the expected structure.
@@ -709,8 +713,9 @@ export function renderProblemReport(
     )
     .map((error) => {
       const issue = ISSUES[error.code];
+      const category = error.category ?? issue.category;
       const reference =
-        (error.category ?? issue.category) === 'reference' &&
+        category === 'reference' &&
         (effect === 'presentation_commit' ||
           (effect === 'hop_commit' &&
             /^(?:column_flow|indirect_columns)(?:\.|$)/.test(error.path)));
@@ -721,8 +726,16 @@ export function renderProblemReport(
             : effect === 'hop_commit'
               ? COLUMN_REFERENCE_FALLBACK
               : REPORT_REFERENCE_FALLBACK
-          : '';
-      if (fallback) fallbackShown = true;
+          : stage !== 3
+            ? ''
+            : held &&
+                error.path &&
+                (category === 'shape' || category === 'required')
+              ? FIELD_ALONE_EXIT
+              : error.values?.length
+                ? ALLOWED_VALUE_EXIT
+                : '';
+      if (fallback && reference) fallbackShown = true;
       const text: IssueText =
         error.parse?.trailing && 'trailing' in issue ? issue.trailing : issue;
       const located = error.parse
@@ -740,7 +753,7 @@ export function renderProblemReport(
           ? error.path.split('.').at(-1)
           : valueAt(input, error.path);
       const allowed =
-        error.values && (stage >= 2 || issue.category === 'required')
+        error.values && stage >= 2
           ? [...error.values].sort(
               (a, b) =>
                 (typeof sent === 'string'

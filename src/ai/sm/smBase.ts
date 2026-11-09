@@ -1604,6 +1604,42 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
+   * The `out_node` values offered for one `column_flow` row: {@link outNodeScopeIds} without an
+   * object the row names as supplier of its own `out_col`, which the self-loop check refuses. A
+   * supplier or row whose column was not read drops its object.
+   */
+  private offeredOutNodeIds(
+    focusId: string,
+    row: string,
+    facts: Pick<
+      ReturnType<typeof findingAdmissionFacts>,
+      'references' | 'columns' | 'outColumns'
+    >,
+  ): string[] {
+    const key = (col: string | undefined) =>
+      col === undefined
+        ? undefined
+        : normalizeColName(col, this.identifierCaseSensitive);
+    const outCol = key(facts.outColumns.get(`${row}/out_col`));
+    const own = new Set(
+      [...facts.references].flatMap(([path, sent]) => {
+        if (!path.startsWith(`${row}/upstream_columns/`)) return [];
+        const col = key(facts.columns.get(path.replace(/node$/, 'col')));
+        return outCol === undefined || col === undefined || col === outCol
+          ? [
+              resolveModelNodeId(
+                sent,
+                this.nodeMap,
+                this.identifierCaseSensitive,
+              ),
+            ]
+          : [];
+      }),
+    );
+    return this.outNodeScopeIds(focusId).filter((id) => !own.has(id));
+  }
+
+  /**
    * Object-graph ids an `upstream_columns` contributor may name at one hop: the focus's neighbors
    * plus the read suppliers of its declared scalar callers. The served `node` enum and the
    * contributor admission both read it, so a column edge never leaves the object graph.
@@ -3039,7 +3075,11 @@ export class NavigationEngine implements IHopStateMachine {
       )
         return {
           ...mapped,
-          values: this.outNodeScopeIds(currentFocusId ?? ''),
+          values: this.offeredOutNodeIds(
+            currentFocusId ?? '',
+            `/${mapped.path.split('.').slice(0, 2).join('/')}`,
+            admission,
+          ),
         };
       if (error.keyword !== 'enum' && error.keyword !== 'const') return;
       const path = error.instancePath.slice(1).split('/').join('.');
@@ -3323,7 +3363,7 @@ export class NavigationEngine implements IHopStateMachine {
           alternatives: ['questions', 'sections'],
           // The served enum of this field, kept inside the approved scope.
           allowed_values: path.endsWith('/out_node')
-            ? this.outNodeScopeIds(focusId)
+            ? this.offeredOutNodeIds(focusId, row, facts)
             : (this.hopSubmitColumns.columnSourceNodeIds ?? []).filter((id) =>
                 this.admitsColumnReference(id, this.nodeMap.get(id)!, focusId),
               ),

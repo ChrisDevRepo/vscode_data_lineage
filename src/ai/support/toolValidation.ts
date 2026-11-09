@@ -457,13 +457,13 @@ function rejection(
         code = parentSchema.toolIssue as IssueCode;
       else if (keyword === 'required') {
         code = 'missing';
-        // A missing closed-set field lists its served values at once.
+        // A missing field lists its served values, or else its schema type.
         const field = parentSchema?.properties?.[params.missingProperty];
         values = Array.isArray(field?.enum)
           ? field.enum.map(String)
           : field && 'const' in field
             ? [String(field.const)]
-            : undefined;
+            : field?.type && [field.type].flat();
       } else if (keyword === 'additionalProperties') {
         code = 'unknown_key';
         values = Object.keys(parentSchema?.properties ?? {});
@@ -474,7 +474,7 @@ function rejection(
           code = container.code;
           parse = container.parse;
         } else code = error.data === undefined ? 'missing' : 'type';
-        if (code !== 'json_text' && code !== 'json_parse') values = types;
+        values = types;
       } else if (keyword === 'enum' || keyword === 'const') {
         code = parentSchema?.toolIdentifier?.issue ?? 'enum';
         values = (params.allowedValues ?? [params.allowedValue]).map(String);
