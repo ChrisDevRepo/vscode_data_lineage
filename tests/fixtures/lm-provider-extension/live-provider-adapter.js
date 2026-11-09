@@ -106,6 +106,25 @@ function buildProviderRequest(request, config) {
   };
 }
 
+/** Canned replies get a fixed window; a live run advertises the model's real one from the env. */
+function modelWindow() {
+  if (process.env.AI_TEST_REAL_PROVIDER !== '1')
+    return { maxInputTokens: 32_000, maxOutputTokens: 4_000 };
+  const window = {};
+  for (const [key, name] of [
+    ['maxInputTokens', 'AI_TEST_MAX_INPUT_TOKENS'],
+    ['maxOutputTokens', 'AI_TEST_MAX_OUTPUT_TOKENS'],
+  ]) {
+    const value = Number(process.env[name]);
+    if (!Number.isInteger(value) || value < 1)
+      throw new Error(
+        `Set ${name} (the model's real window, whole number) for a live run.`,
+      );
+    window[key] = value;
+  }
+  return window;
+}
+
 /** Non-streaming test transport with explicit header/body deadlines and caller cancellation. */
 function createProviderFetch(timeoutMs, { captureTiming = false } = {}) {
   if (
@@ -384,6 +403,7 @@ module.exports = {
   parseProviderResponse,
   providerEndpoint,
   isResponsesEndpoint,
+  modelWindow,
   sendProviderRequest,
   toProviderMessages,
   tokenUsage,

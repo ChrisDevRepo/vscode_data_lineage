@@ -2,6 +2,7 @@ const { appendFileSync } = require('node:fs');
 const vscode = require('vscode');
 const {
   createProviderFetch,
+  modelWindow,
   sendProviderRequest,
   tokenUsage,
 } = require('./live-provider-adapter');
@@ -131,8 +132,7 @@ function activate(context) {
           name: 'Lineage Smoke Model',
           family: MODEL_ID,
           version: '1.0.0',
-          maxInputTokens: 32_000,
-          maxOutputTokens: 4_000,
+          ...modelWindow(),
           capabilities: { toolCalling: true },
         },
       ];
