@@ -1,5 +1,7 @@
 'use strict';
 
+const { responsesRequestBody, readResponse } = require('./responses-wire');
+
 function toProviderMessages(messages) {
   const output = [];
   for (const message of messages) {
@@ -83,14 +85,12 @@ function buildProviderRequest(request, config) {
             authorization: `Bearer ${apiKey}`,
           },
     body: isResponsesEndpoint(url)
-      ? responsesWire(config).responsesRequestBody(
+      ? responsesRequestBody(
           model,
           messages,
           tools,
           toolChoice,
-          config.reasoningEffort
-            ? { reasoning: { effort: config.reasoningEffort } }
-            : undefined,
+          config.reasoningEffort,
         )
       : {
           model,
@@ -104,15 +104,6 @@ function buildProviderRequest(request, config) {
             : {}),
         },
   };
-}
-
-/** The headless port's Responses codec (`responsesRequestBody`, `readResponse`), passed in by the
- * caller; this file keeps no second Responses implementation.
- */
-function responsesWire(config) {
-  if (!config.responsesWire)
-    throw new Error('A Responses endpoint needs the harness Responses wire.');
-  return config.responsesWire;
 }
 
 /** Non-streaming test transport with explicit header/body deadlines and caller cancellation. */
@@ -222,18 +213,15 @@ async function sendProviderRequest(request, config, fetchImpl, signal) {
     throw new Error('AI provider response was not valid JSON.');
   }
   return {
-    ...parseProviderResponse(
-      payload,
-      isResponsesEndpoint(wire.url) ? responsesWire(config) : undefined,
-    ),
+    ...parseProviderResponse(payload, isResponsesEndpoint(wire.url)),
     ...(response.timing ? { timing: response.timing } : {}),
   };
 }
 
-/** Decodes a Chat Completions body, or a Responses body through `wire.readResponse` when given. */
-function parseProviderResponse(payload, wire) {
-  const { toolCalls, text } = wire
-    ? decodeResponses(wire.readResponse(payload))
+/** Decodes a Chat Completions body, or a Responses body when `responses` is true. */
+function parseProviderResponse(payload, responses = false) {
+  const { toolCalls, text } = responses
+    ? readResponse(payload)
     : decodeChatCompletion(payload);
   if (toolCalls.length === 0 && text.length === 0) {
     throw new Error(
@@ -246,28 +234,6 @@ function parseProviderResponse(payload, wire) {
     ...(payload.usage && typeof payload.usage === 'object'
       ? { usage: payload.usage }
       : {}),
-  };
-}
-
-function decodeResponses({ parts }) {
-  return {
-    toolCalls: parts
-      .filter((part) => part.type === 'tool-call')
-      .map((part) => {
-        if (!part.input && part.rawArguments.trim())
-          throw new Error(
-            `AI provider tool call ${part.toolName} contained invalid JSON arguments.`,
-          );
-        return {
-          id: part.callId,
-          name: part.toolName,
-          input: part.input ?? {},
-        };
-      }),
-    text: parts
-      .filter((part) => part.type === 'text')
-      .map((part) => part.text)
-      .join(''),
   };
 }
 

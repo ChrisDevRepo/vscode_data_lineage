@@ -22,7 +22,7 @@ The gate prints `PASS`, `FAIL` and `SKIP` per step and exits nonzero on any `FAI
 
 ## Where tests live
 
-`tests/unit/` holds the Vitest suites, `tests/cases/` the shared case catalogs (parser rows in `tests/cases/parser/exact-edges.yaml`, headless demo rows in `tests/cases/lineage-cases.yaml`), `tests/integration/` the VS Code host lanes, `tests/harness/` the optional headless runner and `tests/tools/` the lane runners. The gate runs the core and runtime lanes once each; `npm test` is their aggregate. Add a check as one row in an existing file or catalog.
+`tests/unit/` holds the Vitest suites, `tests/cases/` the shared case catalogs (parser rows in `tests/cases/parser/exact-edges.yaml`), `tests/integration/` the VS Code host lanes (with their shared in-host setup `hostSession.ts`), `tests/harness/` the run-evidence helpers and `tests/tools/` the lane runners. The gate runs the core and runtime lanes once each; `npm test` is their aggregate. Add a check as one row in an existing file or catalog.
 
 ## What these checks establish
 
@@ -34,7 +34,6 @@ Deterministic tests verify parser, graph and runtime contracts. A structurally v
 |---|---|---|
 | Electron host lanes | `npm run test:edh` | Activation and tool invocation through the VS Code API |
 | Real-model smoke | `npm run test:ai:smoke` | One live `@lineage` turn against the demo DACPAC |
-| Headless question | `npm run test:ai:headless -- --prompt TEXT` | Asks one question (with optional `--followup` turns) against `assets/demo.dacpac` or `--dacpac FILE`; `--case ID` runs one demo row (`headless-summary`, `headless-procedure-dependencies`, `headless-view-chain`) with its checks (flags: `-- --help`). |
 | Large layout scale | `npm run test:scale` | Layout check for a 1,500-node model |
 
 ## VS Code host checks
@@ -51,9 +50,9 @@ These run the extension in an isolated VS Code host (Extension Development Host)
 
 ## Live-model settings
 
-Copy [`.env.example`](../../.env.example) into the local environment file the harness reads, and fill only the section you need. Leave that file, traces, and answers untracked. `AI_TEST_PROVIDER` is required (`azure`, `fireworks`, `openrouter`, `openai-compatible` or `qwen`); there is no default. `AI_TEST_API_KEY` must be non-empty (any placeholder for a keyless local server). For Azure, `AI_TEST_MODEL` is the deployment name. For the Alibaba Cloud Model Studio provider (`qwen` or `openai-compatible`), supported models include `qwen3.8-flash` and `deepseek-v4.1-flash-1017`; set `QWEN_URL`, `QWEN_API` and `QWEN_MODEL` for `qwen`. `AI_TEST_REASONING_EFFORT` (`low`, `medium`, `high`, `xhigh`, `max` or `off`) sets the reasoning effort; headless `--effort` overrides it. These settings configure test harnesses only; the extension itself uses the VS Code chat model.
+Copy [`.env.example`](../../.env.example) into the local environment file the harness reads, and fill only the section you need. Leave that file, traces, and answers untracked. `AI_TEST_PROVIDER` is required (`azure`, `fireworks`, `openrouter`, `openai-compatible` or `qwen`); there is no default. `AI_TEST_API_KEY` must be non-empty (any placeholder for a keyless local server). For Azure, `AI_TEST_MODEL` is the deployment name. For the Alibaba Cloud Model Studio provider (`qwen` or `openai-compatible`), supported models include `qwen3.8-flash` and `deepseek-v4.1-flash-1017`; set `QWEN_URL`, `QWEN_API` and `QWEN_MODEL` for `qwen`. `AI_TEST_REASONING_EFFORT` (`low`, `medium`, `high`, `xhigh`, `max` or `off`) sets the reasoning effort; the provider fixture reads it and sets no temperature. These settings configure test harnesses only; the extension itself uses the VS Code chat model.
 
-`AI_TEST_TIMEOUT_MS` sets the AI budget (default: two hours), covering the whole headless run or the real-model smoke. `AI_TEST_REQUEST_TIMEOUT_MS` bounds each provider request and defaults to that budget. Increase these settings for slower local models; headless `--timeout-ms` and `--request-timeout-ms` override their respective settings.
+`AI_TEST_TIMEOUT_MS` sets the AI budget (default: two hours), covering the whole headless host run or the real-model smoke. `AI_TEST_REQUEST_TIMEOUT_MS` bounds each provider request and defaults to that budget. Increase these settings for slower local models. The provider fixture sends each request once: a provider error fails the run.
 
 Generated answers, metrics and traces stay untracked. Completion is runtime evidence, not answer-quality evidence.
 

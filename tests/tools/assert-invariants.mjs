@@ -478,7 +478,7 @@ async function checkTemplateSchemaVersion() {
     const ci = (process.env.CI ?? '').trim().toLowerCase();
     if (ci && ci !== 'false' && ci !== '0')
       throw new Error(
-        'No v* tag or origin/main in this CI checkout; fetch them (actions/checkout fetch-depth: 0).',
+        'No v* tag or origin/main in this CI checkout; get them by checking out full history (actions/checkout depth 0).',
       );
     return skip('no git baseline tag or origin/main for template diff.');
   }

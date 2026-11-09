@@ -33,7 +33,7 @@ export interface WireMessage {
 }
 
 /** Provider-reported token accounting for one generation. */
-export interface TokenUsage {
+interface TokenUsage {
   /** Provider-reported prompt (input) token count; absent when not reported. */
   readonly inputTokens?: number;
   /** Provider-reported completion (output) token count; absent when not reported. */

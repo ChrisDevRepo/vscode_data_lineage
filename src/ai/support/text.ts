@@ -82,7 +82,7 @@ export function sanitizeProviderError(message: string): string {
  * Redacts credentials, long opaque tokens and URLs from provider error text and collapses
  * whitespace, without the length cap {@link sanitizeProviderError} applies.
  */
-export function redactProviderSecrets(message: string): string {
+function redactProviderSecrets(message: string): string {
   return message
     .replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer ‹redacted›')
     .replace(/\b(?:sk|key|api)[-_][A-Za-z0-9]{8,}\b/gi, '‹redacted-key›')

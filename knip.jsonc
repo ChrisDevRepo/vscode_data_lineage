@@ -11,12 +11,11 @@
     "scripts/verify-docs.mjs",
     "tests/tools/assert-invariants.mjs",
     "tests/tools/load-test-env.test.mjs",
-    // Compiled to out/ and loaded from there by tests/tools/run-headless.mjs.
-    "tests/harness/cli.ts",
     "src/index.css",
     // Extension-host and CommonJS transport APIs loaded by host staging and contract checks.
     "tests/fixtures/lm-provider-extension/extension.js",
     "tests/fixtures/lm-provider-extension/live-provider-adapter.js",
+    "tests/fixtures/lm-provider-extension/responses-wire.js",
   ],
   "project": [
     "src/**/*.{ts,tsx,css}",

@@ -896,7 +896,6 @@
     "gate": "node tests/tools/gate.mjs",
     "postinstall": "node scripts/repair-langsmith-stub.mjs",
     "test:scale": "node tests/tools/run-vitest.mjs run --config tests/scale/vitest.config.ts",
-    "test:ai:headless": "node tests/tools/run-headless.mjs ai",
     "lint": "eslint . --max-warnings 0",
     "format:check": "prettier --ignore-path .gitignore --check \"src/**/*.{ts,tsx,css,html}\" \"tests/**/*.{ts,tsx,mjs,js}\" \"scripts/*.mjs\" \"*.{json,jsonc,mjs,ts}\"",
     "format": "prettier --ignore-path .gitignore --write \"src/**/*.{ts,tsx,css,html}\" \"tests/**/*.{ts,tsx,mjs,js}\" \"scripts/*.mjs\" \"*.{json,jsonc,mjs,ts}\"",

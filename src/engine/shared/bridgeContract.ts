@@ -57,7 +57,10 @@ export const TRACE_ALL_LEVELS = Number.MAX_SAFE_INTEGER;
 
 const AiScopeListSchema = z.array(z.string()).max(MAX_ID_LIST_LENGTH);
 
-/** Typed structural and free-text edits accepted when revising a pending exploration gate. */
+/**
+ * Typed structural and free-text edits accepted when revising a pending exploration gate.
+ * @internal Read by the internal baseline comparison.
+ */
 export const AiGateRefineSchema = z
   .object({
     origin: z.string().min(1).optional(),

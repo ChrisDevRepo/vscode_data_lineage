@@ -5,33 +5,16 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { copyNativeHostLog } from '../harness/nativeEvidence';
+import {
+  activateHost,
+  chatRequest,
+  openDemo,
+  recordingStream,
+} from './hostSession';
 
 suite('Real provider smoke', () => {
-  const EXTENSION_ID = 'datahelper-chwagner.data-lineage-viz';
-  const FIXTURE_ID = 'data-lineage-test.data-lineage-test-model-provider';
-  const TEST_VENDOR = 'lineage-test';
   const TEST_TIMEOUT_MS = Number(process.env.AI_TEST_TIMEOUT_MS);
   const DEADLINE_MARGIN_MS = 10_000;
-
-  function recordingStream() {
-    const markdown: string[] = [];
-    const stream = {
-      progress: () => {},
-      markdown: (value: unknown) => {
-        markdown.push(
-          typeof value === 'string'
-            ? value
-            : String((value as { value?: string })?.value ?? value),
-        );
-      },
-      button: () => {},
-      anchor: () => {},
-      filetree: () => {},
-      reference: () => {},
-      push: () => {},
-    } as unknown as vscode.ChatResponseStream;
-    return { stream, markdown };
-  }
 
   test('a configured provider completes a public demo-data question', async function () {
     this.timeout(TEST_TIMEOUT_MS + 60_000);
@@ -49,29 +32,9 @@ suite('Real provider smoke', () => {
       );
     }
 
-    const fixture = vscode.extensions.getExtension(FIXTURE_ID);
-    assert.ok(
-      fixture,
-      'the language-model adapter fixture must be installed in this lane',
-    );
-    await fixture.activate();
-    const deadline = Math.min(
-      testDeadline - DEADLINE_MARGIN_MS,
-      Date.now() + 20_000,
-    );
-    let model: vscode.LanguageModelChat | undefined;
-    while (Date.now() < deadline && !model) {
-      model = (await vscode.lm.selectChatModels({ vendor: TEST_VENDOR }))[0];
-      if (!model) await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-    assert.ok(model, 'the VS Code language-model adapter did not register');
-
-    const extension = vscode.extensions.getExtension(EXTENSION_ID);
-    assert.ok(extension);
-    const exports = await extension.activate();
-    assert.ok(exports?.participant);
+    const { model, exports, extensionPath } = await activateHost();
     const directory = join(
-      extension.extensionPath,
+      extensionPath,
       'test-results',
       'ai-smoke',
       randomUUID(),
@@ -82,47 +45,11 @@ suite('Real provider smoke', () => {
       true,
     );
     assert.ok(tracePath, 'real-provider smoke requires a fresh verbose trace');
-    await vscode.commands.executeCommand('dataLineageViz.openDemo');
-    const readyBy = Math.min(
-      testDeadline - DEADLINE_MARGIN_MS,
-      Date.now() + 45_000,
-    );
-    let demoLoaded = false;
-    while (Date.now() < readyBy && !demoLoaded) {
-      const probe = await Promise.resolve(
-        vscode.lm.invokeTool('lineage_search_objects', {
-          input: { query: 'Sales' },
-          toolInvocationToken: undefined,
-        }),
-      ).catch((error: unknown) => {
-        if (
-          error instanceof Error &&
-          /no project is loaded/i.test(error.message)
-        )
-          return null;
-        throw error;
-      });
-      if (!probe) {
-        await new Promise((resolve) => setTimeout(resolve, 250));
-        continue;
-      }
-      const resultText = probe.content
-        .map((part) => (part as { value?: unknown }).value ?? '')
-        .join('');
-      try {
-        const result = JSON.parse(resultText) as { results?: unknown[] };
-        demoLoaded = Array.isArray(result.results) && result.results.length > 0;
-      } catch {
-        demoLoaded = false;
-      }
-      if (!demoLoaded) await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-    assert.ok(
-      demoLoaded,
-      'the public demo DACPAC must be searchable before the provider turn starts',
+    await openDemo(
+      Math.min(testDeadline - DEADLINE_MARGIN_MS - Date.now(), 45_000),
     );
 
-    const { stream, markdown } = recordingStream();
+    const { stream, markdown: answer } = recordingStream();
     const cancellation = new vscode.CancellationTokenSource();
     // Cancellation aborts the provider request; reserve only teardown time.
     const cancelAt = testDeadline - DEADLINE_MARGIN_MS;
@@ -140,14 +67,7 @@ suite('Real provider smoke', () => {
       'Which tables feed Sales? Name the sources you can verify from the loaded lineage data.';
     try {
       const result = await exports.participant.handleChatRequest(
-        {
-          prompt: question,
-          command: undefined,
-          references: [],
-          toolReferences: [],
-          toolInvocationToken: undefined as never,
-          model,
-        },
+        chatRequest(question, model),
         { history: [] },
         stream,
         cancellation.token,
@@ -167,7 +87,7 @@ suite('Real provider smoke', () => {
         'the participant must call the configured provider',
       );
       assert.ok(
-        markdown.some((part) => part.trim().length > 0),
+        answer().trim().length > 0,
         'the participant must produce an answer',
       );
     } finally {
@@ -182,7 +102,7 @@ suite('Real provider smoke', () => {
       } while (Date.now() < drainBy);
       writeFileSync(join(directory, 'trace.ndjson'), trace);
       copyNativeHostLog(process.env.DLV_AI_SMOKE_PROFILE, directory);
-      writeFileSync(join(directory, 'answer.txt'), markdown.join('\n'));
+      writeFileSync(join(directory, 'answer.txt'), answer());
       console.log(
         `[ai-smoke] provider=${process.env.AI_TEST_PROVIDER} model=${process.env.AI_TEST_MODEL} ` +
           `adapter=${model.vendor}/${model.family}/${model.version} elapsedMs=${Date.now() - startedAt} ` +
