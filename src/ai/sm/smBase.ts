@@ -1603,40 +1603,110 @@ export class NavigationEngine implements IHopStateMachine {
       .sort();
   }
 
+  /** Outputs of the callers a function hop investigates; a caller-context entry pairs into one. */
+  private callerTargets(): { node: string; col: string }[] {
+    return this.getCurrentTasks().flatMap((task) =>
+      task.callerContext &&
+      task.nodeId &&
+      this.validFunctionCallerContext(task.nodeId, task.callerContext)
+        ? [{ node: task.callerContext.node, col: task.callerContext.col }]
+        : [],
+    );
+  }
+
   /**
-   * The `out_node` values offered for one `column_flow` row: {@link outNodeScopeIds} without an
-   * object the row names as supplier of its own `out_col`, which the self-loop check refuses. A
-   * supplier or row whose column was not read drops its object.
+   * The ids offered for one `column_flow` node field, an entry's `out_node` or a supplier's `node`:
+   * the in-scope candidates the entry accepts at that field with everything else it sent. The
+   * tracer's own supplier and entry checks decide, so an offered id never fails another check; a
+   * field no candidate passes gets no list.
    */
-  private offeredOutNodeIds(
+  private offeredFlowNodeIds(
     focusId: string,
-    row: string,
+    pointer: string,
     facts: Pick<
       ReturnType<typeof findingAdmissionFacts>,
       'references' | 'columns' | 'outColumns'
     >,
   ): string[] {
-    const key = (col: string | undefined) =>
-      col === undefined
-        ? undefined
-        : normalizeColName(col, this.identifierCaseSensitive);
-    const outCol = key(facts.outColumns.get(`${row}/out_col`));
-    const own = new Set(
-      [...facts.references].flatMap(([path, sent]) => {
-        if (!path.startsWith(`${row}/upstream_columns/`)) return [];
-        const col = key(facts.columns.get(path.replace(/node$/, 'col')));
-        return outCol === undefined || col === undefined || col === outCol
-          ? [
-              resolveModelNodeId(
-                sent,
-                this.nodeMap,
-                this.identifierCaseSensitive,
-              ),
-            ]
-          : [];
-      }),
-    );
-    return this.outNodeScopeIds(focusId).filter((id) => !own.has(id));
+    const tracer = this.tracer;
+    if (!tracer) return [];
+    const row = pointer.split('/').slice(0, 3).join('/');
+    const dotted = (path: string) => path.slice(1).split('/').join('.');
+    const contributors = this.columnContributorIds(focusId);
+    const out_col = facts.outColumns.get(`${row}/out_col`);
+    /** The verified supplier at a path; `null` if refused, `undefined` if its column is unread. */
+    const supplier = (path: string, node: string) => {
+      const col = facts.columns.get(`${path}/col`);
+      if (col === undefined) return undefined;
+      const checked = tracer.validateColumnSupplier(
+        focusId,
+        {
+          node:
+            resolveModelNodeId(
+              node,
+              this.nodeMap,
+              this.identifierCaseSensitive,
+            ) ?? node,
+          col,
+        },
+        dotted(path),
+        this.nodeMap,
+        this.store ?? null,
+        this.removedSet,
+        contributors,
+      );
+      return 'neighbor' in checked
+        ? {
+            ref: { node: checked.neighbor.id, col },
+            path: dotted(path),
+            neighbor: checked.neighbor,
+          }
+        : null;
+    };
+    const entryFaults = (
+      out_node: string | undefined,
+      suppliers: Parameters<ColumnTracer['prepareColumnEntry']>[2],
+    ) =>
+      out_col === undefined
+        ? []
+        : tracer.prepareColumnEntry(
+            focusId,
+            { out_col, ...(out_node !== undefined ? { out_node } : {}) },
+            suppliers,
+            dotted(row),
+            this.nodeMap,
+            this.model,
+            this.store ?? null,
+            undefined,
+            this.callerTargets(),
+            this.removedSet,
+            contributors,
+          ).invalidRoutes;
+    if (pointer.endsWith('/out_node')) {
+      if (out_col === undefined) return [];
+      const suppliers = [...facts.references].flatMap(([path, node]) =>
+        path.startsWith(`${row}/upstream_columns/`)
+          ? (supplier(path.replace(/\/node$/, ''), node) ?? [])
+          : [],
+      );
+      return this.outNodeScopeIds(focusId).filter(
+        (id) => entryFaults(id, suppliers).length === 0,
+      );
+    }
+    const path = pointer.replace(/\/node$/, '');
+    const out_node = facts.references.get(`${row}/out_node`);
+    return (this.hopSubmitColumns.columnSourceNodeIds ?? []).filter((id) => {
+      if (!this.admitsColumnReference(id, this.nodeMap.get(id)!, focusId))
+        return false;
+      const candidate = supplier(path, id);
+      return (
+        candidate !== null &&
+        (candidate === undefined ||
+          !entryFaults(out_node, [candidate]).some((route) =>
+            route.path?.startsWith(candidate.path),
+          ))
+      );
+    });
   }
 
   /**
@@ -3067,17 +3137,19 @@ export class NavigationEngine implements IHopStateMachine {
         /^column_flow\.\d+\./.test(mapped.path)
       )
         return { ...mapped, category: 'reference' };
-      // A missing out_node lists the in-scope destinations, as a refused one does.
+      // A missing or mistyped column_flow node field lists the ids its entry accepts.
       if (
-        mapped.code === 'missing' &&
+        (mapped.code === 'missing' || mapped.code === 'type') &&
         mapped.values &&
-        /^column_flow\.\d+\.out_node$/.test(mapped.path)
+        /^column_flow\.\d+\.(?:out_node|upstream_columns\.\d+\.node)$/.test(
+          mapped.path,
+        )
       )
         return {
           ...mapped,
-          values: this.offeredOutNodeIds(
+          values: this.offeredFlowNodeIds(
             currentFocusId ?? '',
-            `/${mapped.path.split('.').slice(0, 2).join('/')}`,
+            `/${mapped.path.split('.').join('/')}`,
             admission,
           ),
         };
@@ -3098,11 +3170,20 @@ export class NavigationEngine implements IHopStateMachine {
       return {
         ...issue,
         path,
+        // A column_flow node field offers only ids its entry accepts; any other, its served enum.
         values:
           issue.values ??
-          (error.params.allowedValues ?? [error.params.allowedValue]).map(
-            String,
-          ),
+          (/^\/column_flow\/\d+\/(?:out_node|upstream_columns\/\d+\/node)$/.test(
+            error.instancePath,
+          )
+            ? this.offeredFlowNodeIds(
+                currentFocusId ?? '',
+                error.instancePath,
+                admission,
+              )
+            : (error.params.allowedValues ?? [error.params.allowedValue]).map(
+                String,
+              )),
       };
     };
     return ingestToolInput<typeof schema, SubmitResult>({
@@ -3361,23 +3442,12 @@ export class NavigationEngine implements IHopStateMachine {
           id: nid,
           path: paths(path),
           alternatives: ['questions', 'sections'],
-          // The served enum of this field, kept inside the approved scope.
-          allowed_values: path.endsWith('/out_node')
-            ? this.offeredOutNodeIds(focusId, row, facts)
-            : (this.hopSubmitColumns.columnSourceNodeIds ?? []).filter((id) =>
-                this.admitsColumnReference(id, this.nodeMap.get(id)!, focusId),
-              ),
+          allowed_values: this.offeredFlowNodeIds(focusId, path, facts),
           reason: `The object is out of scope (${outside}).`,
         });
     }
     if (complete) mentions.column_flow = mentioned;
-    const callerTargets = this.getCurrentTasks().flatMap((task) =>
-      task.callerContext &&
-      task.nodeId &&
-      this.validFunctionCallerContext(task.nodeId, task.callerContext)
-        ? [{ node: task.callerContext.node, col: task.callerContext.col }]
-        : [],
-    );
+    const callerTargets = this.callerTargets();
     const headers = new Map(facts.headers);
     for (const [columnPath, out_col] of facts.outColumns) {
       const row = rowOf(columnPath),
@@ -3799,6 +3869,12 @@ export class NavigationEngine implements IHopStateMachine {
     }
 
     const neighbors = this.neighborChoices(focusId);
+    // A neighbor this call prunes is never offered for a question: the pair is the conflict fault.
+    const pruned = new Set(
+      pruneTargets.map(
+        (target) => target.resolved ?? this.identifierKey(target.raw),
+      ),
+    );
     const failures = invalidRoutes.map((route) => {
       const action = route.path?.startsWith('prune_neighbors.')
         ? 'can_prune'
@@ -3812,13 +3888,14 @@ export class NavigationEngine implements IHopStateMachine {
               .filter(
                 (neighbor) =>
                   neighbor[action] &&
-                  (action !== 'can_prune' ||
-                    !this.neighborPruneRefusal(
-                      focusId,
-                      [neighbor.id],
-                      acceptedNids,
-                      pruneColumnEdges ?? [],
-                    )),
+                  (action === 'can_prune'
+                    ? !this.neighborPruneRefusal(
+                        focusId,
+                        [neighbor.id],
+                        acceptedNids,
+                        pruneColumnEdges ?? [],
+                      )
+                    : !pruned.has(neighbor.id)),
               )
               .map((neighbor) => neighbor.id),
           }
