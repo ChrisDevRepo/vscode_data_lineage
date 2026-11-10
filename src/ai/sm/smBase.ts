@@ -3204,9 +3204,8 @@ export class NavigationEngine implements IHopStateMachine {
             problem.resend = [
               ...new Set([
                 ...failed,
-                ...(held
-                  ? [...this.missingRequiredParts(held), ...alternatives]
-                  : []),
+                ...(held ? this.missingRequiredParts(held) : []),
+                ...alternatives,
               ]),
             ];
           }
@@ -3261,9 +3260,10 @@ export class NavigationEngine implements IHopStateMachine {
         conflictPaths
           .filter((path) => !path.startsWith('column_flow.'))
           .forEach((path) => view.holdPaths.add(path));
-        alternatives = invalidRoutes.flatMap(
-          (route) => route.alternatives ?? [],
-        );
+        alternatives = [
+          ...invalidRoutes.flatMap((route) => route.alternatives ?? []),
+          ...plan.openOutcomeFields,
+        ];
         if (invalidRoutes.length) {
           const problem = buildRouteValidationRejection(invalidRoutes);
           problem.issuePaths = [
@@ -3919,6 +3919,7 @@ export class NavigationEngine implements IHopStateMachine {
       focusId,
       invalidRoutes: failures,
       conflictPaths: conflictPrunePaths,
+      openOutcomeFields: actions.openOutcomeFields,
       routeRequests,
       flowQuestionByNode,
       routeOutcomes,
@@ -4222,22 +4223,33 @@ export class NavigationEngine implements IHopStateMachine {
     }
     for (const nid of pruneIds)
       if (!aloneRefusals.get(nid) && !jointRefusal) prunedNeighborNids.add(nid);
+    const undecided = (id: string) =>
+      !requested.has(id) &&
+      !prunedNeighborNids.has(id) &&
+      !actionMentions.questions?.has(id) &&
+      !actionMentions.prune_neighbors?.has(id);
+    // The fields beside column_flow that can give this neighbor its outcome.
+    const outcomeFields = (id: string) => [
+      'questions',
+      ...(neighbors.get(id)?.can_prune &&
+      !this.neighborPruneRefusal(
+        focusId,
+        [id],
+        acceptedNids,
+        stagedColumnEdges ?? [],
+      )
+        ? ['prune_neighbors']
+        : []),
+    ];
     // Routing follows authored decisions; generated carry alone is not a decision about a neighbor.
     // A missing outcome fails no supplied field, so valid findings remain held for an action-only
     // retry.
-    if (
-      mappedNeighborIds &&
+    const actionsKnown =
       (questions !== null || actionMentions.questions) &&
-      (prunes !== null || actionMentions.prune_neighbors)
-    ) {
+      (prunes !== null || actionMentions.prune_neighbors);
+    if (mappedNeighborIds && actionsKnown) {
       for (const id of this.requiredNeighborIds(focusId)) {
-        if (
-          requested.has(id) ||
-          prunedNeighborNids.has(id) ||
-          actionMentions.questions?.has(id) ||
-          actionMentions.prune_neighbors?.has(id)
-        )
-          continue;
+        if (!undecided(id)) continue;
         if (!mappedNeighborIds.has(id)) {
           // In CT, column_flow is offered only for a neighbor that can be a value source (incoming
           // edge) or, at a procedure, an out_node; a downstream reader is never mapped as a source.
@@ -4251,16 +4263,7 @@ export class NavigationEngine implements IHopStateMachine {
             kind: 'neighbor_outcome_missing',
             id,
             alternatives: [
-              'questions',
-              ...(neighbors.get(id)?.can_prune &&
-              !this.neighborPruneRefusal(
-                focusId,
-                [id],
-                acceptedNids,
-                stagedColumnEdges ?? [],
-              )
-                ? ['prune_neighbors']
-                : []),
+              ...outcomeFields(id),
               ...(offerFlow ? ['column_flow'] : []),
             ],
             reason: 'This neighbor has no authored outcome.',
@@ -4290,6 +4293,14 @@ export class NavigationEngine implements IHopStateMachine {
       routeRequests,
       prunedNeighborNids,
       mutablePruneConflicts,
+      // An unknown flow leaves each outcome unknown and no fault: only the other fields that can
+      // still give one are named for the resend.
+      openOutcomeFields:
+        mappedNeighborIds || !actionsKnown
+          ? []
+          : this.requiredNeighborIds(focusId)
+              .filter(undecided)
+              .flatMap(outcomeFields),
     };
   }
 
