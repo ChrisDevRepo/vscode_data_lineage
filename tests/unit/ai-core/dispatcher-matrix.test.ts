@@ -130,11 +130,8 @@ describe('backend-fault rejection', () => {
       'phase_closed',
     ]);
     expect(
-      recordToolAttempt(
-        initialToolPhaseAttemptState('discover'),
-        attempt,
-        registry,
-      ).stopReason,
+      recordToolAttempt(initialToolPhaseAttemptState('discover'), attempt)
+        .stopReason,
     ).toBe('backend_fault');
   });
 });

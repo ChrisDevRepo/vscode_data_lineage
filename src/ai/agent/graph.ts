@@ -359,7 +359,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     phaseLabel: string,
     startedAt?: number,
   ): ToolPhaseAttemptState => {
-    const nextAttempt = recordToolAttempt(priorAttempt, res, deps.registry);
+    const nextAttempt = recordToolAttempt(priorAttempt, res);
     const last = nextAttempt.rejections[nextAttempt.rejections.length - 1];
     logGraphDebug(
       deps,
@@ -836,17 +836,13 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (remainingProviderCalls < 1) {
       const exhaustedAttempt = priorAttempt.stopReason
         ? priorAttempt
-        : recordToolAttempt(
-            priorAttempt,
-            {
-              stop: 'continue',
-              providerCalls: 0,
-              observations: [],
-              rejections: [],
-              messages: [],
-            },
-            deps.registry,
-          );
+        : recordToolAttempt(priorAttempt, {
+            stop: 'continue',
+            providerCalls: 0,
+            observations: [],
+            rejections: [],
+            messages: [],
+          });
       const stopped = attemptStop(
         exhaustedAttempt,
         'Entry detection',
@@ -909,36 +905,32 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
           'Structured-generation model-port contract violated: rejected output recorded no provider call.',
         );
       }
-      const nextAttempt = recordToolAttempt(
-        priorAttempt,
-        {
-          stop: 'continue',
-          providerCalls,
-          observations: [],
-          rejections: [
-            {
-              callId: '',
-              toolName: 'entry_detection',
-              code: error.code,
-              reason: error.reason,
-              errors: [...error.errors],
-            },
-          ],
-          messages: [
-            modelUserMessage(
-              noCallCorrectionText(
-                {
-                  code: error.code,
-                  reason: error.reason,
-                  errors: [...error.errors],
-                },
-                priorAttempt,
-              ),
+      const nextAttempt = recordToolAttempt(priorAttempt, {
+        stop: 'continue',
+        providerCalls,
+        observations: [],
+        rejections: [
+          {
+            callId: '',
+            toolName: 'entry_detection',
+            code: error.code,
+            reason: error.reason,
+            errors: [...error.errors],
+          },
+        ],
+        messages: [
+          modelUserMessage(
+            noCallCorrectionText(
+              {
+                code: error.code,
+                reason: error.reason,
+                errors: [...error.errors],
+              },
+              priorAttempt,
             ),
-          ],
-        },
-        deps.registry,
-      );
+          ),
+        ],
+      });
       logGraphDebug(
         deps,
         `[AI] [Attempt] phase=detect_entry providerCalls=${nextAttempt.providerCalls} noProgressCalls=${nextAttempt.noProgressCalls} stop=${nextAttempt.stopReason ?? 'continue'}`,

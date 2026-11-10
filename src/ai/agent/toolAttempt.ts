@@ -279,7 +279,9 @@ export interface ToolPhaseAttemptState {
   readonly phase: InstructionPhase;
   readonly providerCalls: number;
   /**
-   * Model replies in a row that stored no accepted observation; bounded by
+   * Model replies in a row that were not accepted: a reply holding any rejected call, or one that
+   * stored no accepted observation. An accepted reply (every call accepted and one stored, or an
+   * accepted terminal) resets it. It sets the feedback stage and is bounded by
    * {@link MAX_TOOL_PROVIDER_CALLS}.
    */
   readonly noProgressCalls: number;
@@ -293,15 +295,9 @@ export interface ToolPhaseAttemptState {
    */
   readonly messages: readonly ModelMessage[];
   /**
-   * Replies that rejected any call but a read, including a synthesized rejection for a reply with
-   * no call, counted even when the same reply stored an accepted read. A reply whose rejections are
-   * all reads does not count here.
-   */
-  readonly rejectedTerminalCalls: number;
-  /**
    * `'backend_fault'` once a rejection of that group was recorded, `'no_progress'` once
-   * {@link MAX_TOOL_PROVIDER_CALLS} replies passed without progress or without an accepted terminal
-   * call, else null.
+   * {@link MAX_TOOL_PROVIDER_CALLS} replies in a row were not accepted (see `noProgressCalls`),
+   * else null.
    */
   readonly stopReason: 'no_progress' | 'backend_fault' | null;
 }
@@ -314,7 +310,6 @@ export function initialToolPhaseAttemptState(
     phase,
     providerCalls: 0,
     noProgressCalls: 0,
-    rejectedTerminalCalls: 0,
     observations: [],
     rejections: [],
     messages: [],
@@ -357,15 +352,13 @@ export function recordToolAttempt(
     | 'messages'
     | 'prefix'
   >,
-  registry: IToolRegistry<string>,
 ): ToolPhaseAttemptState {
   const providerCalls = state.providerCalls + attempt.providerCalls;
   const stored = attempt.observations.some(
     (observation) => !observation.refused,
   );
-  const noProgressCalls = stored
-    ? 0
-    : state.noProgressCalls + attempt.providerCalls;
+  // A reply is checked as a whole: any rejected call makes it a rejected reply.
+  const rejectedReply = attempt.rejections.length > 0;
   const observations = [...state.observations, ...attempt.observations];
   const rejections = [...state.rejections, ...attempt.rejections];
   const messages = [...state.messages, ...attempt.messages];
@@ -375,20 +368,15 @@ export function recordToolAttempt(
     attempt.stop === 'reroute' ||
     attempt.stop === 'refused' ||
     attempt.stop === 'phase_complete';
-  const terminalRejected = attempt.rejections.some(
-    (rejection) => !isReadEffect(registry.get(rejection.toolName)?.effect),
-  );
-  const rejectedTerminalCalls = acceptedTerminal
-    ? 0
-    : state.rejectedTerminalCalls +
-      (terminalRejected ? attempt.providerCalls : 0);
+  const noProgressCalls =
+    acceptedTerminal || (stored && !rejectedReply)
+      ? 0
+      : state.noProgressCalls + attempt.providerCalls;
   const stopReason = attempt.rejections.some(
     (rejection) => rejection.code === REJECTION_CODES.backendFault,
   )
     ? 'backend_fault'
-    : !acceptedTerminal &&
-        Math.max(noProgressCalls, rejectedTerminalCalls) >=
-          MAX_TOOL_PROVIDER_CALLS
+    : !acceptedTerminal && noProgressCalls >= MAX_TOOL_PROVIDER_CALLS
       ? 'no_progress'
       : null;
   return {
@@ -396,7 +384,6 @@ export function recordToolAttempt(
     prefix: state.prefix ?? attempt.prefix,
     providerCalls,
     noProgressCalls,
-    rejectedTerminalCalls,
     observations,
     rejections,
     messages,
@@ -563,9 +550,7 @@ function renderRejection(
   input?: unknown,
   effect?: ToolDefinition['effect'],
 ): Pick<RecordedToolOutcome, 'resultText' | 'fallback'> {
-  const reply = priorState
-    ? 1 + Math.max(priorState.noProgressCalls, priorState.rejectedTerminalCalls)
-    : 2;
+  const reply = priorState ? 1 + priorState.noProgressCalls : 2;
   const stage = Math.min(
     3,
     rejection.code === REJECTION_CODES.backendFault
