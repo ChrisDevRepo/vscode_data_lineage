@@ -96,7 +96,7 @@ export async function executeStartExploration(
               code: REJECTION_CODES.invalidInput,
               reason:
                 'Additional SQL requires a new exploration with its own approval card: a fresh proposal with origin and scope.',
-              errors: at('fresh_proposal', ['supplement']),
+              errors: at('fresh_proposal', ['supplement'], undefined, 'omit'),
             }),
           );
         if (!isRefining)
@@ -124,6 +124,8 @@ export async function executeStartExploration(
                 isRefining
                   ? [String(sess.pendingExploration!.revision)]
                   : undefined,
+                // Outside a refinement no revision is accepted: the field stays out.
+                isRefining ? undefined : 'omit',
               ),
             }),
           );

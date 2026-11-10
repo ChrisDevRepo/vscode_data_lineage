@@ -1139,7 +1139,7 @@ async function dispatchToolCallBatch(
             rejection: {
               code: REJECTION_CODES.invalidInput,
               reason: `This call repeats an accepted ${call.toolName} call; its result is already in the observations under callId ${reused.callId}.`,
-              errors: at('duplicate_read'),
+              errors: at('duplicate_read', [''], undefined, 'no_call'),
               detail: { acceptedCallId: reused.callId },
             },
           },

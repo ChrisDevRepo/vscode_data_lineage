@@ -5,6 +5,7 @@ import { REJECTION_CODES } from './rejectionCodes';
 import {
   at,
   combineToolRejections,
+  type ToolError,
   type ToolRejection,
 } from './toolErrorEnvelope';
 import {
@@ -59,6 +60,24 @@ export class ToolInputView<S extends z.ZodType = z.ZodType> {
   add(problem: ToolRejection | null | undefined): void {
     if (problem) this.problems.push(problem);
   }
+}
+
+/**
+ * The fault with its required form cut to the fields the draft does not hold: its own field and
+ * every other the correction still owes; a form left naming the fault's field alone is dropped.
+ */
+function unheldForm(error: ToolError, draft: ToolDraft<object>): ToolError {
+  const { form, ...rest } = error;
+  const own = Object.keys(form ?? {})
+    .filter((key) => error.path === key || error.path.endsWith(`.${key}`))
+    .sort((a, b) => b.length - a.length)[0];
+  const holder = own ? error.path.slice(0, -own.length) : '';
+  const kept = Object.entries(form ?? {}).filter(
+    ([key]) => key === own || !draft.holds(holder + key),
+  );
+  return kept.length > (own ? 1 : 0)
+    ? { ...rest, form: Object.fromEntries(kept) }
+    : rest;
 }
 
 /**
@@ -120,6 +139,11 @@ export function ingestToolInput<S extends z.ZodType, R>(options: {
       ]),
     ];
     options.rejected?.(problem, view);
+    // A held draft keeps its accepted fields: a required form names none of them.
+    if (draft)
+      problem.errors = problem.errors.map((error) =>
+        error.form ? unheldForm(error, draft) : error,
+      );
     return problem;
   }
   if (!view.parsed.success || !commit)

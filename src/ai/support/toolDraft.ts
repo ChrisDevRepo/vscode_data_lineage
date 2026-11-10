@@ -166,6 +166,21 @@ export class ToolDraft<T extends object> {
   public get unchanged(): boolean {
     return this._unchanged;
   }
+  /** Whether a value is held at the path that the last rejection named no fault at or under. */
+  public holds(path: string): boolean {
+    const value = path
+      .split('.')
+      .reduce<unknown>(
+        (at, key) => (object(at) ? at[key] : undefined),
+        this.value,
+      );
+    return (
+      value !== undefined &&
+      !this.faults.some(
+        (fault) => fault === path || fault.startsWith(`${path}.`),
+      )
+    );
+  }
   /** Paths the last rejection named; cleared with the draft. */
   public get faultPaths(): readonly string[] {
     return this.faults;

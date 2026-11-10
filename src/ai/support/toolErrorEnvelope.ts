@@ -19,9 +19,6 @@ const FALLBACK_FIELD = 'sections';
 
 const REPORT_REFERENCE_FALLBACK =
   'If you cannot correct it, write that information in the detail memory instead, highlighted with a callout naming the unresolved issue.';
-/** Stage-3 exit for a field without listed values in a call whose accepted fields stay held. */
-const FIELD_ALONE_EXIT =
-  'If it still fails, send this field alone in this call as its schema type; held fields stay held, send the others next.';
 /** Stage-3 exit for a fault whose accepted values are listed. */
 const ALLOWED_VALUE_EXIT =
   'If it still fails, send exactly what the allowed list gives for this field.';
@@ -437,7 +434,23 @@ export interface ToolError {
   code: IssueCode;
   /** Domain classification of this particular fault; its fixed issue text stays unchanged. */
   category?: IssueCategory;
+  /** Values every check accepts; an empty list states that the engine found none. */
   values?: readonly string[];
+  /** JSON types the served schema accepts at the path; never listed as values. */
+  types?: readonly string[];
+  /** The schema bound the value broke, and the length or count sent (never the value). */
+  bound?: {
+    readonly keyword: string;
+    readonly limit: number;
+    readonly sent?: number;
+  };
+  /**
+   * Required fields of the object that holds the path, each with its schema types, and the field
+   * itself; always names a field besides the fault's own, never one a held draft keeps.
+   */
+  form?: Readonly<Record<string, readonly string[]>>;
+  /** The accepted state is absence: the field left out of the call, or no call at all. */
+  exit?: 'omit' | 'no_call';
   /** SyntaxError kind and character offset, when reported. Never the submitted text. */
   parse?: {
     readonly kind: string;
@@ -513,6 +526,17 @@ const RejectionShape = z
               ])
               .optional(),
             values: z.array(z.string()).optional(),
+            types: z.array(z.string()).optional(),
+            bound: z
+              .object({
+                keyword: z.string().min(1),
+                limit: z.number(),
+                sent: z.number().int().nonnegative().optional(),
+              })
+              .strict()
+              .optional(),
+            form: z.record(z.string(), z.array(z.string())).optional(),
+            exit: z.enum(['omit', 'no_call']).optional(),
             parse: z
               .object({
                 kind: z.string().min(1),
@@ -593,7 +617,10 @@ export function readToolErrorText(text: string): ToolRejection | null {
   }
 }
 
-/** Feedback stage of one fault: 1 states it, 2 adds the allowed values, 3 adds its exit. */
+/**
+ * Feedback stage of one fault: 1 states it, 2 adds the allowed values or the schema type or bound,
+ * 3 adds its exit: the fallback, or the required form, sent size or absence it carries.
+ */
 export type FeedbackStage = 1 | 2 | 3;
 
 /**
@@ -608,6 +635,11 @@ export interface ToolProblem {
     code: IssueCode;
     message: string;
     allowed?: readonly string[];
+    type?: readonly string[];
+    /** The broken schema keyword with its limit; from feedback 3 also the size sent. */
+    bound?: Readonly<Record<string, number>>;
+    form?: ToolError['form'];
+    exit?: ToolError['exit'];
   }>;
   resend: string[];
 }
@@ -671,8 +703,9 @@ function mergeToolErrors(
 }
 
 /**
- * Renders every independent fault once, each at its own stage: allowed values from feedback 2 and
- * the fault's exit only at feedback 3; submitted values are never echoed.
+ * Renders every independent fault once, each at its own stage: allowed values or the schema type
+ * or bound from feedback 2 and the fault's exit only at feedback 3; submitted values are never
+ * echoed; a list the engine found empty is served empty.
  */
 export function renderProblem(
   rejection: ToolRejection,
@@ -690,7 +723,6 @@ export function renderProblemReport(
   input?: unknown,
   effect?: ToolDefinition['effect'],
 ): { readonly text: string; readonly fallback: boolean } {
-  const held = effect === 'presentation_commit' || effect === 'hop_commit';
   const merged = mergeToolErrors(rejection.errors, false);
   // An absent parent covers its descendants; children under a present or mistyped parent still
   // explain the expected structure.
@@ -713,9 +745,8 @@ export function renderProblemReport(
     )
     .map((error) => {
       const issue = ISSUES[error.code];
-      const category = error.category ?? issue.category;
       const reference =
-        category === 'reference' &&
+        (error.category ?? issue.category) === 'reference' &&
         (effect === 'presentation_commit' ||
           (effect === 'hop_commit' &&
             /^(?:column_flow|indirect_columns)(?:\.|$)/.test(error.path)));
@@ -726,15 +757,9 @@ export function renderProblemReport(
             : effect === 'hop_commit'
               ? COLUMN_REFERENCE_FALLBACK
               : REPORT_REFERENCE_FALLBACK
-          : stage !== 3
-            ? ''
-            : held &&
-                error.path &&
-                (category === 'shape' || category === 'required')
-              ? FIELD_ALONE_EXIT
-              : error.values?.length
-                ? ALLOWED_VALUE_EXIT
-                : '';
+          : stage === 3 && error.values?.length
+            ? ALLOWED_VALUE_EXIT
+            : '';
       if (fallback && reference) fallbackShown = true;
       const text: IssueText =
         error.parse?.trailing && 'trailing' in issue ? issue.trailing : issue;
@@ -766,6 +791,25 @@ export function renderProblemReport(
         code: error.code,
         message,
         ...(allowed ? { allowed } : {}),
+        // Typed schema and engine facts, never text: a fault without listed values gets its type
+        // or bound at feedback 2 and the facts of its exit at feedback 3.
+        ...(stage >= 2 && error.types?.length && !allowed?.length
+          ? { type: error.types }
+          : {}),
+        ...(stage >= 2 && error.bound
+          ? {
+              bound: {
+                [error.bound.keyword]: error.bound.limit,
+                ...(stage === 3 && error.bound.sent !== undefined
+                  ? { sent: error.bound.sent }
+                  : {}),
+              },
+            }
+          : {}),
+        ...(stage === 3 && error.form && !allowed?.length
+          ? { form: error.form }
+          : {}),
+        ...(stage === 3 && error.exit ? { exit: error.exit } : {}),
       };
     });
   const problem: ToolProblem = {
@@ -782,13 +826,22 @@ export function renderProblemReport(
   return { text: JSON.stringify(problem), fallback: fallbackShown };
 }
 
-/** Faults with one issue code at each path; the call itself when no path is given. */
+/**
+ * Faults with one issue code at each path; the call itself when no path is given. `exit` states
+ * that the accepted state is absence.
+ */
 export function at(
   code: IssueCode,
   paths: readonly string[] = [''],
   values?: readonly string[],
+  exit?: ToolError['exit'],
 ): ToolError[] {
-  return paths.map((path) => ({ path, code, ...(values ? { values } : {}) }));
+  return paths.map((path) => ({
+    path,
+    code,
+    ...(values ? { values } : {}),
+    ...(exit ? { exit } : {}),
+  }));
 }
 
 /** Unions independently assessed faults; a backend invariant fault always owns the outcome code. */

@@ -3137,10 +3137,10 @@ export class NavigationEngine implements IHopStateMachine {
         /^column_flow\.\d+\./.test(mapped.path)
       )
         return { ...mapped, category: 'reference' };
-      // A missing or mistyped column_flow node field lists the ids its entry accepts.
+      // A missing or mistyped column_flow node field lists the ids its entry accepts; its schema
+      // type stays a fact beside them.
       if (
         (mapped.code === 'missing' || mapped.code === 'type') &&
-        mapped.values &&
         /^column_flow\.\d+\.(?:out_node|upstream_columns\.\d+\.node)$/.test(
           mapped.path,
         )

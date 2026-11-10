@@ -76,7 +76,7 @@ export function evaluateStartTargetColumnsRule(
       code: REJECTION_CODES.invalidInput,
       reason:
         'analysisMode "bb" is whole-object lineage and does not accept targetColumns.',
-      errors: at('never', ['targetColumns']),
+      errors: at('never', ['targetColumns'], undefined, 'omit'),
     });
   return null;
 }
