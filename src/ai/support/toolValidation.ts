@@ -214,7 +214,7 @@ function branchFaults(branch: Record<string, unknown>, value: unknown): number {
  * one pass); `once` visits only the first such branch. Not if/then/else, not, $defs or
  * additionalProperties.
  */
-function walk(
+export function walkServedSchema(
   node: unknown,
   value: unknown,
   pointer: string,
@@ -228,7 +228,7 @@ function walk(
   if (!isRecord(node)) return;
   visit(node, value, pointer);
   for (const member of (node.allOf as unknown[] | undefined) ?? [])
-    walk(member, value, pointer, visit, once);
+    walkServedSchema(member, value, pointer, visit, once);
   const branches = [
     ...((node.anyOf as unknown[] | undefined) ?? []),
     ...((node.oneOf as unknown[] | undefined) ?? []),
@@ -238,17 +238,17 @@ function walk(
   const fewest = Math.min(...branches.map(({ faults }) => faults));
   const chosen = branches.filter(({ faults }) => faults === fewest);
   for (const { branch } of once ? chosen.slice(0, 1) : chosen)
-    walk(branch, value, pointer, visit, once);
+    walkServedSchema(branch, value, pointer, visit, once);
   if (Array.isArray(value))
     value.forEach((item, index) =>
-      walk(node.items, item, `${pointer}/${index}`, visit, once),
+      walkServedSchema(node.items, item, `${pointer}/${index}`, visit, once),
     );
   else if (isRecord(value))
     for (const [key, schema] of Object.entries(
       isRecord(node.properties) ? node.properties : {},
     )) {
       if (Object.prototype.hasOwnProperty.call(value, key))
-        walk(schema, value[key], `${pointer}/${key}`, visit, once);
+        walkServedSchema(schema, value[key], `${pointer}/${key}`, visit, once);
     }
 }
 
@@ -460,7 +460,7 @@ export function schemaTypesAt(
   const pointer = path ? `/${path.split('.').join('/')}` : '';
   const types = new Set<string>();
   const { json } = compiledSchema(schema);
-  walk(json, input, '', (node, _value, at) => {
+  walkServedSchema(json, input, '', (node, _value, at) => {
     if (at === pointer) for (const type of schemaTypes(node)) types.add(type);
   });
   return unbarred(barredTypes(json, input), pointer, [...types]);
@@ -475,7 +475,7 @@ function barredTypes(
   input: unknown,
 ): Map<string, string[]> {
   const barred = new Map<string, string[]>();
-  walk(json, input, '', (node, value, pointer) => {
+  walkServedSchema(json, input, '', (node, value, pointer) => {
     if (!isRecord(value) || !isRecord(node.properties)) return;
     for (const [key, property] of Object.entries(node.properties))
       if (isRecord(property) && isRecord(property.not))
@@ -502,7 +502,7 @@ function requiredForms(
   input: unknown,
 ): Map<string, Record<string, string[]>> {
   const forms = new Map<string, Record<string, string[]>>();
-  walk(json, input, '', (node, value, pointer) => {
+  walkServedSchema(json, input, '', (node, value, pointer) => {
     if (!isRecord(value)) return;
     const properties = isRecord(node.properties) ? node.properties : {};
     const form = forms.get(pointer) ?? {};
@@ -697,7 +697,7 @@ export function validateToolCandidate<S extends z.ZodType>(
     faults: ToolError[] = [],
     problems: ToolRejection[] = [];
   // Served schemas omit `pattern` (provider compatibility); each regex is checked here instead.
-  walk(json, input, '', (node, value, pointer) => {
+  walkServedSchema(json, input, '', (node, value, pointer) => {
     if (
       typeof node.toolPattern === 'string' &&
       typeof value === 'string' &&
@@ -722,7 +722,7 @@ export function validateToolCandidate<S extends z.ZodType>(
         ? path === pointer || path.startsWith(`${pointer}/`)
         : path === `${pointer}/${key}` || path.startsWith(`${pointer}/${key}/`),
     );
-  walk(json, input, '', (node, value, pointer) => {
+  walkServedSchema(json, input, '', (node, value, pointer) => {
     for (const [name, rule] of Object.entries(DOMAIN_RULES))
       if (name in node)
         faults.push(
@@ -742,7 +742,7 @@ export function validateToolCandidate<S extends z.ZodType>(
   const add = (problem: ToolRejection | null | void) => {
     if (problem) problems.push(problem);
   };
-  walk(
+  walkServedSchema(
     json,
     input,
     '',

@@ -35,7 +35,6 @@ import {
   type ToolRejection,
 } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
-import { toolCallNotationFault } from '../support/toolCallNotation';
 import { storedEvidenceKindBytes } from '../support/tokenBudget';
 import { sensitiveTraceReason } from '../providers/traceSecurity';
 import type { ToolDefinition, IToolRegistry } from '../tools/registry';
@@ -458,33 +457,20 @@ function modelToolDefinitions(
   }));
 }
 
-/** Applies the tool-call notation check to one provider call. */
-function checkToolCallNotation(call: GeneratedToolCall): GeneratedToolCall {
-  const fault = call.valid ? toolCallNotationFault(call.input) : null;
-  if (!fault) return call;
-  return {
-    valid: false,
-    callId: call.callId,
-    toolName: call.toolName,
-    input: call.input,
-    code: 'tool_call_notation',
-    reason: fault.reason,
-    issuePaths: fault.issuePaths,
-  };
-}
-
 function rejectionFromInvalid(
   call: Extract<GeneratedToolCall, { valid: false }>,
   registry: IToolRegistry<string>,
 ): ToolOutcomeData {
   const issuePaths = call.issuePaths ?? [];
   const tools = registry.getTools().map((tool) => tool.name);
-  // Arguments that are not one JSON object hold nothing, so the correction resends every field its
-  // live card requires; held fields are optional on that card, so none is asked for again.
+  // Arguments that are not one JSON object, or that carry notation, hold nothing, so the
+  // correction resends every field its live card requires; held fields are optional on that card,
+  // so none is asked for again.
   const definition = registry.get(call.toolName);
   const resend =
-    (call.code === 'type' || call.code === 'json_syntax') &&
-    issuePaths.length === 0 &&
+    (call.code === 'tool_call_notation' ||
+      ((call.code === 'type' || call.code === 'json_syntax') &&
+        issuePaths.length === 0)) &&
     definition
       ? ((toModelJsonSchema(definition.inputSchema).required as
           | string[]
@@ -970,7 +956,7 @@ async function dispatchToolCallBatch(
 
   for (const emitted of toolCalls) {
     const call = {
-      ...checkToolCallNotation(emitted),
+      ...emitted,
       effect: input.registry.get(emitted.toolName)?.effect,
     };
     if (input.signal?.aborted) {

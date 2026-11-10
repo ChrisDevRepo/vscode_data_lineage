@@ -20,7 +20,11 @@ import {
   normalizeArgumentText,
   normalizeModelInput,
 } from '../tools/normalizeModelInput';
-import { toolCallNotationFault } from '../support/toolCallNotation';
+import {
+  servedNotation,
+  toolCallNotationFault,
+} from '../support/toolCallNotation';
+import { toModelJsonSchema } from '../tools/jsonSchema';
 import {
   STRUCTURED_OUTPUT_TOOL,
   StructuredOutputError,
@@ -378,6 +382,7 @@ export function classifyToolCall(
     code: InvalidGeneratedToolCall['code'],
     reason: string,
     parse?: InvalidGeneratedToolCall['parse'],
+    issuePaths?: readonly string[],
   ) => ({
     replayInput,
     call: {
@@ -388,6 +393,7 @@ export function classifyToolCall(
       code,
       reason,
       ...(parse ? { parse } : {}),
+      ...(issuePaths ? { issuePaths } : {}),
     },
   });
   const definition = definitions.get(toolName);
@@ -399,6 +405,20 @@ export function classifyToolCall(
   }
   const normalized = normalizeModelInput(definition.inputSchema, emitted.args);
   logFixes(toolName, callId, normalized.fixes, debugLog);
+  const notation = toolCallNotationFault(
+    normalized.input,
+    servedNotation(
+      definitions.keys(),
+      toModelJsonSchema(definition.inputSchema),
+    ),
+  );
+  if (notation)
+    return reject(
+      'tool_call_notation',
+      notation.reason,
+      undefined,
+      notation.issuePaths,
+    );
   return {
     call: {
       valid: true,
@@ -452,7 +472,10 @@ export function finishStructured<T>(
     debugLog,
   );
   const payload = normalized?.input;
-  const notation = toolCallNotationFault(payload);
+  const notation = toolCallNotationFault(
+    payload,
+    servedNotation([STRUCTURED_OUTPUT_TOOL], toModelJsonSchema(schema)),
+  );
   if (notation)
     throw fail(notation.reason, at('tool_call_notation', notation.issuePaths));
   const admitted =
