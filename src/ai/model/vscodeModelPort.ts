@@ -37,6 +37,7 @@ import {
 } from './vscodeLangChainBridge';
 import {
   systemPromptHash,
+  type TokenUsage,
   type WireEvent,
   type WireRecord,
 } from '../observability/wireLog';
@@ -143,6 +144,7 @@ export class VscodeModelPort implements ModelPort {
         message,
         emitted: emittedCalls,
         nonTextChars,
+        usage,
       } = await this.collectGeneration(
         input.messages,
         input.system,
@@ -197,7 +199,13 @@ export class VscodeModelPort implements ModelPort {
           ` observed_parts=${content.length} observed_text_chars=${text.length}` +
           ` observed_nontext_chars=${nonTextChars} provider_parts=${providerParts.length}` +
           ` tool_calls=${toolCalls.length} duration_ms=${Date.now() - startedAt}` +
-          ' (provider usage unavailable)',
+          (usage
+            ? ` input_tokens=${usage.inputTokens ?? 'n/a'}` +
+              ` output_tokens=${usage.outputTokens ?? 'n/a'}` +
+              ` total_tokens=${usage.totalTokens ?? 'n/a'}` +
+              ` reasoning_tokens=${usage.reasoningTokens ?? 'n/a'}` +
+              ` cached_tokens=${usage.cachedTokens ?? 'n/a'}`
+            : ' (provider usage unavailable)'),
       );
       return {
         status: 'completed',
@@ -285,6 +293,8 @@ export class VscodeModelPort implements ModelPort {
     /** The message's tool calls in emission order, each verified to carry a call ID. */
     emitted: readonly EmittedToolCall[];
     nonTextChars: number;
+    /** Provider-reported usage of the last 'usage' stream part; absent when none was sent. */
+    usage?: TokenUsage;
   }> {
     const cancellation = bindCancellation(signal);
     const wireLog = this.options.wireLog;
@@ -335,6 +345,7 @@ export class VscodeModelPort implements ModelPort {
         : [...history];
       let message = new AIMessageChunk({ content: '' });
       let nonTextChars = 0;
+      let usage: TokenUsage | undefined;
       const stream = await runnable.stream(messages, { signal });
       for await (const chunk of stream) {
         if (signal?.aborted) throw cancelledError();
@@ -344,6 +355,8 @@ export class VscodeModelPort implements ModelPort {
         const streamedNonText = chunk.response_metadata?.nonTextChars;
         if (typeof streamedNonText === 'number')
           nonTextChars += streamedNonText;
+        const streamedUsage = chunk.response_metadata?.providerUsage;
+        if (streamedUsage) usage = streamedUsage as TokenUsage;
       }
       if (signal?.aborted) throw cancelledError();
       const emitted = emittedToolCalls(message);
@@ -353,8 +366,9 @@ export class VscodeModelPort implements ModelPort {
         finishReason:
           (message.tool_calls?.length ?? 0) > 0 ? 'tool-calls' : 'stop',
         latencyMs: Date.now() - startedAt,
+        ...(usage ? { usage } : {}),
       });
-      return { message, emitted, nonTextChars };
+      return { message, emitted, nonTextChars, usage };
     } catch (error) {
       if (
         emitWire &&

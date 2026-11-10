@@ -1,5 +1,6 @@
 /** Request-scoped bridge from the VS Code Chat model selected by the user to LangChain. */
 import * as vscode from 'vscode';
+import type { TokenUsage } from '../observability/wireLog';
 import type { CallbackManagerForLLMRun } from '@langchain/core/callbacks/manager';
 import {
   BaseChatModel,
@@ -269,6 +270,19 @@ export class VscodeLangChainBridge extends BaseChatModel<VscodeLangChainCallOpti
           yield new ChatGenerationChunk({ text: '', message });
           continue;
         }
+        if (isUsagePart(part)) {
+          // Accounting, not content: never replayed to the model nor counted as a provider part,
+          // whether or not its payload parses.
+          const providerUsage = parseUsageData(part.data);
+          if (providerUsage) {
+            const message = new AIMessageChunk({
+              content: '',
+              response_metadata: { providerUsage },
+            });
+            yield new ChatGenerationChunk({ text: '', message });
+          }
+          continue;
+        }
         providerParts.push(part);
         capture?.otherParts.push(toWirePart(part));
         const nonTextChars = streamedValueChars(part);
@@ -349,6 +363,54 @@ function toVscodeMessage(
     'invalid_request',
     `Unsupported LangChain message type: ${message.getType()}.`,
   );
+}
+
+/** The data part VS Code's built-in providers stream for token usage. */
+function isUsagePart(
+  part: unknown,
+): part is { mimeType: 'usage'; data: unknown } {
+  return (
+    !!part &&
+    typeof part === 'object' &&
+    (part as { mimeType?: unknown }).mimeType === 'usage'
+  );
+}
+
+/**
+ * Token usage from a usage part's UTF-8 JSON in OpenAI chat-completions field names; undefined
+ * for an unreadable payload.
+ */
+function parseUsageData(data: unknown): TokenUsage | undefined {
+  if (!(data instanceof Uint8Array)) return undefined;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(new TextDecoder().decode(data));
+  } catch {
+    return undefined;
+  }
+  if (!raw || typeof raw !== 'object') return undefined;
+  const u = raw as Record<string, unknown>;
+  const count = (value: unknown): number | undefined =>
+    typeof value === 'number' && Number.isFinite(value) && value >= 0
+      ? value
+      : undefined;
+  const nested = (key: string, field: string): number | undefined => {
+    const group = u[key];
+    return group && typeof group === 'object'
+      ? count((group as Record<string, unknown>)[field])
+      : undefined;
+  };
+  const usage: TokenUsage = {
+    inputTokens: count(u.prompt_tokens),
+    outputTokens: count(u.completion_tokens),
+    totalTokens: count(u.total_tokens),
+    reasoningTokens: nested('completion_tokens_details', 'reasoning_tokens'),
+    cachedTokens: nested('prompt_tokens_details', 'cached_tokens'),
+  };
+  const present = Object.entries(usage).filter(([, v]) => v !== undefined);
+  return present.length > 0
+    ? (Object.fromEntries(present) as TokenUsage)
+    : undefined;
 }
 
 /** Character size of a stream part's string or string-array `value`; 0 for any other shape. */
