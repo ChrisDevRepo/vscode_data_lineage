@@ -11,7 +11,7 @@ The newest version heading collects changes until that version ships.
 ### Changed
 - Improved AI messages and rejection handling. Approving a new deep analysis while one is shown clears the current preview and its findings.
 - Enhanced column traces: the AI stores indirect columns, shown apart from direct lineage in the graph, detail view and AI preview.
-- Custom AI output templates now use `schemaVersion: 3`: instructions the business, technical and callout recipes repeated word for word are stated once. An older file is ignored in favour of the built-in templates, with a warning in the output log; re-create it with **Data Lineage: Create AI Output Templates** and copy your edits across.
+- Custom AI output templates now use `schemaVersion: 3`; keys and fields are unchanged. An older file is ignored in favour of the built-in templates, with a warning in the output log; set `schemaVersion: 3` in it.
 
 ### Removed
 - **Breaking:** the SQL Server (mssql) extension integration and the `dataLineageViz.database.connectionProvider` setting; connect with **Data Lineage: Add Database Connection**.
