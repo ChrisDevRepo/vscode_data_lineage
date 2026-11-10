@@ -303,12 +303,18 @@ function canonicalSchema(schema: z.ZodType): Record<string, unknown> {
           Object.prototype.hasOwnProperty.call(properties, key),
         );
         const required = (owner.required ?? []) as string[];
+        // Fields the group asserts as required join its own, beside their property schemas.
+        const { required: asserted = [], ...assertions } =
+          group.assertions ?? {};
         const schema = {
           properties: Object.fromEntries(
             fields.map((key) => [key, properties[key]]),
           ),
-          required: required.filter((key) => fields.includes(key)),
-          ...group.assertions,
+          required: [
+            ...required.filter((key) => fields.includes(key)),
+            ...(asserted as string[]),
+          ],
+          ...assertions,
         };
         for (const key of fields) properties[key] = {};
         owner.required = required.filter((key) => !fields.includes(key));
@@ -327,6 +333,16 @@ const compiled = new WeakMap<
   z.ZodType,
   { json: Record<string, unknown>; check: ValidateFunction }
 >();
+/** The canonical schema and its validator, compiled once per schema object. */
+function compiledSchema(schema: z.ZodType) {
+  let entry = compiled.get(schema);
+  if (!entry) {
+    const json = canonicalSchema(schema);
+    entry = { json, check: newValidator().compile(json) };
+    compiled.set(schema, entry);
+  }
+  return entry;
+}
 /** The sole canonical admission verdict and original native schema faults. */
 export type ToolValidation<T> =
   | { success: true; data: T }
@@ -435,12 +451,30 @@ function schemaTypes(node: unknown): string[] {
       ];
 }
 
-/** By JSON pointer of each object the value holds: its required fields with their schema types. */
+/** The JSON types the schema accepts for the value the candidate holds at a dotted path. */
+export function schemaTypesAt(
+  schema: z.ZodType,
+  input: unknown,
+  path: string,
+): string[] {
+  const pointer = path ? `/${path.split('.').join('/')}` : '';
+  const types = new Set<string>();
+  walk(compiledSchema(schema).json, input, '', (node, _value, at) => {
+    if (at === pointer) for (const type of schemaTypes(node)) types.add(type);
+  });
+  return [...types];
+}
+
+/**
+ * By JSON pointer of each object the value holds: its required fields with their schema types,
+ * without a type another assertion on the same object bars (`not`).
+ */
 function requiredForms(
   json: Record<string, unknown>,
   input: unknown,
 ): Map<string, Record<string, string[]>> {
   const forms = new Map<string, Record<string, string[]>>();
+  const barred: Array<[pointer: string, key: string, types: string[]]> = [];
   walk(json, input, '', (node, value, pointer) => {
     if (!isRecord(value)) return;
     const properties = isRecord(node.properties) ? node.properties : {};
@@ -450,7 +484,15 @@ function requiredForms(
       if (types.length) form[key] = types;
     }
     forms.set(pointer, form);
+    for (const [key, property] of Object.entries(properties))
+      if (isRecord(property) && isRecord(property.not))
+        barred.push([pointer, key, schemaTypes(property.not)]);
   });
+  for (const [pointer, key, types] of barred) {
+    const form = forms.get(pointer);
+    if (form?.[key])
+      form[key] = form[key].filter((type) => !types.includes(type));
+  }
   return forms;
 }
 
@@ -497,12 +539,15 @@ function rejection(
       .slice(held)
       .map((part) => part.replace(/~1/g, '/').replace(/~0/g, '~'))
       .join('.');
-    const expected =
-      error.keyword === 'type' && !isRecord(error.data)
-        ? Object.entries(
-            requiredForms(error.parentSchema ?? {}, {}).get('') ?? {},
-          ).map(([key, inner]) => [`${field}.${key}`, inner])
-        : [];
+    const unsent =
+      error.keyword === 'required'
+        ? error.parentSchema?.properties?.[error.params.missingProperty]
+        : error.keyword === 'type' && !isRecord(error.data)
+          ? error.parentSchema
+          : undefined;
+    const expected = Object.entries(
+      requiredForms(unsent ?? {}, {}).get('') ?? {},
+    ).map(([key, inner]) => [`${field}.${key}`, inner]);
     const named = form && {
       ...form,
       [field]: form[field] ?? [...types],
@@ -552,7 +597,9 @@ function rejection(
           : field && 'const' in field
             ? [String(field.const)]
             : undefined;
-        const types = schemaTypes(field);
+        const types =
+          forms.get(error.instancePath)?.[params.missingProperty] ??
+          schemaTypes(field);
         shape = { types, form: formOf(error, types) };
       } else if (keyword === 'additionalProperties') {
         code = 'unknown_key';
@@ -616,13 +663,7 @@ export function validateToolCandidate<S extends z.ZodType>(
   input: unknown,
   facts: ToolFactContext = {},
 ): ToolValidation<z.output<S>> {
-  let entry = compiled.get(schema);
-  if (!entry) {
-    const json = canonicalSchema(schema);
-    entry = { json, check: newValidator().compile(json) };
-    compiled.set(schema, entry);
-  }
-  const { json, check } = entry;
+  const { json, check } = compiledSchema(schema);
   const native = check(input),
     errors = [...(check.errors ?? [])],
     faults: ToolError[] = [],

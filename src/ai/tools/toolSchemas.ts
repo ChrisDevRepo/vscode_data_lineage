@@ -135,15 +135,18 @@ const START_SCOPE_FIELDS = {
   passNodeIds: true,
 } as const;
 
+/** `required` sits beside the scope fields, so a missing one keeps its schema type and values. */
 const FreshScopeAdmission = {
   required: ['origin', 'analysisMode', 'depth'],
-  properties: { depth: { not: { type: 'null' }, toolIssue: 'missing' } },
+  allOf: [
+    { properties: { depth: { not: { type: 'null' }, toolIssue: 'missing' } } },
+  ],
 };
 const startScopeAdmission = (fresh: object) => [
   {
     name: 'start.scope',
     fields: Object.keys(START_SCOPE_FIELDS),
-    assertions: { allOf: [fresh] },
+    assertions: fresh,
   },
 ];
 

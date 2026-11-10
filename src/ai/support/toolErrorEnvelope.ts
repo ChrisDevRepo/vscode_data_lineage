@@ -705,7 +705,7 @@ function mergeToolErrors(
 /**
  * Renders every independent fault once, each at its own stage: allowed values or the schema type
  * or bound from feedback 2 and the fault's exit only at feedback 3; submitted values are never
- * echoed; a list the engine found empty is served empty.
+ * echoed; a list the engine found empty is not served, the fault's schema type is.
  */
 export function renderProblem(
   rejection: ToolRejection,
@@ -778,7 +778,7 @@ export function renderProblemReport(
           ? error.path.split('.').at(-1)
           : valueAt(input, error.path);
       const allowed =
-        error.values && stage >= 2
+        error.values?.length && stage >= 2
           ? [...error.values].sort(
               (a, b) =>
                 (typeof sent === 'string'
@@ -793,7 +793,7 @@ export function renderProblemReport(
         ...(allowed ? { allowed } : {}),
         // Typed schema and engine facts, never text: a fault without listed values gets its type
         // or bound at feedback 2 and the facts of its exit at feedback 3.
-        ...(stage >= 2 && error.types?.length && !allowed?.length
+        ...(stage >= 2 && error.types?.length && !allowed
           ? { type: error.types }
           : {}),
         ...(stage >= 2 && error.bound
@@ -806,9 +806,7 @@ export function renderProblemReport(
               },
             }
           : {}),
-        ...(stage === 3 && error.form && !allowed?.length
-          ? { form: error.form }
-          : {}),
+        ...(stage === 3 && error.form && !allowed ? { form: error.form } : {}),
         ...(stage === 3 && error.exit ? { exit: error.exit } : {}),
       };
     });

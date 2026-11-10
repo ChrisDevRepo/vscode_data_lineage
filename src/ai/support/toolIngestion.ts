@@ -9,6 +9,7 @@ import {
   type ToolRejection,
 } from './toolErrorEnvelope';
 import {
+  schemaTypesAt,
   validateToolCandidate,
   type ToolValidation,
   type ToolFactContext,
@@ -139,11 +140,16 @@ export function ingestToolInput<S extends z.ZodType, R>(options: {
       ]),
     ];
     options.rejected?.(problem, view);
-    // A held draft keeps its accepted fields: a required form names none of them.
-    if (draft)
-      problem.errors = problem.errors.map((error) =>
-        error.form ? unheldForm(error, draft) : error,
-      );
+    problem.errors = problem.errors.map((error) => {
+      // A fault the engine found no accepted value for states its field's schema type instead.
+      const types =
+        error.values?.length === 0 && !error.types
+          ? schemaTypesAt(schema, candidate, error.path)
+          : [];
+      const typed = types.length ? { ...error, types } : error;
+      // A held draft keeps its accepted fields: a required form names none of them.
+      return draft && typed.form ? unheldForm(typed, draft) : typed;
+    });
     return problem;
   }
   if (!view.parsed.success || !commit)
