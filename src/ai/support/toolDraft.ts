@@ -287,6 +287,7 @@ export class ToolDraft<T extends object> {
           overwritten.add(path);
         } else if (
           faulty &&
+          !invalid.includes(path) &&
           object(input[key]) &&
           Object.keys(shape(child)).length
         ) {

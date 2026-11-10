@@ -57,6 +57,17 @@ export async function executeStartExploration(
     const beforeRevision = sess.pendingExploration?.revision;
     const receipt = toolInputReceipt.getStore();
     const admission = startAdmissionFacts();
+    // A missing analysisMode offers only the modes the call's own targetColumns accept.
+    admission.facts.nativeIssue = (error, mapped) => {
+      if (mapped.path !== 'analysisMode' || mapped.code !== 'missing') return;
+      const sent = (error.data as { targetColumns?: readonly string[] })
+        .targetColumns;
+      const { values: offered = [], ...rest } = mapped;
+      const values = offered.filter(
+        (mode) => !evaluateStartTargetColumnsRule(mode as 'bb' | 'ct', sent),
+      );
+      return values.length ? { ...rest, values } : rest;
+    };
     const outcome = ingestToolInput<
       typeof StartExplorationInputSchema,
       Promise<string>
