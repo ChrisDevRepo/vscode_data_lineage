@@ -291,21 +291,18 @@ function malformedArgumentsFault(text: string): {
 
 /**
  * An emitted call whose malformed argument text normalizes to one object (see
- * `normalizeArgumentText`) becomes an object-argument call; the sent text is returned as `raw`.
+ * `normalizeArgumentText`) becomes an object-argument call.
  */
 function resolveEmitted(
   emitted: EmittedToolCall,
   debugLog?: (message: string) => void,
-): { readonly emitted: EmittedToolCall; readonly raw?: string } {
-  if (!('malformedArgs' in emitted)) return { emitted };
+): EmittedToolCall {
+  if (!('malformedArgs' in emitted)) return emitted;
   const trailing = normalizeArgumentText(emitted.malformedArgs);
-  if (!trailing) return { emitted };
-  logFixes(emitted.toolName, trailing.fixes, debugLog);
+  if (!trailing) return emitted;
+  logFixes(emitted.toolName, emitted.callId, trailing.fixes, debugLog);
   const { callId, toolName } = emitted;
-  return {
-    emitted: { callId, toolName, args: trailing.input },
-    raw: emitted.malformedArgs,
-  };
+  return { callId, toolName, args: trailing.input };
 }
 
 /**
@@ -319,8 +316,6 @@ export interface ValidGeneratedToolCall {
   readonly toolName: string;
   /** Transport-decoded arguments, preserved for the receiving tool's schema admission. */
   readonly input: unknown;
-  /** The argument text exactly as sent, kept as evidence when it was normalized into `input`. */
-  readonly rawInput?: string;
 }
 
 /** A provider tool call rejected before dispatch. */
@@ -376,7 +371,7 @@ export function classifyToolCall(
   readonly call: GeneratedToolCall;
   readonly replayInput: Record<string, unknown>;
 } {
-  const { emitted, raw } = resolveEmitted(provided, debugLog);
+  const emitted = resolveEmitted(provided, debugLog);
   const { callId, toolName } = emitted;
   const replayInput = 'args' in emitted ? emitted.args : {};
   const reject = (
@@ -403,14 +398,13 @@ export function classifyToolCall(
     return reject(fault.code, fault.reason, fault.parse);
   }
   const normalized = normalizeModelInput(definition.inputSchema, emitted.args);
-  logFixes(toolName, normalized.fixes, debugLog);
+  logFixes(toolName, callId, normalized.fixes, debugLog);
   return {
     call: {
       valid: true,
       callId,
       toolName,
       input: normalized.input,
-      ...(raw === undefined ? {} : { rawInput: raw }),
     },
     replayInput,
   };
@@ -425,11 +419,9 @@ export function finishStructured<T>(
   schema: ZodType<T>,
   debugLog?: (message: string) => void,
 ): T {
-  const resolved = provided.map((call) => resolveEmitted(call, debugLog));
-  const emitted = resolved.map((call) => call.emitted);
-  const rawInput = resolved.find((call) => call.raw !== undefined)?.raw;
+  const emitted = provided.map((call) => resolveEmitted(call, debugLog));
   const fail = (reason: string, errors: readonly ToolError[]) =>
-    new StructuredOutputError(reason, errors, rawInput);
+    new StructuredOutputError(reason, errors);
   const calls = emitted.flatMap((call) => ('args' in call ? [call.args] : []));
   if (
     emitted.some((call) => call.toolName !== STRUCTURED_OUTPUT_TOOL) ||
@@ -453,7 +445,12 @@ export function finishStructured<T>(
   }
   const normalized =
     calls.length === 1 ? normalizeModelInput(schema, calls[0]) : undefined;
-  logFixes(STRUCTURED_OUTPUT_TOOL, normalized?.fixes ?? [], debugLog);
+  logFixes(
+    STRUCTURED_OUTPUT_TOOL,
+    emitted[0]?.callId ?? '',
+    normalized?.fixes ?? [],
+    debugLog,
+  );
   const payload = normalized?.input;
   const notation = toolCallNotationFault(payload);
   if (notation)
@@ -478,6 +475,7 @@ export function finishStructured<T>(
 
 function logFixes(
   toolName: string,
+  callId: string,
   fixes: readonly { path: string; before: string }[],
   debugLog?: (message: string) => void,
 ): void {
@@ -489,7 +487,7 @@ function logFixes(
   };
   for (const fix of fixes)
     debugLog?.(
-      `[Normalize] tool=${safeIdentifier(toolName, identifiers)} path=${safeIdentifier(fix.path, identifiers)} beforeBytes=${Buffer.byteLength(fix.before)}`,
+      `[Normalize] tool=${safeIdentifier(toolName, identifiers)} call=${safeIdentifier(callId, identifiers)} path=${safeIdentifier(fix.path, identifiers)} beforeBytes=${Buffer.byteLength(fix.before)}`,
     );
 }
 
