@@ -483,13 +483,7 @@ export const GetScopeBundleInputSchema = z
                 then: { properties: { depth: false } },
               },
               {
-                if: {
-                  not: { required: ['depth'] },
-                  anyOf: [
-                    { required: ['upstream_depth'] },
-                    { required: ['downstream_depth'] },
-                  ],
-                },
+                if: { not: { required: ['depth'] } },
                 then: { required: ['upstream_depth', 'downstream_depth'] },
               },
             ],
