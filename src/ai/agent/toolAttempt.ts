@@ -54,19 +54,17 @@ import type { ScopeProposal } from './discoveryCapture';
  * The stored stand-in for an accepted result that does not fit the evidence share: a "too big"
  * reply in the tool-error shape the model already repairs from, never a prefix of the body.
  */
-function resultTooLargeReply(
+function resultTooLargeRejection(
   toolName: string,
   bytes: number,
   heldBytes: number,
   budget: number,
-): string {
-  return JSON.stringify(
-    makeRejection({
-      code: REJECTION_CODES.invalidInput,
-      errors: at('result_too_large'),
-      detail: { tool: toolName, bytes, held_bytes: heldBytes, budget },
-    }),
-  );
+): ToolRejection {
+  return makeRejection({
+    code: REJECTION_CODES.invalidInput,
+    errors: at('result_too_large'),
+    detail: { tool: toolName, bytes, held_bytes: heldBytes, budget },
+  });
 }
 
 /**
@@ -127,7 +125,8 @@ type ToolOutcomeData =
         readonly observe: boolean;
         readonly acceptedCallKey?: string;
         readonly input?: unknown;
-        readonly refused?: boolean;
+        /** The too-big refusal that replaced the result, as the typed value `result` renders. */
+        readonly refused?: ToolRejection;
       };
     }
   | {
@@ -158,7 +157,7 @@ export interface ToolAttemptObservation {
    * Set when the body was refused storage for size: the observation holds no evidence and adds no
    * progress.
    */
-  readonly refused?: true;
+  readonly refused?: ToolRejection;
 }
 
 interface ToolAttemptCall extends ToolOutcomeIdentity {
@@ -479,10 +478,9 @@ function rejectionFromInvalid(
   };
 }
 
-function rejectionFromResult(resultText: string): ToolOutcomeData | null {
-  const rejection = readToolErrorText(resultText);
-  if (!rejection) return null;
-  return { status: 'rejected', rejection };
+/** The one place a dispatched result's text is read for the rejection it carries. */
+function rejectionFromResult(resultText: string): ToolRejection | null {
+  return readToolErrorText(resultText);
 }
 
 /**
@@ -563,17 +561,16 @@ function recordToolOutcome(
         ...(outcome.detail.acceptedCallKey
           ? { acceptedCallKey: outcome.detail.acceptedCallKey }
           : {}),
-        ...(outcome.detail.refused ? { refused: true } : {}),
+        ...(outcome.detail.refused ? { refused: outcome.detail.refused } : {}),
       });
     }
     if (outcome.detail.refused) {
-      const refusal = readToolErrorText(outcome.detail.result);
-      if (refusal)
-        return {
-          ...renderRejection(refusal, priorState, call.input, call.effect),
-          status: 'error',
-          artifact: refusal,
-        };
+      const refusal = outcome.detail.refused;
+      return {
+        ...renderRejection(refusal, priorState, call.input, call.effect),
+        status: 'error',
+        artifact: refusal,
+      };
     }
     return {
       resultText: renderObservationResultContent(outcome.detail.result),
@@ -1078,7 +1075,7 @@ async function dispatchToolCallBatch(
           detail: {
             result: reused.result,
             observe: false,
-            ...(reused.refused ? { refused: true } : {}),
+            ...(reused.refused ? { refused: reused.refused } : {}),
           },
         },
         calls,
@@ -1123,18 +1120,20 @@ async function dispatchToolCallBatch(
     const detectedRefusal = signal?.kind === 'refused' ? signal.reason : null;
     const controlSuccess =
       detectedGate || detectedReroute !== null || detectedRefusal !== null;
-    const resultRejection = controlSuccess
-      ? null
-      : rejectionFromResult(resultText);
-    const isError = resultRejection !== null;
+    const rejected = controlSuccess ? null : rejectionFromResult(resultText);
+    const isError = rejected !== null;
     input.onToolResult?.(call.toolName, call.input, isError, resultText);
     const terminalSuccess =
       !isError &&
       (call.toolName === input.requiredTerminalTool ||
         (input.isPhaseComplete?.() ?? false));
 
-    if (resultRejection) {
-      const data = withResendIdentity(resultRejection, call, input.priorState);
+    if (rejected) {
+      const data = withResendIdentity(
+        { status: 'rejected', rejection: rejected },
+        call,
+        input.priorState,
+      );
       const outcome = recordToolOutcome(
         call,
         data,
@@ -1167,20 +1166,20 @@ async function dispatchToolCallBatch(
     } else {
       const observe = !controlSuccess && !terminalSuccess;
       let storedResult = resultText;
-      let refused = false;
+      let refused: ToolRejection | undefined;
       if (observe) {
         const candidateBytes = Buffer.byteLength(resultText);
         if (
           heldObservationBytes + candidateBytes >
           storedEvidenceKindBytes(model.budget)
         ) {
-          refused = true;
-          storedResult = resultTooLargeReply(
+          refused = resultTooLargeRejection(
             call.toolName,
             candidateBytes,
             heldObservationBytes,
             storedEvidenceKindBytes(model.budget),
           );
+          storedResult = JSON.stringify(refused);
           input.debugLog?.(
             `[Observation] result too big phase=${safeLogIdentifier(input.phase, 'unknown')}` +
               ` tool=${safeLogIdentifier(call.toolName, 'unknown')}` +
