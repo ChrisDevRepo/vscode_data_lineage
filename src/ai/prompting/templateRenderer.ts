@@ -272,7 +272,12 @@ export function resolveStagePrompt(
 
   const bareSummary =
     render.scope === 'per_focus' && render.focusKind === 'non_bodied';
-  const blocks = passing.map((key) => {
+  // D-114: shared coverage is served once, after the last recipe bullet.
+  const ordered = [
+    ...passing.filter((key) => key !== 'shared_capture'),
+    ...passing.filter((key) => key === 'shared_capture'),
+  ];
+  const blocks = ordered.map((key) => {
     if (bareSummary) return templates[key].trim();
     if (key === 'general') {
       const instruction = templates[key]
@@ -283,6 +288,8 @@ export function resolveStagePrompt(
     }
     const angle = CAPTURE_ANGLE[key];
     if (angle) return `- ${angle}: ${templates[key].trim()}`;
+    if (key === 'shared_capture')
+      return `- every key above: ${templates[key].trim()}`;
     if (render.scope === 'per_focus') return `- ${templates[key].trim()}`;
     return `- ${key}: ${templates[key].trim()}`;
   });
