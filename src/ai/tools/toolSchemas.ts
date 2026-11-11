@@ -1801,7 +1801,7 @@ const PresentResultSectionSchema = z
     {
       label: z
         .string()
-        .meta({ toolValidated: 'report.label' })
+        .meta({ toolValidated: 'report.label', ...REPORT_MATH })
         .regex(/\S/, 'Section label must not be blank.')
         .min(
           1,
