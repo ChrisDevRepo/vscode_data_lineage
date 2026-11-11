@@ -384,8 +384,6 @@ export function finishStructured<T>(
       at('one_call'),
     );
   }
-  const empty = (): StructuredOutputError =>
-    fail(`${STRUCTURED_OUTPUT_TOOL} arguments were empty`, at('missing'));
   const [first] = emitted;
   if (calls.length === 0 && first && 'malformedArgs' in first) {
     throw fail(
@@ -405,7 +403,6 @@ export function finishStructured<T>(
   const admitted =
     calls.length === 1 ? validateToolCandidate(schema, payload) : undefined;
   if (admitted?.success) return admitted.data;
-  if (calls.length === 1 && Object.keys(calls[0]).length === 0) throw empty();
   if (calls.length > 1)
     throw fail(`multiple ${STRUCTURED_OUTPUT_TOOL} tool calls`, at('one_call'));
   if (!admitted)
