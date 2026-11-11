@@ -272,7 +272,7 @@ export function resolveStagePrompt(
 
   const bareSummary =
     render.scope === 'per_focus' && render.focusKind === 'non_bodied';
-  // D-114: shared coverage is served once, after the last recipe bullet.
+  // Shared coverage is served once, after the last recipe bullet.
   const ordered = [
     ...passing.filter((key) => key !== 'shared_capture'),
     ...passing.filter((key) => key === 'shared_capture'),
