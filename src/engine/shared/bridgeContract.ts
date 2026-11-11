@@ -59,7 +59,7 @@ const AiScopeListSchema = z.array(z.string()).max(MAX_ID_LIST_LENGTH);
 
 /**
  * Typed structural and free-text edits accepted when revising a pending exploration gate.
- * @internal Read by the internal baseline comparison.
+ * @internal
  */
 export const AiGateRefineSchema = z
   .object({
