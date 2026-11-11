@@ -214,7 +214,7 @@ function branchFaults(branch: Record<string, unknown>, value: unknown): number {
  * one pass); `once` visits only the first such branch. Not if/then/else, not, $defs or
  * additionalProperties.
  */
-export function walkServedSchema(
+function walkServedSchema(
   node: unknown,
   value: unknown,
   pointer: string,

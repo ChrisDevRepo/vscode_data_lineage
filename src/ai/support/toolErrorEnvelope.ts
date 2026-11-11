@@ -94,12 +94,6 @@ export const ISSUES = {
     correction:
       "Put this content where the field's schema description places it; this field stays out of the call.",
   },
-  tool_call_notation: {
-    category: 'shape',
-    label: 'tool-call notation inside a text value',
-    correction:
-      'Give each argument its own field; a text value holds only its own content.',
-  },
   math_escape: {
     category: 'shape',
     label:

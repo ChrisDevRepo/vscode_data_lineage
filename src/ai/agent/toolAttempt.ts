@@ -463,14 +463,13 @@ function rejectionFromInvalid(
 ): ToolOutcomeData {
   const issuePaths = call.issuePaths ?? [];
   const tools = registry.getTools().map((tool) => tool.name);
-  // Arguments that are not one JSON object, or that carry notation, hold nothing, so the
+  // Arguments that are not one JSON object hold nothing, so the
   // correction resends every field its live card requires; held fields are optional on that card,
   // so none is asked for again.
   const definition = registry.get(call.toolName);
   const resend =
-    (call.code === 'tool_call_notation' ||
-      ((call.code === 'type' || call.code === 'json_syntax') &&
-        issuePaths.length === 0)) &&
+    (call.code === 'type' || call.code === 'json_syntax') &&
+    issuePaths.length === 0 &&
     definition
       ? ((toModelJsonSchema(definition.inputSchema).required as
           | string[]
