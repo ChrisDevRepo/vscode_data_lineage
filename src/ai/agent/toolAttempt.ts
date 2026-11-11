@@ -412,21 +412,6 @@ export function renderToolAttemptContext(
 }
 
 /**
- * The once-per-reply slot of a tool, named by its registry effect, or undefined for any other tool.
- * Every hop commit command shares one slot: a second commit in the same reply competes with the
- * first instead of adding to its held draft. A presentation commit has its own.
- */
-function oncePerReplySlot(
-  toolName: string,
-  registry: IToolRegistry<string>,
-): string | undefined {
-  const effect = registry.get(toolName)?.effect;
-  return effect === 'hop_commit' || effect === 'presentation_commit'
-    ? effect
-    : undefined;
-}
-
-/**
  * Stamps a rejection with the call's identity and, when an earlier attempt of this step rejected
  * the identical call, names the resend as unchanged.
  */
@@ -951,7 +936,6 @@ async function dispatchToolCallBatch(
   let closedBy: { readonly callId: string; readonly toolName: string } | null =
     null;
   let heldObservationBytes = loop.heldObservationBytes;
-  const evaluatedOncePerReply = new Map<string, string>();
 
   for (const emitted of toolCalls) {
     const call = {
@@ -1003,51 +987,6 @@ async function dispatchToolCallBatch(
       );
       continue;
     }
-    // Findings and candidate removal are competing ways to commit this same hop.
-    const onceKey = oncePerReplySlot(call.toolName, input.registry);
-    const evaluatedCallId =
-      onceKey === undefined ? undefined : evaluatedOncePerReply.get(onceKey);
-    if (evaluatedCallId !== undefined) {
-      const outcome = recordToolOutcome(
-        call,
-        {
-          status: 'phase_closed',
-          closedByCallId: evaluatedCallId,
-          rejection: makeRejection({
-            code: REJECTION_CODES.invalidInput,
-            reason:
-              onceKey === 'hop_commit'
-                ? 'Not evaluated: a reply carries one hop commit command, and an earlier findings or candidate-removal command in this reply was evaluated.'
-                : `Not evaluated: a reply carries one ${call.toolName} call, and an earlier call in this reply was evaluated.`,
-            errors: at('one_call'),
-            detail: { evaluatedCallId },
-          }),
-        },
-        calls,
-        observations,
-        rejections,
-        input.traceSyntheticRejection,
-        input.priorState,
-      );
-      toolMessages.push(
-        modelToolResultMessage(
-          call.callId,
-          call.toolName,
-          outcome.resultText,
-          outcome.status,
-          outcome.artifact,
-        ),
-      );
-      logSyntheticRejection(
-        input,
-        'extra_call_not_evaluated',
-        call,
-        'not_evaluated',
-        `evaluated callId ${evaluatedCallId}`,
-      );
-      continue;
-    }
-    if (onceKey !== undefined) evaluatedOncePerReply.set(onceKey, call.callId);
     if (!call.valid) {
       const data = withResendIdentity(
         rejectionFromInvalid(call, input.registry),
