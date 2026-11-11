@@ -446,33 +446,31 @@ function rejectionFromInvalid(
   call: Extract<GeneratedToolCall, { valid: false }>,
   registry: IToolRegistry<string>,
 ): ToolOutcomeData {
-  const issuePaths = call.issuePaths ?? [];
   const tools = registry.getTools().map((tool) => tool.name);
   // Arguments that are not one JSON object hold nothing, so the
   // correction resends every field its live card requires; held fields are optional on that card,
   // so none is asked for again.
   const definition = registry.get(call.toolName);
   const resend =
-    call.code === 'type' && issuePaths.length === 0 && definition
+    call.code === 'type' && definition
       ? ((toModelJsonSchema(definition.inputSchema).required as
           | string[]
           | undefined) ?? [])
       : undefined;
-  const errors: ToolError[] = (issuePaths.length ? issuePaths : ['']).map(
-    (path) => ({
-      path,
+  const errors: ToolError[] = [
+    {
+      path: '',
       code: call.code,
       ...(call.code === 'off_policy' ? { values: tools } : {}),
       ...(call.code === 'type' ? { values: ['object'] } : {}),
-    }),
-  );
+    },
+  ];
   return {
     status: 'rejected',
     rejection: {
       code: REJECTION_CODES.invalidInput,
       reason: call.reason,
       errors,
-      ...(issuePaths.length > 0 ? { issuePaths: [...issuePaths] } : {}),
       ...(resend ? { resend } : {}),
       ...(call.code === 'off_policy'
         ? { detail: { allowedTools: tools } }

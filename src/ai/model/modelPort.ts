@@ -260,8 +260,6 @@ interface InvalidGeneratedToolCall {
   readonly code: Extract<IssueCode, 'type' | 'off_policy'>;
   /** Human-readable rejection prose returned to the model for repair. */
   readonly reason: string;
-  /** Paths of the input values that rejected the call, when the producer names them. */
-  readonly issuePaths?: readonly string[];
 }
 
 /**
