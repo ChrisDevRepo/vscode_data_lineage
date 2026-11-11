@@ -219,6 +219,10 @@ const HELD_FIELDS = [
 ] as const;
 type HeldField = (typeof HELD_FIELDS)[number];
 
+/** A `column_flow` node field (an entry's `out_node` or a supplier's `node`), by dotted path. */
+const isFlowNodeField = (path: string): boolean =>
+  /^column_flow\.\d+\.(?:out_node|upstream_columns\.\d+\.node)$/.test(path);
+
 /**
  * Section child faults invalidate known angles only: unknown names are never extracted into held
  * content. Whole-container faults still invalidate sections.
@@ -3141,9 +3145,7 @@ export class NavigationEngine implements IHopStateMachine {
       // type stays a fact beside them.
       if (
         (mapped.code === 'missing' || mapped.code === 'type') &&
-        /^column_flow\.\d+\.(?:out_node|upstream_columns\.\d+\.node)$/.test(
-          mapped.path,
-        )
+        isFlowNodeField(mapped.path)
       )
         return {
           ...mapped,
@@ -3173,9 +3175,7 @@ export class NavigationEngine implements IHopStateMachine {
         // A column_flow node field offers only ids its entry accepts; any other, its served enum.
         values:
           issue.values ??
-          (/^\/column_flow\/\d+\/(?:out_node|upstream_columns\/\d+\/node)$/.test(
-            error.instancePath,
-          )
+          (isFlowNodeField(path)
             ? this.offeredFlowNodeIds(
                 currentFocusId ?? '',
                 error.instancePath,

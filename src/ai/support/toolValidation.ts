@@ -205,14 +205,27 @@ function branchFaults(branch: Record<string, unknown>, value: unknown): number {
     branchChecks.set(branch, check);
   }
   check(value);
-  return check.errors?.length ?? 0;
+  // Served schemas omit `pattern`, so a branch's `toolPattern` mismatches count as its faults too.
+  let patterns = 0;
+  walkServedSchema(branch, value, '', (node, held) => {
+    if (patternMismatch(node, held)) patterns += 1;
+  });
+  return (check.errors?.length ?? 0) + patterns;
 }
+
+const patternMismatch = (
+  node: Record<string, unknown>,
+  value: unknown,
+): boolean =>
+  typeof node.toolPattern === 'string' &&
+  typeof value === 'string' &&
+  !new RegExp(node.toolPattern, 'u').test(value);
 
 /**
  * Visits annotations through properties, items, allOf and the anyOf/oneOf branches that admit the
- * value, or when none does, those with the fewest native faults (so independent faults surface in
- * one pass); `once` visits only the first such branch. Not if/then/else, not, $defs or
- * additionalProperties.
+ * value, or when none does, those with the fewest native faults plus `toolPattern` mismatches (so
+ * independent faults surface in one pass); `once` visits only the first such branch. Not
+ * if/then/else, not, $defs or additionalProperties.
  */
 function walkServedSchema(
   node: unknown,
@@ -698,11 +711,7 @@ export function validateToolCandidate<S extends z.ZodType>(
     problems: ToolRejection[] = [];
   // Served schemas omit `pattern` (provider compatibility); each regex is checked here instead.
   walkServedSchema(json, input, '', (node, value, pointer) => {
-    if (
-      typeof node.toolPattern === 'string' &&
-      typeof value === 'string' &&
-      !new RegExp(node.toolPattern, 'u').test(value)
-    )
+    if (patternMismatch(node, value))
       errors.push({
         keyword: 'pattern',
         instancePath: pointer,
