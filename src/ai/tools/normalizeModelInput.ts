@@ -2,11 +2,7 @@ import { z, type ZodType } from 'zod';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveModelNodeId } from '../support/modelReferences';
 import { splitSqlName, stripBrackets, normalizeColName } from '../../utils/sql';
-import {
-  syntaxFault,
-  TRAILING_JSON_KIND,
-  validateToolCandidate,
-} from '../support/toolValidation';
+import { validateToolCandidate } from '../support/toolValidation';
 
 /** Admission by the served JSON Schema decides every normalization step. */
 const admits = (schema: ZodType, value: unknown): boolean =>
@@ -313,36 +309,6 @@ export function normalizeModelInput(
     fixes.push(...spellingFixes);
   }
   return { input: current, fixes };
-}
-
-/**
- * Argument text that is one complete JSON object followed only by closing brackets or whitespace
- * (an extra closing brace) is that object: no content is added or dropped. Any other trailing
- * text, truncation or non-object value returns `undefined` and stays a syntax fault. The caller
- * keeps the sent text as raw evidence.
- */
-export function normalizeArgumentText(
-  text: string,
-):
-  | { readonly input: Record<string, unknown>; readonly fixes: ModelInputFix[] }
-  | undefined {
-  let fault;
-  try {
-    JSON.parse(text);
-    return undefined;
-  } catch (error) {
-    fault = syntaxFault(error, text);
-  }
-  if (fault?.kind !== TRAILING_JSON_KIND || fault.offset === undefined)
-    return undefined;
-  if (!/^[\s}\]]+$/.test(text.slice(fault.offset))) return undefined;
-  const value: unknown = JSON.parse(text.slice(0, fault.offset));
-  if (typeof value !== 'object' || value === null || Array.isArray(value))
-    return undefined;
-  return {
-    input: value as Record<string, unknown>,
-    fixes: [{ path: '', before: text, after: value }],
-  };
 }
 
 /**

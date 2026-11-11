@@ -34,12 +34,6 @@ const OBJECT_IDENTITY_ISSUE = {
 interface IssueText {
   readonly label: string;
   readonly correction: string;
-  /** Appended to the located parser diagnostic. */
-  readonly note?: string;
-  /** Appended from the second attempt. */
-  readonly escalation?: string;
-  /** Appended on the last attempt. */
-  readonly stop?: string;
 }
 
 /**
@@ -52,23 +46,6 @@ export const ISSUES = {
     label: 'wrong JSON type',
     correction:
       'Send the value as the JSON type the schema defines for this field.',
-  },
-  json_syntax: {
-    category: 'shape',
-    label: 'arguments are malformed or cut-off JSON text',
-    correction: 'Send the fields in resend as one valid JSON object.',
-    escalation:
-      ' Close the JSON object with exactly one "}" and emit no trailing characters, fences, or duplicate braces.',
-    // Text that continues after a complete JSON value (`parse.trailing`).
-    trailing: {
-      label:
-        'arguments contain trailing characters or duplicate braces after the JSON object',
-      correction: 'Emit the JSON object with no trailing characters.',
-      note: ' Unexpected duplicate or trailing characters after the JSON object. Close with exactly one "}" and emit no trailing braces.',
-      escalation:
-        ' Do not append extra "}" or text after the final "}". The JSON object was complete before the extra closing brace.',
-      stop: ' Stop generation immediately after the single closing "}".',
-    },
   },
   json_text: {
     category: 'shape',
@@ -406,8 +383,6 @@ export const ISSUES = {
   string,
   IssueText & {
     category: IssueCategory;
-    /** Wording served instead when the fault is trailing text after a complete value. */
-    trailing?: IssueText;
     fallback?: string;
     /** Allowed values rank against the key name sent instead of the value sent. */
     ranksKey?: true;
@@ -449,7 +424,6 @@ export interface ToolError {
   parse?: {
     readonly kind: string;
     readonly offset?: number;
-    readonly trailing?: boolean;
   };
 }
 
@@ -535,7 +509,6 @@ const RejectionShape = z
               .object({
                 kind: z.string().min(1),
                 offset: z.number().int().nonnegative().optional(),
-                trailing: z.boolean().optional(),
               })
               .strict()
               .optional(),
@@ -755,18 +728,14 @@ export function renderProblemReport(
             ? ALLOWED_VALUE_EXIT
             : '';
       if (fallback && reference) fallbackShown = true;
-      const text: IssueText =
-        error.parse?.trailing && 'trailing' in issue ? issue.trailing : issue;
       const located = error.parse
         ? ` ${error.parse.kind}${
             error.parse.offset !== undefined
               ? ` at position ${error.parse.offset}`
               : ''
-          }.${text.note ?? ''}`
+          }.`
         : '';
-      const escalation = stage >= 2 ? (text.escalation ?? '') : '';
-      const stop = stage >= 3 ? (text.stop ?? '') : '';
-      const message = `${text.label}. ${text.correction}${located}${escalation}${stop}${fallback ? ` ${fallback}` : ''}`;
+      const message = `${issue.label}. ${issue.correction}${located}${fallback ? ` ${fallback}` : ''}`;
       const sent =
         'ranksKey' in issue
           ? error.path.split('.').at(-1)

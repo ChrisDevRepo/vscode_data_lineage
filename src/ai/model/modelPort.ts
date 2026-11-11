@@ -11,15 +11,8 @@ import {
   type IssueCode,
   type ToolError,
 } from '../support/toolErrorEnvelope';
-import {
-  syntaxFault,
-  TRAILING_JSON_KIND,
-  validateToolCandidate,
-} from '../support/toolValidation';
-import {
-  normalizeArgumentText,
-  normalizeModelInput,
-} from '../tools/normalizeModelInput';
+import { validateToolCandidate } from '../support/toolValidation';
+import { normalizeModelInput } from '../tools/normalizeModelInput';
 import {
   STRUCTURED_OUTPUT_TOOL,
   StructuredOutputError,
@@ -237,73 +230,6 @@ export interface ToolGenerationInput {
 export const TOOL_ARGUMENTS_NOT_OBJECT_REASON =
   'Tool arguments were not a JSON object; send the required fields as one JSON object.';
 
-/** Reason of the `json_syntax` fault for argument text that does not parse as JSON. */
-const TOOL_ARGUMENTS_SYNTAX_REASON =
-  'Tool arguments were not parseable JSON; send the required fields as one complete JSON object.';
-
-/** Reason of the `type` fault for a call whose arguments were empty text. */
-const TOOL_ARGUMENTS_EMPTY_REASON =
-  'Tool arguments were empty; send the required fields as a JSON object.';
-
-/**
- * The one fault of argument text that was no JSON object: `json_syntax` for text that opens an
- * object or array and does not parse (malformed or cut off), otherwise `type`.
- */
-function malformedArgumentsFault(text: string): {
-  readonly code: 'type' | 'json_syntax';
-  readonly reason: string;
-  readonly parse?: {
-    readonly kind: string;
-    readonly offset?: number;
-    readonly trailing?: boolean;
-  };
-} {
-  if (/^\s*[{[]/.test(text)) {
-    try {
-      JSON.parse(text);
-    } catch (error) {
-      // json_syntax is the whole argument text; json_parse is one field's string value.
-      const fault = syntaxFault(error, text);
-      return {
-        code: 'json_syntax',
-        reason: TOOL_ARGUMENTS_SYNTAX_REASON,
-        ...(fault
-          ? {
-              parse: {
-                ...fault,
-                ...(fault.kind === TRAILING_JSON_KIND
-                  ? { trailing: true }
-                  : {}),
-              },
-            }
-          : {}),
-      };
-    }
-  }
-  return {
-    code: 'type',
-    reason: text.trim()
-      ? TOOL_ARGUMENTS_NOT_OBJECT_REASON
-      : TOOL_ARGUMENTS_EMPTY_REASON,
-  };
-}
-
-/**
- * An emitted call whose malformed argument text normalizes to one object (see
- * `normalizeArgumentText`) becomes an object-argument call.
- */
-function resolveEmitted(
-  emitted: EmittedToolCall,
-  debugLog?: (message: string) => void,
-): EmittedToolCall {
-  if (!('malformedArgs' in emitted)) return emitted;
-  const trailing = normalizeArgumentText(emitted.malformedArgs);
-  if (!trailing) return emitted;
-  logFixes(emitted.toolName, emitted.callId, trailing.fixes, debugLog);
-  const { callId, toolName } = emitted;
-  return { callId, toolName, args: trailing.input };
-}
-
 /**
  * A registered native tool call ready for argument validation.
  * @internal
@@ -331,16 +257,11 @@ interface InvalidGeneratedToolCall {
    */
   readonly input?: unknown;
   /** Issue code of the rejection. */
-  readonly code: Extract<IssueCode, 'type' | 'json_syntax' | 'off_policy'>;
+  readonly code: Extract<IssueCode, 'type' | 'off_policy'>;
   /** Human-readable rejection prose returned to the model for repair. */
   readonly reason: string;
   /** Paths of the input values that rejected the call, when the producer names them. */
   readonly issuePaths?: readonly string[];
-  readonly parse?: {
-    readonly kind: string;
-    readonly offset?: number;
-    readonly trailing?: boolean;
-  };
 }
 
 /**
@@ -355,27 +276,55 @@ export type EmittedToolCall = {
   | { readonly malformedArgs: string }
 );
 
+/** The value a non-object argument text carries; text that does not parse stays undefined. */
+function parseValue(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/**
+ * The one normalization of an emitted call's arguments against the served schema: the object it
+ * sent, or the value its argument text carries, normalized once. Anything that is then no object
+ * (or text that does not parse) is `undefined` and stays a `type` fault.
+ */
+function normalizeEmitted(
+  schema: ZodType,
+  emitted: EmittedToolCall,
+):
+  | {
+      readonly input: Record<string, unknown>;
+      readonly fixes: ReturnType<typeof normalizeModelInput>['fixes'];
+    }
+  | undefined {
+  const received =
+    'args' in emitted ? emitted.args : parseValue(emitted.malformedArgs);
+  const normalized = normalizeModelInput(schema, received);
+  return isPlainObject(normalized.input)
+    ? { input: normalized.input, fixes: normalized.fixes }
+    : undefined;
+}
+
 /**
  * Classifies one emitted call against the offered tools, normalizing valid arguments once;
  * `replayInput` is what the transcript replays (`{}` for arguments that were no object).
  */
 export function classifyToolCall(
-  provided: EmittedToolCall,
+  emitted: EmittedToolCall,
   definitions: ReadonlyMap<string, ModelToolDefinition>,
   debugLog?: (message: string) => void,
 ): {
   readonly call: GeneratedToolCall;
   readonly replayInput: Record<string, unknown>;
 } {
-  const emitted = resolveEmitted(provided, debugLog);
   const { callId, toolName } = emitted;
   const replayInput = 'args' in emitted ? emitted.args : {};
-  const reject = (
-    code: InvalidGeneratedToolCall['code'],
-    reason: string,
-    parse?: InvalidGeneratedToolCall['parse'],
-    issuePaths?: readonly string[],
-  ) => ({
+  const reject = (code: InvalidGeneratedToolCall['code'], reason: string) => ({
     replayInput,
     call: {
       valid: false as const,
@@ -384,18 +333,13 @@ export function classifyToolCall(
       input: 'args' in emitted ? emitted.args : emitted.malformedArgs,
       code,
       reason,
-      ...(parse ? { parse } : {}),
-      ...(issuePaths ? { issuePaths } : {}),
     },
   });
   const definition = definitions.get(toolName);
   if (!definition)
     return reject('off_policy', 'Tool is not available in this phase.');
-  if ('malformedArgs' in emitted) {
-    const fault = malformedArgumentsFault(emitted.malformedArgs);
-    return reject(fault.code, fault.reason, fault.parse);
-  }
-  const normalized = normalizeModelInput(definition.inputSchema, emitted.args);
+  const normalized = normalizeEmitted(definition.inputSchema, emitted);
+  if (!normalized) return reject('type', TOOL_ARGUMENTS_NOT_OBJECT_REASON);
   logFixes(toolName, callId, normalized.fixes, debugLog);
   return {
     call: {
@@ -404,7 +348,8 @@ export function classifyToolCall(
       toolName,
       input: normalized.input,
     },
-    replayInput,
+    // An accepted call is replayed as the object it carried; `{}` stays for rejected ones.
+    replayInput: 'args' in emitted ? replayInput : normalized.input,
   };
 }
 
@@ -413,11 +358,22 @@ export function classifyToolCall(
  * then admitted by Ajv against the served JSON Schema alone.
  */
 export function finishStructured<T>(
-  provided: readonly EmittedToolCall[],
+  sent: readonly EmittedToolCall[],
   schema: ZodType<T>,
   debugLog?: (message: string) => void,
 ): T {
-  const emitted = provided.map((call) => resolveEmitted(call, debugLog));
+  // Argument text that carries an object is that object, by the same step as a tool call.
+  const emitted: EmittedToolCall[] = sent.map((call) => {
+    if ('args' in call) return call;
+    const decoded = normalizeEmitted(schema, call);
+    if (!decoded) return call;
+    logFixes(call.toolName, call.callId, decoded.fixes, debugLog);
+    return {
+      callId: call.callId,
+      toolName: call.toolName,
+      args: decoded.input,
+    };
+  });
   const fail = (reason: string, errors: readonly ToolError[]) =>
     new StructuredOutputError(reason, errors);
   const calls = emitted.flatMap((call) => ('args' in call ? [call.args] : []));
@@ -434,11 +390,9 @@ export function finishStructured<T>(
     fail(`${STRUCTURED_OUTPUT_TOOL} arguments were empty`, at('missing'));
   const [first] = emitted;
   if (calls.length === 0 && first && 'malformedArgs' in first) {
-    if (emitted.length === 1 && !first.malformedArgs.trim()) throw empty();
-    const fault = malformedArgumentsFault(first.malformedArgs);
     throw fail(
       `${STRUCTURED_OUTPUT_TOOL} arguments were not a JSON object`,
-      fault.code === 'type' ? at('type', [''], ['object']) : at(fault.code),
+      at('type', [''], ['object']),
     );
   }
   const normalized =

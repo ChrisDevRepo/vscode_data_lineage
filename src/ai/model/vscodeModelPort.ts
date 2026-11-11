@@ -161,7 +161,8 @@ export class VscodeModelPort implements ModelPort {
         : [];
       const toolCalls: GeneratedToolCall[] = [];
       /**
-       * The calls as the transcript replays them; `{}` stands in for arguments that were no object.
+       * The calls as the transcript replays them; `{}` stands in for the arguments of a rejected
+       * call that were no object.
        */
       const replayed: Array<{
         callId: string;
@@ -209,8 +210,9 @@ export class VscodeModelPort implements ModelPort {
       );
       return {
         status: 'completed',
-        // A call whose arguments were no object is replayed with `{}`: the transcript needs an
-        // object and the model sent none; its rejection carries the truth.
+        // A rejected call whose arguments were no object is replayed with `{}`: the transcript
+        // needs an object and the model sent none; its rejection carries the truth. An accepted
+        // call is replayed as the object it carried.
         message: rebuilt
           ? modelToolCallMessage(replayed, text, providerParts)
           : message,

@@ -453,9 +453,7 @@ function rejectionFromInvalid(
   // so none is asked for again.
   const definition = registry.get(call.toolName);
   const resend =
-    (call.code === 'type' || call.code === 'json_syntax') &&
-    issuePaths.length === 0 &&
-    definition
+    call.code === 'type' && issuePaths.length === 0 && definition
       ? ((toModelJsonSchema(definition.inputSchema).required as
           | string[]
           | undefined) ?? [])
@@ -466,7 +464,6 @@ function rejectionFromInvalid(
       code: call.code,
       ...(call.code === 'off_policy' ? { values: tools } : {}),
       ...(call.code === 'type' ? { values: ['object'] } : {}),
-      ...(call.parse ? { parse: call.parse } : {}),
     }),
   );
   return {

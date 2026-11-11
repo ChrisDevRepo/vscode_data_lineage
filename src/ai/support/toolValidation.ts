@@ -378,15 +378,11 @@ function errorPointer(error: ErrorObject): string {
     : error.instancePath;
 }
 
-/** The parser's kind for text that continues after a complete JSON value. */
-export const TRAILING_JSON_KIND =
-  'Unexpected non-whitespace character after JSON';
-
 /**
  * Kind and, when the parser reports one, character offset of a JSON SyntaxError.
  * The submitted text is never copied into the kind.
  */
-export function syntaxFault(
+function syntaxFault(
   error: unknown,
   text: string,
 ): { readonly kind: string; readonly offset?: number } | undefined {
