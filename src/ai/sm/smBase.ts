@@ -181,13 +181,14 @@ interface NavigationWorkingMemory extends WorkingMemory {
 }
 
 /**
- * User-facing reason when a queued function investigation no longer matches its caller declaration.
+ * Stop cause (the stop text adds subject and next step) when a queued function investigation no
+ * longer matches its caller declaration.
  */
 const CALLER_CONTEXT_CHANGED =
-  "Exploration stopped: a queued function investigation no longer matches its caller's loaded SQL or column. Start a new analysis.";
+  "a queued function investigation no longer matches its caller's loaded SQL or column";
 /** User-facing reason when a queued column investigation carries no qualified source column. */
 const COLUMN_SOURCE_MISSING =
-  'Exploration stopped: a queued column investigation has no qualified source column to continue from. Start a new analysis.';
+  'a queued column investigation has no qualified source column to continue from';
 
 /**
  * Why an invalid removal proposal is refused; the disconnected-analysis wording is reserved for a

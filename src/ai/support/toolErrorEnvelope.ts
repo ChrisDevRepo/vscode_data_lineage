@@ -523,13 +523,17 @@ const RejectionShape = z
 
 /**
  * Write-side builder for the one tool-execution failure envelope both LM lanes record when a
- * handler throws; the run ends on it.
+ * handler throws; the run ends on it. `cause` is the thrown error's sanitized message, which the
+ * stop text passes on.
  */
-export function buildToolExecutionError(toolName: string): string {
+export function buildToolExecutionError(
+  toolName: string,
+  cause?: string,
+): string {
   return JSON.stringify(
     makeRejection({
       code: REJECTION_CODES.backendFault,
-      reason: `${toolName} failed inside the extension.`,
+      reason: cause || `${toolName} failed inside the extension.`,
       errors: at('backend_fault'),
     }),
   );

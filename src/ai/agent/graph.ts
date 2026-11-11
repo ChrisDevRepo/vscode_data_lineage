@@ -55,6 +55,7 @@ import { buildChatAnswer } from '../support/chatAnswer';
 import { extractShortTermMemory } from '../support/smMemoryCore';
 import { toEngineLog } from '../support/engineLog';
 import { REJECTION_CODES } from '../support/rejectionCodes';
+import { ISSUES } from '../support/toolErrorEnvelope';
 import { detectSlashRoute } from './slashCommands';
 import { selectInitialAgentStage } from './entryRouting';
 import {
@@ -80,6 +81,7 @@ import {
   escapePromptText,
   truncAtWordBoundary,
   formatProviderErrorDiagnostic,
+  sanitizeProviderError,
   isTransportProviderError,
   sanitizeDescriptionForChat,
   sanitizeProviderErrorDiagnostic,
@@ -322,7 +324,11 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     },
     fallbackMessage: string,
   ): AgentStateUpdate => {
-    const message = res.error ?? fallbackMessage;
+    const message = stopText({
+      subject: 'The analysis',
+      cause: res.error ?? fallbackMessage,
+      next: 'Ask again.',
+    });
     deps.logger?.error(
       fallbackMessage,
       res.providerError
@@ -542,23 +548,51 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
   ): { reason: 'no_progress' | 'backend_fault'; message: string } | null => {
     const reason = nextAttempt.stopReason;
     if (!reason) return null;
-    const fault =
-      [...nextAttempt.rejections]
-        .reverse()
-        .find((rejection) => rejection.code === REJECTION_CODES.backendFault)
-        ?.errors?.[0]?.code ?? 'unknown';
+    const rejections = [...nextAttempt.rejections].reverse();
+    const fault = rejections.find(
+      (rejection) => rejection.code === REJECTION_CODES.backendFault,
+    );
+    const code = fault?.errors?.[0]?.code ?? 'unknown';
     logGraphDebug(
       deps,
       `[AI] [Breaker] phase=${nextAttempt.phase} reason=${reason} noProgressCalls=${nextAttempt.noProgressCalls}` +
-        (reason === 'backend_fault' ? ` code=${fault}` : ''),
+        (reason === 'backend_fault' ? ` code=${code}` : ''),
     );
     if (reason === 'backend_fault')
-      return { reason, message: backendFaultStopText(subject, fault, at) };
+      return {
+        reason,
+        message: stopText({
+          subject,
+          at,
+          cause:
+            code === 'no_project'
+              ? 'no project is loaded in the Data Lineage panel'
+              : sanitizeProviderError(fault?.reason ?? '') ||
+                'an internal error occurred',
+          next:
+            code === 'no_project'
+              ? 'Open the project and ask again.'
+              : 'Ask again.',
+        }),
+      };
+    // The last rejection's issues, by the registry's own label and code: no model-supplied text.
+    const issues = [
+      ...new Set(rejections[0]?.errors?.map((error) => error.code)),
+    ].map((issue) => `${ISSUES[issue].label} (${issue})`);
     return {
       reason,
-      message: at
-        ? loopStopText(at)
-        : `${subject} made no progress after ${MAX_TOOL_PROVIDER_CALLS} model replies ${incompleteSuffix}.`,
+      message: stopText({
+        subject,
+        at,
+        cause:
+          `${MAX_TOOL_PROVIDER_CALLS} model replies ${at ? 'for this object' : incompleteSuffix} were not accepted` +
+          (issues.length
+            ? `; the last was rejected as ${issues.join(', ')}`
+            : ''),
+        next: at
+          ? 'Ask again, or exclude this object from the scope.'
+          : 'Ask again.',
+      }),
     };
   };
 
@@ -1491,7 +1525,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
         state,
         engine,
         'engine_error',
-        engine.errorReason ?? 'Exploration engine entered an error state.',
+        engineStopText(state, engine),
       );
     }
     if (hop?.done) {
@@ -1626,13 +1660,15 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
           state,
           engine,
           'provider_error',
-          providerStopText(
-            {
+          stopText({
+            subject: 'Exploration active hop',
+            at: {
               object: focusId.replace(/[[\]]/g, ''),
               completedHops: state.activeHopCount,
             },
-            res.error ?? 'Active hop failed.',
-          ),
+            cause: res.error ?? 'Active hop failed.',
+            next: 'Ask again.',
+          }),
         ),
         toolAttempt: nextAttempt,
       };
@@ -1647,7 +1683,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
           state,
           engine,
           'engine_error',
-          engine.errorReason ?? 'Exploration engine entered an error state.',
+          engineStopText(state, engine),
         ),
         toolAttempt: nextAttempt,
       };
@@ -2153,20 +2189,6 @@ export function buildSynthesisEnvelopeMessage(
   ].join('\n');
 }
 
-/**
- * User-facing text for a run ended by a failed model request during a hop: where it stopped, the
- * provider's message, and that nothing was shown or changed.
- */
-function providerStopText(
-  at: { readonly object: string; readonly completedHops: number },
-  cause: string,
-): string {
-  return (
-    `The analysis stopped at \`${at.object}\`: ${cause.replace(/\.$/, '')}. ` +
-    'The run is incomplete, so no result is shown and the graph was not changed. Ask again.'
-  );
-}
-
 /** Wait before the one retry of a generation a transport interruption ended. */
 const TRANSPORT_RETRY_DELAY_MS = 1_000;
 
@@ -2199,45 +2221,42 @@ function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 /**
- * User-facing text for a run ended by a backend fault: where it stopped, the cause, and that
- * nothing was shown or changed. A missing project names the user's action instead of an internal
- * error.
+ * The one user text of every session ending: where the run stopped, why (the last error,
+ * passed on), how far it got, that nothing is shown or changed, and the next step.
  */
-function backendFaultStopText(
-  subject: string,
-  code: string,
-  at?: { readonly object: string; readonly completedHops: number },
-): string {
-  const where = at
+function stopText(stop: {
+  readonly subject: string;
+  readonly at?: { readonly object?: string; readonly completedHops: number };
+  readonly cause: string;
+  readonly next: string;
+}): string {
+  const { at } = stop;
+  const where = at?.object
     ? `The analysis stopped at \`${at.object}\``
-    : `${subject} stopped`;
-  const noProject = code === 'no_project';
+    : `${stop.subject} stopped`;
+  const progress = !at
+    ? ''
+    : at.completedHops > 0
+      ? `${at.completedHops} object${at.completedHops === 1 ? ' was' : 's were'} analysed before the stop. `
+      : 'No object was analysed. ';
   return (
-    `${where}: ${noProject ? 'no project is loaded in the Data Lineage panel' : `an internal error occurred (${code})`}. ` +
-    'The run is incomplete, so no result is shown and the graph was not changed. ' +
-    (noProject
-      ? 'Open the project and ask again.'
-      : 'Details are in the debug log. Ask again.')
+    `${where}: ${stop.cause.replace(/\.$/, '')}. ${progress}` +
+    `The run is incomplete, so no result is shown and the graph was not changed. ${stop.next}`
   );
 }
 
-/**
- * The user text of a per-hop reply-limit stop: names the object, the reply limit, how far the run
- * got, and that no result is shown.
- */
-function loopStopText(at: {
-  readonly object: string;
-  readonly completedHops: number;
-}): string {
-  const progress =
-    at.completedHops > 0
-      ? `${at.completedHops} object${at.completedHops === 1 ? ' was' : 's were'} analysed before the stop`
-      : 'No object was analysed';
-  return (
-    `The analysis stopped at \`${at.object}\`: ${MAX_TOOL_PROVIDER_CALLS} model replies for this object were not accepted. ` +
-    `${progress}. The run is incomplete, so no result is shown and the graph was not changed. ` +
-    'Ask again, or exclude this object from the scope.'
-  );
+/** The stop text of an exploration engine that entered its error state: the engine's own reason. */
+function engineStopText(
+  state: AgentStateType,
+  engine: NavigationEngine,
+): string {
+  return stopText({
+    subject: 'The analysis',
+    at: { completedHops: state.activeHopCount },
+    cause:
+      engine.errorReason ?? 'the exploration engine entered an error state',
+    next: 'Ask again.',
+  });
 }
 
 /**

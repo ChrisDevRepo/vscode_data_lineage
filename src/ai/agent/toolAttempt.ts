@@ -749,7 +749,7 @@ async function dispatchRegistryTool(
       `[AI] tool-execution-error source=dispatcher tool=${call.toolName} callId=${safeCallId(call.callId)} ${detail}`,
     );
     return {
-      resultText: buildToolExecutionError(call.toolName),
+      resultText: buildToolExecutionError(call.toolName, diagnostic.message),
       cancelled: false,
     };
   }
