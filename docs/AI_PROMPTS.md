@@ -15,7 +15,7 @@ Output templates control the tone, structure and detail of `@lineage` answers, n
 | Key | When it is used | What it shapes |
 |---|---|---|
 | `discovery_chat` | Chat answers before or without an exploration | Tone, structure and detail of the answer |
-| `shared_capture` | Each hop on an object with a SQL body, once for all selected angles | Optional coverage common to all angles; empty in the built-in templates |
+| `shared_capture` | Each hop on an object with a SQL body, once for all selected angles | Coverage common to all angles; the built-in templates serve their grain and plan-evidence instructions here once |
 | `business_capture` | Each hop of a business or combined exploration | What is recorded about an object's business meaning |
 | `technical_capture` | Each hop of a technical or combined exploration | What is recorded about an object's execution |
 | `structural_callouts` | Each hop on an object with a SQL body | Warnings backed by the object's SQL |
