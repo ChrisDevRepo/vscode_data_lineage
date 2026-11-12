@@ -461,7 +461,7 @@ function rejectionFromInvalid(
       path: '',
       code: call.code,
       ...(call.code === 'off_policy' ? { values: tools } : {}),
-      ...(call.code === 'type' ? { values: ['object'] } : {}),
+      ...(call.code === 'type' ? { types: ['object'] } : {}),
     },
   ];
   return {
