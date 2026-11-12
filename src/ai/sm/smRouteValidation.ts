@@ -41,7 +41,10 @@ export function buildRouteValidationRejection(
     resend: [...new Set(errors.flatMap((error) => error.alternatives ?? []))],
     // A missing outcome names its neighbor: the subject of the fault, never a submitted value.
     errors: errors.map((error) => ({
-      path: error.path ?? '',
+      path:
+        error.kind === 'neighbor_outcome_missing'
+          ? 'questions.*.nodeId'
+          : (error.path ?? ''),
       code: ROUTE_ISSUE[error.kind],
       ...(error.kind === 'neighbor_outcome_missing'
         ? { values: [error.id] }

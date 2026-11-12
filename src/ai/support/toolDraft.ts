@@ -13,6 +13,9 @@ export const shape = (
     ? (schema.shape as Record<string, z.ZodType>)
     : {};
 };
+/** A wildcard fault path names owed subjects, not an invalid submitted value at a concrete path. */
+export const owedSubjectPath = (path: string): boolean =>
+  path.split('.').includes('*');
 
 /**
  * Uncommitted fields for one tool/context. Sent values replace whole; only previously named object
@@ -122,13 +125,23 @@ export class ToolDraft<T extends object> {
     }) as Node;
     const owned = fields(source) ?? {};
     const held = this.value;
+    // An owed subject's root is required while nothing is held there.
+    const owedRoots = this.faults
+      .filter(owedSubjectPath)
+      .map((path) => path.split('.')[0])
+      .filter((root) => owned[root] && held[root] === undefined);
     const projected = schema.meta({
       ...schema.meta(),
       toolDisplay: {
         ...(schema.meta()?.toolDisplay as Node | undefined),
-        required: required(source).filter(
-          (key) => !complete(owned[key], held[key]),
-        ),
+        required: [
+          ...new Set([
+            ...required(source).filter(
+              (key) => !complete(owned[key], held[key]),
+            ),
+            ...owedRoots,
+          ]),
+        ],
         properties: Object.fromEntries(
           Object.entries(owned).map(([key, field]) => {
             const named = patch(field, held[key], key);
@@ -267,8 +280,7 @@ export class ToolDraft<T extends object> {
     schema: z.ZodType,
   ): string[] {
     const overwritten = new Set<string>();
-    // A wildcard names owed subjects, not an invalid submitted value at a concrete path.
-    const invalid = paths.filter((path) => !path.split('.').includes('*'));
+    const invalid = paths.filter((path) => !owedSubjectPath(path));
     const keep = (
       input: Record<string, unknown>,
       held: Record<string, unknown>,

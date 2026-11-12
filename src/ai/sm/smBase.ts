@@ -55,7 +55,7 @@ import {
   CLASSIFICATION_KEPT_ANGLES,
   type ClassificationValue,
 } from '../session/classification';
-import { ToolDraft } from '../support/toolDraft';
+import { owedSubjectPath, ToolDraft } from '../support/toolDraft';
 import { ingestToolInput } from '../support/toolIngestion';
 import {
   evaluateStartTargetColumnsRule,
@@ -3123,7 +3123,11 @@ export class NavigationEngine implements IHopStateMachine {
           }
         : input;
     const owedBefore = this.heldFindingDraft.matches(this.findingContext())
-      ? this.failedParts(this.heldFindingDraft.faultPaths)
+      ? this.failedParts(
+          this.heldFindingDraft.faultPaths.filter(
+            (path) => !owedSubjectPath(path),
+          ),
+        )
       : [];
     let alternatives: readonly string[] = [];
     const diagnostics: Parameters<LogFn>[] = [];
@@ -3261,6 +3265,11 @@ export class NavigationEngine implements IHopStateMachine {
         conflictPaths
           .filter((path) => !path.startsWith('column_flow.'))
           .forEach((path) => view.holdPaths.add(path));
+        invalidRoutes
+          .filter((route) => route.kind === 'neighbor_outcome_missing')
+          .flatMap((route) => route.alternatives ?? [])
+          .filter((field) => field !== 'column_flow')
+          .forEach((field) => view.holdPaths.add(`${field}.*`));
         alternatives = [
           ...invalidRoutes.flatMap((route) => route.alternatives ?? []),
           ...plan.openOutcomeFields,

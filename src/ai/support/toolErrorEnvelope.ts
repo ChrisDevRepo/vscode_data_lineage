@@ -94,6 +94,7 @@ export const ISSUES = {
     label: 'neighbor without a decision',
     correction:
       'Give each listed neighbor one decision as the schema describes.',
+    servesIds: true,
   },
   slot_unplaced: {
     category: 'required',
@@ -386,6 +387,8 @@ export const ISSUES = {
     fallback?: string;
     /** Allowed values rank against the key name sent instead of the value sent. */
     ranksKey?: true;
+    /** The subject ids are served at every stage, not only from the second. */
+    servesIds?: true;
   }
 >;
 
@@ -589,8 +592,8 @@ export function readToolErrorText(text: string): ToolRejection | null {
 }
 
 /**
- * Feedback stage of one fault: 1 states it, 2 adds the allowed values or the schema type or bound,
- * 3 adds its exit: the fallback, or the required form, sent size or absence it carries.
+ * Feedback stage of one fault: 1 states it (`neighbor_undecided` its subject ids too), 2 adds
+ * allowed values or the type or bound, 3 its exit: fallback, form, sent size, absence.
  */
 export type FeedbackStage = 1 | 2 | 3;
 
@@ -674,9 +677,9 @@ function mergeToolErrors(
 }
 
 /**
- * Renders every independent fault once, each at its own stage: allowed values or the schema type
- * or bound from feedback 2 and the fault's exit only at feedback 3; submitted values are never
- * echoed; a list the engine found empty is not served, the fault's schema type is.
+ * Renders every independent fault once, each at its own stage: allowed values, type or bound from
+ * feedback 2, exit only at feedback 3; `neighbor_undecided` serves subject ids from feedback 1.
+ * Submitted values are never echoed; an empty list is not served, the fault's type is.
  */
 export function renderProblem(
   rejection: ToolRejection,
@@ -745,7 +748,7 @@ export function renderProblemReport(
           ? error.path.split('.').at(-1)
           : valueAt(input, error.path);
       const allowed =
-        error.values?.length && stage >= 2
+        error.values?.length && (stage >= 2 || 'servesIds' in issue)
           ? [...error.values].sort(
               (a, b) =>
                 (typeof sent === 'string'
