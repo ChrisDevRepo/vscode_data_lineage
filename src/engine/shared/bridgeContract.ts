@@ -389,7 +389,7 @@ export const IndirectFactSchema = z
     node: z.string(),
     col: z.string().min(1),
     usage: z.enum(['join', 'filter', 'arrange']),
-    detail: z.string().max(200).optional(),
+    detail: z.string().optional(),
   })
   .strict();
 
