@@ -382,7 +382,7 @@ function errorPointer(error: ErrorObject): string {
  * Kind and, when the parser reports one, character offset of a JSON SyntaxError.
  * The submitted text is never copied into the kind.
  */
-function syntaxFault(
+export function syntaxFault(
   error: unknown,
   text: string,
 ): { readonly kind: string; readonly offset?: number } | undefined {

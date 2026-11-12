@@ -2,7 +2,7 @@ import { z, type ZodType } from 'zod';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveModelNodeId } from '../support/modelReferences';
 import { splitSqlName, stripBrackets, normalizeColName } from '../../utils/sql';
-import { validateToolCandidate } from '../support/toolValidation';
+import { syntaxFault, validateToolCandidate } from '../support/toolValidation';
 
 /** Admission by the served JSON Schema decides every normalization step. */
 const admits = (schema: ZodType, value: unknown): boolean =>
@@ -221,6 +221,9 @@ function normalizeJsonStringValues(text: string): string {
   return result;
 }
 
+/** The parser's kind for text that continues after one complete JSON value. */
+const TRAILING_JSON_KIND = 'Unexpected non-whitespace character after JSON';
+
 /**
  * The single decoded value of `text` when it is exactly the expected type, otherwise `undefined`.
  */
@@ -239,10 +242,9 @@ function decodeExact(text: string, expected: string): unknown {
   if (expected === 'boolean')
     return text === 'true' ? true : text === 'false' ? false : undefined;
   if (expected !== 'object' && expected !== 'array') return undefined;
-  let decoded: unknown;
-  try {
-    decoded = JSON.parse(
-      normalizeJsonStringValues(text),
+  const parse = (source: string): unknown =>
+    JSON.parse(
+      source,
       (_key, value: unknown, context?: { source?: string }) => {
         if (
           typeof value === 'number' &&
@@ -262,9 +264,26 @@ function decodeExact(text: string, expected: string): unknown {
         return value;
       },
     );
+  let decoded: unknown;
+  try {
+    const source = normalizeJsonStringValues(text);
+    try {
+      decoded = parse(source);
+    } catch (error) {
+      // After one complete value (the parser's own end position) only surplus closing
+      // brackets or braces and whitespace may follow; they are dropped, nothing else is.
+      const fault = syntaxFault(error, source);
+      if (
+        fault?.kind !== TRAILING_JSON_KIND ||
+        fault.offset === undefined ||
+        !/^[ \t\n\r}\]]+$/.test(source.slice(fault.offset))
+      )
+        throw error;
+      decoded = parse(source.slice(0, fault.offset));
+    }
   } catch {
     // A syntax error stays the sent text so admission can name its kind and offset. A number that
-    // cannot be kept exactly is not a value either. Neither is repaired.
+    // cannot be kept exactly is not a value either. Nothing else is repaired.
     return undefined;
   }
   const isArray = Array.isArray(decoded);
