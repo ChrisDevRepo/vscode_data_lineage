@@ -423,89 +423,7 @@ const ScopeIncludeDdlSchema = z
   .optional()
   .describe('Whether to include SQL bodies for nodes in the returned scope.');
 
-/** Zod schema validating the parameters for the `get_scope_bundle` discovery tool. */
-export const GetScopeBundleInputSchema = z
-  .object({
-    origin: ScopeOriginSchema.meta({ toolStringFact: 'modelObject' }),
-    direction: z
-      .enum(['upstream', 'downstream', 'bidirectional'])
-      .optional()
-      .describe(
-        'Direction of dependencies to include; defaults to bidirectional.',
-      ),
-    depth: ScopeDepthSchema.optional().describe(
-      'Optional symmetric hop depth, or "all" for the whole reachable chain. Omit to use the backend default of 3.',
-    ),
-    upstream_depth: ScopeDepthSchema.optional().describe(
-      'Optional upstream hop depth for an asymmetric bidirectional scope.',
-    ),
-    downstream_depth: ScopeDepthSchema.optional().describe(
-      'Optional downstream hop depth for an asymmetric bidirectional scope.',
-    ),
-    include_ddl: ScopeIncludeDdlSchema,
-  })
-  .strict()
-  .meta({
-    toolGroups: [
-      {
-        name: 'scope.parameters',
-        fields: [
-          'origin',
-          'direction',
-          'depth',
-          'upstream_depth',
-          'downstream_depth',
-        ],
-      },
-    ],
-    toolAdmission: {
-      allOf: [
-        {
-          if: {
-            anyOf: [
-              { not: { required: ['direction'] } },
-              {
-                properties: { direction: { const: 'bidirectional' } },
-                required: ['direction'],
-              },
-            ],
-          },
-          then: {
-            allOf: [
-              {
-                if: {
-                  required: ['depth'],
-                  anyOf: [
-                    { required: ['upstream_depth'] },
-                    { required: ['downstream_depth'] },
-                  ],
-                },
-                then: { properties: { depth: false } },
-              },
-              {
-                if: { not: { required: ['depth'] } },
-                then: { required: ['upstream_depth', 'downstream_depth'] },
-              },
-            ],
-          },
-          else: {
-            if: {
-              anyOf: [
-                { required: ['upstream_depth'] },
-                { required: ['downstream_depth'] },
-              ],
-            },
-            then: { properties: { direction: false } },
-          },
-        },
-      ],
-    },
-  });
-
-/** Inferred type of {@link GetScopeBundleInputSchema}. */
-export type GetScopeBundleInput = z.infer<typeof GetScopeBundleInputSchema>;
-
-/** Model-facing projection of `lineage_get_scope_bundle` sent on every model call. */
+/** The one `lineage_get_scope_bundle` schema: served to the model and checked at admission. */
 export const GetScopeBundleModelSchema = z
   .object({
     origin: ScopeOriginSchema.meta({ toolStringFact: 'modelObject' }),
@@ -517,7 +435,18 @@ export const GetScopeBundleModelSchema = z
     ),
     include_ddl: ScopeIncludeDdlSchema,
   })
-  .strict();
+  .strict()
+  .meta({
+    toolGroups: [
+      {
+        name: 'scope.parameters',
+        fields: ['origin', 'upstream_depth', 'downstream_depth'],
+      },
+    ],
+  });
+
+/** Inferred type of {@link GetScopeBundleModelSchema}. */
+export type GetScopeBundleInput = z.infer<typeof GetScopeBundleModelSchema>;
 
 const nonWhitespaceText = z
   .string()

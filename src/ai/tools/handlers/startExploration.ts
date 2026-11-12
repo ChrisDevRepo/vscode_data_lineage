@@ -57,14 +57,37 @@ export async function executeStartExploration(
     const beforeRevision = sess.pendingExploration?.revision;
     const receipt = toolInputReceipt.getStore();
     const admission = startAdmissionFacts();
-    // A missing analysisMode offers only the modes the call's own targetColumns accept.
-    admission.facts.nativeIssue = (error, mapped) => {
-      if (mapped.path !== 'analysisMode' || mapped.code !== 'missing') return;
-      const sent = (error.data as { targetColumns?: readonly string[] })
-        .targetColumns;
+    const pendingInit = isRefining ? sess.pendingExploration!.init : undefined;
+    const supplied = (field: string) => {
+      const raw = admission.input();
+      return (
+        raw !== undefined && Object.prototype.hasOwnProperty.call(raw, field)
+      );
+    };
+    /** The targetColumns in force for a mode: the sent list, else a refinement's held CT list. */
+    const effectiveTargetColumns = (
+      mode: 'bb' | 'ct' | undefined,
+      sent: string[] | undefined,
+    ) =>
+      sent ??
+      (!supplied('targetColumns') && mode === 'ct'
+        ? pendingInit?.targetColumns
+        : undefined);
+    // A missing or wrong analysisMode offers only the modes the effective targetColumns accept.
+    admission.facts.nativeIssue = (_error, mapped) => {
+      if (
+        mapped.path !== 'analysisMode' ||
+        (mapped.code !== 'missing' && mapped.code !== 'enum')
+      )
+        return;
+      const sent = admission.input()?.targetColumns as string[] | undefined;
       const { values: offered = [], ...rest } = mapped;
       const values = offered.filter(
-        (mode) => !evaluateStartTargetColumnsRule(mode as 'bb' | 'ct', sent),
+        (mode) =>
+          !evaluateStartTargetColumnsRule(
+            mode as 'bb' | 'ct',
+            effectiveTargetColumns(mode as 'bb' | 'ct', sent),
+          ),
       );
       return values.length ? { ...rest, values } : rest;
     };
@@ -91,8 +114,6 @@ export async function executeStartExploration(
       inspect: (view) => {
         const parsed = view.parsed;
         const raw = admission.input();
-        const supplied = (field: string) =>
-          raw !== undefined && Object.prototype.hasOwnProperty.call(raw, field);
         const annotations = admission.annotations;
         view.add(
           evaluateAlreadyStartedRule(
@@ -152,9 +173,6 @@ export async function executeStartExploration(
           sess.columnStore,
         );
         engine.sessionId = sess.id;
-        const pendingInit = isRefining
-          ? sess.pendingExploration!.init
-          : undefined;
         const referenceList = (
           field: 'excludeNodeIds' | 'passNodeIds',
           fallback: readonly string[],
@@ -191,11 +209,10 @@ export async function executeStartExploration(
           (!supplied('analysisMode') && isRefining
             ? pendingInit?.analysisMode
             : undefined);
-        const targetColumns =
-          annotations.targetColumns ??
-          (!supplied('targetColumns') && mode === 'ct'
-            ? pendingInit?.targetColumns
-            : undefined);
+        const targetColumns = effectiveTargetColumns(
+          mode,
+          annotations.targetColumns,
+        );
         if (
           !supplied('targetColumns') ||
           annotations.targetColumns !== undefined

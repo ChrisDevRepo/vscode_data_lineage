@@ -27,7 +27,7 @@ import {
 } from '../tools/tools';
 import {
   parseToolInput,
-  GetScopeBundleInputSchema,
+  GetScopeBundleModelSchema,
   GetNeighborColumnsInputSchema,
   SearchObjectsInputSchema,
   GetObjectDetailInputSchema,
@@ -414,18 +414,18 @@ class ToolHandler implements ToolServices {
     try {
       const model = this.requireModel(),
         facts = modelObjectAdmission(model);
-      let parameters: z.output<typeof GetScopeBundleInputSchema> | undefined;
+      let parameters: z.output<typeof GetScopeBundleModelSchema> | undefined;
       facts.validated = new Map([
         [
           'scope.parameters',
-          captureToolFact(GetScopeBundleInputSchema, (value) => {
+          captureToolFact(GetScopeBundleModelSchema, (value) => {
             parameters = value;
           }),
         ],
       ]);
       const outcome = ingestToolInput({
         input,
-        schema: GetScopeBundleInputSchema,
+        schema: GetScopeBundleModelSchema,
         context: '',
         facts,
         inspect: (view) => {

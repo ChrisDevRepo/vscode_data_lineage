@@ -642,23 +642,10 @@ export function prepareScopeBundle(
   prepared: ModelObjectPlan,
 ) {
   const { node: originNode, id: origin } = prepared;
-  const direction = input.direction ?? 'bidirectional';
-  const symmetricDepth = input.depth ?? 3;
-  const upstreamDepth =
-    direction === 'bidirectional'
-      ? (input.upstream_depth ?? symmetricDepth)
-      : undefined;
-  const downstreamDepth =
-    direction === 'bidirectional'
-      ? (input.downstream_depth ?? symmetricDepth)
-      : undefined;
-  const singleDepth = input.depth ?? 3;
+  const { upstream_depth: upstreamDepth, downstream_depth: downstreamDepth } =
+    input;
 
-  if (
-    direction === 'bidirectional' &&
-    upstreamDepth === 0 &&
-    downstreamDepth === 0
-  ) {
+  if (upstreamDepth === 0 && downstreamDepth === 0) {
     return makeRejection({
       code: REJECTION_CODES.invalidInput,
       errors: at('depth_zero', ['upstream_depth', 'downstream_depth']),
@@ -693,14 +680,8 @@ export function prepareScopeBundle(
     );
   };
 
-  if (direction === 'upstream') {
-    walkWithCap('inbound', singleDepth, upstreamDistance);
-  } else if (direction === 'downstream') {
-    walkWithCap('outbound', singleDepth, downstreamDistance);
-  } else {
-    walkWithCap('inbound', upstreamDepth!, upstreamDistance);
-    walkWithCap('outbound', downstreamDepth!, downstreamDistance);
-  }
+  walkWithCap('inbound', upstreamDepth, upstreamDistance);
+  walkWithCap('outbound', downstreamDepth, downstreamDistance);
 
   const overBudgetScopeReply = (
     admission: DiscoveryBudgetRejection,
@@ -726,8 +707,6 @@ export function prepareScopeBundle(
     scopeIds,
     upstreamDistance,
     downstreamDistance,
-    direction,
-    singleDepth,
     upstreamDepth,
     downstreamDepth,
     overBudgetScopeReply,
@@ -748,8 +727,6 @@ export function executeScopeBundle(
     scopeIds,
     upstreamDistance,
     downstreamDistance,
-    direction,
-    singleDepth,
     upstreamDepth,
     downstreamDepth,
     overBudgetScopeReply,
@@ -807,12 +784,9 @@ export function executeScopeBundle(
 
   return {
     origin: originNode.id,
-    direction,
-    depth: direction === 'bidirectional' ? undefined : singleDepth,
-    upstream_depth:
-      direction === 'bidirectional' ? (upstreamDepth ?? null) : undefined,
-    downstream_depth:
-      direction === 'bidirectional' ? (downstreamDepth ?? null) : undefined,
+    direction: 'bidirectional',
+    upstream_depth: upstreamDepth,
+    downstream_depth: downstreamDepth,
     include_ddl: effectiveIncludeDdl,
     scope: {
       nodes: nodes.length,

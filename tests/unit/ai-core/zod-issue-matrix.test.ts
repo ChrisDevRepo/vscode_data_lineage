@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { validateToolCandidate } from '../../../src/ai/support/toolValidation';
 import {
-  GetScopeBundleInputSchema,
+  GetScopeBundleModelSchema,
   PresentResultModelSchema,
   presentResultSchemaForPhase,
   startExplorationSchemaForState,
@@ -41,10 +41,10 @@ describe('Canonical tool issue matrix', () => {
     values?: string[];
   }>([
     {
-      // Bidirectional scope needs a depth on each side; only upstream is given.
+      // A scope needs a depth on each side; only upstream is given.
       name: 'asymmetric scope: missing downstream_depth',
-      schema: GetScopeBundleInputSchema,
-      input: { origin: 'dbo.a', direction: 'bidirectional', upstream_depth: 2 },
+      schema: GetScopeBundleModelSchema,
+      input: { origin: 'dbo.a', upstream_depth: 2 },
       faults: [{ path: 'downstream_depth', code: 'missing' }],
     },
     // Text that decodes as JSON is json_text. A container string that does not
