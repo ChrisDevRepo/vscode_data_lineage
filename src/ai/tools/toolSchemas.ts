@@ -661,7 +661,7 @@ const indirectColumnsSchema = (
       IndirectFactSchema.extend({
         node,
         usage: IndirectFactSchema.shape.usage.describe(
-          'join: key relating rows of two inputs. filter: decides which rows count or which value branch applies, in WHERE or ON. arrange: groups, partitions or orders rows.',
+          'join: relates rows of two inputs: the key of any join condition, and any predicate in a LEFT or FULL join ON — an outer join keeps every preserved row, so such a predicate only narrows which rows match. filter: decides which rows count or which value branch applies: a WHERE predicate, or an inner join ON predicate, which does remove rows. arrange: groups, partitions or orders rows.',
         ),
         detail: IndirectFactSchema.shape.detail.describe(
           'The SQL clause as written.',
