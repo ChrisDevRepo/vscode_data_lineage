@@ -165,7 +165,7 @@ describe('a tool call whose arguments are not a JSON object', () => {
       resend: ['query'],
     });
     expect(shown(String(results[0].content))).toEqual([
-      { ...fault('type'), allowed: ['object'] },
+      { ...fault('type'), type: ['object'] },
     ]);
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(attempt.rejections).toEqual([
