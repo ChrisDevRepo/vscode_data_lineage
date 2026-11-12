@@ -360,23 +360,19 @@ export function finishStructured<T>(
   schema: ZodType<T>,
   debugLog?: (message: string) => void,
 ): T {
-  // Argument text that carries an object is that object, by the same step as a tool call.
-  const emitted: EmittedToolCall[] = sent.map((call) => {
-    if ('args' in call) return call;
-    const decoded = normalizeEmitted(schema, call);
-    if (!decoded) return call;
-    logFixes(call.toolName, call.callId, decoded.fixes, debugLog);
-    return {
-      callId: call.callId,
-      toolName: call.toolName,
-      args: decoded.input,
-    };
-  });
+  // Each call is normalized once, by the same step as a tool call: the object it sent or the
+  // object its argument text carries.
+  const emitted = sent.map((call) => ({
+    call,
+    normalized: normalizeEmitted(schema, call),
+  }));
   const fail = (reason: string, errors: readonly ToolError[]) =>
     new StructuredOutputError(reason, errors);
-  const calls = emitted.flatMap((call) => ('args' in call ? [call.args] : []));
+  const calls = emitted.flatMap(({ normalized }) =>
+    normalized ? [normalized] : [],
+  );
   if (
-    emitted.some((call) => call.toolName !== STRUCTURED_OUTPUT_TOOL) ||
+    emitted.some(({ call }) => call.toolName !== STRUCTURED_OUTPUT_TOOL) ||
     (calls.length > 0 && calls.length < emitted.length)
   ) {
     throw fail(
@@ -385,17 +381,15 @@ export function finishStructured<T>(
     );
   }
   const [first] = emitted;
-  if (calls.length === 0 && first && 'malformedArgs' in first) {
-    throw fail(
-      `${STRUCTURED_OUTPUT_TOOL} arguments were not a JSON object`,
-      at('type', [''], ['object']),
-    );
+  if (calls.length === 0 && first && 'malformedArgs' in first.call) {
+    throw fail(`${STRUCTURED_OUTPUT_TOOL} arguments were not a JSON object`, [
+      { path: '', code: 'type', types: ['object'] },
+    ]);
   }
-  const normalized =
-    calls.length === 1 ? normalizeModelInput(schema, calls[0]) : undefined;
+  const normalized = calls.length === 1 ? calls[0] : undefined;
   logFixes(
     STRUCTURED_OUTPUT_TOOL,
-    emitted[0]?.callId ?? '',
+    first?.call.callId ?? '',
     normalized?.fixes ?? [],
     debugLog,
   );

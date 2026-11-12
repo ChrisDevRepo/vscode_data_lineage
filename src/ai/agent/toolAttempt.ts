@@ -478,11 +478,6 @@ function rejectionFromInvalid(
   };
 }
 
-/** The one place a dispatched result's text is read for the rejection it carries. */
-function rejectionFromResult(resultText: string): ToolRejection | null {
-  return readToolErrorText(resultText);
-}
-
 /**
  * Result recorded for one dispatched or synthesized call, ready to become its paired
  * {@link ModelMessage}.
@@ -1120,7 +1115,7 @@ async function dispatchToolCallBatch(
     const detectedRefusal = signal?.kind === 'refused' ? signal.reason : null;
     const controlSuccess =
       detectedGate || detectedReroute !== null || detectedRefusal !== null;
-    const rejected = controlSuccess ? null : rejectionFromResult(resultText);
+    const rejected = controlSuccess ? null : readToolErrorText(resultText);
     const isError = rejected !== null;
     input.onToolResult?.(call.toolName, call.input, isError, resultText);
     const terminalSuccess =
