@@ -2,6 +2,7 @@ import type { InvalidRoute, DepthIntent } from './smTypes';
 import { buildRouteValidationRejection } from './smRouteValidation';
 import { missingSectionParts } from '../interaction/rules/submitFindingsRules';
 import {
+  HELD_LISTS_DESCRIPTION,
   submitFindingsSchemaForMode,
   toHopFinding,
   type SubmitFindingsHopColumns,
@@ -461,7 +462,9 @@ export class NavigationEngine implements IHopStateMachine {
   }> = [];
 
   /** One wire-shaped draft: representation adaptation happens only after full-schema validation. */
-  private readonly heldFindingDraft = new ToolDraft<Record<string, unknown>>();
+  private readonly heldFindingDraft = new ToolDraft<Record<string, unknown>>(
+    HELD_LISTS_DESCRIPTION,
+  );
 
   /** Exploration direction set by `init`. */
   protected _direction: 'upstream' | 'downstream' | 'bidirectional' =
@@ -1416,6 +1419,7 @@ export class NavigationEngine implements IHopStateMachine {
       : [];
     return {
       focusNodeId: focus?.id,
+      owedNeighborIds: focus ? this.requiredNeighborIds(focus.id) : [],
       neighbors,
       // At a procedure, out_col names the out_node column, never a column of the focus.
       outCols:

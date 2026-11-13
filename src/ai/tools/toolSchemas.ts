@@ -508,6 +508,14 @@ const BB_PRUNE_NEIGHBORS_DESCRIPTION =
 const BB_QUESTIONS_DESCRIPTION =
   'Provide a self-contained subquestion for each eligible in-scope neighbor kept for analysis or passthrough, tied to the user question. For an eligible out-of-scope neighbor, optionally propose a relevant follow-up; it is deferred until scope approval. No questions to visited or pruned neighbors.';
 
+/** Served once, on `questions` of a fresh bb hop with an owed neighbor (both lists required). */
+const NEIGHBOR_OUTCOME_DESCRIPTION =
+  ' Every open neighbor needs one outcome: a `questions` entry or a `prune_neighbors` entry. A list with no entry is `[]`.';
+
+/** Root sentence of a card whose draft holds fields: a sent list replaces its held list. */
+export const HELD_LISTS_DESCRIPTION =
+  'A sent questions or prune_neighbors list replaces its held list whole; repeat entries you keep. Omit the list to retain it; [] withdraws it.';
+
 /** One `questions[]` entry, attached to that neighbour's queued hop. */
 const NeighborQuestionSchema = z
   .object({
@@ -952,6 +960,7 @@ function finalizeSubmitFindingsSchema(
   schema: typeof HopFindingBaseSchema | typeof HopFindingCtBaseSchema,
   fresh: boolean,
   classification?: ClassificationValue,
+  owedLists = false,
 ): z.ZodType<FlatSubmitFindings> {
   const keptAngles = classification
     ? CLASSIFICATION_KEPT_ANGLES[classification]
@@ -996,14 +1005,16 @@ function finalizeSubmitFindingsSchema(
       ]),
     ),
   );
-  const validated = declared
-    .meta({
-      toolFindingShape: { fresh },
-      toolObjectFact: 'findingPresence',
-    })
-    .describe(
-      'A sent questions or prune_neighbors list replaces its held list whole; repeat entries you keep. Omit the list to retain it; [] withdraws it.',
-    ) as z.ZodType<FlatSubmitFindings>;
+  const found = declared.meta({
+    toolFindingShape: { fresh },
+    toolObjectFact: 'findingPresence',
+  });
+  // A fresh bb card holds nothing; its draft serves the sentence once it holds something.
+  const validated = (
+    fresh && !('column_flow' in schema.shape)
+      ? found
+      : found.describe(HELD_LISTS_DESCRIPTION)
+  ) as z.ZodType<FlatSubmitFindings>;
   if (!fresh) return validated;
   const required = Object.entries(schema.shape)
     .filter(([, field]) => !field.isOptional())
@@ -1011,7 +1022,12 @@ function finalizeSubmitFindingsSchema(
   return validated.meta({
     toolFindingShape: { fresh },
     toolObjectFact: 'findingPresence',
-    required: [...required, 'summary', 'sections'],
+    required: [
+      ...required,
+      'summary',
+      'sections',
+      ...(owedLists ? ['questions', 'prune_neighbors'] : []),
+    ],
   });
 }
 
@@ -1068,6 +1084,8 @@ function capturedSectionSchemaForClassification(
 export interface SubmitFindingsHopColumns {
   /** Focus node id of the current hop, admitting only equivalent metadata spellings when sent. */
   readonly focusNodeId?: string;
+  /** Open, admitted neighbors that owe an AI outcome (engine rule owner). */
+  readonly owedNeighborIds?: readonly string[];
   /** Backend-owned current-hop neighbors, including closed evidence-only neighbors. */
   readonly neighbors?: readonly {
     readonly id: string;
@@ -1335,6 +1353,9 @@ export function submitFindingsSchemaForMode(
   }
   const prunableIds =
     hop?.neighbors?.filter((n) => n.can_prune).map((n) => n.id) ?? [];
+  // A fresh bb hop with an owed neighbor owes both lists; an empty list is allowed.
+  const owedLists =
+    mode === 'bb' && freshSubmission && (hop?.owedNeighborIds?.length ?? 0) > 0;
   if (hop?.neighbors)
     narrowed = narrowed
       .extend({
@@ -1366,7 +1387,8 @@ export function submitFindingsSchemaForMode(
           .max(questionIds.length ? MAX_ID_LIST_LENGTH : 0)
           .optional()
           .describe(
-            mode === 'bb' ? BB_QUESTIONS_DESCRIPTION : QUESTIONS_DESCRIPTION,
+            (mode === 'bb' ? BB_QUESTIONS_DESCRIPTION : QUESTIONS_DESCRIPTION) +
+              (owedLists ? NEIGHBOR_OUTCOME_DESCRIPTION : ''),
           ),
       })
       .strict() as typeof HopFindingCtBaseSchema;
@@ -1449,6 +1471,7 @@ export function submitFindingsSchemaForMode(
     narrowed,
     freshSubmission,
     classification,
+    owedLists,
   );
   if (submitFindingsSchemaCache.size >= SUBMIT_FINDINGS_SCHEMA_CACHE_LIMIT)
     submitFindingsSchemaCache.delete([...submitFindingsSchemaCache.keys()][0]);

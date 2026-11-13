@@ -30,6 +30,9 @@ export class ToolDraft<T extends object> {
   private releaseAbort?: () => void;
   private schemas = new WeakMap<z.ZodType, z.ZodType>();
 
+  /** `heldDescription`: the card's root description once the draft holds fields. */
+  constructor(private readonly heldDescription?: string) {}
+
   /** Generation identity belongs to transport; two state-changing calls cannot own one draft. */
   public own(context: string, generation: number): boolean {
     if (this.ownerContext !== context || this.generation !== generation) {
@@ -66,6 +69,7 @@ export class ToolDraft<T extends object> {
       ...schema.meta(),
       toolDisplay: {
         ...(schema.meta()?.toolDisplay as Node | undefined),
+        ...(this.heldDescription && { description: this.heldDescription }),
         required: this.owed(source),
         properties: Object.fromEntries(
           Object.entries(owned).map(([key, field]) => [
