@@ -1406,16 +1406,7 @@ export class NavigationEngine implements IHopStateMachine {
       : undefined;
     const neighbors = focus ? this.neighborChoices(focus.id) : [];
     const declaredOutCols = focus
-      ? [
-          ...new Set(
-            (
-              getNodeColumns(focus.id, this.nodeMap, this.store ?? undefined) ??
-              []
-            )
-              .map((column) => column.name)
-              .filter(Boolean),
-          ),
-        ]
+      ? [...new Set(this.declaredColumns(focus.id).filter(Boolean))]
       : [];
     return {
       focusNodeId: focus?.id,
@@ -1465,6 +1456,35 @@ export class NavigationEngine implements IHopStateMachine {
         ? { columnDestinations: this.currentDestinations() }
         : {}),
     };
+  }
+
+  /**
+   * The declared column names of one node: the supplier check's clause-backed set (CT check 2)
+   * and the destination set where the served schema lists no `out_col` enum.
+   */
+  private declaredColumns(nodeId: string): string[] {
+    return (
+      getNodeColumns(nodeId, this.nodeMap, this.store ?? undefined) ?? []
+    ).map((column) => column.name);
+  }
+
+  /**
+   * The columns the destination check admits for one `out_node`: the set the served enum lists —
+   * the arriving focus columns, or the columns paired with that node in `columnDestinations` — or
+   * the node's declared columns where no `out_col` enum is served. The offer and the check read
+   * this one set, so an offered value never fails the check.
+   */
+  private admittedOutCols(focusId: string, nodeId: string): readonly string[] {
+    const hop = this.hopSubmitColumns;
+    if (nodeId === focusId) return hop.outCols ?? [];
+    if (hop.columnDestinations)
+      return hop.columnDestinations
+        .filter(
+          (target) =>
+            this.identifierKey(target.node) === this.identifierKey(nodeId),
+        )
+        .map((target) => target.col);
+    return this.declaredColumns(nodeId);
   }
 
   /**
@@ -1550,20 +1570,15 @@ export class NavigationEngine implements IHopStateMachine {
     const supplier = (path: string, node: string) => {
       const col = facts.columns.get(`${path}/col`);
       if (col === undefined) return undefined;
+      const id =
+        resolveModelNodeId(node, this.nodeMap, this.identifierCaseSensitive) ??
+        node;
       const checked = tracer.validateColumnSupplier(
         focusId,
-        {
-          node:
-            resolveModelNodeId(
-              node,
-              this.nodeMap,
-              this.identifierCaseSensitive,
-            ) ?? node,
-          col,
-        },
+        { node: id, col },
         dotted(path),
         this.nodeMap,
-        this.store ?? null,
+        this.declaredColumns(id),
         this.removedSet,
         contributors,
       );
@@ -1588,12 +1603,11 @@ export class NavigationEngine implements IHopStateMachine {
             dotted(row),
             this.nodeMap,
             this.model,
-            this.store ?? null,
+            (node) => this.admittedOutCols(focusId, node),
             undefined,
             this.callerTargets(),
             this.removedSet,
             contributors,
-            this.hopSubmitColumns.outCols ?? undefined,
           ).invalidRoutes;
     if (pointer.endsWith('/out_node')) {
       if (out_col === undefined) return [];
@@ -3265,20 +3279,15 @@ export class NavigationEngine implements IHopStateMachine {
       const prefix = path.split('/').slice(0, -1).join('/'),
         node = facts.references.get(`${prefix}/node`);
       if (node === undefined) continue;
+      const nid =
+        resolveModelNodeId(node, this.nodeMap, this.identifierCaseSensitive) ??
+        node;
       const checked = this.tracer.validateColumnSupplier(
         focusId,
-        {
-          node:
-            resolveModelNodeId(
-              node,
-              this.nodeMap,
-              this.identifierCaseSensitive,
-            ) ?? node,
-          col,
-        },
+        { node: nid, col },
         paths(prefix),
         this.nodeMap,
-        this.store ?? null,
+        this.declaredColumns(nid),
         this.removedSet,
         contributors,
         log,
@@ -3293,7 +3302,7 @@ export class NavigationEngine implements IHopStateMachine {
         fact,
         paths(path),
         this.nodeMap,
-        this.store ?? null,
+        this.declaredColumns(fact.node),
         this.removedSet,
         contributors,
         log,
@@ -3374,8 +3383,6 @@ export class NavigationEngine implements IHopStateMachine {
           ...(out_node !== undefined ? { out_node } : {}),
         });
     }
-    // The focus column check admits the columns the served enum lists, one set for both.
-    const servedOutCols = this.hopSubmitColumns.outCols ?? undefined;
     for (const [path, header] of headers) {
       const suppliers = [...facts.suppliers].flatMap(([refPath, ref]) => {
         const neighbor = verified.get(refPath);
@@ -3396,12 +3403,11 @@ export class NavigationEngine implements IHopStateMachine {
         paths(path),
         this.nodeMap,
         this.model,
-        this.store ?? null,
+        (node) => this.admittedOutCols(focusId, node),
         log,
         callerTargets,
         this.removedSet,
         contributors,
-        servedOutCols,
       );
       invalidRoutes.push(...prepared.invalidRoutes);
       stagedEdges.push(...prepared.stagedEdges);

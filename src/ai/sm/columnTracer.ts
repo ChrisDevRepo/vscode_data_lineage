@@ -7,8 +7,6 @@ import {
 import type { DatabaseModel, LineageNode } from '../../engine/shared/types';
 import { resolveModelNodeId } from '../support/modelReferences';
 import { edgeApiType } from '../support/aiPresenter';
-import { getNodeColumns } from '../support/graphUtils';
-import { ColumnStore } from '../../engine/shared/columnStore';
 import { normalizeColName, schemaKey } from '../../utils/sql';
 import { DirectedGraph } from 'graphology';
 import { bfsFromNode } from 'graphology-traversal';
@@ -184,13 +182,17 @@ export class ColumnTracer {
     return byNode;
   }
 
-  /** Verifies a supplier's independent identity and adjacency with the one endpoint check. */
+  /**
+   * Verifies a supplier's independent identity and adjacency with the one endpoint check.
+   * `admitted` is the supplier node's declared columns, the clause-backed set where the served
+   * schema lists no supplier column enum (CT check 2).
+   */
   validateColumnSupplier(
     focusId: string,
     cont: ColumnFlowEntry['upstream_columns'][number],
     path: string,
     nodeMap: Map<string, LineageNode>,
-    store: ColumnStore | null,
+    admitted: readonly string[],
     removedSet?: ReadonlySet<string>,
     contributorIds?: ReadonlySet<string>,
     log?: TracerLogFn,
@@ -211,7 +213,7 @@ export class ColumnTracer {
       { node: `${path}.node`, col: `${path}.col` },
       SOURCE_FAULTS,
       nodeMap,
-      store,
+      admitted,
       removedSet,
       contributorIds,
       log,
@@ -233,7 +235,9 @@ export class ColumnTracer {
 
   /**
    * The one check of a stored pair endpoint: a loaded object that is not pruned, the focus or its
-   * neighbor, owning the column where metadata exists.
+   * neighbor, owning the column where metadata exists. `admitted` is the one column set the caller
+   * reads from the served schema (the declared columns where no enum is served); an empty set
+   * leaves a node without column metadata trusted.
    */
   private checkEndpoint(
     focusId: string,
@@ -241,11 +245,10 @@ export class ColumnTracer {
     at: { node: string; col: string },
     faults: EndpointFaults,
     nodeMap: Map<string, LineageNode>,
-    store: ColumnStore | null,
+    admitted: readonly string[],
     removedSet?: ReadonlySet<string>,
     contributorIds?: ReadonlySet<string>,
     log?: TracerLogFn,
-    admitted?: readonly string[],
   ): { node: LineageNode } | { invalidRoute: InvalidRoute } {
     const node = nodeMap.get(ref.node);
     if (!node)
@@ -259,11 +262,7 @@ export class ColumnTracer {
           reason: faults.pruned,
         },
       };
-    const columns = admitted?.length
-      ? [...admitted]
-      : (getNodeColumns(node.id, nodeMap, store ?? undefined) ?? []).map(
-          (column) => column.name,
-        );
+    const columns = [...admitted];
     if (
       columns.length &&
       !columns.some(
@@ -312,7 +311,7 @@ export class ColumnTracer {
    * Stores one direct pair per verified supplier into the entry's destination, `out_node.out_col`
    * or the focus column, after the same endpoint check; a supplier identical to that destination is
    * refused (topology: a column cannot be its own upstream source); the backend adds no pair of its
-   * own.
+   * own. `admittedOutCols` supplies the destination node's one served column set.
    */
   prepareColumnEntry(
     focusId: string,
@@ -321,12 +320,11 @@ export class ColumnTracer {
     path: string,
     nodeMap: Map<string, LineageNode>,
     model: DatabaseModel,
-    store: ColumnStore | null,
+    admittedOutCols: (node: string) => readonly string[],
     log: TracerLogFn | undefined,
     callerTargets: readonly { node: string; col: string }[],
     removedSet?: ReadonlySet<string>,
     contributorIds?: ReadonlySet<string>,
-    focusOutCols?: readonly string[],
   ): { invalidRoutes: InvalidRoute[]; stagedEdges: ColumnEdge[] } {
     const invalidRoutes: InvalidRoute[] = [],
       stagedEdges: ColumnEdge[] = [];
@@ -344,11 +342,10 @@ export class ColumnTracer {
       { node: `${path}.out_node`, col: `${path}.out_col` },
       node === focusId ? FOCUS_FAULTS : DESTINATION_FAULTS,
       nodeMap,
-      store,
+      admittedOutCols(node),
       removedSet,
       contributorIds,
       log,
-      node === focusId ? focusOutCols : undefined,
     );
     if ('invalidRoute' in destination) {
       invalidRoutes.push(destination.invalidRoute);
