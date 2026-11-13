@@ -3172,24 +3172,24 @@ export class NavigationEngine implements IHopStateMachine {
           : columnReceipt().columnPlan?.invalidRoutes.find(
               (route) => route.path === path,
             );
-      if (!route) return;
+      // A column_flow node field offers only ids its entry accepts; any other, its served enum.
+      const values = () =>
+        isFlowNodeField(path)
+          ? this.offeredFlowNodeIds(
+              currentFocusId ?? '',
+              error.instancePath,
+              admission,
+            )
+          : (error.params.allowedValues ?? [error.params.allowedValue]).map(
+              String,
+            );
+      // Without a route fault at this path the schema fault stands, with the same offer.
+      if (!route)
+        return isFlowNodeField(path)
+          ? { ...mapped, values: values() }
+          : undefined;
       const issue = buildRouteValidationRejection([route]).errors[0];
-      return {
-        ...issue,
-        path,
-        // A column_flow node field offers only ids its entry accepts; any other, its served enum.
-        values:
-          issue.values ??
-          (isFlowNodeField(path)
-            ? this.offeredFlowNodeIds(
-                currentFocusId ?? '',
-                error.instancePath,
-                admission,
-              )
-            : (error.params.allowedValues ?? [error.params.allowedValue]).map(
-                String,
-              )),
-      };
+      return { ...issue, path, values: issue.values ?? values() };
     };
     return ingestToolInput<typeof schema, SubmitResult>({
       input: authored,

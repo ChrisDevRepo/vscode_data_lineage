@@ -10,6 +10,7 @@ import {
 
 /** The issue code of each route fault; the renderer states its fault and correction. */
 const ROUTE_ISSUE = {
+  unknown_contributor: 'not_found',
   absent_contributor: 'not_neighbor',
   bad_out_col: 'unknown_column',
   bad_contributor_col: 'unknown_column',

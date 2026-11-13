@@ -769,6 +769,7 @@ export interface HopLogEntry {
 
 /** Kinds of invalid routes during exploration. */
 export type InvalidRouteKind =
+  | 'unknown_contributor'
   | 'absent_contributor'
   | 'bad_out_col'
   | 'bad_contributor_col'

@@ -238,7 +238,7 @@ export class ColumnTracer {
     if (!node)
       return {
         invalidRoute: {
-          kind: 'absent_contributor',
+          kind: 'unknown_contributor',
           id: ref.node,
           path: at.node,
           reason: faults.absent,
