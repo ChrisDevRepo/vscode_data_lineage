@@ -6,13 +6,15 @@ import { z } from 'zod';
 import type { ToolDefinition } from '../tools/registry';
 import { REJECTION_CODES } from './rejectionCodes';
 
-type IssueCategory =
-  | 'shape'
-  | 'required'
-  | 'reference'
-  | 'value'
-  | 'protocol'
-  | 'stage';
+const ISSUE_CATEGORIES = [
+  'shape',
+  'required',
+  'reference',
+  'value',
+  'protocol',
+  'stage',
+] as const;
+type IssueCategory = (typeof ISSUE_CATEGORIES)[number];
 
 /** The text field a fallback writes its fact into; a rendered fallback adds it to `resend`. */
 const FALLBACK_FIELD = 'sections';
@@ -397,62 +399,6 @@ export type IssueCode = keyof typeof ISSUES;
 const ISSUE_CODES = Object.keys(ISSUES) as [IssueCode, ...IssueCode[]];
 
 /**
- * One fault of a rejection: where it is, its issue code and, from schema or engine facts, the
- * backend values it concerns: what the field accepts, or for a required fault the subjects still
- * missing. Never text, never a submitted value.
- */
-export interface ToolError {
-  path: string;
-  code: IssueCode;
-  /** Domain classification of this particular fault; its fixed issue text stays unchanged. */
-  category?: IssueCategory;
-  /** Values every check accepts; an empty list states that the engine found none. */
-  values?: readonly string[];
-  /** JSON types the served schema accepts at the path; never listed as values. */
-  types?: readonly string[];
-  /** The schema bound the value broke, and the length or count sent (never the value). */
-  bound?: {
-    readonly keyword: string;
-    readonly limit: number;
-    readonly sent?: number;
-  };
-  /**
-   * Required fields of the object that holds the path, each with its schema types, and the field
-   * itself; always names a field besides the fault's own, never one a held draft keeps.
-   */
-  form?: Readonly<Record<string, readonly string[]>>;
-  /** The accepted state is absence: the field left out of the call, or no call at all. */
-  exit?: 'omit' | 'no_call';
-  /** SyntaxError kind and character offset, when reported. Never the submitted text. */
-  parse?: {
-    readonly kind: string;
-    readonly offset?: number;
-  };
-}
-
-/**
- * The one rejection record: stable code, typed faults, and facts for logs and the held-draft
- * protocol; {@link renderProblem} alone turns it into model feedback.
- */
-export interface ToolRejection {
-  /** Stable machine code. */
-  code: string;
-  /** Log line; never shown to the model. */
-  reason: string;
-  /** Structured facts for logs and traces; never shown to the model. */
-  detail?: unknown;
-  /** Every independently decidable fault, by path and issue code. */
-  errors: ToolError[];
-  /**
-   * Dotted paths of the offending fields for held-draft bookkeeping and observability; defaults to
-   * the error paths.
-   */
-  issuePaths?: string[];
-  /** Top-level fields the model resends; every other field stays held. */
-  resend?: string[];
-}
-
-/**
  * Engine code carried by the consent gate, which shares the rejection envelope without being one.
  */
 const CONSENT_GATE_CODE = REJECTION_CODES.actionRequired;
@@ -472,10 +418,17 @@ export function isAdmissionRefusal(code: string): boolean {
 }
 
 /**
- * Zod view of the {@link makeRejection} shape, parsed once at the read boundary. Strict: a success
- * payload carrying any other key is never read as a rejection.
+ * The one rejection record, parsed once at the read boundary; {@link ToolRejection} and
+ * {@link ToolError} are inferred from it. Strict: a success payload carrying any other key is never
+ * read as a rejection. A stable machine `code`; a log-only `reason` and `detail`, never shown to
+ * the model; every independently decidable fault in `errors`, by path and issue code, with the
+ * backend values it concerns (`values`, `types`, `bound`, `form`, `exit`, `parse`), never text or a
+ * submitted value; `issuePaths` for held-draft bookkeeping, defaulting to the error paths;
+ * `resend`, the top-level fields the model resends while every other field stays held.
+ *
+ * @internal
  */
-const RejectionShape = z
+export const RejectionShape = z
   .object({
     code: z.string(),
     reason: z.string().trim().min(1),
@@ -486,16 +439,7 @@ const RejectionShape = z
           .object({
             path: z.string(),
             code: z.enum(ISSUE_CODES),
-            category: z
-              .enum([
-                'shape',
-                'required',
-                'reference',
-                'value',
-                'protocol',
-                'stage',
-              ])
-              .optional(),
+            category: z.enum(ISSUE_CATEGORIES).optional(),
             values: z.array(z.string()).optional(),
             types: z.array(z.string()).optional(),
             bound: z
@@ -523,6 +467,14 @@ const RejectionShape = z
     resend: z.array(z.string()).optional(),
   })
   .strict();
+
+/**
+ * The one rejection record: stable code, typed faults, and facts for logs and the held-draft
+ * protocol; {@link renderProblem} alone turns it into model feedback.
+ */
+export type ToolRejection = z.infer<typeof RejectionShape>;
+/** One fault of a rejection. */
+export type ToolError = ToolRejection['errors'][number];
 
 /**
  * Write-side builder for the one tool-execution failure envelope both LM lanes record when a
@@ -813,7 +765,7 @@ export function at(
   return paths.map((path) => ({
     path,
     code,
-    ...(values ? { values } : {}),
+    ...(values ? { values: [...values] } : {}),
     ...(exit ? { exit } : {}),
   }));
 }
