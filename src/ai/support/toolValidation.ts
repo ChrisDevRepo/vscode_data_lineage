@@ -471,21 +471,6 @@ function schemaTypes(node: unknown): string[] {
       ];
 }
 
-/** The JSON types the schema accepts for the value the candidate holds at a dotted path. */
-export function schemaTypesAt(
-  schema: z.ZodType,
-  input: unknown,
-  path: string,
-): string[] {
-  const pointer = path ? `/${path.split('.').join('/')}` : '';
-  const types = new Set<string>();
-  const { json } = compiledSchema(schema);
-  walkServedSchema(json, input, '', (node, _value, at) => {
-    if (at === pointer) for (const type of schemaTypes(node)) types.add(type);
-  });
-  return [...types];
-}
-
 /** The size a bound keyword measures: characters, items or keys; a number is the value itself. */
 function sentSize(data: unknown): number | undefined {
   if (typeof data === 'string') return [...data].length;

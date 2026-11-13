@@ -8,7 +8,6 @@ import {
   type ToolRejection,
 } from './toolErrorEnvelope';
 import {
-  schemaTypesAt,
   validateToolCandidate,
   type ToolValidation,
   type ToolFactContext,
@@ -109,14 +108,6 @@ export function ingestToolInput<S extends z.ZodType, R>(options: {
     problem.errors.push(...at('not_overwritten', lists?.overwritten ?? []));
     problem.resend = lists?.resend;
     options.rejected?.(problem, view);
-    problem.errors = problem.errors.map((error) => {
-      // A fault the engine found no accepted value for states its field's schema type instead.
-      const types =
-        error.values?.length === 0 && !error.types
-          ? schemaTypesAt(schema, candidate, error.path)
-          : [];
-      return types.length ? { ...error, types } : error;
-    });
     return problem;
   }
   if (!view.parsed.success || !commit)
