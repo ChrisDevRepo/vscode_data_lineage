@@ -233,6 +233,7 @@ export class ColumnTracer {
     removedSet?: ReadonlySet<string>,
     contributorIds?: ReadonlySet<string>,
     log?: TracerLogFn,
+    admitted?: readonly string[],
   ): { node: LineageNode } | { invalidRoute: InvalidRoute } {
     const node = nodeMap.get(ref.node);
     if (!node)
@@ -253,9 +254,11 @@ export class ColumnTracer {
           reason: faults.pruned,
         },
       };
-    const columns = (
-      getNodeColumns(node.id, nodeMap, store ?? undefined) ?? []
-    ).map((column) => column.name);
+    const columns = admitted?.length
+      ? [...admitted]
+      : (getNodeColumns(node.id, nodeMap, store ?? undefined) ?? []).map(
+          (column) => column.name,
+        );
     if (
       columns.length &&
       !columns.some(
@@ -318,6 +321,7 @@ export class ColumnTracer {
     callerTargets: readonly { node: string; col: string }[],
     removedSet?: ReadonlySet<string>,
     contributorIds?: ReadonlySet<string>,
+    focusOutCols?: readonly string[],
   ): { invalidRoutes: InvalidRoute[]; stagedEdges: ColumnEdge[] } {
     const invalidRoutes: InvalidRoute[] = [],
       stagedEdges: ColumnEdge[] = [];
@@ -339,6 +343,7 @@ export class ColumnTracer {
       removedSet,
       contributorIds,
       log,
+      node === focusId ? focusOutCols : undefined,
     );
     if ('invalidRoute' in destination) {
       invalidRoutes.push(destination.invalidRoute);

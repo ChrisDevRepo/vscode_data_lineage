@@ -1589,6 +1589,7 @@ export class NavigationEngine implements IHopStateMachine {
             this.callerTargets(),
             this.removedSet,
             contributors,
+            this.hopSubmitColumns.outCols ?? undefined,
           ).invalidRoutes;
     if (pointer.endsWith('/out_node')) {
       if (out_col === undefined) return [];
@@ -3358,6 +3359,8 @@ export class NavigationEngine implements IHopStateMachine {
           ...(out_node !== undefined ? { out_node } : {}),
         });
     }
+    // The focus column check admits the columns the served enum lists, one set for both.
+    const servedOutCols = this.hopSubmitColumns.outCols ?? undefined;
     for (const [path, header] of headers) {
       const suppliers = [...facts.suppliers].flatMap(([refPath, ref]) => {
         const neighbor = verified.get(refPath);
@@ -3383,6 +3386,7 @@ export class NavigationEngine implements IHopStateMachine {
         callerTargets,
         this.removedSet,
         contributors,
+        servedOutCols,
       );
       invalidRoutes.push(...prepared.invalidRoutes);
       stagedEdges.push(...prepared.stagedEdges);
