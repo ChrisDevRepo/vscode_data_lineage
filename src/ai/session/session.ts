@@ -8,7 +8,11 @@ import {
 } from '../model/modelPort';
 import type { DatabaseModel } from '../../engine/shared/types';
 import { getGlobalSingleton } from '../../utils/globalSingleton';
-import type { SerializedFilterState } from '../../engine/shared/bridgeContract';
+import type {
+  RenderStateSnapshot,
+  SerializedFilterState,
+  UiStateSnapshot,
+} from '../../engine/shared/bridgeContract';
 import { ColumnStore } from '../../engine/shared/columnStore';
 import { AiMemoryManager } from '../session/memoryManager';
 import {
@@ -188,11 +192,8 @@ export class AiSession {
   public graph: Graph | null = null;
   public filter: SerializedFilterState | null = null;
   public modelName?: string;
-  /**
-   * GUI state snapshot from the webview's `filter-changed` message, validated at the bridge;
-   * readers stay defensive because non-bridge writers may seed it.
-   */
-  public uiState: unknown = null;
+  /** GUI state snapshot from the webview's `filter-changed` message, validated at the bridge. */
+  public uiState: UiStateSnapshot | null = null;
   /**
    * Trace-mode snapshot lifted from `uiState.trace`, with no extension-host consumer beyond debug
    * dumps.
@@ -202,7 +203,7 @@ export class AiSession {
    * Render-state snapshot from the webview's `render-state` message, consumed by the screen-state
    * presenter.
    */
-  public renderState: unknown = null;
+  public renderState: RenderStateSnapshot | null = null;
   public graphMode: 'full' | 'overview' = 'full';
   /** Total count of nodes after all active filters are applied (from webview). */
   public filteredCount = 0;

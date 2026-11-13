@@ -11,7 +11,10 @@ import {
   UNKNOWN_DB_PLATFORM,
   type DatabaseModel,
 } from '../../engine/shared/types';
-import type { SerializedFilterState } from '../../engine/shared/bridgeContract';
+import type {
+  SerializedFilterState,
+  UiStateSnapshot,
+} from '../../engine/shared/bridgeContract';
 import type { AiGateRefine } from '../../engine/shared/bridgeContract';
 import { describeScreen } from '../tools/screenStatePresenter';
 import { escapePromptText } from '../support/text';
@@ -24,7 +27,7 @@ export type StagePromptContext = GeneralPromptContext;
 export function deriveStagePromptContext(
   model: DatabaseModel | null,
   filter: SerializedFilterState | null,
-  uiState: unknown = null,
+  uiState: UiStateSnapshot | null = null,
 ): StagePromptContext {
   const screen = describeScreen(uiState);
   if (!model) {

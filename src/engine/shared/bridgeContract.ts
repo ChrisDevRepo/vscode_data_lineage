@@ -801,6 +801,9 @@ const UiStateSnapshotSchema = z.looseObject({
   screenState: ScreenStateExtrasSchema.optional(),
 });
 
+/** Validated `filter-changed` ui-state buffer: filter, trace, graph mode, counts, extras. */
+export type UiStateSnapshot = z.infer<typeof UiStateSnapshotSchema>;
+
 /**
  * Zod schema representing the complete discriminated union of message types sent from the VS Code
  * Extension Host to the React Webview.

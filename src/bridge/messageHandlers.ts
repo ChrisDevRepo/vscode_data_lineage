@@ -98,7 +98,6 @@ import {
   type Project,
   type RenderStateSnapshot,
   type StoredConnectionInfo,
-  type ScreenStateExtras,
   stripFocusNodeLinks,
 } from '../engine/shared/bridgeContract';
 import { summarizeZodError, postToDetail } from './host';
@@ -2470,8 +2469,7 @@ export function buildDebugDump(
   add(
     formatScreenStateSections(
       uiDiagnostics.renderState,
-      (sess.uiState as { screenState?: ScreenStateExtras } | null)
-        ?.screenState ?? null,
+      sess.uiState?.screenState ?? null,
       sess.model ?? null,
     ),
   );
