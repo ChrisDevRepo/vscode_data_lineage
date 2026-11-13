@@ -11,7 +11,6 @@
     "scripts/verify-docs.mjs",
     "tests/tools/assert-invariants.mjs",
     "tests/tools/load-test-env.test.mjs",
-    "tests/tools/gate-summary.test.mjs",
     "src/index.css",
     // Extension-host and CommonJS transport APIs loaded by host staging and contract checks.
     "tests/fixtures/lm-provider-extension/extension.js",

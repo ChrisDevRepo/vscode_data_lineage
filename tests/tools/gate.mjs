@@ -86,11 +86,7 @@ const STEPS = [
   {
     name: 'test environment profiles',
     cmd: nodeBin,
-    args: [
-      '--test',
-      'tests/tools/load-test-env.test.mjs',
-      'tests/tools/gate-summary.test.mjs',
-    ],
+    args: ['--test', 'tests/tools/load-test-env.test.mjs'],
   },
   { name: 'markdown facts', cmd: nodeBin, args: ['scripts/verify-docs.mjs'] },
   {

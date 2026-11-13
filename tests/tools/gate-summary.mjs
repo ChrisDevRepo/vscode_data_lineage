@@ -5,7 +5,7 @@
  */
 
 const MAX_FAILED_STEPS = 5;
-/** Lines of a red gate: verdict, MAX_FAILED_STEPS steps, one "+N more" line, the summary path. */
+/** @internal Lines of a red gate: verdict, MAX_FAILED_STEPS steps, "+N more", summary path. */
 export const GATE_LINE_BUDGET = MAX_FAILED_STEPS + 3;
 
 const LOCATION = /(?:[\w.-]+\/)+[\w.-]+\.\w+:\d+/;
