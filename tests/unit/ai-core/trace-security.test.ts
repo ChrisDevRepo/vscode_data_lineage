@@ -121,7 +121,6 @@ describe('trace security redaction', () => {
     modelId: 'deepseek/deepseek-chat',
     finishReason: 'tool_calls',
     latencyMs: 4210,
-    usage: { inputTokens: 12_000, outputTokens: 480, totalTokens: 12_480 },
   } satisfies WireRecord;
   const providerRaw = {
     type: 'provider-raw',

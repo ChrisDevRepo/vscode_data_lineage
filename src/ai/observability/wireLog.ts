@@ -32,20 +32,6 @@ export interface WireMessage {
   readonly parts: readonly WirePart[];
 }
 
-/** Provider-reported token accounting for one generation. */
-export interface TokenUsage {
-  /** Provider-reported prompt (input) token count; absent when not reported. */
-  readonly inputTokens?: number;
-  /** Provider-reported completion (output) token count; absent when not reported. */
-  readonly outputTokens?: number;
-  /** Provider-reported total token count; absent when not reported. */
-  readonly totalTokens?: number;
-  /** Reasoning tokens billed separately by reasoning models, when the provider itemizes them. */
-  readonly reasoningTokens?: number;
-  /** Prompt tokens served from the provider's cache (a subset of `inputTokens`), when reported. */
-  readonly cachedTokens?: number;
-}
-
 /** One captured moment of a generation, before the port stamps it with its context. */
 export type WireEvent =
   | {
@@ -74,7 +60,6 @@ export type WireEvent =
       }>;
       /** Raw provider stop reason, on lanes whose protocol reports one. */
       readonly finishReason?: string;
-      readonly usage?: TokenUsage;
       /** Stream parts that are neither text nor a tool call (reasoning, signatures). */
       readonly otherParts?: readonly WirePart[];
     }
@@ -89,7 +74,6 @@ export type WireEvent =
       readonly modelId: string;
       readonly finishReason: string;
       readonly latencyMs: number;
-      readonly usage?: TokenUsage;
     }
   | {
       /** One verbatim provider HTTP body, captured only while the trace runs verbose. */
