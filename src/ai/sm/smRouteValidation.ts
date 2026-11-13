@@ -39,18 +39,10 @@ export function buildRouteValidationRejection(
     reason: routeRejectionReason(errors),
     detail: routeRejectionDetail(errors),
     issuePaths: errors.flatMap((e) => (e.path ? [e.path] : [])),
-    // A missing outcome names its neighbor: the subject of the fault, never a submitted value.
     errors: errors.map((error) => ({
-      path:
-        error.kind === 'neighbor_outcome_missing'
-          ? 'questions.*.nodeId'
-          : (error.path ?? ''),
+      path: error.path ?? '',
       code: ROUTE_ISSUE[error.kind],
-      ...(error.kind === 'neighbor_outcome_missing'
-        ? { values: [error.id] }
-        : error.allowed_values
-          ? { values: error.allowed_values }
-          : {}),
+      ...(error.allowed_values ? { values: error.allowed_values } : {}),
     })),
   });
 }

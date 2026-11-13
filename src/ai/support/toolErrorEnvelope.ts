@@ -653,22 +653,8 @@ export function renderProblemReport(
   effect?: ToolDefinition['effect'],
 ): { readonly text: string; readonly fallback: boolean } {
   const merged = mergeToolErrors(rejection.errors, false);
-  // An absent parent covers its descendants; children under a present or mistyped parent still
-  // explain the expected structure.
-  const missingParents = merged
-    .filter(
-      (error) =>
-        error.path &&
-        error.code === 'missing' &&
-        valueAt(input, error.path) == null,
-    )
-    .map((error) => `${error.path}.`);
   let fallbackShown = false;
   const errors = merged
-    .filter(
-      (error) =>
-        !missingParents.some((prefix) => error.path.startsWith(prefix)),
-    )
     .sort(
       (a, b) => a.path.localeCompare(b.path) || a.code.localeCompare(b.code),
     )

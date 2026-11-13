@@ -4181,6 +4181,9 @@ export class NavigationEngine implements IHopStateMachine {
           invalidRoutes.push({
             kind: 'neighbor_outcome_missing',
             id,
+            // The owed neighbor is the subject of the fault, never a submitted value.
+            path: 'questions.*.nodeId',
+            allowed_values: [id],
             alternatives: outcomeFields(id),
             reason: 'This neighbor has no authored outcome.',
           });
