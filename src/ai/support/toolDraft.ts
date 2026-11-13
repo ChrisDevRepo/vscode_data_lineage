@@ -54,9 +54,9 @@ export class ToolDraft<T extends object> {
   }
 
   /**
-   * Serves exactly what {@link apply} composes: held top-level fields may be omitted, and an owed
-   * subject's root is required while nothing is held there. A held field is served without its
-   * bare "Required." presence prefix. Everything else keeps its canonical schema.
+   * Serves exactly what {@link apply} composes: held top-level fields may be omitted. A held field
+   * is served without its bare "Required." presence prefix. Everything else keeps its canonical
+   * schema.
    */
   public modelSchema<S extends z.ZodType>(schema: S): S {
     if (!this.value || Object.keys(this.value).length === 0) return schema;
@@ -70,7 +70,7 @@ export class ToolDraft<T extends object> {
       toolDisplay: {
         ...(schema.meta()?.toolDisplay as Node | undefined),
         ...(this.heldDescription && { description: this.heldDescription }),
-        required: this.owed(source),
+        required: requiredOf(source).filter((key) => held[key] === undefined),
         properties: Object.fromEntries(
           Object.entries(owned).map(([key, field]) => [
             key,
@@ -173,24 +173,6 @@ export class ToolDraft<T extends object> {
     this.context = null;
     this.faults = [];
     this.sent = [];
-  }
-
-  /**
-   * The card's required fields: the canonical ones not held, plus an owed subject's root where
-   * nothing is held.
-   */
-  private owed(source: Node): string[] {
-    const held = this.value ?? {};
-    const owned = fields(source);
-    return [
-      ...new Set([
-        ...requiredOf(source).filter((key) => held[key] === undefined),
-        ...this.faults
-          .filter(owedSubjectPath)
-          .map((path) => path.split('.')[0])
-          .filter((root) => owned[root] && held[root] === undefined),
-      ]),
-    ];
   }
 }
 
