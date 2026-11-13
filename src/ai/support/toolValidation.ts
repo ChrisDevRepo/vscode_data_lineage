@@ -324,8 +324,10 @@ function canonicalSchema(schema: z.ZodType): Record<string, unknown> {
             fields.map((key) => [key, properties[key]]),
           ),
           required: [
-            ...required.filter((key) => fields.includes(key)),
-            ...(asserted as string[]),
+            ...new Set([
+              ...required.filter((key) => fields.includes(key)),
+              ...(asserted as string[]),
+            ]),
           ],
           ...assertions,
         };
