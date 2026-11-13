@@ -580,13 +580,6 @@ export async function executePresentResult(
           viewKnown,
         );
         view.add(inspected);
-        // The other field that answers the fault is owed beside the faulty one: a note for an
-        // unexplained node, an added id for an addable one.
-        for (const error of inspected?.errors ?? []) {
-          if (error.code === 'node_unexplained') view.holdPaths.add('notes.*');
-          if (error.code === 'addable_to_result')
-            view.holdPaths.add('add_node_ids.*');
-        }
         if (!parsed.success || rejections.length) return undefined;
         // Required fields here have passed the complete native phase schema; optional section
         // bodies come only from admitted rows, explicit cached preview blocks, or committed label

@@ -109,6 +109,7 @@ export const ISSUES = {
     label: 'result node ids placed in no section',
     correction:
       'Add each listed id to the node_ids of the section that describes it.',
+    owedField: 'notes',
   },
   not_found: OBJECT_IDENTITY_ISSUE,
   out_of_scope: {
@@ -175,6 +176,7 @@ export const ISSUES = {
     label: 'not in the result graph',
     correction:
       'Name a node id of the result graph, or bring the real id into view with add_node_ids.',
+    owedField: 'add_node_ids',
   },
   unknown_evidence_id: {
     category: 'reference',
@@ -391,6 +393,8 @@ export const ISSUES = {
     ranksKey?: true;
     /** The subject ids are served at every stage, not only from the second. */
     servesIds?: true;
+    /** The field whose entries answer this fault; ingestion holds it owed beside the faulty one. */
+    owedField?: string;
   }
 >;
 

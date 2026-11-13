@@ -5,6 +5,7 @@ import { REJECTION_CODES } from './rejectionCodes';
 import {
   at,
   combineToolRejections,
+  ISSUES,
   type ToolRejection,
 } from './toolErrorEnvelope';
 import {
@@ -57,7 +58,13 @@ export class ToolInputView<S extends z.ZodType = z.ZodType> {
   }
   /** Rules append checked facts, never render a model message or retain a draft. */
   add(problem: ToolRejection | null | undefined): void {
-    if (problem) this.problems.push(problem);
+    if (!problem) return;
+    this.problems.push(problem);
+    // The field that answers a fault is owed beside the faulty one, from its issue code alone.
+    for (const error of problem.errors) {
+      const issue = ISSUES[error.code];
+      if ('owedField' in issue) this.holdPaths.add(`${issue.owedField}.*`);
+    }
   }
 }
 
