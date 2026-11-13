@@ -141,10 +141,8 @@ export async function executeStartExploration(
           raw &&
           (!supplied('proposalRevision') ||
             annotations.proposalRevision !== undefined) &&
-          ((!isRefining && annotations.proposalRevision !== undefined) ||
-            (isRefining &&
-              annotations.proposalRevision !==
-                sess.pendingExploration!.revision))
+          isRefining &&
+          annotations.proposalRevision !== sess.pendingExploration!.revision
         ) {
           view.add(
             makeRejection({
@@ -152,11 +150,7 @@ export async function executeStartExploration(
               errors: at(
                 'stale_revision',
                 ['proposalRevision'],
-                isRefining
-                  ? [String(sess.pendingExploration!.revision)]
-                  : undefined,
-                // Outside a refinement no revision is accepted: the field stays out.
-                isRefining ? undefined : 'omit',
+                [String(sess.pendingExploration!.revision)],
               ),
             }),
           );

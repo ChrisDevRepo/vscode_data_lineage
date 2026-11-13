@@ -207,11 +207,11 @@ export const StartExplorationInputSchema = z
   })
   .strict();
 
-/** A fresh start serves and admits `depth` as an object; only a refine may send null. */
+/** Only a refine serves `proposalRevision` and may send a null `depth`. */
 const startPhaseSchemas = [false, true].map((refining) =>
   (refining
     ? StartExplorationInputSchema
-    : StartExplorationInputSchema.extend({
+    : StartExplorationInputSchema.omit({ proposalRevision: true }).extend({
         depth: ExplorationDepthSelectionSchema.describe(DEPTH_DESCRIPTION),
       })
   ).meta({
