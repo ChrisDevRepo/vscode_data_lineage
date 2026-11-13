@@ -615,7 +615,8 @@ export interface ToolProblem {
     form?: ToolError['form'];
     exit?: ToolError['exit'];
   }>;
-  resend: string[];
+  /** Top-level fields to resend; present only where the tool holds a draft. */
+  resend?: string[];
 }
 
 /**
@@ -784,12 +785,17 @@ export function renderProblemReport(
     code: rejection.code,
     attempt: `${stage}/3`,
     errors,
-    resend: [
-      ...new Set([
-        ...(rejection.resend ?? []),
-        ...(fallbackShown ? [FALLBACK_FIELD] : []),
-      ]),
-    ],
+    // Only a held draft lists fields to resend; a tool that holds none has its card as contract.
+    ...(rejection.resend
+      ? {
+          resend: [
+            ...new Set([
+              ...rejection.resend,
+              ...(fallbackShown ? [FALLBACK_FIELD] : []),
+            ]),
+          ],
+        }
+      : {}),
   };
   return { text: JSON.stringify(problem), fallback: fallbackShown };
 }
@@ -852,9 +858,6 @@ export function combineToolRejections(
         }
       : {}),
     errors: rejections.flatMap((rejection) => rejection.errors),
-    resend: [
-      ...new Set(rejections.flatMap((rejection) => rejection.resend ?? [])),
-    ],
   });
 }
 
@@ -884,7 +887,6 @@ export function makeRejection(input: {
   reason?: string;
   detail?: unknown;
   issuePaths?: readonly string[];
-  resend?: readonly string[];
 }): ToolRejection {
   const reason =
     input.reason?.trim() ||
@@ -908,6 +910,5 @@ export function makeRejection(input: {
     ...(input.detail !== undefined ? { detail: input.detail } : {}),
     errors,
     ...(issuePaths.length > 0 ? { issuePaths } : {}),
-    ...(input.resend !== undefined ? { resend: [...input.resend] } : {}),
   };
 }

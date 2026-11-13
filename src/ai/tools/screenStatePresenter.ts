@@ -569,7 +569,6 @@ export function presentRunRecall(
     return rejectionWithEstimate({
       ...admission,
       errors: at('result_too_large', [input.ids?.length ? 'ids' : 'filter']),
-      resend: [],
     });
   }
   return withEstimate(payload);

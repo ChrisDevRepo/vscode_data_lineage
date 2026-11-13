@@ -6,11 +6,7 @@ import {
   type MessageContent,
 } from '@langchain/core/messages';
 import type { ZodType } from 'zod';
-import {
-  at,
-  type IssueCode,
-  type ToolError,
-} from '../support/toolErrorEnvelope';
+import { at, type ToolError } from '../support/toolErrorEnvelope';
 import { validateToolCandidate } from '../support/toolValidation';
 import { normalizeModelInput } from '../tools/normalizeModelInput';
 import {
@@ -224,13 +220,6 @@ export interface ToolGenerationInput {
 }
 
 /**
- * Reason of the `type` fault for non-object tool-call arguments, shared by both model lanes.
- * @internal
- */
-export const TOOL_ARGUMENTS_NOT_OBJECT_REASON =
-  'Tool arguments were not a JSON object; send the required fields as one JSON object.';
-
-/**
  * A registered native tool call ready for argument validation.
  * @internal
  */
@@ -243,7 +232,7 @@ export interface ValidGeneratedToolCall {
   readonly input: unknown;
 }
 
-/** A provider tool call rejected before dispatch. */
+/** A provider call of a tool the phase does not offer, rejected before dispatch. */
 interface InvalidGeneratedToolCall {
   /** Literal `false` discriminator for the invalid arm. */
   readonly valid: false;
@@ -256,8 +245,6 @@ interface InvalidGeneratedToolCall {
    * never dispatched, replayed or logged raw.
    */
   readonly input?: unknown;
-  /** Issue code of the rejection. */
-  readonly code: Extract<IssueCode, 'type' | 'off_policy'>;
   /** Human-readable rejection prose returned to the model for repair. */
   readonly reason: string;
 }
@@ -288,24 +275,17 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> =>
 
 /**
  * The one normalization of an emitted call's arguments against the served schema: the object it
- * sent, or the value its argument text carries, normalized once. Anything that is then no object
- * (or text that does not parse) is `undefined` and stays a `type` fault.
+ * sent, or the value its argument text carries (`undefined` for text that does not parse),
+ * normalized once. A value that is then no object is left to the receiving schema's admission.
  */
 function normalizeEmitted(
   schema: ZodType,
   emitted: EmittedToolCall,
-):
-  | {
-      readonly input: Record<string, unknown>;
-      readonly fixes: ReturnType<typeof normalizeModelInput>['fixes'];
-    }
-  | undefined {
-  const received =
-    'args' in emitted ? emitted.args : parseValue(emitted.malformedArgs);
-  const normalized = normalizeModelInput(schema, received);
-  return isPlainObject(normalized.input)
-    ? { input: normalized.input, fixes: normalized.fixes }
-    : undefined;
+): ReturnType<typeof normalizeModelInput> {
+  return normalizeModelInput(
+    schema,
+    'args' in emitted ? emitted.args : parseValue(emitted.malformedArgs),
+  );
 }
 
 /**
@@ -321,33 +301,26 @@ export function classifyToolCall(
   readonly replayInput: Record<string, unknown>;
 } {
   const { callId, toolName } = emitted;
-  const replayInput = 'args' in emitted ? emitted.args : {};
-  const reject = (code: InvalidGeneratedToolCall['code'], reason: string) => ({
-    replayInput,
-    call: {
-      valid: false as const,
-      callId,
-      toolName,
-      input: 'args' in emitted ? emitted.args : emitted.malformedArgs,
-      code,
-      reason,
-    },
-  });
   const definition = definitions.get(toolName);
   if (!definition)
-    return reject('off_policy', 'Tool is not available in this phase.');
-  const normalized = normalizeEmitted(definition.inputSchema, emitted);
-  if (!normalized) return reject('type', TOOL_ARGUMENTS_NOT_OBJECT_REASON);
-  logFixes(toolName, callId, normalized.fixes, debugLog);
+    return {
+      replayInput: 'args' in emitted ? emitted.args : {},
+      call: {
+        valid: false as const,
+        callId,
+        toolName,
+        input: 'args' in emitted ? emitted.args : emitted.malformedArgs,
+        reason: 'Tool is not available in this phase.',
+      },
+    };
+  const { input, fixes } = normalizeEmitted(definition.inputSchema, emitted);
+  logFixes(toolName, callId, fixes, debugLog);
   return {
-    call: {
-      valid: true,
-      callId,
-      toolName,
-      input: normalized.input,
-    },
-    // An accepted call is replayed as the object it carried; `{}` stays for rejected ones.
-    replayInput: 'args' in emitted ? replayInput : normalized.input,
+    // Arguments that are no object are dispatched too: the tool's own admission rejects them.
+    call: { valid: true, callId, toolName, input },
+    // A call is replayed as the object it carried; `{}` stays where it carried none.
+    replayInput:
+      'args' in emitted ? emitted.args : isPlainObject(input) ? input : {},
   };
 }
 
@@ -369,7 +342,7 @@ export function finishStructured<T>(
   const fail = (reason: string, errors: readonly ToolError[]) =>
     new StructuredOutputError(reason, errors);
   const calls = emitted.flatMap(({ normalized }) =>
-    normalized ? [normalized] : [],
+    isPlainObject(normalized.input) ? [normalized] : [],
   );
   if (
     emitted.some(({ call }) => call.toolName !== STRUCTURED_OUTPUT_TOOL) ||

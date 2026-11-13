@@ -1,11 +1,10 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
-import { ToolDraft, shape } from './toolDraft';
+import { ToolDraft } from './toolDraft';
 import { REJECTION_CODES } from './rejectionCodes';
 import {
   at,
   combineToolRejections,
-  type ToolError,
   type ToolRejection,
 } from './toolErrorEnvelope';
 import {
@@ -64,24 +63,6 @@ export class ToolInputView<S extends z.ZodType = z.ZodType> {
 }
 
 /**
- * The fault with its required form cut to the fields the draft does not hold: its own field and
- * every other the correction still owes; a form left naming the fault's field alone is dropped.
- */
-function unheldForm(error: ToolError, draft: ToolDraft<object>): ToolError {
-  const { form, ...rest } = error;
-  const own = Object.keys(form ?? {})
-    .filter((key) => error.path === key || error.path.endsWith(`.${key}`))
-    .sort((a, b) => b.length - a.length)[0];
-  const holder = own ? error.path.slice(0, -own.length) : '';
-  const kept = Object.entries(form ?? {}).filter(
-    ([key]) => key === own || !draft.holds(holder + key),
-  );
-  return kept.length > (own ? 1 : 0)
-    ? { ...rest, form: Object.fromEntries(kept) }
-    : rest;
-}
-
-/**
  * Shared staging, canonical parsing, one domain inspection, and the sole retain-or-commit decision.
  */
 export function ingestToolInput<S extends z.ZodType, R>(options: {
@@ -93,7 +74,6 @@ export function ingestToolInput<S extends z.ZodType, R>(options: {
   inspect(view: ToolInputView<S>): (() => R) | undefined;
   rejected?(problem: ToolRejection, view: ToolInputView<S>): void;
   committed?(result: Awaited<R>): boolean;
-  log?(message: string): void;
 }): R | ToolRejection {
   const { schema, draft, context } = options;
   const receipt = toolInputReceipt.getStore();
@@ -104,12 +84,9 @@ export function ingestToolInput<S extends z.ZodType, R>(options: {
       !draft.own(receipt.context, receipt.generation));
   if (ambiguous) draft.clear();
   const candidate =
-    draft && !ambiguous
-      ? draft.apply(context, options.input, schema)
-      : options.input;
+    draft && !ambiguous ? draft.apply(context, options.input) : options.input;
   if (!ambiguous && receipt?.signal)
     draft?.bindCancellation(receipt.signal, context);
-  if (draft?.unchanged) options.log?.('[Hold] identical resend no-op');
   const view = new ToolInputView(schema, candidate, options.facts);
   const commit = options.inspect(view);
   if (ambiguous)
@@ -126,19 +103,11 @@ export function ingestToolInput<S extends z.ZodType, R>(options: {
         ...view.holdPaths,
       ]),
     ];
-    const overwritten = !ambiguous
-      ? (draft?.retain(candidate, paths, schema) ?? [])
-      : [];
-    problem.errors.push(...at('not_overwritten', overwritten));
-    const roots = new Set(Object.keys(shape(schema)));
-    problem.resend = [
-      ...new Set([
-        ...(problem.resend ?? []),
-        ...paths
-          .map((path) => path.split('.')[0])
-          .filter((root) => roots.has(root)),
-      ]),
-    ];
+    // A held draft writes the lists; a tool that holds nothing gets none, its card is the contract.
+    const lists =
+      draft && !ambiguous ? draft.retain(candidate, paths, schema) : undefined;
+    problem.errors.push(...at('not_overwritten', lists?.overwritten ?? []));
+    problem.resend = lists?.resend;
     options.rejected?.(problem, view);
     problem.errors = problem.errors.map((error) => {
       // A fault the engine found no accepted value for states its field's schema type instead.
@@ -146,9 +115,12 @@ export function ingestToolInput<S extends z.ZodType, R>(options: {
         error.values?.length === 0 && !error.types
           ? schemaTypesAt(schema, candidate, error.path)
           : [];
-      const typed = types.length ? { ...error, types } : error;
-      // A held draft keeps its accepted fields: a required form names none of them.
-      return draft && typed.form ? unheldForm(typed, draft) : typed;
+      const { form, ...typed } = types.length ? { ...error, types } : error;
+      // Where a draft holds the fields, the card is the form of the root object: a fault at a
+      // top-level field serves none, so no form names a field outside `resend`.
+      return form && !(lists && !error.path.includes('.'))
+        ? { ...typed, form }
+        : typed;
     });
     return problem;
   }

@@ -276,7 +276,6 @@ export async function executePresentResult(
         ]),
       },
       rejected: () => sess.recordPresentResultFailure(turnEpoch),
-      log: (line) => s.logger.debug(`${line} tool=lineage_present_result`),
       committed: () => sess.presentResultCalledThisTurn,
       inspect: (view) => {
         const { parsed, problems: rejections } = view;
@@ -307,7 +306,6 @@ export async function executePresentResult(
                   'start_order',
                   partition.map((index) => `sections.${index}.start`),
                 ),
-                resend: ['sections'],
               }),
             );
         }
@@ -364,7 +362,6 @@ export async function executePresentResult(
               makeRejection({
                 code: REJECTION_CODES.invalidInput,
                 errors: [{ path, code: issue, category: 'value' }],
-                resend: [key],
               }),
             );
             viewKnown = false;
@@ -464,7 +461,6 @@ export async function executePresentResult(
                     [`sections.${index}.label`],
                     retainableSections.map((section) => section.label),
                   ),
-                  resend: ['sections'],
                 }),
               );
             if (source || sectionKeys.get(index)?.has('node_ids') === false) {
@@ -525,19 +521,14 @@ export async function executePresentResult(
             expansionTexts.set(`sections.${index}.text`, row.text);
           for (const [path, text] of expansionTexts) {
             const expanded = expandEvidenceRefs(text, evidenceBlocks);
-            const repairField = path.startsWith('sections.')
-              ? 'sections'
-              : (path as 'title' | 'intro' | 'closing');
             if (expanded.unknownIds.length)
               externalViolations.push({
                 errors: at('unknown_evidence_id', [path]),
-                repairFields: [repairField],
                 paths: [path],
               });
             if (expanded.malformedRefs.length)
               externalViolations.push({
                 errors: at('unclosed_fence', [path]),
-                repairFields: [repairField],
                 paths: [path],
               });
             expandedTexts.set(path, expanded.text);
@@ -564,7 +555,6 @@ export async function executePresentResult(
               ['sections.*.node_ids'],
               unrenderedSlotIds,
             ),
-            repairFields: ['sections'],
             paths: ['sections'],
             entryIds: unrenderedSlotIds,
           });
@@ -581,16 +571,22 @@ export async function executePresentResult(
             ? 'in_scope_undispositioned'
             : 'out_of_scope';
         };
-        view.add(
-          inspectPresentResult(
-            { references, coverageKnown: sectionCoverageKnown && notesKnown },
-            resolvedNodeIds,
-            externalViolations,
-            presentResultStage,
-            nodeIdState,
-            viewKnown,
-          ),
+        const inspected = inspectPresentResult(
+          { references, coverageKnown: sectionCoverageKnown && notesKnown },
+          resolvedNodeIds,
+          externalViolations,
+          presentResultStage,
+          nodeIdState,
+          viewKnown,
         );
+        view.add(inspected);
+        // The other field that answers the fault is owed beside the faulty one: a note for an
+        // unexplained node, an added id for an addable one.
+        for (const error of inspected?.errors ?? []) {
+          if (error.code === 'node_unexplained') view.holdPaths.add('notes.*');
+          if (error.code === 'addable_to_result')
+            view.holdPaths.add('add_node_ids.*');
+        }
         if (!parsed.success || rejections.length) return undefined;
         // Required fields here have passed the complete native phase schema; optional section
         // bodies come only from admitted rows, explicit cached preview blocks, or committed label

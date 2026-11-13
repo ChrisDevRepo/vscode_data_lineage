@@ -251,7 +251,6 @@ function validateQuery(query: string, isRegex: boolean): ToolRejection | null {
       : makeRejection({
           code: REJECTION_CODES.invalidInput,
           errors: at('invalid_regex', ['query']),
-          resend: ['mode'],
           reason: regexRejectHint(query, compiled),
         });
   }

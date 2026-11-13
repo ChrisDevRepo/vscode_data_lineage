@@ -51,10 +51,7 @@ import {
   type IncomingQuestion,
   type WorkingMemory,
 } from '../session/memoryManager';
-import {
-  CLASSIFICATION_KEPT_ANGLES,
-  type ClassificationValue,
-} from '../session/classification';
+import { type ClassificationValue } from '../session/classification';
 import { owedSubjectPath, ToolDraft } from '../support/toolDraft';
 import { ingestToolInput } from '../support/toolIngestion';
 import {
@@ -223,38 +220,6 @@ type HeldField = (typeof HELD_FIELDS)[number];
 /** A `column_flow` node field (an entry's `out_node` or a supplier's `node`), by dotted path. */
 const isFlowNodeField = (path: string): boolean =>
   /^column_flow\.\d+\.(?:out_node|upstream_columns\.\d+\.node)$/.test(path);
-
-/**
- * Section child faults invalidate known angles only: unknown names are never extracted into held
- * content. Whole-container faults still invalidate sections.
- */
-function splitFailedParts(paths: readonly string[]): {
-  readonly fields: Set<string>;
-  readonly angles: Set<string>;
-} {
-  const fields = new Set<string>();
-  const angles = new Set<string>();
-  for (const path of paths) {
-    const [top, second] = path.split('.');
-    if (!top) continue;
-    if (top === 'sections' && second) {
-      if (second === 'business' || second === 'technical') angles.add(second);
-    } else fields.add(top);
-  }
-  if (fields.has('sections')) angles.clear();
-  return { fields, angles };
-}
-
-/** Whether a finding carries `part` (`summary`, `sections`, `sections.<angle>` or a held field). */
-function hasPart(finding: HopFindingKept, part: string): boolean {
-  if (part === 'summary') return finding.summary.trim().length > 0;
-  if (part === 'sections') return finding.sections.length > 0;
-  if (part.startsWith('sections.'))
-    return finding.sections.some(
-      (section) => section.angle === part.slice('sections.'.length),
-    );
-  return finding[part as HeldField] !== undefined;
-}
 
 /** Defines the core interface for the state machine handling exploration modes. */
 export interface IHopStateMachine {
@@ -705,15 +670,6 @@ export class NavigationEngine implements IHopStateMachine {
     ]);
   }
 
-  /** Project wire sections to the engine's existing snapshot/commit representation. */
-  private heldDraftOfCurrentFocus(): HopFindingKept | null {
-    return this.heldFindingFocus === null
-      ? null
-      : toHopFinding(
-          this.heldFindingDraft.get() as Parameters<typeof toHopFinding>[0],
-        );
-  }
-
   /**
    * Compatibility adapter for internal callers: empty summary/section defaults represent omission,
    * not an authored replacement.
@@ -733,59 +689,6 @@ export class NavigationEngine implements IHopStateMachine {
           : {}
         : { sections }),
     };
-  }
-
-  /**
-   * Only parts declared for the active finding can be owed; unsupported input remains rejected,
-   * never held.
-   */
-  private failedParts(paths: readonly string[]): string[] {
-    const { fields, angles } = splitFailedParts(paths);
-    return [
-      ...[...angles]
-        .filter(
-          (angle) =>
-            !this.classification ||
-            CLASSIFICATION_KEPT_ANGLES[this.classification].some(
-              (kept) => kept === angle,
-            ),
-        )
-        .map((angle) => `sections.${angle}`),
-      ...[...fields].filter(
-        (field) =>
-          (field === 'sections' ||
-            field === 'focus_node_id' ||
-            HELD_FIELDS.some((held) => held === field)) &&
-          (!['column_flow', 'indirect_columns'].includes(field) ||
-            this.currentHopAnalysisMode === 'ct'),
-      ),
-    ];
-  }
-
-  /**
-   * The required parts a draft lacks: the summary, a locked section angle not yet archived, and the
-   * CT `column_flow`.
-   */
-  private missingRequiredParts(draft: HopFindingKept): string[] {
-    const archived = this.currentFocusNodeId
-      ? this.memory.getArchivedAngles(this.currentFocusNodeId)
-      : new Set<string>();
-    return [
-      ...(draft.summary.trim() ? [] : ['summary']),
-      ...(this.classification
-        ? CLASSIFICATION_KEPT_ANGLES[this.classification]
-            .filter(
-              (angle) =>
-                !archived.has(angle) &&
-                !draft.sections.some((section) => section.angle === angle),
-            )
-            .map((angle) => `sections.${angle}`)
-        : []),
-      ...(this.currentHopAnalysisMode === 'ct' &&
-      draft.column_flow === undefined
-        ? ['column_flow']
-        : []),
-    ];
   }
 
   /**
@@ -3117,19 +3020,23 @@ export class NavigationEngine implements IHopStateMachine {
       input && typeof input === 'object' && !Array.isArray(input)
         ? {
             ...raw,
-            ...(raw.focus_node_id === undefined
+            ...(raw.focus_node_id === undefined && currentFocusId
               ? { focus_node_id: currentFocusId }
               : {}),
           }
         : input;
+    // Held fields the last rejection faulted: one the accepted call leaves out is withdrawn.
     const owedBefore = this.heldFindingDraft.matches(this.findingContext())
-      ? this.failedParts(
-          this.heldFindingDraft.faultPaths.filter(
-            (path) => !owedSubjectPath(path),
+      ? [
+          ...new Set(
+            this.heldFindingDraft.faultPaths
+              .filter((path) => !owedSubjectPath(path))
+              .map((path) => path.split('.')[0]),
           ),
+        ].filter((field): field is HeldField =>
+          HELD_FIELDS.some((held) => held === field),
         )
       : [];
-    let alternatives: readonly string[] = [];
     const diagnostics: Parameters<LogFn>[] = [];
     let columns:
       | ReturnType<NavigationEngine['prepareFindingColumns']>
@@ -3197,24 +3104,7 @@ export class NavigationEngine implements IHopStateMachine {
       facts: admission.facts,
       context: this.findingContext(),
       draft: bound ? this.heldFindingDraft : undefined,
-      log: (line) => this.log('debug', line),
       committed: (result) => 'ok' in result,
-      rejected: bound
-        ? (problem, view) => {
-            const failed = this.failedParts([
-              ...problem.errors.map((error) => error.path),
-              ...view.holdPaths,
-            ]);
-            const held = this.heldDraftOfCurrentFocus();
-            problem.resend = [
-              ...new Set([
-                ...failed,
-                ...(held ? this.missingRequiredParts(held) : []),
-                ...alternatives,
-              ]),
-            ];
-          }
-        : undefined,
       inspect: (view) => {
         const focusCheck = this.validateCurrentHopFocus(
           view.value('focus_node_id'),
@@ -3266,14 +3156,13 @@ export class NavigationEngine implements IHopStateMachine {
           .filter((path) => !path.startsWith('column_flow.'))
           .forEach((path) => view.holdPaths.add(path));
         invalidRoutes
-          .filter((route) => route.kind === 'neighbor_outcome_missing')
+          .filter(
+            (route) =>
+              route.kind === 'neighbor_outcome_missing' ||
+              route.kind === 'column_out_of_scope',
+          )
           .flatMap((route) => route.alternatives ?? [])
-          .filter((field) => field !== 'column_flow')
           .forEach((field) => view.holdPaths.add(`${field}.*`));
-        alternatives = [
-          ...invalidRoutes.flatMap((route) => route.alternatives ?? []),
-          ...plan.openOutcomeFields,
-        ];
         if (invalidRoutes.length) {
           const problem = buildRouteValidationRejection(invalidRoutes);
           problem.issuePaths = [
@@ -3299,8 +3188,7 @@ export class NavigationEngine implements IHopStateMachine {
           const withdrawn = owedBefore.filter(
             (part) =>
               !['summary', 'column_flow'].includes(part) &&
-              !part.startsWith('sections') &&
-              !hasPart(params, part),
+              params[part] === undefined,
           );
           const result = this.applyValidatedHop({
             ...plan,
@@ -3929,7 +3817,6 @@ export class NavigationEngine implements IHopStateMachine {
       focusId,
       invalidRoutes: failures,
       conflictPaths: conflictPrunePaths,
-      openOutcomeFields: actions.openOutcomeFields,
       routeRequests,
       flowQuestionByNode,
       routeOutcomes,
@@ -4060,7 +3947,6 @@ export class NavigationEngine implements IHopStateMachine {
         path,
         reason:
           'The object is also named in prune_neighbors; the same submission cannot prune and investigate it.',
-        alternatives: ['prune_neighbors'],
       });
     }
     (questions ?? []).forEach((q, index) => {
@@ -4226,7 +4112,6 @@ export class NavigationEngine implements IHopStateMachine {
           id: target.resolved,
           path: target.path,
           reason: refusal,
-          ...(mutableMapping ? { alternatives: ['column_flow'] } : {}),
         });
         if (mutableMapping) mutablePruneConflicts.push(target.resolved);
       }
@@ -4238,7 +4123,7 @@ export class NavigationEngine implements IHopStateMachine {
       !prunedNeighborNids.has(id) &&
       !actionMentions.questions?.has(id) &&
       !actionMentions.prune_neighbors?.has(id);
-    // The fields beside column_flow that can give this neighbor its outcome.
+    // The fields that can give this neighbor its outcome.
     const outcomeFields = (id: string) => [
       'questions',
       ...(neighbors.get(id)?.can_prune &&
@@ -4261,21 +4146,10 @@ export class NavigationEngine implements IHopStateMachine {
       for (const id of this.requiredNeighborIds(focusId)) {
         if (!undecided(id)) continue;
         if (!mappedNeighborIds.has(id)) {
-          // In CT, column_flow is offered only for a neighbor that can be a value source (incoming
-          // edge) or, at a procedure, an out_node; a downstream reader is never mapped as a source.
-          const ct = this.currentHopAnalysisMode === 'ct';
-          const offerFlow =
-            ct &&
-            this.mappableNeighborIds(focusId).has(id) &&
-            (this.graph.inNeighbors(focusId).includes(id) ||
-              this.nodeMap.get(focusId)?.type === 'procedure');
           invalidRoutes.push({
             kind: 'neighbor_outcome_missing',
             id,
-            alternatives: [
-              ...outcomeFields(id),
-              ...(offerFlow ? ['column_flow'] : []),
-            ],
+            alternatives: outcomeFields(id),
             reason: 'This neighbor has no authored outcome.',
           });
           continue;
@@ -4303,14 +4177,6 @@ export class NavigationEngine implements IHopStateMachine {
       routeRequests,
       prunedNeighborNids,
       mutablePruneConflicts,
-      // An unknown flow leaves each outcome unknown and no fault: only the other fields that can
-      // still give one are named for the resend.
-      openOutcomeFields:
-        mappedNeighborIds || !actionsKnown
-          ? []
-          : this.requiredNeighborIds(focusId)
-              .filter(undecided)
-              .flatMap(outcomeFields),
     };
   }
 

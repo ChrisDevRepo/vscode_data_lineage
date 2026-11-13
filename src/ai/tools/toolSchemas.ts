@@ -2006,11 +2006,6 @@ export function presentResultSchemaForPhase(
   return reportAdmissionSchema(schema);
 }
 
-/** Presentation fields named by deterministic validation errors. */
-export type PresentResultRepairField = keyof z.infer<
-  typeof PresentResultModelSchema
->;
-
 /** Model-facing schema for a new synthesis render. */
 const PresentResultSynthesisModelSchema = PresentResultModelSchema.omit({
   prune_node_ids: true,

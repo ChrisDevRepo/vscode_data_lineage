@@ -31,14 +31,12 @@ import {
   makeRejection,
   readToolErrorText,
   renderProblemReport,
-  type ToolError,
   type ToolRejection,
 } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { storedEvidenceKindBytes } from '../support/tokenBudget';
 import { sensitiveTraceReason } from '../providers/traceSecurity';
 import type { ToolDefinition, IToolRegistry } from '../tools/registry';
-import { toModelJsonSchema } from '../tools/jsonSchema';
 import type {
   ConverseInstructionPlan,
   InstructionPhase,
@@ -446,34 +444,13 @@ function rejectionFromInvalid(
   registry: IToolRegistry<string>,
 ): ToolOutcomeData {
   const tools = registry.getTools().map((tool) => tool.name);
-  // Arguments that are not one JSON object hold nothing, so the
-  // correction resends every field its live card requires; held fields are optional on that card,
-  // so none is asked for again.
-  const definition = registry.get(call.toolName);
-  const resend =
-    call.code === 'type' && definition
-      ? ((toModelJsonSchema(definition.inputSchema).required as
-          | string[]
-          | undefined) ?? [])
-      : undefined;
-  const errors: ToolError[] = [
-    {
-      path: '',
-      code: call.code,
-      ...(call.code === 'off_policy' ? { values: tools } : {}),
-      ...(call.code === 'type' ? { types: ['object'] } : {}),
-    },
-  ];
   return {
     status: 'rejected',
     rejection: {
       code: REJECTION_CODES.invalidInput,
       reason: call.reason,
-      errors,
-      ...(resend ? { resend } : {}),
-      ...(call.code === 'off_policy'
-        ? { detail: { allowedTools: tools } }
-        : {}),
+      errors: at('off_policy', [''], tools),
+      detail: { allowedTools: tools },
     },
   };
 }
@@ -1001,9 +978,7 @@ async function dispatchToolCallBatch(
       );
       logToolOutcome(
         input,
-        call.code === 'off_policy'
-          ? 'provider_generation'
-          : 'provider_prevalidation',
+        'provider_generation',
         call,
         'rejected',
         rejection,

@@ -356,6 +356,15 @@ function compiledSchema(schema: z.ZodType) {
   }
   return entry;
 }
+/** The root fields the admitted schema requires of a call, its group assertions included. */
+export function requiredFields(schema: z.ZodType): string[] {
+  const required = new Set<string>();
+  walkServedSchema(compiledSchema(schema).json, {}, '', (node) => {
+    for (const key of (node.required as string[] | undefined) ?? [])
+      required.add(key);
+  });
+  return [...required];
+}
 /** The sole canonical admission verdict and original native schema faults. */
 export type ToolValidation<T> =
   | { success: true; data: T }

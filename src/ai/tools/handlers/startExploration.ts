@@ -105,7 +105,6 @@ export async function executeStartExploration(
         receipt?.generation !== undefined
           ? sess.startExplorationDraft
           : undefined,
-      log: (line) => s.logger.debug(line),
       committed: () => sess.pendingExploration?.revision !== beforeRevision,
       rejected: (problem) => {
         if (problem.code === REJECTION_CODES.overActiveScopeBudget)

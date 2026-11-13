@@ -108,7 +108,6 @@ export function inspectTargetColumns(
     unmatched,
     rejection: makeRejection({
       code: REJECTION_CODES.invalidInput,
-      resend: ['analysisMode'],
       reason: `targetColumns must match declared columns of the origin under its identifier comparison policy${declaredNames.length > 0 ? '' : '; the origin declares no columns of its own'}.`,
       errors: at(
         'unknown_column',

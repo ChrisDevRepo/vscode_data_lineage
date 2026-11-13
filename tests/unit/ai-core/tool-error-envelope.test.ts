@@ -45,7 +45,6 @@ describe('tool-error-envelope', () => {
         makeRejection({
           code: 'invalid_input',
           errors: [{ path: 'summary', code: 'type' }],
-          resend: ['summary'],
         }),
         makeRejection({
           code: 'backend_fault',
@@ -58,7 +57,6 @@ describe('tool-error-envelope', () => {
       expect(result).toMatchObject({
         code: 'backend_fault',
         issuePaths: ['summary'],
-        resend: ['summary'],
       });
       expect(result.errors).toHaveLength(2);
       expect(result.errors).toEqual(
@@ -119,10 +117,14 @@ describe('tool-error-envelope', () => {
       ['unknown_column', 'column_flow.0.upstream_columns.0.col', 'hop_commit'],
     ] as const)('%s at %s', (code, path, effect) => {
       for (const values of [[], ['x']]) {
-        const rejection = makeRejection({
-          code: 'invalid_input',
-          errors: [{ path, code, values }],
-        });
+        // A held draft's list: the fallback's field joins it, and no list is made without one.
+        const rejection = {
+          ...makeRejection({
+            code: 'invalid_input',
+            errors: [{ path, code, values }],
+          }),
+          resend: [path.split('.')[0]],
+        };
         for (const stage of [1, 2] as const)
           expect(hasFallback(render(rejection, stage, undefined, effect))).toBe(
             false,
@@ -155,7 +157,6 @@ describe('tool-error-envelope', () => {
         'attempt',
         'code',
         'errors',
-        'resend',
       ]);
       expect(content).not.toMatch(/SENTINEL/);
     }

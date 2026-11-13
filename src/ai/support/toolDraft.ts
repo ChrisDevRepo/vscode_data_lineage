@@ -1,12 +1,10 @@
 import { z } from 'zod';
-import { isDeepStrictEqual } from 'node:util';
+import { requiredFields } from './toolValidation';
 
 const object = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 /** Root fields of an object schema, through optional and nullable wrappers. */
-export const shape = (
-  schema: z.ZodType | undefined,
-): Record<string, z.ZodType> => {
+const shape = (schema: z.ZodType | undefined): Record<string, z.ZodType> => {
   while (schema instanceof z.ZodOptional || schema instanceof z.ZodNullable)
     schema = schema.unwrap() as z.ZodType;
   return schema instanceof z.ZodObject
@@ -18,16 +16,14 @@ export const owedSubjectPath = (path: string): boolean =>
   path.split('.').includes('*');
 
 /**
- * Uncommitted fields for one tool/context. Sent values replace whole; only previously named object
- * leaves may be resent alone. Arrays never merge by key or index.
+ * Uncommitted fields for one tool/context. A top-level field is a section: it is accepted whole or
+ * resent whole, and one the model does not send stays as accepted. Arrays and objects never merge.
  */
 export class ToolDraft<T extends object> {
   private value: Record<string, unknown> | null = null;
   private context: string | null = null;
   private faults: readonly string[] = [];
   private sent: string[] = [];
-  private previous: unknown;
-  private _unchanged = false;
   private generation = -1;
   private ownerContext = '';
   private calls = 0;
@@ -55,111 +51,34 @@ export class ToolDraft<T extends object> {
   }
 
   /**
-   * Serves exactly what {@link apply} composes: complete held root fields may be omitted, and a
-   * held object accepts a patch whose every leaf is a named fault. A complete held field is served
-   * without its bare "Required." presence prefix. Everything else keeps its canonical schema.
+   * Serves exactly what {@link apply} composes: held top-level fields may be omitted, and an owed
+   * subject's root is required while nothing is held there. A held field is served without its
+   * bare "Required." presence prefix. Everything else keeps its canonical schema.
    */
   public modelSchema<S extends z.ZodType>(schema: S): S {
     if (!this.value || Object.keys(this.value).length === 0) return schema;
     const cached = this.schemas.get(schema);
     if (cached) return cached as S;
-    type Node = Record<string, unknown>;
-    const fields = (node: Node): Record<string, Node> | undefined => {
-      const current = {
-        ...node,
-        ...(object(node.toolDisplay) ? node.toolDisplay : {}),
-      };
-      return object(current.properties)
-        ? (current.properties as Record<string, Node>)
-        : (current.anyOf as Node[] | undefined)
-            ?.map(fields)
-            .find((found) => found !== undefined);
-    };
-    const required = (node: Node): string[] =>
-      ((object(node.toolDisplay) && Array.isArray(node.toolDisplay.required)
-        ? node.toolDisplay.required
-        : node.required) ?? []) as string[];
-    const complete = (node: Node, value: unknown): boolean => {
-      const owned = fields(node);
-      return (
-        value !== undefined &&
-        (!owned ||
-          !object(value) ||
-          required(node).every((key) => complete(owned[key], value[key])))
-      );
-    };
-    // Mirrors apply(): a held, unnamed object merges a non-empty patch built only from named fault
-    // leaves.
-    const patch = (
-      node: Node,
-      held: unknown,
-      path: string,
-    ): Node | undefined => {
-      if (!object(held) || this.faults.includes(path)) return undefined;
-      const owned = fields(node) ?? {};
-      const properties = Object.fromEntries(
-        Object.keys(owned).flatMap((key) => {
-          const leaf = `${path}.${key}`;
-          const value = this.faults.includes(leaf)
-            ? owned[key]
-            : patch(owned[key], held[key], leaf);
-          return value ? [[key, value]] : [];
-        }),
-      );
-      const keys = Object.keys(properties);
-      return keys.length
-        ? {
-            type: 'object',
-            minProperties: 1,
-            required: required(node).filter(
-              (key) => !complete(owned[key], held[key]),
-            ),
-            propertyNames: { enum: keys },
-            properties,
-          }
-        : undefined;
-    };
-    const source = z.toJSONSchema(schema, {
-      io: 'input',
-      unrepresentable: 'throw',
-    }) as Node;
-    const owned = fields(source) ?? {};
     const held = this.value;
-    // An owed subject's root is required while nothing is held there.
-    const owedRoots = this.faults
-      .filter(owedSubjectPath)
-      .map((path) => path.split('.')[0])
-      .filter((root) => owned[root] && held[root] === undefined);
+    const source = jsonSchema(schema);
+    const owned = fields(source);
     const projected = schema.meta({
       ...schema.meta(),
       toolDisplay: {
         ...(schema.meta()?.toolDisplay as Node | undefined),
-        required: [
-          ...new Set([
-            ...required(source).filter(
-              (key) => !complete(owned[key], held[key]),
-            ),
-            ...owedRoots,
-          ]),
-        ],
+        required: this.owed(source),
         properties: Object.fromEntries(
-          Object.entries(owned).map(([key, field]) => {
-            const named = patch(field, held[key], key);
+          Object.entries(owned).map(([key, field]) => [
+            key,
             // Shared descriptions mark bare presence with a leading "Required. "; a held field is
             // not required on this card, so only that prefix is dropped and the rest stays.
-            const served =
-              complete(field, held[key]) &&
-              typeof field.description === 'string'
-                ? {
-                    ...field,
-                    description: field.description.replace(
-                      /^Required\.\s+/,
-                      '',
-                    ),
-                  }
-                : field;
-            return [key, named ? { anyOf: [served, named] } : served];
-          }),
+            held[key] !== undefined && typeof field.description === 'string'
+              ? {
+                  ...field,
+                  description: field.description.replace(/^Required\.\s+/, ''),
+                }
+              : field,
+          ]),
         ),
       },
     });
@@ -176,153 +95,70 @@ export class ToolDraft<T extends object> {
   public matches(context: string): boolean {
     return this.context === context;
   }
-  public get unchanged(): boolean {
-    return this._unchanged;
-  }
-  /** Whether a value is held at the path that the last rejection named no fault at or under. */
-  public holds(path: string): boolean {
-    const value = path
-      .split('.')
-      .reduce<unknown>(
-        (at, key) => (object(at) ? at[key] : undefined),
-        this.value,
-      );
-    return (
-      value !== undefined &&
-      !this.faults.some(
-        (fault) => fault === path || fault.startsWith(`${path}.`),
-      )
-    );
-  }
   /** Paths the last rejection named; cleared with the draft. */
   public get faultPaths(): readonly string[] {
     return this.faults;
   }
 
   /** Compose a candidate without validating it; its handler owns the one full-schema check. */
-  public apply(context: string, input: unknown, schema: z.ZodType): unknown {
+  public apply(context: string, input: unknown): unknown {
     if (this.context !== context) {
       this.clear();
       this.context = context;
     }
-    this.sent = [];
-    if (!object(input)) {
-      this._unchanged = isDeepStrictEqual(input, this.previous);
-      this.previous = input;
-      return input;
-    }
-    const named = (path: string, value: unknown): boolean =>
-      this.faults.includes(path) ||
-      (object(value) &&
-        Object.keys(value).length > 0 &&
-        Object.entries(value).every(([key, leaf]) =>
-          named(`${path}.${key}`, leaf),
-        ));
-    const replace = (
-      held: Record<string, unknown>,
-      patch: Record<string, unknown>,
-      owner: z.ZodType,
-      prefix: string,
-    ): Record<string, unknown> => {
-      const result = { ...held },
-        fields = shape(owner);
-      for (const [key, value] of Object.entries(patch)) {
-        const path = prefix ? `${prefix}.${key}` : key;
-        const child = Object.prototype.hasOwnProperty.call(fields, key)
-          ? fields[key]
-          : undefined;
-        const namedLeaves =
-          object(value) &&
-          object(held[key]) &&
-          !this.faults.includes(path) &&
-          named(path, value);
-        if (namedLeaves && child)
-          result[key] = replace(
-            held[key] as Record<string, unknown>,
-            value as Record<string, unknown>,
-            child,
-            path,
-          );
-        else {
-          this.sent.push(path);
-          if (
-            value === null &&
-            child?.isOptional() &&
-            !((owner.meta()?.required as string[] | undefined) ?? []).includes(
-              key,
-            )
-          )
-            delete result[key];
-          else
-            Object.defineProperty(result, key, {
-              value: structuredClone(value),
-              enumerable: true,
-              configurable: true,
-              writable: true,
-            });
-        }
-      }
-      return result;
-    };
-    const candidate = replace(this.value ?? {}, input, schema, '');
-    this._unchanged = isDeepStrictEqual(candidate, this.previous);
-    this.previous = structuredClone(candidate);
-    return candidate;
+    this.sent = object(input) ? Object.keys(input) : [];
+    return object(input) ? { ...this.value, ...structuredClone(input) } : input;
   }
 
   /**
-   * Retain only schema-defined, nonfaulty fields, preserving a held value when its replacement
-   * failed. No second validation pass.
+   * The one writer of the rejection's lists. Keeps every sent top-level field without a fault and
+   * every held one whose replacement failed; a candidate that is no object is the empty call and
+   * leaves the draft and the faults it answers. Returns the held fields a faulty resend could not
+   * overwrite and `resend`: the faulty fields, an owed subject's root and the required fields
+   * not held, in schema order. No second validation pass.
    */
   public retain(
     candidate: unknown,
     paths: readonly string[],
     schema: z.ZodType,
-  ): string[] {
-    const overwritten = new Set<string>();
-    const invalid = paths.filter((path) => !owedSubjectPath(path));
-    const keep = (
-      input: Record<string, unknown>,
-      held: Record<string, unknown>,
-      owner: z.ZodType,
-      prefix: string,
-    ): Record<string, unknown> => {
-      const result: Record<string, unknown> = {};
-      for (const [key, child] of Object.entries(shape(owner))) {
-        const path = prefix ? `${prefix}.${key}` : key;
-        const faulty = invalid.some(
-          (fault) => fault === path || fault.startsWith(`${path}.`),
-        );
-        const had = Object.prototype.hasOwnProperty.call(held, key);
-        if (faulty && had && this.sent.includes(path)) {
-          result[key] = held[key];
-          overwritten.add(path);
-        } else if (
-          faulty &&
-          !invalid.includes(path) &&
-          object(input[key]) &&
-          Object.keys(shape(child)).length
-        ) {
-          const nested = keep(
-            input[key] as Record<string, unknown>,
-            object(held[key]) ? (held[key] as Record<string, unknown>) : {},
-            child,
-            path,
-          );
-          if (Object.keys(nested).length) result[key] = nested;
-        } else if (faulty) {
-          if (had) result[key] = held[key];
-        } else if (Object.prototype.hasOwnProperty.call(input, key))
-          result[key] = structuredClone(input[key]);
-      }
-      return result;
-    };
-    this.value = object(candidate)
-      ? keep(candidate, this.value ?? {}, schema, '')
-      : this.value;
-    this.faults = [...paths];
+  ): { overwritten: string[]; resend: string[] } {
+    const roots = Object.keys(shape(schema));
+    if (object(candidate)) this.faults = [...paths];
+    const rootsOf = (owed: boolean) =>
+      this.faults
+        .filter((path) => owedSubjectPath(path) === owed)
+        .map((path) => path.split('.')[0]);
+    const faulty = new Set(rootsOf(false));
+    const held = this.value ?? {};
+    const overwritten = roots.filter(
+      (key) =>
+        faulty.has(key) &&
+        Object.prototype.hasOwnProperty.call(held, key) &&
+        this.sent.includes(key),
+    );
+    if (object(candidate))
+      this.value = Object.fromEntries(
+        roots.flatMap((key) =>
+          faulty.has(key)
+            ? Object.prototype.hasOwnProperty.call(held, key)
+              ? [[key, held[key]]]
+              : []
+            : Object.prototype.hasOwnProperty.call(candidate, key)
+              ? [[key, structuredClone(candidate[key])]]
+              : [],
+        ),
+      );
     this.schemas = new WeakMap();
-    return [...overwritten];
+    const value = this.value ?? {};
+    // An owed subject's root is resent even where it is held: the subject is added to it.
+    const owed = new Set([
+      ...rootsOf(true),
+      ...requiredFields(schema).filter((key) => value[key] === undefined),
+    ]);
+    return {
+      overwritten,
+      resend: roots.filter((key) => faulty.has(key) || owed.has(key)),
+    };
   }
 
   public clear(): void {
@@ -333,7 +169,43 @@ export class ToolDraft<T extends object> {
     this.context = null;
     this.faults = [];
     this.sent = [];
-    this.previous = undefined;
-    this._unchanged = false;
+  }
+
+  /**
+   * The card's required fields: the canonical ones not held, plus an owed subject's root where
+   * nothing is held.
+   */
+  private owed(source: Node): string[] {
+    const held = this.value ?? {};
+    const owned = fields(source);
+    return [
+      ...new Set([
+        ...requiredOf(source).filter((key) => held[key] === undefined),
+        ...this.faults
+          .filter(owedSubjectPath)
+          .map((path) => path.split('.')[0])
+          .filter((root) => owned[root] && held[root] === undefined),
+      ]),
+    ];
   }
 }
+
+type Node = Record<string, unknown>;
+const jsonSchema = (schema: z.ZodType): Node =>
+  z.toJSONSchema(schema, { io: 'input', unrepresentable: 'throw' }) as Node;
+/** The properties of an object schema node, through its display projection and union branches. */
+const fields = (node: Node): Record<string, Node> => {
+  const current = {
+    ...node,
+    ...(object(node.toolDisplay) ? node.toolDisplay : {}),
+  };
+  return object(current.properties)
+    ? (current.properties as Record<string, Node>)
+    : ((current.anyOf as Node[] | undefined)
+        ?.map(fields)
+        .find((found) => Object.keys(found).length) ?? {});
+};
+const requiredOf = (node: Node): string[] =>
+  ((object(node.toolDisplay) && Array.isArray(node.toolDisplay.required)
+    ? node.toolDisplay.required
+    : node.required) ?? []) as string[];

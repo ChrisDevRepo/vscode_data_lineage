@@ -158,7 +158,6 @@ describe('AI tool registration', () => {
       expect(JSON.parse(thrown!.message)).toEqual({
         code: 'backend_fault',
         attempt: '2/3',
-        resend: [],
         errors: [
           {
             path: '',

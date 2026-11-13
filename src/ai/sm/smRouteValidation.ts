@@ -39,7 +39,6 @@ export function buildRouteValidationRejection(
     reason: routeRejectionReason(errors),
     detail: routeRejectionDetail(errors),
     issuePaths: errors.flatMap((e) => (e.path ? [e.path] : [])),
-    resend: [...new Set(errors.flatMap((error) => error.alternatives ?? []))],
     // A missing outcome names its neighbor: the subject of the fault, never a submitted value.
     errors: errors.map((error) => ({
       path:

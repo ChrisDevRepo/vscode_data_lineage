@@ -158,11 +158,11 @@ describe('a tool call whose arguments are not a JSON object', () => {
     expect(results.map((item) => item.status)).toEqual(['error', 'success']);
     // The call-level fault is the root error; its message comes from the port's reason.
     // Without step state the rejection renders at feedback 2, so the accepted JSON type is stated;
-    // arguments that are not an object hold nothing, so every required field of the card is resent.
-    expect(problemOf(String(results[0].content))).toMatchObject({
+    // the tool holds no draft, so the rejection carries no resend list: its card is the contract.
+    expect(problemOf(String(results[0].content))).toEqual({
       code: REJECTION_CODES.invalidInput,
       attempt: '2/3',
-      resend: ['query'],
+      errors: expect.any(Array),
     });
     expect(shown(String(results[0].content))).toEqual([
       { ...fault('type'), type: ['object'] },

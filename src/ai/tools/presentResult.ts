@@ -2,10 +2,7 @@
  * AI `present_result` contract: input/output types, validation, and the deterministic markdown
  * assembly. Zero VS Code imports.
  */
-import {
-  PresentResultModelSchema,
-  type PresentResultRepairField,
-} from './toolSchemas';
+import { PresentResultModelSchema } from './toolSchemas';
 import { normalizeColName, schemaKey } from '../../utils/sql';
 import {
   makeRejection,
@@ -177,8 +174,6 @@ export function assemblePreviewSections(
 export interface PresentResultViolation {
   /** The faults reported through the inspection's accumulator. */
   readonly errors: readonly ToolError[];
-  /** Fields this violation authorizes for a repair resend. */
-  readonly repairFields: readonly PresentResultRepairField[];
   /** Exact offending entry paths, empty when the violation is about the payload as a whole. */
   readonly paths: readonly string[];
   /**
@@ -829,28 +824,16 @@ export function inspectPresentResult(
   viewKnown = true,
 ): ToolRejection | undefined {
   const faults: ToolError[] = [];
-  let allRepairable = true;
-  const repairFields = new Set<PresentResultRepairField>();
   const issuePaths = new Set<string>();
   /** One fault per error, at its path; `paths` are the held-draft paths it fails. */
-  const addError = (
-    error: ToolError,
-    authorizedFields: readonly PresentResultRepairField[] = [],
-    paths: readonly string[] = [],
-  ): void => {
+  const addError = (error: ToolError, paths: readonly string[] = []): void => {
     faults.push(error);
-    if (authorizedFields.length === 0) allRepairable = false;
-    for (const f of authorizedFields) repairFields.add(f);
     for (const path of paths) issuePaths.add(path);
   };
 
   for (const violation of externalViolations) {
     violation.errors.forEach((error, index) =>
-      addError(
-        error,
-        violation.repairFields,
-        index === 0 ? violation.paths : [],
-      ),
+      addError(error, index === 0 ? violation.paths : []),
     );
   }
 
@@ -875,7 +858,6 @@ export function inspectPresentResult(
    * id; in a completed run `add_node_ids` brings any in-scope id into view.
    */
   const addNodeIdError = (
-    field: PresentResultRepairField,
     heldPath: string,
     path: string,
     nodeId: string,
@@ -891,19 +873,13 @@ export function inspectPresentResult(
           : stage === 'completed'
             ? 'addable_to_result'
             : 'not_in_result';
-    if (code === 'addable_to_result') repairFields.add('add_node_ids');
-    addError({ path, code, values: [...resolvedNodeIds] }, [field], [heldPath]);
+    addError({ path, code, values: [...resolvedNodeIds] }, [heldPath]);
   };
 
   const noteNodeIds = new Set<string>();
   for (const reference of facts.references) {
     if (!resolvedSet.has(reference.nodeId))
-      addNodeIdError(
-        reference.field,
-        reference.heldPath,
-        reference.path,
-        reference.nodeId,
-      );
+      addNodeIdError(reference.heldPath, reference.path, reference.nodeId);
     else if (reference.field === 'sections')
       sectionLinkedNodeIds.add(reference.nodeId);
     else if (reference.field === 'notes') noteNodeIds.add(reference.nodeId);
@@ -921,26 +897,19 @@ export function inspectPresentResult(
       !alreadyRepairedIds.has(id),
   );
   if (viewKnown && facts.coverageKnown && unexplainedNodeIds.length > 0) {
-    addError(
-      {
-        path: 'sections.*.node_ids',
-        code: 'node_unexplained',
-        values: unexplainedNodeIds,
-      },
-      ['sections', 'notes'],
-      ['sections', 'notes'],
-    );
+    addError({
+      path: 'sections.*.node_ids',
+      code: 'node_unexplained',
+      values: unexplainedNodeIds,
+    });
   }
 
   if (faults.length > 0) {
-    const resendList = [...repairFields];
-    const repairInstructed = allRepairable && resendList.length > 0;
     return makeRejection({
       code: REJECTION_CODES.invalidInput,
       reason: faults.map((fault) => `${fault.path}: ${fault.code}`).join('\n'),
       issuePaths: [...issuePaths],
       errors: faults,
-      resend: repairInstructed ? resendList : [],
     });
   }
 
