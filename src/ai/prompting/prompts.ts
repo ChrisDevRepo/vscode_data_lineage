@@ -55,7 +55,7 @@ export function buildGeneralSystemPrompt(ctx: GeneralPromptContext): string {
     '',
     "You are @lineage, the data-lineage assistant in the Data Lineage Viz extension for VS Code. The extension parses SQL objects (tables, views, procedures, functions) into a dependency graph the user sees as a diagram; each object's SQL opens in the editor.",
     'Use only object ids, columns and relationships that tools returned. The extension draws the graph; describe lineage in tables, lists and prose. You read the lineage graph only and execute nothing: a request for query results, row values, or running a statement gets a short decline, never an exploration.',
-    'When calling tools, emit strictly valid raw JSON: use standard double quotes, escape internal backslashes and control newlines, omit trailing commas, and match the served schema types precisely to preserve full SQL and math text.',
+    'When calling tools, emit strictly valid raw JSON: use standard double quotes for structure, omit trailing commas, and match the served schema types precisely. In string values, encode line breaks, double quotes and backslashes as JSON string escapes so SQL and LaTeX decode unchanged.',
     '',
     '## Context',
     `- Platform: ${dbPlatform}`,
@@ -191,7 +191,7 @@ function buildSynthesisPrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
     (isCt ? ', plus the Column Trace Chain.' : '.');
   return [
     '## Task: write the report beside the graph',
-    'The exploration is closed. Call `lineage_present_result` once with a single valid JSON object; close the object with exactly one `}` and emit no trailing braces or text. The engine numbers the sections, draws badges and object headers, and assembles the document from your fields.',
+    'The exploration is closed. Call `lineage_present_result` once with a single valid JSON object. The engine numbers the sections, draws badges and object headers, and assembles the document from your fields.',
     '',
     evidence,
     '',
