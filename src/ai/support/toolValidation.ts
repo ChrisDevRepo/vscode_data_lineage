@@ -483,40 +483,10 @@ export function schemaTypesAt(
   walkServedSchema(json, input, '', (node, _value, at) => {
     if (at === pointer) for (const type of schemaTypes(node)) types.add(type);
   });
-  return unbarred(barredTypes(json, input), pointer, [...types]);
+  return [...types];
 }
 
-/**
- * By JSON pointer of a property, the types another assertion on the same object bars (`not`),
- * e.g. a fresh start call bars null from `depth`.
- */
-function barredTypes(
-  json: Record<string, unknown>,
-  input: unknown,
-): Map<string, string[]> {
-  const barred = new Map<string, string[]>();
-  walkServedSchema(json, input, '', (node, value, pointer) => {
-    if (!isRecord(value) || !isRecord(node.properties)) return;
-    for (const [key, property] of Object.entries(node.properties))
-      if (isRecord(property) && isRecord(property.not))
-        barred.set(`${pointer}/${key}`, [
-          ...(barred.get(`${pointer}/${key}`) ?? []),
-          ...schemaTypes(property.not),
-        ]);
-  });
-  return barred;
-}
-
-const unbarred = (
-  barred: ReadonlyMap<string, readonly string[]>,
-  pointer: string,
-  types: readonly string[],
-): string[] => types.filter((type) => !barred.get(pointer)?.includes(type));
-
-/**
- * By JSON pointer of each object the value holds: its required fields with their schema types,
- * without a type another assertion on the same object bars (`not`).
- */
+/** By JSON pointer of each object the value holds: its required fields with their schema types. */
 function requiredForms(
   json: Record<string, unknown>,
   input: unknown,
@@ -532,10 +502,6 @@ function requiredForms(
     }
     forms.set(pointer, form);
   });
-  const barred = barredTypes(json, input);
-  for (const [pointer, form] of forms)
-    for (const key of Object.keys(form))
-      form[key] = unbarred(barred, `${pointer}/${key}`, form[key]);
   return forms;
 }
 
@@ -558,7 +524,6 @@ function rejection(
   input: unknown,
 ): ToolRejection {
   const forms = requiredForms(json, input);
-  const barred = barredTypes(json, input);
   /**
    * The required form of the nearest object holding a fault's field, with the field itself under
    * its path inside that object (an optional field, an array item) and, where an object was
@@ -649,11 +614,7 @@ function rejection(
         code = 'unknown_key';
         values = Object.keys(parentSchema?.properties ?? {});
       } else if (keyword === 'type') {
-        const types = unbarred(
-          barred,
-          errorPointer(error),
-          [params.type].flat(),
-        );
+        const types: string[] = [params.type].flat();
         const container = containerTextIssue(error.data, types);
         if (container) {
           code = container.code;

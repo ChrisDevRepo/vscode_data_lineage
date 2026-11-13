@@ -136,12 +136,7 @@ const START_SCOPE_FIELDS = {
 } as const;
 
 /** `required` sits beside the scope fields, so a missing one keeps its schema type and values. */
-const FreshScopeAdmission = {
-  required: ['origin', 'analysisMode', 'depth'],
-  allOf: [
-    { properties: { depth: { not: { type: 'null' }, toolIssue: 'missing' } } },
-  ],
-};
+const FreshScopeAdmission = { required: ['origin', 'analysisMode', 'depth'] };
 const startScopeAdmission = (fresh: object) => [
   {
     name: 'start.scope',
@@ -212,8 +207,14 @@ export const StartExplorationInputSchema = z
   })
   .strict();
 
+/** A fresh start serves and admits `depth` as an object; only a refine may send null. */
 const startPhaseSchemas = [false, true].map((refining) =>
-  StartExplorationInputSchema.meta({
+  (refining
+    ? StartExplorationInputSchema
+    : StartExplorationInputSchema.extend({
+        depth: ExplorationDepthSelectionSchema.describe(DEPTH_DESCRIPTION),
+      })
+  ).meta({
     toolObjectFact: 'start.input',
     toolGroups: startScopeAdmission(refining ? {} : FreshScopeAdmission),
     toolAdmission: refining ? {} : { required: ['classification'] },
@@ -222,7 +223,8 @@ const startPhaseSchemas = [false, true].map((refining) =>
 /** Resolves required scope facts from the real session stage, never a model's claimed revision. */
 export const startExplorationSchemaForState = (
   refining: boolean,
-): typeof StartExplorationInputSchema => startPhaseSchemas[Number(refining)];
+): typeof StartExplorationInputSchema =>
+  startPhaseSchemas[Number(refining)] as typeof StartExplorationInputSchema;
 
 const StartScopeFactSchema =
   StartExplorationInputSchema.pick(START_SCOPE_FIELDS);
