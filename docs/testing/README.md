@@ -18,7 +18,7 @@ These need no database, model provider or display. Parser and lineage scenarios 
 
 A path argument to `test:core`, `test:lineage` or `test:runtime` runs that file only: `npm run test:core -- tests/unit/parser/identifier-case.test.ts`.
 
-The gate prints `PASS`, `FAIL` and `SKIP` per step and exits nonzero on any `FAIL`. A `SKIP` is unverified: the template-schema step skips without a `v*` tag or `origin/main`, and fails instead when `CI` is set. Failed step logs and `test-results/gate/summary.json` (step outcomes, unit test counts) stay in untracked local output.
+The gate prints one verdict line when green, and on failure the first failed steps with a `file:line` and their log path; `npm run gate -- --full` prints every step's output and the `PASS`/`FAIL` table. It exits nonzero on any failed step. A `SKIP` is unverified: the template-schema step skips without a `v*` tag or `origin/main`, and fails instead when `CI` is set. Failed step logs and `test-results/gate/summary.json` (step outcomes, unit test counts) stay in untracked local output.
 
 ## Where tests live
 

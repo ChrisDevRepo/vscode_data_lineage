@@ -8,6 +8,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
+import { summarizeGate } from './gate-summary.mjs';
 const stepOutcome = (status) => (status === 0 ? 'PASS' : 'FAIL');
 const stepFailureOutput = (step, run) => {
   if (run.output && run.output.trim()) return run.output;
@@ -20,10 +21,13 @@ const stepFailureOutput = (step, run) => {
 };
 import { nodeBin, npmCommand } from './npm-launcher.mjs';
 
+/** `npm run gate -- --full` streams every step's output and prints the full table. */
+const FULL = process.argv.includes('--full');
+
 /** Where a failing step's captured output is written, so a red gate stays diagnosable. */
 const LOG_DIR = join('test-results', 'gate');
 
-/** Runs one step, streaming its output live while retaining a copy. */
+/** Runs one step, retaining its output and streaming it live under --full. */
 function runStep(step) {
   return new Promise((resolve) => {
     const child = spawn(step.cmd, step.args, {
@@ -34,7 +38,7 @@ function runStep(step) {
     const capture = (stream, sink) =>
       stream.on('data', (chunk) => {
         output += chunk;
-        sink.write(chunk);
+        if (FULL) sink.write(chunk);
       });
     capture(child.stdout, process.stdout);
     capture(child.stderr, process.stderr);
@@ -82,7 +86,11 @@ const STEPS = [
   {
     name: 'test environment profiles',
     cmd: nodeBin,
-    args: ['--test', 'tests/tools/load-test-env.test.mjs'],
+    args: [
+      '--test',
+      'tests/tools/load-test-env.test.mjs',
+      'tests/tools/gate-summary.test.mjs',
+    ],
   },
   { name: 'markdown facts', cmd: nodeBin, args: ['scripts/verify-docs.mjs'] },
   {
@@ -121,24 +129,27 @@ for (const file of unitReports) rmSync(file, { force: true });
 
 const results = [];
 for (const step of STEPS) {
-  process.stdout.write(`\n──── ${step.name}\n`);
+  if (FULL) process.stdout.write(`\n──── ${step.name}\n`);
   const started = Date.now();
   const run = await runStep(step);
   const outcome = run.error ? 'FAIL' : stepOutcome(run.status);
   const ok = outcome !== 'FAIL';
   let logPath = '';
+  let output = '';
   if (!ok) {
+    output = stepFailureOutput(step, run);
     logPath = join(
       LOG_DIR,
       `${step.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.log`,
     );
-    writeFileSync(logPath, stepFailureOutput(step, run), 'utf8');
+    writeFileSync(logPath, output, 'utf8');
   }
   results.push({
     name: step.name,
     outcome,
     ok,
     logPath,
+    output,
     note: run.error
       ? `did not start: ${run.error.message}`
       : run.status === null
@@ -194,6 +205,11 @@ writeFileSync(
     2,
   )}\n`,
 );
+
+if (!FULL) {
+  process.stdout.write(summarizeGate({ results, totals }));
+  process.exit(results.every((r) => r.ok) ? 0 : 1);
+}
 
 const width = Math.max(...results.map((r) => r.name.length));
 process.stdout.write(
