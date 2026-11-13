@@ -486,25 +486,6 @@ export function schemaTypesAt(
   return [...types];
 }
 
-/** By JSON pointer of each object the value holds: its required fields with their schema types. */
-function requiredForms(
-  json: Record<string, unknown>,
-  input: unknown,
-): Map<string, Record<string, string[]>> {
-  const forms = new Map<string, Record<string, string[]>>();
-  walkServedSchema(json, input, '', (node, value, pointer) => {
-    if (!isRecord(value)) return;
-    const properties = isRecord(node.properties) ? node.properties : {};
-    const form = forms.get(pointer) ?? {};
-    for (const key of (node.required as string[] | undefined) ?? []) {
-      const types = schemaTypes(properties[key]);
-      if (types.length) form[key] = types;
-    }
-    forms.set(pointer, form);
-  });
-  return forms;
-}
-
 /** The size a bound keyword measures: characters, items or keys; a number is the value itself. */
 function sentSize(data: unknown): number | undefined {
   if (typeof data === 'string') return [...data].length;
@@ -514,56 +495,13 @@ function sentSize(data: unknown): number | undefined {
 
 /**
  * Native schema faults enter the same issue list and renderer as domain faults, each with the
- * schema facts of its keyword: accepted values, or type, bound and required form.
+ * schema facts of its keyword: accepted values, or type and bound.
  */
 function rejection(
   errors: readonly ErrorObject[],
   domain: readonly ToolError[],
   facts: ToolFactContext,
-  json: Record<string, unknown>,
-  input: unknown,
 ): ToolRejection {
-  const forms = requiredForms(json, input);
-  /**
-   * The required form of the nearest object holding a fault's field, with the field itself under
-   * its path inside that object (an optional field, an array item) and, where an object was
-   * expected and not sent, that object's required fields under the same paths; for the call
-   * itself, the required form the schema expects. None when the schema does not type the field or
-   * the form would name that field alone.
-   */
-  const formOf = (
-    error: ErrorObject,
-    types: readonly string[],
-  ): ToolError['form'] => {
-    if (!types.length) return undefined;
-    const parts = errorPointer(error).split('/').slice(1);
-    if (!parts.length) {
-      const expected = requiredForms(json, {}).get('');
-      return expected && Object.keys(expected).length ? expected : undefined;
-    }
-    let held = parts.length - 1;
-    while (held > 0 && !forms.has(`/${parts.slice(0, held).join('/')}`)) held--;
-    const form = forms.get(held ? `/${parts.slice(0, held).join('/')}` : '');
-    const field = parts
-      .slice(held)
-      .map((part) => part.replace(/~1/g, '/').replace(/~0/g, '~'))
-      .join('.');
-    const unsent =
-      error.keyword === 'required'
-        ? error.parentSchema?.properties?.[error.params.missingProperty]
-        : error.keyword === 'type' && !isRecord(error.data)
-          ? error.parentSchema
-          : undefined;
-    const expected = Object.entries(
-      requiredForms(unsent ?? {}, {}).get('') ?? {},
-    ).map(([key, inner]) => [`${field}.${key}`, inner]);
-    const named = form && {
-      ...form,
-      [field]: form[field] ?? [...types],
-      ...Object.fromEntries(expected),
-    };
-    return named && Object.keys(named).length > 1 ? named : undefined;
-  };
   // Wrong JSON type and a forbidden value at the same schema node describe one native fault.
   const native = errors
     .filter(
@@ -590,7 +528,7 @@ function rejection(
       const { keyword, params, parentSchema } = error;
       let code: IssueCode = 'invalid',
         values: string[] | undefined,
-        shape: Pick<ToolError, 'types' | 'form'> | undefined,
+        types: ToolError['types'],
         bound: ToolError['bound'],
         exit: ToolError['exit'],
         parse: ToolError['parse'];
@@ -606,21 +544,17 @@ function rejection(
           : field && 'const' in field
             ? [String(field.const)]
             : undefined;
-        const types =
-          forms.get(error.instancePath)?.[params.missingProperty] ??
-          schemaTypes(field);
-        shape = { types, form: formOf(error, types) };
+        types = schemaTypes(field);
       } else if (keyword === 'additionalProperties') {
         code = 'unknown_key';
         values = Object.keys(parentSchema?.properties ?? {});
       } else if (keyword === 'type') {
-        const types: string[] = [params.type].flat();
+        types = [params.type].flat();
         const container = containerTextIssue(error.data, types);
         if (container) {
           code = container.code;
           parse = container.parse;
         } else code = error.data === undefined ? 'missing' : 'type';
-        shape = { types, form: formOf(error, types) };
       } else if (keyword === 'enum' || keyword === 'const') {
         code = parentSchema?.toolIdentifier?.issue ?? 'enum';
         values = (params.allowedValues ?? [params.allowedValue]).map(String);
@@ -631,9 +565,6 @@ function rejection(
       ) {
         code = 'size';
         const sent = sentSize(error.data);
-        // A numeric bound has no size to state: its further schema fact is the holding form.
-        if (sent === undefined)
-          shape = { form: formOf(error, schemaTypes(parentSchema)) };
         if (typeof params.limit === 'number')
           bound = {
             keyword,
@@ -648,8 +579,7 @@ function rejection(
         path: toolErrorPath(error),
         code,
         ...(values?.length ? { values } : {}),
-        ...(shape?.types?.length ? { types: shape.types } : {}),
-        ...(shape?.form ? { form: shape.form } : {}),
+        ...(types?.length ? { types } : {}),
         ...(bound ? { bound } : {}),
         ...(exit ? { exit } : {}),
         ...(parse ? { parse } : {}),
@@ -764,7 +694,7 @@ export function validateToolCandidate<S extends z.ZodType>(
     errors,
     rejection: combineToolRejections([
       ...(errors.length || faults.length
-        ? [rejection(errors, faults, facts, json, input)]
+        ? [rejection(errors, faults, facts)]
         : []),
       ...problems,
     ]),

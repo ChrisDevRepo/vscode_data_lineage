@@ -422,7 +422,7 @@ export function isAdmissionRefusal(code: string): boolean {
  * {@link ToolError} are inferred from it. Strict: a success payload carrying any other key is never
  * read as a rejection. A stable machine `code`; a log-only `reason` and `detail`, never shown to
  * the model; every independently decidable fault in `errors`, by path and issue code, with the
- * backend values it concerns (`values`, `types`, `bound`, `form`, `exit`, `parse`), never text or a
+ * backend values it concerns (`values`, `types`, `bound`, `exit`, `parse`), never text or a
  * submitted value; `issuePaths` for held-draft bookkeeping, defaulting to the error paths;
  * `resend`, the top-level fields the model resends while every other field stays held.
  *
@@ -450,7 +450,6 @@ export const RejectionShape = z
               })
               .strict()
               .optional(),
-            form: z.record(z.string(), z.array(z.string())).optional(),
             exit: z.enum(['omit', 'no_call']).optional(),
             parse: z
               .object({
@@ -545,7 +544,7 @@ export function readToolErrorText(text: string): ToolRejection | null {
 
 /**
  * Feedback stage of one fault: 1 states it (`neighbor_undecided` its subject ids too), 2 adds
- * allowed values or the type or bound, 3 its exit: fallback, form, sent size, absence.
+ * allowed values or the type or bound, 3 its exit: fallback, sent size, absence.
  */
 export type FeedbackStage = 1 | 2 | 3;
 
@@ -564,7 +563,6 @@ export interface ToolProblem {
     type?: readonly string[];
     /** The broken schema keyword with its limit; from feedback 3 also the size sent. */
     bound?: Readonly<Record<string, number>>;
-    form?: ToolError['form'];
     exit?: ToolError['exit'];
   }>;
   /** Top-level fields to resend; present only where the tool holds a draft. */
@@ -729,7 +727,6 @@ export function renderProblemReport(
               },
             }
           : {}),
-        ...(stage === 3 && error.form && !allowed ? { form: error.form } : {}),
         ...(stage === 3 && error.exit ? { exit: error.exit } : {}),
       };
     });

@@ -115,12 +115,7 @@ export function ingestToolInput<S extends z.ZodType, R>(options: {
         error.values?.length === 0 && !error.types
           ? schemaTypesAt(schema, candidate, error.path)
           : [];
-      const { form, ...typed } = types.length ? { ...error, types } : error;
-      // Where a draft holds the fields, the card is the form of the root object: a fault at a
-      // top-level field serves none, so no form names a field outside `resend`.
-      return form && !(lists && !error.path.includes('.'))
-        ? { ...typed, form }
-        : typed;
+      return types.length ? { ...error, types } : error;
     });
     return problem;
   }
