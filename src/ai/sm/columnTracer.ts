@@ -220,6 +220,18 @@ export class ColumnTracer {
   }
 
   /**
+   * The route fault of a column_flow node field naming no loaded object, raised without its
+   * column: an unknown id is `unknown_contributor` whether or not the column was read.
+   */
+  unknownNode(id: string, path: string, destination: boolean): InvalidRoute {
+    return unknownEndpoint(
+      id,
+      path,
+      destination ? DESTINATION_FAULTS : SOURCE_FAULTS,
+    );
+  }
+
+  /**
    * The one check of a stored pair endpoint: a loaded object that is not pruned, the focus or its
    * neighbor, owning the column where metadata exists.
    */
@@ -237,14 +249,7 @@ export class ColumnTracer {
   ): { node: LineageNode } | { invalidRoute: InvalidRoute } {
     const node = nodeMap.get(ref.node);
     if (!node)
-      return {
-        invalidRoute: {
-          kind: 'unknown_contributor',
-          id: ref.node,
-          path: at.node,
-          reason: faults.absent,
-        },
-      };
+      return { invalidRoute: unknownEndpoint(ref.node, at.node, faults) };
     if (removedSet?.has(node.id))
       return {
         invalidRoute: {
@@ -727,6 +732,15 @@ const FOCUS_FAULTS: EndpointFaults = {
   metadata: (type) =>
     `Column metadata is unavailable for this ${type}; the output column cannot be verified.`,
 };
+
+/** The route fault of an id that names no loaded object. */
+function unknownEndpoint(
+  id: string,
+  path: string,
+  faults: EndpointFaults,
+): InvalidRoute {
+  return { kind: 'unknown_contributor', id, path, reason: faults.absent };
+}
 
 /**
  * A node whose column names are trusted unverified when it has no column metadata: a procedure, an

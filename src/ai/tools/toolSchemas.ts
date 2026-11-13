@@ -588,7 +588,7 @@ const indirectColumnsSchema = (
   z
     .array(
       IndirectFactSchema.extend({
-        node,
+        node: stringFact(node, 'indirectReference'),
         usage: IndirectFactSchema.shape.usage.describe(
           'join: relates rows of two inputs: the key of any join condition, and any predicate in a LEFT or FULL join ON — an outer join keeps every preserved row, so such a predicate only narrows which rows match. filter: decides which rows count or which value branch applies: a WHERE predicate, or an inner join ON predicate, which does remove rows. arrange: groups, partitions or orders rows.',
         ),
@@ -788,6 +788,7 @@ export function findingAdmissionFacts(schema: z.ZodType) {
   const suppliers = new Map<string, z.output<typeof ColumnRefSchema>>();
   const indirect = new Map<string, Pick<IndirectFact, 'node' | 'col'>>();
   const references = new Map<string, string>(),
+    indirectReferences = new Map<string, string>(),
     identities = new Map<string, string>(),
     arrays = new Map<string, number>(),
     rows = new Map<string, ReadonlySet<string>>();
@@ -828,6 +829,12 @@ export function findingAdmissionFacts(schema: z.ZodType) {
         'flowReference',
         (value, context) => {
           references.set(context.instancePath, value);
+        },
+      ],
+      [
+        'indirectReference',
+        (value, context) => {
+          indirectReferences.set(context.instancePath, value);
         },
       ],
       [
@@ -902,6 +909,7 @@ export function findingAdmissionFacts(schema: z.ZodType) {
     outColumns,
     suppliers,
     indirect,
+    indirectReferences,
     references,
     identities,
     arrays,
@@ -1543,13 +1551,7 @@ export const GetScreenStateInputSchema = z
       ),
     cursor: CursorSchema.optional(),
   })
-  .strict()
-  .meta({
-    toolAdmission: {
-      if: { required: ['ids', 'filter'] },
-      then: { properties: { filter: false } },
-    },
-  });
+  .strict();
 
 /** `lineage_search_objects` input. */
 export const SearchObjectsInputSchema = z

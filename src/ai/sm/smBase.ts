@@ -3296,6 +3296,15 @@ export class NavigationEngine implements IHopStateMachine {
       );
       if ('invalidRoute' in checked) invalidRoutes.push(checked.invalidRoute);
     }
+    // An indirect node of no loaded object is not found whether or not its entry's column was read.
+    for (const [path, raw] of facts.indirectReferences) {
+      const at = paths(path);
+      if (
+        !resolveModelNodeId(raw, this.nodeMap, this.identifierCaseSensitive) &&
+        !invalidRoutes.some((route) => route.path === at)
+      )
+        invalidRoutes.push(this.tracer.unknownNode(raw, at, false));
+    }
     for (const [row, keys] of facts.rows) {
       const supplierCount = facts.arrays.get(`${row}/upstream_columns`);
       if (
@@ -3310,6 +3319,7 @@ export class NavigationEngine implements IHopStateMachine {
     }
     // At a procedure an entry pairs only through its out_node; without one it has no destination.
     const atProcedure = this.nodeMap.get(focusId)?.type === 'procedure';
+    const unknownIds = new Map<string, string>();
     for (const [path, raw] of facts.references) {
       const nid = resolveModelNodeId(
           raw,
@@ -3319,6 +3329,7 @@ export class NavigationEngine implements IHopStateMachine {
         node = nid ? this.nodeMap.get(nid) : undefined;
       if (!nid || !node) {
         complete = false;
+        unknownIds.set(paths(path), raw);
         continue;
       }
       if (!this.graph.areNeighbors(focusId, nid)) continue;
@@ -3392,6 +3403,13 @@ export class NavigationEngine implements IHopStateMachine {
       stagedEdges.push(...prepared.stagedEdges);
       entryEdges.set(Number(path.split('/')[2]), prepared.stagedEdges);
     }
+    // An id of no loaded object is not found whether or not its entry's column was read.
+    const routed = new Set(invalidRoutes.map((route) => route.path));
+    for (const [at, id] of unknownIds)
+      if (isFlowNodeField(at) && !routed.has(at))
+        invalidRoutes.push(
+          this.tracer.unknownNode(id, at, at.endsWith('.out_node')),
+        );
     const sides = new Set(
         this.getCurrentTasks().flatMap((task) =>
           task.kind === 'column_lineage' && task.traversalSide

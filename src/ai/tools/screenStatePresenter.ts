@@ -54,9 +54,9 @@ interface RunRecallInput {
   readonly liveRun?: StoredAiRun;
   /** The calling turn's budget, which the recall payload is measured against. */
   readonly budget: TurnTokenBudget;
-  /** Canonical object ids to recall; mutually exclusive with {@link RunRecallInput.filter}. */
+  /** Canonical object ids to recall; when sent with a filter, the ids are recalled. */
   readonly ids?: readonly string[];
-  /** One class of the stored run to list; mutually exclusive with {@link RunRecallInput.ids}. */
+  /** One class of the stored run to list; read only when no ids are sent. */
   readonly filter?: 'pruned' | 'open_leads' | 'stale';
   /** Resolver for an object's current DDL text. */
   readonly getDdl?: (
