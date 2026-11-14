@@ -505,6 +505,10 @@ const QUESTIONS_DESCRIPTION =
   'Ask a kept neighbor what its own SQL must answer for the user question and arriving task: its rules, calculations and thresholds beyond automatic column continuation. ' +
   'A question to an out-of-scope neighbor becomes a follow-up offer. No questions to visited or pruned neighbors.';
 
+/** Served in place of the pruning description when no neighbor can be pruned (`maxItems` 0). */
+const NO_PRUNABLE_NEIGHBOR_DESCRIPTION =
+  'No neighbor can be pruned at this hop, so this list takes no entry.';
+
 const BB_PRUNE_NEIGHBORS_DESCRIPTION =
   "Name each `can_prune: true` neighbor this node's SQL shows is off the path; that neighbor and whatever only it leads to are removed. The focus stays on the graph, including when every neighbor is named (a dead end). A neighbor named here gets no questions entry.";
 const BB_QUESTIONS_DESCRIPTION =
@@ -1398,9 +1402,11 @@ export function submitFindingsSchemaForMode(
         )
           .optional()
           .describe(
-            mode === 'bb'
-              ? BB_PRUNE_NEIGHBORS_DESCRIPTION
-              : PRUNE_NEIGHBORS_DESCRIPTION,
+            !prunableIds.length
+              ? NO_PRUNABLE_NEIGHBOR_DESCRIPTION
+              : mode === 'bb'
+                ? BB_PRUNE_NEIGHBORS_DESCRIPTION
+                : PRUNE_NEIGHBORS_DESCRIPTION,
           ),
         questions: z
           .array(baseQuestion)
