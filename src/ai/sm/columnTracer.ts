@@ -189,7 +189,7 @@ export class ColumnTracer {
    */
   validateColumnSupplier(
     focusId: string,
-    cont: ColumnFlowEntry['upstream_columns'][number],
+    cont: { node: string; col?: string },
     path: string,
     nodeMap: Map<string, LineageNode>,
     admitted: readonly string[],
@@ -197,16 +197,6 @@ export class ColumnTracer {
     contributorIds?: ReadonlySet<string>,
     log?: TracerLogFn,
   ): { neighbor: LineageNode } | { invalidRoute: InvalidRoute } {
-    if (cont.col.trim().length === 0)
-      return {
-        invalidRoute: {
-          kind: 'bad_contributor_col',
-          id: cont.node,
-          path: `${path}.col`,
-          reason:
-            'An upstream column reference must name a non-empty column; procedure metadata fallback does not supply a column identity.',
-        },
-      };
     const checked = this.checkEndpoint(
       focusId,
       cont,
@@ -218,19 +208,18 @@ export class ColumnTracer {
       contributorIds,
       log,
     );
-    return 'invalidRoute' in checked ? checked : { neighbor: checked.node };
-  }
-
-  /**
-   * The route fault of a column_flow node field naming no loaded object, raised without its
-   * column: an unknown id is `unknown_contributor` whether or not the column was read.
-   */
-  unknownNode(id: string, path: string, destination: boolean): InvalidRoute {
-    return unknownEndpoint(
-      id,
-      path,
-      destination ? DESTINATION_FAULTS : SOURCE_FAULTS,
-    );
+    if ('invalidRoute' in checked) return checked;
+    if (cont.col !== undefined && cont.col.trim().length === 0)
+      return {
+        invalidRoute: {
+          kind: 'bad_contributor_col',
+          id: cont.node,
+          path: `${path}.col`,
+          reason:
+            'An upstream column reference must name a non-empty column; procedure metadata fallback does not supply a column identity.',
+        },
+      };
+    return { neighbor: checked.node };
   }
 
   /**
@@ -241,7 +230,7 @@ export class ColumnTracer {
    */
   private checkEndpoint(
     focusId: string,
-    ref: { node: string; col: string },
+    ref: { node: string; col?: string },
     at: { node: string; col: string },
     faults: EndpointFaults,
     nodeMap: Map<string, LineageNode>,
@@ -252,7 +241,16 @@ export class ColumnTracer {
   ): { node: LineageNode } | { invalidRoute: InvalidRoute } {
     const node = nodeMap.get(ref.node);
     if (!node)
-      return { invalidRoute: unknownEndpoint(ref.node, at.node, faults) };
+      return {
+        invalidRoute: {
+          kind: 'unknown_contributor',
+          id: ref.node,
+          path: at.node,
+          reason: faults.absent,
+        },
+      };
+    const col = ref.col;
+    if (col === undefined) return { node };
     if (removedSet?.has(node.id))
       return {
         invalidRoute: {
@@ -265,9 +263,7 @@ export class ColumnTracer {
     const columns = [...admitted];
     if (
       columns.length &&
-      !columns.some(
-        (column) => this.columnKey(column) === this.columnKey(ref.col),
-      )
+      !columns.some((column) => this.columnKey(column) === this.columnKey(col))
     ) {
       return {
         invalidRoute: {
@@ -315,7 +311,7 @@ export class ColumnTracer {
    */
   prepareColumnEntry(
     focusId: string,
-    entry: ColumnFlowHeader,
+    entry: { out_node?: string; out_col?: string },
     suppliers: readonly VerifiedColumnSupplier[],
     path: string,
     nodeMap: Map<string, LineageNode>,
@@ -329,13 +325,14 @@ export class ColumnTracer {
     const invalidRoutes: InvalidRoute[] = [],
       stagedEdges: ColumnEdge[] = [];
     if (!nodeMap.get(focusId)) return { invalidRoutes, stagedEdges };
-    const target = resolveColumnFlowTarget(
-      entry,
-      focusId,
-      nodeMap,
-      this.identifierCaseSensitive,
-    );
-    const node = target?.attributionTo ?? entry.out_node ?? focusId;
+    const node =
+      entry.out_node === undefined
+        ? focusId
+        : (resolveModelNodeId(
+            entry.out_node,
+            nodeMap,
+            this.identifierCaseSensitive,
+          ) ?? entry.out_node);
     const destination = this.checkEndpoint(
       focusId,
       { node, col: entry.out_col },
@@ -351,6 +348,13 @@ export class ColumnTracer {
       invalidRoutes.push(destination.invalidRoute);
       return { invalidRoutes, stagedEdges };
     }
+    if (entry.out_col === undefined) return { invalidRoutes, stagedEdges };
+    const target = resolveColumnFlowTarget(
+      { out_col: entry.out_col, out_node: entry.out_node },
+      focusId,
+      nodeMap,
+      this.identifierCaseSensitive,
+    );
     if (!target) return { invalidRoutes, stagedEdges };
 
     for (const { ref: cont, neighbor, path: refPath } of suppliers) {
@@ -729,15 +733,6 @@ const FOCUS_FAULTS: EndpointFaults = {
   metadata: (type) =>
     `Column metadata is unavailable for this ${type}; the output column cannot be verified.`,
 };
-
-/** The route fault of an id that names no loaded object. */
-function unknownEndpoint(
-  id: string,
-  path: string,
-  faults: EndpointFaults,
-): InvalidRoute {
-  return { kind: 'unknown_contributor', id, path, reason: faults.absent };
-}
 
 /**
  * A node whose column names are trusted unverified when it has no column metadata: a procedure, an

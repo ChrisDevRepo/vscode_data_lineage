@@ -3404,7 +3404,8 @@ export class NavigationEngine implements IHopStateMachine {
     mentions: ActionMentions;
   } {
     const mentions: ActionMentions = {};
-    if (!this.tracer) return { mentions };
+    const tracer = this.tracer;
+    if (!tracer) return { mentions };
     const paths = (path: string): string => path.slice(1).split('/').join('.');
     const rowOf = (path: string): string =>
       path.split('/').slice(0, 3).join('/');
@@ -3416,48 +3417,39 @@ export class NavigationEngine implements IHopStateMachine {
       entryEdges = new Map<number, ColumnEdge[]>();
     const verified = new Map<string, LineageNode>();
     const contributors = this.columnContributorIds(focusId);
-    for (const [path, col] of facts.columns) {
-      const prefix = path.split('/').slice(0, -1).join('/'),
-        node = facts.references.get(`${prefix}/node`);
-      if (node === undefined) continue;
+    const checkSupplier = (prefix: string, raw: string, col?: string) => {
       const nid =
-        resolveModelNodeId(node, this.nodeMap, this.identifierCaseSensitive) ??
-        node;
-      const checked = this.tracer.validateColumnSupplier(
-        focusId,
-        { node: nid, col },
-        paths(prefix),
-        this.nodeMap,
-        this.declaredColumns(nid),
-        this.removedSet,
-        contributors,
-        log,
-      );
+          resolveModelNodeId(raw, this.nodeMap, this.identifierCaseSensitive) ??
+          raw,
+        checked = tracer.validateColumnSupplier(
+          focusId,
+          col !== undefined ? { node: nid, col } : { node: nid },
+          paths(prefix),
+          this.nodeMap,
+          this.declaredColumns(nid),
+          this.removedSet,
+          contributors,
+          log,
+        );
       if ('invalidRoute' in checked) invalidRoutes.push(checked.invalidRoute);
-      else verified.set(prefix, checked.neighbor);
+      else if (col !== undefined) return checked.neighbor;
+      return undefined;
+    };
+    for (const [path, node] of facts.references) {
+      if (!path.endsWith('/node')) continue;
+      const prefix = path.slice(0, -'/node'.length),
+        neighbor = checkSupplier(
+          prefix,
+          node,
+          facts.columns.get(`${prefix}/col`),
+        );
+      if (neighbor) verified.set(prefix, neighbor);
     }
     // An indirect fact needs only its column checked; it never maps, routes or stages an edge.
-    for (const [path, fact] of facts.indirect) {
-      const checked = this.tracer.validateColumnSupplier(
-        focusId,
-        fact,
-        paths(path),
-        this.nodeMap,
-        this.declaredColumns(fact.node),
-        this.removedSet,
-        contributors,
-        log,
-      );
-      if ('invalidRoute' in checked) invalidRoutes.push(checked.invalidRoute);
-    }
-    // An indirect node of no loaded object is not found whether or not its entry's column was read.
     for (const [path, raw] of facts.indirectReferences) {
-      const at = paths(path);
-      if (
-        !resolveModelNodeId(raw, this.nodeMap, this.identifierCaseSensitive) &&
-        !invalidRoutes.some((route) => route.path === at)
-      )
-        invalidRoutes.push(this.tracer.unknownNode(raw, at, false));
+      const prefix = path.slice(0, -'/node'.length),
+        fact = facts.indirect.get(prefix);
+      checkSupplier(prefix, fact?.node ?? raw, fact?.col);
     }
     for (const [row, keys] of facts.rows) {
       const supplierCount = facts.arrays.get(`${row}/upstream_columns`);
@@ -3473,7 +3465,6 @@ export class NavigationEngine implements IHopStateMachine {
     }
     // At a procedure an entry pairs only through its out_node; without one it has no destination.
     const atProcedure = this.nodeMap.get(focusId)?.type === 'procedure';
-    const unknownIds = new Map<string, string>();
     for (const [path, raw] of facts.references) {
       const nid = resolveModelNodeId(
           raw,
@@ -3483,7 +3474,6 @@ export class NavigationEngine implements IHopStateMachine {
         node = nid ? this.nodeMap.get(nid) : undefined;
       if (!nid || !node) {
         complete = false;
-        unknownIds.set(paths(path), raw);
         continue;
       }
       if (!this.graph.areNeighbors(focusId, nid)) continue;
@@ -3512,7 +3502,9 @@ export class NavigationEngine implements IHopStateMachine {
     }
     if (complete) mentions.column_flow = mentioned;
     const callerTargets = this.callerTargets();
-    const headers = new Map(facts.headers);
+    const headers = new Map<string, { out_node?: string; out_col?: string }>(
+      facts.headers,
+    );
     for (const [columnPath, out_col] of facts.outColumns) {
       const row = rowOf(columnPath),
         keys = facts.rows.get(row),
@@ -3523,6 +3515,11 @@ export class NavigationEngine implements IHopStateMachine {
           out_col,
           ...(out_node !== undefined ? { out_node } : {}),
         });
+    }
+    for (const [path, out_node] of facts.references) {
+      if (!path.endsWith('/out_node')) continue;
+      const row = rowOf(path);
+      if (!headers.has(row)) headers.set(row, { out_node });
     }
     for (const [path, header] of headers) {
       const suppliers = [...facts.suppliers].flatMap(([refPath, ref]) => {
@@ -3537,7 +3534,7 @@ export class NavigationEngine implements IHopStateMachine {
             ]
           : [];
       });
-      const prepared = this.tracer.prepareColumnEntry(
+      const prepared = tracer.prepareColumnEntry(
         focusId,
         header,
         suppliers,
@@ -3554,13 +3551,6 @@ export class NavigationEngine implements IHopStateMachine {
       stagedEdges.push(...prepared.stagedEdges);
       entryEdges.set(Number(path.split('/')[2]), prepared.stagedEdges);
     }
-    // An id of no loaded object is not found whether or not its entry's column was read.
-    const routed = new Set(invalidRoutes.map((route) => route.path));
-    for (const [at, id] of unknownIds)
-      if (isFlowNodeField(at) && !routed.has(at))
-        invalidRoutes.push(
-          this.tracer.unknownNode(id, at, at.endsWith('.out_node')),
-        );
     const sides = new Set(
         this.getCurrentTasks().flatMap((task) =>
           task.kind === 'column_lineage' && task.traversalSide
@@ -3571,7 +3561,7 @@ export class NavigationEngine implements IHopStateMachine {
       mixed = sides.size > 1;
     return {
       mentions,
-      columnPlan: this.tracer.finishColumnFlow(
+      columnPlan: tracer.finishColumnFlow(
         focusId,
         facts.fields.column_flow,
         invalidRoutes,
