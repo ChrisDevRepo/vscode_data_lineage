@@ -272,18 +272,17 @@ function decodeExact(text: string, expected: string): unknown {
     } catch (error) {
       // After one complete value (the parser's own end position) only surplus closing
       // brackets or braces and whitespace may follow; they are dropped, nothing else is.
-      const fault = syntaxFault(error, source);
+      const fault = syntaxFault(error);
       if (
         fault?.kind !== TRAILING_JSON_KIND ||
-        fault.offset === undefined ||
         !/^[ \t\n\r}\]]+$/.test(source.slice(fault.offset))
       )
         throw error;
       decoded = parse(source.slice(0, fault.offset));
     }
   } catch {
-    // A syntax error stays the sent text so admission can name its kind and offset. A number that
-    // cannot be kept exactly is not a value either. Nothing else is repaired.
+    // A syntax error stays the sent text, which admission reports as the validator's type fault. A
+    // number that cannot be kept exactly is not a value either. Nothing else is repaired.
     return undefined;
   }
   const isArray = Array.isArray(decoded);

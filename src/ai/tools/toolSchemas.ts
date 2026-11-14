@@ -1074,9 +1074,7 @@ function capturedSectionSchemaForClassification(
   const offAngle = onlyAngle === 'business' ? 'technical' : 'business';
   const body = reportText
     .optional()
-    .describe(
-      `The only angle classification=${classification} keeps; fold any ${offAngle} content into this key — a separate "${offAngle}" key is rejected.`,
-    );
+    .describe(`Section text; also holds ${offAngle} content.`);
   return z.strictObject({
     [onlyAngle]: body,
   }) as unknown as z.ZodType<CapturedSectionsWire>;
@@ -1466,14 +1464,11 @@ export function submitFindingsSchemaForMode(
       .strict() as typeof HopFindingCtBaseSchema;
   }
   if (classification) {
-    const kept = CLASSIFICATION_KEPT_ANGLES[classification];
     const sectionsDescribe =
       (freshSubmission
         ? 'Required. '
         : 'Required for a fresh finding; on a revisit, omit angles saved on an earlier visit. ') +
-      (kept.length === CLASSIFICATION_KEPT_ANGLES.both.length
-        ? 'Pre-formatted section body for the `business` and `technical` recipes, under keys `business` and `technical`.'
-        : `Pre-formatted section body for the \`${kept[0]}\` recipe, under key \`${kept[0]}\`.`);
+      'Object keyed by angle; each value is the section text.';
     const narrowedSections = capturedSectionSchemaForClassification(
       classification,
     )

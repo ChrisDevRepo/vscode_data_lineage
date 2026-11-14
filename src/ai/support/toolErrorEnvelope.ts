@@ -49,18 +49,6 @@ export const ISSUES = {
     correction:
       'Send the value as the JSON type the schema defines for this field.',
   },
-  json_text: {
-    category: 'shape',
-    label: 'text instead of a JSON object',
-    correction:
-      'Send the value as a JSON object or array, not as a string that holds JSON.',
-  },
-  json_parse: {
-    category: 'shape',
-    label: 'JSON parse error',
-    correction:
-      'Send one complete JSON object or array. The text is not valid JSON and is not repaired.',
-  },
   unknown_key: {
     category: 'shape',
     label: 'not a field of this object',
@@ -426,7 +414,7 @@ export function isAdmissionRefusal(code: string): boolean {
  * {@link ToolError} are inferred from it. Strict: a success payload carrying any other key is never
  * read as a rejection. A stable machine `code`; a log-only `reason` and `detail`, never shown to
  * the model; every independently decidable fault in `errors`, by path and issue code, with the
- * backend values it concerns (`values`, `types`, `bound`, `exit`, `parse`), never text or a
+ * backend values it concerns (`values`, `types`, `received`, `bound`, `exit`), never text or a
  * submitted value; `issuePaths` for held-draft bookkeeping, defaulting to the error paths;
  * `resend`, the top-level fields the model resends while every other field stays held.
  *
@@ -446,6 +434,7 @@ export const RejectionShape = z
             category: z.enum(ISSUE_CATEGORIES).optional(),
             values: z.array(z.string()).optional(),
             types: z.array(z.string()).optional(),
+            received: z.string().optional(),
             bound: z
               .object({
                 keyword: z.string().min(1),
@@ -455,13 +444,6 @@ export const RejectionShape = z
               .strict()
               .optional(),
             exit: z.enum(['omit', 'no_call']).optional(),
-            parse: z
-              .object({
-                kind: z.string().min(1),
-                offset: z.number().int().nonnegative().optional(),
-              })
-              .strict()
-              .optional(),
           })
           .strict(),
       )
@@ -565,6 +547,8 @@ export interface ToolProblem {
     message: string;
     allowed?: readonly string[];
     type?: readonly string[];
+    /** The JSON type of the value a type fault received. */
+    received?: string;
     /** The broken schema keyword with its limit; from feedback 3 also the size sent. */
     bound?: Readonly<Record<string, number>>;
     exit?: ToolError['exit'];
@@ -632,8 +616,9 @@ function mergeToolErrors(
 }
 
 /**
- * Renders every independent fault once, each at its own stage: allowed values, type or bound from
- * feedback 2, exit only at feedback 3; `neighbor_undecided` serves subject ids from feedback 1.
+ * Renders every independent fault once, each at its own stage: the type from feedback 1, allowed
+ * values or bound from feedback 2, exit only at feedback 3; `neighbor_undecided` serves subject ids
+ * from feedback 1.
  * Submitted values are never echoed; an empty list is not served, the fault's type is.
  */
 export function renderProblem(
@@ -643,6 +628,22 @@ export function renderProblem(
   effect?: ToolDefinition['effect'],
 ): string {
   return renderProblemReport(rejection, stage, input, effect).text;
+}
+
+/**
+ * The feedback stage of the nth reply the step did not accept, capped at 3; a backend fault is at
+ * least stage 2.
+ */
+export function feedbackStage(
+  rejection: ToolRejection,
+  reply: number,
+): FeedbackStage {
+  return Math.min(
+    3,
+    rejection.code === REJECTION_CODES.backendFault
+      ? Math.max(2, reply)
+      : reply,
+  ) as FeedbackStage;
 }
 
 /** {@link renderProblem} plus whether the rendered text carries the stage-3 fallback guidance. */
@@ -676,14 +677,7 @@ export function renderProblemReport(
             ? ALLOWED_VALUE_EXIT
             : '';
       if (fallback && reference) fallbackShown = true;
-      const located = error.parse
-        ? ` ${error.parse.kind}${
-            error.parse.offset !== undefined
-              ? ` at position ${error.parse.offset}`
-              : ''
-          }.`
-        : '';
-      const message = `${issue.label}. ${issue.correction}${located}${fallback ? ` ${fallback}` : ''}`;
+      const message = `${issue.label}. ${issue.correction}${fallback ? ` ${fallback}` : ''}`;
       const sent =
         'ranksKey' in issue
           ? error.path.split('.').at(-1)
@@ -703,10 +697,9 @@ export function renderProblemReport(
         message,
         ...(allowed ? { allowed } : {}),
         // Typed schema and engine facts, never text: a fault without listed values gets its type
-        // or bound at feedback 2 and the facts of its exit at feedback 3.
-        ...(stage >= 2 && error.types?.length && !allowed
-          ? { type: error.types }
-          : {}),
+        // from feedback 1, its bound at feedback 2 and the facts of its exit at feedback 3.
+        ...(error.types?.length && !allowed ? { type: error.types } : {}),
+        ...(error.received ? { received: error.received } : {}),
         ...(stage >= 2 && error.bound
           ? {
               bound: {

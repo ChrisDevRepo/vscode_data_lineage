@@ -26,7 +26,7 @@ import type {
 } from '../model/modelPort';
 import {
   buildToolExecutionError,
-  type FeedbackStage,
+  feedbackStage,
   at,
   makeRejection,
   readToolErrorText,
@@ -486,15 +486,9 @@ function renderRejection(
   effect?: ToolDefinition['effect'],
 ): Pick<RecordedToolOutcome, 'resultText' | 'fallback'> {
   const reply = priorState ? 1 + priorState.noProgressCalls : 2;
-  const stage = Math.min(
-    3,
-    rejection.code === REJECTION_CODES.backendFault
-      ? Math.max(2, reply)
-      : reply,
-  ) as FeedbackStage;
   const { text, fallback } = renderProblemReport(
     rejection,
-    stage,
+    feedbackStage(rejection, reply),
     input,
     effect,
   );

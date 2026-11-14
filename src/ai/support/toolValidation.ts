@@ -390,63 +390,26 @@ function errorPointer(error: ErrorObject): string {
 }
 
 /**
- * Kind and, when the parser reports one, character offset of a JSON SyntaxError.
- * The submitted text is never copied into the kind.
+ * Kind and character offset of a positioned JSON SyntaxError. Its only reader is the
+ * trailing-closer trim in `decodeExact` (normalizeModelInput.ts); no rejection carries either.
  */
 export function syntaxFault(
   error: unknown,
-  text: string,
-): { readonly kind: string; readonly offset?: number } | undefined {
-  if (!(error instanceof SyntaxError)) return undefined;
-  const safe = (kind: string): string =>
-    text.length >= 8 && kind.includes(text) ? 'JSON parse error' : kind;
+): { readonly kind: string; readonly offset: number } | undefined {
   const positioned =
-    /^(.*) at position (\d+)(?: \(line \d+ column \d+\))?$/.exec(error.message);
-  if (positioned) {
-    return {
-      kind: safe(positioned[1]),
-      offset: Number(positioned[2]),
-    };
-  }
-  // No index is reported; the text ended at this offset.
-  if (error.message === 'Unexpected end of JSON input')
-    return { kind: error.message, offset: text.length };
-  const token = /^Unexpected token ('(?:[^'\\]|\\.)*'|\S+), /.exec(
-    error.message,
-  );
-  if (!token?.[1]) return { kind: 'JSON parse error' };
-  const raw = token[1];
-  const lexeme = raw.startsWith("'")
-    ? raw.slice(1, -1).replace(/\\'/g, "'").replace(/\\\\/g, '\\')
-    : raw;
-  return { kind: safe(`Unexpected token ${lexeme}`) };
+    error instanceof SyntaxError
+      ? /^(.*) at position (\d+)(?: \(line \d+ column \d+\))?$/.exec(
+          error.message,
+        )
+      : null;
+  return positioned
+    ? { kind: positioned[1], offset: Number(positioned[2]) }
+    : undefined;
 }
 
-/**
- * A string where an object or array is required: decoded JSON stays `json_text`; text that does not
- * parse is the syntax fault. Anything else is not this classification.
- */
-function containerTextIssue(
-  data: unknown,
-  types: readonly string[],
-):
-  | {
-      readonly code: 'json_text' | 'json_parse';
-      readonly parse?: ToolError['parse'];
-    }
-  | undefined {
-  if (typeof data !== 'string') return undefined;
-  if (!types.some((type) => type === 'array' || type === 'object'))
-    return undefined;
-  if (!/^\s*[[{]/.test(data)) return undefined;
-  try {
-    JSON.parse(data);
-    return { code: 'json_text' };
-  } catch (error) {
-    const fault = syntaxFault(error, data);
-    return fault ? { code: 'json_parse', parse: fault } : { code: 'json_text' };
-  }
-}
+/** The JSON type name of a decoded value, as a type fault reports what it received. */
+const jsonType = (value: unknown): string =>
+  value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
 
 /** A JSON pointer has one original position; escaped identifiers never become array slices. */
 const toolErrorPath = (error: ErrorObject): string =>
@@ -516,7 +479,7 @@ function rejection(
         types: ToolError['types'],
         bound: ToolError['bound'],
         exit: ToolError['exit'],
-        parse: ToolError['parse'];
+        received: ToolError['received'];
       if (parentSchema?.toolIssue && parentSchema.toolIssue in ISSUES) {
         code = parentSchema.toolIssue as IssueCode;
         if (code === 'never') exit = 'omit';
@@ -535,11 +498,8 @@ function rejection(
         values = Object.keys(parentSchema?.properties ?? {});
       } else if (keyword === 'type') {
         types = [params.type].flat();
-        const container = containerTextIssue(error.data, types);
-        if (container) {
-          code = container.code;
-          parse = container.parse;
-        } else code = error.data === undefined ? 'missing' : 'type';
+        code = error.data === undefined ? 'missing' : 'type';
+        if (code === 'type') received = jsonType(error.data);
       } else if (keyword === 'enum' || keyword === 'const') {
         code = parentSchema?.toolIdentifier?.issue ?? 'enum';
         values = (params.allowedValues ?? [params.allowedValue]).map(String);
@@ -566,8 +526,8 @@ function rejection(
         ...(values?.length ? { values } : {}),
         ...(types?.length ? { types } : {}),
         ...(bound ? { bound } : {}),
+        ...(received ? { received } : {}),
         ...(exit ? { exit } : {}),
-        ...(parse ? { parse } : {}),
       };
       return facts.nativeIssue?.(error, mapped) ?? mapped;
     });
