@@ -255,24 +255,12 @@ interface InvalidGeneratedToolCall {
 }
 
 /**
- * One provider tool call as a port's transport decoded it: its object arguments, or the argument
- * text that was no JSON object.
+ * One provider tool call as the host decoded it: its input as sent, whatever value that is.
  */
-export type EmittedToolCall = {
+export interface EmittedToolCall {
   readonly callId: string;
   readonly toolName: string;
-} & (
-  | { readonly args: Record<string, unknown> }
-  | { readonly malformedArgs: string }
-);
-
-/** The value a non-object argument text carries; text that does not parse stays undefined. */
-function parseValue(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
+  readonly input: unknown;
 }
 
 /** True when `value` is a JSON object: not null and not an array. */
@@ -282,29 +270,14 @@ export const isPlainObject = (
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /**
- * The one normalization of an emitted call's arguments against the served schema: the object it
- * sent, or the value its argument text carries (`undefined` for text that does not parse),
- * normalized once. A value that is then no object is left to the receiving schema's admission.
- */
-function normalizeEmitted(
-  schema: ZodType,
-  emitted: EmittedToolCall,
-): ReturnType<typeof normalizeModelInput> {
-  return normalizeModelInput(
-    schema,
-    'args' in emitted ? emitted.args : parseValue(emitted.malformedArgs),
-  );
-}
-
-/**
- * Classifies one emitted call against the offered tools, normalizing valid arguments once.
+ * Classifies one emitted call against the offered tools, normalizing a valid call's input once.
  */
 export function classifyToolCall(
   emitted: EmittedToolCall,
   definitions: ReadonlyMap<string, ModelToolDefinition>,
   debugLog?: (message: string) => void,
 ): { readonly call: GeneratedToolCall } {
-  const { callId, toolName } = emitted;
+  const { callId, toolName, input: sent } = emitted;
   const definition = definitions.get(toolName);
   if (!definition)
     return {
@@ -312,69 +285,63 @@ export function classifyToolCall(
         valid: false as const,
         callId,
         toolName,
-        input: 'args' in emitted ? emitted.args : emitted.malformedArgs,
+        input: sent,
         reason: 'Tool is not available in this phase.',
       },
     };
-  const { input, fixes } = normalizeEmitted(definition.inputSchema, emitted);
+  const { input, fixes } = normalizeModelInput(definition.inputSchema, sent);
   logFixes(toolName, callId, fixes, debugLog);
-  // Arguments that are no object are dispatched too: the tool's own admission rejects them.
+  // An input that is no object is dispatched too: the tool's own admission rejects it.
   return { call: { valid: true, callId, toolName, input } };
 }
 
 /**
- * Finishes a forced structured-output generation: one call to the structured tool, normalized once,
- * then admitted by Ajv against the served JSON Schema alone.
+ * Finishes a forced structured-output generation: each call is classified as any tool call is
+ * (the structured tool is the one offered), then the one payload is admitted by Ajv against the
+ * served JSON Schema alone.
  */
 export function finishStructured<T>(
   sent: readonly EmittedToolCall[],
   schema: ZodType<T>,
   debugLog?: (message: string) => void,
 ): T {
-  // Each call is normalized once, by the same step as a tool call: the object it sent or the
-  // object its argument text carries.
-  const emitted = sent.map((call) => ({
-    call,
-    normalized: normalizeEmitted(schema, call),
-  }));
+  const offered = new Map([
+    [
+      STRUCTURED_OUTPUT_TOOL,
+      { name: STRUCTURED_OUTPUT_TOOL, description: '', inputSchema: schema },
+    ],
+  ]);
+  const classified = sent.map(
+    (call) => classifyToolCall(call, offered, debugLog).call,
+  );
   const fail = (reason: string, errors: readonly ToolError[]) =>
     new StructuredOutputError(reason, errors);
-  const calls = emitted.flatMap(({ normalized }) =>
-    isPlainObject(normalized.input) ? [normalized] : [],
+  const payloads = classified.flatMap((call) =>
+    call.valid && isPlainObject(call.input) ? [call.input] : [],
   );
   if (
-    emitted.some(({ call }) => call.toolName !== STRUCTURED_OUTPUT_TOOL) ||
-    (calls.length > 0 && calls.length < emitted.length)
+    classified.some((call) => !call.valid) ||
+    (payloads.length > 0 && payloads.length < classified.length)
   ) {
     throw fail(
       `unexpected tool call alongside ${STRUCTURED_OUTPUT_TOOL}`,
       at('one_call'),
     );
   }
-  const [first] = emitted;
-  if (calls.length === 0 && first && 'malformedArgs' in first.call) {
+  if (payloads.length === 0 && classified.length > 0) {
     throw fail(`${STRUCTURED_OUTPUT_TOOL} arguments were not a JSON object`, [
       { path: '', code: 'type', types: ['object'] },
     ]);
   }
-  const normalized = calls.length === 1 ? calls[0] : undefined;
-  logFixes(
-    STRUCTURED_OUTPUT_TOOL,
-    first?.call.callId ?? '',
-    normalized?.fixes ?? [],
-    debugLog,
-  );
-  const payload = normalized?.input;
-  const admitted =
-    calls.length === 1 ? validateToolCandidate(schema, payload) : undefined;
-  if (admitted?.success) return admitted.data;
-  if (calls.length > 1)
+  if (payloads.length > 1)
     throw fail(`multiple ${STRUCTURED_OUTPUT_TOOL} tool calls`, at('one_call'));
-  if (!admitted)
+  if (payloads.length === 0)
     throw fail(
       `missing ${STRUCTURED_OUTPUT_TOOL} tool call`,
       at('no_tool_call', [''], [STRUCTURED_OUTPUT_TOOL]),
     );
+  const admitted = validateToolCandidate(schema, payloads[0]);
+  if (admitted.success) return admitted.data;
   const { errors } = admitted.rejection;
   throw fail(
     `invalid ${STRUCTURED_OUTPUT_TOOL} fields: ${errors.map((error) => `${error.path}: ${error.code}`).join(', ')}`,

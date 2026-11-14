@@ -4,7 +4,6 @@ import {
   SystemMessage,
   type BaseMessage,
   type MessageContent,
-  type ToolCall,
 } from '@langchain/core/messages';
 import {
   assertToolCallIds,
@@ -26,9 +25,11 @@ import {
   cancelledToolTurnResult,
   errorToolTurnResult,
   isHostCancellationError,
+  isPlainObject,
   isPortCancellation,
   messageContentToText,
   messageProviderParts,
+  modelToolCallMessage,
 } from './modelPort';
 import {
   VscodeLangChainBridge,
@@ -187,7 +188,16 @@ export class VscodeModelPort implements ModelPort {
       );
       return {
         status: 'completed',
-        message,
+        // The transcript replays the calls whose input was an object, as sent; a call whose input
+        // was no object is replayed by its rejection.
+        message:
+          emittedCalls.length > 0
+            ? modelToolCallMessage(
+                emittedCalls.filter((call) => isPlainObject(call.input)),
+                text,
+                providerParts,
+              )
+            : message,
         content,
         text,
         toolCalls,
@@ -230,7 +240,7 @@ export class VscodeModelPort implements ModelPort {
   public async completeText(input: CompleteTextInput): Promise<string> {
     if (input.signal?.aborted) throw cancelledError();
     this.modelCalls += 1;
-    const { message } = await this.collectGeneration(
+    const { message, emitted } = await this.collectGeneration(
       input.messages,
       input.system,
       [],
@@ -239,7 +249,7 @@ export class VscodeModelPort implements ModelPort {
       undefined,
       input.phase,
     );
-    if ((message.tool_calls ?? []).length > 0) {
+    if (emitted.length > 0) {
       throw new ModelPortError(
         'unsupported_response',
         'Text completion returned a tool call.',
@@ -294,11 +304,13 @@ export class VscodeModelPort implements ModelPort {
         });
       });
     const startedAt = Date.now();
+    const emitted: EmittedToolCall[] = [];
     try {
       const bridge = new VscodeLangChainBridge({
         model: this.model,
         token: cancellation.source.token,
         wire: emitWire,
+        onToolCall: (call) => emitted.push(call),
       });
       const tools = definitions.map((definition) => ({
         name: definition.name,
@@ -331,14 +343,11 @@ export class VscodeModelPort implements ModelPort {
         if (chunk.response_metadata?.usageParts) usageReceived = true;
       }
       if (signal?.aborted) throw cancelledError();
-      const emitted = emittedToolCalls(message);
+      assertToolCallIds(emitted.map((call) => call.callId));
       emitWire?.({
         type: 'generation',
         modelId: this.model.id,
-        finishReason: observedFinishReason(
-          usageReceived,
-          message.tool_calls?.length ?? 0,
-        ),
+        finishReason: observedFinishReason(usageReceived, emitted.length),
         latencyMs: Date.now() - startedAt,
       });
       return { message, emitted, nonTextChars, usageReceived };
@@ -375,49 +384,6 @@ function observedFinishReason(
 ): 'tool-calls' | 'stop' | 'unknown' {
   if (!usageReceived) return 'unknown';
   return toolCallCount > 0 ? 'tool-calls' : 'stop';
-}
-
-/**
- * The generation's tool calls in emission order, pairing LangChain's parsed `tool_calls` and its
- * `invalid_tool_calls` (arguments that were no JSON object) back onto the bridge's one chunk per
- * call.
- */
-function emittedToolCalls(message: AIMessageChunk): EmittedToolCall[] {
-  const valid: ToolCall[] = [...(message.tool_calls ?? [])];
-  const invalid = [...(message.invalid_tool_calls ?? [])];
-  const incomplete = (): ModelPortError =>
-    new ModelPortError(
-      'unsupported_response',
-      'Language model returned an incomplete tool call.',
-    );
-  const ids = [...valid, ...invalid].map((call) => call.id);
-  assertToolCallIds(ids);
-  const take = <T extends { id?: string }>(
-    list: T[],
-    id: string | undefined,
-  ): T | undefined => {
-    const at = list.findIndex((call) => call.id === id);
-    return at < 0 ? undefined : list.splice(at, 1)[0];
-  };
-  const toEmitted = (id: string | undefined): EmittedToolCall => {
-    if (!id) throw incomplete();
-    const parsed = take(valid, id);
-    if (parsed) return { callId: id, toolName: parsed.name, args: parsed.args };
-    const malformed = take(invalid, id);
-    if (malformed)
-      return {
-        callId: id,
-        toolName: malformed.name ?? '',
-        malformedArgs: malformed.args ?? '',
-      };
-    throw incomplete();
-  };
-  const chunks = [...(message.tool_call_chunks ?? [])].sort(
-    (left, right) => Number(left.index ?? 0) - Number(right.index ?? 0),
-  );
-  if (chunks.length === valid.length + invalid.length)
-    return chunks.map((chunk) => toEmitted(chunk.id));
-  return ids.map(toEmitted);
 }
 
 function toLangChainToolChoice(

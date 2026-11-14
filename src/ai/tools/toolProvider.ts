@@ -980,7 +980,7 @@ export function createExternalToolSource(
         return registry.invoke(name, input);
       // An external caller is a model boundary too: the same one normalization step runs first.
       const { call } = classifyToolCall(
-        { callId: '', toolName: name, args: input as Record<string, unknown> },
+        { callId: '', toolName: name, input },
         new Map([[name, { ...tool, description: '' }]]),
         (message) => outputChannel.debug(message),
       );

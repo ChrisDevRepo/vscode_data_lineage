@@ -23,6 +23,7 @@ import {
   messageProviderParts,
   ModelPortError,
   PROVIDER_PARTS_KEY,
+  type EmittedToolCall,
   type ModelPortErrorCode,
 } from './modelPort';
 import {
@@ -68,6 +69,12 @@ interface VscodeLangChainBridgeFields {
   readonly token: vscode.CancellationToken;
   /** Debug wire capture, present only when session trace logging is enabled. */
   readonly wire?: (event: WireEvent) => void;
+  /**
+   * Receives each tool call the model emits, in order, with its input exactly as the host decoded
+   * it. Tool calls travel here and not through LangChain's message, whose argument text can carry
+   * no value but a JSON one.
+   */
+  readonly onToolCall?: (call: EmittedToolCall) => void;
 }
 
 /** LangChain `BaseChatModel` backed by exactly one VS Code `request.model`. */
@@ -75,12 +82,14 @@ export class VscodeLangChainBridge extends BaseChatModel<VscodeLangChainCallOpti
   private readonly model: vscode.LanguageModelChat;
   private readonly token: vscode.CancellationToken;
   private readonly wire?: (event: WireEvent) => void;
+  private readonly onToolCall?: (call: EmittedToolCall) => void;
 
   constructor(fields: VscodeLangChainBridgeFields) {
     super({});
     this.model = fields.model;
     this.token = fields.token;
     this.wire = fields.wire;
+    this.onToolCall = fields.onToolCall;
   }
 
   /** LangChain serialization name for this bridge class. */
@@ -195,7 +204,6 @@ export class VscodeLangChainBridge extends BaseChatModel<VscodeLangChainCallOpti
         throw cancelledError();
       }
       iterator = response.stream[Symbol.asyncIterator]();
-      let toolIndex = 0;
       for (;;) {
         const next = await iterator.next();
         if (this.isCancelled(options)) {
@@ -250,23 +258,11 @@ export class VscodeLangChainBridge extends BaseChatModel<VscodeLangChainCallOpti
             name: part.name,
             input: part.input,
           });
-          // The input goes to LangChain as its JSON text: a value that is not a JSON object lands
-          // in `invalid_tool_calls` with its id and name, so the port can charge that one call.
-          const message = new AIMessageChunk({
-            content: '',
-            tool_call_chunks: [
-              {
-                id: part.callId,
-                name: part.name,
-                // JSON.stringify(undefined) is undefined. An empty args string is read as {} and
-                // would accept a call the model did not make.
-                args: JSON.stringify(part.input) ?? 'undefined',
-                index: toolIndex++,
-                type: 'tool_call_chunk',
-              },
-            ],
+          this.onToolCall?.({
+            callId: part.callId,
+            toolName: part.name,
+            input: part.input,
           });
-          yield new ChatGenerationChunk({ text: '', message });
           continue;
         }
         if (isUsagePart(part)) {
