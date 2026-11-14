@@ -1648,6 +1648,63 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
+   * Open neighbor ids named under `prefix` in a call's captured identities for one action kind.
+   */
+  private actionIdentities(
+    focusId: string,
+    identities: ReadonlyMap<string, string> | undefined,
+    prefix: '/prune_neighbors/' | '/questions/',
+    kind: 'can_prune' | 'can_question',
+    neighbors: ReadonlyMap<
+      string,
+      NonNullable<SubmitFindingsHopColumns['neighbors']>[number]
+    > = new Map(
+      this.neighborChoices(focusId).map((neighbor) => [neighbor.id, neighbor]),
+    ),
+  ): Set<string> {
+    return new Set(
+      [...(identities ?? [])]
+        .filter(([at]) => at.startsWith(prefix))
+        .flatMap(([, raw]) => {
+          const id = resolveModelNodeId(
+            raw,
+            this.nodeMap,
+            this.identifierCaseSensitive,
+          );
+          return id && neighbors.get(id)?.[kind] ? [id] : [];
+        }),
+    );
+  }
+
+  /**
+   * The neighbors one action field may offer for a call: a prune choice no mapping or question of
+   * the call keeps, a question choice the call does not prune. The one list behind a route fault's
+   * and a schema fault's offer, so a resent offer never fails the call's other checks.
+   */
+  private offeredNeighborIds(
+    focusId: string,
+    action: 'can_prune' | 'can_question',
+    pruned: ReadonlySet<string>,
+    routed: ReadonlySet<string>,
+    columnEdges: readonly ColumnEdge[],
+  ): string[] {
+    return this.neighborChoices(focusId)
+      .filter(
+        (neighbor) =>
+          neighbor[action] &&
+          (action === 'can_prune'
+            ? !this.neighborPruneRefusal(
+                focusId,
+                [neighbor.id],
+                routed,
+                columnEdges,
+              )
+            : !pruned.has(neighbor.id)),
+      )
+      .map((neighbor) => neighbor.id);
+  }
+
+  /**
    * Object-graph ids an `upstream_columns` contributor may name at one hop: the focus's neighbors
    * plus the read suppliers of its declared scalar callers. The served `node` enum and the
    * contributor admission both read it, so a column edge never leaves the object graph.
@@ -3077,28 +3134,64 @@ export class NavigationEngine implements IHopStateMachine {
         admission,
         (...args) => diagnostics.push(args),
       ));
+    let neighbors:
+      | ReadonlyMap<
+          string,
+          NonNullable<SubmitFindingsHopColumns['neighbors']>[number]
+        >
+      | undefined;
+    const neighborMap = () =>
+      (neighbors ??= new Map(
+        this.neighborChoices(currentFocusId ?? '').map((neighbor) => [
+          neighbor.id,
+          neighbor,
+        ]),
+      ));
     admission.facts.nativeIssue = (error, mapped) => {
       if (
         mapped.code === 'unknown_key' &&
         /^column_flow\.\d+\./.test(mapped.path)
       )
         return { ...mapped, category: 'reference' };
-      // A missing or mistyped column_flow node field lists the ids its entry accepts; its schema
-      // type stays a fact beside them.
-      if (
-        (mapped.code === 'missing' || mapped.code === 'type') &&
+      const action = /^questions\.\d+\.nodeId$/.test(mapped.path)
+        ? 'can_question'
+        : /^prune_neighbors\.\d+\.id$/.test(mapped.path)
+          ? 'can_prune'
+          : undefined;
+      // A column_flow node field offers only ids its entry accepts, a neighbor action field only
+      // the neighbors the call's other fields leave valid; any other, its served enum.
+      const offeredValues = (pointer: string) =>
         isFlowNodeField(mapped.path)
-      )
-        return {
-          ...mapped,
-          values: this.offeredFlowNodeIds(
-            currentFocusId ?? '',
-            `/${mapped.path.split('.').join('/')}`,
-            admission,
-          ),
-        };
+          ? this.offeredFlowNodeIds(currentFocusId ?? '', pointer, admission)
+          : action
+            ? this.offeredNeighborIds(
+                currentFocusId ?? '',
+                action,
+                this.actionIdentities(
+                  currentFocusId ?? '',
+                  admission.identities,
+                  '/prune_neighbors/',
+                  'can_prune',
+                  neighborMap(),
+                ),
+                this.actionIdentities(
+                  currentFocusId ?? '',
+                  admission.identities,
+                  '/questions/',
+                  'can_question',
+                  neighborMap(),
+                ),
+                columnReceipt().columnPlan?.stagedEdges ?? [],
+              )
+            : undefined;
+      // A missing or mistyped node or action field lists only offered ids; its schema type stays
+      // a fact beside them.
+      if (mapped.code === 'missing' || mapped.code === 'type') {
+        const offered = offeredValues(`/${mapped.path.split('.').join('/')}`);
+        return offered ? { ...mapped, values: offered } : undefined;
+      }
       if (error.keyword !== 'enum' && error.keyword !== 'const') return;
-      const path = error.instancePath.slice(1).split('/').join('.');
+      const path = mapped.path;
       const question =
         /^questions\.\d+\.nodeId$/.test(path) && typeof error.data === 'string'
           ? this.questionReference(currentFocusId ?? '', error.data, path)
@@ -3109,20 +3202,20 @@ export class NavigationEngine implements IHopStateMachine {
           : columnReceipt().columnPlan?.invalidRoutes.find(
               (route) => route.path === path,
             );
-      // A column_flow node field offers only ids its entry accepts; any other, its served enum.
-      const values = () =>
-        isFlowNodeField(path)
-          ? this.offeredFlowNodeIds(
-              currentFocusId ?? '',
-              error.instancePath,
-              admission,
-            )
-          : (error.params.allowedValues ?? [error.params.allowedValue]).map(
-              String,
-            );
+      const allowed = (
+        error.params.allowedValues ?? [error.params.allowedValue]
+      ).map(String);
+      const values = () => {
+        const offered = offeredValues(error.instancePath);
+        return offered
+          ? action
+            ? offered.filter((id) => allowed.includes(id))
+            : offered
+          : allowed;
+      };
       // Without a route fault at this path the schema fault stands, with the same offer.
       if (!route)
-        return isFlowNodeField(path)
+        return isFlowNodeField(path) || action
           ? { ...mapped, values: values() }
           : undefined;
       const issue = buildRouteValidationRejection([route]).errors[0];
@@ -3846,13 +3939,6 @@ export class NavigationEngine implements IHopStateMachine {
         );
     }
 
-    const neighbors = this.neighborChoices(focusId);
-    // A neighbor this call prunes is never offered for a question: the pair is the conflict fault.
-    const pruned = new Set(
-      pruneTargets.map(
-        (target) => target.resolved ?? this.identifierKey(target.raw),
-      ),
-    );
     const failures = invalidRoutes.map((route) => {
       const action = route.path?.startsWith('prune_neighbors.')
         ? 'can_prune'
@@ -3862,20 +3948,13 @@ export class NavigationEngine implements IHopStateMachine {
       return action
         ? {
             ...route,
-            allowed_values: neighbors
-              .filter(
-                (neighbor) =>
-                  neighbor[action] &&
-                  (action === 'can_prune'
-                    ? !this.neighborPruneRefusal(
-                        focusId,
-                        [neighbor.id],
-                        acceptedNids,
-                        pruneColumnEdges ?? [],
-                      )
-                    : !pruned.has(neighbor.id)),
-              )
-              .map((neighbor) => neighbor.id),
+            allowed_values: this.offeredNeighborIds(
+              focusId,
+              action,
+              actions.pruneIdentities,
+              actions.questionIdentities,
+              pruneColumnEdges ?? [],
+            ),
           }
         : route;
     });
@@ -4000,15 +4079,21 @@ export class NavigationEngine implements IHopStateMachine {
     );
     const pruneIdentities = new Set([
       ...pruneNeighborIds,
-      ...identities
-        .filter(
-          (ref) =>
-            ref.path.startsWith('prune_neighbors.') &&
-            ref.id &&
-            neighbors.get(ref.id)?.can_prune,
-        )
-        .map((ref) => ref.id),
+      ...this.actionIdentities(
+        focusId,
+        actionMentions.identities,
+        '/prune_neighbors/',
+        'can_prune',
+        neighbors,
+      ),
     ]);
+    const questionIdentities = this.actionIdentities(
+      focusId,
+      actionMentions.identities,
+      '/questions/',
+      'can_question',
+      neighbors,
+    );
     for (const checked of questionChecks.values())
       if (checked.kind !== 'valid') invalidRoutes.push(checked);
     const conflictingQuestions = new Set<string>();
@@ -4039,6 +4124,7 @@ export class NavigationEngine implements IHopStateMachine {
         return;
       }
       const nid = checked.id;
+      questionIdentities.add(nid);
       // The purpose is authored even if another field makes its proposed action inconsistent.
       requested.add(nid);
       if (conflictingQuestions.has(nid)) return;
@@ -4257,6 +4343,8 @@ export class NavigationEngine implements IHopStateMachine {
     return {
       invalidRoutes,
       pruneTargets,
+      pruneIdentities,
+      questionIdentities,
       routeRequests,
       prunedNeighborNids,
       mutablePruneConflicts,
