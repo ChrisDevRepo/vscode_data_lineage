@@ -509,6 +509,10 @@ const QUESTIONS_DESCRIPTION =
 const NO_PRUNABLE_NEIGHBOR_DESCRIPTION =
   'No neighbor can be pruned at this hop, so this list takes no entry.';
 
+/** Served when no neighbor can take a question (`maxItems` 0). */
+const NO_QUESTIONABLE_NEIGHBOR_DESCRIPTION =
+  'No neighbor can take a question at this hop, so this list takes no entry.';
+
 const BB_PRUNE_NEIGHBORS_DESCRIPTION =
   "Name each `can_prune: true` neighbor this node's SQL shows is off the path; that neighbor and whatever only it leads to are removed. The focus stays on the graph, including when every neighbor is named (a dead end). A neighbor named here gets no questions entry.";
 const BB_QUESTIONS_DESCRIPTION =
@@ -1413,8 +1417,12 @@ export function submitFindingsSchemaForMode(
           .max(questionIds.length ? MAX_ID_LIST_LENGTH : 0)
           .optional()
           .describe(
-            (mode === 'bb' ? BB_QUESTIONS_DESCRIPTION : QUESTIONS_DESCRIPTION) +
-              (owedLists ? NEIGHBOR_OUTCOME_DESCRIPTION : ''),
+            !questionIds.length
+              ? NO_QUESTIONABLE_NEIGHBOR_DESCRIPTION
+              : (mode === 'bb'
+                  ? BB_QUESTIONS_DESCRIPTION
+                  : QUESTIONS_DESCRIPTION) +
+                  (owedLists ? NEIGHBOR_OUTCOME_DESCRIPTION : ''),
           ),
       })
       .strict() as typeof HopFindingCtBaseSchema;
@@ -1465,7 +1473,11 @@ export function submitFindingsSchemaForMode(
           .array(question)
           .max(hop.neighbors && !nodeIds.length ? 0 : MAX_ID_LIST_LENGTH)
           .optional()
-          .describe(QUESTIONS_DESCRIPTION),
+          .describe(
+            hop.neighbors && !nodeIds.length
+              ? NO_QUESTIONABLE_NEIGHBOR_DESCRIPTION
+              : QUESTIONS_DESCRIPTION,
+          ),
       })
       .strict() as typeof HopFindingCtBaseSchema;
   }
