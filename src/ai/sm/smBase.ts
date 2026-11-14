@@ -137,7 +137,10 @@ import {
 
 /** Resolved mentions from rejected decision fields; never accepted decisions. */
 type ActionMentions = Partial<
-  Record<'questions' | 'prune_neighbors' | 'column_flow', ReadonlySet<string>>
+  Record<
+    'questions' | 'prune_neighbors' | 'column_flow' | 'indirect_columns',
+    ReadonlySet<string>
+  >
 > & { identities?: ReadonlyMap<string, string> };
 
 /** A hop neighbour plus the engine decisions already taken about it. */
@@ -3302,6 +3305,9 @@ export class NavigationEngine implements IHopStateMachine {
               ...entry.upstream_columns.map((ref) => ref.node),
             ]),
           );
+          mentions.indirect_columns = known(
+            (held?.indirect_columns ?? []).map((fact) => fact.node),
+          );
         }
         const { invalidRoutes, conflictPaths, ...plan } =
           this.collectFindingPlan(
@@ -3445,12 +3451,31 @@ export class NavigationEngine implements IHopStateMachine {
         );
       if (neighbor) verified.set(prefix, neighbor);
     }
-    // An indirect fact needs only its column checked; it never maps, routes or stages an edge.
+    // An indirect fact validates its column without enqueuing value flow, and accounts for its
+    // explicit neighbor mention under spec 05:14.
+    const indirectCount = facts.arrays.get('/indirect_columns');
+    let indirectComplete =
+      indirectCount === undefined ||
+      facts.indirectReferences.size === indirectCount;
+    const indirectMentioned = new Set<string>();
     for (const [path, raw] of facts.indirectReferences) {
       const prefix = path.slice(0, -'/node'.length),
-        fact = facts.indirect.get(prefix);
-      checkSupplier(prefix, fact?.node ?? raw, fact?.col);
+        fact = facts.indirect.get(prefix),
+        rawNode = fact?.node ?? raw;
+      checkSupplier(prefix, rawNode, fact?.col);
+      const nid = resolveModelNodeId(
+        rawNode,
+        this.nodeMap,
+        this.identifierCaseSensitive,
+      );
+      if (!nid) {
+        indirectComplete = false;
+        continue;
+      }
+      if (this.graph.areNeighbors(focusId, nid)) indirectMentioned.add(nid);
     }
+    if (indirectCount !== undefined && indirectComplete)
+      mentions.indirect_columns = indirectMentioned;
     for (const [row, keys] of facts.rows) {
       const supplierCount = facts.arrays.get(`${row}/upstream_columns`);
       if (
@@ -3672,6 +3697,19 @@ export class NavigationEngine implements IHopStateMachine {
         mappedNeighborIds.add(target.attributionTo);
       }
     }
+    // Spec 05:14: explicit AI-authored indirect_columns entries account for their neighbor without
+    // enqueuing a value-flow hop (D-073/D-207).
+    if (this.tracer && !unavailable.has('indirect_columns')) {
+      for (const fact of finding.indirect_columns ?? []) {
+        const nid = resolveModelNodeId(
+          fact.node,
+          this.nodeMap,
+          this.identifierCaseSensitive,
+        );
+        if (nid && this.graph.areNeighbors(focusId, nid))
+          mappedNeighborIds.add(nid);
+      }
+    }
     const mappingPaths = (
       matches: (node: string, col: string) => boolean,
     ): string[] =>
@@ -3811,14 +3849,29 @@ export class NavigationEngine implements IHopStateMachine {
     const pruneColumnEdges = unavailable.has('column_flow')
       ? columnPlan?.stagedEdges
       : stagedColumnEdges;
-    // A faulty flow still names its objects by structure; a reference resolving to no single object
-    // leaves outcomes unknown.
-    const outcomeIds =
-      invalidRoutes.length === 0
+    // A faulty flow still names its objects by structure; an unreadable/unresolvable flow or
+    // indirect_columns field leaves outcomes unknown so neighbor_undecided is suppressed.
+    const pathBroken = (field: 'column_flow' | 'indirect_columns') =>
+      (unavailable.has(field) ||
+        invalidRoutes.some((route) => route.path?.startsWith(`${field}.`))) &&
+      !actionMentions[field];
+    const outcomeIds = !this.tracer
+      ? invalidRoutes.length === 0
         ? mappedNeighborIds
         : actionMentions.column_flow
           ? new Set([...mappedNeighborIds, ...actionMentions.column_flow])
-          : undefined;
+          : undefined
+      : pathBroken('column_flow') || pathBroken('indirect_columns')
+        ? undefined
+        : invalidRoutes.length === 0 &&
+            !unavailable.has('column_flow') &&
+            !unavailable.has('indirect_columns')
+          ? mappedNeighborIds
+          : new Set([
+              ...mappedNeighborIds,
+              ...(actionMentions.column_flow ?? []),
+              ...(actionMentions.indirect_columns ?? []),
+            ]);
     const actions = this.collectNeighborActions(
       focusId,
       unavailable.has('questions') ? null : (finding.questions ?? []),
@@ -3827,9 +3880,7 @@ export class NavigationEngine implements IHopStateMachine {
         : (finding.prune_neighbors ?? []),
       pruneColumnEdges,
       flowQuestionByNode,
-      !this.tracer || !unavailable.has('column_flow')
-        ? outcomeIds
-        : actionMentions.column_flow,
+      outcomeIds,
       actionMentions,
     );
     const { pruneTargets, routeRequests, prunedNeighborNids } = actions;

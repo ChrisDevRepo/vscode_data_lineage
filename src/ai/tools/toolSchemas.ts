@@ -790,6 +790,7 @@ const FINDING_DECISION_FIELDS = [
   'questions',
   'prune_neighbors',
   'column_flow',
+  'indirect_columns',
 ] as const;
 
 /** Native facts distinguish an undeclared field from a missing or invalid applicable field. */
@@ -830,14 +831,18 @@ export function findingAdmissionFacts(schema: z.ZodType) {
       ],
     ]),
     arrays: new Map(
-      ['column_flow', 'suppliers', 'questions', 'prune_neighbors'].map(
-        (name) => [
-          name,
-          (value, context) => {
-            arrays.set(context.instancePath, value.length);
-          },
-        ],
-      ),
+      [
+        'column_flow',
+        'indirect_columns',
+        'suppliers',
+        'questions',
+        'prune_neighbors',
+      ].map((name) => [
+        name,
+        (value, context) => {
+          arrays.set(context.instancePath, value.length);
+        },
+      ]),
     ),
     strings: new Map([
       [
@@ -919,6 +924,16 @@ export function findingAdmissionFacts(schema: z.ZodType) {
           fields.column_flow = value;
           valid.add('column_flow');
         }),
+      ],
+      [
+        'indirect_columns',
+        captureToolFact(
+          HopFindingCtBaseSchema.shape.indirect_columns,
+          (value) => {
+            fields.indirect_columns = value;
+            valid.add('indirect_columns');
+          },
+        ),
       ],
     ]),
   };
