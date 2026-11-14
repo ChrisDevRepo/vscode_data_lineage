@@ -3173,6 +3173,43 @@ export class NavigationEngine implements IHopStateMachine {
           )
             mentions[field] = new Set(ids);
         }
+        // A call that is no object is the empty call: only the held fields decide a neighbor, so
+        // every other owed neighbor lacks its outcome and the fields that can give one are owed.
+        if (
+          !view.candidate ||
+          typeof view.candidate !== 'object' ||
+          Array.isArray(view.candidate)
+        ) {
+          const held: Partial<HopFindingKept> | null =
+            this.heldFindingDraft.matches(this.findingContext())
+              ? this.heldFindingDraft.get()
+              : null;
+          const known = (names: Array<string | undefined>) =>
+            new Set(
+              names.flatMap((name) => {
+                const id =
+                  name &&
+                  resolveModelNodeId(
+                    name,
+                    this.nodeMap,
+                    this.identifierCaseSensitive,
+                  );
+                return id ? [id] : [];
+              }),
+            );
+          mentions.questions = known(
+            (held?.questions ?? []).map((question) => question.nodeId),
+          );
+          mentions.prune_neighbors = known(
+            (held?.prune_neighbors ?? []).map((prune) => prune.id),
+          );
+          mentions.column_flow = known(
+            (held?.column_flow ?? []).flatMap((entry) => [
+              entry.out_node,
+              ...entry.upstream_columns.map((ref) => ref.node),
+            ]),
+          );
+        }
         const { invalidRoutes, conflictPaths, ...plan } =
           this.collectFindingPlan(
             focus,

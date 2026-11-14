@@ -116,10 +116,10 @@ export class ToolDraft<T extends object> {
 
   /**
    * The one writer of the rejection's lists. Keeps every sent top-level field without a fault and
-   * every held one whose replacement failed; a candidate that is no object is the empty call and
-   * leaves the draft and the faults it answers. Returns the held fields a faulty resend could not
-   * overwrite and `resend`: the faulty fields, an owed subject's root and the required fields
-   * not held, in schema order. No second validation pass.
+   * every held one whose replacement failed; a candidate that is no object is the empty call: it
+   * leaves the draft and the faults it answers and adds the faults this call names. Returns the
+   * held fields a faulty resend could not overwrite and `resend`: the faulty fields, an owed
+   * subject's root and the required fields not held, in schema order. No second validation pass.
    */
   public retain(
     candidate: unknown,
@@ -127,7 +127,9 @@ export class ToolDraft<T extends object> {
     schema: z.ZodType,
   ): { overwritten: string[]; resend: string[] } {
     const roots = Object.keys(shape(schema));
-    if (object(candidate)) this.faults = [...paths];
+    this.faults = object(candidate)
+      ? [...paths]
+      : [...new Set([...this.faults, ...paths])];
     const rootsOf = (owed: boolean) =>
       this.faults
         .filter((path) => owedSubjectPath(path) === owed)
