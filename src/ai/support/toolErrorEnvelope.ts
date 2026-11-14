@@ -3,6 +3,7 @@
  * reads.
  */
 import { z } from 'zod';
+import { toModelJsonSchema } from '../tools/jsonSchema';
 import type { ToolDefinition } from '../tools/registry';
 import { REJECTION_CODES } from './rejectionCodes';
 
@@ -522,8 +523,9 @@ export function readToolErrorText(text: string): ToolRejection | null {
 }
 
 /**
- * Feedback stage of one fault: 1 states it, 2 adds allowed values or the type or bound, 3 its
- * exit: fallback, sent size, absence.
+ * Feedback stage of one fault: 1 states it with its type; 2 adds retry state, allowed values or
+ * bound; 3 its exit (fallback, sent size, absence) and, for a top-level type or missing field, the
+ * call's next schema level (`call`).
  */
 export type FeedbackStage = 1 | 2 | 3;
 
@@ -548,6 +550,11 @@ export interface ToolProblem {
   }>;
   /** Top-level fields to resend; present only where the tool holds a draft. */
   resend?: string[];
+  /**
+   * Feedback 3 example: per top-level type or missing field, its next level on the served card (an
+   * object's keys, an array's item keys, with their type names), else its type names.
+   */
+  call?: Record<string, unknown>;
 }
 
 /**
@@ -610,7 +617,7 @@ function mergeToolErrors(
 
 /**
  * Renders every independent fault once, each at its own stage: the type from feedback 1, allowed
- * values or bound from feedback 2, exit only at feedback 3.
+ * values or bound from feedback 2, exit and the call's next schema level only at feedback 3.
  * Submitted values are never echoed; an empty list is not served, the fault's type is.
  */
 export function renderProblem(
@@ -638,12 +645,65 @@ export function feedbackStage(
   ) as FeedbackStage;
 }
 
+type JsonSchemaNode = Record<string, unknown>;
+
+const isNode = (value: unknown): value is JsonSchemaNode =>
+  value !== null && typeof value === 'object' && !Array.isArray(value);
+
+/** A served node's union branches, or the node itself. */
+const branchesOf = (node: JsonSchemaNode): JsonSchemaNode[] =>
+  [node.anyOf, node.oneOf].find(Array.isArray)?.filter(isNode) ?? [node];
+
+/** The JSON type names a served node accepts: its own, its branches', or its enum/const values'. */
+function typeNames(node: JsonSchemaNode): string {
+  const own = [node.type ?? []].flat().map(String);
+  const values = [
+    ...(Array.isArray(node.enum) ? node.enum : []),
+    ...('const' in node ? [node.const] : []),
+  ];
+  const names = own.length
+    ? own
+    : node.anyOf || node.oneOf
+      ? branchesOf(node).map(typeNames)
+      : values.map((value) =>
+          value === null
+            ? 'null'
+            : Array.isArray(value)
+              ? 'array'
+              : typeof value,
+        );
+  return [...new Set(names)].join(' or ');
+}
+
+/**
+ * The feedback-3 detail of a served field: the keys of its object (an array's items), per union
+ * branch, with their type names; a field without keys gets its type names.
+ */
+function nextLevel(node: JsonSchemaNode): unknown {
+  for (const branch of branchesOf(node)) {
+    const array = typeNames(branch).split(' or ').includes('array');
+    const container = array ? branch.items : branch;
+    const properties = isNode(container) ? container.properties : undefined;
+    if (isNode(properties) && Object.keys(properties).length) {
+      const keys = Object.fromEntries(
+        Object.entries(properties).map(([key, field]) => [
+          key,
+          isNode(field) ? typeNames(field) : '',
+        ]),
+      );
+      return array ? [keys] : keys;
+    }
+  }
+  return typeNames(node);
+}
+
 /** {@link renderProblem} plus whether the rendered text carries the stage-3 fallback guidance. */
 export function renderProblemReport(
   rejection: ToolRejection,
   stage: FeedbackStage,
   input?: unknown,
   effect?: ToolDefinition['effect'],
+  schema?: () => ToolDefinition['inputSchema'] | undefined,
 ): { readonly text: string; readonly fallback: boolean } {
   const merged = mergeToolErrors(rejection.errors, false);
   let fallbackShown = false;
@@ -705,6 +765,19 @@ export function renderProblemReport(
         ...(stage === 3 && error.exit ? { exit: error.exit } : {}),
       };
     });
+  // Feedback 3 example (spec 08): the next schema level of each top-level type or missing field,
+  // read from the correction card the next request serves.
+  const card = stage === 3 ? schema?.() : undefined;
+  const served = card ? toModelJsonSchema(card).properties : undefined;
+  const skeleton =
+    stage === 3
+      ? merged.filter(
+          (error) =>
+            (error.code === 'type' || error.code === 'missing') &&
+            /^[^.]+$/.test(error.path) &&
+            error.types?.length,
+        )
+      : [];
   const problem: ToolProblem = {
     code: rejection.code,
     attempt: `${stage}/3`,
@@ -718,6 +791,18 @@ export function renderProblemReport(
               ...(fallbackShown ? [FALLBACK_FIELD] : []),
             ]),
           ],
+        }
+      : {}),
+    ...(skeleton.length
+      ? {
+          call: Object.fromEntries(
+            skeleton.map((error) => [
+              error.path,
+              isNode(served) && isNode(served[error.path])
+                ? nextLevel(served[error.path] as JsonSchemaNode)
+                : error.types!.join(' or '),
+            ]),
+          ),
         }
       : {}),
   };

@@ -446,6 +446,60 @@ function withResendIdentity(
   return { ...data, rejection: { ...data.rejection, errors }, inputKey };
 }
 
+/** Faults refusing a whole top-level value: wrong JSON type, undeclared or forbidden field. */
+const REFUSED_VALUE_CODES: ReadonlySet<string> = new Set([
+  'type',
+  'unknown_key',
+  'never',
+]);
+
+/**
+ * The model's turn as the transcript keeps it: each rejected call without the top-level values its
+ * rejection refused whole, so a correction does not copy them (DEF-399; the rejection names each
+ * field). A field with a nested, bound or value fault keeps its value: a resend replaces it whole.
+ */
+function withoutRefusedValues(
+  message: AIMessage,
+  rejections: readonly ToolAttemptRejection[],
+): AIMessage {
+  const refused = new Map(
+    rejections.map((rejection) => [
+      rejection.callId,
+      new Set(
+        (rejection.errors ?? [])
+          .filter(
+            (error) =>
+              REFUSED_VALUE_CODES.has(error.code) && /^[^.]+$/.test(error.path),
+          )
+          .map((error) => error.path),
+      ),
+    ]),
+  );
+  const calls = message.tool_calls ?? [];
+  const strip = (id: string | undefined) => (id ? refused.get(id) : undefined);
+  if (!calls.some((call) => strip(call.id)?.size)) return message;
+  return new AIMessage({
+    id: message.id,
+    name: message.name,
+    content: message.content,
+    additional_kwargs: message.additional_kwargs,
+    response_metadata: message.response_metadata,
+    invalid_tool_calls: message.invalid_tool_calls,
+    usage_metadata: message.usage_metadata,
+    tool_calls: calls.map((call) => {
+      const keys = strip(call.id);
+      return keys?.size
+        ? {
+            ...call,
+            args: Object.fromEntries(
+              Object.entries(call.args).filter(([key]) => !keys.has(key)),
+            ),
+          }
+        : call;
+    }),
+  });
+}
+
 function modelToolDefinitions(
   registry: IToolRegistry<string>,
 ): ModelToolDefinition[] {
@@ -502,6 +556,7 @@ function renderRejection(
   priorState?: ToolPhaseAttemptState,
   input?: unknown,
   effect?: ToolDefinition['effect'],
+  schema?: () => ToolDefinition['inputSchema'] | undefined,
 ): Pick<RecordedToolOutcome, 'resultText' | 'fallback'> {
   const reply = priorState ? 1 + (priorState.rejectionRows[toolName] ?? 0) : 2;
   const { text, fallback } = renderProblemReport(
@@ -509,6 +564,7 @@ function renderRejection(
     feedbackStage(rejection, reply),
     input,
     effect,
+    schema,
   );
   return { resultText: text, fallback };
 }
@@ -517,6 +573,8 @@ function recordToolOutcome(
   call: ToolOutcomeIdentity & {
     readonly input?: unknown;
     readonly effect?: ToolDefinition['effect'];
+    /** The tool's card as resolved when the rejection renders: the correction card. */
+    readonly schema?: () => ToolDefinition['inputSchema'] | undefined;
   },
   data: ToolOutcomeData,
   calls: ToolAttemptCall[],
@@ -557,6 +615,7 @@ function recordToolOutcome(
           priorState,
           call.input,
           call.effect,
+          call.schema,
         ),
         status: 'error',
         artifact: refusal,
@@ -611,6 +670,7 @@ function recordToolOutcome(
         priorState,
         call.input,
         call.effect,
+        call.schema,
       ),
       status: 'error',
       rejection: recorded,
@@ -636,6 +696,7 @@ function recordToolOutcome(
       priorState,
       call.input,
       call.effect,
+      call.schema,
     ),
     status: 'error',
     artifact: outcome.rejection,
@@ -937,9 +998,11 @@ async function dispatchToolCallBatch(
   let heldObservationBytes = loop.heldObservationBytes;
 
   for (const emitted of toolCalls) {
+    const tool = input.registry.get(emitted.toolName);
     const call = {
       ...emitted,
-      effect: input.registry.get(emitted.toolName)?.effect,
+      effect: tool?.effect,
+      schema: () => tool?.inputSchema,
     };
     if (input.signal?.aborted) {
       cancelled = true;
@@ -1376,7 +1439,10 @@ async function executeToolGenerationAttempt(
   const rejections = batch.rejections;
   const messages: ModelMessage[] = [];
   if (generated.toolCalls.length > 0 && !cancelled) {
-    messages.push(generated.message, ...toolMessages);
+    messages.push(
+      withoutRefusedValues(generated.message, rejections),
+      ...toolMessages,
+    );
   }
 
   if (generated.toolCalls.length === 0 && input.requiredTerminalTool) {
