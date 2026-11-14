@@ -81,9 +81,9 @@ export const ISSUES = {
   },
   neighbor_undecided: {
     category: 'required',
-    label: 'neighbor without a decision',
+    label: 'neighbor without an outcome',
     correction:
-      'Give each listed neighbor one decision as the schema describes.',
+      'Give each listed neighbor exactly one outcome: map or keep it, prune it, or ask it a question, in the field the schema names for that outcome.',
     servesIds: true,
   },
   slot_unplaced: {
