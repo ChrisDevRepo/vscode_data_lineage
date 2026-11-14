@@ -25,7 +25,6 @@ import {
   cancelledToolTurnResult,
   errorToolTurnResult,
   isHostCancellationError,
-  isPlainObject,
   isPortCancellation,
   messageContentToText,
   messageProviderParts,
@@ -45,6 +44,7 @@ import {
   formatProviderErrorDiagnostic,
   sanitizeProviderErrorDiagnostic,
 } from '../support/text';
+import { isRecord } from '../support/toolValidation';
 import {
   DEFAULT_TURN_TOKEN_BUDGET,
   estimateTokens,
@@ -193,7 +193,7 @@ export class VscodeModelPort implements ModelPort {
         message:
           emittedCalls.length > 0
             ? modelToolCallMessage(
-                emittedCalls.filter((call) => isPlainObject(call.input)),
+                emittedCalls.filter((call) => isRecord(call.input)),
                 text,
                 providerParts,
               )

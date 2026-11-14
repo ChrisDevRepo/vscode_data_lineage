@@ -33,6 +33,7 @@ import {
 } from '../observability/wireLog';
 import { toWireMessage, toWirePart } from '../observability/vscodeWireLog';
 import { sanitizeProviderError } from '../support/text';
+import { isRecord } from '../support/toolValidation';
 import { STRUCTURED_OUTPUT_TOOL_DESCRIPTION } from '../providers/structuredOutput';
 
 /** Canonical tool metadata accepted by the bridge. The bridge never invokes the tool. */
@@ -518,8 +519,4 @@ function asRecord(value: unknown): Record<string, unknown> {
     );
   }
   return value;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

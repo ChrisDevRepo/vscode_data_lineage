@@ -29,6 +29,7 @@ import {
   type ClassificationValue,
 } from '../session/classification';
 import { extractRawSectionAngles } from '../interaction/rules/submitFindingsRules';
+import { evaluateStartTargetColumnsRule } from '../interaction/rules/startExplorationRules';
 import type { ColumnFlowEntry, HopFindingKept } from '../sm/smTypes';
 
 /**
@@ -228,10 +229,25 @@ export const startExplorationSchemaForState = (
 
 const StartScopeFactSchema =
   StartExplorationInputSchema.pick(START_SCOPE_FIELDS);
-/** Collects native-valid start scope and annotations without selecting missing scope values. */
-export function startAdmissionFacts() {
+/**
+ * Collects native-valid start scope and annotations without selecting missing scope values. A
+ * missing or wrong `analysisMode` offers only the modes the effective `targetColumns` accept;
+ * `heldTargetColumns` is the CT list a refined proposal already holds.
+ */
+export function startAdmissionFacts(heldTargetColumns?: string[]) {
   let scope: z.output<typeof StartScopeFactSchema> | undefined,
     input: Record<string, unknown> | undefined;
+  const supplied = (field: string) =>
+    input !== undefined && Object.prototype.hasOwnProperty.call(input, field);
+  /** The targetColumns in force for a mode: the sent list, else a refinement's held CT list. */
+  const effectiveTargetColumns = (
+    mode: 'bb' | 'ct' | undefined,
+    sent: string[] | undefined,
+  ) =>
+    sent ??
+    (!supplied('targetColumns') && mode === 'ct'
+      ? heldTargetColumns
+      : undefined);
   const annotations: Partial<
     Pick<
       z.output<typeof StartExplorationInputSchema>,
@@ -249,6 +265,23 @@ export function startAdmissionFacts() {
     targets = new Map<number, string>();
   const fields = StartExplorationInputSchema.shape;
   const facts: ToolFactContext = {
+    nativeIssue: (_error, mapped) => {
+      if (
+        mapped.path !== 'analysisMode' ||
+        (mapped.code !== 'missing' && mapped.code !== 'enum')
+      )
+        return;
+      const sent = input?.targetColumns as string[] | undefined;
+      const { values: offered = [], ...rest } = mapped;
+      const values = offered.filter(
+        (mode) =>
+          !evaluateStartTargetColumnsRule(
+            mode as 'bb' | 'ct',
+            effectiveTargetColumns(mode as 'bb' | 'ct', sent),
+          ),
+      );
+      return values.length ? { ...rest, values } : rest;
+    },
     objects: new Map([
       [
         'start.input',
@@ -303,6 +336,8 @@ export function startAdmissionFacts() {
     references,
     targets,
     annotations,
+    supplied,
+    effectiveTargetColumns,
     scope: () => scope,
     input: () => input,
   };

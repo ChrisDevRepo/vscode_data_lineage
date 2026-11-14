@@ -7,7 +7,7 @@ import {
 } from '@langchain/core/messages';
 import type { ZodType } from 'zod';
 import { at, type ToolError } from '../support/toolErrorEnvelope';
-import { validateToolCandidate } from '../support/toolValidation';
+import { isRecord, validateToolCandidate } from '../support/toolValidation';
 import { normalizeModelInput } from '../tools/normalizeModelInput';
 import {
   STRUCTURED_OUTPUT_TOOL,
@@ -263,12 +263,6 @@ export interface EmittedToolCall {
   readonly input: unknown;
 }
 
-/** True when `value` is a JSON object: not null and not an array. */
-export const isPlainObject = (
-  value: unknown,
-): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
 /**
  * Classifies one emitted call against the offered tools, normalizing a valid call's input once.
  */
@@ -317,7 +311,7 @@ export function finishStructured<T>(
   const fail = (reason: string, errors: readonly ToolError[]) =>
     new StructuredOutputError(reason, errors);
   const payloads = classified.flatMap((call) =>
-    call.valid && isPlainObject(call.input) ? [call.input] : [],
+    call.valid && isRecord(call.input) ? [call.input] : [],
   );
   if (
     classified.some((call) => !call.valid) ||

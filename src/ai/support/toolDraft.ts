@@ -1,8 +1,6 @@
 import { z } from 'zod';
-import { requiredFields } from './toolValidation';
+import { isRecord, requiredFields } from './toolValidation';
 
-const object = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
 /** Root fields of an object schema, through optional and nullable wrappers. */
 const shape = (schema: z.ZodType | undefined): Record<string, z.ZodType> => {
   while (schema instanceof z.ZodOptional || schema instanceof z.ZodNullable)
@@ -110,8 +108,10 @@ export class ToolDraft<T extends object> {
       this.clear();
       this.context = context;
     }
-    this.sent = object(input) ? Object.keys(input) : [];
-    return object(input) ? { ...this.value, ...structuredClone(input) } : input;
+    this.sent = isRecord(input) ? Object.keys(input) : [];
+    return isRecord(input)
+      ? { ...this.value, ...structuredClone(input) }
+      : input;
   }
 
   /**
@@ -127,7 +127,7 @@ export class ToolDraft<T extends object> {
     schema: z.ZodType,
   ): { overwritten: string[]; resend: string[] } {
     const roots = Object.keys(shape(schema));
-    this.faults = object(candidate)
+    this.faults = isRecord(candidate)
       ? [...paths]
       : [...new Set([...this.faults, ...paths])];
     const rootsOf = (owed: boolean) =>
@@ -142,7 +142,7 @@ export class ToolDraft<T extends object> {
         Object.prototype.hasOwnProperty.call(held, key) &&
         this.sent.includes(key),
     );
-    if (object(candidate))
+    if (isRecord(candidate))
       this.value = Object.fromEntries(
         roots.flatMap((key) =>
           faulty.has(key)
@@ -185,15 +185,15 @@ const jsonSchema = (schema: z.ZodType): Node =>
 const fields = (node: Node): Record<string, Node> => {
   const current = {
     ...node,
-    ...(object(node.toolDisplay) ? node.toolDisplay : {}),
+    ...(isRecord(node.toolDisplay) ? node.toolDisplay : {}),
   };
-  return object(current.properties)
+  return isRecord(current.properties)
     ? (current.properties as Record<string, Node>)
     : ((current.anyOf as Node[] | undefined)
         ?.map(fields)
         .find((found) => Object.keys(found).length) ?? {});
 };
 const requiredOf = (node: Node): string[] =>
-  ((object(node.toolDisplay) && Array.isArray(node.toolDisplay.required)
+  ((isRecord(node.toolDisplay) && Array.isArray(node.toolDisplay.required)
     ? node.toolDisplay.required
     : node.required) ?? []) as string[];

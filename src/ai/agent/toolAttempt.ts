@@ -2,7 +2,6 @@
 import { createHash } from 'node:crypto';
 import { AIMessage, ToolMessage } from '@langchain/core/messages';
 import {
-  isPlainObject,
   messageContentToText,
   messageProviderParts,
   modelToolCallMessage,
@@ -38,6 +37,7 @@ import {
   type ToolError,
   type ToolRejection,
 } from '../support/toolErrorEnvelope';
+import { isRecord } from '../support/toolValidation';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { storedEvidenceKindBytes } from '../support/tokenBudget';
 import { sensitiveTraceReason } from '../providers/traceSecurity';
@@ -526,7 +526,7 @@ function withoutRefusedValues(
   const nextInputs = toolCalls.map((call) =>
     (refused.get(call.callId) ?? []).reduce<unknown>(
       (acc, segments) => omitKeyAtPath(acc, segments),
-      sent.get(call.callId) ?? (isPlainObject(call.input) ? call.input : {}),
+      sent.get(call.callId) ?? (isRecord(call.input) ? call.input : {}),
     ),
   );
   if (

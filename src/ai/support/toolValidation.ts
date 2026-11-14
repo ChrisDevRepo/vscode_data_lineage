@@ -96,7 +96,8 @@ export function captureToolFact<S extends z.ZodType>(
 export const normalizePresentSectionLabel = (label: string): string =>
   label.replace(/\s+/g, ' ').trim().toLowerCase();
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
+/** A plain JSON object: not null, not an array. */
+export const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 const child = (path: string, key: string | number): string =>
   path ? `${path}.${key}` : String(key);
