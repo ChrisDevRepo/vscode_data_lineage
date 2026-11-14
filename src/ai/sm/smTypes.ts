@@ -46,6 +46,7 @@ export type SmNodeStateReason =
   | 'storage_passthrough'
   | 'submitted_prune'
   | 'bb_prune_neighbor'
+  | 'kept_neighbor'
   | 'user_pass_filter';
 
 /** Process state for one node in the SM traversal. */
@@ -785,8 +786,7 @@ export type InvalidRouteKind =
   | 'prune_unsupported'
   | 'prune_question_conflict'
   | 'question_not_neighbor'
-  | 'question_closed'
-  | 'neighbor_outcome_missing';
+  | 'question_closed';
 
 /** Represents an invalid route returned during validation. */
 export interface InvalidRoute {

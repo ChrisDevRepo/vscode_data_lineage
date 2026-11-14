@@ -155,6 +155,7 @@ const NodeStateSchema = z
       'storage_passthrough',
       'submitted_prune',
       'bb_prune_neighbor',
+      'kept_neighbor',
       'user_pass_filter',
       'non_bodied_passthrough', // retired; read from older snapshots and dropped
     ]),

@@ -135,14 +135,6 @@ import {
   type ToolRejection,
 } from '../support/toolErrorEnvelope';
 
-/** Resolved mentions from rejected decision fields; never accepted decisions. */
-type ActionMentions = Partial<
-  Record<
-    'questions' | 'prune_neighbors' | 'column_flow' | 'indirect_columns',
-    ReadonlySet<string>
-  >
-> & { identities?: ReadonlyMap<string, string> };
-
 /** A hop neighbour plus the engine decisions already taken about it. */
 export interface HopNeighborDisclosure extends HopNeighbor {
   /** Already analyzed on an earlier hop; a prune cannot remove committed analysis. */
@@ -364,6 +356,8 @@ interface ValidatedHop {
     depth: number | undefined;
   }>;
   prunedNeighborNids: Set<string>;
+  /** CT neighbors kept by the card's default with no column trace: on the graph, not visited. */
+  keptNeighborIds: string[];
   /** CT carry derived from this hop's column_flow: node → tracked columns it carries. */
   carryByNode: Map<string, Set<string>>;
   /** Qualified context and directed carrier leg of each accepted continuation. */
@@ -1414,7 +1408,6 @@ export class NavigationEngine implements IHopStateMachine {
       : [];
     return {
       focusNodeId: focus?.id,
-      owedNeighborIds: focus ? this.requiredNeighborIds(focus.id) : [],
       neighbors,
       // At a procedure, out_col names the out_node column, never a column of the focus.
       outCols:
@@ -2706,36 +2699,25 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Open directional neighbors of this focus, including queued work; exact-depth proposals are
-   * marked deferred.
+   * Open, admitted directional neighbors of this focus, including queued work; `kept`: in the
+   * approved scope and not queued, so the card's default keeps it when the AI neither prunes nor
+   * questions it (spec 05, D-031).
    */
-  private openNeighbors(
-    focusId: string,
-  ): Array<{ id: string; queued: boolean; deferred: boolean }> {
+  private openNeighbors(focusId: string): Array<{ id: string; kept: boolean }> {
     const directional = new Set(
       this.directionalNeighbors(focusId, this._direction),
     );
     return this.neighborChoices(focusId).flatMap(({ id, can_question }) => {
       const node = this.nodeMap.get(id);
       if (!node || !can_question || !directional.has(id)) return [];
-      const admission = this.admitsRoute(id, node, focusId);
-      if (
-        !admission.admitted &&
-        (admission.border.kind !== 'in_border' ||
-          admission.depthBreach === null)
-      )
-        return [];
+      if (!this.admitsRoute(id, node, focusId).admitted) return [];
       return [
-        { id, queued: this._agenda.has(id), deferred: !admission.admitted },
+        {
+          id,
+          kept: !this._agenda.has(id) && this.scopeNodeIds.has(id),
+        },
       ];
     });
-  }
-
-  /** Open, admitted neighbors that require an AI-authored outcome. */
-  private requiredNeighborIds(focusId: string): string[] {
-    return this.openNeighbors(focusId)
-      .filter((neighbor) => !neighbor.deferred)
-      .map((neighbor) => neighbor.id);
   }
 
   /**
@@ -3247,68 +3229,7 @@ export class NavigationEngine implements IHopStateMachine {
         const focus = currentFocusId ?? '';
         const fields = admission.fields,
           unavailable = admission.unavailable();
-        const { columnPlan, mentions } = columnReceipt();
-        mentions.identities = admission.identities;
-        for (const field of ['questions', 'prune_neighbors'] as const) {
-          if (!unavailable.has(field)) continue;
-          const prefix = `/${field}/`;
-          const ids = [...admission.identities]
-            .filter(([path]) => path.startsWith(prefix))
-            .map(([, raw]) =>
-              resolveModelNodeId(
-                raw,
-                this.nodeMap,
-                this.identifierCaseSensitive,
-              ),
-            );
-          if (
-            admission.arrays.get(`/${field}`) === ids.length &&
-            ids.every(
-              (id): id is string => !!id && this.graph.areNeighbors(focus, id),
-            )
-          )
-            mentions[field] = new Set(ids);
-        }
-        // A call that is no object is the empty call: only the held fields decide a neighbor, so
-        // every other owed neighbor lacks its outcome and the fields that can give one are owed.
-        if (
-          !view.candidate ||
-          typeof view.candidate !== 'object' ||
-          Array.isArray(view.candidate)
-        ) {
-          const held: Partial<HopFindingKept> | null =
-            this.heldFindingDraft.matches(this.findingContext())
-              ? this.heldFindingDraft.get()
-              : null;
-          const known = (names: Array<string | undefined>) =>
-            new Set(
-              names.flatMap((name) => {
-                const id =
-                  name &&
-                  resolveModelNodeId(
-                    name,
-                    this.nodeMap,
-                    this.identifierCaseSensitive,
-                  );
-                return id ? [id] : [];
-              }),
-            );
-          mentions.questions = known(
-            (held?.questions ?? []).map((question) => question.nodeId),
-          );
-          mentions.prune_neighbors = known(
-            (held?.prune_neighbors ?? []).map((prune) => prune.id),
-          );
-          mentions.column_flow = known(
-            (held?.column_flow ?? []).flatMap((entry) => [
-              entry.out_node,
-              ...entry.upstream_columns.map((ref) => ref.node),
-            ]),
-          );
-          mentions.indirect_columns = known(
-            (held?.indirect_columns ?? []).map((fact) => fact.node),
-          );
-        }
+        const { columnPlan } = columnReceipt();
         const { invalidRoutes, conflictPaths, ...plan } =
           this.collectFindingPlan(
             focus,
@@ -3316,17 +3237,13 @@ export class NavigationEngine implements IHopStateMachine {
             unavailable,
             (...args) => diagnostics.push(args),
             columnPlan,
-            mentions,
+            admission.identities,
           );
         conflictPaths
           .filter((path) => !path.startsWith('column_flow.'))
           .forEach((path) => view.holdPaths.add(path));
         invalidRoutes
-          .filter(
-            (route) =>
-              route.kind === 'neighbor_outcome_missing' ||
-              route.kind === 'column_out_of_scope',
-          )
+          .filter((route) => route.kind === 'column_out_of_scope')
           .flatMap((route) => route.alternatives ?? [])
           .forEach((field) => view.holdPaths.add(`${field}.*`));
         if (invalidRoutes.length) {
@@ -3407,18 +3324,13 @@ export class NavigationEngine implements IHopStateMachine {
     log: LogFn,
   ): {
     columnPlan?: ReturnType<ColumnTracer['finishColumnFlow']>;
-    mentions: ActionMentions;
   } {
-    const mentions: ActionMentions = {};
     const tracer = this.tracer;
-    if (!tracer) return { mentions };
+    if (!tracer) return {};
     const paths = (path: string): string => path.slice(1).split('/').join('.');
     const rowOf = (path: string): string =>
       path.split('/').slice(0, 3).join('/');
-    const count = facts.arrays.get('/column_flow');
-    let complete = count !== undefined && facts.rows.size === count;
-    const mentioned = new Set<string>(),
-      invalidRoutes: InvalidRoute[] = [],
+    const invalidRoutes: InvalidRoute[] = [],
       stagedEdges: ColumnEdge[] = [],
       entryEdges = new Map<number, ColumnEdge[]>();
     const verified = new Map<string, LineageNode>();
@@ -3451,42 +3363,11 @@ export class NavigationEngine implements IHopStateMachine {
         );
       if (neighbor) verified.set(prefix, neighbor);
     }
-    // An indirect fact validates its column without enqueuing value flow, and accounts for its
-    // explicit neighbor mention under spec 05:14.
-    const indirectCount = facts.arrays.get('/indirect_columns');
-    let indirectComplete =
-      indirectCount === undefined ||
-      facts.indirectReferences.size === indirectCount;
-    const indirectMentioned = new Set<string>();
+    // An indirect fact validates its column without enqueuing value flow.
     for (const [path, raw] of facts.indirectReferences) {
       const prefix = path.slice(0, -'/node'.length),
-        fact = facts.indirect.get(prefix),
-        rawNode = fact?.node ?? raw;
-      checkSupplier(prefix, rawNode, fact?.col);
-      const nid = resolveModelNodeId(
-        rawNode,
-        this.nodeMap,
-        this.identifierCaseSensitive,
-      );
-      if (!nid) {
-        indirectComplete = false;
-        continue;
-      }
-      if (this.graph.areNeighbors(focusId, nid)) indirectMentioned.add(nid);
-    }
-    if (indirectCount !== undefined && indirectComplete)
-      mentions.indirect_columns = indirectMentioned;
-    for (const [row, keys] of facts.rows) {
-      const supplierCount = facts.arrays.get(`${row}/upstream_columns`);
-      if (
-        supplierCount === undefined ||
-        [...facts.references.keys()].filter((path) =>
-          path.startsWith(`${row}/upstream_columns/`),
-        ).length !== supplierCount
-      )
-        complete = false;
-      if (keys.has('out_node') && !facts.references.has(`${row}/out_node`))
-        complete = false;
+        fact = facts.indirect.get(prefix);
+      checkSupplier(prefix, fact?.node ?? raw, fact?.col);
     }
     // At a procedure an entry pairs only through its out_node; without one it has no destination.
     const atProcedure = this.nodeMap.get(focusId)?.type === 'procedure';
@@ -3497,14 +3378,7 @@ export class NavigationEngine implements IHopStateMachine {
           this.identifierCaseSensitive,
         ),
         node = nid ? this.nodeMap.get(nid) : undefined;
-      if (!nid || !node) {
-        complete = false;
-        continue;
-      }
-      if (!this.graph.areNeighbors(focusId, nid)) continue;
-      const row = rowOf(path);
-      if (!atProcedure || facts.references.has(`${row}/out_node`))
-        mentioned.add(nid);
+      if (!nid || !node || !this.graph.areNeighbors(focusId, nid)) continue;
       if (this.admitsColumnReference(nid, node, focusId)) continue;
       const { border, depthBreach } = this.admitsRoute(nid, node, focusId);
       const outside =
@@ -3525,7 +3399,6 @@ export class NavigationEngine implements IHopStateMachine {
           reason: `The object is out of scope (${outside}).`,
         });
     }
-    if (complete) mentions.column_flow = mentioned;
     const callerTargets = this.callerTargets();
     const headers = new Map<string, { out_node?: string; out_col?: string }>(
       facts.headers,
@@ -3585,7 +3458,6 @@ export class NavigationEngine implements IHopStateMachine {
       ),
       mixed = sides.size > 1;
     return {
-      mentions,
       columnPlan: tracer.finishColumnFlow(
         focusId,
         facts.fields.column_flow,
@@ -3611,7 +3483,7 @@ export class NavigationEngine implements IHopStateMachine {
     unavailable: ReadonlySet<keyof HopFindingKept> = new Set(),
     log: LogFn = this.log,
     columnPlan?: ReturnType<ColumnTracer['finishColumnFlow']>,
-    actionMentions: ActionMentions = {},
+    identities?: ReadonlyMap<string, string>,
   ) {
     const invalidRoutes: InvalidRoute[] = [
       ...(columnPlan?.invalidRoutes ?? []),
@@ -3678,6 +3550,7 @@ export class NavigationEngine implements IHopStateMachine {
       ]),
     );
     const mappingDecisions = new Set(mapped);
+    // A mapped neighbor (an edge, a declared output or an indirect fact) is no default keep.
     const mappedNeighborIds = new Set(
       stagedColumnEdges.flatMap((edge) => [edge.from_node, edge.to_node]),
     );
@@ -3697,18 +3570,13 @@ export class NavigationEngine implements IHopStateMachine {
         mappedNeighborIds.add(target.attributionTo);
       }
     }
-    // Spec 05:14: explicit AI-authored indirect_columns entries account for their neighbor without
-    // enqueuing a value-flow hop (D-073/D-207).
-    if (this.tracer && !unavailable.has('indirect_columns')) {
-      for (const fact of finding.indirect_columns ?? []) {
-        const nid = resolveModelNodeId(
-          fact.node,
-          this.nodeMap,
-          this.identifierCaseSensitive,
-        );
-        if (nid && this.graph.areNeighbors(focusId, nid))
-          mappedNeighborIds.add(nid);
-      }
+    for (const fact of finding.indirect_columns ?? []) {
+      const nid = resolveModelNodeId(
+        fact.node,
+        this.nodeMap,
+        this.identifierCaseSensitive,
+      );
+      if (nid) mappedNeighborIds.add(nid);
     }
     const mappingPaths = (
       matches: (node: string, col: string) => boolean,
@@ -3849,29 +3717,6 @@ export class NavigationEngine implements IHopStateMachine {
     const pruneColumnEdges = unavailable.has('column_flow')
       ? columnPlan?.stagedEdges
       : stagedColumnEdges;
-    // A faulty flow still names its objects by structure; an unreadable/unresolvable flow or
-    // indirect_columns field leaves outcomes unknown so neighbor_undecided is suppressed.
-    const pathBroken = (field: 'column_flow' | 'indirect_columns') =>
-      (unavailable.has(field) ||
-        invalidRoutes.some((route) => route.path?.startsWith(`${field}.`))) &&
-      !actionMentions[field];
-    const outcomeIds = !this.tracer
-      ? invalidRoutes.length === 0
-        ? mappedNeighborIds
-        : actionMentions.column_flow
-          ? new Set([...mappedNeighborIds, ...actionMentions.column_flow])
-          : undefined
-      : pathBroken('column_flow') || pathBroken('indirect_columns')
-        ? undefined
-        : invalidRoutes.length === 0 &&
-            !unavailable.has('column_flow') &&
-            !unavailable.has('indirect_columns')
-          ? mappedNeighborIds
-          : new Set([
-              ...mappedNeighborIds,
-              ...(actionMentions.column_flow ?? []),
-              ...(actionMentions.indirect_columns ?? []),
-            ]);
     const actions = this.collectNeighborActions(
       focusId,
       unavailable.has('questions') ? null : (finding.questions ?? []),
@@ -3880,10 +3725,12 @@ export class NavigationEngine implements IHopStateMachine {
         : (finding.prune_neighbors ?? []),
       pruneColumnEdges,
       flowQuestionByNode,
-      outcomeIds,
-      actionMentions,
+      identities,
     );
     const { pruneTargets, routeRequests, prunedNeighborNids } = actions;
+    const keptNeighborIds = actions.keptNeighborIds.filter(
+      (id) => !mappedNeighborIds.has(id),
+    );
     invalidRoutes.push(...actions.invalidRoutes);
     for (const id of actions.mutablePruneConflicts)
       conflictPaths.push(...mappingPaths((node) => node === id));
@@ -4025,6 +3872,7 @@ export class NavigationEngine implements IHopStateMachine {
       scopeAddNids,
       deferredRoutes,
       prunedNeighborNids,
+      keptNeighborIds,
       carryByNode,
       routeContexts,
       stagedColumnEdges,
@@ -4079,8 +3927,7 @@ export class NavigationEngine implements IHopStateMachine {
     prunes: HopFindingKept['prune_neighbors'] | null,
     stagedColumnEdges: readonly ColumnEdge[] | undefined,
     continuationQuestions: ReadonlyMap<string, string>,
-    mappedNeighborIds: ReadonlySet<string> | undefined,
-    actionMentions: ActionMentions = {},
+    submittedIdentities?: ReadonlyMap<string, string>,
   ) {
     const invalidRoutes: InvalidRoute[] = [];
     const prunedNeighborNids = new Set<string>();
@@ -4103,13 +3950,11 @@ export class NavigationEngine implements IHopStateMachine {
     const neighbors = new Map(
       this.neighborChoices(focusId).map((neighbor) => [neighbor.id, neighbor]),
     );
-    const identities = [...(actionMentions.identities ?? [])].map(
-      ([path, raw]) => ({
-        raw,
-        path: path.slice(1).split('/').join('.'),
-        id: resolveModelNodeId(raw, this.nodeMap, this.identifierCaseSensitive),
-      }),
-    );
+    const identities = [...(submittedIdentities ?? [])].map(([path, raw]) => ({
+      raw,
+      path: path.slice(1).split('/').join('.'),
+      id: resolveModelNodeId(raw, this.nodeMap, this.identifierCaseSensitive),
+    }));
     const questionChecks = new Map(
       identities
         .filter((ref) => /^questions\.\d+\.nodeId$/.test(ref.path))
@@ -4122,7 +3967,7 @@ export class NavigationEngine implements IHopStateMachine {
       ...pruneNeighborIds,
       ...this.actionIdentities(
         focusId,
-        actionMentions.identities,
+        submittedIdentities,
         '/prune_neighbors/',
         'can_prune',
         neighbors,
@@ -4130,7 +3975,7 @@ export class NavigationEngine implements IHopStateMachine {
     ]);
     const questionIdentities = this.actionIdentities(
       focusId,
-      actionMentions.identities,
+      submittedIdentities,
       '/questions/',
       'can_question',
       neighbors,
@@ -4325,53 +4170,17 @@ export class NavigationEngine implements IHopStateMachine {
     }
     for (const nid of pruneIds)
       if (!aloneRefusals.get(nid) && !jointRefusal) prunedNeighborNids.add(nid);
-    const undecided = (id: string) =>
-      !requested.has(id) &&
-      !prunedNeighborNids.has(id) &&
-      !actionMentions.questions?.has(id) &&
-      !actionMentions.prune_neighbors?.has(id);
-    // The fields that can give this neighbor its outcome.
-    const outcomeFields = (id: string) => [
-      'questions',
-      ...(neighbors.get(id)?.can_prune &&
-      !this.neighborPruneRefusal(
-        focusId,
-        [id],
-        acceptedNids,
-        stagedColumnEdges ?? [],
-      )
-        ? ['prune_neighbors']
-        : []),
-    ];
-    // Routing follows authored decisions; generated carry alone is not a decision about a neighbor.
-    // A missing outcome fails no supplied field, so valid findings remain held for an action-only
-    // retry.
-    const actionsKnown =
-      (questions !== null || actionMentions.questions) &&
-      (prunes !== null || actionMentions.prune_neighbors);
-    if (mappedNeighborIds && actionsKnown) {
-      for (const id of this.requiredNeighborIds(focusId)) {
-        if (!undecided(id)) continue;
-        if (!mappedNeighborIds.has(id)) {
-          invalidRoutes.push({
-            kind: 'neighbor_outcome_missing',
-            id,
-            // The owed neighbor is the subject of the fault, never a submitted value.
-            path: 'questions.*.nodeId',
-            allowed_values: [id],
-            alternatives: outcomeFields(id),
-            reason: 'This neighbor has no authored outcome.',
-          });
-          continue;
-        }
-        // The authored mapping supplies the outcome; its qualified column question travels
-        // separately.
-        if (continuationQuestions.has(id))
-          routeRequests.push({ nodeId: id, question: '' });
-      }
+    // Spec 05 (D-031): an open neighbor the AI neither prunes nor questions is kept, as the card
+    // states. One whose mapping carries a column continues; in BB a kept neighbor is enqueued, in
+    // CT an unmapped one stays on the graph with no column trace. Scope is never extended.
+    const keptNeighborIds: string[] = [];
+    for (const { id, kept } of this.openNeighbors(focusId)) {
+      if (requested.has(id) || pruneNeighborIds.has(id)) continue;
+      if (continuationQuestions.has(id) || (kept && !this.tracer))
+        routeRequests.push({ nodeId: id, question: '' });
+      else if (kept) keptNeighborIds.push(id);
     }
-    // A caller-bound supplier is no neighbor of the function, so no outcome is owed; its attached
-    // column still continues.
+    // A caller-bound supplier is no neighbor of the function; its attached column still continues.
     for (const id of continuationQuestions.keys())
       if (
         !neighbors.has(id) &&
@@ -4388,6 +4197,7 @@ export class NavigationEngine implements IHopStateMachine {
       questionIdentities,
       routeRequests,
       prunedNeighborNids,
+      keptNeighborIds,
       mutablePruneConflicts,
     };
   }
@@ -4442,6 +4252,7 @@ export class NavigationEngine implements IHopStateMachine {
       scopeAddNids,
       deferredRoutes,
       prunedNeighborNids,
+      keptNeighborIds,
       carryByNode,
       routeContexts,
       stagedSections,
@@ -4536,7 +4347,14 @@ export class NavigationEngine implements IHopStateMachine {
         `[CT] column_flow hop=${this.hopCount} focus=${focusId} entries=${this.lastHopColumnFlowEntries} total_edges=${this.tracer.edges.length} active_cols=${this.tracer.activeColumns.join(',')}`,
       );
     }
-    this.tryResolvePrunes([...prunedNeighborNids]);
+    // A CT neighbor kept by the card's default is this hop's keep vote, on the graph untraced.
+    for (const nid of keptNeighborIds)
+      if (this.recordBallot(nid, focusId, 'keep'))
+        this.markNodeState(nid, 'passthrough', 'engine', 'kept_neighbor', {
+          viaNodeId: focusId,
+          atHop: this.hopCount,
+        });
+    this.tryResolvePrunes([...prunedNeighborNids, ...keptNeighborIds]);
 
     this.memory.recordVerdict('analyze');
     this.lastHopVerdict = 'analyze';

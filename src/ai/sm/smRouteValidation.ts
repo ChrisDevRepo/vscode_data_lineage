@@ -27,7 +27,6 @@ const ROUTE_ISSUE = {
   prune_question_conflict: 'conflict',
   question_not_neighbor: 'not_neighbor',
   question_closed: 'closed_neighbor',
-  neighbor_outcome_missing: 'neighbor_undecided',
 } as const satisfies Record<InvalidRouteKind, IssueCode>;
 
 /** Builds the atomic content/action rejection envelope. */

@@ -79,13 +79,6 @@ export const ISSUES = {
     label: 'required field',
     correction: 'Add a value for this field as its schema describes.',
   },
-  neighbor_undecided: {
-    category: 'required',
-    label: 'neighbor without an outcome',
-    correction:
-      'Give each listed neighbor exactly one outcome: map or keep it, prune it, or ask it a question, in the field the schema names for that outcome.',
-    servesIds: true,
-  },
   slot_unplaced: {
     category: 'required',
     label: 'detail slot ids placed in no section',
@@ -529,8 +522,8 @@ export function readToolErrorText(text: string): ToolRejection | null {
 }
 
 /**
- * Feedback stage of one fault: 1 states it (`neighbor_undecided` its subject ids too), 2 adds
- * allowed values or the type or bound, 3 its exit: fallback, sent size, absence.
+ * Feedback stage of one fault: 1 states it, 2 adds allowed values or the type or bound, 3 its
+ * exit: fallback, sent size, absence.
  */
 export type FeedbackStage = 1 | 2 | 3;
 
@@ -617,8 +610,7 @@ function mergeToolErrors(
 
 /**
  * Renders every independent fault once, each at its own stage: the type from feedback 1, allowed
- * values or bound from feedback 2, exit only at feedback 3; `neighbor_undecided` serves subject ids
- * from feedback 1.
+ * values or bound from feedback 2, exit only at feedback 3.
  * Submitted values are never echoed; an empty list is not served, the fault's type is.
  */
 export function renderProblem(
