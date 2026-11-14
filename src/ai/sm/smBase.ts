@@ -1405,6 +1405,7 @@ export class NavigationEngine implements IHopStateMachine {
       ? this.nodeMap.get(this.currentFocusNodeId)
       : undefined;
     const neighbors = focus ? this.neighborChoices(focus.id) : [];
+    const sources = this.columnSourceScope(focus?.id ?? '');
     const declaredOutCols = focus
       ? [...new Set(this.declaredColumns(focus.id).filter(Boolean))]
       : [];
@@ -1443,14 +1444,16 @@ export class NavigationEngine implements IHopStateMachine {
               )
               .sort()
           : [],
-      // A procedure names itself as the source of a value it creates.
+      // The flow enums offer only in-scope ids; a procedure names itself as the source of a value
+      // it creates.
       columnSourceNodeIds:
         focus && this.graph.hasNode(focus.id)
           ? [
-              ...this.columnSourceNodeIds(focus.id),
+              ...sources.inScope,
               ...(focus.type === 'procedure' ? [focus.id] : []),
             ].sort()
           : [],
+      outOfScopeNodeIds: sources.outside,
       identifierCaseSensitive: this.identifierCaseSensitive,
       ...(this.currentDestinations().length
         ? { columnDestinations: this.currentDestinations() }
@@ -1514,18 +1517,28 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Neighbour ids a `column_flow` mapping may name at this focus: the served enum ids inside the
-   * approved scope (`in_approved_scope: true`). The enum also serves the others,
-   * so naming one is refused by the scope check as `column_out_of_scope`, not by the schema.
+   * The served column source ids split by the approved scope (`in_approved_scope`). A `column_flow`
+   * mapping may name only the first; the others are neighbors the scope check refuses as
+   * `column_out_of_scope`, and `indirect_columns` still lists them.
    */
+  private columnSourceScope(focusId: string): {
+    inScope: string[];
+    outside: string[];
+  } {
+    const ids = this.graph.hasNode(focusId)
+      ? this.columnSourceNodeIds(focusId)
+      : [];
+    const admitted = (id: string) =>
+      this.admitsColumnReference(id, this.nodeMap.get(id)!, focusId);
+    return {
+      inScope: ids.filter(admitted),
+      outside: ids.filter((id) => !admitted(id)),
+    };
+  }
+
+  /** Ids a `column_flow` mapping may name at this focus: the served ones in the approved scope. */
   private mappableNeighborIds(focusId: string): Set<string> {
-    return new Set(
-      this.graph.hasNode(focusId)
-        ? this.columnSourceNodeIds(focusId).filter((id) =>
-            this.admitsColumnReference(id, this.nodeMap.get(id)!, focusId),
-          )
-        : [],
-    );
+    return new Set(this.columnSourceScope(focusId).inScope);
   }
 
   /** The `out_node` values the scope check admits: every rejection lists exactly these. */
@@ -1623,8 +1636,6 @@ export class NavigationEngine implements IHopStateMachine {
     const path = pointer.replace(/\/node$/, '');
     const out_node = facts.references.get(`${row}/out_node`);
     return (this.hopSubmitColumns.columnSourceNodeIds ?? []).filter((id) => {
-      if (!this.admitsColumnReference(id, this.nodeMap.get(id)!, focusId))
-        return false;
       const candidate = supplier(path, id);
       return (
         candidate !== null &&

@@ -1110,12 +1110,18 @@ export interface SubmitFindingsHopColumns {
   readonly callerContextNodeIds?: readonly string[];
   /**
    * Sorted ids the loaded store metadata admits as `upstream_columns` sources and `out_node`
-   * values: focus neighbors (and read suppliers of its declared scalar callers) that carry stored
-   * columns or are trusted without column metadata (procedure, external, function). A columnless
-   * function also stays eligible in `questions` via
+   * values and the approved scope admits: focus neighbors (and read suppliers of its declared
+   * scalar callers) that carry stored columns or are trusted without column metadata (procedure,
+   * external, function). A columnless function also stays eligible in `questions` via
    * {@link SubmitFindingsHopColumns.callerContextNodeIds}.
    */
   readonly columnSourceNodeIds?: readonly string[];
+  /**
+   * The neighbors of that kind outside the approved scope. `column_flow` does not offer them: it
+   * binds their spelling and the scope check refuses them as `column_out_of_scope`.
+   * `indirect_columns` offers them with the in-scope ids.
+   */
+  readonly outOfScopeNodeIds?: readonly string[];
 }
 
 /**
@@ -1183,7 +1189,12 @@ function columnRefSchemaForHop(hop: SubmitFindingsHopColumns) {
   return hop.columnSourceNodeIds
     ? ColumnRefSchema.extend({
         node: stringFact(
-          objectIdSchema(hop.columnSourceNodeIds, hop.identifierCaseSensitive),
+          objectIdSchema(
+            hop.columnSourceNodeIds,
+            hop.identifierCaseSensitive,
+            undefined,
+            hop.outOfScopeNodeIds,
+          ),
           'flowReference',
         ),
       })
@@ -1220,7 +1231,12 @@ function columnFlowSchemaForHop(
     // Required at a procedure focus: omission would attribute the pair to the procedure node.
     out_node: (hop.columnSourceNodeIds
       ? stringFact(
-          objectIdSchema(outNodes!, hop.identifierCaseSensitive),
+          objectIdSchema(
+            outNodes!,
+            hop.identifierCaseSensitive,
+            undefined,
+            hop.outOfScopeNodeIds,
+          ),
           'flowReference',
         )
       : stringFact(z.string(), 'flowReference')
@@ -1276,7 +1292,8 @@ function columnFlowSchemaForHop(
     .strict()
     .meta(FLOW_HEADER_FACT);
   const flow = z.array(entry).describe(COLUMN_FLOW_DESCRIPTION);
-  return hop.outCols?.length === 0 || (hop.outNode && outNodes?.length === 0)
+  return hop.outCols?.length === 0 ||
+    (hop.outNode && outNodes?.length === 0 && !hop.outOfScopeNodeIds?.length)
     ? flow.max(0)
     : flow;
 }
@@ -1347,7 +1364,10 @@ export function submitFindingsSchemaForMode(
         column_flow: columnFlowSchemaForHop(hop, outNodes),
         ...(outNodes && {
           indirect_columns: indirectColumnsSchema(
-            objectIdSchema(outNodes, hop.identifierCaseSensitive),
+            objectIdSchema(
+              [...outNodes, ...(hop.outOfScopeNodeIds ?? [])],
+              hop.identifierCaseSensitive,
+            ),
           ),
         }),
       })
