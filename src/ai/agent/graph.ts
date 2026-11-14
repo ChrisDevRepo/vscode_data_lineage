@@ -960,6 +960,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
                 reason: error.reason,
                 errors: [...error.errors],
               },
+              'entry_detection',
               priorAttempt,
             ),
           ),

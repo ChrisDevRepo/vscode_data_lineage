@@ -275,11 +275,14 @@ export interface ToolPhaseAttemptState {
   readonly phase: InstructionPhase;
   readonly providerCalls: number;
   /**
-   * Model replies in a row that were not accepted: a reply holding any rejected call, or one that
-   * stored no accepted observation. An accepted reply (every call accepted and one stored, or an
-   * accepted terminal) resets it. It sets the feedback stage and is bounded by
-   * {@link MAX_TOOL_PROVIDER_CALLS}.
+   * Replies in a row each tool had a rejected call, by tool name; a reply with no tool call counts
+   * for the tool it should have called, and `''` holds replies with no progress. A rejected call
+   * adds one to its tool's row; an accepted stored call of a tool without a rejected call in that
+   * reply restarts only that row; an accepted terminal clears all. A row sets the feedback stage
+   * of that tool's rejection.
    */
+  readonly rejectionRows: Readonly<Record<string, number>>;
+  /** The largest rejection row; bounded by {@link MAX_TOOL_PROVIDER_CALLS}. */
   readonly noProgressCalls: number;
   readonly observations: readonly ToolAttemptObservation[];
   /** Compact typed policy ledger retained for recovery attempts; never rendered to the model. */
@@ -305,6 +308,7 @@ export function initialToolPhaseAttemptState(
   return {
     phase,
     providerCalls: 0,
+    rejectionRows: {},
     noProgressCalls: 0,
     observations: [],
     rejections: [],
@@ -353,8 +357,6 @@ export function recordToolAttempt(
   const stored = attempt.observations.some(
     (observation) => !observation.refused,
   );
-  // A reply is checked as a whole: any rejected call makes it a rejected reply.
-  const rejectedReply = attempt.rejections.length > 0;
   const observations = [...state.observations, ...attempt.observations];
   const rejections = [...state.rejections, ...attempt.rejections];
   const messages = [...state.messages, ...attempt.messages];
@@ -364,10 +366,24 @@ export function recordToolAttempt(
     attempt.stop === 'reroute' ||
     attempt.stop === 'refused' ||
     attempt.stop === 'phase_complete';
-  const noProgressCalls =
-    acceptedTerminal || (stored && !rejectedReply)
-      ? 0
-      : state.noProgressCalls + attempt.providerCalls;
+  // A reply with no tool call counts in the row of the tool it was asked to call.
+  const rejectedTools = new Set(
+    attempt.rejections.map(({ toolName }) => toolName),
+  );
+  const rejectionRows: Record<string, number> = acceptedTerminal
+    ? {}
+    : { ...state.rejectionRows };
+  if (!acceptedTerminal) {
+    for (const tool of rejectedTools)
+      rejectionRows[tool] = (rejectionRows[tool] ?? 0) + 1;
+    for (const { toolName, refused } of attempt.observations)
+      if (!refused && !rejectedTools.has(toolName))
+        delete rejectionRows[toolName];
+    if (stored) delete rejectionRows[''];
+    else if (rejectedTools.size === 0)
+      rejectionRows[''] = (rejectionRows[''] ?? 0) + attempt.providerCalls;
+  }
+  const noProgressCalls = Math.max(0, ...Object.values(rejectionRows));
   const stopReason = attempt.rejections.some(
     (rejection) => rejection.code === REJECTION_CODES.backendFault,
   )
@@ -379,6 +395,7 @@ export function recordToolAttempt(
     phase: state.phase,
     prefix: state.prefix ?? attempt.prefix,
     providerCalls,
+    rejectionRows,
     noProgressCalls,
     observations,
     rejections,
@@ -481,11 +498,12 @@ interface RecordedToolOutcome {
  */
 function renderRejection(
   rejection: ToolRejection,
+  toolName: string,
   priorState?: ToolPhaseAttemptState,
   input?: unknown,
   effect?: ToolDefinition['effect'],
 ): Pick<RecordedToolOutcome, 'resultText' | 'fallback'> {
-  const reply = priorState ? 1 + priorState.noProgressCalls : 2;
+  const reply = priorState ? 1 + (priorState.rejectionRows[toolName] ?? 0) : 2;
   const { text, fallback } = renderProblemReport(
     rejection,
     feedbackStage(rejection, reply),
@@ -533,7 +551,13 @@ function recordToolOutcome(
     if (outcome.detail.refused) {
       const refusal = outcome.detail.refused;
       return {
-        ...renderRejection(refusal, priorState, call.input, call.effect),
+        ...renderRejection(
+          refusal,
+          call.toolName,
+          priorState,
+          call.input,
+          call.effect,
+        ),
         status: 'error',
         artifact: refusal,
       };
@@ -581,7 +605,13 @@ function recordToolOutcome(
         : {}),
     });
     return {
-      ...renderRejection(rejection, priorState, call.input, call.effect),
+      ...renderRejection(
+        rejection,
+        call.toolName,
+        priorState,
+        call.input,
+        call.effect,
+      ),
       status: 'error',
       rejection: recorded,
       artifact: rejection,
@@ -600,7 +630,13 @@ function recordToolOutcome(
     status: 'not_evaluated',
   });
   return {
-    ...renderRejection(outcome.rejection, priorState, call.input, call.effect),
+    ...renderRejection(
+      outcome.rejection,
+      call.toolName,
+      priorState,
+      call.input,
+      call.effect,
+    ),
     status: 'error',
     artifact: outcome.rejection,
   };
@@ -775,9 +811,10 @@ type SynthesizedRejectionMessages = readonly ModelMessage[];
  */
 export function noCallCorrectionText(
   rejection: ToolRejection,
+  toolName: string,
   priorState?: ToolPhaseAttemptState,
 ): string {
-  return renderRejection(rejection, priorState).resultText;
+  return renderRejection(rejection, toolName, priorState).resultText;
 }
 
 /** Builds, records, logs, and traces one synthesized (no-call) rejection. */
@@ -814,7 +851,11 @@ function emitSynthesizedRejection(
   const hasAttemptedTurn =
     messageContentToText(spec.attempted.content).trim().length > 0 ||
     messageProviderParts(spec.attempted).length > 0;
-  const note = noCallCorrectionText(rejection, input.priorState);
+  const note = noCallCorrectionText(
+    rejection,
+    rejection.toolName,
+    input.priorState,
+  );
   return hasAttemptedTurn
     ? [spec.attempted, modelUserMessage(note)]
     : [modelUserMessage(note)];
