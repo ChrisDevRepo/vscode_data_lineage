@@ -22,9 +22,6 @@ const FALLBACK_FIELD = 'sections';
 
 const REPORT_REFERENCE_FALLBACK =
   'If you cannot correct it, write that information in the detail memory instead, highlighted with a callout naming the unresolved issue.';
-/** Stage-3 exit for a fault whose accepted values are listed. */
-const ALLOWED_VALUE_EXIT =
-  'If it still fails, send exactly what the allowed list gives for this field.';
 /** Stage-3 fallback for a column reference fault without its own issue fallback. */
 export const COLUMN_REFERENCE_FALLBACK = `If you cannot correct it, write that information in ${FALLBACK_FIELD} instead, highlighted with a callout naming the unresolved issue.`;
 const OBJECT_IDENTITY_ISSUE = {
@@ -373,8 +370,6 @@ export const ISSUES = {
     fallback?: string;
     /** Allowed values rank against the key name sent instead of the value sent. */
     ranksKey?: true;
-    /** The subject ids are served at every stage, not only from the second. */
-    servesIds?: true;
     /** The field whose entries answer this fault; ingestion holds it owed beside the faulty one. */
     owedField?: string;
   }
@@ -523,8 +518,8 @@ export function readToolErrorText(text: string): ToolRejection | null {
 }
 
 /**
- * Feedback stage of one fault: 1 states it with its type; 2 adds retry state, allowed values or
- * bound; 3 its exit (fallback, sent size, absence) and, for a top-level type or missing field, the
+ * Feedback stage of one fault: 1 states it with its type, allowed values and bound; 2 adds retry
+ * state; 3 its exit (fallback, sent size, absence) and, for a top-level type or missing field, the
  * call's next schema level (`call`).
  */
 export type FeedbackStage = 1 | 2 | 3;
@@ -616,8 +611,8 @@ function mergeToolErrors(
 }
 
 /**
- * Renders every independent fault once, each at its own stage: the type from feedback 1, allowed
- * values or bound from feedback 2, exit and the call's next schema level only at feedback 3.
+ * Renders every independent fault once, each at its own stage: the type, allowed values and bound
+ * from feedback 1, exit and the call's next schema level only at feedback 3.
  * Submitted values are never echoed; an empty list is not served, the fault's type is.
  */
 export function renderProblem(
@@ -725,34 +720,31 @@ export function renderProblemReport(
             : effect === 'hop_commit'
               ? COLUMN_REFERENCE_FALLBACK
               : REPORT_REFERENCE_FALLBACK
-          : stage === 3 && error.values?.length
-            ? ALLOWED_VALUE_EXIT
-            : '';
+          : '';
       if (fallback && reference) fallbackShown = true;
       const message = `${issue.label}. ${issue.correction}${fallback ? ` ${fallback}` : ''}`;
       const sent =
         'ranksKey' in issue
           ? error.path.split('.').at(-1)
           : valueAt(input, error.path);
-      const allowed =
-        error.values?.length && (stage >= 2 || 'servesIds' in issue)
-          ? [...error.values].sort(
-              (a, b) =>
-                (typeof sent === 'string'
-                  ? distance(sent, a) - distance(sent, b)
-                  : 0) || a.localeCompare(b),
-            )
-          : undefined;
+      const allowed = error.values?.length
+        ? [...error.values].sort(
+            (a, b) =>
+              (typeof sent === 'string'
+                ? distance(sent, a) - distance(sent, b)
+                : 0) || a.localeCompare(b),
+          )
+        : undefined;
       return {
         path: error.path,
         code: error.code,
         message,
         ...(allowed ? { allowed } : {}),
         // Typed schema and engine facts, never text: a fault without listed values gets its type
-        // from feedback 1, its bound at feedback 2 and the facts of its exit at feedback 3.
+        // and bound from feedback 1 and the facts of its exit at feedback 3.
         ...(error.types?.length && !allowed ? { type: error.types } : {}),
         ...(error.received ? { received: error.received } : {}),
-        ...(stage >= 2 && error.bound
+        ...(error.bound
           ? {
               bound: {
                 [error.bound.keyword]: error.bound.limit,

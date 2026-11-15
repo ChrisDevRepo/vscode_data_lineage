@@ -1011,7 +1011,7 @@ export function registerAiTools(
           );
           const rejection = readToolErrorText(text);
           // The host keeps no attempt state, so this caller never escalates: it gets feedback 2
-          // (instruction and allowed values).
+          // (retry state on top of feedback 1's instruction, allowed values and bound).
           if (rejection)
             throw new Error(
               renderProblem(rejection, feedbackStage(rejection, 2)),

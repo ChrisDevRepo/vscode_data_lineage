@@ -1032,11 +1032,9 @@ function finalizeSubmitFindingsSchema(
     toolFindingShape: { fresh },
     toolObjectFact: 'findingPresence',
   });
-  // A fresh bb card holds nothing; its draft serves the sentence once it holds something.
+  // A fresh card holds nothing; its draft serves the sentence once it holds something.
   const validated = (
-    fresh && !('column_flow' in schema.shape)
-      ? found
-      : found.describe(HELD_LISTS_DESCRIPTION)
+    fresh ? found : found.describe(HELD_LISTS_DESCRIPTION)
   ) as z.ZodType<FlatSubmitFindings>;
   if (!fresh) return validated;
   const required = Object.entries(schema.shape)

@@ -4,7 +4,7 @@ import { at, makeRejection } from '../../support/toolErrorEnvelope';
 
 /**
  * Evaluates phase policy for a requested tool call: the fault, and the stage's tools as its allowed
- * values (shown from feedback stage 2).
+ * values.
  */
 export function evaluateToolPhaseRule(
   toolName: string,
