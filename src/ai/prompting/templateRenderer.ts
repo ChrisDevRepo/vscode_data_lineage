@@ -15,7 +15,7 @@ import { CLASSIFICATION_KEPT_ANGLES } from '../session/classification';
  * special characters escaped and environments complete.
  */
 export const LATEX_SOURCE_RULE =
-  'In LaTeX, write `\\#`, `\\_`, `\\%` and `\\&` for those characters in names, and close every `\\begin{…}` with its `\\end{…}`.';
+  'In LaTeX, escape only `\\#`, `\\_`, `\\%` and `\\&` in names, and write `@` as `@`. Close every `\\begin{…}` with its `\\end{…}`.';
 
 /** Stages at which a YAML instruction may be injected into the AI system prompt. */
 type TemplateStage = 'discover' | 'active' | 'synthesis';
