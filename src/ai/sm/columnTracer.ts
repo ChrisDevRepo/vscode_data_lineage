@@ -55,21 +55,30 @@ export class ColumnTracer {
 
   /**
    * Aspect a complete exploration delivers: authored edges attached to the tracked roots in the
-   * approved direction; detached claims are withheld and logged.
+   * approved direction, and each end pair whose source they reach; detached claims are withheld
+   * and logged.
    */
   deliveredState(
     roots: readonly { node: string; col: string }[],
     direction: 'upstream' | 'downstream' | 'both',
+    nodeMap: ReadonlyMap<string, LineageNode>,
     log?: TracerLogFn,
   ): ColumnAspect {
+    const endpointKey = columnEndpointKeyFactory(
+      new Map(),
+      this.identifierCaseSensitive,
+    );
     const closure = columnAttachment(
       roots,
       this.aspect.edges,
       direction,
-      columnEndpointKeyFactory(new Map(), this.identifierCaseSensitive),
+      endpointKey,
     );
-    const delivered = this.aspect.edges.filter((edge) =>
-      closure.attaches(edge),
+    const delivered = this.aspect.edges.filter(
+      (edge) =>
+        closure.attaches(edge) ||
+        (isEndPair(edge, nodeMap) &&
+          closure.endpoints.has(endpointKey(edge.from_node, edge.from_col))),
     );
     if (delivered.length === this.aspect.edges.length) return this.aspect;
     const detached = this.aspect.edges
@@ -305,9 +314,8 @@ export class ColumnTracer {
 
   /**
    * Stores one direct pair per verified supplier into the entry's destination, `out_node.out_col`
-   * or the focus column, after the same endpoint check; a supplier identical to that destination is
-   * refused (topology: a column cannot be its own upstream source); the backend adds no pair of its
-   * own. `admittedOutCols` supplies the destination node's one served column set.
+   * or the focus column, after the same endpoint check; the backend adds no pair of its own.
+   * `admittedOutCols` supplies the destination node's one served column set.
    */
   prepareColumnEntry(
     focusId: string,
@@ -378,18 +386,6 @@ export class ColumnTracer {
           path: `${refPath}.node`,
           reason:
             'A caller-context investigation accepts real read contributors of the function or its declared callers, not unrelated loaded objects.',
-        });
-        continue;
-      }
-      if (
-        neighbor.id === target.attributionTo &&
-        this.columnKey(cont.col) === this.columnKey(target.attributionCol)
-      ) {
-        invalidRoutes.push({
-          kind: 'self_loop_column',
-          id: neighbor.id,
-          path: refPath,
-          reason: `upstream_columns entry "${neighbor.id}.${cont.col}" is identical to its own out_node target "${target.attributionTo}.${target.attributionCol}" - a column cannot be its own upstream source.`,
         });
         continue;
       }
@@ -577,6 +573,17 @@ type ColumnClosureEdge = Pick<
   ColumnEdge,
   'hop_node' | 'from_node' | 'from_col' | 'to_node' | 'to_col'
 >;
+
+/** An end pair `source.col -> procedure.col`: stored and delivered, never forwarded. */
+export function isEndPair(
+  edge: Pick<ColumnEdge, 'to_node' | 'hop_node'>,
+  nodeMap: ReadonlyMap<string, LineageNode>,
+): boolean {
+  return (
+    edge.to_node === edge.hop_node &&
+    nodeMap.get(edge.hop_node)?.type === 'procedure'
+  );
+}
 
 interface ColumnAttachment {
   readonly endpoints: Set<string>;

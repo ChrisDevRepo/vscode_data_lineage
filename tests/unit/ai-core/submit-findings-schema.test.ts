@@ -12,6 +12,7 @@ describe('fresh kept required-field projection', () => {
       outCols: ['Value'],
       outNode: true,
       columnSourceNodeIds: ['input'],
+      outNodeIds: ['input'],
     });
     const wire = new Ajv({ strict: false }).compile(toModelJsonSchema(schema));
     const projected = JSON.stringify(toModelJsonSchema(schema));

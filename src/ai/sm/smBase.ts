@@ -109,6 +109,7 @@ import {
   ColumnTracer,
   allowsMissingColumnMetadata,
   columnAttachment,
+  isEndPair,
   columnEndpointKeyFactory,
   resolveColumnFlowTarget,
 } from './columnTracer';
@@ -1449,6 +1450,9 @@ export class NavigationEngine implements IHopStateMachine {
               ...(focus.type === 'procedure' ? [focus.id] : []),
             ].sort()
           : [],
+      ...(focus?.type === 'procedure' && this.graph.hasNode(focus.id)
+        ? { outNodeIds: this.outNodeScopeIds(focus.id) }
+        : {}),
       outOfScopeNodeIds: sources.outside,
       identifierCaseSensitive: this.identifierCaseSensitive,
       ...(this.currentDestinations().length
@@ -1537,11 +1541,26 @@ export class NavigationEngine implements IHopStateMachine {
     return new Set(this.columnSourceScope(focusId).inScope);
   }
 
-  /** The `out_node` values the scope check admits: every rejection lists exactly these. */
+  /**
+   * The `out_node` values the scope check admits, served and listed by every rejection: at a
+   * procedure the in-scope objects it writes (graph write edges) and the procedure itself.
+   */
   private outNodeScopeIds(focusId: string): string[] {
-    return [...this.mappableNeighborIds(focusId)]
-      .filter((id) => id !== focusId)
-      .sort();
+    const ids = [...this.mappableNeighborIds(focusId)].filter(
+      (id) => id !== focusId,
+    );
+    const focusType = this.nodeMap.get(focusId)?.type;
+    if (focusType !== 'procedure') return ids.sort();
+    const written = new Set(
+      this.model.edges
+        .filter(
+          (edge) =>
+            edge.source === focusId &&
+            edgeApiType(edge.type, focusType) === 'write',
+        )
+        .map((edge) => edge.target),
+    );
+    return [focusId, ...ids.filter((id) => written.has(id))].sort();
   }
 
   /** Outputs of the callers a function hop investigates; a caller-context entry pairs into one. */
@@ -3198,10 +3217,25 @@ export class NavigationEngine implements IHopStateMachine {
             : offered
           : allowed;
       };
-      // Without a route fault at this path the schema fault stands, with the same offer.
+      // Without a route fault at this path the schema fault stands, with the same offer; a
+      // neighbor that is no `out_node` target only misses the enum.
       if (!route)
         return isFlowNodeField(path) || action
-          ? { ...mapped, values: values() }
+          ? {
+              ...mapped,
+              ...(/\.out_node$/.test(path) &&
+              this.graph.areNeighbors(
+                currentFocusId ?? '',
+                resolveModelNodeId(
+                  String(error.data),
+                  this.nodeMap,
+                  this.identifierCaseSensitive,
+                ) ?? '',
+              )
+                ? { code: 'enum' as const }
+                : {}),
+              values: values(),
+            }
           : undefined;
       const issue = buildRouteValidationRejection([route]).errors[0];
       return { ...issue, path, values: issue.values ?? values() };
@@ -3611,8 +3645,15 @@ export class NavigationEngine implements IHopStateMachine {
           .map((ref) => ref.path);
       });
     if (this.tracer && finding.column_flow) {
-      // A column is carried only when the one closure of the requested outputs holds it.
-      const closureEdges = [...this.tracer.edges, ...stagedColumnEdges];
+      // A column is carried only when the one closure of the requested outputs holds it; an end
+      // pair (into the procedure) and a self pair are stored, never forwarded.
+      const forwards = (edge: ColumnEdge) =>
+        endpointKey(edge.from_node, edge.from_col) !==
+          endpointKey(edge.to_node, edge.to_col) &&
+        !isEndPair(edge, this.nodeMap);
+      const closureEdges = [...this.tracer.edges, ...stagedColumnEdges].filter(
+        forwards,
+      );
       const attachedUpstream = columnAttachment(
         this.columnRoots(),
         closureEdges,
@@ -3630,7 +3671,7 @@ export class NavigationEngine implements IHopStateMachine {
       if (this.effectiveDirection() !== 'downstream') {
         const priorAttachment = columnAttachment(
           this.columnRoots(),
-          this.tracer.edges,
+          this.tracer.edges.filter(forwards),
           'upstream',
           endpointKey,
         ).endpoints;
@@ -5275,6 +5316,7 @@ export class NavigationEngine implements IHopStateMachine {
       this.tracer?.deliveredState(
         this.columnRoots(),
         direction === 'bidirectional' ? 'both' : direction,
+        this.nodeMap,
         this.log,
       ) ?? null;
     const rendered = new Set(

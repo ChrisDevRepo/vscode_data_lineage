@@ -774,7 +774,6 @@ export type InvalidRouteKind =
   | 'absent_contributor'
   | 'bad_out_col'
   | 'bad_contributor_col'
-  | 'self_loop_column'
   | 'bad_caller_context'
   | 'pruned_contributor'
   | 'column_out_of_scope'

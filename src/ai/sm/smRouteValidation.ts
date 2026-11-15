@@ -14,7 +14,6 @@ const ROUTE_ISSUE = {
   absent_contributor: 'not_neighbor',
   bad_out_col: 'unknown_column',
   bad_contributor_col: 'unknown_column',
-  self_loop_column: 'self_loop',
   bad_caller_context: 'bad_caller_output',
   pruned_contributor: 'closed_neighbor',
   column_out_of_scope: 'column_out_of_scope',
