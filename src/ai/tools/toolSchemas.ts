@@ -453,9 +453,6 @@ export type GetScopeBundleInput = z.infer<typeof GetScopeBundleModelSchema>;
 const nonWhitespaceText = z
   .string()
   .regex(/\S/, 'Must contain non-whitespace text.');
-/** Report text: admission rejects damaged math escapes in it. */
-const REPORT_MATH = { toolReportMath: true } as const;
-const reportText = nonWhitespaceText.meta(REPORT_MATH);
 
 /**
  * Zod schema for `submit_findings.sections`, keyed by angle so the same angle cannot be sent twice.
@@ -463,9 +460,9 @@ const reportText = nonWhitespaceText.meta(REPORT_MATH);
 const CapturedSectionsSchema = z
   .object({
     /** Pre-formatted section body written per `business_capture`. */
-    business: reportText.optional(),
+    business: nonWhitespaceText.optional(),
     /** Pre-formatted section body written per `technical_capture`. */
-    technical: reportText.optional(),
+    technical: nonWhitespaceText.optional(),
   })
   .strict();
 
@@ -711,11 +708,7 @@ const SUMMARY_DESCRIPTION =
 const HopFindingBaseSchema = z
   .object({
     focus_node_id: z.string().optional().describe(FOCUS_NODE_ID_DESCRIPTION),
-    summary: z
-      .string()
-      .meta(REPORT_MATH)
-      .optional()
-      .describe(SUMMARY_DESCRIPTION),
+    summary: z.string().optional().describe(SUMMARY_DESCRIPTION),
     badge_label: z
       .string()
       .max(SUBMIT_FINDINGS_BADGE_LABEL_MAX)
@@ -1081,12 +1074,12 @@ function capturedSectionSchemaForClassification(
 ): z.ZodType<CapturedSectionsWire> {
   const kept = CLASSIFICATION_KEPT_ANGLES[classification];
   if (kept.length === CLASSIFICATION_KEPT_ANGLES.both.length) {
-    const plainBody = reportText.optional();
+    const plainBody = nonWhitespaceText.optional();
     return z.strictObject({ business: plainBody, technical: plainBody });
   }
   const [onlyAngle] = kept;
   const offAngle = onlyAngle === 'business' ? 'technical' : 'business';
-  const body = reportText
+  const body = nonWhitespaceText
     .optional()
     .describe(`Section text; also holds ${offAngle} content.`);
   return z.strictObject({
@@ -1522,7 +1515,7 @@ function internalKeptFindingSchema(mode: 'bb' | 'ct') {
   const base = mode === 'ct' ? HopFindingCtBaseSchema : HopFindingBaseSchema;
   const angles = CLASSIFICATION_KEPT_ANGLES.both;
   const section = z
-    .object({ angle: z.enum(angles), text: reportText })
+    .object({ angle: z.enum(angles), text: nonWhitespaceText })
     .strict();
   return base
     .extend({
@@ -1742,7 +1735,6 @@ const NoteSchema = z
       .string()
       .regex(/\S/, 'Must contain non-whitespace text.')
       .min(1, 'Note is missing its caption')
-      .meta(REPORT_MATH)
       .describe(
         'One-sentence caption, grounded in the evidence supplied for this stage.',
       ),
@@ -1789,7 +1781,7 @@ const PresentResultSectionSchema = z
     {
       label: z
         .string()
-        .meta({ toolValidated: 'report.label', ...REPORT_MATH })
+        .meta({ toolValidated: 'report.label' })
         .regex(/\S/, 'Section label must not be blank.')
         .min(
           1,
@@ -1811,7 +1803,7 @@ const PresentResultSectionSchema = z
           1,
           'Section is missing text — every final section label requires one detail body',
         )
-        .meta({ toolValidated: 'report.text', ...REPORT_MATH })
+        .meta({ toolValidated: 'report.text' })
         .describe('Required detail body for this section label.'),
     },
     {
@@ -1912,22 +1904,14 @@ export const PresentResultModelSchema = z
       .string()
       .regex(/\S/, 'Must contain non-whitespace text.')
       .min(1, 'summary is required — one-line graph purpose (~120 chars)')
-      .meta(REPORT_MATH)
       .describe('One-line summary shown with the generated view.'),
-    title: z
-      .string()
-      .max(120)
-      .meta(REPORT_MATH)
-      .optional()
-      .describe('Optional report heading.'),
+    title: z.string().max(120).optional().describe('Optional report heading.'),
     intro: z
       .string()
-      .meta(REPORT_MATH)
       .optional()
       .describe('Optional grounded introduction to the final report.'),
     closing: z
       .string()
-      .meta(REPORT_MATH)
       .optional()
       .describe('Closing synthesis. Length is never a rejection axis.'),
     prune_node_ids: z
@@ -1974,7 +1958,7 @@ const PresentResultRetainedSectionSchema = PresentResultSectionSchema.extend({
     .describe(
       'Nodes this section documents; put each node in one section. Omit to keep the committed links for this label; an empty array unlinks them.',
     ),
-  text: reportText
+  text: nonWhitespaceText
     .optional()
     .meta({ toolValidated: 'report.text' })
     .describe(
@@ -2084,11 +2068,7 @@ const PresentResultRetainingSynthesisModelSchema = withRetainableSections(
 export const SubmitFindingsModelSchema = z
   .object({
     focus_node_id: z.string().optional().describe(FOCUS_NODE_ID_DESCRIPTION),
-    summary: z
-      .string()
-      .meta(REPORT_MATH)
-      .optional()
-      .describe(SUMMARY_DESCRIPTION),
+    summary: z.string().optional().describe(SUMMARY_DESCRIPTION),
     prune_neighbors: z
       .array(PruneNeighborSchema)
       .max(MAX_ID_LIST_LENGTH)
