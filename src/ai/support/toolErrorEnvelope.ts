@@ -37,15 +37,17 @@ interface IssueText {
 }
 
 /**
- * Marks an issue whose value is refused whole. Not enumerable: replay metadata, not served wording.
+ * Marks an issue whose value is refused in replayed calls (`'top'` for top-level fields only,
+ * `'any'` for any non-empty path). Not enumerable: replay metadata, not served wording.
  */
 function withRefusedValue<const T extends object>(
   issue: T,
-): T & { readonly refusedValue: true } {
+  scope: 'top' | 'any' = 'top',
+): T & { readonly refusedValue: 'top' | 'any' } {
   return Object.defineProperty(issue, 'refusedValue', {
-    value: true,
+    value: scope,
     enumerable: false,
-  }) as T & { readonly refusedValue: true };
+  }) as T & { readonly refusedValue: 'top' | 'any' };
 }
 
 /**
@@ -59,18 +61,24 @@ export const ISSUES = {
     correction:
       'Send the value as the JSON type the schema defines for this field.',
   }),
-  unknown_key: withRefusedValue({
-    category: 'shape',
-    label: 'not a field of this object',
-    correction: 'Use only field names the schema defines for this object.',
-    ranksKey: true,
-  }),
-  never: withRefusedValue({
-    category: 'shape',
-    label: 'field not accepted here',
-    correction:
-      "Put this content where the field's schema description places it; this field stays out of the call.",
-  }),
+  unknown_key: withRefusedValue(
+    {
+      category: 'shape',
+      label: 'not a field of this object',
+      correction: 'Use only field names the schema defines for this object.',
+      ranksKey: true,
+    },
+    'any',
+  ),
+  never: withRefusedValue(
+    {
+      category: 'shape',
+      label: 'field not accepted here',
+      correction:
+        "Put this content where the field's schema description places it; this field stays out of the call.",
+    },
+    'any',
+  ),
   unclosed_fence: {
     category: 'shape',
     label: 'SQL fence not closed',
@@ -370,8 +378,8 @@ export const ISSUES = {
     ranksKey?: true;
     /** The field whose entries answer this fault; ingestion holds it owed beside the faulty one. */
     owedField?: string;
-    /** The value is refused whole; a top-level one is omitted from the replayed call. */
-    refusedValue?: true;
+    /** Whether a refused value drops from replayed calls: top-level only, or any non-empty path. */
+    refusedValue?: 'top' | 'any';
   }
 >;
 

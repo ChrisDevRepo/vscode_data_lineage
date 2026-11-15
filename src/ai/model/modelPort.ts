@@ -439,8 +439,9 @@ export type ToolGenerationResult =
        * The model's own turn — text, every tool call with its arguments, and the provider stream
        * parts ({@link PROVIDER_PARTS_KEY}). The transcript keeps that turn except two rewrites: a
        * call whose arguments were no object is replayed as `{}` (vscodeModelPort), and a rejected
-       * call loses the top-level values its rejection refused whole (toolAttempt). {@link text}
-       * and {@link toolCalls} are views of it (`toolCalls` adds each call's validation outcome).
+       * call drops top-level values refused whole and refused keys at any non-empty path
+       * (toolAttempt). {@link text} and {@link toolCalls} are views of it (`toolCalls` adds each
+       * call's validation outcome).
        */
       readonly message: AIMessage;
       readonly content: readonly ToolGenerationContent[];

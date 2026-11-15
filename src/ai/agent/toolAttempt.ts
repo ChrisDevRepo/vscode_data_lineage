@@ -450,15 +450,56 @@ function withResendIdentity(
   return { ...data, rejection: { ...data.rejection, errors }, inputKey };
 }
 
-/** A fault whose issue refuses the value, and whose path is one field of the call. */
-function refusedWhole(error: ToolError): boolean {
-  return 'refusedValue' in ISSUES[error.code] && isTopLevelPath(error.path);
+/** Path segments to strip from a replayed call for a refused fault, or `undefined` to keep it. */
+function refusedPathSegments(error: ToolError): readonly string[] | undefined {
+  const issue = ISSUES[error.code];
+  if (!('refusedValue' in issue) || !error.path) return undefined;
+  if (issue.refusedValue === 'top' && !isTopLevelPath(error.path))
+    return undefined;
+  return error.path.split('.');
+}
+
+const hasOwnKey = (value: object, key: string): boolean =>
+  Object.prototype.hasOwnProperty.call(value, key);
+
+/**
+ * Returns `value` with the object key at `segments` omitted, leaving parent fields and sibling
+ * properties intact without mutating the original structure.
+ */
+function omitKeyAtPath(
+  value: unknown,
+  segments: readonly string[],
+  index = 0,
+): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  const segment = segments[index];
+  if (segment === undefined) return value;
+  if (index === segments.length - 1) {
+    if (Array.isArray(value) || !hasOwnKey(value, segment)) return value;
+    return Object.fromEntries(
+      Object.entries(value).filter(([key]) => key !== segment),
+    );
+  }
+  if (Array.isArray(value)) {
+    if (!/^(?:0|[1-9]\d*)$/.test(segment)) return value;
+    const pos = Number(segment);
+    if (pos >= value.length) return value;
+    const next = omitKeyAtPath(value[pos], segments, index + 1);
+    return next === value[pos]
+      ? value
+      : value.map((item, itemIndex) => (itemIndex === pos ? next : item));
+  }
+  if (!hasOwnKey(value, segment)) return value;
+  const record = value as Record<string, unknown>;
+  const next = omitKeyAtPath(record[segment], segments, index + 1);
+  return next === record[segment] ? value : { ...record, [segment]: next };
 }
 
 /**
- * The model's turn as the transcript keeps it: each rejected call without the top-level values its
- * rejection refused whole, so a correction does not copy them (the rejection names each field).
- * A field with a nested, bound or value fault keeps its value: a resend replaces it whole.
+ * The model's turn as the transcript keeps it: each rejected call drops top-level values refused
+ * whole and refused keys at any non-empty path, so a correction does not copy them (the rejection
+ * names each field). A nested `type`, bound or value fault keeps its value so a resend replaces it
+ * whole.
  */
 function withoutRefusedValues(
   message: AIMessage,
@@ -467,29 +508,31 @@ function withoutRefusedValues(
   const refused = new Map(
     rejections.map((rejection) => [
       rejection.callId,
-      new Set(
-        (rejection.errors ?? [])
-          .filter(refusedWhole)
-          .map((error) => error.path),
-      ),
+      (rejection.errors ?? [])
+        .map(refusedPathSegments)
+        .filter(
+          (segments): segments is readonly string[] => segments !== undefined,
+        ),
     ]),
   );
   const calls = message.tool_calls ?? [];
-  const strip = (id: string | undefined) => (id ? refused.get(id) : undefined);
-  if (!calls.some((call) => strip(call.id)?.size)) return message;
+  const nextInputs = calls.map((call) => {
+    const paths = call.id ? refused.get(call.id) : undefined;
+    return paths?.length
+      ? paths.reduce<unknown>(
+          (acc, segments) => omitKeyAtPath(acc, segments),
+          call.args,
+        )
+      : call.args;
+  });
+  if (nextInputs.every((input, index) => input === calls[index].args))
+    return message;
   return modelToolCallMessage(
-    calls.map((call) => {
-      const keys = strip(call.id);
-      return {
-        callId: call.id,
-        toolName: call.name,
-        input: keys?.size
-          ? Object.fromEntries(
-              Object.entries(call.args).filter(([key]) => !keys.has(key)),
-            )
-          : call.args,
-      };
-    }),
+    calls.map((call, index) => ({
+      callId: call.id,
+      toolName: call.name,
+      input: nextInputs[index],
+    })),
     messageContentToText(message.content),
     messageProviderParts(message),
     message.name,
