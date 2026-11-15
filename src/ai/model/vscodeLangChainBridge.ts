@@ -273,6 +273,13 @@ export class VscodeLangChainBridge extends BaseChatModel<VscodeLangChainCallOpti
           // Accounting, not content: the capture keeps it verbatim for the eval harness to read;
           // it is never replayed to the model nor counted as a provider part.
           capture?.otherParts.push(toWirePart(part));
+          // Its arrival means the provider ended the stream itself, not how: an OpenAI-compatible
+          // stream cut with finish_reason=length can still carry one. The port reads only arrival.
+          const message = new AIMessageChunk({
+            content: '',
+            response_metadata: { usageParts: 1 },
+          });
+          yield new ChatGenerationChunk({ text: '', message });
           continue;
         }
         providerParts.push(part);

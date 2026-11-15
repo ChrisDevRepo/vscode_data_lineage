@@ -143,6 +143,7 @@ export class VscodeModelPort implements ModelPort {
         message,
         emitted: emittedCalls,
         nonTextChars,
+        usageReceived,
       } = await this.collectGeneration(
         input.messages,
         input.system,
@@ -192,7 +193,10 @@ export class VscodeModelPort implements ModelPort {
         );
       }
 
-      const finishReason = toolCalls.length > 0 ? 'tool-calls' : 'stop';
+      const finishReason = observedFinishReason(
+        usageReceived,
+        toolCalls.length,
+      );
       this.options.debugLog?.(
         `[AI] usage phase=${input.phase} outcome=${finishReason} call=${this.modelCalls}` +
           ` observed_parts=${content.length} observed_text_chars=${text.length}` +
@@ -286,6 +290,7 @@ export class VscodeModelPort implements ModelPort {
     /** The message's tool calls in emission order, each verified to carry a call ID. */
     emitted: readonly EmittedToolCall[];
     nonTextChars: number;
+    usageReceived: boolean;
   }> {
     const cancellation = bindCancellation(signal);
     const wireLog = this.options.wireLog;
@@ -336,6 +341,7 @@ export class VscodeModelPort implements ModelPort {
         : [...history];
       let message = new AIMessageChunk({ content: '' });
       let nonTextChars = 0;
+      let usageReceived = false;
       const stream = await runnable.stream(messages, { signal });
       for await (const chunk of stream) {
         if (signal?.aborted) throw cancelledError();
@@ -345,17 +351,20 @@ export class VscodeModelPort implements ModelPort {
         const streamedNonText = chunk.response_metadata?.nonTextChars;
         if (typeof streamedNonText === 'number')
           nonTextChars += streamedNonText;
+        if (chunk.response_metadata?.usageParts) usageReceived = true;
       }
       if (signal?.aborted) throw cancelledError();
       const emitted = emittedToolCalls(message);
       emitWire?.({
         type: 'generation',
         modelId: this.model.id,
-        finishReason:
-          (message.tool_calls?.length ?? 0) > 0 ? 'tool-calls' : 'stop',
+        finishReason: observedFinishReason(
+          usageReceived,
+          message.tool_calls?.length ?? 0,
+        ),
         latencyMs: Date.now() - startedAt,
       });
-      return { message, emitted, nonTextChars };
+      return { message, emitted, nonTextChars, usageReceived };
     } catch (error) {
       if (
         emitWire &&
@@ -376,6 +385,19 @@ export class VscodeModelPort implements ModelPort {
       cancellation.dispose();
     }
   }
+}
+
+/**
+ * The finish the log states. `vscode.lm` passes no provider finish reason; the usage data part is
+ * the one sign the provider ended the stream itself. Without it the stream may be cut (for example
+ * at max_output_tokens, leaving a partial call), so the call count alone must not name a finish.
+ */
+function observedFinishReason(
+  usageReceived: boolean,
+  toolCallCount: number,
+): 'tool-calls' | 'stop' | 'unknown' {
+  if (!usageReceived) return 'unknown';
+  return toolCallCount > 0 ? 'tool-calls' : 'stop';
 }
 
 /**
