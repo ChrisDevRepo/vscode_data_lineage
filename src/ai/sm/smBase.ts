@@ -3887,24 +3887,10 @@ export class NavigationEngine implements IHopStateMachine {
           }
         : route;
     });
-    const conflictPrunePaths = [
-      ...conflictPaths,
-      ...failures.flatMap((route) =>
-        route.kind === 'prune_question_conflict'
-          ? pruneTargets
-              .filter(
-                (target) =>
-                  (target.resolved ?? this.identifierKey(target.raw)) ===
-                  route.id,
-              )
-              .map((target) => target.path)
-          : [],
-      ),
-    ];
     return {
       focusId,
       invalidRoutes: failures,
-      conflictPaths: conflictPrunePaths,
+      conflictPaths,
       routeRequests,
       flowQuestionByNode,
       routeOutcomes,
@@ -4032,14 +4018,32 @@ export class NavigationEngine implements IHopStateMachine {
         !pruneIdentities.has(id)
       )
         continue;
+      if (conflictingQuestions.has(id)) continue;
       conflictingQuestions.add(id);
-      invalidRoutes.push({
-        kind: 'prune_question_conflict',
-        id,
-        path,
-        reason:
-          'The object is also named in prune_neighbors; the same submission cannot prune and investigate it.',
-      });
+      // Spec 06 refuses the question target as a prune, on the prune field.
+      const prunePaths = [
+        ...pruneTargets
+          .filter(
+            (target) =>
+              (target.resolved ?? this.identifierKey(target.raw)) === id,
+          )
+          .map((target) => target.path),
+        ...identities
+          .filter(
+            (ref) =>
+              ref.id === id && /^prune_neighbors\.\d+\.id$/.test(ref.path),
+          )
+          .map((ref) => ref.path),
+      ];
+      for (const prunePath of new Set(prunePaths)) {
+        invalidRoutes.push({
+          kind: 'prune_question_conflict',
+          id,
+          path: prunePath,
+          reason:
+            'This neighbor is questioned in the same submission; a prune names only a neighbor that submission does not question.',
+        });
+      }
     }
     (questions ?? []).forEach((q, index) => {
       const path = `questions.${index}.nodeId`;
