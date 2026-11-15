@@ -3768,7 +3768,7 @@ export class NavigationEngine implements IHopStateMachine {
       flowQuestionByNode,
       identities,
     );
-    const { pruneTargets, routeRequests, prunedNeighborNids } = actions;
+    const { routeRequests, prunedNeighborNids } = actions;
     const keptNeighborIds = actions.keptNeighborIds.filter(
       (id) => !mappedNeighborIds.has(id),
     );
