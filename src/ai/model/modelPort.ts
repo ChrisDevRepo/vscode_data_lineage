@@ -45,18 +45,23 @@ export function messageProviderParts(message: BaseMessage): readonly unknown[] {
   return Array.isArray(parts) ? parts : [];
 }
 
-/** Creates an assistant message containing validated JSON-object tool calls. */
+/**
+ * Creates an assistant message containing validated JSON-object tool calls.
+ * `name`, when set, is the assistant name replayed with the turn.
+ */
 export function modelToolCallMessage(
   calls: readonly {
-    readonly callId: string;
+    readonly callId?: string;
     readonly toolName: string;
     readonly input: unknown;
   }[],
   text = '',
   providerParts: readonly unknown[] = [],
+  name?: string,
 ): AIMessage {
   return new AIMessage({
     content: text,
+    ...(name !== undefined ? { name } : {}),
     tool_calls: calls.map((call) => ({
       id: call.callId,
       name: call.toolName,
@@ -431,11 +436,11 @@ export type ToolGenerationResult =
   | {
       readonly status: 'completed';
       /**
-       * The model's own turn exactly as the provider returned it — text, every tool call with its
-       * own arguments, and the provider stream parts ({@link PROVIDER_PARTS_KEY}) — appended to the
-       * transcript unchanged except a rejected call's refused top-level values (toolAttempt).
-       * {@link text} and {@link toolCalls} are views of it (`toolCalls` adds
-       * each call's validation outcome).
+       * The model's own turn — text, every tool call with its arguments, and the provider stream
+       * parts ({@link PROVIDER_PARTS_KEY}). The transcript keeps that turn except two rewrites: a
+       * call whose arguments were no object is replayed as `{}` (vscodeModelPort), and a rejected
+       * call loses the top-level values its rejection refused whole (toolAttempt). {@link text}
+       * and {@link toolCalls} are views of it (`toolCalls` adds each call's validation outcome).
        */
       readonly message: AIMessage;
       readonly content: readonly ToolGenerationContent[];

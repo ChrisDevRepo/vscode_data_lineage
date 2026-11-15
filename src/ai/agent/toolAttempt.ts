@@ -4,6 +4,7 @@ import { AIMessage, ToolMessage } from '@langchain/core/messages';
 import {
   messageContentToText,
   messageProviderParts,
+  modelToolCallMessage,
   modelToolResultMessage,
   modelUserMessage,
   type ModelMessage,
@@ -28,9 +29,12 @@ import {
   buildToolExecutionError,
   feedbackStage,
   at,
+  isTopLevelPath,
+  ISSUES,
   makeRejection,
   readToolErrorText,
   renderProblemReport,
+  type ToolError,
   type ToolRejection,
 } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
@@ -446,17 +450,15 @@ function withResendIdentity(
   return { ...data, rejection: { ...data.rejection, errors }, inputKey };
 }
 
-/** Faults refusing a whole top-level value: wrong JSON type, undeclared or forbidden field. */
-const REFUSED_VALUE_CODES: ReadonlySet<string> = new Set([
-  'type',
-  'unknown_key',
-  'never',
-]);
+/** A fault whose issue refuses the value, and whose path is one field of the call. */
+function refusedWhole(error: ToolError): boolean {
+  return 'refusedValue' in ISSUES[error.code] && isTopLevelPath(error.path);
+}
 
 /**
  * The model's turn as the transcript keeps it: each rejected call without the top-level values its
- * rejection refused whole, so a correction does not copy them (DEF-399; the rejection names each
- * field). A field with a nested, bound or value fault keeps its value: a resend replaces it whole.
+ * rejection refused whole, so a correction does not copy them (the rejection names each field).
+ * A field with a nested, bound or value fault keeps its value: a resend replaces it whole.
  */
 function withoutRefusedValues(
   message: AIMessage,
@@ -467,10 +469,7 @@ function withoutRefusedValues(
       rejection.callId,
       new Set(
         (rejection.errors ?? [])
-          .filter(
-            (error) =>
-              REFUSED_VALUE_CODES.has(error.code) && /^[^.]+$/.test(error.path),
-          )
+          .filter(refusedWhole)
           .map((error) => error.path),
       ),
     ]),
@@ -478,26 +477,23 @@ function withoutRefusedValues(
   const calls = message.tool_calls ?? [];
   const strip = (id: string | undefined) => (id ? refused.get(id) : undefined);
   if (!calls.some((call) => strip(call.id)?.size)) return message;
-  return new AIMessage({
-    id: message.id,
-    name: message.name,
-    content: message.content,
-    additional_kwargs: message.additional_kwargs,
-    response_metadata: message.response_metadata,
-    invalid_tool_calls: message.invalid_tool_calls,
-    usage_metadata: message.usage_metadata,
-    tool_calls: calls.map((call) => {
+  return modelToolCallMessage(
+    calls.map((call) => {
       const keys = strip(call.id);
-      return keys?.size
-        ? {
-            ...call,
-            args: Object.fromEntries(
+      return {
+        callId: call.id,
+        toolName: call.name,
+        input: keys?.size
+          ? Object.fromEntries(
               Object.entries(call.args).filter(([key]) => !keys.has(key)),
-            ),
-          }
-        : call;
+            )
+          : call.args,
+      };
     }),
-  });
+    messageContentToText(message.content),
+    messageProviderParts(message),
+    message.name,
+  );
 }
 
 function modelToolDefinitions(

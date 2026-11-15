@@ -37,28 +37,40 @@ interface IssueText {
 }
 
 /**
+ * Marks an issue whose value is refused whole. Not enumerable: replay metadata, not served wording.
+ */
+function withRefusedValue<const T extends object>(
+  issue: T,
+): T & { readonly refusedValue: true } {
+  return Object.defineProperty(issue, 'refusedValue', {
+    value: true,
+    enumerable: false,
+  }) as T & { readonly refusedValue: true };
+}
+
+/**
  * Every issue code's fixed category and verbatim fault/correction text. Fallback wording remains
  * here; contextual category and typed tool effect determine eligibility.
  */
 export const ISSUES = {
-  type: {
+  type: withRefusedValue({
     category: 'shape',
     label: 'wrong JSON type',
     correction:
       'Send the value as the JSON type the schema defines for this field.',
-  },
-  unknown_key: {
+  }),
+  unknown_key: withRefusedValue({
     category: 'shape',
     label: 'not a field of this object',
     correction: 'Use only field names the schema defines for this object.',
     ranksKey: true,
-  },
-  never: {
+  }),
+  never: withRefusedValue({
     category: 'shape',
     label: 'field not accepted here',
     correction:
       "Put this content where the field's schema description places it; this field stays out of the call.",
-  },
+  }),
   unclosed_fence: {
     category: 'shape',
     label: 'SQL fence not closed',
@@ -358,12 +370,21 @@ export const ISSUES = {
     ranksKey?: true;
     /** The field whose entries answer this fault; ingestion holds it owed beside the faulty one. */
     owedField?: string;
+    /** The value is refused whole; a top-level one is omitted from the replayed call. */
+    refusedValue?: true;
   }
 >;
 
 /** Closed set of issue codes. */
 export type IssueCode = keyof typeof ISSUES;
 const ISSUE_CODES = Object.keys(ISSUES) as [IssueCode, ...IssueCode[]];
+
+/**
+ * One field of the call itself. The empty path is the call, and a dotted path is nested.
+ */
+export function isTopLevelPath(path: string): boolean {
+  return /^[^.]+$/.test(path);
+}
 
 /**
  * Engine code carried by the consent gate, which shares the rejection envelope without being one.
@@ -752,7 +773,7 @@ export function renderProblemReport(
       ? merged.filter(
           (error) =>
             (error.code === 'type' || error.code === 'missing') &&
-            /^[^.]+$/.test(error.path) &&
+            isTopLevelPath(error.path) &&
             error.types?.length,
         )
       : [];
