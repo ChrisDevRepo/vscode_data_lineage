@@ -53,6 +53,12 @@ function newValidator(): Ajv2020 {
 }
 /** Per-call fact receipts, called after validation; never part of the compiled validator. */
 export interface ToolFactContext {
+  /**
+   * The ids a field offers where its own value fails, looked up by the field's `toolStringFact` or
+   * `toolValidated` annotation name with the field's JSON pointer. A missing, mistyped or
+   * out-of-set value lists them; `undefined` keeps the schema's own values.
+   */
+  offers?: ReadonlyMap<string, (pointer: string) => string[] | undefined>;
   nativeIssue?: (
     error: ErrorObject,
     mapped: ToolError,
@@ -447,15 +453,33 @@ function sentSize(data: unknown): number | undefined {
   return isRecord(data) ? Object.keys(data).length : undefined;
 }
 
+/** The annotation names a schema node carries that an `offers` lookup can key. */
+const offerNames = (node: unknown): string[] =>
+  isRecord(node)
+    ? [node.toolValidated, node.toolStringFact]
+        .flat()
+        .filter((name): name is string => typeof name === 'string')
+    : [];
+
 /**
  * Native schema faults enter the same issue list and renderer as domain faults, each with the
- * schema facts of its keyword: accepted values, or type and bound.
+ * schema facts of its keyword: accepted values, or type and bound. A missing, mistyped or
+ * out-of-set value lists the field's offer when the call supplies one.
  */
 function rejection(
   errors: readonly ErrorObject[],
   domain: readonly ToolError[],
   facts: ToolFactContext,
+  named: ReadonlyMap<string, string[]>,
 ): ToolRejection {
+  /** The offer of the field at `pointer`, by the annotation names of the served schema there. */
+  const offered = (names: readonly string[], pointer: string) => {
+    for (const name of names) {
+      const ids = facts.offers?.get(name)?.(pointer);
+      if (ids) return ids;
+    }
+    return undefined;
+  };
   // Wrong JSON type and a forbidden value at the same schema node describe one native fault.
   const native = errors
     .filter(
@@ -493,11 +517,13 @@ function rejection(
         code = 'missing';
         // A missing field lists its served values; its schema type is a fact, never a value.
         const field = parentSchema?.properties?.[params.missingProperty];
-        values = Array.isArray(field?.enum)
-          ? field.enum.map(String)
-          : field && 'const' in field
-            ? [String(field.const)]
-            : undefined;
+        values =
+          offered(offerNames(field), errorPointer(error)) ??
+          (Array.isArray(field?.enum)
+            ? field.enum.map(String)
+            : field && 'const' in field
+              ? [String(field.const)]
+              : undefined);
         types = schemaTypes(field);
       } else if (keyword === 'additionalProperties') {
         code = 'unknown_key';
@@ -505,6 +531,10 @@ function rejection(
       } else if (keyword === 'type') {
         types = [params.type].flat();
         code = error.data === undefined ? 'missing' : 'type';
+        values = offered(
+          named.get(error.instancePath) ?? [],
+          error.instancePath,
+        );
         if (code === 'type') received = jsonType(error.data);
       } else if (keyword === 'enum' || keyword === 'const') {
         // A value the field names as an enum fault is a known object it does not offer, not the
@@ -514,7 +544,15 @@ function rejection(
         )
           ? 'enum'
           : (parentSchema?.toolIdentifier?.issue ?? 'enum');
-        values = (params.allowedValues ?? [params.allowedValue]).map(String);
+        const allowed = (params.allowedValues ?? [params.allowedValue]).map(
+          String,
+        );
+        // An offer lists only what the field's own enum accepts.
+        values =
+          offered(
+            named.get(error.instancePath) ?? [],
+            error.instancePath,
+          )?.filter((id) => allowed.includes(id)) ?? allowed;
       } else if (
         /^(?:min|max)(?:Items|Length|imum|Properties)$/.test(keyword) ||
         keyword === 'exclusiveMinimum' ||
@@ -593,11 +631,16 @@ export function validateToolCandidate<S extends z.ZodType>(
   const add = (problem: ToolRejection | null | void) => {
     if (problem) problems.push(problem);
   };
+  /** The annotation names found at each pointer, which an `offers` lookup keys. */
+  const named = new Map<string, string[]>();
   walkServedSchema(
     json,
     input,
     '',
     (node, value, pointer) => {
+      const own = offerNames(node);
+      if (own.length)
+        named.set(pointer, [...(named.get(pointer) ?? []), ...own]);
       const fields = node.toolFields as string[] | undefined,
         names = node.toolValidated as string | string[] | undefined;
       if (
@@ -638,7 +681,7 @@ export function validateToolCandidate<S extends z.ZodType>(
     errors,
     rejection: combineToolRejections([
       ...(errors.length || faults.length
-        ? [rejection(errors, faults, facts)]
+        ? [rejection(errors, faults, facts, named)]
         : []),
       ...problems,
     ]),

@@ -220,10 +220,6 @@ const dottedPath = (path: string): string => path.slice(1).split('/').join('.');
 /** The `/column_flow/<n>` row a pointer path belongs to. */
 const rowOf = (path: string): string => path.split('/').slice(0, 3).join('/');
 
-/** A `column_flow` node field (an entry's `out_node` or a supplier's `node`), by dotted path. */
-const isFlowNodeField = (path: string): boolean =>
-  /^column_flow\.\d+\.(?:out_node|upstream_columns\.\d+\.node)$/.test(path);
-
 /** Defines the core interface for the state machine handling exploration modes. */
 export interface IHopStateMachine {
   readonly status: SmStatus;
@@ -3175,49 +3171,47 @@ export class NavigationEngine implements IHopStateMachine {
       (neighbors ??= new Map(
         this.neighborChoices(focus).map((neighbor) => [neighbor.id, neighbor]),
       ));
+    // A column_flow node field offers only ids its entry accepts, a neighbor action field only the
+    // neighbors the call's other fields leave valid.
+    const offeredNeighbors = (action: 'can_prune' | 'can_question') =>
+      this.offeredNeighborIds(
+        focus,
+        action,
+        this.actionIdentities(
+          focus,
+          admission.identities,
+          '/prune_neighbors/',
+          'can_prune',
+          neighborMap(),
+        ),
+        this.actionIdentities(
+          focus,
+          admission.identities,
+          '/questions/',
+          'can_question',
+          neighborMap(),
+        ),
+        columnReceipt().columnPlan?.stagedEdges ?? [],
+      );
+    admission.facts.offers = new Map([
+      [
+        'flowReference',
+        // The call's own endpoints are classified once before an offer verifies a candidate.
+        (pointer) => {
+          columnReceipt();
+          return this.offeredFlowNodeIds(focus, pointer, admission);
+        },
+      ],
+      ['questionIdentity', () => offeredNeighbors('can_question')],
+      ['pruneIdentity', () => offeredNeighbors('can_prune')],
+    ]);
+    // A route fault at a column_flow or neighbor field replaces the native fault at its path.
     admission.facts.nativeIssue = (error, mapped) => {
       if (
         mapped.code === 'unknown_key' &&
         /^column_flow\.\d+\./.test(mapped.path)
       )
         return { ...mapped, category: 'reference' };
-      const action = /^questions\.\d+\.nodeId$/.test(mapped.path)
-        ? 'can_question'
-        : /^prune_neighbors\.\d+\.id$/.test(mapped.path)
-          ? 'can_prune'
-          : undefined;
-      // A column_flow node field offers only ids its entry accepts, a neighbor action field only
-      // the neighbors the call's other fields leave valid; any other, its served enum.
-      const offeredValues = (pointer: string) =>
-        isFlowNodeField(mapped.path)
-          ? this.offeredFlowNodeIds(focus, pointer, admission)
-          : action
-            ? this.offeredNeighborIds(
-                focus,
-                action,
-                this.actionIdentities(
-                  focus,
-                  admission.identities,
-                  '/prune_neighbors/',
-                  'can_prune',
-                  neighborMap(),
-                ),
-                this.actionIdentities(
-                  focus,
-                  admission.identities,
-                  '/questions/',
-                  'can_question',
-                  neighborMap(),
-                ),
-                columnReceipt().columnPlan?.stagedEdges ?? [],
-              )
-            : undefined;
-      // A missing or mistyped node or action field lists only offered ids; its schema type stays
-      // a fact beside them.
-      if (mapped.code === 'missing' || mapped.code === 'type') {
-        const offered = offeredValues(`/${mapped.path.split('.').join('/')}`);
-        return offered ? { ...mapped, values: offered } : undefined;
-      }
       if (error.keyword !== 'enum' && error.keyword !== 'const') return;
       const path = mapped.path;
       const question =
@@ -3230,24 +3224,9 @@ export class NavigationEngine implements IHopStateMachine {
           : columnReceipt().columnPlan?.invalidRoutes.find(
               (route) => route.path === path,
             );
-      const allowed = (
-        error.params.allowedValues ?? [error.params.allowedValue]
-      ).map(String);
-      const values = () => {
-        const offered = offeredValues(error.instancePath);
-        return offered
-          ? action
-            ? offered.filter((id) => allowed.includes(id))
-            : offered
-          : allowed;
-      };
-      // Without a route fault at this path the schema fault stands, with the same offer.
-      if (!route)
-        return isFlowNodeField(path) || action
-          ? { ...mapped, values: values() }
-          : undefined;
+      if (!route) return;
       const issue = buildRouteValidationRejection([route]).errors[0];
-      return { ...issue, path, values: issue.values ?? values() };
+      return { ...issue, path, values: issue.values ?? mapped.values };
     };
     return ingestToolInput<typeof schema, SubmitResult>({
       input: authored,

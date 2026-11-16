@@ -264,23 +264,22 @@ export function startAdmissionFacts(heldTargetColumns?: string[]) {
     targets = new Map<number, string>();
   const fields = StartExplorationInputSchema.shape;
   const facts: ToolFactContext = {
-    nativeIssue: (_error, mapped) => {
-      if (
-        mapped.path !== 'analysisMode' ||
-        (mapped.code !== 'missing' && mapped.code !== 'enum')
-      )
-        return;
-      const sent = input?.targetColumns as string[] | undefined;
-      const { values: offered = [], ...rest } = mapped;
-      const values = offered.filter(
-        (mode) =>
-          !evaluateStartTargetColumnsRule(
-            mode as 'bb' | 'ct',
-            effectiveTargetColumns(mode as 'bb' | 'ct', sent),
+    offers: new Map([
+      [
+        'start.analysisMode',
+        () =>
+          (['bb', 'ct'] as const).filter(
+            (mode) =>
+              !evaluateStartTargetColumnsRule(
+                mode,
+                effectiveTargetColumns(
+                  mode,
+                  input?.targetColumns as string[] | undefined,
+                ),
+              ),
           ),
-      );
-      return values.length ? { ...rest, values } : rest;
-    },
+      ],
+    ]),
     objects: new Map([
       [
         'start.input',
