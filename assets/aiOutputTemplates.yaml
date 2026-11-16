@@ -84,7 +84,9 @@ closing:
   instruction: >
     One paragraph after the sections with the overall answer in the lens the
     user asked for; a business mission states impact and scope and leaves
-    the mechanism to the sections.
+    the mechanism to the sections. When `result.deferred_questions` is
+    present, a short bullet list of possible next questions follows, drawn
+    from those entries only; otherwise the closing ends with the paragraph.
   example: ""
 
 # `description` is engine output (built by orderAndAssemble in src/ai/tools/presentResult.ts
