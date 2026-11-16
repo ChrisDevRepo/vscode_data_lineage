@@ -1,6 +1,7 @@
 /**
  * In-host setup shared by every AI test that runs the shipped extension in a real VS Code host
- * through vscode.lm only: the provider fixture, its model, a loaded project and a recording chat
+ * through vscode.lm only: the model behind the cloner's own endpoint (VS Code's built-in custom
+ * endpoint provider, configured by the AI_TEST_* names), a loaded project and a recording chat
  * stream. GUI suites add their UI on top.
  */
 import * as assert from 'node:assert';
@@ -8,12 +9,6 @@ import * as vscode from 'vscode';
 
 /** @internal */
 export const EXTENSION_ID = 'datahelper-chwagner.data-lineage-viz';
-/** @internal */
-export const FIXTURE_ID = 'data-lineage-test.data-lineage-test-model-provider';
-/** @internal */
-export const TEST_VENDOR = 'lineage-test';
-/** @internal */
-export const TEST_MODEL_ID = 'lineage-smoke-model';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -61,38 +56,85 @@ export function chatRequest(
   };
 }
 
-/** The fixture's model, once the provider has registered it. @internal */
-export async function fixtureModel(
-  timeoutMs = 20_000,
+/**
+ * Registers the AI_TEST_* endpoint as a built-in custom-endpoint group and returns its one model.
+ * The chat extension is first used here, so VS Code must have finished starting. VS Code owns the
+ * wire: AI_TEST_ENDPOINT ending in /responses selects the Responses API, anything else Chat
+ * Completions.
+ */
+async function byokModel(
+  timeoutMs = 90_000,
 ): Promise<vscode.LanguageModelChat> {
-  for (const until = Date.now() + timeoutMs; Date.now() < until; ) {
-    const model = (
-      await vscode.lm.selectChatModels({ vendor: TEST_VENDOR })
-    )[0];
-    if (model) return model;
-    await sleep(250);
+  const { AI_TEST_ENDPOINT, AI_TEST_API_KEY, AI_TEST_MODEL } = process.env;
+  const effort = process.env.AI_TEST_REASONING_EFFORT;
+  const apiType = new URL(AI_TEST_ENDPOINT!).pathname
+    .replace(/\/+$/u, '')
+    .endsWith('/responses')
+    ? 'responses'
+    : 'chat-completions';
+  await vscode.commands.executeCommand('workbench.action.chat.manage');
+  for (
+    let i = 0;
+    i < 60 && !vscode.extensions.getExtension('GitHub.copilot-chat');
+    i++
+  )
+    await sleep(1000);
+  const chat = vscode.extensions.getExtension('GitHub.copilot-chat');
+  assert.ok(
+    chat,
+    'the built-in chat extension is missing from this VS Code build',
+  );
+  await chat.activate();
+  await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+  await vscode.commands.executeCommand('lm.addLanguageModelsProviderGroup', {
+    name: 'ai-test',
+    vendor: 'customendpoint',
+    apiKey: AI_TEST_API_KEY,
+    apiType,
+    ...(effort
+      ? { settings: { [AI_TEST_MODEL!]: { reasoningEffort: effort } } }
+      : {}),
+    models: [
+      {
+        id: AI_TEST_MODEL,
+        name: AI_TEST_MODEL,
+        url: AI_TEST_ENDPOINT,
+        toolCalling: true,
+        vision: false,
+        maxInputTokens: Number(process.env.AI_TEST_MAX_INPUT_TOKENS),
+        maxOutputTokens: Number(process.env.AI_TEST_MAX_OUTPUT_TOKENS),
+        ...(effort
+          ? {
+              supportsReasoningEffort: [effort],
+              reasoningEffortFormat: apiType,
+            }
+          : {}),
+      },
+    ],
+  });
+  for (
+    const until = Date.now() + timeoutMs;
+    Date.now() < until;
+    await sleep(1000)
+  ) {
+    const models = (
+      await vscode.lm.selectChatModels({ vendor: 'customendpoint' })
+    ).filter((model) => model.id === AI_TEST_MODEL);
+    if (models.length === 1) return models[0];
   }
   return assert.fail(
-    'the language-model fixture did not register through the public VS Code API',
+    `the custom endpoint did not list model ${AI_TEST_MODEL} exactly once`,
   );
 }
 
-/** Activates the provider fixture and the shipped extension and resolves the fixture model. */
+/** Registers the endpoint's model and activates the shipped extension. */
 export async function activateHost() {
-  const fixtureExtension = vscode.extensions.getExtension(FIXTURE_ID);
-  assert.ok(
-    fixtureExtension,
-    'the language-model fixture must be installed in this lane',
-  );
-  const fixture = await fixtureExtension.activate();
-  const model = await fixtureModel();
-  assert.strictEqual(model.vendor, TEST_VENDOR);
-  assert.strictEqual(model.id, TEST_MODEL_ID);
+  const model = await byokModel();
   const extension = vscode.extensions.getExtension(EXTENSION_ID);
   assert.ok(extension, 'the extension under test must be installed');
-  const exports = await extension.activate();
-  assert.ok(exports?.participant, 'activate() must export the participant');
-  return { fixture, model, exports, extensionPath: extension.extensionPath };
+  const api = await extension.activate();
+  assert.ok(api?.participant, 'activate() must export the participant');
+  return { model, exports: api, extensionPath: extension.extensionPath };
 }
 
 /** Waits until the loaded project answers a search through the public tool API. @internal */

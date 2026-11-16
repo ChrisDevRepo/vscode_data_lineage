@@ -46,14 +46,14 @@ export default defineConfig([
     ...shared,
     label: 'bare-environment',
     files: 'out/test/tests/integration/bare-environment.test.js',
-    // No model provider fixture or database extension is installed in this lane.
+    // No model provider or database extension is installed in this lane.
     launchArgs: ['--disable-extensions'],
   },
   {
     ...shared,
     label: 'kill-switch',
     files: 'out/test/tests/integration/kill-switch.test.js',
-    // No provider fixture and a seeded user-data-dir: the lane proves the ai.enabled=false branch
+    // No model provider and a seeded user-data-dir: the lane proves the ai.enabled=false branch
     // as a real user reaches it — settings on disk before activation, not flipped at runtime.
     launchArgs: [
       '--disable-extensions',
@@ -64,7 +64,7 @@ export default defineConfig([
     ...shared,
     label: 'tools',
     files: 'out/test/tests/integration/tools-invoke.test.js',
-    // No provider fixture: a model in the host would make this result unattributable to
+    // No model provider: a model in the host would make this result unattributable to
     // `vscode.lm.invokeTool`.
     launchArgs: ['--disable-extensions'],
   },

@@ -20,16 +20,19 @@ suite('Real provider smoke', () => {
     this.timeout(TEST_TIMEOUT_MS + 60_000);
     const startedAt = Date.now();
     const testDeadline = startedAt + TEST_TIMEOUT_MS;
-    for (const name of [
+    const missing = [
       'AI_TEST_PROVIDER',
       'AI_TEST_ENDPOINT',
       'AI_TEST_API_KEY',
       'AI_TEST_MODEL',
-    ]) {
-      assert.ok(
-        process.env[name],
-        `Set ${name} in .env before running npm run test:ai:smoke.`,
+      'AI_TEST_MAX_INPUT_TOKENS',
+      'AI_TEST_MAX_OUTPUT_TOKENS',
+    ].filter((name) => !process.env[name]?.trim());
+    if (missing.length > 0) {
+      console.log(
+        `[ai-smoke] skipped: set ${missing.join(', ')} in .env to run npm run test:ai:smoke.`,
       );
+      return this.skip();
     }
 
     const { model, exports, extensionPath } = await activateHost();
@@ -105,7 +108,7 @@ suite('Real provider smoke', () => {
       writeFileSync(join(directory, 'answer.txt'), answer());
       console.log(
         `[ai-smoke] provider=${process.env.AI_TEST_PROVIDER} model=${process.env.AI_TEST_MODEL} ` +
-          `adapter=${model.vendor}/${model.family}/${model.version} elapsedMs=${Date.now() - startedAt} ` +
+          `endpoint=${model.vendor}/${model.family}/${model.version} elapsedMs=${Date.now() - startedAt} ` +
           `status=${finalStatus} modelCalls=${modelCalls}`,
       );
     }

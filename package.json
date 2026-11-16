@@ -950,7 +950,6 @@
     "tailwindcss": "^4.3.3",
     "typescript": "^5.7.0",
     "typescript-eslint": "8.72.1",
-    "undici": "^7.30.1",
     "vite": "^8.3.5",
     "vitest": "^4.1.12"
   },

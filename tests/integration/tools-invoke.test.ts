@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { announceLaneTier } from './laneTier';
 
 /** Drives every externally contributed lineage tool through `vscode.lm.invokeTool` in a host with
- * no model provider fixture.
+ * no model provider.
  */
 suite('Tool surface — invokeTool, no model, no CDP', () => {
   const EXTENSION_ID = 'datahelper-chwagner.data-lineage-viz';
@@ -112,11 +112,15 @@ suite('Tool surface — invokeTool, no model, no CDP', () => {
             const problem = JSON.parse(error.message) as {
               code: string;
               errors: unknown[];
-              resend: string[];
+              resend?: string[];
             };
             assert.strictEqual(problem.code, 'backend_fault');
             assert.ok(problem.errors.length > 0);
-            assert.deepStrictEqual(problem.resend, []);
+            assert.strictEqual(
+              problem.resend,
+              undefined,
+              'no held draft, no resend list',
+            );
             return true;
           },
         );

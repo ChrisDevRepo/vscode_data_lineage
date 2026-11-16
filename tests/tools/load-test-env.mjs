@@ -48,10 +48,6 @@ export function loadTestEnv({
       'AI_TEST_TIMEOUT_MS',
       env.AI_TEST_TIMEOUT_MS?.trim() || 7_200_000,
     );
-    env.AI_TEST_REQUEST_TIMEOUT_MS = timeoutSetting(
-      'AI_TEST_REQUEST_TIMEOUT_MS',
-      env.AI_TEST_REQUEST_TIMEOUT_MS?.trim() || env.AI_TEST_TIMEOUT_MS,
-    );
   }
   return applyProviderProfile(env, requireAiProvider);
 }
