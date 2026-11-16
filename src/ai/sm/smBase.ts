@@ -5184,17 +5184,21 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   private buildNeighborList(focusId: string): HopNeighborDisclosure[] {
-    const inSet = new Set(this.graph.inNeighbors(focusId));
     const edgeVerb = new Map<string, string>();
+    const edgeSide = new Map<string, 'upstream' | 'downstream'>();
     for (const e of this.model.edges) {
       if (e.source !== focusId && e.target !== focusId) continue;
       const other = e.source === focusId ? e.target : e.source;
       const verb = edgeApiType(e.type, this.nodeMap.get(e.source)?.type ?? '');
-      if (verb !== 'read' || !edgeVerb.has(other)) edgeVerb.set(other, verb);
+      if (verb !== 'read' || !edgeVerb.has(other)) {
+        edgeVerb.set(other, verb);
+        // The kept edge sets the side too: a written table is downstream, even if also read.
+        edgeSide.set(other, e.source === focusId ? 'downstream' : 'upstream');
+      }
     }
     return this.neighborChoices(focusId).map(({ id: nid, can_prune }) => {
       const n = this.nodeMap.get(nid)!;
-      const edgeDirection = inSet.has(nid) ? 'upstream' : 'downstream';
+      const edgeDirection = edgeSide.get(nid)!;
       // A table the focus writes carries its column constraints: the focus SQL alone cannot show
       // whether a value it inserts is accepted, e.g. a NULL into a NOT NULL column.
       const writtenColumns =
