@@ -27,6 +27,7 @@ export function toModelJsonSchema(schema: z.ZodType): JsonSchemaNode {
     for (const key of [
       'toolAdmission',
       'toolIdentifier',
+      'toolCategory',
       'toolChoice',
       'toolUniqueLabels',
       'toolNoteCaptions',

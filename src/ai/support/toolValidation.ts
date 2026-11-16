@@ -23,6 +23,7 @@ const TOOL_VOCABULARY = [
   'toolValidated',
   'toolFields',
   'toolIdentifier',
+  'toolCategory',
   'toolChoice',
   'toolUniqueLabels',
   'toolNoteCaptions',
@@ -509,7 +510,8 @@ function rejection(
         types: ToolError['types'],
         bound: ToolError['bound'],
         exit: ToolError['exit'],
-        received: ToolError['received'];
+        received: ToolError['received'],
+        category: ToolError['category'];
       if (parentSchema?.toolIssue && parentSchema.toolIssue in ISSUES) {
         code = parentSchema.toolIssue as IssueCode;
         if (code === 'never') exit = 'omit';
@@ -528,6 +530,8 @@ function rejection(
       } else if (keyword === 'additionalProperties') {
         code = 'unknown_key';
         values = Object.keys(parentSchema?.properties ?? {});
+        // A stray key on an object whose fields name served references is a reference fault.
+        if (parentSchema?.toolCategory === 'reference') category = 'reference';
       } else if (keyword === 'type') {
         types = [params.type].flat();
         code = error.data === undefined ? 'missing' : 'type';
@@ -578,6 +582,7 @@ function rejection(
         ...(bound ? { bound } : {}),
         ...(received ? { received } : {}),
         ...(exit ? { exit } : {}),
+        ...(category ? { category } : {}),
       };
       return facts.nativeIssue?.(error, mapped) ?? mapped;
     });

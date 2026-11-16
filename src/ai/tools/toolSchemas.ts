@@ -588,7 +588,7 @@ function stringFact<S extends z.ZodType>(schema: S, name: string): S {
   return schema.meta({ ...schema.meta(), toolStringFact: name });
 }
 
-const SUPPLIER_FACT = { toolValidated: 'supplier' };
+const SUPPLIER_FACT = { toolValidated: 'supplier', toolCategory: 'reference' };
 
 const ColumnRefSchema = z
   .object({
@@ -684,6 +684,7 @@ const ColumnFlowEntrySchema = z
   .meta({
     toolGroups: [{ name: 'flowHeader', fields: ['out_col', 'out_node'] }],
     toolObjectFact: 'flowPresence',
+    toolCategory: 'reference',
   })
   .describe(
     'One output column: out_col, upstream_columns, optional out_node. note belongs inside an upstream_columns entry.',
@@ -1218,6 +1219,7 @@ function spellingField(
 }
 const FLOW_HEADER_FACT = {
   toolObjectFact: 'flowPresence',
+  toolCategory: 'reference',
   toolGroups: [{ name: 'flowHeader', fields: ['out_col', 'out_node'] }],
 };
 
@@ -1315,6 +1317,7 @@ function columnFlowSchemaForHop(
       .strict()
       .meta({
         toolObjectFact: 'flowPresence',
+        toolCategory: 'reference',
         toolGroups: [
           { name: 'flowHeader', fields: ['out_col', 'out_node'], assertions },
         ],

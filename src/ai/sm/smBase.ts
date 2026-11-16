@@ -3207,11 +3207,6 @@ export class NavigationEngine implements IHopStateMachine {
     ]);
     // A route fault at a column_flow or neighbor field replaces the native fault at its path.
     admission.facts.nativeIssue = (error, mapped) => {
-      if (
-        mapped.code === 'unknown_key' &&
-        /^column_flow\.\d+\./.test(mapped.path)
-      )
-        return { ...mapped, category: 'reference' };
       if (error.keyword !== 'enum' && error.keyword !== 'const') return;
       const path = mapped.path;
       const question =
