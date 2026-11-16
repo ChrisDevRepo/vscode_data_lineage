@@ -658,7 +658,7 @@ const indirectColumnsSchema = (
 const OUT_COL_DESCRIPTION =
   "Output column resolved from this hop\'s column task.";
 const OUT_NODE_DESCRIPTION =
-  'Object from <hop_context> that this procedure writes out_col to, or the procedure itself.';
+  'Object from <hop_context> that this procedure writes out_col to.';
 const UPSTREAM_SOURCES =
   'Contributing source columns whose values carry into out_col as-is, computed, or aggregated. ';
 const UPSTREAM_RESOLVE =
@@ -667,10 +667,7 @@ const UPSTREAM_DESCRIPTION =
   UPSTREAM_SOURCES +
   'Columns that only join, decide or arrange the rows or value branch of out_col belong in indirect_columns; a CASE with only literal results has no source column. ' +
   UPSTREAM_RESOLVE;
-/**
- * At a procedure, a created value is the pair procedure.col -> out_node.out_col and a column it
- * only consumes ends there (source.col -> procedure.col): no predicate-only routing is served.
- */
+/** At a procedure, a created value is the pair procedure.col -> out_node.out_col. */
 const PROCEDURE_UPSTREAM_DESCRIPTION = `${UPSTREAM_SOURCES}${UPSTREAM_RESOLVE} A value this procedure creates lists this procedure with the column its task names, else out_col.`;
 
 const ColumnFlowEntrySchema = z
@@ -1163,7 +1160,7 @@ export interface SubmitFindingsHopColumns {
    * {@link SubmitFindingsHopColumns.callerContextNodeIds}.
    */
   readonly columnSourceNodeIds?: readonly string[];
-  /** A procedure focus's `out_node` ids: the in-scope objects it writes and the procedure. */
+  /** A procedure focus's `out_node` ids: the in-scope objects it writes. */
   readonly outNodeIds?: readonly string[];
   /**
    * The ids of that kind outside the approved scope. A neighbor among them is also in
@@ -1276,7 +1273,7 @@ function columnFlowSchemaForHop(
   const shape = {
     out_col: stringFact(outCol, 'flowOutColumn'),
     upstream_columns: upstreamColumns,
-    // Required at a procedure focus: each pair names its target, the procedure for an end pair.
+    // Required at a procedure focus: omission would attribute the pair to the procedure node.
     out_node: (hop.columnSourceNodeIds
       ? stringFact(
           objectIdSchema(

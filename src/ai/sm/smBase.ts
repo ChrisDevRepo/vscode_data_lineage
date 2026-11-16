@@ -110,7 +110,6 @@ import {
   ColumnTracer,
   allowsMissingColumnMetadata,
   columnAttachment,
-  isEndPair,
   columnEndpointKeyFactory,
   resolveColumnFlowTarget,
 } from './columnTracer';
@@ -1549,7 +1548,7 @@ export class NavigationEngine implements IHopStateMachine {
 
   /**
    * The in-scope `out_node` candidates, before {@link offeredFlowNodeIds} filters them: at a
-   * procedure the in-scope objects it writes (graph write edges) and the procedure itself.
+   * procedure the in-scope objects it writes (graph write edges), never the procedure.
    */
   private outNodeScopeIds(focusId: string): string[] {
     const ids = [...this.mappableNeighborIds(focusId)].filter(
@@ -1566,7 +1565,7 @@ export class NavigationEngine implements IHopStateMachine {
         )
         .map((edge) => edge.target),
     );
-    return [focusId, ...ids.filter((id) => written.has(id))].sort();
+    return ids.filter((id) => written.has(id)).sort();
   }
 
   /** Outputs of the callers a function hop investigates; a caller-context entry pairs into one. */
@@ -3620,12 +3619,11 @@ export class NavigationEngine implements IHopStateMachine {
           .map((ref) => ref.path);
       });
     if (this.tracer && finding.column_flow) {
-      // A column is carried only when the one closure of the requested outputs holds it; an end
-      // pair (into the procedure) and a self pair are stored, never forwarded.
+      // A column is carried only when the one closure of the requested outputs holds it; a self
+      // pair is stored, never forwarded.
       const forwards = (edge: ColumnEdge) =>
         endpointKey(edge.from_node, edge.from_col) !==
-          endpointKey(edge.to_node, edge.to_col) &&
-        !isEndPair(edge, this.nodeMap);
+        endpointKey(edge.to_node, edge.to_col);
       const closureEdges = [...this.tracer.edges, ...stagedColumnEdges].filter(
         forwards,
       );
@@ -5299,7 +5297,6 @@ export class NavigationEngine implements IHopStateMachine {
       this.tracer?.deliveredState(
         this.columnRoots(),
         direction === 'bidirectional' ? 'both' : direction,
-        this.nodeMap,
         this.log,
       ) ?? null;
     const rendered = new Set(

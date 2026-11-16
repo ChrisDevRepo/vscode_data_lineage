@@ -55,30 +55,21 @@ export class ColumnTracer {
 
   /**
    * Aspect a complete exploration delivers: authored edges attached to the tracked roots in the
-   * approved direction, and each end pair whose source they reach; detached claims are withheld
-   * and logged.
+   * approved direction; detached claims are withheld and logged.
    */
   deliveredState(
     roots: readonly { node: string; col: string }[],
     direction: 'upstream' | 'downstream' | 'both',
-    nodeMap: ReadonlyMap<string, LineageNode>,
     log?: TracerLogFn,
   ): ColumnAspect {
-    const endpointKey = columnEndpointKeyFactory(
-      new Map(),
-      this.identifierCaseSensitive,
-    );
     const closure = columnAttachment(
       roots,
       this.aspect.edges,
       direction,
-      endpointKey,
+      columnEndpointKeyFactory(new Map(), this.identifierCaseSensitive),
     );
-    const delivered = this.aspect.edges.filter(
-      (edge) =>
-        closure.attaches(edge) ||
-        (isEndPair(edge, nodeMap) &&
-          closure.endpoints.has(endpointKey(edge.from_node, edge.from_col))),
+    const delivered = this.aspect.edges.filter((edge) =>
+      closure.attaches(edge),
     );
     if (delivered.length === this.aspect.edges.length) return this.aspect;
     const detached = this.aspect.edges
@@ -573,17 +564,6 @@ type ColumnClosureEdge = Pick<
   ColumnEdge,
   'hop_node' | 'from_node' | 'from_col' | 'to_node' | 'to_col'
 >;
-
-/** An end pair `source.col -> procedure.col`: stored and delivered, never forwarded. */
-export function isEndPair(
-  edge: Pick<ColumnEdge, 'to_node' | 'hop_node'>,
-  nodeMap: ReadonlyMap<string, LineageNode>,
-): boolean {
-  return (
-    edge.to_node === edge.hop_node &&
-    nodeMap.get(edge.hop_node)?.type === 'procedure'
-  );
-}
 
 interface ColumnAttachment {
   readonly endpoints: Set<string>;
