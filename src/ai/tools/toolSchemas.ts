@@ -1151,19 +1151,20 @@ export interface SubmitFindingsHopColumns {
   /** Neighboring functions eligible for an explicit current-caller output investigation. */
   readonly callerContextNodeIds?: readonly string[];
   /**
-   * Sorted ids the loaded store metadata admits as `upstream_columns` sources and `out_node`
-   * values and the approved scope admits: focus neighbors (and read suppliers of its declared
-   * scalar callers) that carry stored columns or are trusted without column metadata (procedure,
-   * external, function). A columnless function also stays eligible in `questions` via
+   * Sorted ids the loaded store metadata admits as `upstream_columns` sources, in the approved
+   * scope or not (the scope check refuses the others): focus neighbors (and read suppliers of its
+   * declared scalar callers) that carry stored columns or are trusted without column metadata
+   * (procedure, external, function). A columnless function also stays eligible in `questions` via
    * {@link SubmitFindingsHopColumns.callerContextNodeIds}.
    */
   readonly columnSourceNodeIds?: readonly string[];
   /** A procedure focus's `out_node` ids: the in-scope objects it writes and the procedure. */
   readonly outNodeIds?: readonly string[];
   /**
-   * The neighbors of that kind outside the approved scope. `column_flow` does not offer them: it
-   * binds their spelling and the scope check refuses them as `column_out_of_scope`.
-   * `indirect_columns` offers them with the in-scope ids.
+   * The ids of that kind outside the approved scope. A neighbor among them is also in
+   * {@link columnSourceNodeIds}, so a supplier's `node` offers it and the scope check refuses it
+   * as `column_out_of_scope`; `out_node` and a non-neighbor (a scalar caller's read supplier) only
+   * bind their spelling to the scope or neighbor refusal. `indirect_columns` offers them all.
    */
   readonly outOfScopeNodeIds?: readonly string[];
 }
@@ -1418,7 +1419,7 @@ export function submitFindingsSchemaForMode(
         ...(neighborIds && {
           indirect_columns: indirectColumnsSchema(
             objectIdSchema(
-              [...neighborIds, ...(hop.outOfScopeNodeIds ?? [])],
+              [...new Set([...neighborIds, ...(hop.outOfScopeNodeIds ?? [])])],
               hop.identifierCaseSensitive,
             ),
           ),

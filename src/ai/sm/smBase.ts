@@ -1447,12 +1447,16 @@ export class NavigationEngine implements IHopStateMachine {
               )
               .sort()
           : [],
-      // The flow enums offer only in-scope ids; a procedure names itself as the source of a value
-      // it creates.
+      // A supplier's `node` offers every active neighbor, an out-of-scope one included (the scope
+      // check refuses it as `column_out_of_scope`, spec 07:9); a procedure names itself as the
+      // source of a value it creates. `out_node` stays in scope: the arriving demand fixed it.
       columnSourceNodeIds:
         focus && this.graph.hasNode(focus.id)
           ? [
               ...sources.inScope,
+              ...sources.outside.filter((id) =>
+                this.graph.areNeighbors(focus.id, id),
+              ),
               ...(focus.type === 'procedure' ? [focus.id] : []),
             ].sort()
           : [],
@@ -1524,8 +1528,8 @@ export class NavigationEngine implements IHopStateMachine {
 
   /**
    * The served column source ids split by the approved scope (`in_approved_scope`). A `column_flow`
-   * mapping may name only the first; the others are neighbors the scope check refuses as
-   * `column_out_of_scope`, and `indirect_columns` still lists them.
+   * mapping may use only the first; the others are offered as a supplier's `node` and refused by
+   * the scope check as `column_out_of_scope`, and never offered as `out_node` or in a correction.
    */
   private columnSourceScope(focusId: string): {
     inScope: string[];
@@ -1542,7 +1546,7 @@ export class NavigationEngine implements IHopStateMachine {
     };
   }
 
-  /** Ids a `column_flow` mapping may name at this focus: the served ones in the approved scope. */
+  /** Ids a `column_flow` mapping may use at this focus: the served ones in the approved scope. */
   private mappableNeighborIds(focusId: string): Set<string> {
     return new Set(this.columnSourceScope(focusId).inScope);
   }
@@ -1606,10 +1610,10 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * The ids offered for one `column_flow` node field, an entry's `out_node` or a supplier's `node`:
-   * the in-scope candidates the entry accepts at that field with everything else it sent. The
-   * tracer's own supplier and entry checks decide, so an offered id never fails another check; a
-   * field no candidate passes gets no list.
+   * The ids a correction offers for one `column_flow` node field, an entry's `out_node` or a
+   * supplier's `node`: the in-scope candidates the entry accepts at that field with everything else
+   * it sent. The tracer's own supplier and entry checks decide, so a corrected id never fails
+   * another check; a field no candidate passes gets no list.
    */
   private offeredFlowNodeIds(
     focusId: string,
@@ -1676,7 +1680,9 @@ export class NavigationEngine implements IHopStateMachine {
     }
     const path = pointer.replace(/\/node$/, '');
     const out_node = facts.references.get(`${row}/out_node`);
+    const mappable = this.mappableNeighborIds(focusId);
     return (this.hopSubmitColumns.columnSourceNodeIds ?? []).filter((id) => {
+      if (id !== focusId && !mappable.has(id)) return false;
       const candidate = supplier(path, id);
       return (
         candidate !== null &&
