@@ -13,30 +13,11 @@ import {
   type ToolRejection,
 } from './toolErrorEnvelope';
 import { REJECTION_CODES } from './rejectionCodes';
-
-/** Annotations Ajv carries without code; the error facts and receipts read them from nodes. */
-const TOOL_VOCABULARY = [
-  'toolIssue',
-  'toolFields',
-  'toolIdentifier',
-  'toolCategory',
-  'toolChoice',
-];
-
-/**
- * Annotations whose evaluation point a rejection reads: the domain rules and fact receipts they
- * name run after validation, once per place Ajv evaluated them.
- */
-const RECORDED = [
-  'toolUniqueLabels',
-  'toolNoteCaptions',
-  'toolFindingShape',
-  'toolDepthOpen',
-  'toolValidated',
-  'toolArrayFact',
-  'toolObjectFact',
-  'toolStringFact',
-];
+import {
+  TOOL_VOCABULARY,
+  RECORDED,
+  admittedJsonSchema,
+} from '../tools/jsonSchema';
 
 /** Where Ajv evaluated a recorded annotation: its setting and node, the value and path there. */
 interface Recorded {
@@ -231,67 +212,6 @@ const DOMAIN_RULES: Record<
   },
 };
 
-/** Served constraints remain canonical after ModelPort representation normalization. */
-function canonicalSchema(schema: z.ZodType): Record<string, unknown> {
-  const result = z.toJSONSchema(schema, {
-    io: 'input',
-    unrepresentable: 'throw',
-    override: ({ zodSchema, jsonSchema }) => {
-      if (zodSchema instanceof z.ZodNever) jsonSchema.toolIssue = 'never';
-    },
-  });
-  const visit = (node: unknown): void => {
-    if (!node || typeof node !== 'object') return;
-    if ('toolDisplay' in node) {
-      Object.assign(node, node.toolDisplay);
-      delete node.toolDisplay;
-    }
-    if ('toolAdmission' in node) {
-      Object.assign(node, node.toolAdmission);
-      delete node.toolAdmission;
-    }
-    if ('toolGroups' in node) {
-      const owner = node as Record<string, unknown>,
-        properties = owner.properties as Record<string, unknown>;
-      const groups = owner.toolGroups as Array<{
-        name: string;
-        fields: string[];
-        assertions?: Record<string, unknown>;
-      }>;
-      delete owner.toolGroups;
-      for (const group of groups) {
-        const fields = group.fields.filter((key) =>
-          Object.prototype.hasOwnProperty.call(properties, key),
-        );
-        const required = (owner.required ?? []) as string[];
-        // Fields the group asserts as required join its own, beside their property schemas.
-        const { required: asserted = [], ...assertions } =
-          group.assertions ?? {};
-        const schema = {
-          properties: Object.fromEntries(
-            fields.map((key) => [key, properties[key]]),
-          ),
-          required: [
-            ...new Set([
-              ...required.filter((key) => fields.includes(key)),
-              ...(asserted as string[]),
-            ]),
-          ],
-          ...assertions,
-        };
-        for (const key of fields) properties[key] = {};
-        owner.required = required.filter((key) => !fields.includes(key));
-        owner.allOf = [
-          ...((owner.allOf as unknown[]) ?? []),
-          { ...schema, toolValidated: group.name, toolFields: fields },
-        ];
-      }
-    }
-    Object.values(node).forEach(visit);
-  };
-  visit(result);
-  return result;
-}
 const compiled = new WeakMap<object, ValidateFunction>();
 /**
  * The validator of the canonical schema of a Zod schema, or of a schema node a rejection carries,
@@ -301,7 +221,7 @@ function compiledSchema(key: z.ZodType | AnySchemaObject): ValidateFunction {
   let check = compiled.get(key);
   if (!check) {
     check = newValidator().compile(
-      key instanceof z.ZodType ? canonicalSchema(key) : key,
+      key instanceof z.ZodType ? admittedJsonSchema(key) : key,
     );
     compiled.set(key, check);
   }

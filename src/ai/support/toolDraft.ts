@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { isRecord, requiredFields } from './toolValidation';
+import { rawJsonSchema } from '../tools/jsonSchema';
 
 /** Root fields of an object schema, through optional and nullable wrappers. */
 const shape = (schema: z.ZodType | undefined): Record<string, z.ZodType> => {
@@ -61,7 +62,7 @@ export class ToolDraft<T extends object> {
     const cached = this.schemas.get(schema);
     if (cached) return cached as S;
     const held = this.value;
-    const source = jsonSchema(schema);
+    const source = rawJsonSchema(schema);
     const owned = fields(source);
     const projected = schema.meta({
       ...schema.meta(),
@@ -194,8 +195,6 @@ export class ToolDraft<T extends object> {
 }
 
 type Node = Record<string, unknown>;
-const jsonSchema = (schema: z.ZodType): Node =>
-  z.toJSONSchema(schema, { io: 'input', unrepresentable: 'throw' }) as Node;
 /** The properties of an object schema node, through its display projection and union branches. */
 const fields = (node: Node): Record<string, Node> => {
   const current = {
