@@ -540,6 +540,16 @@ function rejection(
             error.instancePath,
           )?.filter((id) => allowed.includes(id)) ?? allowed;
       } else if (
+        keyword === 'not' &&
+        parentSchema?.toolIdentifier?.enumFaultValues?.includes(error.data)
+      ) {
+        // The admission-only refusal of a known-but-unoffered object when the field serves no enum.
+        code = 'enum';
+        values = offered(
+          named.get(error.instancePath) ?? [],
+          error.instancePath,
+        );
+      } else if (
         /^(?:min|max)(?:Items|Length|imum|Properties)$/.test(keyword) ||
         keyword === 'exclusiveMinimum' ||
         keyword === 'exclusiveMaximum'

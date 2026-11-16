@@ -1199,8 +1199,16 @@ function objectIdSchema(
 ) {
   if (ids.length === 0 && closedIds.length === 0 && enumFaultIds.length === 0)
     return z.never().meta({ toolAdmission: { toolIssue: issue ?? 'never' } });
+  // With no served enum (empty ids) admission alone refuses the in-scope neighbors the field does
+  // not offer; the scope check owns the out-of-scope ones. Never served.
+  const unoffered = ids.length
+    ? []
+    : enumFaultIds.filter((id) => !closedIds.includes(id));
   return z.string().meta({
     ...(ids.length ? { enum: [...ids] } : {}),
+    ...(unoffered.length
+      ? { toolAdmission: { not: { enum: [...unoffered] } } }
+      : {}),
     toolIdentifier: {
       kind: 'object',
       values: [...ids],
