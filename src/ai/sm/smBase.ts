@@ -1443,7 +1443,7 @@ export class NavigationEngine implements IHopStateMachine {
               .sort()
           : [],
       // A supplier's `node` offers every active neighbor, an out-of-scope one included (the scope
-      // check refuses it as `column_out_of_scope`, spec 07:9); a procedure names itself as the
+      // check refuses it as `column_out_of_scope`); a procedure names itself as the
       // source of a value it creates. `out_node` stays in scope: the arriving demand fixed it.
       columnSourceNodeIds:
         focus && this.graph.hasNode(focus.id)
