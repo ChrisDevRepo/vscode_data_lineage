@@ -107,8 +107,7 @@ export async function executeStartExploration(
           );
         if (
           raw &&
-          (!supplied('proposalRevision') ||
-            annotations.proposalRevision !== undefined) &&
+          annotations.proposalRevision !== undefined &&
           isRefining &&
           annotations.proposalRevision !== sess.pendingExploration!.revision
         ) {

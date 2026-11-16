@@ -145,6 +145,16 @@ const startScopeAdmission = (fresh: object) => [
   },
 ];
 
+/** The revision of the pending proposal; a refine requires it. */
+const StartProposalRevisionSchema = z
+  .number()
+  .int()
+  .positive()
+  .meta({ toolValidated: 'start.proposalRevision' })
+  .describe(
+    'Required when refining a pending approval proposal; copy the revision shown by the gate.',
+  );
+
 /** Strict domain boundary for fresh, refine, and completed-session exploration requests. */
 export const StartExplorationInputSchema = z
   .object({
@@ -159,15 +169,7 @@ export const StartExplorationInputSchema = z
       .optional()
       .meta({ toolValidated: 'start.question' })
       .describe('The user question this exploration must answer.'),
-    proposalRevision: z
-      .number()
-      .int()
-      .positive()
-      .optional()
-      .meta({ toolValidated: 'start.proposalRevision' })
-      .describe(
-        'Required when refining a pending approval proposal; copy the revision shown by the gate.',
-      ),
+    proposalRevision: StartProposalRevisionSchema.optional(),
     analysisMode: z
       .enum(['bb', 'ct'])
       .optional()
@@ -210,7 +212,9 @@ export const StartExplorationInputSchema = z
 /** Only a refine serves `proposalRevision` and may send a null `depth`. */
 const startPhaseSchemas = [false, true].map((refining) =>
   (refining
-    ? StartExplorationInputSchema
+    ? StartExplorationInputSchema.extend({
+        proposalRevision: StartProposalRevisionSchema,
+      })
     : StartExplorationInputSchema.omit({ proposalRevision: true }).extend({
         depth: ExplorationDepthSelectionSchema.describe(DEPTH_DESCRIPTION),
       })
@@ -224,7 +228,9 @@ const startPhaseSchemas = [false, true].map((refining) =>
 export const startExplorationSchemaForState = (
   refining: boolean,
 ): typeof StartExplorationInputSchema =>
-  startPhaseSchemas[Number(refining)] as typeof StartExplorationInputSchema;
+  startPhaseSchemas[
+    Number(refining)
+  ] as unknown as typeof StartExplorationInputSchema;
 
 const StartScopeFactSchema =
   StartExplorationInputSchema.pick(START_SCOPE_FIELDS);
