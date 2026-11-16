@@ -306,15 +306,29 @@ function canonicalSchema(schema: z.ZodType): Record<string, unknown> {
   visit(result);
   return result;
 }
-const compiled = new WeakMap<z.ZodType, ValidateFunction>();
-/** The validator of the canonical schema, compiled once per schema object. */
-function compiledSchema(schema: z.ZodType): ValidateFunction {
-  let check = compiled.get(schema);
+const compiled = new WeakMap<object, ValidateFunction>();
+/**
+ * The validator of the canonical schema of a Zod schema, or of a schema node a rejection carries,
+ * compiled once per object.
+ */
+function compiledSchema(key: z.ZodType | AnySchemaObject): ValidateFunction {
+  let check = compiled.get(key);
   if (!check) {
-    check = newValidator().compile(canonicalSchema(schema));
-    compiled.set(schema, check);
+    check = newValidator().compile(
+      key instanceof z.ZodType ? canonicalSchema(key) : key,
+    );
+    compiled.set(key, check);
   }
   return check;
+}
+/** The faults of `value` against one schema node (a union branch of an admission fault). */
+export function branchErrors(
+  branch: AnySchemaObject,
+  value: unknown,
+): readonly ErrorObject[] {
+  const check = compiledSchema(branch);
+  check.call([], value);
+  return check.errors ?? [];
 }
 /** The root fields the admitted schema still requires of a call holding `held`. */
 export function requiredFields(

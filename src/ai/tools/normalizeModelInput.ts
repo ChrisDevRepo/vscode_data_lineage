@@ -2,7 +2,12 @@ import { z, type ZodType } from 'zod';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveModelNodeId } from '../support/modelReferences';
 import { splitSqlName, stripBrackets, normalizeColName } from '../../utils/sql';
-import { syntaxFault, validateToolCandidate } from '../support/toolValidation';
+import type { AnySchemaObject, ErrorObject } from 'ajv';
+import {
+  branchErrors,
+  syntaxFault,
+  validateToolCandidate,
+} from '../support/toolValidation';
 
 /** Admission by the served JSON Schema decides every normalization step. */
 const admits = (schema: ZodType, value: unknown): boolean =>
@@ -245,7 +250,10 @@ export function normalizeModelInput(
   schema: ZodType,
   input: unknown,
 ): { readonly input: unknown; readonly fixes: ModelInputFix[] } {
-  const decoded = decodeText(schema, input);
+  const decoded = decodeText((value) => {
+    const admitted = validateToolCandidate(schema, value);
+    return admitted.success ? [] : admitted.errors;
+  }, input);
   const fixes = [...decoded.fixes];
   let current = decoded.input;
   const spelled = structuredClone(current);
@@ -496,157 +504,131 @@ function respellSearch(
   }
 }
 
-/** Decodes values through the schema; union branches must agree on one valid result. */
-function decodeText(
-  schema: ZodType,
-  input: unknown,
-  path: PropertyKey[] = [],
-  rounds = MAX_ROUNDS,
-): { readonly input: unknown; readonly fixes: ModelInputFix[] } {
-  const admitted = validateToolCandidate(schema, input);
-  if (admitted.success || rounds === 0) return { input, fixes: [] };
-  if (
-    schema instanceof z.ZodOptional ||
-    schema instanceof z.ZodNullable ||
-    schema instanceof z.ZodDefault ||
-    schema instanceof z.ZodPrefault ||
-    schema instanceof z.ZodCatch ||
-    schema instanceof z.ZodReadonly ||
-    schema instanceof z.ZodNonOptional
-  )
-    return decodeText(schema.unwrap() as ZodType, input, path, rounds);
-  if (schema instanceof z.ZodPipe)
-    return decodeText(schema.in as ZodType, input, path, rounds);
-  if (schema instanceof z.ZodUnion) {
-    const candidates = schema.options
-      .map((option) => option as ZodType)
-      .map((option) => ({
-        option,
-        decoded: decodeText(option, input, path, rounds),
-      }))
-      .filter(
-        ({ option, decoded }) =>
-          decoded.fixes.length > 0 && admits(option, decoded.input),
-      );
-    const first = candidates[0]?.decoded;
-    return first &&
-      candidates.every(({ decoded }) =>
-        isDeepStrictEqual(decoded.input, first.input),
+/** The faults of a value: admission of the whole schema, or of one union branch. */
+type Faults = (value: unknown) => readonly ErrorObject[];
+type Decoded = ReturnType<typeof normalizeModelInput>;
+
+/** The property names and indices of a fault's instance path. */
+const stepsOf = (error: ErrorObject): string[] =>
+  error.instancePath
+    .split('/')
+    .slice(1)
+    .map((part) => part.replace(/~1/g, '/').replace(/~0/g, '~'));
+
+/** `root` with the value at `steps` replaced; only the nodes on the way are copied. */
+function withValue(
+  root: unknown,
+  steps: readonly string[],
+  value: unknown,
+): unknown {
+  if (steps.length === 0) return value;
+  const [head, ...rest] = steps;
+  const node = root as Record<string, unknown>;
+  const copy = (Array.isArray(root) ? [...root] : { ...node }) as Record<
+    string,
+    unknown
+  >;
+  copy[head] = withValue(node[head], rest, value);
+  return copy;
+}
+
+/** The union faults of Ajv's `anyOf` and `oneOf` keywords. */
+const isUnionFault = (error: ErrorObject): boolean =>
+  error.keyword === 'anyOf' || error.keyword === 'oneOf';
+
+/** Whether `error` was raised by a branch of the union fault `union`. */
+const within = (error: ErrorObject, union: ErrorObject): boolean =>
+  error.schemaPath.startsWith(`${union.schemaPath}/`) &&
+  (error.instancePath === union.instancePath ||
+    error.instancePath.startsWith(`${union.instancePath}/`));
+
+/**
+ * The one value `text` decodes to for a type, enum or const fault, or `undefined` when it decodes
+ * to none or to more than one. A schema with enum or const values leaves its type fault to the
+ * enum or const fault, whose result must be one of those values.
+ */
+function decodeFault(error: ErrorObject, text: string): unknown {
+  const parent = error.parentSchema as { enum?: unknown[]; const?: unknown };
+  const values =
+    'enum' in parent
+      ? parent.enum
+      : 'const' in parent
+        ? [parent.const]
+        : undefined;
+  const results: unknown[] = [];
+  if (error.keyword === 'type' && !values)
+    for (const type of [error.params.type].flat() as string[]) {
+      const after = decodeExact(text, type === 'integer' ? 'number' : type);
+      if (
+        after !== undefined &&
+        (type !== 'integer' || Number.isInteger(after))
       )
-      ? first
-      : { input, fixes: [] };
-  }
-  if (
-    typeof input === 'string' &&
-    (schema instanceof z.ZodLiteral || schema instanceof z.ZodEnum)
-  ) {
-    const values =
-      schema instanceof z.ZodLiteral ? [...schema.values] : schema.options;
-    for (const expected of ['number', 'boolean']) {
-      if (!values.some((value) => typeof value === expected)) continue;
-      const after = decodeExact(input, expected);
-      if (after !== undefined && admits(schema, after)) {
-        return {
-          input: after,
-          fixes: [{ path: path.join('.'), before: input, after }],
-        };
-      }
+        results.push(after);
     }
-    return { input, fixes: [] };
-  }
-  const expected =
-    schema instanceof z.ZodObject
-      ? 'object'
-      : schema instanceof z.ZodArray
-        ? 'array'
-        : schema instanceof z.ZodNumber
-          ? 'number'
-          : schema instanceof z.ZodBoolean
-            ? 'boolean'
-            : undefined;
-  if (typeof input === 'string' && expected) {
-    const after = decodeExact(input, expected);
-    if (after === undefined) return { input, fixes: [] };
-    const nested = decodeText(schema, after, path, rounds - 1);
-    return {
-      input: nested.input,
-      fixes: [{ path: path.join('.'), before: input, after }, ...nested.fixes],
-    };
-  }
+  else if (values && (error.keyword === 'enum' || error.keyword === 'const'))
+    for (const type of ['number', 'boolean']) {
+      const after = decodeExact(text, type);
+      if (
+        values.some((value) => typeof value === type) &&
+        values.includes(after)
+      )
+        results.push(after);
+    }
+  return results.length === 1 ? results[0] : undefined;
+}
+
+/**
+ * Decodes the text values at the paths of the served schema's type, enum and const faults; the
+ * branches of a union fault must agree on one result that admits the value.
+ */
+function decodeText(
+  faultsOf: Faults,
+  input: unknown,
+  base: readonly string[] = [],
+  rounds = MAX_ROUNDS,
+): Decoded {
+  const errors = faultsOf(input);
+  if (errors.length === 0 || rounds === 0) return { input, fixes: [] };
+  const unions = errors.filter(isUnionFault);
   const fixes: ModelInputFix[] = [];
   let current = input;
-  const visit = (
-    child: ZodType,
-    key: string | number,
-    value: unknown,
-  ): void => {
-    const decoded = decodeText(child, value, [...path, key], rounds);
-    if (decoded.fixes.length === 0) return;
-    if (fixes.length === 0) current = structuredClone(input);
-    (current as Record<string | number, unknown>)[key] = decoded.input;
-    fixes.push(...decoded.fixes);
-  };
-  if (schema instanceof z.ZodArray && Array.isArray(input)) {
-    input.forEach((value, index) =>
-      visit(schema.element as ZodType, index, value),
-    );
-  } else if (
-    schema instanceof z.ZodObject &&
-    typeof input === 'object' &&
-    input !== null &&
-    !Array.isArray(input)
-  ) {
-    const record = input as Record<string, unknown>;
-    for (const [key, child] of Object.entries(schema.shape)) {
-      if (Object.prototype.hasOwnProperty.call(record, key))
-        visit(child as ZodType, key, record[key]);
-    }
-  } else {
-    // Other schema compositions decode at the paths of the served schema's type faults.
-    if (!admitted.success)
-      for (const error of admitted.errors) {
-        const steps = error.instancePath
-          .split('/')
-          .slice(1)
-          .map((part) => part.replace(/~1/g, '/').replace(/~0/g, '~'));
-        const key = steps.pop();
-        if (error.keyword !== 'type' || key === undefined) continue;
-        const value = (
-          steps.reduce<unknown>(
-            (node, step) =>
-              (node as Record<string, unknown> | undefined)?.[step],
-            input,
-          ) as Record<string, unknown> | undefined
-        )?.[key];
-        const expected = [error.params.type]
-          .flat()
-          .find((type) => type !== 'null');
-        const after =
-          typeof value === 'string'
-            ? decodeExact(value, expected === 'integer' ? 'number' : expected)
-            : undefined;
-        if (
-          after === undefined ||
-          (expected === 'integer' && !Number.isInteger(after))
+  for (const error of errors) {
+    if (unions.some((union) => within(error, union))) continue;
+    const steps = stepsOf(error);
+    const path = [...base, ...steps];
+    if (isUnionFault(error)) {
+      const branches = (error.schema as AnySchemaObject[])
+        .map((branch) => ({
+          branch,
+          ...decodeText(
+            (value) => branchErrors(branch, value),
+            error.data,
+            path,
+            rounds,
+          ),
+        }))
+        .filter(
+          ({ branch, input: after, fixes: made }) =>
+            made.length > 0 && branchErrors(branch, after).length === 0,
+        );
+      const first = branches[0];
+      if (
+        !first ||
+        !branches.every(({ input: after }) =>
+          isDeepStrictEqual(after, first.input),
         )
-          continue;
-        if (fixes.length === 0) current = structuredClone(input);
-        (
-          steps.reduce<unknown>(
-            (node, step) => (node as Record<string, unknown>)[step],
-            current,
-          ) as Record<string, unknown>
-        )[key] = after;
-        fixes.push({
-          path: [...path, ...steps, key].join('.'),
-          before: value as string,
-          after,
-        });
-      }
-    if (fixes.length > 0) {
-      const nested = decodeText(schema, current, path, rounds - 1);
-      return { input: nested.input, fixes: [...fixes, ...nested.fixes] };
+      )
+        continue;
+      current = withValue(current, steps, first.input);
+      fixes.push(...first.fixes);
+    } else if (typeof error.data === 'string') {
+      const after = decodeFault(error, error.data);
+      if (after === undefined) continue;
+      current = withValue(current, steps, after);
+      fixes.push({ path: path.join('.'), before: error.data, after });
     }
   }
-  return { input: current, fixes };
+  if (fixes.length === 0) return { input, fixes };
+  const nested = decodeText(faultsOf, current, base, rounds - 1);
+  return { input: nested.input, fixes: [...fixes, ...nested.fixes] };
 }
