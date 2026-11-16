@@ -1155,16 +1155,20 @@ function objectIdSchema(
   identifierCaseSensitive = false,
   issue?: 'not_neighbor' | 'prune_target',
   closedIds: readonly string[] = [],
+  enumFaultIds: readonly string[] = [],
 ) {
-  if (ids.length === 0 && closedIds.length === 0)
+  if (ids.length === 0 && closedIds.length === 0 && enumFaultIds.length === 0)
     return z.never().meta({ toolAdmission: { toolIssue: issue ?? 'never' } });
-  const known = new Map([...ids, ...closedIds].map((id) => [id, true]));
+  const known = new Map(
+    [...ids, ...closedIds, ...enumFaultIds].map((id) => [id, true]),
+  );
   const field = z.string().meta({
     ...(ids.length ? { enum: [...ids] } : {}),
     toolIdentifier: {
       kind: 'object',
       values: [...ids],
       ...(closedIds.length ? { closedValues: [...closedIds] } : {}),
+      ...(enumFaultIds.length ? { enumFaultValues: [...enumFaultIds] } : {}),
       caseSensitive: identifierCaseSensitive,
       issue: issue ?? 'not_neighbor',
     },
@@ -1245,6 +1249,11 @@ function columnFlowSchemaForHop(
             hop.identifierCaseSensitive,
             undefined,
             hop.outOfScopeNodeIds,
+            // A neighbor that is no target is a known object the field does not offer: a plain
+            // enum fault, not `not_neighbor`.
+            (hop.neighbors ?? [])
+              .map((neighbor) => neighbor.id)
+              .filter((id) => !hop.outNodeIds?.includes(id)),
           ),
           'flowReference',
         )

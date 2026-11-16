@@ -495,7 +495,13 @@ function rejection(
         code = error.data === undefined ? 'missing' : 'type';
         if (code === 'type') received = jsonType(error.data);
       } else if (keyword === 'enum' || keyword === 'const') {
-        code = parentSchema?.toolIdentifier?.issue ?? 'enum';
+        // A value the field names as an enum fault is a known object it does not offer, not the
+        // identifier's own issue for an unknown one.
+        code = parentSchema?.toolIdentifier?.enumFaultValues?.includes(
+          error.data,
+        )
+          ? 'enum'
+          : (parentSchema?.toolIdentifier?.issue ?? 'enum');
         values = (params.allowedValues ?? [params.allowedValue]).map(String);
       } else if (
         /^(?:min|max)(?:Items|Length|imum|Properties)$/.test(keyword) ||

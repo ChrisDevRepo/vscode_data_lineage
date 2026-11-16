@@ -1462,7 +1462,7 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * The declared column names of one node: the supplier check's clause-backed set (CT check 2)
+   * The declared column names of one node: the supplier check's clause-backed set
    * and the destination set where the served schema lists no `out_col` enum.
    */
   private declaredColumns(nodeId: string): string[] {
@@ -2720,7 +2720,7 @@ export class NavigationEngine implements IHopStateMachine {
   /**
    * Open, admitted directional neighbors of this focus, including queued work; `kept`: in the
    * approved scope and not queued, so the card's default keeps it when the AI neither prunes nor
-   * questions it (spec 05, D-031).
+   * questions it.
    */
   private openNeighbors(focusId: string): Array<{ id: string; kept: boolean }> {
     const directional = new Set(
@@ -3217,25 +3217,10 @@ export class NavigationEngine implements IHopStateMachine {
             : offered
           : allowed;
       };
-      // Without a route fault at this path the schema fault stands, with the same offer; a
-      // neighbor that is no `out_node` target only misses the enum.
+      // Without a route fault at this path the schema fault stands, with the same offer.
       if (!route)
         return isFlowNodeField(path) || action
-          ? {
-              ...mapped,
-              ...(/\.out_node$/.test(path) &&
-              this.graph.areNeighbors(
-                currentFocusId ?? '',
-                resolveModelNodeId(
-                  String(error.data),
-                  this.nodeMap,
-                  this.identifierCaseSensitive,
-                ) ?? '',
-              )
-                ? { code: 'enum' as const }
-                : {}),
-              values: values(),
-            }
+          ? { ...mapped, values: values() }
           : undefined;
       const issue = buildRouteValidationRejection([route]).errors[0];
       return { ...issue, path, values: issue.values ?? values() };
@@ -3830,7 +3815,7 @@ export class NavigationEngine implements IHopStateMachine {
         `[Agenda] route accept hop=${this.hopCount} id=${nNode.id} ← ${focusId} subq=${trunc(req.question, 80)}`,
       );
     }
-    // CT check 1: a column reference names an object the approved scope reaches; anything else is
+    // a column reference names an object the approved scope reaches; anything else is
     // rejected, never dropped.
 
     // An arriving column without a mapping ends at this hop; the acknowledgement names it.
@@ -4020,7 +4005,7 @@ export class NavigationEngine implements IHopStateMachine {
         continue;
       if (conflictingQuestions.has(id)) continue;
       conflictingQuestions.add(id);
-      // Spec 06 refuses the question target as a prune, on the prune field.
+      // A question target is refused as a prune, on the prune field.
       const prunePaths = [
         ...pruneTargets
           .filter(
@@ -4215,7 +4200,7 @@ export class NavigationEngine implements IHopStateMachine {
     }
     for (const nid of pruneIds)
       if (!aloneRefusals.get(nid) && !jointRefusal) prunedNeighborNids.add(nid);
-    // Spec 05 (D-031): an open neighbor the AI neither prunes nor questions is kept, as the card
+    // An open neighbor the AI neither prunes nor questions is kept, as the card
     // states. One whose mapping carries a column continues; in BB a kept neighbor is enqueued, in
     // CT an unmapped one stays on the graph with no column trace. Scope is never extended.
     const keptNeighborIds: string[] = [];

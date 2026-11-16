@@ -2,6 +2,7 @@
 import { createHash } from 'node:crypto';
 import { AIMessage, ToolMessage } from '@langchain/core/messages';
 import {
+  isPlainObject,
   messageContentToText,
   messageProviderParts,
   modelToolCallMessage,
@@ -496,13 +497,16 @@ function omitKeyAtPath(
 }
 
 /**
- * The model's turn as the transcript keeps it: each rejected call drops top-level values refused
- * whole and refused keys at any non-empty path, so a correction does not copy them (the rejection
- * names each field). A nested `type`, bound or value fault keeps its value so a resend replaces it
- * whole.
+ * The model's turn as the transcript replays it, built once from the generation's calls. Each
+ * call keeps the arguments the provider sent; one whose arguments were no JSON object is replayed
+ * as the object its argument text carried, else `{}` (its rejection carries the truth). A rejected
+ * call drops top-level values refused whole and refused keys at any non-empty path, so a
+ * correction does not copy them (the rejection names each field); a nested `type`, bound or value
+ * fault keeps its value so a resend replaces it whole.
  */
 function withoutRefusedValues(
   message: AIMessage,
+  toolCalls: readonly GeneratedToolCall[],
   rejections: readonly ToolAttemptRejection[],
 ): AIMessage {
   const refused = new Map(
@@ -515,22 +519,26 @@ function withoutRefusedValues(
         ),
     ]),
   );
-  const calls = message.tool_calls ?? [];
-  const nextInputs = calls.map((call) => {
-    const paths = call.id ? refused.get(call.id) : undefined;
-    return paths?.length
-      ? paths.reduce<unknown>(
-          (acc, segments) => omitKeyAtPath(acc, segments),
-          call.args,
-        )
-      : call.args;
-  });
-  if (nextInputs.every((input, index) => input === calls[index].args))
+  // The provider's own arguments are the message's; the call identity is the generation's.
+  const sent = new Map(
+    (message.tool_calls ?? []).map((call) => [call.id, call.args]),
+  );
+  const nextInputs = toolCalls.map((call) =>
+    (refused.get(call.callId) ?? []).reduce<unknown>(
+      (acc, segments) => omitKeyAtPath(acc, segments),
+      sent.get(call.callId) ?? (isPlainObject(call.input) ? call.input : {}),
+    ),
+  );
+  if (
+    nextInputs.every(
+      (input, index) => input === sent.get(toolCalls[index].callId),
+    )
+  )
     return message;
   return modelToolCallMessage(
-    calls.map((call, index) => ({
-      callId: call.id,
-      toolName: call.name,
+    toolCalls.map((call, index) => ({
+      callId: call.callId,
+      toolName: call.toolName,
       input: nextInputs[index],
     })),
     messageContentToText(message.content),
@@ -1479,7 +1487,7 @@ async function executeToolGenerationAttempt(
   const messages: ModelMessage[] = [];
   if (generated.toolCalls.length > 0 && !cancelled) {
     messages.push(
-      withoutRefusedValues(generated.message, rejections),
+      withoutRefusedValues(generated.message, generated.toolCalls, rejections),
       ...toolMessages,
     );
   }

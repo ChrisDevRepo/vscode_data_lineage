@@ -194,7 +194,7 @@ export class ColumnTracer {
   /**
    * Verifies a supplier's independent identity and adjacency with the one endpoint check.
    * `admitted` is the supplier node's declared columns, the clause-backed set where the served
-   * schema lists no supplier column enum (CT check 2).
+   * schema lists no supplier column enum.
    */
   validateColumnSupplier(
     focusId: string,

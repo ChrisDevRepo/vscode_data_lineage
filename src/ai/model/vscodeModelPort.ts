@@ -24,7 +24,6 @@ import {
   type ToolGenerationResult,
   cancelledError,
   cancelledToolTurnResult,
-  modelToolCallMessage,
   errorToolTurnResult,
   isHostCancellationError,
   isPortCancellation,
@@ -159,30 +158,13 @@ export class VscodeModelPort implements ModelPort {
         ? [{ type: 'text', text }]
         : [];
       const toolCalls: GeneratedToolCall[] = [];
-      /**
-       * The calls as the transcript replays them; `{}` stands in for the arguments of a rejected
-       * call that were no object.
-       */
-      const replayed: Array<{
-        callId: string;
-        toolName: string;
-        input: unknown;
-      }> = [];
-      let rebuilt = false;
 
       for (const emittedCall of emittedCalls) {
-        // Malformed calls need a replay anchor regardless of which rejection takes precedence.
-        if ('malformedArgs' in emittedCall) rebuilt = true;
-        const { call, replayInput } = classifyToolCall(
+        const { call } = classifyToolCall(
           emittedCall,
           definitionsByName,
           this.options.debugLog,
         );
-        replayed.push({
-          callId: call.callId,
-          toolName: call.toolName,
-          input: replayInput,
-        });
         toolCalls.push(call);
         content.push({ type: 'tool-call', call });
       }
@@ -205,12 +187,7 @@ export class VscodeModelPort implements ModelPort {
       );
       return {
         status: 'completed',
-        // A rejected call whose arguments were no object is replayed with `{}`: the transcript
-        // needs an object and the model sent none; its rejection carries the truth. An accepted
-        // call is replayed as the object it carried.
-        message: rebuilt
-          ? modelToolCallMessage(replayed, text, providerParts)
-          : message,
+        message,
         content,
         text,
         toolCalls,

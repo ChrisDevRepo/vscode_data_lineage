@@ -51,7 +51,7 @@ export function messageProviderParts(message: BaseMessage): readonly unknown[] {
  */
 export function modelToolCallMessage(
   calls: readonly {
-    readonly callId?: string;
+    readonly callId: string;
     readonly toolName: string;
     readonly input: unknown;
   }[],
@@ -275,7 +275,10 @@ function parseValue(text: string): unknown {
   }
 }
 
-const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+/** True when `value` is a JSON object: not null and not an array. */
+export const isPlainObject = (
+  value: unknown,
+): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /**
@@ -294,22 +297,17 @@ function normalizeEmitted(
 }
 
 /**
- * Classifies one emitted call against the offered tools, normalizing valid arguments once;
- * `replayInput` is what the transcript replays (`{}` for arguments that were no object).
+ * Classifies one emitted call against the offered tools, normalizing valid arguments once.
  */
 export function classifyToolCall(
   emitted: EmittedToolCall,
   definitions: ReadonlyMap<string, ModelToolDefinition>,
   debugLog?: (message: string) => void,
-): {
-  readonly call: GeneratedToolCall;
-  readonly replayInput: Record<string, unknown>;
-} {
+): { readonly call: GeneratedToolCall } {
   const { callId, toolName } = emitted;
   const definition = definitions.get(toolName);
   if (!definition)
     return {
-      replayInput: 'args' in emitted ? emitted.args : {},
       call: {
         valid: false as const,
         callId,
@@ -320,13 +318,8 @@ export function classifyToolCall(
     };
   const { input, fixes } = normalizeEmitted(definition.inputSchema, emitted);
   logFixes(toolName, callId, fixes, debugLog);
-  return {
-    // Arguments that are no object are dispatched too: the tool's own admission rejects them.
-    call: { valid: true, callId, toolName, input },
-    // A call is replayed as the object it carried; `{}` stays where it carried none.
-    replayInput:
-      'args' in emitted ? emitted.args : isPlainObject(input) ? input : {},
-  };
+  // Arguments that are no object are dispatched too: the tool's own admission rejects them.
+  return { call: { valid: true, callId, toolName, input } };
 }
 
 /**
@@ -436,12 +429,11 @@ export type ToolGenerationResult =
   | {
       readonly status: 'completed';
       /**
-       * The model's own turn — text, every tool call with its arguments, and the provider stream
-       * parts ({@link PROVIDER_PARTS_KEY}). The transcript keeps that turn except two rewrites: a
-       * call whose arguments were no object is replayed as `{}` (vscodeModelPort), and a rejected
-       * call drops top-level values refused whole and refused keys at any non-empty path
-       * (toolAttempt). {@link text} and {@link toolCalls} are views of it (`toolCalls` adds each
-       * call's validation outcome).
+       * The model's own turn as the provider sent it: text, the tool calls whose arguments were
+       * objects, and the provider stream parts ({@link PROVIDER_PARTS_KEY}). The transcript turn is
+       * built from it once, by `toolAttempt`, which replays a call whose arguments were no object
+       * as `{}` and drops the values a rejection refused. {@link text} and {@link toolCalls} are
+       * views of the generation (`toolCalls` adds each call's validation outcome).
        */
       readonly message: AIMessage;
       readonly content: readonly ToolGenerationContent[];

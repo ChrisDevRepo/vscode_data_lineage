@@ -60,7 +60,6 @@ import {
   readToolErrorText,
   isConsentGateRejection,
   makeRejection,
-  feedbackStage,
   renderProblem,
   NoProjectLoadedError,
   buildNoProjectLoadedError,
@@ -1012,10 +1011,7 @@ export function registerAiTools(
           const rejection = readToolErrorText(text);
           // The host keeps no attempt state, so this caller never escalates: it gets feedback 2
           // (retry state on top of feedback 1's instruction, allowed values and bound).
-          if (rejection)
-            throw new Error(
-              renderProblem(rejection, feedbackStage(rejection, 2)),
-            );
+          if (rejection) throw new Error(renderProblem(rejection, 2));
           return new vscode.LanguageModelToolResult([
             new vscode.LanguageModelTextPart(text),
           ]);

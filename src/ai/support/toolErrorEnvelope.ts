@@ -21,7 +21,7 @@ type IssueCategory = (typeof ISSUE_CATEGORIES)[number];
 const FALLBACK_FIELD = 'sections';
 
 /** Stage-3 fallback for a reference fault without its own issue fallback. */
-export const COLUMN_REFERENCE_FALLBACK = `If you cannot correct it, write that information in ${FALLBACK_FIELD} instead, highlighted with a callout naming the unresolved issue.`;
+export const REFERENCE_FALLBACK = `If you cannot correct it, write that information in ${FALLBACK_FIELD} instead, highlighted with a callout naming the unresolved issue.`;
 const OBJECT_IDENTITY_ISSUE = {
   category: 'reference',
   label: 'not an object in the loaded model',
@@ -35,48 +35,31 @@ interface IssueText {
 }
 
 /**
- * Marks an issue whose value is refused in replayed calls (`'top'` for top-level fields only,
- * `'any'` for any non-empty path). Not enumerable: replay metadata, not served wording.
- */
-function withRefusedValue<const T extends object>(
-  issue: T,
-  scope: 'top' | 'any' = 'top',
-): T & { readonly refusedValue: 'top' | 'any' } {
-  return Object.defineProperty(issue, 'refusedValue', {
-    value: scope,
-    enumerable: false,
-  }) as T & { readonly refusedValue: 'top' | 'any' };
-}
-
-/**
  * Every issue code's fixed category and verbatim fault/correction text. Fallback wording remains
  * here; contextual category and typed tool effect determine eligibility.
  */
 export const ISSUES = {
-  type: withRefusedValue({
+  type: {
     category: 'shape',
     label: 'wrong JSON type',
     correction:
       'Send the value as the JSON type the schema defines for this field.',
-  }),
-  unknown_key: withRefusedValue(
-    {
-      category: 'shape',
-      label: 'not a field of this object',
-      correction: 'Use only field names the schema defines for this object.',
-      ranksKey: true,
-    },
-    'any',
-  ),
-  never: withRefusedValue(
-    {
-      category: 'shape',
-      label: 'field not accepted here',
-      correction:
-        "Put this content where the field's schema description places it; this field stays out of the call.",
-    },
-    'any',
-  ),
+    refusedValue: 'top',
+  },
+  unknown_key: {
+    category: 'shape',
+    label: 'not a field of this object',
+    correction: 'Use only field names the schema defines for this object.',
+    ranksKey: true,
+    refusedValue: 'any',
+  },
+  never: {
+    category: 'shape',
+    label: 'field not accepted here',
+    correction:
+      "Put this content where the field's schema description places it; this field stays out of the call.",
+    refusedValue: 'any',
+  },
   unclosed_fence: {
     category: 'shape',
     label: 'SQL fence not closed',
@@ -728,7 +711,7 @@ export function renderProblemReport(
         stage === 3 && reference
           ? 'fallback' in issue
             ? issue.fallback
-            : COLUMN_REFERENCE_FALLBACK
+            : REFERENCE_FALLBACK
           : '';
       if (fallback && reference) fallbackShown = true;
       const message = `${issue.label}. ${issue.correction}${fallback ? ` ${fallback}` : ''}`;
@@ -766,7 +749,7 @@ export function renderProblemReport(
         ...(stage === 3 && error.exit ? { exit: error.exit } : {}),
       };
     });
-  // Feedback 3 example (spec 08): the next schema level of each top-level type or missing field,
+  // Feedback 3 example: the next schema level of each top-level type or missing field,
   // read from the correction card the next request serves.
   const card = stage === 3 ? schema?.() : undefined;
   const served = card ? toModelJsonSchema(card).properties : undefined;
