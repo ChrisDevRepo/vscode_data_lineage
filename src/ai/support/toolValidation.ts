@@ -238,20 +238,6 @@ function canonicalSchema(schema: z.ZodType): Record<string, unknown> {
     unrepresentable: 'throw',
     override: ({ zodSchema, jsonSchema }) => {
       if (zodSchema instanceof z.ZodNever) jsonSchema.toolIssue = 'never';
-      if (!(zodSchema instanceof z.ZodNullable)) return;
-      const variants = jsonSchema.anyOf as
-        | Array<Record<string, unknown>>
-        | undefined;
-      const nonNull = variants?.filter((node) => node.type !== 'null');
-      if (nonNull?.length !== 1 || typeof nonNull[0].type !== 'string') return;
-      const inner = nonNull[0];
-      delete jsonSchema.anyOf;
-      Object.assign(jsonSchema, inner, { type: [inner.type, 'null'] });
-      if (Array.isArray(inner.enum)) jsonSchema.enum = [...inner.enum, null];
-      if ('const' in inner) {
-        delete jsonSchema.const;
-        Object.assign(jsonSchema, { enum: [inner.const, null] });
-      }
     },
   });
   const visit = (node: unknown): void => {
@@ -452,8 +438,33 @@ function rejection(
     }
     return undefined;
   };
+  // A union branch rejecting the JSON type is no fault where a sibling branch admits it and
+  // faults below it: the sibling's own faults say what is wrong.
+  const unions = errors.filter(({ keyword }) =>
+    ['anyOf', 'oneOf'].includes(keyword),
+  );
+  const branchOf = (error: ErrorObject, union: ErrorObject) =>
+    error.schemaPath.startsWith(`${union.schemaPath}/`)
+      ? error.schemaPath.slice(union.schemaPath.length + 1).split('/')[0]
+      : undefined;
+  const typed = errors.filter(
+    (error) =>
+      error.keyword !== 'type' ||
+      !unions.some((union) => {
+        const own = branchOf(error, union);
+        return (
+          own !== undefined &&
+          error.instancePath === union.instancePath &&
+          errors.some(
+            (other) =>
+              ![undefined, own].includes(branchOf(other, union)) &&
+              other.instancePath.startsWith(`${union.instancePath}/`),
+          )
+        );
+      }),
+  );
   // Wrong JSON type and a forbidden value at the same schema node describe one native fault.
-  const native = errors
+  const native = typed
     .filter(
       (error) =>
         !['anyOf', 'oneOf', 'if'].includes(error.keyword) &&
@@ -556,7 +567,21 @@ function rejection(
         ...(category ? { category } : {}),
       };
     });
-  const faults = [...native, ...domain];
+  // The type faults of union branches at one path are one fault naming every accepted type.
+  const merged: ToolError[] = [];
+  for (const fault of native) {
+    const same =
+      fault.code === 'type' &&
+      merged.find(
+        (other) => other.code === 'type' && other.path === fault.path,
+      );
+    if (same)
+      same.types = [
+        ...new Set([...(same.types ?? []), ...(fault.types ?? [])]),
+      ];
+    else merged.push(fault);
+  }
+  const faults = [...merged, ...domain];
   return makeRejection({
     code: REJECTION_CODES.invalidInput,
     errors: faults.length ? faults : at('invalid'),
