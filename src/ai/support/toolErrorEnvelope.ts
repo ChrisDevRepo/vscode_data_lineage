@@ -20,9 +20,7 @@ type IssueCategory = (typeof ISSUE_CATEGORIES)[number];
 /** The text field a fallback writes its fact into; a rendered fallback adds it to `resend`. */
 const FALLBACK_FIELD = 'sections';
 
-const REPORT_REFERENCE_FALLBACK =
-  'If you cannot correct it, write that information in the detail memory instead, highlighted with a callout naming the unresolved issue.';
-/** Stage-3 fallback for a column reference fault without its own issue fallback. */
+/** Stage-3 fallback for a reference fault without its own issue fallback. */
 export const COLUMN_REFERENCE_FALLBACK = `If you cannot correct it, write that information in ${FALLBACK_FIELD} instead, highlighted with a callout naming the unresolved issue.`;
 const OBJECT_IDENTITY_ISSUE = {
   category: 'reference',
@@ -108,15 +106,13 @@ export const ISSUES = {
     category: 'reference',
     label: 'outside the approved scope',
     correction:
-      "Name an object inside the approved scope; where the field's schema description names a form for an object outside it, use that form.",
+      'Name an object inside the approved scope; explore an object outside it with lineage_start_exploration.',
   },
   column_out_of_scope: {
     category: 'reference',
     label: 'column outside the approved scope',
     correction:
       'Remove the outside column or its entry if it is the sole supplier or output destination; use column_flow: [] if none remain. Ask the outside object in questions and record the fact in sections.',
-    fallback:
-      'If no in-scope supplier can express the fact, write it in sections instead, highlighted with a callout naming the unresolved supplier and columns.',
   },
   result_out_of_scope: {
     category: 'reference',
@@ -137,9 +133,9 @@ export const ISSUES = {
   },
   closed_neighbor: {
     category: 'reference',
-    label: 'neighbor already pruned or visited',
+    label: 'neighbor already closed',
     correction:
-      'Name a neighbor that is still open; a pruned or visited neighbor takes no further decision.',
+      'Name a neighbor that is still open; a closed neighbor takes no further decision.',
   },
   bad_caller_output: {
     category: 'reference',
@@ -732,9 +728,7 @@ export function renderProblemReport(
         stage === 3 && reference
           ? 'fallback' in issue
             ? issue.fallback
-            : effect === 'hop_commit'
-              ? COLUMN_REFERENCE_FALLBACK
-              : REPORT_REFERENCE_FALLBACK
+            : COLUMN_REFERENCE_FALLBACK
           : '';
       if (fallback && reference) fallbackShown = true;
       const message = `${issue.label}. ${issue.correction}${fallback ? ` ${fallback}` : ''}`;
