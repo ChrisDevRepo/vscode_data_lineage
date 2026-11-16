@@ -55,7 +55,7 @@ import {
 import { type ClassificationValue } from '../session/classification';
 import { owedSubjectPath, ToolDraft } from '../support/toolDraft';
 import { ingestToolInput } from '../support/toolIngestion';
-import { isRecord } from '../support/toolValidation';
+import { isRecord, toolPointer } from '../support/toolValidation';
 import {
   evaluateStartTargetColumnsRule,
   inspectStartReferences,
@@ -3204,24 +3204,6 @@ export class NavigationEngine implements IHopStateMachine {
       ['questionIdentity', () => offeredNeighbors('can_question')],
       ['pruneIdentity', () => offeredNeighbors('can_prune')],
     ]);
-    // A route fault at a column_flow or neighbor field replaces the native fault at its path.
-    admission.facts.nativeIssue = (error, mapped) => {
-      if (error.keyword !== 'enum' && error.keyword !== 'const') return;
-      const path = mapped.path;
-      const question =
-        /^questions\.\d+\.nodeId$/.test(path) && typeof error.data === 'string'
-          ? this.questionReference(focus, error.data, path)
-          : undefined;
-      const route =
-        question && question.kind !== 'valid'
-          ? question
-          : columnReceipt().columnPlan?.invalidRoutes.find(
-              (route) => route.path === path,
-            );
-      if (!route) return;
-      const issue = buildRouteValidationRejection([route]).errors[0];
-      return { ...issue, path, values: issue.values ?? mapped.values };
-    };
     return ingestToolInput<typeof schema, SubmitResult>({
       input: authored,
       schema,
@@ -3240,8 +3222,22 @@ export class NavigationEngine implements IHopStateMachine {
           (typeof focusCheck !== 'string' &&
             focusCheck.errors[0].code !== 'not_current_object') ||
           callerFault
-        )
+        ) {
+          // At this early return a route fault only takes the place of the schema's own
+          // identifier fault at its path; none is added.
+          const routes = [
+            ...(columnReceipt().columnPlan?.invalidRoutes ?? []),
+            ...[...(admission.identities ?? [])]
+              .filter(([pointer]) => /^\/questions\/\d+\/nodeId$/.test(pointer))
+              .map(([pointer, raw]) =>
+                this.questionReference(focus, raw, dottedPath(pointer)),
+              )
+              .filter((route) => route.kind !== 'valid'),
+          ];
+          if (routes.length)
+            view.replace(buildRouteValidationRejection(routes));
           return undefined;
+        }
         const fields = admission.fields,
           unavailable = admission.unavailable();
         const { columnPlan } = columnReceipt();
@@ -3253,6 +3249,7 @@ export class NavigationEngine implements IHopStateMachine {
             (...args) => diagnostics.push(args),
             columnPlan,
             admission.identities,
+            admission,
           );
         conflictPaths
           .filter((path) => !path.startsWith('column_flow.'))
@@ -3490,8 +3487,9 @@ export class NavigationEngine implements IHopStateMachine {
     finding: Partial<HopFindingKept>,
     unavailable: ReadonlySet<keyof HopFindingKept> = new Set(),
     log: LogFn = this.log,
-    columnPlan?: ReturnType<ColumnTracer['finishColumnFlow']>,
-    identities?: ReadonlyMap<string, string>,
+    columnPlan: ReturnType<ColumnTracer['finishColumnFlow']> | undefined,
+    identities: ReadonlyMap<string, string> | undefined,
+    flowFacts: ReturnType<typeof findingAdmissionFacts>,
   ) {
     const invalidRoutes: InvalidRoute[] = [
       ...(columnPlan?.invalidRoutes ?? []),
@@ -3842,11 +3840,23 @@ export class NavigationEngine implements IHopStateMachine {
     }
 
     const failures = invalidRoutes.map((route) => {
+      const flowField = route.path?.match(
+        /^column_flow\.\d+\.(?:out_node|upstream_columns\.\d+\.node)$/,
+      );
       const action = route.path?.startsWith('prune_neighbors.')
         ? 'can_prune'
         : route.path?.match(/^questions\.\d+\.nodeId$/)
           ? 'can_question'
           : undefined;
+      if (route.allowed_values === undefined && flowField)
+        return {
+          ...route,
+          allowed_values: this.offeredFlowNodeIds(
+            focusId,
+            toolPointer(flowField[0]),
+            flowFacts,
+          ),
+        };
       return action
         ? {
             ...route,

@@ -9,6 +9,7 @@ import {
   type ToolRejection,
 } from './toolErrorEnvelope';
 import {
+  toolErrorPath,
   validateToolCandidate,
   type ToolValidation,
   type ToolFactContext,
@@ -33,12 +34,25 @@ export class ToolInputView<S extends z.ZodType = z.ZodType> {
   readonly parsed: ToolValidation<z.output<S>>;
   readonly problems: ToolRejection[] = [];
   readonly holdPaths = new Set<string>();
+  /** The paths of the schema's own enum or const faults of identifier fields. */
+  private readonly identifiers: ReadonlySet<string>;
   constructor(
     readonly schema: S,
     readonly candidate: unknown,
     facts?: ToolFactContext,
   ) {
     this.parsed = validateToolCandidate(schema, candidate, facts);
+    this.identifiers = new Set(
+      this.parsed.success
+        ? []
+        : this.parsed.errors
+            .filter(
+              (error) =>
+                ['enum', 'const'].includes(error.keyword) &&
+                error.parentSchema?.toolIdentifier,
+            )
+            .map(toolErrorPath),
+    );
     if (!this.parsed.success) this.add(this.parsed.rejection);
   }
   /** Read the supplied value without claiming its type or validity. */
@@ -56,9 +70,33 @@ export class ToolInputView<S extends z.ZodType = z.ZodType> {
         this.candidate,
       );
   }
+  /**
+   * A fault at the path of the schema's own identifier enum or const fault takes its place, with
+   * the values that fault offered unless it lists its own; a fault elsewhere is not added.
+   */
+  replace(problem: ToolRejection): void {
+    const [native] = this.problems;
+    const faults = new Map(
+      problem.errors
+        .filter((error) => this.identifiers.has(error.path))
+        .map((error) => [error.path, error]),
+    );
+    if (!native || !faults.size) return;
+    this.problems[0] = {
+      ...native,
+      errors: native.errors.map((error) => {
+        const fault = this.identifiers.has(error.path)
+          ? faults.get(error.path)
+          : undefined;
+        const values = fault?.values ?? error.values;
+        return fault ? { ...fault, ...(values ? { values } : {}) } : error;
+      }),
+    };
+  }
   /** Rules append checked facts, never render a model message or retain a draft. */
   add(problem: ToolRejection | null | undefined): void {
     if (!problem) return;
+    this.replace(problem);
     this.problems.push(problem);
     // The field that answers a fault is owed beside the faulty one, from its issue code alone.
     for (const error of problem.errors) {

@@ -60,10 +60,6 @@ export interface ToolFactContext {
    * out-of-set value lists them; `undefined` keeps the schema's own values.
    */
   offers?: ReadonlyMap<string, (pointer: string) => string[] | undefined>;
-  nativeIssue?: (
-    error: ErrorObject,
-    mapped: ToolError,
-  ) => ToolError | undefined;
   validated?: ReadonlyMap<
     string,
     (value: unknown, path: string) => ToolRejection | null | void
@@ -425,12 +421,16 @@ const jsonType = (value: unknown): string =>
   value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
 
 /** A JSON pointer has one original position; escaped identifiers never become array slices. */
-const toolErrorPath = (error: ErrorObject): string =>
+export const toolErrorPath = (error: ErrorObject): string =>
   errorPointer(error)
     .split('/')
     .slice(1)
     .map((part) => part.replace(/~1/g, '/').replace(/~0/g, '~'))
     .join('.');
+
+/** The JSON pointer of a dotted rejection path, the inverse of {@link toolErrorPath}. */
+export const toolPointer = (path: string): string =>
+  `/${path.split('.').join('/')}`;
 
 /** The JSON types a schema node accepts: its own, or those of its union branches. */
 function schemaTypes(node: unknown): string[] {
@@ -574,7 +574,7 @@ function rejection(
         code = 'never';
         exit = 'omit';
       }
-      const mapped: ToolError = {
+      return {
         path: toolErrorPath(error),
         code,
         ...(values?.length ? { values } : {}),
@@ -584,7 +584,6 @@ function rejection(
         ...(exit ? { exit } : {}),
         ...(category ? { category } : {}),
       };
-      return facts.nativeIssue?.(error, mapped) ?? mapped;
     });
   const faults = [...native, ...domain];
   return makeRejection({
@@ -629,9 +628,7 @@ export function validateToolCandidate<S extends z.ZodType>(
         );
   });
   failed.push(
-    ...faults.map((fault) =>
-      fault.path ? `/${fault.path.split('.').join('/')}` : '',
-    ),
+    ...faults.map((fault) => (fault.path ? toolPointer(fault.path) : '')),
   );
   const add = (problem: ToolRejection | null | void) => {
     if (problem) problems.push(problem);
