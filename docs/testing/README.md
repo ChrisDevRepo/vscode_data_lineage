@@ -26,7 +26,7 @@ The gate prints one verdict line when green, and on failure the first failed ste
 
 ## What these checks establish
 
-Deterministic tests verify parser, graph and runtime contracts. A structurally valid AI result does not establish complete SQL lineage or correct model-authored column mappings, and fixed-response host tests establish API wiring, not inference quality. Headless AI uses simulated consent decisions and its own transport; it does not test the approval controls or the VS Code account's model integration. Statement scanning uses semicolons or recognised top-level statement keywords ([parser limits](../PARSE_RULES.md)). A live check spends provider tokens.
+Deterministic tests verify parser, graph and runtime contracts. A structurally valid AI result does not establish complete SQL lineage or correct model-authored column mappings, and host tests with fixed tool responses establish API wiring, not inference quality. The AI smoke runs one participant turn against the cloner's own BYOK endpoint; it does not test the approval controls or the VS Code account's model integration. Statement scanning uses semicolons or recognised top-level statement keywords ([parser limits](../PARSE_RULES.md)). A live check spends provider tokens.
 
 ## Optional checks
 
