@@ -3250,6 +3250,7 @@ export class NavigationEngine implements IHopStateMachine {
             columnPlan,
             admission.identities,
             admission,
+            new Set(Object.keys(raw)),
           );
         conflictPaths
           .filter((path) => !path.startsWith('column_flow.'))
@@ -3490,6 +3491,7 @@ export class NavigationEngine implements IHopStateMachine {
     columnPlan: ReturnType<ColumnTracer['finishColumnFlow']> | undefined,
     identities: ReadonlyMap<string, string> | undefined,
     flowFacts: ReturnType<typeof findingAdmissionFacts>,
+    sent: ReadonlySet<string>,
   ) {
     const invalidRoutes: InvalidRoute[] = [
       ...(columnPlan?.invalidRoutes ?? []),
@@ -3738,6 +3740,7 @@ export class NavigationEngine implements IHopStateMachine {
       pruneColumnEdges,
       flowQuestionByNode,
       identities,
+      sent,
     );
     const { routeRequests, prunedNeighborNids } = actions;
     const keptNeighborIds = actions.keptNeighborIds.filter(
@@ -3938,6 +3941,7 @@ export class NavigationEngine implements IHopStateMachine {
     stagedColumnEdges: readonly ColumnEdge[] | undefined,
     continuationQuestions: ReadonlyMap<string, string>,
     submittedIdentities?: ReadonlyMap<string, string>,
+    sent?: ReadonlySet<string>,
   ) {
     const invalidRoutes: InvalidRoute[] = [];
     const prunedNeighborNids = new Set<string>();
@@ -4003,6 +4007,20 @@ export class NavigationEngine implements IHopStateMachine {
         continue;
       if (conflictingQuestions.has(id)) continue;
       conflictingQuestions.add(id);
+      // A held question the reply did not resend is refused on its own field: the sent prune is
+      // the latest decision and the question leaves the draft with this rejection.
+      if (sent?.has('prune_neighbors') && !sent.has('questions')) {
+        for (const ref of identities)
+          if (ref.id === id && /^questions\.\d+\.nodeId$/.test(ref.path))
+            invalidRoutes.push({
+              kind: 'prune_question_conflict',
+              id,
+              path: ref.path,
+              reason:
+                'This neighbor is pruned in the same submission; a question names only a neighbor that submission does not prune.',
+            });
+        continue;
+      }
       // A question target is refused as a prune, on the prune field.
       const prunePaths = [
         ...pruneTargets
