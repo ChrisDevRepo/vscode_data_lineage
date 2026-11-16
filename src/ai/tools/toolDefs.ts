@@ -67,7 +67,7 @@ export const TOOL_DEFS = [
     effect: 'read',
     userDescription: 'Search for database objects by name or column.',
     modelDescription:
-      'Search database objects by name or column (substring or regex). Returns object IDs, metadata, per-kind `by_type` counts, `in_user_filter`, and `name_match` (`unique` or `ambiguous` ids for an exact name, in-filter first). When an in-filter search is empty but out-of-filter hits exist, widen `schemas` on the next call.',
+      'Search database objects by name (substring or regex) or by column (substring only). Returns object IDs, metadata, per-kind `by_type` counts, `in_user_filter`, and `name_match` `{status: unique|ambiguous, ids}` for an exact name.',
     progressLabel: 'Searching database objects…',
   },
   {
@@ -79,7 +79,7 @@ export const TOOL_DEFS = [
     userDescription:
       'Get a bounded BFS scope in one call, with optional DDL for all nodes in scope.',
     modelDescription:
-      'Graph-scope retrieval for multi-object lineage questions. In `nodes[]`, the origin carries `in` (writes INTO it) and `out` (reads FROM it); every node carries `uh`/`dh`, its hop distance upstream/downstream from the origin on the side(s) it was reached (the origin is 0 on both; a node reached on both sides carries both) — read this instead of re-deriving reach from edge order. `edges` are positional [source, target, type]. Set include_ddl=true when the user wants scope logic. Keep lineage_get_object_detail for one object.',
+      'Graph-scope retrieval for multi-object lineage questions. In `nodes[]`, the origin carries `in` (upstream neighbors) and `out` (downstream neighbors), each with its edge verb `e`; every node carries `uh`/`dh`, its hop distance upstream/downstream from the origin on the side(s) it was reached (the origin is 0 on both; a node reached on both sides carries both). `edges` are positional [source, target, type].',
     progressLabel: 'Gathering object dependencies…',
   },
   {
@@ -148,7 +148,7 @@ export const TOOL_DEFS = [
     userDescription:
       'Find structural patterns like hubs, cycles, or orphans in the graph.',
     modelDescription:
-      'Analyzes the entire graph for specific structural patterns such as hubs, islands, orphans, longest paths, cycles, or external references. Graph edges point upstream to downstream: inDegree counts incoming links from objects this node depends on; outDegree counts outgoing links to objects that depend on this node. Island results exclude singletons and components above the effective size limit; orphan results identify isolated nodes.',
+      'Detects one structural pattern (`type`) in the whole loaded graph. Hubs carry inDegree (links from objects the node depends on) and outDegree (links to objects that depend on it). Island results exclude singletons and components above the effective size limit.',
     progressLabel: 'Detecting graph patterns…',
   },
   {
@@ -184,7 +184,7 @@ export const TOOL_DEFS = [
     userDescription:
       'Shows what is currently on screen: active trace, analysis, or applied bookmark.',
     modelDescription:
-      'Returns what is on screen: active trace, graph analysis, applied bookmark, and view. Optional `ids` recall objects from a stored AI run; optional `filter` lists pruned, open_leads, or stale. `ids` and `filter` need a stored run; without one they answer `no_run_memory`. Omit input for the screen card.',
+      'Returns what is on screen: active trace, graph analysis, applied bookmark, and view. `ids` or `filter` recall the stored run.',
     progressLabel: 'Reading screen state…',
   },
 ] as const satisfies readonly ToolContract[];

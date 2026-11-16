@@ -625,7 +625,7 @@
         "toolReferenceName": "lineage_search_objects",
         "displayName": "Search Objects",
         "userDescription": "Search for database objects by name or column.",
-        "modelDescription": "Search database objects by name or column (substring or regex). Returns object IDs, metadata, per-kind `by_type` counts, `in_user_filter`, and `name_match` (`unique` or `ambiguous` ids for an exact name, in-filter first). When an in-filter search is empty but out-of-filter hits exist, widen `schemas` on the next call.",
+        "modelDescription": "Search database objects by name (substring or regex) or by column (substring only). Returns object IDs, metadata, per-kind `by_type` counts, `in_user_filter`, and `name_match` `{status: unique|ambiguous, ids}` for an exact name.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",
@@ -716,7 +716,7 @@
         "toolReferenceName": "lineage_detect_graph_patterns",
         "displayName": "Detect Graph Patterns",
         "userDescription": "Find structural patterns like hubs, cycles, or orphans in the graph.",
-        "modelDescription": "Analyzes the entire graph for specific structural patterns such as hubs, islands, orphans, longest paths, cycles, or external references. Graph edges point upstream to downstream: inDegree counts incoming links from objects this node depends on; outDegree counts outgoing links to objects that depend on this node. Island results exclude singletons and components above the effective size limit; orphan results identify isolated nodes.",
+        "modelDescription": "Detects one structural pattern (`type`) in the whole loaded graph. Hubs carry inDegree (links from objects the node depends on) and outDegree (links to objects that depend on it). Island results exclude singletons and components above the effective size limit.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",
@@ -829,7 +829,7 @@
         "toolReferenceName": "lineageView",
         "displayName": "Get Screen State",
         "userDescription": "Shows what is currently on screen: active trace, analysis, or applied bookmark.",
-        "modelDescription": "Returns what is on screen: active trace, graph analysis, applied bookmark, and view. Optional `ids` recall objects from a stored AI run; optional `filter` lists pruned, open_leads, or stale. `ids` and `filter` need a stored run; without one they answer `no_run_memory`. Omit input for the screen card.",
+        "modelDescription": "Returns what is on screen: active trace, graph analysis, applied bookmark, and view. `ids` or `filter` recall the stored run.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",

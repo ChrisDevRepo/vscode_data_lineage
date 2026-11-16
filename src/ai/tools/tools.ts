@@ -1064,7 +1064,7 @@ export async function searchDdl(
       objects,
       searched,
       results_omitted: true as const,
-      hint: 'The matches exceed the discovery token budget and were not inlined. Narrow the pattern, restrict types[], or explore the objects with lineage_start_exploration.',
+      hint: 'The matches exceed the discovery token budget and were not inlined. Narrow the pattern, restrict types[], or inspect individual objects with lineage_get_object_detail.',
     }));
 
   const countAdmission = rowAdmission(scanned.total);
