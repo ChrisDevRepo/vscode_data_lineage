@@ -1,5 +1,5 @@
 import Ajv2020 from 'ajv/dist/2020';
-import type { ErrorObject, ValidateFunction } from 'ajv';
+import type { AnySchemaObject, ErrorObject, ValidateFunction } from 'ajv';
 import { findingShapeIssues } from './findingShape';
 import { bothSidesClosed } from '../../engine/shared/explorationDepthContract';
 import { z } from 'zod';
@@ -14,29 +14,44 @@ import {
 } from './toolErrorEnvelope';
 import { REJECTION_CODES } from './rejectionCodes';
 
-/**
- * Annotations Ajv carries without code; the domain rules and fact receipts they name run after
- * validation.
- */
+/** Annotations Ajv carries without code; the error facts and receipts read them from nodes. */
 const TOOL_VOCABULARY = [
   'toolIssue',
-  'toolValidated',
   'toolFields',
   'toolIdentifier',
   'toolCategory',
   'toolChoice',
+];
+
+/**
+ * Annotations whose evaluation point a rejection reads: the domain rules and fact receipts they
+ * name run after validation, once per place Ajv evaluated them.
+ */
+const RECORDED = [
   'toolUniqueLabels',
   'toolNoteCaptions',
   'toolFindingShape',
   'toolDepthOpen',
+  'toolValidated',
   'toolArrayFact',
   'toolObjectFact',
   'toolStringFact',
 ];
 
+/** Where Ajv evaluated a recorded annotation: its setting and node, the value and path there. */
+interface Recorded {
+  keyword: string;
+  setting: unknown;
+  node: AnySchemaObject | undefined;
+  value: unknown;
+  pointer: string;
+}
+
 /**
  * Canonical admission never coerces, fills defaults, or removes submitted fields. One instance per
- * compiled schema: an Ajv instance keeps every schema it compiled, even after `removeSchema`.
+ * compiled schema: an Ajv instance keeps every schema it compiled, even after `removeSchema`. A
+ * recorded annotation never decides validity; it only pushes where Ajv evaluated it onto the array
+ * its check is called with (`check.call(records, input)`: every call passes a fresh one).
  */
 function newValidator(): Ajv2020 {
   const ajv = new Ajv2020({
@@ -47,8 +62,31 @@ function newValidator(): Ajv2020 {
     coerceTypes: false,
     useDefaults: false,
     removeAdditional: false,
+    passContext: true,
   });
   ajv.addVocabulary(TOOL_VOCABULARY);
+  for (const keyword of RECORDED)
+    ajv.addKeyword({
+      keyword,
+      before: 'not',
+      errors: false,
+      validate: function (
+        this: Recorded[],
+        setting: unknown,
+        value: unknown,
+        node?: AnySchemaObject,
+        context?: { instancePath: string },
+      ) {
+        this.push({
+          keyword,
+          setting,
+          node,
+          value,
+          pointer: context?.instancePath ?? '',
+        });
+        return true;
+      },
+    });
   return ajv;
 }
 /** Per-call fact receipts, called after validation; never part of the compiled validator. */
@@ -193,62 +231,6 @@ const DOMAIN_RULES: Record<
   },
 };
 
-const branchChecks = new WeakMap<object, ValidateFunction>();
-/** Native fault count of one branch; compiling it alone relies on zod inlining (no $ref/$defs). */
-function branchFaults(branch: Record<string, unknown>, value: unknown): number {
-  let check = branchChecks.get(branch);
-  if (!check) {
-    check = newValidator().compile(branch);
-    branchChecks.set(branch, check);
-  }
-  check(value);
-  return check.errors?.length ?? 0;
-}
-
-/**
- * Visits annotations through properties, items, allOf and the anyOf/oneOf branches that admit the
- * value, or when none does, those with the fewest native faults (so
- * independent faults surface in one pass); `once` visits only the first such branch. Not
- * if/then/else, not, $defs or additionalProperties.
- */
-function walkServedSchema(
-  node: unknown,
-  value: unknown,
-  pointer: string,
-  visit: (
-    node: Record<string, unknown>,
-    value: unknown,
-    pointer: string,
-  ) => void,
-  once = false,
-): void {
-  if (!isRecord(node)) return;
-  visit(node, value, pointer);
-  for (const member of (node.allOf as unknown[] | undefined) ?? [])
-    walkServedSchema(member, value, pointer, visit, once);
-  const branches = [
-    ...((node.anyOf as unknown[] | undefined) ?? []),
-    ...((node.oneOf as unknown[] | undefined) ?? []),
-  ]
-    .filter(isRecord)
-    .map((branch) => ({ branch, faults: branchFaults(branch, value) }));
-  const fewest = Math.min(...branches.map(({ faults }) => faults));
-  const chosen = branches.filter(({ faults }) => faults === fewest);
-  for (const { branch } of once ? chosen.slice(0, 1) : chosen)
-    walkServedSchema(branch, value, pointer, visit, once);
-  if (Array.isArray(value))
-    value.forEach((item, index) =>
-      walkServedSchema(node.items, item, `${pointer}/${index}`, visit, once),
-    );
-  else if (isRecord(value))
-    for (const [key, schema] of Object.entries(
-      isRecord(node.properties) ? node.properties : {},
-    )) {
-      if (Object.prototype.hasOwnProperty.call(value, key))
-        walkServedSchema(schema, value[key], `${pointer}/${key}`, visit, once);
-    }
-}
-
 /** Served constraints remain canonical after ModelPort representation normalization. */
 function canonicalSchema(schema: z.ZodType): Record<string, unknown> {
   const result = z.toJSONSchema(schema, {
@@ -324,28 +306,32 @@ function canonicalSchema(schema: z.ZodType): Record<string, unknown> {
   visit(result);
   return result;
 }
-const compiled = new WeakMap<
-  z.ZodType,
-  { json: Record<string, unknown>; check: ValidateFunction }
->();
-/** The canonical schema and its validator, compiled once per schema object. */
-function compiledSchema(schema: z.ZodType) {
-  let entry = compiled.get(schema);
-  if (!entry) {
-    const json = canonicalSchema(schema);
-    entry = { json, check: newValidator().compile(json) };
-    compiled.set(schema, entry);
+const compiled = new WeakMap<z.ZodType, ValidateFunction>();
+/** The validator of the canonical schema, compiled once per schema object. */
+function compiledSchema(schema: z.ZodType): ValidateFunction {
+  let check = compiled.get(schema);
+  if (!check) {
+    check = newValidator().compile(canonicalSchema(schema));
+    compiled.set(schema, check);
   }
-  return entry;
+  return check;
 }
-/** The root fields the admitted schema requires of a call, its group assertions included. */
-export function requiredFields(schema: z.ZodType): string[] {
-  const required = new Set<string>();
-  walkServedSchema(compiledSchema(schema).json, {}, '', (node) => {
-    for (const key of (node.required as string[] | undefined) ?? [])
-      required.add(key);
-  });
-  return [...required];
+/** The root fields the admitted schema still requires of a call holding `held`. */
+export function requiredFields(
+  schema: z.ZodType,
+  held: Record<string, unknown>,
+): string[] {
+  const check = compiledSchema(schema);
+  check.call([], held);
+  return [
+    ...new Set(
+      (check.errors ?? [])
+        .filter(
+          (error) => error.keyword === 'required' && error.instancePath === '',
+        )
+        .map((error) => String(error.params.missingProperty)),
+    ),
+  ];
 }
 /** The sole canonical admission verdict and original native schema faults. */
 export type ToolValidation<T> =
@@ -572,8 +558,9 @@ export function validateToolCandidate<S extends z.ZodType>(
   input: unknown,
   facts: ToolFactContext = {},
 ): ToolValidation<z.output<S>> {
-  const { json, check } = compiledSchema(schema);
-  const native = check(input),
+  const check = compiledSchema(schema),
+    records: Recorded[] = [];
+  const native = check.call(records, input),
     errors = [...(check.errors ?? [])],
     faults: ToolError[] = [],
     problems: ToolRejection[] = [];
@@ -585,18 +572,21 @@ export function validateToolCandidate<S extends z.ZodType>(
         ? path === pointer || path.startsWith(`${pointer}/`)
         : path === `${pointer}/${key}` || path.startsWith(`${pointer}/${key}/`),
     );
-  walkServedSchema(json, input, '', (node, value, pointer) => {
-    for (const [name, rule] of Object.entries(DOMAIN_RULES))
-      if (name in node)
-        faults.push(
-          ...rule(
-            node[name] as never,
-            value,
-            pointer.split('/').slice(1).join('.'),
-            (relative) => !under(pointer, relative),
-          ),
-        );
+  // A union evaluates every branch: one record per annotation setting and path.
+  const seen = new Set<string>();
+  const recorded = records.filter(({ keyword, setting, pointer }) => {
+    const key = JSON.stringify([keyword, setting, pointer]);
+    return !seen.has(key) && !!seen.add(key);
   });
+  for (const { keyword, setting, value, pointer } of recorded)
+    faults.push(
+      ...(DOMAIN_RULES[keyword]?.(
+        setting as never,
+        value,
+        pointer.split('/').slice(1).join('.'),
+        (relative) => !under(pointer, relative),
+      ) ?? []),
+    );
   failed.push(
     ...faults.map((fault) => (fault.path ? toolPointer(fault.path) : '')),
   );
@@ -605,23 +595,20 @@ export function validateToolCandidate<S extends z.ZodType>(
   };
   /** The annotation names found at each pointer, which an `offers` lookup keys. */
   const named = new Map<string, string[]>();
-  walkServedSchema(
-    json,
-    input,
-    '',
-    (node, value, pointer) => {
-      const own = offerNames(node);
-      if (own.length)
-        named.set(pointer, [...(named.get(pointer) ?? []), ...own]);
-      const fields = node.toolFields as string[] | undefined,
-        names = node.toolValidated as string | string[] | undefined;
+  for (const { keyword, setting, node, value, pointer } of recorded) {
+    named.set(pointer, [
+      ...(named.get(pointer) ?? []),
+      ...offerNames({ [keyword]: setting }),
+    ]);
+    const context = { instancePath: pointer };
+    if (keyword === 'toolValidated') {
+      const fields = node?.toolFields as string[] | undefined;
       if (
-        names !== undefined &&
-        (fields
+        fields
           ? isRecord(value) &&
             !failed.includes(pointer) &&
             !fields.some((key) => under(pointer, key))
-          : !under(pointer))
+          : !under(pointer)
       ) {
         const received =
           fields && isRecord(value)
@@ -633,19 +620,16 @@ export function validateToolCandidate<S extends z.ZodType>(
                   .map((key) => [key, value[key]]),
               )
             : value;
-        for (const name of [names].flat())
+        for (const name of [setting].flat() as string[])
           add(facts.validated?.get(name)?.(received, pointer));
       }
-      const context = { instancePath: pointer };
-      if (Array.isArray(value) && typeof node.toolArrayFact === 'string')
-        add(facts.arrays?.get(node.toolArrayFact)?.(value, context));
-      if (isRecord(value) && typeof node.toolObjectFact === 'string')
-        add(facts.objects?.get(node.toolObjectFact)?.(value, context));
-      if (typeof value === 'string' && typeof node.toolStringFact === 'string')
-        add(facts.strings?.get(node.toolStringFact)?.(value, context));
-    },
-    true,
-  );
+    } else if (keyword === 'toolArrayFact' && Array.isArray(value))
+      add(facts.arrays?.get(setting as string)?.(value, context));
+    else if (keyword === 'toolObjectFact' && isRecord(value))
+      add(facts.objects?.get(setting as string)?.(value, context));
+    else if (keyword === 'toolStringFact' && typeof value === 'string')
+      add(facts.strings?.get(setting as string)?.(value, context));
+  }
   if (accepted && !faults.length && !problems.length)
     return { success: true, data: input as z.output<S> };
   return {

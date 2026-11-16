@@ -157,10 +157,7 @@ export class ToolDraft<T extends object> {
     this.schemas = new WeakMap();
     const value = this.value ?? {};
     // An owed subject's root is resent even where it is held: the subject is added to it.
-    const owed = new Set([
-      ...rootsOf(true),
-      ...requiredFields(schema).filter((key) => value[key] === undefined),
-    ]);
+    const owed = new Set([...rootsOf(true), ...requiredFields(schema, value)]);
     return {
       overwritten,
       resend: roots.filter((key) => faulty.has(key) || owed.has(key)),
