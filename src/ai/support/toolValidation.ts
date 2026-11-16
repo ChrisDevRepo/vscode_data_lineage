@@ -200,21 +200,32 @@ function branchFaults(branch: Record<string, unknown>, value: unknown): number {
     branchChecks.set(branch, check);
   }
   check(value);
-  // Served schemas omit `pattern`, so a branch's `toolPattern` mismatches count as its faults too.
-  let patterns = 0;
-  walkServedSchema(branch, value, '', (node, held) => {
-    if (patternMismatch(node, held)) patterns += 1;
-  });
-  return (check.errors?.length ?? 0) + patterns;
+  return (check.errors?.length ?? 0) + patternFaults(branch, value).length;
 }
 
-const patternMismatch = (
-  node: Record<string, unknown>,
-  value: unknown,
-): boolean =>
-  typeof node.toolPattern === 'string' &&
-  typeof value === 'string' &&
-  !new RegExp(node.toolPattern, 'u').test(value);
+/**
+ * Served schemas omit `pattern` (provider compatibility); `toolPattern` carries each regex. This
+ * one walk finds its mismatches for the branch fault count and for the reported errors.
+ */
+const patternFaults = (schema: unknown, input: unknown): ErrorObject[] => {
+  const faults: ErrorObject[] = [];
+  walkServedSchema(schema, input, '', (node, value, pointer) => {
+    if (
+      typeof node.toolPattern === 'string' &&
+      typeof value === 'string' &&
+      !new RegExp(node.toolPattern, 'u').test(value)
+    )
+      faults.push({
+        keyword: 'pattern',
+        instancePath: pointer,
+        schemaPath: '',
+        params: { pattern: node.toolPattern },
+        parentSchema: node,
+        data: value,
+      });
+  });
+  return faults;
+};
 
 /**
  * Visits annotations through properties, items, allOf and the anyOf/oneOf branches that admit the
@@ -553,20 +564,7 @@ export function validateToolCandidate<S extends z.ZodType>(
     errors = [...(check.errors ?? [])],
     faults: ToolError[] = [],
     problems: ToolRejection[] = [];
-  // Served schemas omit `pattern` (provider compatibility); each regex is checked here instead.
-  walkServedSchema(json, input, '', (node, value, pointer) => {
-    if (patternMismatch(node, value))
-      errors.push({
-        keyword: 'pattern',
-        instancePath: pointer,
-        schemaPath: '',
-        params: { pattern: node.toolPattern },
-        message: `must match pattern "${node.toolPattern}"`,
-        schema: node.toolPattern,
-        parentSchema: node,
-        data: value,
-      });
-  });
+  errors.push(...patternFaults(json, input));
   const accepted = native && !errors.length;
   const failed = errors.map(errorPointer);
   const under = (pointer: string, key?: string) =>
