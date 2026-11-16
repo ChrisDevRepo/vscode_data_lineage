@@ -188,7 +188,7 @@ export interface HopContext {
 interface PruneNeighbor {
   /** Neighbor id from `<hop_context>`. */
   id: string;
-  /** Why this node's SQL shows the neighbor is off the answer. */
+  /** Why this node's SQL shows the neighbor is irrelevant to the user question. */
   reason: string;
 }
 

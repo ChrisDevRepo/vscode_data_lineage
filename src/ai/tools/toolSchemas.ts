@@ -65,8 +65,8 @@ const ScopeNotesValueSchema = z
       "each in the user's terms; echoed at the approval gate and carried to every hop.",
   );
 
-/** Canonical answer-lens values and primary-intent instruction shared by entry and tool schemas. */
-export const ClassificationValueSchema = z
+/** Canonical answer-lens values and primary-intent instruction of the tool schemas. */
+const ClassificationValueSchema = z
   .enum(['business', 'technical', 'both'])
   .describe(
     'Choose the answer lens from the primary user intent: "business" for meaning, purpose, impact or business rules, ' +
@@ -476,20 +476,19 @@ type CapturedSectionsWire = z.infer<typeof CapturedSectionsSchema>;
 const PRUNE_NEIGHBORS_DESCRIPTION =
   'An in-scope neighbor you do not prune or question is kept; never prune a neighbor you map. ' +
   "Name each `can_prune: true` neighbor this node's SQL shows is irrelevant to the user question and arriving task. " +
-  'That neighbor and whatever only it leads to are removed. The focus stays on the graph, including when every neighbor is named (a dead end). A neighbor named here gets no questions entry.';
+  'A named neighbor is removed, with whatever only it leads to, once every branch that reaches it also prunes it.';
 
 /**
- * One `prune_neighbors[]` entry: the neighbour and why this node's SQL shows it is off the answer.
+ * One `prune_neighbors[]` entry: the neighbour and why this node's SQL shows it is
+ * irrelevant to the user question.
  */
 const PruneNeighborSchema = z
   .object({
-    id: stringFact(z.string().min(1), 'pruneIdentity').describe(
-      'A neighbor id from `<hop_context>`.',
-    ),
+    id: stringFact(z.string().min(1), 'pruneIdentity'),
     reason: nonWhitespaceText
       .min(1)
       .describe(
-        "What in this node's SQL shows the neighbor is off the answer.",
+        "What in this node's SQL shows the neighbor is irrelevant to the user question.",
       ),
   })
   .strict();
@@ -511,7 +510,7 @@ const NO_QUESTIONABLE_NEIGHBOR_DESCRIPTION =
   'No neighbor can take a question at this hop, so this list takes no entry.';
 
 const BB_PRUNE_NEIGHBORS_DESCRIPTION =
-  "Name each `can_prune: true` neighbor this node's SQL shows is off the path; that neighbor and whatever only it leads to are removed. The focus stays on the graph, including when every neighbor is named (a dead end). A neighbor named here gets no questions entry.";
+  "Name each `can_prune: true` neighbor this node's SQL shows is irrelevant to the user question; it is removed, with whatever only it leads to, once every branch that reaches it also prunes it.";
 const BB_QUESTIONS_DESCRIPTION =
   'An in-scope neighbor you do not prune or question is kept. Ask an eligible in-scope neighbor a self-contained subquestion, tied to the user question, that only its own SQL can answer. For an eligible out-of-scope neighbor, optionally propose a relevant follow-up; it is deferred until scope approval. No questions to visited or pruned neighbors.';
 
@@ -522,9 +521,7 @@ export const HELD_LISTS_DESCRIPTION =
 /** One `questions[]` entry, attached to that neighbour's queued hop. */
 const NeighborQuestionSchema = z
   .object({
-    nodeId: stringFact(z.string().min(1), 'questionIdentity').describe(
-      'A neighbor id from `<hop_context>`.',
-    ),
+    nodeId: stringFact(z.string().min(1), 'questionIdentity'),
     question: z
       .string()
       .min(1)
@@ -1364,7 +1361,7 @@ export function submitFindingsSchemaForMode(
             closedQuestionIds,
           ),
           'questionIdentity',
-        ).describe(NeighborQuestionSchema.shape.nodeId.description ?? ''),
+        ),
       })
     : NeighborQuestionSchema;
   if (mode === 'ct' && hop) {
@@ -1401,7 +1398,7 @@ export function submitFindingsSchemaForMode(
                       'prune_target',
                     ),
                     'pruneIdentity',
-                  ).describe(PruneNeighborSchema.shape.id.description ?? ''),
+                  ),
                 }),
               )
               .max(MAX_ID_LIST_LENGTH)
@@ -1458,7 +1455,7 @@ export function submitFindingsSchemaForMode(
             nodeId: stringFact(
               spellingField(nodeIds, hop.identifierCaseSensitive),
               'questionIdentity',
-            ).describe(NeighborQuestionSchema.shape.nodeId.description ?? ''),
+            ),
             caller_context: z
               .object({ node: callerNode, col: z.string().min(1) })
               .strict()
