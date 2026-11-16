@@ -32,7 +32,6 @@ const TOOL_VOCABULARY = [
   'toolArrayFact',
   'toolObjectFact',
   'toolStringFact',
-  'toolPattern',
 ];
 
 /**
@@ -203,36 +202,12 @@ function branchFaults(branch: Record<string, unknown>, value: unknown): number {
     branchChecks.set(branch, check);
   }
   check(value);
-  return (check.errors?.length ?? 0) + patternFaults(branch, value).length;
+  return check.errors?.length ?? 0;
 }
 
 /**
- * Served schemas omit `pattern` (provider compatibility); `toolPattern` carries each regex. This
- * one walk finds its mismatches for the branch fault count and for the reported errors.
- */
-const patternFaults = (schema: unknown, input: unknown): ErrorObject[] => {
-  const faults: ErrorObject[] = [];
-  walkServedSchema(schema, input, '', (node, value, pointer) => {
-    if (
-      typeof node.toolPattern === 'string' &&
-      typeof value === 'string' &&
-      !new RegExp(node.toolPattern, 'u').test(value)
-    )
-      faults.push({
-        keyword: 'pattern',
-        instancePath: pointer,
-        schemaPath: '',
-        params: { pattern: node.toolPattern },
-        parentSchema: node,
-        data: value,
-      });
-  });
-  return faults;
-};
-
-/**
  * Visits annotations through properties, items, allOf and the anyOf/oneOf branches that admit the
- * value, or when none does, those with the fewest native faults plus `toolPattern` mismatches (so
+ * value, or when none does, those with the fewest native faults (so
  * independent faults surface in one pass); `once` visits only the first such branch. Not
  * if/then/else, not, $defs or additionalProperties.
  */
@@ -299,10 +274,6 @@ function canonicalSchema(schema: z.ZodType): Record<string, unknown> {
   });
   const visit = (node: unknown): void => {
     if (!node || typeof node !== 'object') return;
-    if ('pattern' in node && typeof node.pattern === 'string') {
-      Object.assign(node, { toolPattern: node.pattern });
-      delete node.pattern;
-    }
     if ('toolDisplay' in node) {
       Object.assign(node, node.toolDisplay);
       delete node.toolDisplay;
@@ -606,7 +577,6 @@ export function validateToolCandidate<S extends z.ZodType>(
     errors = [...(check.errors ?? [])],
     faults: ToolError[] = [],
     problems: ToolRejection[] = [];
-  errors.push(...patternFaults(json, input));
   const accepted = native && !errors.length;
   const failed = errors.map(errorPointer);
   const under = (pointer: string, key?: string) =>
