@@ -116,19 +116,24 @@ export class ToolDraft<T extends object> {
 
   /**
    * The one writer of the rejection's lists. Keeps every sent top-level field without a fault and
-   * every held one whose replacement failed; a candidate that is no object is the empty call: it
-   * leaves the draft and the faults it answers and adds the faults this call names. Returns the
-   * held fields a faulty resend could not overwrite and `resend`: the faulty fields, an owed
-   * subject's root and the required fields not held, in schema order. No second validation pass.
+   * every held one whose replacement failed; a held field the rejection refuses whole (`refused`
+   * error paths: one equals the root, or the root is a list and every entry has one) that the reply
+   * did not resend is no longer held, while one refused only in part or faulty only through `hold`
+   * paths stays. A candidate that is no object is the empty call: it leaves the draft and the
+   * faults it answers and adds the faults this call names. Returns the held fields a faulty resend
+   * could not overwrite and `resend`: the faulty fields, an owed subject's root and the required
+   * fields not held, in schema order. No second validation pass.
    */
   public retain(
     candidate: unknown,
-    paths: readonly string[],
+    refused: readonly string[],
     schema: z.ZodType,
+    hold: readonly string[] = [],
   ): { overwritten: string[]; resend: string[] } {
     const roots = Object.keys(shape(schema));
+    const paths = [...new Set([...refused, ...hold])];
     this.faults = isRecord(candidate)
-      ? [...paths]
+      ? paths
       : [...new Set([...this.faults, ...paths])];
     const rootsOf = (owed: boolean) =>
       this.faults
@@ -136,6 +141,18 @@ export class ToolDraft<T extends object> {
         .map((path) => path.split('.')[0]);
     const faulty = new Set(rootsOf(false));
     const held = this.value ?? {};
+    const refusedWhole = (key: string): boolean => {
+      const own = refused.filter((path) => path.split('.')[0] === key);
+      if (own.includes(key)) return true;
+      const value = held[key];
+      return (
+        own.length > 0 &&
+        Array.isArray(value) &&
+        value.every((_, index) =>
+          own.some((path) => path.split('.')[1] === String(index)),
+        )
+      );
+    };
     const overwritten = roots.filter(
       (key) =>
         faulty.has(key) &&
@@ -146,7 +163,8 @@ export class ToolDraft<T extends object> {
       this.value = Object.fromEntries(
         roots.flatMap((key) =>
           faulty.has(key)
-            ? Object.prototype.hasOwnProperty.call(held, key)
+            ? Object.prototype.hasOwnProperty.call(held, key) &&
+              !(!this.sent.includes(key) && refusedWhole(key))
               ? [[key, held[key]]]
               : []
             : Object.prototype.hasOwnProperty.call(candidate, key)

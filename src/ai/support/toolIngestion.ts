@@ -141,15 +141,16 @@ export function ingestToolInput<S extends z.ZodType, R>(options: {
     });
   if (view.problems.length) {
     const problem = combineToolRejections(view.problems);
-    const paths = [
-      ...new Set([
-        ...problem.errors.map((error) => error.path),
-        ...view.holdPaths,
-      ]),
-    ];
     // A held draft writes the lists; a tool that holds nothing gets none, its card is the contract.
     const lists =
-      draft && !ambiguous ? draft.retain(candidate, paths, schema) : undefined;
+      draft && !ambiguous
+        ? draft.retain(
+            candidate,
+            problem.errors.map((error) => error.path),
+            schema,
+            [...view.holdPaths],
+          )
+        : undefined;
     problem.errors.push(...at('not_overwritten', lists?.overwritten ?? []));
     problem.resend = lists?.resend;
     options.rejected?.(problem, view);
