@@ -54,7 +54,7 @@ describe('normalizeModelInput', () => {
 describe('normalizeModelInput object ids', () => {
   const idField = (ids: string[]) => {
     const field = z.string().refine((value) => ids.includes(value));
-    markObjectIdField(field, new Map(ids.map((id) => [id, true])), false);
+    markObjectIdField(field, ids, false);
     return field;
   };
   const idsSchema = (ids: string[]) =>

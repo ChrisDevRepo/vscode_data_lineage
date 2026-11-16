@@ -16,38 +16,46 @@ interface ModelInputFix {
 }
 
 /**
- * Object-id fields and the ids they admit, keyed by definition so `.describe()` clones keep the
- * marker; never sent to the model.
+ * Fields that name an object id and inputs that take an id-form search; never sent to the model. A
+ * clone made with `.describe()` or `.meta()` inherits its source's entry; an `.optional()` wrapper
+ * does not, so the respell walk unwraps. A field authored with a `toolIdentifier` meta needs no
+ * entry.
  */
-const objectIdFields = new WeakMap<object, ObjectIdField>();
+type IdMark =
+  | { readonly served: true }
+  | { readonly search: true }
+  | { readonly ids: readonly string[]; readonly caseSensitive: boolean };
+const idMarks = z.registry<IdMark>();
 
-interface ObjectIdField {
+/** The ids a served root schema binds to every served field beneath it. */
+interface ServedCatalog {
   readonly ids: Map<string, unknown>;
-  readonly kind?: 'column';
-  readonly identifierCaseSensitive: boolean;
+  readonly caseSensitive: boolean;
 }
+const servedCatalogs = z.registry<ServedCatalog>();
 
-/** Object schemas whose `query` may name an object id, rewritten to name plus schema filter. */
-const idFormSearchInputs = new WeakSet<object>();
+/** The ids one field admits, as the respell walk reads them. */
+interface IdCatalog extends ServedCatalog {
+  readonly kind?: 'column';
+}
 
 /** Marks a string schema as an object-id field admitting `ids`. */
 export function markObjectIdField(
   schema: ZodType,
-  ids: Map<string, unknown>,
-  identifierCaseSensitive: boolean,
+  ids: readonly string[],
+  caseSensitive: boolean,
 ): void {
-  objectIdFields.set(schema._zod.def, { ids, identifierCaseSensitive });
+  idMarks.add(schema, { ids, caseSensitive });
 }
-
-/**
- * Sentinel catalog: the field is an object id, and the ids it admits are attached when the schema
- * is served for a model or a stored run. An empty catalog respells nothing.
- */
-const unboundObjectIds = new Map<string, unknown>();
 
 /** Marks a string field whose object-id catalog is supplied by {@link serveObjectIdFields}. */
 export function markServedObjectIdField(schema: ZodType): void {
-  markObjectIdField(schema, unboundObjectIds, false);
+  idMarks.add(schema, { served: true });
+}
+
+/** Marks a search input whose `query` may be written as an object id. */
+export function markIdFormSearch(schema: ZodType): void {
+  idMarks.add(schema, { search: true });
 }
 
 const servedObjectIdSchemas = new WeakMap<
@@ -55,24 +63,10 @@ const servedObjectIdSchemas = new WeakMap<
   WeakMap<object, { cs: boolean; schema: ZodType }>
 >();
 
-type SchemaDef = {
-  type: string;
-  shape?: Record<string, ZodType>;
-  element?: ZodType;
-  options?: readonly ZodType[];
-  innerType?: ZodType;
-  in?: ZodType;
-};
-
-/** A new schema instance with its own definition, keeping description and metadata. */
-function duplicateSchema<T extends ZodType>(schema: T, def: object): T {
-  return schema.clone(def as never, { parent: true }) as T;
-}
-
 /**
- * Returns `schema` with served object-id fields bound to `ids`. The same pair of schema and
- * `cacheKey` is reused so the model-facing JSON Schema keeps a stable identity. Fields that are
- * not served object ids are left untouched.
+ * Returns `schema` as a root that binds its served object-id fields to `ids`; the fields stay the
+ * authored instances. The same pair of schema and `cacheKey` is reused so the model-facing JSON
+ * Schema keeps a stable identity.
  */
 export function serveObjectIdFields<T extends ZodType>(
   schema: T,
@@ -89,75 +83,10 @@ export function serveObjectIdFields<T extends ZodType>(
   const cached = byKey.get(cacheKey);
   if (cached && cached.cs === identifierCaseSensitive)
     return cached.schema as T;
-  const seen = new Map<ZodType, ZodType>();
-  const walk = (current: ZodType): ZodType => {
-    const found = seen.get(current);
-    if (found) return found;
-    const def = current._zod.def as SchemaDef;
-    const marked = objectIdFields.get(current._zod.def);
-    if (marked?.ids === unboundObjectIds) {
-      const bound = duplicateSchema(current, { ...def });
-      markObjectIdField(bound, ids, identifierCaseSensitive);
-      seen.set(current, bound);
-      return bound;
-    }
-    let rebuilt = current;
-    if (def.type === 'object' && def.shape) {
-      let changed = false;
-      const shape = { ...def.shape };
-      for (const [key, child] of Object.entries(def.shape)) {
-        const next = walk(child);
-        if (next !== child) {
-          shape[key] = next;
-          changed = true;
-        }
-      }
-      if (changed) rebuilt = duplicateSchema(current, { ...def, shape });
-    } else if (def.type === 'array' && def.element) {
-      const element = walk(def.element);
-      if (element !== def.element)
-        rebuilt = duplicateSchema(current, { ...def, element });
-    } else if (def.type === 'union' && def.options) {
-      let changed = false;
-      const options = def.options.map((option) => {
-        const next = walk(option);
-        if (next !== option) changed = true;
-        return next;
-      });
-      if (changed) rebuilt = duplicateSchema(current, { ...def, options });
-    } else if (def.innerType) {
-      const innerType = walk(def.innerType);
-      if (innerType !== def.innerType)
-        rebuilt = duplicateSchema(current, { ...def, innerType });
-    } else if (def.type === 'pipe' && def.in) {
-      const input = walk(def.in);
-      if (input !== def.in)
-        rebuilt = duplicateSchema(current, { ...def, in: input });
-    }
-    seen.set(current, rebuilt);
-    return rebuilt;
-  };
-  const served = walk(schema) as T;
+  const served = schema.meta({});
+  servedCatalogs.add(served, { ids, caseSensitive: identifierCaseSensitive });
   byKey.set(cacheKey, { cs: identifierCaseSensitive, schema: served });
   return served;
-}
-
-/** SQL column spellings use the same boundary marker as object ids. */
-export function markColumnField(
-  schema: ZodType,
-  values: readonly string[],
-  identifierCaseSensitive: boolean,
-): void {
-  objectIdFields.set(schema._zod.def, {
-    ids: new Map(values.map((value) => [value, true])),
-    identifierCaseSensitive,
-    kind: 'column',
-  });
-}
-
-/** Marks a search input whose `query` may be written as an object id. */
-export function markIdFormSearch(schema: ZodType): void {
-  idFormSearchInputs.add(schema._zod.def);
 }
 
 /**
@@ -321,7 +250,9 @@ export function normalizeModelInput(
   let current = decoded.input;
   const spelled = structuredClone(current);
   const spellingFixes: ModelInputFix[] = [];
-  respell(schema, spelled, [], spellingFixes);
+  // The registry's mapped meta type rewrites a Map member; the stored value is a ServedCatalog.
+  const served = servedCatalogs.get(schema) as ServedCatalog | undefined;
+  respell(schema, spelled, [], spellingFixes, served);
   if (spellingFixes.length > 0) {
     current = spelled;
     fixes.push(...spellingFixes);
@@ -359,6 +290,7 @@ function respell(
   value: unknown,
   path: PropertyKey[],
   fixes: ModelInputFix[],
+  served: ServedCatalog | undefined,
 ): void {
   const chain = unwrap(schema);
   const core = chain[chain.length - 1]._zod.def as {
@@ -372,7 +304,7 @@ function respell(
       .map((option) => {
         const branchFixes: ModelInputFix[] = [];
         const clone = structuredClone(value);
-        respell(option, clone, path, branchFixes);
+        respell(option, clone, path, branchFixes, served);
         return { clone, branchFixes, valid: admits(option, clone) };
       })
       .filter((branch) => branch.branchFixes.length > 0);
@@ -393,7 +325,10 @@ function respell(
   }
   if (core.type === 'array' && Array.isArray(value) && core.element) {
     value.forEach((entry, index) => {
-      const field = objectIdEntry(core.element as ZodType);
+      const field =
+        typeof entry === 'string'
+          ? idCatalog(core.element as ZodType, served)
+          : undefined;
       if (field && typeof entry === 'string') {
         const after = respellId(entry, field);
         if (after !== undefined) {
@@ -404,7 +339,14 @@ function respell(
             after,
           });
         }
-      } else respell(core.element as ZodType, entry, [...path, index], fixes);
+      } else
+        respell(
+          core.element as ZodType,
+          entry,
+          [...path, index],
+          fixes,
+          served,
+        );
     });
     return;
   }
@@ -417,27 +359,70 @@ function respell(
   )
     return;
   const record = value as Record<string, unknown>;
-  if (chain.some((link) => idFormSearchInputs.has(link._zod.def)))
+  if (
+    chain.some((link) => {
+      const mark = idMarks.get(link);
+      return mark !== undefined && 'search' in mark;
+    })
+  )
     respellSearch(record, path, fixes);
   for (const [key, child] of Object.entries(core.shape)) {
     if (!(key in record)) continue;
-    const field = objectIdEntry(child);
     const entry = record[key];
+    const field =
+      typeof entry === 'string' ? idCatalog(child, served) : undefined;
     if (field && typeof entry === 'string') {
       const after = respellId(entry, field);
       if (after !== undefined) {
         record[key] = after;
         fixes.push({ path: [...path, key].join('.'), before: entry, after });
       }
-    } else respell(child, entry, [...path, key], fixes);
+    } else respell(child, entry, [...path, key], fixes, served);
   }
 }
 
-/** The id marker on a field schema or any wrapper around it. */
-function objectIdEntry(schema: ZodType): ObjectIdField | undefined {
+/** What a `toolIdentifier` meta carries; a column field has no `values` and serves its `enum`. */
+interface ToolIdentifierMeta {
+  readonly kind?: string;
+  readonly values?: readonly string[];
+  readonly closedValues?: readonly string[];
+  readonly enumFaultValues?: readonly string[];
+  readonly caseSensitive?: boolean;
+}
+
+/**
+ * The ids a field schema or any wrapper around it admits: its registry entry, else its own
+ * `toolIdentifier` meta (a column field unless `kind` is `object`), else nothing. A served field
+ * reads the catalog of the root schema being walked.
+ */
+function idCatalog(
+  schema: ZodType,
+  served: ServedCatalog | undefined,
+): IdCatalog | undefined {
   for (const link of unwrap(schema)) {
-    const entry = objectIdFields.get(link._zod.def);
-    if (entry) return entry;
+    const mark = idMarks.get(link);
+    if (mark && 'served' in mark) return served;
+    if (mark && 'ids' in mark)
+      return {
+        ids: new Map(mark.ids.map((id) => [id, true])),
+        caseSensitive: mark.caseSensitive,
+      };
+    const meta = z.globalRegistry.get(link);
+    const identifier = meta?.toolIdentifier as ToolIdentifierMeta | undefined;
+    if (!identifier) continue;
+    const values =
+      identifier.values ?? (meta?.enum as readonly string[] | undefined) ?? [];
+    return {
+      ids: new Map(
+        [
+          ...values,
+          ...(identifier.closedValues ?? []),
+          ...(identifier.enumFaultValues ?? []),
+        ].map((id) => [id, true]),
+      ),
+      caseSensitive: identifier.caseSensitive ?? false,
+      ...(identifier.kind === 'object' ? {} : { kind: 'column' as const }),
+    };
   }
   return undefined;
 }
@@ -447,13 +432,13 @@ function objectIdEntry(schema: ZodType): ObjectIdField | undefined {
  * unknown or ambiguous. Invisible format characters around the spelling are ignored; inside an
  * identifier they stay part of it.
  */
-function respellId(raw: string, field: ObjectIdField): string | undefined {
+function respellId(raw: string, field: IdCatalog): string | undefined {
   if (field.ids.has(raw)) return undefined;
   if (field.kind === 'column') {
     const matches = [...field.ids.keys()].filter(
       (value) =>
-        normalizeColName(value, field.identifierCaseSensitive) ===
-        normalizeColName(raw, field.identifierCaseSensitive),
+        normalizeColName(value, field.caseSensitive) ===
+        normalizeColName(raw, field.caseSensitive),
     );
     return matches.length === 1 ? matches[0] : undefined;
   }
@@ -461,7 +446,7 @@ function respellId(raw: string, field: ObjectIdField): string | undefined {
     resolveModelNodeId(
       raw.replace(/^\p{Cf}+|\p{Cf}+$/gu, ''),
       field.ids,
-      field.identifierCaseSensitive,
+      field.caseSensitive,
     ) ?? undefined
   );
 }

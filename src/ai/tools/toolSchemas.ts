@@ -13,7 +13,6 @@ import {
   markIdFormSearch,
   markObjectIdField,
   markServedObjectIdField,
-  markColumnField,
 } from './normalizeModelInput';
 import {
   MAX_ID_LIST_LENGTH,
@@ -1178,11 +1177,13 @@ function suppliedValueSchema(
   identifierCaseSensitive = false,
 ) {
   if (values.length === 0) return z.never();
-  const field = z
-    .string()
-    .meta({ enum: [...values], toolIdentifier: { issue: 'unknown_column' } });
-  markColumnField(field, values, identifierCaseSensitive);
-  return field;
+  return z.string().meta({
+    enum: [...values],
+    toolIdentifier: {
+      caseSensitive: identifierCaseSensitive,
+      issue: 'unknown_column',
+    },
+  });
 }
 
 /** Offers canonical IDs while admitting only equivalent, unambiguous metadata spellings. */
@@ -1195,10 +1196,7 @@ function objectIdSchema(
 ) {
   if (ids.length === 0 && closedIds.length === 0 && enumFaultIds.length === 0)
     return z.never().meta({ toolAdmission: { toolIssue: issue ?? 'never' } });
-  const known = new Map(
-    [...ids, ...closedIds, ...enumFaultIds].map((id) => [id, true]),
-  );
-  const field = z.string().meta({
+  return z.string().meta({
     ...(ids.length ? { enum: [...ids] } : {}),
     toolIdentifier: {
       kind: 'object',
@@ -1209,8 +1207,6 @@ function objectIdSchema(
       issue: issue ?? 'not_neighbor',
     },
   });
-  markObjectIdField(field, known, identifierCaseSensitive);
-  return field;
 }
 
 function spellingField(
@@ -1218,11 +1214,7 @@ function spellingField(
   identifierCaseSensitive = false,
 ) {
   const field = z.string().meta({ toolDisplay: { enum: [...ids] } });
-  markObjectIdField(
-    field,
-    new Map(ids.map((id) => [id, true])),
-    identifierCaseSensitive,
-  );
+  markObjectIdField(field, ids, identifierCaseSensitive);
   return field;
 }
 const FLOW_HEADER_FACT = {
@@ -1381,7 +1373,7 @@ export function submitFindingsSchemaForMode(
       .describe(FOCUS_NODE_ID_DESCRIPTION);
     markObjectIdField(
       focusField,
-      new Map([[hop.focusNodeId, true]]),
+      [hop.focusNodeId],
       hop.identifierCaseSensitive ?? false,
     );
     narrowed = narrowed
@@ -1478,7 +1470,7 @@ export function submitFindingsSchemaForMode(
     if (hop.focusNodeId)
       markObjectIdField(
         callerNode,
-        new Map([[hop.focusNodeId, true]]),
+        [hop.focusNodeId],
         hop.identifierCaseSensitive ?? false,
       );
     const callerIds = first === undefined ? [] : [first, ...rest];
