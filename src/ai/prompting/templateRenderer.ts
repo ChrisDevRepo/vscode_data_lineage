@@ -93,17 +93,17 @@ function captureRecipeHeader(
     ? CLASSIFICATION_KEPT_ANGLES[classification]
     : undefined;
   const shape = !kept
-    ? 'an object keyed by angle (`{business, technical}`), one key per angle this mission fires'
+    ? 'as an object keyed by angle (`{business, technical}`), one key per angle this mission fires'
     : kept.length === 2
-      ? '`{"business": …, "technical": …}` — classification=both keeps both keys, one key per angle'
-      : '`{"' +
+      ? 'as `{"business": …, "technical": …}` — classification=both keeps both keys, one key per angle'
+      : 'with the key `' +
         kept[0] +
-        '": …}` — classification=' +
+        '` — classification=' +
         classification +
         ' keeps only this key';
   return [
     '### Capture recipe',
-    `Submit \`sections\` as ${shape}, and put every applicable item from the active capture instructions inside that key's string value. Markdown without headings. Back each grain predicate and formula with one short \`\`\`sql fence of its deciding expression, an exact substring of \`ddl\`; what the SQL does not establish reads \`not established from the available SQL\`. Skip an item the SQL lacks.`,
+    `Submit \`sections\` ${shape}, and put every applicable item from the active capture instructions inside that key's string value. Markdown without headings. Back each grain predicate and formula with one short \`\`\`sql fence of its deciding expression, an exact substring of \`ddl\`; what the SQL does not establish reads \`not established from the available SQL\`. Skip an item the SQL lacks.`,
     'The recipe items are a coverage checklist, not disconnected output fragments. Write each substantive calculation, and each intermediate result another calculation builds on, once within its natural rule or transformation step: explain the inputs and affected rows, show the formula, explain its defined meaning and consequences, and quote the deciding SQL there. In every angle, use a LaTeX `$$ … $$` block on its own lines, or a LaTeX `$ … $` formula in a table with a short description of its meaning; short formulas may also sit inline within their explanatory sentence. ' +
       LATEX_SOURCE_RULE +
       ' A formula carries every term and branch of the SQL it restates. Capture this complete explanation in detail memory; a list of calculation names is not their explanation. Simple renames need no equation. Keep SQL quotes contiguous and verbatim: omit unrelated SQL by choosing a shorter quote, never by inserting ellipses. Describe intermediate and final surviving grain separately; later deletion or validation can leave zero rows from an earlier partition.',
