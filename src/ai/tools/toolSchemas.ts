@@ -665,7 +665,7 @@ const UPSTREAM_RESOLVE =
   'Resolve parameters and aliases to source columns. [] records no pair.';
 const UPSTREAM_DESCRIPTION =
   UPSTREAM_SOURCES +
-  'Columns that only join, decide or arrange the rows or value branch of out_col belong in indirect_columns; a CASE with only literal results has no source column. ' +
+  'Columns that only join, decide or arrange the rows or value branch of out_col belong in the top-level indirect_columns field; a CASE with only literal results has no source column. ' +
   UPSTREAM_RESOLVE;
 /** At a procedure, a created value is the pair procedure.col -> out_node.out_col. */
 const PROCEDURE_UPSTREAM_DESCRIPTION = `${UPSTREAM_SOURCES}${UPSTREAM_RESOLVE} A value this procedure creates from no source column in scope lists this procedure with the column its task names, else out_col.`;
