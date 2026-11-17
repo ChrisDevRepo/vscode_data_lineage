@@ -716,7 +716,7 @@ const DESTINATION_FAULTS: EndpointFaults = {
 /** The focus as the destination keeps the output-column wording. */
 const FOCUS_FAULTS: EndpointFaults = {
   ...DESTINATION_FAULTS,
-  column: 'out_col does not exist on the focus object.',
+  column: 'out_col is not one of the focus columns that arrive at this hop.',
   metadata: (type) =>
     `Column metadata is unavailable for this ${type}; the output column cannot be verified.`,
 };
