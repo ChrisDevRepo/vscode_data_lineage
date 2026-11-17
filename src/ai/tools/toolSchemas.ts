@@ -668,7 +668,7 @@ const UPSTREAM_DESCRIPTION =
   'Columns that only join, decide or arrange the rows or value branch of out_col belong in indirect_columns; a CASE with only literal results has no source column. ' +
   UPSTREAM_RESOLVE;
 /** At a procedure, a created value is the pair procedure.col -> out_node.out_col. */
-const PROCEDURE_UPSTREAM_DESCRIPTION = `${UPSTREAM_SOURCES}${UPSTREAM_RESOLVE} A value this procedure creates lists this procedure with the column its task names, else out_col.`;
+const PROCEDURE_UPSTREAM_DESCRIPTION = `${UPSTREAM_SOURCES}${UPSTREAM_RESOLVE} A value this procedure creates from no source column in scope lists this procedure with the column its task names, else out_col.`;
 
 const ColumnFlowEntrySchema = z
   .object({
@@ -721,7 +721,7 @@ export const PruneCurrentInputSchema = z
 
 const COLUMN_FLOW_DESCRIPTION =
   'SQL-proved outputs related to the arriving columns in <current_task>, with their contributing columns. ' +
-  'Reference neighbors in <hop_context>, plus a procedure focus as the origin of a value it creates. [] when nothing feeds the arriving columns.';
+  'Reference neighbors in <hop_context>, plus a procedure focus as the origin of a value it creates from no source column in scope. [] when nothing feeds the arriving columns.';
 
 /**
  * Base flow grammar before hop-specific metadata admission; diagnostics reuse its structural
