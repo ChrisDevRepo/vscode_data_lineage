@@ -3,7 +3,7 @@
  *
  * @remarks
  * Every tool, guard and engine refusal is emitted by {@link makeRejection} in one shape —
- * `{ code, reason, hint?, detail?, issuePaths?, entryIds? }` — and serialized as the
+ * `{ code, reason, hint?, detail?, issuePaths?, entryIds?, errors? }` — and serialized as the
  * tool result. {@link readToolError} reads that shape back. Provider-pure.
  */
 import { z } from 'zod';

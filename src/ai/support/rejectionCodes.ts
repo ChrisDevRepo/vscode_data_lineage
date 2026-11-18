@@ -2,7 +2,7 @@ import { ASYMMETRIC_DEPTH_BOTH_ZERO } from '../../engine/shared/explorationDepth
 
 /**
  * Single owner for rejection codes that appear on more than one surface. A code belongs here once a
- * second surface (a hint payload, instruction prose) shows its wire `error` literal to the model;
+ * second surface (a hint payload, instruction prose) shows its wire `code` literal to the model;
  * both surfaces then interpolate this constant, so a rename cannot drift between guard and prompt.
  * Most codes live only where they are emitted.
  */
