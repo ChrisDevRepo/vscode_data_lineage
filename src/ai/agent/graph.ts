@@ -3,6 +3,7 @@ import { END, REMOVE_ALL_MESSAGES, START, MemorySaver, StateGraph, interrupt } f
 import {
   modelAssistantMessage,
   modelUserMessage,
+  ModelPortError,
   type ModelMessage,
   type ModelPort,
 } from '../model/modelPort';
@@ -44,7 +45,7 @@ import { selectInitialAgentStage } from './entryRouting';
 import { captureDiscoveryWalkFromObservations, detectOverBudgetFromResult, queueDiscoveryBudgetNotice } from './discoveryCapture';
 import { discoveryPreviewNarrative, orderAndAssemble, heldSectionsForRepair, holdRejectedPresentResult } from '../tools/presentResult';
 import { sanitizeForLog, trunc, LOG_TRUNC_REJECTION, type Logger } from '../../utils/log';
-import { escapeDelimitedJson, escapeMarkdownText, escapePromptText, truncAtWordBoundary, formatProviderErrorDiagnostic, sanitizeDescriptionForChat, type ProviderErrorDiagnostic } from '../support/text';
+import { escapeDelimitedJson, escapeMarkdownText, escapePromptText, truncAtWordBoundary, formatProviderErrorDiagnostic, isTransportProviderError, sanitizeDescriptionForChat, sanitizeProviderErrorDiagnostic, type ProviderErrorDiagnostic } from '../support/text';
 import {
   buildActiveHopInstruction,
   buildActiveInstruction,
@@ -61,6 +62,7 @@ import {
   type ConversePlanDraft,
   type ConverseInstructionPlan,
   type InstructionPhase,
+  type StructuredInstructionPlan,
 } from './instructionPlan';
 import {
   executeToolAttempt,
@@ -128,6 +130,9 @@ const PHASE_PROGRESS_LABELS: Readonly<Record<InstructionPhase, string>> = {
  * synthesis-breaker path and the preview-dispatch path.
  */
 const SYNTHESIS_RENDER_FAILED_NOTICE = '_The AI preview could not be rendered; details are in the debug log._';
+
+/** Wait before the one retry of a generation a transport interruption ended. */
+const TRANSPORT_RETRY_DELAY_MS = 1_000;
 
 /**
  * Chat-facing text per {@link RejectionChatGroup}, derived once from
@@ -436,29 +441,64 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
   };
 
   /**
-   * Executes one compiled tool plan: a single physical attempt with no retry. Whatever it returns,
-   * a transport failure included, is final; the calling node decides the disposition.
+   * Logs a connection-level interruption before any reply and waits the transport-retry delay.
+   * Returns false, without waiting, for any other failure or once the turn is aborted.
+   */
+  const waitForTransportRetry = async (failure: ProviderErrorDiagnostic): Promise<boolean> => {
+    if (!isTransportProviderError(failure) || failure.replyReceived || deps.signal?.aborted) return false;
+    deps.logger?.debug(`[AI] transport-retry ${formatProviderErrorDiagnostic(failure)}`);
+    await abortableDelay(TRANSPORT_RETRY_DELAY_MS, deps.signal);
+    return true;
+  };
+
+  /**
+   * Executes one compiled tool plan: one physical attempt, plus one more only when the first ended
+   * in a connection-level interruption before any reply. Any other failure, and a second
+   * interruption, is final; the calling node decides the disposition.
    * `presentResultRepairDraftContext` shows held section labels through
    * {@link heldSectionsForRepair}; the rejected call already carries every body.
    */
-  const runToolAttempt = (
+  const runToolAttempt = async (
     plan: ConverseInstructionPlan,
     priorState: ToolPhaseAttemptState,
-  ) => executeToolAttempt(deps.model, plan, {
-    priorState,
-    debugLog: message => deps.logger?.debug(message),
-    traceSyntheticRejection: deps.traceSyntheticRejection,
-    presentResultRepairDraftContext: () => {
-      const held = deps.getSession().presentResultRepairDraft.get();
-      return held ? { sections: heldSectionsForRepair(held.sections) } : null;
-    },
-    holdRejectedPresentResult: (input, issuePaths) => {
-      const sess = deps.getSession();
-      if (sess.activeLmStage?.kind === 'visual_preview') return null;
-      return holdRejectedPresentResult(sess.presentResultRepairDraft, input, issuePaths, 'synthesis', sess.retainableReportSections());
-    },
-    holdRejectedSubmission: (input, issuePaths) => (deps.getSession().stateMachine as NavigationEngine | null)?.holdRejectedSubmission(input, issuePaths) ?? null,
-  });
+  ): Promise<ToolAttemptResult> => {
+    const attempt = () => executeToolAttempt(deps.model, plan, {
+      priorState,
+      debugLog: message => deps.logger?.debug(message),
+      traceSyntheticRejection: deps.traceSyntheticRejection,
+      presentResultRepairDraftContext: () => {
+        const held = deps.getSession().presentResultRepairDraft.get();
+        return held ? { sections: heldSectionsForRepair(held.sections) } : null;
+      },
+      holdRejectedPresentResult: (input, issuePaths) => {
+        const sess = deps.getSession();
+        if (sess.activeLmStage?.kind === 'visual_preview') return null;
+        return holdRejectedPresentResult(sess.presentResultRepairDraft, input, issuePaths, 'synthesis', sess.retainableReportSections());
+      },
+      holdRejectedSubmission: (input, issuePaths) => (deps.getSession().stateMachine as NavigationEngine | null)?.holdRejectedSubmission(input, issuePaths) ?? null,
+    });
+    const first = await attempt();
+    if (first.stop !== 'error' || !first.providerError) return first;
+    return await waitForTransportRetry(first.providerError) ? attempt() : first;
+  };
+
+  /**
+   * Runs one structured generation; a connection-level interruption before any reply is retried
+   * once, and a failure that is not retried, or the retry's own, is thrown unchanged.
+   */
+  const runStructuredPlan = async <T>(plan: StructuredInstructionPlan<T>, onAttempt?: () => void): Promise<T> => {
+    const attempt = () => {
+      onAttempt?.();
+      return executeInstructionPlan(deps.model, plan);
+    };
+    try {
+      return await attempt();
+    } catch (error) {
+      if (!(error instanceof ModelPortError)) throw error;
+      if (!await waitForTransportRetry(sanitizeProviderErrorDiagnostic(error, plan.frame.phase))) throw error;
+      return attempt();
+    }
+  };
 
   /** Cumulative attempt state for one phase, or a fresh state when the phase changed. */
   const attemptStateFor = (state: AgentStateType, phase: InstructionPhase): ToolPhaseAttemptState =>
@@ -609,7 +649,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     if (held && state.toolAttempt?.phase !== 'detect_entry') {
       let action: 'approve' | 'change' | 'cancel' | 'other';
       try {
-        const classified = await executeInstructionPlan(deps.model, compileInstructionPlan({
+        const classified = await runStructuredPlan(compileInstructionPlan({
           kind: 'structured',
           phase: 'detect_entry',
           contract: { id: 'gate_reply', schema: GateReplySchema },
@@ -674,10 +714,10 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     const detectorMessages = priorAttempt.providerCalls > 0
       ? [...base, ...await renderToolAttemptContext(priorAttempt, deps.model, message => deps.logger?.debug(message))]
       : base;
-    const callsBefore = deps.model.modelCalls;
+    let callsBefore = deps.model.modelCalls;
     let entry: z.infer<typeof EntryDetectionSchema>;
     try {
-      entry = await executeInstructionPlan(deps.model, compileInstructionPlan({
+      entry = await runStructuredPlan(compileInstructionPlan({
         kind: 'structured',
         phase: 'detect_entry',
         contract: { id: 'entry_detection', schema: EntryDetectionSchema },
@@ -685,7 +725,9 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
         messages: detectorMessages,
         system: buildEntryDetectorSystemPrompt(ctx),
         signal: deps.signal,
-      }));
+      }), () => {
+        callsBefore = deps.model.modelCalls;
+      });
     } catch (error) {
       if (!(error instanceof StructuredOutputError)) throw error;
       const providerCalls = deps.model.modelCalls - callsBefore;
@@ -1697,4 +1739,21 @@ function renderHeldSynthesisDraft(deps: AgentGraphDeps, sess: AiSession): void {
     '[AI] [Repair] synthesis breaker tripped with a held draft — held text rendered to chat.',
   );
   sess.markSynthesisRenderDegraded('synthesis_breaker');
+}
+
+/** Resolves after `ms`, or at once when `signal` aborts first. */
+function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(finish, ms);
+    function finish(): void {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', finish);
+      resolve();
+    }
+    signal?.addEventListener('abort', finish, { once: true });
+  });
 }

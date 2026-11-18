@@ -64,7 +64,7 @@ flowchart LR
 ```
 
 - **Participant** ([`src/ai/participant/`](../src/ai/participant/)) adapts VS Code requests, history, cancellation, progress and buttons.
-- **Phase graph** ([`src/ai/agent/graph.ts`](../src/ai/agent/graph.ts), LangGraph) owns phase transitions, semantic retries, synthesis and turn settlement. A small bridge ([`src/ai/model/`](../src/ai/model/)) wraps `vscode.lm` as the chat model; each model call is one `sendRequest`, with no fallback model and no transport retry.
+- **Phase graph** ([`src/ai/agent/graph.ts`](../src/ai/agent/graph.ts), LangGraph) owns phase transitions, semantic retries, synthesis and turn settlement. A small bridge ([`src/ai/model/`](../src/ai/model/)) wraps `vscode.lm` as the chat model; each model call is one `sendRequest`, with no fallback model; the graph retries a call once after 1 s when the connection drops before any reply.
 - **Tools** ([`src/ai/tools/`](../src/ai/tools/)): one canonical registry with phase policy and strict Zod dispatch. `package.json` `languageModelTools` is the read-only subset other VS Code agents can call; tools that change exploration state stay on the participant.
 - **Navigation engine** ([`src/ai/sm/smBase.ts`](../src/ai/sm/smBase.ts)) owns scope, agenda, validation, pruning and termination. The model proposes findings and neighbor decisions; it does not schedule hops or declare the exploration complete.
 
