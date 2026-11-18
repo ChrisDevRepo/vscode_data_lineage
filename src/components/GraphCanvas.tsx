@@ -1959,6 +1959,11 @@ export function GraphCanvas({
     [localNodes, model?.identifierCaseSensitive],
   );
 
+  /** Objects in the current view; unlike `localNodes`, still the real count while the render-limit notice withholds the canvas nodes. */
+  const viewObjectCount = filteredObjectIds?.size ?? 0;
+  /** Info-card scope count: the rendered nodes (a trace narrows them), or the view's objects when the render-limit notice withholds them. */
+  const infoCardObjectCount = renderLimitNotice ? viewObjectCount : localNodes.length;
+
   /** Info-card profile for an unsaved AI preview; memoized so the memoized card skips unrelated canvas renders. */
   const aiPreviewProfile = useMemo((): FilterProfile | null => (aiPreview ? {
     id: '',
@@ -1969,8 +1974,9 @@ export function GraphCanvas({
     aiMetadata: aiPreview.aiMetadata,
   } : null), [aiPreview]);
 
-  useEffect(() => {
-    if (!graphErrorContext) return;
+  /** The `render-state` message for the current inputs; its identity changes only when one of them does. */
+  const renderStateMessage = useMemo(() => {
+    if (!graphErrorContext) return null;
     const highlighted = highlightedNodeId ?? null;
     const controls = highlighted ? traceControlsByNode.get(highlighted) : undefined;
     const traceScope = trace.mode !== 'none'
@@ -1983,16 +1989,20 @@ export function GraphCanvas({
           tracedNodeIds: Array.from(trace.tracedNodeIds),
         }
       : null;
-    vscodeApi.postMessage({
-      type: 'render-state',
+    return {
+      type: 'render-state' as const,
       renderState: {
         ...graphErrorContext,
         highlightedNodeId: highlighted,
         affordances: highlighted && controls ? serializeTraceAffordances(highlighted, controls) : null,
         traceScope,
       },
-    });
-  }, [graphErrorResetKey, highlightedNodeId, traceControlsByNode, trace.tracedNodeIds.size]);
+    };
+  }, [graphErrorContext, highlightedNodeId, traceControlsByNode, trace]);
+
+  useEffect(() => {
+    if (renderStateMessage) vscodeApi.postMessage(renderStateMessage);
+  }, [renderStateMessage, vscodeApi]);
 
   return (
     <div className="flex flex-col h-screen">
@@ -2149,7 +2159,7 @@ export function GraphCanvas({
       {aiPreview && onDiscardAiPreview && (
         <AiViewBanner
           name={aiPreview.name}
-          nodeCount={aiPreview.nodeIds.size}
+          nodeCount={viewObjectCount}
           onDiscard={onDiscardAiPreview}
           onSaveAsBookmark={onSaveAiBookmark ? handleSaveAiAsBookmark : undefined}
           columnViewAvailable={!!columnTraceView}
@@ -2326,7 +2336,7 @@ export function GraphCanvas({
         {activeAdvancedProfile && isBookmarkMode && (
           <BookmarkInfoCard
             profile={activeAdvancedProfile}
-            nodeCount={localNodes.length}
+            nodeCount={infoCardObjectCount}
             schemaCount={legendSchemas.length}
             staleNodeNames={bookmarkStaleNames ?? []}
           />
@@ -2334,7 +2344,7 @@ export function GraphCanvas({
         {aiPreviewProfile && !activeAdvancedProfile && (
           <BookmarkInfoCard
             profile={aiPreviewProfile}
-            nodeCount={localNodes.length}
+            nodeCount={infoCardObjectCount}
             schemaCount={legendSchemas.length}
             staleNodeNames={NO_STALE_NAMES}
           />

@@ -26,7 +26,6 @@ import {
   type SchemaProjectionEdge,
   type SchemaProjectionNode,
 } from './schemaProjection';
-import { notifyUser } from '../utils/notify';
 
 /**
  * Receives a diagnostic line raised while a graph is built or laid out.
@@ -518,7 +517,8 @@ function layoutTraceFlow(
  * @param synthesizeOutOfFilter - Whether to synthesize hidden out-of-filter nodes.
  *
  * @returns Trace-scoped nodes and edges, plus a graphology graph over the synthesized
- * scope when out-of-filter synthesis ran.
+ * scope when out-of-filter synthesis ran, and the user-facing `notice` for an empty or invisible
+ * trace. The function is pure; the caller shows the notice.
  */
 export function applyTraceToFlow(
   flowNodes: FlowNode[],
@@ -527,21 +527,21 @@ export function applyTraceToFlow(
   config: ExtensionConfig = DEFAULT_CONFIG,
   model?: DatabaseModel | null,
   synthesizeOutOfFilter?: boolean
-): { nodes: FlowNode[]; edges: FlowEdge[]; graph?: Graph } {
+): { nodes: FlowNode[]; edges: FlowEdge[]; graph?: Graph; notice?: string } {
   if (trace.mode === 'none' || trace.mode === 'configuring' || trace.mode === 'pathfinding') {
     return { nodes: flowNodes, edges: flowEdges };
   }
   if (trace.tracedNodeIds.size === 0) {
     logTraceWarn(`applyTraceToFlow: tracedNodeIds empty, mode=${trace.mode}`);
-    notifyUser('Trace produced no results.');
-    return { nodes: flowNodes, edges: flowEdges };
+    return { nodes: flowNodes, edges: flowEdges, notice: 'Trace produced no results.' };
   }
 
   const { nodes: filteredNodes, edges: filteredEdges } = projectFlowToTrace(flowNodes, flowEdges, trace);
 
+  let notice: string | undefined;
   if (filteredNodes.length === 0 && flowNodes.length > 0) {
     logTraceWarn(`applyTraceToFlow: 0 match for ${trace.tracedNodeIds.size} ids (mode=${trace.mode})`);
-    notifyUser('Traced nodes are not visible in the current view.');
+    notice = 'Traced nodes are not visible in the current view.';
   }
 
   const synth = isSynthesizingMode(trace, synthesizeOutOfFilter);
@@ -578,7 +578,7 @@ export function applyTraceToFlow(
   }));
   const edges = filteredEdges.map((e) => ({ ...e, style: { ...e.style, strokeWidth: 1.8 } }));
 
-  return { nodes, edges, graph: traceGraph };
+  return { nodes, edges, graph: traceGraph, notice };
 }
 
 /**

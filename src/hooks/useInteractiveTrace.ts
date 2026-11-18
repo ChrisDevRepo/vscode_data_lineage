@@ -1,9 +1,10 @@
-import { useState, useCallback, useMemo, useRef, useTransition } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef, startTransition } from 'react';
 import Graph from 'graphology';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import { TraceState, ExtensionConfig, DEFAULT_CONFIG, AnalysisType, DatabaseModel, type CustomNodeData } from '../engine/types';
 import { traceNodeWithLevels, applyTraceToFlow, computeShortestPath, buildGraphologyGraph } from '../engine/graphBuilder';
 import { buildTraceScopeGraph, buildVisibleTraceScope, canPruneTraceNode, isEditableTraceMode, traceRemovalSides, unionConnectingPaths } from '../engine/traceScope';
+import { notifyUser } from '../utils/notify';
 import { directNeighborIds } from '../engine/graphGuards';
 import { traceSizeByDepth } from '../engine/graphDisplayMode';
 
@@ -141,7 +142,6 @@ export function useInteractiveTrace(
   const [trace, setTrace] = useState<TraceState>(() => createInitialTrace(config));
   const [useFullModel, setUseFullModel] = useState(false);
   const [focus, setFocus] = useState<{ previous: TraceState; targetIds: readonly string[] } | null>(null);
-  const [, startTransition] = useTransition();
 
   const fullGraph = useMemo(() => model ? buildGraphologyGraph(model) : null, [model]);
 
@@ -401,8 +401,8 @@ export function useInteractiveTrace(
     return Math.max(0, fullResult.nodeIds.size - trace.tracedNodeIds.size);
   }, [fullGraph, trace.mode, trace.selectedNodeId, trace.upstreamLevels, trace.downstreamLevels, trace.tracedNodeIds, useFullModel, trace.autoPromoted]);
 
-  const { tracedNodes, tracedEdges, traceGraph } = useMemo(
-    (): { tracedNodes: FlowNode<CustomNodeData>[]; tracedEdges: FlowEdge[]; traceGraph: Graph | null } => {
+  const traced = useMemo(
+    (): { tracedNodes: FlowNode<CustomNodeData>[]; tracedEdges: FlowEdge[]; traceGraph: Graph | null; notice?: string } => {
       if (trace.mode === 'none' || trace.mode === 'configuring' || trace.mode === 'pathfinding') {
         return { tracedNodes: flowNodes, tracedEdges: flowEdges, traceGraph: null };
       }
@@ -411,11 +411,17 @@ export function useInteractiveTrace(
       }
 
       const synthesize = baseRenderLimited || useFullModel || !!trace.autoPromoted || trace.manualAddedNodeIds.size > 0;
-      const { nodes, edges, graph: tGraph } = applyTraceToFlow(flowNodes, flowEdges, trace, config, model, synthesize);
-      return { tracedNodes: nodes as FlowNode<CustomNodeData>[], tracedEdges: edges, traceGraph: tGraph ?? null };
+      const { nodes, edges, graph: tGraph, notice } = applyTraceToFlow(flowNodes, flowEdges, trace, config, model, synthesize);
+      return { tracedNodes: nodes as FlowNode<CustomNodeData>[], tracedEdges: edges, traceGraph: tGraph ?? null, notice };
     },
     [flowNodes, flowEdges, trace, config, model, useFullModel, baseRenderLimited]
   );
+  const { tracedNodes, tracedEdges, traceGraph } = traced;
+
+  /** Shows the empty/invisible-trace warning once per computed view; the memo stays pure. */
+  useEffect(() => {
+    if (traced.notice) notifyUser(traced.notice);
+  }, [traced]);
 
   /** Node count a trace from the current origin at the given depths would render — resolves the same BFS graph {@link applyTrace} would use. */
   const estimateTraceSize = useCallback((upstreamLevels: number, downstreamLevels: number): number => {

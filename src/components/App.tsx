@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, useTransition, useMemo, type CSSProperties } from 'react';
+import { useState, useCallback, useRef, useEffect, startTransition, useMemo, type CSSProperties } from 'react';
 import { ReactFlowProvider, type Node as FlowNode } from '@xyflow/react';
 import { StartScreen } from './StartScreen';
 import { CreateFlow } from './CreateFlow';
@@ -194,7 +194,6 @@ export function App() {
   }, []);
 
   const dacpacLoader = useDacpacLoader(applyConfig);
-  const [, startTransition] = useTransition();
 
   /**
    * Triggers a graph rebuild based on the current model and filters.
@@ -667,15 +666,15 @@ export function App() {
   /** Resets everything back to the default state for the current model. */
   const handleResetAll = useCallback(() => {
     if (model) {
+      viewSnapshotRef.current = null;
       const f = getResetFilter(model);
       setFilter(f);
       const initialGraphMode = deriveInitialGraphMode({ filteredCount: model.nodes.length, config });
       setGraphMode(initialGraphMode);
       setSchemaViewSoftDisabled(model.nodes.length <= effectiveOverviewThreshold(config));
       setExpandedSchemaView(null);
-      clearTrace(() => {
-        rebuild(model, f, config, initialGraphMode === 'full', initialGraphMode);
-      });
+      clearTrace();
+      rebuild(model, f, config, initialGraphMode === 'full', initialGraphMode);
     }
   }, [model, config, rebuild, clearTrace]);
 
@@ -1197,8 +1196,10 @@ export function App() {
 
   /** Applies a saved view profile (filters). */
   const handleApplyView = useCallback((profile: FilterProfile) => {
-    setActiveViewId(profile.id);
     const isAdvanced = (profile.filter.allowlistNodeIds?.length ?? 0) > 0;
+    const restored = deserializeFilter(profile.filter);
+    if (!isAdvanced && model && !guardSchemaSelection(model, restored.schemas)) return;
+    setActiveViewId(profile.id);
     if (isAdvanced && !viewSnapshotRef.current) viewSnapshotRef.current = captureViewSnapshot();
     const shapeMode: GraphMode | undefined = isAdvanced
       ? 'full'
@@ -1218,7 +1219,6 @@ export function App() {
     }
     const targetMode = shapeMode ?? graphMode;
     if (isAdvanced) {
-      const restored = deserializeFilter(profile.filter);
       if (model) restored.schemas = new Set(model.schemas.map(s => s.name));
       restored.types = new Set<ObjectType>(['table', 'view', 'procedure', 'function', 'external']);
       setFilter(restored);
@@ -1226,8 +1226,6 @@ export function App() {
       const annotatedNodeIds = profile.aiMetadata ? annotatedNodeIdsFromAiMetadata(profile.aiMetadata) : undefined;
       if (model) rebuild(model, restored, config, false, targetMode, annotatedNodeIds);
     } else {
-      const restored = deserializeFilter(profile.filter);
-      if (model && !guardSchemaSelection(model, restored.schemas)) return;
       setFilter(restored);
       if (model) rebuild(model, restored, config, false, targetMode);
     }
@@ -1558,6 +1556,37 @@ export function App() {
   const renderLimitFallback = displayMode === 'renderLimit' ? deriveRenderLimitFallback() : null;
   const showRenderLimitNotice = !!renderLimitFallback;
 
+  const renderSurface = useMemo(() => showRenderLimitNotice
+    ? { nodes: [], edges: [] }
+    : displayMode === 'scoped'
+      ? { nodes: tracedNodes, edges: tracedEdges }
+      : (displayMode === 'schemaExpanded' && expandedSchemaViewGraph)
+        ? { nodes: expandedSchemaViewGraph.flowNodes, edges: expandedSchemaViewGraph.flowEdges }
+        : displayMode === 'schemaOverview'
+          ? { nodes: schemaNodes, edges: schemaEdges }
+          : { nodes: flowNodes, edges: flowEdges },
+  [showRenderLimitNotice, displayMode, tracedNodes, tracedEdges, expandedSchemaViewGraph, schemaNodes, schemaEdges, flowNodes, flowEdges]);
+  const renderNodes = renderSurface.nodes;
+  const renderEdges = renderSurface.edges;
+
+  /** Diagnostics context for the canvas error boundary and `render-state`; derived only when a rendered input changes. */
+  const graphErrorContext = useMemo(() => ({
+    projectId: activeProjectId,
+    sourceName,
+    displayMode,
+    graphMode,
+    traceMode: trace.mode,
+    expandedSchemas: serializeExpandedSchemas(expandedSchemaView?.expandedSchemas),
+    renderedNodeCount: renderNodes.length,
+    renderedEdgeCount: renderEdges.length,
+    filteredCount,
+    renderLimitHit,
+    connectivity: summarizeRenderedConnectivity(
+      renderNodes.map((n) => ({ id: n.id, label: (n.data as { schemaName?: string; label?: string })?.schemaName ?? (n.data as { schemaName?: string; label?: string })?.label })),
+      renderEdges.map((e) => ({ source: e.source, target: e.target })),
+    ),
+  }), [activeProjectId, sourceName, displayMode, graphMode, trace.mode, expandedSchemaView, renderNodes, renderEdges, filteredCount, renderLimitHit]);
+
   const handleWizardViewChange = useCallback((v: 'main' | 'projects') => {
     vscodeApi.postMessage({ type: 'save-wizard-view', view: v });
   }, [vscodeApi]);
@@ -1606,18 +1635,6 @@ export function App() {
     );
   }
 
-  const renderSurface = showRenderLimitNotice
-    ? { nodes: [], edges: [] }
-    : displayMode === 'scoped'
-      ? { nodes: tracedNodes, edges: tracedEdges }
-      : (displayMode === 'schemaExpanded' && expandedSchemaViewGraph)
-        ? { nodes: expandedSchemaViewGraph.flowNodes, edges: expandedSchemaViewGraph.flowEdges }
-        : displayMode === 'schemaOverview'
-          ? { nodes: schemaNodes, edges: schemaEdges }
-          : { nodes: flowNodes, edges: flowEdges };
-  const renderNodes = renderSurface.nodes;
-  const renderEdges = renderSurface.edges;
-
   const graphErrorResetKey = JSON.stringify({
     project: activeProjectId,
     source: sourceName,
@@ -1628,22 +1645,6 @@ export function App() {
     expandedSchemas: serializeExpandedSchemas(expandedSchemaView?.expandedSchemas),
     showExpandedSchemaClusters,
   });
-  const graphErrorContext = {
-    projectId: activeProjectId,
-    sourceName,
-    displayMode,
-    graphMode,
-    traceMode: trace.mode,
-    expandedSchemas: serializeExpandedSchemas(expandedSchemaView?.expandedSchemas),
-    renderedNodeCount: renderNodes.length,
-    renderedEdgeCount: renderEdges.length,
-    filteredCount,
-    renderLimitHit,
-    connectivity: summarizeRenderedConnectivity(
-      renderNodes.map((n) => ({ id: n.id, label: (n.data as { schemaName?: string; label?: string })?.schemaName ?? (n.data as { schemaName?: string; label?: string })?.label })),
-      renderEdges.map((e) => ({ source: e.source, target: e.target })),
-    ),
-  };
 
   const renderLimitNotice = (showRenderLimitNotice && renderLimitFallback) ? (
     <div className="absolute inset-0 z-40 flex items-center justify-center" style={{ background: 'color-mix(in srgb, var(--ln-bg) 70%, transparent)' }}>

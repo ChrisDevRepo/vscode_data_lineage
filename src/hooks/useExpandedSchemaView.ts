@@ -56,6 +56,15 @@ export function useExpandedSchemaView({
   );
   const expandedSchemaKey = expandedSchemaNames.join('\u0000');
 
+  const expandedSchemaViewRenderedCount = useMemo(() => {
+    if (graphMode !== 'overview' || !expandedSchemaView || !graph) return undefined;
+    return countExpandedSchemaViewRenderedNodes(
+      graph,
+      expandedSchemaView.expandedSchemas,
+      { includeCollapsedSchemaClusters: showExpandedSchemaClusters },
+    );
+  }, [expandedSchemaKey, expandedSchemaView, graph, graphMode, showExpandedSchemaClusters]);
+
   /**
    * The projected expanded-schema graph, or null when there is none to show.
    *
@@ -66,13 +75,8 @@ export function useExpandedSchemaView({
    * so the webview never lays out an oversized graph and shows the render-limit notice instead.
    */
   const expandedSchemaViewGraph = useMemo(() => {
-    if (graphMode !== 'overview' || !expandedSchemaView || !graph) return null;
-    const projectedCount = countExpandedSchemaViewRenderedNodes(
-      graph,
-      expandedSchemaView.expandedSchemas,
-      { includeCollapsedSchemaClusters: showExpandedSchemaClusters },
-    );
-    if (projectedCount > config.renderLimit) return null;
+    if (!expandedSchemaView || !graph || expandedSchemaViewRenderedCount === undefined) return null;
+    if (expandedSchemaViewRenderedCount > config.renderLimit) return null;
     return buildExpandedSchemaViewGraph(
       graph,
       expandedSchemaView.expandedSchemas,
@@ -80,16 +84,7 @@ export function useExpandedSchemaView({
       config,
       { hideClusters: !showExpandedSchemaClusters },
     );
-  }, [config, expandedSchemaKey, expandedSchemaView, graph, graphMode, showExpandedSchemaClusters]);
-
-  const expandedSchemaViewRenderedCount = useMemo(() => {
-    if (graphMode !== 'overview' || !expandedSchemaView || !graph) return undefined;
-    return countExpandedSchemaViewRenderedNodes(
-      graph,
-      expandedSchemaView.expandedSchemas,
-      { includeCollapsedSchemaClusters: showExpandedSchemaClusters },
-    );
-  }, [expandedSchemaKey, expandedSchemaView, graph, graphMode, showExpandedSchemaClusters]);
+  }, [config, expandedSchemaView, expandedSchemaViewRenderedCount, graph, showExpandedSchemaClusters]);
 
   /** Node IDs in the working set that are currently collapsed inside a schema cluster. */
   const collapsedSchemaNodeIds = useMemo(() => {

@@ -28,12 +28,21 @@ function formatDecimal(n: number): string {
   return n.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
 
-/** Format a raw min/max string — if numeric, add thousands separators. */
+/** Significant digits a double holds exactly. */
+const EXACT_DOUBLE_DIGITS = 15;
+
+/** Whether a plain decimal string survives `Number()` unchanged, judged on its digits (trailing fraction zeros ignored). */
+function holdsExactly(raw: string): boolean {
+  const match = /^-?(\d+)(?:\.(\d+))?(?:[eE][+-]?\d+)?$/.exec(raw);
+  if (!match || !Number.isFinite(Number(raw))) return false;
+  const digits = (match[1] + (match[2] ?? '').replace(/0+$/, '')).replace(/^0+/, '');
+  return digits.length <= EXACT_DOUBLE_DIGITS;
+}
+
+/** Format a raw min/max string: separators when a double holds the value exactly; otherwise the source text, so big-int and decimal(38) values keep every digit. */
 function formatValue(raw: string | undefined): string {
   if (!raw) return '–';
-  const n = Number(raw);
-  if (!isNaN(n)) return formatDecimal(n);
-  return raw;
+  return holdsExactly(raw) ? formatDecimal(Number(raw)) : raw;
 }
 
 /** Format a count with percentage of total rows. */
@@ -139,6 +148,11 @@ function sortColumns(cols: IndexedCol[], key: SortKey, dir: 'asc' | 'desc'): Ind
 }
 
 
+/** `aria-sort` value for the active sort direction. */
+function ariaSortOf(dir: 'asc' | 'desc'): 'ascending' | 'descending' {
+  return dir === 'asc' ? 'ascending' : 'descending';
+}
+
 const GRID_COLS = 'minmax(60px, 1fr) 38px 46px minmax(70px, auto)';
 
 const cellClip: React.CSSProperties = {
@@ -190,7 +204,8 @@ function StatsResults({ stats, mode }: {
 
   const sortedProfiled = useMemo(() => sortColumns(profiled, sort.key, sort.dir), [profiled, sort]);
   const isStandard = mode === 'standard';
-  const hdrStyle: React.CSSProperties = { color: 'var(--ln-fg-muted)', cursor: 'pointer', userSelect: 'none' };
+  const hdrStyle: React.CSSProperties = { color: 'var(--ln-fg-muted)', userSelect: 'none' };
+  const hdrButtonStyle: React.CSSProperties = { background: 'none', border: 0, padding: 0, font: 'inherit', color: 'inherit', textAlign: 'inherit', cursor: 'pointer' };
 
   const isDetailVisible = (colName: string) => {
     if (expandedAll) return !expandedCols.has(colName);
@@ -229,26 +244,48 @@ function StatsResults({ stats, mode }: {
         )}
       </div>
 
-      <div
+      <table
+        role="table"
         className="font-medium pb-1"
-        style={{ display: 'grid', gridTemplateColumns: GRID_COLS, gap: '0 6px', borderBottom: '1px solid var(--ln-border)' }}
+        style={{ display: 'block', borderBottom: '1px solid var(--ln-border)' }}
       >
-        <div style={hdrStyle} onClick={() => {
-          if (sort.key === 'ordinal') toggleSort('name');
-          else if (sort.key === 'name') toggleSort('ordinal');
-          else toggleSort('ordinal');
-        }}>
-          Column{sort.key === 'name' && <SortArrow dir={sort.dir} />}
-          {sort.key === 'ordinal' && <span style={{ fontSize: '0.55rem', marginLeft: 2, opacity: 0.7 }}>#</span>}
-        </div>
-        <div style={{ color: 'var(--ln-fg-muted)' }}>Type</div>
-        <div style={{ ...hdrStyle, textAlign: 'right' }} onClick={() => toggleSort('null')}>
-          Null%{sort.key === 'null' && <SortArrow dir={sort.dir} />}
-        </div>
-        <div style={{ ...hdrStyle, textAlign: 'right' }} onClick={() => toggleSort('distinct')}>
-          Distinct{sort.key === 'distinct' && <SortArrow dir={sort.dir} />}
-        </div>
-      </div>
+        <thead style={{ display: 'block' }}>
+          <tr role="row" style={{ display: 'grid', gridTemplateColumns: GRID_COLS, gap: '0 6px' }}>
+            <th
+              role="columnheader"
+              scope="col"
+              aria-sort={sort.key === 'name' ? ariaSortOf(sort.dir) : 'none'}
+              style={{ ...hdrStyle, fontWeight: 'inherit', textAlign: 'left' }}
+            >
+              <button type="button" style={hdrButtonStyle} onClick={() => toggleSort(sort.key === 'ordinal' ? 'name' : 'ordinal')}>
+                Column{sort.key === 'name' && <SortArrow dir={sort.dir} />}
+                {sort.key === 'ordinal' && <span style={{ fontSize: '0.55rem', marginLeft: 2, opacity: 0.7 }}>#</span>}
+              </button>
+            </th>
+            <th role="columnheader" scope="col" style={{ color: 'var(--ln-fg-muted)', fontWeight: 'inherit', textAlign: 'left' }}>Type</th>
+            <th
+              role="columnheader"
+              scope="col"
+              aria-sort={sort.key === 'null' ? ariaSortOf(sort.dir) : 'none'}
+              style={{ ...hdrStyle, fontWeight: 'inherit', textAlign: 'right' }}
+            >
+              <button type="button" style={hdrButtonStyle} onClick={() => toggleSort('null')}>
+                Null%{sort.key === 'null' && <SortArrow dir={sort.dir} />}
+              </button>
+            </th>
+            <th
+              role="columnheader"
+              scope="col"
+              aria-sort={sort.key === 'distinct' ? ariaSortOf(sort.dir) : 'none'}
+              style={{ ...hdrStyle, fontWeight: 'inherit', textAlign: 'right' }}
+            >
+              <button type="button" style={hdrButtonStyle} onClick={() => toggleSort('distinct')}>
+                Distinct{sort.key === 'distinct' && <SortArrow dir={sort.dir} />}
+              </button>
+            </th>
+          </tr>
+        </thead>
+      </table>
 
       {sortedProfiled.map(col => {
         const showDetail = isStandard && hasDetail(col) && isDetailVisible(col.name);

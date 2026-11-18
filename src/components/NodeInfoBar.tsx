@@ -2,6 +2,7 @@ import { memo, useMemo, useState } from 'react';
 import {
   useFloating,
   useHover,
+  useFocus,
   useInteractions,
   FloatingPortal,
   offset,
@@ -62,7 +63,8 @@ function NeighborHoverList({
   });
 
   const hover = useHover(context, { delay: { open: 150, close: 100 }, move: false });
-  const { getReferenceProps, getFloatingProps } = useInteractions([hover]);
+  const focus = useFocus(context);
+  const { getReferenceProps, getFloatingProps } = useInteractions([hover, focus]);
 
   if (count === 0) return <span className="ln-text-dim">{label}: 0</span>;
 
@@ -84,6 +86,7 @@ function NeighborHoverList({
       <span
         ref={refs.setReference}
         {...getReferenceProps()}
+        tabIndex={0}
         className="ln-text cursor-default"
       >
         {label}: {count}
@@ -146,7 +149,8 @@ function SimpleHoverList({ label, count, items }: { label: string; count: number
   });
 
   const hover = useHover(context, { delay: { open: 150, close: 100 }, move: false });
-  const { getReferenceProps, getFloatingProps } = useInteractions([hover]);
+  const focus = useFocus(context);
+  const { getReferenceProps, getFloatingProps } = useInteractions([hover, focus]);
 
   if (count === 0) return <span className="ln-text-dim">{label}: 0</span>;
 
@@ -155,6 +159,7 @@ function SimpleHoverList({ label, count, items }: { label: string; count: number
       <span
         ref={refs.setReference}
         {...getReferenceProps()}
+        tabIndex={0}
         className="ln-text cursor-default"
       >
         {label}: {count}

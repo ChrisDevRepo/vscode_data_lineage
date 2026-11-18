@@ -136,8 +136,12 @@ export interface MountedCanvas {
   vscodeState: Record<string, unknown>;
 }
 
-/** Mounts `GraphCanvas` in a `ReactFlowProvider` with a stub VS Code API. Requires fake timers that include `requestAnimationFrame`. */
-export function mountCanvas(props: CanvasProps): MountedCanvas {
+/**
+ * Mounts `GraphCanvas` in a `ReactFlowProvider` with a stub VS Code API. Requires fake timers that include `requestAnimationFrame`.
+ *
+ * @param postMessage - Receives every message the canvas posts to the host; ignored by default.
+ */
+export function mountCanvas(props: CanvasProps, postMessage: (message: unknown) => void = () => {}): MountedCanvas {
   const host = document.createElement('div');
   host.style.width = '1200px';
   host.style.height = '800px';
@@ -145,7 +149,7 @@ export function mountCanvas(props: CanvasProps): MountedCanvas {
   const root: Root = createRoot(host);
   const vscodeState: Record<string, unknown> = {};
   const api = {
-    postMessage: () => {},
+    postMessage,
     getState: () => ({ ...vscodeState }),
     setState: (next: Record<string, unknown>) => { Object.assign(vscodeState, next); },
   } as unknown as VsCodeAPI;

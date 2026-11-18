@@ -28,6 +28,12 @@ describe('stripBrackets', () => {
     expect(stripBrackets('"a""b"')).toBe('a"b');
   });
 
+  it('unescapes only the delimiter that encloses the part', () => {
+    expect(stripBrackets('[a""b]')).toBe('a""b');
+    expect(stripBrackets('"a]]b"')).toBe('a]]b');
+    expect(stripBrackets('[a]]b]."c""d"')).toBe('a]b.c"d');
+  });
+
   it('drops stray delimiters from an unbalanced name', () => {
     expect(stripBrackets('dbo].[Table')).toBe('dbo.Table');
   });

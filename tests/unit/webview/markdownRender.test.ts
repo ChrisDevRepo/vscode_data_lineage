@@ -38,6 +38,17 @@ describe('renderAiMarkdown — delimiter rules', () => {
     }
   });
 
+  it('does not start math right after a word character', () => {
+    expect(render('a$x$').querySelectorAll('.katex'), 'a$x$').toHaveLength(0);
+    expect(render('the col1$x$ and $y$').querySelectorAll('.katex'), 'only the standalone pair').toHaveLength(1);
+    expect(render('**bold**$x$').querySelectorAll('.katex'), 'after a closing emphasis').toHaveLength(1);
+  });
+
+  it('pins the escaped and leading-position guards', () => {
+    expect(render('\\$x$').querySelectorAll('.katex'), 'escaped opening dollar').toHaveLength(0);
+    expect(render('$x$').querySelectorAll('.katex'), 'math at the start of the string').toHaveLength(1);
+  });
+
   it('renders block math on its own lines as display math', () => {
     expect(render('text\n\n$$\nE = mc^2\n$$\n\nmore').querySelectorAll('.katex-display')).toHaveLength(1);
   });

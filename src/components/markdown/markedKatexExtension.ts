@@ -35,7 +35,8 @@ const mathInlineRegExp =
 const katexContainerClassName = 'vscode-katex-container';
 const katexContainerLatexAttributeName = 'data-latex';
 
-const inlineRule = new RegExp('^' + mathInlineRegExp.source);
+/** {@link mathInlineRegExp} anchored at `lastIndex`, so its lookbehind still sees the preceding text. */
+const inlineRule = new RegExp(mathInlineRegExp.source, 'y');
 const blockRule = /^(\${1,2})\n((?:\\[^]|[^\\])+?)\n\1(?:\n|$)/;
 
 interface MarkedKatexOptions extends KatexOptions { }
@@ -76,31 +77,18 @@ function createRenderer(
 }
 
 function inlineKatex(renderer: RendererExtensionFunction): TokenizerAndRendererExtension {
-  const ruleReg = inlineRule;
   return {
     name: 'inlineKatex',
     level: 'inline',
     start(src: string) {
-      let index;
-      let indexSrc = src;
-
-      while (indexSrc) {
-        index = indexSrc.indexOf('$');
-        if (index === -1) {
-          return;
-        }
-
-        const possibleKatex = indexSrc.substring(index);
-        if (possibleKatex.match(ruleReg)) {
-          return index;
-        }
-
-        indexSrc = indexSrc.substring(index + 1).replace(/^\$+/, '');
-      }
-      return;
+      return mathInlineRegExp.exec(src)?.index;
     },
-    tokenizer(src: string, _tokens: Token[]) {
-      const match = src.match(ruleReg);
+    tokenizer(src: string, tokens: Token[]) {
+      // `marked` passes only the unconsumed suffix; restore the previous raw character so the
+      // lookbehind rejects `a$x$` the same way it does inside one string.
+      const prefix = tokens.at(-1)?.raw.slice(-1) ?? '';
+      inlineRule.lastIndex = prefix.length;
+      const match = inlineRule.exec(prefix + src);
       if (match) {
         return {
           type: 'inlineKatex',
