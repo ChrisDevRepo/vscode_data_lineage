@@ -14,7 +14,7 @@ import {
 import { notifyError, notifyWarning } from '../utils/notifications';
 import { type BridgeHost } from './host';
 import {
-  type DatabaseModel, type XmlElement, type LineageNode, type ColumnDef, type ParseStats, DEFAULT_CONFIG,
+  type DatabaseModel, type LineageNode, type ColumnDef, type ParseStats, DEFAULT_CONFIG,
   UNKNOWN_DB_PLATFORM,
 } from '../engine/types';
 import { extractDacpac, extractSchemaPreview, extractDacpacFiltered } from '../engine/dacpacExtractor';
@@ -249,9 +249,29 @@ export function createMessageHandlers(
   reportDocumentRef: ReportDocumentRef = {}
 ): MessageHandlerBundle {
 
-  let cachedElements: XmlElement[] | null = null;
-  let cachedDspName = '';
-  let cachedIdentifierCaseSensitive = false;
+  type DacpacPreview = Awaited<ReturnType<typeof extractSchemaPreview>>;
+  let cachedDacpac: DacpacPreview | null = null;
+  /** Builds the selected schemas of a parsed dacpac and installs the model, unless it is over the object limit. */
+  function installFilteredDacpac(
+    host: BridgeHost,
+    dacpac: DacpacPreview,
+    schemas: readonly string[],
+    config: Awaited<ReturnType<typeof readExtensionConfig>>,
+    project: { id: string; name: string } | null,
+    sourceName: string,
+  ): void {
+    const logger = Logger.create(outputChannel, 'Parse');
+    const model = extractDacpacFiltered(dacpac.elements, new Set(schemas), dacpac.dspName, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
+      externalRefsEnabled: config.externalRefs.enabled,
+      identifierCaseSensitive: dacpac.identifierCaseSensitive,
+    });
+    if (isModelOverLimit(model, config.maxNodes, logger, host)) return;
+    logger.info(`Dacpac filtered — ${model.nodes.length} nodes, ${model.edges.length} edges`);
+    setCurrentModel(model, false, project);
+    if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
+    host.postMessage({ type: 'dacpac-model', model, config, sourceName });
+  }
+
   let lastConnectionInfo: StoredConnectionInfo | undefined;
   const dmvQueries = createDmvQueryCache(() => loadDmvQueries(outputChannel, context.extensionUri));
   const dbEnv: DbConnectEnv = { secrets: context.secrets, outputChannel, loadQueries: dmvQueries.get };
@@ -594,8 +614,8 @@ export function createMessageHandlers(
           host.postMessage({ type: 'db-error', message: `Could not open ${path.basename(uris[0].fsPath)}: ${reason}` });
           return;
         }
-        const { preview, elements, dspName, identifierCaseSensitive } = extracted;
-        cachedElements = elements; cachedDspName = dspName; cachedIdentifierCaseSensitive = identifierCaseSensitive;
+        const { preview } = extracted;
+        cachedDacpac = extracted;
         host.postMessage({
           type: 'dacpac-schema-preview',
           preview,
@@ -636,24 +656,16 @@ export function createMessageHandlers(
           const config = await readExtensionConfig(host);
           const schemas = project.connection.schemas;
 
+          const extracted = await extractSchemaPreview(data);
           if (schemas && schemas.length > 0) {
-            host.log('debug', 'Bridge', `Extracting filtered dacpac for schemas: ${trunc(schemas, LOG_TRUNC_LIST)}`);
-            const { elements, dspName, identifierCaseSensitive } = await extractSchemaPreview(data);
             if (token.isCancellationRequested) return;
-            const logger = Logger.create(outputChannel, 'Parse');
-            const model = extractDacpacFiltered(elements, new Set(schemas), dspName, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
-              externalRefsEnabled: config.externalRefs.enabled,
-              identifierCaseSensitive,
-            });
-            if (isModelOverLimit(model, config.maxNodes, logger, host)) return;
-            logger.info(`Dacpac filtered — ${model.nodes.length} nodes, ${model.edges.length} edges`);
-            setCurrentModel(model, false, { id: project.id, name: project.connection.displayName });
-            if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
-            host.postMessage({ type: 'dacpac-model', model, config, sourceName: project.connection.displayName });
+            host.log('debug', 'Bridge', `Extracting filtered dacpac for schemas: ${trunc(schemas, LOG_TRUNC_LIST)}`);
+            const name = project.connection.displayName;
+            installFilteredDacpac(host, extracted, schemas, config, { id: project.id, name }, name);
           } else {
             host.log('debug', 'Bridge', 'No schemas in project, showing preview');
-            const { preview, elements, dspName, identifierCaseSensitive } = await extractSchemaPreview(data);
-            cachedElements = elements; cachedDspName = dspName; cachedIdentifierCaseSensitive = identifierCaseSensitive;
+            const { preview } = extracted;
+            cachedDacpac = extracted;
             host.postMessage({ type: 'dacpac-schema-preview', preview, config, sourceName: project.connection.displayName });
             host.log('info', 'Dacpac', `Schema preview — ${preview.schemas.length} schemas, ${preview.totalObjects} objects`);
           }
@@ -727,33 +739,22 @@ export function createMessageHandlers(
     }),
     'dacpac-visualize': loadHandler(async (host, token, msg) => {
       host.log('debug', 'Bridge', `Dacpac visualize requested for schemas: ${msg.schemas?.join(', ')}`);
-      if (!cachedElements) {
+      if (!cachedDacpac) {
         host.log('error', 'Bridge', 'Dacpac visualize', 'Session expired (cachedElements is null)');
         host.postMessage({ type: 'db-error', message: 'Session expired. Please reopen the file.' });
         return;
       }
       const config = await readExtensionConfig(host);
       if (token.isCancellationRequested) return;
-      const logger = Logger.create(outputChannel, 'Parse');
-      let model: DatabaseModel;
+      const sess = getSession();
+      const projectName = msg.projectName ?? sess.projectName ?? 'dacpac';
       try {
-        model = extractDacpacFiltered(cachedElements, new Set(msg.schemas), cachedDspName, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
-          externalRefsEnabled: config.externalRefs.enabled,
-          identifierCaseSensitive: cachedIdentifierCaseSensitive,
-        });
+        installFilteredDacpac(host, cachedDacpac, msg.schemas, config, sess.currentProjectId ? { id: sess.currentProjectId, name: projectName } : null, projectName);
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
         host.log('error', 'Dacpac', 'Dacpac visualize', err);
         host.postMessage({ type: 'db-error', message: `Could not build the lineage model: ${reason}` });
-        return;
       }
-      if (isModelOverLimit(model, config.maxNodes, logger, host)) return;
-      logger.info(`Dacpac filtered — ${model.nodes.length} nodes, ${model.edges.length} edges`);
-      const sess = getSession();
-      const projectName = msg.projectName ?? sess.projectName ?? 'dacpac';
-      setCurrentModel(model, false, sess.currentProjectId ? { id: sess.currentProjectId, name: projectName } : null);
-      if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
-      host.postMessage({ type: 'dacpac-model', model, config, sourceName: projectName });
     }),
     'db-visualize': loadHandler(async (host, token, msg) => {
       host.log('debug', 'Bridge', `Database visualize requested for schemas: ${msg.schemas?.join(', ')}`);

@@ -28,9 +28,9 @@ import {
   DEFAULT_CONFIG,
 } from './types';
 import { buildModel, parseName, normalizeName } from './modelBuilder';
-import { applyExclusionFilter } from './modelFilters';
 import { quoteIdentifier, stripBrackets, schemaKey, normalizeColName, splitSqlName } from '../utils/sql';
 import { trunc } from '../utils/log';
+export { filterBySchemas, applyExclusionPatterns } from './modelFilters';
 
 interface DacpacExtractionOptions {
   externalRefsEnabled?: boolean;
@@ -69,38 +69,10 @@ export async function extractDacpac(
   const { elements, dspName, identifierCaseSensitive } = parseElements(xml);
   if (onDebugLog) onDebugLog(`Dacpac: model.xml parsed — ${elements.length} elements (dsp=${dspName || 'unspecified'})`);
 
-  const dbPlatform = parseDspPlatform(dspName);
-
-  const objects = extractObjects(elements, undefined, identifierCaseSensitive);
-  const allObjects = extractObjectsLightweight(elements, identifierCaseSensitive);
-  const deps = extractDependencies(elements);
-  const c = countObjectsByType(objects);
-  if (onDebugLog) onDebugLog(`Dacpac: Extracted ${objects.length} objects, ${deps.length} deps (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function})`);
-  if (onInfoLog) onInfoLog(`Dacpac extracted — ${objects.length} objects (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function}) ${deps.length} deps`);
-
-  const model = buildModel(
-    objects,
-    deps,
-    allObjects,
-    undefined,
-    options.externalRefsEnabled ?? DEFAULT_CONFIG.externalRefs.enabled,
-    onDebugLog,
-    identifierCaseSensitive,
-  );
-
-  const warnings: string[] = [];
-  if (elements.length === 0) {
-    warnings.push('This dacpac appears to be empty.');
-  } else if (model.nodes.length === 0) {
-    warnings.push('No tables, views, or stored procedures found in this file.');
-  }
-
-  return {
-    ...model,
-    warnings: warnings.length > 0 ? warnings : undefined,
-    dbPlatform: dbPlatform || undefined,
-    source: 'dacpac',
-  };
+  const emptyWarning = elements.length === 0
+    ? 'This dacpac appears to be empty.'
+    : 'No tables, views, or stored procedures found in this file.';
+  return buildDacpacModel(elements, elements, dspName, { ...options, identifierCaseSensitive }, emptyWarning, onDebugLog, onInfoLog);
 }
 
 /**
@@ -148,9 +120,25 @@ export function extractDacpacFiltered(
   });
   if (onDebugLog) onDebugLog(`Dacpac: Filter — ${elements.length} → ${filtered.length} tracked elements after schema filter`);
 
-  const allObjects = extractObjectsLightweight(elements, identifierCaseSensitive);
-  const objects = extractObjects(filtered, elements, identifierCaseSensitive);
-  const deps = extractDependencies(filtered);
+  return buildDacpacModel(filtered, elements, dspName, options, 'No tables, views, or stored procedures found for selected schemas.', onDebugLog, onInfoLog);
+}
+
+/**
+ * Builds the model of `elements`, with `allElements` as the object catalog; `emptyWarning` is
+ * reported when no node results.
+ */
+function buildDacpacModel(
+  elements: XmlElement[],
+  allElements: XmlElement[],
+  dspName: string | undefined,
+  options: DacpacExtractionOptions,
+  emptyWarning: string,
+  onDebugLog?: (msg: string) => void,
+  onInfoLog?: (msg: string) => void,
+): DatabaseModel {
+  const identifierCaseSensitive = options.identifierCaseSensitive === true;
+  const objects = extractObjects(elements, allElements, identifierCaseSensitive);
+  const deps = extractDependencies(elements);
   const c = countObjectsByType(objects);
   if (onDebugLog) onDebugLog(`Dacpac: Extracted ${objects.length} objects, ${deps.length} deps (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function})`);
   if (onInfoLog) onInfoLog(`Dacpac extracted — ${objects.length} objects (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function}) ${deps.length} deps`);
@@ -158,22 +146,16 @@ export function extractDacpacFiltered(
   const model = buildModel(
     objects,
     deps,
-    allObjects,
+    extractObjectsLightweight(allElements, identifierCaseSensitive),
     undefined,
     options.externalRefsEnabled ?? DEFAULT_CONFIG.externalRefs.enabled,
     onDebugLog,
     identifierCaseSensitive,
   );
-  const dbPlatform = dspName ? parseDspPlatform(dspName) : undefined;
-
-  const warnings: string[] = [];
-  if (model.nodes.length === 0) {
-    warnings.push('No tables, views, or stored procedures found for selected schemas.');
-  }
   return {
     ...model,
-    warnings: warnings.length > 0 ? warnings : undefined,
-    dbPlatform: dbPlatform || undefined,
+    warnings: model.nodes.length === 0 ? [emptyWarning] : undefined,
+    dbPlatform: (dspName && parseDspPlatform(dspName)) || undefined,
     source: 'dacpac',
   };
 }
@@ -216,47 +198,6 @@ function computeSchemaPreviewFromElements(elements: XmlElement[], identifierCase
   }
 
   return { schemas, totalObjects, ...(identifierCaseSensitive && { identifierCaseSensitive }), warnings: warnings.length > 0 ? warnings : undefined };
-}
-
-/**
- * Filters an existing DatabaseModel in memory to objects from specific schemas. Retains every
- * matching object and every external reference it touches; it never truncates. Callers that must
- * honor `dataLineageViz.maxNodes` check the result with {@link checkObjectLimit} before loading or
- * rendering it.
- */
-export function filterBySchemas(
-  model: DatabaseModel,
-  selectedSchemas: Set<string>,
-): DatabaseModel {
-  const lowerSelected = new Set(Array.from(selectedSchemas).map(s => schemaKey(s, model.identifierCaseSensitive)));
-  const schemaNodes = model.nodes.filter((n) => lowerSelected.has(schemaKey(n.schema, model.identifierCaseSensitive)));
-  const schemaNodeIds = new Set(schemaNodes.map(n => n.id));
-
-  const connectedVirtualIds = new Set<string>();
-  for (const e of model.edges) {
-    if (schemaNodeIds.has(e.target)) connectedVirtualIds.add(e.source);
-    if (schemaNodeIds.has(e.source)) connectedVirtualIds.add(e.target);
-  }
-  const virtualNodes = model.nodes.filter((n) =>
-    n.type === 'external' && connectedVirtualIds.has(n.id) && !schemaNodeIds.has(n.id)
-  );
-  const filtered = [...schemaNodes, ...virtualNodes];
-  const nodeIds = new Set(filtered.map((n) => n.id));
-
-  const edges = model.edges.filter(
-    (e) => nodeIds.has(e.source) && nodeIds.has(e.target)
-  );
-
-  return {
-    nodes: filtered,
-    edges,
-    schemas: model.schemas.filter((s) => lowerSelected.has(schemaKey(s.name, model.identifierCaseSensitive))),
-    catalog: model.catalog,
-    neighborIndex: model.neighborIndex,
-    parseStats: model.parseStats,
-    warnings: model.warnings,
-    identifierCaseSensitive: model.identifierCaseSensitive,
-  };
 }
 
 /** Extracts a lightweight catalog of all tracked objects, without body or column detail. */
@@ -851,64 +792,4 @@ function isObjectLevelRef(name: string): boolean {
 function asArray<T>(val: T | T[] | undefined | null): T[] {
   if (val == null) return [];
   return Array.isArray(val) ? val : [val];
-}
-
-/**
- * Removes nodes matching exclusion patterns and records the removed objects on the parse statistics
- * of surviving objects that referenced them. Node and edge exclusion is delegated to
- * {@link applyExclusionFilter} so load-time and graph-time paths cannot diverge; only the
- * parse-stat annotation is specific here. Invalid patterns are skipped and reported via
- * `onWarning`.
- */
-export function applyExclusionPatterns(model: DatabaseModel, patterns: string[], onWarning?: (msg: string) => void): DatabaseModel {
-  const filtered = applyExclusionFilter(model, patterns, (pattern, err) => {
-    onWarning?.(`Invalid exclude pattern "${pattern}": ${err instanceof Error ? err.message : err}`);
-  });
-  if (filtered === model) return model;
-
-  const { nodes } = filtered;
-  const nodeIds = new Set(nodes.map((n) => n.id));
-  const excludedNodes = model.nodes.filter((n) => !nodeIds.has(n.id));
-
-  const excludedIds = new Set(excludedNodes.map((n) => n.id));
-  const excludedNameById = new Map(excludedNodes.map((n) => [n.id, `${n.schema}.${n.name}`]));
-  let parseStats = model.parseStats;
-  if (parseStats && excludedIds.size > 0) {
-    const allEdges = model.edges;
-
-    const nameToIdMap = new Map<string, string>();
-    for (const n of nodes) nameToIdMap.set(schemaKey(`${n.schema}.${n.name}`, model.identifierCaseSensitive), n.id);
-    for (const n of excludedNodes) {
-      const key = schemaKey(`${n.schema}.${n.name}`, model.identifierCaseSensitive);
-      if (!nameToIdMap.has(key)) nameToIdMap.set(key, n.id);
-    }
-
-    const adjacency = new Map<string, string[]>();
-    for (const e of allEdges) {
-      if (excludedIds.has(e.target)) {
-        let arr = adjacency.get(e.source);
-        if (!arr) { arr = []; adjacency.set(e.source, arr); }
-        arr.push(e.target);
-      }
-      if (excludedIds.has(e.source)) {
-        let arr = adjacency.get(e.target);
-        if (!arr) { arr = []; adjacency.set(e.target, arr); }
-        arr.push(e.source);
-      }
-    }
-
-    parseStats = {
-      ...parseStats,
-      spDetails: parseStats.spDetails.map((sp) => {
-        const spId = nameToIdMap.get(schemaKey(sp.name, model.identifierCaseSensitive));
-        if (!spId) return sp;
-        const neighbors = adjacency.get(spId);
-        if (!neighbors) return sp;
-        const lost = neighbors.map(id => excludedNameById.get(id)!).filter(Boolean);
-        return lost.length > 0 ? { ...sp, excluded: lost } : sp;
-      }),
-    };
-  }
-
-  return { ...filtered, parseStats };
 }

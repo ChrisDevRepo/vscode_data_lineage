@@ -11,14 +11,12 @@ import {
   DatabaseModel,
   LineageNode,
   LineageEdge,
-  SchemaInfo,
   ObjectType,
   ParseStats,
   ExtractedObject,
   ExtractedDependency,
   CatalogEntry,
   NeighborIndex,
-  createEmptySchemaInfo,
 } from './types';
 import { parseSqlBody, extractExternalRefs } from './sqlBodyParser';
 import { quoteIdentifier, stripBrackets, splitSqlName, schemaKey } from '../utils/sql';
@@ -26,6 +24,7 @@ import { trunc, sanitizeForLog } from '../utils/log';
 import { ColumnStore } from './columnStore';
 import { SYSTEM_SCHEMAS, XML_METHODS, CLR_TYPE_METHODS } from './shared/sqlMetadata';
 import { normalizeName } from './shared/sqlIdentifier';
+import { computeSchemas } from './shared/modelSchemas';
 
 export { normalizeName };
 
@@ -257,23 +256,6 @@ function addEdge(
     edgeKeys.add(key);
     edges.push(deleteOnly ? { source, target, type, deleteOnly: true } : { source, target, type });
   }
-}
-
-/** Computes schema metrics from the resolved node list, sorted by node count. */
-export function computeSchemas(nodes: LineageNode[], identifierCaseSensitive = false): SchemaInfo[] {
-  const map = new Map<string, SchemaInfo>();
-  for (const node of nodes) {
-    if (node.externalType === 'file' || node.externalType === 'db') continue;
-    const key = schemaKey(node.schema, identifierCaseSensitive);
-    let info = map.get(key);
-    if (!info) {
-      info = createEmptySchemaInfo(node.schema);
-      map.set(key, info);
-    }
-    info.nodeCount++;
-    info.types[node.type]++;
-  }
-  return Array.from(map.values()).sort((a, b) => b.nodeCount - a.nodeCount);
 }
 
 /** Builds the primary list of LineageNodes from extracted object metadata. */

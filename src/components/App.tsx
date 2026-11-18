@@ -30,9 +30,8 @@ import { useVsCode } from '../contexts/VsCodeContext';
 import type { ColumnTraceNodeData, DatabaseModel, ObjectType, FilterState, ExtensionConfig, AnalysisMode, AnalysisType, GraphMode } from '../engine/types';
 import { DEFAULT_CONFIG } from '../engine/types';
 import { runAnalysis } from '../engine/graphAnalysis';
-import { filterBySchemas, applyExclusionPatterns } from '../engine/dacpacExtractor';
+import { scopeModelForVisualize } from '../engine/modelFilters';
 import { refuseOverObjectLimit } from '../utils/objectLimitGuard';
-import { computeSchemas } from '../engine/modelBuilder';
 import { reconcileAiView, annotatedNodeIdsFromAiMetadata } from './aiViewReconcile';
 import { BRIDGE_PROTOCOL_VERSION, ExtensionToWebviewMsgSchema, validateBridgeFrame } from '../engine/shared/bridgeContract';
 import { escapeRegexLiteral } from '../utils/sql';
@@ -211,9 +210,7 @@ export function App() {
   /** Starts the visualization phase for a newly loaded model. */
   const handleVisualize = useCallback(
     (dacpacModel: DatabaseModel, selectedSchemas: Set<string>) => {
-      let trimmed = filterBySchemas(dacpacModel, selectedSchemas);
-      trimmed = applyExclusionPatterns(trimmed, config.excludePatterns, notifyUser);
-      trimmed = { ...trimmed, schemas: computeSchemas(trimmed.nodes) };
+      const trimmed = scopeModelForVisualize(dacpacModel, selectedSchemas, config.excludePatterns, notifyUser);
 
       const refusal = refuseOverObjectLimit(trimmed, config.maxNodes, 'Visualize');
       if (refusal !== null) {
