@@ -174,7 +174,11 @@ export class AgentRuntime {
 
       for (;;) {
         assertExternalTracingDisabled();
-        const recursionLimit = turnRecursionLimit(this.maxRounds, session.stateMachine?.scopeSize ?? 0);
+        // An approval turn builds the pending proposal's engine inside the graph; size by its scope.
+        const recursionLimit = turnRecursionLimit(
+          this.maxRounds,
+          session.pendingExploration?.summary.scopeCount ?? session.stateMachine?.scopeSize ?? 0,
+        );
         const result = await this.graph.invoke(input as never, { ...config, recursionLimit });
         const interruptPayload = extractInterruptPayload(result);
         if (interruptPayload !== null) {
