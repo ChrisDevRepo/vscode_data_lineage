@@ -1225,8 +1225,7 @@ async function withDbProgressHost(
       const failure = connectionFailure(err, session);
       if (failure) {
         const { target } = failure;
-        // A retry reconnects the connection that failed, so a record stored by the retired mssql
-        // extension is not asked to reconnect twice.
+        // A retry reconnects the connection that failed instead of asking for one again.
         const failed: Partial<StoredConnectionInfo> | undefined = target.connectionId ? { provider: 'builtIn', connectionId: target.connectionId } : undefined;
         const retry = (patch?: Partial<StoredConnectionInfo>) => withDbProgressHost(host, env, title, (_patch, token) => connectFn({ ...failed, ...patch }, token), phaseFn);
         const reported = reportConnectionError(

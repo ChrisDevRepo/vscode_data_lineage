@@ -388,12 +388,12 @@ async function pickDatabase(connection: BuiltInConnection): Promise<string | und
  */
 export async function connectDatabase(env: DbConnectEnv, stored?: StoredConnectionInfo, token?: vscode.CancellationToken): Promise<DbSession | undefined> {
   const logger = Logger.create(env.outputChannel, 'DB');
-  const connections = readBuiltInConnections(logger);
   if (stored && usesMssqlExtension(stored)) {
     logger.info('Project saved with the retired mssql extension connection — not supported');
     void vscode.window.showWarningMessage(MSSQL_RECONNECT_NOTICE);
     return undefined;
   }
+  const connections = readBuiltInConnections(logger);
   let connection: BuiltInConnection | undefined;
   if (stored) {
     connection = findBuiltInMatch(connections, stored);

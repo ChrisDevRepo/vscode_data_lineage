@@ -14,7 +14,7 @@ Start with **View → Output → Data Lineage Viz**; set its log level to **Debu
 | 4060 / 916 `Cannot open database` | Database missing, or the login has no user in it | Choose Database · Edit Connection |
 | 40613 / 40197 / 40501 / 40532 | Azure database unavailable, busy or resuming | Retry |
 | `ETIMEOUT`, `ESOCKET`, `ENOTFOUND`, `ECONNREFUSED` | Wrong server or port, server stopped, network blocked | Edit Connection · Retry |
-| Certificate not trusted | Self-signed server certificate | Trust Server Certificate (asks first) · Edit Connection |
+| Certificate not trusted | Self-signed server certificate | Trust Server Certificate (skips certificate validation; use only for a server you know) · Edit Connection |
 | Sign-in cancelled | Microsoft sign-in window closed | Sign In · Sign in with another account |
 | 229 / 297 / 300 | Login cannot read metadata | Copy GRANT Statement |
 | anything else | | Show Log · Edit Connection |

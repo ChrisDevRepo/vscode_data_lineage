@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
 import { Logger } from '../../utils/log';
 import { openBuiltInSession, type BuiltInEnv } from './builtInProvider';
-import { builtInTarget, CONNECTION_ERROR_LABELS, confirmTrustServerCertificate, describeConnectionError } from './connectionErrors';
+import { builtInTarget, CONNECTION_ERROR_LABELS, describeConnectionError } from './connectionErrors';
 import { defaultTenantId, listTenants, pickAccount } from './entraSignIn';
 import {
   AddConnectionArgsSchema, BuiltInConnectionSchema, deleteBuiltInConnection, describeConnection, dropTcpPrefix,
@@ -319,7 +319,7 @@ export async function runAddConnectionFlow(
         const trustLabel = CONNECTION_ERROR_LABELS.trustServerCertificate;
         const choice = await vscode.window.showErrorMessage(failure.message, ...(offerTrust ? [trustLabel] : []), 'Edit', 'Cancel');
         if (choice === trustLabel) {
-          if (await confirmTrustServerCertificate(connection)) state.trustServerCertificate = true;
+          state.trustServerCertificate = true;
           continue;
         }
         if (choice !== 'Edit') return undefined;
@@ -388,11 +388,10 @@ function connectionFromArg(arg: unknown, placeholder: string, filter?: Connectio
 /**
  * Registers the four connection commands. `dataLineageViz.addDatabaseConnection` accepts `{
  * connection, password? }`; with an argument it validates, saves to user settings and the secret
- * store, and returns the id. Its only prompt is the certificate-trust confirmation, shown when the
- * argument turns `trustServerCertificate` on for a server and port not already trusted under that
- * id; declined, the connection is saved without trust. Replacing an existing id that changes
+ * store, and returns the id without prompting. Replacing an existing id that changes
  * server, port, user or authentication type drops its saved password unless a new one is supplied.
- * `removeDatabaseConnection` always asks for confirmation. The other commands take an optional
+ * `removeDatabaseConnection` removes the picked connection and its saved password and shows an
+ * information toast. The other commands take an optional
  * connection id and otherwise show a picker; edit returns the saved id and update-password whether
  * a password was stored. Update-password lists and accepts only SQL login connections; an Entra ID
  * connection named by id is refused with a warning.
@@ -413,12 +412,8 @@ export function registerConnectionCommands(
         const problems = parsed.error.issues.map((i) => `${i.path.join('.') || 'argument'}: ${i.message}`).join('; ');
         throw new Error(`Invalid database connection: ${problems}`);
       }
-      let connection = BuiltInConnectionSchema.parse({ ...parsed.data.connection, id: parsed.data.connection.id ?? randomUUID() });
+      const connection = BuiltInConnectionSchema.parse({ ...parsed.data.connection, id: parsed.data.connection.id ?? randomUUID() });
       const previous = readBuiltInConnections(logger).find((c) => c.id === connection.id);
-      const alreadyTrusted = previous?.trustServerCertificate === true && !hostChanged(previous, connection);
-      if (connection.trustServerCertificate && !alreadyTrusted && !await confirmTrustServerCertificate(connection)) {
-        connection = { ...connection, trustServerCertificate: false };
-      }
       await upsertBuiltInConnection(connection);
       await reconcilePassword(context.secrets, previous, connection, parsed.data.password);
       logger.info('Saved database connection');
@@ -435,14 +430,11 @@ export function registerConnectionCommands(
     vscode.commands.registerCommand('dataLineageViz.removeDatabaseConnection', async (arg?: unknown): Promise<void> => {
       const target = await connectionFromArg(arg, 'Select a connection to remove');
       if (!target) return;
-      const choice = await vscode.window.showWarningMessage(
-        `Remove "${target.name}"? Its saved password is deleted too.`, { modal: true }, 'Remove',
-      );
-      if (choice !== 'Remove') return;
       await deleteBuiltInConnection(target.id);
       await context.secrets.delete(passwordSecretKey(target.id));
       logger.info('Removed database connection');
       logger.debug(`Removed database connection ${target.id}`);
+      void vscode.window.showInformationMessage(`Removed connection "${target.name}" and its saved password.`);
     }),
 
     vscode.commands.registerCommand('dataLineageViz.updateDatabasePassword', async (arg?: unknown): Promise<boolean> => {

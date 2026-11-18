@@ -60,7 +60,6 @@ const UNAVAILABLE_NUMBERS: ReadonlySet<number> = new Set([40613, 40197, 40501, 4
 const PERMISSION_NUMBERS: ReadonlySet<number> = new Set([229, 297, 300]);
 const NETWORK_CODES: ReadonlySet<string> = new Set(['ETIMEOUT', 'ESOCKET', 'ENOTFOUND', 'ECONNREFUSED']);
 
-const TRUST_CERTIFICATE = 'Trust Certificate';
 const CERTIFICATE_TEXT = /self[- ]signed certificate|unable to verify the first certificate|unable to get local issuer certificate|certificate chain|certificate (?:is not trusted|has expired)|CERT_[A-Z_]+/i;
 const NETWORK_TEXT = /ENOTFOUND|ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|Failed to connect to .+ in \d+ms/i;
 const UNAVAILABLE_TEXT = /is not currently available|service is currently busy|encountered an error processing your request|requested by the login\.\s+The login failed/i;
@@ -165,7 +164,6 @@ export function describeConnectionError(
     trustServerCertificate: () => make('trustServerCertificate', async () => {
       const saved = readBuiltInConnections().find((c) => c.id === connectionId);
       if (!saved) return;
-      if (!await confirmTrustServerCertificate(saved)) return;
       await upsertBuiltInConnection({ ...saved, trustServerCertificate: true });
       await retry({ trustServerCertificate: true });
     }),
@@ -216,16 +214,6 @@ export function describeConnectionError(
       add(actions.showLog(), managed(actions.editConnection));
   }
   return { message, actions: wanted };
-}
-
-/** Modal asking whether to trust a server certificate unvalidated; `true` only if confirmed. */
-export async function confirmTrustServerCertificate(connection: Pick<BuiltInConnection, 'server' | 'port' | 'database'>): Promise<boolean> {
-  const confirmed = await vscode.window.showWarningMessage(
-    `Trust the certificate of ${describeConnection(connection)} without validating it? Do this only for a server you know uses a self-signed certificate, such as a development or test server.`,
-    { modal: true },
-    TRUST_CERTIFICATE,
-  );
-  return confirmed === TRUST_CERTIFICATE;
 }
 
 /**
