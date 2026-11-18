@@ -1,3 +1,5 @@
+import { ASYMMETRIC_DEPTH_BOTH_ZERO } from '../../engine/shared/explorationDepthContract';
+
 /**
  * Single owner for rejection codes that appear on more than one surface. A code belongs here once a
  * second surface (a hint payload, instruction prose) shows its wire `error` literal to the model;
@@ -195,5 +197,5 @@ export const REJECTION_CODES = {
   /** `excludeNodeIds`/`passNodeIds` name nodes absent from the loaded model (`smBase.ts`). */
   unknownNodeIds: 'unknown_node_ids',
   /** A depth with both sides at 0 levels, which would seed an empty scope (`tools.ts`, `smBase.ts`). */
-  asymmetricDepthBothZero: 'asymmetric_depth_both_zero',
+  asymmetricDepthBothZero: ASYMMETRIC_DEPTH_BOTH_ZERO,
 } as const;

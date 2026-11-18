@@ -1,5 +1,12 @@
 import { z } from 'zod';
 
+/**
+ * Structural reject code: a `{upstream,downstream}` depth with both sides `levels: 0`, which would
+ * seed an empty starting scope. Registered as `REJECTION_CODES.asymmetricDepthBothZero`; the Zod
+ * issue below carries it.
+ */
+export const ASYMMETRIC_DEPTH_BOTH_ZERO = 'asymmetric_depth_both_zero';
+
 /** Canonical unsigned-integer string shape a depth scalar decodes from. */
 const CANONICAL_DEPTH_DIGITS = /^(?:0|[1-9]\d*)$/;
 
@@ -92,7 +99,7 @@ export const ExplorationDepthSelectionSchema = z.object({
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: 'Depth cannot be 0 in both directions.',
-      params: { hint: 'At least one side must be ≥ 1 or "all"; both 0 would create an empty scope.' },
+      params: { code: ASYMMETRIC_DEPTH_BOTH_ZERO, hint: 'At least one side must be ≥ 1 or "all"; both 0 would create an empty scope.' },
     });
   }
 });
