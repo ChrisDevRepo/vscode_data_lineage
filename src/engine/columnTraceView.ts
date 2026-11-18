@@ -93,8 +93,8 @@ export interface ColumnTraceViewEdge {
   state: ColumnLineState;
   /**
    * Transform classes the model recorded for the relation; absent on an unclassified edge. The
-   * marker chip keys its per-class glyphs off this; when present it, not the verdict-derived {@link
-   * state}, decides what the chip shows.
+   * marker chip keys its per-class glyphs off this; when present it, not the verdict-derived
+   * {@link state}, decides what the chip shows.
    */
   transforms?: ColumnTransformClass[];
   /**
@@ -111,9 +111,7 @@ export interface ColumnTraceViewEdge {
  * never duplicates a column thread.
  */
 export interface ColumnTraceViewObjectEdge {
-  /**
-   * Stable edge id, unique across the view and distinct from every {@link ColumnTraceViewEdge} id.
-   */
+  /** Stable edge id, unique in the view and distinct from every {@link ColumnTraceViewEdge} id. */
   id: string;
   /** Source node id. */
   source: string;
@@ -240,9 +238,9 @@ export const COLUMN_NODE_BORDER_WIDTH = 2;
  * Vertical space the AI badge and note occupy outside the card, added to the layout's vertical
  * separation. Both render through React Flow's `NodeToolbar`, outside the node box and invisible to
  * Dagre; it is added to the separation, not the node height, because Dagre returns a centred box
- * and a taller one would need a compensating offset at every position read. Sized off {@link
- * AI_BADGE_BAND} and {@link AI_NOTE_BAND}, the object view's reservation for the same toolbars, so
- * both views share one governor.
+ * and a taller one would need a compensating offset at every position read. Sized off
+ * {@link AI_BADGE_BAND} and {@link AI_NOTE_BAND}, the object view's reservation for the same
+ * toolbars, so both views share one governor.
  */
 export const COLUMN_AI_ANNOTATION_BAND = AI_BADGE_BAND + AI_NOTE_BAND;
 
@@ -374,9 +372,7 @@ interface NodeAccumulator {
   object: ColumnTraceViewObject;
   /** Normalised row keys in first-seen order. */
   rowKeys: string[];
-  /**
-   * Normalised row key to metadata display name, or first-seen spelling when metadata is absent.
-   */
+  /** Normalised row key to metadata display name, or first-seen spelling without metadata. */
   rowNames: Map<string, string>;
 }
 

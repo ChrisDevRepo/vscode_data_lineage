@@ -424,10 +424,7 @@ function extractObjects(elements: XmlElement[], constraintElements: XmlElement[]
   return objects;
 }
 
-/**
- * A computed-column expression that is one column reference, bracketed or not, under optional
- * parentheses.
- */
+/** A computed-column expression that is one column reference, bracketed or not, in parentheses. */
 const BARE_COLUMN_REFERENCE = /^\s*(?:\[((?:[^\]]|\]\])+)\]|([A-Za-z_@#][\w@#$]*))\s*$/;
 
 /**
@@ -513,9 +510,7 @@ function extractDependencies(elements: XmlElement[]): ExtractedDependency[] {
   return deps;
 }
 
-/**
- * Keys references by every qualified SQL identifier part without changing their emitted identity.
- */
+/** Keys references by every qualified SQL identifier part, keeping their emitted identity. */
 function expressionReferenceKey(reference: string, identifierCaseSensitive: boolean): string {
   return JSON.stringify(splitSqlName(reference).map(part => schemaKey(stripBrackets(part), identifierCaseSensitive)));
 }
@@ -839,8 +834,8 @@ function extractPropertyValue(prop: XmlProperty): string | undefined {
 }
 
 /**
- * Returns the last part of a qualified name, unbracketed; a dot inside `[...]` stays part of the
- * name (e.g. `[Schema].[View].[Name.Prefix]`).
+ * Last part of a qualified name, unbracketed; a dot inside `[...]` stays in the name
+ * (`[View].[Name.Prefix]`).
  */
 function lastNamePart(ref: string): string {
   return stripBrackets(splitSqlName(ref).pop() ?? '');
@@ -860,9 +855,10 @@ function asArray<T>(val: T | T[] | undefined | null): T[] {
 
 /**
  * Removes nodes matching exclusion patterns and records the removed objects on the parse statistics
- * of surviving objects that referenced them. Node and edge exclusion is delegated to {@link
- * applyExclusionFilter} so load-time and graph-time paths cannot diverge; only the parse-stat
- * annotation is specific here. Invalid patterns are skipped and reported via `onWarning`.
+ * of surviving objects that referenced them. Node and edge exclusion is delegated to
+ * {@link applyExclusionFilter} so load-time and graph-time paths cannot diverge; only the
+ * parse-stat annotation is specific here. Invalid patterns are skipped and reported via
+ * `onWarning`.
  */
 export function applyExclusionPatterns(model: DatabaseModel, patterns: string[], onWarning?: (msg: string) => void): DatabaseModel {
   const filtered = applyExclusionFilter(model, patterns, (pattern, err) => {

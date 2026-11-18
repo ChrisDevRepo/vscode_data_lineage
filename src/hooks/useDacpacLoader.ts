@@ -4,9 +4,7 @@ import type { DatabaseModel, SchemaInfo, SchemaPreview, ExtensionConfig } from '
 import { BRIDGE_PROTOCOL_VERSION, ExtensionToWebviewMsgSchema, validateBridgeFrame } from '../engine/shared/bridgeContract';
 import { DEFAULT_CONFIG } from '../engine/types';
 
-/**
- * Represents a status notification displayed in the UI during project loading or processing.
- */
+/** Status notification shown during project loading or processing. */
 export type StatusMessage = {
   /** The descriptive text of the status message. */
   text: string;
@@ -14,17 +12,12 @@ export type StatusMessage = {
   type: 'info' | 'success' | 'warning' | 'error';
 };
 
-/**
- * The source context currently being loaded.
- */
+/** The source context currently being loaded. */
 export type LoadingContext = 'dacpac' | 'database' | null;
 
 /**
- * The full state and action set managed by the project loader hook.
- *
- * @remarks
- * This interface defines the bridge between the React frontend and the VS Code
- * extension host for all data extraction and project lifecycle events.
+ * State and actions of the project loader hook, bridging the webview and the extension host for
+ * extraction and project lifecycle events.
  */
 export interface DacpacLoaderState {
   /** The fully extracted database model (Phase 2 result). */
@@ -57,7 +50,7 @@ export interface DacpacLoaderState {
   loadDemo: () => void;
   /** Starts the database connection flow. */
   connectToDatabase: () => void;
-  /** Aborts the current loading process: tells the host to stop it and drops any result it still posts. */
+  /** Aborts the current load: tells the host to stop and drops any result it still posts. */
   cancelLoading: () => void;
   clearAutoVisualize: () => void;
   /** Clears the transition trigger flag. */
@@ -73,15 +66,9 @@ export interface DacpacLoaderState {
 }
 
 /**
- * Orchestrates the project loading lifecycle: from file picking to full lineage extraction.
- *
- * @remarks
- * Two-phase extraction for both DACPACs and live databases: Phase 1 shows a schema selector,
- * Phase 2 does the full DDL parse and graph build. Communicates with the extension host via
- * `postMessage`.
- *
- * @param onConfigReceived - Callback triggered when the extension host delivers updated configuration.
- * @returns The project loader state and interactive actions.
+ * Orchestrates the project load lifecycle through `postMessage` with the host. Extraction is
+ * two-phase for DACPACs and live databases: a schema selector, then the full DDL parse and graph
+ * build.
  */
 export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => void): DacpacLoaderState {
   const vscodeApi = useVsCode();
@@ -97,9 +84,9 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   const [pendingVisualize, setPendingVisualize] = useState(false);
   const isDemoRef = useRef(false);
   /**
-   * The load this webview sent last, and whether the user cancelled it. A load result is dropped when
-   * it names another load, or the cancelled one. With no load sent yet (a fresh webview after a reload)
-   * every result applies, as does a result that names no load.
+   * The last load this webview sent, and whether the user cancelled it. A result naming another
+   * load or the cancelled one is dropped; with no load sent yet (fresh webview after reload) or a
+   * result naming none, every result applies.
    */
   const loadRef = useRef<{ id: string | null; cancelled: boolean }>({ id: null, cancelled: false });
   /** Names a new load; the id travels on the request and comes back on its results. */
@@ -109,9 +96,8 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
     return id;
   }, []);
   /**
-   * Status auto-clear policy: transient info messages (progress, connecting, loading) clear 6 s
-   * after loading ends; success messages carry the load summary, and warnings and errors need the
-   * user's attention, so those stay until the next status replaces them.
+   * Status auto-clear: transient info messages (progress, connecting, loading) clear 6 s after
+   * loading ends; success, warning and error messages stay until the next status replaces them.
    */
   useEffect(() => {
     if (status && status.type === 'info' && !isLoading) {

@@ -86,10 +86,10 @@ const CAPTURE_ANGLE: Readonly<Partial<Record<keyof AiOutputTemplates, 'business'
 /**
  * Header of the bodied per-focus capture recipe, shared by every capture key: the one home of the
  * one-key-per-schema-angle rule, the exact-substring quoting rule and the `not established`
- * wording, so no capture key restates them. The `sections` shape is read from the same {@link
- * CLASSIFICATION_KEPT_ANGLES} the dispatched `submit_findings` schema narrows to, so prompt and
- * schema never name different angles (a locked mission told both keys would guess the excluded one
- * and be rejected).
+ * wording, so no capture key restates them. The `sections` shape is read from the same
+ * {@link CLASSIFICATION_KEPT_ANGLES} the dispatched `submit_findings` schema narrows to, so prompt
+ * and schema never name different angles (a locked mission told both keys would guess the excluded
+ * one and be rejected).
  */
 function captureRecipeHeader(classification: ClassificationValue | undefined): string {
   const kept = classification ? CLASSIFICATION_KEPT_ANGLES[classification] : undefined;
@@ -135,10 +135,10 @@ function bareSummaryAngleClause(classification: ClassificationValue | undefined)
 
 /**
  * The ordered bold section labels the active angle(s) write, as one list for the synthesis
- * `general` instruction. Reads the `sections` each capture recipe declares for the angles {@link
- * CLASSIFICATION_KEPT_ANGLES} keeps: one angle gives its list, `both` the ordered union (first
- * occurrence wins), unlocked keeps every angle. A label declared only by an angle the mission did
- * not fire is never served.
+ * `general` instruction. Reads the `sections` each capture recipe declares for the angles
+ * {@link CLASSIFICATION_KEPT_ANGLES} keeps: one angle gives its list, `both` the ordered union
+ * (first occurrence wins), unlocked keeps every angle. A label declared only by an angle the
+ * mission did not fire is never served.
  */
 function activeSectionLabels(sections: AiOutputSections, classification: ClassificationValue | undefined): string {
   const angles: readonly AiSectionAngle[] = classification
@@ -153,17 +153,11 @@ export type StageRenderScope =
   | { readonly scope: 'stable' }
   | { readonly scope: 'per_focus'; readonly focusKind: 'bodied' | 'non_bodied' };
 
-/**
- * Result of {@link resolveStagePrompt}: the assembled prompt block plus a gating trail for
- * diagnostics.
- */
+/** Result of {@link resolveStagePrompt}: the prompt block plus a gating trail for diagnostics. */
 export interface StagePromptResult {
   /** Final markdown block ready to splice into the system prompt. Empty if no keys ship. */
   prompt: string;
-  /**
-   * YAML keys that survived stage + classification + slot-count gating and have non-empty
-   * instructions.
-   */
+  /** YAML keys that passed stage, classification and slot-count gating and have instructions. */
   shippedKeys: string[];
   /** Keys filtered out, with the reason they were dropped — for diagnostic logging. */
   gatedOut: Array<{ key: string; reason: 'stage' | 'classification' | 'slot_count' | 'empty_template' | 'ct_mode' | 'focus_scope' }>;
@@ -175,9 +169,9 @@ export interface StagePromptResult {
  * instead (`CAPTURE_ANGLE`); a per-focus recipe key with no angle of its own (e.g.
  * `structural_callouts`) folds into whichever angle fired, per {@link captureRecipeHeader}, never
  * its own line. One heading hierarchy, no per-key `####` wrappers. The non-bodied per-focus render
- * is the exception: `structural_summary` ships bare with no `### ` header, keeping only {@link
- * bareSummaryAngleClause} ahead of it. At synthesis a known `classification` adds a code-resolved
- * `**Mission type:** <value>` line before the list.
+ * is the exception: `structural_summary` ships bare with no `### ` header, keeping only
+ * {@link bareSummaryAngleClause} ahead of it. At synthesis a known `classification` adds a
+ * code-resolved `**Mission type:** <value>` line before the list.
  *
  * @param classification - Optional mission-type signal; gates active-phase capture firing.
  * @param slotCount - Detail slots collected so far; suppresses the `closing` template at synthesis

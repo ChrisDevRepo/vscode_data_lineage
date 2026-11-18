@@ -4,9 +4,7 @@ interface CloseIconProps {
 }
 
 /**
- * Renders the close icon used in dismiss controls.
- *
- * @returns An X-shaped SVG icon sized via the `className` prop, stroked at `strokeWidth`.
+ * Close icon of dismiss controls: an X-shaped SVG sized via `className`, stroked at `strokeWidth`.
  */
 export function CloseIcon({ className = 'w-4 h-4', strokeWidth = 2 }: CloseIconProps) {
   return (

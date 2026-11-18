@@ -349,7 +349,7 @@ export function exportToDrawio(
 }
 
 /**
- * Converts schema-overview cluster nodes into a Draw.io diagram showing schema-level dependencies.
+ * Converts schema-overview cluster nodes into a Draw.io diagram of schema-level dependencies.
  * Schema colors use the checked source identifier policy; absent/false retains CI keys.
  */
 export function exportSchemaOverviewToDrawio(

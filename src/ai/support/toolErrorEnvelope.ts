@@ -9,7 +9,7 @@
 import { z } from 'zod';
 import { REJECTION_CODES } from './rejectionCodes';
 
-/** The one rejection shape: what was wrong (`reason`), how to repair it (`hint`), and typed machine facts. */
+/** The one rejection shape: what was wrong (`reason`), how to repair it (`hint`), machine facts. */
 export interface ToolRejection {
   /** Stable machine code. */
   code: string;
@@ -19,9 +19,9 @@ export interface ToolRejection {
   hint?: string;
   /** Structured dispatcher facts retained for bounded graph-owned correction projection. */
   detail?: unknown;
-  /** Dotted paths of the offending fields; downstream correction-echo and observability read these. */
+  /** Dotted paths of the offending fields; correction-echo and observability read them. */
   issuePaths?: string[];
-  /** Exact offending entry ids, for a violation whose offender is an id rather than a field path. */
+  /** Exact offending entry ids, for a violation whose offender is an id, not a field path. */
   entryIds?: readonly string[];
 }
 
@@ -45,8 +45,9 @@ export function isConsentGateRejection(code: string): boolean {
 }
 
 /**
- * Zod view of the {@link makeRejection} shape, parsed once at the read boundary. Strict: the emitter
- * writes exactly these keys, so a success payload carrying any other key is never read as a rejection.
+ * Zod view of the {@link makeRejection} shape, parsed once at the read boundary. Strict: the
+ * emitter writes exactly these keys, so a success payload carrying any other key is never read as a
+ * rejection.
  */
 const RejectionShape = z.object({
   code: z.string(),
@@ -58,8 +59,9 @@ const RejectionShape = z.object({
 }).strict();
 
 /**
- * Write-side builder for the one tool-execution failure envelope both LM lanes record when a handler
- * throws; the run ends on it. Owning it here keeps the graph-owned dispatch result provider-neutral.
+ * Write-side builder for the one tool-execution failure envelope both LM lanes record when a
+ * handler throws; the run ends on it. Owning it here keeps the graph-owned dispatch result
+ * provider-neutral.
  * @param toolName - Canonical tool name whose handler threw.
  * @returns Generic JSON rejection safe to project into graph attempt state.
  */
@@ -113,9 +115,11 @@ export function readToolError(data: unknown): ToolRejection | null {
 
 /** Longest one dotted-path segment: an identifier, or an index. */
 const MAX_PATH_SEGMENT_CHARS = 100;
-/** One dotted-path segment: an identifier of at most {@link MAX_PATH_SEGMENT_CHARS} chars, or an index. */
+/**
+ * One dotted-path segment: an identifier up to {@link MAX_PATH_SEGMENT_CHARS} chars, or an index.
+ */
 const PATH_SEGMENT = `(?:[A-Za-z_][A-Za-z0-9_-]{0,${MAX_PATH_SEGMENT_CHARS - 1}}|\\d+)`;
-/** Dotted identifier grammar every recorded issue path must match: safe to log where prose is not allowed. */
+/** Dotted identifier grammar every recorded issue path must match; safe to log, unlike prose. */
 const ISSUE_PATH_GRAMMAR = new RegExp(`^${PATH_SEGMENT}(?:\\.${PATH_SEGMENT})*$`);
 
 /**
@@ -148,7 +152,8 @@ export function makeRejection(input: {
 /**
  * Narrowed view of a Zod v4 `invalid_union` issue. Its `errors` field holds one sub-issue array per
  * union branch — the raw material {@link describeInvalidUnion} expands into a per-branch required-
- * field breakdown. (Zod v4 renamed the v3 `unionErrors: ZodError[]` shape to `errors: $ZodIssue[][]`.)
+ * field breakdown. (Zod v4 renamed the v3 `unionErrors: ZodError[]` shape to `errors:
+ * $ZodIssue[][]`.)
  */
 type InvalidUnionIssue = Extract<z.core.$ZodIssue, { code: 'invalid_union' }>;
 
@@ -257,8 +262,8 @@ function describeUnionBranchText(descriptors: string[]): string {
  * (BB/CT `submit_findings`, entry-detection). Branches whose rendered text is byte-identical
  * collapse to one numbered entry; repeating a line under a second variant number adds nothing.
  *
- * @param input - The failed value, when available; enables per-field defect enrichment ({@link
- *   describeUnionBranch}).
+ * @param input - The failed value, when available; enables per-field defect enrichment
+ *   ({@link describeUnionBranch}).
  */
 function describeInvalidUnion(issue: InvalidUnionIssue, input?: unknown): { line: string; paths: string[] } {
   const allPaths: string[] = [];
@@ -277,9 +282,9 @@ function describeInvalidUnion(issue: InvalidUnionIssue, input?: unknown): { line
 }
 
 /**
- * The generic resend rule of a schema-invalid tool call whose tool holds no draft: the complete call is
- * resent with a minimal edit. It is the only resend directive a rejection carries; a tool that holds a
- * draft states its own held rule in its place.
+ * The generic resend rule of a schema-invalid tool call whose tool holds no draft: the complete
+ * call is resent with a minimal edit. It is the only resend directive a rejection carries; a tool
+ * that holds a draft states its own held rule in its place.
  */
 export const INVALID_TOOL_INPUT_REPAIR_HINT
   = 'Resend the full tool call with only the offending field(s) corrected; keep every other field unchanged, and resend every element of a corrected list, repeating the unflagged elements exactly as first sent.';
@@ -295,9 +300,7 @@ function zodUnrecognizedKeys(error: z.ZodError): string[] {
   )];
 }
 
-/**
- * The message of one Zod issue, with an `unrecognized_keys` echo of every offending key whole.
- */
+/** The message of one Zod issue, with an `unrecognized_keys` echo of every offending key whole. */
 function baseIssueMessage(issue: z.core.$ZodIssue): string {
   return issue.code === 'unrecognized_keys'
     ? `Unrecognized key${issue.keys.length > 1 ? 's' : ''}: ${issue.keys.map(quoteKey).join(', ')}`
@@ -321,7 +324,7 @@ function dottedPath(path: readonly PropertyKey[]): string {
   return path.reduce<string>((acc, key) => (typeof key === 'number' ? `${acc}[${key}]` : acc ? `${acc}.${String(key)}` : String(key)), '');
 }
 
-/** The JSON Schema node `path` addresses inside `schema`; `undefined` when the path leaves the schema. */
+/** The JSON Schema node `path` addresses in `schema`; `undefined` if the path leaves the schema. */
 function jsonSchemaNodeAt(schema: z.ZodType | undefined, path: readonly PropertyKey[]): JsonSchemaShape | undefined {
   if (!schema) return undefined;
   const variantsOf = (node: JsonSchemaShape): JsonSchemaShape[] => [node, ...(node.anyOf ?? []), ...(node.oneOf ?? [])];
@@ -336,7 +339,7 @@ function jsonSchemaNodeAt(schema: z.ZodType | undefined, path: readonly Property
   return node;
 }
 
-/** The non-null branch of a nullable node (`anyOf: [X, {type: 'null'}]`); any other node unchanged. */
+/** Non-null branch of a nullable node (`anyOf: [X, {type: 'null'}]`); any other node unchanged. */
 function unwrapNullable(node: JsonSchemaShape): JsonSchemaShape {
   const branches = node.anyOf;
   if (!branches) return node;
@@ -415,8 +418,8 @@ function objectKeyRemovalHint(error: z.ZodError, schema: z.ZodType | undefined):
  *
  * @param schema - The failed schema; when given, a key nested in an object or array element is
  *   answered with the keys that element accepts.
- * @returns The removal-directed hint, or `undefined` so the caller falls back to {@link
- *   INVALID_TOOL_INPUT_REPAIR_HINT}.
+ * @returns The removal-directed hint, or `undefined` so the caller falls back to
+ *   {@link INVALID_TOOL_INPUT_REPAIR_HINT}.
  */
 function unrecognizedKeyRepairHint(error: z.ZodError, schema?: z.ZodType): string | undefined {
   const offendingKeys = zodUnrecognizedKeys(error);
@@ -442,8 +445,8 @@ function unrecognizedKeyRepairHint(error: z.ZodError, schema?: z.ZodType): strin
  * @param input - The rejected payload; needed because an `invalid_type` issue alone cannot tell
  *   "absent" from "wrong type".
  * @param schema - The failed schema; names `null` as the value of a missing field that accepts it.
- * @returns The addition-directed hint, or `undefined` so the caller falls back to {@link
- *   INVALID_TOOL_INPUT_REPAIR_HINT}.
+ * @returns The addition-directed hint, or `undefined` so the caller falls back to
+ *   {@link INVALID_TOOL_INPUT_REPAIR_HINT}.
  */
 function missingFieldRepairHint(error: z.ZodError, input: unknown, schema?: z.ZodType): string | undefined {
   if (input === undefined) return undefined;
@@ -492,21 +495,23 @@ export function zodFieldRepairHint(error: z.ZodError, input: unknown, schema?: z
   return hints.length > 0 ? [...new Set(hints)].join(' ') : undefined;
 }
 
-/** Whether `issue` is a present value outside its accepted values, the issue kind {@link invalidValueRepairHint} states. */
+/**
+ * Whether `issue` is a present value outside its accepted values ({@link invalidValueRepairHint}).
+ */
 function isPresentInvalidValue(issue: z.core.$ZodIssue, input: unknown): boolean {
   return issue.code === 'invalid_value' && issue.path.length > 0
     && (input === undefined || resolveAtPath(input, issue.path) !== undefined);
 }
 
-/** Reason line of an issue whose accepted values the repair hint states; the values are named once, in the hint. */
+/** Reason line of an issue whose accepted values the repair hint states, once, in the hint. */
 const INVALID_VALUE_REASON = 'Invalid value';
 
 /**
  * Repair hint for a present value outside the values its field accepts (enum or literal): names the
  * accepted values and the allowed repairs, setting the field to one of them or, for a field inside
  * an array element, dropping that entry when the array stays within its served minimum. Issues
- * sharing a field shape and accepted values are one clause. An absent field belongs to {@link
- * missingFieldRepairHint}.
+ * sharing a field shape and accepted values are one clause. An absent field belongs to
+ * {@link missingFieldRepairHint}.
  */
 function invalidValueRepairHint(error: z.ZodError, input: unknown, schema?: z.ZodType): string | undefined {
   const issues = error.issues.filter((issue): issue is Extract<z.core.$ZodIssue, { code: 'invalid_value' }> =>
@@ -579,8 +584,8 @@ function sizeBoundRepairHint(error: z.ZodError): string | undefined {
  * The repair instruction a schema refinement states itself, on `params.hint` of its custom issue.
  *
  * @returns Every distinct such hint, so a refinement that names its own concrete repair is never
- * followed by the generic instruction it would contradict, and each flagged field gets its own; `undefined`
- * when no issue carries one.
+ *   followed by the generic instruction it would contradict, and each flagged field gets its own;
+ *   `undefined` when no issue carries one.
  */
 function issueOwnedRepairHint(error: z.ZodError): string | undefined {
   const hints: string[] = [];
@@ -623,7 +628,7 @@ function resolveAtPath(input: unknown, path: readonly PropertyKey[]): unknown {
   return value;
 }
 
-/** Measured size of the received value in the unit the model reasons about; `undefined` when unmeasurable. */
+/** Size of the received value in the unit the model reasons about; `undefined` if unmeasurable. */
 function measuredSize(value: unknown): string | undefined {
   if (typeof value === 'string') return `${value.length} chars`;
   if (Array.isArray(value)) return `${value.length} items`;
@@ -646,7 +651,10 @@ function describeSizeIssue(
   return `${size}, ${bound}`;
 }
 
-/** One dotted path per offending key; a key over {@link KEY_ECHO_MAX_CHARS} yields its container's path, never the key. */
+/**
+ * One dotted path per offending key; a key over {@link KEY_ECHO_MAX_CHARS} yields its container's
+ * path.
+ */
 function unrecognizedKeyPaths(issue: Extract<z.core.$ZodIssue, { code: 'unrecognized_keys' }>): string[] {
   const base = issue.path.join('.');
   return issue.keys.map((key) => (key.length > KEY_ECHO_MAX_CHARS ? base : base ? `${base}.${key}` : key));
@@ -655,23 +663,23 @@ function unrecognizedKeyPaths(issue: Extract<z.core.$ZodIssue, { code: 'unrecogn
 /**
  * Sole producer of auto-generated {@link ToolRejection} reasons from a Zod validation error.
  *
- * @remarks
- * The reason is `z.prettifyError` over the issues, each carrying its enriched message: an
- * `invalid_union` expands via {@link describeInvalidUnion} into a per-branch required-field
- * breakdown, and when `input` is supplied a size issue names the measured size — Zod v4 issues
- * carry no input, so the enrichment happens here; a sent value is never echoed. Issues identical
- * apart from their array index (same code, message and path shape) collapse into the first, which
- * names the other indices, so one defect repeated across N entries is one line. A size issue at a
- * path that also fails its type is dropped: the bound belongs to the declared type. Only STRUCTURAL
- * bounds reach this function; a content cap is enforced and reported separately by the validator
- * or engine. A present value outside its accepted values names them in the default hint
- * ({@link invalidValueRepairHint}) and not again in the reason; a caller-supplied `hint` leaves the
- * reason carrying them.
+ * @remarks The reason is `z.prettifyError` over the issues, each carrying its enriched message: an
+ *   `invalid_union` expands via {@link describeInvalidUnion} into a per-branch required-field
+ *   breakdown, and when `input` is supplied a size issue names the measured size — Zod v4 issues
+ *   carry no input, so the enrichment happens here; a sent value is never echoed. Issues identical
+ *   apart from their array index (same code, message and path shape) collapse into the first, which
+ *   names the other indices, so one defect repeated across N entries is one line. A size issue at a
+ *   path that also fails its type is dropped: the bound belongs to the declared type. Only
+ *   STRUCTURAL bounds reach this function; a content cap is enforced and reported separately by the
+ *   validator or engine. A present value outside its accepted values names them in the default hint
+ *   ({@link invalidValueRepairHint}) and not again in the reason; a caller-supplied `hint` leaves
+ *   the reason carrying them.
  * @param error - The Zod validation failure.
  * @param opts - `code` to stamp on the rejection; optional `hint` (default: the field repair chain,
- * {@link zodFieldRepairHint}, followed by the one generic resend rule {@link INVALID_TOOL_INPUT_REPAIR_HINT}); optional `input`
- * (the value that failed parsing) enabling measured-size enrichment and absent-field hints; optional `schema`
- * (the schema it failed) enabling the hints that name what the schema accepts.
+ *   {@link zodFieldRepairHint}, followed by the one generic resend rule
+ *   {@link INVALID_TOOL_INPUT_REPAIR_HINT}); optional `input` (the value that failed parsing)
+ *   enabling measured-size enrichment and absent-field hints; optional `schema` (the schema it
+ *   failed) enabling the hints that name what the schema accepts.
  * @returns A normalized {@link ToolRejection} built via {@link makeRejection}.
  */
 export function rejectionFromZodError(

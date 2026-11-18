@@ -3,10 +3,11 @@ import { CLASSIFICATION_KEPT_ANGLES } from '../../session/classification';
 import type { CapturedSection } from '../../session/memoryManager';
 
 /**
- * Required section angles by locked classification, read from the same {@link
- * CLASSIFICATION_KEPT_ANGLES} the per-dispatch `submit_findings` schema (`tools/toolSchemas.ts`)
- * narrows the `sections` keys to. An off-lock angle fails that schema before this validator runs,
- * so this rule only catches a locked angle that is missing, not a surplus one.
+ * Required section angles by locked classification, read from the same
+ * {@link CLASSIFICATION_KEPT_ANGLES} the per-dispatch `submit_findings` schema
+ * (`tools/toolSchemas.ts`) narrows the `sections` keys to. An off-lock angle fails that schema
+ * before this validator runs, so this rule only catches a locked angle that is missing, not a
+ * surplus one.
  */
 const SECTION_RULES: Record<ClassificationValue, {
   required: readonly ('business' | 'technical')[];

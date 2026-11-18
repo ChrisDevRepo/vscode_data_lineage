@@ -11,10 +11,7 @@ import { DEFAULT_MAX_ROUNDS } from '../core/agentCore';
 import { REJECTION_CODES } from './rejectionCodes';
 import { makeRejection, type ToolRejection } from './toolErrorEnvelope';
 
-/**
- * Estimates token count from a character count at 1 token ≈ 4 characters, the usual approximation
- * for JSON/SQL payloads.
- */
+/** Estimates tokens at 1 token ≈ 4 characters, the usual approximation for JSON/SQL payloads. */
 export function estimateTokens(chars: number): number {
   return Math.ceil(chars / CHARS_PER_TOKEN);
 }
@@ -51,10 +48,7 @@ export interface PhaseScopeBudget {
 
 /** The limits an exploration proposal is admitted under: rounds and starting trace columns. */
 export interface ExplorationLimits {
-  /**
-   * Maximum rounds of one exploration (`ai.maxRounds`); procedures, views and functions each take
-   * one.
-   */
+  /** Maximum rounds of one exploration (`ai.maxRounds`); each procedure/view/function takes one. */
   readonly maxRounds: number;
   /** Maximum starting columns one column trace may select (`ai.maxTraceColumns`). */
   readonly maxTraceColumns: number;
@@ -208,8 +202,8 @@ export interface ProposedScope {
   /** Every node in the scope, tables included. */
   readonly nodes: number;
   /**
-   * Hops the run takes: those already taken plus one per procedure, view or function still to
-   * visit, queued table and supplement target.
+   * Hops the run takes: hops taken plus one per procedure, view or function, queued table and
+   * supplement target.
    */
   readonly rounds: number;
   /** Distinct starting columns selected at the origin; 0 for a BB scope and for a supplement. */
@@ -267,8 +261,5 @@ export function checkScopeAdmission(budget: TurnTokenBudget, scope: ProposedScop
   return null;
 }
 
-/**
- * Maximum length of a regular expression query; input validation against ReDoS (catastrophic
- * backtracking during model searching).
- */
+/** Maximum regex query length; input validation against ReDoS (catastrophic backtracking). */
 export const REGEX_MAX_LENGTH = 200;

@@ -16,9 +16,7 @@ interface SchemaSelectorProps {
   onClearAll: (names: string[]) => void;
 }
 
-/**
- * Provides searchable schema selection with counts, colors, and bulk actions.
- */
+/** Provides searchable schema selection with counts, colors, and bulk actions. */
 export const SchemaSelector = memo(function SchemaSelector({
   schemas,
   identifierCaseSensitive = false,
@@ -29,9 +27,7 @@ export const SchemaSelector = memo(function SchemaSelector({
 }: SchemaSelectorProps) {
   const [searchTerm, setSearchTerm] = useState('');
 
-  /**
-   * Filters the schema list based on the user's search term.
-   */
+  /** Filters the schema list based on the user's search term. */
   const filteredSchemas = searchTerm
     ? schemas.filter((s) => s.name.toLowerCase().includes(searchTerm.toLowerCase()))
     : schemas;

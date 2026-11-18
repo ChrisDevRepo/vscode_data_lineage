@@ -25,9 +25,9 @@ export interface OrderedShortestPath {
 
 /**
  * Finds the shortest directed dependency path between two endpoints, trying `source → target` first
- * and retrying `target → source`, so the result matches the GUI "Find Path" ({@link
- * computeShortestPath}), the single source of truth for path lookup. `null` only when the nodes are
- * disconnected in both directions or an endpoint is absent.
+ * and retrying `target → source`, so the result matches the GUI "Find Path"
+ * ({@link computeShortestPath}), the single source of truth for path lookup. `null` only when the
+ * nodes are disconnected in both directions or an endpoint is absent.
  *
  * @returns The ordered path and the direction it was found in.
  */
@@ -98,9 +98,7 @@ export interface RemovalContext {
   scope: ReadonlySet<string>;
   removedBefore: ReadonlySet<string>;
   removedAfter: ReadonlySet<string>;
-  /**
-   * Only this active/clicked node may self-prune if already visited. Omission permits no exception.
-   */
+  /** Only this active/clicked node may self-prune if already visited; omission means none. */
   currentNodeId?: string;
   /** Committed analysis anchors, protected from removal by any other node. */
   visited: ReadonlySet<string>;

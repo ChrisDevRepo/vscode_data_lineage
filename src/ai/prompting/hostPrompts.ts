@@ -1,9 +1,9 @@
 /**
  * Per-phase system-prompt composition for the **host** agent runtime: the single place the
- * grounded, phase-aware prompt is assembled, composing the shared pure builders in {@link
- * ./prompts} ({@link buildGeneralSystemPrompt} + {@link buildPhasePrompt}) so grounding rules,
- * routing and phase protocol stay single-sourced and no chat surface builds its own prompt. Omits
- * the YAML stage template and SM-protocol blocks needed for `active`/`synthesis` formatting;
+ * grounded, phase-aware prompt is assembled, composing the shared pure builders in
+ * {@link ./prompts} ({@link buildGeneralSystemPrompt} + {@link buildPhasePrompt}) so grounding
+ * rules, routing and phase protocol stay single-sourced and no chat surface builds its own prompt.
+ * Omits the YAML stage template and SM-protocol blocks needed for `active`/`synthesis` formatting;
  * `agent/stagePrompts.ts` layers those in. VS Code-free.
  */
 
@@ -98,10 +98,10 @@ export function buildEntryDetectorSystemPrompt(ctx: StagePromptContext): string 
 }
 
 /**
- * System prompt for one bounded discovery preview call, composed like every other stage via {@link
- * buildHostStageSystemPrompt} rather than appending its own directive; building the block here
- * instead let the preview stage drift out of the shared presentation contract while still being
- * judged by it.
+ * System prompt for one bounded discovery preview call, composed like every other stage via
+ * {@link buildHostStageSystemPrompt} rather than appending its own directive; building the block
+ * here instead let the preview stage drift out of the shared presentation contract while still
+ * being judged by it.
  */
 export function buildVisualPreviewSystemPrompt(ctx: StagePromptContext): string {
   return buildHostStageSystemPrompt('visual_preview', ctx);

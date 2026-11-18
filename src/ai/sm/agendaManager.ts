@@ -280,10 +280,7 @@ export class AgendaManager {
     return entry;
   }
 
-  /**
-   * Removes the queued entry for `nodeId` (the cut of a resolved prune); `undefined` when it was
-   * not queued.
-   */
+  /** Removes the queued entry for `nodeId` (the cut of a resolved prune); `undefined` if absent. */
   public remove(nodeId: string): AgendaEntry | undefined {
     const entry = this._byId.get(nodeId);
     if (!entry) return undefined;

@@ -6,9 +6,7 @@ import { TableDetailPanel } from '../components/TableDetailPanel';
 import { MonacoSqlView } from './MonacoSqlView';
 import { BRIDGE_PROTOCOL_VERSION, ExtensionToDetailMsgSchema, validateBridgeFrame, type DetailConfig } from '../engine/shared/bridgeContract';
 
-/**
- * Represents the complete state of the detail panel for a specific node.
- */
+/** Represents the complete state of the detail panel for a specific node. */
 interface DetailState {
   /** The lineage node being inspected. */
   node: LineageNode;
@@ -31,9 +29,7 @@ window.addEventListener('error', (event) => {
   _vscodeApi.postMessage({ type: 'error', error: `[Detail] Uncaught error: ${event.message}` });
 });
 
-/**
- * Coordinates detail-webview messages, DDL/column views, and profiling state.
- */
+/** Coordinates detail-webview messages, DDL/column views, and profiling state. */
 export function DetailApp() {
   const vscodeApi  = useRef(_vscodeApi);
   const nodeIdRef  = useRef<string | undefined>(undefined);

@@ -7,11 +7,7 @@ interface SpinnerProps {
   style?: CSSProperties;
 }
 
-/**
- * Animated loading spinner.
- *
- * @returns The shared spinning-circle SVG.
- */
+/** Animated loading spinner (the shared spinning-circle SVG). */
 export function Spinner({ className = 'w-4 h-4', style }: SpinnerProps) {
   return (
     <svg className={`animate-spin ${className}`} style={style} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">

@@ -32,9 +32,7 @@ export interface ToolServices {
    * failure; a transport throw propagates.
    */
   deliverPreview(message: AiViewPreviewMessage): Promise<PreviewDelivery>;
-  /**
-   * Resolves the persisted AI run behind an applied bookmark; absent when the host wires no store.
-   */
+  /** Resolves the persisted AI run behind an applied bookmark; absent if the host has no store. */
   readonly getStoredRun?: StoredRunReader;
   /** Category-scoped logger shared by every handler so log provenance stays uniform. */
   readonly logger: Logger;
@@ -49,29 +47,17 @@ export interface ToolServices {
    * carries the shipped defaults.
    */
   readonly budget: TurnTokenBudget;
-  /**
-   * Current turn epoch — the turn lease wins over the session field so stale-turn writes are
-   * rejectable.
-   */
+  /** Current turn epoch; the turn lease beats the session field, so stale writes are rejectable. */
   turnEpoch(sess: AiSession): number;
   /** Returns the loaded database model, or throws the standard no-model error. */
   requireModel(): DatabaseModel;
   /** Returns the loaded graphology graph, or throws the standard no-model error. */
   requireGraph(): Graph;
-  /**
-   * Logs the tool call to the hop log + channel, then returns the result — the standard return
-   * path.
-   */
+  /** Logs the tool call to the hop log and channel, then returns the result (standard path). */
   logAndReturn(toolName: ToolName, data: object, input?: unknown): string;
-  /**
-   * Materializes the session's partial filter into a fully-defaulted filter for engine
-   * construction.
-   */
+  /** Materializes the session's partial filter into a fully-defaulted one for the engine. */
   buildActiveFilter(sess: AiSession): SerializedFilterState;
-  /**
-   * Wraps a thrown error as an `internal_error` result; the `present_result` branch bumps failure
-   * counters.
-   */
+  /** Wraps a thrown error as an `internal_error` result; `present_result` counts the failure. */
   toolError(toolName: string, err: unknown): string;
 }
 

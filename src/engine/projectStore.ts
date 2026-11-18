@@ -114,8 +114,8 @@ export function createProject(
 }
 
 /**
- * Upserts a project into the store and updates the last opened id: an existing id is replaced,
- * otherwise appended. Returns a new store.
+ * Upserts a project and updates the last opened id: replaced if the id exists, else appended;
+ * returns a new store.
  */
 export function updateProject(store: ProjectStore, project: Project): ProjectStore {
   const exists = store.projects.some(p => p.id === project.id);
@@ -126,8 +126,8 @@ export function updateProject(store: ProjectStore, project: Project): ProjectSto
 }
 
 /**
- * Removes a project by id and returns a new store. Deleting the active project moves the last
- * opened id to the most recently updated project.
+ * Removes a project by id, returning a new store; deleting the active one moves the last opened id
+ * to the newest.
  */
 export function deleteProject(store: ProjectStore, id: string): ProjectStore {
   const projects = store.projects.filter(p => p.id !== id);
@@ -138,10 +138,7 @@ export function deleteProject(store: ProjectStore, id: string): ProjectStore {
   return { ...store, projects, lastOpenedId };
 }
 
-/**
- * Generates a default project name from the connection and the current timestamp: "{sourceName or
- * displayName} YYYY-MM-DD HH:mm".
- */
+/** Default project name "{sourceName or displayName} YYYY-MM-DD HH:mm". */
 export function generateProjectName(connection: DacpacConnection | DatabaseConnection): string {
   const now = new Date();
   const ts = [

@@ -7,10 +7,7 @@
 /** Separator that cannot appear in schema names, for composite edge keys. */
 const SCHEMA_EDGE_KEY_SEPARATOR = '\u0000';
 
-/**
- * Aggregated schema-to-schema dependency edge, with antiparallel pairs collapsed into a single
- * bidirectional entry.
- */
+/** Aggregated schema-to-schema dependency edge; antiparallel pairs merge into one edge. */
 export interface CollapsedSchemaEdge {
   /** Source schema (lexicographically first when bidirectional). */
   sourceSchema: string;

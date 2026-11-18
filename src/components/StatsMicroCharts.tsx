@@ -2,8 +2,8 @@ import { typeBadgeLabel } from '../engine/profilingEngine';
 import { Tooltip } from './ui/Tooltip';
 
 /**
- * Mapping of simplified data type labels to their respective theme-aware colors.
- * Used by {@link TypeBadge} for visual categorization of column types.
+ * Theme-aware color per simplified data type label; {@link TypeBadge} uses it to categorize column
+ * types.
  */
 const BADGE_COLORS: Record<string, string> = {
   INT: 'var(--ln-analysis-icon)',      // blue
@@ -18,9 +18,7 @@ const BADGE_COLORS: Record<string, string> = {
   TXT: 'var(--ln-fg-dim)',             // dim
 };
 
-/**
- * Renders the compact {@link typeBadgeLabel} with the full SQL type in a tooltip.
- */
+/** Renders the compact {@link typeBadgeLabel} with the full SQL type in a tooltip. */
 export function TypeBadge({ typeStr }: { typeStr: string }) {
   const label = typeBadgeLabel(typeStr);
   const color = BADGE_COLORS[label] ?? 'var(--ln-fg-muted)';
@@ -42,10 +40,7 @@ export function TypeBadge({ typeStr }: { typeStr: string }) {
 }
 
 /**
- * Determines a semantic color based on a quality/completeness ratio.
- *
- * @param value - A number between 0 and 1 representing the quality ratio.
- * @returns A CSS color variable string.
+ * Semantic color for a quality/completeness ratio between 0 and 1, as a CSS color variable string.
  */
 function qualityColor(value: number): string {
   if (value >= 0.95) return 'var(--ln-analysis-icon)';
@@ -53,9 +48,7 @@ function qualityColor(value: number): string {
   return 'var(--ln-validation-error-border)';
 }
 
-/**
- * Renders a color-coded completeness ratio as an SVG progress bar.
- */
+/** Renders a color-coded completeness ratio as an SVG progress bar. */
 export function CompletenessBar({ value }: { value: number }) {
   const pct = Math.round(value * 100);
   return (
@@ -66,9 +59,7 @@ export function CompletenessBar({ value }: { value: number }) {
   );
 }
 
-/**
- * Classifies a uniqueness ratio as constant, high, medium, or low.
- */
+/** Classifies a uniqueness ratio as constant, high, medium, or low. */
 export function UniquenessIndicator({ value, distinctCount }: { value: number; distinctCount: number }) {
   let label: string;
   let color: string;

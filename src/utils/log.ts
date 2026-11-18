@@ -1,16 +1,11 @@
 /**
- * Structured logging infrastructure for the Data Lineage extension host.
- *
- * Output-channel logging uses these helpers to enforce consistent
- * `[Category] message` formatting. This ensures traceability across the
- * asynchronous boundaries of the extension, bridge, and engine.
+ * Structured logging for the extension host: the helpers enforce a consistent `[Category] message`
+ * format so entries stay traceable across the extension, bridge and engine.
  */
 import type { LogOutputChannel } from 'vscode';
 import { redactSecrets } from './redact';
 
-/**
- * Canonical categories used to tag extension log entries.
- */
+/** Categories that tag extension log entries. */
 export type LogCategory =
   | 'DB'
   | 'Dacpac'
@@ -25,8 +20,8 @@ export type LogCategory =
   | 'Storage';
 
 /**
- * The one redaction point for output-channel text: every {@link Logger} line, at every level and for
- * every caller, passes through here, so no call site has to remember to remove a credential itself.
+ * The one redaction point for output-channel text: every {@link Logger} line, at every level and
+ * for every caller, passes through here, so no call site has to remove a credential itself.
  */
 function normalizeLogMessage(msg: string): string {
   return sanitizeForLog(redactSecrets(msg));
@@ -43,12 +38,10 @@ function normalizeCategorizedLogMessage(cat: LogCategory, msg: string): string {
 }
 
 /**
- * Logs a milestone event that is meaningful to the end-user.
+ * Logs a user-meaningful milestone: a major state transition, successful operation or startup
+ * event. Keep frequency low (≤ ~20 per session) to keep the signal high.
  *
- * Use for major state transitions, successful operations, or startup events.
- * Keep frequency low (≤ ~20 per session) to maintain high signal.
- *
- * @param msg - The message to log. Format: `Operation — key result (timing)`
+ * @param msg - Format: `Operation — key result (timing)`
  */
 function logInfo(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
   const norm = normalizeCategorizedLogMessage(cat, msg);
@@ -56,12 +49,10 @@ function logInfo(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
 }
 
 /**
- * Logs a granular developer-centric event or state transition.
+ * Logs a developer-centric event or state transition, visible only at the 'Debug' log level:
+ * internal logic flow, tool calls, payload inspection.
  *
- * Only visible when the user enables the 'Debug' log level.
- * Use for tracing internal logic flow, tool calls, and payload inspection.
- *
- * @param msg - The message to log. Format: `Detail — context, parameters, timing`
+ * @param msg - Format: `Detail — context, parameters, timing`
  */
 function logDebug(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
   const norm = normalizeCategorizedLogMessage(cat, msg);
@@ -69,12 +60,10 @@ function logDebug(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
 }
 
 /**
- * Logs a degraded state or non-critical failure.
+ * Logs a degraded state or non-critical failure: the feature continues with limits, or after a
+ * successful fallback.
  *
- * Use when a feature can continue to operate but with limitations or
- * after a successful fallback operation.
- *
- * @param msg - The message to log. Format: `What happened — what system did → recovery hint`
+ * @param msg - Format: `What happened — what system did → recovery hint`
  */
 function logWarn(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
   const norm = normalizeCategorizedLogMessage(cat, msg);
@@ -82,10 +71,7 @@ function logWarn(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
 }
 
 /**
- * A domain-scoped logger that encapsulates a channel and category.
- *
- * Recommended for use within specific services or classes to reduce
- * repetitive parameter passing.
+ * Logger scoped to a channel and category, so services and classes need not repeat the parameters.
  */
 export class Logger {
   /** Creates a new Logger instance. */
@@ -94,11 +80,7 @@ export class Logger {
     private readonly cat: LogCategory
   ) {}
 
-  /**
-   * Factory method to create a new Logger.
-   *
-   * @param cat - Functional category prefix (e.g. `'Config'`, `'Bridge'`) prepended to every log line.
-   */
+  /** Creates a Logger; `cat` is the category prefix (e.g. `'Config'`, `'Bridge'`) of every line. */
   static create(ch: LogOutputChannel, cat: LogCategory): Logger {
     return new Logger(ch, cat);
   }
@@ -110,15 +92,15 @@ export class Logger {
   /** Logs a warning-level message. */
   warn(msg: string): void { logWarn(this.ch, this.cat, msg); }
   /**
-   * Logs an error-level message with full stack detail.
+   * Logs an error-level message with full stack detail; the stack is extracted from `err` when
+   * available.
    *
    * @param op - Operation label prepended to the error message.
-   * @param err - Caught error or unknown value; stack is extracted when available.
    */
   error(op: string, err: unknown): void { logError(this.ch, this.cat, op, err); }
 }
 
-/** Truncation cap for content text (prompts, questions, reasoning, SQL previews) — logging.md truncation table. */
+/** Truncation cap for content text (prompts, questions, reasoning, SQL previews). */
 export const LOG_TRUNC_CONTENT = 200;
 
 /** Truncation cap for JSON payloads (tool I/O, webview messages) — logging.md truncation table. */
@@ -128,24 +110,19 @@ export const LOG_TRUNC_JSON = 300;
 export const LOG_TRUNC_LIST = 10;
 
 /**
- * Truncation cap for tool-rejection diagnostics (reason and remediation hint).
- *
- * @remarks
- * Deliberately larger than the content/JSON caps. A rejection's reason and hint are already
- * bounded at construction, and for a turn that *ends* on a rejection this log line is the only
- * complete record of which rule fired: the model-facing correction envelope is replayed into the
- * next provider request, and a terminal rejection has no next request. Truncating below the
- * value's own bound is what makes such a turn undiagnosable, so this cap is a safety stop on
- * pathological input, not a formatting budget.
+ * Truncation cap for tool-rejection diagnostics (reason and remediation hint), deliberately above
+ * the content/JSON caps. Both are already bounded at construction, and for a turn that *ends* on a
+ * rejection this log line is the only complete record of which rule fired: the correction envelope
+ * is replayed into the next provider request, and a terminal rejection has none. Truncating below
+ * the value's own bound makes such a turn undiagnosable, so this is a safety stop on pathological
+ * input, not a formatting budget.
  */
 export const LOG_TRUNC_REJECTION = 1_000;
 
 /**
- * Serializes an arbitrary value into a bounded, single-line diagnostic preview.
- *
- * Circular references and bigint values are represented explicitly. Objects whose
- * property access or serialization throws degrade to a stable marker so diagnostic
- * formatting can never suppress the user-facing operation it accompanies.
+ * Serializes any value into a bounded single-line diagnostic preview. Circular references and
+ * bigint are shown explicitly; an object whose property access or serialization throws degrades to
+ * a stable marker, so formatting never suppresses the operation it accompanies.
  */
 export function safeStringifyForLog(value: unknown, max = LOG_TRUNC_JSON): string {
   try {
@@ -173,10 +150,8 @@ export function safeStringifyForLog(value: unknown, max = LOG_TRUNC_JSON): strin
 }
 
 /**
- * Truncates a string or an array of items for log previews.
- *
- * @param max - The maximum length (for string) or items (for array).
- * @returns The truncated value with overflow count.
+ * Truncates a string or array for log previews, appending the overflow count; `max` is the length
+ * (string) or item count (array).
  */
 export function trunc(val: string | any[], max: number): string {
   if (Array.isArray(val)) {
@@ -187,11 +162,9 @@ export function trunc(val: string | any[], max: number): string {
 }
 
 /**
- * Normalizes a string for single-line display in the Output Channel.
- *
- * Collapses real whitespace, newlines and control characters into single spaces. A backslash
- * sequence such as the `\new` in `C:\new\temp` is text, not a newline, and stays as written.
- * This is crucial for keeping logs readable in the line-oriented Output view.
+ * Normalizes a string to one line for the Output Channel: whitespace, newlines and control
+ * characters collapse to single spaces. A backslash sequence like the `\new` in `C:\new\temp` is
+ * text and stays as written.
  */
 export function sanitizeForLog(s: string): string {
   return s
@@ -201,13 +174,9 @@ export function sanitizeForLog(s: string): string {
 }
 
 /**
- * Logs a critical failure or unhandled exception.
- *
- * Automatically extracts message from `Error` objects and logs both the
- * `FAILED:` line and the stack trace at **error** level.
- *
- * @remarks
- * Format: `[CAT] FAILED: operation — error detail`
+ * Logs a critical failure or unhandled exception: the message is taken from `Error` objects, and
+ * both the `FAILED:` line and the stack go out at **error** level. Format: `[CAT] FAILED: operation
+ * — error detail`
  */
 function logError(ch: LogOutputChannel, cat: LogCategory, op: string, err: unknown): void {
   const detail = normalizeLogMessage(err instanceof Error ? err.message : String(err));

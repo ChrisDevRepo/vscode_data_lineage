@@ -37,11 +37,9 @@ function extractTitle(text: string, type: StatusType): string {
 const MAX_BODY = 120;
 
 /**
- * Displays a typed status banner with loading, success, or error styling.
- *
- * @remarks
- * An error shows its full message, since the cause is often at the end of a driver message; other
- * types shorten long text and keep the full text in a hover tooltip.
+ * Typed status banner (loading, success, error). An error shows its full message, since the cause
+ * is often at the end of a driver message; other types shorten long text and keep the full text in
+ * a hover tooltip.
  */
 export const StatusMessage = memo(function StatusMessage({ text, type }: StatusMessageProps) {
   const title = extractTitle(text, type);

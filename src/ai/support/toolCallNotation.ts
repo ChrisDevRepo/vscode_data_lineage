@@ -25,10 +25,7 @@ export interface ToolCallNotationFault {
   readonly hint: string;
 }
 
-/**
- * Repair sentence for one value: names the argument attached after the value's own text, when there
- * is one.
- */
+/** Repair sentence for one value: names the argument attached after the value's text, if any. */
 function repairSentence(path: string, value: string): string {
   const first = NOTATION.exec(value)!;
   const attached = /<parameter\s+name="([A-Za-z_]\w*)"\s*>/.exec(value)?.[1];

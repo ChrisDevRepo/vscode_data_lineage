@@ -24,10 +24,7 @@ export interface LineageRuntimeRequest {
   readonly id: string;
   /** Verbatim user prompt for this turn. */
   readonly prompt: string;
-  /**
-   * Optional prior-turn conversation, oldest first; when present the session transcript is cleared
-   * after the turn.
-   */
+  /** Optional prior-turn conversation, oldest first; if given, the transcript is cleared after. */
   readonly priorMessages?: readonly ModelMessage[];
 }
 

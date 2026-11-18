@@ -9,10 +9,7 @@ import { z } from 'zod';
 import type { Logger } from '../../utils/log';
 import { DATABASE_CONFIG_SECTION } from './dbSession';
 
-/**
- * Setting key, relative to {@link DATABASE_CONFIG_SECTION}, that holds the built-in connection
- * list.
- */
+/** Setting key, relative to {@link DATABASE_CONFIG_SECTION}, of the built-in connection list. */
 const CONNECTIONS_SETTING = 'connections';
 
 /** Secret-store key prefix; the connection id is appended. */
@@ -81,10 +78,7 @@ export const MAX_SERVER_LENGTH = 512;
 /** Room for the suggested display name `server,port / database` built from the longest of each. */
 export const MAX_NAME_LENGTH = 1024;
 
-/**
- * Input-box validation message for a value longer than `max`, or `undefined`; `what` is the field
- * as it reads in "A <what> has at most …".
- */
+/** Input-box message for a value over `max`, or `undefined`; `what` names the field. */
 export function tooLong(value: string, max: number, what: string): string | undefined {
   return value.trim().length > max ? `A ${what} has at most ${max} characters.` : undefined;
 }
@@ -99,10 +93,7 @@ function unbracket(host: string): string {
   return host.replace(BRACKETED_HOST, '$1');
 }
 
-/**
- * Removes the leading `tcp:` protocol prefix of a server address, as the Azure portal connection
- * strings carry it.
- */
+/** Removes a leading `tcp:` from a server address, as Azure portal connection strings carry it. */
 export function dropTcpPrefix(server: string): string {
   return server.trim().replace(TCP_PREFIX, '').trim();
 }
@@ -125,9 +116,7 @@ const connectionFields = {
   server: z.string().min(1).max(MAX_SERVER_LENGTH),
   port: z.number().int().min(1).max(MAX_TCP_PORT).optional(),
   database: z.string().min(1).max(MAX_SYSNAME_LENGTH).optional(),
-  /**
-   * Windows authentication is not supported: the bundled driver has no integrated Windows sign-in.
-   */
+  /** Windows authentication is unsupported: the bundled driver has no integrated sign-in. */
   authenticationType: z.enum(['sqlLogin', 'entraId']),
   user: z.string().min(1).max(MAX_SYSNAME_LENGTH).optional(),
   accountId: z.string().min(1).max(MAX_SYSNAME_LENGTH).optional(),
@@ -143,10 +132,7 @@ const connectionFields = {
  */
 export const BuiltInConnectionSchema = z.object({ id: z.string().min(1).max(MAX_SYSNAME_LENGTH), ...connectionFields });
 
-/**
- * {@link BuiltInConnectionSchema} with the id optional, for callers that let the extension assign
- * one.
- */
+/** {@link BuiltInConnectionSchema} with an optional id, for callers letting the host assign one. */
 const BuiltInConnectionInputSchema = z.object({ id: z.string().min(1).max(MAX_SYSNAME_LENGTH).optional(), ...connectionFields });
 
 /** A validated built-in connection. */
@@ -192,10 +178,7 @@ function rawId(entry: unknown): unknown {
   return entry && typeof entry === 'object' ? (entry as { id?: unknown }).id : undefined;
 }
 
-/**
- * Tail of the connection-list rewrites; each read-modify-write starts after the previous one
- * settles.
- */
+/** Tail of the connection-list rewrites; each read-modify-write starts after the last settles. */
 let rewriteTail: Promise<unknown> = Promise.resolve();
 
 /**
@@ -216,8 +199,8 @@ function rewriteConnections(change: (entries: unknown[]) => unknown[]): Promise<
 
 /**
  * Adds a connection, or replaces the saved one with the same id. Every other entry is written back
- * as stored, including a hand-edited one that fails validation. Serialized with {@link
- * deleteBuiltInConnection}, so concurrent calls never drop an entry.
+ * as stored, including a hand-edited one that fails validation. Serialized with
+ * {@link deleteBuiltInConnection}, so concurrent calls never drop an entry.
  */
 export function upsertBuiltInConnection(connection: BuiltInConnection): Promise<void> {
   return rewriteConnections((entries) => {

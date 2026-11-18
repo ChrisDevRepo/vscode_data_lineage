@@ -81,23 +81,15 @@ const TYPE_CATEGORIES: Record<string, ColCategory> = {
   sql_variant: 'skip', timestamp: 'skip', rowversion: 'skip', sysname: 'skip',
 };
 
-/**
- * String types whose `= ''` comparison also matches whitespace-only values, so emptiness is
- * measured by byte length instead.
- */
+/** String types whose `= ''` also matches whitespace-only values, so emptiness uses byte length. */
 const VARIABLE_LENGTH_STRINGS: ReadonlySet<string> = new Set(['varchar', 'nvarchar']);
 
-/**
- * Extracts the lowercase base type name from a type string, dropping any length/precision suffix
- * ('varchar(max)' -> 'varchar').
- */
+/** Lowercase base type name without length/precision ('varchar(max)' -> 'varchar'). */
 export function extractBaseType(typeStr: string): string {
   return typeStr.replace(/\(.*$/, '').trim().toLowerCase();
 }
 
-/**
- * Classifies a column definition into a profiling category; `skip` for computed/unprofilable types.
- */
+/** Classifies a column definition into a profiling category; `skip` for computed/unprofilable. */
 export function classifyColumn(col: ColumnDef): ColCategory {
   if (col.extra === 'COMPUTED') return 'skip';
   const base = extractBaseType(col.type);
@@ -115,10 +107,7 @@ function aggregateAlias(index: number, suffix: string): string {
   return `c${index}_${suffix}`;
 }
 
-/**
- * Largest magnitude a float column may hold for AVG and STDEV to stay inside the float range (the
- * variance squares each value).
- */
+/** Largest magnitude a float column may hold for AVG/STDEV to stay in range (variance squares). */
 const FLOAT_MOMENT_LIMIT = '1E+150';
 
 /**
@@ -257,10 +246,7 @@ function qiStr(name: string): string {
   return qi(name).replace(/'/g, "''");
 }
 
-/**
- * Generates an efficient row count query summing `sys.partitions` rows for the heap/clustered
- * index.
- */
+/** Row-count query summing `sys.partitions` rows for the heap/clustered index. */
 export function buildRowCountQuery(schema: string, tableName: string): string {
   return `SELECT SUM(p.rows) AS row_count
 FROM sys.partitions p
@@ -268,10 +254,7 @@ WHERE p.object_id = OBJECT_ID(N'${qiStr(schema)}.${qiStr(tableName)}')
   AND p.index_id IN (0, 1)`;
 }
 
-/**
- * Calculates the sampling percentage for `TABLESAMPLE`, in `[1, 100]`; 100 when the row count is
- * unknown or zero.
- */
+/** Sampling percentage for `TABLESAMPLE`, in `[1, 100]`; 100 when the row count is unknown or 0. */
 export function computeSamplePercent(sampleSize: number, rowCount: number): number {
   if (rowCount <= 0) return 100;
   return Math.min(100, Math.ceil((sampleSize / rowCount) * 100));
@@ -314,10 +297,7 @@ const TYPE_BADGE_LABELS: Record<string, string> = {
   sql_variant: 'VAR', timestamp: 'TS', rowversion: 'TS', sysname: 'STR',
 };
 
-/**
- * Returns a 3-4 letter badge label for a SQL type: the known label for its base type, else the
- * first 4 letters uppercased.
- */
+/** 3-4 letter badge label for a SQL type: its base type's known label, else its first 4 letters. */
 export function typeBadgeLabel(typeStr: string): string {
   const base = extractBaseType(typeStr);
   return TYPE_BADGE_LABELS[base] ?? base.toUpperCase().slice(0, 4);

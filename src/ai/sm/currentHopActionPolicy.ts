@@ -15,10 +15,7 @@ export interface CurrentHopActionPolicyInput {
   /** Canonical exploration origin. */
   originId: string;
   pruneTargets: CurrentHopActionTarget[];
-  /**
-   * Nodes already processed: analyzed on a hop of their own, or the carrier the engine passed
-   * through into the current focus.
-   */
+  /** Nodes already processed: analyzed on their own hop, or the carrier passed into this focus. */
   visitedIds: ReadonlySet<string>;
   /** Nodes already removed by an earlier accepted prune. */
   removedIds: ReadonlySet<string>;

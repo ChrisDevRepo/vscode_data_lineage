@@ -127,9 +127,7 @@ export function systemPromptHash(system: string): string {
   return createHash('sha256').update(system, 'utf8').digest('hex');
 }
 
-/**
- * Serializes trace content without throwing or truncating; unrepresentable parts become markers.
- */
+/** Serializes trace content without throwing or truncating; unrepresentable parts get markers. */
 export function safeTraceStringify(value: unknown): string {
   try {
     return JSON.stringify(toJsonSafeValue(value, new Set<object>())) ?? 'null';

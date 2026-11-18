@@ -20,8 +20,8 @@ export interface DbQueryOptions {
 }
 
 /**
- * One open database connection. Consumers read result cells by column name, so a session must
- * return `displayValue` strings.
+ * One open database connection; consumers read cells by column name, so it must return
+ * `displayValue` strings.
  */
 export interface DbSession {
   /** The provider that opened this session. */

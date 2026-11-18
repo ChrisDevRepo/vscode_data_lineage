@@ -18,25 +18,17 @@ interface CreateFlowProps {
   /** Callback triggered to return to the previous screen (StartScreen). */
   onBack: () => void;
   /**
-   * Callback triggered to finalize project creation and start the visualization.
-   * @param projectName - The user-defined or auto-generated name for the project.
-   * @param connection - The connection metadata (Dacpac or Database).
+   * Finalizes project creation and starts the visualization, given the project name (user-defined
+   * or auto-generated) and the connection metadata (Dacpac or Database).
    */
   onVisualize: (projectName: string, connection: DacpacConnection | DatabaseConnection | null) => void;
 }
 
 /**
- * A wizard-style component that guides the user through creating a new lineage visualization.
- *
- * @remarks
- * The flow consists of two logical phases:
- * 1. **Source Selection**: The user chooses between opening a .dacpac file or connecting to a live database.
- * 2. **Configuration**: Once a source is partially loaded (Phase 1), the user can:
- *    - Define a project name (auto-generated if left blank).
- *    - Select specific schemas to include in the visualization.
- *    - View warnings if the selected scope exceeds the recommended node limit.
- *
- * @param props - The component props.
+ * Wizard that guides the user through creating a lineage visualization in two phases: Source
+ * Selection (open a .dacpac or connect to a live database), then, once a source is partially loaded
+ * (Phase 1), Configuration: project name (auto-generated if blank), schemas to include, and a
+ * warning when the scope exceeds the recommended node limit.
  */
 export const CreateFlow = memo(function CreateFlow({
   loader,
@@ -60,9 +52,7 @@ export const CreateFlow = memo(function CreateFlow({
   }, [schemaOrModel, loader.selectedSchemas]);
   const overLimit = exceedsObjectLimit(selectedCount, maxNodes);
 
-  /**
-   * Generates a default project name based on the current connection metadata.
-   */
+  /** Generates a default project name based on the current connection metadata. */
   const autoName = useCallback(() => {
     if (!loader.fileName) return '';
     if (loader.filePath) {
@@ -85,9 +75,7 @@ export const CreateFlow = memo(function CreateFlow({
 
   const displayName = projectName || autoName();
 
-  /**
-   * Handles the final 'Visualize' action.
-   */
+  /** Handles the final 'Visualize' action. */
   const handleVisualize = useCallback(() => {
     const name = displayName.trim() || autoName().trim() || loader.fileName || 'Project';
     if (loader.filePath) {

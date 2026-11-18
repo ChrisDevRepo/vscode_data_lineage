@@ -5,9 +5,7 @@ import { countExpandedSchemaViewRenderedNodes, partitionBySchema } from '../engi
 import type { DatabaseModel, ExtensionConfig, GraphMode } from '../engine/types';
 import { notifyUser } from '../utils/notify';
 
-/**
- * UI state that tracks which schemas are expanded in Expanded Schema View.
- */
+/** Which schemas are expanded in Expanded Schema View. */
 export interface ExpandedSchemaViewState {
   /** Object highlighted after search/detail navigation; null for schema-level expansion. */
   focusNodeId: string | null;
@@ -29,14 +27,11 @@ interface UseExpandedSchemaViewArgs {
 }
 
 /**
- * Encapsulates Expanded Schema View state transitions and derived render data.
+ * Expanded Schema View state transitions and derived render data. Owns only the feature logic;
+ * state stays in `App` so reset points and host-sync behavior are unchanged.
  *
- * @remarks
- * This hook owns only the feature logic. State still lives in `App` so existing
- * reset points and host-sync behavior can remain unchanged.
- *
- * @returns Expanded-view flow graph, rendered counts, collapsed-cluster IDs, and
- * the expand/collapse/toggle actions.
+ * @returns Expanded-view flow graph, rendered counts, collapsed-cluster IDs and the
+ *   expand/collapse/toggle actions.
  */
 export function useExpandedSchemaView({
   config,
@@ -66,13 +61,11 @@ export function useExpandedSchemaView({
   }, [expandedSchemaKey, expandedSchemaView, graph, graphMode, showExpandedSchemaClusters]);
 
   /**
-   * The projected expanded-schema graph, or null when there is none to show.
-   *
-   * @remarks
-   * The render limit is checked here, in the layer that owns the projection, because expanded
-   * schemas can arrive without passing `applyExpandedSchemaViewSchemas`: a restored view or bookmark
-   * whose graph grew, or whose limit shrank, since it was saved. Over the limit nothing is projected,
-   * so the webview never lays out an oversized graph and shows the render-limit notice instead.
+   * The projected expanded-schema graph, or null when there is none to show. The render limit is
+   * checked here, in the projection's owner, because a restored view or bookmark can bypass
+   * `applyExpandedSchemaViewSchemas` after its graph grew or its limit shrank. Over the limit
+   * nothing is projected, so the webview never lays out an oversized graph and shows the
+   * render-limit notice.
    */
   const expandedSchemaViewGraph = useMemo(() => {
     if (!expandedSchemaView || !graph || expandedSchemaViewRenderedCount === undefined) return null;
@@ -147,7 +140,9 @@ export function useExpandedSchemaView({
     setShowExpandedSchemaClusters((previous) => !previous);
   }, [preserveViewportOnNextGraphChange, setShowExpandedSchemaClusters]);
 
-  /** Expand all visible schemas at once; rejected with a toast if it would exceed the render limit. */
+  /**
+   * Expands all visible schemas at once; rejected with a toast if it would exceed the render limit.
+   */
   const expandAllSchemas = useCallback((allSchemaNames: string[]) => {
     applyExpandedSchemaViewSchemas(new Set(allSchemaNames), null, 'all');
   }, [applyExpandedSchemaViewSchemas]);

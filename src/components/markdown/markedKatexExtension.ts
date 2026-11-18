@@ -21,13 +21,10 @@ import type {
 } from 'marked';
 
 /**
- * Matches inline math delimited by one or two dollars.
- *
- * @remarks
- * Non-standard, but ensures the opening `$` is not preceded and the closing `$` is not followed
- * by a word/number character, and the opening `$` is not followed by `.`, `("`, or `('`. That is
- * what keeps prose amounts such as `$20,000 and $30,000` from parsing as math while a genuine
- * `$\rightarrow$` still does.
+ * Inline math delimited by one or two dollars. Non-standard: the opening `$` must not be preceded,
+ * nor the closing `$` followed, by a word/number character, and the opening `$` must not be
+ * followed by `.`, `("` or `('`. That keeps prose amounts like `$20,000 and $30,000` from parsing
+ * as math while a genuine `$\rightarrow$` still does.
  */
 const mathInlineRegExp =
   /(?<![a-zA-Z0-9])(?<dollars>\${1,2})(?!\.|\(["'])((?:\\.|[^\\\n])*?(?:\\.|[^\\\n$]))\k<dollars>(?![a-zA-Z0-9])/;
@@ -35,7 +32,7 @@ const mathInlineRegExp =
 const katexContainerClassName = 'vscode-katex-container';
 const katexContainerLatexAttributeName = 'data-latex';
 
-/** {@link mathInlineRegExp} anchored at `lastIndex`, so its lookbehind still sees the preceding text. */
+/** {@link mathInlineRegExp} anchored at `lastIndex`, so its lookbehind sees the preceding text. */
 const inlineRule = new RegExp(mathInlineRegExp.source, 'y');
 /** A block closes on its own line or glued to the last line of the formula, as models write `\end{cases}$$`. */
 const blockRule = /^(\${1,2})\n((?:\\[^]|[^\\])+?)\n?\1(?:\n|$)/;
@@ -87,7 +84,7 @@ function inlineKatex(renderer: RendererExtensionFunction): TokenizerAndRendererE
     },
     tokenizer(src: string, tokens: Token[]) {
       // `marked` passes only the unconsumed suffix; restore the previous raw character so the
-      // lookbehind rejects `a$x$` the same way it does inside one string.
+      // lookbehind rejects `a$x$` as it does inside one string.
       const prefix = tokens.at(-1)?.raw.slice(-1) ?? '';
       inlineRule.lastIndex = prefix.length;
       const match = inlineRule.exec(prefix + src);
@@ -129,11 +126,8 @@ function blockKatex(renderer: RendererExtensionFunction): TokenizerAndRendererEx
 }
 
 /**
- * Builds the `marked` extension that renders `$…$` and `$$…$$` math through KaTeX.
- *
- * @param katexInstance - The KaTeX module used to render each expression.
- * @param options - KaTeX options applied to every expression.
- * @returns The extension to pass to `marked.use()`.
+ * Builds the `marked` extension (for `marked.use()`) that renders `$…$` and `$$…$$` math with the
+ * given KaTeX module and options.
  */
 export function markedKatexExtension(
   katexInstance: typeof katex,

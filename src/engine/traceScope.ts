@@ -78,8 +78,8 @@ export function collectScopeEdgeIds(
 }
 
 /**
- * Applies manual add/prune sets on top of an original BFS trace scope; returns the visible node IDs
- * plus the edge IDs connecting them.
+ * Applies manual add/prune sets to an original BFS trace scope; returns visible node IDs and
+ * connecting edge IDs.
  */
 export function buildVisibleTraceScope(
   baseNodeIds: ReadonlySet<string>,
@@ -160,10 +160,7 @@ function reachable(graph: Graph, startId: string, mode: 'inbound' | 'outbound', 
   return seen;
 }
 
-/**
- * Gets the fixed pruning legs from the trace's effective open levels; zero-depth sides remain
- * closed.
- */
+/** The fixed pruning legs from the trace's effective open levels; zero-depth sides stay closed. */
 export function traceRemovalSides(upstreamLevels: number, downstreamLevels: number): RemovalSide[] {
   const sides: RemovalSide[] = [];
   if (upstreamLevels > 0) sides.push('upstream');

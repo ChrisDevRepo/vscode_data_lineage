@@ -100,10 +100,7 @@ function pageOf<T>(page: ListPage, items: readonly T[]): T[] {
   return items.slice(page.offset, end);
 }
 
-/**
- * Emits one page of an id list as `<key>`; `page` is marked as continuing when this list has more
- * ids.
- */
+/** Emits one page of an id list as `<key>`; `page` is marked as continuing when more ids follow. */
 function spreadPaged(page: ListPage, key: string, ids: readonly string[]): Record<string, unknown> {
   return { [key]: pageOf(page, ids) };
 }

@@ -23,8 +23,8 @@ interface BridgedAbort {
 
 /**
  * Bridges a {@link CancellationTokenLike} to an `AbortSignal`: already aborted when the token is
- * already cancelled, else aborting the first time the token fires. The returned {@link
- * BridgedAbort.dispose} detaches the listener (idempotent); the host calls it when the turn
+ * already cancelled, else aborting the first time the token fires. The returned
+ * {@link BridgedAbort.dispose} detaches the listener (idempotent); the host calls it when the turn
  * settles.
  */
 export function tokenToAbortSignal(token: CancellationTokenLike): BridgedAbort {

@@ -21,10 +21,10 @@ import type { InvestigationTask } from '../sm/smTypes';
 export type PromptPhase = 'discover' | 'visual_preview' | 'active' | 'synthesis' | 'completed';
 
 /**
- * The stages that author a `lineage_present_result` payload, as seen by {@link
- * buildPresentationDetailContract}: a subset of {@link PromptPhase} with `visual_preview` renamed
- * `preview`, since this axis is about what the stage may do with the text. `discover` and `active`
- * never call the tool.
+ * The stages that author a `lineage_present_result` payload, as seen by
+ * {@link buildPresentationDetailContract}: a subset of {@link PromptPhase} with `visual_preview`
+ * renamed `preview`, since this axis is about what the stage may do with the text. `discover` and
+ * `active` never call the tool.
  */
 export type PresentationStage = 'preview' | 'synthesis' | 'completed';
 
@@ -45,7 +45,7 @@ export interface GeneralPromptContext {
   readonly totalNodes: number;
   /** Checked source catalog policy; absent retains the legacy CI prompt. */
   readonly identifierCaseSensitive?: boolean;
-  /** One phrase naming the trace, analysis, or bookmark applied on screen; absent when nothing is applied. */
+  /** One phrase naming the trace, analysis or bookmark applied on screen; absent if none. */
   readonly screen?: string;
 }
 
@@ -122,7 +122,7 @@ export function buildPhasePrompt(
   return buildFollowUpPrompt();
 }
 
-/** Markdown formatting rules for follow-up chat replies (discovery's home is the YAML `discovery_chat`). */
+/** Markdown formatting rules for follow-up chat replies (discovery's are in YAML). */
 const CHAT_MARKDOWN_FORMAT = [
   'User-facing chat text: Markdown only, no arbitrary HTML.',
   'Use short headings and bullets when they improve scanning; avoid wall-of-text paragraphs.',
@@ -131,9 +131,9 @@ const CHAT_MARKDOWN_FORMAT = [
 ].join(' ');
 
 /**
- * Prompt for the Discovery/Idle phase. Role and grounding come from {@link
- * buildGeneralSystemPrompt} and each tool's modelDescription owns which question it answers, so
- * this block states only the task (answer directly or call a read tool), the one lineage call
+ * Prompt for the Discovery/Idle phase. Role and grounding come from
+ * {@link buildGeneralSystemPrompt} and each tool's modelDescription owns which question it answers,
+ * so this block states only the task (answer directly or call a read tool), the one lineage call
  * answering a dependency question, and the applied-bookmark rule: a question about a bookmarked
  * graph reads a stored run, and answering it with a scope walk turned "what do I see here" into a
  * fresh approval gate. Chat format lives in the YAML `discovery_chat` template; scope-depth
@@ -179,8 +179,8 @@ function buildActivePhasePrompt(): string {
  * Preview, synthesis and follow-up share one tool and `validatePresentResult`, so the cross-field
  * rule it enforces (a highlighted node is explained by a section link or a note) lives here once.
  * Single-field meaning lives in the `lineage_present_result` `.describe()` texts; synthesis-only
- * surfaces (`detail_slots[]`, Column Trace Chain, detail-slot coverage) stay in {@link
- * buildSynthesisPrompt}.
+ * surfaces (`detail_slots[]`, Column Trace Chain, detail-slot coverage) stay in
+ * {@link buildSynthesisPrompt}.
  *
  * The depth line is the stage-dependent part: synthesis chooses how much captured evidence
  * survives; follow-up has no archive in the window, so re-deriving via `lineage_get_object_detail`
@@ -352,9 +352,9 @@ function buildFollowUpPrompt(): string {
 /**
  * Sentinel prompt carried by the post-discovery "deeper analysis" follow-up pill.
  *
- * @remarks
- * Kept short because a chat surface shows it verbatim as the pill label. It never reaches the model:
- * {@link expandRunTracePrompt} replaces it with the seeded envelope before the turn starts.
+ * @remarks Kept short because a chat surface shows it verbatim as the pill label. It never reaches
+ *   the model: {@link expandRunTracePrompt} replaces it with the seeded envelope before the turn
+ *   starts.
  */
 export const RUN_TRACE_TRIGGER = 'Run trace';
 
@@ -438,9 +438,9 @@ export const SHOW_FULL_PLAN_TRIGGER = 'Show the full exploration plan';
 /**
  * Stable first line of the seeded trace envelope, matched by the graph to route straight to SM.
  *
- * @remarks
- * Matching our own generated prefix, never user text — this is what makes the re-entry deterministic
- * and saves an entry-detector model call. Mechanical enforcement over prompt language.
+ * @remarks Matching our own generated prefix, never user text — this is what makes the re-entry
+ *   deterministic and saves an entry-detector model call. Mechanical enforcement over prompt
+ *   language.
  */
 export const TRACE_REQUEST_MARKER = 'The user clicked the post-discovery "Run trace" link.';
 
@@ -460,7 +460,9 @@ interface DiscoveryPillContext {
   readonly lastDiscoveryAnswer: string | null;
 }
 
-/** Expands the preview badge into an explicit visual request grounded in the captured BFS question. */
+/**
+ * Expands the preview badge into an explicit visual request grounded in the captured BFS question.
+ */
 export function expandShowGraphPreviewPrompt(prompt: string, ctx: DiscoveryPillContext): string {
   if (prompt !== SHOW_GRAPH_PREVIEW_TRIGGER) return prompt;
   if (!ctx.lastDiscoveryOrigin || !ctx.lastDiscoveryQuestion) return prompt;
@@ -488,7 +490,8 @@ export function expandRunTracePrompt(prompt: string, ctx: DiscoveryPillContext):
 }
 
 /**
- * Builds the User-message envelope that asks the SM-entry turn for a `lineage_start_exploration` call.
+ * Builds the User-message envelope that asks the SM-entry turn for a `lineage_start_exploration`
+ * call.
  *
  * @param question - The user's verbatim discovery question.
  * @param answer - The AI's discovery chat answer (Markdown).

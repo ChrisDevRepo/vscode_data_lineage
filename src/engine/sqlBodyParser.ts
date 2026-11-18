@@ -31,30 +31,15 @@ import type { ExternalRef } from './types';
  * execution calls.
  */
 interface ParsedDependencies {
-  /**
-   * Schema-qualified names of objects read from (e.g., `[dbo].[Table]`).
-   * Captured from SELECT and JOIN clauses.
-   */
+  /** Schema-qualified names of objects read from (e.g. `[dbo].[Table]`), from SELECT and JOIN. */
   sources: string[];
-  /**
-   * Schema-qualified names of objects written to (e.g., `[dbo].[Table]`).
-   * Captured from INSERT, UPDATE, DELETE, and MERGE statements.
-   */
+  /** Schema-qualified names of objects written to (e.g. `[dbo].[Table]`), from INSERT/UPDATE. */
   targets: string[];
-  /**
-   * Schema-qualified names of stored procedures executed (e.g., `[dbo].[Proc]`).
-   * Captured from EXEC/EXECUTE calls.
-   */
+  /** Schema-qualified names of procedures executed (e.g. `[dbo].[Proc]`), from EXEC/EXECUTE. */
   execCalls: string[];
-  /**
-   * Full 3-part names of cross-database sources (e.g., `db.schema.object`).
-   * These are tracked separately from local references.
-   */
+  /** Full 3-part names of cross-database sources (`db.schema.object`), apart from local reads. */
   crossDbSources: string[];
-  /**
-   * Full 3-part names of cross-database targets (e.g., `db.schema.object`).
-   * Tracked for cross-DB lineage analysis.
-   */
+  /** Full 3-part names of cross-database targets (`db.schema.object`), for cross-DB lineage. */
   crossDbTargets: string[];
 }
 
@@ -66,53 +51,30 @@ interface ParsedDependencies {
  * groups to identify pertinent identifiers in the SQL text.
  */
 interface ParseRule {
-  /**
-   * Unique identifier for the rule.
-   * Used for debugging and configuration overrides.
-   */
+  /** Unique identifier for the rule. Used for debugging and configuration overrides. */
   name: string;
-  /**
-   * Whether the rule is actively applied during parsing.
-   */
+  /** Whether the rule is actively applied during parsing. */
   enabled: boolean;
-  /**
-   * Execution order (lower priority runs earlier).
-   * Crucial for rules that depend on previous preprocessing passes.
-   */
+  /** Execution order (lower runs earlier); matters for rules depending on earlier preprocessing. */
   priority: number;
-  /**
-   * Categorizes how the rule's matches are classified in {@link ParsedDependencies}.
-   */
+  /** Categorizes how the rule's matches are classified in {@link ParsedDependencies}. */
   category: 'preprocessing' | 'source' | 'target' | 'exec' | 'external_ref';
-  /**
-   * The regular expression string to evaluate against the SQL body.
-   * Must contain at least one capture group for the identifier.
-   */
+  /** Regex string evaluated against the SQL body; needs one capture group for the identifier. */
   pattern: string;
   /**
    * Regex flags (e.g., 'gi') applied to the pattern. Must include `g`: every consumer scans or
    * rewrites the whole body, and a non-global pattern either never terminates or matches once.
    */
   flags: string;
-  /**
-   * Replacement string for 'preprocessing' category rules.
-   * Allows transforming SQL text before extraction.
-   */
+  /** Replacement string of 'preprocessing' rules, which transform SQL text before extraction. */
   replacement?: string;
-  /**
-   * Defines the type of external reference.
-   * Required if category is 'external_ref'.
-   */
+  /** Defines the type of external reference. Required if category is 'external_ref'. */
   kind?: string;
-  /**
-   * Human-readable explanation of the rule's purpose.
-   */
+  /** Human-readable explanation of the rule's purpose. */
   description: string;
 }
 
-/**
- * Configuration wrapper for loading multiple parse rules.
- */
+/** Configuration wrapper for loading multiple parse rules. */
 export interface ParseRulesConfig {
   /** An array of parse rules to load into the engine. */
   rules: ParseRule[];
@@ -581,7 +543,10 @@ function substituteCteUpdateAliases(sql: string, identifierCaseSensitive: boolea
 
 /** A dotted table name, each part regular or delimited; sticky, so a caller sets `lastIndex`. */
 const TABLE_NAME_RE = /(?:\[(?:[^\]]|\]\])*\]|[\p{L}\p{Nd}_@$#]+)(?:\.(?:\[(?:[^\]]|\]\])*\]|[\p{L}\p{Nd}_@$#]*))*/uy;
-/** One token of the comma-list scan: a word, a delimited identifier or any other character; global, so it skips blanks. */
+/**
+ * One token of the comma-list scan: a word, a delimited identifier or any other character; global,
+ * skips blanks.
+ */
 const LIST_TOKEN_RE = /[\p{L}\p{Nd}_@$#]+|\[(?:[^\]]|\]\])*\]|\S/gu;
 /** A token that can be an alias: a word or delimited identifier, never a number or an operator. */
 const ALIAS_START_RE = /^[\p{L}_@#[]/u;
@@ -668,9 +633,14 @@ function removeBlockComments(sql: string): string {
   return out;
 }
 
-/** Distance from a masked character to its original: the masks lie in Supplementary Private Use Area-A. */
+/**
+ * Distance from a masked character to its original: masks lie in Supplementary Private Use Area-A.
+ */
 const MASK_OFFSET = 0xF0000;
-/** Characters of a delimited identifier that no rule may read as SQL: every BMP character that cannot be part of a regular identifier, except `]` whose doubling is the escape. */
+/**
+ * Characters of a delimited identifier that no rule may read as SQL: every BMP character that
+ * cannot be part of a regular identifier, except `]` whose doubling is the escape.
+ */
 const MASKABLE_RE = /[^\p{L}\p{Nd}_@$#\]\u{10000}-\u{10FFFF}]/gu;
 const MASKED_RE = /[\u{F0000}-\u{FFFFF}]/gu;
 
@@ -687,7 +657,10 @@ function maskDelimitedContent(delimited: string): string {
   return `[${maskText(delimited.slice(1, -1))}]`;
 }
 
-/** Hides every structural character of `text`; an unterminated `[` names nothing, so its remainder is not code. */
+/**
+ * Hides every structural character of `text`; an unterminated `[` names nothing, so the rest is not
+ * code.
+ */
 function maskText(text: string): string {
   return text.replace(MASKABLE_RE, c => String.fromCodePoint(c.codePointAt(0)! + MASK_OFFSET));
 }
@@ -872,7 +845,10 @@ function resolveUpdateAliasTarget(sql: string, scan: AliasScan, match: RegExpExe
   return target !== undefined && others.length === 0 && target !== UNRESOLVED_BINDING ? target : null;
 }
 
-/** Whether the object part of a name is a local or global temp table (`dbo.#t`, `tempdb.dbo.##g`), which is never a lineage node. */
+/**
+ * Whether the object part of a name is a temp table (`dbo.#t`, `tempdb.dbo.##g`), never a lineage
+ * node.
+ */
 function isTempObject(parts: string[]): boolean {
   return parts.at(-1)?.startsWith('#') ?? false;
 }
@@ -894,10 +870,7 @@ function normalizeCaptured(raw: string, identifierCaseSensitive: boolean): strin
   return schemaKey(canonical, identifierCaseSensitive);
 }
 
-/**
- * Normalizes a 3+ part name to `db.schema.object`, filtering out CLR/XML method calls that look
- * like 3-part names. `null` if invalid.
- */
+/** Normalizes a 3+ part name to `db.schema.object`, dropping CLR/XML calls; `null` if invalid. */
 function normalizeCrossDb(raw: string, identifierCaseSensitive: boolean): string | null {
   const parts = splitSqlName(raw).map(p => unmaskIdentifier(stripBrackets(p)));
   const first = parts[0] ?? '';

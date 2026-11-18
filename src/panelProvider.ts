@@ -14,7 +14,10 @@ import {
 
 let activePanel: vscode.WebviewPanel | undefined;
 let activeTriggerDemo: (() => Promise<void>) | undefined;
-/** Outlives every panel: handlers are re-created per panel, the AI report document is one per session. */
+/**
+ * Outlives every panel: handlers are re-created per panel, the AI report document is one per
+ * session.
+ */
 const reportDocumentRef: ReportDocumentRef = {};
 
 export { PROJECT_STORE_KEY };
@@ -23,15 +26,11 @@ export { PROJECT_STORE_KEY };
 export function getActivePanel() { return activePanel; }
 
 /**
- * Orchestrates the creation, restoration, and lifecycle of the primary Data Lineage Webview.
+ * Creates, restores and manages the lifecycle of the primary Data Lineage Webview: reveals the
+ * existing panel instead of opening a second, initializes the IPC bridge (BridgeHost), injects
+ * HTML, scripts and styles, and cleans panel-scoped state on disposal.
  *
- * This function handles:
- * - Preventing multiple instances of the same panel (revealing the existing one instead).
- * - Initializing the IPC bridge (BridgeHost) for Extension <-> Webview communication.
- * - Injecting the necessary HTML, scripts, and styles into the webview.
- * - Managing panel-scoped state and ensuring cleanup on disposal.
- *
- * @param loadDemo - If true, triggers the "AdventureWorks Demo" load sequence on initialization.
+ * @param loadDemo - Start the "AdventureWorks Demo" load on initialization.
  */
 export function openPanel(
   context: vscode.ExtensionContext,
@@ -148,10 +147,9 @@ export function openPanel(
 }
 
 /**
- * Asks whether the open lineage view, which holds a loaded graph, may be closed so the wizard can
- * start. Only one lineage panel exists at a time, so starting the wizard means replacing it.
- *
- * @returns `true` when the user confirms the replacement.
+ * Asks whether the open lineage view (holding a loaded graph) may be closed so the wizard can
+ * start; only one lineage panel exists, so starting the wizard replaces it. Returns `true` when the
+ * user confirms.
  */
 async function confirmReplacePanel(bridgeLogger: Logger): Promise<boolean> {
   const closeAndOpen = 'Close and Open Wizard';
@@ -171,9 +169,7 @@ async function confirmReplacePanel(bridgeLogger: Logger): Promise<boolean> {
 
 import { buildWebviewCsp } from './utils/cspBuilder';
 
-/**
- * Generates the root HTML for the lineage webview.
- */
+/** Generates the root HTML for the lineage webview. */
 function getWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, loadDemo: boolean): string {
   const stylesUri = getUri(webview, extensionUri, ["dist", "assets", "index.css"]);
   const scriptUri = getUri(webview, extensionUri, ["dist", "assets", "index.js"]);

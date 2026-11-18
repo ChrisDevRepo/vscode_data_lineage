@@ -86,10 +86,7 @@ export function buildStartExplorationReject(error: ZodError, input?: Record<stri
   });
 }
 
-/**
- * Rejects named columns inherited into a BB refine without mutating engine state; `null` when no
- * named targets are present.
- */
+/** Rejects named columns inherited into a BB refine without mutating state; `null` if none. */
 export function evaluateBbTargetColumnsRule(targetColumns: readonly string[] | undefined): InteractionRuleResult {
   if (!targetColumns?.length) return null;
   return makeRejection({ code: REJECTION_CODES.ctFieldForbiddenInBb, hint: BB_ACTION });
@@ -130,10 +127,7 @@ export function evaluateParallelStartRule(
   });
 }
 
-/**
- * Supplement path requires a completed engine archive; an error when the engine is not complete,
- * else null.
- */
+/** A supplement needs a completed engine archive; an error when incomplete, else null. */
 export function evaluateSupplementPrereqRule(engineStatus: string | null): InteractionRuleResult {
   if (engineStatus === 'complete') return null;
   return makeRejection({

@@ -175,10 +175,7 @@ function buildNeighborIndex(
   return index;
 }
 
-/**
- * Parses a full SQL name into schema and object, respecting bracketed identifiers; schema defaults
- * to `dbo` when unqualified.
- */
+/** Parses a full SQL name into schema and object, honoring brackets; unqualified means `dbo`. */
 export function parseName(fullName: string): { schema: string; objectName: string } {
   const parts = splitSqlName(fullName).map(p => stripBrackets(p));
   if (parts.length >= 2) {
@@ -423,10 +420,7 @@ interface EdgeContext {
 interface ParseTraceCtx {
   /** Remaining bodies to trace before tracing stops. */
   budget: number;
-  /**
-   * Receiver for the formatted log line. Routed by the caller to `Logger.create(ch,
-   * 'Parse').debug`.
-   */
+  /** Receiver of the formatted log line; callers route it to `Logger.create(ch, 'Parse').debug`. */
   emit: (msg: string) => void;
 }
 
@@ -482,10 +476,7 @@ function processRegexRefs(
   return count;
 }
 
-/**
- * Creates edges for non-procedural nodes (tables, views, functions); `xmlDeps` come from the DACPAC
- * XML model only.
- */
+/** Edges for non-procedural nodes (tables, views, functions); `xmlDeps` from the DACPAC XML. */
 function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext): void {
   const sourceId = node.id;
 
@@ -555,10 +546,7 @@ function processNonSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContex
   }
 }
 
-/**
- * Creates edges for stored procedures using regex-based script analysis plus XML-declared
- * dependencies.
- */
+/** Edges for stored procedures from regex script analysis plus XML-declared dependencies. */
 function processSpEdges(node: LineageNode, xmlDeps: string[], ctx: EdgeContext): void {
   const sourceId = node.id;
   const onRuleFire = makeParseTraceCallback(node, ctx);
@@ -732,8 +720,8 @@ function lastUrlSegment(url: string, maxLen = 40): string {
 /**
  * Creates virtual nodes for external systems such as cloud files or remote databases. Every
  * distinct external reference becomes a node and edge; there is no admission budget. A caller that
- * must honor `dataLineageViz.maxNodes` checks the assembled model afterward with {@link
- * checkObjectLimit} in `modelFilters.ts`.
+ * must honor `dataLineageViz.maxNodes` checks the assembled model afterward with
+ * {@link checkObjectLimit} in `modelFilters.ts`.
  *
  * @param crossDbRegexRefs - 3-part references found by regex.
  * @param crossDbMetaDeps - 3-part references found in model metadata.

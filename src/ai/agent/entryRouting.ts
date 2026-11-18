@@ -1,9 +1,7 @@
 /** Pure MissionSpec + RuntimeFrame entry routing. No natural-language interpretation lives here. */
 import type { AgentExecutionTrigger } from './state';
 
-/**
- * The initial agent execution stage derived from semantic intent and physical UI/command triggers.
- */
+/** Initial agent stage derived from semantic intent and physical UI/command triggers. */
 export type InitialAgentStage = 'discover' | 'visual_preview' | 'sm_entry';
 
 /**

@@ -56,14 +56,9 @@ function aiPurifier(): DOMPurifyInstance {
 }
 
 /**
- * Renders an engine-assembled AI description to sanitized HTML.
- *
- * @remarks
- * Math follows the same delimiter rules VS Code applies to chat responses: `$…$` and `$$…$$`,
- * with prose amounts excluded by the surrounding-character guards. A KaTeX expression that fails
- * to parse degrades to its original source text rather than throwing.
- *
- * @returns Sanitized HTML ready for insertion into the overlay.
+ * Renders an engine-assembled AI description to sanitized HTML. Math follows VS Code's chat rules:
+ * `$…$` and `$$…$$`, with prose amounts excluded by surrounding-character guards; a KaTeX
+ * expression that fails to parse degrades to its source text rather than throwing.
  */
 export function renderAiMarkdown(description: string): string {
   return aiPurifier().sanitize(marked.parse(description, { async: false }), SANITIZE_CONFIG);

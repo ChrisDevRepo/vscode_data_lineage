@@ -13,10 +13,7 @@ import { sanitizeForLog, trunc, type Logger } from '../../utils/log';
 import type { FilterProfile } from '../../engine/shared/bridgeContract';
 import type { PresentationArtifact } from './types';
 
-/**
- * Persisted checkpoint of one presented AI run; written on bookmark save, read by
- * lineage_get_screen_state.
- */
+/** Persisted checkpoint of one presented AI run, written on bookmark save and read back. */
 export interface StoredAiRun {
   /** Fail-closed contract version of this record. */
   readonly schemaVersion: 1;
@@ -94,10 +91,7 @@ export function readStoredRun(
   return undefined;
 }
 
-/**
- * Hashes one object's DDL for staleness comparison: lowercase sha256 hex, or {@link
- * UNKNOWN_DDL_HASH} when there is no DDL.
- */
+/** Hashes an object's DDL for staleness checks: sha256 hex, or {@link UNKNOWN_DDL_HASH} if none. */
 export function hashDdl(ddl: string | undefined): string {
   return typeof ddl === 'string' && ddl.length > 0
     ? createHash('sha256').update(ddl, 'utf8').digest('hex')

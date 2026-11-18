@@ -165,10 +165,7 @@ export class TaskLedger {
     return this.tasks.get(taskId);
   }
 
-  /**
-   * Applies a valid task lifecycle transition (`hop` is the resolution hop when applicable);
-   * returns whether the task existed.
-   */
+  /** Applies a valid task status transition (`hop` = resolution hop); true if the task exists. */
   public setTaskStatus(taskId: string, status: InvestigationTask['status'], hop?: number): boolean {
     const task = this.tasks.get(taskId);
     if (!task) return false;
@@ -195,10 +192,7 @@ export class TaskLedger {
     );
   }
 
-  /**
-   * Marks an unresolved lead scheduled and reactivates its task; `undefined` when it cannot be
-   * scheduled.
-   */
+  /** Marks an unresolved lead scheduled and reactivates its task; `undefined` if it cannot be. */
   public scheduleLead(leadId: string): PendingLead | undefined {
     const lead = this.leads.get(leadId);
     if (!lead || lead.status === 'resolved' || lead.status === 'dismissed') return undefined;

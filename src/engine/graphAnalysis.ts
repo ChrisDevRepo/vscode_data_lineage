@@ -98,9 +98,7 @@ export function analyzeHubs(graph: Graph, minDegree: number): AnalysisResult {
   };
 }
 
-/**
- * Finds orphan nodes with no inbound or outbound connections, grouped by schema and object type.
- */
+/** Orphan nodes with no inbound or outbound connections, grouped by schema and object type. */
 export function analyzeOrphans(graph: Graph): AnalysisResult {
   if (graph.order === 0) {
     return { type: 'orphans', groups: [], summary: 'No nodes in graph' };
@@ -169,9 +167,7 @@ interface Condensation {
    * first edge seen: two bridges between the same components can have different lengths.
    */
   successors: Map<number, Map<number, Array<[string, string]>>>;
-  /**
-   * Component in-degree in the condensation (one per successor component, not per parallel edge).
-   */
+  /** Component in-degree in the condensation (per successor component, not per parallel edge). */
   inDegree: number[];
   /**
    * Nodes at which a chain can arrive in each component: the head of every realised incoming edge,
@@ -509,8 +505,8 @@ export function analyzeExternalRefs(graph: Graph): AnalysisResult {
  * Unified entry point to run one analysis type on the graph.
  *
  * @param maxNodes - Upper bound on island size, applied as the tighter of it and `islandMaxSize`; a
- *   node count that bounds no other analysis (longest-path chain count is capped by {@link
- *   DEFAULT_MAX_CHAINS}).
+ *   node count that bounds no other analysis (longest-path chain count is capped by
+ *   {@link DEFAULT_MAX_CHAINS}).
  */
 export function runAnalysis(graph: Graph, type: AnalysisType, analysisConfig: AnalysisConfig, maxNodes: number = DEFAULT_CONFIG.maxNodes): AnalysisResult {
   switch (type) {

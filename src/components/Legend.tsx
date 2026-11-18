@@ -14,11 +14,11 @@ interface LegendProps {
   isExpandedSchemaViewActive?: boolean;
   /** Schemas currently expanded into object nodes in Expanded Schema View. */
   expandedSchemas?: ReadonlySet<string>;
-  /** Left-edge occupant the legend sits beside: an open sidebar, the trace navigator, or a collapsed panel's reopen rail. */
+  /** Left-edge occupant the legend sits beside: open sidebar, trace navigator, or reopen rail. */
   inset?: 'sidebar' | 'navigator' | 'rail';
 }
 
-/** Left offset per inset: clear of an open sidebar or navigator card, or of the 28px reopen rail, at the 15px panel margin. */
+/** Left offset per inset: clear of an open sidebar or navigator card or the 28px reopen rail. */
 const INSET_LEFT: Record<'none' | 'sidebar' | 'navigator' | 'rail', number | string> = {
   none: 16,
   sidebar: 'min(380px, calc(100vw - 120px))',
@@ -30,14 +30,12 @@ const INSET_LEFT: Record<'none' | 'sidebar' | 'navigator' | 'rail', number | str
 const SCHEMA_DISPLAY_LIMIT = 10;
 
 /**
- * Height cap for the expanded schema list: it scrolls inside the canvas instead of running past
- * its bottom edge, while the toggle stays pinned below the list.
+ * Height cap of the expanded schema list: it scrolls inside the canvas rather than past its bottom
+ * edge, with the toggle pinned below.
  */
 const LEGEND_LIST_MAX_HEIGHT = 'min(60vh, calc(100vh - 160px))';
 
-/**
- * Maps rendered schemas to colors with collapsible overflow and theme-aware contrast.
- */
+/** Maps rendered schemas to colors with collapsible overflow and theme-aware contrast. */
 export const Legend = memo(function Legend({
   schemas,
   schemaColorMap,

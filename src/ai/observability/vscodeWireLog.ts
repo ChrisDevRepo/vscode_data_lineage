@@ -1,7 +1,7 @@
 /**
- * VS Code specific half of the wire capture: projects native chat messages onto {@link
- * WireMessage}. Split out of [`wireLog.ts`](./wireLog.ts) so the record surface stays free of
- * `vscode` imports; only the `vscode.lm` lane pays for `LanguageModelTextPart` and friends, and
+ * VS Code specific half of the wire capture: projects native chat messages onto
+ * {@link WireMessage}. Split out of [`wireLog.ts`](./wireLog.ts) so the record surface stays free
+ * of `vscode` imports; only the `vscode.lm` lane pays for `LanguageModelTextPart` and friends, and
  * every other model port emits the same records without loading the VS Code API.
  */
 import * as vscode from 'vscode';

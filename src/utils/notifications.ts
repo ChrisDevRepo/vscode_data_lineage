@@ -13,12 +13,10 @@ type NotifyContext = Record<string, unknown>;
 const MAX_NOTIFICATION_CONTEXT = LOG_TRUNC_JSON * 4;
 
 /**
- * One-line, bounded rendering of a context value.
- *
- * @remarks
- * Text is redacted before it is cut, so truncation cannot split a credential past the redaction
- * patterns: list items and error messages here, a string value by {@link formatContext} before the
- * call. `formatContext` redacts each rendered part again, which covers serialized objects.
+ * One-line, bounded rendering of a context value. Text is redacted before it is cut, so truncation
+ * cannot split a credential past the redaction patterns: list items and error messages here, a
+ * string value by {@link formatContext} before the call. `formatContext` redacts each rendered part
+ * again, which covers serialized objects.
  */
 function renderContextValue(value: unknown): string {
   try {
@@ -37,7 +35,10 @@ function renderContextValue(value: unknown): string {
   }
 }
 
-/** Renders the context as one `key=value; …` line with credential-shaped text removed from every part. */
+/**
+ * Renders the context as one `key=value; …` line, with credential-shaped text removed from every
+ * part.
+ */
 function formatContext(context?: NotifyContext): string {
   if (!context) return '';
   try {
@@ -56,12 +57,10 @@ function formatContext(context?: NotifyContext): string {
 }
 
 /**
- * Logs the toast text and the call-site context at debug, and returns the redacted toast text.
- *
- * @remarks
- * Both can carry a path, a name or a driver message, so neither reaches an info, warn or error
- * line: the caller logs the operation alone at the toast's level. The toast is redacted because a
- * caller may build it from a driver message.
+ * Logs the toast text and call-site context at debug and returns the redacted toast text. Both can
+ * carry a path, a name or a driver message, so neither reaches an info, warn or error line: the
+ * caller logs the operation alone at the toast's level. The toast is redacted because a caller may
+ * build it from a driver message.
  */
 function noticeDetailAndToast(logger: Logger, operation: string, userMessage: string, context?: NotifyContext): string {
   logger.debug(`${operation} — notification="${userMessage}"${formatContext(context)}`);

@@ -94,31 +94,22 @@ export interface WorkingMemory {
     /** Coverage percentage across `total`. */
     coveragePct: number;
     /**
-     * Monotonic hop counter exposed as the AI-visible budget signal — a counter (not countdown) to
-     * avoid the model anchoring on remaining budget.
+     * Monotonic hop counter shown to the AI as its budget signal; counts up so the model does not
+     * anchor on it.
      */
     rounds_used: number;
     /** Cumulative count of soft/silent-mode scope expansions. */
     scope_growth: number;
   };
 
-  /**
-   * Recent route rejections — prevents the AI from repeating the same invalid or blocked route.
-   * Capped at 5 entries.
-   */
+  /** Recent route rejections, so the AI does not repeat an invalid or blocked route; max 5. */
   recent_rejections: Array<{ nodeId: string; reason: string; atHop: number }>;
-  /**
-   * Schemas currently on the session allowlist. Starts from the user filter; grows when the user
-   * confirms an expansion gate.
-   */
+  /** Session allowlist schemas: the user filter, grown when an expansion gate is confirmed. */
   active_schemas: string[];
 }
 
 
-/**
- * Frozen snapshot of an `AiMemoryManager`, returned by `toJSON()` and embedded in `SmState.memory`
- * for the state dump and eval extraction.
- */
+/** Frozen `AiMemoryManager` snapshot from `toJSON()`, embedded in `SmState.memory`. */
 export interface MemoryStateSnapshot {
   /** The user's original question, captured at session start. */
   userQuestion: string;
@@ -221,10 +212,7 @@ export class AiMemoryManager {
     return this.userQuestion;
   }
 
-  /**
-   * Records the AI-composed mission brief (intent + filters + scope), delivered every hop and
-   * surviving sliding-memory wipes.
-   */
+  /** The AI's mission brief (intent, filters, scope): re-sent each hop, kept across wipes. */
   public setMissionBrief(brief: string): void {
     this.missionBrief = brief;
   }
@@ -252,9 +240,9 @@ export class AiMemoryManager {
   /**
    * Stores the technical findings for a single node in the detail archive. Sections are stored
    * verbatim. A revisit (a `supplementAgenda` follow-up re-enqueues a visited node) appends its
-   * sections after the earlier visit's; summary and metadata take the latest visit, and {@link
-   * appendUniqueSections} drops re-emitted text. Column-flow notes remain on their structural
-   * records.
+   * sections after the earlier visit's; summary and metadata take the latest visit, and
+   * {@link appendUniqueSections} drops re-emitted text. Column-flow notes remain on their
+   * structural records.
    *
    * @param summary - One-line digest of the whole node, shared across hops via `short_term_memory`.
    * @param meta - Optional synthesis metadata: `badge_label`, `reason_for_visit`.

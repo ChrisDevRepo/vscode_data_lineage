@@ -17,10 +17,7 @@
 /** Mode variant of the ACTIVE phase. */
 export type ActiveMode = 'sm_bb' | 'sm_ct';
 
-/**
- * Discriminated stage descriptor passed to {@link getAllowedLmToolNames}; `active` requires `mode`
- * at compile time.
- */
+/** Stage descriptor for {@link getAllowedLmToolNames}; `active` requires `mode` at compile time. */
 export type LmStage =
   /** Idle / ad-hoc question answering. No state machine active. */
   | { kind: 'discover' }
@@ -87,10 +84,7 @@ const COMPLETED_TOOLS: readonly string[] = [
   'lineage_start_exploration',
 ];
 
-/**
- * Exhaustiveness helper: makes the compiler flag an unhandled `kind` when a variant is added to
- * {@link LmStage}.
- */
+/** Exhaustiveness helper: the compiler flags an unhandled `kind` added to {@link LmStage}. */
 function assertNever(x: never): never {
   throw new Error(`toolPolicy: unhandled LmStage variant: ${JSON.stringify(x)}`);
 }

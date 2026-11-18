@@ -45,8 +45,5 @@ export type SessionPhase =
   | { kind: 'awaiting_gate'; gate: PendingGate }
   /** Engine is in the hop loop; next turn resumes or finishes. */
   | { kind: 'exploring' }
-  /**
-   * Synthesis turn finished; archive is frozen but addressable. Follow-up turns route through the
-   * follow-up protocol.
-   */
+  /** Synthesis turn finished; archive frozen but addressable; follow-ups use the follow-up path. */
   | { kind: 'completed' };

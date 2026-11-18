@@ -6,9 +6,8 @@ interface WizardPanelProps {
 }
 
 /**
- * Shared shell for all wizard screens: dark panel, centered, logo header.
- *
- * @returns The wizard frame wrapping `children`, with an optional pinned footer.
+ * Shared shell for wizard screens: dark, centered panel with a logo header, wrapping `children`
+ * with an optional pinned footer.
  */
 export function WizardPanel({ children, footer }: WizardPanelProps) {
   return (

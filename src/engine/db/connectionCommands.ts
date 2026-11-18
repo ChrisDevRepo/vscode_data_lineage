@@ -349,10 +349,7 @@ export async function runAddConnectionFlow(
   }
 }
 
-/**
- * Narrows the connections a command accepts; `refusal` explains why a connection named by id is not
- * one.
- */
+/** Narrows the accepted connections; `refusal` says why a connection named by id is not one. */
 interface ConnectionFilter {
   accepts: (connection: BuiltInConnection) => boolean;
   refusal: (connection: BuiltInConnection) => string;
@@ -381,10 +378,7 @@ async function pickConnection(placeholder: string, filter?: ConnectionFilter): P
   return picked?.connection;
 }
 
-/**
- * The connection an argument names by id, or the one picked; a named connection the filter rejects
- * is refused with a warning.
- */
+/** The connection an argument names by id, or the picked one; one the filter rejects warns. */
 function connectionFromArg(arg: unknown, placeholder: string, filter?: ConnectionFilter): Promise<BuiltInConnection | undefined> {
   const id = typeof arg === 'string' ? arg : (arg as { id?: unknown } | undefined)?.id;
   if (typeof id !== 'string') return pickConnection(placeholder, filter);

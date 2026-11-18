@@ -56,8 +56,8 @@ interface ToolbarProps {
   /** Callback to initiate a column-level or table-level lineage trace. */
   onStartTrace?: (nodeId: string) => void;
   /**
-   * IDs of nodes that are in the working set but collapsed inside a schema cluster.
-   * Passed through to {@link SearchWithAutocomplete} for three-state search partitioning.
+   * Nodes in the working set but collapsed inside a schema cluster; {@link SearchWithAutocomplete}
+   * uses them for three-state search partitioning.
    */
   collapsedSchemaNodeIds?: Set<string>;
   /** Callback to toggle the full-text SQL search sidebar. */
@@ -136,13 +136,13 @@ interface ToolbarProps {
   } | null;
   /** Number of nodes React Flow is actually rendering (the perf-relevant count). */
   renderedNodeCount: number;
-  /** Object count above which newly loaded graphs start in Schema View (`dataLineageViz.overview.threshold`). */
+  /** Object count above which a newly loaded graph starts in Schema View (`overview.threshold`). */
   overviewThreshold: number;
-  /** Rendered-node ceiling above which the graph is replaced by a limit warning (`dataLineageViz.renderLimit`). */
+  /** Rendered-node ceiling above which a limit warning replaces the graph (`renderLimit`). */
   renderLimit: number;
   /**
-   * Set once on initial load/reset: `true` when the loaded model is below the overview threshold.
-   * Disables the Schema View button until the user opts in via settings; never re-derived from filter changes.
+   * Set on initial load/reset: `true` when the model is below the overview threshold. Disables the
+   * Schema View button until the user opts in via settings; never re-derived from filter changes.
    */
   schemaViewSoftDisabled?: boolean;
 }
@@ -184,9 +184,7 @@ function expandedSchemaStatusText(expandedSchemaCount: number): string {
 }
 
 
-/**
- * Provides graph search, filtering, analysis, navigation, and keyboard controls.
- */
+/** Graph search, filtering, analysis, navigation and keyboard controls. */
 export const Toolbar = memo(function Toolbar({
   types,
   onToggleType,
@@ -557,8 +555,8 @@ export const Toolbar = memo(function Toolbar({
           </>
         )}
 
-        {/* Metrics — pushed to right. Shows the rendered-node count gauged toward the render limit,
-            with a tick at the initial Schema View threshold. */}
+        {/* Metrics, pushed right: rendered-node count against the render limit, with a tick at the
+            initial Schema View threshold. */}
         {metrics && (
           <>
             <div className="ml-auto w-px h-6 shrink-0 ln-divider" />

@@ -5,20 +5,18 @@ export function schemaKey(name: string, identifierCaseSensitive = false): string
 
 
 /**
- * Matches one delimited identifier — `[bracketed]` (with `]]` as an escaped `]`) or `"quoted"` —
- * or a single stray delimiter left over from an unbalanced name.
+ * One delimited identifier, `[bracketed]` (`]]` escapes `]`) or `"quoted"`, or a single stray
+ * delimiter left by an unbalanced name.
  */
 const DELIMITED_PART = /\[(?:[^\]]|\]\])*\]|"(?:""|[^"])*"|[\[\]"]/g;
 
 /**
- * Removes SQL-standard delimiters (brackets `[]` and double-quotes `""`) from an identifier and
- * unescapes only the enclosing delimiter's doubled form: `]]` inside brackets, `""` inside double quotes.
+ * Removes SQL-standard delimiters (`[]`, `""`) from an identifier, unescaping only the enclosing
+ * delimiter's doubled form (`]]` in brackets, `""` in double quotes): `[dbo].[a]]b]` becomes
+ * `dbo.a]b`.
  *
- * Example: `[dbo].[Table]` becomes `dbo.Table`; `[dbo].[a]]b]` becomes `dbo.a]b`.
- *
- * @remarks
- * The single owner of identifier-text normalization: an escaped `]` survives here as one literal
- * character, so a name containing `]` round-trips instead of losing the character.
+ * The single owner of identifier-text normalization; an escaped `]` survives as one literal
+ * character, so a name containing `]` round-trips.
  */
 export function stripBrackets(name: string): string {
   return name.replace(DELIMITED_PART, part => {
@@ -30,26 +28,22 @@ export function stripBrackets(name: string): string {
 
 /**
  * Bracket-quotes one identifier part for T-SQL, doubling every `]` so the name round-trips through
- * {@link stripBrackets}. The inverse of the unescaping done there.
- *
- * Example: `a]b` becomes `[a]]b]`.
+ * {@link stripBrackets}: `a]b` becomes `[a]]b]`.
  */
 export function quoteIdentifier(name: string): string {
   return `[${name.replace(/\]/g, ']]')}]`;
 }
 
 /**
- * Canonical comparison form for a SQL **column** name: strip delimiters (reusing {@link stripBrackets})
- * then case-fold, so a model-emitted `[ListPrice]` / `ListPrice` matches a DDL `ListPrice`. The single
- * normalizer for column-name equality across the column-trace path.
+ * Canonical comparison form of a SQL **column** name: delimiters stripped ({@link stripBrackets}),
+ * then case-folded, so a model-emitted `[ListPrice]` matches a DDL `ListPrice`. The single
+ * normalizer for column-name equality in the column-trace path.
  *
- * @remarks
- * Use this — not `normalizeName` — for a bare column: `normalizeName` is node-shaped (`[schema].[object]`)
- * and would treat a dotted column as a qualified object.
+ * Use this, not `normalizeName`, for a bare column: `normalizeName` is node-shaped
+ * (`[schema].[object]`) and would read a dotted column as a qualified object.
  *
- * @param name - A column identifier, possibly bracketed/quoted or mixed-case.
  * @param identifierCaseSensitive - Checked catalog policy; absent/false retains CI equality.
- * @returns Delimiter-free comparison key, preserving casing only for a checked CS catalog.
+ * @returns Delimiter-free key, preserving casing only for a checked CS catalog.
  */
 export function normalizeColName(name: string, identifierCaseSensitive = false): string {
   const input = name.trim();
@@ -58,17 +52,14 @@ export function normalizeColName(name: string, identifierCaseSensitive = false):
 }
 
 /**
- * Splits a qualified SQL name into its constituent parts (Database, Schema, Object).
- *
- * This function correctly handles dots contained within bracketed `[]` or
- * double-quoted `""` identifiers, ensuring they are not treated as part separators.
- * A doubled `]` is T-SQL's escape for a literal one and does not close the name.
+ * Splits a qualified SQL name into parts (Database, Schema, Object). Dots inside bracketed `[]` or
+ * quoted `""` identifiers are not separators, and a doubled `]` (T-SQL's escape) does not close the
+ * name.
  *
  * @example
  * ```typescript
  * splitSqlName("[schema].[obj.with.dot]") // returns ["[schema]", "[obj.with.dot]"]
- * splitSqlName("db.schema.obj")           // returns ["db", "schema", "obj"]
- * splitSqlName("[dbo].[a]].b]")           // returns ["[dbo]", "[a]].b]"]
+ * splitSqlName("[dbo].[a]].b]") // returns ["[dbo]", "[a]].b]"]
  * ```
  */
 export function splitSqlName(name: string): string[] {
@@ -105,18 +96,13 @@ export function escHtml(s: string): string {
 const SCHEMA_PLACEHOLDER = '{{SCHEMAS}}';
 
 /**
- * Expands a `{{SCHEMAS}}` placeholder within a SQL template with a comma-separated list
- * of Unicode (`N'…'`) schema-name literals, so a name outside the server code page keeps its characters.
+ * Expands a `{{SCHEMAS}}` placeholder in a SQL template into a comma-separated list of Unicode
+ * `N'…'` schema-name literals, so a name outside the server code page keeps its characters: `IN
+ * ({{SCHEMAS}})` becomes `IN (N'dbo', N'Sales')`.
  *
- * Example: `SELECT * FROM sys.tables WHERE schema_name IN ({{SCHEMAS}})`
- * becomes `SELECT * FROM sys.tables WHERE schema_name IN (N'dbo', N'Sales')`.
- *
- * @remarks
- * Safe for string-literal (`IN (…)`, `= '…'`) contexts only. Embedded `'` characters are
- * SQL-escaped to `''`. The output is **not** safe to use as a SQL identifier — do not
- * interpolate into `[schema]`/`"schema"` positions. If an identifier context is ever
- * needed, add a dedicated helper that validates against `sys.schemas` or brackets with
- * `]`-escaping.
+ * Safe for string-literal contexts only (`IN (…)`, `= '…'`); embedded `'` is escaped to `''`. Not
+ * safe as a SQL identifier: never interpolate into `[schema]`/`"schema"`; an identifier context
+ * needs a dedicated helper that validates against `sys.schemas` or bracket-escapes.
  */
 export function expandSchemaPlaceholder(sql: string, schemas: string[]): string {
   if (!sql.includes(SCHEMA_PLACEHOLDER)) return sql;
@@ -125,10 +111,8 @@ export function expandSchemaPlaceholder(sql: string, schemas: string[]): string 
 }
 
 /**
- * Validates that a SQL template contains the required schema placeholder for its execution phase.
- *
- * @param phase - The execution phase (Phase 2 requires the placeholder for filtering).
- * @returns A warning message if validation fails, otherwise `undefined`.
+ * Validates that a SQL template holds the schema placeholder its execution phase requires (Phase 2
+ * needs it for filtering); returns a warning message, or `undefined` when valid.
  */
 export function validateSchemaPlaceholder(name: string, sql: string, phase: number): string | undefined {
   if (phase === 2 && !sql.includes(SCHEMA_PLACEHOLDER)) {
@@ -139,18 +123,16 @@ export function validateSchemaPlaceholder(name: string, sql: string, phase: numb
 
 
 /**
- * Compiles a simple exclusion pattern into a case-insensitive regular expression.
- * Supports the `%` wildcard character, which is converted to `.*`.
- *
- * @example `%tmp%` matches any string containing "tmp".
+ * Compiles an exclusion pattern into a case-insensitive RegExp; the `%` wildcard becomes `.*`, so
+ * `%tmp%` matches any string containing "tmp".
  */
 export function compileExclusionPattern(pattern: string): RegExp {
   return new RegExp(pattern.replace(/%/g, '.*'), 'i');
 }
 
 /**
- * Compiles exclusion patterns into one node predicate that matches a node's `schema.name` or its
- * `fullName` — the single matcher for every exclusion-pattern consumer.
+ * Compiles exclusion patterns into one node predicate matching a node's `schema.name` or
+ * `fullName`; the single matcher for every exclusion-pattern consumer.
  *
  * @param onInvalidPattern - Called for each pattern that does not compile; that pattern is skipped.
  * @returns The predicate, or `null` when no pattern compiles.
@@ -180,10 +162,8 @@ export function escapeRegexLiteral(s: string): string {
 }
 
 /**
- * Normalizes a raw DDL script for display in the UI.
- * - Removes blank lines.
- * - Trims trailing whitespace.
- * - Converts tabs to two-space indentation.
+ * Normalizes a raw DDL script for display: removes blank lines, trims trailing whitespace, converts
+ * tabs to two-space indentation.
  */
 export function normalizeBodyScript(raw: string): string {
   return raw

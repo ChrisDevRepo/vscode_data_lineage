@@ -62,9 +62,7 @@ export function buildNodeMap(model: DatabaseModel): Map<string, LineageNode> {
   return m;
 }
 
-/**
- * Retrieves the column definitions for a specific node, preferring the ColumnStore if available.
- */
+/** Column definitions of a node, preferring the ColumnStore when available. */
 export function getNodeColumns(
   nodeId: string, nodeMap: Map<string, LineageNode>,
   store?: NodeSnapshotStore,

@@ -82,10 +82,7 @@ export function captureDiscoveryWalkFromObservations(
   return { walkCount: distinct.size, origin: inspected[0], answer };
 }
 
-/**
- * Whether one tool result means "this scope is too large to answer inline, reroute to SM": true
- * only for an oversized scope-bundle request.
- */
+/** Whether a tool result means "scope too large to answer inline, reroute to SM". */
 export function detectOverBudgetFromResult(toolName: string, resultText: string): boolean {
   if (toolName !== SCOPE_BUNDLE_TOOL) return false;
   try {
@@ -106,10 +103,10 @@ interface OverBudgetNotice {
 }
 
 /**
- * Reads an `over_discovery_budget` rejection from any tool result. Unlike {@link
- * detectOverBudgetFromResult} it is tool-agnostic: every catalog surface shares `checkScopeBudget`,
- * so the envelope can arrive from scope bundles, DDL detail, group requests or screen recall.
- * `null` for anything else, including malformed JSON.
+ * Reads an `over_discovery_budget` rejection from any tool result. Unlike
+ * {@link detectOverBudgetFromResult} it is tool-agnostic: every catalog surface shares
+ * `checkScopeBudget`, so the envelope can arrive from scope bundles, DDL detail, group requests or
+ * screen recall. `null` for anything else, including malformed JSON.
  */
 function readOverBudgetNotice(toolName: string, resultText: string): OverBudgetNotice | null {
   let raw: unknown;

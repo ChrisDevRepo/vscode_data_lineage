@@ -39,10 +39,7 @@ export interface ToolDefinition {
   readonly progressLabel?: string;
 }
 
-/**
- * A registered, executable tool: a {@link ToolDefinition} plus the bound handler; `O` is the
- * execution result type.
- */
+/** A registered tool: a {@link ToolDefinition} plus its bound handler; `O` is the result type. */
 export interface RegisteredTool<O = unknown> extends ToolDefinition {
   /**
    * Runs the tool with the raw, model-supplied input unchanged, so handler boundary validation and
@@ -55,10 +52,7 @@ export interface RegisteredTool<O = unknown> extends ToolDefinition {
 export interface IToolRegistry<O = unknown> {
   /** Registers a tool; throws on a duplicate name (drift/typo guard). */
   register(tool: RegisteredTool<O>): void;
-  /**
-   * Dispatches `name` with the raw input, returning the handler's result. Throws if `name` is
-   * unknown.
-   */
+  /** Dispatches `name` with the raw input and returns the handler's result; throws if unknown. */
   invoke(name: string, input: unknown): O | Promise<O>;
   /** All registered tools, in registration order. */
   getTools(): readonly RegisteredTool<O>[];
@@ -137,9 +131,9 @@ export interface TrackedRegistry<O> {
  * wins the runner's internal race (`@langchain/langgraph` `pregel/runner.js`
  * `_executeTasksWithRetry`): the node, and any `registry.invoke()` it awaits, keeps running after
  * `graph.invoke` rejected, so a host closing the turn on that rejection (releasing the lease,
- * finalizing state) races the tool's effect. Every phase's tool call goes through this view ({@link
- * IToolRegistry.invoke}), so tracking here covers every mutating tool without a second dispatch
- * path.
+ * finalizing state) races the tool's effect. Every phase's tool call goes through this view
+ * ({@link IToolRegistry.invoke}), so tracking here covers every mutating tool without a second
+ * dispatch path.
  *
  * @returns The tracked view plus the settle-await the host calls before finalizing a turn.
  */

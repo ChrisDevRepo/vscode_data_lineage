@@ -2,10 +2,7 @@ import { memo, useState, useRef, useEffect, type ReactNode, type ReactElement } 
 import { Tooltip } from './ui/Tooltip';
 import { CloseIcon } from './ui/CloseIcon';
 
-/**
- * Supported visual variants for the {@link ModeBanner}.
- * Each variant applies specific styling and icon colors.
- */
+/** Visual variants of the {@link ModeBanner}, each with its own styling and icon colors. */
 export type BannerVariant = 'trace' | 'analysis' | 'ai' | 'bookmark';
 
 interface ModeBannerProps {
@@ -25,9 +22,7 @@ interface ModeBannerProps {
   extraControls?: ReactElement | null;
 }
 
-/**
- * Maps banner variants to their corresponding CSS class names.
- */
+/** Maps banner variants to their corresponding CSS class names. */
 const VARIANT_CLASS: Record<BannerVariant, string> = {
   trace: 'ln-mode-banner--trace',
   analysis: 'ln-mode-banner--analysis',
@@ -36,15 +31,9 @@ const VARIANT_CLASS: Record<BannerVariant, string> = {
 };
 
 /**
- * A shared UI component for displaying the active graph mode (Trace, Analysis, AI).
- *
- * It appears at the top of the canvas and provides:
- * - A summary of the active operation.
- * - Mode-specific actions (via `extraControls`).
- * - A standardized workflow for saving the current view as a named bookmark.
- *
- * @param props - The component props.
- * @returns A memoized React component.
+ * Banner at the top of the canvas showing the active graph mode (Trace, Analysis, AI): a summary of
+ * the operation, mode-specific actions via `extraControls`, and the standard flow for saving the
+ * view as a named bookmark.
  */
 export const ModeBanner = memo(function ModeBanner({
   variant,

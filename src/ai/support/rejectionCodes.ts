@@ -10,8 +10,8 @@ export const REJECTION_CODES = {
   /** `start_exploration` while the session's exploration is already live (one-shot per turn). */
   alreadyStarted: 'already_started',
   /**
-   * Provider/SDK emitted the same tool-call id twice in one generation — a transport artifact,
-   * never charged to the model's semantic budget.
+   * Provider/SDK emitted one tool-call id twice in a generation: a transport artifact, not charged
+   * to the model.
    */
   duplicateCallId: 'duplicate_call_id',
   /**
@@ -40,8 +40,8 @@ export const REJECTION_CODES = {
   supplementEmpty: 'supplement_empty',
   /**
    * Every id named in a `supplement` request was refused: unresolved (no such object) or stopped by
-   * the border (excluded, out-of-allowlist, or not connected to the trace). Distinct from {@link
-   * supplementEmpty}, whose id list was empty. The repair is a corrective tool call (a new
+   * the border (excluded, out-of-allowlist, or not connected to the trace). Distinct from
+   * {@link supplementEmpty}, whose id list was empty. The repair is a corrective tool call (a new
    * `lineage_start_exploration` proposal for a border refusal), never a resend of this supplement.
    */
   supplementAllRefused: 'supplement_all_refused',
@@ -50,14 +50,11 @@ export const REJECTION_CODES = {
   /** A discovery-phase scope-expanding catalog request exceeded the turn's node/token budget. */
   overDiscoveryBudget: 'over_discovery_budget',
   /**
-   * A proposal, scope change or supplement exceeded `ai.maxRounds` or `ai.maxTraceColumns` at
-   * admission; no approval card is opened.
+   * A proposal, scope change or supplement over `ai.maxRounds` or `ai.maxTraceColumns`; no approval
+   * card opens.
    */
   overActiveScopeBudget: 'over_active_scope_budget',
-  /**
-   * Consent-gate marker sharing the rejection envelope without being a rejection
-   * (`isConsentGateRejection`).
-   */
+  /** Consent-gate marker in the rejection envelope, not a rejection (`isConsentGateRejection`). */
   actionRequired: 'action_required',
   /** A required field was omitted entirely, as opposed to present but invalid. */
   missingField: 'missing_field',
@@ -93,8 +90,8 @@ export const REJECTION_CODES = {
    */
   contributorColNotOnSource: 'contributor_col_not_on_source',
   /**
-   * A bodyless focus's `column_flow` names a neighbour other than its own carrier side
-   * (`non_writer_continuation` kind, `smRouteValidation.ts`).
+   * A bodyless focus's `column_flow` names a neighbour other than its carrier side
+   * (`non_writer_continuation`).
    */
   continuationNotWriter: 'continuation_not_writer',
   /**
@@ -109,10 +106,7 @@ export const REJECTION_CODES = {
   writesToNamesReader: 'writes_to_names_reader',
   /** An `upstream_columns` entry names a node already pruned earlier this run. */
   prunedContributor: 'pruned_contributor',
-  /**
-   * A `submit_findings` field (e.g. `badge_label`, a `column_flow` note) exceeds its length bound
-   * (`smBase.ts`).
-   */
+  /** A `submit_findings` field (`badge_label`, `column_flow` note) over its length bound. */
   fieldLengthExceeded: 'field_length_exceeded',
   /**
    * The provider emitted the synthetic structured-output/terminal tool call with empty required
@@ -125,10 +119,7 @@ export const REJECTION_CODES = {
   toolExecutionError: 'tool_execution_error',
   /** A tool handler caught an unexpected exception; a backend fault that ends the run. */
   internalError: 'internal_error',
-  /**
-   * The exploration engine threw while applying findings and entered its error status; a backend
-   * fault that ends the run (`smBase.ts`).
-   */
+  /** The engine threw applying findings and entered its error status; a backend fault, run ends. */
   engineCrash: 'engine_crash',
   /**
    * A `lineage_present_result` call failed an engine-state or content rule its served schema cannot
@@ -197,10 +188,7 @@ export const REJECTION_CODES = {
   queryNotAName: 'query_not_a_name',
   /** A search query too short to be a name fragment (`tools.ts`). */
   queryTooShort: 'query_too_short',
-  /**
-   * A tool result that does not fit the evidence share of the turn budget, replaced by this reply
-   * (`toolAttempt.ts`).
-   */
+  /** A tool result over the turn budget's evidence share, replaced by this reply. */
   resultTooLarge: 'result_too_large',
   /** `start_exploration.targetColumns` names columns the origin does not carry (`smBase.ts`). */
   unknownColumns: 'unknown_columns',

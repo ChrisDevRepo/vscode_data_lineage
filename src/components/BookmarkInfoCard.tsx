@@ -9,17 +9,14 @@ interface BookmarkInfoCardProps {
   nodeCount: number;
   /** Total number of distinct schemas represented in this view. */
   schemaCount: number;
-  /** List of object names that were part of the bookmark but are no longer found in the current model. */
+  /** Object names in the bookmark that the current model no longer contains. */
   staleNodeNames: string[];
 }
 
 /** Local alias; the contract owns the values. */
 const SOURCE_DESCRIPTIONS = BOOKMARK_SOURCE_DESCRIPTIONS;
 
-/**
- * Formats an ISO date string into a localized short date and time format.
- * Example: "Mar 29, 2026, 12:15"
- */
+/** Formats an ISO date string as a localized short date and time, e.g. "Mar 29, 2026, 12:15". */
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
     month: 'short', day: 'numeric', year: 'numeric',

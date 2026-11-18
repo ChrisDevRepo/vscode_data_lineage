@@ -33,7 +33,7 @@ interface NodeInfoBarProps {
 }
 
 
-/** Hoverable "label: count" badge whose popover shows `children`; a zero count renders dim and inert. */
+/** Hoverable "label: count" badge whose popover shows `children`; a zero count is dim and inert. */
 function HoverBadge({ label, count, widthClass, children }: {
   label: string;
   count: number;
@@ -88,10 +88,9 @@ function HoverBadge({ label, count, widthClass, children }: {
 }
 
 /**
- * Hoverable badge showing In or Out count.
- * On hover: schema-grouped, alphabetically sorted list.
- * ⊘ suffix = object is known but not rendered in the current graph
- *   (filtered out by type-filter, focus-schema, or search).
+ * Hoverable In or Out count badge; the popover lists objects grouped by schema, sorted
+ * alphabetically. A ⊘ suffix marks an object known but not rendered in the current graph (filtered
+ * out by type filter, focus schema or search).
  */
 function NeighborHoverList({
   label, count, ids, catalog, visibleNodeIds,
@@ -156,9 +155,7 @@ function SimpleHoverList({ label, count, items }: { label: string; count: number
   );
 }
 
-/**
- * Displays identity, connectivity, and parse diagnostics for the selected node.
- */
+/** Displays identity, connectivity, and parse diagnostics for the selected node. */
 export const NodeInfoBar = memo(function NodeInfoBar({
   nodeId, identifierCaseSensitive, catalog, neighborIndex, visibleNodeIds, parseStats, onClose,
 }: NodeInfoBarProps) {

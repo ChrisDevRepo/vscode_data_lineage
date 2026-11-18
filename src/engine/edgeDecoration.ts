@@ -15,9 +15,7 @@ type EdgeDecorationCache = Map<string, EdgeCacheEntry>;
 const SPARSE_EDGE_COUNT = 100;
 /** Rendered edge count from which edges sit at the theme's floor color strength and width. */
 const DENSE_EDGE_COUNT = 2000;
-/**
- * Density step; one rounding step keeps a single trimmed or added edge from repainting every edge.
- */
+/** Density step; rounding keeps one trimmed or added edge from repainting every edge. */
 const DENSITY_STEP = 0.05;
 
 /**
@@ -34,19 +32,16 @@ export function edgeDensity(edgeCount: number): number {
   return Number((Math.round(density / DENSITY_STEP) * DENSITY_STEP).toFixed(2));
 }
 
-/**
- * Creates the retention map {@link decorateFlowEdges} reuses across renders; owned by the caller
- * for the canvas lifetime.
- */
+/** Retention map {@link decorateFlowEdges} reuses across renders; the caller owns it. */
 export function createEdgeDecorationCache(): EdgeDecorationCache {
   return new Map();
 }
 
 /**
  * Applies the click-selection connected/dimmed style to each edge, reusing the previous result
- * whenever an edge's connectedness and animation eligibility are unchanged. Mirrors {@link
- * decorateFlowNodes}: an edge connected to `connectedTo` is marked {@link LIT_CLASS_NAME} and
- * `animated`; the lit stroke and the dimmed, scaled-down look of every other edge are CSS rules
+ * whenever an edge's connectedness and animation eligibility are unchanged. Mirrors
+ * {@link decorateFlowNodes}: an edge connected to `connectedTo` is marked {@link LIT_CLASS_NAME}
+ * and `animated`; the lit stroke and the dimmed, scaled-down look of every other edge are CSS rules
  * keyed off `.ln-has-selection` and {@link LIT_CLASS_NAME} (`src/index.css`), reading each edge's
  * base width from the `--ln-edge-w` property `GraphCanvas.tsx` sets. An edge's object identity
  * therefore never changes just because a *different* node was clicked.

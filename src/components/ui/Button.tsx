@@ -14,9 +14,7 @@ const variantClasses: Record<ButtonVariant, string> = {
   icon: 'w-9 h-9 ln-btn-icon',
 };
 
-/**
- * Shared button component with the repository variant styling.
- */
+/** Shared button component with the repository variant styling. */
 export const Button = memo(forwardRef<HTMLButtonElement, ButtonProps>(function Button({
   variant = 'secondary',
   children,

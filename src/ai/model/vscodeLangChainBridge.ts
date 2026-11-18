@@ -324,10 +324,7 @@ function isUsagePart(part: unknown): part is { mimeType: 'usage'; data: unknown 
   return !!part && typeof part === 'object' && (part as { mimeType?: unknown }).mimeType === 'usage';
 }
 
-/**
- * Token usage from a usage part's UTF-8 JSON (OpenAI chat-completions names); undefined if
- * unreadable.
- */
+/** Token usage from a usage part's UTF-8 JSON (OpenAI chat-completions names); undefined if bad. */
 function parseUsageData(data: unknown): TokenUsage | undefined {
   if (!(data instanceof Uint8Array)) return undefined;
   let raw: unknown;

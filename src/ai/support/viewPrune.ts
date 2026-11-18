@@ -1,7 +1,4 @@
-/**
- * Pure prune helper for `present_result`, in its own module (no `vscode` imports) so unit tests run
- * in plain Node.
- */
+/** Pure prune helper for `present_result`; no `vscode` imports, so unit tests run in plain Node. */
 
 /**
  * Removes nodes listed in `pruneIds` and every edge touching one. Deliberately does NOT reconnect

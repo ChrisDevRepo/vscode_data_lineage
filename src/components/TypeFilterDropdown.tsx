@@ -26,10 +26,8 @@ const TYPE_ICON = (
 );
 
 /**
- * A dropdown menu for filtering database objects by their type.
- *
- * Allows users to selectively show or hide tables, views, stored procedures,
- * functions, and external tables in the lineage graph.
+ * Dropdown to show or hide database object types (tables, views, stored procedures, functions,
+ * external tables) in the graph.
  */
 export const TypeFilterDropdown = memo(function TypeFilterDropdown({
   types,

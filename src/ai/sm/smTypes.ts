@@ -12,26 +12,22 @@ import type { DepthSideValue } from '../../engine/shared/explorationDepthContrac
 import type { ToolRejection } from '../support/toolErrorEnvelope';
 
 
-/**
- * Represents the current lifecycle stage of an SM exploration session.
- */
+/** Represents the current lifecycle stage of an SM exploration session. */
 export type SmStatus = 'created' | 'initialized' | 'exploring' | 'awaiting_findings' | 'complete' | 'error';
 
-/** Live progress for the hop loop: completed AI hops, queued nodes, display-safe total work, and cumulative prunes. */
+/** Live hop-loop progress: completed AI hops, queued nodes, display-safe total work, prunes. */
 export type HopProgress = { current: number; open: number; total: number; pruned: number; added: number };
 
-/**
- * Flags identifying structural boundaries encountered during graph traversal.
- */
+/** Flags identifying structural boundaries encountered during graph traversal. */
 export type BoundaryFlag = 'none' | 'source' | 'sink' | 'external' | 'cycle';
 
 /**
- * The focus node's self-status submitted each hop. Two states:
- * `analyze` = the node applies business logic on the data path (sections stored, featured in the answer);
- * `passthrough` = the node is on the data path but applies no logic (a raw source / bridge / target
- *   table, a SELECT * or synonym) — it is KEPT in the lineage and linked by flow role, and the trace
- *   continues *through* it, or it carries nothing further (a dead end).
- * Off-path neighbors leave through `prune_neighbors` (recorded as node action `prune`).
+ * The focus node's self-status submitted each hop. Two states: `analyze` = the node applies
+ * business logic on the data path (sections stored, featured in the answer); `passthrough` = the
+ * node is on the data path but applies no logic (a raw source / bridge / target table, a SELECT *
+ * or synonym) — it is KEPT in the lineage and linked by flow role, and the trace continues
+ * *through* it, or it carries nothing further (a dead end). Off-path neighbors leave through
+ * `prune_neighbors` (recorded as node action `prune`).
  */
 export type Verdict = 'analyze' | 'passthrough';
 
@@ -77,9 +73,7 @@ export interface SmNodeState {
   atHop?: number;
 }
 
-/**
- * State and constraints for the column-tracing aspect of an exploration.
- */
+/** State and constraints for the column-tracing aspect of an exploration. */
 export interface ColumnAspect {
   /** Target columns requested at session start. Immutable. */
   target_columns: string[];
@@ -93,9 +87,7 @@ export interface ColumnAspect {
   edges: ColumnEdge[];
 }
 
-/**
- * Structured attribution of data flow for a specific output column.
- */
+/** Structured attribution of data flow for a specific output column. */
 export interface ColumnFlowEntry {
   /** Column name on the focus node, or procedure parameter prefixed with @. */
   out_col: string;
@@ -116,18 +108,13 @@ export interface ColumnFlowEntry {
   upstream_columns: ColumnRef[];
 }
 
-/**
- * A single upstream real column in the column trace chain.
- */
+/** A single upstream real column in the column trace chain. */
 interface ColumnRef {
   /** ID of the neighbor node providing the data. */
   node: string;
   /** Name of the column in that neighbor (or `@param` for procedures). */
   col: string;
-  /**
-   * Optional transform classification for this contributor. Absent when the model did not classify
-   * it; the engine never substitutes a default.
-   */
+  /** Optional transform class of this contributor; absent if unclassified, never defaulted. */
   transforms?: ColumnTransformClass[];
   /**
    * Optional one-clause model note for the contributor ("SUM of line totals"). Surface text the
@@ -168,10 +155,7 @@ export interface ColumnEdge {
 }
 
 
-/**
- * Metadata for a neighbor encountered during a hop: enough for the AI to decide whether to visit it
- * without fetching its DDL.
- */
+/** A neighbor met during a hop: enough for the AI to decide whether to visit it without its DDL. */
 export interface HopNeighbor {
   /** Unique identifier for the neighbor node. */
   id: string;
@@ -281,32 +265,31 @@ export interface HopFindingKept {
   focus_node_id: string;
   /**
    * Captured sections, one per fired `*_capture` template; the locked classification narrows
-   * `angle` to the approved angle(s) before dispatch, so an off-classification angle is never authored.
+   * `angle` to the approved angle(s) before dispatch, so an off-classification angle is never
+   * authored.
    */
   sections: CapturedSection[];
-  /** One-line digest of the whole node (across all captured angles), echoed via `short_term_memory`. */
+  /** One-line digest of the whole node (all captured angles), echoed via `short_term_memory`. */
   summary: string;
   /** The relevance verdict for the focus node. */
   verdict: 'analyze' | 'passthrough';
-  /** Unvisited neighbors removed on this node's SQL alone, each with its reason; the cut takes what only they lead to. */
+  /**
+   * Unvisited neighbors removed on this node's SQL alone, each with a reason; the cut takes what
+   * only they lead to.
+   */
   prune_neighbors?: PruneNeighbor[];
   /** Optional per-neighbor checks, attached to that neighbor's queued hop. */
   questions?: NeighborQuestion[];
   /** Optional hop-time role hint for synthesis; not rendered directly. */
   badge_label?: string;
-  /**
-   * Structured attribution of column-level data flow.
-   * Required (and validated) on every CT hop; ignored when the column aspect is inactive.
-   */
+  /** Structured column-level data-flow attribution; required on CT hops, else ignored. */
   column_flow?: ColumnFlowEntry[];
 }
 
 /** A single finding for a focus node. Off-path neighbors leave through `prune_neighbors`. */
 export type HopFinding = HopFindingKept;
 
-/**
- * Data structure used by the AI to submit its findings after analyzing a hop.
- */
+/** Data structure used by the AI to submit its findings after analyzing a hop. */
 export type HopSubmission = HopFinding;
 
 /** A qualified real caller column whose expression declares the scalar function. */
@@ -322,8 +305,9 @@ export interface FunctionCallerContext extends ScalarReturnTarget {
 }
 
 /**
- * Explicit per-neighbor column demand: ordinary columns, row-only investigation, or compiler-declared
- * scalar caller outputs. Qualified outputs stay separate when callers share a column name.
+ * Explicit per-neighbor column demand: ordinary columns, row-only investigation, or
+ * compiler-declared scalar caller outputs. Qualified outputs stay separate when callers share a
+ * column name.
  */
 export type ColumnCarry =
   | { readonly kind: 'carry'; readonly columns: readonly string[] }
@@ -331,18 +315,18 @@ export type ColumnCarry =
   | { readonly kind: 'scalar_return'; readonly outputs: readonly ScalarReturnTarget[] };
 
 /**
- * How a node served the traced columns at the hop that dispatched it. Orthogonal to {@link
- * SmNodeAction} and {@link SmNodeStateReason} (what happened and why): the role is its own field so
- * it survives a later, stronger verdict.
+ * How a node served the traced columns at the hop that dispatched it. Orthogonal to
+ * {@link SmNodeAction} and {@link SmNodeStateReason} (what happened and why): the role is its own
+ * field so it survives a later, stronger verdict.
  */
 export type SmNodeColumnRole = 'carrier' | 'row_role_only';
 
 /**
  * Per-route outcome in a successful `submitFindings` return. Engine-side only: the tool returns the
  * ack and next focus, never this array, so the model does not see it. One debug host-log line is
- * written per non-accepted outcome. Every deferred route is also recorded as a {@link
- * DeferredQuestion}, which reaches the synthesis envelope and follow-up offers. An excluded target
- * requires a new scope proposal before analysis.
+ * written per non-accepted outcome. Every deferred route is also recorded as a
+ * {@link DeferredQuestion}, which reaches the synthesis envelope and follow-up offers. An excluded
+ * target requires a new scope proposal before analysis.
  */
 export interface RouteOutcome {
   /** Node id of the route request (verbatim from submission, not lowercased). */
@@ -353,15 +337,20 @@ export interface RouteOutcome {
   deferred?: boolean;
   /**
    * Reason for deferral:
-   * - `depth` — route target lies past a depth border the user stated; user will see it as a follow-up offer.
-   * - `non_bodied_passthrough` — the in-scope non-bodied neighbor is retained without a separate analysis hop; no follow-up is created for it.
+   * - `depth` — route target lies past a depth border the user stated; user will see it as a
+   *   follow-up offer.
+   * - `non_bodied_passthrough` — the in-scope non-bodied neighbor is retained without a separate
+   *   analysis hop; no follow-up is created for it.
    * - `unresolved` — route target is absent from the loaded model and was skipped with a notice.
-   * - `out_of_direction` — route target exists but is not reachable in the approved traversal direction; never loaded, so a named question is recorded as a follow-up offer.
-   * - `excluded` — route target exists but is outside the user's approved exclude filters; never loaded, so a named question is recorded as a follow-up offer.
+   * - `out_of_direction` — route target exists but is not reachable in the approved traversal
+   *   direction; never loaded, so a named question is recorded as a follow-up offer.
+   * - `excluded` — route target exists but is outside the user's approved exclude filters; never
+   *   loaded, so a named question is recorded as a follow-up offer.
    * - `schema` — route target's schema is outside the session's GUI schema filter, not a
    *   user-authored exclusion; never loaded, so a named question is recorded as a follow-up offer
    *   that can be granted through a new proposal.
-   * - `already_visited` — route target (or a bodied writer a non-bodied target contracted to) was already analyzed on an earlier hop; visit-once, no new hop.
+   * - `already_visited` — route target (or a bodied writer a non-bodied target contracted to) was
+   *   already analyzed on an earlier hop; visit-once, no new hop.
    * - `already_pruned` — same as `already_visited`, for a node pruned on an earlier hop.
    */
   reason?: 'depth' | 'non_bodied_passthrough' | 'unresolved' | 'out_of_direction' | 'excluded' | 'schema' | SettledRouteReason;
@@ -370,13 +359,10 @@ export interface RouteOutcome {
 /** Route reasons for a target an earlier hop already settled (visit-once). */
 export type SettledRouteReason = 'already_visited' | 'already_pruned';
 
-/** Per-node enqueue disposition: settled by an earlier hop or not enqueued for a scope/depth reason. */
+/** Per-node enqueue disposition: settled by an earlier hop, or not enqueued for scope/depth. */
 export type RouteSkipDisposition = SettledRouteReason | 'not_enqueued';
 
-/**
- * Chain extension of a supplement: walk from each named id in one direction, `depth` steps or to
- * the end (`'all'`).
- */
+/** Supplement chain extension: from each named id, `depth` steps or to the end (`'all'`). */
 export interface SupplementChain {
   /** Direction to walk from each named id. */
   direction: 'upstream' | 'downstream';
@@ -386,8 +372,8 @@ export interface SupplementChain {
 
 /**
  * Per-node drop notice from `supplementAgenda`, reported with the aggregate `skipped` count so a
- * caller can surface which id was refused and why (the drop-with-notice shape of {@link
- * RouteOutcome}).
+ * caller can surface which id was refused and why (the drop-with-notice shape of
+ * {@link RouteOutcome}).
  */
 export interface SupplementSkip {
   /** Node id as supplied in the supplement request (verbatim, not lowercased). */
@@ -426,7 +412,10 @@ export type SubmitResult =
   | {
       /** Indicates the submission was accepted (the `ack` side of the ack/reject contract). */
       ok: true;
-      /** Per-neighbor disposition for every neighbor this hop enqueued, deferred or found already settled; engine-side, never returned to the model. */
+      /**
+       * Per-neighbor disposition (enqueued, deferred or already settled) this hop; engine-side
+       * only.
+       */
       route_outcomes?: RouteOutcome[];
       /**
        * CT tracked columns this hop's `column_flow` left unaccounted, by name — plain data, never a
@@ -467,12 +456,12 @@ export interface DiagnosticsSnapshot {
   routedNew: number;
   /** Neighbor references rejected this hop (validation, schema gate, depth gate). */
   routedRejected: number;
-  /** Neighbors deferred this hop (SM mode — out-of-approved-scope neighbors captured for synthesis). */
+  /** Neighbors deferred this hop (SM mode: out-of-scope neighbors captured for synthesis). */
   routedDeferred: number;
   /** Cumulative size of the SM deferred-questions bucket across the session. */
   deferredQueued: number;
   agendaRemaining: number;
-  /** Rolling tally across the session: analyze/passthrough verdicts + cumulative engine prune count. */
+  /** Session tally: analyze/passthrough verdicts plus cumulative engine prune count. */
   tally: { analyze: number; passthrough: number; prune: number };
   /** Count of soft/silent-mode scope expansions since session start. */
   scopeExpansions: number;
@@ -503,7 +492,7 @@ export interface ScopeSummaryLeaf {
   omitted: number;
 }
 
-/** Excluded objects of one group: the total and every object, keyed by object type, alphabetised. */
+/** Excluded objects of one group: the total and every object, keyed by type, alphabetised. */
 export interface ScopeExclusionGroup {
   /** Objects in the group across every type. */
   count: number;
@@ -591,16 +580,14 @@ export interface ScopeSummary {
   scopeNotes: string[];
   /**
    * Gate-locked mission-type verdict. Surfaced at the approval gate because it is the field that
-   * constrains captured analysis: the per-dispatch `submit_findings` schema narrows the `sections` keys
-   * to the angle(s) this value keeps, so a section of another angle is never authored. Undefined
-   * until the AI sets it.
+   * constrains captured analysis: the per-dispatch `submit_findings` schema narrows the `sections`
+   * keys to the angle(s) this value keeps, so a section of another angle is never authored.
+   * Undefined until the AI sets it.
    */
   classification?: ClassificationValue;
 }
 
-/**
- * Represents a node within the final synthesized result set.
- */
+/** Represents a node within the final synthesized result set. */
 interface ResultNode {
   /** Unique node identifier. */
   id: string;
@@ -612,9 +599,7 @@ interface ResultNode {
   t: string;
 }
 
-/**
- * The final, immutable output of a completed State Machine exploration.
- */
+/** The final, immutable output of a completed State Machine exploration. */
 export interface SmResult {
   /** Always `complete`: the engine builds a result only once its agenda is drained. */
   status: 'complete';
@@ -680,7 +665,7 @@ interface InvestigationTaskBase {
   callerContext?: FunctionCallerContext;
 }
 
-/** Engine-owned unit of investigation. Questions remain structured state rather than agenda prose. */
+/** Engine-owned unit of investigation; questions stay structured state, not agenda prose. */
 export type InvestigationTask = InvestigationTaskBase & (
   | {
       /** BB root mission or analytical sub-question. */
@@ -727,7 +712,9 @@ export interface PendingLead {
 export interface ApprovedBorder {
   /** Lower-cased schemas in scope. */
   schemas: string[];
-  /** Effective depth ceiling including mode headroom and any session extensions, or null when no depth budget is set. */
+  /**
+   * Effective depth ceiling with mode headroom and session extensions; null without a depth budget.
+   */
   depth_cap: number | null;
 }
 
@@ -772,7 +759,10 @@ export const DEFAULT_EXPLORATION_QUESTION = 'Explore lineage';
 
 /** Fully resolved mechanical inputs used to preview or initialize one exploration. */
 export interface NavigationInitParams {
-  /** Canonical user question the exploration answers; the {@link DEFAULT_EXPLORATION_QUESTION} placeholder when no user text is available. */
+  /**
+   * Canonical user question being answered; {@link DEFAULT_EXPLORATION_QUESTION} when no user text
+   * exists.
+   */
   question: string;
   /** Origin node id the BFS root resolves from. */
   origin: string;
@@ -783,8 +773,9 @@ export interface NavigationInitParams {
   /** Exploration direction; defaults to `bidirectional`. */
   direction?: 'upstream' | 'downstream' | 'bidirectional';
   /**
-   * Depth verdict that seeds and bounds the scope, one binding per side. The `lineage_start_exploration`
-   * tool boundary requires it on every fresh proposal — never a backend default for the AI.
+   * Depth verdict that seeds and bounds the scope, one binding per side. The
+   * `lineage_start_exploration` tool boundary requires it on every fresh proposal — never a backend
+   * default for the AI.
    */
   depthIntent: DepthIntent;
   /** Object types excluded from the scope. */
@@ -917,9 +908,9 @@ export interface SmState {
     depth: number;
     /** Column-trace columns of interest for this node. */
     activeColumns?: string[];
-    /** CT chain-continuation questions opened for this node by an earlier hop, owned by this entry. */
+    /** CT chain-continuation questions an earlier hop opened for this node, owned by this entry. */
     lineageQuestions?: string[];
-    /** Per-neighbour column-carry decision that survived contraction (`carry` / `row_role_only`). */
+    /** Per-neighbour column-carry decision that survived contraction (`carry`/`row_role_only`). */
     columnCarry?: ColumnCarry;
   }>;
   currentFocusNodeId: string | null;
@@ -941,8 +932,8 @@ export interface SmState {
   /** Legacy key from saved runs written before focus cuts were removed; accepted and ignored. */
   ctPrunedNodeIds?: string[];
   /**
-   * Recorded column-edge endpoint IDs. The historical checkpoint key remains readable;
-   * object retention is independent of this projection.
+   * Recorded column-edge endpoint IDs; the historical checkpoint key stays readable, retention is
+   * independent.
    */
   ctDeclaredRouteIds?: string[];
   /**
@@ -953,9 +944,7 @@ export interface SmState {
   renderDroppedNodeIds?: string[];
 }
 
-/**
- * Log entry representing a single tool invocation within the SM lifecycle.
- */
+/** Log entry representing a single tool invocation within the SM lifecycle. */
 export interface HopLogEntry {
   /** Name of the tool called. */
   tool: string;
@@ -992,9 +981,7 @@ export type InvalidRouteKind = | 'absent_contributor'
       | 'question_not_neighbor'
       | 'question_closed';
 
-/**
- * Represents an invalid route returned during validation.
- */
+/** Represents an invalid route returned during validation. */
 export interface InvalidRoute {
     /** Classification of the route or prune failure. */
     kind: InvalidRouteKind;
@@ -1004,18 +991,24 @@ export interface InvalidRoute {
     reason: string;
     /** Exact submit_findings field path that must be corrected. */
     path?: string;
-    /** Valid column set for a column-content failure, or the tracked columns a refused prune carries; emitted in `detail`. */
+    /**
+     * Valid column set for a column-content failure, or the tracked columns a refused prune
+     * carries.
+     */
     available_columns?: string[];
-    /** Complete catalog column names of this object, never tracked subsets or procedure input unions. */
+    /** Complete catalog column names of this object, never tracked subsets or input unions. */
     actual_columns?: string[];
-    /** Carrier-side neighbours a body-less focus may name (`non_writer_continuation`); emitted in `detail`. */
+    /** Carrier-side neighbours a body-less focus may name (`non_writer_continuation`). */
     available_routes?: string[];
 }
 
 /** Discriminated union representing the engine's current aspect mode. */
 export type EngineAspectMode =  { kind: 'bb' } | { kind: 'ct' };
 
-/** Parts of a rejected `lineage_submit_findings` call the session holds for its retry: section angles, whether the summary, other field names. */
+/**
+ * Parts of a rejected `lineage_submit_findings` call the session holds for its retry: section
+ * angles, whether the summary, other field names.
+ */
 export interface HeldSubmissionParts {
   readonly sections: readonly string[];
   readonly summary: boolean;

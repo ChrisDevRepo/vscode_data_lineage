@@ -215,8 +215,8 @@ export class LineageParticipant {
   /**
    * Records the outcome of one native gate action in the diagnostic trace. Gate resolution runs in
    * a VS Code command handler, outside the raising turn and its event sink, so this is the one
-   * place the trace learns what answered a gate. No-op unless the trace is enabled: {@link
-   * AiTraceWriter.write} discards records while disabled, so the check is the writer's.
+   * place the trace learns what answered a gate. No-op unless the trace is enabled:
+   * {@link AiTraceWriter.write} discards records while disabled, so the check is the writer's.
    *
    * @param pending - Gate the participant currently holds, or `null` when none is pending.
    * @param refusedBy - Enumerated deciding condition, supplied only for a refusal.

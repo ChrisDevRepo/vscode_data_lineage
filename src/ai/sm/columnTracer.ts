@@ -578,10 +578,7 @@ export class ColumnTracer {
   }
 }
 
-/**
- * One directed endpoint pair of a staged or submitted column edge, as keyed by {@link
- * columnEndpointKeyFactory}.
- */
+/** One directed endpoint pair of a column edge, keyed by {@link columnEndpointKeyFactory}. */
 export interface ColumnEndpointLink {
   /** Canonical source endpoint of the recorded data flow. */
   readonly from: string;
@@ -648,8 +645,8 @@ export interface ColumnAttachment {
 
 /**
  * The one definition of what is attached to the trace; a column island is an endpoint or edge
- * outside it. Admission, carry and delivery all read it. Library BFS only ({@link
- * reachableColumnEndpoints}).
+ * outside it. Admission, carry and delivery all read it. Library BFS only
+ * ({@link reachableColumnEndpoints}).
  *
  * Upstream: the requested outputs and everything that feeds them. Downstream: the outputs,
  * everything they feed, and every input of what they feed (a second contributor to a reached output
@@ -722,10 +719,10 @@ export interface ColumnFlowTargetResolution {
 
 /**
  * Resolves where one `column_flow` entry's recorded columns land. Attribution edges (one per
- * upstream real column) land on `writes_to.node` when named, else on the focus. {@link
- * ColumnFlowTargetResolution.writerEdge} is the writer→carrier relation keeping the chain connected
- * to the traced origin; explicit `null` declares no table write, and omission defaults attribution
- * to the focus without inferring a write target from topology or column names.
+ * upstream real column) land on `writes_to.node` when named, else on the focus.
+ * {@link ColumnFlowTargetResolution.writerEdge} is the writer→carrier relation keeping the chain
+ * connected to the traced origin; explicit `null` declares no table write, and omission defaults
+ * attribution to the focus without inferring a write target from topology or column names.
  *
  * @returns The attribution target and writer edge to stage, or `null` when `writes_to` names a node
  *   absent from the loaded model.

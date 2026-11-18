@@ -56,10 +56,7 @@ interface CacheEntry {
 /** Retains the decorated node produced for each id across renders. */
 type NodeDecorationCache = Map<string, CacheEntry>;
 
-/**
- * Creates the retention map {@link decorateFlowNodes} reuses across renders; owned by the caller
- * for the canvas lifetime.
- */
+/** Retention map {@link decorateFlowNodes} reuses across renders; the caller owns it. */
 export function createNodeDecorationCache(): NodeDecorationCache {
   return new Map();
 }
@@ -90,10 +87,7 @@ export function shouldVirtualizeCanvas(renderedNodeCount: number): boolean {
   return renderedNodeCount > VIRTUALIZATION_NODE_THRESHOLD;
 }
 
-/**
- * Whether a connected edge should animate: the config toggle, gated off past {@link
- * EDGE_ANIMATION_COUNT_THRESHOLD}.
- */
+/** Edge animation: the config toggle, off past {@link EDGE_ANIMATION_COUNT_THRESHOLD} edges. */
 export function shouldAnimateEdges(renderedEdgeCount: number, configAllowsAnimation: boolean): boolean {
   return configAllowsAnimation && renderedEdgeCount <= EDGE_ANIMATION_COUNT_THRESHOLD;
 }
@@ -107,9 +101,9 @@ export const SIMPLE_NODE_ZOOM_THRESHOLD = 0.15;
 
 /**
  * Default for React Flow's `minZoom`; the canvas lowers it when fitting the laid-out graph needs
- * more, so a fit never clamps and leaves nodes outside the pane. Well below {@link
- * SIMPLE_NODE_ZOOM_THRESHOLD}: every node this small is already a plain box, so a small `minZoom`
- * still reads as a legible map.
+ * more, so a fit never clamps and leaves nodes outside the pane. Well below
+ * {@link SIMPLE_NODE_ZOOM_THRESHOLD}: every node this small is already a plain box, so a small
+ * `minZoom` still reads as a legible map.
  */
 export const MIN_CANVAS_ZOOM = 0.02;
 
@@ -129,25 +123,20 @@ export function pruneStaleEntries<K, V>(cache: Map<K, V>, present: ReadonlySet<K
   }
 }
 
-/**
- * Decoration inputs a single node reads; the Schema View callbacks and graph mode are cluster-only.
- */
+/** Decoration inputs of a single node; Schema View callbacks and graph mode are cluster-only. */
 export type NodeSelectionInputs = Omit<NodeDecorationInputs, 'graphMode' | 'onExpandSchema' | 'onMakeSchemaCenter'>;
 
 /** Selection, trace, and AI state derived for one non-schema node. */
 export interface NodeDecoration {
-  /**
-   * Highlight state: `true` for the trace origin, `'yellow'` for the clicked node, else the node's
-   * own.
-   */
+  /** Highlight: `true` for the trace origin, `'yellow'` for the clicked node, else its own. */
   highlighted: boolean | 'yellow' | undefined;
   /** Whether the node is de-emphasised because another node is focused. */
   dimmed: boolean;
   /**
    * Whether the node is exempt from the active-selection dim (itself, a level-1 neighbour, or the
    * trace origin). Unlike {@link dimmed}, it stays `false` for an ordinary node whether or not a
-   * selection is active, so the object view can use it as a `className` (see {@link
-   * LIT_CLASS_NAME}) that changes identity only for nodes entering or leaving the lit set.
+   * selection is active, so the object view can use it as a `className` (see
+   * {@link LIT_CLASS_NAME}) that changes identity only for nodes entering or leaving the lit set.
    */
   lit: boolean;
   /** Whether the scoped-view remove control is shown. */
@@ -256,10 +245,10 @@ function reuseOrBuild(
 }
 
 /**
- * Applies an already-computed decoration to its node. The dim is not written into `data`: {@link
- * NodeDecoration.lit} becomes the node's `className` (see {@link LIT_CLASS_NAME}), which React Flow
- * applies to the outer wrapper without passing it to the memoized renderer, so `data` stays stable
- * whichever node is dimmed.
+ * Applies an already-computed decoration to its node. The dim is not written into `data`:
+ * {@link NodeDecoration.lit} becomes the node's `className` (see {@link LIT_CLASS_NAME}), which
+ * React Flow applies to the outer wrapper without passing it to the memoized renderer, so `data`
+ * stays stable whichever node is dimmed.
  */
 function applyDecoration(node: FlowNode, d: NodeDecoration): FlowNode {
   return {
@@ -327,10 +316,7 @@ interface ColumnCacheEntry {
 /** Retains the React Flow node produced for each column-view node across renders. */
 type ColumnNodeCache = Map<string, ColumnCacheEntry>;
 
-/**
- * Creates the retention map {@link projectColumnNodes} reuses across renders; owned by the caller
- * for the canvas lifetime.
- */
+/** Retention map {@link projectColumnNodes} reuses across renders; the caller owns it. */
 export function createColumnNodeCache(): ColumnNodeCache {
   return new Map();
 }

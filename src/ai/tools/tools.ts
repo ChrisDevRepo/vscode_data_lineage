@@ -60,7 +60,8 @@ function buildNodeTypeById(model: DatabaseModel): Map<string, string> {
  * Builds a lookup map for edges between nodes.
  *
  * @param model - The full database model.
- * @returns A map where the key is "sourceId→targetId" and the value is the API-compatible edge type.
+ * @returns A map where the key is "sourceId→targetId" and the value is the API-compatible edge
+ *   type.
  */
 export function buildEdgeTypeMap(model: DatabaseModel): Map<string, string> {
   const nodeTypeById = buildNodeTypeById(model);
@@ -423,10 +424,13 @@ export async function searchObjects(
 }
 
 
-/** Neighbours per direction one `lineage_get_object_detail` page carries; the rest is read with `cursor`. */
+/** Neighbours per direction one `lineage_get_object_detail` page carries; the rest via `cursor`. */
 const NEIGHBOR_PAGE = 25;
 
-/** Corrective hint on every per-id `not_found` rejection that names an object id — points the model at the search tool instead of leaving it to guess a corrected id. */
+/**
+ * Corrective hint on every per-id `not_found` rejection that names an object id — points the model
+ * at the search tool instead of leaving it to guess a corrected id.
+ */
 const SEARCH_OBJECTS_HINT = 'Call lineage_search_objects to find the exact object ID.';
 
 /**
@@ -784,7 +788,7 @@ function toLineRanges(lines: number[]): string {
  */
 const MIN_SEARCH_DDL_ROW_CHARS = JSON.stringify({ id: '', name: '', type: '', line: 0, text: '', context: '' }).length;
 
-/** Hint on a located long line: the row is not served as text, the DDL read shows the line whole. */
+/** Hint on a located long line: the row is not served as text; the DDL read shows it whole. */
 const LONG_LINE_HINT = `These lines match but are longer than ${SEARCH_LINE_MAX_CHARS} characters, so no row shows them. Read the object's DDL with lineage_get_object_detail and go to the line number; match_offset is where the match starts within the line.`;
 
 /**

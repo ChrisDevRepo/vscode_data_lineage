@@ -115,9 +115,7 @@ export class AgentRuntime {
   /** Diagnostic detail behind the most recent non-`ok` {@link close}. */
   public lastFailureDetail: AgentFailureDetail | undefined;
   private readonly priorMessages: readonly ModelMessage[];
-  /**
-   * This turn's ownership epoch — carried into guarded session writes so a zombie turn is a no-op.
-   */
+  /** This turn's ownership epoch, carried into guarded session writes so a zombie turn no-ops. */
   private readonly turnEpoch: number;
   private readonly logger: Logger | undefined;
   private readonly graph: ReturnType<typeof buildAgentGraph>;
@@ -126,8 +124,8 @@ export class AgentRuntime {
    * Settle-await for every tool dispatch in flight through this turn's registry. Awaited before
    * {@link close} on every cancellation path, so a mutating tool's effect (session write, engine
    * publish, panel render) finishes before the turn releases the lease, even when LangGraph's abort
-   * race already rejected `graph.invoke` while the dispatching node still ran. See {@link
-   * trackInFlightDispatch}.
+   * race already rejected `graph.invoke` while the dispatching node still ran. See
+   * {@link trackInFlightDispatch}.
    */
   private readonly dispatchSettled: () => Promise<void>;
 

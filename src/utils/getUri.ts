@@ -1,18 +1,12 @@
 import { Uri, Webview } from "vscode";
 
 /**
- * Resolves a local file system path into a URI compatible with VS Code Webviews.
+ * Resolves a local file system path into a URI a Webview can load, which cannot read the local file
+ * system directly: `webview.asWebviewUri` converts it to the `vscode-webview-resource` scheme for
+ * scripts, styles and assets from the extension bundle.
  *
- * Webviews are restricted from accessing the local file system directly. This
- * function uses `webview.asWebviewUri` to convert standard URIs into the
- * `vscode-webview-resource` scheme, enabling the UI to load scripts, styles,
- * and assets from the extension bundle.
- *
- * @param webview - The target `vscode.Webview` instance where the resource will be used.
- * @param extensionUri - The base URI of the extension (usually from `ExtensionContext.extensionUri`).
- * @param pathList - An array of path segments to be joined and resolved.
- *
- * @returns A `vscode.Uri` that can be safely embedded in webview HTML.
+ * @param extensionUri - Base URI of the extension (usually `ExtensionContext.extensionUri`).
+ * @param pathList - Path segments to join and resolve.
  *
  * @example
  * ```typescript

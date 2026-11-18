@@ -15,13 +15,13 @@ interface SearchWithAutocompleteProps {
   onExecuteSearch?: (name: string, schema?: string) => void;
   /** Optional callback to initiate a trace directly from the search result. */
   onStartTrace?: (nodeId: string) => void;
-  /** When set, the Start Trace action renders disabled with this reason instead of starting a trace. */
+  /** When set, Start Trace renders disabled with this reason instead of starting a trace. */
   startTraceDisabledReason?: string;
   /** Flattened list of all nodes in the project for autocomplete suggestions. */
   allNodes?: Array<{ id: string; name: string; schema: string; type: ObjectType }>;
-  /** Authoritative set of node IDs currently rendered in the graph; partitions suggestions into "In View" and "Other". */
+  /** Node IDs rendered in the graph; partitions suggestions into "In View" and "Other". */
   visibleNodeIds: Set<string>;
-  /** IDs of working-set nodes collapsed inside a schema cluster; forms a third suggestion partition when provided. */
+  /** Working-set node IDs collapsed in a schema cluster; a third suggestion partition when set. */
   collapsedSchemaNodeIds?: Set<string>;
 }
 

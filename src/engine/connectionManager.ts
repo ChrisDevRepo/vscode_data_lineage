@@ -171,10 +171,7 @@ function configuredDmvQueriesFile(): string {
 
 /** DMV queries kept between reads until the configured YAML file changes. */
 export interface DmvQueryCache extends vscode.Disposable {
-  /**
-   * The kept queries, loading them on first use or after the setting changed. A failed load is not
-   * kept.
-   */
+  /** Kept queries, loaded on first use or after a setting change; a failed load is not kept. */
   get(): Promise<DmvQuery[]>;
   /** Loads the queries again and keeps the result, so an import applies an edit to the file. */
   reload(): Promise<DmvQuery[]>;
@@ -286,9 +283,7 @@ export function stripSensitiveFields(source: Record<string, unknown>): StoredCon
   return StoredConnectionInfoSchema.parse(persistable);
 }
 
-/**
- * Host services a connection needs: the secret store for built-in passwords and the log channel.
- */
+/** Host services a connection needs: the secret store (built-in passwords) and the log channel. */
 export type DbConnectEnv = BuiltInEnv;
 
 /** Built-in sign-in type a stored built-in record's `authenticationType` names. */
@@ -476,9 +471,7 @@ export async function releaseSession(session: DbSession): Promise<void> {
   await session.dispose();
 }
 
-/**
- * Wraps an asynchronous operation with a timeout; rejects with `timeoutMessage` when `ms` elapse.
- */
+/** Wraps an async operation with a timeout; rejects with `timeoutMessage` after `ms`. */
 function withQueryTimeout<T>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> {
   let handle: ReturnType<typeof setTimeout>;
   return Promise.race([

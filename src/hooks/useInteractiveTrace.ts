@@ -8,9 +8,7 @@ import { notifyUser } from '../utils/notify';
 import { directNeighborIds } from '../engine/graphGuards';
 import { traceSizeByDepth } from '../engine/graphDisplayMode';
 
-/**
- * Return type for the useInteractiveTrace hook, providing state and control actions.
- */
+/** State and control actions returned by `useInteractiveTrace`. */
 interface UseInteractiveTraceReturn {
   /** The current state of the trace session (mode, focal node, depths). */
   trace: TraceState;
@@ -44,11 +42,11 @@ interface UseInteractiveTraceReturn {
   addTraceNeighbor: (nodeId: string) => void;
   /** Removes one safe node from the current trace scope. */
   pruneTraceNode: (nodeId: string) => void;
-  /** Node count a trace from the current origin at the given depths would render — BFS only, no layout. */
+  /** Node count a trace from the current origin at these depths would render; BFS, no layout. */
   estimateTraceSize: (upstreamLevels: number, downstreamLevels: number) => number;
   /**
-   * Shows only the origin→target routes for the given targets, against the pre-focus scope;
-   * an empty list restores it. False, scope untouched, when a route is unreachable.
+   * Shows only the origin→target routes for `targetIds`, against the pre-focus scope; an empty list
+   * restores it. Returns false and leaves the scope untouched when a route is unreachable.
    */
   setFocusTargets: (targetIds: string[]) => boolean;
   /** Restores the scope stashed by the last focus, or ends the trace when nothing was stashed. */
@@ -57,13 +55,13 @@ interface UseInteractiveTraceReturn {
   isFocusPaths: boolean;
   /** Targets whose routes the focus shows; empty outside a focus. */
   focusTargetIds: readonly string[];
-  /** The pre-focus trace while a focus is on stage, else the trace itself; the navigator lists it. */
+  /** The pre-focus trace while a focus is shown, else the trace itself; the navigator lists it. */
   navigatorTrace: TraceState;
   /** Drops manual add/prune edits, restoring the starting scope while staying in the trace. */
   resetTraceToStart: () => void;
   /** Adds a batch of direct scope neighbors in one update (tree level growth). */
   addTraceNeighbors: (nodeIds: string[]) => void;
-  /** Traversal graph over the trace scope, shared by tree path lighting and focus paths; null outside a trace. */
+  /** Traversal graph over the trace scope for tree path lighting and focus paths; null if none. */
   traceScopeGraph: Graph | null;
   /** Unfiltered traversal graph over the whole model; null until a model is loaded. */
   fullGraph: Graph | null;
@@ -114,19 +112,11 @@ function resolveBfsGraph(
 }
 
 /**
- * Custom hook for managing interactive data lineage traces and pathfinding.
+ * Manages interactive lineage traces and pathfinding. Auto-promotes to `fullGraph` when the
+ * selected node is filtered out of the base graph, so the requested lineage is always visible.
  *
- * @remarks
- * Auto-promotes to `fullGraph` when the selected node is filtered out of the base graph, so the
- * user can always see the requested lineage.
- *
- * @param graph - The currently active (filtered) graph instance.
- * @param flowNodes - The current set of React Flow nodes.
- * @param flowEdges - The current set of React Flow edges.
- * @param config - The application configuration (for default depths).
- * @param model - The full database model (required for unfiltered pathfinding).
- * @param baseRenderLimited - Whether the base object graph is blocked by the React Flow render limit.
- * @returns An object containing the trace state, subsets, and action handlers.
+ * @param model - The full model, required for unfiltered pathfinding.
+ * @param baseRenderLimited - Whether the render limit blocks the base object graph.
  */
 export function useInteractiveTrace(
   graph: Graph | null,
@@ -386,7 +376,10 @@ export function useInteractiveTrace(
     if (traced.notice) notifyUser(traced.notice);
   }, [traced]);
 
-  /** Node count a trace from the current origin at the given depths would render — resolves the same BFS graph {@link applyTrace} would use. */
+  /**
+   * Node count a trace from the current origin at these depths would render; the same BFS graph
+   * {@link applyTrace} uses.
+   */
   const estimateTraceSize = useCallback((upstreamLevels: number, downstreamLevels: number): number => {
     if (!trace.selectedNodeId) return 0;
     const { bfsGraph } = resolveBfsGraph(trace.selectedNodeId, useFullModelRef.current, graph, fullGraph);
@@ -394,7 +387,10 @@ export function useInteractiveTrace(
     return traceSizeByDepth(bfsGraph, trace.selectedNodeId, upstreamLevels, downstreamLevels);
   }, [graph, fullGraph, trace.selectedNodeId]);
 
-  /** Traversal graph over the trace scope; the flow-provided graph exists only on synthesized traces. */
+  /**
+   * Traversal graph over the trace scope; the flow-provided graph exists only on synthesized
+   * traces.
+   */
   const traceScopeGraph = useMemo(() => {
     if (traceGraph) return traceGraph;
     if (!model || !isEditableTraceMode(trace.mode) || trace.tracedNodeIds.size === 0) return null;
@@ -417,10 +413,9 @@ export function useInteractiveTrace(
   }, [focus, endTrace]);
 
   /**
-   * Shows every path connecting the origin and each checked target, unioned.
-   *
-   * All-or-nothing per call: when any route is unreachable the scope is untouched. Routes always
-   * resolve against the pre-focus scope, so a target hidden by the current focus can be added.
+   * Shows the union of every path between the origin and each checked target. All-or-nothing: if
+   * any route is unreachable the scope is untouched. Routes resolve against the pre-focus scope, so
+   * a target hidden by the current focus can be added.
    */
   const setFocusTargets = useCallback((targetIds: string[]): boolean => {
     const base = focus?.previous ?? trace;

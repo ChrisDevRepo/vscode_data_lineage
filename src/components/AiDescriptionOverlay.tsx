@@ -12,12 +12,8 @@ import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
 export type AiDockPosition = 'right' | 'left' | 'bottom';
 
 /**
- * The dock choices, in the order the menu lists them.
- *
- * @remarks
- * One dropdown rather than three always-visible buttons: the trigger already shows the current
- * edge through its icon, so the header carries a single control and every position stays one
- * click away in the menu — the same shape VS Code uses for its own "Move Panel To" layout menu.
+ * Dock choices in menu order. One dropdown, not three buttons: the trigger's icon already shows the
+ * current edge, and the menu matches VS Code's "Move Panel To" shape.
  */
 const DOCK_CHOICES: ReadonlyArray<{ position: AiDockPosition; label: string }> = [
   { position: 'left', label: 'Dock left' },
@@ -26,12 +22,8 @@ const DOCK_CHOICES: ReadonlyArray<{ position: AiDockPosition; label: string }> =
 ];
 
 /**
- * The collapsed rail's expand glyph, per dock edge: it points the way the panel will reopen.
- *
- * @remarks
- * A right- or left-docked rail is a vertical tab and reopens sideways into the canvas; a
- * bottom-docked rail is a horizontal strip and reopens upward. The arrow is the only part of the
- * rail that changes with the edge — the name and the hit target are identical on all three.
+ * Expand glyph of the collapsed rail per dock edge, pointing the way the panel reopens: sideways
+ * for a right- or left-docked rail, upward for a bottom one.
  */
 const RAIL_TOGGLE_GLYPH: Readonly<Record<AiDockPosition, string>> = {
   right: '\u25C0',
@@ -39,7 +31,7 @@ const RAIL_TOGGLE_GLYPH: Readonly<Record<AiDockPosition, string>> = {
   bottom: '\u25B2',
 };
 
-/** The collapse arrow points toward the edge the panel folds into — the reverse of the rail's reopen arrow. */
+/** The collapse arrow points toward the edge the panel folds into, opposite the reopen arrow. */
 const COLLAPSE_GLYPH: Readonly<Record<AiDockPosition, string>> = {
   right: '\u25B6',
   left: '\u25C0',
@@ -47,9 +39,8 @@ const COLLAPSE_GLYPH: Readonly<Record<AiDockPosition, string>> = {
 };
 
 /**
- * Panel-dock icon: a frame with the docked edge filled, modelled on VS Code's
- * `layout-panel-left` / `layout-panel` / `layout-panel-right` codicons so each position reads
- * at a glance instead of three near-identical arrow glyphs.
+ * Panel-dock icon: a frame with the docked edge filled, modelled on VS Code's `layout-panel-left` /
+ * `layout-panel` / `layout-panel-right` codicons.
  */
 function DockIcon({ position }: { position: AiDockPosition }) {
   return (
@@ -85,7 +76,7 @@ interface AiDescriptionOverlayProps {
   sections?: readonly AiReportSection[];
   /** The focused section number, or `null` when no section focus is active — the scroll target. */
   activeSection?: number | null;
-  /** Called when the user (de)selects a section chip — the canvas highlights that section's nodes. */
+  /** Called when a section chip is (de)selected; the canvas highlights that section's nodes. */
   onFocusSection?: (n: number | null) => void;
   /** Called when a `#focus-node:<nodeId>` link is clicked — zooms the graph to that node. */
   onFocusNode?: (nodeId: string) => void;
@@ -93,22 +84,18 @@ interface AiDescriptionOverlayProps {
   dockPosition?: AiDockPosition;
   /** Called with the position picked from the dock menu. */
   onDockPositionChange?: (position: AiDockPosition) => void;
-  /** Called with the panel's measured content-box size (a resize drag or dock switch changed it). */
+  /** Called with the panel's measured content-box size after a resize drag or dock switch. */
   onPanelResize?: (width: number, height: number) => void;
 }
 
 /**
- * The AI report column: a pane docked to the chosen edge for AI-generated descriptions and logic summaries.
+ * The AI report column: a pane docked to the chosen edge for AI-generated descriptions and logic
+ * summaries.
  *
- * @remarks
- * Renders GitHub Flavored Markdown and KaTeX math through the same `marked` extension VS Code
- * applies to chat responses, so a description renders identically in both surfaces. When
- * collapsed it shrinks to a slim rail on the edge it was docked to instead of disappearing, so
- * reopening never hunts for a button. Numbered section
- * chips navigate the document and, through `onFocusSection`, highlight that section's nodes on
- * the graph while the rest dim.
- *
- * @param props - The component props.
+ * Renders GFM and KaTeX through the same `marked` extension VS Code uses for chat, so a description
+ * looks identical in both. Collapsed, it shrinks to a rail on its dock edge instead of
+ * disappearing. Section chips navigate the document and, via `onFocusSection`, highlight that
+ * section's nodes while the rest dim.
  */
 export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   viewName,
@@ -129,7 +116,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   const dockMenu = useDropdown();
 
   const anchorRef = useRef<HTMLDivElement | null>(null);
-  /** Observes the panel while expanded; a dock switch re-observes so the new edge's size is reported even when unchanged. */
+  /** Observes the panel while expanded; a dock switch re-observes to report the new edge's size. */
   useEffect(() => {
     if (!expanded || !onPanelResize) return;
     const el = anchorRef.current;

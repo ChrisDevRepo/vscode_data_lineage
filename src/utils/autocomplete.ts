@@ -14,13 +14,8 @@ export interface AutocompleteNode {
 }
 
 /**
- * Filters and ranks autocomplete suggestions based on a search term.
- *
- * @param limit - The maximum number of suggestions to return (defaults to 10).
- *
- * @remarks
- * Suggestions are only generated if the search term is at least 2 characters long,
- * to prevent excessive computation and UI noise.
+ * Filters and ranks autocomplete suggestions for a search term, only from 2 characters on, to avoid
+ * needless computation and UI noise. `limit` defaults to 10.
  */
 export function filterSuggestions(
   nodes: AutocompleteNode[],

@@ -127,18 +127,12 @@ export type CatalogEntry = {
   externalType?: 'et' | 'file' | 'db'
 };
 
-/**
- * O(1) adjacency keyed by node ID: upstream (`in`) and downstream (`out`) neighbors, for
- * interactive tracing and pathfinding.
- */
+/** O(1) adjacency by node ID: upstream (`in`) and downstream (`out`) neighbors, for tracing. */
 export type NeighborIndex = Record<string, { in: string[]; out: string[] }>;
 
 /** The unified database model representing all nodes, edges, and metadata. */
 export interface DatabaseModel {
-  /**
-   * Checked source catalog metadata enables exact identifier comparison; absent/false retains
-   * legacy CI identity.
-   */
+  /** Checked source catalog metadata enables exact identifier comparison; else legacy CI. */
   identifierCaseSensitive?: boolean;
   /** All objects (nodes) included in the model. */
   nodes: LineageNode[];
@@ -146,10 +140,7 @@ export interface DatabaseModel {
   edges: LineageEdge[];
   /** Summary of schemas found in the model. */
   schemas: SchemaInfo[];
-  /**
-   * Catalog of all known objects, including those not in the current graph, keyed by normalized
-   * node ID.
-   */
+  /** Catalog of all known objects, also those outside the graph, keyed by normalized node ID. */
   catalog: Record<string, CatalogEntry>;
   /** High-performance neighbor lookup index. */
   neighborIndex: NeighborIndex;
@@ -191,10 +182,7 @@ export interface SchemaPreview {
 }
 
 
-/**
- * A generic XML element in a DACPAC model file, traversed in Phase 1 (preview) and Phase 2 (full
- * extraction).
- */
+/** A generic XML element in a DACPAC model file, traversed in Phase 1 (preview) and Phase 2. */
 export interface XmlElement {
   /** The internal SQL object type (e.g., 'SqlTable'). */
   '@_Type': string;
@@ -273,10 +261,7 @@ export const ELEMENT_TYPE_MAP: Record<string, ObjectType> = {
 export const TRACKED_ELEMENT_TYPES = new Set(Object.keys(ELEMENT_TYPE_MAP));
 
 
-/**
- * Technical definition of a database column, used by the "Column Mode" detail view and schema
- * exploration.
- */
+/** Database column definition, used by the "Column Mode" detail view and schema exploration. */
 export interface ColumnDef {
   /** The display name of the column. */
   name: string;
@@ -286,9 +271,7 @@ export interface ColumnDef {
   nullable: string;
   /** Additional flags like 'IDENTITY' or 'COMPUTED'. */
   extra: string;
-  /**
-   * Compiler-declared expression references; their presence does not establish value contribution.
-   */
+  /** Compiler-declared expression references; their presence does not establish contribution. */
   expressionDependencies?: ColumnExpressionDependency[];
   /** Name of the unique constraint if the column participates in one. */
   unique?: string;
@@ -300,10 +283,7 @@ export interface ColumnDef {
 
 /** Exact source metadata for a column expression reference, without inferred SQL semantics. */
 export interface ColumnExpressionDependency {
-  /**
-   * Source reference identity, including column qualification; DACPAC References.Name remains
-   * verbatim.
-   */
+  /** Source reference identity with column qualification; DACPAC References.Name stays verbatim. */
   reference: string;
   /** Exact local source type: DACPAC XML Type or DMV sys.objects.type, when resolved. */
   sourceElementType?: string;
@@ -437,10 +417,7 @@ export function createEmptySchemaInfo(name: string): SchemaInfo {
   return { name, nodeCount: 0, types: { table: 0, view: 0, procedure: 0, function: 0, external: 0 } };
 }
 
-/**
- * A database object extracted during Phase 2, including structural metadata such as columns and
- * foreign keys.
- */
+/** A database object extracted in Phase 2, with structure such as columns and foreign keys. */
 export interface ExtractedObject {
   /** Full schema-qualified name (e.g., "[dbo].[Table]"). */
   fullName: string;
@@ -525,10 +502,7 @@ export interface AnalysisConfig {
 export interface TableStatsConfig {
   /** Whether profiling is enabled. */
   enabled: boolean;
-  /**
-   * Whether standard profiling (MIN/MAX, string length range, AVG, STDEV and zero/empty counts
-   * beyond the basic pass) is active.
-   */
+  /** Whether standard profiling (MIN/MAX, string length range, AVG, STDEV, empty counts) is on. */
   standardModeEnabled: boolean;
   /** Whether to skip profiling for external tables. */
   excludeExternalTables: boolean;
@@ -552,10 +526,7 @@ export interface ExternalRefsConfig {
 
 /** Configuration for Schema View. */
 export interface OverviewConfig {
-  /**
-   * When false, Schema View is disabled and new loads open in Object View until the hard render
-   * limit.
-   */
+  /** When false, Schema View is off and new loads open in Object View until the hard limit. */
   enabled: boolean;
   /** Loaded-model object count above which the initial graph opens in Schema View. */
   threshold: number;
@@ -571,10 +542,7 @@ export interface ExtensionConfig {
   parseRules?: import('./sqlBodyParser').ParseRulesConfig;
   /** Regex patterns, with `%` wildcard compatibility, excluded from the webview model. */
   excludePatterns: string[];
-  /**
-   * Hard cap on objects admitted to the webview working graph; a selection over this limit is
-   * refused rather than truncated.
-   */
+  /** Hard cap on objects admitted to the working graph; a selection over it is refused, not cut. */
   maxNodes: number;
   /** Maximum duration (in seconds) for DMV metadata queries. */
   dmvQueryTimeout: number;
@@ -624,10 +592,7 @@ export interface SchemaNodeData extends Record<string, unknown> {
   typeBreakdown: Partial<Record<ObjectType, number>>;
   /** Display color for the schema node. */
   color: string;
-  /**
-   * True when this node represents only external objects; external-only clusters use the fixed
-   * external color, not the schema palette.
-   */
+  /** True for a node of only external objects; those clusters use the fixed external color. */
   isExternalOnly?: boolean;
   /** Marks a collapsed schema cluster shown alongside object nodes in Expanded Schema View. */
   isExpandedSchemaViewCluster?: boolean;

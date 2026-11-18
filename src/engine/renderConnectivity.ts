@@ -1,9 +1,6 @@
 import { groupByWeaklyConnected } from './unionFind';
 
-/**
- * Minimal node shape for rendered-connectivity analysis, decoupled from React Flow types so the
- * helper stays pure and unit-testable.
- */
+/** Minimal node shape for rendered-connectivity analysis, free of React Flow types. */
 export interface RenderConnectivityNode {
   /** React Flow node id. */
   id: string;
@@ -96,8 +93,8 @@ export function summarizeRenderedConnectivity(
 }
 
 /**
- * Renders a {@link RenderConnectivity} as the `RENDERED CONNECTIVITY` block of the debug dump:
- * indented multi-line text, no trailing newline.
+ * Renders a {@link RenderConnectivity} as the debug dump's `RENDERED CONNECTIVITY` block: indented,
+ * no trailing newline.
  */
 export function formatRenderConnectivity(conn: RenderConnectivity): string {
   const lines: string[] = [];

@@ -1,15 +1,10 @@
-/**
- * Mask value of a character outside any comment, including string literals and quoted identifiers.
- */
+/** Mask value of a character outside any comment, including string literals and quoted names. */
 export const SQL_CODE = 0;
 /** Mask value of a character inside a `/* … *\/` block comment, delimiters included. */
 export const SQL_BLOCK_COMMENT = 1;
 /** Mask value of a character inside a `--` line comment, up to but excluding the newline. */
 export const SQL_LINE_COMMENT = 2;
-/**
- * Mask value of a character inside a `'…'`, `"…"` or `[…]` span, delimiters included; set only on
- * request.
- */
+/** Mask value of a character inside a `'…'`, `"…"` or `[…]` span, delimiters included. */
 const SQL_LITERAL = 3;
 
 /**
@@ -18,8 +13,8 @@ const SQL_LITERAL = 3;
  * honour doubled escapes; an unterminated block comment runs to the end. The parser and DDL search
  * share this one reading so both agree on what is commented out.
  *
- * @param options - `markLiterals` marks quoted spans {@link SQL_LITERAL} instead of {@link
- *   SQL_CODE}.
+ * @param options - `markLiterals` marks quoted spans {@link SQL_LITERAL} instead of
+ *   {@link SQL_CODE}.
  */
 export function sqlCommentMask(sql: string, options?: { readonly markLiterals?: boolean }): Uint8Array {
   const mask = new Uint8Array(sql.length);

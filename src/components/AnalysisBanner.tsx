@@ -8,16 +8,11 @@ interface AnalysisBannerProps {
   analysis: AnalysisMode;
   /** Callback triggered when the user chooses to exit the analysis mode. */
   onClose: () => void;
-  /**
-   * Optional callback to save the current analysis result as a bookmark.
-   * @param name - The name for the bookmark.
-   */
+  /** Optional callback to save the current analysis result as a bookmark under the given name. */
   onSaveAsBookmark?: (name: string) => void;
 }
 
-/**
- * Configures {@link ModeBanner} for the active structural analysis and selected group.
- */
+/** Configures {@link ModeBanner} for the active structural analysis and selected group. */
 export const AnalysisBanner = memo(function AnalysisBanner({
   analysis,
   onClose,

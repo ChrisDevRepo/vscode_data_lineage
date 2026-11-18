@@ -42,15 +42,15 @@ import { createProject, addFilterProfile, deleteFilterProfile, serializeFilter, 
 import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 
-/** Elevated-surface chrome (background + shadow) shared by the render-limit overlays; each spreads in its own `color`. */
+/**
+ * Elevated-surface chrome (background + shadow) of the render-limit overlays; each adds `color`.
+ */
 const RENDER_LIMIT_SURFACE_STYLE: CSSProperties = {
   background: 'var(--ln-bg-elevated, var(--ln-bg))',
   boxShadow: 'var(--ln-dropdown-shadow)',
 };
 
-/**
- * Represents a transient AI-curated view before it is saved as a permanent bookmark.
- */
+/** Transient AI-curated view shown before it is saved as a bookmark. */
 interface AiPreview {
   /** The name of the AI view. */
   name: string;
@@ -59,9 +59,7 @@ interface AiPreview {
   aiMetadata: AIViewMetadata;
 }
 
-/**
- * The possible top-level navigation states for the application.
- */
+/** Top-level navigation states. */
 type AppView = 'start' | 'create' | 'visualizing' | 'graph';
 
 /** Timeout for dacpac file loading operations. */
@@ -70,24 +68,10 @@ const DACPAC_TIMEOUT_MS = 20_000;
 const DB_TIMEOUT_MS = 60_000;
 /** Minimum time to show the loading spinner to prevent visual flickering. */
 const MIN_SPINNER_MS = 1200;
-/**
- * How long the rebuild spinner waits for the host's `rebuild-config` reply before giving up.
- *
- * @remarks
- * The spinner is cleared only by that reply, so a dropped message would otherwise pin the toolbar
- * in a rebuilding state with no way out.
- */
+/** Watchdog for the host's `rebuild-config` reply; only that reply clears the rebuild spinner. */
 const REBUILD_TIMEOUT_MS = 15_000;
 
-/**
- * Computes the set of schemas that are immediate neighbors of a target schema.
- * A schema is a neighbor if there is at least one edge connecting a node in the
- * target schema to a node in the neighbor schema.
- *
- * @param model - The complete database model.
- * @param schema - The name of the central schema.
- * @returns A set of schema names including the target and its neighbors.
- */
+/** Schemas joined to `schema` by an edge, including `schema` itself. */
 function computeNeighborSchemas(model: DatabaseModel, schema: string): Set<string> {
   const focusNodeIds = new Set(model.nodes.filter(n => n.schema === schema).map(n => n.id));
   const nodeById = new Map(model.nodes.map(n => [n.id, n]));
@@ -105,9 +89,7 @@ function computeNeighborSchemas(model: DatabaseModel, schema: string): Set<strin
   return neighborSchemas;
 }
 
-/**
- * State representing the position and target of the active context menu.
- */
+/** Position and target of the active context menu. */
 interface ObjectContextMenuState {
   kind: 'object';
   /** X-coordinate in pixels. */
@@ -157,9 +139,7 @@ const getResetFilter = (schemas: ReadonlyArray<{ name: string }>): FilterState =
   exclusionPatterns: [],
 });
 
-/**
- * Coordinates application navigation, model lifecycle, graph filters, and interaction modes.
- */
+/** Coordinates navigation, model lifecycle, graph filters and interaction modes. */
 export function App() {
   const vscodeApi = useVsCode();
   const isAutoVisualize = document.body.dataset.autoVisualize === 'true';
@@ -190,7 +170,10 @@ export function App() {
   const { trace, tracedNodes, tracedEdges, traceGraph, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, useFullModel, toggleUseFullModel, filteredOutCount: traceFilteredOutCount, addTraceNeighbor, pruneTraceNode, estimateTraceSize, setFocusTargets, exitFocusPaths, isFocusPaths, focusTargetIds, navigatorTrace, resetTraceToStart, addTraceNeighbors, traceScopeGraph, fullGraph } =
     useInteractiveTrace(graph, flowNodes, flowEdges, config, model, isBaseRenderLimited);
 
-  /** Updates the global extension configuration, keeping the current object when the host resends identical content. */
+  /**
+   * Updates the extension configuration; keeps the current object when the host resends equal
+   * content.
+   */
   const applyConfig = useCallback((cfg: ExtensionConfig) => {
     setConfig(prev => (JSON.stringify(prev) === JSON.stringify(cfg) ? prev : cfg));
   }, []);
@@ -198,23 +181,15 @@ export function App() {
   const dacpacLoader = useDacpacLoader(applyConfig);
 
   /**
-   * Triggers a graph rebuild based on the current model and filters.
+   * Rebuilds the graph from `m` and `f`. Returns the node count (0 for deferred builds), or -1 when
+   * the maxNodes admission check refused it; both paths report that synchronously, so no caller
+   * arms a camera restore for a change that will not come.
    *
-   * @param m - The database model to use.
-   * @param f - The filters to apply.
-   * @param cfg - Optional configuration override.
-   * @param forceLayout - If true, builds synchronously (bypassing the transition) so the caller can
-   *   read the resulting node count immediately. Independent of whether Dagre runs — that is decided
-   *   by the resolved mode (Schema View skips Dagre).
-   * @param modeOverride - Graph view mode to build for when the caller flips the mode in the same tick
-   *   (state has not committed yet); defaults to the current `graphMode`. Callers switching to a mode
-   *   must pass this so the correct layout path (Dagre vs. Schema View) is chosen.
-   * @param annotatedNodeIds - Ids carrying an AI badge or footnote, so Dagre reserves the
-   *   vertical band those overlays need; defaults to the ids annotated by the AI preview or AI
-   *   bookmark currently shown, so every rebuild of that view keeps the band.
-   * @returns The number of nodes in the resulting graph (0 for deferred/transition builds), or -1 when
-   *   the maxNodes admission check refused the build. The refusal is reported synchronously on both
-   *   paths so a caller never arms a one-shot camera restore for a graph change that will not come.
+   * @param forceLayout - Build synchronously so the caller can read the node count at once.
+   * @param modeOverride - Mode to build for when the caller flips `graphMode` in the same tick; a
+   *   caller switching mode must pass it so the right layout path is chosen.
+   * @param annotatedNodeIds - Ids with an AI badge or footnote, so Dagre reserves their band;
+   *   defaults to those of the shown AI preview or bookmark.
    */
   const rebuild = useCallback(
     (m: DatabaseModel, f: FilterState, cfg?: ExtensionConfig, forceLayout = false, modeOverride?: GraphMode, annotatedNodeIds?: readonly string[]): number => {
@@ -233,9 +208,7 @@ export function App() {
     [buildFromModel, refusesBuild, config, graphMode]
   );
 
-  /**
-   * Initializes the visualization phase for a newly loaded model.
-   */
+  /** Starts the visualization phase for a newly loaded model. */
   const handleVisualize = useCallback(
     (dacpacModel: DatabaseModel, selectedSchemas: Set<string>) => {
       let trimmed = filterBySchemas(dacpacModel, selectedSchemas);
@@ -339,10 +312,9 @@ export function App() {
   }, [view, loadingPhase, dacpacLoader.status, dacpacLoader.loadingContext, loadingError]);
 
   /**
-   * Rebuilds the shown graph when the settings change. A load in flight owns its own rebuild with
-   * the new settings, so this effect stands down while one is pending — it would otherwise rebuild
-   * the model that load is replacing. A `rebuild-config` frame rebuilds in its own handler and marks
-   * its config as seen here, so one settings change builds the graph once.
+   * Rebuilds the graph when settings change. Stands down while a load is pending (the load rebuilds
+   * with the new settings); a `rebuild-config` frame marks its config as seen so one change builds
+   * once.
    */
   const prevConfigRef = useRef(config);
   const isLoadPending = dacpacLoader.pendingAutoVisualize || dacpacLoader.pendingVisualize;
@@ -413,8 +385,8 @@ export function App() {
   }, [dacpacLoader.loadDemo]);
 
   /**
-   * Re-runs the load that produced the current graph so a reload-class setting (max nodes, exclusion
-   * patterns, external references, parse rules) takes effect; a source with no stored path is warned.
+   * Re-runs the load behind the current graph so a reload-class setting takes effect; a source with
+   * no stored path is warned.
    */
   const reloadSourceRef = useRef<() => void>(() => {});
   reloadSourceRef.current = () => {
@@ -489,7 +461,9 @@ export function App() {
   const [aiPreview, setAiPreview] = useState<AiPreview | null>(null);
   const aiPreviewRef = useRef(aiPreview);
   aiPreviewRef.current = aiPreview;
-  /** Saved view (filter, graph mode, expanded schemas, viewport) before entering any locked mode — restored exactly on exit. */
+  /**
+   * View (filter, mode, expanded schemas, viewport) saved before a locked mode; restored on exit.
+   */
   const viewSnapshotRef = useRef<ViewSnapshot | null>(null);
   /** Live viewport reported by the canvas, read back when a locked mode is entered. */
   const currentViewportRef = useRef<{ x: number; y: number; zoom: number } | undefined>(undefined);
@@ -497,8 +471,8 @@ export function App() {
   const [pendingViewport, setPendingViewport] = useState<{ x: number; y: number; zoom: number } | undefined>(undefined);
 
   /**
-   * Ends every scoped mode (trace, analysis, bookmark view, AI preview) and drops the saved view
-   * snapshot, so a source that is left or reloaded does not carry state built on its old model.
+   * Ends every scoped mode and drops the saved view snapshot, so no state built on the old model
+   * survives a source change.
    */
   const resetScopedModes = useCallback(() => {
     viewSnapshotRef.current = null;
@@ -556,15 +530,17 @@ export function App() {
   const pendingRefreshReset = useRef(false);
   const prevIsModeLocked = useRef(false);
   /**
-   * Tells the canvas to skip its fit on the next graph-data change. Arm it only after the change is
-   * known to be coming: a rebuild that returned -1 (refused) or that never ran leaves the graph data
-   * as it is, so an armed skip would otherwise swallow the fit of an unrelated later change.
+   * Makes the canvas skip its fit on the next graph-data change. Arm it only once the change is
+   * known to come: a refused rebuild changes no data, so an armed skip would swallow an unrelated
+   * later fit.
    */
   const preserveViewportOnNextGraphChange = useCallback(() => {
     setViewportPreserveVersion((version) => version + 1);
   }, []);
 
-  /** Reads the current pre-lock view (filter, graph mode, expanded schemas, focus, viewport) off the live refs. */
+  /**
+   * Reads the pre-lock view (filter, mode, expanded schemas, focus, viewport) off the live refs.
+   */
   const captureViewSnapshot = useCallback((): ViewSnapshot => ({
     filter: filterRef.current,
     graphMode: graphModeRef.current,
@@ -573,12 +549,14 @@ export function App() {
     viewport: currentViewportRef.current,
   }), []);
 
-  /** Reports the canvas's live viewport so it can be captured into a view snapshot on lock entry. */
+  /** Reports the live viewport so lock entry can capture it in the view snapshot. */
   const handleCameraChange = useCallback((viewport: { x: number; y: number; zoom: number }) => {
     currentViewportRef.current = viewport;
   }, []);
 
-  /** Keeps expanded schemas that still exist in the model, instead of collapsing all of them, when settings change or Refresh completes. */
+  /**
+   * Keeps expanded schemas still in the model, not collapsing all, on settings change or Refresh.
+   */
   const reconcileExpandedSchemaView = useCallback((m: DatabaseModel) => {
     const current = expandedSchemaViewRef.current;
     if (!current) return;
@@ -587,16 +565,13 @@ export function App() {
   }, []);
 
   /**
-   * Restores the view (graph mode, expanded schemas, viewport) saved on entry to a locked mode or
-   * the AI preview, then clears the saved snapshot and any shown AI preview. A no-op when none is
-   * saved.
+   * Restores the view (mode, expanded schemas, viewport) saved on entering a locked mode or the AI
+   * preview, then clears the snapshot and any AI preview. No-op when none is saved.
    *
-   * @remarks
-   * The saved camera is armed only when the rebuild is admitted: a refused rebuild (maxNodes lowered
-   * while the mode was locked) changes no graph data, so an armed camera and fit-skip would otherwise
-   * stay pending and snap to the stale viewport on the next unrelated graph change.
+   * The saved camera is armed only when the rebuild is admitted; a refused one (maxNodes lowered
+   * meanwhile) leaves it pending and it would snap to a stale viewport later.
    *
-   * @param selection - The filter to apply; defaults to the filter saved in the snapshot.
+   * @param selection - Filter to apply; defaults to the one saved in the snapshot.
    */
   const restoreViewSnapshot = useCallback((selection?: FilterState) => {
     const saved = viewSnapshotRef.current;
@@ -634,15 +609,12 @@ export function App() {
   }, [isModeLocked, captureViewSnapshot, restoreViewSnapshot]);
 
   /**
-   * Resets filters and pulls fresh extension settings from the host.
+   * Resets filters and pulls fresh settings from the host. Does not exit trace, analysis or AI
+   * preview modes; expanded schemas are kept.
    *
-   * @remarks
-   * Posts `rebuild` and sets {@link pendingRefreshReset} so the arriving `rebuild-config` reply
-   * performs a full filter reset and re-derives the graph view mode. Does not exit active trace,
-   * analysis, or AI preview modes. Also remounts the canvas ({@link canvasResetKey}), so the button
-   * repairs a stuck rendering state even when the host never replies. Expanded schemas are kept
-   * (reconciled once the reply arrives) — a refresh reloads data, it does not collapse the view,
-   * matching the VS Code tree-view convention.
+   * Posts `rebuild` and sets {@link pendingRefreshReset} so the `rebuild-config` reply does a full
+   * filter reset. Also remounts the canvas ({@link canvasResetKey}), so it repairs a stuck render
+   * even if the host never replies.
    */
   const handleRefresh = useCallback(() => {
     pendingRefreshReset.current = true;
@@ -669,8 +641,8 @@ export function App() {
   const rebuildTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /**
-   * Stops the pending rebuild timer: the {@link REBUILD_TIMEOUT_MS} watchdog once a reply has
-   * arrived, or the minimum-spinner hold when a new rebuild starts or the app unmounts.
+   * Stops the pending rebuild timer: the {@link REBUILD_TIMEOUT_MS} watchdog or the minimum-spinner
+   * hold.
    */
   const clearRebuildTimeout = useCallback(() => {
     if (rebuildTimeoutRef.current) {
@@ -682,12 +654,8 @@ export function App() {
   useEffect(() => clearRebuildTimeout, [clearRebuildTimeout]);
 
   /**
-   * Forces a complete rebuild of the graph structure, keeping the current filter.
-   *
-   * @remarks
-   * Remounts the canvas ({@link canvasResetKey}) before the round trip, so the button repairs a
-   * stuck rendering state whether or not the host replies, and arms a watchdog so a lost reply
-   * cannot pin the spinner.
+   * Rebuilds the graph structure, keeping the current filter. Remounts the canvas
+   * ({@link canvasResetKey}) first and arms a watchdog, so a lost reply cannot pin the spinner.
    */
   const handleRebuild = useCallback(() => {
     if (model) {
@@ -849,11 +817,11 @@ export function App() {
   }, [filter, model, config, rebuild]);
 
   /**
-   * Refuses a candidate schema selection that would exceed `dataLineageViz.maxNodes`, through the
-   * build's own admission check, which surfaces the shared refusal warning. The single guard every
-   * in-canvas schema-filter handler calls before committing its next filter state.
+   * Refuses a schema selection that would exceed `dataLineageViz.maxNodes`, via the build's
+   * admission check (which shows the refusal warning). Every in-canvas schema-filter handler calls
+   * it before committing.
    *
-   * @returns `true` when the selection is within the configured limit.
+   * @returns `true` when the selection is within the limit.
    */
   const guardSchemaSelection = useCallback(
     (m: DatabaseModel, schemas: Set<string>): boolean => !refusesBuild(m, { schemas }, config),
@@ -861,10 +829,10 @@ export function App() {
   );
 
   /**
-   * Unified star-schema handler for the schema focus control.
+   * Schema focus control handler.
    *
    * @param schema - Target schema, or null to unfocus.
-   * @param options - Logic flags: toggle, forceLayout, includeNeighbors.
+   * @param options - toggle, forceLayout, includeNeighbors.
    * @returns Post-filter node count, or `0` when the selection is refused.
    */
   const applyStarSchema = useCallback((
@@ -1135,12 +1103,10 @@ export function App() {
   }, [preserveViewportOnNextGraphChange]);
 
   /**
-   * Discards the transient AI preview view, keeping the user's current filter selection.
-   *
-   * @remarks
-   * Restores the pre-preview graph mode, expanded schemas and viewport. While a trace or analysis
-   * owns the snapshot, the graph is rebuilt from the selection and the saved selection is replaced,
-   * so that mode's exit restores the rest.
+   * Discards the AI preview, keeping the current filter selection, and restores the pre-preview
+   * mode, expanded schemas and viewport. While a trace or analysis owns the snapshot, the graph is
+   * rebuilt from the selection and the saved selection replaced, so that mode's exit restores the
+   * rest.
    */
   const handleDiscardAiPreview = useCallback(() => {
     const selection = filterAfterAiPreviewDiscard(filterRef.current);
@@ -1539,7 +1505,10 @@ export function App() {
   const renderNodes = renderSurface.nodes;
   const renderEdges = renderSurface.edges;
 
-  /** Diagnostics context for the canvas error boundary and `render-state`; derived only when a rendered input changes. */
+  /**
+   * Diagnostics context for the canvas error boundary and `render-state`; derived only when a
+   * rendered input changes.
+   */
   const graphErrorContext = useMemo(() => ({
     projectId: activeProjectId,
     sourceName,

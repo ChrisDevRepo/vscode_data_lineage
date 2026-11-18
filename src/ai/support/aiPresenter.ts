@@ -122,10 +122,7 @@ export function presentFkCompact(fk: { columns: string[]; refSchema: string; ref
   return `${fk.columns.join(', ')} → ${fk.refSchema}.${fk.refTable}`;
 }
 
-/**
- * Maps a node's foreign keys to the snake_case model-facing shape; `undefined` when `fks` is absent
- * (callers pick `?? null`/`?? undefined`).
- */
+/** Maps a node's foreign keys to the snake_case model-facing shape; `undefined` without `fks`. */
 export function presentForeignKeys(
   fks: ForeignKeyInfo[] | undefined,
 ): Array<Record<string, unknown>> | undefined {

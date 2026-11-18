@@ -148,7 +148,10 @@ export function NodeRemoveButton({ id, onRemove }: { id: string; onRemove?: (nod
   );
 }
 
-/** Render the four add/prune neighbor buttons for a node's in/out trace sides; nothing without trace controls. */
+/**
+ * Renders the four add/prune neighbor buttons for a node's in/out trace sides; none without trace
+ * controls.
+ */
 export function TraceControlsRail({
   traceControls,
   onAction,
@@ -257,7 +260,5 @@ function CustomNodeComponent({ id, data }: { id: string; data: CustomNodeData })
   );
 }
 
-/**
- * Renders an object or schema node inside the React Flow canvas.
- */
+/** Renders an object or schema node inside the React Flow canvas. */
 export const CustomNode = memo(CustomNodeComponent);

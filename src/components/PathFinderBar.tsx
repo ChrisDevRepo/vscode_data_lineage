@@ -20,9 +20,7 @@ interface PathFinderBarProps {
   onClose: () => void;
 }
 
-/**
- * Collects a target node and delegates shortest-path traversal to the parent graph.
- */
+/** Collects a target node and delegates shortest-path traversal to the parent graph. */
 export const PathFinderBar = memo(function PathFinderBar({
   sourceNodeName,
   allNodes,

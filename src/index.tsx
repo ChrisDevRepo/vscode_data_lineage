@@ -10,17 +10,14 @@ if (!root) {
 }
 
 /**
- * Reports a failed bootstrap chunk load and leaves a visible message in place of the panel.
+ * Reports a failed bootstrap chunk load and leaves a visible message in place of the panel. The
+ * dynamic imports carry the ErrorBoundary and, in detail mode, the global `unhandledrejection`
+ * listener, so a chunk that fails to load has no other reporter: the panel would be blank and
+ * nothing would reach the Output channel. `window.vscode` may be undefined here (detail mode
+ * acquires it inside the failed chunk); the in-page message is then the only surface left.
  *
- * @remarks
- * The dynamic imports below carry the ErrorBoundary and — in detail mode — the global
- * `unhandledrejection` listener itself, so a chunk that fails to load has no other reporter: without
- * this the panel is blank and nothing reaches the Output channel. `window.vscode` may legitimately
- * be undefined here (detail mode acquires it inside the chunk that just failed), in which case the
- * in-page message is the only surface left.
- *
- * @param surface - Which webview failed, used to label the Output-channel record.
- * @param mount - Element the failure message replaces the panel content in.
+ * @param surface - Which webview failed, labelling the Output-channel record.
+ * @param mount - Element whose content the failure message replaces.
  * @param error - The rejection value from the import chain.
  */
 function reportBootstrapFailure(surface: 'detail' | 'panel', mount: HTMLElement, error: unknown): void {
@@ -32,7 +29,8 @@ function reportBootstrapFailure(surface: 'detail' | 'panel', mount: HTMLElement,
     stack: error instanceof Error ? error.stack : undefined,
     timestamp: Date.now(),
   });
-  // textContent, never innerHTML: `message` is provider/runtime text and must not be parsed as markup.
+  // textContent, never innerHTML: `message` is provider/runtime text and must not be parsed as
+  // markup.
   mount.textContent = 'Data Lineage could not load this view. Reload the window; if it persists, reinstall the extension.';
   mount.style.setProperty('padding', '12px');
   mount.style.setProperty('font-size', '12px');
@@ -40,7 +38,8 @@ function reportBootstrapFailure(surface: 'detail' | 'panel', mount: HTMLElement,
 }
 
 if ((window as unknown as { __DETAIL_MODE__?: boolean }).__DETAIL_MODE__) {
-  // Global error handlers + ErrorBoundary are set up in DetailApp.tsx module scope (window.vscode too).
+  // Global error handlers and ErrorBoundary are set up in DetailApp.tsx module scope (window.vscode
+  // too).
   Promise.all([
     import('./detail/DetailApp'),
     import('./components/ErrorBoundary'),
@@ -48,8 +47,8 @@ if ((window as unknown as { __DETAIL_MODE__?: boolean }).__DETAIL_MODE__) {
     createRoot(root).render(
       <ErrorBoundary
         onError={() => {
-          // ErrorBoundary.componentDidCatch already posts the `error` message, which the host answers
-          // with the one error toast; a second toast from here would show the crash twice.
+          // ErrorBoundary.componentDidCatch already posts the `error` message, which the host
+          // answers with the one error toast; a second toast here would show the crash twice. The
           // 800 ms delay lets the fallback render before disposal.
           setTimeout(() => window.vscode?.postMessage({ type: 'close-detail' }), 800);
         }}
@@ -83,7 +82,8 @@ if ((window as unknown as { __DETAIL_MODE__?: boolean }).__DETAIL_MODE__) {
     });
 
     window.addEventListener('error', (event) => {
-      // A browser notice with nothing thrown behind it goes to the log, not a modal toast the user cannot act on.
+      // A browser notice with nothing thrown behind it goes to the log, not a toast the user cannot
+      // act on.
       if (!(event.error instanceof Error)) {
         window.vscode?.postMessage({ type: 'log', level: 'debug', text: `[Graph] Window notice: ${event.message}` });
         return;
@@ -103,14 +103,15 @@ if ((window as unknown as { __DETAIL_MODE__?: boolean }).__DETAIL_MODE__) {
     import('./components/ErrorBoundary'),
     import('./engine/graphBuilder'),
   ]).then(([{ App }, { VsCodeProvider }, { ErrorBoundary }, { setGraphLogSink }]) => {
-    // The engine has no bridge of its own, so this is the one place the sink is installed, before the first render can build one.
+    // The engine has no bridge of its own: this is the one place the sink is installed, before the
+    // first render can build one.
     setGraphLogSink((level, text) => window.vscode?.postMessage({ type: 'log', level, text }));
 
     createRoot(root).render(
       <ErrorBoundary
         onError={() => {
-          // ErrorBoundary emits the error toast and Output log; this handler only auto-reopens the panel.
-          // 800 ms delay lets the fallback render before the panel is recycled.
+          // ErrorBoundary emits the error toast and Output log; this handler only auto-reopens the
+          // panel, after an 800 ms delay so the fallback renders before the panel is recycled.
           setTimeout(() => window.vscode?.postMessage({ type: 'reload' }), 800);
         }}
         fallback={

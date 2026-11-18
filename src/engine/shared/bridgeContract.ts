@@ -13,10 +13,7 @@ import { OBJECT_TYPES, type ExtensionConfig, type SchemaPreview, type TraceAffor
 /** Zod schema defining the valid types of database objects in the lineage graph. */
 const ObjectTypeSchema = z.enum(OBJECT_TYPES);
 
-/**
- * Upper bound on a list of object ids carried in a tool call or across the bridge — an input-size
- * check, never a scope limit.
- */
+/** Upper bound on object ids in a tool call or bridge message: an input-size check, not a scope. */
 export const MAX_ID_LIST_LENGTH = 500;
 
 /**
@@ -197,8 +194,8 @@ const DatabaseModelSchema = z.object({
 });
 
 /**
- * Zod schema carrying the host's settings snapshot across the bridge, pinned to {@link
- * ExtensionConfig} so a parsed message keeps its field types instead of degrading to `any`.
+ * Zod schema carrying the host's settings snapshot across the bridge, pinned to
+ * {@link ExtensionConfig} so a parsed message keeps its field types instead of degrading to `any`.
  * `Partial` is the honest shape: the host is the sole producer, so a mismatch is a host refactor
  * bug that must fail at the boundary. `parseRules` alone stays structural.
  */
@@ -312,8 +309,8 @@ export type ColumnTransformClass = typeof COLUMN_TRANSFORM_CLASSES[number];
 /**
  * Whether a transform class carries the upstream value into the output (DIRECT) or only shaped
  * which rows appear (INDIRECT), in OpenLineage's terms. Exhaustive and load-bearing: no class is
- * both, so a renderer can key a distinct edge treatment off this map alone; a class added to {@link
- * COLUMN_TRANSFORM_CLASSES} without an entry fails to typecheck.
+ * both, so a renderer can key a distinct edge treatment off this map alone; a class added to
+ * {@link COLUMN_TRANSFORM_CLASSES} without an entry fails to typecheck.
  */
 export const COLUMN_TRANSFORM_DIRECTION: Readonly<Record<ColumnTransformClass, 'DIRECT' | 'INDIRECT'>> = {
   pass_through: 'DIRECT',
@@ -365,10 +362,7 @@ const NodeVerdictSchema = z.object({
 /** Inferred shape of {@link NodeVerdictSchema}. */
 export type NodeVerdict = z.infer<typeof NodeVerdictSchema>;
 
-/**
- * Zod schema of AI-generated metadata for the lineage graph UI: custom grouping, badging,
- * highlighting and descriptive text.
- */
+/** Zod schema of AI-generated lineage metadata: grouping, badging, highlighting, descriptions. */
 const AIViewMetadataSchema = z.object({
   summary: z.string().optional(),
   description: z.string().optional(),
@@ -385,17 +379,11 @@ const AIViewMetadataSchema = z.object({
    * result node can show column flow data. Only present during CT sessions.
    */
   columnAspect: ColumnAspectSchema.optional(),
-  /**
-   * Per-node CT verdict, so the webview can mark column lines without an AI-contract change. Only
-   * present during CT sessions.
-   */
+  /** Per-node CT verdict so the webview marks column lines without an AI-contract change. */
   nodeVerdicts: z.array(NodeVerdictSchema).optional(),
 }).strict();
 
-/**
- * AI-generated metadata layered onto the lineage graph UI: grouping, badges, highlights, and
- * descriptive text.
- */
+/** AI-generated metadata layered onto the lineage graph UI: grouping, badges, highlights, text. */
 export type AIViewMetadata = z.infer<typeof AIViewMetadataSchema>;
 
 const ExpandedSchemaViewSchema = z.object({
@@ -423,9 +411,7 @@ const FilterProfileSchema = z.object({
 /** A saved filter profile snapshot: layout, filter rules, and optional AI metadata. */
 export type FilterProfile = z.infer<typeof FilterProfileSchema>;
 
-/**
- * Human-readable labels for bookmark-view sources. Single owner; banner + info card both read it.
- */
+/** Labels of bookmark-view sources; the single owner, read by the banner and the info card. */
 export const BOOKMARK_SOURCE_LABELS: Record<NonNullable<FilterProfile['source']>, string> = {
   ai: 'AI',
   trace: 'Trace',
@@ -482,10 +468,7 @@ export const StoredConnectionInfoSchema = z.object({
   connectionId: z.string().optional(),
 }).strict();
 
-/**
- * Stored database connection metadata. See {@link StoredConnectionInfoSchema} for the
- * persistence-tolerance contract.
- */
+/** Stored database connection metadata; see {@link StoredConnectionInfoSchema} for tolerance. */
 export type StoredConnectionInfo = z.infer<typeof StoredConnectionInfoSchema>;
 
 const DacpacConnectionSchema = z.object({
@@ -513,9 +496,7 @@ const ProjectConnectionSchema = z.discriminatedUnion('type', [
   DatabaseConnectionSchema,
 ]);
 
-/**
- * Zod schema of a workspace project: related database connections plus persistent filter profiles.
- */
+/** Zod schema of a workspace project: related database connections plus filter profiles. */
 export const ProjectSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -561,10 +542,7 @@ const FilterProfileReadSchema = z.object({
   expandedSchemaView: z.object(ExpandedSchemaViewSchema.shape).optional(),
 });
 
-/**
- * Persisted-record counterpart of {@link ProjectSchema}; see {@link
- * StoredConnectionInfoReadSchema}.
- */
+/** Persisted counterpart of {@link ProjectSchema}; see {@link StoredConnectionInfoReadSchema}. */
 export const ProjectReadSchema = z.object({
   ...ProjectSchema.shape,
   connection: ProjectConnectionReadSchema,
@@ -738,10 +716,7 @@ export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ai-view-preview'), name: z.string(), nodeIds: z.array(z.string()), aiMetadata: AIViewMetadataSchema }),
 ]);
 
-/**
- * Type inferred from {@link ExtensionToWebviewMsgSchema}: every valid message dispatched to the
- * Webview.
- */
+/** Type inferred from {@link ExtensionToWebviewMsgSchema}: every valid message to the Webview. */
 export type ExtensionToWebviewMsg = z.infer<typeof ExtensionToWebviewMsgSchema>;
 
 /** Structured webview crash diagnostic accepted from both primary and detail panels. */
@@ -863,9 +838,9 @@ const TableStatsSchema: z.ZodType<TableStats> = z.object({
 });
 
 /**
- * Zod schema for messages from the host **to the detail-panel webview**, mirroring {@link
- * DetailPanelToExtensionMsgSchema} for the reverse direction. Sends go through the `postToDetail`
- * sink so they are validated like the main panel's `postToWebview`; never a raw
+ * Zod schema for messages from the host **to the detail-panel webview**, mirroring
+ * {@link DetailPanelToExtensionMsgSchema} for the reverse direction. Sends go through the
+ * `postToDetail` sink so they are validated like the main panel's `postToWebview`; never a raw
  * `detailPanel.webview.postMessage`.
  */
 export const ExtensionToDetailMsgSchema = z.discriminatedUnion('type', [

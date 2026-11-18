@@ -46,14 +46,9 @@ export interface TraceTree {
   totalUpstream: number;
   /** Total visible downstream node count, origin excluded. */
   totalDownstream: number;
-  /**
-   * Out-of-scope inbound neighbors of every upstream node and the origin: one more upstream level.
-   */
+  /** Out-of-scope inbound neighbors of every upstream node and the origin (one level further). */
   nextUpstream: string[];
-  /**
-   * Out-of-scope outbound neighbors of every downstream node and the origin: one more downstream
-   * level.
-   */
+  /** Out-of-scope outbound neighbors of every downstream node and the origin: one level further. */
   nextDownstream: string[];
 }
 

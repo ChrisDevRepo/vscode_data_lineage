@@ -2,14 +2,9 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 
 /**
- * Resolves a file path against the active VS Code workspace.
- *
- * If the provided `filePath` is already absolute, it is returned as-is.
- * If the path is relative, it is resolved against the root of the first
- * available workspace folder.
- *
- * @param filePath - The path to resolve (absolute or relative to workspace).
- * @returns The absolute file path, or `undefined` if the path is relative and no workspace folder is open.
+ * Resolves a file path against the active workspace: an absolute path is returned as-is, a relative
+ * one is resolved against the first workspace folder. Returns `undefined` when it is relative and
+ * no workspace folder is open.
  */
 export function resolveWorkspacePath(filePath: string): string | undefined {
   if (path.isAbsolute(filePath)) return filePath;
@@ -18,17 +13,11 @@ export function resolveWorkspacePath(filePath: string): string | undefined {
 }
 
 /**
- * Persists a resolved absolute path back into the VS Code configuration.
+ * Writes a resolved absolute path back to the setting it came from when that setting was relative,
+ * to the same configuration target (Global, Workspace or Workspace Folder), so the setting stays
+ * valid if the workspace context changes or goes away.
  *
- * This function detects if a setting was originally provided as a relative path.
- * If so, it writes the resolved absolute path back to the same configuration target
- * (Global, Workspace, or Workspace Folder) to ensure the setting remains valid
- * even if the workspace context changes or is removed.
- *
- * @param settingKey - The configuration key under the 'dataLineageViz' section.
- * @param originalValue - The original raw value retrieved from configuration.
- * @param resolvedAbsolute - The absolute path that was successfully resolved from the original value.
- * @returns A promise that resolves when the configuration update is complete.
+ * @param originalValue - The raw configured value.
  */
 export async function persistAbsolutePath(
   settingKey: string,

@@ -31,9 +31,7 @@ export interface ConnectionErrorAction {
 
 /** What the caller can do on the user's behalf when an action asks for it. */
 export interface ConnectionErrorHooks {
-  /**
-   * Repeats the failed operation once; `patch` overrides stored connection fields for that attempt.
-   */
+  /** Repeats the failed operation once; `patch` overrides stored connection fields for it. */
   retry?: (patch?: Partial<StoredConnectionInfo>) => Promise<void> | void;
   /** Asks the user for a database name. */
   chooseDatabase?: () => Promise<string | undefined>;
@@ -220,10 +218,7 @@ export function describeConnectionError(
   return { message, actions: wanted };
 }
 
-/**
- * Asks, in a modal, whether to trust a server certificate without validating it; `true` only when
- * the user confirmed.
- */
+/** Modal asking whether to trust a server certificate unvalidated; `true` only if confirmed. */
 export async function confirmTrustServerCertificate(connection: Pick<BuiltInConnection, 'server' | 'port' | 'database'>): Promise<boolean> {
   const confirmed = await vscode.window.showWarningMessage(
     `Trust the certificate of ${describeConnection(connection)} without validating it? Do this only for a server you know uses a self-signed certificate, such as a development or test server.`,

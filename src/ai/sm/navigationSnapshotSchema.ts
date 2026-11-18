@@ -4,10 +4,7 @@ import { ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
 import { bothSidesClosed } from '../../engine/shared/explorationDepthContract';
 import { heldHopFindingSchemaForMode } from '../tools/toolSchemas';
 
-/**
- * Stable failure of the navigation-snapshot shape check; a live engine invariant reports through
- * the engine's error status instead.
- */
+/** Stable failure of the navigation-snapshot shape check; engine invariants use error status. */
 export class InvalidEngineCheckpointError extends Error {
   /** Stable machine code exposed to the checkpoint caller. */
   public readonly code = 'invalid_engine_checkpoint' as const;
@@ -287,10 +284,7 @@ const EngineInternalsSchema = z.object({
   ...internals
 }) => internals);
 
-/**
- * Shape contract of the serialized NavigationEngine projection: the state dump and the saved run's
- * snapshot.
- */
+/** Shape of the serialized NavigationEngine projection: the state dump and saved run snapshot. */
 export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
   snapshotVersion: z.union([z.literal(1), z.literal(2)]),
   identifierCaseSensitive: z.boolean().optional(),

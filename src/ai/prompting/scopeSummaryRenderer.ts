@@ -129,8 +129,8 @@ function schemasInPlanOrder(summary: ScopeSummary): Array<[string, ScopeSummary[
 
 /**
  * States the schema selection from its shorter side: `All` when nothing is excluded, `All except x,
- * y` when fewer are excluded than selected, otherwise the selected list ({@link
- * ScopeSummary.selectedSchemas}, `activeFilters.schemas`).
+ * y` when fewer are excluded than selected, otherwise the selected list
+ * ({@link ScopeSummary.selectedSchemas}, `activeFilters.schemas`).
  *
  * @param nameCap - Names listed before the line states `N of M selected` instead.
  */
@@ -213,10 +213,10 @@ export function renderScopeSummaryMd(
 }
 
 /**
- * The `Read as` lines of the user-facing full plan: the same active filters as {@link
- * renderScopeSummaryMd}, excluded objects grouped by excluding rule with each type capped at {@link
- * PLAN_NAMES_PER_TYPE} names, and the schema filter from its shorter side with every name ({@link
- * schemasLine}).
+ * The `Read as` lines of the user-facing full plan: the same active filters as
+ * {@link renderScopeSummaryMd}, excluded objects grouped by excluding rule with each type capped at
+ * {@link PLAN_NAMES_PER_TYPE} names, and the schema filter from its shorter side with every name
+ * ({@link schemasLine}).
  */
 function fullPlanReadAs(summary: ScopeSummary): string[] {
   const readAs: string[] = [`- Schemas: ${schemasLine(summary)}`];
@@ -420,8 +420,6 @@ export const GATE_CARD_HEADER = '\n\n---\n**Confirm exploration**\n\n';
 export const HOLD_GATE_NOTICE =
   '\n\nApprove, change or cancel with the buttons below, or reply here.';
 
-/**
- * Chat line for a typed gate reply whose reading failed: no action is taken on the user's behalf.
- */
+/** Chat line for a typed gate reply whose reading failed: no action is taken for the user. */
 export const UNREAD_GATE_REPLY =
   'That reply could not be read as approve, change or cancel — the proposal is still pending. Use the buttons above, or rephrase.';

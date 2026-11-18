@@ -35,9 +35,7 @@ export function modelAssistantMessage(text: string): AIMessage {
  */
 export const PROVIDER_PARTS_KEY = 'providerParts';
 
-/**
- * Reads a message's provider stream parts ({@link PROVIDER_PARTS_KEY}); empty when it carries none.
- */
+/** Reads a message's provider stream parts ({@link PROVIDER_PARTS_KEY}); empty if none. */
 export function messageProviderParts(message: BaseMessage): readonly unknown[] {
   const parts = message.additional_kwargs?.[PROVIDER_PARTS_KEY];
   return Array.isArray(parts) ? parts : [];
@@ -275,10 +273,7 @@ export interface InvalidGeneratedToolCall {
    * unproductive resend. Never dispatched, replayed or logged raw.
    */
   readonly input?: unknown;
-  /**
-   * Rejection category — schema-invalid input, tool-call notation in a text value, unknown tool, or
-   * a duplicate call id.
-   */
+  /** Rejection category: invalid schema, tool-call notation in text, unknown tool, duplicate id. */
   readonly code:
     | typeof REJECTION_CODES.invalidToolInput
     | typeof REJECTION_CODES.toolCallNotation
@@ -406,10 +401,7 @@ export interface SingleGenerationModelPort {
   getNumTokens(content: MessageContent): Promise<number>;
 }
 
-/**
- * Flattens LangChain `MessageContent` (a string or a list of content blocks) into plain text for a
- * provider token counter.
- */
+/** Flattens LangChain `MessageContent` (string or content blocks) into text for a token counter. */
 export function messageContentToText(content: MessageContent): string {
   if (typeof content === 'string') return content;
   return content.map((block) => (typeof block === 'string' ? block : 'text' in block && typeof block.text === 'string' ? block.text : '')).join('');

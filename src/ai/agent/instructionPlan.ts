@@ -282,10 +282,7 @@ export function compileInstructionPlan<T>(draft: StructuredPlanDraft<T>): Struct
 export function compileInstructionPlan(draft: ConversePlanDraft): ConverseInstructionPlan;
 /** @param draft - Internal text-completion ingredients. @returns A readonly text plan. */
 export function compileInstructionPlan(draft: TextPlanDraft): TextInstructionPlan;
-/**
- * Compiles the plan, preserving discriminated result types; `draft` holds the trusted call
- * ingredients selected by the active LangGraph node.
- */
+/** Compiles the plan, keeping result types; `draft` holds the active node's trusted call data. */
 export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): InstructionPlan<T> {
   if (draft.kind === 'structured') {
     const { kind: _kind, phase, contract, facts, ...input } = draft;
@@ -397,10 +394,7 @@ type InstructionPlanExecutor = Pick<ModelPort, 'generateStructured' | 'completeT
 export function executeInstructionPlan<T>(model: InstructionPlanExecutor, plan: StructuredInstructionPlan<T>): Promise<T>;
 /** Runs a text plan on the model port; resolves to the trimmed provider text. */
 export function executeInstructionPlan(model: InstructionPlanExecutor, plan: TextInstructionPlan): Promise<string>;
-/**
- * Forwards one compiled structured or text plan to the provider-neutral port; returns the result
- * shape tied to the plan discriminant.
- */
+/** Forwards one compiled plan to the provider-neutral port; the result shape follows the plan. */
 export function executeInstructionPlan<T>(
   model: InstructionPlanExecutor,
   plan: StructuredInstructionPlan<T> | TextInstructionPlan,

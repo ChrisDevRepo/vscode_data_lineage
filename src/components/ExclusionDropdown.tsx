@@ -21,14 +21,9 @@ interface ExclusionDropdownProps {
 }
 
 /**
- * A dropdown component for managing node exclusion rules.
- *
- * It allows users to enter SQL-like wildcards (e.g., `%tmp%`) or regular expressions
- * to hide matching nodes from the graph. Patterns are validated using
- * {@link compileExclusionPattern} before being added.
- *
- * @param props - The component props.
- * @returns A memoized React component.
+ * Dropdown for node exclusion rules: SQL-like wildcards (e.g. `%tmp%`) or regular expressions hide
+ * matching nodes from the graph. Patterns are validated with {@link compileExclusionPattern} before
+ * being added.
  */
 export const ExclusionDropdown = memo(function ExclusionDropdown({
   exclusionPatterns,

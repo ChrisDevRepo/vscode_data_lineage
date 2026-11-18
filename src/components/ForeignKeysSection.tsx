@@ -9,9 +9,7 @@ interface ForeignKeysSectionProps {
   findQuery?: string;
 }
 
-/**
- * Renders foreign-key constraints with source columns, referenced tables, and delete rules.
- */
+/** Renders foreign-key constraints with source columns, referenced tables, and delete rules. */
 export function ForeignKeysSection({ fks, findQuery }: ForeignKeysSectionProps) {
   return (
     <div style={{ borderTop: '1px solid var(--ln-border)', paddingTop: 10 }}>

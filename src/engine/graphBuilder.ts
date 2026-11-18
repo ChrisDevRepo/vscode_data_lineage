@@ -27,16 +27,10 @@ import {
  */
 type GraphLogSink = (level: 'info' | 'debug' | 'warn', text: string) => void;
 
-/**
- * Where this module's diagnostics go. A no-op by default so the engine works outside the webview
- * (host process, test) without `window`.
- */
+/** Where this module's diagnostics go; a no-op by default so the engine works without `window`. */
 let logSink: GraphLogSink = () => {};
 
-/**
- * Installs the sink this module logs through; called once from the webview entry point, which owns
- * the bridge to the host.
- */
+/** Installs the sink this module logs through; called once from the webview entry point. */
 export function setGraphLogSink(sink: GraphLogSink): void {
   logSink = sink;
 }
@@ -103,18 +97,13 @@ interface GraphResult {
   graph: Graph;
 }
 
-/**
- * Node fields {@link buildLineageFlowNode} reads; the `external*` fields are set only for external
- * references.
- */
+/** Node fields {@link buildLineageFlowNode} reads; `external*` are set only for external refs. */
 type LineageFlowNodeSource = Pick<
   LineageNode,
   'id' | 'name' | 'schema' | 'fullName' | 'type' | 'externalType' | 'externalUrl' | 'externalDatabase' | 'definitionUnreadable'
 >;
 
-/**
- * Builds a lineage flow node; a null `graph` (synthesized out-of-filter node) gives it zero degree.
- */
+/** Builds a lineage flow node; a null `graph` (synthesized out-of-filter node) has zero degree. */
 function buildLineageFlowNode(
   source: LineageFlowNodeSource,
   graph: Graph | null,
@@ -300,8 +289,8 @@ function isSynthesizingMode(trace: TraceState, synthesizeOutOfFilter?: boolean):
 }
 
 /**
- * Projects the full flow onto the traced node / edge sets, treating a bidirectional edge (`A↔B`) as
- * matching either `A→B` or `B→A`.
+ * Projects the flow onto the traced node/edge sets; a bidirectional edge `A↔B` matches `A→B` or
+ * `B→A`.
  */
 function projectFlowToTrace(
   flowNodes: FlowNode[],
@@ -492,10 +481,7 @@ export interface LayoutInput {
 const LAYOUT_CACHE_SIZE = 12;
 const layoutCache: Array<{ key: string; positions: Map<string, { x: number; y: number }> }> = [];
 
-/**
- * Builds the layout cache identity from sorted topology, layout settings, node sizes and
- * annotations.
- */
+/** Layout cache identity from sorted topology, layout settings, node sizes and annotations. */
 export function layoutCacheKey({ nodeIds, edges, config, ranker, direction, sizeOf, annotatedNodeIds }: LayoutInput): string {
   const sortedNodes = [...nodeIds].sort();
   const sortedEdges = edges.map(e => `${e.source}→${e.target}`).sort();
@@ -504,10 +490,7 @@ export function layoutCacheKey({ nodeIds, edges, config, ranker, direction, size
   return `${direction ?? config.layout.direction}|${config.layout.rankSeparation}|${config.layout.nodeSeparation}|${ranker ?? ''}|${sortedNodes.join(',')}|${sortedEdges.join(',')}|${sizes}|${annotated}`;
 }
 
-/**
- * Computes spatial positions with Dagre and an LRU cache; returns top-left position per node, or an
- * empty map when Dagre fails.
- */
+/** Dagre positions behind an LRU cache: top-left per node, or an empty map when Dagre fails. */
 export function dagreLayout(input: LayoutInput): Map<string, { x: number; y: number }> {
   const key = layoutCacheKey(input);
   const cached = layoutCache.find(e => e.key === key);
@@ -529,10 +512,7 @@ function storeLayout(key: string, positions: Map<string, { x: number; y: number 
   if (layoutCache.length > LAYOUT_CACHE_SIZE) layoutCache.pop();
 }
 
-/**
- * Runs Dagre on one layout input without touching the cache: the unit of work a layout worker
- * executes off the UI thread.
- */
+/** Runs Dagre on one layout input without the cache: the unit a layout worker runs off-thread. */
 export function runDagre({ nodeIds, edges, config, ranker, direction, sizeOf, annotatedNodeIds }: LayoutInput): Map<string, { x: number; y: number }> {
   const g = new dagre.graphlib.Graph();
   g.setGraph({
@@ -589,18 +569,12 @@ export function seedLayoutCache(
   return true;
 }
 
-/**
- * Whether {@link dagreLayout} would answer this input from the cache; `key` is derived from `input`
- * when omitted.
- */
+/** Whether {@link dagreLayout} would serve this input from the cache; `key` defaults to its own. */
 export function hasCachedLayout(input: LayoutInput, key: string = layoutCacheKey(input)): boolean {
   return layoutCache.some(e => e.key === key);
 }
 
-/**
- * Calculates graph metrics for diagnostics: node and edge totals plus root (in-degree 0) and leaf
- * (out-degree 0) counts.
- */
+/** Graph metrics for diagnostics: node and edge totals, root (in-degree 0), leaf (out-degree 0). */
 export function getGraphMetrics(graph: Graph): { totalNodes: number; totalEdges: number; rootNodes: number; leafNodes: number } {
   let rootNodes = 0;
   let leafNodes = 0;
@@ -618,10 +592,7 @@ export function getGraphMetrics(graph: Graph): { totalNodes: number; totalEdges:
   };
 }
 
-/**
- * Selects a canonical direction for a bidirectional edge pair, favoring data flows (transformers →
- * sinks).
- */
+/** Canonical direction for a bidirectional edge pair, favoring data flow (transformers → sinks). */
 function canonicalDirection(graph: Graph, a: string, b: string): [string, string] {
   const aType = graph.getNodeAttributes(a).type;
   const bType = graph.getNodeAttributes(b).type;
@@ -711,8 +682,8 @@ function buildOverviewColorMap(graph: Graph): SchemaColorMap {
 /**
  * Builds the macro-level Schema View graph.
  *
- * @param config - Supplies layout direction and edge style; node spacing is view-owned ({@link
- *   SCHEMA_RANK_SEPARATION}, {@link SCHEMA_NODE_SEPARATION}).
+ * @param config - Supplies layout direction and edge style; node spacing is view-owned
+ *   ({@link SCHEMA_RANK_SEPARATION}, {@link SCHEMA_NODE_SEPARATION}).
  */
 export function buildSchemaGraph(
   graph: Graph,
@@ -1038,8 +1009,8 @@ function buildExpandedSchemaViewFlowEdges(
 /**
  * Builds the expanded schema view flow graph. Objects whose schema is in `expandedSchemas` render
  * individually; every other schema collapses into one cluster node joined by aggregated bridge
- * edges. Isolated nodes and unconnected clusters drop into a peripheral row (as {@link
- * computeLayout}); the caller's graph is pre-filtered.
+ * edges. Isolated nodes and unconnected clusters drop into a peripheral row (as
+ * {@link computeLayout}); the caller's graph is pre-filtered.
  *
  * @param focusId - The node opened in expanded schema view (highlight + centering); `null` when
  *   entered via a schema double-click, which highlights no node.

@@ -196,10 +196,7 @@ interface ActiveHopInstruction {
   readonly classificationGatedKeys: readonly string[];
 }
 
-/**
- * Builds the active-hop user message with its focus-sensitive YAML provenance (selected
- * capture-template keys).
- */
+/** Builds the active-hop user message with its focus-sensitive YAML provenance. */
 export function buildActiveHopInstruction(sess: AiSession, engine: NavigationEngine, focusId: string): ActiveHopInstruction {
   const isCtMode = engine.currentHopAnalysisMode === 'ct';
   const currentTask = buildCurrentTaskBlock(

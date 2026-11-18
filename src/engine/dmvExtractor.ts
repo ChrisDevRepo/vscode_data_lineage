@@ -42,9 +42,7 @@ export interface DmvResults {
   serverPlatform?: string;
 }
 
-/**
- * Shown when the catalog returns no objects: an empty database, or a login without VIEW DEFINITION.
- */
+/** Shown when the catalog has no objects: an empty database or a login lacking VIEW DEFINITION. */
 const NO_USER_OBJECTS_WARNING = 'No user objects found in database. If the database has objects, the login needs VIEW DEFINITION on it.';
 
 /**

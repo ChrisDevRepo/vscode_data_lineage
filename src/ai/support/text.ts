@@ -138,10 +138,7 @@ export function formatProviderErrorDiagnostic(diagnostic: ProviderErrorDiagnosti
   return `phase=${diagnostic.phase} detail=${JSON.stringify(diagnostic)}`;
 }
 
-/**
- * Connection-level Node/undici codes that identify a transport interruption rather than a provider
- * verdict.
- */
+/** Connection-level Node/undici codes marking a transport interruption, not a provider verdict. */
 const TRANSPORT_ERROR_CODES = new Set([
   'ECONNRESET', 'ECONNREFUSED', 'ECONNABORTED', 'EPIPE', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOTFOUND',
   'EHOSTUNREACH', 'ENETUNREACH', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT',
@@ -195,10 +192,7 @@ function providerErrorCodeChain(diagnostic: ProviderErrorCauseDiagnostic): strin
   return codes;
 }
 
-/**
- * Plain-words explanation for each `vscode.LanguageModelError` code; the provider's own text
- * carries no remedy the user can act on.
- */
+/** Plain-words explanation per `vscode.LanguageModelError` code; provider text has no remedy. */
 const LANGUAGE_MODEL_ERROR_TEXT: Readonly<Record<string, string>> = {
   NoPermissions: 'The extension is not allowed to use the selected language model. Grant it access in the model picker or the chat provider settings, then try again.',
   Blocked: 'The AI provider blocked the request. Try again later or choose another model.',
@@ -252,17 +246,14 @@ export function quoteIds(ids: readonly string[]): string {
   return ids.map(id => `\`${id}\``).join(', ');
 }
 
-/**
- * Reads a `cursor` input (the `next_cursor` of a previous result) as the zero-based offset of the
- * next page; `0` when absent.
- */
+/** Reads a `cursor` (a prior `next_cursor`) as the next page's zero-based offset; 0 if none. */
 export function cursorOffset(cursor: string | undefined): number {
   return cursor === undefined ? 0 : Number.parseInt(cursor, 10);
 }
 
 /**
- * Builds the `next_cursor` value for a list that continues at `offset`; `undefined` once `offset`
- * reaches `total`.
+ * Builds the `next_cursor` for a list continuing at `offset`; `undefined` once `offset` reaches
+ * `total`.
  */
 export function nextCursor(offset: number, total: number): string | undefined {
   return offset < total ? String(offset) : undefined;

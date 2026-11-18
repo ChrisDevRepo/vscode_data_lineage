@@ -153,9 +153,7 @@ function buildFlowRoleHighlightLines(groups: FlowRoleGroups, presented: Readonly
   ];
 }
 
-/**
- * Projects node-level `[from, to, kind]` edges to the `{from, to}` flow the shared buckets read.
- */
+/** Projects node-level `[from, to, kind]` edges to the `{from, to}` flow shared buckets read. */
 function asFlowEdges(edges: ReadonlyArray<[string, string, string]>): Array<{ from: string; to: string }> {
   return edges.map(([from, to]) => ({ from, to }));
 }
@@ -252,9 +250,9 @@ interface NodeFlowFacts {
 }
 
 /**
- * The single producer of per-node writer/reader facts for synthesis passthrough grounding ({@link
- * buildPassthroughFlowFacts}), so every caller reads byte-identical, id-sorted facts. A node with
- * no edge has no entry (rendered `(none)` by {@link renderFlowFactsFragment}).
+ * The single producer of per-node writer/reader facts for synthesis passthrough grounding
+ * ({@link buildPassthroughFlowFacts}), so every caller reads byte-identical, id-sorted facts. A
+ * node with no edge has no entry (rendered `(none)` by {@link renderFlowFactsFragment}).
  */
 function computeNodeFlowFacts(edges: ReadonlyArray<[string, string, string]>, identifierCaseSensitive = false): Map<string, NodeFlowFacts> {
   const lc = (s: string): string => schemaKey(s, identifierCaseSensitive);
@@ -342,10 +340,7 @@ export function buildPassthroughFlowFacts(result: SmResult, identifierCaseSensit
  */
 const CAPTURED_ARTIFACT = /\$\$([\s\S]*?)\$\$|```[^\n`]*\n?([\s\S]*?)```|`([^`\n]+)`/g;
 
-/**
- * An identifier immediately followed by `(` — the lexical mark of a call, hence of a computed
- * value.
- */
+/** An identifier directly followed by `(`: the lexical mark of a call, hence a computed value. */
 const CALL_TOKEN = /\w\(/;
 
 /** A whole DML/DDL statement: it performs an action, whatever it calls along the way. */
@@ -362,10 +357,11 @@ const PREDICATE_START = /^(?:where|on|having|and|or|join)\b/i;
  *
  * Formulas and predicates otherwise reach the model only inside slot prose it must re-scan. Only
  * delimited artifacts are read; a formula left in plain prose is not enumerated. A fenced line or
- * inline span qualifies when it carries a {@link CALL_TOKEN} or opens with a {@link
- * PREDICATE_START} keyword and is not a whole {@link STATEMENT_START} statement; a fenced block is
- * read line by line since one body mixes both classes. Output is capture-ordered and de-duplicated
- * per node (byte-stable); which blocks belong in the answer stays the model's judgement.
+ * inline span qualifies when it carries a {@link CALL_TOKEN} or opens with a
+ * {@link PREDICATE_START} keyword and is not a whole {@link STATEMENT_START} statement; a fenced
+ * block is read line by line since one body mixes both classes. Output is capture-ordered and
+ * de-duplicated per node (byte-stable); which blocks belong in the answer stays the model's
+ * judgement.
  *
  * @returns A markdown checklist, or an empty string when no hop captured a formula.
  */
@@ -415,8 +411,8 @@ function buildCapturedFormulaFacts(result: SmResult, identifierCaseSensitive = f
  * result" the synthesis system prompt reads. Single source of truth for the synthesis evidence
  * surface (the `lineage_submit_findings` completion branch and the host-graph synthesis node both
  * call its builder). {@link synthesis_reminder} carries the user-question anchor plus the flow-role
- * block, the only place the model learns which nodes are terminal sources, and the {@link
- * buildPassthroughFlowFacts} digest for kept nodes with no detail slot.
+ * block, the only place the model learns which nodes are terminal sources, and the
+ * {@link buildPassthroughFlowFacts} digest for kept nodes with no detail slot.
  */
 interface SmCompletionEnvelope {
   readonly ok: true;
@@ -442,8 +438,8 @@ interface SmCompletionEnvelope {
  * it. An id the render dropped or the depth border cut still reaches the model through the recorded
  * evidence, in prose, never in a `node_ids` field.
  *
- * `detail_slots` carries a citation id appended to every fenced block's info string ({@link
- * assignEvidenceIds}, e.g. `sql S7`), numbered by slot then block order; `present_result`
+ * `detail_slots` carries a citation id appended to every fenced block's info string
+ * ({@link assignEvidenceIds}, e.g. `sql S7`), numbered by slot then block order; `present_result`
  * recomputes the same ids from the same archive to expand an empty fence in place, so no id is
  * persisted across the call.
  *

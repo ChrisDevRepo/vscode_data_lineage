@@ -94,9 +94,7 @@ export const AI_TEMPLATE_SCHEMA_VERSION = 2;
  * `assets/aiOutputTemplates.yaml` at activation.
  */
 export interface AiOutputTemplates {
-  /**
-   * Discovery-phase chat output — tunes answer length, citation and format; NOT a capture template.
-   */
+  /** Discovery-phase chat output: tunes answer length, citation, format; NOT a capture template. */
   discovery_chat: string;
   /** Instructions for generating the high-level summary. */
   summary: string;
@@ -129,10 +127,7 @@ export interface AiOutputTemplates {
    * and the one-line form both angles cite.
    */
   structural_callouts: string;
-  /**
-   * Reduced active-phase template for non-bodied origin nodes
-   * (Purpose/Columns/Upstream/Downstream/Grain).
-   */
+  /** Reduced active-phase template for non-bodied origin nodes (Purpose/Columns/Upstream/...). */
   structural_summary: string;
   /**
    * Cross-section depth floor at SYNTHESIS: conditional rendering directives (column-rename tables,
@@ -184,10 +179,7 @@ export interface AiOutputTemplateSet {
   readonly sections: AiOutputSections;
 }
 
-/**
- * Default empty state for AI output templates; prevents runtime errors if template loading fails or
- * is delayed.
- */
+/** Empty default for AI output templates, so a failed or late load cannot break runtime. */
 export const EMPTY_AI_TEMPLATES: AiOutputTemplates = {
   discovery_chat: '',
   summary: '',

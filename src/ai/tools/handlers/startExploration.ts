@@ -29,10 +29,7 @@ import { REJECTION_CODES } from '../../support/rejectionCodes';
 import { checkScopeAdmission } from '../../support/tokenBudget';
 import { makeRejection } from '../../support/toolErrorEnvelope';
 
-/**
- * Validates an exploration proposal and either opens its approval gate or resumes an approved
- * supplement.
- */
+/** Validates an exploration proposal, then opens its approval gate or resumes an approved one. */
 export async function executeStartExploration(input: unknown, s: ToolServices): Promise<string> {
     try {
       const loggedInput = redactMissionBriefForLog(input);

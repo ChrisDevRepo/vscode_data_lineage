@@ -76,10 +76,7 @@ function hasIncludedNode(id: string, includedIds?: ReadonlySet<string>): boolean
   return !includedIds || includedIds.has(id);
 }
 
-/**
- * Partitions graph nodes into expanded-object and collapsed-schema sets; `expandedSchemas` render
- * as individual object nodes.
- */
+/** Splits nodes into expanded-object and collapsed-schema sets; `expandedSchemas` show objects. */
 export function partitionBySchema(graph: Graph, expandedSchemas: ReadonlySet<string>): ExpandedSchemaViewResult {
   const individual = new Set<string>();
   const collapsed = new Set<string>();

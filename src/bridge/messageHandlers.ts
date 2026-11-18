@@ -59,8 +59,8 @@ import { summarizeZodError, postToDetail } from './host';
 import { readDeclaredNumericSetting } from '../configCore';
 
 /**
- * Maps each main-panel message type to a handler whose `msg` parameter is
- * narrowed to the matching variant of {@link MainPanelToExtensionMsg}.
+ * Handler per main-panel message type, with `msg` narrowed to the matching
+ * {@link MainPanelToExtensionMsg} variant.
  */
 export type WebviewMessageHandlers = {
   [K in MainPanelToExtensionMsg['type']]: (
@@ -99,15 +99,9 @@ function parseWebviewLog(text: string): { category: LogCategory; message: string
 }
 
 /**
- * Splits a project list into the records the webview contract accepts and those it rejects.
- *
- * @remarks
- * The send path validates the whole frame, so one unacceptable record would otherwise cost every
- * project in it. Partitioning first keeps the failure proportional: the readable projects still
- * arrive, and the rejected one is named in the log — {@link ProjectSchema} stays strict throughout.
- *
- * @param projects - Records loaded from the project store.
- * @returns The records that validate, plus one issue summary per record that does not.
+ * Splits a project list into records the webview contract accepts and those it rejects. The send
+ * validates the whole frame, so one bad record would cost every project; partitioning keeps the
+ * rest and names the rejected one in the log. {@link ProjectSchema} stays strict.
  */
 export function partitionSendableProjects(
   projects: readonly Project[],
@@ -168,38 +162,27 @@ function recordWebviewError(sess: AiSession, entry: WebviewErrorEntry): void {
   if (state.lastErrors.length > MAX_LAST_ERRORS) state.lastErrors.shift();
 }
 
-/**
- * Storage key for the project store in VS Code's global state.
- */
+/** Key of the project store in VS Code's global state. */
 export const PROJECT_STORE_KEY = 'dataLineageViz.projectStore';
 
-/**
- * Represents a bundle of message handlers and their associated cleanup logic.
- */
+/** Message handlers with their cleanup logic. */
 export interface MessageHandlerBundle {
   /** Map of message types to their per-variant handler functions. */
   handlers: WebviewMessageHandlers;
-  /** Cleanup function to release resources (e.g., database connections) when the panel is disposed. */
+  /** Releases resources (e.g. database connections) when the panel is disposed. */
   cleanup: () => Promise<void>;
   /** Function to programmatically trigger the demo load when the panel is already active. */
   triggerDemoLoad: () => Promise<void>;
 }
 
 /**
- * Installs a freshly built model as the session's current one.
+ * Installs a freshly built model as the session's current one, without posting to a webview, so a
+ * command-driven load leaves the session as a bridge-driven load does: column store repopulated,
+ * source labels set, `dataLineageViz.modelLoaded` raised. The lineage store is opened for `project`
+ * only, fire-and-forget; the snapshot is taken synchronously because the write runs later on the
+ * storage queue, when the session may hold another model.
  *
- * @remarks
- * Deliberately panel-independent — it never posts to a webview, so a command-driven load leaves the
- * session in exactly the state a bridge-driven load does: column store repopulated, source labels
- * set, and `dataLineageViz.modelLoaded` raised. The lineage store is opened for `project` only,
- * fire-and-forget, and the snapshot is captured synchronously here because the write runs later on
- * the storage queue — a payload read at write time could see a model the session already replaced.
- *
- * @param sess - Session to install the model into.
- * @param model - Model just extracted from a dacpac or from DMV results.
- * @param isDb - Whether the model came from a live database rather than a dacpac.
- * @param project - Project identity when the load is backed by a stored project.
- * @param store - Project store consulted for the human-readable source label; read only when `project` is set.
+ * @param store - Consulted for the source label; read only when `project` is set.
  */
 export function applyModelToSession(
   sess: AiSession,
@@ -238,28 +221,20 @@ export function applyModelToSession(
   void vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
 }
 
-/** Mutable holder for the session's untitled AI report document; a closed document is never reused. */
+/**
+ * Mutable holder of the session's untitled AI report document; a closed document is never reused.
+ */
 export interface ReportDocumentRef {
   document?: vscode.TextDocument;
 }
 
 /**
- * Factory for creating the IPC (Inter-Process Communication) bridge between the Extension Host and the Webview.
+ * Creates the IPC bridge between the Extension Host and the Webview.
  *
- * @param host - Bridge host used to interact with VS Code.
- * @param context - Extension context for global state and subscriptions.
- * @param getSession - Factory for retrieving the current AI session.
- * @param outputChannel - Output channel used for logging.
- * @param loadProjectStore - Loader for the persisted project store.
- * @param saveProjectStore - Persister for project-store updates.
- * @param migrateFromWorkspaceState - Migration helper for legacy workspace state.
- * @param loadDemoFlag - Whether demo data should be loaded instead of a persisted project.
- * @param setDetailPanel - Setter for the current detail panel reference.
  * @param reportDocumentRef - Holder of the untitled AI report document, owned by the caller so one
- *   report document survives the handlers being re-created when the panel is closed and reopened.
- *   Defaults to a holder private to this handler set.
- *
- * @returns The per-message-type handler map plus the panel-dispose cleanup function.
+ *   report document survives the handlers being re-created when the panel is reopened. Defaults to
+ *   a private holder.
+ * @returns The per-message-type handler map plus the panel-dispose cleanup.
  */
 export function createMessageHandlers(
   host: BridgeHost,
@@ -284,13 +259,16 @@ export function createMessageHandlers(
   let lastDetailNode: LineageNode | null = null;
 
   let reportWrite: Promise<unknown> = Promise.resolve();
-  /** Puts `content` into the session's report document, one call at a time so a second click meets the document the first created. */
+  /**
+   * Puts `content` into the report document, one call at a time so a second click meets the
+   * document the first created.
+   */
   function writeReportDocument(content: string): Promise<vscode.TextDocument> {
     const written = reportWrite.then(() => putReportContent(content));
     reportWrite = written.catch(() => undefined);
     return written;
   }
-  /** Replaces the report document's text, creating the document when none is open or the edit is refused. */
+  /** Replaces the report document's text, creating it when none is open or the edit is refused. */
   async function putReportContent(content: string): Promise<vscode.TextDocument> {
     const open = reportDocumentRef.document;
     if (open && !open.isClosed) {
@@ -304,13 +282,12 @@ export function createMessageHandlers(
     return created;
   }
   /**
-   * The built-in markdown preview tabs titled for `doc`, across every editor group.
+   * The built-in markdown preview tabs titled for `doc`, across all editor groups.
    *
-   * @remarks
-   * The built-in preview labels a tab `<prefix> <name>` (`Preview <name>`, `[Preview] <name>` when locked,
-   * the prefix localized), so the document name must be the whole last word of the label. The webview tab
-   * exposes no document URI; a different document whose name has a space before the same `Untitled-N`
-   * text is the one case this match cannot tell apart.
+   * The built-in preview labels a tab `<prefix> <name>` (`Preview <name>`, `[Preview] <name>` when
+   * locked, prefix localized), so the document name must be the whole last word. The webview tab
+   * has no document URI; a different document whose name has a space before the same `Untitled-N`
+   * text is the one case this cannot tell apart.
    */
   function reportPreviewTabs(doc: vscode.TextDocument): vscode.Tab[] {
     const name = path.basename(doc.uri.path);
@@ -319,12 +296,12 @@ export function createMessageHandlers(
         tab.input instanceof vscode.TabInputWebview && tab.input.viewType.endsWith('markdown.preview') && tab.label.endsWith(` ${name}`)));
   }
   /**
-   * Leaves at most the visible report previews on screen; returns true when one is the visible tab of an editor group.
+   * Leaves at most the visible report previews on screen; true when one is the visible tab of an
+   * editor group.
    *
-   * @remarks
-   * A preview hidden behind another tab is closed, also when another report preview is visible: the preview
-   * command opens a new preview whenever the group beside the active one holds none, so a hidden one would
-   * end as a second preview. A refused or failed close is logged and the command still runs.
+   * A hidden preview is closed even when another report preview is visible: the preview command
+   * opens a new one whenever the group beside the active one has none, which would leave two. A
+   * refused or failed close is logged and the command still runs.
    */
   async function settleReportPreviews(doc: vscode.TextDocument): Promise<boolean> {
     const previews = reportPreviewTabs(doc);
@@ -339,11 +316,9 @@ export function createMessageHandlers(
   }
 
   /**
-   * Installs a newly loaded model.
-   *
-   * @remarks
-   * The detail panel shows a node of the previous model, so it is cleared; a DACPAC model drops the
-   * previous database connection, so table statistics cannot reach the database it came from.
+   * Installs a newly loaded model. The detail panel shows a node of the old model, so it is
+   * cleared; a DACPAC model drops the previous database connection, so table statistics cannot
+   * reach the database it came from.
    */
   function setCurrentModel(m: DatabaseModel, isDb: boolean, project?: { id: string; name: string } | null): void {
     applyModelToSession(getSession(), m, isDb, project, project ? loadProjectStore(context) : null);
@@ -387,25 +362,22 @@ export function createMessageHandlers(
   let current: { id?: string; cancel(): void } | undefined;
 
   /**
-   * Wraps a handler that starts a load, so the load the webview named can be cancelled by that id.
+   * Wraps a load-starting handler so the load the webview named can be cancelled by its id.
    *
-   * @remarks
-   * `msg.loadId` is the webview's own id for the load; a request without one runs unstamped and cannot
-   * be cancelled by id. `body` gets a host that stamps the load-result messages with the id and drops
-   * them once the load is cancelled. That one closure is the only place the id is applied, so no load
-   * path stamps or checks it itself. The host's progress token also fires on a cancel, which stops the
-   * connection and query steps that watch it.
+   * `msg.loadId` is the webview's id for the load; a request without one runs unstamped and cannot
+   * be cancelled by id. `body` gets a host that stamps load-result messages with the id and drops
+   * them once the load is cancelled; this closure is the only place the id is applied. The host's
+   * progress token also fires on cancel, stopping the connection and query steps that watch it.
    *
-   * The latest user intent wins on both sides: starting a load cancels the previous one, because the
-   * webview drops its results and a load that finished last must not set the session model or write
-   * the project store behind the screen.
+   * The latest intent wins: starting a load cancels the previous one, because the webview drops its
+   * results and a load that finished last must not set the session model or write the project store
+   * behind the screen.
    *
-   * A retry that the connection-error toast starts after its load ended opens a new progress
-   * notification through the same host. While the load is still the current one, the retry gets a fresh
-   * source, so `cancel-load` still reaches it and its results are still stamped. A retry is refused when
-   * a newer load replaced this one (the webview has moved on to the newer id and would drop its results,
-   * so letting it run would only change the host) and while another retry of the load runs, so one load
-   * never has two live sources and the live source gates every post.
+   * A retry started by the connection-error toast after its load ended opens a new progress
+   * notification through the same host. While the load is current the retry gets a fresh source, so
+   * `cancel-load` still reaches it and its results are stamped. It is refused when a newer load
+   * replaced this one (the webview would drop its results) and while another retry runs, so one
+   * load never has two live sources and the live source gates every post.
    */
   function loadHandler<M extends { loadId?: string }>(
     body: (host: BridgeHost, token: vscode.CancellationToken, msg: M) => Promise<void> | void,
@@ -488,8 +460,9 @@ export function createMessageHandlers(
       const store = loadProjectStore(context);
       const sess = getSession();
       postProjectsList(host, store);
-      // Every `ready` (first, or after a webview reload) re-syncs the session's model: a load a command installed
-      // before the webview could receive it, or a post lost across a reload, is delivered here.
+      // Every `ready` (first, or after a webview reload) re-syncs the session's model: a load a
+      // command installed before the webview could receive it, or a post lost across a reload, is
+      // delivered here.
       if (sess.model) {
         const project = store.projects.find(p => p.id === store.lastOpenedId);
         if (project) {
@@ -929,11 +902,9 @@ export function createMessageHandlers(
     },
     /**
      * Saves a webview-composed export under a name the user confirms in the save dialog.
-     *
-     * @remarks
-     * `defaultName` is webview-supplied, so only its base name pre-fills the dialog: a name carrying
-     * separators or `..` segments would otherwise seed the dialog at a path the export never came
-     * from. The dialog still owns the destination — this only bounds what the webview may suggest.
+     * `defaultName` is webview-supplied, so only its base name pre-fills the dialog; separators or
+     * `..` segments would seed it at a path the export never came from. The dialog still owns the
+     * destination.
      */
     'export-file': async (msg) => {
       const defaultName = path.basename(msg.defaultName);
@@ -947,17 +918,15 @@ export function createMessageHandlers(
     /**
      * Shows the AI report in one untitled markdown document and one preview beside the panel.
      *
-     * @remarks
-     * The first click creates the document; later clicks replace its text and re-use it while it is
-     * open, so repeated clicks never accumulate documents or previews. The unsaved document stays
-     * available for the user to keep or save. An open preview follows its document by itself, so the
-     * preview command runs only when no preview of the report is the visible tab of a group; a preview
-     * hidden behind another tab is closed first, because the built-in command opens a new preview whenever
-     * the group beside the active one holds none. No HTML sanitizing pass runs
-     * here: the content lands in a text document, and VS Code's own markdown preview renders it under
-     * its `markdown.preview.security` policy. The preview command belongs to the built-in markdown
-     * extension, which a user can disable — its absence is not a failed action, so the fallback shows
-     * the document itself and reports it as a warning.
+     * The first click creates the document; later clicks replace its text and reuse it while open,
+     * so repeated clicks accumulate no documents or previews. The unsaved document stays for the
+     * user to keep or save. An open preview follows its document, so the preview command runs only
+     * when no report preview is the visible tab of a group; a hidden one is closed first (the
+     * command opens a new preview whenever the group beside the active one has none). No HTML
+     * sanitizing runs: the content lands in a text document that VS Code's markdown preview renders
+     * under its `markdown.preview.security` policy. The preview command belongs to the built-in
+     * markdown extension, which a user can disable; its absence is not a failed action, so the
+     * fallback shows the document and warns.
      */
     'ai-open-in-editor': async (msg) => {
       host.log('debug', 'Bridge', 'Opening AI description in editor');
@@ -1047,7 +1016,9 @@ export function createMessageHandlers(
 
 const MAX_DACPAC_BYTES = 50 * 1024 * 1024; // 50 MB
 
-/** Toast sink for a failure the webview already shows inline through `db-error`: log it, show it once. */
+/**
+ * Toast sink for a failure the webview already shows inline via `db-error`: log it, show it once.
+ */
 const SHOWN_INLINE = (): void => {};
 
 /**
@@ -1072,11 +1043,10 @@ function isDacpacTooLarge(bytes: number, host: BridgeHost, outputChannel: vscode
 }
 
 /**
- * Refuses a built model that exceeds `dataLineageViz.maxNodes` — the shared `checkObjectLimit`
- * gate for every model load path, webview-bridge or command. When a webview bridge is present the
- * refusal is posted to it as a `db-error` — shown inline, and the loader leaves its loading state at
- * once instead of spinning to the generic "Processing timed out" notice. `host` is omitted where
- * there is no webview bridge; the refusal is then a `vscode.window.showErrorMessage` toast.
+ * Refuses a built model that exceeds `dataLineageViz.maxNodes`: the shared `checkObjectLimit` gate
+ * for every load path. With a webview bridge the refusal is posted as a `db-error`, shown inline,
+ * and the loader leaves its loading state at once instead of timing out. Without `host` it is a
+ * `vscode.window.showErrorMessage` toast.
  */
 export function isModelOverLimit(model: DatabaseModel, maxNodes: number, logger: Logger, host?: BridgeHost): boolean {
   const check = checkObjectLimit(model, maxNodes);
@@ -1191,25 +1161,20 @@ async function runDbPhase2Host(host: BridgeHost, session: DbSession, schemas: st
 }
 
 /**
- * Upper bound for the platform probe, independent of `dmvQueryTimeout`.
- *
- * @remarks
- * The probe is a single-row `SERVERPROPERTY` read that blocks the Phase 2 sweep, so it must not
- * inherit the user's bulk-query budget (default 120 s) — an unreachable server would otherwise
- * stall the import behind a progress notification showing no steps. The fallback tiers still
- * produce a platform either way.
+ * Upper bound for the platform probe, independent of `dmvQueryTimeout`. The probe is a single-row
+ * `SERVERPROPERTY` read that blocks the Phase 2 sweep, so it must not inherit the bulk-query budget
+ * (default 120 s): an unreachable server would stall the import behind a progress notification with
+ * no steps.
  */
 const PLATFORM_PROBE_TIMEOUT_MS = 10_000;
 
 /**
- * Resolves the database platform before the Phase 2 model is built.
+ * Resolves the database platform before the Phase 2 model is built, as `buildModelFromDmv` needs it
+ * at construction.
  *
- * @remarks
- * Two tiers, neither of which may fail the import: the `platform-info` query, then an explicit
- * unknown label — never an invented `SQL Server` default the model would reason from. The session's
- * `getServerInfo` is no third tier: it sends the same `platform-info` query, so it cannot succeed
- * where the probe did not. Runs ahead of the Phase 2 sweep because `buildModelFromDmv`
- * needs the result at model construction.
+ * Two tiers, neither may fail the import: the `platform-info` query, then an explicit unknown
+ * label, never an invented `SQL Server` default. The session's `getServerInfo` is no third tier: it
+ * sends the same query, so it cannot succeed where the probe did not.
  */
 async function loadDatabasePlatform(
   session: DbSession,
@@ -1261,8 +1226,8 @@ async function withDbProgressHost(
     } catch (err) {
       const target = isDbConnectionError(err) ? err.target : session && isDriverError(err) ? targetFromSession(session) : undefined;
       if (target) {
-        // A retry reconnects the connection that failed, so a stored record saved with the retired mssql
-        // extension is not asked to reconnect a second time.
+        // A retry reconnects the connection that failed, so a record stored by the retired mssql
+        // extension is not asked to reconnect twice.
         const failed: Partial<StoredConnectionInfo> | undefined = target.connectionId ? { provider: 'builtIn', connectionId: target.connectionId } : undefined;
         const retry = (patch?: Partial<StoredConnectionInfo>) => withDbProgressHost(host, env, title, (_patch, token) => connectFn({ ...failed, ...patch }, token), phaseFn);
         const reported = reportConnectionError(
@@ -1389,9 +1354,7 @@ async function handleTableStatsRequestHost(
   }
 }
 
-/**
- * Logs a summary of the SQL parsing results and stores it in the session.
- */
+/** Logs a summary of the SQL parsing results and stores it in the session. */
 function handleParseStats(stats: ParseStats, outputChannel: vscode.LogOutputChannel, getSession: () => AiSession, objectCount?: number, edgeCount?: number, schemaCount?: number) {
   const logger = Logger.create(outputChannel, 'Parse');
   const sess = getSession();
@@ -1429,12 +1392,11 @@ function handleParseStats(stats: ParseStats, outputChannel: vscode.LogOutputChan
 }
 
 /**
- * Reads display and behaviour settings from a VS Code workspace configuration
- * and returns the serialisable config snapshot sent to the webview. Numeric settings are
+ * Reads display and behaviour settings from a workspace configuration into the serialisable
+ * snapshot sent to the webview (same shape as {@link ExtensionConfigSchema}). Numeric settings are
  * clamped to their declared manifest range.
  *
  * @param cfg - Workspace configuration scoped to `dataLineageViz`.
- * @returns Config snapshot for the webview (same shape as {@link ExtensionConfigSchema}).
  */
 export function buildExtensionConfig(cfg: vscode.WorkspaceConfiguration): Record<string, any> {
   const num = (key: string) => readDeclaredNumericSetting(cfg, key);
@@ -1476,16 +1438,7 @@ async function readExtensionConfig(host: BridgeHost): Promise<Record<string, any
 import { buildWebviewCsp } from '../utils/cspBuilder';
 import { getNonce } from '../utils/getNonce';
 
-/**
- * Generates the root HTML for the secondary Detail Webview.
- *
- * This provides the container, strict CSP, and bootloader fallback for the
- * detail panel.
- *
- * @param webview - The vscode.Webview instance for the detail panel.
- * @param extensionUri - The base URI of the extension for resolving assets.
- * @returns The complete HTML string.
- */
+/** Root HTML for the secondary Detail Webview: container, strict CSP and bootloader fallback. */
 function getDetailWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
   const stylesUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "dist", "assets", "index.css"));
   const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "dist", "assets", "index.js"));
@@ -1521,12 +1474,7 @@ function getDetailWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri)
 }
 
 /**
- * Builds a GUI diagnostic snapshot for the current extension state.
- *
- * @param context - Extension context for global state and subscriptions.
- * @param getSession - Factory for retrieving the current session-backed GUI state.
- *
- * @returns Diagnostic text focused on the user-visible graph, filters, render state, and settings.
+ * Builds a GUI diagnostic snapshot of the user-visible graph, filters, render state and settings.
  */
 export function buildDebugDump(context: vscode.ExtensionContext, getSession: () => AiSession): string {
   const sess = getSession();

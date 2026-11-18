@@ -17,10 +17,7 @@ export const ClassificationSchema = z.enum(['business', 'technical', 'both']);
 /** Resolved mission-type classification value. */
 export type ClassificationValue = z.infer<typeof ClassificationSchema>;
 
-/**
- * Short human-readable label per classification value, for confirm-SM-start messages, banners and
- * status lines.
- */
+/** Short label per classification, for confirm-SM-start messages, banners and status lines. */
 export const CLASSIFICATION_LABEL: Record<ClassificationValue, string> = {
   business: 'business-driven',
   technical: 'technical-driven',

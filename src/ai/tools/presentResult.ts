@@ -1,7 +1,4 @@
-/**
- * AI `present_result` contract: input/output types, validation, and the deterministic
- * markdown assembly. Zero VS Code imports.
- */
+/** AI `present_result` contract: types, validation, deterministic markdown; no VS Code imports. */
 import {
   PresentResultModelSchema,
   PresentResultAuthorizableRepairSchema,
@@ -41,8 +38,8 @@ export type PresentResultStage = 'visual_preview' | 'synthesis' | 'completed';
  * already resolved every `node_ids` entry against the whole model, so exactly one member of this
  * union is a hallucination; the rest are real objects the render does not carry, and calling those
  * "unknown" would make the model invent a replacement instead of moving the fact into prose. Only
- * the session holds the engine snapshot, so the caller supplies the classification as {@link
- * PresentNodeIdStateLookup}.
+ * the session holds the engine snapshot, so the caller supplies the classification as
+ * {@link PresentNodeIdStateLookup}.
  */
 export type PresentNodeIdState =
   | 'not_in_model'
@@ -73,7 +70,7 @@ const PRESENT_NODE_ID_STATE_TEXT: Readonly<Record<PresentNodeIdState, string>> =
  */
 export type PresentNodeIdStateLookup = (nodeId: string) => PresentNodeIdState;
 
-/** What `add_node_ids` reveals; the follow-up instruction and the unknown-id route state it identically. */
+/** What `add_node_ids` reveals; the follow-up instruction and unknown-id route state it alike. */
 export const ADD_NODE_IDS_REVEALS = 'reveals objects this exploration already analysed';
 
 /**
@@ -139,7 +136,9 @@ export type PresentResultRepairPatch = Omit<PresentResultBaseRepairPatch, 'highl
 /** What a held-draft rejection authorized: the presentation fields a resend may patch. */
 export interface PresentResultRepairAuthorization {
   readonly fields: readonly PresentResultRepairField[];
-  /** Zero-based highlight entries whose overlong labels may be replaced without resending the list. */
+  /**
+   * Zero-based highlight entries whose overlong labels may be replaced without resending the list.
+   */
   readonly highlightLabelIndexes?: readonly number[];
   /** Zero-based held sections and their text leaves authorized for replacement. */
   readonly sectionTextLeaves?: readonly {
@@ -172,8 +171,8 @@ type PresentResultRequest = {
 
 /**
  * A failed validation: the one rejection the model receives plus what the handler needs to hold the
- * draft. `repairable` is set structurally where each error is added in {@link
- * validatePresentResult}, never inferred from message text. `reason` is one line per error;
+ * draft. `repairable` is set structurally where each error is added in
+ * {@link validatePresentResult}, never inferred from message text. `reason` is one line per error;
  * `issuePaths` and `entryIds` name every offender; `detail.paths` carries per-path offending ids
  * with their recorded state plus the uncapped accepted set (the message states both, capped, so
  * they survive the rejection replay).
@@ -185,7 +184,7 @@ export type PresentResultFailure = {
   repairFields: PresentResultRepairField[];
 };
 
-/** One numbered top-level block of the cached discovery answer, served to the preview stage as `answer_blocks`. */
+/** One numbered top-level block of the cached discovery answer, served as `answer_blocks`. */
 export interface AnswerBlock {
   readonly id: string;
   readonly text: string;
@@ -316,14 +315,15 @@ export function findTextlessNewSectionLabels(
     .map(section => section.label);
 }
 
-/** Held preview sections with each `start` replaced by the block it effectively starts at (the first always B1). */
+/** Held preview sections with each `start` replaced by its effective block (the first is B1). */
 function withEffectiveStarts(sections: readonly PresentSection[]): PresentSection[] {
   return sections.map((section, index) => (section.start ? { ...section, start: `B${startBlock(sections, index)}` } : section));
 }
 
 /**
  * The held sections a repair may key on, as the model-facing view: label and, for a preview
- * section, the block it effectively starts at (the first always B1). The model's own rejected call already carries every body.
+ * section, the block it effectively starts at (the first always B1). The model's own rejected call
+ * already carries every body.
  */
 export function heldSectionsForRepair(sections: PresentResultInput['sections']): Array<{ label: string; start?: string }> {
   return withEffectiveStarts((sections ?? []) as PresentSection[]).map(({ label, start }) => ({ label, ...(start ? { start } : {}) }));
@@ -437,7 +437,10 @@ export function holdRejectedPresentResult(
 type PresentNote = NonNullable<PresentResultInput['notes']>[number];
 type PresentNotePatch = Partial<PresentNote> & { remove?: boolean };
 
-/** A note's merge key: its node id without brackets, case-folded unless the model's identifiers are case-sensitive, so a bare and a bracketed id name one note. */
+/**
+ * A note's merge key: its node id without brackets, case-folded unless the model's identifiers are
+ * case-sensitive, so a bare and a bracketed id name one note.
+ */
 function noteKey(note: Partial<PresentNote>, identifierCaseSensitive: boolean): string {
   const bare = (note.node_id ?? '').replace(/[[\]]/g, '').trim();
   return identifierCaseSensitive ? bare : bare.toLowerCase();
@@ -562,7 +565,10 @@ export interface EvidenceBlock {
   /** Citation id, e.g. `S7` — carried in the fence info string the envelope shows (`sql S7`). */
   readonly id: string;
   readonly nodeId: string;
-  /** The captured ```sql fence closed on a line of its own — body de-indented out of its list or block-quote container, `sql S7` annotation excluded — rendered verbatim. */
+  /**
+   * The captured ```sql fence closed on a line of its own: body de-indented out of its list or
+   * block-quote container, `sql S7` annotation excluded; rendered verbatim.
+   */
   readonly raw: string;
 }
 
@@ -598,9 +604,9 @@ interface LocatedSqlFence {
   readonly start: number;
   /** Offset just past the closing marker. */
   readonly end: number;
-  /** Text after ```sql on the opening line; for a one-line fence, everything between the markers. */
+  /** Text after ```sql on the opening line; for a one-line fence, all between the markers. */
   readonly info: string;
-  /** Code lines, de-indented out of the opening line's container; empty for a one-line or empty fence. */
+  /** Code lines, de-indented out of the opening line's container; empty for a one-line fence. */
   readonly lines: readonly string[];
   /** Container prefix of the opening line. */
   readonly container: string;
@@ -688,11 +694,11 @@ interface FenceExtent {
   readonly from: number;
   /** End of the fence, or just past the `)` that wraps it. */
   readonly to: number;
-  /** Nothing but the container prefix precedes `from` and nothing but whitespace follows `to` on the line. */
+  /** Only the container prefix precedes `from` and only whitespace follows `to` on the line. */
   readonly ownLine: boolean;
 }
 
-/** Locates `fence` on its line; a `(` before and a `)` after it with nothing else between are part of the extent. */
+/** Locates `fence` on its line; a `(` before and `)` after it, nothing between, join the extent. */
 function fenceExtent(text: string, fence: LocatedSqlFence): FenceExtent {
   const lineStart = text.lastIndexOf('\n', fence.start - 1) + 1;
   const newline = text.indexOf('\n', fence.end);
@@ -846,7 +852,7 @@ export function orderAndAssemble(
   opts?: {
     title?: string;
     intro?: string;
-    /** Engine-owned block (e.g. the CT column chain) inserted between the intro and the first section. */
+    /** Engine-owned block (e.g. the CT column chain) inserted between intro and first section. */
     preface?: string;
     closing?: string;
     /** Optional node lookup for injecting clickable object-link footnotes per section. */
@@ -1005,8 +1011,9 @@ export function findBareNonPrunedNodes(
 
 /**
  * Detail-slot node ids a present call must link from `sections[].node_ids[]`: slots whose node is
- * in the rendered set. The synthesis envelope lists this set and {@link
- * findUnrenderedDetailSlotIds} enforces it, so the served list and the check share one source.
+ * in the rendered set. The synthesis envelope lists this set and
+ * {@link findUnrenderedDetailSlotIds} enforces it, so the served list and the check share one
+ * source.
  */
 export function requiredDetailSlotIds(
   slotNodeIds: readonly string[],
@@ -1036,15 +1043,15 @@ export function requiredCtChainNodeIds(
 }
 
 /**
- * Reports which delivered `detail_slots[]` reached no rendered section. Stricter than {@link
- * findBareNonPrunedNodes}, which accepts `sections[].node_ids[]` or `highlight_groups[].node_ids[]`
- * because a highlight is a legitimate place for a passthrough node. A detail slot is the model's
- * own captured technical findings, and only a `sections[].node_ids[]` link places that prose in the
- * walkthrough; a `notes[]` caption is a one-line chip and a highlight carries no findings.
- * Accepting notes as coverage let a CT render park every formula-bearing hop on a caption and ship
- * a chain table in place of the BB walkthrough, so this stays a second, narrower check. The caller
- * (`executePresentResult`) reports each id as a {@link PresentResultViolation} whose
- * `repairFields`/`paths` name `sections` only.
+ * Reports which delivered `detail_slots[]` reached no rendered section. Stricter than
+ * {@link findBareNonPrunedNodes}, which accepts `sections[].node_ids[]` or
+ * `highlight_groups[].node_ids[]` because a highlight is a legitimate place for a passthrough node.
+ * A detail slot is the model's own captured technical findings, and only a `sections[].node_ids[]`
+ * link places that prose in the walkthrough; a `notes[]` caption is a one-line chip and a highlight
+ * carries no findings. Accepting notes as coverage let a CT render park every formula-bearing hop
+ * on a caption and ship a chain table in place of the BB walkthrough, so this stays a second,
+ * narrower check. The caller (`executePresentResult`) reports each id as a
+ * {@link PresentResultViolation} whose `repairFields`/`paths` name `sections` only.
  *
  * @param slotNodeIds - Delivered `detail_slots[].nodeId` values for nodes in the current result
  *   graph (a slot whose node the render dropped cannot be linked, so requiring it would contradict
@@ -1072,13 +1079,13 @@ export function findUnrenderedDetailSlotIds(
  * never read from `input`.
  *
  * @param externalViolations - Findings from checks needing context this function lacks (the cached
- *   discovery answer, the result graph), reported alongside the structural rules ({@link
- *   PresentResultViolation}).
+ *   discovery answer, the result graph), reported alongside the structural rules
+ *   ({@link PresentResultViolation}).
  * @param stage - The engine-derived calling stage, keeping the unknown-node-id hint caller-possible
  *   ({@link presentNodeIdHint}). Defaults to `'completed'`, the only stage whose tool policy
  *   includes `lineage_search_objects`.
- * @param nodeIdState - Classifies an id the result graph cannot link ({@link
- *   PresentNodeIdStateLookup}). Omitted, every offender is `not_in_model`.
+ * @param nodeIdState - Classifies an id the result graph cannot link
+ *   ({@link PresentNodeIdStateLookup}). Omitted, every offender is `not_in_model`.
  * @returns A request object, or a structured error with correction hints.
  */
 export function validatePresentResult(
@@ -1144,7 +1151,10 @@ export function validatePresentResult(
     ...(input.highlight_groups ?? []).flatMap(group => group.node_ids ?? []),
   ].filter(id => !resolvedSet.has(id)))];
   const allHallucinated = unlinkableNodeIds.every(id => stateOf(id) === 'not_in_model');
-  /** `add_node_ids` accepts any id inside the approved scope — pruned, render-dropped or undispositioned — so only those offenders earn its route. */
+  /**
+   * `add_node_ids` accepts any id inside the approved scope — pruned, render-dropped or
+   * undispositioned — so only those offenders earn its route.
+   */
   const addNodeIdsReveals = unlinkableNodeIds.some(id => stateOf(id) !== 'not_in_model' && stateOf(id) !== 'out_of_scope');
   const routeServed = stage === 'completed' ? addNodeIdsReveals : !allHallucinated;
   const nodeIdNoun = allHallucinated
@@ -1155,10 +1165,7 @@ export function validatePresentResult(
     for (const id of ids) byState.set(stateOf(id), [...(byState.get(stateOf(id)) ?? []), id]);
     return [...byState].map(([state, group]) => `${quoteIds(group)} — ${PRESENT_NODE_ID_STATE_TEXT[state]}`).join('; ');
   };
-  /**
-   * The valid set and the route back, stated once — on the first offending site — after every
-   * offender in the call and its state.
-   */
+  /** The valid set and the route back, stated once at the first offending site. */
   let nodeIdHintNeeded = false;
   const nodeIdRejectionTail = (idsAtThisPath: readonly string[]): string => {
     if (nodeIdHintNeeded) return '';

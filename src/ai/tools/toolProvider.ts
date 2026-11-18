@@ -101,10 +101,7 @@ const REJECTION_GROUPS: Readonly<Record<string, Exclude<RejectionChatGroup, 'cor
   [REJECTION_CODES.toolExecutionError]: 'backend_fault',
 };
 
-/**
- * Resolves a rejection code to its retry-messaging group, defaulting to `correction`; see {@link
- * REJECTION_GROUPS}.
- */
+/** Maps a rejection code to its retry group (default `correction`); {@link REJECTION_GROUPS}. */
 export function classifyRejectionCode(code: string): RejectionChatGroup {
   return REJECTION_GROUPS[code] ?? 'correction';
 }
@@ -537,10 +534,10 @@ const EXTERNAL_TOOL_NAMES: ReadonlySet<string> = new Set(
 
 /**
  * Registers the **read-only** lineage tools with `vscode.lm` for external callers, exposing the
- * {@link EXTERNAL_TOOL_NAMES} subset of {@link buildAiToolRegistry} through the shared {@link
- * filterRegistry} view rather than a second hand-kept list. `package.json` contributes exactly this
- * subset: a contributed entry with no `registerTool` binding is a broken tool, so manifest and
- * filter must move together.
+ * {@link EXTERNAL_TOOL_NAMES} subset of {@link buildAiToolRegistry} through the shared
+ * {@link filterRegistry} view rather than a second hand-kept list. `package.json` contributes
+ * exactly this subset: a contributed entry with no `registerTool` binding is a broken tool, so
+ * manifest and filter must move together.
  *
  * @param host - Optional host seam forwarded to the registry builder.
  * @returns Disposables for the registered tool bindings.

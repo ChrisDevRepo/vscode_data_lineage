@@ -1,8 +1,6 @@
 import type { AnalysisType } from '../engine/types';
 
-/**
- * Represents display metadata for a specific graph analysis type.
- */
+/** Represents display metadata for a specific graph analysis type. */
 export interface AnalysisTypeInfo {
   /** The human-readable title of the analysis. */
   title: string;
@@ -13,18 +11,11 @@ export interface AnalysisTypeInfo {
 }
 
 /**
- * Central registry of configuration for all graph analysis modes.
- *
- * Each entry defines the UI properties (title, icon, description) used in the
- * Analysis Sidebar and Detail View.
- *
- * @remarks
- * Architectural remarks:
- * - Islands: Detects connected components where |components| > 1.
- * - Hubs: Identifies nodes with high degree centrality (blast radius).
- * - Orphans: Nodes with degree 0.
- * - Longest Path: Computes the diameter or critical path of the DAG.
- * - Cycles: Detects Strongly Connected Components (SCC) to find recursion.
+ * Registry of configuration for all graph analysis modes: the UI properties (title, icon,
+ * description) the Analysis Sidebar and Detail View use. Islands: connected components,
+ * |components| > 1. Hubs: nodes with high degree centrality (blast radius). Orphans: degree 0.
+ * Longest Path: diameter or critical path of the DAG. Cycles: Strongly Connected Components (SCC),
+ * to find recursion.
  */
 export const ANALYSIS_TYPE_INFO: Record<AnalysisType, AnalysisTypeInfo> = {
   islands: {
@@ -59,9 +50,7 @@ export const ANALYSIS_TYPE_INFO: Record<AnalysisType, AnalysisTypeInfo> = {
   },
 };
 
-/**
- * Mapping of AnalysisType to their full human-readable labels.
- */
+/** Mapping of AnalysisType to their full human-readable labels. */
 export const ANALYSIS_TYPE_LABELS: Record<AnalysisType, string> = {
   islands: 'Islands Analysis',
   hubs: 'Hubs Analysis',
@@ -71,7 +60,5 @@ export const ANALYSIS_TYPE_LABELS: Record<AnalysisType, string> = {
   'external-refs': 'External Refs',
 };
 
-/**
- * Array of all supported analysis types, used for iteration and validation.
- */
+/** Array of all supported analysis types, used for iteration and validation. */
 export const ALL_ANALYSIS_TYPES: AnalysisType[] = ['islands', 'hubs', 'orphans', 'longest-path', 'cycles', 'external-refs'];

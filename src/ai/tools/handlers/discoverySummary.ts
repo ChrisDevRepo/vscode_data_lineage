@@ -21,10 +21,7 @@ import { sanitizeForLog, type Logger } from '../../../utils/log';
  */
 const DiscoverySummarySchema = z.string().trim().min(1);
 
-/**
- * One mechanical re-ask on a rejected compose reply, the reject-with-hint convention every Zod
- * boundary here follows.
- */
+/** One mechanical re-ask on a rejected compose reply (the reject-with-hint convention). */
 const DISCOVERY_SUMMARY_COMPOSE_ATTEMPTS = 2;
 
 /**

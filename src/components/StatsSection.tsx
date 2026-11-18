@@ -31,7 +31,10 @@ function formatDecimal(n: number): string {
 /** Significant digits a double holds exactly. */
 const EXACT_DOUBLE_DIGITS = 15;
 
-/** Whether a plain decimal string survives `Number()` unchanged, judged on its digits (trailing fraction zeros ignored). */
+/**
+ * Whether a plain decimal string survives `Number()` unchanged, judged on its digits (trailing
+ * fraction zeros ignored).
+ */
 function holdsExactly(raw: string): boolean {
   const match = /^-?(\d+)(?:\.(\d+))?(?:[eE][+-]?\d+)?$/.exec(raw);
   if (!match || !Number.isFinite(Number(raw))) return false;
@@ -39,7 +42,10 @@ function holdsExactly(raw: string): boolean {
   return digits.length <= EXACT_DOUBLE_DIGITS;
 }
 
-/** Format a raw min/max string: separators when a double holds the value exactly; otherwise the source text, so big-int and decimal(38) values keep every digit. */
+/**
+ * Formats a raw min/max string with separators when a double holds it exactly; else the source
+ * text, so big-int and decimal(38) values keep every digit.
+ */
 function formatValue(raw: string | undefined): string {
   if (!raw) return '–';
   return holdsExactly(raw) ? formatDecimal(Number(raw)) : raw;
@@ -66,8 +72,8 @@ function hasDetail(col: ColumnStats): boolean {
 }
 
 /**
- * Labeled key-value grid for expanded column detail.
- * Every metric has a plain English label — no abbreviations.
+ * Labeled key-value grid for expanded column detail; every metric has a plain English label, no
+ * abbreviations.
  */
 function DetailGrid({ col, rowCount }: { col: ColumnStats; rowCount: number }) {
   const pairs: Array<{ label: string; value: string }> = [];
@@ -386,9 +392,7 @@ interface StatsSectionProps {
   standardModeEnabled: boolean;
 }
 
-/**
- * Requests and displays quick or standard column-level profiling metrics.
- */
+/** Requests and displays quick or standard column-level profiling metrics. */
 export function StatsSection({ statsState, onRequestStats, standardModeEnabled }: StatsSectionProps) {
   const isLoading = statsState.phase === 'loading';
 

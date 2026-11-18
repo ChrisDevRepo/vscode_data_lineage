@@ -63,9 +63,9 @@ export const KEYWORDS_RE = new RegExp(`^(?:${RESERVED_KEYWORDS.join('|')})$`, 'i
 /**
  * Pass 1 cleansing: leftmost-match pattern that neutralizes strings and comments before extraction
  * rules run, identifying:
- * 1. Brackets: preserved (YAML rules need them); the `]]` escape is honoured as in {@link
- * BRACKET_IDENT}, and an unterminated `[` consumes to the end of input once, so a run of unbalanced
- * `[` scans in linear time.
+ * 1. Brackets: preserved (YAML rules need them); the `]]` escape is honoured as in
+ *   {@link BRACKET_IDENT}, and an unterminated `[` consumes to the end of input once, so a run of
+ *   unbalanced `[` scans in linear time.
  * 2. Double-quoted identifiers, for bracket conversion; `""` is an escaped quote.
  * 3. Single-quoted strings, for neutralization; `''` is an escaped quote.
  * 4. Comments, for removal.

@@ -142,9 +142,7 @@ interface JsonSchemaNode {
 
 /** Result of coercing one tool-argument payload. */
 export interface StringifiedArgumentsResult {
-  /**
-   * The payload with every stringified structure decoded; the input object when nothing changed.
-   */
+  /** The payload with every stringified structure decoded; the input object if nothing changed. */
   readonly value: unknown;
   /** Dotted paths that were decoded. */
   readonly paths: string[];
@@ -208,8 +206,8 @@ function coerce(value: unknown, schema: JsonSchemaNode | undefined, path: string
  * "[\"A\"]"`); the product cannot know which server it talks to, so the decode (`JSON.parse`) runs
  * once at the model boundary for every tool and model, driven by the declared schema alone. Text
  * that is not valid JSON (cut off, or with raw line breaks inside a string) is never completed or
- * repaired: it stays a string and fails schema validation at its field. The caller logs {@link
- * StringifiedArgumentsResult.paths}.
+ * repaired: it stays a string and fails schema validation at its field. The caller logs
+ * {@link StringifiedArgumentsResult.paths}.
  *
  * @returns The coerced payload and the paths decoded.
  */

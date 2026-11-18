@@ -46,9 +46,7 @@ const MS_PER_SECOND = 1000;
  */
 const CONNECT_RETRY_INTERVAL_MS = 5 * MS_PER_SECOND;
 const CONNECT_MAX_RETRIES = 3;
-/**
- * Login budget of one connect attempt; Microsoft recommends 30 seconds for Azure SQL and Synapse.
- */
+/** Login budget of one connect attempt; Microsoft recommends 30 s for Azure SQL and Synapse. */
 const CONNECT_TIMEOUT_MS = 30 * MS_PER_SECOND;
 
 /** Engine editions that run in a Microsoft cloud service. */
@@ -80,10 +78,7 @@ function clockTime(d: Date): string {
   return `${pad(d.getUTCHours(), 2)}:${pad(d.getUTCMinutes(), 2)}:${pad(d.getUTCSeconds(), 2)}`;
 }
 
-/**
- * Fractional-second digits of a temporal value, truncated to `digits` (0-7), millisecond precision
- * plus tedious's sub-millisecond delta.
- */
+/** Fractional-second digits of a temporal value, cut to `digits` (0-7): ms plus sub-ms delta. */
 function fraction(d: Date, digits: number): string {
   if (digits <= 0) return '';
   const delta = (d as Date & { nanosecondsDelta?: number }).nanosecondsDelta ?? 0;

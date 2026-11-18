@@ -64,9 +64,9 @@ export class VscodeModelPort implements ModelPort {
       /** Native request identifier shared by wire and runtime lifecycle records. */
       readonly requestId?: string;
       /**
-       * Debug wire sink, supplied only when session trace logging is enabled. Unlike {@link
-       * debugLog} it carries model content (prompts, tool payloads, SQL), so it never reaches the
-       * output channel and is absent unless the user opted in.
+       * Debug wire sink, supplied only when session trace logging is enabled. Unlike
+       * {@link debugLog} it carries model content (prompts, tool payloads, SQL), so it never
+       * reaches the output channel and is absent unless the user opted in.
        */
       readonly wireLog?: (record: WireRecord) => void;
       /**

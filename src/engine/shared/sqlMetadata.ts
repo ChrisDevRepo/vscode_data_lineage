@@ -24,8 +24,8 @@ export const SYSTEM_SCHEMAS: Set<string> = new Set([
  * `[ref].[value]`, `value` is an XML method, not an object in a schema named `ref`; counting it
  * would create "hallucinated" nodes.
  *
- * @see {@link https://learn.microsoft.com/en-us/sql/t-sql/xml/xml-data-type-methods-xml-data-type |
- *   XML Data Type Methods}
+ * @see
+ *   {@link https://learn.microsoft.com/en-us/sql/t-sql/xml/xml-data-type-methods-xml-data-type | XML Data Type Methods}
  */
 export const XML_METHODS: Set<string> = new Set([
   'nodes',
@@ -41,12 +41,10 @@ export const XML_METHODS: Set<string> = new Set([
  * `Geography`; the set suppresses false positive catalog references during cross-database lineage
  * extraction.
  *
- * @see {@link
- *   https://learn.microsoft.com/en-us/sql/t-sql/data-types/hierarchyid-data-type-method-reference |
- *   HierarchyID Methods}
- * @see {@link
- *   https://learn.microsoft.com/en-us/sql/t-sql/spatial-geometry/ogc-methods-on-geometry-instances
- *   | Geometry Methods}
+ * @see
+ *   {@link https://learn.microsoft.com/en-us/sql/t-sql/data-types/hierarchyid-data-type-method-reference | HierarchyID Methods}
+ * @see
+ *   {@link https://learn.microsoft.com/en-us/sql/t-sql/spatial-geometry/ogc-methods-on-geometry-instances | Geometry Methods}
  */
 export const CLR_TYPE_METHODS: Set<string> = new Set([
   'getancestor', 'getdescendant', 'getlevel', 'getroot', 'getreparentedvalue',

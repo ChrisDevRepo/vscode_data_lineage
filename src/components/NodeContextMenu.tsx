@@ -16,9 +16,9 @@ import { disabledControl } from './ui/disabledControl';
 import { escapeRegexLiteral, quoteIdentifier } from '../utils/sql';
 
 /**
- * Cursor-anchored Floating UI wiring shared by every right-click menu in the canvas: the menu takes
- * focus when it opens, Up/Down/Home/End move between its enabled `menuitem`s, Escape or an outside
- * press closes it.
+ * Cursor-anchored Floating UI wiring shared by every canvas right-click menu: focus moves into the
+ * menu on open, Up/Down/Home/End move between enabled `menuitem`s, Escape or an outside press
+ * closes it.
  */
 function useContextMenuFloating(x: number, y: number, onClose: () => void) {
   const virtualRef = useRef({
@@ -93,15 +93,15 @@ interface NodeContextMenuProps {
   onShowDetails: (nodeId: string) => void;
   /**
    * What "remove from what is on screen" does for this node, from
-   * {@link import('../engine/modeCapabilities').resolveRemoveAction} — the single Remove item
-   * this menu renders always shown, disabled with its reason when refused, never omitted.
+   * {@link import('../engine/modeCapabilities').resolveRemoveAction}. The Remove item is always
+   * shown, disabled with its reason when refused, never omitted.
    */
   removeAction: RemoveAction;
-  /** Callback to add a new exclusion rule based on this node's name (`removeAction.kind === 'exclude'`). */
+  /** Adds an exclusion rule from this node's name (`removeAction.kind === 'exclude'`). */
   onExcludeNode?: (pattern: string) => void;
   /** Callback to prune this node from the active trace (`removeAction.kind === 'trace-prune'`). */
   onTracePruneNode?: (nodeId: string) => void;
-  /** Callback to remove this node from the active curated/bookmark view (`removeAction.kind === 'curated-remove'`). */
+  /** Removes this node from the active curated/bookmark view (`kind === 'curated-remove'`). */
   onCuratedRemoveNode?: (nodeId: string) => void;
   /** Callback to collapse this node's schema in Expanded Schema View. */
   onCollapseSchema?: (schema: string) => void;
@@ -138,16 +138,9 @@ function removeActionLabel(action: RemoveAction): string {
 }
 
 /**
- * A context menu for graph nodes, providing quick access to lineage and inspection tools.
- *
- * It uses Floating UI to position itself at the cursor coordinates and handles:
- * - Initiating Trace and Pathfinding modes.
- * - Opening DDL and Table Detail views.
- * - Copying qualified names to the clipboard.
- * - Removing the node from whatever scope currently owns it.
- *
- * @param props - The component props.
- * @returns A portal-rendered React component.
+ * Context menu for graph nodes, positioned at the cursor with Floating UI: start trace or
+ * pathfinding, open DDL and Table Detail, copy qualified names, remove the node from the scope that
+ * owns it.
  */
 export const NodeContextMenu = memo(function NodeContextMenu({
   x,
@@ -306,7 +299,7 @@ interface SchemaContextMenuProps {
   onCollapse: (schema: string) => void;
 }
 
-/** Right-click menu for a Schema View cluster: Expand/Collapse, the one action a schema box owns. */
+/** Right-click menu of a Schema View cluster: Expand/Collapse, the one action a schema box owns. */
 export const SchemaContextMenu = memo(function SchemaContextMenu({
   x,
   y,

@@ -66,10 +66,7 @@ export function deriveModeCapabilities(input: ModeCapabilityInput): ModeCapabili
   };
 }
 
-/**
- * The concrete action Delete (or its menu/button equivalents) performs, per {@link
- * ModeCapabilities}.
- */
+/** The action Delete (or its menu/button equivalents) performs, per {@link ModeCapabilities}. */
 export type RemoveAction =
   | { kind: 'exclude' }
   | { kind: 'trace-prune' }
