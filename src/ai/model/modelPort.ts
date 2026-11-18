@@ -323,8 +323,9 @@ export type ToolGenerationResult =
       /**
        * The model's own turn exactly as the provider returned it (text, every tool call with its
        * own arguments, and the provider stream parts {@link PROVIDER_PARTS_KEY}), appended to the
-       * transcript unchanged. {@link text} and {@link toolCalls} are views of it (`toolCalls` adds
-       * each call's validation outcome).
+       * transcript unchanged, except that a call whose input is no JSON object is recorded with
+       * `{}` (tool-call arguments must be an object; its paired rejection names the input kind).
+       * {@link text} and {@link toolCalls} are views of it (`toolCalls` adds each call's outcome).
        */
       readonly message: AIMessage;
       readonly content: readonly ToolGenerationContent[];

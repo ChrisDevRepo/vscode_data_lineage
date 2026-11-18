@@ -108,8 +108,8 @@ export function buildScreenStateSlot(screen: string): string[] {
  * static prompt content. YAML template guidance is injected separately by `resolveStagePrompt`.
  *
  * @param analysisMode - Hop or session analysis mode. Synthesis composes CT as the BB protocol plus
- *   a column rider; the active protocol adds the CT scope rule for out-of-scope neighbors (its column
- *   aspect renders in `buildSmProtocol`).
+ *   a column rider; the active protocol adds the CT scope rule for out-of-scope neighbors (its
+ *   column aspect renders in `buildSmProtocol`).
  */
 export function buildPhasePrompt(
   phase: PromptPhase,

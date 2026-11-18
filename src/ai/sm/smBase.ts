@@ -1332,7 +1332,10 @@ export class NavigationEngine implements IHopStateMachine {
     });
   }
 
-  /** The limit of the side {@link depthBorderBreach} judged `depth` by; for a hop-relative depth, the smaller limit. */
+  /**
+   * The limit of the side {@link depthBorderBreach} judged `depth` by; for a hop-relative depth,
+   * the smaller limit.
+   */
   private breachedDepthLimit(nodeId: string, depth: number | null): number {
     const sides = this.directedDepthsFor(nodeId);
     const side = (['upstream', 'downstream'] as const).find(name => sides?.[name] === depth);

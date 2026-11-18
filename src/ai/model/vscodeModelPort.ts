@@ -279,7 +279,7 @@ export class VscodeModelPort implements ModelPort {
   public async completeText(input: CompleteTextInput): Promise<string> {
     if (input.signal?.aborted) throw cancelledError();
     this.modelCalls += 1;
-    const { message } = await this.collectGeneration(
+    const { message, toolCalls } = await this.collectGeneration(
       input.messages,
       input.system,
       [],
@@ -288,7 +288,7 @@ export class VscodeModelPort implements ModelPort {
       undefined,
       input.phase,
     );
-    if ((message.tool_calls ?? []).length > 0) {
+    if (toolCalls.length > 0) {
       throw new ModelPortError(
         'unsupported_response',
         'Text completion returned a tool call.',
