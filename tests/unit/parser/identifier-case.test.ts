@@ -31,7 +31,8 @@ describe('checked identifier comparison',()=>{
 });
 
 import JSZip from 'jszip';
-import { extractDacpac, extractSchemaPreview, extractDacpacFiltered, filterBySchemas } from '../../../src/engine/dacpacExtractor';
+import { extractDacpac, extractSchemaPreview, extractDacpacFiltered } from '../../../src/engine/dacpacExtractor';
+import { filterBySchemas } from '../../../src/engine/modelFilters';
 import { buildModelFromDmv, buildSchemaPreview } from '../../../src/engine/dmvExtractor';
 import type { SimpleExecuteResult } from '../../../src/types/database';
 import { loadParseRules } from '../helpers/testUtils';

@@ -8,7 +8,8 @@
  */
 
 import { beforeAll, describe, expect, it } from 'vitest';
-import { extractDacpac, extractDacpacFiltered, extractSchemaPreview, filterBySchemas } from '../../../src/engine/dacpacExtractor';
+import { extractDacpac, extractDacpacFiltered, extractSchemaPreview } from '../../../src/engine/dacpacExtractor';
+import { filterBySchemas } from '../../../src/engine/modelFilters';
 import { checkObjectLimit, formatObjectLimitMessage } from '../../../src/engine/modelFilters';
 import { loadParseRules } from '../helpers/testUtils';
 import { buildSyntheticDacpac, type SyntheticDacpacResult } from '../helpers/syntheticDacpac';
