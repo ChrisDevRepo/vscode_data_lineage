@@ -2007,9 +2007,11 @@ export class NavigationEngine implements IHopStateMachine {
   /**
    * Finds follow-up targets that clear the border but have no dependency path to the traced graph.
    * Unresolvable and excluded ids are left to the caller, which reports them with their own
-   * reasons. A target is connected when the retained trace reaches it
-   * ({@link tracedGraphReachable}) or pruned connectors bridge it ({@link prunedConnectorsTo}): a
-   * target the user names wins over the AI's earlier prune, and its connectors come back with it. A
+   * reasons. A target past an exact depth is refused by the router's own depth check
+   * ({@link admitsRoute}), so the AI never widens a fixed depth. A target is connected when the
+   * retained trace reaches it ({@link tracedGraphReachable}) or pruned connectors bridge it
+   * ({@link prunedConnectorsTo}): a target the user names wins over the AI's earlier prune,
+   * and its connectors come back with it. A
    * resolved, non-excluded id with no path even through pruned objects is refused, since
    * `present_result`'s closed-graph invariant could never close on it.
    *
@@ -2027,6 +2029,15 @@ export class NavigationEngine implements IHopStateMachine {
       if (!node) continue;
       const border = this.checkBorder(node.id, node, 'supplement');
       if (border.kind === 'excluded') continue;
+      if (this.admitsRoute(node.id, node, this.originNodeId!).depthBreach !== null) {
+        skipped.push({
+          nodeId: node.id,
+          reason: 'past_exact_depth',
+          hint: `${node.id} lies past an exact depth the user approved; to analyse it, start a new lineage_start_exploration proposal (origin + scope, no supplement) whose depth reaches it, for the user to approve at the confirm_sm_start gate.`,
+        });
+        this.log('debug', `[Border] supplement refuse hop=${this.hopCount} id=${node.id} reason=past_exact_depth`);
+        continue;
+      }
       candidates.push({ raw, node });
     }
     const batchIds = new Set(candidates.map(c => c.node.id));

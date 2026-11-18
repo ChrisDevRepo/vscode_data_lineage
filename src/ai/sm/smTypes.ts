@@ -388,12 +388,14 @@ export interface SupplementSkip {
    * typed; `hint` accompanies it.
    * - `not_connected_to_trace`: exists and not excluded but has no dependency path to the traced
    * graph (wire form of `REJECTION_CODES.notConnectedToTrace`); `hint` accompanies it.
+   * - `past_exact_depth`: a node the router would defer for crossing a depth ceiling the user
+   * fixed; `hint` accompanies it.
    *
    * `excluded` and `out_of_allowlist` are a hard wall for every supplement id, named or
    * chain-reached: a follow-up for an out-of-filter object reopens approval for it instead of
    * widening the border.
    */
-  reason: 'excluded' | 'out_of_allowlist' | 'unresolved' | 'not_connected_to_trace';
+  reason: 'excluded' | 'out_of_allowlist' | 'unresolved' | 'not_connected_to_trace' | 'past_exact_depth';
   /**
    * Recovery text for the model, populated for `not_connected_to_trace` — a separate exploration on
    * the id directly is the repair. Also populated for `out_of_allowlist` — starting a new
