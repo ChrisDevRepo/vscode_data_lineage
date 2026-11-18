@@ -51,6 +51,6 @@ export function structuredRejectReason(
   const rejection = rejectionFromZodError(error, { code: REJECTION_CODES.invalidStructuredOutput, input, schema });
   return {
     reason: `invalid ${STRUCTURED_OUTPUT_TOOL} fields: ${rejection.reason}`,
-    hint: [...renderFaults(rejection), rejection.hint].filter(Boolean).join('\n'),
+    hint: [...renderFaults(rejection, () => schema), rejection.hint].filter(Boolean).join('\n'),
   };
 }

@@ -92,9 +92,6 @@ const START_SHAPE_REQUIRED_MESSAGE = "Either 'origin' (fresh proposal) or 'suppl
 export const CT_TARGET_COLUMNS_RECOVERY =
   'Name the columns to trace; for all columns, read them with lineage_get_object_detail and send each one. Then resubmit CT.';
 
-/** Repair of a whole-object (BB) call that names columns. */
-export const BB_TARGET_COLUMNS_RECOVERY = 'Omit targetColumns and resubmit the BB specification.';
-
 /** `targetColumns` on every exploration phase: column trace names them; blackboard forbids it. */
 const TARGET_COLUMNS_PHASE_DESCRIPTION =
   'CT only: name each column to trace. When the user asked for every column, read them with lineage_get_object_detail and send each one. BB forbids this property.';
@@ -204,7 +201,7 @@ export const StartExplorationInputSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ['targetColumns'],
       message: 'analysisMode "bb" is whole-object lineage and does not accept targetColumns.',
-      params: { code: REJECTION_CODES.ctFieldForbiddenInBb, hint: BB_TARGET_COLUMNS_RECOVERY },
+      params: { code: REJECTION_CODES.ctFieldForbiddenInBb },
     });
   }
   if (data.origin && !isProposalRefine && !data.depth) {

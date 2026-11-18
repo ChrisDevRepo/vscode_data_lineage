@@ -30,7 +30,7 @@ import { TaskLedger, type InvestigationTaskInput } from './taskLedger';
 import { resolveScalarReturnTarget, resolveFunctionCallerTarget, functionCallerDdlHash, uniqueScalarReturnTargets } from './scalarReturnBinding';
 import { parseNavigationSnapshot, InvalidEngineCheckpointError } from './navigationSnapshotSchema';
 import { REJECTION_CODES } from '../support/rejectionCodes';
-import { combineToolRejections, makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
+import { combineToolRejections, ISSUES, makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 
 /**
  * A hop neighbour plus the engine decisions already taken about it. A non-bodied carrier contracted
@@ -1790,7 +1790,7 @@ export class NavigationEngine implements IHopStateMachine {
     if (params.analysisMode === 'bb' && params.targetColumns !== undefined) {
       return makeRejection({
         code: REJECTION_CODES.ctFieldForbiddenInBb,
-        hint: 'Omit targetColumns and resubmit the BB specification.',
+        hint: ISSUES[REJECTION_CODES.ctFieldForbiddenInBb].correction,
       });
     }
     const wasRefine = this.initSnapshot !== null;

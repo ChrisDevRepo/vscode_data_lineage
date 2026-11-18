@@ -7,6 +7,7 @@
  * tool result. {@link readToolError} reads that shape back. Provider-pure.
  */
 import { z } from 'zod';
+import { toModelJsonSchema } from '../tools/jsonSchema';
 import { REJECTION_CODES } from './rejectionCodes';
 
 const ISSUE_CATEGORIES = ['shape', 'required', 'reference', 'value', 'protocol', 'stage'] as const;
@@ -50,6 +51,9 @@ export const UNKNOWN_TOOL_REPAIR_HINT = 'Call one of the tools already offered i
  */
 export const DUPLICATE_CALL_ID_REPAIR_HINT = 'Use a new, unique call id for this tool call.';
 
+/** The sections exit of a column fault, shared by its table row and {@link REFERENCE_FALLBACK}. */
+const SECTIONS_EXIT = 'in sections; further work on it goes in questions.';
+
 /** Stable message shared by {@link NoProjectLoadedError} and {@link buildNoProjectLoadedError}. */
 const NO_PROJECT_LOADED_MESSAGE =
   'No project is loaded in the Data Lineage panel (closed or not opened yet); open the project and ask again.';
@@ -92,7 +96,7 @@ export const ISSUES = {
   invalid: {
     category: 'value',
     label: 'breaks the rule of this field',
-    correction: "Send a value that meets the rule in the field's schema description.",
+    correction: 'Send a value that meets the rule stated above.',
   },
   [REJECTION_CODES.offPolicy]: {
     category: 'stage',
@@ -128,7 +132,7 @@ export const ISSUES = {
   [REJECTION_CODES.invalidInput]: {
     category: 'value',
     label: 'breaks the input contract of this tool',
-    correction: INVALID_TOOL_INPUT_REPAIR_HINT,
+    correction: 'Correct this field as its schema describes.',
   },
   [REJECTION_CODES.notFound]: {
     category: 'reference',
@@ -238,7 +242,7 @@ export const ISSUES = {
   [REJECTION_CODES.columnOutOfScope]: {
     category: 'reference',
     label: 'column outside the approved scope',
-    correction: 'column_flow names only in-scope objects. Drop the outside entry from upstream_columns, or set writes_to to null; use column_flow: [] if no entry remains. State the fact about the outside object in sections; further work on it goes in questions.',
+    correction: `column_flow names only in-scope objects. Drop the outside entry from upstream_columns, or set writes_to to null; use column_flow: [] if no entry remains. State the fact about the outside object ${SECTIONS_EXIT}`,
   },
   [REJECTION_CODES.emptyStructuredOutput]: {
     category: 'stage',
@@ -256,7 +260,7 @@ export const ISSUES = {
   [REJECTION_CODES.validation]: {
     category: 'value',
     label: 'breaks the rule of this field',
-    correction: "Send a value that meets the rule in the field's schema description.",
+    correction: 'Send a value that meets the rule stated above.',
   },
   [REJECTION_CODES.invalidStatus]: BACKEND_FAULT,
   [REJECTION_CODES.explorationComplete]: {
@@ -272,7 +276,7 @@ export const ISSUES = {
   [REJECTION_CODES.invalidToolInput]: {
     category: 'shape',
     label: 'call does not match the tool schema',
-    correction: INVALID_TOOL_INPUT_REPAIR_HINT,
+    correction: 'Correct this field to match the tool schema.',
   },
   [REJECTION_CODES.toolCallNotation]: {
     category: 'shape',
@@ -377,7 +381,9 @@ const ISSUE_CODES = Object.keys(ISSUES) as [IssueCode, ...IssueCode[]];
 
 /**
  * One independently decidable fault: its dotted path and issue code, with the backend facts it
- * concerns (allowed `values`, accepted `types`, a size `bound`), never a submitted value.
+ * concerns (allowed `values`, accepted `types`, a size `bound`), never a submitted value. `stated`
+ * marks a fault whose specific repair the rejection's reason or hint already states (the allowed
+ * values, the fields of the object, a size bound, a refinement's own hint, the variants of a union).
  */
 const ToolErrorShape = z.object({
   path: z.string(),
@@ -385,6 +391,7 @@ const ToolErrorShape = z.object({
   values: z.array(z.string()).optional(),
   types: z.array(z.string()).optional(),
   bound: z.object({ keyword: z.string().min(1), limit: z.number(), sent: z.number().int().nonnegative().optional() }).strict().optional(),
+  stated: z.literal(true).optional(),
 }).strict();
 
 /** One fault of a rejection. */
@@ -555,7 +562,8 @@ export function makeRejection(input: {
 /**
  * Unions independently assessed faults into one rejection (one rejection is its own union): reasons
  * one per line, distinct hints, every path, entry id, detail and fault. An `invalid_input` fault owns the outcome code, else the
- * first rejection's code does.
+ * first rejection's code does. A rejection without typed faults is its own code at each issue path,
+ * which its reason and hint state.
  */
 export function combineToolRejections(rejections: readonly ToolRejection[]): ToolRejection {
   if (rejections.length === 0) throw new Error('Cannot combine an empty rejection set.');
@@ -572,40 +580,78 @@ export function combineToolRejections(rejections: readonly ToolRejection[]): Too
     issuePaths: rejections.flatMap(rejection => rejection.issuePaths ?? []),
     entryIds: rejections.flatMap(rejection => rejection.entryIds ?? []),
     ...(details.length > 0 ? { detail: [...new Map(details.map(detail => [JSON.stringify(detail), detail])).values()] } : {}),
-    errors: rejections.flatMap(rejection => rejection.errors ?? []),
+    errors: rejections.flatMap(rejection => rejection.errors
+      ?? (rejection.code in ISSUES ? (rejection.issuePaths ?? []).map(path => ({ path, code: rejection.code as IssueCode, stated: true as const })) : [])),
   });
 }
 
-/** Last-feedback fallback of a column reference fault that cannot be corrected. */
-const REFERENCE_FALLBACK = 'If you cannot correct it, write that information in sections instead, highlighted with a callout naming the unresolved issue.';
+/**
+ * Last-feedback fallback of a column reference fault that cannot be corrected, in the words of the
+ * `column_out_of_scope` exit.
+ */
+const REFERENCE_FALLBACK = `If you cannot correct it, state the fact ${SECTIONS_EXIT}`;
+
+/** The exit a missing or mistyped field that accepts `null` adds to its correction. */
+const NULL_EXIT = 'Send null when it does not apply.';
+
+/** The served schema path of a dotted fault path: an index segment addresses list items. */
+function schemaPath(path: string): PropertyKey[] {
+  return path.split('.').filter(Boolean).map(key => (/^\d+$/.test(key) ? Number(key) : key));
+}
 
 /**
- * The model-facing lines of a rejection's faults: one `path: label. correction` line per issue code,
- * with the paths sharing it. Allowed values are stated once, by the hint ({@link zodFieldRepairHint}).
+ * The repair of one fault: its table correction, and for a missing field that accepts `null` the
+ * null exit after it. A mistyped field's reason states the expected type, so its repair is only the
+ * shape of an expected object and the null exit.
  */
-export function renderFaults(rejection: ToolRejection): string[] {
-  const paths = new Map<IssueCode, string[]>();
-  for (const { path, code } of rejection.errors ?? []) paths.set(code, [...(paths.get(code) ?? []), path]);
-  return [...paths].map(([code, where]) => {
-    const { label, correction } = ISSUES[code];
-    const named = where.filter(Boolean).join(', ');
-    return `${named ? `${named}: ` : ''}${label}. ${correction}`;
+function faultCorrection(error: ToolError, schema: z.ZodType | undefined): string[] {
+  const node = error.code === 'type' || error.code === 'missing' ? jsonSchemaNodeAt(schema, schemaPath(error.path)) : undefined;
+  const object = error.code === 'type' && node && unwrapNullable(node).properties ? unwrapNullable(node) : undefined;
+  const correction = object
+    ? [`Send the object directly, shaped like ${JSON.stringify(exampleOf(object))}.`]
+    : error.code === 'type' ? [] : [ISSUES[error.code].correction];
+  return node && acceptsNull(node) ? [...correction, NULL_EXIT] : correction;
+}
+
+/**
+ * The model-facing lines of a rejection's faults: one `path: label. correction` line per path, with
+ * every label of that path and the correction of each fault whose repair the rejection does not
+ * already state ({@link ToolError}`.stated`); paths with the same text share one line.
+ *
+ * @param schema - The tool's input schema as served when the rejection renders; names the shape of a
+ *   mistyped object and the null exit of a nullable field.
+ */
+export function renderFaults(rejection: ToolRejection, schema?: () => z.ZodType | undefined): string[] {
+  const byPath = new Map<string, ToolError[]>();
+  for (const error of rejection.errors ?? []) byPath.set(error.path, [...(byPath.get(error.path) ?? []), error]);
+  const served = schema?.();
+  const lines = new Map<string, string[]>();
+  for (const [path, errors] of byPath) {
+    const labels = [...new Set(errors.map(error => ISSUES[error.code].label))].join('; ');
+    const corrections = [...new Set(errors.filter(error => !error.stated).flatMap(error => faultCorrection(error, served)))];
+    const text = [`${labels}.`, ...corrections].join(' ');
+    lines.set(text, [...(lines.get(text) ?? []), path]);
+  }
+  return [...lines].map(([text, paths]) => {
+    const named = paths.filter(Boolean).join(', ');
+    return `${named ? `${named}: ` : ''}${text}`;
   });
 }
 
 /**
  * The help the last feedback adds to a rejection's faults: the fallback of a column reference fault
- * (a rejection without faults is its code at each issue path) and the next schema level of each
- * top-level field of the wrong type or missing.
+ * whose correction gives no sections exit of its own (a rejection without faults is its code at each
+ * issue path) and the next schema level of each top-level field of the wrong type or missing.
  *
- * @param schema - The tool's input schema as it is served when the rejection renders.
+ * @param schema - The tool's input schema as served when the rejection renders.
  */
 export function renderLastFeedbackHelp(rejection: ToolRejection, schema?: () => z.ZodType | undefined): string[] {
   const errors = rejection.errors ?? [];
   const lines: string[] = [];
   const faults = errors.length > 0 ? errors : (rejection.issuePaths ?? []).map(path => ({ path, code: rejection.code }));
   const table: Record<string, IssueText | undefined> = ISSUES;
-  if (faults.some(({ path, code }) => table[code]?.category === 'reference' && /^column_flow(?:\.|$)/.test(path))) {
+  if (faults.some(({ path, code }) => table[code]?.category === 'reference' && /^column_flow(?:\.|$)/.test(path)
+    && !table[code]!.correction.endsWith(SECTIONS_EXIT))) {
     lines.push(REFERENCE_FALLBACK);
   }
   for (const error of errors) {
@@ -616,10 +662,15 @@ export function renderLastFeedbackHelp(rejection: ToolRejection, schema?: () => 
   return lines;
 }
 
-/** The JSON type names a schema node accepts: its own, else its branches'. */
+/** The JSON type names a schema node accepts: its own, its branches', or its enum/const values'. */
 function typeNames(node: JsonSchemaShape): string {
   const own = [node.type ?? []].flat();
-  const names = own.length > 0 ? own : [...(node.anyOf ?? []), ...(node.oneOf ?? [])].map(typeNames);
+  const values = [...(node.enum ?? []), ...('const' in node ? [node.const] : [])];
+  const names = own.length > 0
+    ? own
+    : node.anyOf || node.oneOf
+      ? [...(node.anyOf ?? []), ...(node.oneOf ?? [])].map(typeNames)
+      : values.map(value => (value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value));
   return [...new Set(names)].join(' or ');
 }
 
@@ -794,6 +845,7 @@ interface JsonSchemaShape {
   properties?: Record<string, JsonSchemaShape>;
   required?: string[];
   enum?: unknown[];
+  const?: unknown;
   minItems?: number;
 }
 
@@ -806,7 +858,7 @@ function dottedPath(path: readonly PropertyKey[]): string {
 function jsonSchemaNodeAt(schema: z.ZodType | undefined, path: readonly PropertyKey[]): JsonSchemaShape | undefined {
   if (!schema) return undefined;
   const variantsOf = (node: JsonSchemaShape): JsonSchemaShape[] => [node, ...(node.anyOf ?? []), ...(node.oneOf ?? [])];
-  let node = z.toJSONSchema(schema, { io: 'input', unrepresentable: 'any' }) as JsonSchemaShape;
+  let node = toModelJsonSchema(schema) as JsonSchemaShape;
   for (const key of path) {
     const next: JsonSchemaShape | undefined = variantsOf(node)
       .map((variant) => (typeof key === 'number' ? variant.items : variant.properties?.[String(key)]))
@@ -815,6 +867,27 @@ function jsonSchemaNodeAt(schema: z.ZodType | undefined, path: readonly Property
     node = next;
   }
   return node;
+}
+
+/** Whether a node accepts `null`: its own type or one of its branches. */
+function acceptsNull(node: JsonSchemaShape): boolean {
+  return [node, ...(node.anyOf ?? []), ...(node.oneOf ?? [])].some(variant => [variant.type ?? []].flat().includes('null'));
+}
+
+/**
+ * A literal value the node accepts, built from the schema alone: an enum's first member, a
+ * placeholder for a scalar type, and the required members of an object.
+ */
+function exampleOf(node: JsonSchemaShape): unknown {
+  const target = unwrapNullable(node);
+  if (target.enum?.length) return target.enum[0];
+  if (target.properties) {
+    const keys = target.required ?? Object.keys(target.properties);
+    return Object.fromEntries(keys.map(key => [key, exampleOf(target.properties![key] ?? {})]));
+  }
+  const type = Array.isArray(target.type) ? target.type[0] : target.type;
+  if (type === 'array') return [];
+  return type === 'number' || type === 'integer' ? 0 : type === 'boolean' ? false : '...';
 }
 
 /** Non-null branch of a nullable node (`anyOf: [X, {type: 'null'}]`); any other node unchanged. */
@@ -952,8 +1025,21 @@ function invalidValueRepairHint(error: z.ZodError, input: unknown, schema?: z.Zo
 }
 
 /** Whether a schema refinement states the repair of its custom issue on `params.hint`. */
-function issueOwnsRepair(issue: z.core.$ZodIssue): boolean {
+function issueStatesRepair(issue: z.core.$ZodIssue): boolean {
   return issue.code === 'custom' && typeof (issue.params as { hint?: unknown } | undefined)?.hint === 'string';
+}
+
+/** Every registry code; a custom issue carrying one is repaired by that code's table row. */
+const REGISTRY_CODES: ReadonlySet<string> = new Set(Object.values(REJECTION_CODES));
+
+/**
+ * Whether a schema refinement owns the repair of its custom issue: on `params.hint`, or by the
+ * table row of the registry code on `params.code`.
+ */
+function issueOwnsRepair(issue: z.core.$ZodIssue): boolean {
+  if (issue.code !== 'custom') return false;
+  const code = (issue.params as { code?: unknown } | undefined)?.code;
+  return issueStatesRepair(issue) || (typeof code === 'string' && REGISTRY_CODES.has(code));
 }
 
 /**
@@ -966,7 +1052,7 @@ function issueOwnsRepair(issue: z.core.$ZodIssue): boolean {
 function issueOwnedRepairHint(error: z.ZodError): string | undefined {
   const hints: string[] = [];
   for (const issue of error.issues) {
-    if (issue.code !== 'custom' || !issueOwnsRepair(issue)) continue;
+    if (issue.code !== 'custom' || !issueStatesRepair(issue)) continue;
     const hint = (issue.params as { hint: string }).hint;
     if (!hints.includes(hint)) hints.push(hint);
   }
@@ -1034,7 +1120,9 @@ function sizeKeyword(issue: Extract<z.core.$ZodIssue, { code: 'too_big' | 'too_s
  * forbidden one, else `type`; `unrecognized_keys` one `unknown_key` per key; `invalid_value` is
  * `enum` (`missing` when absent); `too_big`/`too_small` `size` with its bound; a custom issue the
  * issue code on its `params.code`; every other issue `invalid`. A union names the faults of its
- * flattened branches, the accepted types of one path merged into one fault.
+ * flattened branches, the accepted types of one path merged into one fault. A fault whose repair the
+ * reason or hint states is `stated`: a listed value, a key, a size bound, a union's variants, a
+ * refinement's `params.hint`.
  */
 function issueErrors(issue: z.core.$ZodIssue, input: unknown): ToolError[] {
   const path = issue.path.join('.');
@@ -1047,30 +1135,30 @@ function issueErrors(issue: z.core.$ZodIssue, input: unknown): ToolError[] {
           for (const fault of issueErrors({ ...sub, path: [...issue.path, ...sub.path] }, input)) {
             const same = fault.code === 'type' && faults.find(other => other.code === 'type' && other.path === fault.path);
             if (same) same.types = [...new Set([...(same.types ?? []), ...(fault.types ?? [])])];
-            else faults.push(fault);
+            else faults.push({ ...fault, stated: true });
           }
         }
       }
       return faults;
     }
     case 'unrecognized_keys':
-      return unrecognizedKeyPaths(issue).map(key => ({ path: key, code: 'unknown_key' }));
+      return unrecognizedKeyPaths(issue).map(key => ({ path: key, code: 'unknown_key', stated: true }));
     case 'invalid_type':
       return [issue.expected === 'never'
         ? { path, code: 'never' }
         : { path, code: absent ? 'missing' : 'type', types: [issue.expected] }];
     case 'invalid_value':
-      return [{ path, code: absent ? 'missing' : 'enum', values: issue.values.map(String) }];
+      return [absent ? { path, code: 'missing', values: issue.values.map(String) } : { path, code: 'enum', values: issue.values.map(String), stated: true }];
     case 'too_big':
     case 'too_small': {
       const sent = resolveAtPath(input, issue.path);
       const size = typeof sent === 'string' || Array.isArray(sent) ? sent.length : undefined;
       const limit = Number(issue.code === 'too_big' ? issue.maximum : issue.minimum);
-      return [{ path, code: 'size', bound: { keyword: sizeKeyword(issue), limit, ...(size !== undefined ? { sent: size } : {}) } }];
+      return [{ path, code: 'size', bound: { keyword: sizeKeyword(issue), limit, ...(size !== undefined ? { sent: size } : {}) }, stated: true }];
     }
     case 'custom': {
       const code = (issue.params as { code?: unknown } | undefined)?.code;
-      return [{ path, code: typeof code === 'string' && code in ISSUES ? code as IssueCode : 'invalid' }];
+      return [{ path, code: typeof code === 'string' && code in ISSUES ? code as IssueCode : 'invalid', ...(issueStatesRepair(issue) ? { stated: true as const } : {}) }];
     }
     default:
       return [{ path, code: 'invalid' }];
@@ -1093,8 +1181,8 @@ function issueErrors(issue: z.core.$ZodIssue, input: unknown): ToolError[] {
  *   the reason carrying them.
  * @param error - The Zod validation failure.
  * @param opts - `code` to stamp on the rejection; optional `hint` (default: {@link zodFieldRepairHint},
- *   followed by the generic resend rule {@link INVALID_TOOL_INPUT_REPAIR_HINT} unless an issue
- *   states its own repair); optional `input` (the value that failed parsing) enabling measured-size
+ *   followed by the generic resend rule {@link INVALID_TOOL_INPUT_REPAIR_HINT} unless a refinement
+ *   owns its repair, on its hint or its registry code's table row); optional `input` (the value that failed parsing) enabling measured-size
  *   enrichment, absent-field faults and the value hint; optional `schema` (the schema it failed)
  *   enabling the hints that name what the schema accepts.
  * @returns A normalized {@link ToolRejection} built via {@link makeRejection}.
@@ -1138,7 +1226,7 @@ export function rejectionFromZodError(
     reason: z.prettifyError(new z.ZodError(collapsed)),
     hint: opts.hint ?? [
       zodFieldRepairHint(error, opts.input, opts.schema),
-      // A refinement that states its own repair may contradict the generic resend rule.
+      // A refinement that owns its repair may contradict the generic resend rule.
       error.issues.some(issueOwnsRepair) ? undefined : INVALID_TOOL_INPUT_REPAIR_HINT,
     ].filter(Boolean).join(' '),
     issuePaths,

@@ -1,8 +1,7 @@
 import type { InteractionRuleResult } from '../types';
 import { DEFAULT_EXPLORATION_QUESTION } from '../../sm/smTypes';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
-import { makeRejection } from '../../support/toolErrorEnvelope';
-import { BB_TARGET_COLUMNS_RECOVERY } from '../../tools/toolSchemas';
+import { ISSUES, makeRejection } from '../../support/toolErrorEnvelope';
 
 /**
  * Resolves the canonical user question for an exploration. User-authored text always wins over the
@@ -36,7 +35,7 @@ export function resolveCanonicalQuestion(sources: {
 /** Rejects named columns inherited into a BB refine without mutating state; `null` if none. */
 export function evaluateBbTargetColumnsRule(targetColumns: readonly string[] | undefined): InteractionRuleResult {
   if (!targetColumns?.length) return null;
-  return makeRejection({ code: REJECTION_CODES.ctFieldForbiddenInBb, hint: BB_TARGET_COLUMNS_RECOVERY });
+  return makeRejection({ code: REJECTION_CODES.ctFieldForbiddenInBb, hint: ISSUES[REJECTION_CODES.ctFieldForbiddenInBb].correction });
 }
 
 /**

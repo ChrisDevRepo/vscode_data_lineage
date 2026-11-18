@@ -727,7 +727,7 @@ function rejectionText(rejection: ToolRejection, priorState?: ToolPhaseAttemptSt
   const heldLabels = held?.sections.map(({ label, start }) => `"${label}"${start ? ` (from ${start})` : ''}`).join(', ');
   return [
     rejection.reason,
-    ...renderFaults(rejection),
+    ...renderFaults(rejection, schema),
     ...inventories,
     ...(rejection.hint !== undefined ? [rejection.hint] : []),
     ...(finalRejection ? renderLastFeedbackHelp(rejection, schema) : []),
