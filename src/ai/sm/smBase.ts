@@ -1305,9 +1305,9 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Spec 07:9: each `column_flow` object (`upstream_columns[].node`, `writes_to.node`) outside the
+   * Each `column_flow` object (`upstream_columns[].node`, `writes_to.node`) outside the
    * approved scope, as a fatal `column_out_of_scope`. The focus, the scope, visited nodes and the
-   * unexcluded tables the origin writes (a procedure origin's columns live there, spec 01) are inside; any
+   * unexcluded tables the origin writes (a procedure origin's columns live there) are inside; any
    * other object must pass {@link admitsRoute}; the refusal names the cause. A reference `prior`
    * already refuses keeps its own refusal; every other reference is still checked.
    */

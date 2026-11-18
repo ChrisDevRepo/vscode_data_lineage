@@ -155,8 +155,8 @@ function buildDiscoveryPrompt(): string {
 /**
  * The active hop's task and deliverable. Field meanings (verdict words, `prune_neighbors`,
  * `questions`, the CT carry) live in the `submit_findings` schema. The CT column aspect renders
- * separately (`buildSmProtocol`); a CT hop adds only the scope rule for `column_flow` objects
- * (spec 07:9), which a BB hop has no field for (CT ⊇ BB).
+ * separately (`buildSmProtocol`); a CT hop adds only the scope rule for `column_flow` objects,
+ * which a BB hop has no field for (CT ⊇ BB).
  */
 function buildActivePhasePrompt(analysisMode: 'bb' | 'ct'): string {
   return [
