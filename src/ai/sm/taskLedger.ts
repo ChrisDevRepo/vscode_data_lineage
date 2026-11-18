@@ -2,11 +2,9 @@ import { normalizeColName, schemaKey } from '../../utils/sql';
 import type { InvestigationTask, PendingLead, ScalarReturnTarget } from './smTypes';
 
 /**
- * What a caller supplies to open a ledger task; the ledger assigns the id and the closed state.
- *
- * @remarks
- * The `kind` arm decides whether traced columns ride along: a column-lineage task always names at
- * least one, a root or analytical task never does.
+ * What a caller supplies to open a ledger task; the ledger assigns the id and the closed state. The
+ * `kind` arm decides whether traced columns ride along: a column-lineage task always names at least
+ * one, a root or analytical task never does.
  */
 export type InvestigationTaskInput = {
   /** Who raised the task — the user's question, the engine, or the model. */
@@ -51,11 +49,9 @@ function stableId(prefix: 'task' | 'lead', identity: string): string {
 }
 
 /**
- * Engine-owned registry for investigation questions and post-run leads.
- *
- * @remarks
- * Task identity is the exact normalized tuple, not a node-only or substring match. This keeps
- * two different questions about the same node distinct while making retries idempotent.
+ * Engine-owned registry for investigation questions and post-run leads. Task identity is the exact
+ * normalized tuple, not a node-only or substring match, so two questions about the same node stay
+ * distinct and retries are idempotent.
  */
 export class TaskLedger {
   /** Follows the proven source identifier policy; existing callers default to case-insensitive. */
@@ -90,9 +86,9 @@ export class TaskLedger {
   }
 
   /**
-   * Shared identity-keyed upsert mechanics for {@link ensureTask} and {@link ensureLead}: the id
-   * lookup, `stableId` derivation and collision guard are identical; only the identity-hit and
-   * fresh-insert behavior (`onHit` / `buildRecord`) differs per caller.
+   * Shared identity-keyed upsert for {@link ensureTask} and {@link ensureLead}: id lookup,
+   * `stableId` derivation and collision guard are identical; only the identity-hit and fresh-insert
+   * behavior (`onHit` / `buildRecord`) differs per caller.
    */
   private upsertByIdentity<T extends { id: string }>(
     store: Map<string, T>,
@@ -115,10 +111,7 @@ export class TaskLedger {
     return record;
   }
 
-  /**
-   * Creates or returns the task with the same normalized identity tuple.
-   * @param input - Typed task content without its derived ID.
-  */
+  /** Creates or returns the task with the same normalized identity tuple. */
   public ensureTask(input: InvestigationTaskInput): InvestigationTask {
     const rawInput = input as { kind: string; activeColumns?: unknown };
     if (rawInput.activeColumns !== undefined && !Array.isArray(rawInput.activeColumns)) {
@@ -167,21 +160,14 @@ export class TaskLedger {
     );
   }
 
-  /**
-   * Returns a task by stable id.
-   * @param taskId - Engine-owned task identity.
-   * @returns Stored task, or `undefined` when absent.
-   */
+  /** Returns a task by stable id, or `undefined`. */
   public getTask(taskId: string): InvestigationTask | undefined {
     return this.tasks.get(taskId);
   }
 
   /**
-   * Applies a valid task lifecycle transition.
-   * @param taskId - Task selected by the host.
-   * @param status - New engine-owned lifecycle state.
-   * @param hop - Resolution hop when applicable.
-   * @returns Whether the task existed.
+   * Applies a valid task lifecycle transition (`hop` is the resolution hop when applicable);
+   * returns whether the task existed.
    */
   public setTaskStatus(taskId: string, status: InvestigationTask['status'], hop?: number): boolean {
     const task = this.tasks.get(taskId);
@@ -192,10 +178,7 @@ export class TaskLedger {
     return true;
   }
 
-  /**
-   * Creates or updates the lead for a deferred task and boundary.
-   * @param input - Lead content without its derived ID.
-   */
+  /** Creates or updates the lead for a deferred task and boundary. */
   public ensureLead(input: Omit<PendingLead, 'id' | 'status'> & { status?: PendingLead['status'] }): PendingLead {
     const identity = leadIdentity(input, this.identifierCaseSensitive);
     return this.upsertByIdentity(
@@ -213,9 +196,8 @@ export class TaskLedger {
   }
 
   /**
-   * Marks an unresolved lead scheduled and reactivates its task.
-   * @param leadId - Pending lead selected by the host.
-   * @returns Scheduled lead, or `undefined` when it cannot be scheduled.
+   * Marks an unresolved lead scheduled and reactivates its task; `undefined` when it cannot be
+   * scheduled.
    */
   public scheduleLead(leadId: string): PendingLead | undefined {
     const lead = this.leads.get(leadId);
@@ -225,10 +207,7 @@ export class TaskLedger {
     return lead;
   }
 
-  /**
-   * Resolves every scheduled lead backed by the completed task.
-   * @param taskId - Task that completed successfully.
-   */
+  /** Resolves every scheduled lead backed by the completed task. */
   public resolveTaskLeads(taskId: string): void {
     for (const lead of this.leads.values()) {
       if (lead.taskId === taskId && lead.status === 'scheduled') lead.status = 'resolved';
@@ -236,13 +215,9 @@ export class TaskLedger {
   }
 
   /**
-   * Resolves every scheduled lead on a node whose hop completed, with its task.
-   *
-   * @remarks
-   * A follow-up add names an object, not a lead, so the leads it schedules on that object are owned
-   * by other tasks; the analysed object answers them all.
-   * @param nodeId - Node whose hop completed.
-   * @param hop - Resolution hop.
+   * Resolves every scheduled lead on a node whose hop completed, with its task. A follow-up add
+   * names an object, not a lead, so the leads it schedules on that object belong to other tasks;
+   * the analysed object answers them all.
    */
   public resolveNodeLeads(nodeId: string, hop: number): void {
     const key = this.identifierKey(nodeId);

@@ -6,8 +6,8 @@ import { markGitIgnored } from '../../utils/gitIgnoredDir';
 
 /**
  * One lifecycle record in the session-scoped AI diagnostic trace. Lifecycle variants carry no
- * prompt, model text, tool argument/result or error prose; wire records do, but only after the
- * user enables the diagnostic command for this extension host session.
+ * prompt, model text, tool argument/result or error prose; wire records do, but only after the user
+ * enables the diagnostic command for this extension host session.
  */
 export type RuntimeLifecycleRecord =
   | {
@@ -23,9 +23,8 @@ export type RuntimeLifecycleRecord =
       readonly runFingerprint: string;
       readonly status: 'ok' | 'error' | 'cancelled';
       /**
-       * Machine-readable stop reason behind a non-`ok` status (`no_progress`, `engine_error`, …).
-       * Typed as `string`: it mirrors the graph's stop-reason channel without importing the agent
-       * layer's union into observability.
+       * Machine-readable stop reason behind a non-`ok` status (`no_progress`, `engine_error`, ...),
+       * typed `string` so observability does not import the agent layer's union.
        */
       readonly reason?: string;
       /** Stable machine-readable graph failure code, when the graph set one. */
@@ -67,7 +66,9 @@ export type RuntimeLifecycleRecord =
       readonly outcome: 'accepted' | 'refused' | 'no_owning_turn' | 'failed';
       /** Enumerated cause when `outcome` is `refused`; never free text. */
       readonly refusedBy?: 'gate_id_mismatch' | 'no_pending_gate';
-      /** When the action was received; an accepted approval's own `at` is after the released turn. */
+      /**
+       * When the action was received; an accepted approval's own `at` is after the released turn.
+       */
       readonly decidedAt?: string;
     }
   | {
@@ -88,7 +89,7 @@ export type RuntimeLifecycleRecord =
       /** Dispatch outcome; `gate` is a consent gate, not charged to the semantic budget. */
       readonly status: 'accepted' | 'rejected' | 'gate' | 'dispatch_error';
       readonly rejectionCode?: string;
-      /** Dotted field paths the rejection blamed, when it reported any; identifiers, never prose. */
+      /** Dotted field paths the rejection blamed, when any; identifiers, never prose. */
       readonly issuePaths?: readonly string[];
       readonly durationMs: number;
     };
@@ -96,7 +97,7 @@ export type RuntimeLifecycleRecord =
 /** Record accepted by the trace: a lifecycle record or any {@link WireRecord}. */
 export type AiTraceRecord = RuntimeLifecycleRecord | WireRecord;
 
-/** What produced a trace file: a live `extension-host` session, or the `headless-harness` (regression only). */
+/** What produced a trace file: a live `extension-host` session or the `headless-harness`. */
 export type TraceOrigin = 'extension-host' | 'headless-harness';
 
 /** Opt-in switches applied when the session trace is enabled. */
@@ -168,8 +169,8 @@ export class AiTraceWriter {
   }
 
   /**
-   * Serializes one record onto the append chain. `consumeOneShot` is false for the trace-open
-   * stamp so a failure at enable time does not spend the once-per-session warn-level report.
+   * Serializes one record onto the append chain. `consumeOneShot` is false for the trace-open stamp
+   * so a failure at enable time does not spend the once-per-session warn-level report.
    */
   private enqueue(record: AiTraceRecord, consumeOneShot: boolean): Promise<void> {
     const line = `${serializeRecord(record)}\n`;

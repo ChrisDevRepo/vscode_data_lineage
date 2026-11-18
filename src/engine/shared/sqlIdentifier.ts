@@ -3,10 +3,8 @@ import { quoteIdentifier, schemaKey, splitSqlName, stripBrackets } from '../../u
 
 /**
  * Normalizes a SQL name to a canonical quoted identifier under the source comparison policy.
- *
- * @param name - Name to use.
- * @param identifierCaseSensitive - True only when checked catalog metadata requires exact casing.
- * @returns Canonical quoted key; legacy/default comparison lowercases identifiers.
+ * `identifierCaseSensitive` is true only when checked catalog metadata requires exact casing; the
+ * default lowercases identifiers.
  */
 export function normalizeName(name: string, identifierCaseSensitive = false): string {
   const parts = splitSqlName(name).map(p => schemaKey(stripBrackets(p), identifierCaseSensitive));

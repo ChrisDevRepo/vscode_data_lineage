@@ -18,9 +18,7 @@ interface ToolPairIndices {
   readonly toolIdx: number;
 }
 
-/**
- * Reads complete tool-call identities from one LangChain AI message.
- */
+/** Reads complete tool-call identities from one LangChain AI message. */
 function assistantCallIds(msg: ModelMessage): Set<string> {
   if (!AIMessage.isInstance(msg)) return new Set();
   return new Set(

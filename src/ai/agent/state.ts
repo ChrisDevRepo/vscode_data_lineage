@@ -9,11 +9,9 @@ import type { PendingGate } from '../session/sessionPhase';
 import type { ToolPhaseAttemptState } from './toolAttempt';
 
 /**
- * Explicit entry route chosen before phase execution starts.
- *
- * @remarks
- * AI-owned semantic verdict. Execution triggers such as `/trace` and the explicit preview action
- * are represented separately so identical visual wording cannot blur the requested execution mode.
+ * Explicit entry route chosen before phase execution starts: an AI-owned semantic verdict.
+ * Execution triggers such as `/trace` and the explicit preview action are represented separately so
+ * identical visual wording cannot blur the requested execution mode.
  */
 export type AgentEntryRoute = 'column_trace' | 'visual_render' | 'discovery';
 
@@ -21,12 +19,9 @@ export type AgentEntryRoute = 'column_trace' | 'visual_render' | 'discovery';
 export type AgentExecutionTrigger = 'free_text' | 'slash_trace' | 'run_trace' | 'preview_button' | 'discovery_budget';
 
 /**
- * Structured output for the narrow entry-detector model call.
- *
- * @remarks
- * `visual_render` identifies explicit visual intent but is not itself an execution trigger: it
- * enters discovery like `discovery` does, and only the host-owned preview action (or another
- * explicit trigger) grants a different route.
+ * Structured output for the narrow entry-detector model call. `visual_render` identifies explicit
+ * visual intent but is not an execution trigger: it enters discovery like `discovery`, and only the
+ * host-owned preview action (or another explicit trigger) grants a different route.
  */
 export const EntryDetectionSchema = z.object({
   entry: z.enum(['column_trace', 'visual_render', 'discovery'])
@@ -42,11 +37,8 @@ export const EntryDetectionSchema = z.object({
   }
 });
 /**
- * User's response to a LangGraph consent interrupt.
- *
- * @remarks
- * `hold` ends the turn with the reviewed proposal intact so the chat input becomes
- * available for a free-text scope change; the next user prompt supplies the
+ * User's response to a LangGraph consent interrupt. `hold` ends the turn with the reviewed proposal
+ * intact so the chat input is free for a scope change; the next user prompt supplies the
  * instruction a same-turn `refine` would have carried.
  */
 export type GateDecision =
@@ -64,11 +56,9 @@ export const GateDecisionSchema = z.discriminatedUnion('kind', [
 ]);
 
 /**
- * Structured reading of one typed chat reply while an approval gate is pending.
- *
- * @remarks
- * The model — never a keyword match — decides what the user's free text asks the pending
- * proposal to do; the verbatim text then rides the decision as the refinement instruction.
+ * Structured reading of one typed chat reply while an approval gate is pending. The model, never a
+ * keyword match, decides what the free text asks of the pending proposal; the verbatim text then
+ * rides the decision as the refinement instruction.
  */
 export const GateReplySchema = z.object({
   action: z.enum(['approve', 'change', 'cancel', 'other'])
@@ -99,12 +89,10 @@ export type AgentErrorCode =
 const lastValue = <T>(_current: T, next: T): T => next;
 
 /**
- * Production host-agent graph state.
- *
- * @remarks
- * Runtime handles (model port, registry, event sink, session) live in graph-node closures, not in
- * checkpointed channels. The in-process checkpoint carries only the serializable turn projection
- * needed for the consent interrupt and its resume within one turn; the live engine stays on the session.
+ * Production host-agent graph state. Runtime handles (model port, registry, event sink, session)
+ * live in graph-node closures, not checkpointed channels; the in-process checkpoint carries only
+ * the serializable turn projection for the consent interrupt and its resume within one turn, and
+ * the live engine stays on the session.
  */
 export const AgentState = Annotation.Root({
   prompt: Annotation<string>({ reducer: lastValue, default: () => '' }),

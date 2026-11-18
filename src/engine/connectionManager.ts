@@ -1,11 +1,8 @@
 /**
  * @module ConnectionManager
- * Database connectivity entry point and DMV query management.
- *
- * This module provides the infrastructure for:
- * - Loading and validating DMV (Dynamic Management View) queries from built-in or custom sources.
- * - Opening a {@link DbSession} through the built-in connection.
- * - Executing queries with automated timeout handling and placeholder expansion.
+ * Database connectivity entry point and DMV query management: loading and validating DMV queries
+ * from built-in or custom sources, opening a {@link DbSession} through the built-in connection, and
+ * executing queries with timeout handling and placeholder expansion.
  */
 
 import * as vscode from 'vscode';
@@ -29,22 +26,17 @@ const DmvQueriesConfigSchema = z.object({
   queries: z.array(z.record(z.string(), z.any())).optional()
 }).passthrough();
 
-/**
- * Represents a Dynamic Management View (DMV) query used to extract metadata from SQL Server.
- */
+/** A Dynamic Management View (DMV) query used to extract metadata from SQL Server. */
 export interface DmvQuery {
   /**
    * The unique name/key of the query.
    *
-   * @remarks
-   * Two classes of name, because they fail differently. Required — 'schema-preview',
-   * 'nodes', 'columns', 'dependencies' — are listed in the loader's `KNOWN_NAMES` and
-   * warn when a custom YAML omits them, since the import path cannot complete without
-   * them. Optional — 'all-objects', 'platform-info', 'constraints' — are deliberately
-   * absent from that list: omitting 'all-objects' leaves cross-schema references
-   * unclassified, omitting 'platform-info' leaves the platform explicitly unknown, and
-   * omitting 'constraints' drops constraint enrichment. All degrade silently by design,
-   * so a warning would be noise.
+   * Two classes, because they fail differently. Required ('schema-preview', 'nodes', 'columns',
+   * 'dependencies') are in the loader's `KNOWN_NAMES` and warn when a custom YAML omits them, since
+   * the import cannot complete without them. Optional ('all-objects', 'platform-info',
+   * 'constraints') are absent from that list and degrade silently by design: omitting 'all-objects'
+   * leaves cross-schema references unclassified, 'platform-info' leaves the platform unknown,
+   * 'constraints' drops constraint enrichment.
    */
   name: string;
   /** A human-readable description of the query's purpose. Never consumed by the import path. */
@@ -52,22 +44,18 @@ export interface DmvQuery {
   /** The raw SQL statement to execute. */
   sql: string;
   /**
-   * The execution phase of the query.
-   * `1`: Preliminary phase (unfiltered).
-   * `2`: Main extraction phase (typically filters by schema).
+   * Execution phase: `1` preliminary (unfiltered), `2` main extraction (typically schema-filtered).
    * @default 2
    */
   phase?: number;
 }
 
-/** The fields the import path actually requires; every other {@link DmvQuery} field degrades gracefully. */
+/** The fields the import path requires; every other {@link DmvQuery} field degrades gracefully. */
 function hasRequiredQueryFields(q: Record<string, any>): q is DmvQuery {
   return Boolean(q.name) && Boolean(q.sql);
 }
 
-/**
- * Root configuration structure for DMV query definition files.
- */
+/** Root configuration structure for DMV query definition files. */
 export interface DmvQueriesConfig {
   /** Schema version of the configuration file. */
   version: number;
@@ -76,12 +64,10 @@ export interface DmvQueriesConfig {
 }
 
 /**
- * Loads DMV queries by checking the workspace configuration for a custom path,
- * falling back to built-in defaults if necessary.
+ * Loads DMV queries from the custom path in workspace configuration, falling back to the built-in
+ * defaults.
  *
- * @param outputChannel - The VS Code output channel for logging.
- * @param extensionUri - The base URI of the extension for resolving built-in assets.
- * @returns A promise resolving to an array of validated DMV queries.
+ * @param extensionUri - Base URI of the extension for resolving built-in assets.
  */
 export async function loadDmvQueries(
   outputChannel: vscode.LogOutputChannel,
@@ -177,7 +163,7 @@ export async function loadDmvQueries(
 /** Setting that names a custom DMV queries YAML. */
 const DMV_QUERIES_FILE_SETTING = 'dataLineageViz.dmvQueriesFile';
 
-/** The file `dataLineageViz.dmvQueriesFile` currently resolves to, or `''` for the built-in queries. */
+/** The file `dataLineageViz.dmvQueriesFile` resolves to, or `''` for the built-in queries. */
 function configuredDmvQueriesFile(): string {
   const value = vscode.workspace.getConfiguration('dataLineageViz').get<string>('dmvQueriesFile', '');
   return value ? resolveWorkspacePath(value) ?? value : '';
@@ -185,21 +171,21 @@ function configuredDmvQueriesFile(): string {
 
 /** DMV queries kept between reads until the configured YAML file changes. */
 export interface DmvQueryCache extends vscode.Disposable {
-  /** The kept queries, loading them on first use or after the setting changed. A failed load is not kept. */
+  /**
+   * The kept queries, loading them on first use or after the setting changed. A failed load is not
+   * kept.
+   */
   get(): Promise<DmvQuery[]>;
-  /** Loads the queries again and keeps the result; an import uses it so an edit to the file applies to the next import. */
+  /** Loads the queries again and keeps the result, so an import applies an edit to the file. */
   reload(): Promise<DmvQuery[]>;
 }
 
 /**
  * Creates a DMV queries cache that reloads when `dataLineageViz.dmvQueriesFile` names another file.
- *
- * @remarks
- * Each load reads the YAML, logs and may show a warning toast for an unusable custom file, so callers
- * that need the queries repeatedly — the built-in provider's server-info lookup on every table-statistics
- * request — read the cached result instead. A setting change that keeps the resolved file (a relative
- * path rewritten to its absolute form) keeps the cache. Listening for setting changes starts with the
- * first load; dispose to stop it.
+ * Each load reads the YAML, logs and may show a warning toast for an unusable custom file, so
+ * repeated callers (the built-in provider's server-info lookup on every table-statistics request)
+ * read the cached result. A setting change that keeps the resolved file (a relative path rewritten
+ * to absolute) keeps the cache. Listening starts with the first load; dispose to stop it.
  *
  * @param load - Reads and validates the queries, normally {@link loadDmvQueries}.
  */
@@ -231,9 +217,6 @@ export function createDmvQueryCache(load: () => Promise<DmvQuery[]>): DmvQueryCa
 /**
  * Loads the built-in DMV queries from the extension's `assets` directory.
  *
- * @param outputChannel - The VS Code output channel for logging.
- * @param extensionUri - The base URI of the extension.
- * @returns A promise resolving to the built-in DMV queries.
  * @throws If the built-in configuration file is missing or corrupted.
  */
 async function loadBuiltInDmvQueries(
@@ -247,11 +230,10 @@ async function loadBuiltInDmvQueries(
 }
 
 /**
- * Reads and validates the built-in `assets/dmvQueries.yaml`, returning the whole config.
+ * Reads and validates the built-in `assets/dmvQueries.yaml` and returns the whole config. Split
+ * from {@link loadBuiltInDmvQueries} because the custom-file path needs the shipped `version` (the
+ * contract a custom file is validated against), not only the queries.
  *
- * @remarks
- * Split from {@link loadBuiltInDmvQueries} because the custom-file path needs the shipped
- * `version` — the contract a custom file is validated against — and not only the queries.
  * @throws If the built-in file is missing, has no `queries` array, or declares no `version`.
  */
 async function loadBuiltInDmvConfig(
@@ -281,28 +263,20 @@ async function loadBuiltInDmvConfig(
 }
 
 /**
- * Reduces connection info to exactly the fields that may be persisted.
+ * Reduces connection info to exactly the fields that may be persisted. An allow-list read from
+ * {@link StoredConnectionInfoSchema}, so the two cannot drift.
  *
- * @remarks
- * Allow-list, not a deny-list, and the allowed set is read from
- * {@link StoredConnectionInfoSchema} so the two can never drift.
+ * A deny-list is unsafe because the object can be wider than the stored shape (a legacy
+ * workspace-state record carries `applicationName`, `connectTimeout`, ...). Spreading the rest
+ * wrote those keys into the project store; the strict read side then rejected the record and
+ * `migrateProjectStore` discarded the saved project on the next load. `.strict()` on the read side
+ * stays on purpose: it keeps a future leaked credential out of the store. This is the only write
+ * path, so it narrows here and parses what it built, failing at save time rather than dropping the
+ * project on the next load.
  *
- * A deny-list is unsafe here because the two sides of persistence are asymmetric: the object
- * can be wider than the stored shape (a legacy workspace-state record carries `applicationName`,
- * `connectTimeout`, and others). Spreading the rest wrote those extra keys into the project store, and the read side
- * (`StoredConnectionInfoSchema` is `.strict()`) then rejected the record — so `migrateProjectStore`
- * discarded a saved database project on the next load. Selecting known keys makes what is written
- * readable by construction.
- *
- * `.strict()` on the read side stays deliberately: it is what keeps a future leaked credential out
- * of the store. This function is the correct place to narrow, because it is the only write path,
- * and it parses what it built for the same reason: a record the read side would reject must fail
- * here, at save time, rather than silently drop the saved project on the next load.
- *
- * @param source - The raw connection information.
- * @returns A persistable clone carrying only schema-declared fields; secrets are never among them.
- * @throws When the narrowed record still violates {@link StoredConnectionInfoSchema} — for
- *   example a server-scoped profile with no `database`.
+ * @returns A persistable clone with only schema-declared fields; secrets are never among them.
+ * @throws When the narrowed record still violates {@link StoredConnectionInfoSchema}, e.g. a
+ *   server-scoped profile with no `database`.
  */
 export function stripSensitiveFields(source: Record<string, unknown>): StoredConnectionInfo {
   const persistable: Record<string, unknown> = {};
@@ -312,7 +286,9 @@ export function stripSensitiveFields(source: Record<string, unknown>): StoredCon
   return StoredConnectionInfoSchema.parse(persistable);
 }
 
-/** Host services a connection needs: the secret store for built-in passwords and the log channel. */
+/**
+ * Host services a connection needs: the secret store for built-in passwords and the log channel.
+ */
 export type DbConnectEnv = BuiltInEnv;
 
 /** Built-in sign-in type a stored built-in record's `authenticationType` names. */
@@ -321,13 +297,10 @@ function storedAuthKind(authenticationType: string | undefined): BuiltInConnecti
 }
 
 /**
- * Finds the saved built-in connection that reopens a stored project.
- *
- * @remarks
- * A saved `connectionId` wins. Otherwise the match is:
- * same server and port (a `host,port` server string is split first), and the same sign-in type and user where both sides name one. Among several
- * matches the one saved for the project's database is preferred, then the first; the project's own
- * database is opened either way.
+ * Finds the saved built-in connection that reopens a stored project. A saved `connectionId` wins.
+ * Otherwise: same server and port (a `host,port` string is split first) and the same sign-in type
+ * and user where both sides name one. Among several matches the one saved for the project's
+ * database is preferred, then the first; the project's own database is opened either way.
  */
 function findBuiltInMatch(connections: BuiltInConnection[], stored: StoredConnectionInfo): BuiltInConnection | undefined {
   const byId = stored.connectionId ? connections.find((c) => c.id === stored.connectionId) : undefined;
@@ -393,12 +366,10 @@ async function pickBuiltInConnection(
 }
 
 /**
- * Asks for the database of a connection saved without one.
- *
- * @remarks
- * The name is typed: a login that exists only inside one database (a contained or Microsoft Entra
- * user on Azure SQL, a Fabric or Synapse workspace) cannot list the server's databases. The
- * connection made with that name reports a database that cannot be opened.
+ * Asks for the database of a connection saved without one. The name is typed because a login that
+ * exists only inside one database (a contained or Entra user on Azure SQL, a Fabric or Synapse
+ * workspace) cannot list the server's databases; the connection reports a database that cannot be
+ * opened.
  */
 async function pickDatabase(connection: BuiltInConnection): Promise<string | undefined> {
   const typed = await vscode.window.showInputBox({ prompt: `Database on ${connection.server}`, placeHolder: 'Database name', ignoreFocusOut: true });
@@ -406,13 +377,12 @@ async function pickDatabase(connection: BuiltInConnection): Promise<string | und
 }
 
 /**
- * Asks the user to reconnect a project saved with the retired mssql extension connection.
+ * Asks the user to reconnect a project saved with the retired mssql extension connection: one
+ * warning notice whose action opens Add Database Connection prefilled with the stored server, port,
+ * user and database. No saved connection is picked for the user.
  *
- * @remarks
- * One warning notice; its action opens Add Database Connection prefilled with the stored server,
- * port, user and database. No saved connection is picked for the user.
- *
- * @returns The connection the user saved, or `undefined` when the notice was dismissed or the flow cancelled.
+ * @returns The connection the user saved, or `undefined` when the notice was dismissed or the flow
+ *   cancelled.
  */
 async function reconnectRetiredMssql(env: DbConnectEnv, logger: Logger, stored: StoredConnectionInfo): Promise<BuiltInConnection | undefined> {
   logger.info('Project saved with the retired mssql extension connection — asking for a reconnect');
@@ -423,15 +393,12 @@ async function reconnectRetiredMssql(env: DbConnectEnv, logger: Logger, stored: 
 }
 
 /**
- * Opens a database session through the built-in connection.
+ * Opens a database session through the built-in connection. A stored connection reconnects silently
+ * by its saved `connectionId`, else by the matching saved connection, else through the picker. A
+ * record written for the retired mssql extension never reconnects silently: it shows one reconnect
+ * notice and opens Add Database Connection, so the project is stored with the new connection only
+ * after the user made it.
  *
- * @remarks
- * A stored connection reconnects silently by its saved `connectionId`, else by the matching saved
- * connection, and falls back to the picker when none matches. A stored record written for the retired
- * mssql extension never reconnects silently: it shows one reconnect notice and opens Add Database
- * Connection instead, so the project is stored with the new connection only after the user made it.
- *
- * @param env - Host services.
  * @param stored - Connection saved with a project, when reconnecting.
  * @param token - Cancels a connect in progress.
  * @returns The open session, or `undefined` when the user cancelled.
@@ -486,7 +453,6 @@ function builtInTarget(connection: BuiltInConnection, database: string | undefin
 /**
  * Builds the capabilities the connection-error actions use.
  *
- * @param env - Host services.
  * @param connectionId - Saved built-in connection an error belongs to, when there is one.
  * @param retry - Repeats the failed operation once.
  */
@@ -511,13 +477,7 @@ export async function releaseSession(session: DbSession): Promise<void> {
 }
 
 /**
- * Utility to wrap an asynchronous operation with a timeout constraint.
- *
- * @typeParam T - The resolved value type.
- * @param promise - The promise to monitor.
- * @param ms - Timeout duration in milliseconds.
- * @param timeoutMessage - Message for the thrown error upon timeout.
- * @returns A promise that resolves with the original value or rejects on timeout.
+ * Wraps an asynchronous operation with a timeout; rejects with `timeoutMessage` when `ms` elapse.
  */
 function withQueryTimeout<T>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> {
   let handle: ReturnType<typeof setTimeout>;
@@ -535,11 +495,9 @@ function dmvTimeoutMessage(name: string, queryTimeoutMs: number): string {
 }
 
 /**
- * Runs one query on a session, bounded by an optional timeout.
- *
- * @remarks
- * The session receives the same budget so a provider that owns the wire cancels the request rather
- * than leaving it running behind the timeout.
+ * Runs one query on a session, bounded by an optional timeout. The session receives the same budget
+ * so a provider that owns the wire cancels the request instead of leaving it running behind the
+ * timeout.
  */
 async function runTimed(
   session: DbSession,
@@ -552,14 +510,9 @@ async function runTimed(
 }
 
 /**
- * Executes a batch of DMV queries sequentially.
+ * Executes a batch of DMV queries sequentially; returns a map of query name to result.
  *
- * @param session - The open database session.
- * @param queries - List of queries to execute.
- * @param outputChannel - Logger output channel.
- * @param onProgress - Optional callback for tracking execution progress.
  * @param queryTimeoutMs - Optional per-query timeout in milliseconds.
- * @returns A map of query names to their execution results.
  */
 export async function executeDmvQueries(
   session: DbSession,
@@ -592,26 +545,17 @@ export async function executeDmvQueries(
 }
 
 /**
- * Whether a query belongs to the schema-filtered Phase 2 sweep.
- *
- * @remarks
- * Exported so callers can size progress reporting from the same predicate the sweep itself
- * uses. `phase: 1` means "not schema-filtered" rather than "runs during Phase 1" — the
- * platform probe carries that tag while running at Phase 2 time — so an independent
- * re-implementation of this test would silently miscount the steps.
+ * Whether a query belongs to the schema-filtered Phase 2 sweep. Exported so callers size progress
+ * from the same predicate the sweep uses: `phase: 1` means "not schema-filtered", not "runs during
+ * Phase 1" (the platform probe carries that tag while running at Phase 2 time), so a
+ * re-implementation would miscount the steps.
  */
 export const isPhase2Query = (q: DmvQuery): boolean => (q.phase ?? 2) !== 1;
 
 /**
- * Executes Phase 2 queries with `{{SCHEMAS}}` substitution.
+ * Executes the Phase 2 queries among `queries` with `{{SCHEMAS}}` substitution from `schemas`.
  *
- * @param session - The open database session.
- * @param queries - Candidate queries to filter and execute.
- * @param schemas - Schema names for placeholder replacement.
- * @param outputChannel - Logger output channel.
- * @param onProgress - Progress tracking callback.
  * @param queryTimeoutMs - Optional per-query timeout in milliseconds.
- * @returns Results for the executed Phase 2 queries.
  */
 export async function executeDmvQueriesFiltered(
   session: DbSession,
@@ -655,11 +599,7 @@ export async function executeDmvQueriesFiltered(
 /**
  * Executes a single SQL command without batching or placeholders.
  *
- * @param session - The open database session.
- * @param sql - The SQL script to execute.
- * @param outputChannel - Logger output channel.
  * @param timeout - Optional budget; the session cancels the request when it is spent.
- * @returns The query execution result.
  */
 export async function executeSimpleQuery(
   session: DbSession,

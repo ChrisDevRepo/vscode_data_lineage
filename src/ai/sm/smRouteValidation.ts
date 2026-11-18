@@ -1,11 +1,9 @@
 /**
- * Shared prune validation and column-reference rejection policy for the Navigation Engine.
- *
- * @remarks
- * Pure, engine-state-free: maps a structural {@link InvalidRouteKind} to its machine error code
- * and verb-led corrective order, and builds the content-error rejection envelope. The engine
- * consumes {@link isAbsentKind} and {@link buildRouteValidationRejection}. Absent/no-op references are
- * nonfatal notices and never reach the rejection envelope.
+ * Shared prune validation and column-reference rejection policy for the Navigation Engine. Pure and
+ * engine-state-free: maps a structural {@link InvalidRouteKind} to its machine error code and
+ * verb-led corrective order, and builds the content-error rejection envelope. The engine consumes
+ * {@link isAbsentKind} and {@link buildRouteValidationRejection}; absent/no-op references are
+ * nonfatal notices and never reach the envelope.
  */
 
 import type { InvalidRouteKind, InvalidRoute } from './smTypes';
@@ -22,11 +20,11 @@ export function isAbsentKind(kind: InvalidRouteKind): boolean {
 }
 
 /**
- * Per-kind corrective order. Keyed by {@link InvalidRouteKind} so a new kind is a compile
- * error. Each value is a self-contained, **verb-led imperative** — positive, with the
- * legitimate alternative built in so the model never has to guess the nearest match. Used for
- * the content-error hint. The offending value
- * is stated in the rejection reason; column inventories remain machine-only until the final rejection.
+ * Per-kind corrective order, keyed by {@link InvalidRouteKind} so a new kind is a compile error.
+ * Each is a self-contained **verb-led imperative**, positive, with the legitimate alternative built
+ * in so the model never guesses the nearest match; used for the content-error hint. The offending
+ * value is stated in the rejection reason; column inventories stay machine-only until the final
+ * rejection.
  */
 export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   absent_contributor:
@@ -69,23 +67,26 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
     'Remove questions[] entries for visited or pruned nodes. Attach new checks only to eligible unvisited neighbors; queued unvisited work can receive a question.',
 };
 
-/** Repair order for an `untracked_out_col` whose reason names detached links (path `.upstream_columns`). */
+/**
+ * Repair order for an `untracked_out_col` whose reason names detached links (path
+ * `.upstream_columns`).
+ */
 const DETACHED_LINK_DIRECTIVE =
   'Attach each named tuple to a tracked column, or leave it out of column_flow and keep it in sections; do not invent a write.';
 
 /**
  * Resubmission order for a rejection made only of field-scoped content errors (a column or prune
- * reference the reason names). The engine holds the draft for that set, so the prose the model
- * authored survives the correction instead of being re-authored from scratch.
+ * reference the reason names). The engine holds the draft for that set, so the model's prose
+ * survives the correction instead of being re-authored.
  */
 export const HELD_CORRECTION_ORDER =
   `Your analysis is held: ${HELD_FINDING_CALL_ORDER}. ${keyedResendRule('sections', 'angle')} Omit summary to keep the held summary.`;
 
 /**
- * Machine error code per validation kind. Used when one kind dominates the rejection so the
- * model gets a specific, structured classification; mixed kinds fall back to the generic code.
- * Exported so a nonfatal (absent-kind) notice can be logged to `host.log` with the same code the
- * model would have received had the kind been fatal — one machine-code source for both surfaces.
+ * Machine error code per validation kind, used when one kind dominates the rejection (mixed kinds
+ * fall back to the generic code). Exported so a nonfatal (absent-kind) notice is logged to
+ * `host.log` with the code the model would have received had it been fatal: one machine-code source
+ * for both surfaces.
  */
 export const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   absent_contributor: REJECTION_CODES.routeValidationFailed,
@@ -109,7 +110,7 @@ export const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   question_closed: REJECTION_CODES.routeValidationFailed,
 };
 
-/** One model-facing reason line for a validation failure: the offending path, what was wrong, without column inventories. */
+/** One model-facing reason line per validation failure: the offending path and what was wrong. */
 function routeErrorLine(error: InvalidRoute): string {
   return [
     error.path ? `${error.path}: ${error.reason}` : error.reason,
@@ -118,17 +119,13 @@ function routeErrorLine(error: InvalidRoute): string {
 }
 
 /**
- * Builds the content/action rejection envelope after nonfatal notices were removed.
- *
- * @remarks
- * Each kind is emitted by one policy owner, so no message-text inference or mode branch is needed.
- * `code` is the specific per-kind code when one kind dominates; `hint` is the verb-led
- * order(s) followed by the held-correction order, since the engine holds the draft of every
- * rejected submission; `reason` states each failure with its valid set as one line per error;
- * `detail` carries the same facts as data.
+ * Builds the content/action rejection envelope after nonfatal notices were removed. Each kind is
+ * emitted by one policy owner, so no message-text inference or mode branch is needed. `code` is the
+ * per-kind code when one kind dominates; `hint` is the verb-led order(s) plus the held-correction
+ * order, since the engine holds the draft of every rejected submission; `reason` states each
+ * failure with its valid set, one line per error; `detail` carries the same facts as data.
  *
  * @param errors - Field-resolved validation failures accumulated before commit; at least one.
- * @returns A stable structured rejection without a second repair protocol.
  */
 export function buildRouteValidationRejection(errors: InvalidRoute[]): ToolRejection {
   const distinctKinds = [...new Set(errors.map(e => e.kind))];

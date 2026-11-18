@@ -1,17 +1,14 @@
 /**
- * Host wrapper for the production native LangGraph runtime.
+ * Host wrapper for the production native LangGraph runtime. LangGraph owns workflow state,
+ * conditional routing and consent interrupts. Its checkpointing is in-process only
+ * (`buildAgentGraph` compiles against a fresh in-memory saver per graph): enough to pause at a
+ * consent interrupt and resume through `Command({ resume })` **within a single turn**, nothing
+ * more; no state survives a host restart or outlives the turn. Cross-turn state is `AiSession` by
+ * design (`docs/ARCHITECTURE.md` §Memory and state ownership).
  *
- * @remarks
- * LangGraph owns workflow state, conditional routing, and consent interrupts. Its checkpointing is
- * in-process only: `buildAgentGraph` compiles against a fresh in-memory saver per graph. That is
- * enough to pause at a consent interrupt and resume through `Command({ resume })` **within a single
- * turn**, and nothing more — the saver dies with the runtime, so no state survives a host restart or
- * even outlives the turn that created it. Cross-turn state is `AiSession`, by design:
- * `docs/ARCHITECTURE.md` §Memory and state ownership.
- *
- * This host wrapper owns only platform-facing turn lifecycle: `thread_id`, native gate event
- * emission, user resume delivery, cancellation, and the single terminal result the
- * {@link TurnEventSink} claims exactly once (`sink.result` / `sink.fail`).
+ * This wrapper owns only platform-facing turn lifecycle: `thread_id`, native gate event emission,
+ * user resume delivery, cancellation, and the single terminal result the {@link TurnEventSink}
+ * claims exactly once (`sink.result` / `sink.fail`).
  */
 
 import { randomUUID } from 'node:crypto';
@@ -38,7 +35,7 @@ export { type GateDecision } from '../agent/state';
 
 /** Diagnostic detail behind a non-`ok` {@link TurnOutcome}. */
 export interface AgentFailureDetail {
-  /** Error prose behind the non-`ok` outcome — graph-state error or the caught exception message. */
+  /** Error prose behind the non-`ok` outcome: graph-state error or caught exception message. */
   readonly message: string;
   /** Enumerated {@link AgentErrorCode} when the failure carries one. */
   readonly code?: AgentErrorCode;
@@ -57,46 +54,35 @@ export interface AgentRuntimeDeps {
   /** Text-adapted full registry; graph nodes filter it by phase. */
   readonly registry: IToolRegistry<string>;
   readonly sink: TurnEventSink;
-  /** Abort signal cancelling this turn; re-checked before every graph invoke and forwarded to the graph. */
+  /** Abort signal cancelling this turn; re-checked before every graph invoke. */
   readonly signal?: AbortSignal;
   /** Hop limit for the turn; defaults to the turn budget's `ai.maxRounds` value. */
   readonly maxRounds?: number;
   /**
-   * Turn-ownership epoch captured for this turn (from {@link AiSession.beginTurn}).
-   *
-   * @remarks
-   * Threaded to the graph and into {@link AgentRuntime.close}'s `enterIdle` so a superseded "zombie"
-   * turn cannot force-idle the session a newer turn now owns.
+   * Turn-ownership epoch captured for this turn (from {@link AiSession.beginTurn}), threaded to the
+   * graph and {@link AgentRuntime.close}'s `enterIdle` so a superseded "zombie" turn cannot
+   * force-idle the session a newer turn owns.
    */
   readonly turnEpoch: number;
   /**
-   * Prior-turn discovery conversation, oldest first, for cross-turn chat memory.
-   *
-   * @remarks
-   * Seeded ahead of the current prompt so discovery answers can reference earlier turns.
-   * Rides in `messages` (after the cached `system` prefix) so prompt caching is preserved.
-   * Empty/omitted on the first turn.
+   * Prior-turn discovery conversation, oldest first, for cross-turn chat memory. Seeded ahead of
+   * the current prompt and carried in `messages` (after the cached `system` prefix) so prompt
+   * caching holds. Empty/omitted on the first turn.
    */
   readonly priorMessages?: readonly ModelMessage[];
   /** Optional logger for graph-attempt diagnostics; forwarded to the graph. Off when undefined. */
   readonly logger?: Logger;
   /**
-   * Optional trace sink for rejections raised without a tool dispatch; forwarded to the graph.
-   *
-   * @remarks
-   * Undefined unless the host enabled the diagnostic trace.
+   * Optional trace sink for rejections raised without a tool dispatch, forwarded to the graph;
+   * undefined unless the host enabled the diagnostic trace.
    */
   readonly traceSyntheticRejection?: SyntheticRejectionTrace;
 }
 
 /**
- * Environment flags that make LangChain construct a LangSmith tracer.
- *
- * @remarks
- * `@lineage` has no external telemetry integration. Failing closed keeps that
- * boundary explicit without importing or declaring LangSmith as an application
- * dependency, and without mutating process-wide environment variables shared
- * with the extension host.
+ * Environment flags that make LangChain construct a LangSmith tracer. `@lineage` has no external
+ * telemetry integration, so failing closed keeps that boundary explicit without declaring LangSmith
+ * as a dependency or mutating process-wide environment variables shared with the extension host.
  */
 const EXTERNAL_TRACING_FLAGS = [
   'LANGSMITH_TRACING',
@@ -124,24 +110,24 @@ export class AgentRuntime {
   private readonly getSession: () => AiSession;
   private readonly sink: TurnEventSink;
   private readonly signal: AbortSignal | undefined;
-  /** Effective per-turn hop limit — `deps.maxRounds` or the turn budget's `ai.maxRounds` value when omitted. */
+  /** Effective per-turn hop limit: `deps.maxRounds`, else the budget's `ai.maxRounds`. */
   public readonly maxRounds: number;
   /** Diagnostic detail behind the most recent non-`ok` {@link close}. */
   public lastFailureDetail: AgentFailureDetail | undefined;
   private readonly priorMessages: readonly ModelMessage[];
-  /** This turn's ownership epoch — carried into guarded session writes so a zombie turn is a no-op. */
+  /**
+   * This turn's ownership epoch — carried into guarded session writes so a zombie turn is a no-op.
+   */
   private readonly turnEpoch: number;
   private readonly logger: Logger | undefined;
   private readonly graph: ReturnType<typeof buildAgentGraph>;
   private readonly pendingGates = new Map<string, (d: GateDecision) => void>();
   /**
-   * Settle-await for every tool dispatch in flight through this turn's registry.
-   *
-   * @remarks
-   * Awaited before {@link close} on every cancellation path, so a mutating tool's effect — a
-   * session write, an engine publish, a panel render — always finishes before the turn releases
-   * the lease, even when LangGraph's abort race already rejected `graph.invoke` while the
-   * dispatching node was still running. See {@link trackInFlightDispatch}.
+   * Settle-await for every tool dispatch in flight through this turn's registry. Awaited before
+   * {@link close} on every cancellation path, so a mutating tool's effect (session write, engine
+   * publish, panel render) finishes before the turn releases the lease, even when LangGraph's abort
+   * race already rejected `graph.invoke` while the dispatching node still ran. See {@link
+   * trackInFlightDispatch}.
    */
   private readonly dispatchSettled: () => Promise<void>;
 

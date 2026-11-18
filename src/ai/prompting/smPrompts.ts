@@ -1,10 +1,6 @@
 /**
- * Mode-scoped prompts for the navigation engine.
- *
- * @remarks
- * Composed from shared blocks so guidance that applies to every mode stays in one place.
- * Following a hybrid Markdown + XML strategy: Markdown headers provide structural context
- * for GPT/Gemini, while XML tags protect high-risk dynamic data for precision in reasoning models.
+ * Mode-scoped prompts for the navigation engine, composed from shared blocks so guidance common to
+ * every mode lives once. Markdown headers give structure; XML tags protect dynamic data.
  */
 
 import { buildColumnAspectPrompt } from '../prompting/prompts';
@@ -14,23 +10,13 @@ import type { ColumnEdge, DeferredQuestion, SmResult } from '../sm/smTypes';
 import { schemaKey } from '../../utils/sql';
 
 /**
- * Re-anchor suffix appended when a passthrough-inherited sub-question lands on a bodied focus.
+ * Suffix appended when a passthrough-inherited sub-question lands on a bodied focus: names the
+ * passthrough provenance and re-anchors the verbatim question onto the new focus.
  *
- * @remarks
- * `enqueueHop` forwards the authored question verbatim; this suffix is the one addition, naming
- * the passthrough provenance and re-anchoring the question onto the new focus. The column clause
- * is gated on the branch: one carrying none of the traced columns has no column to ground an
- * answer in, and asking it for one is the dead-end instruction.
- *
- * @param passthroughId - The non-bodied node the question was inherited through.
- * @param focusId - The bodied neighbor the question re-anchors onto.
- * @param mode - The mode of the BRANCH this question is forwarded on, not of the session: the
- *   column clause is answerable only where a traced column is actually carried, and a CT session
- *   reaches branches that carry none.
- * @param questioned - Whether the forwarded question has text. When it has none, the suffix is the
- *   whole sub-question, so it names the original question instead of pointing at a question that
- *   is not there, and carries no leading newline.
- * @returns The suffix to append to the forwarded question (leading newline included when questioned).
+ * @param mode - Mode of the BRANCH the question is forwarded on, not of the session: the column
+ *   clause is added only for a branch that carries a traced column.
+ * @param questioned - False when the forwarded question has no text; the suffix is then the whole
+ *   sub-question, names the original question and has no leading newline.
  */
 export function buildPassthroughReAnchor(passthroughId: string, focusId: string, mode: 'bb' | 'ct', questioned = true): string {
   const anchor = questioned ? `re-anchor this question to ${focusId}` : `continue the original question at ${focusId}`;
@@ -40,15 +26,8 @@ export function buildPassthroughReAnchor(passthroughId: string, focusId: string,
 
 /**
  * Builds the static active-phase SM protocol block: the column aspect of the hop, rendered only
- * when the hop carries tracked columns.
- *
- * @remarks
- * The hop's task and deliverable are the same with or without tracked columns and live in the
- * active phase prompt (`buildActivePhasePrompt`, `prompts.ts`); field meanings live in the
- * `submit_findings` schema. A hop without target columns therefore gets no block here.
- *
- * @param targetColumns - The columns being traced; absent or empty for a BB hop.
- * @returns The CT column-aspect block, or `''` for a BB hop.
+ * when the hop carries tracked columns (task and deliverable live in the active phase prompt).
+ * Returns `''` for a BB hop.
  */
 export function buildSmProtocol({ targetColumns }: { targetColumns?: string[] }): string {
   if (!targetColumns || targetColumns.length === 0) return '';
@@ -57,15 +36,9 @@ export function buildSmProtocol({ targetColumns }: { targetColumns?: string[] })
 
 
 /**
- * Builds the synthesis reminder appended as the last key of the completion tool_result JSON.
- *
- * @remarks
- * Anchored on the user question at the highest-attention slot (long-context models attend most
- * strongly to the window edges), with the one rule that belongs beside the evidence: depth follows
- * what was captured. The field skeleton lives once, in the synthesis system block and the
- * `lineage_present_result` describes; the engine facts appended after this anchor are the content.
- *
- * @param question - The user's original question, re-injected to anchor synthesis on intent.
+ * Builds the synthesis reminder appended as the last key of the completion tool_result JSON: the
+ * user question at the highest-attention slot, plus the one rule that belongs beside the evidence
+ * (depth follows what was captured). The field skeleton lives once, in the synthesis system block.
  */
 function buildSynthesisReminder(question: string): string {
   return [
@@ -87,17 +60,12 @@ interface FlowRoleGroups {
 }
 
 /**
- * Derives source/transform/target highlight buckets from graph position — the single computation
- * BB and CT synthesis both use, so the two modes bucket identically (no per-mode clone).
+ * Derives source/transform/target highlight buckets from graph position; BB and CT synthesis share
+ * it so both bucket identically.
  *
- * @remarks
- * `source` = a reached node data only flows OUT of (never a flow target within the trace, and — CT
- * only, via `hopNodes` — never itself a focus, since `writes_to` makes writer procs appear as
- * `from` only). `target` = the queried origin. `transform` = every other reached node.
- *
- * @param originNodeId - The queried origin (becomes the sole `target`).
- * @param edges - Normalized flow edges (`from` → `to`, data-flow direction).
- * @param hopNodes - CT-only focus-node set excluded from the terminal-source set.
+ * `source` = a reached node data only flows OUT of (never a flow target in the trace and, CT only
+ * via `hopNodes`, never a focus, since `writes_to` makes writer procs appear as `from` only).
+ * `target` = the queried origin. `transform` = every other reached node.
  */
 function computeFlowRoleGroups(
   originNodeId: string,
@@ -115,16 +83,10 @@ function computeFlowRoleGroups(
 }
 
 /**
- * Buckets every traced node by its DIRECTED relation to the origin.
- *
- * @remarks
- * The `## Column Trace Chain` list renders in hop order, which is not direction order, so direction
- * cannot be inferred from a node's position in it — these buckets state it explicitly instead.
- * `sideBranch` is the bucket that matters: a node that reads a traced node but lies on no path to or
- * from the origin is neither upstream nor downstream, and calling it upstream inverts a real edge.
- *
- * @param originNodeId - The queried origin.
- * @param edges - Normalized flow edges (`from` → `to`, data-flow direction).
+ * Buckets every traced node by its DIRECTED relation to the origin. The Column Trace Chain renders
+ * in hop order, not direction order, so these buckets state direction explicitly. `sideBranch`
+ * matters: a node that reads a traced node but lies on no path to or from the origin is neither
+ * upstream nor downstream, and calling it upstream inverts a real edge.
  */
 function computeDirectionGroups(
   originNodeId: string,
@@ -159,13 +121,8 @@ function computeDirectionGroups(
 
 /**
  * Renders the shared edge-direction lines from computed {@link computeDirectionGroups} buckets.
- *
- * @remarks
- * Takes the computed buckets rather than the edges, so a caller that also branches on a bucket
- * reads the same object these lines state and cannot disagree with the rendered claim.
- *
- * @param originNodeId - The queried origin the buckets are relative to.
- * @param direction - Buckets from {@link computeDirectionGroups} for that origin.
+ * Takes the buckets, not the edges, so a caller that also branches on a bucket cannot disagree with
+ * the rendered claim.
  */
 function buildDirectionLines(
   originNodeId: string,
@@ -182,15 +139,11 @@ function buildDirectionLines(
 /**
  * Renders the shared `highlight_groups` guidance lines from computed {@link FlowRoleGroups}.
  *
- * @remarks
- * Enumerates only mechanical facts (target, terminal-source candidates) — transform is
- * deliberately NOT enumerated: models transcribe enumerated lists verbatim, defeating the
- * question-relative judgment the highlights template assigns the AI. Candidates are bounded by
- * the presented set, since `highlight_groups[].node_ids` rejects anything the render does not carry.
- *
- * @param groups - Mechanically computed flow-role buckets.
- * @param presented - Ids the render carries; a bucket member outside it is dropped from the line.
- *   `null` from a caller that holds no render set, which then bounds nothing.
+ * Enumerates only mechanical facts (target, terminal-source candidates); transform is deliberately
+ * NOT enumerated because models transcribe enumerated lists verbatim, defeating the
+ * question-relative judgment the template assigns. Candidates are bounded by `presented` (`null`:
+ * no render set, bounds nothing), since `highlight_groups[].node_ids` rejects ids the render does
+ * not carry.
  */
 function buildFlowRoleHighlightLines(groups: FlowRoleGroups, presented: ReadonlySet<string> | null): string[] {
   const linkable = (ids: readonly string[]): string[] => presented ? ids.filter(id => presented.has(id)) : [...ids];
@@ -200,15 +153,16 @@ function buildFlowRoleHighlightLines(groups: FlowRoleGroups, presented: Readonly
   ];
 }
 
-/** Projects node-level `[from, to, kind]` edges to the `{from, to}` flow the shared buckets read. */
+/**
+ * Projects node-level `[from, to, kind]` edges to the `{from, to}` flow the shared buckets read.
+ */
 function asFlowEdges(edges: ReadonlyArray<[string, string, string]>): Array<{ from: string; to: string }> {
   return edges.map(([from, to]) => ({ from, to }));
 }
 
 /**
- * One renderer for the flow-role heading plus direction lines. BB synthesis is exactly this
- * block. CT reuses the same highlight and direction helpers (and {@link asFlowEdges}) rather
- * than cloning the buckets; it assembles them around the column-chain rider.
+ * Renders the flow-role heading plus direction lines. BB synthesis is exactly this block; CT reuses
+ * the same helpers and assembles them around the column-chain rider.
  */
 function renderFlowRoleAndDirection(
   originNodeId: string,
@@ -226,13 +180,12 @@ function renderFlowRoleAndDirection(
 }
 
 /**
- * BB-mode counterpart to {@link buildCtSynthesisBlock}: grounds the `highlight_groups` buckets in the
- * traced node edges so BB source-bucketing is a transcription, not a guess (matches CT's fidelity).
+ * BB counterpart to {@link buildCtSynthesisBlock}: grounds the `highlight_groups` buckets in the
+ * traced node edges so source-bucketing is a transcription, not a guess.
  *
- * @param originNodeId - The queried origin (the `target` node).
  * @param edges - Node-level lineage edges `[from, to, kind]` from `SmResult.edges`.
- * @param presentedNodeIds - Ids the render carries, bounding the enumerated candidates; omitted by
- *   a caller that holds no render set, which then bounds nothing.
+ * @param presentedNodeIds - Ids the render carries, bounding the enumerated candidates; omitted:
+ *   bounds nothing.
  */
 export function buildBbSynthesisBlock(
   originNodeId: string,
@@ -243,22 +196,14 @@ export function buildBbSynthesisBlock(
 }
 
 /**
- * Renders the CT-specific synthesis evidence block from validated column edges.
+ * Renders the CT synthesis evidence block from validated column edges: a flat directed edge list so
+ * `present_result` follows the actual traced path. Appended to the synthesis reminder when CT was
+ * active and edges were recorded; off-trace nodes excluded by the scope filter are not listed.
  *
- * @remarks
- * Appended to the synthesis reminder when CT was active and edges were recorded. Presents the
- * directed graph in a flat edge list so the AI can structure `present_result` around the actual
- * traced path rather than free-form prose. Off-trace nodes excluded by the scope
- * filter are not listed here.
- *
- * @param originNodeId - The queried origin node that should be treated as the answer target.
- * @param edges - Validated column-flow edges accumulated by the engine.
- * @param nodeEdges - Node-level flow edges used to distinguish written intermediates from base feeds.
+ * @param nodeEdges - Node-level flow edges used to tell written intermediates from base feeds.
  * @param presentedNodeIds - Ids the render carries, bounding the enumerated highlight candidates;
- *   omitted by a caller that holds no render set, which then bounds nothing. The recorded edge list
- *   itself is never bounded — the trace is the evidence, and an endpoint outside the render is
- *   stated in prose.
- * @returns Markdown instructions/evidence for the final `lineage_present_result` turn.
+ *   omitted: bounds nothing. The recorded edge list is never bounded (the trace is the evidence; an
+ *   endpoint outside the render is stated in prose).
  */
 export function buildCtSynthesisBlock(
   originNodeId: string,
@@ -296,8 +241,8 @@ export function buildCtSynthesisBlock(
 }
 
 /**
- * Per-node writer/reader graph facts — `writtenBy` = the `from` ends of edges INTO the node,
- * `readBy` = the `to` ends of edges FROM it. Both lists lowercased and id-sorted.
+ * Per-node writer/reader facts: `writtenBy` = `from` ends of edges INTO the node, `readBy` = `to`
+ * ends of edges FROM it. Both lists lowercased and id-sorted.
  */
 interface NodeFlowFacts {
   /** Node ids that write INTO this node (`from` ends of inbound edges), sorted, lowercased. */
@@ -307,16 +252,9 @@ interface NodeFlowFacts {
 }
 
 /**
- * The single producer of per-node writer/reader flow facts for synthesis passthrough grounding
- * ({@link buildPassthroughFlowFacts}) so every caller reads byte-identical, deterministically-sorted
- * facts (no per-caller re-derivation).
- *
- * @remarks
- * Facts only: writers/readers come purely from the node-level edge list. A node with no inbound or
- * outbound edge simply has no map entry (callers render it as `(none)` via
- * {@link renderFlowFactsFragment}). Ids are lowercased and neighbor lists id-sorted for determinism.
- *
- * @param edges - Node-level `[from, to, kind]` flow edges from {@link SmResult.edges}.
+ * The single producer of per-node writer/reader facts for synthesis passthrough grounding ({@link
+ * buildPassthroughFlowFacts}), so every caller reads byte-identical, id-sorted facts. A node with
+ * no edge has no entry (rendered `(none)` by {@link renderFlowFactsFragment}).
  */
 function computeNodeFlowFacts(edges: ReadonlyArray<[string, string, string]>, identifierCaseSensitive = false): Map<string, NodeFlowFacts> {
   const lc = (s: string): string => schemaKey(s, identifierCaseSensitive);
@@ -341,8 +279,8 @@ function computeNodeFlowFacts(edges: ReadonlyArray<[string, string, string]>, id
 }
 
 /**
- * Renders one node's flow facts as the shared `written by …; read by …` fragment. An absent entry
- * or empty list renders `(none)` — the byte-exact form the passthrough digest and note captions share.
+ * Renders one node's flow facts as the shared `written by …; read by …` fragment; an absent entry
+ * or empty list renders `(none)`, the byte-exact form the digest and note captions share.
  */
 function renderFlowFactsFragment(facts: NodeFlowFacts | undefined): string {
   const list = (arr: string[] | undefined): string => (arr && arr.length > 0 ? arr.join(', ') : '(none)');
@@ -350,22 +288,18 @@ function renderFlowFactsFragment(facts: NodeFlowFacts | undefined): string {
 }
 
 /**
- * Renders engine flow facts for KEPT (non-pruned) nodes that received no detail slot — the terse
- * `node_states` entry is their only trace in the archive, so without grounded graph facts the
- * model has nothing to state about them and drops them from sections/highlights/notes.
+ * Renders engine flow facts for KEPT (non-pruned) nodes that received no detail slot. Their terse
+ * `node_states` entry is their only trace, so without grounded facts the model drops them from
+ * sections/highlights/notes.
  *
- * @remarks
- * Facts only, derived from {@link SmResult.edges} (`written by`/`read by`), `fullNodes` (type) and
- * `node_states` (action). `fullNodes` already excludes pruned nodes; the explicit `prune` filter
- * here is belt-and-suspenders. A CT dependency carrying no traced value is kept and unslotted, so
- * it surfaces here too. A qualifying node with no `node_states` entry was never dispositioned —
- * scope reachability alone put it in the render — so it lists under its own heading with
- * `notes[]` as the only surface; section-linking it would overstate it as evidence. Deterministic:
- * nodes and neighbor lists sort by id, ids lowercased.
+ * Facts only, from {@link SmResult.edges}, `fullNodes` (type) and `node_states` (action);
+ * `fullNodes` already excludes pruned nodes. A CT dependency carrying no traced value is kept and
+ * unslotted, so it appears here too. A qualifying node with no `node_states` entry was never
+ * dispositioned (scope reachability alone put it in the render), so it lists under its own heading
+ * with `notes[]` as the only surface; section-linking it would overstate it as evidence. Nodes and
+ * neighbors sort by id, ids lowercased.
  *
- * @param result - Completed SM result: `fullNodes` the rendered kept set, `detail_slots` the
- * analyzed subset, `edges` the node-level `[from, to, kind]` flow, `node_states` the actions.
- * @returns A markdown bullet list of writer/reader facts, or an empty string when every kept node is slotted.
+ * @returns A markdown bullet list, or an empty string when every kept node is slotted.
  */
 export function buildPassthroughFlowFacts(result: SmResult, identifierCaseSensitive = false): string {
   const lc = (s: string): string => schemaKey(s, identifierCaseSensitive);
@@ -403,38 +337,36 @@ export function buildPassthroughFlowFacts(result: SmResult, identifierCaseSensit
 
 /**
  * One captured artifact in a detail slot: a `$$ … $$` block, a fenced block, or an inline
- * backticked span — matched left to right, so a delimiter nested inside an outer one is part of
- * that outer artifact and never a second entry. Group order is the render order: math, fence,
- * inline; whichever group matched names the form the hop captured.
+ * backticked span. Matched left to right, so a nested delimiter is part of the outer artifact,
+ * never a second entry. Group order is render order: math, fence, inline.
  */
 const CAPTURED_ARTIFACT = /\$\$([\s\S]*?)\$\$|```[^\n`]*\n?([\s\S]*?)```|`([^`\n]+)`/g;
 
-/** An identifier immediately followed by `(` — the lexical mark of a call, hence of a computed value. */
+/**
+ * An identifier immediately followed by `(` — the lexical mark of a call, hence of a computed
+ * value.
+ */
 const CALL_TOKEN = /\w\(/;
 
 /** A whole DML/DDL statement: it performs an action, whatever it calls along the way. */
 const STATEMENT_START = /^(?:insert|update|delete|merge|truncate|exec|execute|create|alter|drop|declare|select|with|if|begin|end)\b/i;
 
-/** The opening word of a filter condition — it decides which rows survive, whatever it is nested in. */
+/** The opening word of a filter condition; it decides which rows survive wherever it is nested. */
 const PREDICATE_START = /^(?:where|on|having|and|or|join)\b/i;
 
 
 /**
- * Enumerates the value computations and filter conditions the hops captured — `$$ … $$` blocks plus
- * the SQL that computes a value or filters rows — each keyed by the node whose detail slot holds it,
- * in the same self-check shape {@link buildPassthroughFlowFacts} uses for kept node ids.
+ * Enumerates the value computations and filter conditions the hops captured (`$$ … $$` blocks plus
+ * the SQL that computes a value or filters rows), each keyed by the node whose detail slot holds
+ * it, in the self-check shape {@link buildPassthroughFlowFacts} uses.
  *
- * @remarks
- * Every other mandatory-carry class at synthesis is enumerated as a checklist; formulas and
- * predicates otherwise reach the model only inside slot prose it must re-scan. Only delimited
- * artifacts are read — a formula the hop writer left in plain prose is not enumerated. Within a
- * delimited artifact, content decides what is enumerable: a fenced line or inline span qualifies when it
- * carries a {@link CALL_TOKEN} or opens with a {@link PREDICATE_START} keyword and is not a whole
- * {@link STATEMENT_START} statement; a fenced block is read line by line since one body mixes both
- * classes. Enumeration only — sorted by capture order and de-duplicated per node for byte-stable
- * output; which blocks belong in the answer stays the model's judgement.
+ * Formulas and predicates otherwise reach the model only inside slot prose it must re-scan. Only
+ * delimited artifacts are read; a formula left in plain prose is not enumerated. A fenced line or
+ * inline span qualifies when it carries a {@link CALL_TOKEN} or opens with a {@link
+ * PREDICATE_START} keyword and is not a whole {@link STATEMENT_START} statement; a fenced block is
+ * read line by line since one body mixes both classes. Output is capture-ordered and de-duplicated
+ * per node (byte-stable); which blocks belong in the answer stays the model's judgement.
  *
- * @param result - Completed SM result; `detail_slots[].sections[].text` is the captured archive.
  * @returns A markdown checklist, or an empty string when no hop captured a formula.
  */
 function buildCapturedFormulaFacts(result: SmResult, identifierCaseSensitive = false): string {
@@ -479,16 +411,12 @@ function buildCapturedFormulaFacts(result: SmResult, identifierCaseSensitive = f
 }
 
 /**
- * The tool-result envelope delivered to synthesis when SM exploration completes — "the last tool
- * result" the synthesis system prompt reads.
- *
- * @remarks
- * Single source of truth for the synthesis evidence surface; both the `lineage_submit_findings`
- * completion branch and the host-graph synthesis node call this builder. {@link synthesis_reminder}
- * carries the user-question anchor plus the rendered flow-role block (BB from node edges, CT from
- * column edges plus the Column Trace Chain) — the only place the model is told which nodes are
- * terminal sources. It also carries the {@link buildPassthroughFlowFacts} digest
- * for kept nodes with no detail slot, which otherwise have no semantic content to document.
+ * The tool-result envelope delivered to synthesis when SM exploration completes: "the last tool
+ * result" the synthesis system prompt reads. Single source of truth for the synthesis evidence
+ * surface (the `lineage_submit_findings` completion branch and the host-graph synthesis node both
+ * call its builder). {@link synthesis_reminder} carries the user-question anchor plus the flow-role
+ * block, the only place the model learns which nodes are terminal sources, and the {@link
+ * buildPassthroughFlowFacts} digest for kept nodes with no detail slot.
  */
 interface SmCompletionEnvelope {
   readonly ok: true;
@@ -508,21 +436,19 @@ interface SmCompletionEnvelope {
 /**
  * Assembles the {@link SmCompletionEnvelope} from a completed engine result.
  *
- * @remarks
  * The CT chain block ({@link buildCtSynthesisBlock}) is appended only when column edges were
- * recorded. `result.fullNodes` is the render bound and therefore the id set `present_result`
- * accepts: it is stated as `scope.node_ids`, and `node_states[]` plus the enumerated highlight
- * candidates are filtered to it. An id the render dropped or the depth border cut still reaches
- * the model through the recorded evidence, in prose, never in a `node_ids` field.
+ * recorded. `result.fullNodes` is the render bound and so the id set `present_result` accepts: it
+ * is stated as `scope.node_ids`, and `node_states[]` plus the highlight candidates are filtered to
+ * it. An id the render dropped or the depth border cut still reaches the model through the recorded
+ * evidence, in prose, never in a `node_ids` field.
  *
- * `detail_slots` is delivered with a citation id appended to every fenced code block's own fence
- * info string ({@link assignEvidenceIds}, e.g. `sql S7`), numbered by detail-slot order then block
- * order — `present_result` recomputes the same id set from the same archive to expand an empty
- * ```` ```sql S7 ```` fence in place, so a reference resolves without any id persisted across the call.
+ * `detail_slots` carries a citation id appended to every fenced block's info string ({@link
+ * assignEvidenceIds}, e.g. `sql S7`), numbered by slot then block order; `present_result`
+ * recomputes the same ids from the same archive to expand an empty fence in place, so no id is
+ * persisted across the call.
  *
- * @param result - The completed `engine.getResult()` archive (full `detail_slots` across all hops).
- * @param userQuestion - The verbatim mission question anchoring the synthesis reminder.
- * @param deferred - The engine's deferred follow-up leads (`DeferredQuestion.reason` names why each was not visited).
+ * @param deferred - The engine's deferred follow-up leads (`DeferredQuestion.reason` names why each
+ *   was not visited).
  */
 export function buildSmCompletionEnvelope(
   result: SmResult,

@@ -1,17 +1,13 @@
 /**
- * Input normalization helpers for AI-controlled fields.
- *
- * @remarks
- * Keeps boundary normalization deterministic and reusable across tool handlers,
- * state-machine init, and prompt rendering.
+ * Input normalization helpers for AI-controlled fields: deterministic boundary normalization
+ * reusable across tool handlers, state-machine init and prompt rendering.
  */
 import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
 import { splitSqlName, stripBrackets } from '../../utils/sql';
 
 /**
- * Re-exported so AI callers keep importing node-id resolution from here.
- * Implementation lives in `src/engine/shared/` because the webview needs it too and must not
- * reach into `src/ai/**`.
+ * Re-exported so AI callers keep importing node-id resolution from here; the implementation lives
+ * in `src/engine/shared/` because the webview needs it too and must not reach into `src/ai/**`.
  */
 export { resolveModelNodeId };
 
@@ -42,12 +38,11 @@ export interface SubmitFindingsNormalizationResult {
 }
 
 /**
- * Resolves multiple node ids while preserving order and removing duplicates.
+ * Resolves multiple node ids, preserving order and removing duplicates; returns resolved and
+ * unresolved id arrays.
  *
- * @param raws - An array of raw node id strings.
- * @param nodeMap - The map of canonical nodes to check against.
- * @param identifierCaseSensitive - Proven source policy; missing/false retains legacy case-insensitive lookup.
- * @returns An object containing resolved and unresolved node id arrays.
+ * @param identifierCaseSensitive - Proven source policy; missing/false retains legacy
+ *   case-insensitive lookup.
  */
 export function resolveModelNodeIds(
   raws: string[],
@@ -71,16 +66,11 @@ export function resolveModelNodeIds(
 }
 
 /**
- * Normalizes submit_findings node-id encodings into a cloned input object.
+ * Normalizes submit_findings node-id encodings into a cloned input object. Deliberately narrow:
+ * canonicalizes bracket/case/name encodings only and never removes unknown fields or changes the
+ * model's raw object. Source case sensitivity preserves spelling and never substitutes a distinct
+ * object. The caller must still run the clone through the strict BB/CT Zod schema.
  *
- * @remarks
- * This is intentionally narrow: it canonicalizes bracket/case/name encodings only
- * and never removes unknown fields or changes the raw object supplied by the model.
- * Source case sensitivity preserves spelling and never substitutes a distinct object.
- * The caller must still run the cloned output through the strict BB/CT Zod schema.
- *
- * @param rawInput - Raw model input object.
- * @param nodeMap - Canonical model node map used by {@link resolveModelNodeId}.
  * @returns The cloned input and a list of field-level normalization events.
  */
 export function normalizeSubmitFindingsInputIds(
@@ -121,20 +111,12 @@ export function normalizeSubmitFindingsInputIds(
 }
 
 /**
- * Normalizes a free-form `lineage_search_objects.query` string.
- *
- * @remarks
- * Accepts common id-like forms the AI may emit (e.g. `[dbo].[FactSales]`,
- * `dbo.FactSales`, `[db].[dbo].[FactSales]`) and extracts:
- * - `query`: the object token to search by (e.g. `FactSales`)
- * - `schemaHint`: optional schema token (`dbo`) usable as a schema filter
- *
- * Parts are split and undelimited by {@link splitSqlName} and {@link stripBrackets}, so a dot or
- * an escaped `]]` inside a bracketed or quoted part stays in the name. With more than three
- * parts, returns the trimmed input unchanged and no schema hint.
- *
- * @param raw - The free-form query string.
- * @returns An object with the extracted query and optional schema hint.
+ * Normalizes a free-form `lineage_search_objects.query` string. Accepts id-like forms the AI may
+ * emit (`[dbo].[FactSales]`, `dbo.FactSales`, `[db].[dbo].[FactSales]`) and extracts `query` (the
+ * object token, `FactSales`) and an optional `schemaHint` (`dbo`) usable as a schema filter. Parts
+ * are split and undelimited by {@link splitSqlName} and {@link stripBrackets}, so a dot or escaped
+ * `]]` inside a bracketed or quoted part stays in the name. With more than three parts it returns
+ * the trimmed input and no schema hint.
  */
 export function normalizeSearchQueryInput(raw: string): { query: string; schemaHint?: string } {
   const input = (raw ?? '').trim();
@@ -160,7 +142,9 @@ interface JsonSchemaNode {
 
 /** Result of coercing one tool-argument payload. */
 export interface StringifiedArgumentsResult {
-  /** The payload with every stringified structure decoded; the input object when nothing changed. */
+  /**
+   * The payload with every stringified structure decoded; the input object when nothing changed.
+   */
   readonly value: unknown;
   /** Dotted paths that were decoded. */
   readonly paths: string[];
@@ -219,22 +203,15 @@ function coerce(value: unknown, schema: JsonSchemaNode | undefined, path: string
 }
 
 /**
- * Decodes JSON-string values where the tool's JSON Schema declares an array or object, or `null`
- * beside one of them.
+ * Decodes JSON-string values where the tool's JSON Schema declares an array or object (or `null`
+ * beside one). Some model servers return such an argument as a JSON string (`"targetColumns":
+ * "[\"A\"]"`); the product cannot know which server it talks to, so the decode (`JSON.parse`) runs
+ * once at the model boundary for every tool and model, driven by the declared schema alone. Text
+ * that is not valid JSON (cut off, or with raw line breaks inside a string) is never completed or
+ * repaired: it stays a string and fails schema validation at its field. The caller logs {@link
+ * StringifiedArgumentsResult.paths}.
  *
- * @remarks
- * Some model servers return an array- or object-typed argument as a JSON string
- * (`"targetColumns": "[\"A\"]"`); the product cannot know which server it talks to, so the decode
- * runs once at the model boundary for every tool and model, driven by the declared schema alone.
- * The decode is `JSON.parse`. A text that is not valid JSON — cut off before its value closes, or
- * carrying raw line breaks inside a string — is never completed or repaired: it stays a string and
- * fails schema validation at its field.
- * The caller logs {@link StringifiedArgumentsResult.paths}.
- *
- * @param input - Tool arguments as the provider returned them.
- * @param jsonSchema - The tool's model-facing JSON Schema.
- * @returns The coerced payload and the paths decoded; a value that does not parse to the declared
- * kind stays as sent so schema validation rejects it with its field path.
+ * @returns The coerced payload and the paths decoded.
  */
 export function coerceStringifiedArguments(input: unknown, jsonSchema: unknown): StringifiedArgumentsResult {
   const paths: string[] = [];

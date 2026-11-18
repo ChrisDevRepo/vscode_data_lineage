@@ -53,7 +53,10 @@ export interface VscodeBridgeToolDefinition {
 export interface VscodeLangChainCallOptions extends BaseChatModelCallOptions {
   /** Tool definitions bound onto this request and passed to `vscode.lm.sendRequest`. */
   readonly tools?: readonly VscodeBridgeToolDefinition[];
-  /** `'auto'`, `'any'` (a tool call is required), `'none'`, or the name of the one tool the model must call. */
+  /**
+   * `'auto'`, `'any'` (a tool call is required), `'none'`, or the name of the one tool the model
+   * must call.
+   */
   readonly tool_choice?: string;
 }
 
@@ -104,9 +107,7 @@ export class VscodeLangChainBridge extends BaseChatModel<
     return 'vscode-request-model';
   }
 
-  /**
-   * Binds model-facing tool metadata. Execution remains graph/dispatcher-owned.
-   */
+  /** Binds model-facing tool metadata. Execution remains graph/dispatcher-owned. */
   bindTools(
     tools: VscodeBridgeToolDefinition[],
     kwargs: Partial<VscodeLangChainCallOptions> = {},
@@ -114,7 +115,7 @@ export class VscodeLangChainBridge extends BaseChatModel<
     return this.withConfig({ tools, ...kwargs });
   }
 
-  /** Binds one tool, described by its model-facing JSON Schema, forced via `tool_choice`, guaranteeing that exact call. */
+  /** Binds one tool by its model-facing JSON Schema, forced via `tool_choice`. */
   bindStructuredOutputTool(inputSchema: Record<string, unknown>, functionName: string): VscodeBridgeRunnable {
     return this.bindTools(
       [{ name: functionName, description: STRUCTURED_OUTPUT_TOOL_DESCRIPTION, inputSchema }],
@@ -122,7 +123,7 @@ export class VscodeLangChainBridge extends BaseChatModel<
     );
   }
 
-  /** True once either the bridge's own cancellation token or the LangChain call's abort signal fires. */
+  /** True once the bridge's cancellation token or the LangChain call's abort signal fires. */
   private isCancelled(options: this['ParsedCallOptions']): boolean {
     return this.token.isCancellationRequested || Boolean(options.signal?.aborted);
   }
@@ -323,7 +324,10 @@ function isUsagePart(part: unknown): part is { mimeType: 'usage'; data: unknown 
   return !!part && typeof part === 'object' && (part as { mimeType?: unknown }).mimeType === 'usage';
 }
 
-/** Token usage from a usage part's UTF-8 JSON (OpenAI chat-completions names); undefined if unreadable. */
+/**
+ * Token usage from a usage part's UTF-8 JSON (OpenAI chat-completions names); undefined if
+ * unreadable.
+ */
 function parseUsageData(data: unknown): TokenUsage | undefined {
   if (!(data instanceof Uint8Array)) return undefined;
   let raw: unknown;

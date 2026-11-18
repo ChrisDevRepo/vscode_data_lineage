@@ -1,16 +1,10 @@
 /**
- * Canonical AI tool registry, handlers, and optional VS Code LM registrations.
- *
- * @remarks
- * Acts as the Zod boundary between untrusted LM-supplied tool input and the engine + retrieval layer.
- * The native `@lineage` runtime dispatches through {@link buildAiToolRegistry}.
- * {@link registerAiTools} exposes the same catalog through `vscode.lm.registerTool` for external
- * VS Code compatibility.
- *
- * Read-only tools remain thin wrappers around provider-neutral functions in
- * [`tools.ts`](./tools.ts). Mutating exploration and presentation tools live in
- * per-tool handler modules under `handlers/`; this module owns their shared host
- * services, registry binding, turn-lease checks, and effect serialization.
+ * Canonical AI tool registry, handlers and optional VS Code LM registrations; the Zod boundary
+ * between untrusted LM tool input and the engine. The native `@lineage` runtime dispatches through
+ * {@link buildAiToolRegistry}; {@link registerAiTools} exposes the same catalog via
+ * `vscode.lm.registerTool`. Read-only tools wrap provider-neutral functions in
+ * [`tools.ts`](./tools.ts); mutating tools live in `handlers/`; this module owns their shared host
+ * services, registry binding, turn-lease checks and effect serialization.
  */
 import * as vscode from 'vscode';
 import type Graph from 'graphology';
@@ -61,30 +55,26 @@ import { REJECTION_CODES } from '../support/rejectionCodes';
 
 /**
  * Retry-messaging group for a rejection code, shared by this module's `[Reject]` debug line and
- * `graph.ts`'s chat-facing `Retry N — <group>` line — ONE classification, read by both surfaces, so
- * a debug trace and what the user saw can never disagree about which group a code belongs to.
- *
- * @remarks
- * There is no "scope limit" group. The two budget codes are non-chargeable and never reach
- * `rejections[]`, so a group for them would be unreachable and would misrepresent a budget refusal
- * as a model correction.
+ * `graph.ts`'s chat-facing `Retry N — <group>` line, so the debug trace and the user's view cannot
+ * disagree. There is no "scope limit" group: the two budget codes are non-chargeable and never
+ * reach `rejections[]`, so one would be unreachable and misrepresent a budget refusal as a model
+ * correction.
  */
 export type RejectionChatGroup = 'column_mapping' | 'source_selection' | 'answer_format' | 'backend_fault' | 'correction';
 
 /**
- * Explicit membership for the non-fallback groups. Every rejection code NOT listed here —
- * including any future or renamed code — resolves through {@link classifyRejectionCode} to the
- * `correction` fallback, so an unmapped code can never surface to the user as a raw machine string.
+ * Explicit membership for the non-fallback groups. Every code not listed (including future or
+ * renamed ones) resolves via {@link classifyRejectionCode} to `correction`, so an unmapped code
+ * never reaches the user as a raw machine string.
  *
- * - `column_mapping` — the CT column-recording guards (`submitFindings.ts`/`smBase.ts`).
- * - `source_selection` — routing and prune-topology guards.
- * - `answer_format` — structural/schema violations of the tool envelope itself.
- * - `backend_fault` — a backend state or exception no model reply can correct; the run ends on the
- *   first one instead of spending the step's replies.
+ * - `column_mapping`: the CT column-recording guards.
+ * - `source_selection`: routing and prune-topology guards.
+ * - `answer_format`: structural/schema violations of the tool envelope itself.
+ * - `backend_fault`: a backend state or exception no model reply can correct; the run ends on the
+ * first one.
  *
- * Other session/state codes, transport artifacts, the budget guards, and control-flow markers are
- * deliberately absent — none says anything about the model's semantic accuracy, so they fall to
- * `correction` rather than borrowing one of the named groups.
+ * Session/state codes, transport artifacts, budget guards and control-flow markers are absent on
+ * purpose: none says anything about the model's accuracy, so they fall to `correction`.
  */
 const REJECTION_GROUPS: Readonly<Record<string, Exclude<RejectionChatGroup, 'correction'>>> = {
   [REJECTION_CODES.outColNotTracked]: 'column_mapping',
@@ -112,21 +102,18 @@ const REJECTION_GROUPS: Readonly<Record<string, Exclude<RejectionChatGroup, 'cor
 };
 
 /**
- * Resolves a rejection code to its retry-messaging group, defaulting an unmapped code to the
- * `correction` fallback. See {@link REJECTION_GROUPS} for the membership this implements and why a
- * "scope limit" group is intentionally absent.
+ * Resolves a rejection code to its retry-messaging group, defaulting to `correction`; see {@link
+ * REJECTION_GROUPS}.
  */
 export function classifyRejectionCode(code: string): RejectionChatGroup {
   return REJECTION_GROUPS[code] ?? 'correction';
 }
 
 /**
- * Reveals the result panel and posts one preview, naming the outcome.
- *
- * @param panel - The open result panel, or `undefined` when none is open.
- * @returns `no_panel` without a panel, `delivered` when the webview accepted the message,
- * `post_failed` when the validated send was dropped or refused. A transport throw propagates. A schema drop
- * is a log line here: the participant's failed-render toast is the one user-visible notice.
+ * Reveals the result panel and posts one preview, naming the outcome: `no_panel`, `delivered`, or
+ * `post_failed` (the validated send was dropped or refused). A transport throw propagates. A schema
+ * drop is only a log line here; the participant's failed-render toast is the one user-visible
+ * notice.
  */
 export async function deliverToPanel(
   panel: vscode.WebviewPanel | undefined,
@@ -139,10 +126,8 @@ export async function deliverToPanel(
 }
 
 /**
- * Private handler for AI tool execution.
- *
- * Owns the shared VS Code host services and thin read-tool handlers. Mutating
- * tool behavior is delegated through the explicit {@link ToolServices} seam.
+ * Private handler for AI tool execution. Owns the shared VS Code host services and thin read-tool
+ * handlers; mutating tool behavior goes through the {@link ToolServices} seam.
  */
 class ToolHandler implements ToolServices {
   public readonly logger: Logger;
@@ -246,17 +231,13 @@ class ToolHandler implements ToolServices {
   }
 
   /**
-   * Mechanical phase guard — enforces the per-phase tool policy at the shared
-   * registry execution boundary, not just at the LM `tools[]` parameter.
+   * Mechanical phase guard: enforces the per-phase tool policy at the shared registry boundary, not
+   * just at the LM `tools[]` parameter. Both dispatch paths (the native full catalog and the
+   * read-only `vscode.lm` subset) land here, so the current phase stays authoritative even for
+   * externally addressable reads.
    *
-   * @remarks
-   * The native runtime carries the full catalog; `registerAiTools` additionally exposes only the
-   * read-only subset through `vscode.lm`, and both dispatch paths land on this check so the current
-   * phase remains authoritative even for externally addressable reads.
-   *
-   * @returns Provider-neutral JSON text carrying an `off_policy` error when the
-   *   tool is not allowed in the current phase, or `null` when execution is
-   *   permitted.
+   * @returns Provider-neutral JSON text carrying an `off_policy` error when the tool is not allowed
+   *   in the current phase, else `null`.
    */
   public authorizeTool(toolName: ToolName, input: unknown): string | null {
     const sess = this.getSession();
@@ -266,9 +247,7 @@ class ToolHandler implements ToolServices {
     return violation ? this.logAndReturn(toolName, violation, input) : null;
   }
 
-  /**
-   * Derives the {@link LmStage} from the session's current phase + engine state.
-   */
+  /** Derives the {@link LmStage} from the session's current phase + engine state. */
   private deriveLmStage(sess: AiSession): LmStage {
     if (sess.activeLmStage) return sess.activeLmStage;
     const phase = sess.phase.kind;
@@ -429,14 +408,10 @@ class ToolHandler implements ToolServices {
   }
 
   /**
-   * SM ACTIVE pruning-verification affordance. Returns columns + FKs (no DDL)
-   * for direct neighbors of the current focus node, bounded by the active scope.
-   *
-   * @remarks
-   * Structural contract: ids must be direct neighbors of the current focus AND
-   * within the active BFS scope. `NavigationEngine.validateNeighborIds` enforces
-   * both conditions and returns a structured error on violation — the tool is
-   * never a backdoor for out-of-scope exploration.
+   * SM ACTIVE pruning-verification affordance: columns + FKs (no DDL) for direct neighbors of the
+   * current focus, bounded by the active scope. `NavigationEngine.validateNeighborIds` enforces
+   * both conditions and returns a structured error, so the tool is never a backdoor for
+   * out-of-scope exploration.
    */
   public getNeighborColumns(input: unknown) {
     try {
@@ -484,25 +459,16 @@ type LineageToolOutput = string;
 type ToolExecutor = (input: unknown) => LineageToolOutput | Promise<LineageToolOutput>;
 
 /**
- * Builds the shared lineage {@link ToolRegistry} — the single authoritative dispatch surface
- * for the AI tool catalog.
+ * Builds the shared lineage {@link ToolRegistry}, the single authoritative dispatch surface
+ * (`invoke`) for names, handlers, ordering, authorization and labels. The native runtime calls this
+ * directly; {@link registerAiTools} reuses it for externally invokable contributed tools.
  *
- * @remarks
- * The native runtime calls this directly and never touches `vscode.lm.registerTool`.
- * {@link registerAiTools} reuses it when exposing externally invokable contributed tools.
- *
- * The registry is the sole dispatch entry point (`invoke`), keeping names, handlers, ordering,
- * authorization, and labels consistent.
- *
- * @param getSession - Factory for the active AI session.
- * @param outputChannel - Log channel for tracing tool activity.
  * @param getPanel - Accessor for the active webview panel (`present_result` posts to it).
  * @param turnLease - Optional host-turn ownership checked around every dispatch.
- * @param host - Optional host seam; `getStoredRun` resolves the AI run behind an applied bookmark,
- * `model`/`signal` supply the text-completion capability `start_exploration` uses to compose the
- * discovery-handoff memo shown at the bottom of the approval card, and `budget` carries the owning
- * turn's caps so a superseded turn's dispatch keeps measuring against its own model.
- * @returns A ready-to-dispatch canonical registry.
+ * @param host - Optional host seam: `getStoredRun` resolves the AI run behind an applied bookmark,
+ *   `model`/`signal` supply the text completion `start_exploration` uses for the discovery-handoff
+ *   memo on the approval card, and `budget` carries the owning turn's caps so a superseded turn's
+ *   dispatch keeps measuring against its own model.
  */
 export function buildAiToolRegistry(
   getSession: () => AiSession,
@@ -560,35 +526,24 @@ export function buildAiToolRegistry(
 }
 
 /**
- * The externally addressable subset of the catalog: read-only tools.
- *
- * @remarks
- * A `vscode.lm` registration is invokable by **any** extension or chat participant, with no
- * `@lineage` turn behind it; the read tools are safe there since they only answer questions about
- * an already-loaded snapshot. Every other effect class commits session lifecycle state that only
- * the owning turn may advance, so exposing them externally would let a third party drive the
- * exploration state machine out from under the participant.
+ * The externally addressable subset of the catalog: read-only tools. A `vscode.lm` registration is
+ * invokable by **any** extension or chat participant with no `@lineage` turn behind it; reads are
+ * safe there, but every other effect class commits session lifecycle state only the owning turn may
+ * advance, and exposing them would let a third party drive the state machine.
  */
 const EXTERNAL_TOOL_NAMES: ReadonlySet<string> = new Set(
   TOOL_DEFS.filter(def => def.effect === 'read').map(def => def.name),
 );
 
 /**
- * Registers the **read-only** lineage tools with `vscode.lm` for external VS Code callers.
- *
- * @remarks
- * Calls {@link buildAiToolRegistry} and exposes the {@link EXTERNAL_TOOL_NAMES} subset through
- * `vscode.lm.registerTool`, using the shared {@link filterRegistry} read-only view rather than a
- * second hand-maintained list. Native `@lineage` dispatch keeps the full catalog and does not use
- * these registrations. `package.json` contributes exactly this subset — a contributed entry with no
- * `registerTool` binding is a broken tool, not merely an unused one, so the manifest and this
+ * Registers the **read-only** lineage tools with `vscode.lm` for external callers, exposing the
+ * {@link EXTERNAL_TOOL_NAMES} subset of {@link buildAiToolRegistry} through the shared {@link
+ * filterRegistry} view rather than a second hand-kept list. `package.json` contributes exactly this
+ * subset: a contributed entry with no `registerTool` binding is a broken tool, so manifest and
  * filter must move together.
  *
- * @param getSession - Factory for the active AI session.
- * @param outputChannel - Log channel for tracing tool activity.
- * @param getPanel - Accessor for the active webview panel.
- * @param host - Optional host seam forwarded to the shared registry builder.
- * @returns Disposables for the registered `vscode.lm` tool bindings.
+ * @param host - Optional host seam forwarded to the registry builder.
+ * @returns Disposables for the registered tool bindings.
  */
 export function registerAiTools(
   getSession: () => AiSession,

@@ -20,13 +20,11 @@ const OBJECT_DETAIL_TOOL = 'lineage_get_object_detail';
 
 /**
  * The one tool whose over-budget rejection means "this scope is too large to answer inline".
- *
- * @remarks
- * `checkScopeBudget` is shared, so its envelope can surface from any caller — `presentRunRecall`
- * returns it for an oversized stored-run recall. Only an oversized *scope* request carries the
- * routing meaning: the user asked for a neighbourhood that has to be walked hop-by-hop. Matching on
- * the envelope alone turned "what did this run prune?" into a fresh exploration approval gate
- * instead of the recall rejection the model already reads.
+ * `checkScopeBudget` is shared, so its envelope can surface from any caller (`presentRunRecall`
+ * returns it for an oversized stored-run recall), but only an oversized *scope* request means a
+ * neighbourhood that must be walked hop by hop. Matching the envelope alone turned "what did this
+ * run prune?" into a fresh exploration gate instead of the recall rejection the model already
+ * reads.
  */
 const SCOPE_BUNDLE_TOOL = 'lineage_get_scope_bundle';
 
@@ -34,7 +32,7 @@ const NodeCountsView = z.object({ nodes: z.number() }).loose();
 
 /**
  * The over-budget refusal as any catalog tool serves it: the rejection (`detail.counts`,
- * `detail.scope_proposal`) or `lineage_search_ddl`'s partial reply (top-level `counts`) — both carry
+ * `detail.scope_proposal`) or `lineage_search_ddl`'s partial reply (top-level `counts`); both carry
  * the budget code as `reason`.
  */
 const OverBudgetResultView = z.object({
@@ -50,12 +48,11 @@ const OverBudgetResultView = z.object({
 const ObjectDetailIdView = z.object({ id: z.string().trim().min(1) }).loose();
 
 /**
- * Extracts a discovery walk from accepted provider-neutral observations.
+ * Extracts a discovery walk from accepted provider-neutral observations (successful graph-owned
+ * read results of the discovery phase) and the accepted final answer; the walk exists when at least
+ * two distinct object-detail results were observed.
  *
- * @param observations - Successful graph-owned read results retained for the discovery phase.
- * @param answer - Accepted final discovery answer.
  * @param onMalformed - Observable failure policy for canonical output that fails the Zod view.
- * @returns The walk when at least two distinct object-detail results were observed.
  */
 export function captureDiscoveryWalkFromObservations(
   observations: readonly ToolAttemptObservation[],
@@ -86,11 +83,8 @@ export function captureDiscoveryWalkFromObservations(
 }
 
 /**
- * Whether one tool result means "this scope is too large to answer inline — reroute to SM".
- *
- * @param toolName - Name of the tool that produced `resultText`.
- * @param resultText - The tool's serialized result.
- * @returns True only for an oversized scope-bundle request.
+ * Whether one tool result means "this scope is too large to answer inline, reroute to SM": true
+ * only for an oversized scope-bundle request.
  */
 export function detectOverBudgetFromResult(toolName: string, resultText: string): boolean {
   if (toolName !== SCOPE_BUNDLE_TOOL) return false;
@@ -101,7 +95,7 @@ export function detectOverBudgetFromResult(toolName: string, resultText: string)
   }
 }
 
-/** A parsed `over_discovery_budget` rejection from any catalog tool — drives the user-visible notice. */
+/** A parsed `over_discovery_budget` rejection from any catalog tool; drives the user notice. */
 interface OverBudgetNotice {
   /** Tool whose result carried the rejection envelope. */
   readonly toolName: string;
@@ -112,16 +106,10 @@ interface OverBudgetNotice {
 }
 
 /**
- * Reads an `over_discovery_budget` rejection from any tool result.
- *
- * @remarks
- * Unlike {@link detectOverBudgetFromResult} this is tool-agnostic: every catalog surface shares
- * `checkScopeBudget`, so the same envelope can arrive from scope bundles, DDL detail, group
- * requests, or screen recall. Returns `null` for anything else, including malformed JSON.
- *
- * @param toolName - Tool that produced `resultText`.
- * @param resultText - The tool's serialized result.
- * @returns The notice payload, or `null` when the result is not an over-budget rejection.
+ * Reads an `over_discovery_budget` rejection from any tool result. Unlike {@link
+ * detectOverBudgetFromResult} it is tool-agnostic: every catalog surface shares `checkScopeBudget`,
+ * so the envelope can arrive from scope bundles, DDL detail, group requests or screen recall.
+ * `null` for anything else, including malformed JSON.
  */
 function readOverBudgetNotice(toolName: string, resultText: string): OverBudgetNotice | null {
   let raw: unknown;
@@ -137,21 +125,13 @@ function readOverBudgetNotice(toolName: string, resultText: string): OverBudgetN
 
 /**
  * Queues the user-visible discovery-budget notice for the turn's closing markdown, once per turn.
+ * The envelope is model-facing, so without this notice a budget rejection is silent to the user
+ * whenever the model does not mention it; it is recoverable, so it renders inline with the answer
+ * rather than claiming the turn's error presentation.
  *
- * @remarks
- * The envelope itself is model-facing (an observation the model reads); without this
- * notice a budget rejection is silent to the user whenever the model does not mention it.
- * Recoverable, so it renders inline with the answer rather than claiming the turn's error
- * presentation.
- *
- * {@link SCOPE_BUNDLE_TOOL} is excluded: an oversized scope is not a rejection the user has to read
- * about, it is the mechanical reroute into the consent-gated exploration path
- * ({@link detectOverBudgetFromResult}), and the approval gate that opens next is the user-visible
- * signal. A notice there would announce an inline answer the turn is not going to give.
- *
- * @param session - The session whose turn carries the notice to its closing markdown.
- * @param toolName - Tool that produced `resultText`.
- * @param resultText - The tool's serialized result.
+ * {@link SCOPE_BUNDLE_TOOL} is excluded: an oversized scope is the mechanical reroute into the
+ * consent-gated exploration path ({@link detectOverBudgetFromResult}) and the approval gate that
+ * opens next is the signal; a notice would announce an inline answer the turn will not give.
  */
 export function queueDiscoveryBudgetNotice(session: Pick<AiSession, 'queueClosingNotice'>, toolName: string, resultText: string): void {
   if (toolName === SCOPE_BUNDLE_TOOL) return;

@@ -1,9 +1,9 @@
 /**
  * Full-fidelity capture of what the language model receives and returns, plus sanitized provider
- * diagnostics for requests that fail before a response is available. Every record carries schema,
- * table and column names and SQL, so the sink exists only after the user enables AI trace logging
- * for the current extension-host session. Free of `vscode` imports so every model port emits the
- * same records; the VS Code projection is in [`vscodeWireLog.ts`](./vscodeWireLog.ts).
+ * diagnostics for requests that fail before a response exists. Every record carries schema, table
+ * and column names and SQL, so the sink exists only after the user enables AI trace logging for the
+ * current extension-host session. Free of `vscode` imports so every model port emits the same
+ * records; the VS Code projection is [`vscodeWireLog.ts`](./vscodeWireLog.ts).
  */
 import { createHash } from 'node:crypto';
 import type { ProviderErrorDiagnostic } from '../support/text';
@@ -82,7 +82,7 @@ export type WireEvent =
     }
   | {
       /**
-       * One completed generation, summarized. `finishReason` is `unknown` when the provider gave
+       * One completed generation, summarized; `finishReason` is `unknown` when the provider gave
        * none and sent no usage part (the stream may have been cut).
        */
       readonly type: 'generation';
@@ -119,12 +119,17 @@ export type GenerationRecord = Extract<WireRecord, { readonly type: 'generation'
 /** One verbatim provider HTTP body, emitted only while the trace runs verbose. */
 export type ProviderRawRecord = Extract<WireRecord, { readonly type: 'provider-raw' }>;
 
-/** Digests a system instruction into the stable identifier the trace records; hex, not base64, so the trace-security guard never reads it as key material. */
+/**
+ * Digests a system instruction into the stable identifier the trace records; hex, not base64, so
+ * the trace-security guard never reads it as key material.
+ */
 export function systemPromptHash(system: string): string {
   return createHash('sha256').update(system, 'utf8').digest('hex');
 }
 
-/** Serializes trace content without throwing or truncating; unrepresentable parts become markers. */
+/**
+ * Serializes trace content without throwing or truncating; unrepresentable parts become markers.
+ */
 export function safeTraceStringify(value: unknown): string {
   try {
     return JSON.stringify(toJsonSafeValue(value, new Set<object>())) ?? 'null';

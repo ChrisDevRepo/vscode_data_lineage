@@ -14,11 +14,8 @@ export const MSSQL_RECONNECT_NOTICE =
 export const MSSQL_RECONNECT_ACTION = 'Reconnect';
 
 /**
- * Whether a stored connection was written for the mssql extension.
- *
- * @remarks
- * A stored connection without `provider` was written for the mssql extension, before provider
- * selection existed.
+ * Whether a stored connection was written for the mssql extension; one without `provider` predates
+ * provider selection and was.
  */
 export function usesMssqlExtension(stored: StoredConnectionInfo): boolean {
   return (stored.provider ?? 'mssqlExtension') === 'mssqlExtension';

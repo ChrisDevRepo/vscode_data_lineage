@@ -1,19 +1,13 @@
 /**
- * Projects internal lineage models into compact model-facing payloads.
- *
- * This module contains no VS Code dependencies or domain decisions; tool handlers share these
- * projections so field naming and compaction remain consistent.
+ * Projects internal lineage models into compact model-facing payloads. No VS Code dependencies or
+ * domain decisions; tool handlers share these projections so field naming and compaction stay
+ * consistent.
  */
 import type { LineageNode, ColumnDef, SchemaInfo, NeighborIndex, ForeignKeyInfo } from '../../engine/types';
 import type { SerializedFilterState } from '../../engine/projectStore';
 
 
-/**
- * Prunes null, undefined, false, empty strings, and empty arrays from a record.
- *
- * @param obj - The plain object to be stripped.
- * @returns A shallow copy without nullish, false, empty-string, or empty-array values.
- */
+/** Prunes null, undefined, false, empty strings and empty arrays from a record (shallow copy). */
 export function strip<T extends Record<string, unknown>>(obj: T): Partial<T> {
   return Object.fromEntries(
     Object.entries(obj).filter(([, v]) =>
@@ -27,16 +21,10 @@ const EDGE_TYPE_MAP: Record<string, string> = { body: 'read', exec: 'exec' };
 const NULLABLE_VALUES = new Set(['true', 'True', 'NULL']);
 
 /**
- * Standardizes internal edge types into an AI-consumable API nomenclature.
- *
- * @remarks
- * `LineageEdge.type` records provenance (`body` vs `exec`), never direction — the engine
- * orders a `body` edge's endpoints by write-vs-read but discards the verb. Only a procedure
- * ever emits an outbound `body` edge for a mutation; every other `body` source is a read.
- *
- * @param type - The raw edge type from the graph engine.
- * @param sourceNodeType - The `ObjectType` of the edge's source node.
- * @returns A simplified string representing the data flow direction (e.g., 'read', 'write', 'exec').
+ * Standardizes internal edge types into the AI-facing nomenclature ('read', 'write', 'exec').
+ * `LineageEdge.type` records provenance (`body` vs `exec`), never direction: the engine orders a
+ * `body` edge's endpoints by write-vs-read but discards the verb. Only a procedure emits an
+ * outbound `body` edge for a mutation; every other `body` source is a read.
  */
 export function edgeApiType(type: string, sourceNodeType: string): string {
   if (type === 'body' && sourceNodeType === 'procedure') return 'write';
@@ -44,9 +32,7 @@ export function edgeApiType(type: string, sourceNodeType: string): string {
 }
 
 
-/**
- * A minimal representation of a database node, used for cross-layer presentation.
- */
+/** A minimal database node for cross-layer presentation. */
 type PresentableNode = Pick<LineageNode, 'id' | 'schema' | 'name' | 'type'> & {
   /** Optional metadata for external/linked resources. */
   externalType?: string
@@ -54,7 +40,7 @@ type PresentableNode = Pick<LineageNode, 'id' | 'schema' | 'name' | 'type'> & {
 
 /**
  * Optional context that lets {@link presentNode} serve a node's `in`/`out` neighbor split in the
- * same shape `buildHopFocusNode` uses for the hop_context route, instead of only the scalar `deg`.
+ * shape `buildHopFocusNode` uses for the hop_context route, instead of only the scalar `deg`.
  */
 export type NodeNeighborSplitContext = {
   /** Full node lookup, needed to resolve each neighbor id to its schema/name/type. */
@@ -64,18 +50,12 @@ export type NodeNeighborSplitContext = {
 };
 
 /**
- * Transforms a database node into a compact, token-optimized JSON representation.
+ * Transforms a database node into a compact, token-optimized record. Keys are abbreviated
+ * (`s`=schema, `n`=name, `t`=type, `deg`=degree). `deg` alone cannot answer "which side", so
+ * `splitContext` (with a `neighborIndex` entry) adds `in`/`out` neighbor arrays in the shape
+ * `buildHopFocusNode` emits; omitted elsewhere so the payload only grows where requested.
  *
- * @remarks
- * Keys are abbreviated (`s`=schema, `n`=name, `t`=type, `deg`=degree) to minimize payload size.
- * `deg` alone cannot answer "which side"; passing `splitContext` adds `in`/`out` neighbor arrays in
- * the shape `buildHopFocusNode` emits for hop_context, omitted elsewhere so payload only grows where requested.
- *
- * @param node - The node to transform.
  * @param neighborIndex - Optional index to calculate connection density (degree).
- * @param splitContext - Optional; when provided alongside a `neighborIndex` entry, adds `in`/`out`
- * neighbor-direction arrays instead of leaving direction unrecoverable from `deg` alone.
- * @returns A stripped record suitable for AI consumption.
  */
 export function presentNode(
   node: PresentableNode,
@@ -105,14 +85,8 @@ export function presentNode(
 }
 
 /**
- * Transforms a column definition into a compact, token-optimized JSON representation.
- *
- * @remarks
- * Optimized for `getObjectDetail` responses. Abbreviates constraints
- * (`nl`=nullable, `pk`=primary key, `uq`=unique, `ck`=check).
- *
- * @param col - The column metadata to transform.
- * @returns A stripped record containing the column's semantic properties.
+ * Transforms a column definition into a compact record for `getObjectDetail`, abbreviating
+ * constraints (`nl`=nullable, `pk`=primary key, `uq`=unique, `ck`=check).
  */
 export function presentColumn(col: ColumnDef): Record<string, unknown> {
   return strip({
@@ -126,15 +100,8 @@ export function presentColumn(col: ColumnDef): Record<string, unknown> {
 }
 
 /**
- * Generates a human-readable, single-line summary of a column's properties.
- *
- * @remarks
- * Designed for "Hop Context" where the AI reads natural language lists more
- * effectively than dense JSON arrays.
- * Format: `[Name] [Type], [Nullable], [Constraints]`
- *
- * @param col - The column metadata to summarize.
- * @returns A comma-delimited string of column attributes.
+ * Generates a single-line column summary, `[Name] [Type], [Nullable], [Constraints]`, for "Hop
+ * Context", where the AI reads natural language lists more effectively than dense JSON arrays.
  */
 export function presentColumnCompact(col: ColumnDef): string {
   const parts = [col.name];
@@ -150,21 +117,14 @@ export function presentColumnCompact(col: ColumnDef): string {
   return parts.join(', ');
 }
 
-/**
- * Summarizes a Foreign Key relationship in a compact "pointer" format.
- *
- * @param fk - The foreign key metadata.
- * @returns A string in the format `ColumnA, ColumnB → Schema.Table`.
- */
+/** Summarizes a Foreign Key in a compact "pointer" format, `ColumnA, ColumnB → Schema.Table`. */
 export function presentFkCompact(fk: { columns: string[]; refSchema: string; refTable: string }): string {
   return `${fk.columns.join(', ')} → ${fk.refSchema}.${fk.refTable}`;
 }
 
 /**
- * Maps a node's foreign keys to the snake_case model-facing shape.
- *
- * @param fks - The node's foreign-key metadata (or `undefined`).
- * @returns The mapped array, or `undefined` when `fks` is absent — callers pick `?? null`/`?? undefined`.
+ * Maps a node's foreign keys to the snake_case model-facing shape; `undefined` when `fks` is absent
+ * (callers pick `?? null`/`?? undefined`).
  */
 export function presentForeignKeys(
   fks: ForeignKeyInfo[] | undefined,
@@ -180,13 +140,8 @@ export function presentForeignKeys(
 }
 
 /**
- * Transforms schema-level statistics into a compact JSON representation.
- *
- * @remarks
- * Used in `getContext` to provide a bird's-eye view of the database structure.
- *
- * @param schema - The schema summary to transform.
- * @returns A stripped record containing node and type counts.
+ * Transforms schema-level statistics into a compact record (node and type counts); used in
+ * `getContext` for a bird's-eye view of the database structure.
  */
 export function presentSchema(schema: SchemaInfo): Record<string, unknown> {
   return strip({
@@ -201,18 +156,14 @@ export function presentSchema(schema: SchemaInfo): Record<string, unknown> {
 }
 
 /**
- * Presents a neighboring node and its relationship to the focus object.
+ * Presents a neighboring node and its relationship to the focus object, for the
+ * `upstream`/`downstream` arrays in `getObjectDetail`. Includes the edge type to distinguish data
+ * flow from execution flow.
  *
- * @remarks
- * Used to build `upstream` and `downstream` arrays in `getObjectDetail`.
- * Includes the specific edge type to distinguish between data flow and execution flow.
- *
- * @param nid - The unique ID of the neighbor.
- * @param originId - The unique ID of the object currently being inspected.
+ * @param nid - The neighbor's id.
+ * @param originId - The id of the object being inspected.
  * @param nodeMap - Global lookup for node metadata.
  * @param edgeMap - Global lookup for edge metadata.
- * @param isUpstream - Directionality of the relationship.
- * @returns A compact representation of the neighbor and the connecting edge.
  */
 export function presentNeighbor(
   nid: string,
@@ -233,14 +184,8 @@ export function presentNeighbor(
 }
 
 /**
- * Compresses the current UI filter state for AI consumption.
- *
- * @remarks
- * Replaces large ID allow-lists with simple counts to save significant token space
- * while still informing the AI about the user's focus.
- *
- * @param filter - The raw filter state from the project store.
- * @returns A compact representation of active search, schema, and type filters.
+ * Compresses the current UI filter state for AI consumption: large ID allow-lists become counts,
+ * saving tokens while still showing the user's focus.
  */
 export function presentFilter(filter: SerializedFilterState): Record<string, unknown> {
   const bookmarkCount = filter.allowlistNodeIds?.length;

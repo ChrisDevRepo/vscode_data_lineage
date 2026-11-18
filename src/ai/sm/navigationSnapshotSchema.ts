@@ -4,7 +4,10 @@ import { ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
 import { bothSidesClosed } from '../../engine/shared/explorationDepthContract';
 import { heldHopFindingSchemaForMode } from '../tools/toolSchemas';
 
-/** Stable failure of the navigation-snapshot shape check; a live engine invariant reports through the engine's error status instead. */
+/**
+ * Stable failure of the navigation-snapshot shape check; a live engine invariant reports through
+ * the engine's error status instead.
+ */
 export class InvalidEngineCheckpointError extends Error {
   /** Stable machine code exposed to the checkpoint caller. */
   public readonly code = 'invalid_engine_checkpoint' as const;
@@ -284,7 +287,10 @@ const EngineInternalsSchema = z.object({
   ...internals
 }) => internals);
 
-/** Shape contract of the serialized NavigationEngine projection: the state dump and the saved run's snapshot. */
+/**
+ * Shape contract of the serialized NavigationEngine projection: the state dump and the saved run's
+ * snapshot.
+ */
 export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
   snapshotVersion: z.union([z.literal(1), z.literal(2)]),
   identifierCaseSensitive: z.boolean().optional(),
@@ -307,9 +313,7 @@ export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
   renderDroppedNodeIds: z.array(NonEmptyString).optional(),
 }).strict();
 
-/**
- * A strongly typed snapshot of an active NavigationEngine session.
- */
+/** A strongly typed snapshot of an active NavigationEngine session. */
 type NavigationSnapshot = z.infer<typeof NavigationSnapshotSchema>;
 
 /**

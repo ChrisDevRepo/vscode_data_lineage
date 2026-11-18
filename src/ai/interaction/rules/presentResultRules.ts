@@ -3,10 +3,9 @@ import { makeRejection } from '../../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
 
 /**
- * `present_result` requires either a bounded preview scope or a completed exploration graph.
- *
- * @param hasPresentationSource - True if a bounded scope or result graph exists.
- * @returns A rule result error if no presentation source is available, otherwise null.
+ * `present_result` requires a bounded preview scope or a completed exploration graph;
+ * `hasPresentationSource` says whether one exists. Returns a rule error when neither does, else
+ * null.
  */
 export function evaluatePresentResultPreconditionsRule(hasPresentationSource: boolean): InteractionRuleResult {
   if (hasPresentationSource) return null;

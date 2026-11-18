@@ -1,23 +1,18 @@
 /**
- * Native VS Code chat boundary and history projection for the provider-neutral runtime.
- *
- * This adapter detects the host's new-chat boundary and converts message shapes.
- * It does not retain history, select a model, count tokens, or define memory
- * reset behavior; reset semantics remain owned by `AiSession`.
+ * Native VS Code chat boundary and history projection for the provider-neutral runtime: detects the
+ * host's new-chat boundary and converts message shapes. It retains no history and does not select a
+ * model, count tokens or define reset behavior (owned by `AiSession`).
  *
  * Prior turns are projected as user and assistant text only. Tool calls and results are never
  * replayed across turns: the participant writes no tool rounds into `ChatResult.metadata`, which VS
- * Code persists with the chat, so database content stays out of that store. A later turn reads
- * its facts again through the phase-valid read tools.
+ * Code persists with the chat, so database content stays out of that store; a later turn re-reads
+ * facts through the phase-valid read tools.
  *
- * The projection is bounded: replayed history is capped to the same turn-count and byte ceilings
- * as the session's canonical discovery transcript ({@link MAX_DISCOVERY_TRANSCRIPT_TURNS} /
- * {@link contextBlockBytes}), evicting oldest whole turns first, so native history —
- * which only grows — can never push the assembled request past a model's input window.
- *
- * A replayed turn is also stripped of host-written UI framing (the approval gate's card header
- * and button-reference notices) that never passed through the model — see
- * {@link neutralizeGateCardArtifacts}.
+ * Replayed history is capped to the turn-count and byte ceilings of the session's discovery
+ * transcript ({@link MAX_DISCOVERY_TRANSCRIPT_TURNS} / {@link contextBlockBytes}), evicting oldest
+ * whole turns first, so ever-growing native history cannot push a request past the model's input
+ * window. A replayed turn also loses host-written UI framing that never passed through the model;
+ * see {@link neutralizeGateCardArtifacts}.
  */
 import type * as vscode from 'vscode';
 import {
@@ -31,14 +26,14 @@ import {
 import { contextBlockBytes, type TurnTokenBudget } from '../support/tokenBudget';
 import { GATE_CARD_HEADER, HOLD_GATE_NOTICE, UNREAD_GATE_REPLY } from '../prompting/scopeSummaryRenderer';
 
-/** Replaces evicted turns so the model knows the transcript is a tail, not the whole conversation. */
+/** Replaces evicted turns so the model knows the transcript is a tail, not the whole chat. */
 const HISTORY_EVICTION_STUB = '[Earlier turns were evicted to keep the conversation within the model context budget.]';
 
 /**
- * Replaces the native approval gate's interactive header ({@link GATE_CARD_HEADER}) when a prior
- * card is replayed into history — the plan content that follows stays (a real prior proposal is
- * real context); only the UI-authored framing is not the assistant's own words and is renamed as
- * what it is: a fact about what the user was shown, never a template.
+ * Replaces the approval gate's interactive header ({@link GATE_CARD_HEADER}) when a prior card is
+ * replayed into history. The plan content after it stays (a real prior proposal is real context);
+ * only the UI-authored framing, not the assistant's own words, is renamed as what it is: a fact
+ * about what the user was shown, never a template.
  */
 const GATE_CARD_REPLAY_LEAD_IN = '\n\n_An exploration proposal was shown to the user for review:_\n\n';
 
@@ -52,11 +47,9 @@ interface NativePendingGate {
 }
 
 /**
- * Applies the existing new-chat reset when VS Code supplies an empty history.
- *
- * The optional pending-gate cancellation lets the new runtime release an old
- * interrupt before the session is reset. Memory implementation details remain
- * owned by `AiSession.resetExploration()`.
+ * Applies the existing new-chat reset when VS Code supplies an empty history. The optional
+ * pending-gate cancellation lets the runtime release an old interrupt before the session is reset;
+ * memory details stay with `AiSession.resetExploration()`.
  */
 export function applyNativeChatBoundary(
   history: vscode.ChatContext['history'],
@@ -71,9 +64,8 @@ export function applyNativeChatBoundary(
 }
 
 /**
- * Converts the current participant's native chat history into ordered graph messages.
+ * Converts the participant's native chat history into ordered graph messages.
  *
- * @param history - The native VS Code chat history for this participant.
  * @param budget - The calling turn's budget, which bounds the replayed transcript.
  * @param debug - Optional debug sink that reports evicted turns.
  */
@@ -104,16 +96,13 @@ export function chatHistoryToModelMessages(
 export const GATE_SHOWN_METADATA = 'gateShown';
 
 /**
- * Names the slash command a plain-text reply continues.
+ * Names the slash command a plain-text reply continues: the command of the latest request turn when
+ * its reply put no approval card in front of the user (a clarifying question, a decline), so the
+ * answer stays inside the command the user chose. `undefined` when that request carried no command
+ * or its reply's metadata sets {@link GATE_SHOWN_METADATA}, whose next reply belongs to the gate.
  *
- * @param history - The native VS Code chat history for this participant.
- * @returns The command of the latest request turn when its reply put no approval card in front of
- *   the user (a clarifying question, a decline), so the answer to that question stays inside the
- *   command the user chose; `undefined` when the latest request carried no command or its reply's
- *   result metadata sets {@link GATE_SHOWN_METADATA}, whose next reply belongs to the gate.
- * @remarks
- * `ChatRequest.command` is empty on the reply turn even though the conversation is still the
- * command's own request, and a command is the one mechanical statement of intent the runtime has
+ * `ChatRequest.command` is empty on the reply turn though the conversation is still the command's
+ * own, and a command is the one mechanical statement of intent the runtime has
  * (`slashCommands.ts`). The caller applies this only while the session is idle.
  */
 export function continuedSlashCommand(history: vscode.ChatContext['history']): string | undefined {
@@ -131,12 +120,9 @@ export function continuedSlashCommand(history: vscode.ChatContext['history']): s
 }
 
 /**
- * Applies the history budget: keeps the newest whole turns that fit both the turn-count and byte
- * ceilings, evicting oldest-first, and replaces anything evicted with one stub message.
- *
- * @remarks
- * The newest turn is exempt from the ceilings: a follow-up prompt without its antecedent turn is
- * worse than a one-turn byte overshoot of that turn's own prompt and answer text.
+ * Applies the history budget: keeps the newest whole turns that fit both ceilings, evicting
+ * oldest-first, and replaces anything evicted with one stub message. The newest turn is exempt: a
+ * follow-up without its antecedent is worse than a one-turn byte overshoot.
  */
 function boundReplayedHistory(
   groups: readonly (readonly ModelMessage[])[],
@@ -172,18 +158,14 @@ function groupBytes(group: readonly ModelMessage[]): number {
 }
 
 /**
- * Strips the native approval gate's UI-only framing from a turn's replayed text.
- *
- * @remarks
- * `lineageParticipant.ts` writes {@link GATE_CARD_HEADER} and {@link HOLD_GATE_NOTICE} around a
- * pending card, and a gate reply may write {@link UNREAD_GATE_REPLY}, straight to the chat stream —
- * text the model never generated and never saw as its own. `ChatResponseTurn.response` carries it
- * verbatim, so it reaches {@link chatHistoryToModelMessages} through {@link responseMarkdown}.
- * Replayed unchanged, it reads as the assistant's own prior utterance — a template complete with "Approve, change or cancel with the
- * buttons below" and no origin, columns, or tool call attached to it — and the model then
- * completes that template as text on the next turn instead of calling
- * `lineage_start_exploration` again. The plan content in between the header and the trailer is
- * kept: a real prior proposal is real context, only the interactive frame around it is not.
+ * Strips the approval gate's UI-only framing from a turn's replayed text. `lineageParticipant.ts`
+ * writes {@link GATE_CARD_HEADER} and {@link HOLD_GATE_NOTICE} around a pending card, and a gate
+ * reply may write {@link UNREAD_GATE_REPLY}, straight to the chat stream; the model never generated
+ * it, but `ChatResponseTurn.response` carries it verbatim into {@link chatHistoryToModelMessages}
+ * via {@link responseMarkdown}. Replayed unchanged it reads as the assistant's own utterance, a
+ * template ("Approve, change or cancel with the buttons below") with no origin, columns or tool
+ * call, which the model then completes as text instead of calling `lineage_start_exploration`
+ * again. The plan between header and trailer is kept; only the interactive frame is not context.
  */
 function neutralizeGateCardArtifacts(markdown: string): string {
   if (!markdown) return markdown;

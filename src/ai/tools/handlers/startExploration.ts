@@ -1,9 +1,7 @@
 /**
- * Executes the approval-gated `lineage_start_exploration` lifecycle.
- *
- * @remarks
- * Proposal validation and preview construction stay local to this handler.
- * Turn-lease validation and effect serialization remain in the registry wrapper.
+ * Executes the approval-gated `lineage_start_exploration` lifecycle. Proposal validation and
+ * preview construction stay local; turn-lease validation and effect serialization stay in the
+ * registry wrapper.
  */
 import { NavigationEngine } from '../../sm/smBase';
 import { sameExplorationProposal } from '../../session/session';
@@ -31,7 +29,10 @@ import { REJECTION_CODES } from '../../support/rejectionCodes';
 import { checkScopeAdmission } from '../../support/tokenBudget';
 import { makeRejection } from '../../support/toolErrorEnvelope';
 
-/** Validates an exploration proposal and either opens its approval gate or resumes an approved supplement. */
+/**
+ * Validates an exploration proposal and either opens its approval gate or resumes an approved
+ * supplement.
+ */
 export async function executeStartExploration(input: unknown, s: ToolServices): Promise<string> {
     try {
       const loggedInput = redactMissionBriefForLog(input);

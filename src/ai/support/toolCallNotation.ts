@@ -1,14 +1,15 @@
 /**
- * Detection of tool-call notation inside the text values of one tool call.
- *
- * @remarks
- * A model reply can deliver a text argument with the arguments that follow it still attached in
- * the provider's call notation. The value is checked, never split or rewritten: the call is
- * rejected at the field that carries the notation. A closing `</parameter>` counts only where an
- * argument or the call ends there, so the same tag inside quoted XML is ordinary text.
+ * Detection of tool-call notation inside the text values of one tool call. A model reply can
+ * deliver a text argument with the arguments that follow it still attached in the provider's call
+ * notation; the value is checked, never split or rewritten, and the call is rejected at the field
+ * carrying the notation. A closing `</parameter>` counts only where an argument or the call ends
+ * there, so the same tag inside quoted XML is ordinary text.
  */
 
-/** Tool-call notation inside a text value: the start of a named argument or call, the end of a call, or the end of an argument followed by one of those or by the end of the value. */
+/**
+ * Tool-call notation inside a text value: the start of a named argument or call, the end of a call,
+ * or the end of an argument followed by one of those or by the end of the value.
+ */
 const NOTATION = /<parameter\s+name="[A-Za-z_]\w*"\s*>|<invoke\s+name="[^"]*"\s*>|<\/invoke>|<\/parameter>(?=\s*(?:<parameter\s+name="|<\/invoke>|$))/;
 
 /** The notation {@link NOTATION} matches, as stated in the rejection. */
@@ -24,7 +25,10 @@ export interface ToolCallNotationFault {
   readonly hint: string;
 }
 
-/** Repair sentence for one value: names the argument attached after the value's own text, when there is one. */
+/**
+ * Repair sentence for one value: names the argument attached after the value's own text, when there
+ * is one.
+ */
 function repairSentence(path: string, value: string): string {
   const first = NOTATION.exec(value)!;
   const attached = /<parameter\s+name="([A-Za-z_]\w*)"\s*>/.exec(value)?.[1];
@@ -44,10 +48,8 @@ function collect(value: unknown, path: string, found: Array<{ path: string; valu
 }
 
 /**
- * Checks every text value of one tool call's arguments for tool-call notation.
- *
- * @param input - The call's arguments as received, after the JSON-text decode.
- * @returns The rejection content naming each offending path, or `null` when no value carries notation.
+ * Checks every text value of one tool call's arguments (as received, after the JSON-text decode)
+ * for tool-call notation; returns the rejection content naming each offending path, or `null`.
  */
 export function toolCallNotationFault(input: unknown): ToolCallNotationFault | null {
   const found: Array<{ path: string; value: string }> = [];

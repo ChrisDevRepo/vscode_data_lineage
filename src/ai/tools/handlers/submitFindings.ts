@@ -1,9 +1,7 @@
 /**
- * Executes active-hop submissions for the `lineage_submit_findings` tool.
- *
- * @remarks
- * Raw arguments are parsed once against the current hop's served contract, before id resolution
- * and internal conversion. Turn-lease validation and effect serialization remain in the registry.
+ * Executes active-hop submissions for the `lineage_submit_findings` tool. Raw arguments are parsed
+ * once against the current hop's served contract, before id resolution and internal conversion.
+ * Turn-lease validation and effect serialization stay in the registry.
  */
 import { NavigationEngine } from '../../sm/smBase';
 import { sanitizeForLog } from '../../../utils/log';
@@ -21,10 +19,8 @@ import { type ToolServices, getModelNodeMap } from './toolServices';
 
 /**
  * Hop-log counters over the submitted column refs: `refs_no_note` counts refs without a `note`,
- * `role_mixed` counts refs that pair an INDIRECT class with a DIRECT one.
- *
- * @param columnFlow - The hop's submitted `column_flow`; absent yields zero counts.
- * @returns The suffix for the `[Hop N]` log line.
+ * `role_mixed` counts refs pairing an INDIRECT class with a DIRECT one; zero when `column_flow` is
+ * absent. Returns the suffix for the `[Hop N]` log line.
  */
 export function columnRefSuffix(columnFlow: readonly ColumnFlowEntry[] | undefined): string {
   const refs = (columnFlow ?? []).flatMap(entry => entry.upstream_columns);
@@ -37,11 +33,8 @@ export function columnRefSuffix(columnFlow: readonly ColumnFlowEntry[] | undefin
 }
 
 /**
- * Validates and submits findings for the current exploration focus.
- *
- * @param input - Raw model-supplied tool input.
- * @param s - Host capabilities for the active tool session.
- * @returns The accepted-hop result, completion envelope, or structured rejection.
+ * Validates and submits findings for the current exploration focus; returns the accepted-hop
+ * result, completion envelope or structured rejection.
  */
 export function executeSubmitFindings(input: unknown, s: ToolServices): string {
     try {

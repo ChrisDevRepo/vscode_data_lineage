@@ -24,7 +24,10 @@ export interface LineageRuntimeRequest {
   readonly id: string;
   /** Verbatim user prompt for this turn. */
   readonly prompt: string;
-  /** Optional prior-turn conversation, oldest first; when present the session transcript is cleared after the turn. */
+  /**
+   * Optional prior-turn conversation, oldest first; when present the session transcript is cleared
+   * after the turn.
+   */
   readonly priorMessages?: readonly ModelMessage[];
 }
 
@@ -65,11 +68,9 @@ export interface LineageRuntimeDeps {
 }
 
 /**
- * Single production facade for native lineage turns.
- *
- * The facade owns turn setup and active-request coordination. The outer
- * LangGraph owns phase/hop routing and `AgentRuntime` owns interrupt/resume and
- * the one terminal event.
+ * Single production facade for native lineage turns: owns turn setup and active-request
+ * coordination, while the outer LangGraph owns phase/hop routing and `AgentRuntime` owns
+ * interrupt/resume and the one terminal event.
  */
 export class LineageRuntime {
   private readonly active = new Map<string, {
@@ -81,8 +82,6 @@ export class LineageRuntime {
 
   /**
    * Generates suggestions from compact facts without tools, history replay or session mutation.
-   *
-   * @remarks
    * Writes the same `turn-start`/`turn-terminal` lifecycle pair as {@link run}, so the trace joins
    * this turn's wire records to a turn like any other request.
    */

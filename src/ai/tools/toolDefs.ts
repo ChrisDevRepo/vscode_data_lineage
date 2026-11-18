@@ -1,11 +1,7 @@
 /**
- * The AI tool catalog.
- *
- * @remarks
- * One entry per registered `languageModelTool`, pairing the model-facing name with its
- * single Zod input schema. This is the authoritative, **VS Code-free** list that drives
- * host registration: `registerAiTools` builds a {@link ToolRegistry} from it and binds
- * each entry's handler.
+ * The AI tool catalog: one entry per registered `languageModelTool`, pairing the model-facing name
+ * with its single Zod input schema. The authoritative **VS Code-free** list that drives host
+ * registration (`registerAiTools` builds a {@link ToolRegistry} from it and binds each handler).
  */
 import type { z } from 'zod';
 import type { ToolDefinition } from './registry';
@@ -38,8 +34,8 @@ export interface ToolContract<TSchema extends z.ZodType = z.ZodType> {
   readonly inputSchema: TSchema;
   /**
    * Progress label shown while the tool executes. Omitted on tools that run repeatedly inside one
-   * user-visible operation (per-hop commits) — a registered tool without a label emits no status
-   * update, so the operation-level status stays visible instead of flickering per call.
+   * user-visible operation (per-hop commits): a tool without a label emits no status update, so the
+   * operation-level status stays visible instead of flickering per call.
    */
   readonly progressLabel?: string;
   /** Lifecycle mutation class used for execution serialization. */
@@ -49,12 +45,9 @@ export interface ToolContract<TSchema extends z.ZodType = z.ZodType> {
 }
 
 /**
- * The canonical tool catalog, in registration order.
- *
- * @remarks
- * The model descriptions mirror the public manifest and are used directly by API adapters.
- * `submit_findings` and `present_result` use model-facing schemas whose runtime dispatch
- * narrows to the strict phase/mode-specific variants.
+ * The canonical tool catalog, in registration order. The model descriptions mirror the public
+ * manifest and are used directly by API adapters; `submit_findings` and `present_result` use
+ * model-facing schemas whose runtime dispatch narrows to the strict phase/mode-specific variants.
  */
 export const TOOL_DEFS = [
   {

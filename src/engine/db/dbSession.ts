@@ -20,10 +20,8 @@ export interface DbQueryOptions {
 }
 
 /**
- * One open database connection.
- *
- * @remarks
- * Consumers read result cells by column name, so a session must return `displayValue` strings.
+ * One open database connection. Consumers read result cells by column name, so a session must
+ * return `displayValue` strings.
  */
 export interface DbSession {
   /** The provider that opened this session. */
@@ -61,11 +59,9 @@ export interface ConnectionErrorTarget {
 }
 
 /**
- * A failed connect, keeping the original driver error untouched.
- *
- * @remarks
- * `message` is the driver's own text. Presentation (name prefix, actions) is added by
- * `describeConnectionError`, never by rewriting the error.
+ * A failed connect, keeping the original driver error untouched: `message` is the driver's own
+ * text, and presentation (name prefix, actions) is added by `describeConnectionError`, never by
+ * rewriting the error.
  */
 export class DbConnectionError extends Error {
   constructor(readonly target: ConnectionErrorTarget, readonly original: unknown) {

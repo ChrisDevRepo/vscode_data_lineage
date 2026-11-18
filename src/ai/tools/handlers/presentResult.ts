@@ -1,12 +1,9 @@
 /**
- * Executes validation, assembly, and persistence for `lineage_present_result`.
- *
- * @remarks
- * Provider-neutral validation and assembly helpers remain in the sibling
- * `presentResult.ts`; this handler owns session persistence and the validated
- * webview effect. Raw arguments are admitted once against the same live stage/repair schema the
- * provider sees, before normalization or held-content merge. Turn-lease validation and effect
- * serialization remain in the registry wrapper.
+ * Executes validation, assembly and persistence for `lineage_present_result`. Provider-neutral
+ * validation and assembly helpers stay in the sibling `presentResult.ts`; this handler owns session
+ * persistence and the validated webview effect. Raw arguments are admitted once against the same
+ * live stage/repair schema the provider sees, before normalization or held-content merge.
+ * Turn-lease validation and effect serialization stay in the registry wrapper.
  */
 import { type AiSession } from '../../session/session';
 import { trunc, sanitizeForLog } from '../../../utils/log';
@@ -65,16 +62,13 @@ function findUncoveredCtChainNodes(
 }
 
 /**
- * Fills a render that amends a committed report back out to a complete section array.
+ * Fills a render that amends a committed report back out to a complete section array. An omitted
+ * `sections` array or empty section text retains the committed body under that label, and omitted
+ * `node_ids` retain its committed links, narrowed to nodes this render still shows so a retained
+ * section cannot re-link a node the same call pruned. Supplied node ids are left alone. Committed
+ * text is stored with evidence references already expanded, so a retained body keeps its SQL
+ * verbatim.
  *
- * @remarks
- * An omitted `sections` array or empty section text asks to retain the committed body under that
- * label, and omitted section `node_ids` ask to retain its committed links; inherited `node_ids` are
- * narrowed to nodes this render still shows so a retained section cannot re-link a node the same
- * call pruned. Supplied node ids are left alone. Committed text is stored with its evidence
- * references already expanded, so a retained body keeps its SQL verbatim.
- *
- * @param committed - Sections of the report this run already rendered.
  * @returns The complete sections, or the labels that asked to retain a body that does not exist.
  */
 function resolveRetainedSections(
@@ -106,9 +100,8 @@ function resolveRetainedSections(
 
 /**
  * The notes an amendment renders: the committed captions for nodes still shown, overlaid by this
- * call's notes by node id — the one merge both the rendered view and the committed
- * `resultGraph.notes` take, so a follow-up that edits one caption does not blank every other
- * caption on the graph.
+ * call's notes by node id. The one merge both the rendered view and the committed
+ * `resultGraph.notes` take, so editing one caption does not blank every other.
  */
 function mergeAmendedNotes(
   committed: ReadonlyArray<{ nodeId: string; summary: string }> | undefined,
@@ -294,7 +287,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       let resolvedEdges: [string, string, string][] = [...resultGraph.edges];
       const graphSource = resultGraph.source;
       const modelNodeMap = getModelNodeMap(model);
-      // A completed-phase graph edit changes the rendered view, so its ids and edges commit with it.
+      // A completed-phase graph edit changes the rendered view, so its ids and edges commit with
+      // it.
       let graphEdited = false;
 
       const canonicalNodeId = (id: string, field: string): string => {
@@ -625,7 +619,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           reason: 'The turn no longer owns this session; the result was not committed.',
         }), rawInput);
       }
-      // The delivery outcome is recorded only once the turn still owns the session, and the latest present decides it.
+      // The delivery outcome is recorded only once the turn still owns the session, and the latest
+      // present decides it.
       if (previewFailure) sess.markSynthesisRenderDegraded(previewFailure);
       else sess.clearPreviewDeliveryDegraded();
       if (isAmendment || graphEdited) {
@@ -657,13 +652,11 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
 
 /**
  * Maps merged-sections validation issues to the indexed `label`/`text` leaves a repair may replace.
- *
- * @remarks
  * Only issues under `sections[<number>]` qualify; the leaf is `text` when the issue path names it,
- * otherwise `label` (the only other leaf the merged schema validates). Leaves are deduped per index.
+ * else `label`. Leaves are deduped per index.
  *
  * @returns The leaves, or `undefined` when no issue addresses an indexed section, so the caller
- * holds a fields-only repair instead of an indexless/NaN leaf.
+ *   holds a fields-only repair instead of an indexless/NaN leaf.
  */
 function sectionTextLeavesFromIssues(
   issues: readonly { readonly path: readonly PropertyKey[] }[],

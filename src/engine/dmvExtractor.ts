@@ -1,12 +1,8 @@
 /**
  * @module DmvExtractor
- * Handles the transformation of raw SQL Server DMV (Dynamic Management View) results into a structured database model.
- *
- * This module is responsible for:
- * - Parsing and validating result sets from `sys.objects`, `sys.columns`, and `sys.sql_expression_dependencies`.
- * - Reconstructing complex constraints (FK, UQ, CK) from relational rows.
- * - Mapping SQL Server engine editions and versions to human-readable platform names.
- * - Building lightweight schema previews for Phase 1 exploration.
+ * Turns raw SQL Server DMV results into a structured database model: parses and validates the
+ * `sys.*` result sets, rebuilds FK/UQ/CK constraints from rows, maps engine editions to platform
+ * names, and builds the lightweight schema previews of Phase 1 exploration.
  */
 
 import {
@@ -28,9 +24,7 @@ import { buildModel, normalizeName } from './modelBuilder';
 import type { SimpleExecuteResult, DbCellValue } from '../types/database';
 import { quoteIdentifier, schemaKey } from '../utils/sql';
 
-/**
- * Aggregates raw query results from various system catalog views.
- */
+/** Aggregates raw query results from various system catalog views. */
 export interface DmvResults {
   /** Core object definitions (tables, views, procedures) and their body scripts. */
   nodes: SimpleExecuteResult;
@@ -48,7 +42,9 @@ export interface DmvResults {
   serverPlatform?: string;
 }
 
-/** Shown when the catalog returns no objects: an empty database, or a login without VIEW DEFINITION. */
+/**
+ * Shown when the catalog returns no objects: an empty database, or a login without VIEW DEFINITION.
+ */
 const NO_USER_OBJECTS_WARNING = 'No user objects found in database. If the database has objects, the login needs VIEW DEFINITION on it.';
 
 /**
@@ -134,7 +130,7 @@ export function buildModelFromDmv(
   return { ...model, warnings: warnings.length > 0 ? warnings : undefined, dbPlatform, source: 'database' };
 }
 
-/** Enables exact identifiers only for an actual catalog collation with a checked comparison style. */
+/** Enables exact identifiers only for a real catalog collation with a checked comparison style. */
 function checkedIdentifierCaseSensitivity(result?: SimpleExecuteResult): boolean {
   if (result?.rows.length !== 1) return false;
   const cols = buildColumnIndex(result);
@@ -145,9 +141,7 @@ function checkedIdentifierCaseSensitivity(result?: SimpleExecuteResult): boolean
     && comparisonStyle <= 0x7fffffff && (comparisonStyle & 1) === 0;
 }
 
-/**
- * Maps SQL Server engine metadata to human-readable platform strings.
- */
+/** Maps SQL Server engine metadata to human-readable platform strings. */
 function mapEnginePlatform(result: SimpleExecuteResult): string {
   if (!result.rows.length) return UNKNOWN_DB_PLATFORM;
   const colIdx = buildColumnIndex(result);
@@ -178,9 +172,7 @@ function mapEngineMetadata(engineEdition: number, majorVersion: number, edition:
   }
 }
 
-/**
- * Column requirements for various DMV queries to ensure data integrity.
- */
+/** Column requirements for various DMV queries to ensure data integrity. */
 const REQUIRED_COLUMNS: Record<string, string[]> = {
   'schema-preview': ['schema_name', 'type_code', 'object_count'],
   nodes: ['schema_name', 'object_name', 'type_code', 'body_script'],
@@ -211,9 +203,7 @@ export function validateQueryResult(name: string, result: SimpleExecuteResult): 
   return required.filter(c => !actual.has(c));
 }
 
-/**
- * Safely extracts a cell value from a database row.
- */
+/** Safely extracts a cell value from a database row. */
 function cellValue(row: DbCellValue[], colIndex: Map<string, number>, name: string): string {
   const idx = colIndex.get(name);
   if (idx === undefined) return '';
@@ -221,9 +211,7 @@ function cellValue(row: DbCellValue[], colIndex: Map<string, number>, name: stri
   return cell && !cell.isNull ? cell.displayValue : '';
 }
 
-/**
- * Builds a fast-lookup map for column names to their array indices.
- */
+/** Builds a fast-lookup map for column names to their array indices. */
 function buildColumnIndex(result: SimpleExecuteResult): Map<string, number> {
   const map = new Map<string, number>();
   for (let i = 0; i < result.columnInfo.length; i++) {
@@ -237,9 +225,7 @@ function metadataObjectKey(schema: string, object: string, identifierCaseSensiti
   return JSON.stringify([schemaKey(schema, identifierCaseSensitive), schemaKey(object, identifierCaseSensitive)]);
 }
 
-/**
- * Reconstructs UQ, CK, and FK constraints from a flattened result set.
- */
+/** Reconstructs UQ, CK, and FK constraints from a flattened result set. */
 function buildConstraintMaps(result: SimpleExecuteResult, identifierCaseSensitive: boolean): ConstraintMaps {
   const colIdx = buildColumnIndex(result);
   const uqColMap = new Map<string, string>();
@@ -289,9 +275,7 @@ function buildConstraintMaps(result: SimpleExecuteResult, identifierCaseSensitiv
   return { uqColMap, ckColMap, fkMap, pkOrdinalMap: new Map() };
 }
 
-/**
- * Extracts normalized objects and their columns from raw result sets.
- */
+/** Extracts normalized objects and their columns from raw result sets. */
 function extractObjects(results: DmvResults, identifierCaseSensitive: boolean): ExtractedObject[] {
   const nodeColIdx = buildColumnIndex(results.nodes);
   const colColIdx = buildColumnIndex(results.columns);
@@ -400,9 +384,7 @@ function extractObjects(results: DmvResults, identifierCaseSensitive: boolean): 
   return objects;
 }
 
-/**
- * Extracts directional dependencies between objects based on sys.sql_expression_dependencies.
- */
+/** Extracts directional dependencies between objects based on sys.sql_expression_dependencies. */
 function extractDependencies(results: DmvResults): ExtractedDependency[] {
   const depColIdx = buildColumnIndex(results.dependencies);
   const deps: ExtractedDependency[] = [];
@@ -429,9 +411,7 @@ function extractDependencies(results: DmvResults): ExtractedDependency[] {
   return deps;
 }
 
-/**
- * Extracts a lightweight catalog of all objects from the full catalog query.
- */
+/** Extracts a lightweight catalog of all objects from the full catalog query. */
 function extractAllObjects(result: SimpleExecuteResult, identifierCaseSensitive: boolean): ExtractedObject[] {
   const colIdx = buildColumnIndex(result);
   const seen = new Set<string>();

@@ -1,24 +1,18 @@
 /**
  * Canonical node-id resolution shared by the extension host, the AI subsystem and the webview.
- *
- * @remarks
- * This lives under `src/engine/shared/` — the VS Code-free surface both bundles may import —
- * because the webview's AI-view reconciler needs it too. Keeping it here stops the Vite build
- * from reaching into `src/ai/**`, which is extension-host-only territory.
- * `src/ai/support/inputNormalization.ts` re-exports it so existing AI callers are unaffected.
+ * Lives under `src/engine/shared/`, the VS Code-free surface both bundles may import, because the
+ * webview's AI-view reconciler needs it and the Vite build must not reach into extension-host-only
+ * `src/ai/**`. `src/ai/support/inputNormalization.ts` re-exports it.
  */
 import { normalizeName } from './sqlIdentifier';
 
 /**
- * Resolves a user/model-supplied node id against a canonical node map.
+ * Resolves a user/model-supplied node id against a canonical node map. Accepts equivalent
+ * identifier delimiters and CI case variants; CS requires exact catalog casing. Returns the
+ * canonical id present in `nodeMap` or `null`.
  *
- * Accepts equivalent identifier delimiters and CI case variants; CS requires exact catalog casing.
- * Returns the canonical id present in `nodeMap` or `null` when no match exists.
- *
- * @param raw - The raw node id string.
- * @param nodeMap - The map of canonical nodes to check against.
- * @param identifierCaseSensitive - Checked source catalog policy; true forbids guessed identifier casing.
- * @returns The canonical node id if resolved, otherwise null.
+ * @param identifierCaseSensitive - Checked source catalog policy; true forbids guessed identifier
+ *   casing.
  */
 export function resolveModelNodeId(raw: string, nodeMap: Map<string, unknown>, identifierCaseSensitive = false): string | null {
   const input = (raw ?? '').replace(/\p{Cf}/gu, '').trim();

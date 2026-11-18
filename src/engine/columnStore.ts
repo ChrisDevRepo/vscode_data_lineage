@@ -24,9 +24,7 @@ export class ColumnStore {
    */
   private readonly cols = new Map<string, ColumnDef[]>();
 
-  /**
-   * Storage mapping node unique identifiers to their raw DDL (bodyScript) strings.
-   */
+  /** Storage mapping node unique identifiers to their raw DDL (bodyScript) strings. */
   private readonly ddl = new Map<string, string>();
 
   /**

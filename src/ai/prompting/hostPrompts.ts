@@ -1,15 +1,10 @@
 /**
- * Per-phase system-prompt composition for the **host** agent runtime.
- *
- * @remarks
- * The single place the grounded, phase-aware system prompt is assembled. It composes the shared,
- * pure builders in {@link ./prompts} ({@link buildGeneralSystemPrompt} + {@link buildPhasePrompt}),
- * so the grounding rules, routing, and phase protocol stay single-sourced (DRY) and no chat surface
- * builds a prompt of its own.
- *
- * Intentionally omits the YAML stage template + SM-protocol blocks needed for `active`/`synthesis`
- * output formatting — `agent/stagePrompts.ts` layers those in per phase.
- * VS Code-free: pure data in, string out.
+ * Per-phase system-prompt composition for the **host** agent runtime: the single place the
+ * grounded, phase-aware prompt is assembled, composing the shared pure builders in {@link
+ * ./prompts} ({@link buildGeneralSystemPrompt} + {@link buildPhasePrompt}) so grounding rules,
+ * routing and phase protocol stay single-sourced and no chat surface builds its own prompt. Omits
+ * the YAML stage template and SM-protocol blocks needed for `active`/`synthesis` formatting;
+ * `agent/stagePrompts.ts` layers those in. VS Code-free.
  */
 
 import {
@@ -27,30 +22,21 @@ import { escapePromptText } from '../support/text';
 import { ClassificationValueSchema } from '../tools/toolSchemas';
 
 /**
- * The grounding context surfaced in the system prompt's `## Context` block.
- *
- * @remarks
- * Derived from the loaded model and active filter so every phase receives the same grounded
- * counts and platform metadata. Same shape as `GeneralPromptContext` in `./prompts` — that module
- * is the one-directional source, this is the name callers in this file (and its consumers) use.
+ * The grounding context surfaced in the system prompt's `## Context` block, derived from the loaded
+ * model and active filter so every phase gets the same counts and platform metadata. Same shape as
+ * `GeneralPromptContext` in `./prompts`, the one-directional source.
  */
 export type StagePromptContext = GeneralPromptContext;
 
 /**
- * Derives the {@link StagePromptContext} from the loaded model + active filter.
+ * Derives the {@link StagePromptContext} from the loaded model + active filter. With a schema
+ * filter, `visibleNodes` counts only nodes in those schemas. With no model it degrades to zeros so
+ * discovery still renders; `dbPlatform` stays platform-typed rather than carrying a "no model"
+ * sentence, since it renders under a `- Platform:` label where a non-platform value reads as a
+ * category error and the zero counts already say nothing is loaded.
  *
- * @remarks
- * When a schema filter is active, `visibleNodes` counts only nodes in those schemas.
- * Degrades cleanly to zeros when no model is loaded, so the discovery prompt still renders.
- * `dbPlatform` stays platform-typed in that case rather than carrying a "no model" sentence:
- * it is rendered under a `- Platform:` label, so a non-platform value reads as a category
- * error to the model, and the zeroed counts already state that nothing is loaded.
- *
- * @param model - The session's loaded model, or `null` when none is loaded.
- * @param filter - The active serialized filter, or `null`.
- * @param uiState - Raw UI-state payload passed to {@link describeScreen}; absent or unrecognized
- *   shapes simply omit the `screen` field.
- * @returns The prompt grounding values derived from the current model and filter.
+ * @param uiState - Raw UI-state payload for {@link describeScreen}; absent or unrecognized shapes
+ *   omit the `screen` field.
  */
 export function deriveStagePromptContext(
   model: DatabaseModel | null,
@@ -80,11 +66,8 @@ export function deriveStagePromptContext(
 /**
  * Composes the host system prompt for a phase: the grounded base + the phase protocol block.
  *
- * @param phase - The lifecycle phase whose protocol to render.
- * @param ctx - The grounding context (see {@link deriveStagePromptContext}).
- * @param analysisMode - Hop or session analysis mode forwarded to {@link buildPhasePrompt} so
- *   active and synthesis compose CT as BB plus a column rider.
- * @returns The assembled system-prompt string.
+ * @param analysisMode - Hop or session mode forwarded to {@link buildPhasePrompt} so active and
+ *   synthesis compose CT as BB plus a column rider.
  */
 export function buildHostStageSystemPrompt(
   phase: PromptPhase,
@@ -97,15 +80,10 @@ export function buildHostStageSystemPrompt(
 }
 
 /**
- * System prompt for the code-driven **entry detector** (one structured pre-loop call).
- *
- * @remarks
- * Classifies semantic intent only. `visual_render` enters discovery like any other free-text
- * request; the host-owned preview action remains a separate RuntimeFrame fact for the bounded
- * preview route reached afterward.
- *
- * @param ctx - Grounding context (see {@link deriveStagePromptContext}).
- * @returns The detector system-prompt string.
+ * System prompt for the code-driven **entry detector** (one structured pre-loop call). Classifies
+ * semantic intent only: `visual_render` enters discovery like any free-text request; the host-owned
+ * preview action stays a separate RuntimeFrame fact for the bounded preview route reached
+ * afterward.
  */
 export function buildEntryDetectorSystemPrompt(ctx: StagePromptContext): string {
   return [
@@ -120,29 +98,24 @@ export function buildEntryDetectorSystemPrompt(ctx: StagePromptContext): string 
 }
 
 /**
- * System prompt for one bounded discovery preview call.
- *
- * @remarks
- * Composed exactly like every other stage — {@link buildHostStageSystemPrompt} — rather than
- * appending a directive of its own. Building the block here instead is what let the preview stage
- * drift out of the shared presentation contract while still being judged by it.
+ * System prompt for one bounded discovery preview call, composed like every other stage via {@link
+ * buildHostStageSystemPrompt} rather than appending its own directive; building the block here
+ * instead let the preview stage drift out of the shared presentation contract while still being
+ * judged by it.
  */
 export function buildVisualPreviewSystemPrompt(ctx: StagePromptContext): string {
   return buildHostStageSystemPrompt('visual_preview', ctx);
 }
 
 /**
- * Directive system prompt for the restricted **SM-entry** turn.
+ * Directive system prompt for the restricted **SM-entry** turn, paired with a 4-tool registry
+ * (`lineage_get_screen_state`, `lineage_search_objects`, `lineage_get_object_detail`,
+ * `lineage_start_exploration`) under automatic tool choice: `lineage_start_exploration` opens the
+ * `confirm_sm_start` gate and a text-only reply ends the turn as its answer. For a column trace the
+ * detected columns are surfaced so the model passes them as `targetColumns`.
  *
- * @remarks
- * Paired with a 4-tool registry (`lineage_get_screen_state` + `lineage_search_objects` + `lineage_get_object_detail` + `lineage_start_exploration`)
- * under automatic tool choice: a `lineage_start_exploration` call opens the `confirm_sm_start` gate,
- * and a text-only reply ends the turn as its answer. For a column trace, the detected columns are
- * surfaced so the model passes them as `targetColumns`.
- *
- * @param ctx - Grounding context.
- * @param targetColumns - Columns to trace when the entry route is `column_trace`; omitted otherwise.
- * @returns The SM-entry system-prompt string.
+ * @param targetColumns - Columns to trace when the entry route is `column_trace`; omitted
+ *   otherwise.
  */
 export function buildSmEntrySystemPrompt(ctx: StagePromptContext, targetColumns?: string[]): string {
   const base = buildGeneralSystemPrompt(ctx);
@@ -195,17 +168,13 @@ export function buildGateRefinePrompt(
 
 /**
  * The leading user anchor the active-phase thread is reseeded to at approval and after every
- * committed hop.
- *
- * @remarks
- * The graph replaces the thread with `[anchor]` alone (`RemoveMessage(REMOVE_ALL_MESSAGES)` + this message); the per-hop
- * task, focus context and `<short_term_memory>` ride the following worker message, while hop
- * protocol and session memo stay in the stable `system`. The anchor keeps the conversation leading
- * with a `user` turn (strict providers reject a leading assistant turn), so it stays a one-line
- * continuation directive, not a per-hop task config. The incomplete-stop path keeps the last tool
- * pair instead (`extractShortTermMemory`).
- *
- * @returns The anchor user-message text.
+ * committed hop. The graph replaces the thread with `[anchor]` alone
+ * (`RemoveMessage(REMOVE_ALL_MESSAGES)` + this message); per-hop task, focus context and
+ * `<short_term_memory>` ride the following worker message, hop protocol and session memo stay in
+ * the stable `system`. The anchor keeps the conversation leading with a `user` turn (strict
+ * providers reject a leading assistant turn), so it stays a one-line continuation directive, not
+ * per-hop task config. The incomplete-stop path keeps the last tool pair instead
+ * (`extractShortTermMemory`).
  */
 export function buildActiveContinuationAnchor(): string {
   return 'Analyze `<current_task>` on the next agenda node.';

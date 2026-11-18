@@ -1,10 +1,7 @@
 /**
- * Project store — named sessions with connection + schema selection + saved filter views.
- *
- * Pure module: no VS Code imports. Usable in both extension host and tests.
- * Stored in context.globalState under key 'dataLineageViz.projectStore'.
- *
- * Schema versioning: schemaVersion field enables forward-compatible migrations.
+ * Project store: named sessions with connection, schema selection and saved filter views. Pure
+ * module (no VS Code imports), stored in `context.globalState` under `dataLineageViz.projectStore`;
+ * `schemaVersion` enables forward-compatible migrations.
  */
 
 import type { FilterState } from './types';
@@ -27,10 +24,7 @@ export type {
   StoredConnectionInfo,
 } from './shared/bridgeContract';
 
-/**
- * Represents the root persistence object for the data lineage extension.
- * Contains all user projects and the state of the wizard.
- */
+/** Root persistence object of the extension: all user projects and the wizard state. */
 export interface ProjectStore {
   /** The current schema version of the store. Used for migrations. */
   schemaVersion: 1;
@@ -41,22 +35,16 @@ export interface ProjectStore {
   lastWizardView?: 'main' | 'projects';
 }
 
-/**
- * Returns an empty ProjectStore initialized to the current schema version.
- *
- * @returns A fresh, empty project store instance.
- */
+/** Returns an empty ProjectStore at the current schema version. */
 function emptyStore(): ProjectStore {
   return { schemaVersion: 1, projects: [], lastOpenedId: null };
 }
 
 /**
- * Diagnostic summary of persisted records discarded by {@link migrateProjectStore}.
- *
- * @remarks
- * Dropping a record is permanent data loss from the user's point of view, so the host must be
- * able to say it happened. Field *paths* are carried, never field values: the report reaches the
- * output channel, which must stay free of connection content.
+ * Diagnostic summary of persisted records discarded by {@link migrateProjectStore}. A dropped
+ * record is permanent data loss to the user, so the host must be able to say it happened. Field
+ * *paths* are carried, never values: the report reaches the output channel, which must stay free of
+ * connection content.
  */
 export interface ProjectStoreDropReport {
   /** Number of persisted project records that failed validation and were discarded. */
@@ -69,22 +57,14 @@ export interface ProjectStoreDropReport {
 const MAX_REPORTED_ISSUE_PATHS = 10;
 
 /**
- * Safely deserializes a raw object into a ProjectStore.
- * Validates the schema version and project shapes. Returns an empty store on any parse failure.
+ * Safely deserializes a raw object into a ProjectStore; returns an empty store on any parse
+ * failure. Validation tolerates unknown fields (`ProjectReadSchema` drops them rather than
+ * rejecting the record, since an older build's project carries keys this one never declared); a
+ * record is discarded only when a required field is missing or mistyped.
  *
- * @remarks
- * Validation is deliberately tolerant of fields it does not recognize — `ProjectReadSchema` drops
- * them rather than rejecting the record. A project written by an older build carries keys this one
- * never declared, and a record is discarded only when a field the schema *requires* is missing or
- * of the wrong type.
- *
- * Kept free of VS Code imports: discarded records are surfaced through the optional `onDropped`
- * callback so the extension host owns logging and notification, and the engine stays testable.
- * The callback fires at most once per call, and only when at least one record was discarded.
- *
- * @param raw - The untyped data loaded from persistent storage.
- * @param onDropped - Invoked with the drop report when records were discarded.
- * @returns A validated ProjectStore.
+ * Free of VS Code imports: discarded records surface through the optional `onDropped` callback (at
+ * most once per call, only when something was discarded), so the host owns logging and notification
+ * and the engine stays testable.
  */
 export function migrateProjectStore(
   raw: unknown,
@@ -124,13 +104,7 @@ export function migrateProjectStore(
   };
 }
 
-/**
- * Creates a new Project record with a generated UUID and current timestamps.
- *
- * @param name - The user-defined or auto-generated name for the project.
- * @param connection - The validated DACPAC or Database connection.
- * @returns A newly instantiated Project object.
- */
+/** Creates a Project record with a generated UUID and current timestamps. */
 export function createProject(
   name: string,
   connection: DacpacConnection | DatabaseConnection,
@@ -140,12 +114,8 @@ export function createProject(
 }
 
 /**
- * Upserts a project into the store and updates the last opened identifier.
- * If the project ID already exists, it is replaced; otherwise, it is appended.
- *
- * @param store - The current project store state.
- * @param project - The project to insert or update.
- * @returns A new project store instance with the applied changes.
+ * Upserts a project into the store and updates the last opened id: an existing id is replaced,
+ * otherwise appended. Returns a new store.
  */
 export function updateProject(store: ProjectStore, project: Project): ProjectStore {
   const exists = store.projects.some(p => p.id === project.id);
@@ -156,12 +126,8 @@ export function updateProject(store: ProjectStore, project: Project): ProjectSto
 }
 
 /**
- * Removes a project from the store by its identifier.
- * Automatically adjusts the last opened ID to the most recently updated project if the current active project is deleted.
- *
- * @param store - The current project store state.
- * @param id - The UUID of the project to delete.
- * @returns A new project store instance with the project removed.
+ * Removes a project by id and returns a new store. Deleting the active project moves the last
+ * opened id to the most recently updated project.
  */
 export function deleteProject(store: ProjectStore, id: string): ProjectStore {
   const projects = store.projects.filter(p => p.id !== id);
@@ -173,11 +139,8 @@ export function deleteProject(store: ProjectStore, id: string): ProjectStore {
 }
 
 /**
- * Generates a default project name based on the connection type and current timestamp.
- * Format: "{sourceName or displayName} YYYY-MM-DD HH:mm".
- *
- * @param connection - The connection to derive the name from.
- * @returns A formatted string representing the default project name.
+ * Generates a default project name from the connection and the current timestamp: "{sourceName or
+ * displayName} YYYY-MM-DD HH:mm".
  */
 export function generateProjectName(connection: DacpacConnection | DatabaseConnection): string {
   const now = new Date();
@@ -192,25 +155,12 @@ export function generateProjectName(connection: DacpacConnection | DatabaseConne
     : `${connection.sourceName} ${ts}`;
 }
 
-/**
- * Pads a number with a leading zero if it is less than 10.
- *
- * @param n - The number to pad.
- * @returns A two-character padded string.
- */
+/** Zero-pads a number below 10 to two characters. */
 function pad(n: number): string {
   return n.toString().padStart(2, '0');
 }
 
-/**
- * Adds or replaces a filter profile for a specific project.
- * Matches existing profiles based on their ID.
- *
- * @param store - The current project store state.
- * @param projectId - The UUID of the project to modify.
- * @param profile - The new or updated filter profile to insert.
- * @returns A new project store instance with the updated filter profiles.
- */
+/** Adds or replaces (matched by ID) a filter profile of one project; returns a new store. */
 export function addFilterProfile(store: ProjectStore, projectId: string, profile: FilterProfile): ProjectStore {
   const projects = store.projects.map(p => {
     if (p.id !== projectId) return p;
@@ -223,14 +173,7 @@ export function addFilterProfile(store: ProjectStore, projectId: string, profile
   return { ...store, projects };
 }
 
-/**
- * Removes a filter profile from a specific project.
- *
- * @param store - The current project store state.
- * @param projectId - The UUID of the project to modify.
- * @param profileId - The UUID of the filter profile to remove.
- * @returns A new project store instance with the filter profile removed.
- */
+/** Removes a filter profile from a project; returns a new store. */
 export function deleteFilterProfile(store: ProjectStore, projectId: string, profileId: string): ProjectStore {
   const projects = store.projects.map(p => {
     if (p.id !== projectId) return p;
@@ -239,12 +182,7 @@ export function deleteFilterProfile(store: ProjectStore, projectId: string, prof
   return { ...store, projects };
 }
 
-/**
- * Converts a live FilterState containing Sets into a JSON-serializable SerializedFilterState.
- *
- * @param filter - The active in-memory filter state.
- * @returns A plain object suitable for persistent storage.
- */
+/** Converts a live FilterState containing Sets into a JSON-serializable SerializedFilterState. */
 export function serializeFilter(filter: FilterState): SerializedFilterState {
   return {
     schemas: Array.from(filter.schemas),
@@ -261,13 +199,7 @@ export function serializeFilter(filter: FilterState): SerializedFilterState {
   };
 }
 
-/**
- * Restores a SerializedFilterState from persistent storage back into a live FilterState.
- * Reconstructs Set objects where required.
- *
- * @param s - The serialized filter state object.
- * @returns An in-memory FilterState object with fully instantiated Sets.
- */
+/** Restores a SerializedFilterState into a live FilterState, reconstructing the Sets. */
 export function deserializeFilter(s: SerializedFilterState): FilterState {
   return {
     schemas: new Set(s.schemas),

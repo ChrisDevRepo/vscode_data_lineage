@@ -40,11 +40,9 @@ import {
 } from '../providers/structuredOutput';
 
 /**
- * Request-scoped model port over the exact native model selected in Chat UI.
- *
- * LangChain `BaseMessage` instances are the only history representation. The
- * port performs no model selection, fallback, tool execution, or lifecycle
- * routing.
+ * Request-scoped model port over the exact native model selected in Chat UI. LangChain
+ * `BaseMessage` instances are the only history representation; the port performs no model
+ * selection, fallback, tool execution or lifecycle routing.
  */
 export class VscodeModelPort implements ModelPort {
   /** Request-scoped adapter identifier derived from the selected model ID. */
@@ -66,34 +64,28 @@ export class VscodeModelPort implements ModelPort {
       /** Native request identifier shared by wire and runtime lifecycle records. */
       readonly requestId?: string;
       /**
-       * Debug wire sink, supplied only when session trace logging is enabled.
-       *
-       * @remarks
-       * Unlike {@link debugLog} this carries model content — prompts, tool payloads, SQL — so it
-       * never reaches the output channel and is absent unless the user opted in.
+       * Debug wire sink, supplied only when session trace logging is enabled. Unlike {@link
+       * debugLog} it carries model content (prompts, tool payloads, SQL), so it never reaches the
+       * output channel and is absent unless the user opted in.
        */
       readonly wireLog?: (record: WireRecord) => void;
       /**
-       * Whether the active trace captures the verbatim system instruction as its own field.
+       * Whether the active trace captures the verbatim system instruction as its own field. Off by
+       * default, so the `wire-request` `system` field carries the prompt's hash only. This does
+       * **not** make the trace prompt-free: `vscode.lm` has no system role, so the bridge
+       * downgrades the system instruction into the first User turn and it is recorded with
+       * `messages[]` either way, deliberately, since the message array makes a bad turn
+       * reconstructable from the trace alone. The privacy control is the opt-in plus the owner-only
+       * file mode, not partial redaction.
        *
-       * @remarks
-       * Off by default, in which case the `wire-request` `system` field carries the prompt's hash
-       * only. This does **not** make the trace prompt-free: `vscode.lm` has no system role, so the
-       * bridge downgrades the system instruction into the first User turn and it is recorded with
-       * the rest of `messages[]` either way. That is deliberate — the message array is what makes a
-       * bad turn reconstructable from the trace alone. The privacy control is the opt-in itself
-       * plus the owner-only file mode, not partial redaction of the request.
-       *
-       * The port never captures provider bodies on this lane — `vscode.lm` hands back a stream of
-       * parts, not an HTTP payload — so `provider-raw` has no emitter here.
+       * The port never captures provider bodies (`vscode.lm` yields a stream of parts, not an HTTP
+       * payload), so `provider-raw` has no emitter here.
        */
       readonly traceVerbose?: boolean;
       /**
        * Token budget the owning turn resolved from this model's window and the workspace settings.
-       *
-       * @remarks
        * Absent only where a caller builds a port outside a turn, which leaves the shipped defaults
-       * and the ceilings in force.
+       * and ceilings in force.
        */
       readonly budget?: TurnTokenBudget;
     } = {},
@@ -113,14 +105,11 @@ export class VscodeModelPort implements ModelPort {
   }
 
   /**
-   * {@inheritDoc SingleGenerationModelPort.getNumTokens} — delegates to the selected model's own
-   * `countTokens`.
-   *
-   * @remarks
-   * Carries no cancellation token: the caller is `trimMessages`' token counter, run outside any
-   * single generation's request-scoped `CancellationTokenSource` — there is no live token in
-   * scope to pass. A rejecting `countTokens` call (a BYOK provider whose counter throws) falls
-   * back to the shared chars-per-token estimate rather than failing the node.
+   * {@inheritDoc SingleGenerationModelPort.getNumTokens}; delegates to the selected model's
+   * `countTokens`. Carries no cancellation token: the caller is `trimMessages`' counter, run
+   * outside any generation's request-scoped `CancellationTokenSource`. A rejecting `countTokens` (a
+   * BYOK provider whose counter throws) falls back to the shared chars-per-token estimate rather
+   * than failing the node.
    */
   public async getNumTokens(content: MessageContent): Promise<number> {
     const text = messageContentToText(content);
@@ -135,7 +124,7 @@ export class VscodeModelPort implements ModelPort {
     }
   }
 
-  /** Executes one tool-capable generation and validates emitted calls against the supplied tools. */
+  /** Runs one tool-capable generation and validates emitted calls against the supplied tools. */
   public async generateToolTurn(input: ToolGenerationInput): Promise<ToolGenerationResult> {
     if (input.signal?.aborted) return cancelledToolTurnResult();
 

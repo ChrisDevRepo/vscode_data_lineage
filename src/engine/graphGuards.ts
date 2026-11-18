@@ -1,18 +1,10 @@
 /**
- * Shared graph-integrity guards — pure graph algorithms for scope edits.
- *
- * @remarks
- * Pure graph algorithms: accept graph + sets as parameters, no SM- or view-specific coupling.
- * Single source of truth for add/prune rules:
- * - Prune validation (orphan guard, cascade guard, disconnect guard)
- * - Node reference validation (reject hallucinated names)
- * - Bridge node injection (reconnect orphan noted nodes in result graph)
- * - Direct-neighbor lookup (add must target an adjacent node)
- *
- * All BFS operations are O(V+E) — fast even for 10K+ node graphs.
- *
- * Zero VS Code imports. No side effects. Safe to bundle in both the extension
- * host and the webview.
+ * Shared graph-integrity guards: pure graph algorithms for scope edits (graph + sets as parameters,
+ * no SM- or view-specific coupling, no VS Code imports, no side effects; safe to bundle in the
+ * extension host and the webview). Single source of truth for prune validation (orphan, cascade and
+ * disconnect guards), node reference validation (reject hallucinated names), bridge node injection
+ * (reconnect orphan noted nodes in the result graph) and direct-neighbor lookup (an add must target
+ * an adjacent node). All BFS is O(V+E), fast for 10K+ node graphs.
  */
 
 import type Graph from 'graphology';
@@ -32,18 +24,12 @@ export interface OrderedShortestPath {
 }
 
 /**
- * Finds the shortest directed dependency path between two endpoints, trying both directions.
+ * Finds the shortest directed dependency path between two endpoints, trying `source → target` first
+ * and retrying `target → source`, so the result matches the GUI "Find Path" ({@link
+ * computeShortestPath}), the single source of truth for path lookup. `null` only when the nodes are
+ * disconnected in both directions or an endpoint is absent.
  *
- * @remarks
- * Single source of truth for shortest-path lookup, consumed by the GUI "Find Path" feature
- * ({@link computeShortestPath}). Tries `source → target` first; on no directed path, retries `target → source` so the
- * result matches what the GUI surfaces. Returns `null` only when the two nodes are not
- * connected in either direction (or an endpoint is absent).
- *
- * @param graph - Graphology directed dependency graph.
- * @param sourceId - First canonical endpoint.
- * @param targetId - Second canonical endpoint.
- * @returns The ordered path and the direction it was found in, or `null` when disconnected.
+ * @returns The ordered path and the direction it was found in.
  */
 export function findShortestPathOrdered(
   graph: Graph,
@@ -60,11 +46,8 @@ export function findShortestPathOrdered(
 
 
 /**
- * Logging callback injected into state machines for operational tracing.
- *
- * @remarks
- * The optional error argument preserves caught exception stacks at production
- * adapters without requiring the engine to depend on a concrete logger.
+ * Logging callback injected into state machines for operational tracing; the optional error
+ * preserves caught stacks at production adapters without tying the engine to a concrete logger.
  */
 export type LogFn = (level: 'info' | 'debug' | 'warn' | 'error', msg: string, err?: unknown) => void;
 
@@ -73,18 +56,13 @@ export type NeighborSide = 'in' | 'out';
 
 
 /**
- * Performs a BFS reachability check from a starting node, respecting a set of removed (pruned) nodes.
+ * BFS reachability from a starting node, treating `removedSet` (pruned) nodes as non-existent.
+ * Traversal is undirected (`graph.neighbors`) because relevance in a lineage scope runs both ways
+ * (an inbound source table or an outbound target view).
  *
- * @remarks
- * Traversal is undirected (`graph.neighbors`) because relevance in a lineage scope runs both
- * ways — a node can matter through an inbound source table or an outbound target view.
- *
- * @param graph - The graphology instance to traverse.
- * @param startId - The ID of the node to start the BFS from.
- * @param removedSet - A set of node IDs that have been pruned and should be treated as non-existent.
- * @param candidateId - An optional candidate node ID to exclude from reachability (used for "what-if" analysis).
- * @param scope - An optional set of allowed node IDs to restrict the search.
- * @returns A set of all node IDs reachable from the start node.
+ * @param candidateId - Optional candidate excluded from reachability ("what-if" analysis).
+ * @param scope - Optional set of allowed node IDs restricting the search.
+ * @returns All node IDs reachable from the start node.
  */
 export function bfsReachable(
   graph: Graph,
@@ -120,7 +98,9 @@ export interface RemovalContext {
   scope: ReadonlySet<string>;
   removedBefore: ReadonlySet<string>;
   removedAfter: ReadonlySet<string>;
-  /** Only this active/clicked node may self-prune if already visited. Omission permits no exception. */
+  /**
+   * Only this active/clicked node may self-prune if already visited. Omission permits no exception.
+   */
   currentNodeId?: string;
   /** Committed analysis anchors, protected from removal by any other node. */
   visited: ReadonlySet<string>;
@@ -139,16 +119,14 @@ export interface RemovalAnalysis {
 }
 
 /**
- * Analyzes the same pruning policy for AI navigation and interactive traces.
+ * Analyzes the one pruning policy shared by AI navigation and interactive traces. Each permitted
+ * leg walks from the origin in one direction; the cut is every open node the legs reached before
+ * the removal and no leg reaches after it, so a surviving shared join stays and nothing is left
+ * without a directed path to the origin. A current node may remove itself, but losing support for
+ * another visited anchor is reported for atomic rejection. The origin is protected. Invalid scopes
+ * or unknown removal nodes return a rejection without traversing missing nodes. Never mutates its
+ * graph or inputs.
  *
- * Each permitted leg walks from the origin in one direction. The cut is every open node the
- * legs reached before the removal and no leg reaches after it, so a surviving shared join stays
- * and nothing is left without a directed path to the origin. A current node may remove
- * itself, but losing support for another visited anchor is reported for atomic rejection.
- * The origin is protected. Invalid scopes or unknown removal nodes return a rejection without
- * invoking traversal on missing nodes. This function never mutates its graph or input sets.
- *
- * @param graph - Directed dependency graph.
  * @param context - Explicit scope, removal proposal, committed anchors and open direction legs.
  * @returns Support before/after, disconnected committed anchors, and exclusive open cut nodes.
  */
@@ -185,18 +163,10 @@ export function analyzeRemoval(graph: Graph, context: RemovalContext): RemovalAn
 }
 
 /**
- * Returns exact direct neighbors for one node and lineage side.
- *
- * @remarks
- * The single add-guard primitive: an add must target a node directly adjacent to
- * the current scope. Reads the precomputed `neighborIndex` under the source comparison policy,
- * falling back to an edge scan. Shared by the AI neighbor-column validator and
- * the webview trace add-neighbor control.
- *
- * @param model - Database model to inspect.
- * @param nodeId - Node ID to inspect.
- * @param side - Neighbor direction to collect.
- * @returns Array of matching neighbor ids (deduplicated).
+ * Returns the exact direct neighbors (deduplicated ids) of one node on one lineage side. The single
+ * add-guard primitive: an add must target a node directly adjacent to the current scope. Reads the
+ * precomputed `neighborIndex` under the source comparison policy, falling back to an edge scan;
+ * shared by the AI neighbor-column validator and the webview trace add-neighbor control.
  */
 export function directNeighborIds(
   model: DatabaseModel,
@@ -217,15 +187,9 @@ export function directNeighborIds(
 }
 
 /**
- * Generates a depth map for a directed graph starting from an origin node.
- *
- * @remarks
- * Depth is the minimum hop distance from the origin, used to sort nodes into stages/tiers
- * for report generation and visualization layout.
- *
- * @param edges - A flat list of directed edges [source, target, type].
- * @param originNodeId - The root node from which to calculate depths (depth 0).
- * @returns A map of node IDs to their respective depth. Unreachable nodes are excluded.
+ * Depth map (minimum hop distance, origin at depth 0) over a flat list of directed edges `[source,
+ * target, type]`, used to sort nodes into tiers for reports and layout. Unreachable nodes are
+ * excluded.
  */
 export function bfsDepthMap(
   edges: ReadonlyArray<readonly [string, string, string]>,

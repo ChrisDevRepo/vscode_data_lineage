@@ -1,26 +1,14 @@
 /**
- * ─── SQL Metadata ───────────────────────────────────────────────────────────
- *
- * Centralized repository for SQL Server system metadata, suppressed schemas,
- * and built-in CLR/XML methods.
- *
- * This ensures consistency across the parser and model builder by providing
- * a single source of truth for objects that should be excluded from lineage
- * graphs.
+ * SQL Server system metadata (suppressed schemas, built-in CLR/XML methods): one source of truth
+ * for objects excluded from lineage graphs, keeping the parser and model builder consistent.
  *
  * @packageDocumentation
  */
 
 /**
- * Well-known system schemas whose objects must never appear as lineage nodes.
- *
- * @remarks
- * `msdb`, `tempdb`, `model`, and `master` are SQL Server system databases.
- * Their schemas (like `dbo`, `sys`, etc.) are commonly referenced in stored
- * procedures but are generally not considered part of user-defined data lineage.
- *
- * @constant
- * @readonly
+ * Well-known system schemas whose objects must never appear as lineage nodes. `msdb`, `tempdb`,
+ * `model` and `master` are system databases; their schemas (`dbo`, `sys`, ...) are commonly
+ * referenced in stored procedures but are not user-defined data lineage.
  */
 export const SYSTEM_SCHEMAS: Set<string> = new Set([
   'sys',
@@ -32,16 +20,12 @@ export const SYSTEM_SCHEMAS: Set<string> = new Set([
 ]);
 
 /**
- * SQL Server XML data type methods that look like `schema.object` to the parser.
+ * SQL Server XML data type methods that look like `schema.object` to the parser: in
+ * `[ref].[value]`, `value` is an XML method, not an object in a schema named `ref`; counting it
+ * would create "hallucinated" nodes.
  *
- * @remarks
- * For example, in `[ref].[value]`, `value` is an XML method, not a database
- * object in a schema named `ref`. Including these in lineage would create
- * "hallucinated" nodes.
- *
- * @constant
- * @readonly
- * @see {@link https://learn.microsoft.com/en-us/sql/t-sql/xml/xml-data-type-methods-xml-data-type | XML Data Type Methods}
+ * @see {@link https://learn.microsoft.com/en-us/sql/t-sql/xml/xml-data-type-methods-xml-data-type |
+ *   XML Data Type Methods}
  */
 export const XML_METHODS: Set<string> = new Set([
   'nodes',
@@ -52,19 +36,17 @@ export const XML_METHODS: Set<string> = new Set([
 ]);
 
 /**
- * SQL Server CLR built-in type methods that appear as the last part of a 3-part name.
+ * SQL Server CLR built-in type methods that appear as the last part of a 3-part name. They look
+ * like `db.schema.object` but are method calls on system types such as `HierarchyID`, `Geometry` or
+ * `Geography`; the set suppresses false positive catalog references during cross-database lineage
+ * extraction.
  *
- * @remarks
- * These often look like `db.schema.object` but are actually method calls on
- * system types like `HierarchyID`, `Geometry`, or `Geography`.
- *
- * This set is used to suppress false positive catalog references during
- * cross-database lineage extraction.
- *
- * @constant
- * @readonly
- * @see {@link https://learn.microsoft.com/en-us/sql/t-sql/data-types/hierarchyid-data-type-method-reference | HierarchyID Methods}
- * @see {@link https://learn.microsoft.com/en-us/sql/t-sql/spatial-geometry/ogc-methods-on-geometry-instances | Geometry Methods}
+ * @see {@link
+ *   https://learn.microsoft.com/en-us/sql/t-sql/data-types/hierarchyid-data-type-method-reference |
+ *   HierarchyID Methods}
+ * @see {@link
+ *   https://learn.microsoft.com/en-us/sql/t-sql/spatial-geometry/ogc-methods-on-geometry-instances
+ *   | Geometry Methods}
  */
 export const CLR_TYPE_METHODS: Set<string> = new Set([
   'getancestor', 'getdescendant', 'getlevel', 'getroot', 'getreparentedvalue',

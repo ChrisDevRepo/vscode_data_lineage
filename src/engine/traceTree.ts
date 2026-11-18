@@ -1,15 +1,15 @@
 /**
  * @module TraceTree
  * Projects a trace scope into the L0-anchored tree the trace navigator renders: per-side hop levels
- * from direction-restricted breadth-first walks, a group for visible nodes neither walk reaches, and
- * the out-of-scope grow candidates of every node.
+ * from direction-restricted breadth-first walks, a group for visible nodes neither walk reaches,
+ * and each node's out-of-scope grow candidates.
  */
 import type Graph from 'graphology';
 import { bfsFromNode } from 'graphology-traversal';
 
 /**
- * Tree placement relative to the origin: `up` follows inbound edges, `down` outbound edges,
- * `connected` holds visible nodes neither directional walk reaches.
+ * Tree placement relative to the origin: `up` follows inbound edges, `down` outbound, `connected`
+ * holds visible nodes neither directional walk reaches.
  */
 export type TraceTreeSide = 'up' | 'down' | 'connected';
 
@@ -20,7 +20,7 @@ export interface TraceTreeGroup {
   /** Visible node ids in first-visit order. */
   nodeIds: string[];
   /**
-   * Out-of-scope neighbors per node, in the group's direction (`up` inbound, `down` outbound,
+   * Out-of-scope neighbors per node in the group's direction (`up` inbound, `down` outbound,
    * `connected` both), pruned nodes excluded.
    */
   grow: ReadonlyMap<string, string[]>;
@@ -46,9 +46,14 @@ export interface TraceTree {
   totalUpstream: number;
   /** Total visible downstream node count, origin excluded. */
   totalDownstream: number;
-  /** Out-of-scope inbound neighbors of every upstream node and the origin: one more upstream level. */
+  /**
+   * Out-of-scope inbound neighbors of every upstream node and the origin: one more upstream level.
+   */
   nextUpstream: string[];
-  /** Out-of-scope outbound neighbors of every downstream node and the origin: one more downstream level. */
+  /**
+   * Out-of-scope outbound neighbors of every downstream node and the origin: one more downstream
+   * level.
+   */
   nextDownstream: string[];
 }
 
@@ -62,16 +67,14 @@ export interface TraceTreeInput {
 }
 
 /**
- * Shapes a trace scope into an L0-anchored tree.
- *
- * Levels come from a direction-restricted breadth-first walk over the visible set, so they
- * always agree with what the canvas shows. A node reachable from both directions appears on
- * both sides; a visible node reachable from neither lands in `connected`, so every visible
- * node appears at least once. The walk is cycle-safe. A null origin or an origin outside the
+ * Shapes a trace scope into an L0-anchored tree. Levels come from a direction-restricted,
+ * cycle-safe breadth-first walk over the visible set, so they agree with the canvas. A node
+ * reachable from both directions appears on both sides; one reachable from neither lands in
+ * `connected`, so every visible node appears at least once. A null origin or one outside the
  * visible set yields no tree.
  *
- * @param input - Origin, visible scope, and pruned set from the trace state.
- * @param graph - Full graphology graph (a superset of the visible scope) for traversal and grow checks.
+ * @param graph - Full graphology graph (a superset of the visible scope) for traversal and grow
+ *   checks.
  * @returns The anchored tree, or null when no trace is active.
  */
 export function buildTraceTree(input: TraceTreeInput, graph: Graph | null): TraceTree | null {

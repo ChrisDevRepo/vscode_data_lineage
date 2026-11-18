@@ -17,9 +17,8 @@ class InactiveTurnError extends Error {
 }
 
 /**
- * Rejects work that no longer belongs to the active session epoch.
- * @param lease - Ownership captured by the executing host turn.
- * @param currentEpoch - Live singleton-session epoch at the dispatch boundary.
+ * Rejects work that no longer belongs to the active session epoch; `currentEpoch` is the live
+ * singleton-session epoch at the dispatch boundary.
  */
 export function assertActiveTurnLease(lease: TurnLease, currentEpoch: number): void {
   if (lease.signal.aborted) throw new InactiveTurnError('AI turn was cancelled.');

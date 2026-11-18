@@ -15,7 +15,10 @@ export interface CurrentHopActionPolicyInput {
   /** Canonical exploration origin. */
   originId: string;
   pruneTargets: CurrentHopActionTarget[];
-  /** Nodes already processed: analyzed on a hop of their own, or the carrier the engine passed through into the current focus. */
+  /**
+   * Nodes already processed: analyzed on a hop of their own, or the carrier the engine passed
+   * through into the current focus.
+   */
   visitedIds: ReadonlySet<string>;
   /** Nodes already removed by an earlier accepted prune. */
   removedIds: ReadonlySet<string>;
@@ -29,16 +32,14 @@ export interface CurrentHopActionPolicyInput {
 export interface CurrentHopActionPolicyResult {
   /** Nonfatal refused/unknown actions recorded for the next hop. */
   notices: InvalidRoute[];
-  /** Resolved prune targets that are not the origin and not already visited, queued, noted or removed. */
+  /** Resolved prune targets that are not the origin and not visited, queued, noted or removed. */
   acceptedPruneIds: string[];
 }
 
 /**
- * Classifies current-hop prune actions without mutating engine state.
- *
- * @remarks
- * Unresolved and no-op prunes are notices. The origin, queued, visited and removed targets are
- * protected rather than turned into a retry-loop rejection.
+ * Classifies current-hop prune actions without mutating engine state. Unresolved and no-op prunes
+ * are notices; the origin and queued, visited and removed targets are protected instead of becoming
+ * a retry-loop rejection.
  */
 export function evaluateCurrentHopActionPolicy(input: CurrentHopActionPolicyInput): CurrentHopActionPolicyResult {
   const notices: InvalidRoute[] = [];

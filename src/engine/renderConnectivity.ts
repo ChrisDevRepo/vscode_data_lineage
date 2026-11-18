@@ -1,10 +1,8 @@
 import { groupByWeaklyConnected } from './unionFind';
 
 /**
- * Minimal node shape for rendered-connectivity analysis.
- *
- * @remarks
- * Decoupled from React Flow types so the helper stays pure and unit-testable.
+ * Minimal node shape for rendered-connectivity analysis, decoupled from React Flow types so the
+ * helper stays pure and unit-testable.
  */
 export interface RenderConnectivityNode {
   /** React Flow node id. */
@@ -30,12 +28,9 @@ export interface RenderComponent {
 }
 
 /**
- * Connectivity of the graph currently on screen.
- *
- * @remarks
- * Computed from the actual rendered React Flow nodes/edges so the debug dump
- * reflects exactly what the user sees — including whether clusters are joined
- * or orphaned. Bounded by `renderLimit`, so always cheap.
+ * Connectivity of the graph currently on screen, computed from the actual rendered React Flow
+ * nodes/edges so the debug dump reflects exactly what the user sees, including whether clusters are
+ * joined or orphaned. Bounded by `renderLimit`, so always cheap.
  */
 export interface RenderConnectivity {
   nodeCount: number;
@@ -54,12 +49,8 @@ const MAX_COMPONENTS_LISTED = 12;
 const MAX_MEMBERS_PER_COMPONENT = 25;
 
 /**
- * Summarizes the connectivity of the rendered graph.
- *
- * @param nodes - Rendered nodes (id + optional label).
- * @param edges - Rendered directed edges, treated as undirected for grouping.
- *
- * @returns Component count, the largest components, and isolated node labels.
+ * Summarizes the connectivity of the rendered graph: component count, the largest components and
+ * isolated node labels. Directed edges are treated as undirected for grouping.
  */
 export function summarizeRenderedConnectivity(
   nodes: readonly RenderConnectivityNode[],
@@ -105,12 +96,8 @@ export function summarizeRenderedConnectivity(
 }
 
 /**
- * Renders a {@link RenderConnectivity} as the `RENDERED CONNECTIVITY` block in
- * the debug dump.
- *
- * @param conn - The rendered-connectivity summary to format.
- *
- * @returns Indented multi-line text (no trailing newline).
+ * Renders a {@link RenderConnectivity} as the `RENDERED CONNECTIVITY` block of the debug dump:
+ * indented multi-line text, no trailing newline.
  */
 export function formatRenderConnectivity(conn: RenderConnectivity): string {
   const lines: string[] = [];

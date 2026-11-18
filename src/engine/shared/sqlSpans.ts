@@ -1,22 +1,25 @@
-/** Mask value of a character outside any comment, including string literals and quoted identifiers. */
+/**
+ * Mask value of a character outside any comment, including string literals and quoted identifiers.
+ */
 export const SQL_CODE = 0;
 /** Mask value of a character inside a `/* … *\/` block comment, delimiters included. */
 export const SQL_BLOCK_COMMENT = 1;
 /** Mask value of a character inside a `--` line comment, up to but excluding the newline. */
 export const SQL_LINE_COMMENT = 2;
-/** Mask value of a character inside a `'…'`, `"…"` or `[…]` span, delimiters included; set only on request. */
+/**
+ * Mask value of a character inside a `'…'`, `"…"` or `[…]` span, delimiters included; set only on
+ * request.
+ */
 const SQL_LITERAL = 3;
 
 /**
- * Classifies every character of a T-SQL text as code, block comment or line comment.
+ * Classifies every character of a T-SQL text as code, block comment or line comment, one mask value
+ * per UTF-16 code unit. Block comments nest; `'…'`, `"…"` and `[…]` hide comment delimiters and
+ * honour doubled escapes; an unterminated block comment runs to the end. The parser and DDL search
+ * share this one reading so both agree on what is commented out.
  *
- * @remarks
- * Block comments nest; `'…'`, `"…"` and `[…]` hide comment delimiters and honour their doubled
- * escapes; an unterminated block comment runs to the end of the text. The parser and the DDL
- * search share this one reading so both agree on what is commented out.
- *
- * @param options - `markLiterals` marks quoted spans {@link SQL_LITERAL} instead of {@link SQL_CODE}.
- * @returns One mask value per UTF-16 code unit of `sql`.
+ * @param options - `markLiterals` marks quoted spans {@link SQL_LITERAL} instead of {@link
+ *   SQL_CODE}.
  */
 export function sqlCommentMask(sql: string, options?: { readonly markLiterals?: boolean }): Uint8Array {
   const mask = new Uint8Array(sql.length);
@@ -52,7 +55,7 @@ export function sqlCommentMask(sql: string, options?: { readonly markLiterals?: 
   return mask;
 }
 
-/** Returns the index just past the closer of a quoted span opened before `i`; a doubled closer is an escape. */
+/** Index just past the closer of a quoted span opened before `i`; a doubled closer is an escape. */
 function skipQuoted(sql: string, i: number, closer: string): number {
   while (i < sql.length) {
     if (sql[i] !== closer) { i++; continue; }

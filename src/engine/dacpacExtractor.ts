@@ -1,9 +1,8 @@
 /**
  * @module DacpacExtractor
- * Extracts database metadata and lineage from SQL Server DACPAC archives.
- *
- * Phase one builds the schema preview and object catalog. Phase two extracts columns, DDL,
- * constraints, dependencies, and platform metadata for the selected schemas.
+ * Extracts database metadata and lineage from SQL Server DACPAC archives. Phase one builds the
+ * schema preview and object catalog; phase two extracts columns, DDL, constraints, dependencies and
+ * platform metadata for the selected schemas.
  */
 
 import JSZip from 'jszip';
@@ -51,15 +50,12 @@ function countObjectsByType(objs: ExtractedObject[]): Record<'table' | 'view' | 
 /**
  * Extracts a complete {@link DatabaseModel} from a DACPAC archive buffer.
  *
- * @param buffer - DACPAC archive bytes to extract.
+ * Accepts `Uint8Array` so callers pass `readFile` output directly: Node pools small reads, so
+ * `.buffer` of a small dacpac is a 64KB pool shared with later allocations, not the file's bytes.
+ *
  * @param options - Runtime extraction settings from VS Code configuration.
- *
- * @throws If the buffer is not a valid ZIP archive, or if `model.xml` is missing or corrupted.
- *   The thrown error carries the underlying archive error as `cause`.
- *
- * @remarks Accepts `Uint8Array` so callers pass `readFile` output directly. Node pools file reads
- * up to 32KB, so `.buffer` on a small dacpac is a 64KB pool shared with later allocations rather
- * than the file's bytes.
+ * @throws If the buffer is not a valid ZIP archive or `model.xml` is missing or corrupted; the
+ *   archive error is the `cause`.
  */
 export async function extractDacpac(
   buffer: Uint8Array | ArrayBuffer,
@@ -108,12 +104,10 @@ export async function extractDacpac(
 }
 
 /**
- * Extracts a lightweight preview of the database schemas from a .dacpac file buffer.
- * This Phase 1 extraction counts schemas and object types without parsing body scripts,
- * columns, or deep dependencies.
+ * Phase 1 extraction: a lightweight preview that counts schemas and object types without parsing
+ * body scripts, columns or deep dependencies.
  *
- * @param buffer - The raw bytes of the .dacpac file.
- * @returns A Promise resolving to the schema preview and the pre-parsed XML elements for Phase 2.
+ * @returns The schema preview and the pre-parsed XML elements for Phase 2.
  */
 export async function extractSchemaPreview(buffer: Uint8Array | ArrayBuffer): Promise<{
   preview: SchemaPreview;
@@ -128,18 +122,11 @@ export async function extractSchemaPreview(buffer: Uint8Array | ArrayBuffer): Pr
 }
 
 /**
- * Performs a Phase 2 full extraction filtered to a specific set of schemas.
- * Uses pre-parsed XML elements from Phase 1 to significantly improve performance.
+ * Phase 2 full extraction filtered to a set of schemas, using the pre-parsed elements from Phase 1.
  *
- *
- * @param elements - Pre-parsed DACPAC elements to filter.
- * @param selectedSchemas - Schemas selected for extraction.
  * @param dspName - Source DSP name from the DACPAC metadata.
- * @param onDebugLog - Debug logger callback.
- * @param onInfoLog - Info logger callback.
  * @param options - Runtime extraction settings from VS Code configuration.
- *
- * @returns The resulting DatabaseModel containing only the filtered objects.
+ * @returns A DatabaseModel containing only the filtered objects.
  */
 export function extractDacpacFiltered(
   elements: XmlElement[],
@@ -191,12 +178,7 @@ export function extractDacpacFiltered(
   };
 }
 
-/**
- * Internal logic to compute schema-level statistics from parsed XML elements.
- *
- * @param elements - The full array of parsed elements from model.xml.
- * @returns A summary object containing schema info and total object count.
- */
+/** Computes schema-level statistics and the total object count from parsed XML elements. */
 function computeSchemaPreviewFromElements(elements: XmlElement[], identifierCaseSensitive: boolean): SchemaPreview {
   const schemaMap = new Map<string, SchemaInfo>();
   const seen = new Set<string>();
@@ -237,15 +219,10 @@ function computeSchemaPreviewFromElements(elements: XmlElement[], identifierCase
 }
 
 /**
- * Filters an existing DatabaseModel in memory to include only objects from specific schemas.
- *
- * @remarks
- * Retains every matching object and every external reference it touches — this never truncates.
- * Callers that must honor `dataLineageViz.maxNodes` check the result with
- * {@link checkObjectLimit} before loading or rendering it.
- *
- * @param selectedSchemas - Set of schema names to retain.
- * @returns A new DatabaseModel instance containing the filtered subset.
+ * Filters an existing DatabaseModel in memory to objects from specific schemas. Retains every
+ * matching object and every external reference it touches; it never truncates. Callers that must
+ * honor `dataLineageViz.maxNodes` check the result with {@link checkObjectLimit} before loading or
+ * rendering it.
  */
 export function filterBySchemas(
   model: DatabaseModel,
@@ -282,12 +259,7 @@ export function filterBySchemas(
   };
 }
 
-/**
- * Extracts a lightweight catalog of all tracked objects from XML elements.
- *
- * @param elements - The source XML elements.
- * @returns A collection of extracted objects without body or column detail.
- */
+/** Extracts a lightweight catalog of all tracked objects, without body or column detail. */
 function extractObjectsLightweight(elements: XmlElement[], identifierCaseSensitive: boolean): ExtractedObject[] {
   const seen = new Set<string>();
   const objects: ExtractedObject[] = [];
@@ -303,12 +275,7 @@ function extractObjectsLightweight(elements: XmlElement[], identifierCaseSensiti
   return objects;
 }
 
-/**
- * Loads the dacpac buffer into JSZip and retrieves the `model.xml` content.
- *
- * @param buffer - Raw file bytes.
- * @returns The XML content as a string.
- */
+/** Loads the dacpac buffer into JSZip and returns the `model.xml` content. */
 async function extractModelXml(buffer: Uint8Array | ArrayBuffer): Promise<string> {
   let zip: JSZip;
   try {
@@ -327,15 +294,10 @@ async function extractModelXml(buffer: Uint8Array | ArrayBuffer): Promise<string
 }
 
 /**
- * Parses the raw XML string into a structured object using `fast-xml-parser`.
- *
- * @remarks
- * Entity processing stays off so a hostile DOCTYPE cannot expand entities. The five predefined entities
- * and character references in `Name` attributes are decoded afterwards by {@link decodeXmlText}, so an
- * object or column named `a&b` is read as `a&b`; `Value` attributes and text are decoded where they are read.
- *
- * @param xml - The XML string to parse.
- * @returns An object containing the elements array and the DSP name.
+ * Parses the raw XML string with `fast-xml-parser`. Entity processing stays off so a hostile
+ * DOCTYPE cannot expand entities. The five predefined entities and character references in `Name`
+ * attributes are decoded afterwards by {@link decodeXmlText} (so an object named `a&b` reads as
+ * `a&b`); `Value` attributes and text are decoded where read.
  */
 function parseElements(xml: string): { elements: XmlElement[]; dspName: string; identifierCaseSensitive: boolean } {
   const parser = new XMLParser({
@@ -374,10 +336,9 @@ function parseElements(xml: string): { elements: XmlElement[]; dspName: string; 
 }
 
 /**
- * Maps the DspName attribute from a dacpac's DataSchemaModel element to a human-readable platform string.
- *
- * @param dsp - The Data Schema Provider name string (e.g., 'Sql160DatabaseSchemaProvider').
- * @returns A user-friendly database platform name, or the raw provider string if unrecognized.
+ * Maps the DspName attribute of a dacpac's DataSchemaModel element (e.g.
+ * 'Sql160DatabaseSchemaProvider') to a human-readable platform string, or the raw provider string
+ * if unrecognized.
  */
 export function parseDspPlatform(dsp: string): string {
   if (!dsp) return '';
@@ -402,11 +363,8 @@ export function parseDspPlatform(dsp: string): string {
 }
 
 /**
- * Extracts deep metadata (DDL, columns, constraints) for tracked objects.
- *
- * @param elements - The elements to process.
- * @param constraintElements - Optional elements collection for cross-referencing constraints.
- * @returns The collection of detailed object metadata.
+ * Extracts deep metadata (DDL, columns, constraints) for tracked objects; `constraintElements` is
+ * an optional collection for cross-referencing constraints.
  */
 function extractObjects(elements: XmlElement[], constraintElements: XmlElement[] | undefined, identifierCaseSensitive: boolean): ExtractedObject[] {
   const objects: ExtractedObject[] = [];
@@ -466,15 +424,16 @@ function extractObjects(elements: XmlElement[], constraintElements: XmlElement[]
   return objects;
 }
 
-/** A computed-column expression that is one column reference, bracketed or not, under optional parentheses. */
+/**
+ * A computed-column expression that is one column reference, bracketed or not, under optional
+ * parentheses.
+ */
 const BARE_COLUMN_REFERENCE = /^\s*(?:\[((?:[^\]]|\]\])+)\]|([A-Za-z_@#][\w@#$]*))\s*$/;
 
 /**
- * Names the column a computed-column expression passes through unchanged.
- *
- * @param script - The column's `ExpressionScript`, if the model records one.
- * @returns The referenced column name when the whole expression is a bare column reference such as
- *   `([Qty])` or `Qty`; `null` for any other expression, and for a column with no script.
+ * Names the column a computed-column expression passes through unchanged: the referenced name when
+ * the whole `ExpressionScript` is a bare column reference such as `([Qty])` or `Qty`; `null` for
+ * any other expression and for a column with no script.
  */
 function bareColumnReference(script: string | undefined): string | null {
   if (script === undefined) return null;
@@ -487,15 +446,14 @@ function bareColumnReference(script: string | undefined): string | null {
 
 /**
  * Gives a computed column the declared type of the column its expression passes through unchanged.
+ * A computed column carries no `TypeSpecifier`, so an unresolved one renders as `—`. Only a
+ * bare-column-reference `ExpressionScript` takes the referenced type; other expressions
+ * (arithmetic, `CONVERT`, a call) produce a type the model does not state, and a view or function
+ * column has no `ExpressionScript`; both keep the `—`.
  *
- * @remarks
- * A computed column carries no `TypeSpecifier`, which is why an unresolved one renders as `—`. Only
- * a column whose `ExpressionScript` is a bare column reference has the referenced column's declared
- * type; any other expression (arithmetic, `CONVERT`, a function call) produces a type the model does
- * not state, and a view or function column has no `ExpressionScript` at all — both keep the `—`.
- *
- * Iterated to a fixpoint so a reference to a column resolved in an earlier pass is typed in the next.
- * Terminates because each pass only replaces `—` and a pass that resolves nothing ends the loop.
+ * Iterated to a fixpoint so a reference to a column resolved in an earlier pass is typed in the
+ * next; it terminates because each pass only replaces `—` and a pass that resolves nothing ends the
+ * loop.
  *
  * @param objects - Extracted objects, mutated in place.
  * @param computedSources - Computed column key → the column its bare-reference expression names.
@@ -537,12 +495,7 @@ function resolveComputedColumnTypes(objects: ExtractedObject[], computedSources:
   }
 }
 
-/**
- * Extracts object-level dependencies between XML elements.
- *
- * @param elements - The source XML elements.
- * @returns The collection of discovered dependencies.
- */
+/** Extracts object-level dependencies between XML elements. */
 function extractDependencies(elements: XmlElement[]): ExtractedDependency[] {
   const deps: ExtractedDependency[] = [];
 
@@ -560,17 +513,14 @@ function extractDependencies(elements: XmlElement[]): ExtractedDependency[] {
   return deps;
 }
 
-/** Keys references by every qualified SQL identifier part without changing their emitted identity. */
+/**
+ * Keys references by every qualified SQL identifier part without changing their emitted identity.
+ */
 function expressionReferenceKey(reference: string, identifierCaseSensitive: boolean): string {
   return JSON.stringify(splitSqlName(reference).map(part => schemaKey(stripBrackets(part), identifierCaseSensitive)));
 }
 
-/**
- * Extracts column definitions for tables, views, and functions from the XML model.
- *
- * @param el - The source element.
- * @returns An array of column definitions.
- */
+/** Extracts column definitions for tables, views and functions from the XML model. */
 function extractColumnsFromXml(el: XmlElement, computedSources: Map<string, string> | undefined, sourceElementTypes: ReadonlyMap<string, string> | undefined, identifierCaseSensitive: boolean): ColumnDef[] {
   const cols: ColumnDef[] = [];
   const objectId = normalizeName(el['@_Name'] ?? '', identifierCaseSensitive);
@@ -646,13 +596,7 @@ function relatedReferences(el: XmlElement, relName: string): XmlReference[] {
     .flatMap(entry => asArray(entry.References));
 }
 
-/**
- * Utility to extract `@_Name` values from a specific Relationship.
- *
- * @param el - The source element.
- * @param relName - The relationship name to lookup.
- * @returns An array of referenced names.
- */
+/** Extracts the `@_Name` values of one Relationship. */
 function getRelRefs(el: XmlElement, relName: string): string[] {
   const rel = asArray(el.Relationship).find(r => r['@_Name'] === relName);
   if (!rel) return [];
@@ -661,17 +605,10 @@ function getRelRefs(el: XmlElement, relName: string): string[] {
   );
 }
 
-/**
- * Mapping of SQL Server Foreign Key delete actions from numeric IDs to strings.
- */
+/** SQL Server foreign-key delete actions, numeric ID to keyword. */
 const FK_DELETE_ACTION: Record<string, string> = { '1': 'CASCADE', '2': 'SET NULL', '3': 'SET DEFAULT' };
 
-/**
- * Extracts comprehensive constraint metadata (UQ, CK, FK, PK) for the entire model.
- *
- * @param elements - The source XML elements.
- * @returns Maps of unique, check, foreign key, and primary key constraints.
- */
+/** Extracts constraint metadata (UQ, CK, FK, PK) for the entire model. */
 function extractConstraintMaps(elements: XmlElement[], identifierCaseSensitive: boolean): ConstraintMaps {
   const uqColMap      = new Map<string, string>();
   const ckColMap      = new Map<string, string>();
@@ -747,9 +684,7 @@ function extractConstraintMaps(elements: XmlElement[], identifierCaseSensitive: 
   return { uqColMap, ckColMap, fkMap, pkOrdinalMap };
 }
 
-/**
- * Relationship types that indicate object-to-object dependencies in dacpac XML.
- */
+/** Relationship types that indicate object-to-object dependencies in dacpac XML. */
 const DEPENDENCY_RELATIONSHIPS = new Set([
   'BodyDependencies',
   'QueryDependencies',
@@ -757,24 +692,14 @@ const DEPENDENCY_RELATIONSHIPS = new Set([
   'CheckExpressionDependencies',
 ]);
 
-/**
- * Extracts dependencies from an element's script or body.
- *
- * @param el - The source element.
- * @returns A collection of dependency names.
- */
+/** Extracts dependencies from an element's script or body. */
 function extractBodyDependencies(el: XmlElement): string[] {
   const deps: string[] = [];
   collectDeps(el, deps);
   return deps;
 }
 
-/**
- * Recursively collects object-level dependency references from XML relationships.
- *
- * @param el - The current element.
- * @param deps - Dependency names accumulated so far.
- */
+/** Recursively collects object-level dependency references from XML relationships into `deps`. */
 function collectDeps(el: XmlElement, deps: string[]): void {
   const rels = asArray(el.Relationship);
   for (const rel of rels) {
@@ -801,13 +726,8 @@ function collectDeps(el: XmlElement, deps: string[]): void {
 }
 
 /**
- * Retrieves the full SQL body script for an element, synthesizing a header if necessary.
- *
- * @param el - The source element.
- * @param type - Dacpac element type.
- * @param schema - Object schema.
- * @param objectName - Object name.
- * @returns The full SQL body or `undefined`.
+ * Retrieves the full SQL body script for an element, synthesizing a header if necessary;
+ * `undefined` when there is none.
  */
 function getBodyScript(el: XmlElement, type: string, schema: string, objectName: string): string | undefined {
   const bodyScript = getDirectBodyScript(el, type);
@@ -847,12 +767,7 @@ function getScriptHeader(el: XmlElement): string | undefined {
   return undefined;
 }
 
-/**
- * Maps a dacpac element type to its SQL keyword equivalent.
- *
- * @param type - The dacpac element type.
- * @returns The keyword (e.g. 'PROCEDURE', 'VIEW') or `undefined`.
- */
+/** Maps a dacpac element type to its SQL keyword (e.g. 'PROCEDURE', 'VIEW'), or `undefined`. */
 function getSqlKeyword(type: string): string | undefined {
   if (type === 'SqlProcedure') return 'PROCEDURE';
   if (type === 'SqlView') return 'VIEW';
@@ -860,13 +775,7 @@ function getSqlKeyword(type: string): string | undefined {
   return undefined;
 }
 
-/**
- * Extracts the raw script content from dacpac properties or function body elements.
- *
- * @param el - The source element.
- * @param type - Element type.
- * @returns The raw script string or `undefined`.
- */
+/** Extracts the raw script content from dacpac properties or function body elements. */
 function getDirectBodyScript(el: XmlElement, type: string): string | undefined {
   const props = asArray(el.Property);
   for (const prop of props) {
@@ -895,12 +804,8 @@ const PREDEFINED_ENTITIES: Readonly<Record<string, string>> = { lt: '<', gt: '>'
 
 /**
  * Decodes XML character references and the five predefined entities in attribute or text content.
- *
- * @remarks
- * One pass, so decoded text is never decoded again: `&amp;lt;` and `&#38;lt;` both yield the literal `&lt;`.
- *
- * @param raw - Entity-encoded text as read from model.xml.
- * @returns The decoded text.
+ * One pass, so decoded text is never decoded again: `&amp;lt;` and `&#38;lt;` both yield the
+ * literal `&lt;`.
  */
 /** XML 1.0 `Char` production: a reference to any other code point is not well-formed text. */
 function isXmlChar(cp: number): boolean {
@@ -917,14 +822,9 @@ function decodeXmlText(raw: string): string {
 }
 
 /**
- * Extracts a property value, decoding XML references in attribute and text content.
- *
- * @remarks
- * CDATA content is returned verbatim: it holds no references, so decoding it would corrupt
- * literal text such as `'&lt;'` inside a SQL string.
- *
- * @param prop - The XML property object.
- * @returns The decoded string value.
+ * Extracts a property value, decoding XML references in attribute and text content. CDATA is
+ * returned verbatim: it holds no references, and decoding would corrupt literal text such as
+ * `'&lt;'` inside a SQL string.
  */
 function extractPropertyValue(prop: XmlProperty): string | undefined {
   if (prop['@_Value']) return decodeXmlText(prop['@_Value']);
@@ -939,49 +839,30 @@ function extractPropertyValue(prop: XmlProperty): string | undefined {
 }
 
 /**
- * Returns the last part of a qualified name, unbracketed; a dot inside `[...]` stays part of the name.
- *
- * @param ref - A qualified reference such as `[Schema].[View].[Name.Prefix]`.
+ * Returns the last part of a qualified name, unbracketed; a dot inside `[...]` stays part of the
+ * name (e.g. `[Schema].[View].[Name.Prefix]`).
  */
 function lastNamePart(ref: string): string {
   return stripBrackets(splitSqlName(ref).pop() ?? '');
 }
 
-/**
- * Checks if a reference is object-level (schema.object) rather than column-level.
- *
- * @param name - The reference string.
- * @returns `true` if it looks like an object-level reference.
- */
+/** Whether a reference is object-level (schema.object) rather than column-level. */
 function isObjectLevelRef(name: string): boolean {
   const parts = splitSqlName(name).map(stripBrackets);
   return parts.length === 2 && !parts[1].startsWith('@');
 }
 
-/**
- * Ensures the provided value is treated as an array.
- *
- * @param val - A single value or an array.
- * @returns An array.
- */
+/** Wraps a single value in an array; arrays pass through. */
 function asArray<T>(val: T | T[] | undefined | null): T[] {
   if (val == null) return [];
   return Array.isArray(val) ? val : [val];
 }
 
 /**
- * Removes nodes from a DatabaseModel that match specified exclusion patterns, and records
- * the removed objects on the parse statistics of the surviving objects that referenced them.
- *
- * @remarks
- * Node and edge exclusion is delegated to {@link applyExclusionFilter} so the load-time and
- * graph-time paths cannot diverge; only the parse-stat annotation is specific to this entry
- * point. Invalid patterns are skipped and reported, matching that function's contract.
- *
- * @param model - The DatabaseModel to filter.
- * @param patterns - Array of regex pattern strings.
- * @param onWarning - Callback receiving a formatted message for each invalid regex pattern.
- * @returns A new DatabaseModel with matching nodes and edges removed.
+ * Removes nodes matching exclusion patterns and records the removed objects on the parse statistics
+ * of surviving objects that referenced them. Node and edge exclusion is delegated to {@link
+ * applyExclusionFilter} so load-time and graph-time paths cannot diverge; only the parse-stat
+ * annotation is specific here. Invalid patterns are skipped and reported via `onWarning`.
  */
 export function applyExclusionPatterns(model: DatabaseModel, patterns: string[], onWarning?: (msg: string) => void): DatabaseModel {
   const filtered = applyExclusionFilter(model, patterns, (pattern, err) => {

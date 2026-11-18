@@ -1,15 +1,12 @@
 /**
- * Full-array structural validation of a model-bound message history.
- *
- * @remarks
- * Providers reject a history in which a tool result has no call on the nearest preceding assistant
- * message, or a tool call has no result before the next turn — but only with an opaque transport
- * error (HTTP 400 `unexpected tool_use_id` / `tool_use ids were found without tool_result`) raised
- * deep in the provider stack. The first shape is what a suffix cut of a paired transcript can
- * produce, the cut point being chosen by `trimMessages`, not by the runtime; asserting both at the
- * send chokepoint turns either into a diagnosable internal error carrying a compact structural
- * snapshot. Pure and vscode-free; the snapshot carries roles and tail-truncated call ids only,
- * never message content.
+ * Full-array structural validation of a model-bound message history. Providers reject a history in
+ * which a tool result has no call on the nearest preceding assistant message, or a tool call has no
+ * result before the next turn, but only with an opaque transport error (HTTP 400 `unexpected
+ * tool_use_id` / `tool_use ids were found without tool_result`) deep in the provider stack. A
+ * suffix cut of a paired transcript (the cut point chosen by `trimMessages`, not the runtime) can
+ * produce the first shape; asserting both at the send chokepoint turns either into a diagnosable
+ * internal error with a compact structural snapshot. Pure and vscode-free; the snapshot carries
+ * roles and tail-truncated call ids only, never message content.
  */
 import { AIMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages';
 
@@ -40,9 +37,9 @@ function snapshotMessages(messages: readonly BaseMessage[]): string {
 
 /**
  * Verifies every tool message answers a tool call on the nearest preceding assistant message and
- * every tool call is answered by a tool message directly after its assistant message.
+ * every tool call is answered by a tool message directly after it.
  *
- * @throws An internal invariant error naming the first unpaired tool message or tool call, with a
+ * @throws An internal invariant error naming the first unpaired tool message or call, with a
  *   structural snapshot of roles and tail-truncated call ids.
  */
 export function assertToolPairingWellFormed(messages: readonly BaseMessage[]): void {

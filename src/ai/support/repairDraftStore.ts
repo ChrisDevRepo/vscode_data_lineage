@@ -1,10 +1,8 @@
 /**
- * Tiny lifecycle holder for "hold-and-amend" AI repair drafts.
- *
- * @remarks
- * The store is deliberately domain-neutral: it does not know which fields are safe to preserve or
- * which failures are repairable; tool/domain dispatchers own those policies. A held draft is cleared
- * only on success or turn reset, never by a failed retry.
+ * Lifecycle holder for "hold-and-amend" AI repair drafts. Deliberately domain-neutral: it does not
+ * know which fields are safe to preserve or which failures are repairable (tool/domain dispatchers
+ * own those policies). A held draft is cleared only on success or turn reset, never by a failed
+ * retry.
  */
 export class RepairDraftStore<TFull, TAuthorization = undefined> {
   private draft: TFull | null = null;
@@ -59,10 +57,10 @@ export class RepairDraftStore<TFull, TAuthorization = undefined> {
  * contract for the same merge ({@link RepairDraftStore.mergeByKey}).
  *
  * @param field - The list field a resend carries, e.g. `sections`.
- * @param key - What identifies an entry in that list, e.g. `label` or `angle`.
+ * @param key - What identifies an entry, e.g. `label` or `angle`.
  * @param partialFields - The entry fields the stage accepts and a resent entry may omit to keep the
- * held value, the first being the body a new key needs. Absent for a list whose entries are only
- * replaced by key.
+ *   held value, the first being the body a new key needs; absent for a list whose entries are only
+ *   replaced by key.
  */
 export function keyedResendRule(field: string, key: string, partialFields: readonly string[] = []): string {
   const rule = `${field}: resend only the entries you add or change, each under its held ${key}; a held entry left unnamed is kept as authored.`;

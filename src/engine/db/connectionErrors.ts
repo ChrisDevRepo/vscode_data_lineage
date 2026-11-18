@@ -1,8 +1,7 @@
 /**
  * @module ConnectionErrors
- * One place that turns a failed connect or query into the text and actions the user sees.
- *
- * The driver's own message is shown verbatim behind the connection name; only the actions are chosen
+ * One place that turns a failed connect or query into the text and actions the user sees. The
+ * driver's own message is shown verbatim behind the connection name; only the actions are chosen,
  * by error number, code or message pattern. Both providers use it.
  */
 
@@ -32,7 +31,9 @@ export interface ConnectionErrorAction {
 
 /** What the caller can do on the user's behalf when an action asks for it. */
 export interface ConnectionErrorHooks {
-  /** Repeats the failed operation once; `patch` overrides stored connection fields for that attempt. */
+  /**
+   * Repeats the failed operation once; `patch` overrides stored connection fields for that attempt.
+   */
   retry?: (patch?: Partial<StoredConnectionInfo>) => Promise<void> | void;
   /** Asks the user for a database name. */
   chooseDatabase?: () => Promise<string | undefined>;
@@ -83,11 +84,9 @@ function errorNumber(err: unknown): number | undefined {
 }
 
 /**
- * Whether an error came from the SQL driver rather than from this extension's own logic.
- *
- * @remarks
- * Driver errors carry a numeric SQL Server error number or an `E…` code (`ELOGIN`, `ETIMEOUT`,
- * `ESOCKET`, `EREQUEST`).
+ * Whether an error came from the SQL driver rather than this extension's own logic: driver errors
+ * carry a numeric SQL Server error number or an `E…` code (`ELOGIN`, `ETIMEOUT`, `ESOCKET`,
+ * `EREQUEST`).
  */
 export function isDriverError(err: unknown): boolean {
   return errorNumber(err) !== undefined || /^E[A-Z]+$/.test(errorCode(err) ?? '');
@@ -116,17 +115,12 @@ function grantStatement(user: string | undefined): string {
 }
 
 /**
- * Describes a connection or query failure for the user.
+ * Describes a connection or query failure for the user. `message` is `<connection name>: <original
+ * driver text>` with credential-shaped text removed, plus one hint when the server rejects a
+ * Microsoft token. Actions depend on the error class: those managing a saved built-in connection
+ * are offered only for the built-in provider, Retry only when the caller supplies a retry hook.
+ * Each action runs on the user's click and any retry is a single attempt, never a loop.
  *
- * @remarks
- * `message` is `<connection name>: <original driver text>` with credential-shaped text removed, plus
- * one hint when the server rejects a Microsoft token. The
- * actions depend on the error class; those that manage a saved built-in connection are offered only
- * for the built-in provider, and Retry only when the caller supplies a retry hook. Each action runs
- * on the user's click and any retry it triggers is a single attempt, never a loop.
- *
- * @param err - The raw error from the driver.
- * @param target - The connection the error belongs to.
  * @param hooks - Caller-supplied capabilities the actions use.
  */
 export function describeConnectionError(
@@ -227,10 +221,8 @@ export function describeConnectionError(
 }
 
 /**
- * Asks, in a modal, whether to trust a server certificate without validating it.
- *
- * @param connection - The server the certificate belongs to.
- * @returns `true` only when the user confirmed.
+ * Asks, in a modal, whether to trust a server certificate without validating it; `true` only when
+ * the user confirmed.
  */
 export async function confirmTrustServerCertificate(connection: Pick<BuiltInConnection, 'server' | 'port' | 'database'>): Promise<boolean> {
   const confirmed = await vscode.window.showWarningMessage(
@@ -243,12 +235,9 @@ export async function confirmTrustServerCertificate(connection: Pick<BuiltInConn
 
 /**
  * Logs a connection error once, shows it with its actions, and runs the action the user picks.
- *
- * @remarks
- * Redacted driver detail goes to the log at debug level; the toast carries the described message, never
- * the raw error alone. The returned `message` is for callers that also show the text inline.
- *
- * @returns The described message, and a promise that settles once the toast is answered or dismissed.
+ * Redacted driver detail goes to the log at debug level; the toast carries the described message,
+ * never the raw error alone. The returned `message` is for callers that also show the text inline,
+ * with a promise that settles once the toast is answered or dismissed.
  */
 export function reportConnectionError(
   err: unknown,
@@ -274,21 +263,12 @@ export function reportConnectionError(
   return { message, actions, answered };
 }
 
-/**
- * Builds the error target for a session that is already open.
- *
- * @param session - The open session.
- */
+/** Builds the error target for a session that is already open. */
 export function targetFromSession(session: DbSession): ConnectionErrorTarget {
   return targetFromStored(session.connectionInfo, session.provider);
 }
 
-/**
- * Builds the error target for a stored connection record.
- *
- * @param info - The stored record.
- * @param provider - The provider that is connecting.
- */
+/** Builds the error target for a stored connection record and the provider that is connecting. */
 export function targetFromStored(info: StoredConnectionInfo, provider: ConnectionErrorTarget['provider']): ConnectionErrorTarget {
   const saved = provider === 'builtIn' && info.connectionId
     ? readBuiltInConnections().find((c) => c.id === info.connectionId)

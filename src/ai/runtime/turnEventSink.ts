@@ -43,10 +43,9 @@ export type TurnEventConsumer = (event: TurnEvent) => void;
 export type TurnEventObserver = (event: TurnEvent, sequence: number) => void;
 
 /**
- * Provider-neutral event sink for exactly one runtime turn.
- *
- * The terminal outcome is claimed before invoking the external callback, so
- * synchronous re-entry cannot emit a second terminal or a late event.
+ * Provider-neutral event sink for exactly one runtime turn. The terminal outcome is claimed before
+ * the external callback runs, so synchronous re-entry cannot emit a second terminal or a late
+ * event.
  */
 export class TurnEventSink {
   private eventCount = 0;

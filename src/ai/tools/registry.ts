@@ -1,23 +1,17 @@
 /**
- * Shared provider-neutral tool registry and dispatch seam.
- *
- * @remarks
- * `IToolRegistry` is the single, provider-neutral dispatch surface for the AI tool catalog and the
- * authoritative list — the host builds one, binds each catalog entry's `execute` to its handler,
- * and registers its tools with VS Code, so no hand-maintained parallel array can drift from it.
- * The registry itself is VS Code-free and Map-backed, so it is unit-testable and equally usable
- * from a model transport or from a LangGraph node.
- *
- * Generic over the execution result `O` so the host can parameterize it with
- * `vscode.LanguageModelToolResult` without leaking a VS Code import into this module.
+ * Shared provider-neutral tool registry and dispatch seam. `IToolRegistry` is the single dispatch
+ * surface and authoritative list of the AI tool catalog: the host builds one, binds each entry's
+ * `execute` to its handler and registers its tools with VS Code, so no parallel array can drift. VS
+ * Code-free and Map-backed, so it is unit-testable and usable from a model transport or a LangGraph
+ * node; generic over the result `O` so the host can use `vscode.LanguageModelToolResult` without a
+ * VS Code import here.
  */
 import type { z } from 'zod';
 
 /**
- * The VS Code-free registry shape for a tool. Canonical lineage entries come from the
- * richer `ToolContract` catalog in `toolDefs.ts`; lightweight third-party/test entries
- * may omit presentation metadata. The executable `RegisteredTool` is assembled at
- * registration time by pairing this shape with a handler.
+ * The VS Code-free registry shape for a tool. Canonical entries come from the richer `ToolContract`
+ * catalog in `toolDefs.ts`; lightweight third-party/test entries may omit presentation metadata.
+ * The executable `RegisteredTool` pairs this shape with a handler at registration.
  */
 export interface ToolDefinition {
   /** `snake_case` `verb_noun`, `lineage_`-prefixed, ≤64 chars — matches `package.json`. */
@@ -32,29 +26,27 @@ export interface ToolDefinition {
   readonly modelDescription?: string;
   /**
    * Whether invoking the tool reads state or commits a lifecycle transition. Anything except
-   * `'read'` executes through the write-serializing effect queue — `'scope_store'` exists because
-   * the scope-bundle lookup also stores the discovery-scope artifact, so it must serialize with
-   * the other session writers even though the model perceives it as a read.
+   * `'read'` runs through the write-serializing effect queue; `'scope_store'` exists because the
+   * scope-bundle lookup also stores the discovery-scope artifact, so it must serialize with the
+   * other session writers though the model perceives a read.
    */
   readonly effect?: 'read' | 'scope_store' | 'session_start' | 'hop_commit' | 'preview_commit' | 'presentation_commit';
   /**
-   * Short, user-friendly label shown in the UI while the tool executes (e.g. "Searching database
-   * objects…"). A registered tool that omits it emits no status update — the previous status
-   * remains visible; only unregistered tools fall back to a generic running label.
+   * Short user-facing label shown while the tool executes (e.g. "Searching database objects…"). A
+   * registered tool that omits it emits no status update, leaving the previous status visible; only
+   * unregistered tools fall back to a generic running label.
    */
   readonly progressLabel?: string;
 }
 
 /**
- * A registered, executable tool: a {@link ToolDefinition} plus the bound handler.
- *
- * @typeParam O - The execution result type (e.g. `vscode.LanguageModelToolResult`).
+ * A registered, executable tool: a {@link ToolDefinition} plus the bound handler; `O` is the
+ * execution result type.
  */
 export interface RegisteredTool<O = unknown> extends ToolDefinition {
   /**
-   * Runs the tool. Receives the raw, model-supplied input unchanged so existing
-   * handler boundary validation and policy guards remain authoritative. The registry adds
-   * provider-neutral lookup and dispatch without introducing a second validation path.
+   * Runs the tool with the raw, model-supplied input unchanged, so handler boundary validation and
+   * policy guards stay authoritative and the registry adds no second validation path.
    */
   execute(input: unknown): O | Promise<O>;
 }
@@ -63,7 +55,10 @@ export interface RegisteredTool<O = unknown> extends ToolDefinition {
 export interface IToolRegistry<O = unknown> {
   /** Registers a tool; throws on a duplicate name (drift/typo guard). */
   register(tool: RegisteredTool<O>): void;
-  /** Dispatches `name` with the raw input, returning the handler's result. Throws if `name` is unknown. */
+  /**
+   * Dispatches `name` with the raw input, returning the handler's result. Throws if `name` is
+   * unknown.
+   */
   invoke(name: string, input: unknown): O | Promise<O>;
   /** All registered tools, in registration order. */
   getTools(): readonly RegisteredTool<O>[];
@@ -109,17 +104,10 @@ export class ToolRegistry<O = unknown> implements IToolRegistry<O> {
 }
 
 /**
- * A read-only view of a registry restricted to an allowed tool-name set.
- *
- * @remarks
- * The phase-aware host loop exposes only the tools allowed in the current phase (the
- * phase tool-policy set) without mutating the underlying registry. Lookup and dispatch are
- * filtered so a phase-disallowed name fails as an unknown tool. The single dispatch surface
- * is preserved; `register` is disabled because the view is immutable.
- *
- * @param reg - The backing registry.
- * @param allowed - The set of tool names visible through this view.
- * @returns A read-only filtered registry view.
+ * A read-only view of a registry restricted to an allowed tool-name set, so the phase-aware host
+ * loop exposes only the current phase's tools without mutating the registry. Lookup and dispatch
+ * are filtered, so a phase-disallowed name fails as an unknown tool; the single dispatch surface is
+ * preserved and `register` is disabled because the view is immutable.
  */
 export function filterRegistry<O>(reg: IToolRegistry<O>, allowed: ReadonlySet<string>): IToolRegistry<O> {
   const ensure = (name: string): void => {
@@ -145,16 +133,14 @@ export interface TrackedRegistry<O> {
 /**
  * Wraps a registry so the host turn boundary can await in-flight dispatch before it finalizes.
  *
- * @remarks
  * A LangGraph node's task promise is not awaited by `graph.invoke` once an external `AbortSignal`
- * wins the runner's internal race (`@langchain/langgraph/dist/pregel/runner.js`
- * `_executeTasksWithRetry`): the node — and any `registry.invoke()` it is awaiting — keeps running
- * after `graph.invoke` has already rejected. A host that closes the turn (releases the lease,
- * finalizes session state) on that rejection races its own close against the tool's effect. This
- * view is the one dispatch surface every phase's tool call goes through
- * ({@link IToolRegistry.invoke}), so tracking here — not inside any one handler — covers every
- * mutating tool without adding a second dispatch path.
- * @param reg - The backing registry.
+ * wins the runner's internal race (`@langchain/langgraph` `pregel/runner.js`
+ * `_executeTasksWithRetry`): the node, and any `registry.invoke()` it awaits, keeps running after
+ * `graph.invoke` rejected, so a host closing the turn on that rejection (releasing the lease,
+ * finalizing state) races the tool's effect. Every phase's tool call goes through this view ({@link
+ * IToolRegistry.invoke}), so tracking here covers every mutating tool without a second dispatch
+ * path.
+ *
  * @returns The tracked view plus the settle-await the host calls before finalizing a turn.
  */
 export function trackInFlightDispatch<O>(reg: IToolRegistry<O>): TrackedRegistry<O> {
@@ -189,9 +175,9 @@ export function overrideRegistrySchemas<O>(
 }
 
 /**
- * Returns a read-only registry view whose selected provider schemas are resolved on every access.
- * This is the provider-neutral projection seam for runtime facts resolved immediately before one
- * model generation. Dispatch remains delegated to the unchanged backing registry.
+ * Returns a read-only registry view whose selected provider schemas are resolved on every access:
+ * the projection seam for runtime facts resolved immediately before one model generation. Dispatch
+ * stays delegated to the unchanged backing registry.
  */
 export function resolveRegistrySchemas<O>(
   reg: IToolRegistry<O>,

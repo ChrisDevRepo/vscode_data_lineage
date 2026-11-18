@@ -5,7 +5,8 @@ import type { AIViewMetadata } from '../../engine/projectStore';
 export interface DiscoveryScopeArtifact {
   /**
    * Epoch of the host turn that captured (or, for a preview, re-armed) this scope; a consumer that
-   * renders it requires the live turn's epoch, and discovery tells its own walk from an earlier one.
+   * renders it requires the live turn's epoch, and discovery tells its own walk from an earlier
+   * one.
    */
   readonly turnEpoch: number;
   /** Canonical id of the node the BFS walked from. */
@@ -28,16 +29,13 @@ export interface PresentationArtifact {
   readonly aiMetadata: AIViewMetadata & { readonly summary: string; readonly description: string };
   /** Identifier of the run that authored this presentation. */
   readonly runId?: string;
-  /** Serialized engine state captured at present time; absent when no exploration engine was live. */
+  /** Serialized engine state captured at present time; absent when no engine was live. */
   readonly checkpoint?: SmState;
 }
 
 /**
- * Represents the grounded findings of an AI session, serialized for visualization.
- *
- * @remarks
- * This structure is typically populated by `ColumnTrace` or `Blackboard` modes and
- * consumed by the `present_result` synthesis logic to generate the final interactive report.
+ * The grounded findings of an AI session, serialized for visualization; populated by `ColumnTrace`
+ * or `Blackboard` modes and consumed by `present_result` synthesis to build the interactive report.
  */
 export interface ResultGraph {
   /** IDs of nodes that are part of the result scope. */
@@ -54,7 +52,10 @@ export interface ResultGraph {
   suggested_sections?: Array<{ label: string; node_ids: string[] }>;
   /** Engine-owned lifecycle state for nodes; detail slots are content only. */
   node_states?: SmNodeState[];
-  /** Engine-assembled markdown body from `present_result` (engine output, not AI input) — carries the full synthesized description, not just topology. */
+  /**
+   * Engine-assembled markdown body from `present_result` (engine output, not AI input) — carries
+   * the full synthesized description, not just topology.
+   */
   description?: string;
   /** AI-supplied one-line digest from `present_result.input.summary`. */
   summary?: string;
@@ -65,37 +66,37 @@ export interface ResultGraph {
   /** AI-supplied closing note from `present_result.input.closing`. */
   closing?: string;
   /**
-   * AI-supplied report sections from `present_result.input.sections[]`, with evidence references
-   * already expanded — ids number the captured archive in slot order, so a later capture could
+   * AI-supplied report sections from `present_result.input.sections[]` with evidence references
+   * already expanded. Ids number the captured archive in slot order, so a later capture could
    * renumber them before an amendment retains the section.
    */
   sections?: Array<{ label: string; node_ids?: string[]; text?: string }>;
-  /** The `explorationRunId` that authored {@link sections} — distinguishes sections a later render may retain from ones left over from a previous run. */
+  /**
+   * The `explorationRunId` that authored {@link sections} — distinguishes sections a later render
+   * may retain from ones left over from a previous run.
+   */
   sectionsRunId?: string;
   /** Column lineage chain from a CT session. */
   columnAspect?: { edges: ColumnEdge[] };
 }
 
 /**
- * Schema version of the AI output-templates contract (the `aiOutputTemplates.yaml` structure).
- *
- * @remarks
- * A user's custom overlay (`ai.outputTemplateFile`) is honoured only when its `schemaVersion`
- * equals this. Bump only when a released change would break a previous overlay (a key/field
- * removed or retyped); an added key or wording change never bumps. On mismatch the overlay is
- * skipped with an Output-channel warning — no migration code.
+ * Schema version of the AI output-templates contract (`aiOutputTemplates.yaml`). A custom overlay
+ * (`ai.outputTemplateFile`) is honoured only when its `schemaVersion` equals this. Bump only when a
+ * released change would break a previous overlay (a key/field removed or retyped); an added key or
+ * wording change never bumps. On mismatch the overlay is skipped with an Output-channel warning;
+ * there is no migration code.
  */
 export const AI_TEMPLATE_SCHEMA_VERSION = 2;
 
 /**
- * Collection of Markdown-formatted instructions for AI report generation.
- *
- * @remarks
- * These templates are loaded from `assets/aiOutputTemplates.yaml` during extension activation
- * and guide the AI in synthesizing its findings into a structured, user-friendly report.
+ * Markdown-formatted instructions for AI report generation, loaded from
+ * `assets/aiOutputTemplates.yaml` at activation.
  */
 export interface AiOutputTemplates {
-  /** Discovery-phase chat output — tunes answer length, citation and format; NOT a capture template. */
+  /**
+   * Discovery-phase chat output — tunes answer length, citation and format; NOT a capture template.
+   */
   discovery_chat: string;
   /** Instructions for generating the high-level summary. */
   summary: string;
@@ -110,48 +111,45 @@ export interface AiOutputTemplates {
   /** Instructions for extracting and formatting node-level notes. */
   notes: string;
   /**
-   * Business-angle capture rules — fired at ACTIVE phase. Governs the body
-   * of the section the AI submits with `angle: 'business'` per hop: meaning,
-   * formulas, column renames, ⚠️ invariants, question-relevance evidence.
-   * The section body arrives at synthesis already formatted and is lifted
-   * verbatim into a peer entry of `present_result.sections[]`.
+   * Business-angle capture rules, fired at ACTIVE phase: govern the body of the section submitted
+   * with `angle: 'business'` per hop (meaning, formulas, column renames, ⚠️ invariants,
+   * question-relevance evidence). The body arrives at synthesis formatted and is lifted verbatim
+   * into a peer entry of `present_result.sections[]`.
    */
   business_capture: string;
   /**
-   * Technical-angle capture rules — fired at ACTIVE phase. Governs the body
-   * of the section the AI submits with `angle: 'technical'` per hop:
-   * verbatim SQL snippets, loading pattern, join types, antipatterns,
-   * distribution hints, DDL annotations. The section body arrives at
-   * synthesis already formatted and is lifted verbatim.
+   * Technical-angle capture rules, fired at ACTIVE phase: govern the body of the section submitted
+   * with `angle: 'technical'` per hop (verbatim SQL, loading pattern, join types, antipatterns,
+   * distribution hints, DDL annotations). Lifted verbatim at synthesis.
    */
   technical_capture: string;
   /**
-   * The ⚠️ structural-callout contract — fired at ACTIVE phase on every bodied focus,
-   * once per hop beside whichever capture recipes the classification fires. One home for the
-   * exposure classes and the one-line form both angles cite.
+   * The ⚠️ structural-callout contract, fired at ACTIVE phase on every bodied focus, once per hop
+   * beside whichever capture recipes the classification fires. One home for the exposure classes
+   * and the one-line form both angles cite.
    */
   structural_callouts: string;
-  /** Reduced active-phase template for non-bodied origin nodes (Purpose/Columns/Upstream/Downstream/Grain). */
+  /**
+   * Reduced active-phase template for non-bodied origin nodes
+   * (Purpose/Columns/Upstream/Downstream/Grain).
+   */
   structural_summary: string;
   /**
-   * Cross-section depth floor at SYNTHESIS. Conditional rendering directives
-   * (column-rename tables, LaTeX formulas, code-fenced source guards, numbered
-   * state transitions) lifted across every section when the underlying capture
-   * material supports them. Always-on at synthesis; conditional-by-content.
+   * Cross-section depth floor at SYNTHESIS: conditional rendering directives (column-rename tables,
+   * LaTeX formulas, code-fenced source guards, numbered state transitions) lifted across every
+   * section when the capture material supports them. Always on; conditional by content.
    */
   general: string;
   /**
-   * Big-picture ETL closing pattern at SYNTHESIS — TECHNICAL angle only.
-   * When all bodied procedures share a load shape (TRUNCATE+INSERT, append,
-   * upsert, historization, purge, orchestration), name it once in the closing
-   * note. Classification-gated to `technical` and `both`.
+   * Big-picture ETL closing pattern at SYNTHESIS, TECHNICAL angle only: when all bodied procedures
+   * share a load shape (TRUNCATE+INSERT, append, upsert, historization, purge, orchestration), name
+   * it once in the closing note. Classification-gated to `technical` and `both`.
    */
   loading_pattern: string;
   /**
-   * Column Trace capture rules — fired at ACTIVE phase when CT mode is on (`targetColumns` set).
-   * Provides per-hop instructions for filling the `column_flow` JSON provenance record.
-   * CT-mode-gated — does not fire on Blackboard sessions without column targets.
-   * Additive alongside classification-gated templates (business_capture / technical_capture).
+   * Column Trace capture rules, fired at ACTIVE phase when CT mode is on (`targetColumns` set):
+   * per-hop instructions for filling the `column_flow` provenance record. CT-mode-gated (not on
+   * Blackboard sessions) and additive to the classification-gated templates.
    */
   column_trace_capture: string;
 }
@@ -160,24 +158,22 @@ export interface AiOutputTemplates {
 export type AiSectionAngle = 'business' | 'technical';
 
 /**
- * Template key whose recipe declares the section labels of each {@link AiSectionAngle}.
- *
- * @remarks
- * The `sections` field of that key is the single home of the bold labels the angle writes:
- * synthesis serves the active angle's list from it, so a label is never listed a second time.
+ * Template key whose recipe declares the section labels of each {@link AiSectionAngle}. Its
+ * `sections` field is the single home of the bold labels the angle writes; synthesis serves the
+ * active angle's list from it, so a label is never listed twice.
  */
 export const AI_SECTION_KEY_BY_ANGLE: Readonly<Record<AiSectionAngle, 'business_capture' | 'technical_capture'>> = {
   business: 'business_capture',
   technical: 'technical_capture',
 };
 
-/** Ordered section labels per capture angle, read from the optional `sections` field of the capture recipes. */
+/** Ordered section labels per capture angle, from the optional `sections` field of the recipes. */
 export type AiOutputSections = Readonly<Partial<Record<AiSectionAngle, readonly string[]>>>;
 
 /** No declared section labels: a synthesis template carrying the placeholder gets an empty list. */
 export const EMPTY_AI_SECTIONS: AiOutputSections = {};
 
-/** Placeholder in the `general` instruction that synthesis replaces with the active angle's section labels. */
+/** Placeholder in the `general` instruction replaced at synthesis by the active angle's labels. */
 export const SECTIONS_PLACEHOLDER = '{{sections}}';
 
 /** Loader result: the instruction strings plus the section labels declared beside them. */
@@ -189,10 +185,8 @@ export interface AiOutputTemplateSet {
 }
 
 /**
- * Default empty state for AI output templates.
- *
- * @remarks
- * Prevents runtime errors if template loading fails or is delayed.
+ * Default empty state for AI output templates; prevents runtime errors if template loading fails or
+ * is delayed.
  */
 export const EMPTY_AI_TEMPLATES: AiOutputTemplates = {
   discovery_chat: '',
