@@ -10,7 +10,7 @@ import type { InvalidRouteKind, InvalidRoute } from './smTypes';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { keyedResendRule } from '../support/repairDraftStore';
 import { HELD_FINDING_CALL_ORDER } from '../tools/toolSchemas';
-import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
+import { ISSUES, makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 
 /** True for nonfatal drop/refuse-with-notice kinds. */
 export function isAbsentKind(kind: InvalidRouteKind): boolean {
@@ -22,33 +22,25 @@ export function isAbsentKind(kind: InvalidRouteKind): boolean {
 /**
  * Per-kind corrective order, keyed by {@link InvalidRouteKind} so a new kind is a compile error.
  * Each is a self-contained **verb-led imperative**, positive, with the legitimate alternative built
- * in so the model never guesses the nearest match; used for the content-error hint. The offending
- * value is stated in the rejection reason; column inventories stay machine-only until the final
- * rejection.
+ * in so the model never guesses the nearest match; used for the content-error hint. A kind with its
+ * own registry code states that code's table correction. The offending value is stated in the
+ * rejection reason; column inventories stay machine-only until the final rejection.
  */
 export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   absent_contributor:
     'Record it as an unresolved upstream source in your analysis and keep the upstream columns that resolve — it is not in the loaded model.',
-  bad_out_col:
-    'Recheck the exact object and column identity against the supplied SQL; do not guess a replacement.',
-  untracked_out_col:
-    'Set column_flow[].out_col to a tracked column from the `<column_trace> Active columns` list supplied for this hop — the named column exists on this node but the trace does not follow it — or submit column_flow: [] if this node carries no tracked column.',
-  bad_contributor_col:
-    'Recheck the exact object and column identity against the supplied SQL; do not guess a replacement.',
-  non_writer_continuation:
-    'This focus node has no body of its own, so its column_flow declares continuation: name only the neighbours on this focus\'s carrier side, using the valid routes named in the rejection reason, carrying the tracked column unchanged; the column is attributed on that node\'s own hop, where its body is in view. Remove entries naming any other neighbour.',
-  self_loop_column:
-    'Remove the upstream_columns entry identical to its output destination; keep a SQL-proved writes_to unchanged and explain any existing-destination read in sections.',
+  bad_out_col: ISSUES[REJECTION_CODES.outColNotOnNode].correction,
+  untracked_out_col: ISSUES[REJECTION_CODES.outColNotTracked].correction,
+  bad_contributor_col: ISSUES[REJECTION_CODES.contributorColNotOnSource].correction,
+  non_writer_continuation: ISSUES[REJECTION_CODES.continuationNotWriter].correction,
+  self_loop_column: ISSUES[REJECTION_CODES.columnSelfLoop].correction,
   bad_return_target:
     'Supply one column_flow entry for each exact caller_output_targets destination, with returns_to matching that node and column and out_col matching its column. Do not use writes_to on scalar-return tasks; identify real contributors from the supplied caller and function SQL.',
   bad_caller_context:
     'Use questions[].caller_context only for a neighboring function with supplied caller SQL and an active real caller output; otherwise omit caller_context and keep the question.',
-  bad_writes_to_target:
-    'Set writes_to to the table and column this hop\'s SQL writes, or to null when it writes no table or only a table outside the approved scope. A downstream reader is never a write destination: remove that node from writes_to; every open neighbor you do not prune is visited anyway.',
-  pruned_contributor:
-    'This upstream node was already pruned earlier this run and cannot supply the column — a removed node stays removed. Name a different, still-reachable supplier for this upstream_columns entry, or submit upstream_columns: [] and account for the column ending here.',
-  column_out_of_scope:
-    'column_flow names only in-scope objects. Drop the outside entry from upstream_columns, or set writes_to to null; use column_flow: [] if no entry remains. State the fact about the outside object in sections; further work on it goes in questions.',
+  bad_writes_to_target: ISSUES[REJECTION_CODES.writesToNamesReader].correction,
+  pruned_contributor: ISSUES[REJECTION_CODES.prunedContributor].correction,
+  column_out_of_scope: ISSUES[REJECTION_CODES.columnOutOfScope].correction,
   prune_absent:
     'This id is not in the loaded model — there is nothing to prune. Remove it from prune_neighbors.',
   prune_noop_removed:

@@ -12,86 +12,363 @@ import { REJECTION_CODES } from './rejectionCodes';
 const ISSUE_CATEGORIES = ['shape', 'required', 'reference', 'value', 'protocol', 'stage'] as const;
 type IssueCategory = (typeof ISSUE_CATEGORIES)[number];
 
-/** The fixed category of one issue code. */
+/** Fixed wording of one issue code: the fault (`label`) and its repair (`correction`). */
 interface IssueText {
   readonly category: IssueCategory;
+  readonly label: string;
+  readonly correction: string;
 }
 
 type RegistryCode = (typeof REJECTION_CODES)[keyof typeof REJECTION_CODES];
 /** Codes of a schema fault, mapped from Zod issue codes by {@link rejectionFromZodError}. */
 type SchemaIssueCode = 'type' | 'unknown_key' | 'never' | 'missing' | 'enum' | 'size' | 'invalid';
 
+const BACKEND_FAULT = {
+  category: 'stage',
+  label: 'extension fault',
+  correction: 'The run ends; the extension reports the fault to the user.',
+} as const;
+
 /**
- * Every issue code's fixed category: each registry code and each schema fault code. A fault on a
- * rejection's `errors` names one of these keys.
+ * The generic resend rule of a schema-invalid tool call whose tool holds no draft: the complete
+ * call is resent with a minimal edit. It is the only resend directive a rejection carries; a tool
+ * that holds a draft states its own held rule in its place.
+ */
+export const INVALID_TOOL_INPUT_REPAIR_HINT
+  = 'Resend the full tool call with only the offending field(s) corrected; keep every other field unchanged, and resend every element of a corrected list, repeating the unflagged elements exactly as first sent.';
+
+/**
+ * Standing repair instruction for a provider call naming a tool outside this phase's catalog. The
+ * valid names ride in the rejection's `detail.allowedTools`, not this sentence, so the instruction
+ * stays one fixed sentence regardless of how many tools the phase offers.
+ */
+export const UNKNOWN_TOOL_REPAIR_HINT = 'Call one of the tools already offered in this response.';
+
+/**
+ * Standing repair instruction for a provider-emitted duplicate tool-call id. The duplicate is a
+ * transport artifact, not a content mistake, so the repair is a fresh id rather than a resend.
+ */
+export const DUPLICATE_CALL_ID_REPAIR_HINT = 'Use a new, unique call id for this tool call.';
+
+/** Stable message shared by {@link NoProjectLoadedError} and {@link buildNoProjectLoadedError}. */
+const NO_PROJECT_LOADED_MESSAGE =
+  'No project is loaded in the Data Lineage panel (closed or not opened yet); open the project and ask again.';
+
+/**
+ * Every issue code's fixed category and fault/correction text: each registry code and each schema
+ * fault code. A fault on a rejection's `errors` names one of these keys.
  */
 export const ISSUES = {
-  type: { category: 'shape' },
-  unknown_key: { category: 'shape' },
-  never: { category: 'shape' },
-  missing: { category: 'required' },
-  enum: { category: 'value' },
-  size: { category: 'value' },
-  invalid: { category: 'value' },
-  [REJECTION_CODES.offPolicy]: { category: 'stage' },
-  [REJECTION_CODES.alreadyStarted]: { category: 'protocol' },
-  [REJECTION_CODES.duplicateCallId]: { category: 'protocol' },
-  [REJECTION_CODES.emptyGeneration]: { category: 'stage' },
-  [REJECTION_CODES.duplicateRead]: { category: 'protocol' },
-  [REJECTION_CODES.noRunMemory]: { category: 'stage' },
-  [REJECTION_CODES.staleTurn]: { category: 'stage' },
-  [REJECTION_CODES.invalidInput]: { category: 'value' },
-  [REJECTION_CODES.notFound]: { category: 'reference' },
-  [REJECTION_CODES.supplementRequiresCompleteEngine]: { category: 'stage' },
-  [REJECTION_CODES.supplementEmpty]: { category: 'value' },
-  [REJECTION_CODES.supplementAllRefused]: { category: 'reference' },
-  [REJECTION_CODES.invalidRegex]: { category: 'value' },
-  [REJECTION_CODES.overDiscoveryBudget]: { category: 'stage' },
-  [REJECTION_CODES.overActiveScopeBudget]: { category: 'stage' },
-  [REJECTION_CODES.actionRequired]: { category: 'stage' },
-  [REJECTION_CODES.missingField]: { category: 'required' },
-  [REJECTION_CODES.ctFieldForbiddenInBb]: { category: 'value' },
-  [REJECTION_CODES.noActiveSession]: { category: 'stage' },
-  [REJECTION_CODES.noProjectLoaded]: { category: 'stage' },
-  [REJECTION_CODES.staleProposalRevision]: { category: 'protocol' },
-  [REJECTION_CODES.routeValidationFailed]: { category: 'reference' },
-  [REJECTION_CODES.outColNotOnNode]: { category: 'reference' },
-  [REJECTION_CODES.outColNotTracked]: { category: 'reference' },
-  [REJECTION_CODES.contributorColNotOnSource]: { category: 'reference' },
-  [REJECTION_CODES.continuationNotWriter]: { category: 'reference' },
-  [REJECTION_CODES.columnSelfLoop]: { category: 'value' },
-  [REJECTION_CODES.writesToNamesReader]: { category: 'reference' },
-  [REJECTION_CODES.prunedContributor]: { category: 'reference' },
-  [REJECTION_CODES.columnOutOfScope]: { category: 'reference' },
-  [REJECTION_CODES.emptyStructuredOutput]: { category: 'stage' },
-  [REJECTION_CODES.missingRequiredToolCall]: { category: 'stage' },
-  [REJECTION_CODES.toolExecutionError]: { category: 'stage' },
-  [REJECTION_CODES.internalError]: { category: 'stage' },
-  [REJECTION_CODES.engineCrash]: { category: 'stage' },
-  [REJECTION_CODES.validation]: { category: 'value' },
-  [REJECTION_CODES.invalidStatus]: { category: 'stage' },
-  [REJECTION_CODES.explorationComplete]: { category: 'stage' },
-  [REJECTION_CODES.focusNodeIdMismatch]: { category: 'reference' },
-  [REJECTION_CODES.invalidToolInput]: { category: 'shape' },
-  [REJECTION_CODES.toolCallNotation]: { category: 'shape' },
-  [REJECTION_CODES.unknownTool]: { category: 'stage' },
-  [REJECTION_CODES.invalidStructuredOutput]: { category: 'shape' },
-  [REJECTION_CODES.notConnectedToTrace]: { category: 'reference' },
-  [REJECTION_CODES.extraCallNotEvaluated]: { category: 'protocol' },
-  [REJECTION_CODES.invalidPendingLead]: { category: 'reference' },
-  [REJECTION_CODES.missingResultGraph]: { category: 'stage' },
-  [REJECTION_CODES.noOpRefine]: { category: 'protocol' },
-  [REJECTION_CODES.originNotFound]: { category: 'reference' },
-  [REJECTION_CODES.outOfScopeOrNotNeighbor]: { category: 'reference' },
-  [REJECTION_CODES.parallelCallForbidden]: { category: 'protocol' },
-  [REJECTION_CODES.phaseClosed]: { category: 'protocol' },
-  [REJECTION_CODES.previewSourceUnavailable]: { category: 'stage' },
-  [REJECTION_CODES.queryNotAName]: { category: 'value' },
-  [REJECTION_CODES.queryTooShort]: { category: 'value' },
-  [REJECTION_CODES.resultTooLarge]: { category: 'stage' },
-  [REJECTION_CODES.unknownColumns]: { category: 'reference' },
-  [REJECTION_CODES.unknownNodeIds]: { category: 'reference' },
-  [REJECTION_CODES.asymmetricDepthBothZero]: { category: 'value' },
+  type: {
+    category: 'shape',
+    label: 'wrong JSON type',
+    correction: 'Send the value as the JSON type the schema defines for this field.',
+  },
+  unknown_key: {
+    category: 'shape',
+    label: 'not a field of this object',
+    correction: 'Use only field names the schema defines for this object.',
+  },
+  never: {
+    category: 'shape',
+    label: 'field not accepted here',
+    correction: "Put this content where the field's schema description places it; this field stays out of the call.",
+  },
+  missing: {
+    category: 'required',
+    label: 'required field',
+    correction: 'Add a value for this field as its schema describes.',
+  },
+  enum: {
+    category: 'value',
+    label: 'not an allowed value',
+    correction: 'Send one of the values the schema lists for this field.',
+  },
+  size: {
+    category: 'value',
+    label: 'outside its size bound',
+    correction: 'Keep the value within the length or count the schema states.',
+  },
+  invalid: {
+    category: 'value',
+    label: 'breaks the rule of this field',
+    correction: "Send a value that meets the rule in the field's schema description.",
+  },
+  [REJECTION_CODES.offPolicy]: {
+    category: 'stage',
+    label: 'tool not offered in this step',
+    correction: 'Call a tool this step offers.',
+  },
+  [REJECTION_CODES.alreadyStarted]: {
+    category: 'protocol',
+    label: 'an exploration is already running',
+    correction: 'Continue the running exploration with lineage_submit_findings.',
+  },
+  [REJECTION_CODES.duplicateCallId]: {
+    category: 'protocol',
+    label: 'call id already used in this reply',
+    correction: DUPLICATE_CALL_ID_REPAIR_HINT,
+  },
+  [REJECTION_CODES.emptyGeneration]: {
+    category: 'stage',
+    label: 'reply carried no text and no call',
+    correction: 'Answer the user in text, or call a tool for more evidence.',
+  },
+  [REJECTION_CODES.duplicateRead]: {
+    category: 'protocol',
+    label: 'read already answered in this step',
+    correction: 'Answer from the result already in the conversation, or call a different read.',
+  },
+  [REJECTION_CODES.noRunMemory]: {
+    category: 'stage',
+    label: 'no stored run for the applied view',
+    correction: 'Answer from what the applied view shows.',
+  },
+  [REJECTION_CODES.staleTurn]: BACKEND_FAULT,
+  [REJECTION_CODES.invalidInput]: {
+    category: 'value',
+    label: 'breaks the input contract of this tool',
+    correction: INVALID_TOOL_INPUT_REPAIR_HINT,
+  },
+  [REJECTION_CODES.notFound]: {
+    category: 'reference',
+    label: 'not an object in the loaded model',
+    correction: 'Name an object of the loaded model by its id.',
+  },
+  [REJECTION_CODES.supplementRequiresCompleteEngine]: {
+    category: 'stage',
+    label: 'no completed exploration to supplement',
+    correction: "Start a fresh exploration instead (omit the 'supplement' field, provide 'origin').",
+  },
+  [REJECTION_CODES.supplementEmpty]: {
+    category: 'value',
+    label: 'supplement names no object',
+    correction: 'Answer from what the completed exploration holds.',
+  },
+  [REJECTION_CODES.supplementAllRefused]: {
+    category: 'reference',
+    label: 'every supplement id was refused',
+    correction: 'Propose a new exploration with lineage_start_exploration for an object the trace does not reach.',
+  },
+  [REJECTION_CODES.invalidRegex]: {
+    category: 'value',
+    label: 'pattern does not compile within the length and time limits',
+    correction: 'Send a simpler pattern that compiles, or a plain name fragment.',
+  },
+  [REJECTION_CODES.overDiscoveryBudget]: {
+    category: 'stage',
+    label: 'scope exceeds the discovery budget',
+    correction: 'Propose an exploration with lineage_start_exploration; it reads the scope hop by hop.',
+  },
+  [REJECTION_CODES.overActiveScopeBudget]: {
+    category: 'stage',
+    label: 'scope over the configured round or column limit',
+    correction: 'Propose a narrower scope: fewer levels or fewer columns.',
+  },
+  [REJECTION_CODES.actionRequired]: {
+    category: 'stage',
+    label: 'waiting for the user decision on the card',
+    correction: 'Wait for the user decision; the card holds the proposal.',
+  },
+  [REJECTION_CODES.missingField]: {
+    category: 'required',
+    label: 'required field',
+    correction: 'Add a value for this field as its schema describes.',
+  },
+  [REJECTION_CODES.ctFieldForbiddenInBb]: {
+    category: 'value',
+    label: 'targetColumns sent with analysisMode "bb"',
+    correction: 'Omit targetColumns and resubmit the BB specification.',
+  },
+  [REJECTION_CODES.noActiveSession]: {
+    category: 'stage',
+    label: 'no exploration is running',
+    correction: 'Start an exploration with lineage_start_exploration, or answer from what the conversation holds.',
+  },
+  [REJECTION_CODES.noProjectLoaded]: {
+    category: 'stage',
+    label: 'no project is loaded in the Data Lineage panel',
+    correction: NO_PROJECT_LOADED_MESSAGE,
+  },
+  [REJECTION_CODES.staleProposalRevision]: {
+    category: 'protocol',
+    label: 'not the revision the approval card shows',
+    correction: 'proposalRevision is valid only while refining the matching pending approval gate.',
+  },
+  [REJECTION_CODES.routeValidationFailed]: {
+    category: 'reference',
+    label: 'reference not valid for this hop',
+    correction: 'Correct the listed references; the other fields of the call stay held.',
+  },
+  [REJECTION_CODES.outColNotOnNode]: {
+    category: 'reference',
+    label: 'not a column of the current object',
+    correction: 'Recheck the exact object and column identity against the supplied SQL; do not guess a replacement.',
+  },
+  [REJECTION_CODES.outColNotTracked]: {
+    category: 'reference',
+    label: 'not a tracked column of this hop',
+    correction: 'Set column_flow[].out_col to a tracked column from the `<column_trace> Active columns` list supplied for this hop — the named column exists on this node but the trace does not follow it — or submit column_flow: [] if this node carries no tracked column.',
+  },
+  [REJECTION_CODES.contributorColNotOnSource]: {
+    category: 'reference',
+    label: 'not a declared column of that object',
+    correction: 'Recheck the exact object and column identity against the supplied SQL; do not guess a replacement.',
+  },
+  [REJECTION_CODES.continuationNotWriter]: {
+    category: 'reference',
+    label: 'not a neighbour on the carrier side of this bodyless focus',
+    correction: 'This focus node has no body of its own, so its column_flow declares continuation: name only the neighbours on this focus\'s carrier side, using the valid routes named in the rejection reason, carrying the tracked column unchanged; the column is attributed on that node\'s own hop, where its body is in view. Remove entries naming any other neighbour.',
+  },
+  [REJECTION_CODES.columnSelfLoop]: {
+    category: 'value',
+    label: 'upstream entry identical to its output destination',
+    correction: 'Remove the upstream_columns entry identical to its output destination; keep a SQL-proved writes_to unchanged and explain any existing-destination read in sections.',
+  },
+  [REJECTION_CODES.writesToNamesReader]: {
+    category: 'reference',
+    label: 'a downstream reader, not a write destination',
+    correction: 'Set writes_to to the table and column this hop\'s SQL writes, or to null when it writes no table or only a table outside the approved scope. A downstream reader is never a write destination: remove that node from writes_to; every open neighbor you do not prune is visited anyway.',
+  },
+  [REJECTION_CODES.prunedContributor]: {
+    category: 'reference',
+    label: 'node already pruned this run',
+    correction: 'This upstream node was already pruned earlier this run and cannot supply the column — a removed node stays removed. Name a different, still-reachable supplier for this upstream_columns entry, or submit upstream_columns: [] and account for the column ending here.',
+  },
+  [REJECTION_CODES.columnOutOfScope]: {
+    category: 'reference',
+    label: 'column outside the approved scope',
+    correction: 'column_flow names only in-scope objects. Drop the outside entry from upstream_columns, or set writes_to to null; use column_flow: [] if no entry remains. State the fact about the outside object in sections; further work on it goes in questions.',
+  },
+  [REJECTION_CODES.emptyStructuredOutput]: {
+    category: 'stage',
+    label: 'required call arrived with empty arguments',
+    correction: 'Call the required tool now, with its content as arguments.',
+  },
+  [REJECTION_CODES.missingRequiredToolCall]: {
+    category: 'stage',
+    label: 'reply carried no call of the required tool',
+    correction: 'Call the required tool now, with its content as arguments.',
+  },
+  [REJECTION_CODES.toolExecutionError]: BACKEND_FAULT,
+  [REJECTION_CODES.internalError]: BACKEND_FAULT,
+  [REJECTION_CODES.engineCrash]: BACKEND_FAULT,
+  [REJECTION_CODES.validation]: {
+    category: 'value',
+    label: 'breaks the rule of this field',
+    correction: "Send a value that meets the rule in the field's schema description.",
+  },
+  [REJECTION_CODES.invalidStatus]: BACKEND_FAULT,
+  [REJECTION_CODES.explorationComplete]: {
+    category: 'stage',
+    label: 'exploration complete',
+    correction: 'Call lineage_present_result to assemble the report.',
+  },
+  [REJECTION_CODES.focusNodeIdMismatch]: {
+    category: 'reference',
+    label: 'not the current object',
+    correction: 'Use the id of the current object.',
+  },
+  [REJECTION_CODES.invalidToolInput]: {
+    category: 'shape',
+    label: 'call does not match the tool schema',
+    correction: INVALID_TOOL_INPUT_REPAIR_HINT,
+  },
+  [REJECTION_CODES.toolCallNotation]: {
+    category: 'shape',
+    label: 'value carries tool-call notation',
+    correction: 'Send each field as its own argument, without the notation.',
+  },
+  [REJECTION_CODES.unknownTool]: {
+    category: 'stage',
+    label: 'not a tool of this step',
+    correction: UNKNOWN_TOOL_REPAIR_HINT,
+  },
+  [REJECTION_CODES.invalidStructuredOutput]: {
+    category: 'shape',
+    label: 'required call missing, repeated or schema-invalid',
+    correction: 'Send one call of the required tool that matches its schema.',
+  },
+  [REJECTION_CODES.notConnectedToTrace]: {
+    category: 'reference',
+    label: 'no dependency path to the traced graph',
+    correction: 'Propose a new exploration with lineage_start_exploration for an object the trace does not reach.',
+  },
+  [REJECTION_CODES.extraCallNotEvaluated]: {
+    category: 'protocol',
+    label: 'not evaluated: one commit call per reply',
+    correction: 'Send one commit call per reply that carries all its content.',
+  },
+  [REJECTION_CODES.invalidPendingLead]: {
+    category: 'reference',
+    label: 'not an unresolved pending lead',
+    correction: 'Use an unresolved pending lead id from the completed exploration, or provide explicit supplement nodeIds.',
+  },
+  [REJECTION_CODES.missingResultGraph]: {
+    category: 'stage',
+    label: 'no preview scope or completed exploration to present',
+    correction: 'Load one bounded scope for a visual preview or complete the active exploration first.',
+  },
+  [REJECTION_CODES.noOpRefine]: {
+    category: 'protocol',
+    label: 'refinement changes nothing in the proposal',
+    correction: 'Apply the requested change to scope, mode, classification, columns or filter, or answer the user in text when the plan needs no change.',
+  },
+  [REJECTION_CODES.originNotFound]: {
+    category: 'reference',
+    label: 'not an object in the loaded model',
+    correction: 'Verify the origin node id with lineage_search_objects first. Use the exact id it returns.',
+  },
+  [REJECTION_CODES.outOfScopeOrNotNeighbor]: {
+    category: 'reference',
+    label: 'not a neighbor of the current object in scope',
+    correction: 'Send only ids listed as neighbors of the current object.',
+  },
+  [REJECTION_CODES.parallelCallForbidden]: {
+    category: 'protocol',
+    label: 'lineage_start_exploration already called in this reply',
+    correction: 'Send lineage_submit_findings for the current object; each accepted finding serves the next queued object.',
+  },
+  [REJECTION_CODES.phaseClosed]: {
+    category: 'protocol',
+    label: 'not executed: an earlier call of this reply closed the step',
+    correction: 'Do not retry it.',
+  },
+  [REJECTION_CODES.previewSourceUnavailable]: {
+    category: 'stage',
+    label: 'no discovery behind the preview',
+    correction: 'Run the discovery question again, then request its graph preview.',
+  },
+  [REJECTION_CODES.queryNotAName]: {
+    category: 'value',
+    label: 'punctuation only, which matches no name',
+    correction: 'Send part of a name, or set mode to regex for a pattern.',
+  },
+  [REJECTION_CODES.queryTooShort]: {
+    category: 'value',
+    label: 'query too short to match a name',
+    correction: 'Send a fragment of an object or column name.',
+  },
+  [REJECTION_CODES.resultTooLarge]: {
+    category: 'stage',
+    label: 'result larger than this step holds',
+    correction: 'Send a narrower request: fewer ids, a filter or fewer types.',
+  },
+  [REJECTION_CODES.unknownColumns]: {
+    category: 'reference',
+    label: 'not a declared column of the origin',
+    correction: 'Name a column declared on that object.',
+  },
+  [REJECTION_CODES.unknownNodeIds]: {
+    category: 'reference',
+    label: 'not an object in the loaded model',
+    correction: 'Name an object of the loaded model by its id.',
+  },
+  [REJECTION_CODES.asymmetricDepthBothZero]: {
+    category: 'value',
+    label: 'both depth sides are 0',
+    correction: 'Set at least one depth side above 0.',
+  },
 } as const satisfies Record<RegistryCode | SchemaIssueCode, IssueText>;
 
 /** Closed set of issue codes a fault may carry. */
@@ -178,10 +455,6 @@ export function buildToolExecutionError(toolName: string): string {
     reason: `${toolName} failed inside the extension.`,
   }));
 }
-
-/** Stable message shared by {@link NoProjectLoadedError} and {@link buildNoProjectLoadedError}. */
-const NO_PROJECT_LOADED_MESSAGE =
-  'No project is loaded in the Data Lineage panel (closed or not opened yet); open the project and ask again.';
 
 /**
  * Thrown by a tool host's `requireModel`/`requireGraph` when no model/graph is loaded: the panel
@@ -303,6 +576,65 @@ export function combineToolRejections(rejections: readonly ToolRejection[]): Too
   });
 }
 
+/** Last-feedback fallback of a column reference fault that cannot be corrected. */
+const REFERENCE_FALLBACK = 'If you cannot correct it, write that information in sections instead, highlighted with a callout naming the unresolved issue.';
+
+/**
+ * The model-facing lines of a rejection's faults: one `path: label. correction` line per issue code,
+ * with the paths sharing it. Allowed values are stated once, by the hint ({@link zodFieldRepairHint}).
+ */
+export function renderFaults(rejection: ToolRejection): string[] {
+  const paths = new Map<IssueCode, string[]>();
+  for (const { path, code } of rejection.errors ?? []) paths.set(code, [...(paths.get(code) ?? []), path]);
+  return [...paths].map(([code, where]) => {
+    const { label, correction } = ISSUES[code];
+    const named = where.filter(Boolean).join(', ');
+    return `${named ? `${named}: ` : ''}${label}. ${correction}`;
+  });
+}
+
+/**
+ * The help the last feedback adds to a rejection's faults: the fallback of a column reference fault
+ * (a rejection without faults is its code at each issue path) and the next schema level of each
+ * top-level field of the wrong type or missing.
+ *
+ * @param schema - The tool's input schema as it is served when the rejection renders.
+ */
+export function renderLastFeedbackHelp(rejection: ToolRejection, schema?: () => z.ZodType | undefined): string[] {
+  const errors = rejection.errors ?? [];
+  const lines: string[] = [];
+  const faults = errors.length > 0 ? errors : (rejection.issuePaths ?? []).map(path => ({ path, code: rejection.code }));
+  const table: Record<string, IssueText | undefined> = ISSUES;
+  if (faults.some(({ path, code }) => table[code]?.category === 'reference' && /^column_flow(?:\.|$)/.test(path))) {
+    lines.push(REFERENCE_FALLBACK);
+  }
+  for (const error of errors) {
+    if ((error.code !== 'type' && error.code !== 'missing') || !error.types?.length || !/^[^.]+$/.test(error.path)) continue;
+    const node = jsonSchemaNodeAt(schema?.(), [error.path]);
+    lines.push(`${error.path} takes ${node ? nextLevel(node) : error.types.join(' or ')}.`);
+  }
+  return lines;
+}
+
+/** The JSON type names a schema node accepts: its own, else its branches'. */
+function typeNames(node: JsonSchemaShape): string {
+  const own = [node.type ?? []].flat();
+  const names = own.length > 0 ? own : [...(node.anyOf ?? []), ...(node.oneOf ?? [])].map(typeNames);
+  return [...new Set(names)].join(' or ');
+}
+
+/** The keys of a node's object (an array's items) with their type names; else its type names. */
+function nextLevel(node: JsonSchemaShape): string {
+  for (const branch of [node, ...(node.anyOf ?? []), ...(node.oneOf ?? [])]) {
+    const list = branch.type === 'array';
+    const keys = Object.entries((list ? branch.items : branch)?.properties ?? {});
+    if (keys.length > 0) {
+      return `${list ? 'a list of objects' : 'an object'} with ${keys.map(([key, field]) => `${key} (${typeNames(field)})`).join(', ')}`;
+    }
+  }
+  return typeNames(node);
+}
+
 /**
  * Narrowed view of a Zod v4 `invalid_union` issue. Its `errors` field holds one sub-issue array per
  * union branch — the raw material {@link describeInvalidUnion} expands into a per-branch required-
@@ -390,8 +722,8 @@ function flattenUnionBranches(
 
 /**
  * Shared fragment naming a field the model never sent at all, reused by every rejection surface
- * that tells a missing field apart from one merely typed wrong ({@link missingFieldRepairHint},
- * {@link describeInvalidUnion}) — one wording, not a second phrase invented per call site.
+ * that tells a missing field apart from one merely typed wrong ({@link describeInvalidUnion}) — one
+ * wording, not a second phrase invented per call site.
  */
 const MISSING_FIELD_FRAGMENT = 'missing entirely from this call';
 
@@ -434,14 +766,6 @@ function describeInvalidUnion(issue: InvalidUnionIssue, input?: unknown): { line
     paths: allPaths,
   };
 }
-
-/**
- * The generic resend rule of a schema-invalid tool call whose tool holds no draft: the complete
- * call is resent with a minimal edit. It is the only resend directive a rejection carries; a tool
- * that holds a draft states its own held rule in its place.
- */
-export const INVALID_TOOL_INPUT_REPAIR_HINT
-  = 'Resend the full tool call with only the offending field(s) corrected; keep every other field unchanged, and resend every element of a corrected list, repeating the unflagged elements exactly as first sent.';
 
 /**
  * The distinct offending key(s) of every `unrecognized_keys` issue on `error`.
@@ -499,30 +823,6 @@ function unwrapNullable(node: JsonSchemaShape): JsonSchemaShape {
   if (!branches) return node;
   const nonNull = branches.filter((branch) => branch.type !== 'null');
   return nonNull.length === 1 && nonNull.length < branches.length ? nonNull[0]! : node;
-}
-
-/**
- * A literal value the node accepts, built from the schema alone: an enum's first member, a
- * placeholder for a scalar type, and the required members of an object.
- */
-function exampleOf(node: JsonSchemaShape): unknown {
-  const target = unwrapNullable(node);
-  if (target.enum?.length) return target.enum[0];
-  if (target.properties) {
-    const keys = target.required ?? Object.keys(target.properties);
-    return Object.fromEntries(keys.map(key => [key, exampleOf(target.properties![key] ?? {})]));
-  }
-  const type = Array.isArray(target.type) ? target.type[0] : target.type;
-  if (type === 'array') return [];
-  return type === 'number' || type === 'integer' ? 0 : type === 'boolean' ? false : '...';
-}
-
-/** Whether the schema accepts `null` at `path`. */
-function acceptsNullAt(schema: z.ZodType | undefined, path: readonly PropertyKey[]): boolean {
-  const node = jsonSchemaNodeAt(schema, path);
-  if (!node) return false;
-  return [node, ...(node.anyOf ?? []), ...(node.oneOf ?? [])]
-    .some((variant) => variant.type === 'null' || (Array.isArray(variant.type) && variant.type.includes('null')));
 }
 
 /**
@@ -590,63 +890,18 @@ function unrecognizedKeyRepairHint(error: z.ZodError, schema?: z.ZodType): strin
 }
 
 /**
- * Repair hint for an `invalid_tool_input` rejection whose `invalid_type` issue names a field absent
- * from the call, not merely of the wrong type. The generic {@link INVALID_TOOL_INPUT_REPAIR_HINT}
- * presumes the field is present and wrong, so a model told only that loops the same omission; this
- * names the missing field(s) and directs addition. Checked after {@link unrecognizedKeyRepairHint};
- * the two issue kinds never share a path.
+ * The repair a Zod rejection states beyond its faults' table rows: a refinement's own hint, the
+ * fields an object accepts in place of an unrecognized key, and the values a field accepts with the
+ * entry removal its array minimum allows (the table rows name no field, value or removal).
  *
- * @param input - The rejected payload; needed because an `invalid_type` issue alone cannot tell
- *   "absent" from "wrong type".
- * @param schema - The failed schema; names `null` as the value of a missing field that accepts it.
- * @returns The addition-directed hint, or `undefined` so the caller falls back to
- *   {@link INVALID_TOOL_INPUT_REPAIR_HINT}.
- */
-function missingFieldRepairHint(error: z.ZodError, input: unknown, schema?: z.ZodType): string | undefined {
-  if (input === undefined) return undefined;
-  const isMissingFieldIssue = (issue: z.core.$ZodIssue): boolean =>
-    (issue.code === 'invalid_type' || issue.code === 'invalid_value')
-    && resolveAtPath(input, issue.path) === undefined && issue.path.length > 0;
-
-  const missingFields = [...new Set(
-    error.issues.filter(isMissingFieldIssue).map((issue) => issue.path.join('.')),
-  )];
-  if (missingFields.length === 0) return undefined;
-
-  const plural = missingFields.length > 1;
-  const fieldList = missingFields.map((field) => `"${field}"`).join(', ');
-  const nullable = missingFields.filter((field) => acceptsNullAt(schema, field.split('.').map((key) => (/^\d+$/.test(key) ? Number(key) : key))));
-  const nullNote = nullable.length === 0
-    ? ''
-    : ` ${nullable.map((field) => `"${field}"`).join(', ')} must be present; send null when ${nullable.length > 1 ? 'they do' : 'it does'} not apply.`;
-  const addition = `Field${plural ? 's' : ''} ${fieldList} ${plural ? 'are' : 'is'} ${MISSING_FIELD_FRAGMENT}, `
-    + `not present with the wrong type — add ${plural ? 'them' : 'it'} at the required type.${nullNote}`;
-  return addition;
-}
-
-/**
- * General field-repair hint chain shared by every Zod-validation reject regardless of `code`, in
- * order: a refinement's own hint, an unrecognized key (removal is unambiguous), a field absent
- * outright (addition), a present value of the wrong JSON type, a value outside its enum, an array
- * outside its size bound. Schema-derived, so any caller composing its own envelope gets the same
- * repair intelligence as {@link rejectionFromZodError}. A hint states the fault and field repair
- * only; the caller appends the resend rule once, last.
- *
- * @param input - The rejected payload; see {@link missingFieldRepairHint}.
- * @param schema - The failed schema; lets a hint name what it accepts (an element's keys, `null`
- *   for a nullable field). Absent, every link keeps its schema-free wording.
- * @returns The distinct applicable hints joined, or `undefined` when no link applies.
+ * @param input - The rejected payload; tells a present value from an absent one.
+ * @param schema - The failed schema; lets a hint name the fields of an object and an array minimum.
+ * @returns The distinct applicable hints joined, or `undefined` when none applies.
  */
 export function zodFieldRepairHint(error: z.ZodError, input: unknown, schema?: z.ZodType): string | undefined {
-  const hints = [
-    issueOwnedRepairHint(error),
-    unrecognizedKeyRepairHint(error, schema),
-    missingFieldRepairHint(error, input, schema),
-    typeMismatchRepairHint(error, input, schema),
-    invalidValueRepairHint(error, input, schema),
-    sizeBoundRepairHint(error),
-  ].filter((hint): hint is string => hint !== undefined);
-  return hints.length > 0 ? [...new Set(hints)].join(' ') : undefined;
+  const hints = [issueOwnedRepairHint(error), unrecognizedKeyRepairHint(error, schema), invalidValueRepairHint(error, input, schema)]
+    .filter((hint): hint is string => hint !== undefined);
+  return hints.length > 0 ? hints.join(' ') : undefined;
 }
 
 /**
@@ -664,8 +919,7 @@ const INVALID_VALUE_REASON = 'Invalid value';
  * Repair hint for a present value outside the values its field accepts (enum or literal): names the
  * accepted values and the allowed repairs, setting the field to one of them or, for a field inside
  * an array element, dropping that entry when the array stays within its served minimum. Issues
- * sharing a field shape and accepted values are one clause. An absent field belongs to
- * {@link missingFieldRepairHint}.
+ * sharing a field shape and accepted values are one clause. An absent field is a `missing` fault.
  */
 function invalidValueRepairHint(error: z.ZodError, input: unknown, schema?: z.ZodType): string | undefined {
   const issues = error.issues.filter((issue): issue is Extract<z.core.$ZodIssue, { code: 'invalid_value' }> =>
@@ -697,43 +951,6 @@ function invalidValueRepairHint(error: z.ZodError, input: unknown, schema?: z.Zo
   return clauses.size > 0 ? [...clauses].join(' ') : undefined;
 }
 
-/**
- * Repair hint for a present value of the wrong JSON type (an array sent as its stringified form).
- *
- * @returns The type-directed hint naming the first such path, expected and received types;
- * `undefined` when no `invalid_type` issue has a present value.
- */
-function typeMismatchRepairHint(error: z.ZodError, input: unknown, schema?: z.ZodType): string | undefined {
-  if (input === undefined) return undefined;
-  for (const issue of error.issues) {
-    if (issue.code !== 'invalid_type' || issue.path.length === 0) continue;
-    const value = resolveAtPath(input, issue.path);
-    if (value === undefined) continue;
-    const nullNote = acceptsNullAt(schema, issue.path) ? ', or null when it does not apply' : '';
-    const node = jsonSchemaNodeAt(schema, issue.path);
-    const example = issue.expected === 'object' && node ? JSON.stringify(exampleOf(node)) : undefined;
-    return `Send the ${issue.expected} directly${example ? `, shaped like ${example}` : ''}${nullNote}.`;
-  }
-  return undefined;
-}
-
-/**
- * Repair action for an array outside its served size bound; the count and the bound ride on the
- * issue line.
- *
- * @returns The action for the first `too_big` / `too_small` array issue; `undefined` when none is
- * present.
- */
-function sizeBoundRepairHint(error: z.ZodError): string | undefined {
-  for (const issue of error.issues) {
-    if (issue.code !== 'too_big' && issue.code !== 'too_small') continue;
-    if (issue.origin !== 'array' && issue.origin !== 'set') continue;
-    const path = issue.path.join('.');
-    return issue.code === 'too_big' ? `Merge or drop the surplus in "${path}".` : `Add the missing items to "${path}".`;
-  }
-  return undefined;
-}
-
 /** Whether a schema refinement states the repair of its custom issue on `params.hint`. */
 function issueOwnsRepair(issue: z.core.$ZodIssue): boolean {
   return issue.code === 'custom' && typeof (issue.params as { hint?: unknown } | undefined)?.hint === 'string';
@@ -755,19 +972,6 @@ function issueOwnedRepairHint(error: z.ZodError): string | undefined {
   }
   return hints.length > 0 ? hints.join(' ') : undefined;
 }
-
-/**
- * Standing repair instruction for a provider call naming a tool outside this phase's catalog. The
- * valid names ride in the rejection's `detail.allowedTools`, not this sentence, so the instruction
- * stays one fixed sentence regardless of how many tools the phase offers.
- */
-export const UNKNOWN_TOOL_REPAIR_HINT = 'Call one of the tools already offered in this response.';
-
-/**
- * Standing repair instruction for a provider-emitted duplicate tool-call id. The duplicate is a
- * transport artifact, not a content mistake, so the repair is a fresh id rather than a resend.
- */
-export const DUPLICATE_CALL_ID_REPAIR_HINT = 'Use a new, unique call id for this tool call.';
 
 /** Longest object key quoted whole; a longer key is reported by length alone, never as a prefix. */
 const KEY_ECHO_MAX_CHARS = 120;
@@ -888,11 +1092,11 @@ function issueErrors(issue: z.core.$ZodIssue, input: unknown): ToolError[] {
  *   ({@link invalidValueRepairHint}) and not again in the reason; a caller-supplied `hint` leaves
  *   the reason carrying them.
  * @param error - The Zod validation failure.
- * @param opts - `code` to stamp on the rejection; optional `hint` (default: the field repair chain,
- *   {@link zodFieldRepairHint}, followed by the one generic resend rule unless an issue states its own repair,
- *   {@link INVALID_TOOL_INPUT_REPAIR_HINT}); optional `input` (the value that failed parsing)
- *   enabling measured-size enrichment and absent-field hints; optional `schema` (the schema it
- *   failed) enabling the hints that name what the schema accepts.
+ * @param opts - `code` to stamp on the rejection; optional `hint` (default: {@link zodFieldRepairHint},
+ *   followed by the generic resend rule {@link INVALID_TOOL_INPUT_REPAIR_HINT} unless an issue
+ *   states its own repair); optional `input` (the value that failed parsing) enabling measured-size
+ *   enrichment, absent-field faults and the value hint; optional `schema` (the schema it failed)
+ *   enabling the hints that name what the schema accepts.
  * @returns A normalized {@link ToolRejection} built via {@link makeRejection}.
  */
 export function rejectionFromZodError(

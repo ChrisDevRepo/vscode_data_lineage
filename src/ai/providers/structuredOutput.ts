@@ -1,6 +1,6 @@
 /** Provider-neutral names and corrective messages for forced structured-output calls. */
 import type { z } from 'zod';
-import { rejectionFromZodError } from '../support/toolErrorEnvelope';
+import { rejectionFromZodError, renderFaults } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 
 /** Synthetic tool advertised when a provider lacks native JSON-schema output. */
@@ -32,8 +32,8 @@ export class StructuredOutputError extends Error {
 /**
  * Builds a concise rejection reason and repair hint for a missing or schema-invalid synthetic tool
  * call. The schema-invalid case goes through {@link rejectionFromZodError}, the sole producer of
- * auto-generated Zod reasons and the field repair chain, so the model receives the violated
- * predicate (`"<dottedPath>: <message>"`) and the schema-derived repair as on the tool path.
+ * auto-generated Zod reasons, and its fault lines lead the hint, so the model receives the violated
+ * predicate (`"<dottedPath>: <message>"`) and each fault's repair as on the tool path.
  *
  * @param input - The parsed payload that failed validation; enables measured-size and type-mismatch
  *   text.
@@ -48,6 +48,9 @@ export function structuredRejectReason(
 ): { reason: string; hint?: string } {
   if (!callPresent) return { reason: `missing ${STRUCTURED_OUTPUT_TOOL} tool call` };
   if (!error) return { reason: `invalid ${STRUCTURED_OUTPUT_TOOL} fields: schema mismatch` };
-  const { reason, hint } = rejectionFromZodError(error, { code: REJECTION_CODES.invalidStructuredOutput, input, schema });
-  return { reason: `invalid ${STRUCTURED_OUTPUT_TOOL} fields: ${reason}`, hint };
+  const rejection = rejectionFromZodError(error, { code: REJECTION_CODES.invalidStructuredOutput, input, schema });
+  return {
+    reason: `invalid ${STRUCTURED_OUTPUT_TOOL} fields: ${rejection.reason}`,
+    hint: [...renderFaults(rejection), rejection.hint].filter(Boolean).join('\n'),
+  };
 }

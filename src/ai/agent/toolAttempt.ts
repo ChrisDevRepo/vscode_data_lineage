@@ -17,6 +17,7 @@
  * duplicate-read identity and input hashes — read by dispatch, never rendered to the model.
  */
 import { createHash } from 'node:crypto';
+import type { z } from 'zod';
 import { AIMessage, trimMessages } from '@langchain/core/messages';
 import {
   messageContentToText,
@@ -48,6 +49,9 @@ import {
   INVALID_TOOL_INPUT_REPAIR_HINT,
   makeRejection,
   readToolError,
+  renderFaults,
+  renderLastFeedbackHelp,
+  type ToolError,
   type ToolRejection,
   UNKNOWN_TOOL_REPAIR_HINT,
 } from '../support/toolErrorEnvelope';
@@ -192,6 +196,7 @@ type ToolOutcomeData =
       readonly hint?: string;
       readonly issuePaths?: string[];
       readonly entryIds?: readonly string[];
+      readonly errors?: ToolError[];
     };
     readonly detail?: unknown;
   }
@@ -675,6 +680,7 @@ function rejectionFromResult(resultText: string): ToolOutcomeData | null {
         ...(rejection.hint ? { hint: rejection.hint } : {}),
         ...(rejection.issuePaths ? { issuePaths: rejection.issuePaths } : {}),
         ...(rejection.entryIds ? { entryIds: rejection.entryIds } : {}),
+        ...(rejection.errors ? { errors: rejection.errors } : {}),
       },
     };
   } catch {
@@ -699,13 +705,16 @@ interface RecordedToolOutcome {
 
 /**
  * The model-facing content of one rejection as plain text: its reason (one line per error of a
- * multi-error validation), its hint and, when a `present_result` repair draft is held, its section
- * labels. The reason states the identity fault; verified column inventories and the top-level
- * fields to correct are disclosed on the rejection the last budgeted reply answers. The last line
- * states the replies the step has left, so the budget is known before it is spent. Code, issue
- * paths and detail stay on the paired `ToolMessage.artifact`.
+ * multi-error validation), its fault lines ({@link renderFaults}), its hint and, when a
+ * `present_result` repair draft is held, its section labels. The reason states the identity fault;
+ * verified column inventories, the help of the faults ({@link renderLastFeedbackHelp}) and the
+ * top-level fields to correct are disclosed on the rejection the last budgeted reply answers. The
+ * last line states the replies the step has left, so the budget is known before it is spent. Code,
+ * issue paths and detail stay on the paired `ToolMessage.artifact`.
+ *
+ * @param schema - The tool's input schema as served when the rejection renders.
  */
-function rejectionText(rejection: ToolRejection, priorState?: ToolPhaseAttemptState): string {
+function rejectionText(rejection: ToolRejection, priorState?: ToolPhaseAttemptState, schema?: () => z.ZodType | undefined): string {
   const repliesLeft = repliesLeftAfter(priorState);
   const finalRejection = repliesLeft !== undefined && repliesLeft <= 1;
   const inventories = finalRejection && Array.isArray(rejection.detail)
@@ -718,8 +727,10 @@ function rejectionText(rejection: ToolRejection, priorState?: ToolPhaseAttemptSt
   const heldLabels = held?.sections.map(({ label, start }) => `"${label}"${start ? ` (from ${start})` : ''}`).join(', ');
   return [
     rejection.reason,
+    ...renderFaults(rejection),
     ...inventories,
     ...(rejection.hint !== undefined ? [rejection.hint] : []),
+    ...(finalRejection ? renderLastFeedbackHelp(rejection, schema) : []),
     ...(heldLabels ? [`Held sections: ${heldLabels}.`] : []),
     ...(owed.length > 0 ? [`Fields to correct in this reply: ${owed.join(', ')}.`] : []),
     ...replyBudgetLine(repliesLeft),
@@ -740,7 +751,7 @@ function replyBudgetLine(repliesLeft: number | undefined): string[] {
 }
 
 function recordToolOutcome(
-  call: ToolOutcomeIdentity,
+  call: ToolOutcomeIdentity & { readonly schema?: () => z.ZodType | undefined },
   data: ToolOutcomeData,
   calls: ToolAttemptCall[],
   observations: ToolAttemptObservation[],
@@ -780,7 +791,8 @@ function recordToolOutcome(
     calls.push({ callId: outcome.callId, toolName: outcome.toolName, status: outcome.status });
     rejections.push(rejection);
     trace?.({ toolName: outcome.toolName, code: outcome.code });
-    return { resultText: rejectionText(rejection, priorState), status: 'error', rejection, artifact: rejection };
+    const artifact = { ...rejection, ...(outcome.correction.errors ? { errors: outcome.correction.errors } : {}) };
+    return { resultText: rejectionText(artifact, priorState, call.schema), status: 'error', rejection, artifact };
   }
   calls.push({ callId: outcome.callId, toolName: outcome.toolName, status: outcome.status, closedByCallId: outcome.closedByCallId });
   trace?.({ toolName: outcome.toolName, code: outcome.rejection.code });
@@ -1142,7 +1154,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
 
     if (resultRejection) {
       const data = withHeldDraftDetail(resultRejection, call.toolName, input.presentResultRepairDraftContext);
-      const outcome = recordToolOutcome(call, data, calls, observations, rejections, undefined, input.priorState);
+      const outcome = recordToolOutcome({ ...call, schema: () => definition?.inputSchema }, data, calls, observations, rejections, undefined, input.priorState);
       toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
       if (classifyRejectionCode(outcome.rejection!.code) === 'backend_fault') closedBy = { callId: call.callId, toolName: call.toolName };
     } else {
