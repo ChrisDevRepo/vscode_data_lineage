@@ -21,7 +21,7 @@ Start with **View → Output → Data Lineage Viz**; set its log level to **Debu
 
 The connection retries transient errors (4060, 10928, 10929, 40197, 40501, 40613) up to three times with five-second waits, so a mistyped database name can add 15 seconds before the error shows. A `tcp:` server prefix is accepted. **Update Database Password** applies to SQL logins; **Remove Database Connection** deletes the stored password with the connection.
 
-A project saved with the retired SQL Server (mssql) extension shows one notice when it opens; **Reconnect** opens **Add Database Connection** prefilled with its server and database, and the project keeps its schemas.
+A project saved with the retired SQL Server (mssql) extension shows one warning when it opens and does not connect; reconnect through **Add Database Connection**.
 
 **Permissions.** `VIEW DEFINITION` on the database for lineage; `SELECT` on the tables for table statistics. See [`DMV_QUERIES.md`](DMV_QUERIES.md). `@lineage` reads only the loaded model and never opens a connection.
 

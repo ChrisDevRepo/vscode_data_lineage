@@ -8,7 +8,7 @@ Type **Data Lineage** in the Command Palette to see every command (loading and r
 
 ## Database connections
 
-Use SQL login or Microsoft Entra ID (sign-in through VS Code's Microsoft account picker, MFA supported; the account and tenant are saved with the connection); Windows authentication is not supported. Passwords stay in VS Code secret storage. Manage connections with **Data Lineage: Add / Edit / Remove Database Connection** and **Update Database Password**. Type the database name yourself, since a database-scoped login may not list databases. Connecting through the SQL Server (mssql) extension is gone because Microsoft deprecated its connection API; a project saved with it shows one notice, and **Reconnect** opens **Add Database Connection** prefilled with its server and database, keeping its schemas. Queries: [`DMV_QUERIES.md`](DMV_QUERIES.md). Errors: [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#import-and-connection).
+Use SQL login or Microsoft Entra ID (sign-in through VS Code's Microsoft account picker, MFA supported; the account and tenant are saved with the connection); Windows authentication is not supported. Passwords stay in VS Code secret storage. Manage connections with **Data Lineage: Add / Edit / Remove Database Connection** and **Update Database Password**. Type the database name yourself, since a database-scoped login may not list databases. Connecting through the SQL Server (mssql) extension is gone because Microsoft deprecated its connection API; a project saved with it shows one warning and does not connect; reconnect through **Add Database Connection**. Queries: [`DMV_QUERIES.md`](DMV_QUERIES.md). Errors: [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#import-and-connection).
 
 ## Keyboard shortcuts
 

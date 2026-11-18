@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Removed
-- Connecting through the SQL Server (mssql) extension, whose connection API Microsoft deprecated, and the `dataLineageViz.database.connectionProvider` setting. A project saved with it shows one notice and opens **Add Database Connection** prefilled with the saved server and database; the project keeps its schemas.
+- Connecting through the SQL Server (mssql) extension, whose connection API Microsoft deprecated, and the `dataLineageViz.database.connectionProvider` setting. The mssql connection is no longer supported: a project saved with it shows a warning; reconnect through **Add Database Connection**.
 - The **with positions** bookmark option. Bookmarks keep their filters and view; node positions saved by earlier versions are ignored.
 
 ### Changed

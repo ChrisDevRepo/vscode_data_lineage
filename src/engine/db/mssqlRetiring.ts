@@ -6,12 +6,9 @@
 
 import type { StoredConnectionInfo } from '../shared/bridgeContract';
 
-/** Notice shown when a project saved with the mssql extension connection opens. */
+/** Warning shown when a project saved with the mssql extension connection opens. */
 export const MSSQL_RECONNECT_NOTICE =
   'Microsoft deprecated the mssql extension connection API. Reconnect to keep using this project.';
-
-/** Notice action that opens Add Database Connection prefilled from the stored connection. */
-export const MSSQL_RECONNECT_ACTION = 'Reconnect';
 
 /** Whether a stored connection was written for the mssql extension; no `provider` predates it. */
 export function usesMssqlExtension(stored: StoredConnectionInfo): boolean {
