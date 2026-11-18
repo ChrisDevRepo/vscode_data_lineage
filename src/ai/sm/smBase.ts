@@ -1305,15 +1305,34 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
+   * The route admission of an object the approved scope does not hold by membership, or `null`
+   * when it is inside: the focus, the scope, visited nodes and the unexcluded tables the origin
+   * writes (a procedure origin's columns live there) are inside; any other object must pass
+   * {@link admitsRoute}. Single statement of the inside-set for the `column_flow` validator
+   * ({@link columnRefsOutOfScope}) and the served `in_approved_scope` flag.
+   *
+   * @param originWrites - {@link writtenCarrierIds} of the origin, computed once by the caller.
+   */
+  private outsideAdmission(id: string, node: LineageNode, focusId: string, originWrites: ReadonlySet<string>): RouteAdmission | null {
+    if (id === focusId || this.scopeNodeIds.has(id) || this.visited.has(id)
+      || (originWrites.has(id) && this.checkBorder(id, node, 'supplement').kind === 'in_border')) return null;
+    return this.admitsRoute(id, node, focusId);
+  }
+
+  /** The tables the origin writes; empty before init. */
+  private originWrittenCarrierIds(): Set<string> {
+    return this.originNodeId ? this.writtenCarrierIds(this.originNodeId) : new Set<string>();
+  }
+
+  /**
    * Each `column_flow` object (`upstream_columns[].node`, `writes_to.node`) outside the
-   * approved scope, as a fatal `column_out_of_scope`. The focus, the scope, visited nodes and the
-   * unexcluded tables the origin writes (a procedure origin's columns live there) are inside; any
-   * other object must pass {@link admitsRoute}; the refusal names the cause. A reference `prior`
-   * already refuses keeps its own refusal; every other reference is still checked.
+   * approved scope ({@link outsideAdmission}), as a fatal `column_out_of_scope`; the refusal names
+   * the cause. A reference `prior` already refuses keeps its own refusal; every other reference is
+   * still checked.
    */
   private columnRefsOutOfScope(focusId: string, finding: HopFindingKept, prior: readonly InvalidRoute[]): InvalidRoute[] {
     const refused = new Set(prior.map(route => /^column_flow\.\d+\.(upstream_columns\.\d+|writes_to)/.exec(route.path ?? '')?.[0]));
-    const originWrites = this.originNodeId ? this.writtenCarrierIds(this.originNodeId) : new Set<string>();
+    const originWrites = this.originWrittenCarrierIds();
     const refs = (finding.column_flow ?? []).flatMap((entry, index) => [
       ...entry.upstream_columns.map((ref, refIndex) => ({ node: ref.node, at: `column_flow.${index}.upstream_columns.${refIndex}` })),
       ...(entry.writes_to ? [{ node: entry.writes_to.node, at: `column_flow.${index}.writes_to` }] : []),
@@ -1321,10 +1340,10 @@ export class NavigationEngine implements IHopStateMachine {
     return refs.flatMap(({ node: raw, at }) => {
       const id = resolveModelNodeId(raw, this.nodeMap, this.model.identifierCaseSensitive);
       const node = id ? this.nodeMap.get(id) : undefined;
-      if (!id || !node || id === focusId || this.scopeNodeIds.has(id) || this.visited.has(id)
-        || (originWrites.has(id) && this.checkBorder(id, node, 'supplement').kind === 'in_border')) return [];
-      const { border, depthBreach, admitted } = this.admitsRoute(id, node, focusId);
-      if (admitted) return [];
+      if (!id || !node) return [];
+      const admission = this.outsideAdmission(id, node, focusId, originWrites);
+      if (!admission || admission.admitted) return [];
+      const { border, depthBreach } = admission;
       const cause = border.kind === 'excluded' ? `excluded ${border.axis === 'node_id' ? 'object' : border.axis}`
         : border.kind === 'out_of_direction' ? 'out of direction'
           : `at depth ${depthBreach}, past the limit ${this.breachedDepthLimit(id, depthBreach)}`;
@@ -3845,6 +3864,7 @@ export class NavigationEngine implements IHopStateMachine {
       const verb = edgeApiType(e.type, this.nodeMap.get(e.source)?.type ?? '');
       if (verb !== 'read' || !edgeVerb.has(other)) edgeVerb.set(other, verb);
     }
+    const originWrites = this.originWrittenCarrierIds();
     return ids.map(nid => {
       const n = this.nodeMap.get(nid)!;
       const boundary = this.visited.has(nid) ? 'cycle' : 'none';
@@ -3871,7 +3891,7 @@ export class NavigationEngine implements IHopStateMachine {
       if (d !== undefined) neighbor.depth_from_origin = d;
       neighbor.in_budget = this.scopeNodeIds.has(nid);
 
-      neighbor.in_approved_scope = this.admitsRoute(nid, n, focusId).admitted;
+      neighbor.in_approved_scope = this.outsideAdmission(nid, n, focusId, originWrites)?.admitted ?? true;
       return neighbor;
     });
   }

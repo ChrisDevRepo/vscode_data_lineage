@@ -182,10 +182,11 @@ export interface HopNeighbor {
   /** False when this node is beyond the active depth budget. Always surfaced when budget is set. */
   in_budget?: boolean;
   /**
-   * Whether a route to this node would be admitted: inside the approved border (exclusions,
-   * direction) and the stated depth. Always surfaced; the same verdict the prune and route
-   * validators apply. In SM sessions the scope is locked at `confirm_sm_start`; routes out of scope
-   * are deferred (not rejected) and surfaced at synthesis.
+   * Whether the `column_flow` scope check admits this node: focus, scope, visited and in-border
+   * tables the origin writes are inside, any other node needs an admitted route (approved border,
+   * direction, stated depth). Always surfaced; owned by `outsideAdmission`. In SM sessions the
+   * scope is locked at `confirm_sm_start`; routes out of scope are deferred (not rejected) and
+   * surfaced at synthesis.
    */
   in_approved_scope?: boolean;
 }
