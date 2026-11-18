@@ -196,5 +196,5 @@ export function scopeModelForVisualize(
   onWarning?: (msg: string) => void,
 ): DatabaseModel {
   const scoped = applyExclusionPatterns(filterBySchemas(model, selectedSchemas), patterns, onWarning);
-  return { ...scoped, schemas: computeSchemas(scoped.nodes) };
+  return { ...scoped, schemas: computeSchemas(scoped.nodes, scoped.identifierCaseSensitive) };
 }
