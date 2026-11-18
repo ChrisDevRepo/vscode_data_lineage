@@ -198,7 +198,7 @@ describe('migrateProjectStore', () => {
     expect(s.projects.length, 'project with an unrecognised view field survives').toBe(1);
     const profile = s.projects[0].filterProfiles?.[0];
     expect(profile?.name, 'saved view retained').toBe('AI View');
-    expect(profile?.positions?.['[dbo].[FactSales]'], 'position narrowed to declared fields').toEqual({ x: 1, y: 2 });
+    expect(profile ? 'positions' in profile : true, 'positions is no longer a declared field, dropped on read').toBe(false);
     expect(profile ? 'viewport' in profile : false, 'viewport is no longer a declared field, dropped on read').toBe(false);
     expect(Object.keys(profile?.aiMetadata?.badges[0] ?? {}), 'badge fields stripped').toEqual(['nodeId', 'text']);
     expect(profile?.aiMetadata?.columnAspect?.edges[0].toCol, 'column-trace edge retained').toBe('DateKey');

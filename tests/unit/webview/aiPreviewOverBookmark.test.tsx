@@ -15,7 +15,7 @@ import { VsCodeProvider } from '../../../src/contexts/VsCodeContext';
 type CanvasProps = {
   aiPreview?: unknown;
   activeAdvancedProfile?: unknown;
-  onSaveAiBookmark?: (name: string, withPositions: boolean) => void;
+  onSaveAiBookmark?: (name: string) => void;
   onDiscardAiPreview?: () => void;
 };
 const canvas = vi.hoisted(() => ({ props: null as CanvasProps | null }));
@@ -85,7 +85,7 @@ describe('AI preview over a bookmark view', () => {
     expect(lastHostFilter()?.hideIsolated).toBe(true);
 
     post(preview('First', [model.nodes[0].id]));
-    act(() => canvas.props?.onSaveAiBookmark?.('First', false));
+    act(() => canvas.props?.onSaveAiBookmark?.('First'));
     expect(canvas.props?.activeAdvancedProfile).toBeTruthy();
     expect(canvas.props?.aiPreview).toBeNull();
 

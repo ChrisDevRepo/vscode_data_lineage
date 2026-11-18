@@ -503,8 +503,6 @@ export function App() {
   const [aiPreview, setAiPreview] = useState<AiPreview | null>(null);
   const aiPreviewRef = useRef(aiPreview);
   aiPreviewRef.current = aiPreview;
-  /** Saved node positions from a bookmark — applied once after rebuild, then cleared. */
-  const [pendingPositions, setPendingPositions] = useState<Record<string, { x: number; y: number }> | undefined>(undefined);
   /** Saved view (filter, graph mode, expanded schemas, viewport) before entering any locked mode — restored exactly on exit. */
   const viewSnapshotRef = useRef<ViewSnapshot | null>(null);
   /** Live viewport reported by the canvas, read back when a locked mode is entered. */
@@ -1134,10 +1132,6 @@ export function App() {
     endTrace();
   }, [analysisMode, endTrace]);
 
-  const handlePendingPositionsApplied = useCallback(() => {
-    setPendingPositions(undefined);
-  }, []);
-
   const handlePendingViewportApplied = useCallback(() => {
     setPendingViewport(undefined);
   }, []);
@@ -1201,7 +1195,7 @@ export function App() {
     }
   }, false, { allowEmptyTextEntry: true });
 
-  /** Applies a saved view profile (filters and optionally positions). */
+  /** Applies a saved view profile (filters). */
   const handleApplyView = useCallback((profile: FilterProfile) => {
     setActiveViewId(profile.id);
     const isAdvanced = (profile.filter.allowlistNodeIds?.length ?? 0) > 0;
@@ -1223,10 +1217,6 @@ export function App() {
       setShowExpandedSchemaClusters(profile.showExpandedSchemaClusters ?? true);
     }
     const targetMode = shapeMode ?? graphMode;
-    const hasPositions = !!profile.positions && Object.keys(profile.positions).length > 0;
-    if (hasPositions) {
-      setPendingPositions(profile.positions);
-    }
     if (isAdvanced) {
       const restored = deserializeFilter(profile.filter);
       if (model) restored.schemas = new Set(model.schemas.map(s => s.name));
@@ -1234,12 +1224,12 @@ export function App() {
       setFilter(restored);
       setActiveAdvancedProfile(profile);
       const annotatedNodeIds = profile.aiMetadata ? annotatedNodeIdsFromAiMetadata(profile.aiMetadata) : undefined;
-      if (model) rebuild(model, restored, config, hasPositions, targetMode, annotatedNodeIds);
+      if (model) rebuild(model, restored, config, false, targetMode, annotatedNodeIds);
     } else {
       const restored = deserializeFilter(profile.filter);
       if (model && !guardSchemaSelection(model, restored.schemas)) return;
       setFilter(restored);
-      if (model) rebuild(model, restored, config, hasPositions, targetMode);
+      if (model) rebuild(model, restored, config, false, targetMode);
     }
   }, [model, config, filter, rebuild, graphMode, schemaViewSoftDisabled, guardSchemaSelection, captureViewSnapshot]);
 
@@ -1487,7 +1477,6 @@ export function App() {
     name: string,
     nodeIds: string[],
     source: 'trace' | 'path',
-    positions?: Record<string, { x: number; y: number }>,
   ) => {
     const profile: FilterProfile = {
       id: crypto.randomUUID(),
@@ -1498,7 +1487,6 @@ export function App() {
         ...serializeFilter(filter),
         allowlistNodeIds: nodeIds,
       },
-      ...(positions ? { positions } : {}),
     };
     persistFilterProfile(profile, { activateProfile: true });
   }, [filter, persistFilterProfile]);
@@ -1507,7 +1495,6 @@ export function App() {
   const handleSaveAnalysisBookmark = useCallback((
     name: string,
     nodeIds: string[],
-    positions?: Record<string, { x: number; y: number }>,
   ) => {
     const profile: FilterProfile = {
       id: crypto.randomUUID(),
@@ -1518,17 +1505,12 @@ export function App() {
         ...serializeFilter(filter),
         allowlistNodeIds: nodeIds,
       },
-      ...(positions ? { positions } : {}),
     };
     persistFilterProfile(profile, { activateProfile: true });
   }, [filter, persistFilterProfile]);
 
   /** Saves a transient AI preview as a permanent bookmark. */
-  const handleSaveAiBookmark = useCallback((
-    name: string,
-    withPositions: boolean,
-    positions?: Record<string, { x: number; y: number }>,
-  ) => {
+  const handleSaveAiBookmark = useCallback((name: string) => {
     if (!aiPreview || !model) return;
     const display = aiPreviewDisplayFilter(filter, true, model.schemas.map(s => s.name));
     const profile: FilterProfile = {
@@ -1541,7 +1523,6 @@ export function App() {
         allowlistNodeIds: Array.from(aiPreview.nodeIds),
       },
       aiMetadata: aiPreview.aiMetadata,
-      ...(withPositions && positions ? { positions } : {}),
     };
     setFilter(display);
     persistFilterProfile(profile, { clearAiPreview: true, activateProfile: true });
@@ -1775,9 +1756,7 @@ export function App() {
         activeAdvancedProfile={activeAdvancedProfile}
         bookmarkStaleNames={bookmarkStaleNames}
         onExitAdvancedBookmark={handleExitAdvancedBookmark}
-        pendingPositions={pendingPositions}
         viewportPreserveVersion={viewportPreserveVersion}
-        onPendingPositionsApplied={handlePendingPositionsApplied}
         onCameraChange={handleCameraChange}
         pendingViewport={pendingViewport}
         onPendingViewportApplied={handlePendingViewportApplied}

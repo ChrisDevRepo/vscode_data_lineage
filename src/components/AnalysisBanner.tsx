@@ -11,9 +11,8 @@ interface AnalysisBannerProps {
   /**
    * Optional callback to save the current analysis result as a bookmark.
    * @param name - The name for the bookmark.
-   * @param withPositions - Whether to save the current visual positions of nodes.
    */
-  onSaveAsBookmark?: (name: string, withPositions: boolean) => void;
+  onSaveAsBookmark?: (name: string) => void;
 }
 
 /**

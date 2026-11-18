@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 /**
- * Bookmarks and exports are object-view artifacts. While the column view is on stage React Flow
- * holds column nodes under the same ids, in another coordinate space; every bookmark save and the
- * Draw.io export must still read the object nodes and edges. Switching views clears a graph error,
+ * The Draw.io export is an object-view artifact. While the column view is on stage React Flow
+ * holds column nodes under the same ids, in another coordinate space; the export must still read
+ * the object nodes and edges. Switching views clears a graph error,
  * and a new column relation set drops the hand-placed column positions and the pinned thread.
  */
 import { act, type ReactElement } from 'react';
@@ -71,31 +71,12 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function buttonByText(text: string): HTMLButtonElement {
-  const button = [...canvas!.host.querySelectorAll('button')].find(b => b.textContent?.trim() === text);
-  expect(button, `a "${text}" button`).toBeTruthy();
-  return button as HTMLButtonElement;
-}
-
 /** Switches the AI banner between the object and the column view. */
 function showView(label: 'Detail' | 'Objects'): void {
   act(() => {
     ([...canvas!.host.querySelectorAll('[aria-label="View detail level"] button')]
       .find(b => b.textContent?.trim() === label) as HTMLButtonElement).click();
   });
-}
-
-/** Saves through the one banner offering "Save as Bookmark", with positions. */
-function saveBookmarkWithPositions(): void {
-  act(() => { buttonByText('Save as Bookmark').click(); });
-  const input = canvas!.host.querySelector('input[placeholder="Bookmark name..."]') as HTMLInputElement;
-  act(() => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'Saved');
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  });
-  const positions = input.parentElement!.querySelector('input[type="checkbox"]') as HTMLInputElement;
-  act(() => { positions.click(); });
-  act(() => { buttonByText('Save').click(); });
 }
 
 function columnNodeTransform(id: string): string {
@@ -111,42 +92,6 @@ async function mountColumnView(extra: object = {}): Promise<void> {
 }
 
 describe('GraphCanvas object-space artifacts while the column view is on stage', () => {
-  it('saves an AI bookmark with the object positions, not the column positions', async () => {
-    const onSaveAiBookmark = vi.fn();
-    await mountColumnView({ onSaveAiBookmark });
-    saveBookmarkWithPositions();
-    expect(onSaveAiBookmark).toHaveBeenCalledWith('Saved', true, objectPositions);
-  });
-
-  it('saves a trace bookmark with the object positions of the traced nodes', async () => {
-    const onSaveTraceBookmark = vi.fn();
-    const traced = new Set([edge.source, edge.target]);
-    await mountColumnView({
-      onSaveTraceBookmark,
-      trace: { ...canvasProps(flowNodes, built.flowEdges, schemas).trace, mode: 'applied', selectedNodeId: edge.source, baseNodeIds: traced, tracedNodeIds: traced },
-    });
-    saveBookmarkWithPositions();
-    expect(onSaveTraceBookmark).toHaveBeenCalledWith('Saved', [...traced], 'trace', {
-      [edge.source]: objectPositions[edge.source],
-      [edge.target]: objectPositions[edge.target],
-    });
-  });
-
-  it('saves an analysis bookmark with the object positions', async () => {
-    const onSaveAnalysisBookmark = vi.fn();
-    await mountColumnView({
-      onSaveAnalysisBookmark,
-      onCloseAnalysis: () => {},
-      analysisMode: {
-        type: 'hubs',
-        activeGroupId: null,
-        result: { type: 'hubs', summary: '', groups: [{ id: 'g', label: 'Hub', nodeIds: [edge.source] }] },
-      },
-    });
-    saveBookmarkWithPositions();
-    expect(onSaveAnalysisBookmark).toHaveBeenCalledWith('Saved', [edge.source], objectPositions);
-  });
-
   it('exports the object nodes and object edges to Draw.io', async () => {
     await mountColumnView();
     act(() => { (canvas!.host.querySelector('button[aria-label="Export as Draw.io"]') as HTMLButtonElement).click(); });

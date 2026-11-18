@@ -25,7 +25,7 @@ interface TracedFilterBannerProps {
   /** Callback to reset/clear the trace filter. */
   onReset: () => void;
   /** Optional callback to save the current traced view as a persistent bookmark. */
-  onSaveAsBookmark?: (name: string, withPositions: boolean) => void;
+  onSaveAsBookmark?: (name: string) => void;
   /** Whether the trace should ignore existing schema/type filters and use the full model. */
   useFullModel: boolean;
   /** Callback triggered when the "Include objects outside the filters" checkbox is toggled. */

@@ -19,7 +19,7 @@ interface ModeBannerProps {
   /** Callback fired when the user closes the banner. */
   onClose: () => void;
   /** Optional callback to save the current mode's result as a permanent bookmark. */
-  onSaveAsBookmark?: (name: string, withPositions: boolean) => void;
+  onSaveAsBookmark?: (name: string) => void;
   /** Extra controls rendered in the action area (before Save as Bookmark). */
   extraControls?: ReactElement | null;
 }
@@ -56,7 +56,6 @@ export const ModeBanner = memo(function ModeBanner({
 }: ModeBannerProps) {
   const [saving, setSaving] = useState(false);
   const [saveName, setSaveName] = useState('');
-  const [withPositions, setWithPositions] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -66,10 +65,9 @@ export const ModeBanner = memo(function ModeBanner({
   function handleConfirmSave() {
     const name = saveName.trim();
     if (!name) return;
-    onSaveAsBookmark?.(name, withPositions);
+    onSaveAsBookmark?.(name);
     setSaving(false);
     setSaveName('');
-    setWithPositions(false);
   }
 
   return (
@@ -121,15 +119,6 @@ export const ModeBanner = memo(function ModeBanner({
               placeholder="Bookmark name..."
               className="h-7 px-2 text-xs rounded-sm ln-input w-[140px]"
             />
-            <label className="flex items-center gap-1 text-xs ln-text-muted cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={withPositions}
-                onChange={e => setWithPositions(e.target.checked)}
-                className="ln-checkbox"
-              />
-              Positions
-            </label>
             <button
               onClick={handleConfirmSave}
               disabled={!saveName.trim()}
