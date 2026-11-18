@@ -828,6 +828,9 @@ export class AiSession {
     try {
       const classification = ClassificationSchema.parse(proposal.classification);
       built.publishMemoryTo(this.memory);
+      // A new exploration replaces any earlier result; it never extends it.
+      this.resultGraph = null;
+      this.resetPresentResultLifecycle();
       this.stateMachine = built;
       this.explorationCounter += 1;
       this.explorationRunId = `${this.id}:e${this.explorationCounter}`;
@@ -989,9 +992,7 @@ export class AiSession {
   /**
    * The committed report sections a further render of this run may keep instead of resending.
    * Requires sections, an approved exploration behind them, and that run still being the one
-   * rendering. The last is load-bearing: {@link storeSmResult} carries sections across a fresh
-   * exploration, so an unstamped check would leak the previous run's report. A discovery-turn
-   * render has no run id and never retains.
+   * rendering. A discovery-turn render has no run id and never retains.
    *
    * @returns The retainable sections, or `null` when this render must author its own.
    */
