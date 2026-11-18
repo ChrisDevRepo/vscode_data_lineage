@@ -2623,21 +2623,22 @@ export class NavigationEngine implements IHopStateMachine {
     if ('code' in merged) return merged;
     params = merged;
     // Independent faults collect into one rejection; a focus or caller fault leaves routes unchecked.
-    const faults: ToolRejection[] = [];
     const classViolation = validateSectionsAgainstClassification(params.sections,
       this.classification, archivedAngles);
-    if (classViolation) {
+    // Built when returned, so its held line states the draft after any hold this call makes.
+    const faults = (): ToolRejection[] => {
+      if (!classViolation) return [];
       const held = this.heldPartsOfCurrentFocus();
-      faults.push(makeRejection({
+      return [makeRejection({
         code: REJECTION_CODES.invalidInput,
         reason: `sections: ${classViolation}`,
         ...(held ? { hint: heldSubmissionRepairHint(held) } : {}),
         issuePaths: ['sections'],
-      }));
-    }
+      })];
+    };
 
     if (this.getCurrentTasks().some(task => task.callerContext && (!task.nodeId || task.parentTaskId !== task.callerContext.callerTaskId || !this.validFunctionCallerContext(task.nodeId, task.callerContext)))) {
-      return combineToolRejections([...faults, makeRejection({ code: REJECTION_CODES.routeValidationFailed, hint: 'Caller SQL or task provenance changed after this function investigation was declared. Nothing was committed; start a new exploration.' })]);
+      return combineToolRejections([...faults(), makeRejection({ code: REJECTION_CODES.routeValidationFailed, hint: 'Caller SQL or task provenance changed after this function investigation was declared. Nothing was committed; start a new exploration.' })]);
     }
     try {
       const invalidRoutes: InvalidRoute[] = [];
@@ -2645,7 +2646,7 @@ export class NavigationEngine implements IHopStateMachine {
       const rawFocusId = params.focus_node_id;
       const focusId = resolveModelNodeId(rawFocusId, this.nodeMap, this.model.identifierCaseSensitive) ?? (rawFocusId === undefined ? undefined : this.identifierKey(rawFocusId));
       if (!focusId || !this.nodeMap.has(focusId)) {
-        return combineToolRejections([...faults, makeRejection({
+        return combineToolRejections([...faults(), makeRejection({
           code: REJECTION_CODES.invalidInput,
           reason: `focus_node_id \`${rawFocusId ?? ''}\` not found in the loaded model.`,
           hint: activeSubmitFindingsRecoveryHint(this.currentFocusNodeId ?? undefined),
@@ -2653,7 +2654,7 @@ export class NavigationEngine implements IHopStateMachine {
       }
       if (focusId !== this.currentFocusNodeId) {
         const expected = this.currentFocusNodeId ?? '';
-        return combineToolRejections([...faults, makeRejection({
+        return combineToolRejections([...faults(), makeRejection({
           code: REJECTION_CODES.focusNodeIdMismatch,
           reason: `focus_node_id names \`${focusId}\`; the current object is \`${expected}\`.`,
           hint: `Resend the same call with focus_node_id \`${expected}\`.`,
@@ -2979,18 +2980,20 @@ export class NavigationEngine implements IHopStateMachine {
 
       const fatalRoutes = invalidRoutes.filter(r => !isAbsentKind(r.kind));
       if (fatalRoutes.length > 0) {
-        const rejection = combineToolRejections([...faults, buildRouteValidationRejection(fatalRoutes)]);
+        const routeRejection = buildRouteValidationRejection(fatalRoutes);
         this.lastRoutedRejected = fatalRoutes.length;
         for (const r of fatalRoutes) this.memory.recordRejection(r.id, r.reason, this.hopCount);
         // Neither action in a prune/question conflict is valid held content.
         const issuePaths = [...new Set([
-          ...(rejection.issuePaths ?? []),
+          ...(classViolation ? ['sections'] : []),
+          ...(routeRejection.issuePaths ?? []),
           ...fatalRoutes.flatMap(route => route.kind === 'prune_question_conflict' ? ['prune_neighbors'] : []),
         ])];
         this.holdFinding(finding, issuePaths.map(path => path.split('.')[0]));
-        return { ...rejection, issuePaths };
+        return { ...combineToolRejections([...faults(), routeRejection]), issuePaths };
       }
-      if (faults.length > 0) return combineToolRejections(faults);
+      const sectionFaults = faults();
+      if (sectionFaults.length > 0) return combineToolRejections(sectionFaults);
 
       const notices = [...actionPolicy.notices, ...invalidRoutes.filter(r => isAbsentKind(r.kind))];
       for (const notice of notices) {
