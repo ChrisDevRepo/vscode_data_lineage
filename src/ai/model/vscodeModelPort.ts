@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { AIMessageChunk, SystemMessage, type BaseMessage, type MessageContent, type ToolCall } from '@langchain/core/messages';
+import { AIMessageChunk, SystemMessage, type BaseMessage, type MessageContent } from '@langchain/core/messages';
 import {
   type CompleteTextInput,
   type GeneratedToolCall,
@@ -12,10 +12,12 @@ import {
   type ToolGenerationContent,
   type ToolGenerationInput,
   type ToolGenerationResult,
+  cancelledError,
   cancelledToolTurnResult,
   errorToolTurnResult,
   isHostCancellationError,
   isPortCancellation,
+  isRecord,
   messageContentToText,
   messageProviderParts,
 } from './modelPort';
@@ -387,13 +389,14 @@ export class VscodeModelPort implements ModelPort {
         if (streamedUsage) usage = streamedUsage as TokenUsage;
       }
       if (signal?.aborted) throw cancelledError();
-      if ((message.invalid_tool_calls?.length ?? 0) > 0) {
-        throw new ModelPortError(
-          'unsupported_response',
-          'Language model returned non-object tool input.',
-        );
-      }
-      const toolCalls = message.tool_calls ?? [];
+      // A non-object input is LangChain's invalid call; it stays a call of the turn, so the
+      // receiving boundary rejects it by its call ID instead of the turn failing.
+      const nonObjectCalls = (message.invalid_tool_calls ?? []).map((call) => ({
+        id: call.id,
+        name: call.name ?? '',
+        args: call.args === undefined ? undefined : JSON.parse(call.args) as unknown,
+      }));
+      const toolCalls: Array<{ id?: string; name: string; args: unknown }> = [...(message.tool_calls ?? []), ...nonObjectCalls];
       if (!toolCalls.every(hasCallId)) {
         throw new ModelPortError(
           'unsupported_response',
@@ -433,18 +436,19 @@ function observedFinishReason(usageReceived: boolean, toolCallCount: number): 't
   return toolCallCount > 0 ? 'tool-calls' : 'stop';
 }
 
-/** A LangChain tool call whose provider call ID is present. */
-type IdentifiedToolCall = ToolCall & { readonly id: string };
+/** A tool call whose provider call ID is present; `args` is the input exactly as streamed. */
+interface IdentifiedToolCall {
+  readonly id: string;
+  readonly name: string;
+  readonly args: unknown;
+}
 
-function hasCallId(call: ToolCall): call is IdentifiedToolCall {
+function hasCallId(call: { readonly id?: string }): call is IdentifiedToolCall {
   return typeof call.id === 'string' && call.id.length > 0;
 }
 
 function isEmptyRecord(value: unknown): value is Record<string, never> {
-  return value !== null
-    && typeof value === 'object'
-    && !Array.isArray(value)
-    && Object.keys(value).length === 0;
+  return isRecord(value) && Object.keys(value).length === 0;
 }
 
 function toLangChainToolChoice(
@@ -475,8 +479,4 @@ function bindCancellation(signal?: AbortSignal): {
 
 function isCancellation(error: unknown): boolean {
   return isPortCancellation(error) || isHostCancellationError(error);
-}
-
-function cancelledError(): ModelPortError {
-  return new ModelPortError('cancelled', 'Language model request was cancelled.');
 }

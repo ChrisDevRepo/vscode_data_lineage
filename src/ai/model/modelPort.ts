@@ -47,6 +47,26 @@ export function messageProviderParts(message: BaseMessage): readonly unknown[] {
 }
 
 /**
+ * The assistant turn to append to the transcript for one generation: its message, plus each call
+ * the message lacks (a call whose input was no JSON object) with empty arguments, so every call
+ * keeps the tool result that answers it.
+ */
+export function transcriptTurn(message: AIMessage, calls: readonly GeneratedToolCall[]): AIMessage {
+  const kept = message.tool_calls ?? [];
+  const keptIds = new Set(kept.map((call) => call.id));
+  const missing = calls.filter((call) => !keptIds.has(call.callId));
+  if (missing.length === 0) return message;
+  return new AIMessage({
+    content: message.content,
+    additional_kwargs: message.additional_kwargs,
+    tool_calls: [
+      ...kept,
+      ...missing.map((call) => ({ id: call.callId, name: call.toolName, args: {}, type: 'tool_call' as const })),
+    ],
+  });
+}
+
+/**
  * Creates an assistant message containing validated JSON-object tool calls.
  *
  * @param providerParts - The provider stream parts of the generation that emitted these calls,
@@ -75,13 +95,18 @@ export function modelToolCallMessage(
 }
 
 function modelToolArgs(input: unknown): Record<string, unknown> {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+  if (!isRecord(input)) {
     throw new ModelPortError(
       'invalid_request',
       'Tool-call input must be a JSON object.',
     );
   }
-  return input as Record<string, unknown>;
+  return input;
+}
+
+/** Whether a value is a JSON object: not null and not an array. */
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**
@@ -138,6 +163,11 @@ export class ModelPortError extends Error {
     super(message);
     this.name = 'ModelPortError';
   }
+}
+
+/** The port-level cancellation error every model boundary raises. */
+export function cancelledError(): ModelPortError {
+  return new ModelPortError('cancelled', 'Language model request was cancelled.');
 }
 
 /**

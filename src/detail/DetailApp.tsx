@@ -1,25 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { LineageNode } from '../engine/types';
-import { DEFAULT_CONFIG } from '../engine/types';
 import type { TableStatsState } from '../components/TableDetailPanel';
 import type { StatsMode } from '../engine/profilingEngine';
 import { TableDetailPanel } from '../components/TableDetailPanel';
 import { MonacoSqlView } from './MonacoSqlView';
-import { BRIDGE_PROTOCOL_VERSION, ExtensionToDetailMsgSchema, validateBridgeFrame } from '../engine/shared/bridgeContract';
-
-/**
- * Configuration options for the detail view, typically synchronized from VS Code settings.
- */
-interface DetailConfig {
-  /** Whether the active session is connected to a live database. */
-  isDbMode: boolean;
-  /** Whether table statistics (row counts, distributions) are enabled. */
-  statsEnabled: boolean;
-  /** Whether to skip statistics generation for external tables. */
-  excludeExternalTables: boolean;
-  /** Whether standard profiling mode is enabled. */
-  standardModeEnabled: boolean;
-}
+import { BRIDGE_PROTOCOL_VERSION, ExtensionToDetailMsgSchema, validateBridgeFrame, type DetailConfig } from '../engine/shared/bridgeContract';
 
 /**
  * Represents the complete state of the detail panel for a specific node.
@@ -32,14 +17,6 @@ interface DetailState {
   /** The current configuration for the detail view. */
   config: DetailConfig;
 }
-
-/** Default configuration used when no explicit config is provided by the extension host. */
-const DEFAULT_DETAIL_CONFIG: DetailConfig = {
-  isDbMode:              false,
-  statsEnabled:          DEFAULT_CONFIG.tableStatistics.enabled,
-  excludeExternalTables: DEFAULT_CONFIG.tableStatistics.excludeExternalTables,
-  standardModeEnabled:   DEFAULT_CONFIG.tableStatistics.standardModeEnabled,
-};
 
 /** VS Code API acquired once for the detail webview lifecycle. */
 const _vscodeApi = acquireVsCodeApi();
@@ -85,7 +62,7 @@ export function DetailApp() {
         setDetail({
           node:      msg.node,
           findQuery: msg.findQuery,
-          config:    msg.config ?? DEFAULT_DETAIL_CONFIG,
+          config:    msg.config,
         });
       } else if (msg.type === 'detail-clear') {
         setStatsState({ phase: 'idle' });

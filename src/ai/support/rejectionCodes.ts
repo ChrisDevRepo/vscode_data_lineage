@@ -101,4 +101,32 @@ export const REJECTION_CODES = {
   invalidStructuredOutput: 'invalid_structured_output',
   /** A `supplement`/`start_exploration` id resolves to a real node with no dependency path (in either direction) to the traced graph — refused, never silently admitted (`smBase.ts` `admitSupplementTargets`). */
   notConnectedToTrace: 'not_connected_to_trace',
+  /** A second call to a once-per-reply tool in one provider reply; only the first is evaluated (`toolAttempt.ts`). */
+  extraCallNotEvaluated: 'extra_call_not_evaluated',
+  /** A `supplement` lead id names no unresolved pending lead of the completed exploration (`smBase.ts`). */
+  invalidPendingLead: 'invalid_pending_lead',
+  /** `lineage_present_result` ran with no presentation source: no loaded scope and no completed exploration (`presentResultRules.ts`). */
+  missingResultGraph: 'missing_result_graph',
+  /** A refine proposal identical to the reviewed pending proposal (`startExploration.ts`). */
+  noOpRefine: 'no_op_refine',
+  /** `start_exploration` origin resolves to no node of the loaded model (`smBase.ts`). */
+  originNotFound: 'origin_not_found',
+  /** `lineage_get_neighbor_columns` ids that are not direct neighbors of the current object or lie outside the scope (`toolProvider.ts`). */
+  outOfScopeOrNotNeighbor: 'out_of_scope_or_not_neighbor',
+  /** `lineage_start_exploration` called a second time in one reply (`startExplorationRules.ts`). */
+  parallelCallForbidden: 'parallel_call_forbidden',
+  /** A sibling call not executed because an earlier call of the same provider batch closed the phase (`toolAttempt.ts`). */
+  phaseClosed: 'phase_closed',
+  /** A graph preview requested with no discovery narrative or scope behind it (`handlers/presentResult.ts`). */
+  previewSourceUnavailable: 'preview_source_unavailable',
+  /** A substring-mode search query of punctuation only, which no object name contains (`tools.ts`). */
+  queryNotAName: 'query_not_a_name',
+  /** A search query too short to be a name fragment (`tools.ts`). */
+  queryTooShort: 'query_too_short',
+  /** A tool result that does not fit the evidence share of the turn budget, replaced by this reply (`toolAttempt.ts`). */
+  resultTooLarge: 'result_too_large',
+  /** `start_exploration.targetColumns` names columns the origin does not carry (`smBase.ts`). */
+  unknownColumns: 'unknown_columns',
+  /** `excludeNodeIds`/`passNodeIds` name nodes absent from the loaded model (`smBase.ts`). */
+  unknownNodeIds: 'unknown_node_ids',
 } as const;

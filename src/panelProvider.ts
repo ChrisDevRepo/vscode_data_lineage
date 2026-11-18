@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { type AiSession } from './ai/session/session';
-import { Logger, safeStringifyForLog } from './utils/log';
+import { Logger } from './utils/log';
 import { notifyError } from './utils/notifications';
 import { getUri } from './utils/getUri';
 import { getNonce } from './utils/getNonce';
@@ -8,9 +8,7 @@ import { createBridgeHost, type BridgeHost } from './bridge/host';
 import { summarizeZodError } from './bridge/host';
 import { createMessageHandlers, PROJECT_STORE_KEY, type ReportDocumentRef } from './bridge/messageHandlers';
 import {
-  BRIDGE_PROTOCOL_VERSION,
   MainPanelToExtensionMsgSchema,
-  type BridgeEnvelope,
   type MainPanelToExtensionMsg,
 } from './engine/shared/bridgeContract';
 
@@ -127,15 +125,6 @@ export function openPanel(
   });
 
   panel.webview.onDidReceiveMessage(async (rawMsg) => {
-    const inboundVersion = (rawMsg as BridgeEnvelope | undefined)?.protocolVersion;
-    if (inboundVersion !== undefined && inboundVersion !== BRIDGE_PROTOCOL_VERSION) {
-      notifyError(
-        bridgeLogger,
-        'Bridge protocol mismatch',
-        `Data Lineage: the webview is speaking bridge protocol v${safeStringifyForLog(inboundVersion)} but this extension expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window to pick up the matching view.`,
-      );
-      return;
-    }
     const parsed = MainPanelToExtensionMsgSchema.safeParse(rawMsg);
     if (!parsed.success) {
       bridgeLogger.warn(`Rejected malformed webview message (type=${rawMsg?.type ?? '?'}): ${summarizeZodError(parsed.error)}`);

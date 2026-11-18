@@ -44,11 +44,9 @@ import { summarizeModelConnectivity, formatModelConnectivity } from '../engine/s
 import { formatRenderConnectivity } from '../engine/renderConnectivity';
 import { formatScreenStateSections } from './debugDumpScreenState';
 import {
-  BRIDGE_PROTOCOL_VERSION,
   DetailPanelToExtensionMsgSchema,
   LOAD_RESULT_TYPES,
   ProjectSchema,
-  type BridgeEnvelope,
   type ExtensionToWebviewMsg,
   type MainPanelToExtensionMsg,
   type Project,
@@ -528,15 +526,6 @@ export function createMessageHandlers(
         setDetailPanel(detailPanel);
 
         detailPanel.webview.onDidReceiveMessage(async (rawM) => {
-          const inboundVersion = (rawM as BridgeEnvelope | undefined)?.protocolVersion;
-          if (inboundVersion !== undefined && inboundVersion !== BRIDGE_PROTOCOL_VERSION) {
-            notifyError(
-              bridgeLogger,
-              'Bridge protocol mismatch (detail panel)',
-              `Data Lineage: the detail panel is speaking bridge protocol v${safeStringifyForLog(inboundVersion)} but this extension expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window to pick up the matching view.`,
-            );
-            return;
-          }
           const parsed = DetailPanelToExtensionMsgSchema.safeParse(rawM);
           if (!parsed.success) {
             host.log('warn', 'Bridge', `Rejected malformed detail-panel message (type=${rawM?.type ?? '?'}): ${summarizeZodError(parsed.error)}`);
@@ -629,7 +618,7 @@ export function createMessageHandlers(
           const reason = err instanceof Error ? err.message : String(err);
           host.log('error', 'Dacpac', 'Open dacpac', err);
           host.log('debug', 'Dacpac', `Open dacpac failed: ${uris[0].fsPath}`);
-          host.postMessage({ type: 'db-error', message: `Could not open ${path.basename(uris[0].fsPath)}: ${reason}`, phase: 'extract' });
+          host.postMessage({ type: 'db-error', message: `Could not open ${path.basename(uris[0].fsPath)}: ${reason}` });
           return;
         }
         const { preview, elements, dspName, identifierCaseSensitive } = extracted;
@@ -655,7 +644,7 @@ export function createMessageHandlers(
       if (!project) {
         host.log('error', 'Bridge', 'Load project', 'Project not found');
         host.log('debug', 'Bridge', `Project not found: ${msg.id}`);
-        host.postMessage({ type: 'db-error', message: `Project not found: ${msg.id}`, phase: 'connect' });
+        host.postMessage({ type: 'db-error', message: `Project not found: ${msg.id}` });
         return;
       }
 
@@ -704,7 +693,7 @@ export function createMessageHandlers(
             const reason = err instanceof Error ? err.message : String(err);
             host.log('error', 'Bridge', 'Load project', err);
             host.log('debug', 'Bridge', `Load project failed: ${project.connection.path}`);
-            host.postMessage({ type: 'db-error', message: `Could not load ${project.connection.displayName}: ${reason}`, phase: 'extract' });
+            host.postMessage({ type: 'db-error', message: `Could not load ${project.connection.displayName}: ${reason}` });
           }
         }
       } else if (project.connection.type === 'database') {
@@ -767,7 +756,7 @@ export function createMessageHandlers(
       host.log('debug', 'Bridge', `Dacpac visualize requested for schemas: ${msg.schemas?.join(', ')}`);
       if (!cachedElements) {
         host.log('error', 'Bridge', 'Dacpac visualize', 'Session expired (cachedElements is null)');
-        host.postMessage({ type: 'db-error', message: 'Session expired. Please reopen the file.', phase: 'extract' });
+        host.postMessage({ type: 'db-error', message: 'Session expired. Please reopen the file.' });
         return;
       }
       const config = await readExtensionConfig(host);
@@ -782,7 +771,7 @@ export function createMessageHandlers(
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
         host.log('error', 'Dacpac', 'Dacpac visualize', err);
-        host.postMessage({ type: 'db-error', message: `Could not build the lineage model: ${reason}`, phase: 'extract' });
+        host.postMessage({ type: 'db-error', message: `Could not build the lineage model: ${reason}` });
         return;
       }
       if (isModelOverLimit(model, config.maxNodes, logger, host)) return;
@@ -798,7 +787,7 @@ export function createMessageHandlers(
       return withDbProgressHost(host, dbEnv, 'Loading selected schemas', async (patch, progressToken) => {
         if (!lastConnectionInfo) {
           host.log('error', 'Bridge', 'Database visualize', 'No stored connection info');
-          host.postMessage({ type: 'db-error', message: 'No stored connection info. Please reconnect.', phase: 'connect' });
+          host.postMessage({ type: 'db-error', message: 'No stored connection info. Please reconnect.' });
           return undefined;
         }
         return connectDatabase(dbEnv, { ...lastConnectionInfo, ...patch }, progressToken);
@@ -1078,7 +1067,7 @@ function isDacpacTooLarge(bytes: number, host: BridgeHost, outputChannel: vscode
     { bytes, maxBytes: MAX_DACPAC_BYTES },
     SHOWN_INLINE,
   );
-  host.postMessage({ type: 'db-error', message, phase: 'extract' });
+  host.postMessage({ type: 'db-error', message });
   return true;
 }
 
@@ -1101,7 +1090,7 @@ export function isModelOverLimit(model: DatabaseModel, maxNodes: number, logger:
     { count: check.count, limit: check.limit },
     host ? SHOWN_INLINE : undefined,
   );
-  host?.postMessage({ type: 'db-error', message, phase: 'extract' });
+  host?.postMessage({ type: 'db-error', message });
   return true;
 }
 
@@ -1131,7 +1120,7 @@ async function handleLoadDemo(host: BridgeHost, getSession: () => AiSession, out
       { asset: 'assets/demo.dacpac' },
       SHOWN_INLINE,
     );
-    host.postMessage({ type: 'db-error', message: `Failed to load demo — ${msg}`, phase: 'extract' });
+    host.postMessage({ type: 'db-error', message: `Failed to load demo — ${msg}` });
   }
 }
 
@@ -1282,11 +1271,11 @@ async function withDbProgressHost(
           Logger.create(env.outputChannel, 'DB'),
           connectionErrorHooks(env, target.connectionId, token.isCancellationRequested ? undefined : retry),
         );
-        host.postMessage({ type: 'db-error', message: reported.message, phase: 'connect' });
+        host.postMessage({ type: 'db-error', message: reported.message });
       } else {
         const message = redactSecrets(err instanceof Error ? err.message : String(err));
         host.log('error', 'DB', title, message);
-        host.postMessage({ type: 'db-error', message, phase: 'connect' });
+        host.postMessage({ type: 'db-error', message });
       }
     } finally {
       if (session) {

@@ -356,8 +356,8 @@ describe('load messages in the bridge contract', () => {
     expect(MainPanelToExtensionMsgSchema.safeParse({ type: 'db-visualize', schemas: [], loadId: 'A' }).success).toBe(true);
     expect(MainPanelToExtensionMsgSchema.safeParse({ type: 'cancel-load', loadId: 'A' }).success).toBe(true);
     expect(MainPanelToExtensionMsgSchema.safeParse({ type: 'cancel-load' }).success).toBe(false);
-    expect(ExtensionToWebviewMsgSchema.safeParse({ type: 'db-error', message: 'x', phase: 'connect', loadId: 'A' }).success).toBe(true);
-    expect(ExtensionToWebviewMsgSchema.safeParse({ type: 'db-error', message: 'x', phase: 'connect' }).success).toBe(true);
+    expect(ExtensionToWebviewMsgSchema.safeParse({ type: 'db-error', message: 'x', loadId: 'A' }).success).toBe(true);
+    expect(ExtensionToWebviewMsgSchema.safeParse({ type: 'db-error', message: 'x' }).success).toBe(true);
   });
 
   it('has no host-assigned load announcement', () => {

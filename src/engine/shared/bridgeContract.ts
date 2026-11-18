@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ExplorationDepthSelectionSchema } from './explorationDepthContract';
+import type { ColumnStats, TableStats } from '../profilingEngine';
 import { OBJECT_TYPES, type ExtensionConfig, type SchemaPreview, type TraceAffordanceSnapshot } from '../types';
 
 /**
@@ -27,6 +28,14 @@ export const MAX_ID_LIST_LENGTH = 500;
  * language-model turn; a payload above this ceiling is a malformed or hostile frame, not a long answer.
  */
 export const AI_REPORT_MARKDOWN_MAX_CHARS = 200_000;
+
+/**
+ * Upper bound, in characters, on the file text the webview hands to the host for `export-file`.
+ *
+ * @remarks
+ * Matches the 50 MB dacpac ceiling, the largest model the webview can render an export from.
+ */
+export const EXPORT_FILE_MAX_CHARS = 50 * 1024 * 1024;
 
 /**
  * Link destination scheme of the engine-assembled object links in AI report markdown:
@@ -762,21 +771,12 @@ export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('db-schema-preview'), preview: SchemaPreviewSchema, config: ExtensionConfigSchema, sourceName: z.string(), loadId: z.string().optional() }),
   z.object({ type: z.literal('db-progress'), step: z.number(), total: z.number(), label: z.string(), loadId: z.string().optional() }),
   z.object({ type: z.literal('db-cancelled'), loadId: z.string().optional() }),
-  z.object({ type: z.literal('db-error'), message: z.string(), phase: z.string(), loadId: z.string().optional() }),
+  z.object({ type: z.literal('db-error'), message: z.string(), loadId: z.string().optional() }),
   z.object({ type: z.literal('last-dacpac-gone'), loadId: z.string().optional() }),
   z.object({ type: z.literal('rebuild-config'), config: ExtensionConfigSchema }),
   z.object({ type: z.literal('focus-object'), schema: z.string(), name: z.string() }),
   z.object({ type: z.literal('reload-source') }),
   z.object({ type: z.literal('ai-view-preview'), name: z.string(), nodeIds: z.array(z.string()), aiMetadata: AIViewMetadataSchema }),
-  z.object({
-    type: z.literal('error'),
-    error: z.string(),
-    stack: z.string().optional(),
-    componentStack: z.string().optional(),
-    source: z.enum(['error-boundary', 'window-error', 'unhandled-rejection']).optional(),
-    context: z.record(z.string(), z.unknown()).optional(),
-    timestamp: z.number().optional(),
-  }),
 ]);
 
 /**
@@ -838,7 +838,7 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('request-projects') }),
   z.object({ type: z.literal('open-external'), url: z.string().url().refine(u => u.startsWith('http://') || u.startsWith('https://'), { message: 'Only HTTP/HTTPS URLs are allowed' }) }),
   z.object({ type: z.literal('open-settings') }),
-  z.object({ type: z.literal('export-file'), defaultName: z.string(), data: z.string() }),
+  z.object({ type: z.literal('export-file'), defaultName: z.string(), data: z.string().max(EXPORT_FILE_MAX_CHARS) }),
   z.object({ type: z.literal('ai-open-in-editor'), markdown: z.string().max(AI_REPORT_MARKDOWN_MAX_CHARS) }),
   z.object({ type: z.literal('log'), level: z.enum(['info', 'warn', 'debug']).optional(), text: z.string() }),
   WebviewErrorMessageSchema,
@@ -875,6 +875,44 @@ export type DetailPanelToExtensionMsg = z.infer<typeof DetailPanelToExtensionMsg
  */
 export type WebviewToExtensionMsg = MainPanelToExtensionMsg | DetailPanelToExtensionMsg;
 
+/** Settings the detail panel reads, synchronized from VS Code settings and the active session. */
+const DetailConfigSchema = z.object({
+  isDbMode: z.boolean(),
+  statsEnabled: z.boolean(),
+  excludeExternalTables: z.boolean(),
+  standardModeEnabled: z.boolean(),
+});
+
+/** Detail-panel settings carried by `detail-update`. */
+export type DetailConfig = z.infer<typeof DetailConfigSchema>;
+
+const ColumnStatsSchema: z.ZodType<ColumnStats> = z.object({
+  name: z.string(),
+  type: z.string(),
+  distinctCount: z.number(),
+  nullCount: z.number().nullable(),
+  nullPercent: z.number().nullable(),
+  completeness: z.number(),
+  uniqueness: z.number(),
+  min: z.string().optional(),
+  max: z.string().optional(),
+  mean: z.number().optional(),
+  stdDev: z.number().optional(),
+  minLength: z.number().optional(),
+  maxLength: z.number().optional(),
+  zeroCount: z.number().optional(),
+  emptyCount: z.number().optional(),
+  skipped: z.boolean().optional(),
+});
+
+const TableStatsSchema: z.ZodType<TableStats> = z.object({
+  rowCount: z.number(),
+  columns: z.array(ColumnStatsSchema),
+  sampled: z.boolean(),
+  samplePercent: z.number().optional(),
+  warnings: z.array(z.string()).optional(),
+});
+
 /**
  * Zod schema for messages sent from the extension host **to the detail-panel webview**.
  *
@@ -884,9 +922,9 @@ export type WebviewToExtensionMsg = MainPanelToExtensionMsg | DetailPanelToExten
  * exactly like the main panel's `postToWebview` — no raw `detailPanel.webview.postMessage`.
  */
 export const ExtensionToDetailMsgSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('detail-update'), node: LineageNodeSchema, findQuery: z.string().optional(), config: z.any() }),
+  z.object({ type: z.literal('detail-update'), node: LineageNodeSchema, findQuery: z.string().optional(), config: DetailConfigSchema }),
   z.object({ type: z.literal('detail-clear') }),
-  z.object({ type: z.literal('table-stats-result'), stats: z.any(), mode: z.enum(['quick', 'standard']) }),
+  z.object({ type: z.literal('table-stats-result'), stats: TableStatsSchema, mode: z.enum(['quick', 'standard']) }),
   z.object({ type: z.literal('table-stats-error'), message: z.string() }),
 ]);
 

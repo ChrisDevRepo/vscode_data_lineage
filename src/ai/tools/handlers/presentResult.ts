@@ -246,7 +246,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
           : null;
         if (!previewNarrative?.summary || !scope) {
           return reject(makeRejection({
-            code: 'preview_source_unavailable',
+            code: REJECTION_CODES.previewSourceUnavailable,
             hint: 'Run the discovery question again, then request its graph preview.',
           }));
         }

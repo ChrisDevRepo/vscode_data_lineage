@@ -1796,7 +1796,7 @@ export class NavigationEngine implements IHopStateMachine {
     if (excludeIds.unresolved.length > 0 || passIds.unresolved.length > 0) {
       this.log('debug', `[NL] excludeNodeIds resolved=[${excludeIds.resolved.join(',')}] unresolved=[${excludeIds.unresolved.join(',')}] passNodeIds resolved=[${passIds.resolved.join(',')}] unresolved=[${passIds.unresolved.join(',')}]`);
       return makeRejection({
-        code: 'unknown_node_ids',
+        code: REJECTION_CODES.unknownNodeIds,
         reason: [
           ...(excludeIds.unresolved.length > 0 ? [`excludeNodeIds not in the loaded model: ${excludeIds.unresolved.join(', ')}`] : []),
           ...(passIds.unresolved.length > 0 ? [`passNodeIds not in the loaded model: ${passIds.unresolved.join(', ')}`] : []),
@@ -1813,7 +1813,7 @@ export class NavigationEngine implements IHopStateMachine {
     const originNode = resolvedOriginId ? this.nodeMap.get(resolvedOriginId) : null;
     if (!originNode) {
       return makeRejection({
-        code: 'origin_not_found',
+        code: REJECTION_CODES.originNotFound,
         hint: 'Verify the origin node id with lineage_search_objects first. Use the exact id it returns.',
       });
     }
@@ -1835,7 +1835,7 @@ export class NavigationEngine implements IHopStateMachine {
         const offending = unmatched.length > 0 ? unmatched : (explicitlyForeign.length > 0 ? explicitlyForeign : effectiveTargetColumns);
         this.log('debug', `[AI] [CT] requested columns [${effectiveTargetColumns.join(',')}] offending=[${offending.join(',')}] not on origin ${originNode.id} — rejecting (no partial-trace fallback)`);
         return makeRejection({
-          code: 'unknown_columns',
+          code: REJECTION_CODES.unknownColumns,
           hint: declaredNames.length > 0
             ? `targetColumns [${offending.join(', ')}] are not columns on ${originNode.id}. Its columns are: [${declaredNames.join(', ')}]. Provide valid columns, ask the user to clarify, or switch analysisMode to "bb".`
             : `targetColumns [${offending.join(', ')}] are not columns on ${originNode.id}, which exposes no column metadata of its own. Provide valid columns, ask the user to clarify, or switch analysisMode to "bb".`,
@@ -2257,7 +2257,7 @@ export class NavigationEngine implements IHopStateMachine {
     });
     if (leadEntries.some(entry => !entry)) {
       return makeRejection({
-        code: 'invalid_pending_lead',
+        code: REJECTION_CODES.invalidPendingLead,
         hint: 'Use an unresolved pending lead id from the completed exploration, or provide explicit supplement nodeIds.',
       });
     }

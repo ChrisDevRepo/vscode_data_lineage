@@ -285,7 +285,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
       if (isRefining && sess.pendingExploration && sameExplorationProposal(nextProposal, sess.pendingExploration)) {
         s.logger.debug(`[AI] [Proposal] no-op refine rejected revision=${sess.pendingExploration.revision}`);
         return s.logAndReturn('lineage_start_exploration', makeRejection({
-          code: 'no_op_refine',
+          code: REJECTION_CODES.noOpRefine,
           hint: 'The refinement did not change the reviewed proposal. Apply at least one requested scope, mode, classification, column, or filter change; if the request needs no change to the plan, reply to the user in text instead.',
         }), loggedInput);
       }

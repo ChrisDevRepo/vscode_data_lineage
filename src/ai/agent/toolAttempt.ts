@@ -24,6 +24,7 @@ import {
   messageProviderParts,
   modelToolResultMessage,
   modelUserMessage,
+  transcriptTurn,
   type ModelMessage,
 } from '../model/modelPort';
 import { assertToolPairingWellFormed } from '../model/messageWellFormed';
@@ -110,7 +111,7 @@ const RESULT_TOO_LARGE_HINT = 'This result is larger than the evidence this step
  */
 function resultTooLargeReply(toolName: string, bytes: number, heldBytes: number, budget: number): string {
   return JSON.stringify(makeRejection({
-    code: 'result_too_large',
+    code: REJECTION_CODES.resultTooLarge,
     hint: RESULT_TOO_LARGE_HINT,
     detail: { tool: toolName, bytes, held_bytes: heldBytes, budget },
   }));
@@ -1051,14 +1052,14 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
         status: 'phase_closed',
         closedByCallId: closedBy.callId,
         rejection: makeRejection({
-          code: 'phase_closed',
+          code: REJECTION_CODES.phaseClosed,
           reason: 'This sibling was not executed because an earlier call in the same provider batch closed the phase.',
           hint: 'Do not retry it.',
           detail: { closedByCallId: closedBy.callId, closedByTool: closedBy.toolName },
         }),
       }, calls, observations, rejections, input.traceSyntheticRejection);
       toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
-      logSyntheticRejection(input, 'batch_phase_closed', call, 'phase_closed',
+      logSyntheticRejection(input, 'batch_phase_closed', call, REJECTION_CODES.phaseClosed,
         `closed by ${closedBy.toolName} callId ${closedBy.callId}`);
       continue;
     }
@@ -1068,14 +1069,14 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
         status: 'phase_closed',
         closedByCallId: evaluatedCallId,
         rejection: makeRejection({
-          code: 'extra_call_not_evaluated',
+          code: REJECTION_CODES.extraCallNotEvaluated,
           reason: `Not evaluated: a reply carries one ${call.toolName} call, and an earlier call in this reply was evaluated.`,
           hint: "Answer that call's result with one call in your next reply.",
           detail: { evaluatedCallId },
         }),
       }, calls, observations, rejections, input.traceSyntheticRejection);
       toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
-      logSyntheticRejection(input, 'extra_call_not_evaluated', call, 'extra_call_not_evaluated',
+      logSyntheticRejection(input, 'extra_call_not_evaluated', call, REJECTION_CODES.extraCallNotEvaluated,
         `evaluated callId ${evaluatedCallId}`);
       continue;
     }
@@ -1300,7 +1301,7 @@ async function executeToolGenerationAttempt(
   const rejections = batch.rejections;
   const messages: ModelMessage[] = [];
   if (generated.toolCalls.length > 0 && !cancelled) {
-    messages.push(generated.message, ...toolMessages);
+    messages.push(transcriptTurn(generated.message, generated.toolCalls), ...toolMessages);
   }
 
   if (generated.toolCalls.length === 0 && input.requiredTerminalTool) {

@@ -262,10 +262,10 @@ const WILDCARD_ALL_TOKENS = new Set(['*', '.*', '%']);
 function validateQuery(query: string): ToolRejection | null {
   const trimmed = query.trim();
   if (trimmed.length < 1) {
-    return makeRejection({ code: 'query_too_short', hint: `Send a name fragment — any part of an object or column name. ${LIST_SCHEMA_REPAIR}` });
+    return makeRejection({ code: REJECTION_CODES.queryTooShort, hint: `Send a name fragment — any part of an object or column name. ${LIST_SCHEMA_REPAIR}` });
   }
   if (/^["'`.*?+^$]+$/.test(trimmed)) {
-    return makeRejection({ code: 'query_not_a_name', hint: `Substring mode matches the query literally, and this is punctuation only — no object name contains it. Send a real name fragment, or set mode:"regex" to use it as a pattern. ${LIST_SCHEMA_REPAIR}` });
+    return makeRejection({ code: REJECTION_CODES.queryNotAName, hint: `Substring mode matches the query literally, and this is punctuation only — no object name contains it. Send a real name fragment, or set mode:"regex" to use it as a pattern. ${LIST_SCHEMA_REPAIR}` });
   }
   return null;
 }

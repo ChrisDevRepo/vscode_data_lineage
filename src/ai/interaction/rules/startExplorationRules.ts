@@ -138,7 +138,7 @@ export function evaluateParallelStartRule(
 ): InteractionRuleResult {
   if (priorStartRoundId === null || priorStartRoundId !== currentRoundId) return null;
   return makeRejection({
-    code: 'parallel_call_forbidden',
+    code: REJECTION_CODES.parallelCallForbidden,
     reason: 'lineage_start_exploration was already called in this reply.',
     hint: 'Send lineage_submit_findings for the current object; each accepted finding serves the next queued object.',
     detail: { next_action: 'submit_findings' },

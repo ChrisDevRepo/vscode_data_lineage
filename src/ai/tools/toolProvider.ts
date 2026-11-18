@@ -464,7 +464,7 @@ class ToolHandler implements ToolServices {
       const invalidIds = engine.validateNeighborIds(ids);
       if (invalidIds.length > 0) {
         return this.logAndReturn('lineage_get_neighbor_columns', makeRejection({
-          code: 'out_of_scope_or_not_neighbor',
+          code: REJECTION_CODES.outOfScopeOrNotNeighbor,
           reason: `Not a direct neighbor of the current object, or outside the scope: ${invalidIds.join(', ')}.`,
           hint: 'Send only ids listed as neighbors of the current object.',
           detail: { invalid_ids: invalidIds },

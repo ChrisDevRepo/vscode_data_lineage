@@ -291,20 +291,24 @@ const MULTI_SITE_REJECTION_CODES = [
   REJECTION_CODES.invalidRegex,
 ] as const;
 
-describe('rejection codes — one home per multi-site code', () => {
-  it('leaves no hand-typed literal for a multi-site code anywhere in src/ai', () => {
+describe('rejection codes — one home per code', () => {
+  it('leaves no hand-typed literal for an owned code, nor a literal code on makeRejection, anywhere in src/ai', () => {
     const REJECTION_CODES_OWNER = join(aiRoot, 'support', 'rejectionCodes.ts');
     const offenders: string[] = [];
     for (const file of sourceFiles(aiRoot)) {
       if (file === REJECTION_CODES_OWNER) continue;
-      const lines = readFileSync(file, 'utf8').split('\n');
+      const text = readFileSync(file, 'utf8');
+      const lines = text.split('\n');
       lines.forEach((line, index) => {
-        for (const code of MULTI_SITE_REJECTION_CODES) {
+        for (const code of Object.values(REJECTION_CODES)) {
           if (line.includes(`code: '${code}'`) || line.includes(`code: "${code}"`)) {
             offenders.push(`${posixRelative(aiRoot, file)}:${index + 1} ${code}`);
           }
         }
       });
+      for (const match of text.matchAll(/makeRejection\(\{\s*code:\s*['"`]([^'"`]*)/g)) {
+        offenders.push(`${posixRelative(aiRoot, file)}:${text.slice(0, match.index).split('\n').length} ${match[1]}`);
+      }
     }
     expect(offenders, 'every emission site interpolates REJECTION_CODES').toEqual([]);
   });

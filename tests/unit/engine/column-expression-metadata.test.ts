@@ -6,7 +6,7 @@ import { ExtensionToDetailMsgSchema } from '../../../src/engine/shared/bridgeCon
 const legacyColumn = { name: 'Amount', type: 'decimal(18,2)', nullable: 'NULL', extra: 'COMPUTED' };
 const frame = (column: unknown) => ({ type: 'detail-update', node: {
   id: '[demo].[Projected]', fullName: '[demo].[Projected]', schema: 'demo', name: 'Projected', type: 'view', columns: [column],
-}, config: {} });
+}, config: { isDbMode: false, statsEnabled: true, excludeExternalTables: true, standardModeEnabled: false } });
 
 it('retains exact declared metadata through JSON storage and IPC parsing', () => {
   const column = { ...legacyColumn, expressionDependencies: [

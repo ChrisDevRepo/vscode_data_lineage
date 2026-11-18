@@ -26,7 +26,9 @@ import {
 import { ChatGenerationChunk, type ChatResult } from '@langchain/core/outputs';
 import type { Runnable } from '@langchain/core/runnables';
 import {
+  cancelledError,
   isHostCancellationError,
+  isRecord,
   messageProviderParts,
   ModelPortError,
   PROVIDER_PARTS_KEY,
@@ -230,7 +232,7 @@ export class VscodeLangChainBridge extends BaseChatModel<
             tool_call_chunks: [{
               id: part.callId,
               name: part.name,
-              args: JSON.stringify(asRecord(part.input)),
+              args: JSON.stringify(part.input),
               index: toolIndex++,
               type: 'tool_call_chunk',
             }],
@@ -298,11 +300,7 @@ export function toVscodeMessage(message: BaseMessage): vscode.LanguageModelChatM
             'Assistant tool call requires a non-empty call ID.',
           );
         }
-        return new vscode.LanguageModelToolCallPart(
-          call.id,
-          call.name,
-          asRecord(call.args),
-        );
+        return new vscode.LanguageModelToolCallPart(call.id, call.name, call.args);
       }),
     ];
     return vscode.LanguageModelChatMessage.Assistant(parts, message.name);
@@ -446,22 +444,4 @@ function rawErrorText(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (isRecord(error)) return typeof error.message === 'string' ? error.message : '';
   return error === null || error === undefined ? '' : String(error);
-}
-
-function cancelledError(): ModelPortError {
-  return new ModelPortError('cancelled', 'Language model request was cancelled.');
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  if (!isRecord(value)) {
-    throw new ModelPortError(
-      'unsupported_response',
-      'Language model returned non-object tool input.',
-    );
-  }
-  return value;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

@@ -20,6 +20,8 @@ describe('assertToolPairingWellFormed', () => {
   it.each<[string, BaseMessage[], RegExp]>([
     ['a result with no preceding assistant', [user(), answer('call-a')], /no preceding assistant/],
     ['a result for a call the assistant did not make', [user(), ask('call-a'), answer('call-a'), answer('call-z')], /no matching tool call/],
+    ['a call with no result at all', [user(), ask('call-a')], /no tool result/],
+    ['a call answered only in part', [user(), ask('call-a', 'call-b'), answer('call-a'), user('next')], /no tool result/],
   ])('rejects %s before sending', (_label, messages, reason) => {
     expect(() => assertToolPairingWellFormed(messages)).toThrow(reason);
   });
