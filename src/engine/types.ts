@@ -19,7 +19,7 @@ export type ObjectType = typeof OBJECT_TYPES[number];
 export interface LineageNode {
   /**
    * Unique identifier: `[schema].[name]` (local), `[db].[schema].[name]` (cross-DB), or
-   * `[__ext__].[hash]` (file).
+   * `[__ext__].[hash]` (file; the hash is the SHA-256 hex of the URL).
    */
   id: string;
   /** SQL schema name (e.g., "dbo", "SalesLT"). Empty for virtual nodes. */

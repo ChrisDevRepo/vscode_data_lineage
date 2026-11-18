@@ -7,6 +7,7 @@
  * statistics and neighbor indexes.
  */
 
+import { createHash } from 'node:crypto';
 import {
   DatabaseModel,
   LineageNode,
@@ -679,14 +680,12 @@ function buildNodesAndEdges(
   return { nodes, edges: sanitized, stats, neighborPairs };
 }
 
-/** Deterministic 8-char hex hash of a URL, for stable virtual node IDs. */
+/**
+ * Stable virtual node ID of a URL: SHA-256 over its UTF-16 code units, so distinct URLs never share
+ * an ID and an unpaired surrogate stays distinct (UTF-8 would turn it into U+FFFD).
+ */
 function hashUrl(url: string): string {
-  let hash = 0;
-  for (let i = 0; i < url.length; i++) {
-    hash = ((hash << 5) - hash) + url.charCodeAt(i);
-    hash |= 0;
-  }
-  return Math.abs(hash).toString(16).padStart(8, '0').slice(0, 8);
+  return createHash('sha256').update(url, 'utf16le').digest('hex');
 }
 
 /** Extracts the last path segment of a URL, capped at `maxLen` characters. */

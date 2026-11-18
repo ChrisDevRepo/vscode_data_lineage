@@ -19,6 +19,7 @@
 - A view the schema selection refuses is no longer marked active and leaves the graph unchanged.
 - Trace notices and detail-panel errors show one notification instead of several; **Change scope** shows where to type the change.
 - A `$` right after a word in AI descriptions no longer starts a formula.
+- Two external files whose URLs hashed alike no longer merge into one node. External-file node IDs change once, so a saved view drops an external file it listed by ID.
 - The AI view banner and the view cards show the right object count when the graph is over the render limit.
 - Statistics column headers can be sorted with the keyboard, and node information pop-ups open on keyboard focus.
 - Draw.io export places schema clusters around their nodes.
