@@ -48,7 +48,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   pruned_contributor:
     'This upstream node was already pruned earlier this run and cannot supply the column — a removed node stays removed. Name a different, still-reachable supplier for this upstream_columns entry, or submit upstream_columns: [] and account for the column ending here.',
   column_out_of_scope:
-    'Remove the outside column or its entry if it is the sole supplier or output destination; use column_flow: [] if none remain. Ask the outside object in questions and record the fact in sections.',
+    'column_flow names only in-scope objects. Drop the outside entry from upstream_columns, or set writes_to to null; use column_flow: [] if no entry remains. State the fact about the outside object in sections; further work on it goes in questions.',
   prune_absent:
     'This id is not in the loaded model — there is nothing to prune. Remove it from prune_neighbors.',
   prune_noop_removed:

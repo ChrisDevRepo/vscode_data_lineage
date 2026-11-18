@@ -108,8 +108,8 @@ export function buildScreenStateSlot(screen: string): string[] {
  * static prompt content. YAML template guidance is injected separately by `resolveStagePrompt`.
  *
  * @param analysisMode - Hop or session analysis mode. Synthesis composes CT as the BB protocol plus
- *   a column rider; the active protocol is mode-independent (its column aspect renders in
- *   `buildSmProtocol`).
+ *   a column rider; the active protocol adds the CT scope rule for out-of-scope neighbors (its column
+ *   aspect renders in `buildSmProtocol`).
  */
 export function buildPhasePrompt(
   phase: PromptPhase,
@@ -117,7 +117,7 @@ export function buildPhasePrompt(
 ): string {
   if (phase === 'discover') return buildDiscoveryPrompt();
   if (phase === 'visual_preview') return buildVisualPreviewPrompt();
-  if (phase === 'active') return buildActivePhasePrompt();
+  if (phase === 'active') return buildActivePhasePrompt(analysisMode);
   if (phase === 'synthesis') return buildSynthesisPrompt(analysisMode);
   return buildFollowUpPrompt();
 }
@@ -153,12 +153,12 @@ function buildDiscoveryPrompt(): string {
 
 
 /**
- * The active hop's task and deliverable, the same with or without tracked columns. Field meanings
- * (verdict words, `prune_neighbors`, `questions`, the CT carry) live in the `submit_findings`
- * schema. The CT column aspect renders separately (`buildSmProtocol`), so this text is
- * mode-independent (CT ⊇ BB).
+ * The active hop's task and deliverable. Field meanings (verdict words, `prune_neighbors`,
+ * `questions`, the CT carry) live in the `submit_findings` schema. The CT column aspect renders
+ * separately (`buildSmProtocol`); a CT hop adds only the scope rule for `column_flow` objects
+ * (spec 07:9), which a BB hop has no field for (CT ⊇ BB).
  */
-function buildActivePhasePrompt(): string {
+function buildActivePhasePrompt(analysisMode: 'bb' | 'ct'): string {
   return [
     '# Active hop',
     'This hop reads one SQL object, `focus_node` in `<hop_context>`, against `<current_task>`. Read its `bb_ddl`, where present, the way a reviewer reads code. Neighbors carry no SQL; a question about a neighbor\'s logic belongs to its own hop. `<short_term_memory>` is context from earlier hops, not evidence for this one.',
@@ -169,7 +169,8 @@ function buildActivePhasePrompt(): string {
     '2. With `analyze` or `passthrough`: `sections` and a one-sentence `summary`.',
     '3. Neighbor decisions in `prune_neighbors` and `questions`, as their fields describe.',
     '',
-    'Flags on `neighbors[]` are committed: `already_visited` and `already_removed` neighbors take no decision; neighbors with `can_prune: false` are not pruned. `can_question` permits a subquestion in approved scope or an optional deferred follow-up outside it, including `out_of_direction`; it never widens scope.',
+    'Flags on `neighbors[]` are committed: `already_visited` and `already_removed` neighbors take no decision; neighbors with `can_prune: false` are not pruned. `can_question` permits a subquestion in approved scope or an optional deferred follow-up outside it, including `out_of_direction`; it never widens scope.'
+      + (analysisMode === 'ct' ? ' A neighbor with in_approved_scope: false lies outside the approved scope: column_flow names it neither as an upstream_columns source nor as writes_to (null when the only destination lies outside). In-scope sources and destinations stay as the SQL proves them. State a relevant fact about it in sections; further work on it is a questions follow-up.' : ''),
   ].join('\n');
 }
 
