@@ -3,6 +3,7 @@ import {
   useFloating,
   useHover,
   useFocus,
+  useDismiss,
   useInteractions,
   FloatingPortal,
   offset,
@@ -56,7 +57,8 @@ function HoverBadge({ label, count, widthClass, children }: {
 
   const hover = useHover(context, { delay: { open: 150, close: 100 }, move: false });
   const focus = useFocus(context);
-  const { getReferenceProps, getFloatingProps } = useInteractions([hover, focus]);
+  const dismiss = useDismiss(context);
+  const { getReferenceProps, getFloatingProps } = useInteractions([hover, focus, dismiss]);
 
   if (count === 0) return <span className="ln-text-dim">{label}: 0</span>;
 

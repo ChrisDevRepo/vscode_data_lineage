@@ -597,6 +597,23 @@ export function validateBridgeFrame<S extends z.ZodTypeAny>(
   return { ok: true, data: parsed.data, msgType };
 }
 
+/**
+ * Host-log lines for a frame that failed the Zod parse, in the webview `log` message shape. The
+ * warn line carries the message type and the distinct issue codes; the key paths and issue texts,
+ * which name payload fields, go to the debug line only.
+ */
+export function parseRejectionLogs(
+  tag: string,
+  frame: { msgType: string; issues: readonly z.core.$ZodIssue[] },
+): Array<{ type: 'log'; level: 'warn' | 'debug'; text: string }> {
+  const codes = [...new Set(frame.issues.map((issue) => issue.code))].join(',');
+  const paths = frame.issues.slice(0, 5).map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`);
+  return [
+    { type: 'log', level: 'warn', text: `[${tag}] Host message "${frame.msgType}" rejected — issues=${codes}` },
+    { type: 'log', level: 'debug', text: `[${tag}] Host message "${frame.msgType}" issue paths — ${paths.join('; ')}` },
+  ];
+}
+
 const TraceAffordanceSideSnapshotSchema = z.looseObject({
   add: z.array(z.string()),
   prune: z.array(z.string()),

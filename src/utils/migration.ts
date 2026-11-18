@@ -8,6 +8,7 @@ import {
   type ProjectStoreDropReport,
 } from '../engine/projectStore';
 import { Logger } from './log';
+import { errorMessage } from './errorMessage';
 
 /**
  * Migrates legacy workspace-state connection metadata (DACPAC and database) into the project store,
@@ -45,7 +46,7 @@ export async function migrateFromWorkspaceState(
       try {
         connection = { type: 'database', connectionInfo: stripSensitiveFields(connectionInfo), sourceName, schemas: [] };
       } catch (err) {
-        logger.debug(`Legacy connection "${sourceName}" failed validation: ${err instanceof Error ? err.message : String(err)}`);
+        logger.debug(`Legacy connection "${sourceName}" failed validation: ${errorMessage(err)}`);
       }
     }
   }

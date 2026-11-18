@@ -33,7 +33,7 @@ import { runAnalysis } from '../engine/graphAnalysis';
 import { scopeModelForVisualize } from '../engine/modelFilters';
 import { refuseOverObjectLimit } from '../utils/objectLimitGuard';
 import { reconcileAiView, annotatedNodeIdsFromAiMetadata } from './aiViewReconcile';
-import { BRIDGE_PROTOCOL_VERSION, ExtensionToWebviewMsgSchema, validateBridgeFrame } from '../engine/shared/bridgeContract';
+import { BRIDGE_PROTOCOL_VERSION, ExtensionToWebviewMsgSchema, parseRejectionLogs, validateBridgeFrame } from '../engine/shared/bridgeContract';
 import { escapeRegexLiteral } from '../utils/sql';
 import { notifyUser } from '../utils/notify';
 import type { Project, FilterProfile, DacpacConnection, DatabaseConnection, AIViewMetadata } from '../engine/projectStore';
@@ -1190,10 +1190,7 @@ export function App() {
             error: `[Bridge] Protocol mismatch on "${frame.msgType}": host sent v${String(frame.version)}, webview expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window.`,
           });
         } else {
-          window.vscode?.postMessage({
-            type: 'error',
-            error: `[Bridge] Parse rejected host message "${frame.msgType}": ${JSON.stringify(frame.issues.slice(0, 5))}`,
-          });
+          for (const line of parseRejectionLogs('Bridge', frame)) window.vscode?.postMessage(line);
         }
         return;
       }

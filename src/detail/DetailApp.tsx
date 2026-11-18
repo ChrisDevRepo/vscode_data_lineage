@@ -4,7 +4,7 @@ import type { TableStatsState } from '../components/TableDetailPanel';
 import type { StatsMode } from '../engine/profilingEngine';
 import { TableDetailPanel } from '../components/TableDetailPanel';
 import { MonacoSqlView } from './MonacoSqlView';
-import { BRIDGE_PROTOCOL_VERSION, ExtensionToDetailMsgSchema, validateBridgeFrame, type DetailConfig } from '../engine/shared/bridgeContract';
+import { BRIDGE_PROTOCOL_VERSION, ExtensionToDetailMsgSchema, parseRejectionLogs, validateBridgeFrame, type DetailConfig } from '../engine/shared/bridgeContract';
 
 /** Represents the complete state of the detail panel for a specific node. */
 interface DetailState {
@@ -49,10 +49,7 @@ export function DetailApp() {
             error: `[Detail] Bridge protocol mismatch on "${frame.msgType}": host sent v${String(frame.version)}, webview expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window.`,
           });
         } else {
-          vscodeApi.current.postMessage({
-            type: 'error',
-            error: `[Detail] Parse rejected host message "${frame.msgType}": ${JSON.stringify(frame.issues.slice(0, 5))}`,
-          });
+          for (const line of parseRejectionLogs('Detail', frame)) vscodeApi.current.postMessage(line);
         }
         return;
       }

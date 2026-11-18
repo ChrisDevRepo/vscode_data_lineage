@@ -100,7 +100,10 @@ interface ToolbarProps {
   onUpdateView?: (profileId: string) => void;
   /** Whether the filters have been modified since the last project load/save. */
   isFilterDirty?: boolean;
-  /** Increments when the extension asks to go back; runs the Back button action, with its unsaved-changes bar. */
+  /**
+   * Increments when the extension asks to go back; runs the Back button action, with its
+   * unsaved-changes bar.
+   */
   backRequest?: number;
   /** Whether UI interactions that would change the graph structure are disabled. */
   isModeLocked?: boolean;

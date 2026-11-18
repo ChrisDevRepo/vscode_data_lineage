@@ -85,6 +85,7 @@ import { normalizeColName, schemaKey } from '../utils/sql';
 import { SHORTCUT_KEYS, ESC_PRIORITY } from '../ui/keyboardShortcuts';
 import type { AiReportSection, AiDockPosition } from './AiDescriptionOverlay';
 import { ExtensionToWebviewMsgSchema, validateBridgeFrame } from '../engine/shared/bridgeContract';
+import { errorMessage } from '../utils/errorMessage';
 
 /**
  * Custom node types for React Flow. Must stay at module level: defined inside the component, React
@@ -971,7 +972,7 @@ export function GraphCanvas({
       vscodeApi.postMessage({
         type: 'log',
         level: 'warn',
-        text: `[Graph] Column view unavailable: ${err instanceof Error ? err.message : String(err)}`,
+        text: `[Graph] Column view unavailable: ${errorMessage(err)}`,
       });
       return null;
     }
@@ -1377,7 +1378,8 @@ export function GraphCanvas({
     if (isManualTraceScopeEdit(previousTrace, currentTrace)) return;
     return fitGraph();
   }, [clearPendingZoomTimer, flowNodes, fitGraph, zoomToNode, aiPreview, analysisMode,
-    shownTraceMode, trace.tracedNodeIds]); // onNodeClickRef intentionally excluded — read at effect run time
+    shownTraceMode, trace.tracedNodeIds]);
+  // onNodeClickRef is intentionally excluded from the deps: the effect reads it at run time.
 
   const [notesVisible, setNotesVisible] = useState(true);
   const [hoveredColumn, setHoveredColumn] = useState<{ nodeId: string; column: string } | null>(null);

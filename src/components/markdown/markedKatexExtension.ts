@@ -34,7 +34,10 @@ const katexContainerLatexAttributeName = 'data-latex';
 
 /** {@link mathInlineRegExp} anchored at `lastIndex`, so its lookbehind sees the preceding text. */
 const inlineRule = new RegExp(mathInlineRegExp.source, 'y');
-/** A block closes on its own line or glued to the last line of the formula, as models write `\end{cases}$$`. */
+/**
+ * A block closes on its own line or glued to the last line of the formula, as models write
+ * `\end{cases}$$`.
+ */
 const blockRule = /^(\${1,2})\n((?:\\[^]|[^\\])+?)\n?\1(?:\n|$)/;
 
 interface MarkedKatexOptions extends KatexOptions { }
@@ -60,8 +63,7 @@ function createRenderer(
   return (token: Tokens.Generic) => {
     let out: string;
     try {
-      // `#1`..`#9` are KaTeX macro parameters; any other bare `#`, as in SQL names such as `#SalesBase`, is literal text.
-      const html = katexInstance.renderToString(token.text.replace(/\\.|#(?!\d)/g, (m: string) => (m === '#' ? '\\#' : m)), {
+      const html = katexInstance.renderToString(token.text, {
         ...options,
         throwOnError: true,
         displayMode: token.displayMode,

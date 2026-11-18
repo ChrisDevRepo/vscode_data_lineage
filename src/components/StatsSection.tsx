@@ -251,12 +251,8 @@ function StatsResults({ stats, mode }: {
         )}
       </div>
 
-      <table
-        role="table"
-        className="font-medium pb-1"
-        style={{ display: 'block', borderBottom: '1px solid var(--ln-border)' }}
-      >
-        <thead style={{ display: 'block' }}>
+      <table role="table" className="font-medium" style={{ display: 'block' }}>
+        <thead style={{ display: 'block', borderBottom: '1px solid var(--ln-border)', paddingBottom: 4 }}>
           <tr role="row" style={{ display: 'grid', gridTemplateColumns: GRID_COLS, gap: '0 6px' }}>
             <th
               role="columnheader"
@@ -292,69 +288,89 @@ function StatsResults({ stats, mode }: {
             </th>
           </tr>
         </thead>
+
+        {sortedProfiled.map(col => {
+          const showDetail = isStandard && hasDetail(col) && isDetailVisible(col.name);
+          const canExpand = isStandard && hasDetail(col);
+          return (
+            <tbody key={col.name} style={{ display: 'block', borderBottom: '1px solid var(--ln-border-light)' }}>
+              <tr
+                role="row"
+                className="py-1"
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: GRID_COLS,
+                  gap: '0 6px',
+                  alignItems: 'center',
+                  cursor: canExpand ? 'pointer' : 'default',
+                }}
+                onClick={canExpand ? () => toggleCol(col.name) : undefined}
+              >
+                <td role="cell" style={{ minWidth: 0 }}>
+                  <Tooltip content={col.name} asChild>
+                    {canExpand ? (
+                      <button
+                        type="button"
+                        aria-expanded={showDetail}
+                        className="font-mono flex items-center gap-1"
+                        style={{ ...hdrButtonStyle, ...cellClip, minWidth: 0, maxWidth: '100%', cursor: 'pointer' }}
+                      >
+                        <span style={{ flexShrink: 0, color: 'var(--ln-fg-dim)' }}>
+                          <ChevronIcon expanded={showDetail} />
+                        </span>
+                        <span style={cellClip}>{col.name}</span>
+                      </button>
+                    ) : (
+                      <div className="font-mono flex items-center gap-1" style={{ ...cellClip, minWidth: 0 }}>
+                        <span style={{ flexShrink: 0, visibility: 'hidden' }}>
+                          <ChevronIcon expanded={false} />
+                        </span>
+                        <span style={cellClip}>{col.name}</span>
+                      </div>
+                    )}
+                  </Tooltip>
+                </td>
+                <td role="cell" style={{ textAlign: 'center' }}><TypeBadge typeStr={col.type} /></td>
+                <td role="cell" className="font-mono" style={{
+                  ...cellClip,
+                  textAlign: 'right',
+                  color: col.nullPercent !== null ? nullQualityColor(col.nullPercent) : 'var(--ln-fg-dim)',
+                  fontSize: col.nullPercent === null ? '0.65rem' : undefined,
+                }}>
+                  {col.nullPercent === null ? 'NN' : `${col.nullPercent.toFixed(1)}%`}
+                </td>
+                <td role="cell" className="font-mono" style={{ ...cellClip, textAlign: 'right' }}>
+                  {col.distinctCount.toLocaleString()}
+                  <UniquenessIndicator value={col.uniqueness} distinctCount={col.distinctCount} />
+                </td>
+              </tr>
+
+              {/* Detail — labeled key-value grid (standard mode, collapsible) */}
+              {showDetail && (
+                <tr role="row" style={{ display: 'block' }}>
+                  <td role="cell" colSpan={4} style={{ display: 'block' }}><DetailGrid col={col} rowCount={stats.rowCount} /></td>
+                </tr>
+              )}
+
+              {/* Completeness bar — only shown when column has actual nulls */}
+              {col.completeness < 1.0 && (
+                <tr role="row" style={{ display: 'block' }}>
+                  <td role="cell" colSpan={4} className="flex items-center" style={{ paddingBottom: 3 }}>
+                    <Tooltip content={`${Math.round(col.completeness * 100)}% of rows have a non-null value`} asChild>
+                      <div style={{ flex: 1 }}>
+                        <CompletenessBar value={col.completeness} />
+                      </div>
+                    </Tooltip>
+                    <span className="font-mono" style={{ width: 42, textAlign: 'right', fontSize: '0.6rem', color: 'var(--ln-fg-dim)', flexShrink: 0 }}>
+                      {Math.round(col.completeness * 100)}% fill
+                    </span>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          );
+        })}
       </table>
-
-      {sortedProfiled.map(col => {
-        const showDetail = isStandard && hasDetail(col) && isDetailVisible(col.name);
-        const canExpand = isStandard && hasDetail(col);
-        return (
-          <div key={col.name} style={{ borderBottom: '1px solid var(--ln-border-light)' }}>
-            <div
-              className="py-1"
-              style={{
-                display: 'grid',
-                gridTemplateColumns: GRID_COLS,
-                gap: '0 6px',
-                alignItems: 'center',
-                cursor: canExpand ? 'pointer' : 'default',
-              }}
-              onClick={canExpand ? () => toggleCol(col.name) : undefined}
-              role={canExpand ? 'button' : undefined}
-              tabIndex={canExpand ? 0 : undefined}
-              onKeyDown={canExpand ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleCol(col.name); } } : undefined}
-            >
-              <Tooltip content={col.name} asChild>
-              <div className="font-mono flex items-center gap-1" style={{ ...cellClip, minWidth: 0 }}>
-                <span style={{ flexShrink: 0, color: 'var(--ln-fg-dim)', visibility: canExpand ? 'visible' : 'hidden' }}>
-                  <ChevronIcon expanded={showDetail} />
-                </span>
-                <span style={cellClip}>{col.name}</span>
-              </div>
-              </Tooltip>
-              <div style={{ textAlign: 'center' }}><TypeBadge typeStr={col.type} /></div>
-              <div className="font-mono" style={{
-                ...cellClip,
-                textAlign: 'right',
-                color: col.nullPercent !== null ? nullQualityColor(col.nullPercent) : 'var(--ln-fg-dim)',
-                fontSize: col.nullPercent === null ? '0.65rem' : undefined,
-              }}>
-                {col.nullPercent === null ? 'NN' : `${col.nullPercent.toFixed(1)}%`}
-              </div>
-              <div className="font-mono" style={{ ...cellClip, textAlign: 'right' }}>
-                {col.distinctCount.toLocaleString()}
-                <UniquenessIndicator value={col.uniqueness} distinctCount={col.distinctCount} />
-              </div>
-            </div>
-
-            {/* Detail — labeled key-value grid (standard mode, collapsible) */}
-            {showDetail && <DetailGrid col={col} rowCount={stats.rowCount} />}
-
-            {/* Completeness bar — only shown when column has actual nulls */}
-            {col.completeness < 1.0 && (
-              <div className="flex items-center" style={{ paddingBottom: 3 }}>
-                <Tooltip content={`${Math.round(col.completeness * 100)}% of rows have a non-null value`} asChild>
-                  <div style={{ flex: 1 }}>
-                    <CompletenessBar value={col.completeness} />
-                  </div>
-                </Tooltip>
-                <span className="font-mono" style={{ width: 42, textAlign: 'right', fontSize: '0.6rem', color: 'var(--ln-fg-dim)', flexShrink: 0 }}>
-                  {Math.round(col.completeness * 100)}% fill
-                </span>
-              </div>
-            )}
-          </div>
-        );
-      })}
 
       {skipped.length > 0 && (
         <div style={{ marginTop: 8 }}>

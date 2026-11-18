@@ -8,6 +8,7 @@ import { filterBySchemas, applyExclusionFilter, applyIsolationFilter, applyAllow
 import { createSchemaColorMap, getSchemaColorFromMap } from '../utils/schemaColors';
 import { createLayoutWorkerClient } from '../utils/layoutWorkerClient';
 import LayoutWorker from '../utils/layout.worker?worker&inline';
+import { errorMessage } from '../utils/errorMessage';
 
 const logPrewarmSkipped = (reason: string): void => {
   window.vscode?.postMessage({ type: 'log', text: `[Filter] Layout prewarm skipped (${reason})`, level: 'debug' });
@@ -106,7 +107,7 @@ export function useGraphology(): UseGraphologyReturn {
     const exclusionFiltered = applyExclusionFilter(
       { ...filtered, nodes: fusedNodes, edges: fusedEdges },
       filter.exclusionPatterns,
-      (pattern, err) => log(`[Filter] Skipping invalid exclusion pattern "${pattern}": ${err instanceof Error ? err.message : String(err)}`, 'debug'),
+      (pattern, err) => log(`[Filter] Skipping invalid exclusion pattern "${pattern}": ${errorMessage(err)}`, 'debug'),
     );
     const isolationFiltered = applyIsolationFilter(exclusionFiltered, filter.hideIsolated);
     const allowlistFiltered = applyAllowlistFilter(isolationFiltered, filter.allowlistNodeIds);
