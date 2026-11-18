@@ -765,37 +765,55 @@ export interface SubmitFindingsHopColumns {
    * stay eligible in `questions` via {@link SubmitFindingsHopColumns.callerContextNodeIds}.
    */
   readonly columnSourceNodeIds?: readonly string[];
+  /**
+   * The {@link columnSourceNodeIds} outside the approved scope: never served as a `node` value;
+   * admitted by the parse so the scope check refuses them as `column_out_of_scope`.
+   */
+  readonly outOfScopeNodeIds?: readonly string[];
+  /** A procedure focus's served `writes_to.node` values: the in-scope objects it writes. */
+  readonly writesToNodeIds?: readonly string[];
 }
 
 /**
- * Advertises the hop's metadata-eligible contributor ids as the served `node` enum while
- * admitting the equivalent spellings ({@link resolveModelNodeId}) the engine itself resolves,
+ * Advertises the `offered` ids as the served `node` enum while admitting the equivalent spellings
+ * ({@link resolveModelNodeId}) of every metadata-eligible contributor the engine itself resolves,
  * so normalized object references keep passing the boundary a columnless function cannot.
  */
-function columnSourceNodeSchema(sources: readonly string[]) {
+function columnSourceNodeSchema(sources: readonly string[], offered: readonly string[]) {
   const resolvable = new Map(sources.map(id => [id, id] as const));
-  return z.string().refine(
+  const node = z.string().refine(
     value => resolveModelNodeId(value, resolvable) !== null,
     { message: 'upstream_columns[].node must name a served column-carrying source; a scalar function without stored columns is named in questions, not as a column source.' },
-  ).meta({ enum: [...sources] });
+  );
+  return offered.length ? node.meta({ enum: [...offered] }) : node;
 }
 
 /**
  * Projects {@link ColumnFlowSchema} onto one hop: `out_col` as the tracked-column enum, `writes_to`
- * for procedures.
+ * for procedures. A `node` enum serves only the ids the approved-scope check admits; with none, the
+ * field serves only its exit (`upstream_columns: []`, `writes_to: null`). The parse still admits
+ * every metadata source and write target, so the scope check states its own refusal.
  */
 function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
   const [first, ...rest] = hop.outCols ?? [];
   const outCol = first === undefined
     ? ColumnFlowEntrySchema.shape.out_col
     : z.enum([first, ...rest]).describe(OUT_COL_DESCRIPTION);
-  const upstreamColumns = hop.columnSourceNodeIds
-    ? z.array(ColumnRefSchema.extend({ node: columnSourceNodeSchema(hop.columnSourceNodeIds) }).strict()).describe(ColumnFlowEntrySchema.shape.upstream_columns.description ?? '')
+  const sources = hop.columnSourceNodeIds;
+  const offered = sources?.filter(id => !hop.outOfScopeNodeIds?.includes(id)) ?? [];
+  const sourceRefs = sources && z.array(ColumnRefSchema.extend({ node: columnSourceNodeSchema(sources, offered) }).strict());
+  const upstreamColumns = sourceRefs
+    ? (offered.length ? sourceRefs : sourceRefs.meta({ maxItems: 0 })).describe(ColumnFlowEntrySchema.shape.upstream_columns.description ?? '')
     : ColumnFlowEntrySchema.shape.upstream_columns;
+  const writeTargets = hop.writesToNodeIds;
+  const anyWrite = ColumnFlowEntrySchema.shape.writes_to.unwrap();
+  const writesTo = !writeTargets ? anyWrite
+    : writeTargets.length ? ColumnFlowWritesToObject.extend({ node: z.string().meta({ enum: [...writeTargets] }) }).strict().nullable()
+      : anyWrite.meta({ anyOf: [{ type: 'null' }] });
   const shape = {
     out_col: outCol,
     upstream_columns: upstreamColumns,
-    writes_to: ColumnFlowEntrySchema.shape.writes_to.unwrap().describe(ColumnFlowEntrySchema.shape.writes_to.description ?? ''),
+    writes_to: writesTo.describe(ColumnFlowEntrySchema.shape.writes_to.description ?? ''),
   };
   if (hop.returnTargets?.length) {
     const destinations = hop.returnTargets.map(target => z.object({
@@ -843,7 +861,7 @@ export function submitFindingsSchemaForMode(
   freshSubmission = false,
   hop?: SubmitFindingsHopColumns,
 ): z.ZodType<FlatSubmitFindings> {
-  const hopKey = mode === 'ct' && hop ? `${hop.writesTo}:${JSON.stringify(hop.outCols)}:${JSON.stringify(hop.returnTargets ?? [])}:${JSON.stringify(hop.callerContextNodeIds ?? null)}:${JSON.stringify(hop.columnSourceNodeIds ?? null)}` : '';
+  const hopKey = mode === 'ct' && hop ? `${hop.writesTo}:${JSON.stringify(hop.outCols)}:${JSON.stringify(hop.returnTargets ?? [])}:${JSON.stringify(hop.callerContextNodeIds ?? null)}:${JSON.stringify(hop.columnSourceNodeIds ?? null)}:${JSON.stringify(hop.outOfScopeNodeIds ?? null)}:${JSON.stringify(hop.writesToNodeIds ?? null)}` : '';
   if (!classification && !hopKey && freshSubmission) {
     return mode === 'ct' ? SubmitFindingsCtInputSchema : SubmitFindingsBbInputSchema;
   }

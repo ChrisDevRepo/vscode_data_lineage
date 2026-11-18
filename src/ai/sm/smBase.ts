@@ -1462,11 +1462,16 @@ export class NavigationEngine implements IHopStateMachine {
    * Column facts that narrow this hop's served `column_flow`: the tracked columns an upstream trace
    * accepts as `out_col`, and whether the focus is a procedure (the only node that may name a
    * `writes_to` target). Eligible function neighbors narrow caller-context questions; stored column
-   * metadata narrows the admissible `upstream_columns` sources.
+   * metadata narrows the admissible `upstream_columns` sources, and the approved scope
+   * ({@link outsideAdmission}) the served `upstream_columns` and `writes_to` objects.
    */
   public get hopSubmitColumns(): SubmitFindingsHopColumns {
     const focus = this.currentFocusNodeId ? this.nodeMap.get(this.currentFocusNodeId) : undefined;
     const active = this.tracer?.activeColumns.filter(Boolean) ?? [];
+    const sources = focus && this.graph.hasNode(focus.id) ? this.columnSourceNodeIds(focus.id) : [];
+    const originWrites = this.originWrittenCarrierIds();
+    const outOfScope = focus ? sources.filter(id => this.outsideAdmission(id, this.nodeMap.get(id)!, focus.id, originWrites)?.admitted === false) : [];
+    const written = focus?.type === 'procedure' ? this.writtenCarrierIds(focus.id) : null;
     return {
       outCols: this.columnTraceDirection() === 'upstream' && !this.getCurrentTasks().some(task => task.kind === 'column_lineage' && task.traversalSide === 'downstream') && active.length > 0
         ? this.resolveActiveColumnsForNode(focus?.id ?? '', active) ?? [...active] : null,
@@ -1476,7 +1481,9 @@ export class NavigationEngine implements IHopStateMachine {
           && this.getCurrentTasks().some(task => task.kind === 'column_lineage' && task.nodeId === focus.id
             && task.activeColumns.some(col => resolveFunctionCallerTarget(id, { node: focus.id, col }, this.nodeMap, this.model, this.store)))).sort()
         : [],
-      columnSourceNodeIds: focus && this.graph.hasNode(focus.id) ? this.columnSourceNodeIds(focus.id) : [],
+      columnSourceNodeIds: sources,
+      outOfScopeNodeIds: outOfScope,
+      ...(written ? { writesToNodeIds: sources.filter(id => written.has(id) && !outOfScope.includes(id)) } : {}),
       ...(this.currentReturnTargets().length ? { returnTargets: this.currentReturnTargets() } : {}),
     };
   }
