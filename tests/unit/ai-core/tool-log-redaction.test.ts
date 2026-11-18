@@ -1,10 +1,14 @@
-/** Mutating tool handlers keep object ids and model-authored text off info-level log lines; counts stay at info. */
+/**
+ * Mutating tool handlers keep object ids and model-authored text off info-level log lines; counts stay at info.
+ * The Logger removes credential-shaped text for every caller at every level, so no call site has to.
+ */
 import { describe, expect, it, vi } from 'vitest';
 import { AiSession } from '../../../src/ai/session/session';
 import { NavigationEngine } from '../../../src/ai/sm/smBase';
 import type { DepthIntent } from '../../../src/ai/sm/smTypes';
 import { executeStartExploration } from '../../../src/ai/tools/handlers/startExploration';
 import { executePresentResult } from '../../../src/ai/tools/handlers/presentResult';
+import { Logger } from '../../../src/utils/log';
 import { directionFromDepth } from '../../../src/engine/shared/explorationDepthContract';
 import { buildModel } from './helpers/engineFixture';
 import { stubToolServices } from './helpers/toolServices';
@@ -12,6 +16,12 @@ import { stubToolServices } from './helpers/toolServices';
 const BOTH: DepthIntent = { upstream: { levels: 'all', exactness: 'approximate' }, downstream: { levels: 'all', exactness: 'approximate' } };
 const node = (id: string, type: 'table' | 'view') => ({ id, type, columns: [] as string[] });
 const edge = (source: string, target: string) => ({ source, target, type: 'body' as const });
+
+function channel() {
+  return { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), trace: vi.fn() };
+}
+
+const SECRET = 'hunter2-Zk93';
 
 function completedWorld() {
   const built = buildModel({
@@ -76,5 +86,32 @@ describe('tool handler info-log redaction', () => {
     const debug = lines.debug.join('\n');
     expect(debug).toContain('Confidential payroll view');
     expect(debug).toContain('Payroll heading secret');
+  });
+});
+
+describe('Logger redaction', () => {
+  it.each(['info', 'debug', 'warn'] as const)('removes a credential from a %s line', (level) => {
+    const ch = channel();
+    Logger.create(ch as never, 'DB')[level](`Connect failed: Server=x;Password=${SECRET};Database=y`);
+    const line = String(ch[level].mock.calls[0][0]);
+    expect(line).toContain('Server=x');
+    expect(line).not.toContain(SECRET);
+  });
+
+  it('removes a credential from the error line and the stack line', () => {
+    const ch = channel();
+    const err = new Error(`login: Password=${SECRET}`);
+    err.stack = `Error: login: Password=${SECRET}\n    at connect (db.js:1:1)`;
+    Logger.create(ch as never, 'DB').error(`Open Pwd=${SECRET}`, err);
+    const lines = ch.error.mock.calls.map(([l]) => String(l));
+    expect(lines).toHaveLength(2);
+    expect(lines.join('\n')).not.toContain(SECRET);
+    expect(lines[1]).toContain('at connect (db.js:1:1)');
+  });
+
+  it('removes a credential from a thrown non-Error value', () => {
+    const ch = channel();
+    Logger.create(ch as never, 'DB').error('Open', `Password=${SECRET}`);
+    expect(String(ch.error.mock.calls[0][0])).not.toContain(SECRET);
   });
 });

@@ -1,8 +1,7 @@
 /** Catalog fallback must compare complete mutation targets, never an identifier prefix. */
 import { beforeAll, describe, expect, it } from 'vitest';
 import { buildModel, normalizeName } from '../../../src/engine/modelBuilder';
-import { readFileSync } from 'fs';
-import { loadParseRules, testPath } from '../helpers/testUtils';
+import { loadParseRules } from '../helpers/testUtils';
 import { quoteIdentifier } from '../../../src/utils/sql';
 
 beforeAll(() => { loadParseRules(); });
@@ -121,7 +120,20 @@ describe.each([false, true])('delete-only write mark CS=%s', cs => {
 });
 
 it('reads and writes the table updated through a CTE that joins it to a GROUP BY derived table', () => {
-  const body = readFileSync(testPath('sql', 'targeted', 'update_alias_03_cte_update.sql'), 'utf-8');
+  // The CTE joins one base table to a GROUP BY derived table, which cannot be written through, so the write
+  // lands on the base table; the CTE name itself is never a target.
+  const body = `WITH InventoryWithSales AS (
+    SELECT inv.[ProductID], inv.[QtyOnHand], ISNULL(sold.[QtySold30d], 0) AS QtySold30d
+    FROM [dbo].[Inventory] AS inv
+    LEFT JOIN (
+        SELECT [ProductID], SUM([Quantity]) AS QtySold30d
+        FROM   [dbo].[SalesOrderLine]
+        GROUP BY [ProductID]
+    ) AS sold ON sold.[ProductID] = inv.[ProductID]
+)
+UPDATE InventoryWithSales
+SET    [QtyOnHand] = [QtyOnHand] - [QtySold30d]
+WHERE  [QtySold30d] > 0;`;
   const edges = edgesFor(body, ['Inventory', 'SalesOrderLine'], false);
   expect(edges.sort()).toEqual([['[dbo].[build]', '[dbo].[inventory]'], ['[dbo].[inventory]', '[dbo].[build]'], ['[dbo].[salesorderline]', '[dbo].[build]']]);
 });
