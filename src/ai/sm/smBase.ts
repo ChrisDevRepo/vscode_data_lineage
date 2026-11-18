@@ -609,6 +609,11 @@ export class NavigationEngine implements IHopStateMachine {
     return authorization.focusId;
   }
 
+  /** Whether the held finding of the current focus holds a summary a retry may omit. */
+  public get heldSummary(): boolean {
+    return this.heldFindingFocus !== null && (this.heldFindingDraft.get()?.summary.trim() ?? '') !== '';
+  }
+
   /** Whether the current tasks trace columns on both sides of the focus. */
   private mixedColumnSides(): boolean {
     return new Set(this.getCurrentTasks().flatMap(task => task.kind === 'column_lineage' && task.traversalSide ? [task.traversalSide] : [])).size > 1;

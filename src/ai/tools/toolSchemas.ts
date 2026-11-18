@@ -595,13 +595,13 @@ export type FlatSubmitFindings = z.output<typeof HopFindingBaseSchema> & { colum
 /**
  * Enforces the fresh kept shape of one flat `submit_findings` payload. A kept verdict carries
  * `sections` and `summary` (and, in CT, `column_flow`); a `reason` sent with it is accepted and
- * dropped by {@link toHopFinding}. `summary` may be empty only when a held draft exists (`fresh`
- * unset); the engine keeps the held summary. A fresh kept verdict under a `both` lock with
- * non-empty `sections` names each missing angle in the same parse as any shape fault. An invalid or
+ * dropped by {@link toHopFinding}. `summary` may be empty only when a held draft holds one
+ * (`summaryRequired` unset); the engine keeps the held summary. A fresh kept verdict under a `both`
+ * lock with non-empty `sections` names each missing angle in the same parse as any shape fault. An invalid or
  * missing `verdict` is reported once by its own enum issue and skips verdict-dependent checks. Each
  * fault is one issue on its own path, naming the exact field to drop or add.
  */
-function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementCtx, fresh: boolean, classification?: ClassificationValue): void {
+function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementCtx, fresh: boolean, classification?: ClassificationValue, summaryRequired = fresh): void {
   if (typeof value !== 'object' || value === null || !HopVerdictSchema.safeParse(value.verdict).success) return;
   const keptAngles = classification ? CLASSIFICATION_KEPT_ANGLES[classification] : undefined;
   const bothAnglesRequired = fresh && keptAngles?.length === CLASSIFICATION_KEPT_ANGLES.both.length;
@@ -636,7 +636,7 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
       ctx.addIssue({ code: 'custom', path: ['sections', angle], message: 'required with a both classification when sections is not empty.', params: { hint: `Send ${jsonPointer(['sections', angle])}.` } });
     }
   }
-  if (fresh && (value.summary === undefined || (typeof value.summary === 'string' && value.summary.trim() === ''))) {
+  if (summaryRequired && (value.summary === undefined || (typeof value.summary === 'string' && value.summary.trim() === ''))) {
     ctx.addIssue({
       code: 'custom',
       path: ['summary'],
@@ -672,13 +672,16 @@ export function toHopFinding(value: FlatSubmitFindings): HopFindingKept {
  * Applies the verdict-shape check to one flat per-mode object. A pure validator: it returns the
  * same flat shape unconverted (`z.output` equals `z.input`, `sections` still angle-keyed), so
  * re-parsing a validated payload is a no-op. {@link toHopFinding} is the separate conversion step.
+ * `summary` is required, served and checked, unless a held draft holds one.
  */
 function finalizeSubmitFindingsSchema(
   schema: typeof HopFindingBaseSchema | typeof HopFindingCtBaseSchema,
   fresh: boolean,
   classification?: ClassificationValue,
+  summaryHeld = false,
 ): z.ZodType<FlatSubmitFindings> {
   const keptAngles = classification ? CLASSIFICATION_KEPT_ANGLES[classification] : undefined;
+  const summaryRequired = fresh || !summaryHeld;
   const source = fresh
     ? schema.extend({
       sections: schema.shape.sections.unwrap().meta(keptAngles
@@ -688,12 +691,12 @@ function finalizeSubmitFindingsSchema(
     }).strict()
     : schema;
   const validated = source
-    .check(superRefineAll((value, ctx) => refineSubmitFindingsShape(value as FlatSubmitFindings, ctx, fresh, classification))) as z.ZodType<FlatSubmitFindings>;
-  if (!fresh) return validated;
+    .check(superRefineAll((value, ctx) => refineSubmitFindingsShape(value as FlatSubmitFindings, ctx, fresh, classification, summaryRequired))) as z.ZodType<FlatSubmitFindings>;
+  if (!summaryRequired) return validated;
   const required = Object.entries(schema.shape)
     .filter(([, field]) => !field.isOptional())
     .map(([key]) => key);
-  return validated.meta({ required: [...required, 'summary', 'sections'] });
+  return validated.meta({ required: [...required, 'summary', ...(fresh ? ['sections'] : [])] });
 }
 
 /**
@@ -852,6 +855,7 @@ export function hopColumnFlowSchema(hop?: SubmitFindingsHopColumns) {
  * @param hop - CT only: the active hop's column facts; narrows `column_flow[].out_col`, offers
  *   `writes_to` for a procedure focus alone and, with column-source metadata, restricts
  *   `upstream_columns[].node` to the hop's column-carrying sources.
+ * @param summaryHeld - A held draft of this focus holds a summary, so a retry may omit it.
  * @returns The strict provider schema; a pure validator whose output is the flat, angle-keyed shape
  *   it accepts ({@link toHopFinding} is the caller's separate step).
  */
@@ -860,12 +864,13 @@ export function submitFindingsSchemaForMode(
   classification?: ClassificationValue,
   freshSubmission = false,
   hop?: SubmitFindingsHopColumns,
+  summaryHeld = false,
 ): z.ZodType<FlatSubmitFindings> {
   const hopKey = mode === 'ct' && hop ? `${hop.writesTo}:${JSON.stringify(hop.outCols)}:${JSON.stringify(hop.returnTargets ?? [])}:${JSON.stringify(hop.callerContextNodeIds ?? null)}:${JSON.stringify(hop.columnSourceNodeIds ?? null)}:${JSON.stringify(hop.outOfScopeNodeIds ?? null)}:${JSON.stringify(hop.writesToNodeIds ?? null)}` : '';
   if (!classification && !hopKey && freshSubmission) {
     return mode === 'ct' ? SubmitFindingsCtInputSchema : SubmitFindingsBbInputSchema;
   }
-  const cacheKey = `${mode}:${classification ?? ''}:${freshSubmission}:${hopKey}`;
+  const cacheKey = `${mode}:${classification ?? ''}:${freshSubmission}:${summaryHeld}:${hopKey}`;
   const cached = submitFindingsSchemaCache.get(cacheKey);
   if (cached) return cached;
   let narrowed = (mode === 'ct' ? HopFindingCtBaseSchema : HopFindingBaseSchema) as typeof HopFindingCtBaseSchema;
@@ -888,7 +893,7 @@ export function submitFindingsSchemaForMode(
       .describe(sectionsDescribe);
     narrowed = narrowed.extend({ sections: narrowedSections }).strict() as typeof HopFindingCtBaseSchema;
   }
-  const schema = finalizeSubmitFindingsSchema(narrowed, freshSubmission, classification);
+  const schema = finalizeSubmitFindingsSchema(narrowed, freshSubmission, classification, summaryHeld);
   submitFindingsSchemaCache.set(cacheKey, schema);
   return schema;
 }

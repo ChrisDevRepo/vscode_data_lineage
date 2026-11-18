@@ -48,7 +48,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
 
       const focus = engine.currentFocus;
       const fresh = engine.heldFindingFocus === null && (!focus || sess.memory.getArchivedAngles(focus).size === 0);
-      const schema = submitFindingsSchemaForMode(engine.currentHopAnalysisMode, sess.classification ?? undefined, fresh, engine.hopSubmitColumns);
+      const schema = submitFindingsSchemaForMode(engine.currentHopAnalysisMode, sess.classification ?? undefined, fresh, engine.hopSubmitColumns, engine.heldSummary);
       const parsed = schema.safeParse(input);
       if (!parsed.success) {
         const schemaFault = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
