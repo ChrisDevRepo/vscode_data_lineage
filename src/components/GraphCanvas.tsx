@@ -663,11 +663,7 @@ interface GraphCanvasProps {
    */
   filteredObjectIds?: Set<string>;
   /** Called when user saves a trace/path result as an advanced bookmark. */
-  onSaveTraceBookmark?: (
-    name: string,
-    nodeIds: string[],
-    source: 'trace' | 'path',
-  ) => void;
+  onSaveTraceBookmark?: (name: string, nodeIds: string[]) => void;
   /** Called when user saves an analysis result as an advanced bookmark. */
   onSaveAnalysisBookmark?: (
     name: string,
@@ -1139,7 +1135,7 @@ export function GraphCanvas({
 
   const handleSaveTraceAsBookmark = useCallback((name: string) => {
     if (!onSaveTraceBookmark) return;
-    onSaveTraceBookmark(name, Array.from(trace.tracedNodeIds), 'trace');
+    onSaveTraceBookmark(name, Array.from(trace.tracedNodeIds));
   }, [onSaveTraceBookmark, trace.tracedNodeIds]);
 
   const handleSaveAnalysisAsBookmark = useCallback((name: string) => {

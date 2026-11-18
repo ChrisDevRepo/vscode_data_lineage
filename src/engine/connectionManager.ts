@@ -519,7 +519,7 @@ export async function releaseSession(session: DbSession): Promise<void> {
  * @param timeoutMessage - Message for the thrown error upon timeout.
  * @returns A promise that resolves with the original value or rejects on timeout.
  */
-export function withQueryTimeout<T>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> {
+function withQueryTimeout<T>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> {
   let handle: ReturnType<typeof setTimeout>;
   return Promise.race([
     promise.finally(() => clearTimeout(handle)),

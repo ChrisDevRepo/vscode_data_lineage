@@ -5,7 +5,7 @@ export const SQL_BLOCK_COMMENT = 1;
 /** Mask value of a character inside a `--` line comment, up to but excluding the newline. */
 export const SQL_LINE_COMMENT = 2;
 /** Mask value of a character inside a `'…'`, `"…"` or `[…]` span, delimiters included; set only on request. */
-export const SQL_LITERAL = 3;
+const SQL_LITERAL = 3;
 
 /**
  * Classifies every character of a T-SQL text as code, block comment or line comment.

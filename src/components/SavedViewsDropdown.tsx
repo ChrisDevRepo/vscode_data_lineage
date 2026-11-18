@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState } from 'react';
 import { FloatingFocusManager, FloatingPortal } from '@floating-ui/react';
 import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
+import { CloseIcon } from './ui/CloseIcon';
 import type { FilterProfile } from '../engine/projectStore';
 import { useDropdown } from '../hooks/useDropdown';
 import { useReturnFocus } from '../hooks/useReturnFocus';
@@ -245,9 +246,7 @@ export const SavedViewsDropdown = memo(function SavedViewsDropdown({
                             onClick={() => setConfirmDeleteId(profile.id)}
                             aria-label={`Delete ${profile.name}`}
                           >
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3 h-3">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
-                            </svg>
+                            <CloseIcon className="w-3 h-3" strokeWidth={1.5} />
                           </button>
                         </Tooltip>
                       </div>

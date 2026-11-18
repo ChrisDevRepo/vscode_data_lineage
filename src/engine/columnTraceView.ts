@@ -25,17 +25,6 @@ import type { ExtensionConfig } from './types';
 export type ColumnLineState = 'passthrough' | 'transformation' | 'unknown';
 
 /**
- * Structural shape of a row, derived from the relation set alone.
- *
- * @remarks
- * Never authored by the model — `renamed` means an inbound relation's endpoint names differ,
- * `incoming` that several
- * upstream columns feed this one, `outgoing` that one upstream column feeds several downstream
- * columns, and `terminal` that the trace recorded no upstream for it.
- */
-type ColumnRowShape = 'renamed' | 'incoming' | 'outgoing' | 'terminal';
-
-/**
  * One row inside a column-trace node: a traced column, or a port on a transform node.
  *
  * @remarks
@@ -45,10 +34,6 @@ type ColumnRowShape = 'renamed' | 'incoming' | 'outgoing' | 'terminal';
 export interface ColumnTraceRow {
   /** Extracted column name when available, otherwise the recorded or borrowed transform-port name. */
   name: string;
-  /** Derived structural shape; absent when none applies. */
-  shape?: ColumnRowShape;
-  /** Contributing upstream (`incoming`) or feeding downstream (`outgoing`) column count. */
-  contributors?: number;
   /**
    * Declared SQL data type from the extracted model — backend metadata, never an AI claim. Absent
    * for borrowed transform-port names and for columns the host model declares no type for.
@@ -442,18 +427,6 @@ export function resolveRowLineStates(
   return byRow;
 }
 
-/** One inbound relation, reduced to what shape derivation needs from it. */
-interface RowRelation {
-  /** Source-policy comparison key of the node at the other end of the relation. */
-  otherNodeKey: string;
-  /** Normalised column key at the other end of the relation. */
-  otherColKey: string;
-  /** Raw source-column name, for the renamed comparison. */
-  fromColRaw: string;
-  /** Raw target-column name, for the renamed comparison. */
-  toColRaw: string;
-}
-
 /** Per-node accumulator built while walking `input.relations`. */
 interface NodeAccumulator {
   /** Object identity supplied by the caller. */
@@ -462,22 +435,6 @@ interface NodeAccumulator {
   rowKeys: string[];
   /** Normalised row key to metadata display name, or first-seen spelling when metadata is absent. */
   rowNames: Map<string, string>;
-  /** Normalised row key to the relations that fed it from upstream. */
-  inbound: Map<string, RowRelation[]>;
-  /** Normalised row key to the distinct downstream tuples it feeds. */
-  outbound: Map<string, Set<string>>;
-}
-
-function pushInbound(map: Map<string, RowRelation[]>, rowKey: string, entry: RowRelation): void {
-  const existing = map.get(rowKey);
-  if (existing) existing.push(entry);
-  else map.set(rowKey, [entry]);
-}
-
-function addOutbound(map: Map<string, Set<string>>, rowKey: string, tupleKey: string): void {
-  const existing = map.get(rowKey);
-  if (existing) existing.add(tupleKey);
-  else map.set(rowKey, new Set([tupleKey]));
 }
 
 function touchRow(acc: NodeAccumulator, columnName: string, identifierCaseSensitive: boolean | undefined): string {
@@ -489,40 +446,10 @@ function touchRow(acc: NodeAccumulator, columnName: string, identifierCaseSensit
   return rowKey;
 }
 
-/**
- * Derives one node's rows from its accumulated relations.
- *
- * @remarks
- * Shape precedence when more than one condition holds: `incoming` outranks `outgoing`, which
- * outranks `renamed`, which outranks `terminal` — structural multiplicity beats a naming
- * difference, which beats mere absence of an upstream relation. `renamed` looks at inbound
- * relations only, so tagging the source row too would mark a column that was never renamed.
- */
-function buildRows(acc: NodeAccumulator, identifierCaseSensitive: boolean | undefined): ColumnTraceRow[] {
+/** Derives one node's rows: display name and declared type per touched row key. */
+function buildRows(acc: NodeAccumulator): ColumnTraceRow[] {
   return acc.rowKeys.map((rowKey) => {
-    const name = acc.rowNames.get(rowKey)!;
-    const inbound = acc.inbound.get(rowKey) ?? [];
-    const upstreamTuples = new Set(inbound.map((x) => JSON.stringify([x.otherNodeKey, x.otherColKey])));
-    const downstreamTuples = acc.outbound.get(rowKey) ?? new Set<string>();
-    const renamed = inbound.some((x) => normalizeColName(x.fromColRaw, identifierCaseSensitive) !== normalizeColName(x.toColRaw, identifierCaseSensitive));
-
-    let shape: ColumnRowShape | undefined;
-    let contributors: number | undefined;
-    if (upstreamTuples.size > 1) {
-      shape = 'incoming';
-      contributors = upstreamTuples.size;
-    } else if (downstreamTuples.size > 1) {
-      shape = 'outgoing';
-      contributors = downstreamTuples.size;
-    } else if (renamed) {
-      shape = 'renamed';
-    } else if (inbound.length === 0) {
-      shape = 'terminal';
-    }
-
-    const row: ColumnTraceRow = { name };
-    if (shape) row.shape = shape;
-    if (contributors !== undefined) row.contributors = contributors;
+    const row: ColumnTraceRow = { name: acc.rowNames.get(rowKey)! };
     const dataType = acc.object.columnTypes?.get(rowKey);
     if (dataType) row.dataType = dataType;
     return row;
@@ -586,7 +513,7 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     const key = schemaKey(object.id, input.identifierCaseSensitive);
     let acc = nodeAccs.get(key);
     if (!acc) {
-      acc = { object, rowKeys: [], rowNames: new Map(), inbound: new Map(), outbound: new Map() };
+      acc = { object, rowKeys: [], rowNames: new Map() };
       nodeAccs.set(key, acc);
     }
     return acc;
@@ -625,18 +552,8 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
     if (seenRelations.has(identity)) return;
     seenRelations.add(identity);
 
-    const sourceAcc = getAcc(sourceObj);
-    const targetAcc = getAcc(targetObj);
-    const sourceRowKey = touchRow(sourceAcc, relation.fromCol, input.identifierCaseSensitive);
-    const targetRowKey = touchRow(targetAcc, relation.toCol, input.identifierCaseSensitive);
-
-    addOutbound(sourceAcc.outbound, sourceRowKey, JSON.stringify([targetKey, targetRowKey]));
-    pushInbound(targetAcc.inbound, targetRowKey, {
-      otherNodeKey: sourceKey,
-      otherColKey: sourceRowKey,
-      fromColRaw: relation.fromCol,
-      toColRaw: relation.toCol,
-    });
+    touchRow(getAcc(sourceObj), relation.fromCol, input.identifierCaseSensitive);
+    touchRow(getAcc(targetObj), relation.toCol, input.identifierCaseSensitive);
 
     let viaId: string | undefined;
     if (hopKey !== sourceKey && hopKey !== targetKey) {
@@ -646,26 +563,12 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
         const viaAcc = getAcc(hopObj);
         const inRowKey = touchRow(viaAcc, relation.fromCol, input.identifierCaseSensitive);
         const outRowKey = touchRow(viaAcc, relation.toCol, input.identifierCaseSensitive);
-        pushInbound(viaAcc.inbound, inRowKey, {
-          otherNodeKey: sourceKey,
-          otherColKey: sourceRowKey,
-          fromColRaw: relation.fromCol,
-          toColRaw: relation.fromCol,
-        });
-        addOutbound(viaAcc.outbound, outRowKey, JSON.stringify([targetKey, targetRowKey]));
         if (inRowKey !== outRowKey) {
           const bridgeKey = JSON.stringify([hopKey, inRowKey, outRowKey]);
           if (!seenBridges.has(bridgeKey)) {
             seenBridges.add(bridgeKey);
             portBridges.push({ nodeId: hopObj.id, fromColumn: viaAcc.rowNames.get(inRowKey)!, toColumn: viaAcc.rowNames.get(outRowKey)! });
           }
-          addOutbound(viaAcc.outbound, inRowKey, JSON.stringify([hopKey, outRowKey]));
-          pushInbound(viaAcc.inbound, outRowKey, {
-            otherNodeKey: hopKey,
-            otherColKey: inRowKey,
-            fromColRaw: relation.fromCol,
-            toColRaw: relation.toCol,
-          });
         }
       }
     }
@@ -686,7 +589,7 @@ export function buildColumnTraceView(input: ColumnTraceViewInput): ColumnTraceVi
   for (const object of input.objects.values()) getAcc(object);
 
   const nodes: ColumnTraceViewNode[] = Array.from(nodeAccs.values()).map((acc) => {
-    const rows = buildRows(acc, input.identifierCaseSensitive);
+    const rows = buildRows(acc);
     const isTransform = isColumnTraceTransformNode(acc.object);
     return {
       id: acc.object.id,

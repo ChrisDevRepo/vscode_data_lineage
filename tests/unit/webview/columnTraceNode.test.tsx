@@ -159,9 +159,8 @@ describe('ColumnTraceNode', () => {
     expect(bordered?.style.borderLeftColor).toBe('rgb(18, 52, 86)');
   });
 
-  it('shows the declared backend data type beside the column name, and no shape annotation', () => {
-    // The type comes from the extracted model, never from the AI; the row carries no structural
-    // shape annotation such as "incoming (2)".
+  it('shows the declared backend data type beside the column name', () => {
+    // The type comes from the extracted model, never from the AI.
     mount(
       <ReactFlowProvider>
         <HoverHarness>
@@ -171,7 +170,7 @@ describe('ColumnTraceNode', () => {
               ...makeData(['OrderId', 'Total']).view,
               rows: [
                 { name: 'OrderId', dataType: 'int' },
-                { name: 'Total', shape: 'incoming', contributors: 2, dataType: 'money' },
+                { name: 'Total', dataType: 'money' },
               ],
             },
           }} />
@@ -180,7 +179,7 @@ describe('ColumnTraceNode', () => {
     );
     const rendered = rows();
     expect(rendered[0].textContent).toBe('OrderIdint');
-    expect(rendered[1].textContent, 'the shape annotation does not survive next to the type').toBe('Totalmoney');
+    expect(rendered[1].textContent).toBe('Totalmoney');
     expect(rendered[1].getAttribute('aria-label')).toBe('dbo.Orders column Total, money');
   });
 

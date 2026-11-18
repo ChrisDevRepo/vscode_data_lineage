@@ -146,6 +146,18 @@ interface SchemaContextMenuState {
 
 type ContextMenuState = ObjectContextMenuState | SchemaContextMenuState;
 
+/** The default filter state over the given schemas: everything shown, isolated nodes hidden. */
+const getResetFilter = (schemas: ReadonlyArray<{ name: string }>): FilterState => ({
+  schemas: new Set(schemas.map(s => s.name)),
+  types: new Set<ObjectType>(['table', 'view', 'procedure', 'function', 'external']),
+  searchTerm: '',
+  hideIsolated: true,
+  focusSchemas: new Set(),
+  showExternalRefs: true,
+  externalRefTypes: new Set<'file' | 'db'>(['file', 'db']),
+  exclusionPatterns: [],
+});
+
 /**
  * Coordinates application navigation, model lifecycle, graph filters, and interaction modes.
  */
@@ -170,22 +182,13 @@ export function App() {
 
   const [sourceName, setSourceName] = useState<string | null>(isAutoVisualize ? 'AdventureWorks (demo)' : null);
 
-  const [filter, setFilter] = useState<FilterState>({
-    schemas: new Set(),
-    types: new Set<ObjectType>(['table', 'view', 'procedure', 'function', 'external']),
-    searchTerm: '',
-    hideIsolated: true,
-    focusSchemas: new Set(),
-    showExternalRefs: true,
-    externalRefTypes: new Set<'file' | 'db'>(['file', 'db']),
-    exclusionPatterns: [],
-  });
+  const [filter, setFilter] = useState<FilterState>(() => getResetFilter([]));
   const [graphMode, setGraphMode] = useState<GraphMode>('full');
   const [schemaViewSoftDisabled, setSchemaViewSoftDisabled] = useState(false);
 
   const { flowNodes, flowEdges, graph, metrics, renderLimitHit, filteredCount, renderedSchemas, buildFromModel, refusesBuild } = useGraphology();
   const isBaseRenderLimited = renderLimitHit > 0 || filteredCount > config.renderLimit;
-  const { trace, tracedNodes, tracedEdges, traceGraph, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, clearTrace, useFullModel, toggleUseFullModel, filteredOutCount: traceFilteredOutCount, addTraceNeighbor, pruneTraceNode, estimateTraceSize, setFocusTargets, exitFocusPaths, isFocusPaths, focusTargetIds, navigatorTrace, resetTraceToStart, addTraceNeighbors, traceScopeGraph, fullGraph } =
+  const { trace, tracedNodes, tracedEdges, traceGraph, startTraceConfig, startTraceImmediate, applyTrace, startPathFinding, applyPath, applyAnalysisSubset, endTrace, useFullModel, toggleUseFullModel, filteredOutCount: traceFilteredOutCount, addTraceNeighbor, pruneTraceNode, estimateTraceSize, setFocusTargets, exitFocusPaths, isFocusPaths, focusTargetIds, navigatorTrace, resetTraceToStart, addTraceNeighbors, traceScopeGraph, fullGraph } =
     useInteractiveTrace(graph, flowNodes, flowEdges, config, model, isBaseRenderLimited);
 
   /** Updates the global extension configuration, keeping the current object when the host resends identical content. */
@@ -232,20 +235,6 @@ export function App() {
   );
 
   /**
-   * Generates a default filter state for a given model.
-   */
-  const getResetFilter = (m: DatabaseModel): FilterState => ({
-    schemas: new Set(m.schemas.map(s => s.name)),
-    types: new Set<ObjectType>(['table', 'view', 'procedure', 'function', 'external']),
-    searchTerm: '',
-    hideIsolated: true,
-    focusSchemas: new Set(),
-    showExternalRefs: true,
-    externalRefTypes: new Set<'file' | 'db'>(['file', 'db']),
-    exclusionPatterns: [],
-  });
-
-  /**
    * Initializes the visualization phase for a newly loaded model.
    */
   const handleVisualize = useCallback(
@@ -260,7 +249,7 @@ export function App() {
         return;
       }
 
-      const f = getResetFilter(trimmed);
+      const f = getResetFilter(trimmed.schemas);
       const initialGraphMode = deriveInitialGraphMode({ filteredCount: trimmed.nodes.length, config });
       modelRef.current = trimmed;
       filterRef.current = f;
@@ -519,8 +508,8 @@ export function App() {
     setAiPreview(null);
     setActiveAdvancedProfile(null);
     setAnalysisMode(null);
-    clearTrace();
-  }, [clearTrace]);
+    endTrace();
+  }, [endTrace]);
 
   /** Returns to the start screen and resets exploration state. */
   const handleBack = useCallback(() => {
@@ -667,16 +656,16 @@ export function App() {
   const handleResetAll = useCallback(() => {
     if (model) {
       viewSnapshotRef.current = null;
-      const f = getResetFilter(model);
+      const f = getResetFilter(model.schemas);
       setFilter(f);
       const initialGraphMode = deriveInitialGraphMode({ filteredCount: model.nodes.length, config });
       setGraphMode(initialGraphMode);
       setSchemaViewSoftDisabled(model.nodes.length <= effectiveOverviewThreshold(config));
       setExpandedSchemaView(null);
-      clearTrace();
+      endTrace();
       rebuild(model, f, config, initialGraphMode === 'full', initialGraphMode);
     }
-  }, [model, config, rebuild, clearTrace]);
+  }, [model, config, rebuild, endTrace]);
 
   const rebuildStartRef = useRef(0);
   const rebuildTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1274,7 +1263,7 @@ export function App() {
           if (pendingRefreshReset.current && modelRef.current) {
             pendingRefreshReset.current = false;
             const f: FilterState = {
-              ...getResetFilter(modelRef.current),
+              ...getResetFilter(modelRef.current.schemas),
               hideIsolated: filterRef.current.hideIsolated,
               exclusionPatterns: filterRef.current.exclusionPatterns,
             };
@@ -1400,7 +1389,7 @@ export function App() {
   const isFilterDirty = useMemo(() => {
     if (!model) return false;
     if (activeViewId && !isViewModified) return false;
-    const clean = getResetFilter(model);
+    const clean = getResetFilter(model.schemas);
     return JSON.stringify(serializeFilter(filter)) !== JSON.stringify(serializeFilter(clean));
   }, [model, filter, activeViewId, isViewModified]);
 
@@ -1470,17 +1459,13 @@ export function App() {
     persistFilterProfile(updated);
   }, [activeProjectId, filter, filterProfiles, persistFilterProfile]);
 
-  /** Saves the result of an interactive trace as a permanent bookmark. */
-  const handleSaveTraceAsBookmark = useCallback((
-    name: string,
-    nodeIds: string[],
-    source: 'trace' | 'path',
-  ) => {
+  /** Saves a node allowlist (trace, path or analysis result) as a permanent bookmark. */
+  const saveAllowlistBookmark = useCallback((name: string, nodeIds: string[], source: 'trace' | 'analysis') => {
     const profile: FilterProfile = {
       id: crypto.randomUUID(),
       name,
       createdAt: new Date().toISOString(),
-      source: source === 'path' ? 'trace' : source,
+      source,
       filter: {
         ...serializeFilter(filter),
         allowlistNodeIds: nodeIds,
@@ -1489,23 +1474,13 @@ export function App() {
     persistFilterProfile(profile, { activateProfile: true });
   }, [filter, persistFilterProfile]);
 
-  /** Saves the result of a structural analysis as a permanent bookmark. */
-  const handleSaveAnalysisBookmark = useCallback((
-    name: string,
-    nodeIds: string[],
-  ) => {
-    const profile: FilterProfile = {
-      id: crypto.randomUUID(),
-      name,
-      createdAt: new Date().toISOString(),
-      source: 'analysis',
-      filter: {
-        ...serializeFilter(filter),
-        allowlistNodeIds: nodeIds,
-      },
-    };
-    persistFilterProfile(profile, { activateProfile: true });
-  }, [filter, persistFilterProfile]);
+  const handleSaveTraceAsBookmark = useCallback((name: string, nodeIds: string[]) => {
+    saveAllowlistBookmark(name, nodeIds, 'trace');
+  }, [saveAllowlistBookmark]);
+
+  const handleSaveAnalysisBookmark = useCallback((name: string, nodeIds: string[]) => {
+    saveAllowlistBookmark(name, nodeIds, 'analysis');
+  }, [saveAllowlistBookmark]);
 
   /** Saves a transient AI preview as a permanent bookmark. */
   const handleSaveAiBookmark = useCallback((name: string) => {

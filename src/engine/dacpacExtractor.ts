@@ -16,6 +16,7 @@ import {
   TRACKED_ELEMENT_TYPES,
   XmlElement,
   XmlProperty,
+  XmlReference,
   ExtractedObject,
   ExtractedDependency,
   ColumnDef,
@@ -572,83 +573,77 @@ function expressionReferenceKey(reference: string, identifierCaseSensitive: bool
  */
 function extractColumnsFromXml(el: XmlElement, computedSources: Map<string, string> | undefined, sourceElementTypes: ReadonlyMap<string, string> | undefined, identifierCaseSensitive: boolean): ColumnDef[] {
   const cols: ColumnDef[] = [];
-  const rels = asArray(el.Relationship);
   const objectId = normalizeName(el['@_Name'] ?? '', identifierCaseSensitive);
 
-  for (const rel of rels) {
-    if (rel['@_Name'] !== 'Columns') continue;
-    for (const entry of asArray(rel.Entry)) {
-      for (const colEl of asArray(entry.Element)) {
-        const colName = lastNamePart(colEl['@_Name'] ?? '');
-        const props = asArray(colEl.Property);
-        const isNullable = props.find(p => p['@_Name'] === 'IsNullable')?.['@_Value'] !== 'False';
-        const isIdentity = props.find(p => p['@_Name'] === 'IsIdentity')?.['@_Value'] === 'True';
-        const isComputed = colEl['@_Type'] === 'SqlComputedColumn';
+  for (const colEl of relatedElements(el, 'Columns')) {
+    const colName = lastNamePart(colEl['@_Name'] ?? '');
+    const props = asArray(colEl.Property);
+    const isNullable = props.find(p => p['@_Name'] === 'IsNullable')?.['@_Value'] !== 'False';
+    const isIdentity = props.find(p => p['@_Name'] === 'IsIdentity')?.['@_Value'] === 'True';
+    const isComputed = colEl['@_Type'] === 'SqlComputedColumn';
 
-        let typeName = '?';
-        let length: string | undefined;
-        let precision: string | undefined;
-        let scale: string | undefined;
+    let typeName = '?';
+    let length: string | undefined;
+    let precision: string | undefined;
+    let scale: string | undefined;
 
-        if (isComputed && computedSources) {
-          const scriptProp = props.find(p => p['@_Name'] === 'ExpressionScript');
-          const bareName = bareColumnReference(scriptProp ? extractPropertyValue(scriptProp) : undefined);
-          const source = bareName === null ? undefined : asArray(colEl.Relationship)
-            .filter(r => r['@_Name'] === 'ExpressionDependencies')
-            .flatMap(r => asArray(r.Entry))
-            .flatMap(entry => asArray(entry.References))
-            .map(ref => ref['@_Name'])
-            .find((n): n is string => !!n
-              && normalizeColName(stripBrackets(splitSqlName(n).pop() ?? ''), identifierCaseSensitive) === normalizeColName(bareName, identifierCaseSensitive));
-          if (source) computedSources.set(`${objectId}::${normalizeColName(colName, identifierCaseSensitive)}`, source);
+    if (isComputed && computedSources) {
+      const scriptProp = props.find(p => p['@_Name'] === 'ExpressionScript');
+      const bareName = bareColumnReference(scriptProp ? extractPropertyValue(scriptProp) : undefined);
+      const source = bareName === null ? undefined : relatedReferences(colEl, 'ExpressionDependencies')
+        .map(ref => ref['@_Name'])
+        .find((n): n is string => !!n
+          && normalizeColName(stripBrackets(splitSqlName(n).pop() ?? ''), identifierCaseSensitive) === normalizeColName(bareName, identifierCaseSensitive));
+      if (source) computedSources.set(`${objectId}::${normalizeColName(colName, identifierCaseSensitive)}`, source);
+    }
+
+    if (!isComputed) {
+      for (const tsEl of relatedElements(colEl, 'TypeSpecifier')) {
+        const tsProps = asArray(tsEl.Property);
+        const isMax = tsProps.find(p => p['@_Name'] === 'IsMax')?.['@_Value'] === 'True';
+        length = isMax ? '-1' : tsProps.find(p => p['@_Name'] === 'Length')?.['@_Value'];
+        precision = tsProps.find(p => p['@_Name'] === 'Precision')?.['@_Value'];
+        scale = tsProps.find(p => p['@_Name'] === 'Scale')?.['@_Value'];
+        for (const ref of relatedReferences(tsEl, 'Type')) {
+          typeName = ref['@_Name'] ? stripBrackets(ref['@_Name']).replace(/^sys\./i, '') : '?';
         }
-
-        if (!isComputed) {
-          for (const colRel of asArray(colEl.Relationship)) {
-            if (colRel['@_Name'] !== 'TypeSpecifier') continue;
-            for (const tsEntry of asArray(colRel.Entry)) {
-              for (const tsEl of asArray(tsEntry.Element)) {
-                const tsProps = asArray(tsEl.Property);
-                const isMax = tsProps.find(p => p['@_Name'] === 'IsMax')?.['@_Value'] === 'True';
-                length = isMax ? '-1' : tsProps.find(p => p['@_Name'] === 'Length')?.['@_Value'];
-                precision = tsProps.find(p => p['@_Name'] === 'Precision')?.['@_Value'];
-                scale = tsProps.find(p => p['@_Name'] === 'Scale')?.['@_Value'];
-                for (const typeRel of asArray(tsEl.Relationship)) {
-                  if (typeRel['@_Name'] !== 'Type') continue;
-                  for (const typeEntry of asArray(typeRel.Entry)) {
-                    for (const ref of asArray(typeEntry.References)) {
-                      typeName = ref['@_Name'] ? stripBrackets(ref['@_Name']).replace(/^sys\./i, '') : '?';
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-
-        const column = buildColumnDef(colName, typeName, isNullable, isIdentity, isComputed, length, precision, scale, true);
-        const expressionDependencies = asArray(colEl.Relationship)
-          .filter(relationship => relationship['@_Name'] === 'ExpressionDependencies')
-          .flatMap(relationship => asArray(relationship.Entry))
-          .flatMap(entry => asArray(entry.References))
-          .filter(reference => typeof reference['@_Name'] === 'string' && reference['@_Name'].trim().length > 0)
-          .map(reference => {
-            const externalSource = reference['@_ExternalSource'];
-            const sourceElementType = externalSource === undefined
-              ? sourceElementTypes?.get(expressionReferenceKey(reference['@_Name'], identifierCaseSensitive)) : undefined;
-            return {
-              reference: reference['@_Name'],
-              ...(sourceElementType !== undefined && { sourceElementType }),
-              ...(externalSource !== undefined && { externalSource }),
-            };
-          });
-        if (expressionDependencies.length > 0) column.expressionDependencies = expressionDependencies;
-        cols.push(column);
       }
     }
+
+    const column = buildColumnDef(colName, typeName, isNullable, isIdentity, isComputed, length, precision, scale, true);
+    const expressionDependencies = relatedReferences(colEl, 'ExpressionDependencies')
+      .filter(reference => typeof reference['@_Name'] === 'string' && reference['@_Name'].trim().length > 0)
+      .map(reference => {
+        const externalSource = reference['@_ExternalSource'];
+        const sourceElementType = externalSource === undefined
+          ? sourceElementTypes?.get(expressionReferenceKey(reference['@_Name'], identifierCaseSensitive)) : undefined;
+        return {
+          reference: reference['@_Name'],
+          ...(sourceElementType !== undefined && { sourceElementType }),
+          ...(externalSource !== undefined && { externalSource }),
+        };
+      });
+    if (expressionDependencies.length > 0) column.expressionDependencies = expressionDependencies;
+    cols.push(column);
   }
 
   return cols;
+}
+
+/** Child elements of every `relName` relationship of `el`, in document order. */
+function relatedElements(el: XmlElement, relName: string): XmlElement[] {
+  return asArray(el.Relationship)
+    .filter(r => r['@_Name'] === relName)
+    .flatMap(r => asArray(r.Entry))
+    .flatMap(entry => asArray(entry.Element));
+}
+
+/** Reference nodes of every `relName` relationship of `el`, in document order. */
+function relatedReferences(el: XmlElement, relName: string): XmlReference[] {
+  return asArray(el.Relationship)
+    .filter(r => r['@_Name'] === relName)
+    .flatMap(r => asArray(r.Entry))
+    .flatMap(entry => asArray(entry.References));
 }
 
 /**
@@ -824,15 +819,10 @@ function getBodyScript(el: XmlElement, type: string, schema: string, objectName:
   // DACPAC scalar-function signatures belong to the implementation, not the
   // function element. Read its own header and body together, without rebuilding SQL.
   if (type.includes('Function')) {
-    for (const rel of asArray(el.Relationship)) {
-      if (rel['@_Name'] !== 'FunctionBody') continue;
-      for (const entry of asArray(rel.Entry)) {
-        for (const implementation of asArray(entry.Element)) {
-          const header = getScriptHeader(implementation);
-          const implementationBody = getDirectBodyScript(implementation, 'SqlScriptFunctionImplementation');
-          if (header && implementationBody) return `${header}\n${implementationBody}`;
-        }
-      }
+    for (const implementation of relatedElements(el, 'FunctionBody')) {
+      const header = getScriptHeader(implementation);
+      const implementationBody = getDirectBodyScript(implementation, 'SqlScriptFunctionImplementation');
+      if (header && implementationBody) return `${header}\n${implementationBody}`;
     }
   }
 
@@ -888,21 +878,9 @@ function getDirectBodyScript(el: XmlElement, type: string): string | undefined {
   }
 
   if (type.includes('Function')) {
-    const rels = asArray(el.Relationship);
-    for (const rel of rels) {
-      if (rel['@_Name'] === 'FunctionBody') {
-        const entries = asArray(rel.Entry);
-        for (const entry of entries) {
-          const innerEls = asArray(entry.Element);
-          for (const inner of innerEls) {
-            const innerProps = asArray(inner.Property);
-            for (const p of innerProps) {
-              if (p['@_Name'] === 'BodyScript') {
-                return extractPropertyValue(p);
-              }
-            }
-          }
-        }
+    for (const inner of relatedElements(el, 'FunctionBody')) {
+      for (const p of asArray(inner.Property)) {
+        if (p['@_Name'] === 'BodyScript') return extractPropertyValue(p);
       }
     }
   }

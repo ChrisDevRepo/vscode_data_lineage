@@ -16,7 +16,7 @@ import { bfsFromNode } from 'graphology-traversal';
 import { findShortestPathOrdered } from './graphGuards';
 import dagre from '@dagrejs/dagre';
 import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
-import { DatabaseModel, TraceState, ExtensionConfig, DEFAULT_CONFIG, SchemaNodeData, ObjectType } from './types';
+import { DatabaseModel, LineageNode, TraceState, ExtensionConfig, DEFAULT_CONFIG, SchemaNodeData } from './types';
 import { createSchemaColorMap, getExternalNodeColor, getSchemaColorFromMap, getSchemaDisplayColor, isExternalOnlyTypeBreakdown, type SchemaColorMap } from '../utils/schemaColors';
 import {
   projectExpandedSchemaView,
@@ -138,30 +138,16 @@ interface GraphResult {
   graph: Graph;
 }
 
-/**
- * Minimal node shape consumed by {@link buildLineageFlowNode} when constructing a React Flow node.
- * The `external*` fields are populated only for external references (objects outside the analyzed
- * project) and are therefore optional; internal objects leave them undefined.
- */
-type LineageFlowNodeSource = {
-  id: string;
-  label: string;
-  schema: string;
-  fullName: string;
-  objectType: ObjectType;
-  /** External-reference source kind (e.g. file, db); set only for external nodes. */
-  externalType?: string;
-  /** External-reference URL; set only for external nodes that carry one. */
-  externalUrl?: string;
-  /** Originating database name for cross-database external references. */
-  externalDatabase?: string;
-  /** Set for a module whose definition is not readable; drives the node's warning marker. */
-  definitionUnreadable?: boolean;
-};
+/** Node fields {@link buildLineageFlowNode} reads; the `external*` fields are set only for external references. */
+type LineageFlowNodeSource = Pick<
+  LineageNode,
+  'id' | 'name' | 'schema' | 'fullName' | 'type' | 'externalType' | 'externalUrl' | 'externalDatabase' | 'definitionUnreadable'
+>;
 
+/** Builds a lineage flow node; a null `graph` (synthesized out-of-filter node) gives it zero degree. */
 function buildLineageFlowNode(
   source: LineageFlowNodeSource,
-  graph: Graph,
+  graph: Graph | null,
   position: { x: number; y: number },
   options?: { highlighted?: boolean; schemaColor?: string },
 ): FlowNode {
@@ -172,12 +158,12 @@ function buildLineageFlowNode(
     draggable: true,
     selectable: true,
     data: {
-      label: source.label,
+      label: source.name,
       schema: source.schema,
       fullName: source.fullName,
-      objectType: source.objectType,
-      inDegree: graph.hasNode(source.id) ? graph.inDegree(source.id) : 0,
-      outDegree: graph.hasNode(source.id) ? graph.outDegree(source.id) : 0,
+      objectType: source.type,
+      inDegree: graph?.hasNode(source.id) ? graph.inDegree(source.id) : 0,
+      outDegree: graph?.hasNode(source.id) ? graph.outDegree(source.id) : 0,
       ...(source.externalType && { externalType: source.externalType }),
       ...(source.externalUrl && { externalUrl: source.externalUrl }),
       ...(source.externalDatabase && { externalDatabase: source.externalDatabase }),
@@ -230,17 +216,7 @@ function toFlowResult(
   config: ExtensionConfig
 ): GraphResult {
   const flowNodes: FlowNode[] = model.nodes.map((node) => buildLineageFlowNode(
-    {
-      id: node.id,
-      label: node.name,
-      schema: node.schema,
-      fullName: node.fullName,
-      objectType: node.type,
-      externalType: node.externalType,
-      externalUrl: node.externalUrl,
-      externalDatabase: node.externalDatabase,
-      definitionUnreadable: node.definitionUnreadable,
-    },
+    node,
     graph,
     positions.get(node.id) || { x: 0, y: 0 },
   ));
@@ -426,25 +402,7 @@ function synthesizeMissingTraceScope(
     if (flowNodeIdSet.has(id)) continue;
     const mn = modelNodeMap.get(id);
     if (!mn) continue;
-    filteredNodes.push({
-      id: mn.id,
-      type: 'lineageNode',
-      position: { x: 0, y: 0 },
-      draggable: true,
-      selectable: true,
-      data: {
-        label: mn.name,
-        schema: mn.schema,
-        fullName: mn.fullName,
-        objectType: mn.type,
-        inDegree: 0,
-        outDegree: 0,
-        ...(mn.externalType && { externalType: mn.externalType }),
-        ...(mn.externalUrl && { externalUrl: mn.externalUrl }),
-        ...(mn.externalDatabase && { externalDatabase: mn.externalDatabase }),
-        ...(mn.definitionUnreadable && { definitionUnreadable: true }),
-      },
-    });
+    filteredNodes.push(buildLineageFlowNode(mn, null, { x: 0, y: 0 }));
   }
 
   const existingEdgeIds = new Set(filteredEdges.map((e) => e.id));
@@ -977,6 +935,18 @@ export function objectLayoutInputForGraph(graph: Graph, config: ExtensionConfig 
   return objectLayoutPlan(graph, config, annotatedNodeIds).input;
 }
 
+/** Places nodes Dagre cannot rank in a grid row below the laid-out positions, in place. */
+function placeIsolatedRow(positions: Map<string, { x: number; y: number }>, isolatedIds: readonly string[]): void {
+  if (isolatedIds.length === 0) return;
+  let maxY = 0;
+  for (const pos of positions.values()) {
+    if (pos.y + NODE_HEIGHT > maxY) maxY = pos.y + NODE_HEIGHT;
+  }
+  const rowY = maxY > 0 ? maxY + GRID_CELL_PADDING * 2 : 0;
+  const cellW = NODE_WIDTH + GRID_CELL_PADDING;
+  isolatedIds.forEach((id, i) => positions.set(id, { x: i * cellW, y: rowY }));
+}
+
 /**
  * Computes spatial layout for the object graph.
  *
@@ -992,16 +962,7 @@ function computeLayout(graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG, a
   const { input, isolatedIds } = objectLayoutPlan(graph, config, annotatedNodeIds);
   const positions = dagreLayout(input);
 
-  if (isolatedIds.length > 0) {
-    let maxY = 0;
-    for (const pos of positions.values()) {
-      if (pos.y + NODE_HEIGHT > maxY) maxY = pos.y + NODE_HEIGHT;
-    }
-    const rowY = maxY > 0 ? maxY + GRID_CELL_PADDING * 2 : 0;
-    const cellW = NODE_WIDTH + GRID_CELL_PADDING;
-    isolatedIds.forEach((id, i) => positions.set(id, { x: i * cellW, y: rowY }));
-  }
-
+  placeIsolatedRow(positions, isolatedIds);
   return positions;
 }
 
@@ -1053,17 +1014,7 @@ function buildExpandedSchemaViewPositions(
     config,
   }));
 
-  const isolatedIds = candidateIds.filter((id) => !connectedIds.has(id));
-  if (isolatedIds.length === 0) return positions;
-
-  let maxY = 0;
-  for (const position of positions.values()) {
-    if (position.y + NODE_HEIGHT > maxY) maxY = position.y + NODE_HEIGHT;
-  }
-
-  const rowY = maxY > 0 ? maxY + GRID_CELL_PADDING * 2 : 0;
-  const cellW = NODE_WIDTH + GRID_CELL_PADDING;
-  isolatedIds.forEach((id, index) => positions.set(id, { x: index * cellW, y: rowY }));
+  placeIsolatedRow(positions, candidateIds.filter((id) => !connectedIds.has(id)));
   return positions;
 }
 
@@ -1080,23 +1031,13 @@ function buildExpandedSchemaViewFlowNodes(
 
   for (const id of individualIds) {
     if (!graph.hasNode(id)) continue;
-    const n = graph.getNodeAttributes(id) as {
-      id?: string;
-      name?: string;
-      schema?: string;
-      fullName?: string;
-      type?: ObjectType;
-      externalType?: string;
-      externalUrl?: string;
-      externalDatabase?: string;
-      definitionUnreadable?: boolean;
-    };
+    const n = graph.getNodeAttributes(id) as Partial<LineageNode>;
     const source: LineageFlowNodeSource = {
       id: String(n.id ?? id),
-      label: String(n.name ?? id),
+      name: String(n.name ?? id),
       schema: String(n.schema ?? ''),
       fullName: String(n.fullName ?? id),
-      objectType: n.type ?? 'table',
+      type: n.type ?? 'table',
       externalType: n.externalType,
       externalUrl: n.externalUrl,
       externalDatabase: n.externalDatabase,
@@ -1108,7 +1049,7 @@ function buildExpandedSchemaViewFlowNodes(
       positions.get(id) ?? { x: 0, y: 0 },
       {
         highlighted: id === focusId,
-        schemaColor: source.objectType === 'external' ? getExternalNodeColor() : getSchemaColorFromMap(source.schema, colorMap, graph.getAttribute('identifierCaseSensitive') === true),
+        schemaColor: source.type === 'external' ? getExternalNodeColor() : getSchemaColorFromMap(source.schema, colorMap, graph.getAttribute('identifierCaseSensitive') === true),
       },
     ));
   }

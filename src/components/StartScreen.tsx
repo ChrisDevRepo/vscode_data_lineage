@@ -1,6 +1,7 @@
 import { memo, useState, type ReactNode } from 'react';
 import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
+import { CloseIcon } from './ui/CloseIcon';
 import { WizardPanel } from './ui/WizardPanel';
 import { StatusMessage } from './ui/StatusMessage';
 import { Spinner } from './ui/Spinner';
@@ -252,7 +253,7 @@ export const StartScreen = memo(function StartScreen({
                       style={{ width: 28, height: 28 }}
                       onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(project.id); }}
                     >
-                      <IconClose />
+                      <CloseIcon strokeWidth={1.5} />
                     </Button>
                   </Tooltip>
                 )}
@@ -320,11 +321,3 @@ export const StartScreen = memo(function StartScreen({
     </WizardPanel>
   );
 });
-
-function IconClose() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
-    </svg>
-  );
-}

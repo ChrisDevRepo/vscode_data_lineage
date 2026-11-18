@@ -2,6 +2,7 @@ import { memo, useState, useRef, useCallback, useEffect } from 'react';
 import { FloatingFocusManager, FloatingPortal } from '@floating-ui/react';
 import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
+import { CloseIcon } from './ui/CloseIcon';
 import { disabledControl } from './ui/disabledControl';
 import { useDropdown } from '../hooks/useDropdown';
 import { compileExclusionPattern } from '../utils/sql';
@@ -212,9 +213,7 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
                           className="shrink-0 w-4 h-4 flex items-center justify-center rounded-sm transition-colors ln-text-muted hover:opacity-80"
                           aria-label={`Remove exclusion pattern: ${pattern}`}
                         >
-                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3 h-3">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
-                          </svg>
+                          <CloseIcon className="w-3 h-3" strokeWidth={2.5} />
                         </button>
                       </Tooltip>
                     </div>

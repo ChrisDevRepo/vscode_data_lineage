@@ -8,6 +8,7 @@ import * as vscode from 'vscode';
 import { getConfiguredAuthProviderId, getConfiguredAzureEnv, getSessionFromVSCode, VSCodeAzureSubscriptionProvider, type AzureTenant } from '@microsoft/vscode-azext-azureauth';
 import type { Logger } from '../../utils/log';
 import { MicrosoftSignInError } from './dbSession';
+import { errorMessage } from '../../utils/errorMessage';
 
 /** Azure SQL resource of the public cloud. */
 const PUBLIC_SQL_RESOURCE = 'https://database.windows.net/';
@@ -38,10 +39,6 @@ export interface EntraTenant {
 }
 
 let provider: VSCodeAzureSubscriptionProvider | undefined;
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 /**
  * Signs in for Azure SQL with VS Code's Microsoft account.
