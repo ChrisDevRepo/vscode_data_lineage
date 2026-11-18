@@ -223,6 +223,8 @@ export interface AgentGraphDeps {
    * so the default path pays nothing.
    */
   readonly traceSyntheticRejection?: SyntheticRejectionTrace;
+  /** Clears the AI preview on the canvas; an approved exploration replaces the earlier result. */
+  readonly clearPreview?: () => void;
 }
 
 
@@ -1016,6 +1018,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       deps.logger?.debug(`[AI] approved proposal activation rejected — revision=${expectedRevision} reason=${sanitizeForLog(activation.reason)}`);
       return fail(`Approved exploration could not start: ${activation.reason}`);
     }
+    deps.clearPreview?.();
     const engine = activation.engine as NavigationEngine;
     if (cachedDiscoverySummary) engine.setDiscoverySummary(cachedDiscoverySummary);
     return {

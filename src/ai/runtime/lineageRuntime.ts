@@ -62,6 +62,8 @@ export interface LineageRuntimeDeps {
   readonly maxRounds?: number;
   /** Optional trace writer receiving this runtime's lifecycle and tool records. */
   readonly traceWriter?: AiTraceWriter;
+  /** Optional AI preview clear; forwarded to the agent runtime. */
+  readonly clearPreview?: () => void;
 }
 
 /**
@@ -185,6 +187,7 @@ export class LineageRuntime {
       priorMessages: input.request.priorMessages ?? session.getDiscoveryHistory(),
       logger: this.deps.logger,
       traceSyntheticRejection,
+      clearPreview: this.deps.clearPreview,
     });
     let completeRun!: () => void;
     const completed = new Promise<void>((resolve) => { completeRun = resolve; });

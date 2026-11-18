@@ -1121,6 +1121,9 @@ export function App() {
     if (viewSnapshotRef.current) viewSnapshotRef.current = { ...viewSnapshotRef.current, filter: selection };
   }, [isModeLocked, restoreViewSnapshot, preserveViewportOnNextGraphChange]);
 
+  const discardAiPreviewRef = useRef(handleDiscardAiPreview);
+  discardAiPreviewRef.current = handleDiscardAiPreview;
+
   /** Exits the active advanced bookmark view and restores previous filters. */
   const handleExitAdvancedBookmark = useCallback(() => {
     setActiveAdvancedProfile(null);
@@ -1255,6 +1258,8 @@ export function App() {
         reloadSourceRef.current();
       } else if (msg.type === 'request-back') {
         setBackRequest((n) => n + 1);
+      } else if (msg.type === 'ai-view-clear') {
+        if (aiPreviewRef.current) discardAiPreviewRef.current();
       } else if (msg.type === 'ai-view-preview') {
         const renderModel = modelRef.current;
         let resolvedIds = msg.nodeIds;

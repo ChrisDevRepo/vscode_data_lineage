@@ -743,6 +743,7 @@ export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
    */
   z.object({ type: z.literal('request-back') }),
   z.object({ type: z.literal('ai-view-preview'), name: z.string(), nodeIds: z.array(z.string()), aiMetadata: AIViewMetadataSchema }),
+  z.object({ type: z.literal('ai-view-clear') }),
 ]);
 
 /** Type inferred from {@link ExtensionToWebviewMsgSchema}: every valid message to the Webview. */
