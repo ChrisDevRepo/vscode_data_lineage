@@ -167,7 +167,7 @@ function buildActivePhasePrompt(analysisMode: 'bb' | 'ct'): string {
     'Deliver one `lineage_submit_findings` call; judge `verdict` from the focus itself.',
     '',
     'Flags on `neighbors[]` are committed: `already_visited` and `already_removed` neighbors take no decision; neighbors with `can_prune: false` are not pruned. `can_question` permits a subquestion in approved scope or an optional deferred follow-up outside it, including `out_of_direction`; it never widens scope.'
-      + (analysisMode === 'ct' ? ' A neighbor with in_approved_scope: false lies outside the approved scope: column_flow names it neither as an upstream_columns source nor as writes_to (null when the only destination lies outside). In-scope sources and destinations stay as the SQL proves them. State a relevant fact about it in sections; further work on it is a questions follow-up.' : ''),
+      + (analysisMode === 'ct' ? ' A neighbor with `in_approved_scope: false` lies outside the approved scope: `column_flow` names it neither as an `upstream_columns` source nor as `writes_to`. In-scope sources and destinations stay as the SQL proves them. State a relevant fact about it in `sections`; further work on it is a `questions` follow-up.' : ''),
   ].join('\n');
 }
 
