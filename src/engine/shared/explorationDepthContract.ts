@@ -61,10 +61,8 @@ export interface DepthSideValue {
  * admit that way.
  */
 const DepthSideSchema: z.ZodType<DepthSideValue> = z.object({
-  levels: numericStringDepth(z.union([z.number().int().min(0), z.literal('all')]))
-    .describe('Starting level count for this side, or "all" for the full chain.'),
-  exactness: z.enum(['exact', 'approximate'])
-    .describe('"exact" is a limit the user stated, enforced as a border. "approximate" is your own estimate, shown on the plan; above 0 it does not bound the scope, which runs until the filters or the border stop it.'),
+  levels: numericStringDepth(z.union([z.number().int().min(0), z.literal('all')])),
+  exactness: z.enum(['exact', 'approximate']),
 }).strict();
 
 /** True when the two sides carry different verdicts (`levels` or `exactness`). */
@@ -95,8 +93,8 @@ export function directionFromDepth(depth: { upstream: DepthSideValue; downstream
  * exactness for both `upstream` and `downstream`.
  */
 export const ExplorationDepthSelectionSchema = z.object({
-  upstream: DepthSideSchema.describe('Upstream starting depth.'),
-  downstream: DepthSideSchema.describe('Downstream starting depth.'),
+  upstream: DepthSideSchema,
+  downstream: DepthSideSchema,
 }).strict().superRefine((data, ctx) => {
   if (bothSidesClosed(data.upstream, data.downstream)) {
     ctx.addIssue({

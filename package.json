@@ -625,7 +625,7 @@
         "toolReferenceName": "lineage_search_objects",
         "displayName": "Search Objects",
         "userDescription": "Search for database objects by name or column.",
-        "modelDescription": "Search database objects by name or column (substring or regex). Returns object IDs, metadata, per-kind `by_type` counts, `in_user_filter`, and `name_match` (`unique` or `ambiguous` ids for an exact name, in-filter first). When an in-filter search is empty but out-of-filter hits exist, widen `schemas` on the next call. Use lineage_search_ddl to grep SQL bodies.",
+        "modelDescription": "Search database objects by name (substring or regex) or by column (substring only). Returns object IDs, metadata and `name_match` (`unique` or `ambiguous` ids for an exact name).",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",
@@ -641,7 +641,7 @@
               "description": "In substring mode: any part of an object or column name, without a schema prefix like '[dbo].'. In regex mode: the pattern, used verbatim. May be empty ONLY together with schemas[] to list everything in those schemas."
             },
             "types": {
-              "description": "Optional object-type filter.",
+              "description": "Object-type filter.",
               "type": "array",
               "items": {
                 "type": "string",
@@ -655,14 +655,14 @@
               }
             },
             "schemas": {
-              "description": "Optional schema-name filter; combine with a zero-length query to list objects in those schemas.",
+              "description": "Schema-name filter.",
               "type": "array",
               "items": {
                 "type": "string"
               }
             },
             "mode": {
-              "description": "Name matching strategy: \"substring\" (default) or \"regex\" (case-insensitive, matched against name and schema.name).",
+              "description": "\"substring\" (default) or \"regex\" (case-insensitive, matched against name and schema.name).",
               "type": "string",
               "enum": [
                 "substring",
@@ -672,7 +672,7 @@
             "cursor": {
               "type": "string",
               "pattern": "^\\d+$",
-              "description": "Page cursor: the next_cursor of the previous result, sent unchanged to read the next page of the same list. Omit for the first page."
+              "description": "The previous result's `next_cursor`, unchanged. Omit for the first page."
             }
           },
           "required": [
@@ -686,7 +686,7 @@
         "toolReferenceName": "lineage_get_object_detail",
         "displayName": "Get Object Detail",
         "userDescription": "Get full details for a specific database object.",
-        "modelDescription": "Primary single-object lookup. Use this when the user asks about one specific object (DDL, columns, direct neighbors). For graph-scope lineage questions, prefer lineage_get_scope_bundle instead of chaining repeated per-node detail calls.",
+        "modelDescription": "Single-object lookup: DDL, columns and direct neighbors.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",
@@ -704,7 +704,7 @@
             "cursor": {
               "type": "string",
               "pattern": "^\\d+$",
-              "description": "Page cursor: the next_cursor of the previous result, sent unchanged to read the next page of the same list. Omit for the first page."
+              "description": "The previous result's `next_cursor`, unchanged. Omit for the first page."
             }
           },
           "required": [
@@ -831,7 +831,7 @@
         "toolReferenceName": "lineageView",
         "displayName": "Get Screen State",
         "userDescription": "Shows what is currently on screen: active trace, analysis, or applied bookmark.",
-        "modelDescription": "Returns what is on screen: active trace, graph analysis, applied bookmark, and view. Optional `ids` recall objects from a stored AI run; optional `filter` lists pruned, open_leads, or stale. `ids` and `filter` need a stored run; without one they answer `no_run_memory`. Omit input for the screen card.",
+        "modelDescription": "Returns what is on screen: active trace, graph analysis, applied bookmark, and view. `ids` or `filter` recall objects from a stored AI run and answer `no_run_memory` without one; no input returns the screen card.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",
@@ -843,7 +843,7 @@
           "type": "object",
           "properties": {
             "ids": {
-              "description": "Canonical object ids to recall from the stored run, taken from the screen card's node_ids. Use without filter.",
+              "description": "Canonical object ids to recall, taken from the screen card's node_ids.",
               "minItems": 1,
               "maxItems": 20,
               "type": "array",
@@ -852,7 +852,7 @@
               }
             },
             "filter": {
-              "description": "One class of the stored run to list: pruned, open_leads, or stale. Use without ids.",
+              "description": "Class of the stored run to list.",
               "type": "string",
               "enum": [
                 "pruned",
@@ -863,7 +863,7 @@
             "cursor": {
               "type": "string",
               "pattern": "^\\d+$",
-              "description": "Page cursor: the next_cursor of the previous result, sent unchanged to read the next page of the same list. Omit for the first page."
+              "description": "The previous result's `next_cursor`, unchanged. Omit for the first page."
             }
           },
           "additionalProperties": false

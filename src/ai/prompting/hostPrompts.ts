@@ -19,7 +19,6 @@ import type { SerializedFilterState } from '../../engine/projectStore';
 import type { AiGateRefine } from '../../engine/shared/bridgeContract';
 import { describeScreen } from '../tools/screenStatePresenter';
 import { escapePromptText } from '../support/text';
-import { ClassificationValueSchema } from '../tools/toolSchemas';
 
 /**
  * The grounding context surfaced in the system prompt's `## Context` block, derived from the loaded
@@ -124,8 +123,7 @@ export function buildSmEntrySystemPrompt(ctx: StagePromptContext, targetColumns?
     : '';
   const directive = [
     '## Task: open the exploration',
-    "Resolve the object the user named with `lineage_search_objects`. When `name_match` is `unique`, call `lineage_start_exploration` once with its id as `origin`; when `ambiguous`, reply in text naming those ids and asking which, with no tool call; without `name_match`, call it with the id of the object the user named. Set every other field from the user's own words, as its description says: `depth`, exclusions, `classification`, `analysisMode`, a `mission_brief` stating the goal and what counts as relevant, and `scopeNotes` for any constraint no other field holds.",
-    ClassificationValueSchema.description,
+    "Resolve the object the user named with `lineage_search_objects`. When `name_match` is `unique`, call `lineage_start_exploration` once with its id as `origin`; when `ambiguous`, reply in text naming those ids and asking which, with no tool call; without `name_match`, call it with the id of the object the user named. Set every other field from the user's own words, as its description says, with a `mission_brief` stating the goal and what counts as relevant.",
     ctLine,
     'The user then reviews your proposal at an approval gate.',
   ].filter(Boolean).join('\n');
@@ -177,5 +175,5 @@ export function buildGateRefinePrompt(
  * (`extractShortTermMemory`).
  */
 export function buildActiveContinuationAnchor(): string {
-  return 'Analyze `<current_task>` on the next agenda node.';
+  return 'Analyze `<current_task>` on `focus_node`.';
 }

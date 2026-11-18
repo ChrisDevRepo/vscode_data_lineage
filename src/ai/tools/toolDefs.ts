@@ -59,7 +59,7 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_search_objects', inputSchema: SearchObjectsInputSchema, tags: ['lineage', 'lineage-research'], effect: 'read',
     userDescription: 'Search for database objects by name or column.',
-    modelDescription: 'Search database objects by name or column (substring or regex). Returns object IDs, metadata, per-kind `by_type` counts, `in_user_filter`, and `name_match` (`unique` or `ambiguous` ids for an exact name, in-filter first). When an in-filter search is empty but out-of-filter hits exist, widen `schemas` on the next call. Use lineage_search_ddl to grep SQL bodies.',
+    modelDescription: 'Search database objects by name (substring or regex) or by column (substring only). Returns object IDs, metadata and `name_match` (`unique` or `ambiguous` ids for an exact name).',
     progressLabel: 'Searching database objects…',
   },
   {
@@ -88,7 +88,7 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_get_object_detail', inputSchema: GetObjectDetailInputSchema, tags: ['lineage', 'lineage-research'], effect: 'read',
     userDescription: 'Get full details for a specific database object.',
-    modelDescription: 'Primary single-object lookup. Use this when the user asks about one specific object (DDL, columns, direct neighbors). For graph-scope lineage questions, prefer lineage_get_scope_bundle instead of chaining repeated per-node detail calls.',
+    modelDescription: 'Single-object lookup: DDL, columns and direct neighbors.',
     progressLabel: 'Fetching object details…',
   },
   {
@@ -112,7 +112,7 @@ export const TOOL_DEFS = [
   {
     name: 'lineage_get_screen_state', inputSchema: GetScreenStateInputSchema, tags: ['lineage', 'lineage-research'], effect: 'read',
     userDescription: 'Shows what is currently on screen: active trace, analysis, or applied bookmark.',
-    modelDescription: 'Returns what is on screen: active trace, graph analysis, applied bookmark, and view. Optional `ids` recall objects from a stored AI run; optional `filter` lists pruned, open_leads, or stale. `ids` and `filter` need a stored run; without one they answer `no_run_memory`. Omit input for the screen card.',
+    modelDescription: 'Returns what is on screen: active trace, graph analysis, applied bookmark, and view. `ids` or `filter` recall objects from a stored AI run and answer `no_run_memory` without one; no input returns the screen card.',
     progressLabel: 'Reading screen state…',
   },
 ] as const satisfies readonly ToolContract[];

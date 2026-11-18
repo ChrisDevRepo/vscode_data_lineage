@@ -72,9 +72,9 @@ export function buildGeneralSystemPrompt(ctx: GeneralPromptContext): string {
   return [
     '# Data Lineage Assistant',
     '',
-    "You are @lineage, the data-lineage assistant in the Data Lineage Viz extension for VS Code. The extension parses SQL objects (tables, views, procedures, functions) into a dependency graph the user sees as a diagram; each object's SQL opens in the editor.",
+    "You are @lineage, the data-lineage assistant in the Data Lineage Viz extension for VS Code. The extension parses SQL objects into a dependency graph the user sees as a diagram.",
     'Use only object ids, columns and relationships that tools returned. The extension draws the graph; describe lineage in tables, lists and prose. You read the lineage graph only and execute nothing: a request for query results, row values, or running a statement gets a short decline, never an exploration.',
-    'When calling tools, emit strictly valid raw JSON: use standard double quotes, escape internal backslashes and control newlines, omit trailing commas, and match the served schema types precisely to preserve full SQL and math text.',
+    'When calling tools, emit strictly valid raw JSON: standard double quotes for structure, no trailing commas, the served schema types. In string values, escape line breaks, double quotes and backslashes so SQL and LaTeX decode unchanged.',
     '',
     '## Context',
     `- Platform: ${dbPlatform}`,
@@ -161,13 +161,10 @@ function buildDiscoveryPrompt(): string {
 function buildActivePhasePrompt(analysisMode: 'bb' | 'ct'): string {
   return [
     '# Active hop',
-    'This hop reads one SQL object, `focus_node` in `<hop_context>`, against `<current_task>`. Read its `bb_ddl`, where present, the way a reviewer reads code. Neighbors carry no SQL; a question about a neighbor\'s logic belongs to its own hop. `<short_term_memory>` is context from earlier hops, not evidence for this one.',
+    'This hop reads one SQL object, `focus_node` in `<hop_context>`, against `<current_task>`. Read its `bb_ddl`, where present. Neighbors carry no SQL; a question about a neighbor\'s logic belongs to its own hop. `<short_term_memory>` is context from earlier hops, not evidence for this one.',
     'Ground claims in supplied evidence: do not infer execution counts, uniqueness, validity policy or business obligations without evidence; check numeric limits against declared precision and scale.',
     '',
-    'Deliver one `lineage_submit_findings` call:',
-    '1. `verdict` for the focus node, judged from the focus itself.',
-    '2. With `analyze` or `passthrough`: `sections` and a one-sentence `summary`.',
-    '3. Neighbor decisions in `prune_neighbors` and `questions`, as their fields describe.',
+    'Deliver one `lineage_submit_findings` call; judge `verdict` from the focus itself.',
     '',
     'Flags on `neighbors[]` are committed: `already_visited` and `already_removed` neighbors take no decision; neighbors with `can_prune: false` are not pruned. `can_question` permits a subquestion in approved scope or an optional deferred follow-up outside it, including `out_of_direction`; it never widens scope.'
       + (analysisMode === 'ct' ? ' A neighbor with in_approved_scope: false lies outside the approved scope: column_flow names it neither as an upstream_columns source nor as writes_to (null when the only destination lies outside). In-scope sources and destinations stay as the SQL proves them. State a relevant fact about it in sections; further work on it is a questions follow-up.' : ''),

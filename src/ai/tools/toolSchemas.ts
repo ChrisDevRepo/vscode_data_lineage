@@ -25,7 +25,7 @@ export const ColumnIdentifierSchema = z.string().trim().min(1).regex(/^[^*%?]+$/
 const MissionBriefValueSchema = z.string()
   .min(1, 'Mission brief must not be empty.')
   .regex(/\S/, 'Mission brief must contain non-whitespace content.')
-  .describe('Compact investigation goal and relevance criteria preserved verbatim across exploration hops. Keep it compact (a few sentences); length is never a rejection axis.');
+  .describe('Investigation goal and relevance criteria, a few sentences, preserved verbatim across exploration hops.');
 
 const ScopeNotesValueSchema = z.array(z.string().min(1).regex(/\S/, 'A scope note must contain non-whitespace content.'))
   .max(8)
@@ -34,7 +34,7 @@ const ScopeNotesValueSchema = z.array(z.string().min(1).regex(/\S/, 'A scope not
     + "each in the user's terms; echoed at the approval gate and carried to every hop.",
   );
 
-/** Canonical answer-lens values and primary-intent instruction shared by entry and tool schemas. */
+/** Canonical answer-lens values and primary-intent instruction shared by the tool schemas. */
 export const ClassificationValueSchema = z.enum(['business', 'technical', 'both'])
   .describe(
     'Choose the answer lens from the primary user intent: "business" for meaning, purpose, impact or business rules, '
@@ -78,12 +78,12 @@ const SupplementSchema = z.object({
  * skip.
  */
 const DEPTH_DESCRIPTION =
-  'Starting scope: {upstream, downstream}, each {levels, exactness}; upstream levels reach the sources, downstream levels reach the consumers that read the origin. levels is a non-negative integer or "all"; 0 permanently closes that side for the session. exactness is "exact" when the user literally stated that level count, "approximate" when it is your own estimate — an approximate count above 0 does not bound the scope, which runs until the filters or the border stop it. Required for a fresh proposal; omit on a refine to keep the reviewed depth.';
+  'Starting scope: {upstream, downstream}, each {levels, exactness}; upstream levels reach the sources, downstream levels reach the consumers that read the origin. levels is a non-negative integer or "all"; 0 permanently closes that side for the session. exactness is "exact" when the user literally stated that level count (enforced as a border), "approximate" when it is your own estimate — an approximate count above 0 does not bound the scope, which runs until the filters or the border stop it. Omit on a refine to keep the reviewed depth.';
 
 const StartDepthSchema = ExplorationDepthSelectionSchema.nullish().describe(DEPTH_DESCRIPTION);
 
 const ANALYSIS_MODE_DESCRIPTION =
-  'Required for fresh exploration: "bb" traces whole objects; "ct" traces named columns. Default to "bb" when unclear.';
+  '"bb" traces whole objects; "ct" traces named columns. Default to "bb" when unclear.';
 
 /** Issue text when a start_exploration call carries neither an origin nor a supplement. */
 const START_SHAPE_REQUIRED_MESSAGE = "Either 'origin' (fresh proposal) or 'supplement' with nodeIds must be provided.";
@@ -422,13 +422,10 @@ const CapturedSectionsSchema = z.object({
 type CapturedSectionsWire = z.infer<typeof CapturedSectionsSchema>;
 
 /**
- * Applicability prefix for the fields only a kept verdict carries (`sections`, `badge_label`,
- * `prune_neighbors`), so each field states in its own describe its requirements.
+ * Applicability prefix for `badge_label`, which only a kept verdict carries. Without it the model
+ * omits the optional badge.
  */
 const KEPT_VERDICT_ONLY = 'Only with analyze or passthrough: ';
-
-/** Requirement prefix for `summary` and `sections`, which a kept verdict must carry. */
-const KEPT_VERDICT_REQUIRED = 'Required with analyze or passthrough. ';
 
 /**
  * Single source for the `prune_neighbors` field describe text, shared by the strict per-mode
@@ -440,20 +437,20 @@ const PRUNE_NEIGHBORS_DESCRIPTION =
 
 /** One `prune_neighbors[]` entry: the neighbour and why this node's SQL shows it is off-answer. */
 const PruneNeighborSchema = z.object({
-  id: z.string().min(1).describe('A neighbor id from `<hop_context>`.'),
+  id: z.string().min(1),
   reason: z.string().min(1).describe('What in this node\'s SQL shows the neighbor is off the answer.'),
 }).strict();
 
 /** Single source of the `questions` describe text, shared by per-mode schemas and the union. */
 const QUESTIONS_DESCRIPTION =
-  KEPT_VERDICT_ONLY + 'Provide a self-contained subquestion for each eligible in-scope neighbor kept for analysis or passthrough, tied to the user question. '
-  + 'For an eligible out-of-scope neighbor, optionally propose a relevant follow-up; it is deferred until scope approval. '
+  'A self-contained subquestion, tied to the user question, for each eligible in-scope neighbor you keep. '
+  + 'For an eligible out-of-scope neighbor, an optional follow-up, deferred until scope approval. '
   + 'No questions to visited or pruned neighbors.';
 
 /** One `questions[]` entry, attached to that neighbour's queued hop. */
 const NeighborQuestionSchema = z.object({
-  nodeId: z.string().min(1).describe('A neighbor id from `<hop_context>`.'),
-  question: z.string().min(1).describe('The check, self-contained: name the neighbor and what to establish there.'),
+  nodeId: z.string().min(1),
+  question: z.string().min(1).describe('Name the neighbor and what to establish there.'),
 }).strict();
 
 const CtNeighborQuestionSchema = NeighborQuestionSchema.extend({
@@ -462,7 +459,7 @@ const CtNeighborQuestionSchema = NeighborQuestionSchema.extend({
 
 /** Single source for the `reason` describe text. The served verdicts do not use it. */
 const IGNORED_REASON_DESCRIPTION =
-  'Ignored on analyze and passthrough. Omit it.';
+  'Unused; omit it.';
 
 /**
  * States a content cap in the JSON schema the model reads (`maxLength` / `maxItems`) without
@@ -554,7 +551,7 @@ const ColumnFlowEntrySchema = z.object({
 const HopVerdictSchema = z.enum(['analyze', 'passthrough']).describe(
   'analyze: transforms data on the answer path (a calculation, condition, filter, join or status change). '
   + 'passthrough: on the path, handing values on unchanged (a stored table, SELECT *, a synonym). '
-  + 'The focus stays. Name off-path neighbors in prune_neighbors; naming every neighbor leaves this node visible as a dead end.',
+  + 'The focus stays.',
 );
 
 const COLUMN_FLOW_DESCRIPTION = 'One entry per tracked column this node carries; [] when it carries none. `upstream_columns` names what each neighbor carries.';
@@ -562,11 +559,11 @@ const COLUMN_FLOW_DESCRIPTION = 'One entry per tracked column this node carries;
 const ColumnFlowSchema = z.array(ColumnFlowEntrySchema).describe(COLUMN_FLOW_DESCRIPTION);
 
 /** Single source of the `sections` describe text, shared by per-mode schemas and the union. */
-const SECTIONS_DESCRIPTION = KEPT_VERDICT_REQUIRED + 'Pre-formatted section body per fired capture recipe, keyed by angle: `{business, technical}`; a locked classification keeps only its angle key(s).';
+const SECTIONS_DESCRIPTION = 'Pre-formatted section body per fired capture recipe, keyed by angle: `{business, technical}`; a locked classification keeps only its angle key(s).';
 
 /** Single source of the `summary` describe text, shared by per-mode schemas and the union. */
 const SUMMARY_DESCRIPTION =
-  KEPT_VERDICT_REQUIRED + 'One sentence, readable without this hop: what this node does to the data and what it hands to which node.';
+  'One sentence, readable without this hop: what this node does to the data and what it hands to which node.';
 
 /**
  * Shared `submit_findings` fields across BB and CT, one flat object. Flat by design: a top-level
@@ -882,15 +879,15 @@ export function submitFindingsSchemaForMode(
     const [first, ...rest] = hop.callerContextNodeIds;
     const question = first === undefined ? NeighborQuestionSchema : z.union([
       NeighborQuestionSchema,
-      CtNeighborQuestionSchema.extend({ nodeId: z.enum([first, ...rest]).describe(NeighborQuestionSchema.shape.nodeId.description ?? '') }),
+      CtNeighborQuestionSchema.extend({ nodeId: z.enum([first, ...rest]) }),
     ]);
     narrowed = narrowed.extend({ questions: z.array(question).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION) }).strict() as typeof HopFindingCtBaseSchema;
   }
   if (classification) {
     const kept = CLASSIFICATION_KEPT_ANGLES[classification];
     const sectionsDescribe = kept.length === CLASSIFICATION_KEPT_ANGLES.both.length
-      ? KEPT_VERDICT_REQUIRED + 'Pre-formatted section body for the `business` and `technical` recipes, under keys `business` and `technical`.'
-      : `${KEPT_VERDICT_REQUIRED}Pre-formatted section body for the \`${kept[0]}\` recipe, under key \`${kept[0]}\`.`;
+      ? 'Pre-formatted section body for the `business` and `technical` recipes.'
+      : `Pre-formatted section body for the \`${kept[0]}\` recipe.`;
     const narrowedSections = capturedSectionSchemaForClassification(classification)
       .optional()
       .describe(sectionsDescribe);
@@ -988,7 +985,7 @@ export const GetContextInputSchema = z.object({}).strict();
  * Optional page cursor: the previous result's `next_cursor`, echoed unchanged for the next page.
  */
 const CursorSchema = z.string().regex(/^\d+$/, 'cursor must be the next_cursor value of the previous result, unchanged')
-  .describe('Page cursor: the next_cursor of the previous result, sent unchanged to read the next page of the same list. Omit for the first page.');
+  .describe("The previous result's `next_cursor`, unchanged. Omit for the first page.");
 
 /**
  * `lineage_get_screen_state` input: no field returns the screen card; `ids`/`filter` recalls the
@@ -996,9 +993,9 @@ const CursorSchema = z.string().regex(/^\d+$/, 'cursor must be the next_cursor v
  */
 export const GetScreenStateInputSchema = z.object({
   ids: z.array(z.string()).min(1).max(SCREEN_STATE_MAX_IDS).optional()
-    .describe('Canonical object ids to recall from the stored run, taken from the screen card\'s node_ids. Use without filter.'),
+    .describe('Canonical object ids to recall, taken from the screen card\'s node_ids.'),
   filter: z.enum(['pruned', 'open_leads', 'stale']).optional()
-    .describe('One class of the stored run to list: pruned, open_leads, or stale. Use without ids.'),
+    .describe('Class of the stored run to list.'),
   cursor: CursorSchema.optional(),
 }).strict().superRefine((value, ctx) => {
   if (value.ids && value.filter) {
@@ -1009,9 +1006,9 @@ export const GetScreenStateInputSchema = z.object({
 /** `lineage_search_objects` input. */
 export const SearchObjectsInputSchema = z.object({
   query: z.string().describe('In substring mode: any part of an object or column name, without a schema prefix like \'[dbo].\'. In regex mode: the pattern, used verbatim. May be empty ONLY together with schemas[] to list everything in those schemas.'),
-  types: z.array(z.enum(['table', 'view', 'procedure', 'function', 'external'])).optional().describe('Optional object-type filter.'),
-  schemas: z.array(z.string()).optional().describe('Optional schema-name filter; combine with a zero-length query to list objects in those schemas.'),
-  mode: z.enum(['substring', 'regex']).optional().describe('Name matching strategy: "substring" (default) or "regex" (case-insensitive, matched against name and schema.name).'),
+  types: z.array(z.enum(['table', 'view', 'procedure', 'function', 'external'])).optional().describe('Object-type filter.'),
+  schemas: z.array(z.string()).optional().describe('Schema-name filter.'),
+  mode: z.enum(['substring', 'regex']).optional().describe('"substring" (default) or "regex" (case-insensitive, matched against name and schema.name).'),
   cursor: CursorSchema.optional(),
 }).strict();
 
