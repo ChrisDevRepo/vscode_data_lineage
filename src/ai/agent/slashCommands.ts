@@ -5,6 +5,7 @@
  * regex or keyword matching over natural language never selects a route. VS Code-free; imported
  * only by the agent runtime.
  */
+import { stripBrackets } from '../../utils/sql';
 import type { AgentEntryRoute, AgentExecutionTrigger } from './state';
 
 /** A pinned entry route for a recognized deterministic command/intent. */
@@ -18,9 +19,11 @@ interface SlashRoute {
 }
 
 const SLASH_RE = /^\s*\/(trace|search)\b[ \t]*/i;
-const BRACKET_TOKEN_RE = /\[([^\]]+)\]/g;
+/** One bracketed identifier; `]]` inside is an escaped `]`. */
+const BRACKET_IDENTIFIER = String.raw`\[(?:[^\]]|\]\])+\]`;
+const BRACKET_TOKEN_RE = new RegExp(BRACKET_IDENTIFIER, 'g');
 /** One contiguous dot-joined bracket chain of 3+ parts, e.g. `[schema].[table].[column]`. */
-const BRACKET_CHAIN_RE = /(?:\[[^\]]+\]\.){2,}\[[^\]]+\]/g;
+const BRACKET_CHAIN_RE = new RegExp(`(?:${BRACKET_IDENTIFIER}\\.){2,}${BRACKET_IDENTIFIER}`, 'g');
 
 /**
  * Pins an entry route for a leading `/trace` or `/search` command, skipping the entry-detector
@@ -50,8 +53,8 @@ export function detectSlashRoute(prompt: string): SlashRoute | null {
  */
 function parseTraceColumns(text: string): string[] | null {
   const columns = [...text.matchAll(BRACKET_CHAIN_RE)].map((chainMatch) => {
-    const tokens = [...chainMatch[0].matchAll(BRACKET_TOKEN_RE)].map(m => m[1].trim());
-    return tokens[tokens.length - 1];
+    const tokens = [...chainMatch[0].matchAll(BRACKET_TOKEN_RE)].map(m => m[0]);
+    return stripBrackets(tokens[tokens.length - 1]).trim();
   });
   return columns.length > 0 ? columns : null;
 }

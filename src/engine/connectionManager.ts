@@ -52,7 +52,7 @@ export interface DmvQuery {
 
 /** The fields the import path requires; every other {@link DmvQuery} field degrades gracefully. */
 function hasRequiredQueryFields(q: Record<string, any>): q is DmvQuery {
-  return Boolean(q.name) && Boolean(q.sql);
+  return typeof q.name === 'string' && q.name !== '' && typeof q.sql === 'string' && q.sql !== '';
 }
 
 /** Root configuration structure for DMV query definition files. */

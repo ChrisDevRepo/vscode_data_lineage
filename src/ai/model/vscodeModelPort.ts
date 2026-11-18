@@ -231,7 +231,7 @@ export class VscodeModelPort implements ModelPort {
     if (input.signal?.aborted) throw cancelledError();
     this.modelCalls += 1;
     const outputSchema = toModelJsonSchema(input.schema);
-    const { message } = await this.collectGeneration(
+    const { toolCalls } = await this.collectGeneration(
       input.messages,
       input.system,
       [],
@@ -241,7 +241,7 @@ export class VscodeModelPort implements ModelPort {
       input.phase,
       (bridge) => bridge.bindStructuredOutputTool(outputSchema, STRUCTURED_OUTPUT_TOOL),
     );
-    const calls = (message.tool_calls ?? []).filter((call) => call.name === STRUCTURED_OUTPUT_TOOL);
+    const calls = toolCalls.filter((call) => call.name === STRUCTURED_OUTPUT_TOOL);
     const decoded = calls.length === 1
       ? this.decodeStringifiedArguments(STRUCTURED_OUTPUT_TOOL, calls[0].args, outputSchema)
       : undefined;

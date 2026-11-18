@@ -66,6 +66,31 @@ function listSourceFiles(dir) {
 }
 
 /**
+ * Maps each line to the statement it opens or continues: a call whose parentheses span several
+ * lines reads as one line, so wrapping it does not change the verdict.
+ *
+ * @param {string[]} lines - Source lines.
+ * @returns {{start: number, joined: string}[]} Per line: the index of the statement's first line and the statement as one line.
+ */
+function statements(lines) {
+  const out = [];
+  let start = 0;
+  let depth = 0;
+  lines.forEach((raw, i) => {
+    if (depth === 0) start = i;
+    const code = raw.replace(/\\./g, '').replace(/'[^']*'|"[^"]*"|`[^`]*`/g, '');
+    depth = Math.max(0, depth + (code.match(/\(/g) ?? []).length - (code.match(/\)/g) ?? []).length);
+    out.push({ start, joined: '' });
+    if (depth === 0) {
+      const joined = lines.slice(start, i + 1).map((l, k) => (k ? l.trim() : l)).join(' ').replace(/\(\s+/g, '(').replace(/\s+\)/g, ')');
+      for (let k = start; k <= i; k++) out[k].joined = joined;
+    }
+  });
+  for (let k = out.length - 1; k >= 0 && !out[k].joined; k--) out[k].joined = lines.slice(out[k].start).join(' ');
+  return out;
+}
+
+/**
  * Finds cut sites in one source text.
  *
  * @param {string} file - Repo-relative path, used for the allowlist and the report.
@@ -75,21 +100,21 @@ function listSourceFiles(dir) {
 export function findSites(file, text) {
   if (file.startsWith('src/components/')) return [];
   const lines = text.split('\n');
+  const owner = statements(lines);
   const sites = [];
   lines.forEach((raw, i) => {
     const line = raw.trim();
     if (line.startsWith('//') || line.startsWith('*') || line.startsWith('/*')) return;
-    let hit = CUT_MARKERS.test(line) && !/^(?:async\s+)?function\s/.test(line);
-    if (!hit && CUT_CALL.test(line)) {
-      const expr = lines.slice(i, i + 1 + EXPRESSION_LOOKAHEAD).join('\n').split(';')[0];
-      hit = ELLIPSIS.test(expr);
+    const { start, joined } = owner[i];
+    const marker = CUT_MARKERS.test(line) && !/^(?:async\s+)?function\s/.test(line);
+    let statementHit = false;
+    if (start === i) {
+      const expr = [joined, ...lines.slice(i + 1, i + 1 + EXPRESSION_LOOKAHEAD)].join('\n').split(';')[0];
+      statementHit = (CUT_CALL.test(joined) && ELLIPSIS.test(expr))
+        || (TRUNC_CALL.test(joined) && !TRUNC_DEFINITION.test(joined) && !/^import\s/.test(joined) && !LOG_CALL.test(joined));
     }
-    if (!hit && TRUNC_CALL.test(line) && !TRUNC_DEFINITION.test(line) && !/^import\s/.test(line) && !LOG_CALL.test(line)) {
-      hit = true;
-    }
-    if (!hit) return;
-    if (ALLOWLIST.some((a) => a.file === file && raw.includes(a.symbol))) return;
-    sites.push({ file, line: i + 1, text: line });
+    const allowed = (where) => ALLOWLIST.some((a) => a.file === file && where.includes(a.symbol));
+    if ((marker && !allowed(raw)) || (statementHit && !allowed(joined))) sites.push({ file, line: i + 1, text: line });
   });
   return sites;
 }
