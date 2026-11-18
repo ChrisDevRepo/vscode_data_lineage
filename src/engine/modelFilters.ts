@@ -71,9 +71,9 @@ export function applyExclusionFilter(
   return { ...model, nodes, edges };
 }
 
-/** Filters the model to the nodes explicitly present in the allowlist. */
+/** Filters the model to the nodes explicitly present in the allowlist; an empty allowlist keeps no node. */
 export function applyAllowlistFilter(model: DatabaseModel, allowlist: Set<string> | undefined): DatabaseModel {
-  if (!allowlist || allowlist.size === 0) return model;
+  if (!allowlist) return model;
   const nodes = model.nodes.filter((n) => allowlist.has(n.id));
   const nodeIds = new Set(nodes.map((n) => n.id));
   const edges = model.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));

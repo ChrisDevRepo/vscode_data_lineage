@@ -416,7 +416,7 @@ function bodyMatcher(
       lineStarts = buildLineStarts(lines);
       commentMask = sqlCommentMask(body);
       deadMask = markDeadLines(lines, lineStarts, commentMask);
-      predicateMask = deriveEnclosingPredicates(lines, lineStarts, sqlCommentMask(body, { markLiterals: true }));
+      predicateMask = deriveEnclosingPredicates(lines, lineStarts, commentMask, sqlCommentMask(body, { markLiterals: true }));
     }
     return makeMatch(node, lines, lineStarts, index, matchText, contextLines, lineCap, commentMask, deadMask, predicateMask);
   };
@@ -532,6 +532,8 @@ const BLOCK_KEYWORD_RE = /\b(BEGIN(?!\s+(?:TRAN|TRANSACTION|DISTRIBUTED|DIALOG|C
  * @param lines - The body split on newlines, as {@link searchBodyScripts} already holds it.
  * @param lineStarts - Start offset of each line, as {@link buildLineStarts} computes it.
  * @param commentMask - The per-character mask {@link sqlCommentMask} already produced for this body.
+ * @param literalMask - The same mask with string and bracketed-identifier spans marked, so a keyword
+ *   inside one is never scanned; the reported predicate keeps that text.
  * @returns One entry per line: the text of the nearest enclosing `IF`/`WHILE`, or `undefined` when
  *   the line sits outside any such condition.
  *
@@ -548,6 +550,7 @@ function deriveEnclosingPredicates(
   lines: string[],
   lineStarts: number[],
   commentMask: Uint8Array,
+  literalMask: Uint8Array,
 ): (string | undefined)[] {
   const result = new Array<string | undefined>(lines.length);
   /** One entry per open `BEGIN`/`CASE` frame; the predicate it carries, or `undefined`. */
@@ -559,12 +562,16 @@ function deriveEnclosingPredicates(
     const line = lines[i];
     const base = lineStarts[i];
     let live = '';
-    for (let c = 0; c < line.length; c++) live += commentMask[base + c] !== SQL_CODE ? ' ' : line[c];
+    let code = '';
+    for (let c = 0; c < line.length; c++) {
+      live += literalMask[base + c] !== SQL_CODE ? ' ' : line[c];
+      code += commentMask[base + c] !== SQL_CODE ? ' ' : line[c];
+    }
     const trimmed = live.trim();
     const isLive = trimmed.length > 0;
 
     const ifWhile = IF_WHILE_LINE_RE.exec(trimmed);
-    const ownPredicate = ifWhile ? trimmed.replace(/\bBEGIN\b\s*$/i, '').trim() : undefined;
+    const ownPredicate = ifWhile ? code.trim().replace(/\bBEGIN\b\s*$/i, '').trim() : undefined;
     let ownConsumed = false;
     let pendingConsumed = false;
 

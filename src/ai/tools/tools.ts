@@ -283,7 +283,7 @@ export async function searchObjects(
       return makeRejection({ code: REJECTION_CODES.invalidRegex, hint: regexRejectHint(effectiveQuery, compiled) });
     }
   }
-  const listAllInSchemas = isWildcardAllQuery || (!isRegex && effectiveQuery.length === 0 && (appliedSchemaFilter?.length ?? 0) > 0);
+  const listAllInSchemas = effectiveQuery.length === 0 && (appliedSchemaFilter?.length ?? 0) > 0;
 
   if (!isRegex && !listAllInSchemas) {
     const rejection = validateQuery(normalizedQuery.query);
