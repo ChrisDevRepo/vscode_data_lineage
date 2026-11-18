@@ -21,8 +21,8 @@ Include:
 
 - The extension parses SQL object definitions but does not execute object DDL
 - `.dacpac` parsing is fully offline
-- Live database import runs configured catalog / DMV queries through the MSSQL
-  extension connection API only when the user starts an import. Built-in
+- Live database import runs configured catalog / DMV queries through a built-in
+  connection only when the user starts an import. Built-in
   queries are read-only; custom DMV SQL is trusted local configuration and is
   executed as configured (with `{{SCHEMAS}}` expansion for Phase 2)
 - Table profiling runs row-count and aggregate `SELECT` queries only after an explicit profiling click

@@ -4,29 +4,25 @@
  *
  * This module provides the infrastructure for:
  * - Loading and validating DMV (Dynamic Management View) queries from built-in or custom sources.
- * - Opening a {@link DbSession} through the provider the `dataLineageViz.database.connectionProvider`
- *   setting selects: the SQL Server (mssql) extension or the built-in connection.
+ * - Opening a {@link DbSession} through the built-in connection.
  * - Executing queries with automated timeout handling and placeholder expansion.
  */
 
 import * as vscode from 'vscode';
 import * as yaml from 'js-yaml';
 import { z } from 'zod';
-import type { IConnectionInfo, SimpleExecuteResult } from '../types/mssql';
+import type { SimpleExecuteResult } from '../types/database';
 import { resolveWorkspacePath, persistAbsolutePath } from '../utils/paths';
 import { expandSchemaPlaceholder, validateSchemaPlaceholder } from '../utils/sql';
 import { Logger, trunc, sanitizeForLog } from '../utils/log';
-import { notifyInfo, notifyWarning } from '../utils/notifications';
+import { notifyWarning } from '../utils/notifications';
 import { StoredConnectionInfoSchema, type StoredConnectionInfo } from './shared/bridgeContract';
-import { DbConnectionError, getConnectionProvider, type ConnectionErrorTarget, type ConnectionProviderId, type DbSession } from './db/dbSession';
-import {
-  MssqlApiError, createMssqlSession, isMssqlExtensionAvailable,
-  promptForMssqlConnection, reconnectMssqlConnection,
-} from './db/mssqlExtensionProvider';
+import { DbConnectionError, type ConnectionErrorTarget, type DbSession } from './db/dbSession';
+import { MSSQL_RECONNECT_ACTION, MSSQL_RECONNECT_NOTICE, usesMssqlExtension } from './db/mssqlRetiring';
 import { openBuiltInSession, type BuiltInEnv } from './db/builtInProvider';
 import { describeConnection, readBuiltInConnections, type BuiltInConnection } from './db/connectionSettings';
 import { parseServerInput, runAddConnectionFlow } from './db/connectionCommands';
-import { targetFromStored, type ConnectionErrorHooks } from './db/connectionErrors';
+import type { ConnectionErrorHooks } from './db/connectionErrors';
 
 const DmvQueriesConfigSchema = z.object({
   version: z.coerce.number().optional(),
@@ -46,7 +42,7 @@ export interface DmvQuery {
    * warn when a custom YAML omits them, since the import path cannot complete without
    * them. Optional — 'all-objects', 'platform-info', 'constraints' — are deliberately
    * absent from that list: omitting 'all-objects' leaves cross-schema references
-   * unclassified, omitting 'platform-info' falls back to MSSQL server metadata, and
+   * unclassified, omitting 'platform-info' leaves the platform explicitly unknown, and
    * omitting 'constraints' drops constraint enrichment. All degrade silently by design,
    * so a warning would be noise.
    */
@@ -292,9 +288,8 @@ async function loadBuiltInDmvConfig(
  * {@link StoredConnectionInfoSchema} so the two can never drift.
  *
  * A deny-list is unsafe here because the two sides of persistence are asymmetric: the object
- * comes from the mssql extension, whose runtime shape is wider than the partial
- * {@link IConnectionInfo} declaration in this repo (`applicationName`, `connectTimeout`, and
- * others). Spreading the rest wrote those extra keys into the project store, and the read side
+ * can be wider than the stored shape (a legacy workspace-state record carries `applicationName`,
+ * `connectTimeout`, and others). Spreading the rest wrote those extra keys into the project store, and the read side
  * (`StoredConnectionInfoSchema` is `.strict()`) then rejected the record — so `migrateProjectStore`
  * discarded a saved database project on the next load. Selecting known keys makes what is written
  * readable by construction.
@@ -304,13 +299,12 @@ async function loadBuiltInDmvConfig(
  * and it parses what it built for the same reason: a record the read side would reject must fail
  * here, at save time, rather than silently drop the saved project on the next load.
  *
- * @param info - The raw connection information from the mssql extension.
+ * @param source - The raw connection information.
  * @returns A persistable clone carrying only schema-declared fields; secrets are never among them.
  * @throws When the narrowed record still violates {@link StoredConnectionInfoSchema} — for
  *   example a server-scoped profile with no `database`.
  */
-export function stripSensitiveFields(info: IConnectionInfo): StoredConnectionInfo {
-  const source = info as unknown as Record<string, unknown>;
+export function stripSensitiveFields(source: Record<string, unknown>): StoredConnectionInfo {
   const persistable: Record<string, unknown> = {};
   for (const key of Object.keys(StoredConnectionInfoSchema.shape)) {
     if (source[key] !== undefined) persistable[key] = source[key];
@@ -321,34 +315,16 @@ export function stripSensitiveFields(info: IConnectionInfo): StoredConnectionInf
 /** Host services a connection needs: the secret store for built-in passwords and the log channel. */
 export type DbConnectEnv = BuiltInEnv;
 
-const SETTING_NAME = 'dataLineageViz.database.connectionProvider';
-
-/**
- * Reports whether the selected provider can open connections right now.
- *
- * @remarks
- * Only the `mssqlExtension` provider depends on another extension; the built-in provider is always
- * available, so the webview never asks the user to install the SQL Server extension for it.
- */
-export function getConnectionAvailability(): { provider: ConnectionProviderId; available: boolean } {
-  const provider = getConnectionProvider();
-  return { provider, available: provider === 'builtIn' ? true : isMssqlExtensionAvailable() };
-}
-
-/** Built-in sign-in type a stored record's `authenticationType` names; mssql and built-in spellings both read. */
+/** Built-in sign-in type a stored built-in record's `authenticationType` names. */
 function storedAuthKind(authenticationType: string | undefined): BuiltInConnection['authenticationType'] | undefined {
-  if (!authenticationType) return undefined;
-  const value = authenticationType.toLowerCase();
-  if (value === 'sqllogin') return 'sqlLogin';
-  if (value === 'entraid' || value.startsWith('azure') || value.startsWith('activedirectory')) return 'entraId';
-  return undefined;
+  return authenticationType === 'sqlLogin' || authenticationType === 'entraId' ? authenticationType : undefined;
 }
 
 /**
  * Finds the saved built-in connection that reopens a stored project.
  *
  * @remarks
- * A saved `connectionId` wins. Otherwise the match follows the mssql extension's profile match:
+ * A saved `connectionId` wins. Otherwise the match is:
  * same server and port (a `host,port` server string is split first), and the same sign-in type and user where both sides name one. Among several
  * matches the one saved for the project's database is preferred, then the first; the project's own
  * database is opened either way.
@@ -400,9 +376,7 @@ async function pickBuiltInConnection(
           : []),
       ],
       {
-        placeHolder: stored && (stored.provider ?? 'mssqlExtension') === 'mssqlExtension'
-          ? `Old SQL Server extension connection — select or add a built-in connection for ${stored.server}`
-          : 'Select a database connection',
+        placeHolder: 'Select a database connection',
         ignoreFocusOut: true, matchOnDescription: true,
       },
     );
@@ -431,18 +405,54 @@ async function pickDatabase(connection: BuiltInConnection): Promise<string | und
   return typed?.trim() || undefined;
 }
 
-async function connectBuiltIn(env: DbConnectEnv, stored: StoredConnectionInfo | undefined, token: vscode.CancellationToken | undefined): Promise<DbSession | undefined> {
+/**
+ * Asks the user to reconnect a project saved with the retired mssql extension connection.
+ *
+ * @remarks
+ * One warning notice; its action opens Add Database Connection prefilled with the stored server,
+ * port, user and database. No saved connection is picked for the user.
+ *
+ * @returns The connection the user saved, or `undefined` when the notice was dismissed or the flow cancelled.
+ */
+async function reconnectRetiredMssql(env: DbConnectEnv, logger: Logger, stored: StoredConnectionInfo): Promise<BuiltInConnection | undefined> {
+  logger.info('Project saved with the retired mssql extension connection — asking for a reconnect');
+  logger.debug(`Retired mssql connection server: ${stored.server}`);
+  const choice = await vscode.window.showWarningMessage(MSSQL_RECONNECT_NOTICE, { modal: true }, MSSQL_RECONNECT_ACTION);
+  if (choice !== MSSQL_RECONNECT_ACTION) return undefined;
+  return runAddConnectionFlow(env, undefined, { server: stored.server, port: stored.port, user: stored.user, database: stored.database });
+}
+
+/**
+ * Opens a database session through the built-in connection.
+ *
+ * @remarks
+ * A stored connection reconnects silently by its saved `connectionId`, else by the matching saved
+ * connection, and falls back to the picker when none matches. A stored record written for the retired
+ * mssql extension never reconnects silently: it shows one reconnect notice and opens Add Database
+ * Connection instead, so the project is stored with the new connection only after the user made it.
+ *
+ * @param env - Host services.
+ * @param stored - Connection saved with a project, when reconnecting.
+ * @param token - Cancels a connect in progress.
+ * @returns The open session, or `undefined` when the user cancelled.
+ * @throws {@link DbConnectionError} when the connection cannot be opened.
+ */
+export async function connectDatabase(env: DbConnectEnv, stored?: StoredConnectionInfo, token?: vscode.CancellationToken): Promise<DbSession | undefined> {
   const logger = Logger.create(env.outputChannel, 'DB');
   const connections = readBuiltInConnections(logger);
   let connection: BuiltInConnection | undefined;
-  if (stored) {
-    connection = findBuiltInMatch(connections, stored);
-    if (!connection) {
-      logger.warn('Direct reconnect: no matching saved built-in connection — falling back to picker');
-      logger.debug(`Unmatched reconnect server: ${stored.server}`);
+  if (stored && usesMssqlExtension(stored)) {
+    connection = await reconnectRetiredMssql(env, logger, stored);
+  } else {
+    if (stored) {
+      connection = findBuiltInMatch(connections, stored);
+      if (!connection) {
+        logger.warn('Direct reconnect: no matching saved built-in connection — falling back to picker');
+        logger.debug(`Unmatched reconnect server: ${stored.server}`);
+      }
     }
+    connection ??= await pickBuiltInConnection(env, connections, stored);
   }
-  connection ??= await pickBuiltInConnection(env, connections, stored);
   if (!connection) {
     logger.info('User cancelled connection picker');
     return undefined;
@@ -473,24 +483,6 @@ function builtInTarget(connection: BuiltInConnection, database: string | undefin
   };
 }
 
-async function connectMssqlExtension(env: DbConnectEnv, stored: StoredConnectionInfo | undefined): Promise<DbSession | undefined> {
-  try {
-    if (stored) {
-      const { provider: _provider, connectionId: _connectionId, ...mssqlInfo } = stored;
-      const reconnected = await reconnectMssqlConnection(mssqlInfo as unknown as IConnectionInfo, env.outputChannel);
-      if (reconnected) return createMssqlSession(reconnected, stripSensitiveFields);
-    }
-    const picked = await promptForMssqlConnection(env.outputChannel);
-    return picked ? createMssqlSession(picked, stripSensitiveFields) : undefined;
-  } catch (err) {
-    if (err instanceof MssqlApiError) throw err;
-    const target: ConnectionErrorTarget = stored
-      ? targetFromStored(stored, 'mssqlExtension')
-      : { provider: 'mssqlExtension', name: 'SQL Server', server: '' };
-    throw new DbConnectionError(target, err);
-  }
-}
-
 /**
  * Builds the capabilities the connection-error actions use.
  *
@@ -513,44 +505,9 @@ export function connectionErrorHooks(
   };
 }
 
-/**
- * Opens a database session through the provider the `dataLineageViz.database.connectionProvider`
- * setting selects.
- *
- * @remarks
- * With a stored connection the provider reconnects it silently and falls back to its picker when it
- * cannot. A stored record without `provider` was written for the mssql extension. When the record's
- * provider differs from the setting, the setting wins and one info message says so; callers that
- * persist the returned `connectionInfo` make the switch permanent and the message does not repeat.
- * The built-in provider never looks up or activates the mssql extension.
- *
- * @param env - Host services.
- * @param stored - Connection saved with a project, when reconnecting.
- * @param token - Cancels a built-in connect in progress; the mssql extension's connect cannot be cancelled.
- * @returns The open session, or `undefined` when the user cancelled.
- * @throws When the provider cannot connect, with a message that names the server or the missing extension.
- */
-export async function connectDatabase(env: DbConnectEnv, stored?: StoredConnectionInfo, token?: vscode.CancellationToken): Promise<DbSession | undefined> {
-  const provider = getConnectionProvider();
-  const storedProvider: ConnectionProviderId = stored?.provider ?? 'mssqlExtension';
-  if (stored && storedProvider !== provider) {
-    const message = provider === 'builtIn'
-      ? `This project was saved with the SQL Server (mssql) extension. ${SETTING_NAME} selects built-in connections, so it connects with those.`
-      : `This project was saved with a built-in connection. ${SETTING_NAME} selects the SQL Server (mssql) extension, so it connects through that extension.`;
-    notifyInfo(Logger.create(env.outputChannel, 'DB'), 'Select connection provider', message, { stored: storedProvider, setting: provider });
-  }
-  return provider === 'builtIn' ? connectBuiltIn(env, stored, token) : connectMssqlExtension(env, stored);
-}
-
-/**
- * Releases a session opened for one operation.
- *
- * @remarks
- * Built-in connections are sockets this extension owns and are closed. A connection opened through
- * the mssql extension stays with that extension, as before provider selection existed.
- */
+/** Releases a session opened for one operation: its socket is closed. */
 export async function releaseSession(session: DbSession): Promise<void> {
-  if (session.provider === 'builtIn') await session.dispose();
+  await session.dispose();
 }
 
 /**

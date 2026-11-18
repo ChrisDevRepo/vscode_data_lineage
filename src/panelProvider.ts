@@ -7,7 +7,6 @@ import { getNonce } from './utils/getNonce';
 import { createBridgeHost, type BridgeHost } from './bridge/host';
 import { summarizeZodError } from './bridge/host';
 import { createMessageHandlers, PROJECT_STORE_KEY, type ReportDocumentRef } from './bridge/messageHandlers';
-import { getConnectionAvailability } from './engine/connectionManager';
 import {
   BRIDGE_PROTOCOL_VERSION,
   MainPanelToExtensionMsgSchema,
@@ -122,19 +121,6 @@ export function openPanel(
   );
 
   activeTriggerDemo = triggerDemoLoad;
-
-  let connectionStatus = getConnectionAvailability();
-  const repostConnectionStatus = (reason: string) => {
-    const status = getConnectionAvailability();
-    if (status.available === connectionStatus.available && status.provider === connectionStatus.provider) return;
-    connectionStatus = status;
-    bridgeLogger.info(`Database connection status changed (${reason}): provider=${status.provider} available=${status.available} — re-posting mssql-status.`);
-    void host.postMessage({ type: 'mssql-status', ...status });
-  };
-  vscode.extensions.onDidChange(() => repostConnectionStatus('extensions changed'), undefined, panelDisposables);
-  vscode.workspace.onDidChangeConfiguration((e) => {
-    if (e.affectsConfiguration('dataLineageViz.database.connectionProvider')) repostConnectionStatus('setting changed');
-  }, undefined, panelDisposables);
 
   panel.onDidDispose(() => {
     cleanup().catch(err => bridgeLogger.warn(`Cleanup failed — next session may reuse stale state: ${err}`));

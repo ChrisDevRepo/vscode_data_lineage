@@ -1,6 +1,6 @@
 /** Optional database smoke releases sessions after import, malformed metadata, query failure and cancellation. */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import type { SimpleExecuteResult } from '../../../src/types/mssql';
+import type { SimpleExecuteResult } from '../../../src/types/database';
 import { main } from '../../harness/cli';
 import { openBuiltInSession } from '../../../src/engine/db/builtInProvider';
 

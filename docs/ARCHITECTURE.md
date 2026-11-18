@@ -140,20 +140,14 @@ flowchart LR
 
 Live ingestion opens one `DbSession` ([`src/engine/db/dbSession.ts`](../src/engine/db/dbSession.ts)) per
 operation through `connectDatabase` in [`src/engine/connectionManager.ts`](../src/engine/connectionManager.ts).
-The setting `dataLineageViz.database.connectionProvider` selects the implementation; the DMV and profiling
-code sees only the `DbSession` contract (`executeSimpleQuery`, `getServerInfo`, `dispose`).
+The DMV and profiling code sees only the `DbSession` contract (`executeSimpleQuery`, `getServerInfo`, `dispose`).
 
-- **`mssqlExtension`** (default) — [`mssqlExtensionProvider.ts`](../src/engine/db/mssqlExtensionProvider.ts) wraps the
-  mssql extension's connection API (legacy `connect` or saved profiles with connection sharing). Import sessions
-  stay with that extension and are not closed by this one (`releaseSession` is a no-op for them). The one
-  exception is the table-statistics session: negotiated once and reused for the panel's lifetime, it is
-  disconnected when the panel closes or another project loads.
-- **`builtIn`** — [`builtInProvider.ts`](../src/engine/db/builtInProvider.ts) opens a `tedious` connection loaded by
+- **Built-in connection** — [`builtInProvider.ts`](../src/engine/db/builtInProvider.ts) opens a `tedious` connection loaded by
   dynamic import and bundled by esbuild. It serializes requests, cancels on the wire when `dataLineageViz.dmvQueryTimeout`
   elapses, returns the first result set, and is closed after the operation. Its `getServerInfo` runs the YAML
   `platform-info` query from the panel's DMV query cache (reloaded by each import and when
-  `dataLineageViz.dmvQueriesFile` names another file), so platform detection does not retry it as a fallback. With this provider nothing looks up,
-  activates or calls the mssql extension, and `extensionDependencies` stays empty.
+  `dataLineageViz.dmvQueriesFile` names another file), so platform detection does not retry it as a fallback. Nothing looks up, activates or calls the
+  mssql extension, and `extensionDependencies` stays empty.
 - **Connection store** — [`connectionSettings.ts`](../src/engine/db/connectionSettings.ts) reads the application-scoped
   array `dataLineageViz.database.connections` tolerantly and validates every write; the item schema has no password
   property. Upserts and deletes rewrite the list one at a time through a module-level queue, so concurrent saves
@@ -166,17 +160,17 @@ code sees only the `DbSession` contract (`executeSimpleQuery`, `getServerInfo`, 
   Update-password accepts only SQL login connections, whether picked or named by id; an Entra ID id is refused with a
   warning and nothing is stored.
 - **Errors** — [`connectionErrors.ts`](../src/engine/db/connectionErrors.ts) is the one owner of connection failure
-  presentation for both providers. The message is `<connection name>: <original driver text>` with secrets redacted;
+  presentation. The message is `<connection name>: <original driver text>` with secrets redacted;
   actions are chosen by error number, code or text pattern and are never retried automatically.
 - **Persistence** — `StoredConnectionInfoSchema` carries optional `provider` and `connectionId`; a record without
-  `provider` reads as `mssqlExtension`. When a stored record names a different provider than the setting, the setting
-  wins and one info message says so.
+  `provider` or with `mssqlExtension` was saved with the retired mssql extension connection. It is never reconnected
+  silently: `connectDatabase` shows one reconnect notice ([`mssqlRetiring.ts`](../src/engine/db/mssqlRetiring.ts)) and its
+  **Reconnect** action opens Add Database Connection prefilled with the stored server, user and database. The project
+  keeps its schemas and stores the new connection only after that flow.
 - **Identifier comparison** — `DatabaseModel.identifierCaseSensitive` is enabled only by checked source catalog metadata. Database imports probe the effective collation of `sys.schemas.name`; data/column or server collation does not establish identifier comparison. DACPAC imports read the model's explicit case comparator and catalog-collation options, including Azure's separate catalog setting. Missing or ambiguous metadata retains the existing CI normalization and IDs. Verified CS imports retain exact object/schema/column identities through catalog, dependencies, AI routing, checkpoints and the webview. Existing CI bookmarks keep their IDs; an old checkpoint cannot reinterpret a previously collapsed object as a new CS identity.
   Canonical IDs are comparison keys: CI folds casing, CS preserves casing, and both compare keys exactly. Object and column display names come from source metadata when available. Snapshots record their comparison policy; legacy snapshots without the flag remain CI. Historical recall uses the saved policy independently of the current model.
   In a DACPAC ZIP, the inputs are in `model.xml`: `DataSchemaModel/@CollationCaseSensitive` and the `SqlDatabaseOptions` properties `CatalogCollation` and `Containment`. Repeated or conflicting options cannot enable CS. For live imports, the DMV platform query returns the catalog column's collation and `ComparisonStyle`; extraction validates that single metadata record before enabling CS.
 - **Dependency scanning** — The configured `maxNodes` governs model admission. SQL extraction has no per-rule match-count cutoff: every match contributes to dependency resolution. Validated rules must be global; the shared collector advances correctly after zero-width matches, including Unicode input, rather than dropping references after an arbitrary count.
-- **Webview** — `mssql-status` carries `provider`; while `mssqlExtension` is active the wizard shows an inline retirement
-  notice whose button posts `use-builtin-connection`, and the host sets the setting to `builtIn` globally.
 
 `src/ai` never imports these modules; the AI surface cannot open a connection.
 

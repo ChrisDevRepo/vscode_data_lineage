@@ -6,10 +6,9 @@ Defaults and thresholds change between versions — check **Settings → Data Li
 
 **`.dacpac` won't load.** Check that the file is a valid ZIP archive containing `model.xml` with a `DataSchemaModel/Model` element. If the error reports a file lock, close the program holding the file.
 
-**Database connection fails.** The error includes the connection name and driver message, with credential-shaped text removed. Details appear in **Output → Data Lineage Viz**. Which fix applies depends on `dataLineageViz.database.connectionProvider`:
+**Database connection fails.** The error includes the connection name and driver message, with credential-shaped text removed. Details appear in **Output → Data Lineage Viz**. Add a connection with **Data Lineage: Add Database Connection**; no other extension is needed. The notification buttons fit the error:
 
-- `mssqlExtension` (default): install or update the [MSSQL extension](https://marketplace.visualstudio.com/items?itemName=ms-mssql.mssql) and save a connection profile there. The wizard warns that its connection-sharing API is retiring and offers **Use Built-in Connection**.
-- `builtIn`: add a connection with **Data Lineage: Add Database Connection**; no other extension is needed. The notification buttons fit the error:
+A project saved with the retired SQL Server (mssql) extension connection shows one notice when it opens; **Reconnect** opens **Add Database Connection** prefilled with the saved server and database, and the project keeps its schemas.
 
 | Error | Typical cause | Buttons |
 |---|---|---|

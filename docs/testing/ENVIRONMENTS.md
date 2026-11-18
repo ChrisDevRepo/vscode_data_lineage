@@ -18,8 +18,7 @@ Settings come from an ignored `.env` (template: [`.env.example`](../../.env.exam
 or from process environment variables, so a host can inject them as secrets.
 
 Not covered by any automated tier, and done on a developer workstation:
-interactive F5 debugging and visual UX review, Microsoft Entra ID sign-in and
-mssql-extension connection profiles, the VS Code account's own chat models,
+interactive F5 debugging and visual UX review, Microsoft Entra ID sign-in, the VS Code account's own chat models,
 private-network databases, Windows/macOS-specific behavior and representative
 performance timings. Never copy customer database content or real
 conversations onto a shared or hosted machine.

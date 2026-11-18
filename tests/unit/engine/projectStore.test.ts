@@ -25,7 +25,6 @@ import {
   StoredConnectionInfoSchema,
 } from '../../../src/engine/shared/bridgeContract';
 import { stripSensitiveFields } from '../../../src/engine/connectionManager';
-import type { IConnectionInfo } from '../../../src/types/mssql';
 
 
 const dacpacConn: DacpacConnection = {
@@ -287,7 +286,7 @@ describe('stripSensitiveFields → persisted shape', () => {
     connectTimeout: 30,
     persistSecurityInfo: true,
     multipleActiveResultSets: false,
-  } as unknown as IConnectionInfo;
+  } as unknown as Record<string, unknown>;
 
   it('drops secrets', () => {
     const stored = stripSensitiveFields(liveShapedConnection) as Record<string, unknown>;
@@ -336,7 +335,7 @@ describe('stripSensitiveFields → persisted shape', () => {
     const serverScoped = {
       server: 'sql.example.net',
       authenticationType: 'Integrated',
-    } as unknown as IConnectionInfo;
+    } as unknown as Record<string, unknown>;
     expect(() => stripSensitiveFields(serverScoped)).toThrow();
   });
 });

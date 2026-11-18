@@ -6,7 +6,7 @@
 
 import * as vscode from 'vscode';
 import type { Connection } from 'tedious';
-import type { DbCellValue, IDbColumn, IServerInfo, SimpleExecuteResult } from '../../types/mssql';
+import type { DbCellValue, IDbColumn, IServerInfo, SimpleExecuteResult } from '../../types/database';
 import { Logger } from '../../utils/log';
 import { DEFAULT_CONFIG } from '../types';
 import { StoredConnectionInfoSchema, type StoredConnectionInfo } from '../shared/bridgeContract';

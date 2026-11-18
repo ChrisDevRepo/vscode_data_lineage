@@ -25,7 +25,7 @@ import {
   UNKNOWN_DB_PLATFORM,
 } from './types';
 import { buildModel, normalizeName } from './modelBuilder';
-import type { SimpleExecuteResult, DbCellValue, IServerInfo } from '../types/mssql';
+import type { SimpleExecuteResult, DbCellValue } from '../types/database';
 import { quoteIdentifier, schemaKey } from '../utils/sql';
 
 /**
@@ -44,7 +44,7 @@ export interface DmvResults {
   constraints?: SimpleExecuteResult;
   /** Server-level platform and version metadata. */
   platformInfo?: SimpleExecuteResult;
-  /** Platform derived from MSSQL server metadata when the platform query is unavailable. */
+  /** Explicit platform label used when the platform query is unavailable. */
   serverPlatform?: string;
 }
 
@@ -156,21 +156,6 @@ function mapEnginePlatform(result: SimpleExecuteResult): string {
   const majorVersion  = parseInt(cellValue(row, colIdx, 'major_version'), 10);
   const edition       = cellValue(row, colIdx, 'edition');
   return mapEngineMetadata(engineEdition, majorVersion, edition);
-}
-
-/**
- * Maps authoritative MSSQL extension server metadata to a platform label.
- *
- * @remarks
- * A second entry point exists so the `getServerInfo` fallback cannot drift from the
- * `platform-info` query path: both funnel into `mapEngineMetadata`, so a connection
- * yields the same label whichever tier resolved it. Changing one mapping without the
- * other would make the displayed platform depend on which tier happened to answer.
- */
-export function mapServerInfoPlatform(
-  info: Pick<IServerInfo, 'engineEditionId' | 'serverMajorVersion' | 'serverEdition'>,
-): string {
-  return mapEngineMetadata(info.engineEditionId, info.serverMajorVersion, info.serverEdition);
 }
 
 function mapEngineMetadata(engineEdition: number, majorVersion: number, edition: string): string {

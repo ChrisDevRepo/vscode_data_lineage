@@ -16,12 +16,9 @@ loading and settings actions.
 
 ## Database connections
 
-A live database is read through the provider set in `dataLineageViz.database.connectionProvider`:
+A live database is read through connections saved by Data Lineage, with SQL login or Microsoft Entra ID. Passwords stay in VS Code secret storage. Entra sign-in uses VS Code's Microsoft account picker and supports MFA; the selected account and tenant are saved with the connection. Windows authentication is not supported.
 
-- **`mssqlExtension`** (default) — uses a profile saved in the MSSQL extension. The wizard warns about its retiring connection API and offers **Use Built-in Connection**.
-- **`builtIn`** — uses connections saved by Data Lineage, with SQL login or Microsoft Entra ID. Passwords stay in VS Code secret storage. Entra sign-in uses VS Code's Microsoft account picker and supports MFA; the selected account and tenant are saved with the connection. Windows authentication is not supported.
-
-Manage built-in connections through **Data Lineage: Add / Edit / Remove Database Connection** and **Update Database Password** in the Command Palette. Enter the database name directly; a database-scoped login may not be able to list databases. Saved projects using the MSSQL extension show an **! Old connection** badge with migration advice.
+Manage built-in connections through **Data Lineage: Add / Edit / Remove Database Connection** and **Update Database Password** in the Command Palette. Enter the database name directly; a database-scoped login may not be able to list databases. Connecting through the SQL Server (mssql) extension is gone because Microsoft deprecated its connection API. A project saved with it shows one notice when it opens, and **Reconnect** opens **Add Database Connection** prefilled with the saved server and database; the project keeps its schemas.
 
 Import queries are documented in [`DMV_QUERIES.md`](DMV_QUERIES.md). For connection errors, see [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#import-and-connection).
 
@@ -407,7 +404,6 @@ Defaults and ranges below match `package.json`; the Settings UI shows the short 
 
 | Setting | Default | Detail |
 |---|---|---|
-| `database.connectionProvider` | `mssqlExtension` | Where live connections come from; application-scoped. See [Database connections](#database-connections). |
 | `database.connections` | `[]` | Connections of the `builtIn` provider: server, port, database, `sqlLogin` or `entraId`, user, tenant, encryption. Passwords are kept in VS Code secret storage under `dataLineageViz.database.password.<id>`. Manage entries with **Add / Edit / Remove Database Connection**; replace a password with **Update Database Password**. Hand-editing the JSON is not needed. |
 | `dmvQueryTimeout` | 120 s (10–600) | Time allowed per metadata query; raise for large databases. |
 | `dmvQueriesFile` | empty | Custom DMV queries YAML; empty uses the built-in queries. Scaffold with **Data Lineage: Create DMV Queries**; contract in [`DMV_QUERIES.md`](DMV_QUERIES.md). The file is read at each import; no reload needed. |

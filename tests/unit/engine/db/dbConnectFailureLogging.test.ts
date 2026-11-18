@@ -1,30 +1,15 @@
 /**
- * Pins the wizard's switch to the built-in connection: the host handler writes the provider setting
- * globally and answers with the refreshed connection status.
+ * Pins how a failed `db-connect` outside the connection-error path is logged and posted: secrets
+ * redacted, one FAILED line, no stack.
  */
 import { describe, expect, it, vi } from 'vitest';
-
-const cfg = vi.hoisted(() => {
-  const values: Record<string, unknown> = {};
-  return {
-    values,
-    update: vi.fn(async (key: string, value: unknown) => { values[key] = value; }),
-    sections: [] as string[],
-  };
-});
 
 vi.mock('vscode', async (importOriginal) => {
   const actual = await importOriginal<Record<string, any>>();
   return {
     ...actual,
-    ConfigurationTarget: { Global: 1, Workspace: 2 },
     ProgressLocation: { Notification: 15 },
-    workspace: {
-      getConfiguration: (section: string) => {
-        cfg.sections.push(section);
-        return { get: (k: string, d: unknown) => cfg.values[k] ?? d, update: cfg.update, inspect: () => ({}) };
-      },
-    },
+    workspace: { getConfiguration: () => ({ get: (_k: string, d: unknown) => d, inspect: () => ({}) }) },
     extensions: { getExtension: () => undefined },
   };
 });
@@ -60,19 +45,6 @@ function handlers() {
   );
   return { handlers: bundle.handlers, posted, host };
 }
-
-describe('use-builtin-connection', () => {
-  it('sets dataLineageViz.database.connectionProvider to builtIn at global scope and re-posts the status', async () => {
-    const { handlers: h, posted } = handlers();
-
-    await h['use-builtin-connection']({ type: 'use-builtin-connection' } as never);
-
-    expect(cfg.sections).toContain('dataLineageViz.database');
-    expect(cfg.update).toHaveBeenCalledTimes(1);
-    expect(cfg.update).toHaveBeenCalledWith('connectionProvider', 'builtIn', 1);
-    expect(posted.find((m) => m.type === 'mssql-status')).toMatchObject({ type: 'mssql-status', available: true });
-  });
-});
 
 describe('db-connect failures outside the connection error path', () => {
   it('redacts secrets in the log and in the message posted to the webview', async () => {

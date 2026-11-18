@@ -5,7 +5,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { BridgeHost } from '../../../src/bridge/host';
 import type { ProjectStore } from '../../../src/engine/projectStore';
-import type { DbCellValue, SimpleExecuteResult } from '../../../src/types/mssql';
+import type { DbCellValue, SimpleExecuteResult } from '../../../src/types/database';
 import { ColumnStore } from '../../../src/engine/columnStore';
 import { formatObjectLimitMessage } from '../../../src/engine/modelFilters';
 import { buildSyntheticDacpac } from '../helpers/syntheticDacpac';

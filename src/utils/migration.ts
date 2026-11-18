@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import { IConnectionInfo } from '../types/mssql';
 import { stripSensitiveFields } from '../engine/connectionManager';
 import {
   migrateProjectStore,
@@ -43,7 +42,7 @@ export async function migrateFromWorkspaceState(
     }
   } else if (sourceType === 'database') {
     const sourceName = context.workspaceState.get<string>('lastDbSourceName');
-    const connectionInfo = context.workspaceState.get<IConnectionInfo>('lastDbConnectionInfo');
+    const connectionInfo = context.workspaceState.get<Record<string, unknown>>('lastDbConnectionInfo');
     if (sourceName && connectionInfo) {
       try {
         connection = { type: 'database', connectionInfo: stripSensitiveFields(connectionInfo), sourceName, schemas: [] };

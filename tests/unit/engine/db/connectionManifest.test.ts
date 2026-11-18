@@ -1,6 +1,6 @@
 /**
- * Pins the connection contributions in package.json: the provider enum, the credential-free
- * connections schema, application scope, the four commands, and that mssql stays a soft dependency.
+ * Pins the connection contributions in package.json: no provider setting, the credential-free
+ * connections schema, application scope, the four commands, and no extension dependency.
  */
 
 import { readFileSync } from 'node:fs';
@@ -21,15 +21,8 @@ const manifest = JSON.parse(readFileSync(rootPath('package.json'), 'utf-8')) as 
 const settings = Object.assign({}, ...manifest.contributes.configuration.map((s) => s.properties)) as Record<string, any>;
 
 describe('connection settings contribution', () => {
-  it('offers exactly mssqlExtension and builtIn, defaulting to mssqlExtension, one description each', () => {
-    const provider = settings['dataLineageViz.database.connectionProvider'];
-    expect(provider.enum).toEqual(['mssqlExtension', 'builtIn']);
-    expect(provider.default).toBe('mssqlExtension');
-    expect(provider.enumDescriptions).toHaveLength(2);
-  });
-
-  it('is application-scoped so a workspace cannot override where connections come from', () => {
-    expect(settings['dataLineageViz.database.connectionProvider'].scope).toBe('application');
+  it('no longer contributes the connection provider setting and keeps the connections setting application-scoped', () => {
+    expect(settings['dataLineageViz.database.connectionProvider']).toBeUndefined();
     expect(settings['dataLineageViz.database.connections'].scope).toBe('application');
   });
 
@@ -59,7 +52,7 @@ describe('connection settings contribution', () => {
     expect(manifest.contributes.commands.find((c) => c.command === 'dataLineageViz.addDatabaseConnection')?.title).toBe('Add Database Connection');
   });
 
-  it('keeps the mssql extension a soft dependency and ships tedious', () => {
+  it('declares no extension dependency and ships tedious', () => {
     expect(manifest.extensionDependencies ?? []).toEqual([]);
     expect(manifest.dependencies.tedious).toBeDefined();
   });

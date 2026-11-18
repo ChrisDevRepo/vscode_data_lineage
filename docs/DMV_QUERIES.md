@@ -11,7 +11,7 @@ Live-database ingestion uses Dynamic Management View (DMV) queries defined in [`
 
 ## Prerequisites
 
-- A connection: the built-in connection, or a profile in the MSSQL extension (`ms-mssql.mssql`) — see `dataLineageViz.database.connectionProvider`.
+- A connection: a built-in connection (**Data Lineage: Add Database Connection**).
 - Permissions: `VIEW DEFINITION` on the database for lineage; `SELECT` on tables for profiling. Custom queries may need additional permissions.
 - Supported platforms: SQL Server 2016+, Azure SQL, Fabric Data Warehouse, Synapse Dedicated SQL Pool.
 
@@ -33,8 +33,8 @@ Nothing runs automatically in the background. The standard import path uses:
 | Phase | Queries | When |
 |-------|---------|------|
 | Phase 1 | `schema-preview` | Runs first to populate the schema-selection wizard. |
-| Platform detection | `platform-info` | Runs once before the selected-schema model is built. If it is missing, fails, or returns no row, the extension uses authoritative MSSQL server metadata; if neither source is available, the model records `Unknown database platform` without failing the import. A built-in connection has no other source, so it records `Unknown database platform` directly instead of sending the query again. |
-| Built-in connection | `platform-info` | A built-in connection (`dataLineageViz.database.connectionProvider` = `builtIn`) reads server details (edition, version) with `platform-info`; it sends no SQL that is not in this file. The database name is typed, not listed. |
+| Platform detection | `platform-info` | Runs once before the selected-schema model is built. If it is missing, fails, or returns no row, the model records `Unknown database platform` without failing the import; the query is not sent again. |
+| Built-in connection | `platform-info` | A connection reads server details (edition, version) with `platform-info`; it sends no SQL that is not in this file. The database name is typed, not listed. |
 | Object catalog | `all-objects` | Runs once before the Phase 2 sweep (unfiltered). Lists every object across all schemas (no DDL, no columns) so references into unselected schemas classify as "cross-schema known" with correct schema casing instead of "unresolved". If it is missing or fails, those references stay unclassified; the import continues. |
 | Phase 2 | `nodes`, `columns`, `constraints`, `dependencies` | Runs after schema selection. Each configured non-phase-1 query is executed with `{{SCHEMAS}}` expanded. |
 
@@ -274,7 +274,7 @@ metadata and routing validation do not establish their completeness.
 - **YAML missing or invalid** → uses built-in queries + VS Code warning dialog + log entry to the Output channel.
 - **YAML `version` does not match the shipped file** (including a missing `version`) → uses built-in queries + VS Code warning dialog naming both versions + log entry to the Output channel; re-scaffold and re-apply your edits.
 - **YAML valid but missing required query names** → an early warning lists the missing names; import fails when the active path needs a missing result.
-- **Main query returns wrong columns** → extraction may be empty or incomplete; there is no complete preflight validator for these result sets. `platform-info` is validated and falls back to MSSQL server metadata when unusable.
+- **Main query returns wrong columns** → extraction may be empty or incomplete; there is no complete preflight validator for these result sets. `platform-info` is validated and the platform is recorded as unknown when unusable.
 - **Built-in YAML itself fails** (should not happen) → error logged, `db-error` sent to the webview.
 
 ## Known limitations

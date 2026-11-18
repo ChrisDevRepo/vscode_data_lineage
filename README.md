@@ -25,7 +25,7 @@ No data? Click **Try with demo data** or run **Data Lineage: Open Demo** to expl
 
 ## Database projects
 
-Connect to SQL Server, Azure SQL, Fabric Data Warehouse, or Synapse Dedicated SQL Pool using built-in connections or saved profiles from the [MSSQL extension](https://marketplace.visualstudio.com/items?itemName=ms-mssql.mssql). Built-in connections support SQL login or Microsoft Entra ID where supported by the platform; Fabric requires Entra ID.
+Connect to SQL Server, Azure SQL, Fabric Data Warehouse, or Synapse Dedicated SQL Pool using built-in connections. They support SQL login or Microsoft Entra ID where supported by the platform; Fabric requires Entra ID.
 
 Save, reuse, and manage connections from the wizard. Passwords for built-in connections are kept in VS Code’s secure storage.
 

@@ -263,20 +263,6 @@
             "markdownDescription": "Path to a custom DMV queries YAML file. Leave empty for built-in defaults. [Customization guide](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/DMV_QUERIES.md)",
             "scope": "resource"
           },
-          "dataLineageViz.database.connectionProvider": {
-            "type": "string",
-            "enum": [
-              "mssqlExtension",
-              "builtIn"
-            ],
-            "default": "mssqlExtension",
-            "enumDescriptions": [
-              "Use connections saved in the SQL Server (mssql) extension. Microsoft is retiring this API.",
-              "Connect directly with Data Lineage's own connections (SQL login or Microsoft Entra ID). Passwords stay in the VS Code secret store."
-            ],
-            "markdownDescription": "Where database connections come from. With `builtIn`, add connections with **Data Lineage: Add Database Connection**.",
-            "scope": "application"
-          },
           "dataLineageViz.database.connections": {
             "type": "array",
             "default": [],

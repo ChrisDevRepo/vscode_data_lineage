@@ -12,7 +12,7 @@
  */
 
 import { ENGINE_EDITION_FABRIC, type ColumnDef } from './types';
-import type { SimpleExecuteResult } from '../types/mssql';
+import type { SimpleExecuteResult } from '../types/database';
 import { quoteIdentifier } from '../utils/sql';
 
 /**

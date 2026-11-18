@@ -1,27 +1,18 @@
 /**
  * Pins the two contracts that keep a saved database project readable by the webview:
- * what may reach the mssql extension, and what may reach the `projects-list` frame.
+ * what may be persisted from a live connection object, and what may reach the `projects-list` frame.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import * as vscode from 'vscode';
-import { connectDatabase, stripSensitiveFields } from '../../../src/engine/connectionManager';
+import { describe, it, expect, vi } from 'vitest';
+import { stripSensitiveFields } from '../../../src/engine/connectionManager';
 import { partitionSendableProjects } from '../../../src/bridge/messageHandlers';
 import { migrateProjectStore } from '../../../src/engine/projectStore';
 import { ExtensionToWebviewMsgSchema, type Project } from '../../../src/engine/shared/bridgeContract';
-import type { IConnectionInfo } from '../../../src/types/mssql';
-
-const MSSQL_EXTENSION_ID = 'ms-mssql.mssql';
 
 vi.mock('vscode', async (importOriginal) => ({
   ...await importOriginal<Record<string, unknown>>(),
   workspace: { getConfiguration: () => ({ get: (_key: string, fallback: unknown) => fallback, inspect: () => undefined }) },
 }));
-
-const outputChannel = {
-  debug() {}, info() {}, warn() {}, error() {}, trace() {}, append() {}, appendLine() {},
-} as unknown as vscode.LogOutputChannel;
-const env = { secrets: {} as vscode.SecretStorage, outputChannel, loadQueries: async () => [] };
 
 function dbProject(connectionInfo: Record<string, unknown>): Project {
   return {
@@ -47,41 +38,13 @@ const cleanConnectionInfo = {
 };
 
 describe('stored connection integrity', () => {
-  beforeEach(() => {
-    (vscode as unknown as { extensions: { reset(): void } }).extensions.reset();
-  });
-
-  it('reconnecting hands the mssql extension a clone, so a mutated profile cannot reach the saved record', async () => {
-    const stored = { ...cleanConnectionInfo };
-    let received: Record<string, unknown> | undefined;
-    (vscode as unknown as { extensions: { registry: Map<string, unknown> } }).extensions.registry.set(MSSQL_EXTENSION_ID, {
-      isActive: true,
-      packageJSON: { version: '1.34.0' },
-      exports: {
-        connect(profile: Record<string, unknown>) {
-          received = profile;
-          profile.azureAccountToken = 'token-value';
-          return Promise.resolve('uri://connection');
-        },
-      },
-    });
-
-    const session = await connectDatabase(env, stored);
-
-    expect(session?.provider).toBe('mssqlExtension');
-    expect(received).not.toBe(stored);
-    expect(session?.connectionInfo).not.toHaveProperty('azureAccountToken');
-    expect(stored).not.toHaveProperty('azureAccountToken');
-    expect(Object.keys(stored).sort()).toEqual(Object.keys(cleanConnectionInfo).sort());
-  });
-
   it('stripSensitiveFields keeps only declared fields, whatever the live object carries', () => {
     const narrowed = stripSensitiveFields({
       ...cleanConnectionInfo,
       azureAccountToken: 'token-value',
       password: 'never-persisted',
       applicationName: 'vscode-mssql',
-    } as unknown as IConnectionInfo);
+    } as unknown as Record<string, unknown>);
 
     expect(narrowed).not.toHaveProperty('azureAccountToken');
     expect(narrowed).not.toHaveProperty('password');

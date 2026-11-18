@@ -463,7 +463,12 @@ export const BOOKMARK_SOURCE_DESCRIPTIONS: Record<NonNullable<FilterProfile['sou
   user: 'Saved view',
 };
 
-/** Identifier of the implementation that opens database connections. */
+/**
+ * Identifier of the implementation that opens database connections.
+ *
+ * @remarks
+ * `mssqlExtension` is read only to detect a project saved with the retired mssql extension connection.
+ */
 export const ConnectionProviderIdSchema = z.enum(['mssqlExtension', 'builtIn']);
 export type ConnectionProviderId = z.infer<typeof ConnectionProviderIdSchema>;
 
@@ -745,7 +750,6 @@ export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('db-cancelled') }),
   z.object({ type: z.literal('db-error'), message: z.string(), phase: z.string() }),
   z.object({ type: z.literal('last-dacpac-gone') }),
-  z.object({ type: z.literal('mssql-status'), available: z.boolean(), provider: ConnectionProviderIdSchema.optional() }),
   z.object({ type: z.literal('rebuild-config'), config: ExtensionConfigSchema }),
   z.object({ type: z.literal('focus-object'), schema: z.string(), name: z.string() }),
   z.object({ type: z.literal('reload-source') }),
@@ -807,8 +811,6 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('filter-changed'), uiState: UiStateSnapshotSchema }),
   z.object({ type: z.literal('render-state'), renderState: RenderStateSnapshotSchema }),
   z.object({ type: z.literal('db-connect') }),
-  z.object({ type: z.literal('check-mssql') }),
-  z.object({ type: z.literal('use-builtin-connection') }),
   z.object({
     type: z.literal('save-view'),
     projectId: z.string(),

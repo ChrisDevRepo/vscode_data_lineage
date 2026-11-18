@@ -1,16 +1,12 @@
 /**
  * @module DbSession
- * Provider-neutral database session contract shared by the mssql-extension and built-in providers.
+ * Database session contract of the built-in connection.
  */
 
-import * as vscode from 'vscode';
-import type { SimpleExecuteResult, IServerInfo } from '../../types/mssql';
+import type { SimpleExecuteResult, IServerInfo } from '../../types/database';
 import type { ConnectionProviderId, StoredConnectionInfo } from '../shared/bridgeContract';
 
 export type { ConnectionProviderId };
-
-/** Provider used when `dataLineageViz.database.connectionProvider` is unset or holds an unknown value. */
-export const DEFAULT_CONNECTION_PROVIDER: ConnectionProviderId = 'mssqlExtension';
 
 /** Configuration section that owns the connection settings. */
 export const DATABASE_CONFIG_SECTION = 'dataLineageViz.database';
@@ -27,8 +23,7 @@ export interface DbQueryOptions {
  * One open database connection.
  *
  * @remarks
- * Consumers read result cells by column name, so a provider must return `displayValue` strings in
- * the form the mssql extension renders them.
+ * Consumers read result cells by column name, so a session must return `displayValue` strings.
  */
 export interface DbSession {
   /** The provider that opened this session. */
@@ -41,16 +36,6 @@ export interface DbSession {
   getServerInfo(): Promise<IServerInfo>;
   /** Releases what this extension opened; safe to call more than once. */
   dispose(): Promise<void>;
-}
-
-/**
- * Reads the active provider from `dataLineageViz.database.connectionProvider`.
- *
- * @returns `builtIn` or `mssqlExtension`; any other stored value reads as the default.
- */
-export function getConnectionProvider(): ConnectionProviderId {
-  const value = vscode.workspace.getConfiguration(DATABASE_CONFIG_SECTION).get<string>('connectionProvider');
-  return value === 'builtIn' ? 'builtIn' : DEFAULT_CONNECTION_PROVIDER;
 }
 
 /** Identifies the connection an error belongs to; carries no credential. */

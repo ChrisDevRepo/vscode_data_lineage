@@ -129,13 +129,13 @@ live import derives one from the server.
   Each import reads the YAML again; the panel keeps the last load for the
   built-in provider's server-info lookup (table statistics) and drops it when
   `dataLineageViz.dmvQueriesFile` names another file.
-- **Connection providers** — [`src/engine/db/`](../src/engine/db/). `connectDatabase`
-  returns a `DbSession` from either the mssql extension or the built-in `tedious`
-  provider, selected by `dataLineageViz.database.connectionProvider`; saved
+- **Connections** — [`src/engine/db/`](../src/engine/db/). `connectDatabase`
+  returns a `DbSession` from the built-in `tedious` provider; saved
   built-in connections live in `dataLineageViz.database.connections` with
   passwords in `SecretStorage`. Connection errors are presented only by
   `connectionErrors.ts`. Tests: [`tests/unit/engine/db/`](../tests/unit/engine/db/);
-  the `builtIn` tests assert the mssql extension is never touched. Runtime
+  `mssqlReconnectNotice.test.ts` pins the reconnect notice for a project saved
+  with the retired mssql extension. Runtime
   contract: [`ARCHITECTURE.md`](ARCHITECTURE.md) §Database connection providers.
 - **Persistence** — [`src/engine/projectStore.ts`](../src/engine/projectStore.ts).
   On read, unrecognized fields are dropped; a project is discarded only when a

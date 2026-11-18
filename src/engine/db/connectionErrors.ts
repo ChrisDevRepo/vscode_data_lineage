@@ -128,7 +128,7 @@ function grantStatement(user: string | undefined): string {
  * for the built-in provider, and Retry only when the caller supplies a retry hook. Each action runs
  * on the user's click and any retry it triggers is a single attempt, never a loop.
  *
- * @param err - The raw error from the driver or the mssql extension.
+ * @param err - The raw error from the driver.
  * @param target - The connection the error belongs to.
  * @param hooks - Caller-supplied capabilities the actions use.
  */
