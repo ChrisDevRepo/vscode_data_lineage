@@ -32,9 +32,6 @@ export interface SchemaProjectionNode {
    * Schema name represented by this aggregate node.
    */
   schemaName: string;
-  /**
-   * Number of objects in the schema.
-   */
   objectCount: number;
   /**
    * Object counts keyed by lineage object type.
@@ -55,9 +52,6 @@ export interface SchemaProjection {
    * Schema aggregate nodes keyed by schema name.
    */
   nodes: Map<string, SchemaProjectionNode>;
-  /**
-   * Aggregated schema-to-schema dependency edges.
-   */
   edges: SchemaProjectionEdge[];
 }
 

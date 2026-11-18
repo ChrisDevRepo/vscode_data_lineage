@@ -31,7 +31,6 @@ export interface DacpacLoaderState {
   model: DatabaseModel | null;
   /** The lightweight schema preview (Phase 1 result). */
   schemaPreview: SchemaPreview | null;
-  /** The set of schemas selected by the user for extraction. */
   selectedSchemas: Set<string>;
   /** Whether an extraction or connection process is active. */
   isLoading: boolean;
@@ -53,7 +52,6 @@ export interface DacpacLoaderState {
   openFile: () => void;
   /** Resets the internal loader state to the starting screen. */
   resetToStart: () => void;
-  /** Loads an existing project by its unique ID. */
   loadProject: (id: string) => void;
   /** Loads the built-in demo project. */
   loadDemo: () => void;
@@ -61,7 +59,6 @@ export interface DacpacLoaderState {
   connectToDatabase: () => void;
   /** Aborts the current loading process: tells the host to stop it and drops any result it still posts. */
   cancelLoading: () => void;
-  /** Clears the auto-visualize trigger flag. */
   clearAutoVisualize: () => void;
   /** Clears the transition trigger flag. */
   clearPendingVisualize: () => void;

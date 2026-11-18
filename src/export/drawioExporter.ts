@@ -80,7 +80,6 @@ function objectLabel(
   );
 }
 
-/** The card of a schema-cluster node. */
 function schemaCard(
   node: FlowNode<SchemaNodeData>,
   color: string,

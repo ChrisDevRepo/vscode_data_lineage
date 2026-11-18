@@ -7,7 +7,6 @@ interface SchemaSelectorProps {
   schemas: SchemaInfo[];
   /** Checked source catalog comparison policy for palette identity. */
   identifierCaseSensitive?: boolean;
-  /** A set of currently selected schema names. */
   selectedSchemas: Set<string>;
   /** Callback function to toggle the selection of a specific schema. */
   onToggle: (name: string) => void;

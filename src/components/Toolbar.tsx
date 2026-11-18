@@ -27,9 +27,7 @@ interface ToolbarProps {
   onToggleIsolated: () => void;
   /** Set of schemas that are currently highlighted or "focused" in the graph. */
   focusSchemas: Set<string>;
-  /** Callback to toggle focus for a specific schema. */
   onToggleFocusSchema: (schema: string) => void;
-  /** The set of schemas currently selected for rendering. */
   selectedSchemas?: Set<string>;
   /** Callback to toggle visibility for a specific schema. */
   onToggleSchema?: (schema: string) => void;
@@ -84,7 +82,6 @@ interface ToolbarProps {
   exclusionPatterns?: string[];
   /** Callback to add a new name-based exclusion pattern. */
   onAddExclusionPattern?: (pattern: string) => void;
-  /** Callback to remove an existing exclusion pattern. */
   onRemoveExclusionPattern?: (pattern: string) => void;
   /** List of saved filter profiles (bookmarks) for the current project. */
   filterProfiles?: FilterProfile[];
@@ -96,7 +93,6 @@ interface ToolbarProps {
   isViewModified?: boolean;
   /** Callback to save the current filter state as a new view. */
   onSaveView?: (name: string) => void;
-  /** Callback to apply a saved filter profile. */
   onApplyView?: (profile: FilterProfile) => void;
   /** Callback to delete a saved filter profile. */
   onDeleteView?: (profileId: string) => void;
@@ -124,7 +120,6 @@ interface ToolbarProps {
   showExpandedSchemaClusters?: boolean;
   /** Callback to hide/show collapsed schema clusters without changing filters. */
   onToggleExpandedSchemaClusters?: () => void;
-  /** Number of schemas currently expanded in expanded schema view. */
   expandedSchemaCount?: number;
   /** Callback to expand all schemas at once and enter Expanded Schema View. */
   onExpandAllSchemas?: () => void;

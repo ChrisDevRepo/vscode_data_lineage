@@ -20,17 +20,11 @@ export interface DbCellValue {
  * Column metadata of a query result.
  */
 export interface IDbColumn {
-  /**
-   * Column name.
-   */
   columnName: string;
   /**
    * Database-specific type identifier.
    */
   dataType: string;
-  /**
-   * Display name of the SQL data type.
-   */
   dataTypeName: string;
   /**
    * Whether the column allows `NULL` values.
@@ -64,17 +58,8 @@ export interface SimpleExecuteResult {
  * Server version and edition metadata.
  */
 export interface IServerInfo {
-  /**
-   * Major SQL Server version number.
-   */
   serverMajorVersion: number;
-  /**
-   * Minor SQL Server version number.
-   */
   serverMinorVersion: number;
-  /**
-   * Full SQL Server version string.
-   */
   serverVersion: string;
   /**
    * SQL engine edition identifier.

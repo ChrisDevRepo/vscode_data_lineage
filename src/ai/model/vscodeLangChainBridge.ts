@@ -95,7 +95,6 @@ export class VscodeLangChainBridge extends BaseChatModel<
     this.wire = fields.wire;
   }
 
-  /** LangChain serialization name for this bridge class. */
   static lc_name(): string {
     return 'VscodeLangChainBridge';
   }

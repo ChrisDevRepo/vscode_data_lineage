@@ -588,9 +588,7 @@ export type EdgeStyle = 'default' | 'smoothstep' | 'step' | 'straight';
  * Configuration for interactive lineage tracing.
  */
 export interface TraceConfig {
-  /** Default number of upstream levels to explore. */
   defaultUpstreamLevels: number;
-  /** Default number of downstream levels to explore. */
   defaultDownstreamLevels: number;
 }
 
@@ -644,7 +642,6 @@ export interface OverviewConfig {
   enabled: boolean;
   /** Loaded-model object count above which the initial graph opens in Schema View. */
   threshold: number;
-  /** Schema-node double-click behavior in Schema View. */
   schemaDoubleClickBehavior: 'expand' | 'expandOnly';
 }
 
@@ -704,9 +701,6 @@ export type GraphMode = 'full' | 'overview';
 
 /** Data for a schema-level super-node rendered in Schema View. */
 export interface SchemaNodeData extends Record<string, unknown> {
-  /**
-   * Schema name rendered by the schema node.
-   */
   schemaName: string;
   /**
    * Number of objects represented by the schema node.
@@ -928,9 +922,6 @@ export interface TraceState {
    * Origin node ID for the trace.
    */
   selectedNodeId: string | null;
-  /**
-   * Target node ID for pathfinding traces.
-   */
   targetNodeId: string | null;
   /**
    * Configured upstream traversal depth.
@@ -1026,9 +1017,6 @@ export interface AnalysisResult {
    * Analysis type that produced this result.
    */
   type: AnalysisType;
-  /**
-   * Grouped analysis results.
-   */
   groups: AnalysisGroup[];
   /**
    * Human-readable summary of the analysis result.

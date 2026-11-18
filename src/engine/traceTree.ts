@@ -56,7 +56,6 @@ export interface TraceTree {
 export interface TraceTreeInput {
   /** Trace origin id; null when no trace is active. */
   originId: string | null;
-  /** Currently visible trace node ids. */
   visibleNodeIds: ReadonlySet<string>;
   /** Manually pruned node ids, never offered as grow candidates. */
   prunedNodeIds: ReadonlySet<string>;

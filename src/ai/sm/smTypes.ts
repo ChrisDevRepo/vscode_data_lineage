@@ -51,16 +51,12 @@ export type SmNodeStateReason =
   | 'non_bodied_passthrough';
 
 /**
- * Process state for one node in the SM traversal.
- *
- * @remarks
- * This is the source of truth for lifecycle state. `DetailSlot` remains only
- * the text/evidence bucket; a node can be `passthrough` without having a detail slot.
+ * Process state for one node in the SM traversal; the source of truth for lifecycle state.
+ * `DetailSlot` stays the text/evidence bucket, and a node can be `passthrough` without one.
  */
 export interface SmNodeState {
   /** Canonical id of the node this state describes. */
   nodeId: string;
-  /** Lifecycle action taken on the node. */
   action: SmNodeAction;
   /** Who made the lifecycle decision. */
   source: SmNodeStateSource;
@@ -173,11 +169,8 @@ export interface ColumnEdge {
 
 
 /**
- * Metadata for a neighbor node encountered during a navigation hop.
- *
- * @remarks
- * This structure provides the AI with enough context to decide whether to visit
- * a node without needing to fetch its full DDL.
+ * Metadata for a neighbor encountered during a hop: enough for the AI to decide whether to visit it
+ * without fetching its DDL.
  */
 export interface HopNeighbor {
   /** Unique identifier for the neighbor node. */
@@ -206,12 +199,9 @@ export interface HopNeighbor {
   in_budget?: boolean;
   /**
    * Whether a route to this node would be admitted: inside the approved border (exclusions,
-   * direction) and the stated depth. Always surfaced; it is the same verdict the
-   * prune and route validators apply.
-   *
-   * @remarks
-   * In SM sessions the approved scope is locked at `confirm_sm_start`; routes to out-of-scope
-   * neighbors are deferred (not rejected) and surfaced at synthesis.
+   * direction) and the stated depth. Always surfaced; the same verdict the prune and route
+   * validators apply. In SM sessions the scope is locked at `confirm_sm_start`; routes out of scope
+   * are deferred (not rejected) and surfaced at synthesis.
    */
   in_approved_scope?: boolean;
 }
@@ -224,11 +214,8 @@ export interface HopNeighbor {
 type HopFocusNode = Record<string, unknown>;
 
 /**
- * Encapsulates all information delivered to the AI for a single navigation hop.
- *
- * @remarks
- * SM ships one focus node per hop. CT activates when `targetColumns` is provided
- * at `start_exploration` and operates within the same SM hop loop.
+ * Everything delivered to the AI for a single navigation hop. SM ships one focus node per hop; CT
+ * activates when `targetColumns` is provided at `start_exploration` and runs in the same hop loop.
  */
 export interface HopContext {
   /** Set to `true` if there are no more nodes to visit in the agenda. */
@@ -238,12 +225,9 @@ export interface HopContext {
   /** The current hop index. */
   hop?: number;
   /**
-   * The contract this hop is dispatched under — mode as data, not as prose the model must infer.
-   *
-   * @remarks
-   * `ct` when this hop carries at least one traced column, `bb` otherwise — per hop, therefore per
-   * edge, so the same node reached on a carrying edge and a row-shaping edge is dispatched under
-   * each contract in turn.
+   * The contract this hop is dispatched under, as data rather than prose the model must infer: `ct`
+   * when the hop carries at least one traced column, else `bb`. Per hop and so per edge: one node
+   * reached on a carrying edge and a row-shaping edge is dispatched under each contract in turn.
    */
   analysis_mode?: 'bb' | 'ct';
   /** Count of nodes still on the agenda. */
@@ -288,15 +272,12 @@ export interface NeighborQuestion {
 }
 
 /**
- * A kept (`analyze` / `passthrough`) finding for a focus node.
- *
- * @remarks
- * Neighbor decisions are exceptions only: the engine enqueues every open in-scope neighbor not
- * named in `prune_neighbors`, and `questions` attaches a check to one of them. In CT the column
- * carry each neighbor receives is derived from this finding's own `column_flow`.
+ * A kept (`analyze` / `passthrough`) finding for a focus node. Neighbor decisions are exceptions:
+ * the engine enqueues every open in-scope neighbor not named in `prune_neighbors`, and `questions`
+ * attaches a check to one of them. In CT each neighbor's column carry derives from this finding's
+ * own `column_flow`.
  */
 export interface HopFindingKept {
-  /** ID of the node that was analyzed. */
   focus_node_id: string;
   /**
    * Captured sections, one per fired `*_capture` template; the locked classification narrows
@@ -350,24 +331,18 @@ export type ColumnCarry =
   | { readonly kind: 'scalar_return'; readonly outputs: readonly ScalarReturnTarget[] };
 
 /**
- * How a node served the traced columns at the hop that dispatched it.
- *
- * @remarks
- * Orthogonal to {@link SmNodeAction} and {@link SmNodeStateReason}, which answer what happened to
- * the node and why. A node can be analyzed, passed through, or pruned under either role, so the
- * role is its own field and survives a later, stronger verdict instead of being overwritten by it.
+ * How a node served the traced columns at the hop that dispatched it. Orthogonal to {@link
+ * SmNodeAction} and {@link SmNodeStateReason} (what happened and why): the role is its own field so
+ * it survives a later, stronger verdict.
  */
 export type SmNodeColumnRole = 'carrier' | 'row_role_only';
 
 /**
- * Per-route outcome in a successful `submitFindings` return.
- *
- * @remarks
- * Engine-side record only: the `lineage_submit_findings` tool returns the ack and the next focus,
- * never this array, so the model does not see it. The engine writes one debug host-log line per
- * non-accepted outcome where the hop's outcomes are finalized. Every deferred route is also recorded as a
- * {@link DeferredQuestion}, which reaches the synthesis completion envelope and post-synthesis
- * follow-up offers. An excluded target requires a new scope proposal before analysis.
+ * Per-route outcome in a successful `submitFindings` return. Engine-side only: the tool returns the
+ * ack and next focus, never this array, so the model does not see it. One debug host-log line is
+ * written per non-accepted outcome. Every deferred route is also recorded as a {@link
+ * DeferredQuestion}, which reaches the synthesis envelope and follow-up offers. An excluded target
+ * requires a new scope proposal before analysis.
  */
 export interface RouteOutcome {
   /** Node id of the route request (verbatim from submission, not lowercased). */
@@ -410,30 +385,26 @@ export interface SupplementChain {
 }
 
 /**
- * Per-node drop notice from `supplementAgenda`.
- *
- * @remarks
- * Reported alongside the aggregate `skipped` count so a caller can surface WHICH id was
- * refused and WHY, mirroring {@link RouteOutcome}'s drop-with-notice shape.
+ * Per-node drop notice from `supplementAgenda`, reported with the aggregate `skipped` count so a
+ * caller can surface which id was refused and why (the drop-with-notice shape of {@link
+ * RouteOutcome}).
  */
 export interface SupplementSkip {
   /** Node id as supplied in the supplement request (verbatim, not lowercased). */
   nodeId: string;
   /**
    * Reason for the drop:
-   * - `unresolved` — node id does not exist in the loaded graph model.
-   * - `excluded` — node exists but is outside the user's own approved exclude filters
-   *   (`excludedNodeIds` / `excludedTypes` / a schema the user typed that the GUI does not hide).
-   * - `out_of_allowlist` — node exists, but its schema is unticked in the GUI schema filter (the
-   *   session allowlist) — including a schema the user also typed, since the GUI hides it anyway.
-   *   `hint` always accompanies this reason.
-   * - `not_connected_to_trace` — node exists and is not excluded, but has no dependency path to the
-   *   traced graph — the wire form of `REJECTION_CODES.notConnectedToTrace`. `hint` always
-   *   accompanies this reason.
+   * - `unresolved`: id absent from the loaded model.
+   * - `excluded`: outside the user's own exclusions (`excludedNodeIds` / `excludedTypes` / a schema
+   * the user typed that the GUI does not hide).
+   * - `out_of_allowlist`: schema unticked in the GUI schema filter, including one the user also
+   * typed; `hint` accompanies it.
+   * - `not_connected_to_trace`: exists and not excluded but has no dependency path to the traced
+   * graph (wire form of `REJECTION_CODES.notConnectedToTrace`); `hint` accompanies it.
    *
-   * Both `excluded` and `out_of_allowlist` are a hard wall for every supplement id, named directly
-   * or chain-reached: a follow-up asking for an out-of-filter object does not itself widen the
-   * border — it reopens approval for that object instead of admitting it.
+   * `excluded` and `out_of_allowlist` are a hard wall for every supplement id, named or
+   * chain-reached: a follow-up for an out-of-filter object reopens approval for it instead of
+   * widening the border.
    */
   reason: 'excluded' | 'out_of_allowlist' | 'unresolved' | 'not_connected_to_trace';
   /**
@@ -446,13 +417,10 @@ export interface SupplementSkip {
 }
 
 /**
- * The outcome of a `submitFindings` operation — a discriminated **ack | reject** union (the engine's
- * only two responses to a hop submission, looping until the engine drains the agenda).
- *
- * @remarks
- * `{ ok: true }` = **ack** (recorded, advance). A {@link ToolRejection} = **reject** — a Zod-/topology-only,
- * mode-pure validation failure the AI self-corrects from. There is no third outcome and no AI "done"
- * signal: termination is engine-owned (agenda drain), surfaced separately via `getHopContext().done`.
+ * Outcome of `submitFindings`: a discriminated ack | reject union, the engine's only two responses
+ * to a hop submission. `{ ok: true }` is ack (recorded, advance); a {@link ToolRejection} is a
+ * Zod/topology-only, mode-pure failure the AI self-corrects from. There is no AI "done" signal:
+ * termination is engine-owned (agenda drain), surfaced via `getHopContext().done`.
  */
 export type SubmitResult =
   | {
@@ -470,19 +438,15 @@ export type SubmitResult =
   | ToolRejection;
 
 /**
- * Per-hop engine diagnostics — single structured snapshot for logging + AI visibility.
- *
- * @remarks
- * Produced by `engine.getHopDiagnostics()` after each successful `submitFindings`. Feeds
- * the `[AI] [Hop N]` structured log line and the working-memory fields the AI reads each
- * hop. Counts are cumulative since `start_exploration`.
+ * Per-hop engine diagnostics from `engine.getHopDiagnostics()` after each successful
+ * `submitFindings`: feeds the `[AI] [Hop N]` log line and the working-memory fields the AI reads
+ * each hop. Counts are cumulative since `start_exploration`.
  */
 export interface DiagnosticsSnapshot {
   /** 1-based hop index. */
   hop: number;
   /** Node id of the focus just submitted. */
   focus: string;
-  /** Schema of the focus. */
   schema: string;
   /** Depth from origin for the focus. */
   depth: number;
@@ -496,7 +460,6 @@ export interface DiagnosticsSnapshot {
   verdict: 'analyze' | 'passthrough' | 'prune' | null;
   /** Detail-archive chars added this hop. */
   detailChars: number;
-  /** Summary chars added this hop. */
   summaryChars: number;
   /** Cumulative archive size across the session. */
   archiveChars: number;
@@ -508,7 +471,6 @@ export interface DiagnosticsSnapshot {
   routedDeferred: number;
   /** Cumulative size of the SM deferred-questions bucket across the session. */
   deferredQueued: number;
-  /** Nodes remaining on the agenda. */
   agendaRemaining: number;
   /** Rolling tally across the session: analyze/passthrough verdicts + cumulative engine prune count. */
   tally: { analyze: number; passthrough: number; prune: number };
@@ -526,13 +488,9 @@ export interface DiagnosticsSnapshot {
 
 
 /**
- * Per-(schema,type) leaf in the scope tree.
- *
- * @remarks
- * `hops` counts bodied nodes (view / procedure / function — agenda candidates);
- * `scope` is the total node count including non-bodied (table) nodes that BFS
- * surfaced. Names are listed in full unless the caller bounds them; `omitted` carries
- * the overflow count of a bounded list.
+ * Per-(schema,type) leaf in the scope tree. `hops` counts bodied nodes (agenda candidates); `scope`
+ * is the total including non-bodied (table) nodes BFS surfaced. Names are listed in full unless the
+ * caller bounds them; `omitted` is the overflow count.
  */
 export interface ScopeSummaryLeaf {
   /** Bodied-node count (view / procedure / function) at this leaf — agenda candidates. */
@@ -554,12 +512,9 @@ export interface ScopeExclusionGroup {
 }
 
 /**
- * Excluded objects split by cause.
- *
- * @remarks
- * `rules` holds one entry per GUI exclusion pattern that matched at least one excluded object, in
- * filter order; an object several patterns match counts under the first. `named` holds the
- * excluded objects no pattern matches — the ones the question or the model named.
+ * Excluded objects split by cause. `rules` has one entry per GUI exclusion pattern that matched an
+ * excluded object, in filter order (an object several patterns match counts under the first);
+ * `named` holds excluded objects no pattern matches, the ones the question or model named.
  */
 export interface ScopeExclusions {
   rules: Array<ScopeExclusionGroup & { pattern: string }>;
@@ -567,14 +522,10 @@ export interface ScopeExclusions {
 }
 
 /**
- * Snapshot of the proposed scope, computed once per `confirm_sm_start` gate emission.
- *
- * @remarks
- * Single source of truth for the gate detail markdown and the live "Scope: N nodes"
- * line — both come from this snapshot so the count and the tree never diverge. The
- * snapshot reflects the post-filter scope (after `excludeSchemas` / `excludeTypes` /
- * `excludeNodeIds`) and includes the `passNodeIds` membership so the renderer can
- * mark pass-through nodes distinctly from analyzed nodes.
+ * Snapshot of the proposed scope, computed once per `confirm_sm_start` gate emission; the gate
+ * detail markdown and the live "Scope: N nodes" line both read it so count and tree never diverge.
+ * It reflects the post-filter scope (`excludeSchemas` / `excludeTypes` / `excludeNodeIds`) and
+ * includes `passNodeIds` membership so pass-through nodes render distinctly.
  */
 export interface ScopeSummary {
   /** Source comparison policy for rendering object and schema identities; absent retains CI. */
@@ -611,10 +562,9 @@ export interface ScopeSummary {
   /** Schema → type → leaf rollup used by `renderScopeSummaryMd` to reproduce the approval tree. */
   bySchema: Record<string, { hops: number; scope: number; byType: Record<string, ScopeSummaryLeaf> }>;
   /**
-   * Per object-type list of lowercased names that recur in more than one schema of the loaded
-   * model — a model fact, computed once from the full node map, never from the proposed scope
-   * alone. The card renderer schema-qualifies a name in this set so a bare name never reads as a
-   * specific object when the model holds more than one by that name and type. Absent or empty
+   * Per object type, lowercased names recurring in more than one schema of the loaded model: a
+   * model fact computed from the full node map, never the proposed scope. The card renderer
+   * schema-qualifies such a name so a bare name never reads as one specific object. Absent or empty
    * for a type with no repeated name.
    */
   ambiguousObjectNames?: Record<string, readonly string[]>;
@@ -686,21 +636,17 @@ export interface SmResult {
 
 
 /**
- * A route request to an out-of-approved-scope node, captured during an SM session.
- *
- * @remarks
- * Produced by the engine when a `submit_findings` route, or a contraction through a non-bodied
- * carrier, targets a node outside the approved border (schema, exclusion or direction) or past an
- * exact depth. Derived from typed pending leads for the synthesis evidence envelope and
- * native-chat follow-up action; the older lead reasons a saved run may hold stay readable on
- * {@link PendingLead} only.
+ * A route request to an out-of-approved-scope node, captured during an SM session: a
+ * `submit_findings` route, or a contraction through a non-bodied carrier, targeting a node outside
+ * the approved border (schema, exclusion, direction) or past an exact depth. Derived from typed
+ * pending leads for the synthesis envelope and the follow-up action; older lead reasons a saved run
+ * may hold stay readable on {@link PendingLead} only.
  */
 export interface DeferredQuestion {
   /** Fully-qualified id of the out-of-scope target. */
   nodeId: string;
   /** Schema of the target — the reason for schema-class deferral. */
   schema: string;
-  /** Focus node id from which the route was proposed. */
   fromFocusNodeId: string;
   /** Sub-question the AI wanted to ask at the target. */
   question: string;
@@ -728,9 +674,7 @@ interface InvestigationTaskBase {
   traversalSide?: 'upstream' | 'downstream';
   /** Lifecycle controlled by the navigation engine. */
   status: 'pending' | 'active' | 'resolved' | 'deferred';
-  /** Hop at which the task was created. */
   createdHop: number;
-  /** Hop at which the task was resolved. */
   resolvedHop?: number;
   /** Explicit caller declaration anchored to its originating task and SQL snapshot. */
   callerContext?: FunctionCallerContext;
@@ -776,7 +720,6 @@ export interface PendingLead {
   valueToUser: string;
   /** Follow-up lifecycle. */
   status: 'pending' | 'scheduled' | 'resolved' | 'dismissed';
-  /** Hop at which the lead was created. */
   createdHop: number;
 }
 
@@ -800,13 +743,10 @@ export interface EngineInitSnapshot {
   origin: string;
   /** Explicit exploration mode approved before hop-by-hop analysis. */
   analysisMode: 'bb' | 'ct';
-  /** Target columns when a column-trace aspect is active. */
   targetColumns?: [string, ...string[]];
-  /** Exploration direction. */
   direction: 'upstream' | 'downstream' | 'bidirectional';
   /** AI-owned depth verdict that seeded the scope. */
   depthIntent: DepthIntent;
-  /** Sanitized mission brief. */
   mission_brief?: string;
 }
 
@@ -823,12 +763,10 @@ export interface DepthIntent {
 }
 
 /**
- * Placeholder question stored on {@link NavigationInitParams.question} when the model proposes an
- * exploration without restating the user's ask.
- *
- * @remarks
- * It is a filler, not user intent: hosts that need a human-authored prompt (for example the native
- * "Change scope" reproposal) must treat this value as absent and fall back to the real prompt.
+ * Placeholder stored on {@link NavigationInitParams.question} when the model proposes an
+ * exploration without restating the user's ask. A filler, not user intent: hosts needing a
+ * human-authored prompt (e.g. "Change scope" reproposal) must treat it as absent and use the real
+ * prompt.
  */
 export const DEFAULT_EXPLORATION_QUESTION = 'Explore lineage';
 
@@ -864,13 +802,10 @@ export interface NavigationInitParams {
 }
 
 /**
- * Serializable projection of the {@link NavigationEngine}'s private working state not already
- * carried by the top-level fields of {@link SmState}.
- *
- * @remarks
- * Runtime handles (model, graph, logger, store, node map, and edge map) are rebuilt by the caller
- * from the active host and are deliberately not serialized. Maps and sets are flattened to arrays
- * for the JSON boundary. A saved run is read back only through the `NavigationSnapshot` schema.
+ * Serializable projection of the {@link NavigationEngine}'s private working state not carried by
+ * the top-level fields of {@link SmState}. Runtime handles (model, graph, logger, store, node and
+ * edge maps) are rebuilt from the active host and not serialized; maps and sets flatten to arrays.
+ * A saved run is read back only through the `NavigationSnapshot` schema.
  */
 export interface EngineInternalsSnapshot {
   /** Resolved origin/root node id (anchors the trace). */
@@ -897,9 +832,7 @@ export interface EngineInternalsSnapshot {
   sessionAllowedSchemas: string[];
   /** Object types the user excluded at init. */
   excludedTypes: string[];
-  /** Schemas the user excluded at init. */
   excludedSchemas: string[];
-  /** Specific node ids the user excluded at init. */
   excludedNodeIds: string[];
   /** Object types hidden by the GUI filter at session start (advisory diagnostics). */
   guiHiddenTypes: string[];
@@ -907,7 +840,6 @@ export interface EngineInternalsSnapshot {
   passNodeIds: string[];
   /** Agenda-entry question captured at dequeue for the current focus. */
   currentFocusQuestion: string | null;
-  /** Task ids being answered by the current focus hop. */
   currentFocusTaskIds: string[];
   /** Last current-task question delivered with a hop context. */
   lastCurrentTask: string;
@@ -964,7 +896,6 @@ export interface SmState {
   hopCount: number;
   /** Total number of nodes within the discovered exploration scope. */
   scopeSize: number;
-  /** List of all node IDs currently in the exploration scope. */
   scopeNodeIds: string[];
   /** Set of node IDs already visited by the engine. */
   visited: string[];
@@ -991,7 +922,6 @@ export interface SmState {
     /** Per-neighbour column-carry decision that survived contraction (`carry` / `row_role_only`). */
     columnCarry?: ColumnCarry;
   }>;
-  /** ID of the node currently under analysis, if any. */
   currentFocusNodeId: string | null;
   /** Serialized snapshot of the associated memory manager. */
   memory: MemoryStateSnapshot;
@@ -1038,12 +968,9 @@ export interface HopLogEntry {
 }
 
 /**
- * Kinds of invalid routes during exploration.
- *
- * @remarks
- * Absent/no-op kinds are nonfatal notices. Content, completeness, action-conflict, origin, and
- * topology kinds reject atomically. The pure current-hop policy owns route/prune classification;
- * ColumnTracer owns indexed CT content paths.
+ * Kinds of invalid routes. Absent/no-op kinds are nonfatal notices; content, completeness,
+ * action-conflict, origin and topology kinds reject atomically. The pure current-hop policy owns
+ * route/prune classification; ColumnTracer owns indexed CT content paths.
  */
 export type InvalidRouteKind = | 'absent_contributor'
       | 'bad_out_col'

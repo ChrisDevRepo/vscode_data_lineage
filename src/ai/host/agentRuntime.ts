@@ -56,7 +56,6 @@ export interface AgentRuntimeDeps {
   readonly model: ModelPort;
   /** Text-adapted full registry; graph nodes filter it by phase. */
   readonly registry: IToolRegistry<string>;
-  /** Native turn event sink. */
   readonly sink: TurnEventSink;
   /** Abort signal cancelling this turn; re-checked before every graph invoke and forwarded to the graph. */
   readonly signal?: AbortSignal;
@@ -226,7 +225,6 @@ export class AgentRuntime {
     }
   }
 
-  /** Resolves a pending consent gate with the user's decision. */
   public resumeGate(gateId: string, decision: GateDecision): boolean {
     const resume = this.pendingGates.get(gateId);
     if (!resume) return false;

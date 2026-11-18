@@ -14,7 +14,6 @@ export interface CurrentHopActionTarget {
 export interface CurrentHopActionPolicyInput {
   /** Canonical exploration origin. */
   originId: string;
-  /** Explicit prune_neighbors targets. */
   pruneTargets: CurrentHopActionTarget[];
   /** Nodes already processed: analyzed on a hop of their own, or the carrier the engine passed through into the current focus. */
   visitedIds: ReadonlySet<string>;

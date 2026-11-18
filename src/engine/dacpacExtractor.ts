@@ -835,7 +835,6 @@ function getBodyScript(el: XmlElement, type: string, schema: string, objectName:
   return bodyScript;
 }
 
-/** Header annotation on the element that owns a SQL script. */
 function getScriptHeader(el: XmlElement): string | undefined {
   for (const annotation of asArray(el.Annotation)) {
     if (annotation['@_Type'] !== 'SysCommentsObjectAnnotation') continue;

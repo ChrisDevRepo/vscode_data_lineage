@@ -71,7 +71,6 @@ interface UseInteractiveTraceReturn {
 
 const NO_TARGETS: readonly string[] = [];
 
-/** Initial trace state factory */
 const createInitialTrace = (config: ExtensionConfig): TraceState => ({
   mode: 'none',
   selectedNodeId: null,

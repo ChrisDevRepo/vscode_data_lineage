@@ -524,7 +524,6 @@ interface GraphCanvasProps {
   onNodeContextMenu: (node: FlowNode, x: number, y: number) => void;
   /** Callback fired when an object node is double-clicked — opens the same detail view as the context menu's Show Details. */
   onShowDetails?: (nodeId: string) => void;
-  /** Callback to start a trace immediately from a node. */
   onStartTraceImmediate: (nodeId: string) => void;
   /** Callback to apply a trace configuration (upstream/downstream levels). */
   onTraceApply: (config: { upstreamLevels: number; downstreamLevels: number }) => void;
@@ -536,7 +535,6 @@ interface GraphCanvasProps {
   onToggleType: (type: ObjectType) => void;
   /** Callback to toggle 'Isolated Nodes' filter. */
   onToggleIsolated: () => void;
-  /** Callback to toggle focus on a specific schema. */
   onToggleFocusSchema: (schema: string) => void;
   /** Callback to toggle visibility of a specific schema. */
   onToggleSchema?: (schema: string) => void;
@@ -550,9 +548,7 @@ interface GraphCanvasProps {
   onToggleExternalRefType?: (subType: 'file' | 'db') => void;
   /** Array of active exclusion patterns. */
   exclusionPatterns?: string[];
-  /** Callback to add a new exclusion pattern. */
   onAddExclusionPattern?: (pattern: string) => void;
-  /** Callback to remove an existing exclusion pattern. */
   onRemoveExclusionPattern?: (pattern: string) => void;
   /** List of all schemas available in the model. */
   availableSchemas?: string[];
@@ -572,7 +568,6 @@ interface GraphCanvasProps {
   onOpenDdlViewer?: () => void;
   /** Whether the detailed search sidebar is currently open. */
   isDetailSearchOpen?: boolean;
-  /** Callback to toggle the detailed search sidebar. */
   onToggleDetailSearch?: () => void;
   /** Whether the trace navigator is collapsed to its reopen button. */
   isTraceTreeCollapsed?: boolean;
@@ -598,9 +593,7 @@ interface GraphCanvasProps {
   onAddTraceNeighbors?: (candidateIds: string[]) => void;
   /** The full database model (catalog and graph). */
   model?: DatabaseModel | null;
-  /** ID of the node currently shown in the info bar. */
   infoBarNodeId?: string | null;
-  /** Callback to close the info bar. */
   onCloseInfoBar?: () => void;
   /** Current state of the graph analysis (SCC, Hubs, etc.). */
   analysisMode?: AnalysisMode | null;
@@ -622,15 +615,12 @@ interface GraphCanvasProps {
   sourceName?: string;
   /** List of saved filter profiles (bookmarks). */
   filterProfiles?: FilterProfile[];
-  /** ID of the active project. */
   activeProjectId?: string | null;
-  /** ID of the active saved view. */
   activeViewId?: string | null;
   /** Whether the current view has unsaved changes. */
   isViewModified?: boolean;
   /** Callback to save the current view. */
   onSaveView?: (name: string) => void;
-  /** Callback to apply a saved filter profile. */
   onApplyView?: (profile: FilterProfile) => void;
   /** Callback to delete a saved view. */
   onDeleteView?: (profileId: string) => void;

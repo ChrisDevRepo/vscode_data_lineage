@@ -73,11 +73,9 @@ export interface CapturedSection {
  * step can render every archived slot verbatim.
  */
 export interface DetailSlot {
-  /** Node identifier. */
   nodeId: string;
   /** Schema of the database object. */
   schema: string;
-  /** Object name. */
   name: string;
   /** Object type (e.g. 'table', 'view', 'procedure'). */
   type: string;
@@ -463,7 +461,6 @@ export class AiMemoryManager {
     return this.detailSlots.size;
   }
 
-  /** Node IDs of every stored detail slot. */
   public get notedNodeIds(): string[] {
     return Array.from(this.detailSlots.keys());
   }

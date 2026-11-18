@@ -218,7 +218,6 @@ export class AgendaManager {
   /** Id-keyed index onto `_entries`, kept in sync at every mutation site for O(1) lookups. */
   private _byId = new Map<string, AgendaEntry>();
 
-  /** Returns all current entries. */
   public get entries(): ReadonlyArray<AgendaEntry> {
     return this._entries;
   }

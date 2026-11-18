@@ -301,7 +301,6 @@ interface SchemaContextMenuProps {
   disabledReason?: string;
   /** Callback fired when the menu is closed. */
   onClose: () => void;
-  /** Expands this schema in Expanded Schema View. */
   onExpand: (schema: string) => void;
   /** Collapses this schema out of Expanded Schema View. */
   onCollapse: (schema: string) => void;

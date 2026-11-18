@@ -44,7 +44,6 @@ export class ColumnTracer {
 
   private columnKey = (value: string): string => normalizeColName(value, this.identifierCaseSensitive);
 
-  /** Current column-trace state. */
   get state(): ColumnAspect {
     return this.aspect;
   }

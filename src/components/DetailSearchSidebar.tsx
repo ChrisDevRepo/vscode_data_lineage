@@ -54,7 +54,6 @@ interface SearchResult {
   snippet: string;
 }
 
-/** Props for a single Detail Search result row. */
 interface ResultRowProps {
   result: SearchResult;
   term: string;

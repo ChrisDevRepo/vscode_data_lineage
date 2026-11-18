@@ -966,7 +966,6 @@ function computeLayout(graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG, a
   return positions;
 }
 
-/** Prefix for an expanded-schema-view schema-cluster node id. */
 const EXPANDED_SCHEMA_VIEW_CLUSTER_PREFIX = '__expandedschemaviewcluster__';
 
 type LayoutEdge = { source: string; target: string };

@@ -4,9 +4,7 @@ import { Tooltip } from './ui/Tooltip';
 import { TRACE_ALL_LEVELS } from '../engine/shared/bridgeContract';
 
 interface InlineTraceControlsProps {
-  /** ID of the node starting the trace. */
   startNodeId: string;
-  /** Display name of the start node. */
   startNodeName: string;
   /** Initial upstream depth to show in the input. */
   defaultUpstream?: number;

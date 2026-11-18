@@ -2,7 +2,6 @@ import * as vscode from 'vscode';
 
 /** Static entry points shown in the Data Lineage activity view. */
 export class SidebarProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
-  /** Returns the given tree item unchanged. */
   getTreeItem(element: vscode.TreeItem): vscode.TreeItem { return element; }
 
   /** Returns the static entry list rendered in the view. */

@@ -13,25 +13,18 @@ import { ADD_NODE_IDS_REVEALS } from '../tools/presentResult';
 import type { InvestigationTask } from '../sm/smTypes';
 
 /**
- * Phase key used by the TS prompt protocol builders.
- *
- * @remarks
- * `visual_preview` is the rendering step of a discovery answer, not a lifecycle phase of its own —
- * it keeps the discovery grounding. It is listed here because it authors a
- * `lineage_present_result` payload and must therefore receive the same presentation contract
- * synthesis receives; a stage that calls the tool without going through {@link buildPhasePrompt} is
- * a stage validated by rules it was never told.
+ * Phase key used by the TS prompt protocol builders. `visual_preview` is the rendering step of a
+ * discovery answer, not a lifecycle phase; it keeps the discovery grounding and is listed because
+ * it authors a `lineage_present_result` payload and must receive the same presentation contract as
+ * synthesis ({@link buildPhasePrompt}).
  */
 export type PromptPhase = 'discover' | 'visual_preview' | 'active' | 'synthesis' | 'completed';
 
 /**
- * The three stages that author a `lineage_present_result` payload, as seen by
- * {@link buildPresentationDetailContract}.
- *
- * @remarks
- * A subset of {@link PromptPhase} with `visual_preview` renamed to `preview`, because this axis is
- * about what the stage is allowed to do with the text — not about where it sits in the lifecycle.
- * `discover` and `active` never call the tool and therefore have no member here.
+ * The stages that author a `lineage_present_result` payload, as seen by {@link
+ * buildPresentationDetailContract}: a subset of {@link PromptPhase} with `visual_preview` renamed
+ * `preview`, since this axis is about what the stage may do with the text. `discover` and `active`
+ * never call the tool.
  */
 export type PresentationStage = 'preview' | 'synthesis' | 'completed';
 
@@ -47,11 +40,8 @@ export interface GeneralPromptContext {
   readonly dbPlatform: string;
   /** Schema names currently active in the user's filter. */
   readonly filterSchemas: string[];
-  /** Total number of schemas in the loaded model. */
   readonly totalSchemaCount: number;
-  /** Number of nodes visible under the active filter. */
   readonly visibleNodes: number;
-  /** Total number of nodes in the loaded model. */
   readonly totalNodes: number;
   /** Checked source catalog policy; absent retains the legacy CI prompt. */
   readonly identifierCaseSensitive?: boolean;
@@ -60,25 +50,17 @@ export interface GeneralPromptContext {
 }
 
 /**
- * Constructs the base system prompt used to govern AI behavior across all phases.
- *
- * @remarks
- * Contains the role definition, injected app context (platform, schemas, node counts),
- * and core grounding rules. LaTeX is intentionally absent — the capture recipe and the synthesis
+ * Builds the base system prompt for all phases: role definition, injected app context (platform,
+ * schemas, node counts) and core grounding rules. LaTeX is absent; the capture recipe and synthesis
  * block state it where formulas are authored.
  *
- * The rendering rule is stated here rather than in a phase block because it is true in every
- * phase, and because the phase that needs it most is discovery: given a lineage question and
- * markdown, a model that has not been told a diagram already exists will draw one, and that
- * drawing is a second lineage graph no engine produced and no validator checks. It stays
- * tool-agnostic for the same reason — `lineage_present_result` is not available in discovery,
- * so naming it would be a rule the receiving phase cannot act on.
+ * The rendering rule lives here because it holds in every phase and matters most in discovery: a
+ * model not told a diagram already exists will draw one, a second lineage graph no engine produced.
+ * It stays tool-agnostic because `lineage_present_result` is unavailable in discovery. The base
+ * carries no phase label and stays byte-identical across stages as the shared cacheable prefix.
  *
- * The base carries no phase label: the stage block appended after it opens with a heading that
- * names the stage, and the base stays byte-identical across stages as the shared cacheable prefix.
- *
- * @param ctx - Grounding context values (one object so call sites can pass their `StagePromptContext` straight through).
- * @returns The assembled base system prompt string.
+ * @param ctx - Grounding context (one object so call sites can pass their `StagePromptContext`
+ *   through).
  */
 export function buildGeneralSystemPrompt(ctx: GeneralPromptContext): string {
   const { dbPlatform, filterSchemas, totalSchemaCount, visibleNodes, totalNodes, screen } = ctx;
@@ -104,17 +86,13 @@ export function buildGeneralSystemPrompt(ctx: GeneralPromptContext): string {
 }
 
 /**
- * Renders the `<screen_state>` block naming what the user currently has applied on screen.
+ * Renders the `<screen_state>` block naming what the user has applied on screen. The phrase carries
+ * database-derived object names, so it is delimited and banner-marked like every engine-produced
+ * payload (`stagePrompts.ts`, `toolAttempt.ts`): a name that reads as an instruction stays data.
+ * One owner for the base prompt and the entry detector keeps the two from drifting into different
+ * screen-state contracts.
  *
- * @remarks
- * The phrase is host-computed but carries database-derived object names, so it is delimited and
- * banner-marked exactly like every other engine-produced payload (`stagePrompts.ts`,
- * `toolAttempt.ts`): a name that reads as an instruction stays data. One owner for both consumers
- * — the base system prompt and the entry detector's context line — keeps the two copies from
- * drifting into two different screen-state contracts.
- *
- * @param screen - One phrase naming the trace, analysis, or bookmark applied on screen.
- * @returns The banner sentence followed by the delimited, escaped phrase, as prompt lines.
+ * @param screen - One phrase naming the trace, analysis or bookmark applied.
  */
 export function buildScreenStateSlot(screen: string): string[] {
   return [
@@ -126,17 +104,12 @@ export function buildScreenStateSlot(screen: string): string[] {
 }
 
 /**
- * Builds the phase-specific TS protocol block (non-YAML).
+ * Builds the phase-specific TS protocol block (non-YAML); the single phase-first entrypoint for
+ * static prompt content. YAML template guidance is injected separately by `resolveStagePrompt`.
  *
- * @remarks
- * This is the single phase-first entrypoint for static TS prompt content.
- * YAML template guidance is injected separately by `resolveStagePrompt`.
- *
- * @param phase - The runtime phase whose protocol block to render.
- * @param analysisMode - Hop or session analysis mode. Synthesis composes CT as the BB protocol
- *   plus a column rider; the active protocol is mode-independent (its column aspect renders in
+ * @param analysisMode - Hop or session analysis mode. Synthesis composes CT as the BB protocol plus
+ *   a column rider; the active protocol is mode-independent (its column aspect renders in
  *   `buildSmProtocol`).
- * @returns The phase-specific protocol text.
  */
 export function buildPhasePrompt(
   phase: PromptPhase,
@@ -158,25 +131,18 @@ const CHAT_MARKDOWN_FORMAT = [
 ].join(' ');
 
 /**
- * Constructs the prompt for the Discovery/Idle phase.
+ * Prompt for the Discovery/Idle phase. Role and grounding come from {@link
+ * buildGeneralSystemPrompt} and each tool's modelDescription owns which question it answers, so
+ * this block states only the task (answer directly or call a read tool), the one lineage call
+ * answering a dependency question, and the applied-bookmark rule: a question about a bookmarked
+ * graph reads a stored run, and answering it with a scope walk turned "what do I see here" into a
+ * fresh approval gate. Chat format lives in the YAML `discovery_chat` template; scope-depth
+ * mechanics in `lineage_get_scope_bundle`'s `.describe()` texts.
  *
- * @remarks
- * Role and grounding are established by {@link buildGeneralSystemPrompt}, composed once upstream
- * of this block, and each tool's modelDescription owns which question it answers — so this block
- * states only the task (when to answer directly and when to call a read tool), the one lineage call
- * that answers a dependency question, and the applied-bookmark rule, which selects the evidence
- * source before the kind of ask picks a tool: a question about a bookmarked graph is a read of a
- * run already stored, and answering it with a scope walk is what turned "what do I see here" into a
- * fresh approval gate. Chat format has one
- * home, the YAML `discovery_chat` template. The `over_discovery_budget` guard is deliberately
- * unmentioned — `lineage_get_scope_bundle` is the only place it can fire, that call site always
- * wires the mechanical `detectReroute` detector (`detectOverBudgetFromResult`,
- * `agent/discoveryCapture.ts`), and graph dispatch treats the tool result as a reroute terminal
- * that hands the turn to SM entry and its consent gate, so no prose describing that path is ever
- * reachable. Scope-depth mechanics have one home in `lineage_get_scope_bundle`'s `.describe()`
- * texts.
- *
- * @returns The assembled discovery-phase prompt string.
+ * The `over_discovery_budget` guard is unmentioned on purpose: only `lineage_get_scope_bundle` can
+ * fire it, that call site always wires the mechanical `detectReroute` detector
+ * (`detectOverBudgetFromResult`, `agent/discoveryCapture.ts`), and graph dispatch hands the turn to
+ * SM entry and its consent gate, so prose about that path is never reachable.
  */
 function buildDiscoveryPrompt(): string {
   return [
@@ -187,15 +153,10 @@ function buildDiscoveryPrompt(): string {
 
 
 /**
- * The active hop's task and deliverable, the same with or without tracked columns; field meanings
- * — the verdict words, `prune_neighbors`, `questions` and the CT carry — live in the
- * `submit_findings` schema, their one home.
- *
- * @remarks
- * The column aspect of a CT hop is rendered separately (`buildSmProtocol`, `smPrompts.ts`), so the
- * text here is mode-independent (CT ⊇ BB).
- *
- * @returns The active-phase protocol text.
+ * The active hop's task and deliverable, the same with or without tracked columns. Field meanings
+ * (verdict words, `prune_neighbors`, `questions`, the CT carry) live in the `submit_findings`
+ * schema. The CT column aspect renders separately (`buildSmProtocol`), so this text is
+ * mode-independent (CT ⊇ BB).
  */
 function buildActivePhasePrompt(): string {
   return [
@@ -215,26 +176,22 @@ function buildActivePhasePrompt(): string {
 
 /**
  * Builds the presentation contract shared by every stage that authors a `present_result` payload.
+ * Preview, synthesis and follow-up share one tool and `validatePresentResult`, so the cross-field
+ * rule it enforces (a highlighted node is explained by a section link or a note) lives here once.
+ * Single-field meaning lives in the `lineage_present_result` `.describe()` texts; synthesis-only
+ * surfaces (`detail_slots[]`, Column Trace Chain, detail-slot coverage) stay in {@link
+ * buildSynthesisPrompt}.
  *
- * @remarks
- * Preview, synthesis and follow-up render through the same tool and the same
- * `validatePresentResult`, so the cross-field rule that validator enforces in every stage — a
- * highlighted node is explained by a section link or a note — lives here once. Single-field meaning
- * (the section label, the one-section link, the highlight roles) lives in the
- * `lineage_present_result` `.describe()` texts, which ship with the tool on every call. Synthesis-only
- * surfaces (`detail_slots[]`, the Column Trace Chain, the detail-slot coverage rule) stay in
- * {@link buildSynthesisPrompt}.
- *
- * The depth line is the one stage-dependent part. Synthesis chooses how much captured evidence
- * survives; follow-up authors text without the archive in the window, so re-deriving via
- * `lineage_get_object_detail` is the owner; preview authors none — its section text is assembled
- * from the served answer blocks, so a compress-or-drop rule there would contradict the stage. The
- * heading rule ships to the two stages that author section text.
+ * The depth line is the stage-dependent part: synthesis chooses how much captured evidence
+ * survives; follow-up has no archive in the window, so re-deriving via `lineage_get_object_detail`
+ * owns it; preview authors no section text of its own (assembled from the served answer blocks), so
+ * a compress-or-drop rule there would contradict the stage. The heading rule ships to the two
+ * stages that author section text.
  *
  * @param evidence - Sentence naming the stage's evidence surface for `sections[].text`; omitted by
  *   stages whose own block names it. First parameter because existing callers pass it positionally.
- * @param mode - Which stage receives the contract; selects the depth line. Defaults to `'synthesis'`.
- * @returns The shared highlight rule plus the stage's depth and heading lines.
+ * @param mode - Which stage receives the contract; selects the depth line. Defaults to
+ *   `'synthesis'`.
  */
 export function buildPresentationDetailContract(
   evidence?: string,
@@ -267,17 +224,11 @@ export function buildPresentationDetailContract(
 }
 
 /**
- * Constructs the protocol block for the bounded **visual preview** call.
- *
- * @remarks
- * The stage restructures an already-written discovery answer into the graph presentation; it
- * authors no new prose and reads no new evidence. Everything about *how* nodes are linked,
- * captioned, and coloured is therefore identical to synthesis and comes from
- * {@link buildPresentationDetailContract}. What is unique here is the reference contract: the
- * answer is served as numbered blocks, each section names the block it starts at and the
- * engine assembles its text up to the next section.
- *
- * @returns The visual-preview protocol block.
+ * Protocol block for the bounded visual preview call. The stage restructures an already-written
+ * discovery answer into the graph presentation, authoring no new prose and reading no new evidence,
+ * so linking, captioning and colouring come from {@link buildPresentationDetailContract}. What is
+ * unique is the reference contract: the answer is served as numbered blocks, each section names the
+ * block it starts at and the engine assembles its text up to the next section.
  */
 function buildVisualPreviewPrompt(): string {
   return [
@@ -292,18 +243,15 @@ function buildVisualPreviewPrompt(): string {
 
 
 /**
- * Constructs the synthesis-phase task block.
- *
- * @remarks
- * States the task, the evidence surfaces, the fields the model authors and the cross-field rules the
- * validator enforces at this stage. Single-field meaning lives in the `lineage_present_result`
- * describes, field wording in the YAML synthesis templates rendered after this block. Three rules are
- * the pre-emptive copies of synthesis rejections: the detail-slot sentence
+ * Synthesis-phase task block: the task, evidence surfaces, authored fields and the cross-field
+ * rules the validator enforces at this stage. Single-field meaning lives in the
+ * `lineage_present_result` describes; field wording in the YAML synthesis templates rendered after
+ * this block. Three rules pre-empt synthesis rejections: the detail-slot sentence
  * (`findUnrenderedDetailSlotIds`), the CT coverage sentence (`findUncoveredCtChainNodes`) and the
- * id-set sentence (the unknown-node-id rejection).
+ * id-set sentence (unknown-node-id).
  *
- * CT is BB plus the column-chain rider: the shared block always ships, and a CT session additionally
- * names the Column Trace Chain surface and its coverage rule. Depth is mode-independent.
+ * CT is BB plus the column-chain rider: the shared block always ships and a CT session adds the
+ * Column Trace Chain surface and its coverage rule. Depth is mode-independent.
  */
 function buildSynthesisPrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
   const isCt = analysisMode === 'ct';
@@ -338,25 +286,19 @@ function buildSynthesisPrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
 
 
 /**
- * Constructs the prompt for the Follow-Up phase (post-synthesis refinement).
+ * Prompt for the Follow-Up phase (`sess.phase.kind === 'completed'`, a later user turn). History
+ * replay carries earlier user turns and the assistant's markdown only; the per-node archive and
+ * engine-assembled section bodies are not replayed. The protocol therefore points at
+ * `lineage_get_object_detail` and `lineage_search_ddl` to re-derive node facts instead of inviting
+ * the model to quote an archive it cannot read. It refines the existing answer (text edits, prunes,
+ * explicit-node supplements), answers questions beyond the report by walking the graph with the
+ * read tools, and sends a fresh proposal, run only after approval, for a different origin,
+ * direction or scope.
  *
- * @remarks
- * Fires when `sess.phase.kind === 'completed'` on a subsequent user turn. History replay carries
- * the conversation — earlier user turns and the assistant's own markdown — and nothing else: the
- * per-node archive and the engine-assembled section bodies are not replayed into this stage. The
- * protocol therefore points at `lineage_get_object_detail` and `lineage_search_ddl` to re-derive
- * node facts, instead of inviting the model to quote an archive it cannot read. Tells the model to
- * refine the existing answer — text edits, prunes, and explicit-node supplements — to answer a
- * question beyond the report by walking the graph with the discovery read tools, and, for a
- * different origin, direction or scope, to send a fresh proposal that runs only after the user
- * approves it.
- *
- * Receives {@link buildPresentationDetailContract} like every other stage that authors a
- * `present_result` payload: linking, labels, colors, and `is_update` are the same rules
- * `validatePresentResult` enforces. Depth is not — follow-up has no archive in the window, so the
- * completed depth does not lift captured warnings, formulas, or predicates.
- *
- * @returns A string containing the follow-up-phase protocol.
+ * It receives {@link buildPresentationDetailContract} like every `present_result` stage (same
+ * linking, labels, colors and `is_update` rules as `validatePresentResult`); depth differs: with no
+ * archive in the window, the completed depth does not lift captured warnings, formulas or
+ * predicates.
  */
 function buildFollowUpPrompt(): string {
   return [
@@ -420,14 +362,12 @@ export const RUN_TRACE_TRIGGER = 'Run trace';
 export const SHOW_GRAPH_PREVIEW_TRIGGER = 'Show graph preview';
 
 /**
- * Internal routing prompt for a validated **Approve & Proceed** or **Cancel** button action.
- *
- * @remarks
- * The gate turn ends when the card renders so VS Code frees the chat input; a button therefore
- * re-enters as a fresh chat turn displaying only the action label. The host projects its
- * request-owned action into this internal prompt, which `detectEntryNode` resolves against the
- * held proposal (see {@link parseGateTrigger}) without a model call. The revision ties the click
- * to the plan the user saw, so a stale card never acts on a newer plan.
+ * Internal routing prompt for a validated **Approve & Proceed** or **Cancel** button action. The
+ * gate turn ends when the card renders, so a button re-enters as a fresh chat turn showing only the
+ * action label; the host projects its request-owned action into this prompt, which
+ * `detectEntryNode` resolves against the held proposal ({@link parseGateTrigger}) without a model
+ * call. The revision ties the click to the plan the user saw, so a stale card never acts on a newer
+ * plan.
  */
 export function gateTriggerPrompt(action: 'approve' | 'cancel', revision: number): string {
   return `${action === 'approve' ? 'Approve' : 'Cancel'} exploration plan revision ${revision}`;
@@ -445,13 +385,10 @@ export function parseGateTrigger(prompt: string): { action: 'approve' | 'cancel'
 export const STALE_GATE_TRIGGER_REPLY = 'That plan is no longer pending — use the buttons on the latest plan, or ask again.';
 
 /**
- * System prompt for the structured reading of one typed reply at a pending approval gate.
- *
- * @remarks
- * One call, four outcomes: the user's free text approves the plan as shown, changes it (the reply
- * names the change), cancels it, or is about something else. A change is delivered verbatim as the
- * refinement instruction; `other` is answered like any chat turn while the proposal and its card
- * stay pending, so no typed reply is ever a dead end.
+ * System prompt for the structured reading of one typed reply at a pending approval gate. Four
+ * outcomes: the reply approves the plan as shown, changes it (delivered verbatim as the refinement
+ * instruction), cancels it, or is about something else (`other`, answered like any chat turn while
+ * the proposal and card stay pending), so no typed reply is a dead end.
  */
 export function buildGateReplySystemPrompt(): string {
   return [
@@ -486,12 +423,9 @@ export function buildGateReplyUserPrompt(scopeMd: string, reply: string): string
 export const PREVIEW_REQUEST_MARKER = 'The user clicked the post-discovery "Show graph preview" link.';
 
 /**
- * Sentinel prompt fired by the "Show full description" follow-up pill.
- *
- * @remarks
- * Recognized and answered before any model round is spent: the reply is the session's cached
- * synthesized description, replayed verbatim. That makes the full answer reachable in chat without
- * depending on the model choosing to narrate it again after `present_result`.
+ * Sentinel prompt of the "Show full description" follow-up pill. Recognized and answered before any
+ * model round: the reply is the cached synthesized description, replayed verbatim, so the full
+ * answer is reachable without the model choosing to narrate it again after `present_result`.
  */
 export const SHOW_FULL_DESCRIPTION_TRIGGER = 'Show the full description';
 
@@ -539,14 +473,10 @@ export function expandShowGraphPreviewPrompt(prompt: string, ctx: DiscoveryPillC
 
 /**
  * Expands the SM-offer pill sentinel into the seeded trace prompt from captured discovery context.
+ * Living here keeps the pill label and routing marker from drifting. Any other prompt passes
+ * through unchanged, and so does the sentinel when the walk was never captured, so the graph routes
+ * that turn normally rather than seeding a half-built envelope.
  *
- * @remarks
- * The expansion lives here so the pill label and the routing marker cannot drift apart. Any other
- * prompt passes through unchanged, and so does the sentinel itself when the walk was never
- * captured — the graph then routes that turn normally rather than seeding a half-built envelope.
- *
- * @param prompt - The raw prompt: the pill sentinel, or any other user text.
- * @param ctx - The session's captured discovery context.
  * @returns The seeded trace prompt when the sentinel and full context are present; else `prompt`.
  */
 export function expandRunTracePrompt(prompt: string, ctx: DiscoveryPillContext): string {
@@ -587,12 +517,9 @@ function buildRunTraceTriggerPrompt(
 }
 
 /**
- * System prompt for the discovery-summary composition round.
- *
- * @remarks
- * Compose is otherwise the only model call in the pipeline with no system key on the wire — the
- * memo it produces rides every later hop's stable prefix as established fact, so grounding and
- * formatting instructions belong at the system layer like every other stage.
+ * System prompt for the discovery-summary composition round. The memo it produces rides every later
+ * hop's stable prefix as established fact, so grounding and formatting instructions belong at the
+ * system layer like every other stage (compose was the one model call without a system key).
  */
 export const DISCOVERY_SUMMARY_COMPOSE_SYSTEM_PROMPT = [
   'You are the @lineage assistant in the Data Lineage Viz VS Code extension, composing one internal memo for your own later hops.',
@@ -601,15 +528,12 @@ export const DISCOVERY_SUMMARY_COMPOSE_SYSTEM_PROMPT = [
 ].join('\n');
 
 /**
- * Builds the one-shot prompt for the proposal-build discovery-summary
- * composition round (fires once per shown SM proposal).
+ * One-shot prompt for the proposal-build discovery-summary composition round (once per shown SM
+ * proposal).
  *
- * @param question - The user's verbatim discovery question.
- * @param answer - The AI's discovery chat answer (Markdown).
  * @param contractSummary - One-line digest of the proposed gate parameters.
  * @param rejectReason - Zod issue text from a rejected prior reply; appends the reject-with-hint
- * retry block. Omitted on the first attempt.
- * @returns Effective-prompt text fed into the one-shot composition round.
+ *   retry block. Omitted on the first attempt.
  */
 export function buildDiscoverySummaryComposePrompt(
   question: string,
@@ -643,15 +567,9 @@ export function buildDiscoverySummaryComposePrompt(
 }
 
 /**
- * Renders the `<discovery_summary>` XML block for SM hop stable prefix.
- * Returns empty string when summary is null or empty.
- *
- * @remarks
- * The memo restates the user's question near-verbatim and is composed from the discovery answer,
- * so it is a dynamic slot and escapes through {@link escapePromptText} like the mission brief.
- *
- * @param summary - The AI-composed memo, or `null` when unavailable.
- * @returns Filled block, or empty string.
+ * Renders the `<discovery_summary>` XML block for the SM hop stable prefix; empty when the summary
+ * is null or empty. The memo restates the user's question near-verbatim, so it is a dynamic slot
+ * escaped through {@link escapePromptText} like the mission brief.
  */
 export function buildDiscoverySummaryBlock(summary: string | null): string {
   if (!summary || summary.trim().length === 0) return '';
@@ -664,16 +582,12 @@ export function buildDiscoverySummaryBlock(summary: string | null): string {
 }
 
 /**
- * Renders the `<original_question>` XML block for the active/synthesis stable prefix.
+ * Renders the `<original_question>` XML block for the active/synthesis stable prefix. The question
+ * is user-authored text resolved at `start_exploration` (verbatim, never the model's paraphrase),
+ * so it is escaped like the mission brief. Session-constant, hence byte-identical across hops and
+ * stable-prefix-safe.
  *
- * @remarks
- * The canonical question is user-authored text resolved at `start_exploration`
- * (verbatim discovery prompt or direct turn prompt — never only the model's
- * paraphrase), so it is escaped exactly like the mission brief. Session-constant,
- * therefore stable-prefix-safe: the block is byte-identical across hops.
- *
- * @param question - The canonical user question, or null/empty when unresolved.
- * @returns Filled block, or empty string.
+ * @returns Filled block, or empty string when unresolved.
  */
 export function buildOriginalQuestionBlock(question: string | null): string {
   if (!question || question.trim().length === 0) return '';
@@ -687,16 +601,12 @@ export function buildOriginalQuestionBlock(question: string | null): string {
 }
 
 /**
- * Renders the CT stable-prefix anchor — injected into the active-phase system prompt when
- * `targetColumns` are set.
+ * Renders the CT stable-prefix anchor injected into the active-phase system prompt when
+ * `targetColumns` are set. Names the traced columns only; what `column_flow` holds and how it
+ * differs from `sections` is owned by the `column_trace_capture` template and the
+ * `upstream_columns` schema description.
  *
- * @remarks
- * Names the traced columns only. What `column_flow` holds and how it differs from
- * `sections` is owned by the `column_trace_capture` template and the `upstream_columns`
- * schema description.
- *
- * @param targetColumns - The columns being traced, as confirmed at gate-approval.
- * @returns Stable-prefix markdown block anchoring the CT session contract.
+ * @param targetColumns - The columns being traced, as confirmed at gate approval.
  */
 export function buildColumnAspectPrompt(targetColumns: string[]): string {
   return [
@@ -708,22 +618,17 @@ export function buildColumnAspectPrompt(targetColumns: string[]): string {
 
 
 /**
- * Renders the `<mission_brief>` XML block — **session-stable** content.
+ * Renders the `<mission_brief>` XML block: session-stable content, set once at `start_exploration`,
+ * so the service-side prompt cache covers it across every hop. Scope notes ride here for the same
+ * reason (fixed at approval, byte-identical across hops) and are the only surviving copy of an
+ * instruction mapping to no filter, since the sliding-memory wipe removes its conversation turn
+ * after the first hop.
  *
- * @remarks
- * Mission brief is set once at `start_exploration` and never changes during a
- * session. Placing it in the stable prefix lets the service-side prompt cache
- * cover it across every hop of the active/synthesis phase.
- *
- * Scope notes ride here for the same reason: they are fixed at approval, so the block stays
- * byte-identical across hops and the cached prefix still holds. They are also the only surviving
- * copy of an instruction that maps to no filter — the conversation turn that carried it is removed
- * by the sliding-memory wipe after the first hop.
- *
- * @param brief - The AI-composed mission statement; may be empty before the first `start_exploration`.
- * @param question - The user's original question, used as fallback text when `brief` is absent.
+ * @param brief - The AI-composed mission statement; may be empty before the first
+ *   `start_exploration`.
+ * @param question - The user's original question, fallback text when `brief` is absent.
  * @param scopeNotes - User-stated constraints no filter field expresses; omitted when empty.
- * @returns Filled mission-brief XML block, or an empty string when `brief`, `question`, and `scopeNotes` are all absent.
+ * @returns The block, or an empty string when `brief`, `question` and `scopeNotes` are all absent.
  */
 export function buildMissionBriefBlock(brief: string, question: string, scopeNotes: readonly string[] = []): string {
   const missionText = brief || question;
@@ -744,35 +649,26 @@ export function buildMissionBriefBlock(brief: string, question: string, scopeNot
 }
 
 /**
- * Renders the `<current_task>` XML block — **per-hop dynamic** content.
+ * Renders the `<current_task>` XML block: per-hop dynamic content, the sub-question for the hop's
+ * focus node, so it leads the per-hop worker user message, never the cacheable stable prefix. The
+ * input is exactly one task-ledger question; root tasks carry the `Root Question:` prefix, routed
+ * questions render as the hop's sub-question. Prior tasks live in structured memory, not a
+ * delimiter-bearing string.
  *
- * @remarks
- * Current task is the sub-question assigned to the focus node of the present
- * hop. It changes every hop in SM mode, so it leads the per-hop worker user
- * message, never the cacheable stable system prefix.
+ * A hop tracking at least one column gets a `<column_trace>` block with only that per-hop set and
+ * the column-source inspection hint. A hop tracking none runs under the BB contract and gets no
+ * such block: its submission form has no `column_flow` field, and its mode reaches the model as
+ * `hop_context.analysis_mode`. Invariant CT rules live in the stable system prompt and CT capture
+ * template so sliding-memory wipes do not repeat the rulebook each hop. When the engine routed this
+ * focus to continue an earlier hop's column_flow, a `<lineage_questions>` block follows; it and the
+ * sub-questions carry no priority label, and the questions are always this focus's own from its
+ * AgendaEntry.
  *
- * The input is exactly one task-ledger question. Root tasks carry the explicit
- * `Root Question:` prefix; routed questions are rendered as the current hop's
- * sub-question. Prior tasks live in structured memory rather than being encoded
- * into and reparsed from a delimiter-bearing string.
- *
- * A hop tracking at least one column gets a `<column_trace>` block carrying only that per-hop set
- * and the column-source inspection hint. A hop tracking none is dispatched under the BB contract
- * and gets no such block: its submission form has no `column_flow` field for the block to ask for,
- * and its mode reaches the model as `hop_context.analysis_mode` instead. The invariant
- * CT rules live in the stable system prompt and CT capture template so sliding
- * memory wipes do not duplicate the same rulebook every hop. When the engine
- * routed this focus node to continue an earlier hop's column_flow, a
- * `<lineage_questions>` block follows asking the model to address those
- * continuations; neither it nor the sub-questions carry a priority label. The
- * questions are always this focus's own, carried on its AgendaEntry, never a
- * different node's.
- *
- * @param currentTasks - Structured tasks assigned to the active node.
- * @param columnTraceColumns - Active CT target columns for this hop; omit when this hop tracks none.
- * @param columnLineageQuestions - This focus node's own lineage sub-questions, carried on its AgendaEntry from the hop that opened them (CT only).
- * @returns Structured `<current_task>` XML block; a task with a blank question renders no element,
- *   and the result is an empty string when no element would render.
+ * @param columnTraceColumns - Active CT target columns for this hop; omit when none.
+ * @param columnLineageQuestions - This focus's own lineage sub-questions from its AgendaEntry (CT
+ *   only).
+ * @returns The block; a task with a blank question renders no element, and the result is empty when
+ *   no element would render.
  */
 export function buildCurrentTaskBlock(
   currentTasks: ReadonlyArray<Pick<InvestigationTask, 'kind' | 'question'>>,
@@ -811,16 +707,12 @@ export function buildCurrentTaskBlock(
 
 /**
  * Renders the `<short_term_memory>` block (last 3 node summaries) plus, when present, a
- * `<recent_rejections>` block (the engine's rejection ring) for SM active hops.
+ * `<recent_rejections>` block (the engine's rejection ring) for SM active hops. The worker is
+ * handed `peekHopContext`, which omits `working_memory`, so this block of the per-hop worker
+ * message is the only channel carrying the rejection ring, which lets it self-correct from prior
+ * rejected hops.
  *
- * @remarks
- * Surfacing `recent_rejections` here is what lets the host worker self-correct from prior rejected
- * hops: the worker is handed `peekHopContext` (which omits `working_memory`), so this block — part
- * of the per-hop worker user message — is the only channel carrying the rejection ring to the worker.
- *
- * @param stm - Sliding window of the last 3 node summaries.
  * @param recentRejections - The engine's recent-rejection ring (max 5); empty renders no block.
- * @returns A string containing the working-memory block(s).
  */
 export function buildMemoryBlock(
   stm: Array<{ nodeId: string; summary: string }>,

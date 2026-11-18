@@ -54,7 +54,6 @@ const RENDER_LIMIT_SURFACE_STYLE: CSSProperties = {
 interface AiPreview {
   /** The name of the AI view. */
   name: string;
-  /** The set of node IDs that belong to this view. */
   nodeIds: Set<string>;
   /** Metadata provided by the AI regarding the purpose and logic of this view. */
   aiMetadata: AIViewMetadata;
@@ -363,7 +362,6 @@ export function App() {
     setView('create');
   }, [dacpacLoader.resetToStart]);
 
-  /** Loads and opens a specific saved project. */
   const handleOpenProject = useCallback((id: string) => {
     setLoadingProjectId(id);
     setLoadingPhase('load');
@@ -1065,7 +1063,6 @@ export function App() {
     handleAddExclusionPattern(pattern);
   });
 
-  /** Exits analysis mode. */
   const closeAnalysis = useCallback(() => {
     endTrace();
     setAnalysisMode(null);
@@ -1113,7 +1110,6 @@ export function App() {
     applyAnalysisSubset(nodeIdSet, edgeIds, originId, analysisMode.type);
   }, [analysisMode, graph, flowNodes.length, applyAnalysisSubset]);
 
-  /** Clears the current analysis group focus. */
   const clearAnalysisGroup = useCallback(() => {
     if (!analysisMode) return;
     setAnalysisMode(prev => prev ? { ...prev, activeGroupId: null } : null);
@@ -1446,7 +1442,6 @@ export function App() {
     persistFilterProfile(profile, { activateProfile: true });
   }, [activeProjectId, filter, persistFilterProfile, vscodeApi]);
 
-  /** Updates an existing view profile with the current filters. */
   const handleUpdateView = useCallback((profileId: string) => {
     if (!activeProjectId) return;
     const existing = filterProfiles.find(p => p.id === profileId);

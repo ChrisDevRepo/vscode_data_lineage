@@ -12,7 +12,6 @@
  */
 import { z } from 'zod';
 
-/** A plain JSON-Schema fragment. */
 type JsonSchemaNode = Record<string, unknown>;
 
 /**

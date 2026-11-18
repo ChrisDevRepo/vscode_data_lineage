@@ -38,9 +38,7 @@ export interface RenderComponent {
  * or orphaned. Bounded by `renderLimit`, so always cheap.
  */
 export interface RenderConnectivity {
-  /** Rendered node count. */
   nodeCount: number;
-  /** Rendered edge count. */
   edgeCount: number;
   /** Number of weakly-connected components. */
   componentCount: number;

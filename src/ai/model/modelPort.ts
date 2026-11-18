@@ -239,7 +239,6 @@ export interface ModelToolDefinition {
   readonly name: string;
   /** Natural-language description of what the tool does. */
   readonly description: string;
-  /** Zod schema validating the call input. */
   readonly inputSchema: ZodType;
 }
 
@@ -256,7 +255,6 @@ export interface ToolGenerationInput {
   readonly messages: readonly ModelMessage[];
   /** Optional system instruction prepended ahead of `messages`. */
   readonly system?: string;
-  /** Tool definitions offered to the model. */
   readonly tools: readonly ModelToolDefinition[];
   /** Optional policy narrowing which tools the model may call. */
   readonly toolChoice?: ModelToolChoice;
@@ -338,7 +336,6 @@ export interface ModelIdentity {
   readonly vendor: string;
   /** Model family the platform groups it under. */
   readonly family: string;
-  /** Model version string. */
   readonly version: string;
 }
 

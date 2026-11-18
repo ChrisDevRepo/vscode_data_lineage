@@ -38,7 +38,6 @@ export interface ProjectStore {
   projects: Project[];
   /** The ID of the last opened project, or null if none was opened. */
   lastOpenedId: string | null;
-  /** The last active view in the setup wizard. */
   lastWizardView?: 'main' | 'projects';
 }
 

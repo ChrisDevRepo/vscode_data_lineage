@@ -103,11 +103,8 @@ const RESULT_TOO_LARGE_HINT = 'This result is larger than the evidence this step
  * The stored stand-in for an accepted result that does not fit the evidence share: a "too big"
  * reply in the tool-error shape the model already repairs from, never a prefix of the body.
  *
- * @param toolName - Tool whose result was refused storage.
- * @param bytes - Size of the refused result.
  * @param heldBytes - Bytes of observation bodies already held for this phase/hop.
- * @param budget - The evidence share both were measured against.
- * @returns The JSON reply stored as this call's observation.
+ * @param budget - The evidence share both sizes were measured against.
  */
 function resultTooLargeReply(toolName: string, bytes: number, heldBytes: number, budget: number): string {
   return JSON.stringify(makeRejection({
@@ -242,12 +239,11 @@ export interface ToolAttemptResult {
   /** Compact failures available to graph policy and recovery projection. */
   readonly rejections: readonly ToolAttemptRejection[];
   /**
-   * This attempt's own delta onto the phase's append-only transcript: the model's own `AIMessage`
-   * (text, every tool call, provider parts) followed by one `ToolMessage` per call in call order, or
-   * — when the generation carried no tool call — the model's own text `AIMessage` followed by one
-   * `HumanMessage` correction. Empty when the generation itself was cancelled, errored, or
-   * output-limited before any call dispatched. Empty on any
-   * cancellation, including a cancel between two calls of one batch.
+   * This attempt's delta onto the phase's append-only transcript: the model's `AIMessage` (text,
+   * every tool call, provider parts) followed by one `ToolMessage` per call in call order, or, when
+   * the generation carried no tool call, its text `AIMessage` followed by one `HumanMessage`
+   * correction. Empty when the generation was cancelled (including between two calls of one batch),
+   * errored or output-limited before any call dispatched.
    */
   readonly messages: readonly ModelMessage[];
   /** Model prose emitted by this generation. */
@@ -326,14 +322,11 @@ interface ToolGenerationAttemptInput {
 
 /**
  * Sink for a rejection this module raises itself, with no tool dispatch behind it.
- *
- * @remarks
- * Registry-dispatched rejections are captured by the observability decorator wrapping
- * `IToolRegistry.invoke`. A rejection raised here never reaches that decorator, so without this
- * hook the only failures the model was actually charged for would be invisible to a trace consumer.
- * Enumerated code and tool name only — the reason prose stays on
- * {@link ToolGenerationAttemptInput.debugLog}, keeping this provider-neutral module free of any
- * observability import.
+ * Registry-dispatched rejections are captured by the observability decorator on
+ * `IToolRegistry.invoke`; one raised here never reaches it, so without this hook the failures the
+ * model was charged for would be invisible to a trace consumer. Carries the enumerated code and
+ * tool name only; the reason prose stays on {@link ToolGenerationAttemptInput.debugLog}, keeping
+ * this module free of observability imports.
  */
 export type SyntheticRejectionTrace = (rejection: { toolName: string; code: string }) => void;
 
@@ -433,13 +426,10 @@ function acceptedCallKey(toolName: string, input: unknown): string {
 }
 
 /**
- * Appends one attempt's counters and its own transcript delta, never retiring an earlier rejection — the transcript is append-only,
- * so a repaired tool's earlier failed attempt stays exactly where it happened, the same standard
- * behaviour every tool-calling client keeps.
+ * Appends one attempt's counters and transcript delta, never retiring an earlier rejection: the
+ * transcript is append-only, so a repaired tool's earlier failed attempt stays where it happened.
  *
- * @param state - Existing phase-local cumulative state.
- * @param attempt - Exactly one completed graph attempt.
- * @param terminalTool - The step's terminal tool; a reply that leaves it rejected counts toward the
+ * @param terminalTool - The step's terminal tool; a reply leaving it rejected counts toward the
  *   reply limit even when the same reply carried an accepted read.
  * @returns Updated state carrying the backend-fault or no-progress stop.
  */
@@ -519,25 +509,19 @@ function newestAttemptGroup(messages: readonly ModelMessage[]): ModelMessage[] {
 }
 
 /**
- * One phase's retry context as the model's own provider-native history — the accumulated transcript,
- * bounded to the turn's attempt-context budget. Every attempt already appended its own
- * `AIMessage`/`ToolMessage` (or `AIMessage`/`HumanMessage`) pair when it happened, so rendering is
- * concatenation, never reconstruction; the only work left is dropping whole leading attempts once
- * the transcript outgrows the budget, which `trimMessages` does on the model's own token count,
- * keeping every assistant call and its tool results together (`startOn: ['human', 'ai']` never lets
- * a kept span begin mid-group, and `strategy: 'last'` always keeps the newest attempt first).
+ * One phase's retry context as the model's provider-native history: the accumulated transcript
+ * bounded to the turn's attempt-context budget. Every attempt already appended its own message
+ * pair, so rendering is concatenation, never reconstruction; the only work is dropping whole
+ * leading attempts once the transcript outgrows the budget. `trimMessages` counts the model's own
+ * tokens and keeps each assistant call with its tool results (`startOn: ['human', 'ai']`,
+ * `strategy: 'last'`, newest attempt first); it keeps a suffix or nothing, never a partial group,
+ * since {@link assertToolPairingWellFormed} rejects a lone `ToolMessage` as a boundary. When the
+ * newest attempt alone exceeds the budget, `trimMessages` would return an empty transcript and the
+ * retry would silently lose its rejection context, so that attempt is kept whole, over budget, and
+ * the fallback is logged.
  *
- * `trimMessages` can only keep a suffix of the transcript or nothing at all — never a partial
- * group, since {@link assertToolPairingWellFormed}'s own shape rejects a lone `ToolMessage` as a
- * `startOn` boundary. When the newest attempt's own delta alone already exceeds the budget,
- * `trimMessages` would otherwise return an empty transcript and the retry would silently lose its
- * own rejection context; the newest attempt is kept whole instead, over budget, and the fallback is
- * logged.
- *
- * @param state - Cumulative typed state for the current logical phase or hop.
- * @param model - The turn's model port, read for its token budget and its own token counter.
- * @param debugLog - Optional debug sink ({@link Logger.debug} via `src/utils/log.ts`), called only
- *   when the newest-attempt fallback fires.
+ * @param model - The turn's model port, read for its token budget and token counter.
+ * @param debugLog - Optional debug sink called only when the newest-attempt fallback fires.
  */
 export async function renderToolAttemptContext(
   state: ToolPhaseAttemptState,
@@ -609,7 +593,6 @@ function withHeldDraftDetail(
   return { ...data, detail: { ...baseDetail, held_draft: held } };
 }
 
-/** Appends a repair sentence to a rejection's hint. */
 function withRepairHint(data: ToolOutcomeData, sentence: string): ToolOutcomeData {
   if (data.status !== 'rejected') return data;
   const hint = data.correction?.hint;
@@ -709,11 +692,11 @@ interface RecordedToolOutcome {
 
 /**
  * The model-facing content of one rejection as plain text: its reason (one line per error of a
- * multi-error validation), its hint and, when a `present_result` repair draft is held, the labels of its sections. The
- * reason states the identity fault; verified object-column inventories and the top-level fields to
- * correct are disclosed on the rejection the last budgeted reply answers. The last line states the replies the step has left, so
- * the remaining budget is known before it is spent. The code, issue paths and detail stay on the
- * paired `ToolMessage.artifact`.
+ * multi-error validation), its hint and, when a `present_result` repair draft is held, its section
+ * labels. The reason states the identity fault; verified column inventories and the top-level
+ * fields to correct are disclosed on the rejection the last budgeted reply answers. The last line
+ * states the replies the step has left, so the budget is known before it is spent. Code, issue
+ * paths and detail stay on the paired `ToolMessage.artifact`.
  */
 function rejectionText(rejection: ToolRejection, priorState?: ToolPhaseAttemptState): string {
   const repliesLeft = repliesLeftAfter(priorState);
@@ -808,12 +791,10 @@ function safeLogIdentifier(value: string, fallback: string): string {
 }
 
 /**
- * Writes the `[Reject]` log line for a rejection no tool dispatch stands behind.
- *
- * @remarks
- * Dispatched rejections are logged by the registry's own result path; a rejection raised here
- * reaches the trace through {@link SyntheticRejectionTrace} and would otherwise be counted by the
- * trace and by no log line, leaving the two sources disagreeing on the run's rejection count.
+ * Writes the `[Reject]` log line for a rejection no tool dispatch stands behind. The registry logs
+ * dispatched rejections; one raised here reaches the trace via {@link SyntheticRejectionTrace} and
+ * would otherwise be counted by the trace and by no log line, leaving the two disagreeing on the
+ * rejection count.
  */
 function logSyntheticRejection(
   input: Pick<ToolGenerationAttemptInput, 'debugLog' | 'phase'>,
@@ -865,7 +846,6 @@ async function dispatchRegistryTool(
 /**
  * Executes one provider generation and dispatches its valid calls in provider order.
  *
- * @param model - One-generation model port selected for this turn.
  * @param plan - Immutable phase-filtered tool-generation plan compiled by LangGraph.
  * @param options - Existing phase counters and optional secret-safe debug sink.
  * @returns Compact attempt evidence; never a provider transcript or a retry decision.
@@ -920,13 +900,10 @@ interface SynthesizedRejectionSpec {
 type SynthesizedRejectionMessages = readonly ModelMessage[];
 
 /**
- * Builds, records, logs, and traces one synthesized (no-call) rejection.
- *
- * @remarks
- * Every synthesized rejection follows the same 3-step contract as a dispatched-call reject —
- * build, debug-log, trace — and, like every reply without progress, counts toward
- * {@link MAX_TOOL_PROVIDER_CALLS}. The correction travels as a user message because no tool call
- * was received, so there is no call id for a tool result to answer.
+ * Builds, records, logs and traces one synthesized (no-call) rejection: the same build, debug-log,
+ * trace contract as a dispatched-call reject, counting toward {@link MAX_TOOL_PROVIDER_CALLS} like
+ * any reply without progress. The correction travels as a user message because no tool call was
+ * received to answer.
  */
 function emitSynthesizedRejection(
   input: Pick<ToolGenerationAttemptInput, 'debugLog' | 'phase' | 'traceSyntheticRejection' | 'priorState'>,
@@ -1004,27 +981,19 @@ interface ToolCallDispatchLoopResult {
 }
 
 /**
- * Dispatches one provider-emitted batch of tool calls in order, closing the batch the moment a
- * gate, reroute or phase completion makes every later sibling moot.
+ * Dispatches one provider-emitted batch of tool calls in order, closing the batch once a gate,
+ * reroute or phase completion makes later siblings moot (each is recorded as `phase_closed` without
+ * dispatch; the closure state does not outlive the call). The reusable-observation map and
+ * prior-observation-key set are explicit parameters and part of the accumulated result.
  *
- * @remarks
- * A pure move of {@link executeToolGenerationAttempt}'s per-call loop: the reusable-observation map and the prior-observation-key set are threaded through as explicit
- * parameters and the accumulated result, never captured only as a closure the caller cannot see.
- * Once `closedBy` closes the batch, every remaining sibling is recorded as
- * `phase_closed` without dispatch — that closure state is internal to this one
- * batch and does not survive past the return. A second call of a {@link ONE_CALL_PER_REPLY_TOOLS}
- * tool is recorded the same way, whatever became of the first, so it can neither be held as the
- * repair draft nor answer the first call's rejection inside the same reply. A call whose text
- * values carry tool-call notation ({@link toolCallNotationFault}) is rejected before dispatch and
- * none of its fields is held: no schema has checked them. A backend-fault rejection closes the
- * batch like a phase completion, so no later sibling is dispatched. Every call, dispatched or synthetically closed,
- * appends exactly one {@link ModelMessage} `ToolMessage` to {@link ToolCallDispatchLoopResult.toolMessages},
- * so the caller's one leading `AIMessage` always pairs with the same number of tool results as it
- * has tool calls. A cancellation is the one exit that leaves later siblings unanswered; the caller
- * then appends no message group at all.
- *
- * @returns The batch's calls, observations, rejections, tool-result messages and terminal-control
- *   signals; never a provider transcript.
+ * A second call of a {@link ONE_CALL_PER_REPLY_TOOLS} tool is recorded the same way, so it can
+ * neither be held as the repair draft nor answer the first call's rejection within one reply. A
+ * call whose text values carry tool-call notation ({@link toolCallNotationFault}) is rejected
+ * before dispatch and none of its fields is held (no schema checked them). A backend-fault
+ * rejection closes the batch like a phase completion. Every call, dispatched or synthetically
+ * closed, appends exactly one `ToolMessage` to {@link ToolCallDispatchLoopResult.toolMessages}, so
+ * the caller's leading `AIMessage` pairs with as many results as calls. A cancellation is the one
+ * exit leaving siblings unanswered; the caller then appends no message group.
  */
 async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<ToolCallDispatchLoopResult> {
   const { model, input, toolCalls, reusableObservations, priorObservationKeys } = loop;
@@ -1215,21 +1184,15 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
 }
 
 /**
- * Runs exactly one provider tool-generation turn and classifies its outcome.
- *
- * @remarks
- * Enforces the single-generation model-port contract (exactly one provider call per attempt),
- * dispatches the returned tool calls against gate/reroute/phase-completion detection. Every dispatched
- * generation appends its own transcript delta — the model's own `AIMessage` plus its `ToolMessage`s,
- * or its text `AIMessage` plus a `HumanMessage` correction — to {@link ToolAttemptResult.messages}.
- * A cancelled attempt appends none: its batch may be partly answered, and the turn ends without
- * another send.
+ * Runs exactly one provider tool-generation turn and classifies its outcome. Enforces the
+ * single-generation model-port contract (one provider call per attempt) and dispatches the returned
+ * calls with gate/reroute/phase-completion detection. Each dispatched generation appends its
+ * transcript delta to {@link ToolAttemptResult.messages}; a cancelled attempt appends none (its
+ * batch may be partly answered and the turn ends without another send).
  *
  * @param model - Request-scoped model port; must record exactly one provider call.
- * @param input - Turn context: message history, registry, tool choice, and phase/gate detectors.
- * @returns The attempt's calls, observations, rejections, transcript delta, and terminal `stop` classification.
- * @throws When the model port violates the single-generation contract by recording more or fewer
- *   than one provider call for this attempt.
+ * @param input - Turn context: message history, registry, tool choice, phase/gate detectors.
+ * @throws When the model port records more or fewer than one provider call for this attempt.
  */
 async function executeToolGenerationAttempt(
   model: SingleGenerationModelPort,

@@ -34,7 +34,6 @@ export interface TraceTreePanelProps {
   originName: string;
   /** Collapsed to the reopen button. */
   collapsed: boolean;
-  /** Collapse toggle. */
   onToggleCollapse: () => void;
   /** Label lookup by node id. */
   resolveNode: (id: string) => TraceTreeNodeMeta | undefined;

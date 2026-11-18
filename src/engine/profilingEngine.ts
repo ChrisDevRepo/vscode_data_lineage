@@ -25,7 +25,6 @@ export interface ColumnStats {
   type: string;
   /** Number of unique values (may be approximated). */
   distinctCount: number;
-  /** count of NULL values. */
   nullCount: number | null;
   /** Percentage of rows containing NULL. */
   nullPercent: number | null;

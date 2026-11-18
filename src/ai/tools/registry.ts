@@ -67,7 +67,6 @@ export interface IToolRegistry<O = unknown> {
   invoke(name: string, input: unknown): O | Promise<O>;
   /** All registered tools, in registration order. */
   getTools(): readonly RegisteredTool<O>[];
-  /** Looks a tool up by name. */
   get(name: string): RegisteredTool<O> | undefined;
   /** Whether a tool is registered under `name`. */
   has(name: string): boolean;
