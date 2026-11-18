@@ -49,6 +49,8 @@ function emptyStore(): ProjectStore {
 export interface ProjectStoreDropReport {
   /** Number of persisted project records that failed validation and were discarded. */
   dropped: number;
+  /** Saved views skipped inside retained projects; absent when none were skipped. */
+  droppedViews?: number;
   /** Dot-joined paths of the rejected fields, de-duplicated and capped. Names only, no values. */
   issuePaths: string[];
 }
@@ -61,6 +63,8 @@ const MAX_REPORTED_ISSUE_PATHS = 10;
  * failure. Validation tolerates unknown fields (`ProjectReadSchema` drops them rather than
  * rejecting the record, since an older build's project carries keys this one never declared); a
  * record is discarded only when a required field is missing or mistyped.
+ *
+ * An unreadable saved view inside a readable project is skipped alone and counted in `droppedViews`.
  *
  * Free of VS Code imports: discarded records surface through the optional `onDropped` callback (at
  * most once per call, only when something was discarded), so the host owns logging and notification
@@ -83,20 +87,32 @@ export function migrateProjectStore(
     return emptyStore();
   }
   let dropped = 0;
+  let droppedViews = 0;
   const issuePaths: string[] = [];
+  const addIssuePath = (path: string) => {
+    if (issuePaths.length < MAX_REPORTED_ISSUE_PATHS && !issuePaths.includes(path)) issuePaths.push(path);
+  };
   const projects = (obj.projects as unknown[]).flatMap((project) => {
     const parsed = ProjectReadSchema.safeParse(project);
-    if (parsed.success) return [parsed.data];
+    if (parsed.success) {
+      const skipped =
+        ((project as { filterProfiles?: unknown[] }).filterProfiles?.length ?? 0)
+        - (parsed.data.filterProfiles?.length ?? 0);
+      if (skipped > 0) {
+        droppedViews += skipped;
+        addIssuePath('filterProfiles');
+      }
+      return [parsed.data];
+    }
     dropped += 1;
     for (const issue of parsed.error.issues) {
-      const path = issue.path.map((segment) => String(segment)).join('.') || '(root)';
-      if (issuePaths.length < MAX_REPORTED_ISSUE_PATHS && !issuePaths.includes(path)) {
-        issuePaths.push(path);
-      }
+      addIssuePath(issue.path.map((segment) => String(segment)).join('.') || '(root)');
     }
     return [];
   });
-  if (dropped > 0) onDropped?.({ dropped, issuePaths });
+  if (dropped > 0 || droppedViews > 0) {
+    onDropped?.({ dropped, issuePaths, ...(droppedViews > 0 ? { droppedViews } : {}) });
+  }
   return {
     schemaVersion: 1,
     projects,

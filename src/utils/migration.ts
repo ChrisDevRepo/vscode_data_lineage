@@ -56,7 +56,7 @@ export async function migrateFromWorkspaceState(
     const rawStore = context.globalState.get(PROJECT_STORE_KEY);
     const store = migrateProjectStore(rawStore, (report) => {
       logger.warn(
-        `Legacy migration rewrote the project store without ${report.dropped} unreadable record(s) — fields: ${report.issuePaths.join(', ') || 'unknown'}`,
+        `Legacy migration rewrote the project store without ${report.dropped} unreadable project(s) and ${report.droppedViews ?? 0} unreadable view(s) — fields: ${report.issuePaths.join(', ') || 'unknown'}`,
       );
       onProjectsDropped?.(report);
     });

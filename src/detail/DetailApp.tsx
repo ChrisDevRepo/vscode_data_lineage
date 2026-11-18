@@ -48,6 +48,11 @@ export function DetailApp() {
             type: 'error',
             error: `[Detail] Bridge protocol mismatch on "${frame.msgType}": host sent v${String(frame.version)}, webview expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window.`,
           });
+        } else {
+          vscodeApi.current.postMessage({
+            type: 'error',
+            error: `[Detail] Parse rejected host message "${frame.msgType}": ${JSON.stringify(frame.issues.slice(0, 5))}`,
+          });
         }
         return;
       }

@@ -17,7 +17,7 @@ import { StoredConnectionInfoSchema, type StoredConnectionInfo } from './shared/
 import { DbConnectionError, type DbSession } from './db/dbSession';
 import { MSSQL_RECONNECT_ACTION, MSSQL_RECONNECT_NOTICE, usesMssqlExtension } from './db/mssqlRetiring';
 import { openBuiltInSession, type BuiltInEnv } from './db/builtInProvider';
-import { describeConnection, readBuiltInConnections, type BuiltInConnection } from './db/connectionSettings';
+import { describeConnection, dropTcpPrefix, readBuiltInConnections, type BuiltInConnection } from './db/connectionSettings';
 import { parseServerInput, runAddConnectionFlow } from './db/connectionCommands';
 import { builtInTarget, type ConnectionErrorHooks } from './db/connectionErrors';
 
@@ -282,16 +282,23 @@ export function stripSensitiveFields(source: Record<string, unknown>): StoredCon
 /** Host services a connection needs: the secret store (built-in passwords) and the log channel. */
 export type DbConnectEnv = BuiltInEnv;
 
-/** Built-in sign-in type a stored built-in record's `authenticationType` names. */
+/** Built-in sign-in type a stored record names; the mssql extension's spellings read too. */
 function storedAuthKind(authenticationType: string | undefined): BuiltInConnection['authenticationType'] | undefined {
-  return authenticationType === 'sqlLogin' || authenticationType === 'entraId' ? authenticationType : undefined;
+  const value = authenticationType?.toLowerCase() ?? '';
+  if (value === 'sqllogin') return 'sqlLogin';
+  return value === 'entraid' || value.startsWith('azure') || value.startsWith('activedirectory') ? 'entraId' : undefined;
 }
+
+/** Port SQL Server listens on when none is given; a named instance has none. */
+const DEFAULT_SQL_PORT = 1433;
 
 /**
  * Finds the saved built-in connection that reopens a stored project. A saved `connectionId` wins.
- * Otherwise: same server and port (a `host,port` string is split first) and the same sign-in type
- * and user where both sides name one. Among several matches the one saved for the project's
- * database is preferred, then the first; the project's own database is opened either way.
+ * Otherwise: same server (`tcp:` prefix ignored) and effective port (a `host,port` string is split
+ * first, an absent port is the default one; a named instance has a dynamic port, so an absent port
+ * matches any) and the same sign-in type and user where both sides name one. Among several matches
+ * the one saved for the project's database is preferred, then the first; the project's own database
+ * is opened either way.
  */
 function findBuiltInMatch(connections: BuiltInConnection[], stored: StoredConnectionInfo): BuiltInConnection | undefined {
   const byId = stored.connectionId ? connections.find((c) => c.id === stored.connectionId) : undefined;
@@ -299,9 +306,10 @@ function findBuiltInMatch(connections: BuiltInConnection[], stored: StoredConnec
   const same = (a?: string, b?: string) => !a || !b || a.toLowerCase() === b.toLowerCase();
   const kind = storedAuthKind(stored.authenticationType);
   const host = parseServerInput(stored.server) ?? { server: stored.server };
-  const port = stored.port ?? host.port;
-  const matches = connections.filter((c) => c.server.toLowerCase() === host.server.toLowerCase()
-    && (!c.port || !port || c.port === port)
+  const defaultPort = host.server.includes('\\') ? undefined : DEFAULT_SQL_PORT;
+  const port = stored.port ?? host.port ?? defaultPort;
+  const matches = connections.filter((c) => dropTcpPrefix(c.server).toLowerCase() === host.server.toLowerCase()
+    && (defaultPort === undefined ? !c.port || !port || c.port === port : (c.port ?? defaultPort) === port)
     && (!kind || c.authenticationType === kind)
     && same(c.user, stored.user));
   return matches.find((c) => same(c.database, stored.database) && !!c.database) ?? matches[0];

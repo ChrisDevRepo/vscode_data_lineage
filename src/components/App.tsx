@@ -1191,6 +1191,11 @@ export function App() {
             type: 'error',
             error: `[Bridge] Protocol mismatch on "${frame.msgType}": host sent v${String(frame.version)}, webview expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window.`,
           });
+        } else {
+          window.vscode?.postMessage({
+            type: 'error',
+            error: `[Bridge] Parse rejected host message "${frame.msgType}": ${JSON.stringify(frame.issues.slice(0, 5))}`,
+          });
         }
         return;
       }
@@ -1201,7 +1206,7 @@ export function App() {
         const updatedProjects: Project[] = msg.projects ?? [];
         setProjects(updatedProjects);
         setLastOpenedId(msg.lastOpenedId ?? null);
-        if (msg.lastWizardView) setLastWizardView(msg.lastWizardView as 'main' | 'projects');
+        if (msg.lastWizardView) setLastWizardView(msg.lastWizardView);
         setLoadingProjectId(null);
         if (view === 'visualizing' && msg.lastOpenedId) {
           setActiveProjectId(msg.lastOpenedId);

@@ -42,21 +42,24 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
 
   const projectLogger = Logger.create(outputChannel, 'Project');
   let droppedProjectsReported = false;
-  const reportDroppedProjects = ({ dropped, issuePaths }: ProjectStoreDropReport): void => {
-    if (dropped <= 0) return;
+  const reportDroppedProjects = ({ dropped, droppedViews = 0, issuePaths }: ProjectStoreDropReport): void => {
+    if (dropped <= 0 && droppedViews <= 0) return;
     if (droppedProjectsReported) {
       projectLogger.debug(
-        `Project store validation — dropped=${dropped} fields=${issuePaths.join(', ') || 'unknown'} (already reported this session)`,
+        `Project store validation — dropped=${dropped} views=${droppedViews} fields=${issuePaths.join(', ') || 'unknown'} (already reported this session)`,
       );
       return;
     }
     droppedProjectsReported = true;
-    const noun = dropped === 1 ? 'project' : 'projects';
+    const skipped = [
+      dropped > 0 ? `${dropped} saved ${dropped === 1 ? 'project' : 'projects'}` : '',
+      droppedViews > 0 ? `${droppedViews} saved ${droppedViews === 1 ? 'view' : 'views'}` : '',
+    ].filter(Boolean).join(' and ');
     notifyWarning(
       projectLogger,
       'Project store validation',
-      `Data Lineage: ${dropped} saved ${noun} could not be read and ${dropped === 1 ? 'was' : 'were'} skipped. See the Data Lineage Viz output channel for details.`,
-      { droppedProjects: dropped, invalidFields: issuePaths.length > 0 ? issuePaths : 'unknown' },
+      `Data Lineage: ${skipped} could not be read and ${dropped + droppedViews === 1 ? 'was' : 'were'} skipped. See the Data Lineage Viz output channel for details.`,
+      { droppedProjects: dropped, droppedViews, invalidFields: issuePaths.length > 0 ? issuePaths : 'unknown' },
     );
   };
 

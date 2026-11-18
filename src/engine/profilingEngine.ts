@@ -304,7 +304,8 @@ export function typeBadgeLabel(typeStr: string): string {
 }
 
 /**
- * Parses the single-row result of a profiling query into structured TableStats.
+ * Parses the single-row result of a profiling query into structured TableStats. A column without
+ * an aggregate in the row (skipped type or over the `maxColumns` budget) is marked `skipped`.
  *
  * @param row - The raw relational result row.
  * @param sampled - Whether sampling was used.
@@ -337,7 +338,7 @@ export function parseProfilingResult(
     const cat = classifyColumn(col);
     const isNullable = col.nullable === 'NULL';
 
-    if (cat === 'skip') {
+    if (cat === 'skip' || row[aggregateAlias(index, 'd')] === undefined) {
       columns.push({
         name: col.name,
         type: col.type,

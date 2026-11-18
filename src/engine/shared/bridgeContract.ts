@@ -25,10 +25,14 @@ export const MAX_ID_LIST_LENGTH = 500;
 export const AI_REPORT_MARKDOWN_MAX_CHARS = 200_000;
 
 /**
- * Upper bound, in characters, on the file text the webview hands to the host for `export-file`;
- * matches the 50 MB dacpac ceiling, the largest model the webview can render an export from.
+ * Upper bound, in characters, on the file text the webview hands to the host for `export-file`.
+ * Draw.io export measured about 1.6 KB per object (236,627 chars for 148 nodes and 164 edges, 396,332
+ * for 249 and 303): 8-10 MB at the 5000-object limit, so 50 MB keeps at least 5x margin.
  */
 export const EXPORT_FILE_MAX_CHARS = 50 * 1024 * 1024;
+
+/** Upper bound, in characters, on one webview `log` line; real lines are a few hundred. */
+export const WEBVIEW_LOG_MAX_CHARS = 100_000;
 
 /**
  * Link scheme of the engine-assembled object links in AI report markdown,
@@ -539,11 +543,17 @@ const FilterProfileReadSchema = z.object({
   expandedSchemaView: z.object(ExpandedSchemaViewSchema.shape).optional(),
 });
 
-/** Persisted counterpart of {@link ProjectSchema}; see {@link StoredConnectionInfoReadSchema}. */
+/**
+ * Persisted counterpart of {@link ProjectSchema}; see {@link StoredConnectionInfoReadSchema}. A
+ * saved view that fails its schema is skipped alone, so one unreadable view never drops its project.
+ */
 export const ProjectReadSchema = z.object({
   ...ProjectSchema.shape,
   connection: ProjectConnectionReadSchema,
-  filterProfiles: z.array(FilterProfileReadSchema).optional(),
+  filterProfiles: z.array(z.unknown()).transform(profiles => profiles.flatMap(profile => {
+    const parsed = FilterProfileReadSchema.safeParse(profile);
+    return parsed.success ? [parsed.data] : [];
+  })).optional(),
 });
 
 /**
@@ -560,12 +570,12 @@ export type BridgeEnvelope = { protocolVersion?: unknown };
 /**
  * Validated host→webview frame: the parsed payload or a classified rejection. The single owner of
  * the receive-side seam both webviews repeat: Zod-parse the raw frame, then compare the envelope
- * version. Parse failures stay silent (foreign frames are ignored); version mismatches are loud
- * (stale bundle).
+ * version. A parse failure carries its Zod issues; a version mismatch means a stale bundle.
  */
 export type ValidatedBridgeFrame<S extends z.ZodTypeAny> =
   | { ok: true; data: z.infer<S>; msgType: string }
-  | { ok: false; reason: 'parse' | 'version'; msgType: string; version: unknown };
+  | { ok: false; reason: 'parse'; msgType: string; version: unknown; issues: z.core.$ZodIssue[] }
+  | { ok: false; reason: 'version'; msgType: string; version: unknown };
 
 /** Validates one host→webview frame against `schema` plus {@link BRIDGE_PROTOCOL_VERSION}. */
 export function validateBridgeFrame<S extends z.ZodTypeAny>(
@@ -578,7 +588,7 @@ export function validateBridgeFrame<S extends z.ZodTypeAny>(
     const msgType = typeof (raw as { type?: unknown } | undefined)?.type === 'string'
       ? String((raw as { type: string }).type)
       : '?';
-    return { ok: false, reason: 'parse', msgType, version };
+    return { ok: false, reason: 'parse', msgType, version, issues: parsed.error.issues };
   }
   const msgType = String((parsed.data as { type: string }).type);
   if (version !== BRIDGE_PROTOCOL_VERSION) {
@@ -699,7 +709,7 @@ export const LOAD_RESULT_TYPES = [
 export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('dacpac-model'), model: DatabaseModelSchema, config: ExtensionConfigSchema, sourceName: z.string(), autoVisualize: z.boolean().optional(), isDemo: z.boolean().optional(), loadId: z.string().optional() }),
   z.object({ type: z.literal('db-model'), model: DatabaseModelSchema, config: ExtensionConfigSchema, sourceName: z.string(), loadId: z.string().optional() }),
-  z.object({ type: z.literal('projects-list'), projects: z.array(ProjectSchema), lastOpenedId: z.string().nullable(), lastWizardView: z.string().nullish() }),
+  z.object({ type: z.literal('projects-list'), projects: z.array(ProjectSchema), lastOpenedId: z.string().nullable(), lastWizardView: z.enum(['main', 'projects']).nullish() }),
   z.object({ type: z.literal('detail-closed') }),
   z.object({ type: z.literal('dacpac-schema-preview'), preview: SchemaPreviewSchema, config: ExtensionConfigSchema, sourceName: z.string(), filePath: z.string().optional(), loadId: z.string().optional() }),
   z.object({ type: z.literal('db-schema-preview'), preview: SchemaPreviewSchema, config: ExtensionConfigSchema, sourceName: z.string(), loadId: z.string().optional() }),
@@ -767,7 +777,7 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('open-settings') }),
   z.object({ type: z.literal('export-file'), defaultName: z.string(), data: z.string().max(EXPORT_FILE_MAX_CHARS) }),
   z.object({ type: z.literal('ai-open-in-editor'), markdown: z.string().max(AI_REPORT_MARKDOWN_MAX_CHARS) }),
-  z.object({ type: z.literal('log'), level: z.enum(['info', 'warn', 'debug']).optional(), text: z.string() }),
+  z.object({ type: z.literal('log'), level: z.enum(['info', 'warn', 'debug']).optional(), text: z.string().max(WEBVIEW_LOG_MAX_CHARS) }),
   WebviewErrorMessageSchema,
   WebviewWarningMessageSchema,
   z.object({ type: z.literal('view-render-result'), rendered: z.number(), of: z.number(), unresolved: z.array(z.string()) }),

@@ -12,13 +12,12 @@ import { builtInTarget, CONNECTION_ERROR_LABELS, confirmTrustServerCertificate, 
 import { defaultTenantId, listTenants, pickAccount } from './entraSignIn';
 import {
   AddConnectionArgsSchema, BuiltInConnectionSchema, deleteBuiltInConnection, describeConnection, dropTcpPrefix,
-  MAX_NAME_LENGTH, MAX_SERVER_LENGTH, MAX_SYSNAME_LENGTH, passwordSecretKey, passwordTooLong, readBuiltInConnections,
+  MAX_NAME_LENGTH, MAX_SERVER_LENGTH, MAX_SYSNAME_LENGTH, MAX_TCP_PORT, passwordSecretKey, passwordTooLong, readBuiltInConnections,
   savePassword, tooLong, upsertBuiltInConnection, type BuiltInConnection,
 } from './connectionSettings';
 
 const WIZARD_TITLE = 'Add Database Connection';
 const WIZARD_STEPS = 6;
-const MAX_TCP_PORT = 65535;
 
 /**
  * Parses the wizard's server field (`host` or `host,port`, optional `tcp:` prefix dropped);
