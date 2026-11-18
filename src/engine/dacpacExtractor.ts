@@ -30,7 +30,6 @@ import {
 import { buildModel, parseName, normalizeName } from './modelBuilder';
 import { quoteIdentifier, stripBrackets, schemaKey, normalizeColName, splitSqlName } from '../utils/sql';
 import { trunc } from '../utils/log';
-export { filterBySchemas, applyExclusionPatterns } from './modelFilters';
 
 interface DacpacExtractionOptions {
   externalRefsEnabled?: boolean;

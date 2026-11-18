@@ -740,7 +740,7 @@ export function createMessageHandlers(
     'dacpac-visualize': loadHandler(async (host, token, msg) => {
       host.log('debug', 'Bridge', `Dacpac visualize requested for schemas: ${msg.schemas?.join(', ')}`);
       if (!cachedDacpac) {
-        host.log('error', 'Bridge', 'Dacpac visualize', 'Session expired (cachedElements is null)');
+        host.log('error', 'Bridge', 'Dacpac visualize', 'Session expired (cachedDacpac is null)');
         host.postMessage({ type: 'db-error', message: 'Session expired. Please reopen the file.' });
         return;
       }
