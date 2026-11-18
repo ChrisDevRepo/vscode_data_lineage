@@ -6,6 +6,7 @@
  * asynchronous boundaries of the extension, bridge, and engine.
  */
 import type { LogOutputChannel } from 'vscode';
+import { redactSecrets } from './redact';
 
 /**
  * Canonical categories used to tag extension log entries.
@@ -23,8 +24,12 @@ export type LogCategory =
   | 'Filter'
   | 'Storage';
 
+/**
+ * The one redaction point for output-channel text: every {@link Logger} line, at every level and for
+ * every caller, passes through here, so no call site has to remember to remove a credential itself.
+ */
 function normalizeLogMessage(msg: string): string {
-  return sanitizeForLog(msg);
+  return sanitizeForLog(redactSecrets(msg));
 }
 
 /** Removes stale manual category tags before the structured logger adds the canonical one. */
@@ -148,7 +153,7 @@ export function safeStringifyForLog(value: unknown, max = LOG_TRUNC_JSON): strin
     const serialized = JSON.stringify(value, (_key, candidate: unknown) => {
       if (typeof candidate === 'bigint') return `${candidate.toString()}n`;
       if (typeof candidate === 'string') {
-        return trunc(candidate, Math.max(32, Math.floor(max / 2)));
+        return trunc(sanitizeForLog(candidate), Math.max(32, Math.floor(max / 2)));
       }
       if (candidate && typeof candidate === 'object') {
         if (seen.has(candidate)) return '[Circular]';
@@ -184,12 +189,12 @@ export function trunc(val: string | any[], max: number): string {
 /**
  * Normalizes a string for single-line display in the Output Channel.
  *
- * Collapses all whitespace, newlines, and escape sequences into single spaces.
+ * Collapses real whitespace, newlines and control characters into single spaces. A backslash
+ * sequence such as the `\new` in `C:\new\temp` is text, not a newline, and stays as written.
  * This is crucial for keeping logs readable in the line-oriented Output view.
  */
 export function sanitizeForLog(s: string): string {
   return s
-    .replace(/\\[nrt]/g, ' ')      // JSON-escaped newline/return/tab → space
     .replace(/[\u0000-\u001F\u007F]/g, ' ') // ASCII control chars → space
     .replace(/\s+/g, ' ')          // collapse all whitespace runs
     .trim();

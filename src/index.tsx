@@ -1,7 +1,6 @@
 import { createRoot } from 'react-dom/client';
 import { z } from 'zod';
 import './index.css';
-import { notifyUser } from './utils/notify';
 
 z.config({ jitless: true });
 
@@ -49,9 +48,8 @@ if ((window as unknown as { __DETAIL_MODE__?: boolean }).__DETAIL_MODE__) {
     createRoot(root).render(
       <ErrorBoundary
         onError={() => {
-          // Crash is already logged by ErrorBoundary.componentDidCatch; surface it to the
-          // user before recovery so a real crash is never a silent flicker.
-          notifyUser('The detail panel hit an error and was closed — see the output channel for details.');
+          // ErrorBoundary.componentDidCatch already posts the `error` message, which the host answers
+          // with the one error toast; a second toast from here would show the crash twice.
           // 800 ms delay lets the fallback render before disposal.
           setTimeout(() => window.vscode?.postMessage({ type: 'close-detail' }), 800);
         }}

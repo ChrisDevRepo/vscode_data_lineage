@@ -29,7 +29,7 @@ function handlers() {
     postMessage: vi.fn((m: Record<string, unknown>) => { posted.push(m); return Promise.resolve(true); }),
     log: vi.fn(),
     withProgress: (_options: unknown, task: (progress: unknown, token: unknown) => Promise<void>) =>
-      task({ report: vi.fn() }, { isCancellationRequested: false }),
+      task({ report: vi.fn() }, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) }),
     getConfiguration: vi.fn().mockReturnValue({ get: () => undefined }),
   };
   const bundle = createMessageHandlers(
@@ -65,7 +65,7 @@ describe('db-connect failures outside the connection error path', () => {
     const channel = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), trace: vi.fn(), appendLine: vi.fn(), error: (m: string) => { lines.push(m); } };
     const host = createBridgeHost({ webview: { postMessage: () => Promise.resolve(true) } } as never, {} as never, channel as never);
     const bundle = createMessageHandlers(
-      { ...host, withProgress: (_o: unknown, task: (p: unknown, t: unknown) => Promise<void>) => task({ report: vi.fn() }, { isCancellationRequested: false }) } as never,
+      { ...host, withProgress: (_o: unknown, task: (p: unknown, t: unknown) => Promise<void>) => task({ report: vi.fn() }, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) }) } as never,
       { globalState: { get: () => undefined, update: () => Promise.resolve() }, secrets: {} } as never,
       () => ({ model: null, uiState: {}, renderState: null }) as never,
       channel as never,
@@ -134,13 +134,13 @@ describe('error-level bridge log lines', () => {
   });
 
   it.each([
-    ['load-project', { type: 'load-project', id: 'missing' }, 'FAILED: Load project — Project not found: missing'],
+    ['load-project', { type: 'load-project', id: 'missing' }, 'FAILED: Load project — Project not found'],
     ['dacpac-visualize', { type: 'dacpac-visualize', schemas: ['dbo'] }, 'FAILED: Dacpac visualize — Session expired (cachedElements is null)'],
     ['db-visualize', { type: 'db-visualize', schemas: ['dbo'] }, 'FAILED: Database visualize — No stored connection info'],
   ])('%s logs its synthetic failure as message text with no stack of the logging site', async (key, msg, expected) => {
     const { lines, host, channel } = realHost();
     const bundle = createMessageHandlers(
-      { ...host, withProgress: (_o: unknown, task: (p: unknown, t: unknown) => Promise<void>) => task({ report: vi.fn() }, { isCancellationRequested: false }) } as never,
+      { ...host, withProgress: (_o: unknown, task: (p: unknown, t: unknown) => Promise<void>) => task({ report: vi.fn() }, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) }) } as never,
       { globalState: { get: () => undefined, update: () => Promise.resolve() }, secrets: {} } as never,
       () => ({ model: null, uiState: {}, renderState: null }) as never,
       channel as never,

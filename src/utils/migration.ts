@@ -47,7 +47,7 @@ export async function migrateFromWorkspaceState(
       try {
         connection = { type: 'database', connectionInfo: stripSensitiveFields(connectionInfo), sourceName, schemas: [] };
       } catch (err) {
-        logger.warn(`Legacy connection "${sourceName}" failed validation and was not migrated: ${err instanceof Error ? err.message : String(err)}`);
+        logger.debug(`Legacy connection "${sourceName}" failed validation: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
   }
@@ -64,7 +64,10 @@ export async function migrateFromWorkspaceState(
     });
     const updated = updateProject(store, project);
     await context.globalState.update(PROJECT_STORE_KEY, updated);
-    logger.info(`Migrated legacy connection to project "${name}"`);
+    logger.info('Migrated legacy connection to a project');
+    logger.debug(`Migrated legacy connection to project "${name}"`);
+  } else {
+    logger.warn('Legacy connection state could not be migrated and was cleared');
   }
 
   await Promise.all([

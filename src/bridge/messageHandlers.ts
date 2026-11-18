@@ -46,8 +46,10 @@ import { formatScreenStateSections } from './debugDumpScreenState';
 import {
   BRIDGE_PROTOCOL_VERSION,
   DetailPanelToExtensionMsgSchema,
+  LOAD_RESULT_TYPES,
   ProjectSchema,
   type BridgeEnvelope,
+  type ExtensionToWebviewMsg,
   type MainPanelToExtensionMsg,
   type Project,
   type RenderStateSnapshot,
@@ -125,7 +127,8 @@ export function partitionSendableProjects(
 function postProjectsList(host: BridgeHost, store: ProjectStore): void {
   const { sendable, rejected } = partitionSendableProjects(store.projects);
   for (const record of rejected) {
-    host.log('warn', 'Bridge', `Project "${record.id}" was not sent to the view — ${record.issues}`);
+    host.log('warn', 'Bridge', 'A saved project failed validation and was not sent to the view');
+    host.log('debug', 'Bridge', `Project "${record.id}" was not sent to the view — ${record.issues}`);
   }
   void host.postMessage({
     type: 'projects-list',
@@ -329,7 +332,10 @@ export function createMessageHandlers(
     const previews = reportPreviewTabs(doc);
     for (const tab of previews.filter((candidate) => !candidate.isActive)) {
       const closed = await Promise.resolve(vscode.window.tabGroups.close(tab)).catch(() => false);
-      if (!closed) host.log('warn', 'Bridge', `Hidden report preview tab "${tab.label}" could not be closed`);
+      if (!closed) {
+        host.log('warn', 'Bridge', 'A hidden report preview tab could not be closed');
+        host.log('debug', 'Bridge', `Hidden report preview tab "${tab.label}" could not be closed`);
+      }
     }
     return previews.some((tab) => tab.isActive);
   }
@@ -356,7 +362,8 @@ export function createMessageHandlers(
     try {
       await clearStoredRun(context.globalState, profileId);
     } catch (err) {
-      host.log('warn', 'Bridge', `Failed to clear AI run memory for view ${profileId}: ${err instanceof Error ? err.message : String(err)}`);
+      host.log('warn', 'Bridge', `Failed to clear AI run memory for a saved view: ${err instanceof Error ? err.message : String(err)}`);
+      host.log('debug', 'Bridge', `AI run memory not cleared for view ${profileId}`);
     }
   }
 
@@ -377,6 +384,92 @@ export function createMessageHandlers(
     const ddl = sess.columnStore.getDdl(node.id);
     return { ...node, ...(cols && { columns: cols }), ...(ddl && { bodyScript: ddl }) };
   }
+
+  /** The one load the webview still waits for; starting another cancels it. */
+  let current: { id?: string; cancel(): void } | undefined;
+
+  /**
+   * Wraps a handler that starts a load, so the load the webview named can be cancelled by that id.
+   *
+   * @remarks
+   * `msg.loadId` is the webview's own id for the load; a request without one runs unstamped and cannot
+   * be cancelled by id. `body` gets a host that stamps the load-result messages with the id and drops
+   * them once the load is cancelled. That one closure is the only place the id is applied, so no load
+   * path stamps or checks it itself. The host's progress token also fires on a cancel, which stops the
+   * connection and query steps that watch it.
+   *
+   * The latest user intent wins on both sides: starting a load cancels the previous one, because the
+   * webview drops its results and a load that finished last must not set the session model or write
+   * the project store behind the screen.
+   *
+   * A retry that the connection-error toast starts after its load ended opens a new progress
+   * notification through the same host. While the load is still the current one, the retry gets a fresh
+   * source, so `cancel-load` still reaches it and its results are still stamped. A retry is refused when
+   * a newer load replaced this one (the webview has moved on to the newer id and would drop its results,
+   * so letting it run would only change the host) and while another retry of the load runs, so one load
+   * never has two live sources and the live source gates every post.
+   */
+  function loadHandler<M extends { loadId?: string }>(
+    body: (host: BridgeHost, token: vscode.CancellationToken, msg: M) => Promise<void> | void,
+  ): (msg: M) => Promise<void> {
+    return async (msg) => {
+      const { loadId } = msg;
+      let source = new vscode.CancellationTokenSource();
+      let ended = false;
+      let retrying = false;
+      const mine = { id: loadId, cancel: () => source.cancel() };
+      current?.cancel();
+      current = mine;
+      /** Reads the live source, so a guard made before a retry still sees the retry's cancel. */
+      const token: vscode.CancellationToken = {
+        get isCancellationRequested() { return source.token.isCancellationRequested; },
+        onCancellationRequested: (listener, thisArgs, disposables) => source.token.onCancellationRequested(listener, thisArgs, disposables),
+      };
+      const scoped: BridgeHost = {
+        ...host,
+        postMessage: (out: ExtensionToWebviewMsg) => {
+          if (!loadId || !(LOAD_RESULT_TYPES as readonly string[]).includes(out.type)) return host.postMessage(out);
+          return source.token.isCancellationRequested ? Promise.resolve(false) : host.postMessage({ ...out, loadId } as ExtensionToWebviewMsg);
+        },
+        withProgress: <R,>(options: vscode.ProgressOptions, task: (progress: vscode.Progress<unknown>, token: vscode.CancellationToken) => Thenable<R>) => {
+          const isRetry = ended;
+          if (isRetry) {
+            if (current !== mine || retrying) {
+              host.log('info', 'Bridge', 'Retry skipped — a newer load replaced this one or a retry is running');
+              return Promise.resolve(undefined as R);
+            }
+            retrying = true;
+            source = new vscode.CancellationTokenSource();
+          }
+          const mySource = source;
+          return host.withProgress(options, async (progress, progressToken) => {
+            const merged = new vscode.CancellationTokenSource();
+            const links = [progressToken, mySource.token].map((t) => t.onCancellationRequested(() => merged.cancel()));
+            try {
+              return await task(progress, merged.token);
+            } finally {
+              links.forEach((link) => link.dispose());
+              merged.dispose();
+              if (isRetry) {
+                mySource.dispose();
+                retrying = false;
+              }
+            }
+          });
+        },
+      };
+      try {
+        await body(scoped, token, msg);
+      } finally {
+        ended = true;
+        source.dispose();
+      }
+    };
+  }
+
+  /** Runs `fn` only while the load is live, so a cancelled load leaves no model in the session. */
+  const unlessCancelled = (token: vscode.CancellationToken, fn: (model: DatabaseModel) => void) =>
+    (model: DatabaseModel): void => { if (!token.isCancellationRequested) fn(model); };
 
   const bridgeLogger = Logger.create(outputChannel, 'Bridge');
   const handlers: WebviewMessageHandlers = {
@@ -404,12 +497,14 @@ export function createMessageHandlers(
           sess.projectName = project.name;
           sess.isDbSession = project.connection.type === 'database';
         }
-        host.log('info', 'Bridge', `Restoring session for project: ${sess.projectName}`);
+        host.log('info', 'Bridge', 'Restoring session for the last opened project');
+        host.log('debug', 'Bridge', `Restoring session for project: ${sess.projectName}`);
         host.postMessage({ type: 'dacpac-model', model: sess.model, config, sourceName: sess.projectName ?? 'Project', autoVisualize: true });
       }
     },
     'show-detail': async (msg) => {
-      host.log('info', 'Bridge', `Node detail opened — ${msg.node?.id || '(no node)'}`);
+      host.log('info', 'Bridge', 'Node detail opened');
+      host.log('debug', 'Bridge', `Node detail opened — ${msg.node?.id || '(no node)'}`);
       if (msg.node) {
         lastDetailNode = msg.node;
       } else {
@@ -512,7 +607,7 @@ export function createMessageHandlers(
         }
       }
     },
-    'open-dacpac': async () => {
+    'open-dacpac': loadHandler(async (host) => {
       host.log('info', 'Bridge', 'Opening dacpac picker');
       const uris = await host.showOpenDialog({
         canSelectMany: false,
@@ -520,7 +615,8 @@ export function createMessageHandlers(
         title: 'Select a .dacpac file'
       });
       if (uris && uris.length > 0) {
-        host.log('info', 'Bridge', `Selected dacpac: ${uris[0].fsPath}`);
+        host.log('info', 'Bridge', 'Dacpac selected');
+        host.log('debug', 'Bridge', `Selected dacpac: ${uris[0].fsPath}`);
         const data = await host.readFile(uris[0]);
         if (isDacpacTooLarge(data.byteLength, host, outputChannel)) return;
         const config = await readExtensionConfig(host);
@@ -529,7 +625,8 @@ export function createMessageHandlers(
           extracted = await extractSchemaPreview(data);
         } catch (err) {
           const reason = err instanceof Error ? err.message : String(err);
-          host.log('error', 'Dacpac', `Open ${uris[0].fsPath}`, err);
+          host.log('error', 'Dacpac', 'Open dacpac', err);
+          host.log('debug', 'Dacpac', `Open dacpac failed: ${uris[0].fsPath}`);
           host.postMessage({ type: 'db-error', message: `Could not open ${path.basename(uris[0].fsPath)}: ${reason}`, phase: 'extract' });
           return;
         }
@@ -547,13 +644,15 @@ export function createMessageHandlers(
         host.log('info', 'Bridge', 'Dacpac picker cancelled');
         host.postMessage({ type: 'db-cancelled' });
       }
-    },
-    'load-project': async (msg) => {
-      host.log('info', 'Bridge', `Loading project: ${msg.id}`);
+    }),
+    'load-project': loadHandler(async (host, token, msg) => {
+      host.log('info', 'Bridge', 'Loading project');
+      host.log('debug', 'Bridge', `Loading project: ${msg.id}`);
       const store = loadProjectStore(context);
       const project = store.projects.find(p => p.id === msg.id);
       if (!project) {
-        host.log('error', 'Bridge', 'Load project', `Project not found: ${msg.id}`);
+        host.log('error', 'Bridge', 'Load project', 'Project not found');
+        host.log('debug', 'Bridge', `Project not found: ${msg.id}`);
         host.postMessage({ type: 'db-error', message: `Project not found: ${msg.id}`, phase: 'connect' });
         return;
       }
@@ -563,7 +662,7 @@ export function createMessageHandlers(
           const fileUri = vscode.Uri.file(project.connection.path);
           host.log('debug', 'Bridge', `Reading dacpac file: ${fileUri.fsPath}`);
           const data = await host.readFile(fileUri);
-          if (isDacpacTooLarge(data.byteLength, host, outputChannel)) return;
+          if (token.isCancellationRequested || isDacpacTooLarge(data.byteLength, host, outputChannel)) return;
 
           const refreshed = { ...project, updatedAt: new Date().toISOString() };
           const updatedStore = updateProject(store, refreshed);
@@ -576,6 +675,7 @@ export function createMessageHandlers(
           if (schemas && schemas.length > 0) {
             host.log('debug', 'Bridge', `Extracting filtered dacpac for schemas: ${trunc(schemas, LOG_TRUNC_LIST)}`);
             const { elements, dspName, identifierCaseSensitive } = await extractSchemaPreview(data);
+            if (token.isCancellationRequested) return;
             const logger = Logger.create(outputChannel, 'Parse');
             const model = extractDacpacFiltered(elements, new Set(schemas), dspName, (msg) => logger.debug(msg), (msg) => logger.info(msg), {
               externalRefsEnabled: config.externalRefs.enabled,
@@ -595,11 +695,13 @@ export function createMessageHandlers(
           }
         } catch (err) {
           if (err instanceof vscode.FileSystemError && err.code === 'FileNotFound') {
-            host.log('warn', 'Bridge', `Dacpac file not found: ${project.connection.path}`);
+            host.log('warn', 'Bridge', 'Dacpac file not found');
+            host.log('debug', 'Bridge', `Dacpac file not found: ${project.connection.path}`);
             host.postMessage({ type: 'last-dacpac-gone' });
           } else {
             const reason = err instanceof Error ? err.message : String(err);
-            host.log('error', 'Bridge', `Load project ${project.connection.path}`, err);
+            host.log('error', 'Bridge', 'Load project', err);
+            host.log('debug', 'Bridge', `Load project failed: ${project.connection.path}`);
             host.postMessage({ type: 'db-error', message: `Could not load ${project.connection.displayName}: ${reason}`, phase: 'extract' });
           }
         }
@@ -607,6 +709,7 @@ export function createMessageHandlers(
         const dbConn = project.connection;
         const wasLegacy = usesMssqlExtension(dbConn.connectionInfo);
         const storeReconnected = async (session: DbSession) => {
+          if (token.isCancellationRequested) return;
           const updatedStore = updateProject(store, {
             ...project,
             connection: { ...dbConn, connectionInfo: session.connectionInfo },
@@ -615,21 +718,21 @@ export function createMessageHandlers(
           await saveProjectStore(context, updatedStore);
           postProjectsList(host, updatedStore);
         };
-        await withDbProgressHost(host, dbEnv, 'Loading project', (patch, token) => connectDatabase(dbEnv, { ...dbConn.connectionInfo, ...patch }, token), async (session) => {
+        await withDbProgressHost(host, dbEnv, 'Loading project', (patch, progressToken) => connectDatabase(dbEnv, { ...dbConn.connectionInfo, ...patch }, progressToken), async (session) => {
           lastConnectionInfo = session.connectionInfo;
           const schemas = dbConn.schemas;
           if (!schemas || schemas.length === 0) {
             await runDbPhase1Host(host, session, outputChannel, dmvQueries.reload);
             if (wasLegacy) await storeReconnected(session);
           } else {
-            await runDbPhase2Host(host, session, schemas, outputChannel, dmvQueries.reload, getSession, session.connectionInfo.database, dbConn.sourceName, (m) => {
+            await runDbPhase2Host(host, session, schemas, outputChannel, dmvQueries.reload, getSession, session.connectionInfo.database, dbConn.sourceName, unlessCancelled(token, (m) => {
               setCurrentModel(m, true, { id: project.id, name: project.name });
-            });
+            }));
             await storeReconnected(session);
           }
         });
       }
-    },
+    }),
     'save-project': async (msg) => {
       host.log('debug', 'Bridge', `Saving project: ${msg.project?.name}`);
       const store = loadProjectStore(context);
@@ -651,14 +754,14 @@ export function createMessageHandlers(
         await clearStoredRunLogged(profileId);
       }
     },
-    'load-demo': async () => {
+    'load-demo': loadHandler(async (host, token) => {
       host.log('debug', 'Bridge', 'Loading demo');
-      await handleLoadDemo(host, getSession, outputChannel, (m) => {
+      await handleLoadDemo(host, getSession, outputChannel, unlessCancelled(token, (m) => {
         setCurrentModel(m, false, null);
         getSession().projectName = 'Demo';
-      });
-    },
-    'dacpac-visualize': async (msg) => {
+      }));
+    }),
+    'dacpac-visualize': loadHandler(async (host, token, msg) => {
       host.log('debug', 'Bridge', `Dacpac visualize requested for schemas: ${msg.schemas?.join(', ')}`);
       if (!cachedElements) {
         host.log('error', 'Bridge', 'Dacpac visualize', 'Session expired (cachedElements is null)');
@@ -666,6 +769,7 @@ export function createMessageHandlers(
         return;
       }
       const config = await readExtensionConfig(host);
+      if (token.isCancellationRequested) return;
       const logger = Logger.create(outputChannel, 'Parse');
       let model: DatabaseModel;
       try {
@@ -686,17 +790,17 @@ export function createMessageHandlers(
       setCurrentModel(model, false, sess.currentProjectId ? { id: sess.currentProjectId, name: projectName } : null);
       if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
       host.postMessage({ type: 'dacpac-model', model, config, sourceName: projectName });
-    },
-    'db-visualize': async (msg) => {
+    }),
+    'db-visualize': loadHandler(async (host, token, msg) => {
       host.log('debug', 'Bridge', `Database visualize requested for schemas: ${msg.schemas?.join(', ')}`);
-      return withDbProgressHost(host, dbEnv, 'Loading selected schemas', async (patch, token) => {
+      return withDbProgressHost(host, dbEnv, 'Loading selected schemas', async (patch, progressToken) => {
         if (!lastConnectionInfo) {
           host.log('error', 'Bridge', 'Database visualize', 'No stored connection info');
           host.postMessage({ type: 'db-error', message: 'No stored connection info. Please reconnect.', phase: 'connect' });
           return undefined;
         }
-        return connectDatabase(dbEnv, { ...lastConnectionInfo, ...patch }, token);
-      }, async (conn, _progress, token) => {
+        return connectDatabase(dbEnv, { ...lastConnectionInfo, ...patch }, progressToken);
+      }, async (conn, _progress, progressToken) => {
         const sourceName = `${conn.connectionInfo.server} / ${conn.connectionInfo.database}`;
         let pendingProject: ReturnType<typeof createProject> | null = null;
         if (msg.projectName) {
@@ -719,23 +823,23 @@ export function createMessageHandlers(
           }
         }
 
-        await runDbPhase2Host(host, conn, msg.schemas, outputChannel, dmvQueries.reload, getSession, conn.connectionInfo.database, sourceName, (m) => {
+        await runDbPhase2Host(host, conn, msg.schemas, outputChannel, dmvQueries.reload, getSession, conn.connectionInfo.database, sourceName, unlessCancelled(token, (m) => {
           if (pendingProject) {
             setCurrentModel(m, true, { id: pendingProject.id, name: pendingProject.name });
           } else {
             setCurrentModel(m, true, null);
             getSession().projectName = sourceName;
           }
-        });
+        }));
 
-        if (pendingProject && !token.isCancellationRequested) {
+        if (pendingProject && !progressToken.isCancellationRequested) {
           const store = loadProjectStore(context);
           const updated = updateProject(store, pendingProject);
           await saveProjectStore(context, updated);
           postProjectsList(host, updated);
         }
       });
-    },
+    }),
     'filter-changed': (msg) => {
       const sess = getSession();
       const { uiState } = msg;
@@ -759,12 +863,16 @@ export function createMessageHandlers(
       sess.renderState = msg.renderState;
       state.lastUiSyncAt = Date.now();
     },
-    'db-connect': () => {
+    'db-connect': loadHandler((host) => {
       host.log('debug', 'Bridge', 'Database connect requested');
       return withDbProgressHost(host, dbEnv, 'Connecting', (_patch, token) => connectDatabase(dbEnv, undefined, token), (conn) => {
         lastConnectionInfo = conn.connectionInfo;
         return runDbPhase1Host(host, conn, outputChannel, dmvQueries.reload);
       });
+    }),
+    'cancel-load': (msg) => {
+      host.log('debug', 'Bridge', 'Load cancel requested');
+      if (current?.id === msg.loadId) current.cancel();
     },
     'save-view': async (msg) => {
       const logger = Logger.create(outputChannel, 'Bridge');
@@ -773,7 +881,7 @@ export function createMessageHandlers(
         const store = loadProjectStore(context);
         const updated = addFilterProfile(store, msg.projectId, msg.profile);
         await saveProjectStore(context, updated);
-        logger.info(`Successfully saved filter view: "${msg.profile?.name}"`);
+        logger.info('Saved filter view');
         postProjectsList(host, updated);
         try {
           const sess = getSession();
@@ -785,10 +893,10 @@ export function createMessageHandlers(
             logger.debug(`AI run memory kept for "${msg.profile?.name}" — the save resolves to no presented run.`);
           }
         } catch (runErr) {
-          logger.warn(`Failed to store AI run memory for "${msg.profile?.name}": ${runErr instanceof Error ? runErr.message : String(runErr)}`);
+          logger.warn(`Failed to store AI run memory for the saved view: ${runErr instanceof Error ? runErr.message : String(runErr)}`);
         }
       } catch (err) {
-        logger.error(`Failed to save filter view: "${msg.profile?.name}"`, err);
+        logger.error('Failed to save filter view', err);
         throw err;
       }
     },
@@ -906,7 +1014,8 @@ export function createMessageHandlers(
         ? 'Data Lineage hit an error and is reloading the view — see the "Data Lineage Viz" Output channel for details.'
         : 'Data Lineage encountered an unexpected error — see the "Data Lineage Viz" Output channel for details.';
 
-      host.log('error', 'Bridge', `Webview ${sanitizeForLog(source)} — notification="${userMessage}" — messageType=error; source=${sanitizeForLog(source)}; component=${componentLine}; context=${contextLine}`, err);
+      host.log('error', 'Bridge', `Webview ${sanitizeForLog(source)} — notification="${userMessage}" — messageType=error; source=${sanitizeForLog(source)}; component=${componentLine}`, err);
+      host.log('debug', 'Bridge', `Webview ${sanitizeForLog(source)} error context=${contextLine}`);
       host.showErrorMessage(userMessage);
     },
     'show-warning': (msg) => {
@@ -915,7 +1024,7 @@ export function createMessageHandlers(
         Logger.create(outputChannel, 'Bridge'),
         'Webview warning notification',
         `Data Lineage: ${text}`,
-        { messageType: 'show-warning', text },
+        { messageType: 'show-warning' },
       );
     },
     'view-render-result': (msg) => {
@@ -924,9 +1033,11 @@ export function createMessageHandlers(
       if (msg.rendered === msg.of) {
         logger.debug(`AI view rendered — ${msg.rendered}/${msg.of} nodes resolved`);
       } else if (msg.rendered > 0) {
-        logger.info(`AI view rendered ${msg.rendered}/${msg.of} — ${msg.unresolved.length} scoped id(s) not in the loaded model: ${trunc(msg.unresolved.join(', '), 200)}`);
+        logger.info(`AI view rendered ${msg.rendered}/${msg.of} — ${msg.unresolved.length} scoped id(s) not in the loaded model`);
+        logger.debug(`AI view unresolved ids: ${trunc(msg.unresolved.join(', '), 200)}`);
       } else {
-        logger.warn(`AI view rendered 0/${msg.of} — none of the scoped objects are in the loaded render model. unresolved: ${trunc(msg.unresolved.join(', '), 200)}`);
+        logger.warn(`AI view rendered 0/${msg.of} — none of the scoped objects are in the loaded render model`);
+        logger.debug(`AI view unresolved ids: ${trunc(msg.unresolved.join(', '), 200)}`);
       }
     },
   };
@@ -1040,7 +1151,8 @@ async function runDbPhase1Host(host: BridgeHost, session: DbSession, outputChann
 
 async function runDbPhase2Host(host: BridgeHost, session: DbSession, schemas: string[], outputChannel: vscode.LogOutputChannel, loadQueries: () => Promise<DmvQuery[]>, getSession: () => AiSession, currentDatabase?: string, sourceName?: string, onModelBuilt?: (model: DatabaseModel) => void) {
   const queries = await loadQueries();
-  host.log('info', 'DB', `Running Phase 2 queries for schemas: ${schemas.join(', ')}`);
+  host.log('info', 'DB', `Running Phase 2 queries for ${schemas.length} schema(s)`);
+  host.log('debug', 'DB', `Running Phase 2 queries for schemas: ${schemas.join(', ')}`);
   const timeoutMs = readDeclaredNumericSetting(host.getConfiguration(), 'dmvQueryTimeout', DEFAULT_CONFIG.dmvQueryTimeout) * 1000;
   const allObjectsQuery = queries.find(q => q.name === 'all-objects');
   const leadSteps = allObjectsQuery ? 2 : 1;
@@ -1130,7 +1242,7 @@ async function loadDatabasePlatform(
         : 'no rows';
       logger.warn(`Platform query returned unusable metadata (${reason}) — ${fallback}`);
     } catch (err) {
-      logger.warn(`Platform query failed — ${fallback}: ${redactSecrets(err instanceof Error ? err.message : String(err))}`);
+      logger.warn(`Platform query failed — ${fallback}: ${err instanceof Error ? err.message : String(err)}`);
     }
   } else {
     logger.warn(`Custom DMV configuration has no platform-info query — ${fallback}`);
@@ -1166,7 +1278,7 @@ async function withDbProgressHost(
           isDbConnectionError(err) ? err.original : err,
           target,
           Logger.create(env.outputChannel, 'DB'),
-          connectionErrorHooks(env, target.connectionId, retry),
+          connectionErrorHooks(env, target.connectionId, token.isCancellationRequested ? undefined : retry),
         );
         host.postMessage({ type: 'db-error', message: reported.message, phase: 'connect' });
       } else {
@@ -1280,7 +1392,7 @@ async function handleTableStatsRequestHost(
   } finally {
     if (session) {
       await releaseSession(session).catch((err: unknown) =>
-        host.log('warn', 'Stats', `Disconnect failed: ${redactSecrets(err instanceof Error ? err.message : String(err))}`));
+        host.log('warn', 'Stats', `Disconnect failed: ${err instanceof Error ? err.message : String(err)}`));
     }
   }
 }
@@ -1306,7 +1418,8 @@ function handleParseStats(stats: ParseStats, outputChannel: vscode.LogOutputChan
   }
 
   if (stats.unreadableDefinitions?.length) {
-    logger.warn(`Definition not readable (encrypted or no VIEW DEFINITION permission) — loaded without edges: ${stats.unreadableDefinitions.join(', ')}`);
+    logger.warn(`Definition not readable (encrypted or no VIEW DEFINITION permission) — ${stats.unreadableDefinitions.length} object(s) loaded without edges`);
+    logger.debug(`Definitions not readable: ${stats.unreadableDefinitions.join(', ')}`);
   }
 
   if (spCount === 0) {

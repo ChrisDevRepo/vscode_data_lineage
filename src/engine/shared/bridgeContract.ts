@@ -733,6 +733,20 @@ export const UiStateSnapshotSchema = z.looseObject({
 });
 
 /**
+ * Host→webview message types that answer one load and therefore carry that load's `loadId`.
+ *
+ * @remarks
+ * The webview names a load with the `loadId` it sends on the request; the host stamps these results with
+ * that id and `cancel-load{loadId}` stops it. The webview drops a result of a load it cancelled or has
+ * replaced. The id is optional on the wire: a request without one is answered unstamped, and a result the
+ * host posts on its own (session restore, the external-project command) names no load and always applies.
+ */
+export const LOAD_RESULT_TYPES = [
+  'dacpac-schema-preview', 'dacpac-model', 'db-schema-preview', 'db-model',
+  'db-progress', 'db-error', 'db-cancelled', 'last-dacpac-gone',
+] as const;
+
+/**
  * Zod schema representing the complete discriminated union of message types
  * sent from the VS Code Extension Host to the React Webview.
  *
@@ -740,16 +754,16 @@ export const UiStateSnapshotSchema = z.looseObject({
  * All outgoing communication from the extension is validated against this schema.
  */
 export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('dacpac-model'), model: DatabaseModelSchema, config: ExtensionConfigSchema, sourceName: z.string(), autoVisualize: z.boolean().optional(), isDemo: z.boolean().optional() }),
-  z.object({ type: z.literal('db-model'), model: DatabaseModelSchema, config: ExtensionConfigSchema, sourceName: z.string() }),
+  z.object({ type: z.literal('dacpac-model'), model: DatabaseModelSchema, config: ExtensionConfigSchema, sourceName: z.string(), autoVisualize: z.boolean().optional(), isDemo: z.boolean().optional(), loadId: z.string().optional() }),
+  z.object({ type: z.literal('db-model'), model: DatabaseModelSchema, config: ExtensionConfigSchema, sourceName: z.string(), loadId: z.string().optional() }),
   z.object({ type: z.literal('projects-list'), projects: z.array(ProjectSchema), lastOpenedId: z.string().nullable(), lastWizardView: z.string().nullish() }),
   z.object({ type: z.literal('detail-closed') }),
-  z.object({ type: z.literal('dacpac-schema-preview'), preview: SchemaPreviewSchema, config: ExtensionConfigSchema, sourceName: z.string(), filePath: z.string().optional() }),
-  z.object({ type: z.literal('db-schema-preview'), preview: SchemaPreviewSchema, config: ExtensionConfigSchema, sourceName: z.string() }),
-  z.object({ type: z.literal('db-progress'), step: z.number(), total: z.number(), label: z.string() }),
-  z.object({ type: z.literal('db-cancelled') }),
-  z.object({ type: z.literal('db-error'), message: z.string(), phase: z.string() }),
-  z.object({ type: z.literal('last-dacpac-gone') }),
+  z.object({ type: z.literal('dacpac-schema-preview'), preview: SchemaPreviewSchema, config: ExtensionConfigSchema, sourceName: z.string(), filePath: z.string().optional(), loadId: z.string().optional() }),
+  z.object({ type: z.literal('db-schema-preview'), preview: SchemaPreviewSchema, config: ExtensionConfigSchema, sourceName: z.string(), loadId: z.string().optional() }),
+  z.object({ type: z.literal('db-progress'), step: z.number(), total: z.number(), label: z.string(), loadId: z.string().optional() }),
+  z.object({ type: z.literal('db-cancelled'), loadId: z.string().optional() }),
+  z.object({ type: z.literal('db-error'), message: z.string(), phase: z.string(), loadId: z.string().optional() }),
+  z.object({ type: z.literal('last-dacpac-gone'), loadId: z.string().optional() }),
   z.object({ type: z.literal('rebuild-config'), config: ExtensionConfigSchema }),
   z.object({ type: z.literal('focus-object'), schema: z.string(), name: z.string() }),
   z.object({ type: z.literal('reload-source') }),
@@ -801,16 +815,17 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ready') }),
   z.object({ type: z.literal('show-detail'), node: LineageNodeSchema.optional(), findQuery: z.string().optional() }),
   z.object({ type: z.literal('update-detail'), node: LineageNodeSchema.optional(), findQuery: z.string().optional() }),
-  z.object({ type: z.literal('open-dacpac') }),
-  z.object({ type: z.literal('load-project'), id: z.string() }),
+  z.object({ type: z.literal('open-dacpac'), loadId: z.string().optional() }),
+  z.object({ type: z.literal('load-project'), id: z.string(), loadId: z.string().optional() }),
   z.object({ type: z.literal('save-project'), project: ProjectSchema }),
   z.object({ type: z.literal('delete-project'), id: z.string() }),
-  z.object({ type: z.literal('load-demo') }),
-  z.object({ type: z.literal('dacpac-visualize'), schemas: z.array(z.string()), projectName: z.string().optional() }),
-  z.object({ type: z.literal('db-visualize'), schemas: z.array(z.string()), projectName: z.string().optional() }),
+  z.object({ type: z.literal('load-demo'), loadId: z.string().optional() }),
+  z.object({ type: z.literal('dacpac-visualize'), schemas: z.array(z.string()), projectName: z.string().optional(), loadId: z.string().optional() }),
+  z.object({ type: z.literal('db-visualize'), schemas: z.array(z.string()), projectName: z.string().optional(), loadId: z.string().optional() }),
   z.object({ type: z.literal('filter-changed'), uiState: UiStateSnapshotSchema }),
   z.object({ type: z.literal('render-state'), renderState: RenderStateSnapshotSchema }),
-  z.object({ type: z.literal('db-connect') }),
+  z.object({ type: z.literal('db-connect'), loadId: z.string().optional() }),
+  z.object({ type: z.literal('cancel-load'), loadId: z.string() }),
   z.object({
     type: z.literal('save-view'),
     projectId: z.string(),

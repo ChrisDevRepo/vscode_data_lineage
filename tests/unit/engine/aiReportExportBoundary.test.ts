@@ -209,9 +209,10 @@ describe('ai-open-in-editor handler: one report document and preview', () => {
     showWarningMessage.mockReset();
     openTabs.length = 0;
     closeTab.mockReset().mockResolvedValue(true);
-    const handlers = buildHandlers(fakeHost());
+    const host = fakeHost();
+    const handlers = buildHandlers(host);
     const click = (markdown: string) => handlers['ai-open-in-editor']({ type: 'ai-open-in-editor', markdown });
-    return { docs, click };
+    return { docs, click, host };
   }
 
   it('keeps one document and one preview uri across three clicks with changing content', async () => {
@@ -297,13 +298,16 @@ describe('ai-open-in-editor handler: one report document and preview', () => {
     ['returns false', () => closeTab.mockResolvedValue(false)],
     ['rejects', () => closeTab.mockRejectedValue(new Error('close refused'))],
   ])('still asks for the preview, without throwing, when closing the hidden tab %s', async (_name, setup) => {
-    const { docs, click } = arrange();
+    const { docs, click, host } = arrange();
     await click('# A');
     openTabs.push(previewTabFor('Untitled-1', false));
     setup();
     executeCommand.mockClear();
 
     await expect(click('# B')).resolves.toBeUndefined();
+    const logged = (host.log as ReturnType<typeof vi.fn>).mock.calls.map(([level, , text]) => `${level}: ${text}`);
+    expect(logged.filter((line) => line.startsWith('warn') && line.includes('Untitled-1')), 'the tab label stays at debug').toEqual([]);
+    expect(logged.some((line) => line.startsWith('debug') && line.includes('Untitled-1'))).toBe(true);
     expect(closeTab).toHaveBeenCalledTimes(1);
     expect(executeCommand).toHaveBeenCalledTimes(1);
     expect(executeCommand).toHaveBeenCalledWith('markdown.showPreviewToSide', docs[0].uri);
@@ -547,8 +551,11 @@ describe('webview error handler: logging goes through the redacting host.log', (
 
     expect(channel.error, 'a direct channel write bypasses redaction').not.toHaveBeenCalled();
     expect(channel.warn).not.toHaveBeenCalled();
-    expect(host.log).toHaveBeenCalledTimes(1);
-    const [level, category, text, err] = (host.log as ReturnType<typeof vi.fn>).mock.calls[0];
+    const calls = (host.log as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls.map(([callLevel]) => callLevel)).toEqual(['error', 'debug']);
+    expect(calls[1][2]).toContain('"note":"x"');
+    expect(calls[0][2]).not.toContain('"note"');
+    const [level, category, text, err] = calls[0];
     expect(level).toBe('error');
     expect(category).toBe('Bridge');
     expect(text).toContain('Webview error-boundary');

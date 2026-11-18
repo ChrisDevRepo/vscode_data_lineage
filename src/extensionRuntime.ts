@@ -463,7 +463,8 @@ async function loadParseRules(
         );
       }
     } else {
-      logger.warn(`Fallback parse rules custom → built-in: reason=cannot resolve path "${customPath}"`);
+      logger.warn('Fallback parse rules custom → built-in: reason=cannot resolve path');
+      logger.debug(`Fallback parse rules custom → built-in: path "${customPath}"`);
     }
   }
 

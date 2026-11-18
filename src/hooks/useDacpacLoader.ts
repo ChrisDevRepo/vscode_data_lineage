@@ -59,7 +59,7 @@ export interface DacpacLoaderState {
   loadDemo: () => void;
   /** Starts the database connection flow. */
   connectToDatabase: () => void;
-  /** Aborts the current loading process. */
+  /** Aborts the current loading process: tells the host to stop it and drops any result it still posts. */
   cancelLoading: () => void;
   /** Clears the auto-visualize trigger flag. */
   clearAutoVisualize: () => void;
@@ -99,6 +99,18 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   const [pendingAutoVisualize, setPendingAutoVisualize] = useState(false);
   const [pendingVisualize, setPendingVisualize] = useState(false);
   const isDemoRef = useRef(false);
+  /**
+   * The load this webview sent last, and whether the user cancelled it. A load result is dropped when
+   * it names another load, or the cancelled one. With no load sent yet (a fresh webview after a reload)
+   * every result applies, as does a result that names no load.
+   */
+  const loadRef = useRef<{ id: string | null; cancelled: boolean }>({ id: null, cancelled: false });
+  /** Names a new load; the id travels on the request and comes back on its results. */
+  const beginLoad = useCallback((): string => {
+    const id = crypto.randomUUID();
+    loadRef.current = { id, cancelled: false };
+    return id;
+  }, []);
   /**
    * Status auto-clear policy: transient info messages (progress, connecting, loading) clear 6 s
    * after loading ends; success messages carry the load summary, and warnings and errors need the
@@ -153,6 +165,9 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         return;
       }
       const msg = frame.data;
+
+      const { id: sentId, cancelled } = loadRef.current;
+      if ('loadId' in msg && msg.loadId !== undefined && sentId !== null && (msg.loadId !== sentId || cancelled)) return;
 
       const applyConfig = (raw: Partial<ExtensionConfig>) => {
         onConfigReceived({
@@ -250,22 +265,22 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   const visualize = useCallback((schemas: Set<string>, projectName?: string) => {
     const named = projectName ? { projectName } : {};
     if (schemaPreview !== null && model === null && loadingContext !== 'database') {
-      vscodeApi.postMessage({ type: 'dacpac-visualize', schemas: Array.from(schemas), ...named });
+      vscodeApi.postMessage({ type: 'dacpac-visualize', schemas: Array.from(schemas), ...named, loadId: beginLoad() });
       setIsLoading(true);
       setLoadingContext('dacpac');
       return;
     }
 
-    vscodeApi.postMessage({ type: 'db-visualize', schemas: Array.from(schemas), ...named });
+    vscodeApi.postMessage({ type: 'db-visualize', schemas: Array.from(schemas), ...named, loadId: beginLoad() });
     setIsLoading(true);
     setLoadingContext('database');
     setStatus({ text: 'Loading selected schemas from database...', type: 'info' });
-  }, [vscodeApi, schemaPreview, model, loadingContext]);
+  }, [vscodeApi, beginLoad, schemaPreview, model, loadingContext]);
 
   const openFile = useCallback(() => {
     isDemoRef.current = false;
-    vscodeApi.postMessage({ type: 'open-dacpac' });
-  }, [vscodeApi]);
+    vscodeApi.postMessage({ type: 'open-dacpac', loadId: beginLoad() });
+  }, [vscodeApi, beginLoad]);
 
   const resetToStart = useCallback(() => {
     setModel(null);
@@ -285,30 +300,35 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
     setIsLoading(true);
     setStatus(null);
     setLoadingContext(null); // set when response message type is known
-    vscodeApi.postMessage({ type: 'load-project', id });
-  }, [vscodeApi]);
+    vscodeApi.postMessage({ type: 'load-project', id, loadId: beginLoad() });
+  }, [vscodeApi, beginLoad]);
 
   const loadDemo = useCallback(() => {
     isDemoRef.current = true;
     setIsLoading(true);
     setLoadingContext('dacpac');
     setStatus(null);
-    vscodeApi.postMessage({ type: 'load-demo' });
-  }, [vscodeApi]);
+    vscodeApi.postMessage({ type: 'load-demo', loadId: beginLoad() });
+  }, [vscodeApi, beginLoad]);
 
   const connectToDatabase = useCallback(() => {
     isDemoRef.current = false;
     setIsLoading(true);
     setLoadingContext('database');
     setStatus({ text: 'Connecting to database...', type: 'info' });
-    vscodeApi.postMessage({ type: 'db-connect' });
-  }, [vscodeApi]);
+    vscodeApi.postMessage({ type: 'db-connect', loadId: beginLoad() });
+  }, [vscodeApi, beginLoad]);
 
   const cancelLoading = useCallback(() => {
+    const { id } = loadRef.current;
+    if (id) {
+      loadRef.current = { id, cancelled: true };
+      vscodeApi.postMessage({ type: 'cancel-load', loadId: id });
+    }
     setIsLoading(false);
     setLoadingContext(null);
     setStatus(null);
-  }, []);
+  }, [vscodeApi]);
 
   const clearAutoVisualize = useCallback(() => {
     setPendingAutoVisualize(false);

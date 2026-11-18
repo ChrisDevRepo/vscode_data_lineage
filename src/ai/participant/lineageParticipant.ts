@@ -9,7 +9,7 @@ import * as vscode from 'vscode';
 import type { Logger } from '../../utils/log';
 import { Logger as OutputLogger } from '../../utils/log';
 import { expandNextQuestionSuggestions } from '../prompting/followupSuggestions';
-import { notifyWarning } from '../../utils/notifications';
+import { notifyInfo, notifyWarning } from '../../utils/notifications';
 import { VscodeModelPort } from '../model/vscodeModelPort';
 import type { AiTraceWriter } from '../observability/aiTraceWriter';
 import { tokenToAbortSignal } from '../providers/cancellation';
@@ -138,6 +138,10 @@ export class LineageParticipant {
             await vscode.commands.executeCommand('workbench.action.chat.open', action === 'change'
               ? { query: PARTICIPANT_MENTION, isPartialQuery: true }
               : { query: `${PARTICIPANT_MENTION}${submitted!.label}`, blockOnResponse: true });
+            // Change scope only opens an empty chat; without a hint the user does not know the next step.
+            if (action === 'change') {
+              notifyInfo(this.logger, 'Change scope', `Type your scope change after ${PARTICIPANT_MENTION.trim()} and press Enter.`);
+            }
           } finally {
             if (this.buttonRequest === submitted) this.buttonRequest = null;
             this.gateCommandBusy = false;

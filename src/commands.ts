@@ -229,7 +229,8 @@ export function registerCommands(
      * context key. Renders into an already-open panel; it does not open one.
      */
     vscode.commands.registerCommand('dataLineageViz.openExternalProject', async (uri: vscode.Uri) => {
-      configLogger.info(`Forcing project load from: ${uri.fsPath}`);
+      configLogger.info('Forcing project load from a file');
+      configLogger.debug(`Forcing project load from: ${uri.fsPath}`);
       try {
         const { extractDacpac } = await import('./engine/dacpacExtractor');
 
@@ -254,7 +255,8 @@ export function registerCommands(
           void postToWebview(panel, { type: 'dacpac-model', model, config, sourceName: sess.projectName, autoVisualize: true }, configLogger);
         }
 
-        configLogger.info(`Model forced: ${model.nodes.length} nodes, ${model.edges.length} edges, project: ${sess.projectName}`);
+        configLogger.info(`Model forced: ${model.nodes.length} nodes, ${model.edges.length} edges`);
+        configLogger.debug(`Model forced for project: ${sess.projectName}`);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         notifyError(configLogger, 'Open external project', `Data Lineage: Failed to read file — ${msg}`, err, {

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as vscode from 'vscode';
-const host = vi.hoisted(() => ({ commands: new Map<string, (...args: unknown[]) => unknown>(), execute: vi.fn() }));
+const host = vi.hoisted(() => ({ commands: new Map<string, (...args: unknown[]) => unknown>(), execute: vi.fn(), info: vi.fn() }));
 vi.mock('vscode', async original => ({ ...await original<object>(),
   commands: {
     registerCommand: (name: string, handler: (...args: unknown[]) => unknown) => { host.commands.set(name, handler); return {dispose(){}}; },
@@ -8,7 +8,7 @@ vi.mock('vscode', async original => ({ ...await original<object>(),
   },
   chat: {createChatParticipant: () => ({onDidReceiveFeedback(){},dispose(){}})},
   workspace: {getConfiguration: () => ({get: () => undefined})},
-  StatusBarAlignment: {Left: 1}, window: {createStatusBarItem: () => ({show(){},hide(){}})},
+  StatusBarAlignment: {Left: 1}, window: {createStatusBarItem: () => ({show(){},hide(){}}), showInformationMessage: host.info},
 }));
 import { LineageParticipant } from '../../../src/ai/participant/lineageParticipant';
 import type { LineageRuntime } from '../../../src/ai/runtime/lineageRuntime';
@@ -53,7 +53,9 @@ describe('native plan buttons',()=>{
     it(`${action} submits only the action label and retains the reviewed revision in the host`,async()=>{
       const {reply,click,run,runtime}=fixture();
       host.execute.mockImplementation(async (_command,options)=>{ await reply(options.query.replace('@lineage ','')); });
+      host.info.mockClear();
       await click('gate-2',action);
+      expect(host.info).not.toHaveBeenCalled();
       expect(host.execute).toHaveBeenLastCalledWith('workbench.action.chat.open',{query:`@lineage ${label}`,blockOnResponse:true});
       expect(run.mock.calls[0]?.[0]).toMatchObject({request:{prompt:`${action==='approve'?'Approve':'Cancel'} exploration plan revision 2`}});
       expect(runtime.resumeGate).toHaveBeenCalledWith('gate-2',action==='approve'?{kind:'approve',classes:['reviewed']}:{kind:'cancel'});
@@ -63,8 +65,10 @@ describe('native plan buttons',()=>{
   it('Change scope opens editable chat without submitting a request or approving',async()=>{
     const {click,run,runtime}=fixture();
     host.execute.mockResolvedValue(undefined);
+    host.info.mockClear();
     await click('gate-2','change');
     expect(host.execute).toHaveBeenLastCalledWith('workbench.action.chat.open',{query:'@lineage ',isPartialQuery:true});
+    expect(host.info.mock.calls).toEqual([['Type your scope change after @lineage and press Enter.']]);
     expect(runtime.resumeGate).toHaveBeenCalledWith('gate-2',{kind:'hold'});
     expect(run).not.toHaveBeenCalled();
   });

@@ -55,6 +55,19 @@ function formatContext(context?: NotifyContext): string {
   }
 }
 
+/**
+ * Logs the toast text and the call-site context at debug, and returns the redacted toast text.
+ *
+ * @remarks
+ * Both can carry a path, a name or a driver message, so neither reaches an info, warn or error
+ * line: the caller logs the operation alone at the toast's level. The toast is redacted because a
+ * caller may build it from a driver message.
+ */
+function noticeDetailAndToast(logger: Logger, operation: string, userMessage: string, context?: NotifyContext): string {
+  logger.debug(`${operation} — notification="${userMessage}"${formatContext(context)}`);
+  return redactSecrets(userMessage);
+}
+
 /** Logs detailed error diagnostics before showing a concise VS Code error toast. */
 export function notifyError(
   logger: Logger,
@@ -64,9 +77,8 @@ export function notifyError(
   context?: NotifyContext,
   showErrorMessage: (message: string) => unknown = vscode.window.showErrorMessage,
 ): void {
-  const detail = `notification="${userMessage}"${formatContext(context)}`;
-  logger.error(`${operation} — ${detail}`, error ?? new Error(userMessage));
-  showErrorMessage(userMessage);
+  logger.error(operation, error ?? 'no error detail');
+  showErrorMessage(noticeDetailAndToast(logger, operation, userMessage, context));
 }
 
 /** Logs detailed information diagnostics before showing a concise VS Code info toast. */
@@ -77,8 +89,8 @@ export function notifyInfo(
   context?: NotifyContext,
   showInformationMessage: (message: string) => unknown = vscode.window.showInformationMessage,
 ): void {
-  logger.info(`${operation} — notification="${userMessage}"${formatContext(context)}`);
-  showInformationMessage(userMessage);
+  logger.info(operation);
+  showInformationMessage(noticeDetailAndToast(logger, operation, userMessage, context));
 }
 
 /** Logs detailed warning diagnostics before showing a concise VS Code warning toast. */
@@ -89,6 +101,6 @@ export function notifyWarning(
   context?: NotifyContext,
   showWarningMessage: (message: string) => unknown = vscode.window.showWarningMessage,
 ): void {
-  logger.warn(`${operation} — notification="${userMessage}"${formatContext(context)}`);
-  showWarningMessage(userMessage);
+  logger.warn(operation);
+  showWarningMessage(noticeDetailAndToast(logger, operation, userMessage, context));
 }
