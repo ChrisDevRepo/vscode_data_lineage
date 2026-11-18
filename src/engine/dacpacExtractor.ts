@@ -253,7 +253,7 @@ function parseElements(xml: string): { elements: XmlElement[]; dspName: string; 
 
   let doc: any;
   try {
-    doc = parser.parse(xml);
+    doc = parser.parse(xml, true);
   } catch {
     throw new Error('Failed to parse model.xml — the file may be corrupted');
   }

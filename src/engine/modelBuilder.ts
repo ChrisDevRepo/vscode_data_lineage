@@ -331,7 +331,7 @@ function groupDependencies(
     const targetParts = splitSqlName(dep.targetName);
     if (targetParts.length >= 3) {
       const sourceId = normalizeName(dep.sourceName, identifierCaseSensitive);
-      if (nodeIds.has(sourceId) || (allNodeIds.size > 0 && allNodeIds.has(sourceId))) {
+      if (nodeIds.has(sourceId)) {
         if (!crossDbMetaDeps.has(sourceId)) crossDbMetaDeps.set(sourceId, []);
         crossDbMetaDeps.get(sourceId)!.push(dep.targetName);
       }
@@ -665,9 +665,7 @@ function buildNodesAndEdges(
     onDebugLog!(`Parse trace sample limit reached (${traceStartBudget} bodies) — see [Parse] aggregate stats for full counts`);
   }
 
-  if (externalRefsEnabled) {
-    createVirtualNodes(nodes, nodeIds, edges, edgeKeys, crossDbRegexRefs, grouped.crossDbMetaDeps, currentDatabase, identifierCaseSensitive);
-  }
+  createVirtualNodes(nodes, nodeIds, edges, edgeKeys, crossDbRegexRefs, grouped.crossDbMetaDeps, currentDatabase, identifierCaseSensitive, externalRefsEnabled);
 
   const typeById = new Map(nodes.map(n => [n.id, n.type]));
   const sanitized: LineageEdge[] = [];
@@ -707,6 +705,7 @@ function lastUrlSegment(url: string, maxLen = 40): string {
  *
  * @param crossDbRegexRefs - 3-part references found by regex.
  * @param crossDbMetaDeps - 3-part references found in model metadata.
+ * @param externalRefsEnabled - When false, only references to the current database become local edges.
  */
 function createVirtualNodes(
   nodes: LineageNode[],
@@ -717,13 +716,14 @@ function createVirtualNodes(
   crossDbMetaDeps: Map<string, string[]>,
   currentDatabase?: string,
   identifierCaseSensitive = false,
+  externalRefsEnabled = true,
 ): void {
   const nodeMap = new Map(nodes.map(n => [n.id, n]));
 
   const fileNodeMap = new Map<string, string>();
   const nodeSnapshot = [...nodes];
   for (const node of nodeSnapshot) {
-    if (!node.bodyScript) continue;
+    if (!externalRefsEnabled || !node.bodyScript) continue;
     const refs = extractExternalRefs(node.bodyScript);
     for (const ref of refs) {
       let virtualId = fileNodeMap.get(ref.url);
@@ -780,6 +780,7 @@ function createVirtualNodes(
         addLocalEdge(nodeId, localId, false);
         continue;
       }
+      if (!externalRefsEnabled) continue;
       ensureCrossDbNode(db, schema, object, crossDbId);
       addEdge(edges, edgeKeys, crossDbId, nodeId, 'body');
     }
@@ -796,6 +797,7 @@ function createVirtualNodes(
           addLocalEdge(nodeId, localId, true);
           continue;
         }
+        if (!externalRefsEnabled) continue;
         ensureCrossDbNode(db, schema, object, crossDbId);
         addEdge(edges, edgeKeys, nodeId, crossDbId, 'body');
       }
@@ -819,6 +821,7 @@ function createVirtualNodes(
         addLocalEdge(sourceId, localId, isWrite);
         continue;
       }
+      if (!externalRefsEnabled) continue;
       ensureCrossDbNode(db, schema, object, crossDbId);
       if (isWrite) addEdge(edges, edgeKeys, sourceId, crossDbId, 'body');
       else         addEdge(edges, edgeKeys, crossDbId, sourceId, 'body');

@@ -18,7 +18,7 @@ beforeAll(() => { loadParseRules(); });
 type Expect = { s?: string[]; t?: string[]; x?: string[]; xs?: string[]; xt?: string[] };
 
 /** Splits at the first dot only, so a dotted object name such as `[a.b]` stays one part. */
-const key = (name: string) => `[${name.toLowerCase().replace('.', '].[')}]`;
+const key = (name: string) => `[${name.toLowerCase().replace(/]/g, ']]').replace('.', '].[')}]`;
 const sorted = (list: string[]) => [...list].sort();
 
 function expectParsed(sql: string, want: Expect): void {

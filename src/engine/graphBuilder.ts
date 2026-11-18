@@ -834,8 +834,7 @@ function placeIsolatedRow(positions: Map<string, { x: number; y: number }>, isol
  */
 function computeLayout(graph: Graph, config: ExtensionConfig = DEFAULT_CONFIG, annotatedNodeIds?: readonly string[]): Map<string, { x: number; y: number }> {
   const { input, isolatedIds } = objectLayoutPlan(graph, config, annotatedNodeIds);
-  const positions = dagreLayout(input);
-
+  const positions = new Map(dagreLayout(input));
   placeIsolatedRow(positions, isolatedIds);
   return positions;
 }

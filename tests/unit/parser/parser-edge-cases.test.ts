@@ -1187,12 +1187,12 @@ describe('a bracketed identifier is not a string literal', () => {
 
   it('an escaped bracket in a source name is captured, not the fragment before it', () => {
     const result = parseSqlBody('SELECT * FROM [dbo].[a]]b]');
-    expect(result.sources).toContain('[dbo].[a]b]');
+    expect(result.sources).toContain('[dbo].[a]]b]');
   });
 
   it('an escaped bracket in a target name is captured, not the fragment before it', () => {
     const result = parseSqlBody('INSERT INTO [dbo].[x]]y] SELECT 1');
-    expect(result.targets).toContain('[dbo].[x]y]');
+    expect(result.targets).toContain('[dbo].[x]]y]');
   });
 });
 

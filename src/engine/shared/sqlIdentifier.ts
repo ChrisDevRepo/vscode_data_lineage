@@ -8,12 +8,11 @@ import { quoteIdentifier, schemaKey, splitSqlName, stripBrackets } from '../../u
  */
 export function normalizeName(name: string, identifierCaseSensitive = false): string {
   const parts = splitSqlName(name).map(p => schemaKey(stripBrackets(p), identifierCaseSensitive));
-  const quotePart = identifierCaseSensitive ? quoteIdentifier : (part: string): string => `[${part}]`;
   if (parts.length < 2) {
-    return quotePart(parts[0] ?? '');
+    return quoteIdentifier(parts[0] ?? '');
   }
   if (parts.length >= 4) {
-    return `[__external__].${quotePart(parts[parts.length - 1])}`;
+    return `[__external__].${quoteIdentifier(parts[parts.length - 1])}`;
   }
-  return parts.map(quotePart).join('.');
+  return parts.map(quoteIdentifier).join('.');
 }

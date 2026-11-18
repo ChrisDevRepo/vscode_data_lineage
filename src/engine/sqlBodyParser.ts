@@ -844,8 +844,7 @@ function normalizeCaptured(raw: string, identifierCaseSensitive: boolean): strin
   const schema = parts[0];
   const obj = parts[1];
   if (!schema || !obj) return null;
-  const canonical = identifierCaseSensitive ? `${quoteIdentifier(schema)}.${quoteIdentifier(obj)}` : `[${schema}].[${obj}]`;
-  return schemaKey(canonical, identifierCaseSensitive);
+  return schemaKey(`${quoteIdentifier(schema)}.${quoteIdentifier(obj)}`, identifierCaseSensitive);
 }
 
 /** Normalizes a 3+ part name to `db.schema.object`, dropping CLR/XML calls; `null` if invalid. */
