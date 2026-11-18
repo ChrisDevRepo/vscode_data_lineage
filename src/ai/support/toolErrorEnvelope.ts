@@ -889,7 +889,7 @@ function issueErrors(issue: z.core.$ZodIssue, input: unknown): ToolError[] {
  *   the reason carrying them.
  * @param error - The Zod validation failure.
  * @param opts - `code` to stamp on the rejection; optional `hint` (default: the field repair chain,
- *   {@link zodFieldRepairHint}, followed by the one generic resend rule
+ *   {@link zodFieldRepairHint}, followed by the one generic resend rule unless an issue states its own repair,
  *   {@link INVALID_TOOL_INPUT_REPAIR_HINT}); optional `input` (the value that failed parsing)
  *   enabling measured-size enrichment and absent-field hints; optional `schema` (the schema it
  *   failed) enabling the hints that name what the schema accepts.
@@ -935,7 +935,7 @@ export function rejectionFromZodError(
     hint: opts.hint ?? [
       zodFieldRepairHint(error, opts.input, opts.schema),
       // A refinement that states its own repair may contradict the generic resend rule.
-      error.issues.every(issueOwnsRepair) ? undefined : INVALID_TOOL_INPUT_REPAIR_HINT,
+      error.issues.some(issueOwnsRepair) ? undefined : INVALID_TOOL_INPUT_REPAIR_HINT,
     ].filter(Boolean).join(' '),
     issuePaths,
     errors,
