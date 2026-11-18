@@ -784,7 +784,7 @@ function recordToolOutcome(
   }
   calls.push({ callId: outcome.callId, toolName: outcome.toolName, status: outcome.status, closedByCallId: outcome.closedByCallId });
   trace?.({ toolName: outcome.toolName, code: outcome.rejection.code });
-  return { resultText: rejectionText(outcome.rejection), status: 'error', artifact: outcome.rejection };
+  return { resultText: rejectionText(outcome.rejection, priorState), status: 'error', artifact: outcome.rejection };
 }
 
 /** Bounds and normalizes a provider-controlled call id for single-line log surfaces. */
@@ -1053,7 +1053,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
           hint: "Answer that call's result with one call in your next reply.",
           detail: { evaluatedCallId },
         }),
-      }, calls, observations, rejections, input.traceSyntheticRejection);
+      }, calls, observations, rejections, input.traceSyntheticRejection, input.priorState);
       toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
       logSyntheticRejection(input, 'extra_call_not_evaluated', call, REJECTION_CODES.extraCallNotEvaluated,
         `evaluated callId ${evaluatedCallId}`);
