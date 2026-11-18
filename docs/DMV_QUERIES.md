@@ -1,293 +1,271 @@
-# Custom DMV Queries
+# DMV queries
 
-Live-database ingestion uses Dynamic Management View (DMV) queries defined in [`assets/dmvQueries.yaml`](../assets/dmvQueries.yaml). You can inspect the built-in SQL and override it in your workspace.
+Reference for DBAs: the application SQL a database import sends, what it reads and what it returns. The SQL is in [`assets/dmvQueries.yaml`](../assets/dmvQueries.yaml) and can be replaced by a custom file.
 
-## Setup
+## Connection
 
-1. Open the **Command Palette** (`Ctrl+Shift+P`) and run **Data Lineage: Create DMV Queries** — copies the built-in YAML into your workspace as `dmvQueries.yaml`.
-2. Set `dataLineageViz.dmvQueriesFile` to `dmvQueries.yaml` in VS Code Settings (`Ctrl+,`, search "dataLineageViz").
-3. Edit the SQL — add WHERE filters, adjust JOINs, swap a query for a vendor variant.
-4. The YAML is loaded on every DB import. Table statistics on a built-in connection reuse the queries last loaded, until the next import or a change of `dataLineageViz.dmvQueriesFile`, so an invalid file warns once rather than on every request. Missing or unreadable files, invalid YAML, or a file with no usable query entries falls back to the built-in queries with a warning. Invalid individual entries are skipped; a partially valid custom file remains active.
+| Item | Value |
+|---|---|
+| Authentication | SQL login or Microsoft Entra ID |
+| Application intent | `ReadOnly` |
+| Encryption | On by default; required for Entra ID |
+| Permission | `VIEW DEFINITION` on the database for lineage; `SELECT` on tables for table statistics. Custom queries may need additional permissions. |
+| Built-in statements | Catalog queries and metadata functions only; no writes, no temp objects, no user-table reads |
+| Timeout | `dataLineageViz.dmvQueryTimeout` per query (default 120 s) |
+| Platforms | SQL Server 2016 or later, Azure SQL, Fabric Data Warehouse, Synapse Dedicated SQL Pool |
 
-## Prerequisites
+These guarantees describe the shipped queries. Custom YAML SQL runs with the connection's permissions and is not restricted to `SELECT`; `ReadOnly` intent is a routing hint, not a permission boundary. Use a login with only the permissions your features need.
 
-- A connection: a built-in connection (**Data Lineage: Add Database Connection**).
-- Permissions: `VIEW DEFINITION` on the database for lineage; `SELECT` on tables for profiling. Custom queries may need additional permissions.
-- Supported platforms: SQL Server 2016+, Azure SQL, Fabric Data Warehouse, Synapse Dedicated SQL Pool.
+Table statistics use the same connection settings with different statements; see [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md). They also send `platform-info` to learn the server edition.
 
 ## Query execution
 
-Every executed DMV query is logged to the **Data Lineage Viz** Output channel with the `[DB]` category. To see what hit your database:
-
-1. `View → Output → Data Lineage Viz`.
-2. Set the channel log level to **Debug** (gear icon → Set Log Level → Debug). Phase milestones are at INFO; the per-query SQL is at DEBUG.
-3. Open the wizard and run an import.
-4. Each query is logged on execution as `[DB] Executing <name> (step/total) — SQL: <first 300 chars>`.
-
-The 300-character cap is intentional for log hygiene. For the full built-in
-SQL, read [`assets/dmvQueries.yaml`](../assets/dmvQueries.yaml). Custom SQL is
-executed as configured; non-phase-1 queries receive `{{SCHEMAS}}` expansion.
-
-Nothing runs automatically in the background. The standard import path uses:
-
-| Phase | Queries | When |
-|-------|---------|------|
-| Phase 1 | `schema-preview` | Runs first to populate the schema-selection wizard. |
-| Platform detection | `platform-info` | Runs once before the selected-schema model is built. If it is missing, fails, or returns no row, the model records `Unknown database platform` without failing the import; the query is not sent again. |
-| Built-in connection | `platform-info` | A connection reads server details (edition, version) with `platform-info`; it sends no SQL that is not in this file. The database name is typed, not listed. |
-| Object catalog | `all-objects` | Runs once before the Phase 2 sweep (unfiltered). Lists every object across all schemas (no DDL, no columns) so references into unselected schemas classify as "cross-schema known" with correct schema casing instead of "unresolved". If it is missing or fails, those references stay unclassified; the import continues. |
-| Phase 2 | `nodes`, `columns`, `constraints`, `dependencies` | Runs after schema selection. Each configured non-phase-1 query is executed with `{{SCHEMAS}}` expanded. |
-
-The current live import executes `constraints` but does not pass those rows to
-the extractor, so they do not enrich the table design view.
-
-The built-in Phase 2 queries use `{{SCHEMAS}}`, which the extension expands to
-the comma-separated, single-quoted schema list before execution (for example
-`'dbo', 'Sales'`). The SQL author controls where the filter is applied; TypeScript
-does not otherwise rewrite custom SQL.
-
-## YAML structure
-
-```yaml
-version: 1
-required_permission: "VIEW DEFINITION"
-queries:
-  - name: schema-preview   # Phase 1 — schema counts for the selection wizard
-    phase: 1
-    description: "..."
-    sql: |
-      SELECT ...
-  - name: all-objects      # Phase 1 — full object catalog (no DDL), optional
-    phase: 1
-    description: "..."
-    sql: |
-      SELECT ...
-  - name: platform-info    # Platform detection before model construction
-    phase: 1
-    description: "..."
-    sql: |
-      SELECT ...
-  - name: nodes            # Phase 2 — DDL for selected schemas
-    phase: 2
-    description: "..."
-    sql: |
-      SELECT ... WHERE s.name IN ({{SCHEMAS}})
-  - name: columns          # Phase 2 — column metadata
-    phase: 2
-    description: "..."
-    sql: |
-      SELECT ... WHERE s.name IN ({{SCHEMAS}})
-  - name: constraints      # Phase 2 — FK, UQ, CK metadata (optional)
-    phase: 2
-    description: "..."
-    sql: |
-      SELECT ... WHERE s.name IN ({{SCHEMAS}})
-  - name: dependencies     # Phase 2 — object-level references
-    phase: 2
-    description: "..."
-    sql: |
-      SELECT ... WHERE s1.name IN ({{SCHEMAS}}) OR d.referenced_schema_name IN ({{SCHEMAS}})
-```
-
-### Example: keep a schema out of the model
-
-To hide a schema from the wizard and the graph, add the same predicate to every
-query that returns objects. A restriction in only one query leaves the schema
-reachable through the others.
-
-| Query | Built-in predicate | Restricted |
+| Step | Query | When |
 |---|---|---|
-| `schema-preview`, `all-objects` | `s.name NOT IN ('sys','INFORMATION_SCHEMA')` | `s.name NOT IN ('sys','INFORMATION_SCHEMA', N'Audit')` |
-| `nodes`, `columns`, `constraints` | `s.name IN ({{SCHEMAS}})` | `s.name IN ({{SCHEMAS}}) AND s.name NOT IN (N'Audit')` |
-| `dependencies` | `(s1.name IN ({{SCHEMAS}}) OR d.referenced_schema_name IN ({{SCHEMAS}}))` | add `AND s1.name NOT IN (N'Audit') AND d.referenced_schema_name NOT IN (N'Audit')` |
+| Phase 1 | `schema-preview`, then `platform-info` | When an import starts, to fill the schema-selection wizard. |
+| Phase 2 start | `platform-info` (10-second limit), then `all-objects` (unfiltered) | After you select schemas. |
+| Phase 2 | `nodes`, `columns`, `constraints`, `dependencies` | After you select schemas. |
 
-Keep `{{SCHEMAS}}` in every Phase 2 query: a query without it runs verbatim and
-ignores the wizard's schema selection (the output channel logs a warning). The
-file is read at each import, so an edit applies to the next import.
+Nothing runs in the background. `phase: 1` marks a query as not schema-filtered and keeps it out of the Phase 2 sweep, so `platform-info` and `all-objects` carry `phase: 1` although they run at Phase 2 time. Every query without `phase: 1` runs in the Phase 2 sweep, in file order. The database name is typed, not listed. Opening a local `.dacpac` does not connect to a database.
 
-## Expected columns — the contract
+### `{{SCHEMAS}}`
 
-Each query must return the columns below. Column matching is case-insensitive and extra columns are ignored. The host currently validates `platform-info` before using it; the main extraction queries have no complete preflight check, so test custom result shapes before production use.
+`{{SCHEMAS}}` in Phase 2 queries expands to the selected schemas as comma-separated Unicode literals, with embedded quotes doubled, for example `N'dbo', N'Sales'`. The SQL author decides where the filter applies; the SQL is not otherwise rewritten. A Phase 2 query without the placeholder runs verbatim, ignores the schema selection, and logs a warning.
 
-### `schema-preview` — schema object counts (Phase 1)
+### Query logging
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `schema_name` | string | Schema name |
-| `type_code` | string | Object type code (see table below) |
-| `object_count` | int | Number of objects of that type in the schema |
+Open **View → Output → Data Lineage Viz**, set the channel log level to **Debug** (gear icon → Set Log Level → Debug; phase milestones log at Info, per-query SQL at Debug) and run an import. Each query logs as `[DB] Executing <name> (step/total) — SQL: <first 300 characters>`, followed by its row count and elapsed time. The 300-character cap is intentional for log hygiene.
 
-### `all-objects` — full object catalog (Phase 1, optional)
+### Result contract
 
-Used to identify dependencies into unselected schemas and preserve schema casing.
+Each query must return the columns listed below. Names match case-insensitively; extra columns are ignored; rows are read in the order returned. Only `platform-info` is validated before use; a wrong shape in other queries can leave the model empty or incomplete, so test custom queries first.
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `schema_name` | string | Schema name |
-| `object_name` | string | Object name |
-| `type_code` | string | Object type code |
+### `type_code` values
 
-### `nodes` — objects and DDL (Phase 2)
+The standard `sys.objects.type` codes; the only deviation is `ET` for external tables (`U` with `sys.tables.is_external = 1`). A row with any other code is skipped.
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `schema_name` | string | Schema name (`dbo`, `Sales`, etc.) |
-| `object_name` | string | Object name |
-| `type_code` | string | Object type code (see table below) |
-| `body_script` | string/null | DDL body for SPs, views, functions. NULL for tables. |
-
-**Valid `type_code` values** — these are the standard `sys.objects.type` codes; the only deviation is `ET` for external tables (collapsed from `U` + `is_external = 1`):
-
-| Code | Object Type |
-|------|-------------|
+| Code | Object type |
+|---|---|
 | `U` | Table |
 | `V` | View |
-| `P` | Stored Procedure |
-| `FN` | Scalar Function |
-| `IF` | Inline Table-Valued Function |
-| `TF` | Multi-Statement Table-Valued Function |
-| `ET` | External Table (PolyBase, Synapse Dedicated SQL Pool, Fabric) |
+| `P` | Stored procedure |
+| `FN` | Scalar function |
+| `IF` | Inline table-valued function |
+| `TF` | Multi-statement table-valued function |
+| `ET` | External table (PolyBase, Synapse Dedicated SQL Pool, Fabric) |
 
-### `platform-info` — platform detection
+**Object filter.** `schema-preview`, `all-objects` and `nodes` return only user objects of the types above. They exclude `is_ms_shipped = 1` and objects with the extended property `microsoft_database_tools_support`. The preview and the full catalog also exclude the `sys` and `INFORMATION_SCHEMA` schemas; `nodes` uses the selected schema list.
 
-Returns one row identifying the platform stored in the model. If unavailable,
-the extension tries server metadata, then records `Unknown database platform`.
+### `schema-preview`
+
+| | |
+|---|---|
+| Reads | `sys.objects`, `sys.schemas`, `sys.tables`, `sys.extended_properties` |
+| Filter | Object filter; all schemas |
+| Returns | One row per schema and type (columns below) |
+| Used for | Schema-selection wizard |
 
 | Column | Type | Description |
-|--------|------|-------------|
-| `engine_edition` | int | `SERVERPROPERTY('EngineEdition')` — identifies the platform family |
-| `major_version` | int | `SERVERPROPERTY('ProductMajorVersion')` — used to resolve on-prem SQL Server year |
-| `edition` | string | `SERVERPROPERTY('Edition')` — fallback label when version is unrecognised |
+|---|---|---|
+| `schema_name` | string | Schema name |
+| `type_code` | string | Object type code |
+| `object_count` | int | Number of objects of that type in the schema |
 
-**`engine_edition` mapping:**
+### `platform-info`
+
+| | |
+|---|---|
+| Reads | `SERVERPROPERTY('EngineEdition')`, `SERVERPROPERTY('ProductMajorVersion')`, `SERVERPROPERTY('Edition')`; collation of `sys.schemas.name` |
+| Returns | One row (columns below) |
+| Used for | Platform label, name case sensitivity, table-statistics sampling method |
+| Time limit | 10 seconds, or `dataLineageViz.dmvQueryTimeout` if lower |
+
+| Column | Type | Description |
+|---|---|---|
+| `engine_edition` | int | `SERVERPROPERTY('EngineEdition')`; identifies the platform family |
+| `major_version` | int | `SERVERPROPERTY('ProductMajorVersion')`; resolves the SQL Server release year |
+| `edition` | string | `SERVERPROPERTY('Edition')`; label when the version is not recognized |
+| `identifier_collation` *(optional)* | string/null | Collation of `sys.schemas.name` |
+| `identifier_comparison_style` *(optional)* | int/null | `COLLATIONPROPERTY(<collation>, 'ComparisonStyle')`. Names compare case-sensitively only when a collation is returned and the style has the ignore-case bit (1) clear; otherwise case-insensitively. |
+
+Platform label by `engine_edition`:
 
 | Value | Platform |
-|-------|---------|
+|---|---|
 | 5 | Azure SQL Database |
 | 6 | Synapse Dedicated Pool |
 | 8 | Azure SQL Managed Instance |
 | 9 | Azure SQL Edge |
 | 11 | Fabric Data Warehouse |
 | 12 | SQL Database in Fabric |
-| any other value | Resolved from `major_version` to an on-prem SQL Server year (2000-2025); an unrecognised version falls back to `edition`, then to unknown |
+| Other | `SQL Server <year>` from `major_version` (2000–2025); an unknown version falls back to `edition`, then to `Unknown database platform` |
 
-### `columns` — table column metadata (Phase 2)
+If the query is missing, fails, or returns no row or not the three required columns, the import continues with `Unknown database platform`.
 
-Used for the table design preview in the SQL viewer.
+### `all-objects`
+
+| | |
+|---|---|
+| Reads | `sys.objects`, `sys.schemas`, `sys.tables`, `sys.extended_properties` |
+| Filter | Object filter; all schemas; no SQL bodies |
+| Returns | One row per object (columns below) |
+| Used for | Classifying references into unselected schemas as known cross-schema objects, with the catalog's schema casing |
 
 | Column | Type | Description |
-|--------|------|-------------|
+|---|---|---|
 | `schema_name` | string | Schema name |
-| `table_name` | string | Table name |
+| `object_name` | string | Object name |
+| `type_code` | string | Object type code |
+
+### `nodes`
+
+| | |
+|---|---|
+| Reads | `sys.objects`, `sys.schemas`, `sys.tables`, `sys.sql_modules`, `sys.extended_properties` |
+| Filter | Object filter; `s.name IN ({{SCHEMAS}})` |
+| Returns | One row per object (columns below) |
+
+| Column | Type | Description |
+|---|---|---|
+| `schema_name` | string | Schema name (`dbo`, `Sales`, …) |
+| `object_name` | string | Object name |
+| `type_code` | string | Object type code |
+| `body_script` | string/null | `sys.sql_modules.definition` for procedures, views and functions; NULL for tables and for bodies the login cannot read |
+
+### `columns`
+
+| | |
+|---|---|
+| Reads | `sys.columns`, `sys.objects`, `sys.schemas`, `sys.indexes`, `sys.index_columns`, `sys.extended_properties` |
+| Filter | Types `U`, `V`, `IF`, `TF`, `ET`; excludes shipped objects and `microsoft_database_tools_support`; `s.name IN ({{SCHEMAS}})` |
+| Returns | One row per column, ordered by schema, object and `column_id` (columns below) |
+| Used for | Table design preview and column metadata for the optional AI column trace |
+
+| Column | Type | Description |
+|---|---|---|
+| `schema_name` | string | Schema name |
+| `table_name` | string | Table, view or function name |
 | `ordinal` | int | Column position (1-based) |
 | `column_name` | string | Column name |
-| `type_name` | string | Data type (`int`, `nvarchar`, etc.); CLR types such as `hierarchyid`, `geography` and `geometry` use their user-type name |
-| `max_length` | int | Max length in bytes (-1 = `max`) |
+| `type_name` | string | Data type (`int`, `nvarchar`, …); CLR types such as `hierarchyid`, `geography` and `geometry` use their user-type name |
+| `max_length` | int | Maximum length in bytes (-1 = `max`) |
 | `precision` | int | Numeric precision |
 | `scale` | int | Numeric scale |
 | `is_nullable` | bit/bool | Allows NULL |
 | `is_identity` | bit/bool | Identity column |
 | `is_computed` | bit/bool | Computed column |
-| `pk_ordinal` *(optional)* | int/null | Primary key ordinal (1-based). NULL for non-PK columns. When present, drives the `PK` / `PK1` / `PK2` badges in the table design view. Not validated; if absent, badges are not rendered. |
+| `pk_ordinal` *(optional)* | int/null | Position in the primary key (1-based); NULL for other columns. Drives the `PK` / `PK1` / `PK2` badges; without the column no badges are shown. |
 
-### `constraints` — table constraints (Phase 2, optional)
+### `constraints`
 
-Returns FK, UQ, and CK constraint metadata via `UNION ALL`, distinguished by
-`constraint_type`. The query currently executes, but the host omits its result
-when constructing `DmvResults`; consequently these constraints are not shown.
-
-CK rows are **column-level only** (`parent_column_id != 0`). Table-level CHECK constraints are not yet returned by the built-in query; see comments in `assets/dmvQueries.yaml` for context.
+| | |
+|---|---|
+| Reads | `sys.foreign_keys`, `sys.foreign_key_columns`, `sys.key_constraints`, `sys.index_columns`, `sys.check_constraints`, `sys.columns`, `sys.objects`, `sys.schemas` |
+| Filter | Parent table in `{{SCHEMAS}}`; unique constraints only (`type = 'UQ'`); check constraints defined on a column (`parent_column_id <> 0`) |
+| Returns | One row per constraint column, as one `UNION ALL` result distinguished by `constraint_type` (columns below) |
+| Used for | Nothing yet: the query runs, but the import does not pass its rows to the model, so no `FK`, `UQ` or `CK` annotations appear |
 
 | Column | Type | Description |
-|--------|------|-------------|
+|---|---|---|
 | `schema_name` | string | Table schema |
 | `table_name` | string | Table name |
-| `constraint_type` | string | `FK`, `UQ`, or `CK` |
-| `constraint_name` | string | Constraint name |
+| `constraint_type` | string | `FK`, `UQ` or `CK` |
+| `constraint_name` | string | Constraint name; a composite constraint repeats it over several rows |
 | `column_name` | string | Column name |
-| `column_ordinal` | int/null | Key order (FK, UQ only) |
-| `ref_schema` | string/null | Referenced schema (FK only) |
-| `ref_table` | string/null | Referenced table (FK only) |
-| `ref_column` | string/null | Referenced column (FK only) |
-| `on_delete` | string/null | Referential action (FK only): `NO_ACTION`, `CASCADE`, `SET_NULL`, `SET_DEFAULT` |
+| `column_ordinal` | int/null | Key order (`FK`, `UQ` only) |
+| `ref_schema` | string/null | Referenced schema (`FK` only); may be an unselected schema |
+| `ref_table` | string/null | Referenced table (`FK` only) |
+| `ref_column` | string/null | Referenced column (`FK` only) |
+| `on_delete` | string/null | Referential action (`FK` only): `NO_ACTION`, `CASCADE`, `SET_NULL`, `SET_DEFAULT` |
 
-### `dependencies` — object-level references (Phase 2)
+Table-level CHECK constraints (`parent_column_id = 0`) are not returned; column-level ones are. Primary keys come from `columns` (`pk_ordinal`).
+
+### `dependencies`
+
+| | |
+|---|---|
+| Reads | `sys.sql_expression_dependencies`, `sys.objects`, `sys.schemas`, `sys.columns` |
+| Filter | Schema-qualified references only (`referenced_schema_name` not NULL); `referenced_class = 1`; referencing object not `is_ms_shipped`; referencing or referenced schema in `{{SCHEMAS}}` |
+| Returns | One row per reference (columns below) |
+| Used for | Object-level lineage edges, cross-database nodes, and column bindings for function calls |
 
 | Column | Type | Description |
-|--------|------|-------------|
-| `referencing_schema` | string | Schema of the object that references |
-| `referencing_name` | string | Name of the object that references |
-| `referenced_schema` | string | Schema of the referenced object |
+|---|---|---|
+| `referencing_schema` | string | Schema of the referencing object |
+| `referencing_name` | string | Name of the referencing object |
+| `referenced_schema` | string | Schema of the referenced object; a row without it is skipped |
 | `referenced_name` | string | Name of the referenced object |
-| `referenced_database` *(optional)* | string/null | Database name for cross-database references. Used to build `[db].[schema].[object]` identifiers. Not validated — omit if your DB engine doesn't expose it. |
-| `referenced_server` *(optional)* | string/null | Server name for a declared cross-server column-expression reference. |
-| `referencing_column` *(optional)* | string/null | Exact catalog column name resolved from `referencing_id` and `referencing_minor_id`; absent for object-level dependencies. |
-| `referenced_column` *(optional)* | string/null | Exact referenced column name resolved from local `referenced_id` and `referenced_minor_id`, when supplied. |
-| `referenced_type` *(optional)* | string/null | Exact local `sys.objects.type` code, such as `FN` for a SQL scalar function or `IF` for an inline table-valued function. External references remain unclassified. |
+| `referenced_database` *(optional)* | string/null | Database of a cross-database reference; builds a `[db].[schema].[object]` node. Omit if the engine does not expose it. |
+| `referenced_server` *(optional)* | string/null | Server of a declared cross-server reference; used only for column bindings |
+| `referencing_column` *(optional)* | string/null | Catalog column from `referencing_id` and `referencing_minor_id`; NULL for object-level rows |
+| `referenced_column` *(optional)* | string/null | Referenced column from local `referenced_id` and `referenced_minor_id`, when supplied |
+| `referenced_type` *(optional)* | string/null | Local `sys.objects.type` code of the referenced object, such as `FN` or `IF`; NULL for cross-database and cross-server references |
 
-The built-in query retains these fields with left joins, preserving object-level dependency rows.
-Only a supplied `referencing_column` that matches a loaded column receives
-`ColumnDef.expressionDependencies`; an object-level dependency never binds a function to every output.
-References preserve server/database/schema/object/column qualification, with SQL identifier quoting.
-These declarations identify dependencies, not semantic value contributors. Custom queries that omit
-the optional fields retain their existing behavior.
+The built-in query keeps the optional columns with left joins, so object-level rows are preserved. A custom query that omits them keeps object-level lineage and loses column bindings.
 
-SQL Server can report object-level references with `referencing_minor_id = 0`; this does not identify
-which projected view output invokes a function. This adapter leaves such output bindings unresolved.
-Column dependency availability also differs for schema-bound and non-schema-bound objects; see
-[Microsoft's catalog contract](https://learn.microsoft.com/en-us/sql/relational-databases/system-catalog-views/sys-sql-expression-dependencies-transact-sql).
-
-The [column-tracing contract](ARCHITECTURE.md) supports an explicit function
-investigation request carrying caller SQL and real loaded output columns when
-catalog projection metadata is absent.
-It does not change this adapter's dependency meaning or populate
-`expressionDependencies` from object-level rows. Live-DB and DACPAC callers can
-therefore supply different declaration coverage without authorizing guessed
-column edges. Supplied contributor mappings still require SQL-grounded review;
-metadata and routing validation do not establish their completeness.
-
-## What you can customise
-
-- **WHERE filters** — restrict to specific schemas, object types, or naming patterns.
-- **JOINs** — add joins for additional metadata your queries can return; extra columns are ignored.
-- **Platform-specific syntax** — adapt queries for vendor dialects (Synapse `LABEL`, Fabric workarounds for unsupported DMVs, etc.).
-
-## What must stay fixed
-
-- **`version`** — must match the shipped YAML. A missing or different version
-  triggers a warning and built-in fallback. After an upgrade, run **Data
-  Lineage: Create DMV Queries** and re-apply your edits to the current version.
-- **Runtime query names** — the current import path requires
-  `schema-preview`, `nodes`, `columns`, and `dependencies`. `all-objects`,
-  `constraints`, and `platform-info` are optional definitions; server
-  metadata is tried when `platform-info` is unavailable, and a
-  missing `all-objects` leaves cross-schema references unclassified.
-- **Required column names** — the columns listed above must be present in the result set.
-- **Column semantics** — `type_code` must return `sys.objects.type` codes (or `ET` for external tables).
-- **`{{SCHEMAS}}` placeholder** — use it in Phase 2 SQL to apply the wizard's
-  schema selection. If it is absent, the loader warns but executes the custom
-  SQL verbatim rather than enforcing a filter.
-
-## Fallback behaviour
-
-- **No YAML configured** → uses built-in queries silently.
-- **YAML missing or invalid** → uses built-in queries + VS Code warning dialog + log entry to the Output channel.
-- **YAML `version` does not match the shipped file** (including a missing `version`) → uses built-in queries + VS Code warning dialog naming both versions + log entry to the Output channel; re-scaffold and re-apply your edits.
-- **YAML valid but missing required query names** → an early warning lists the missing names; import fails when the active path needs a missing result.
-- **Main query returns wrong columns** → extraction may be empty or incomplete; there is no complete preflight validator for these result sets. `platform-info` is validated and the platform is recorded as unknown when unusable.
-- **Built-in YAML itself fails** (should not happen) → error logged, `db-error` sent to the webview.
+`referencing_column` binds a referenced object, such as a scalar function, to the output column that calls it. A row with `referencing_minor_id = 0` does not say which output column calls the function, so no binding is made; a binding is made only when `referencing_column` matches a loaded column. A binding declares a dependency, not which values contribute to the column. Recorded column dependencies differ for schema-bound and non-schema-bound objects; see [`sys.sql_expression_dependencies`](https://learn.microsoft.com/sql/relational-databases/system-catalog-views/sys-sql-expression-dependencies-transact-sql).
 
 ## Known limitations
 
-| Limitation | Reason |
-|------------|--------|
-| Dynamic SQL dependencies not captured | `sys.sql_expression_dependencies` only tracks static references. |
-| Remote database internals not introspected | Three- or four-part references can surface as virtual cross-database nodes when metadata exposes database/schema/object names, but DMV import remains scoped to the connected database. |
-| Unqualified / unresolved references may be excluded | Built-in dependency SQL filters unresolved rows; parser fallback can recover some schema-qualified references from SQL bodies, but default-schema ambiguity is not reliable. |
+- Dynamic SQL dependencies are not captured; `sys.sql_expression_dependencies` tracks only static references.
+- Remote database internals are not introspected. Three- or four-part references can appear as virtual cross-database nodes, but import stays scoped to the connected database.
+- Unqualified or unresolved references may be excluded: the built-in dependency SQL filters unresolved rows, and parser fallback recovers only some schema-qualified references.
 
-These are metadata-source limits rather than UI-only gaps.
+## Custom queries
 
-## Reference
+1. Run **Data Lineage: Create DMV Queries**. It copies the built-in YAML to `dmvQueries.yaml` in the first workspace folder; an existing file is opened, not overwritten.
+2. Set `dataLineageViz.dmvQueriesFile` to that file in VS Code Settings (search "dataLineageViz").
+3. Edit the SQL. The file is read again at every import.
 
-- Built-in YAML: [`assets/dmvQueries.yaml`](../assets/dmvQueries.yaml)
-- Microsoft DMV catalogue: <https://learn.microsoft.com/sql/relational-databases/system-dynamic-management-views/system-dynamic-management-views>
+Table statistics reuse the queries last loaded until the next import or a change of `dataLineageViz.dmvQueriesFile`; an invalid file warns once.
+
+### YAML structure
+
+```yaml
+version: 1
+required_permission: "VIEW DEFINITION"
+queries:
+  - name: schema-preview
+    phase: 1
+    sql: |
+      SELECT ...
+  - name: nodes
+    phase: 2
+    sql: |
+      SELECT ... WHERE s.name IN ({{SCHEMAS}})
+```
+
+| Field | Notes |
+|---|---|
+| `version` | Must match the shipped file. After an upgrade, rename your copy, re-run **Create DMV Queries** and re-apply edits. |
+| `name`, `sql` | Required per query; an entry without them is skipped, and the rest of the file stays active. |
+| `description` | Optional; informational only. |
+| `phase` | `1` or `2`; default `2`. Keep `platform-info` and `all-objects` at `phase: 1`. |
+
+Required queries: `schema-preview`, `nodes`, `columns`, `dependencies`. Optional: `all-objects` (without it, cross-schema references stay unclassified), `constraints` (rows are not used yet), `platform-info` (without it, the import records `Unknown database platform` and table statistics report an error).
+
+**What you can customise:** `WHERE` filters (schemas, object types, naming patterns), extra `JOIN`s (extra columns are ignored), and platform-specific syntax such as Synapse `LABEL` or a Fabric replacement for an unsupported catalog view.
+
+**What must stay fixed:** `version`, the required query names and column names listed above, `type_code` semantics (`sys.objects.type` codes, or `ET`), `{{SCHEMAS}}` in every Phase 2 query, the `ORDER BY` of `columns` (columns show in row order), and `referenced_database` in `dependencies` (without it, cross-database references are not recognized).
+
+### Example: exclude a schema
+
+Add the predicate to every query that returns objects.
+
+| Query | Restricted predicate |
+|---|---|
+| `schema-preview`, `all-objects` | `s.name NOT IN ('sys','INFORMATION_SCHEMA', N'Audit')` |
+| `nodes`, `columns`, `constraints` | `s.name IN ({{SCHEMAS}}) AND s.name NOT IN (N'Audit')` |
+| `dependencies` | add `AND s1.name NOT IN (N'Audit') AND d.referenced_schema_name NOT IN (N'Audit')` |
+
+### Errors and fallback
+
+| Situation | Result |
+|---|---|
+| No file configured | Built-in queries. |
+| File missing, unreadable, invalid YAML or no usable query | Built-in queries and a warning. |
+| `version` missing or different | Built-in queries and a warning naming both versions. |
+| A required query is missing | A warning lists it when the file loads; the import fails at the step that needs it. |
+| The built-in file itself cannot be read | An error is logged and the import shows an error. |
+
+Microsoft DMV catalogue: <https://learn.microsoft.com/sql/relational-databases/system-dynamic-management-views/system-dynamic-management-views>

@@ -9,7 +9,7 @@ SQL-body dependencies are extracted by a multi-pass regex engine driven by metad
 3. Edit, add, or disable rules. Invalid entries are skipped and logged; the extension shows a warning whenever any rule is skipped, not only when none remain valid.
 4. Reload the model. Run `npm run test:parser` and review the resulting dependency edges against the affected SQL.
 
-## Parsing pipeline
+## How SQL is read
 
 The parser removes comments and neutralises string literals, removes
 whitespace around the period of a multipart name (`dbo . T` reads as `dbo.T`),
@@ -57,22 +57,11 @@ current names and regex bodies; that file is the source of truth.
 `tests/unit/parser/tsql-coverage-matrix.test.ts` states the expected reads,
 writes and calls for each supported T-SQL construct.
 
-`extract_update_alias_target` only anchors `UPDATE alias SET`; its
-match must contain that text and must not consume the statement, and capture
-group 1 is the alias. The parser
-binds the alias to the single top-level `FROM`/`JOIN` table of the same
-statement, or to a top-level `FROM`/`JOIN` derived table whose query names one
-table, however long the `SET` list is. A CTE name used as an
-`UPDATE` target, or as a `FROM`/`JOIN` table of that `UPDATE`, resolves before the rules run to the one table its
-query names: exactly one `FROM` at the query's own level holding one table reference (a derived
-table there is read the same way), followed through earlier CTEs of the same `WITH` list. A join
-list names one table when exactly one member is a table reference and every other member is a
-derived table that cannot be written through (`DISTINCT`, `GROUP BY` or a set operator at its own
-level). The rewrite applies only to the `UPDATE` that directly follows the `WITH` list. A CTE
-that joins two table references, a table function or a writable derived table, uses `APPLY` or a
-set operator, or names no single table leaves the write unresolved; a comma list is read as a join
-list. An
-`INSERT` or `MERGE` into a CTE yields no write target.
+`extract_update_alias_target` only anchors `UPDATE alias SET`: its match must contain that text and must not consume the statement, and capture group 1 is the alias.
+
+- The alias binds to the single top-level `FROM`/`JOIN` table of the same statement, or to a derived table whose query names one table, however long the `SET` list is.
+- A CTE used as an `UPDATE` target, or as a `FROM`/`JOIN` table of that `UPDATE`, resolves to the one table its query names (exactly one `FROM` at the query's own level holding one table reference, followed through earlier CTEs of the same `WITH` list). The rewrite applies only to the `UPDATE` that directly follows the `WITH` list.
+- A CTE that joins two table references, a table function or a writable derived table, uses `APPLY` or a set operator, or names no single table leaves the write unresolved. An `INSERT` or `MERGE` into a CTE yields no write target.
 
 Temp tables (`#local`, `##global`), table variables (`@name`), CTE names,
 and unqualified captures are not lineage nodes. Flow through a shared global
@@ -139,36 +128,14 @@ Metadata fallback supplements the YAML, but it does not make static parsing
 complete. Unresolved schema-qualified references are included in DEBUG
 diagnostics and omitted from the graph.
 
-## How to verify a rule change
+## Customise and check
 
-Run the maintained parser subset:
+- Add rules rather than editing built-in ones, and give them priorities after the shipped ones unless an earlier pass is intended.
+- Use non-capturing groups `(?:...)` except for the object reference in group 1.
+- For dialect-specific syntax (Synapse `LABEL`, Fabric), add a sibling rule guarded by the dialect's keyword instead of changing a generic rule.
+- A captured identifier that does not resolve against the catalog adds no ordinary edge; `external_ref` rules follow their virtual-node contract instead.
 
-```bash
-npm run test:parser
-```
-
-Review affected SQL cases and expected edge directions as well as the test result.
-
-For ad-hoc verification:
-
-1. Open the VS Code Output panel → select **Data Lineage Viz**.
-2. Set the channel log level to **Debug** (gear icon → Set Log Level → Debug).
-3. Reload your model.
-4. Review `[Parse]` entries for the affected object and compare the resolved
-   dependencies with the expected SQL direction.
-
-When working on a single SP, point the wizard at one schema, narrow the model, and read the parsed output for that SP only — fewer log lines, faster feedback.
-
-## Customisation guidance
-
-- Add new patterns rather than modifying built-ins. Rule precedence is by
-  `priority`; inspect the built-in YAML and place custom rules after the shipped
-  priorities unless an earlier pass is intentional.
-- Use non-capturing groups (`(?:...)`) except for the object reference in group 1.
-- For dialect-specific syntax (Synapse `LABEL`, Fabric quirks) prefer adding a sibling rule guarded by the dialect's keyword rather than editing a generic rule's regex.
-- If a captured identifier does not resolve against the catalog, the parser
-  omits the ordinary catalog edge; use DEBUG logging to review dropped
-  references. `external_ref` rules follow their virtual-node contract instead.
+To check a change, run `npm run test:parser` and review the expected edges against the affected SQL. For ad-hoc checks, open **Output → Data Lineage Viz**, set the log level to **Debug**, reload the model (ideally with only the affected schema selected) and compare the `[Parse]` entries for the object, including dropped references, with its SQL.
 
 ## Reference
 

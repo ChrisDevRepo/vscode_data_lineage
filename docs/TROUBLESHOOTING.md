@@ -1,75 +1,64 @@
 # Troubleshooting
 
-Defaults and thresholds change between versions — check **Settings → Data Lineage** for current values. **Output → Data Lineage Viz** is the first place to look for unexpected behaviour.
+Start with **View → Output → Data Lineage Viz**; set its log level to **Debug** for detail. Defaults change between versions, so check **Settings → Data Lineage** for current values.
 
 ## Import and connection
 
-**`.dacpac` won't load.** Check that the file is a valid ZIP archive containing `model.xml` with a `DataSchemaModel/Model` element. If the error reports a file lock, close the program holding the file.
+**`.dacpac` won't load.** The file must be a valid `.dacpac` (a ZIP archive with `model.xml` holding a `DataSchemaModel/Model` element) and not locked by another program.
 
-**Database connection fails.** The error includes the connection name and driver message, with credential-shaped text removed. Details appear in **Output → Data Lineage Viz**. Add a connection with **Data Lineage: Add Database Connection**; no other extension is needed. The notification buttons fit the error:
-
-A project saved with the retired SQL Server (mssql) extension connection shows one notice when it opens; **Reconnect** opens **Add Database Connection** prefilled with the saved server and database, and the project keeps its schemas.
+**Database connection fails.** The error names the connection and the driver message, with credential-shaped text removed, and the notification buttons fit the error. Add connections with **Data Lineage: Add Database Connection**; no other extension is needed. The extension does not change firewall rules.
 
 | Error | Typical cause | Buttons |
 |---|---|---|
-| 18456 `Login failed for user` | Wrong password or user, or a database the login cannot open (SQL Server reports both the same way); Entra account without access | Update Password · Choose Database · Edit Connection (Entra: Sign in with another account) |
-| 4060 / 916 `Cannot open database` | Database missing or the login has no user in it | Choose Database · Edit Connection |
+| 18456 `Login failed for user` | Wrong password or user, a database the login cannot open (SQL Server reports both the same way), or an Entra account without access | Update Password · Choose Database · Edit Connection (Entra: Sign in with another account) |
+| 4060 / 916 `Cannot open database` | Database missing, or the login has no user in it | Choose Database · Edit Connection |
 | 40613 / 40197 / 40501 / 40532 | Azure database unavailable, busy or resuming | Retry |
 | `ETIMEOUT`, `ESOCKET`, `ENOTFOUND`, `ECONNREFUSED` | Wrong server or port, server stopped, network blocked | Edit Connection · Retry |
-| Certificate not trusted (self-signed) | Server certificate is not trusted by this machine | Trust Server Certificate (asks first; also offered when a new connection is tested) · Edit Connection |
+| Certificate not trusted | Self-signed server certificate | Trust Server Certificate (asks first) · Edit Connection |
 | Sign-in cancelled | Microsoft sign-in window closed | Sign In · Sign in with another account |
 | 229 / 297 / 300 | Login cannot read metadata | Copy GRANT Statement |
-| anything else | — | Show Log · Edit Connection |
+| anything else | | Show Log · Edit Connection |
 
-The built-in connection retries a connect by itself on the transient errors 4060, 10928, 10929, 40197, 40501 and 40613 up to three times, with five-second waits, before showing the error. A mistyped database name (4060) can therefore add 15 seconds of retry waits.
+The connection retries transient errors (4060, 10928, 10929, 40197, 40501, 40613) up to three times with five-second waits, so a mistyped database name can add 15 seconds before the error shows. A `tcp:` server prefix is accepted. **Update Database Password** applies to SQL logins; **Remove Database Connection** deletes the stored password with the connection.
 
-A `tcp:` prefix, as the Azure portal connection strings carry it, is accepted and dropped.
-Firewall and IP-allow-list errors are shown as the server reports them; Data Lineage does not change firewall rules. A password is stored only in VS Code secret storage — **Data Lineage: Update Database Password** replaces it, **Remove Database Connection** deletes it with the connection.
+A project saved with the retired SQL Server (mssql) extension shows one notice when it opens; **Reconnect** opens **Add Database Connection** prefilled with its server and database, and the project keeps its schemas.
 
-Switching the provider keeps saved projects and their schema selection. On its next open a project reconnects through the selected provider: a saved built-in connection with the same server and user is used directly, otherwise the connection picker opens and **Add Connection…** starts from the project's server, user and database. The project then remembers the new connection.
+**Permissions.** `VIEW DEFINITION` on the database for lineage; `SELECT` on the tables for table statistics. See [`DMV_QUERIES.md`](DMV_QUERIES.md). `@lineage` reads only the loaded model and never opens a connection.
 
-Permissions: `VIEW DEFINITION` on the database for lineage; `SELECT` on the tables to profile for table statistics. See [`DMV_QUERIES.md`](DMV_QUERIES.md) for metadata queries. `@lineage` reads only the already-loaded model and never opens a database connection.
+**Import times out.** Raise `dataLineageViz.dmvQueryTimeout` or select fewer schemas. The limit is per query; a Phase 2 import sends several.
 
-**Cross-database refs missing.** Fully qualified three- or four-part names can surface as virtual external nodes, but remote database internals are not imported. Unqualified names are ambiguous and may not resolve.
+**Custom YAML rejected.** Compare your file with the built-in one; see [`DMV_QUERIES.md`](DMV_QUERIES.md) and [`PARSE_RULES.md`](PARSE_RULES.md).
 
-**DMV query timed out.** Raise `dataLineageViz.dmvQueryTimeout`. The timeout is per query — Phase 2 runs several.
+**Dependencies missing.** Dynamic SQL, triggers and the other unsupported constructs in [Limitations](../README.md#limitations) are not added by changing graph filters. Fully qualified three- or four-part names can appear as virtual external nodes, but remote internals are not imported; unqualified names may stay unresolved.
 
-**Custom YAML rejected.** Structure must match the built-in YAML. See [`DMV_QUERIES.md`](DMV_QUERIES.md) and [`PARSE_RULES.md`](PARSE_RULES.md).
+**"saved projects could not be read and were skipped".** A saved project has missing or invalid fields. The Output log lists the rejected field paths without their values. Recreate the project in the wizard.
 
-**"saved projects could not be read and were skipped".** A saved project has missing or invalid fields. **Output → Data Lineage Viz** lists rejected field paths without their values. Recreate the project through the wizard; unknown fields are dropped without discarding an otherwise valid project.
+## Graph
 
-## Graph and webview
+**Blank or stuck graph.** Reload the window. For details, run **Developer: Open Webview Developer Tools** and check the console.
 
-**Blank or stuck graph.** Open Webview Developer Tools, check the console, then reload the window.
+**"Render limit reached".** Narrow the filters or raise `dataLineageViz.renderLimit` (default 750, maximum 1500). Loaded objects stay searchable and available to `@lineage`. `dataLineageViz.maxNodes` limits import separately (default 2,000, maximum 5,000): a larger selection is refused.
 
-**"Render limit reached".** The notice says to reduce filter scope or adjust VS Code settings. Narrow the filters, or raise `dataLineageViz.renderLimit` (default 750, maximum 1500). The loaded objects remain searchable and available to `@lineage`. `dataLineageViz.maxNodes` limits import separately (default 2,000, maximum 5,000): a selection above it is refused. `dataLineageViz.overview.threshold` controls the initial view, capped at `renderLimit`.
+**Docking.** The graph is a normal editor tab: drag it to any editor group, split it, or choose **Move Editor into New Window**. Inside the graph, the dock menu in the AI report header moves that panel left, bottom or right.
 
-**Docking the graph or the AI report.** The graph webview is a normal VS Code editor tab: drag it to any editor group, split it, or right-click → **Move Editor into New Window**. Chat (including `@lineage`) docks the same way via its drag handle or **View: Move Chat**. Inside the graph, the dock menu in the AI report header moves that panel to the left, bottom, or right edge.
+## `@lineage`
 
-## `@lineage` chat participant
+**No response.** Load a graph and make sure a chat model provider such as [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot) is available in VS Code Chat, and that `dataLineageViz.ai.enabled` is on.
 
-**No response.** Load a graph first, then make sure a VS Code Language Model Chat provider is installed, configured, and available to Chat. [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot) is one supported provider.
+**"Analysis cannot start", or the request is redirected for exceeding its budget.** The scope is too large. Narrow it, or raise `dataLineageViz.ai.maxRounds` (one round per procedure, view or function), `dataLineageViz.ai.maxTraceColumns` (a column trace with more starting columns is refused the same way), or for discovery answers `dataLineageViz.ai.discoveryNodeCap` and `dataLineageViz.ai.discoveryTokenBudget`. AI settings apply from the next request.
 
-**The request is redirected because the scope exceeds its budget.** Narrow the requested scope or approve the offered deep analysis. For larger discovery answers, adjust `dataLineageViz.ai.discoveryNodeCap` or `dataLineageViz.ai.discoveryTokenBudget` (the budget is further capped at one eighth of the selected model's input window); `ai.maxRounds` does not change those limits. If the chat answers "Analysis cannot start", the scope is over a limit: narrow it, or raise `dataLineageViz.ai.maxRounds` (one round per procedure, view or function). A column trace that selects more starting columns than `dataLineageViz.ai.maxTraceColumns` (default 10) is refused the same way: trace fewer columns or raise the setting. The setting applies from the next request, no reload needed.
+**Change scope ends the response.** By design: VS Code locks chat input while a request runs, so the turn finishes and the input is prefilled with `@lineage`. Type the change, for example `remove DimCalendar`; the proposal comes back revised. **Cancel** or a slash command abandons it.
 
-**Deep-analysis confirmation.** The assistant asks before starting hop-by-hop analysis. This path is used by `/trace`, named-column traces, explicit deeper analysis, and discovery scopes that exceed their configured budget. A graph request uses the bounded **AI Preview** path and does not open this gate.
+**Deep analysis stops early.** Provider failures or repeated replies without progress can stop a run. The error names the object it stopped at, and an incomplete run publishes no result or graph preview. Ask again or narrow the scope. A long pause usually means the provider is still generating; the hop counter advances as hops complete, and the chat **Stop** button cancels.
 
-**The response ends when I click Change scope.** By design. VS Code keeps the chat input locked while a request is still running, so the turn finishes and the input is prefilled with `@lineage`. Type the change — for example `remove DimCalendar` — and send it; the proposal stays pending and comes back revised. **Cancel** or a slash command abandons it instead.
+**Repeated result or preview retries.** Invalid tool calls are rejected so the model can correct them. If it keeps failing, press **Stop** and report the rejection codes and issue paths from the Debug log. A model that passes the structural checks can still misread SQL.
 
-**Related paths beyond the approved scope.** By design — deep analysis locks the schema border at confirmation. A completed result offers **Explore related objects…** for the deferred routes.
+**Related objects are outside the approved scope.** By design: approval fixes the schema and depth boundary shown in the plan. A completed result offers **Next questions and related objects** for deferred leads.
 
-**Deep analysis stops before the whole scope is covered.** An approved scope always fits `dataLineageViz.ai.maxRounds`, but provider failures or repeated replies without progress can stop a run early. The run ends with an error naming the object it stopped at; no result or graph preview is shown for an incomplete run. Ask again, or exclude the named object from the scope.
+## Table statistics
 
-**Repeated graph-preview or result retries.** The extension rejects malformed tool calls and lets the model repair them. If retries persist, stop the turn and report the rejection codes and issue paths from **Output → Data Lineage Viz** at debug level.
-
-**Model choice.** Per-hop latency and protocol compliance differ by model. A long silence during deep analysis usually means the provider is still generating — the hop counter advances as hops complete. Use the chat **Stop** button to end a generation that appears hung.
-
-## Export and profiling
-
-- Draw.io export mirrors the current webview layout.
-- Profiling is live-DB only (no dacpac). See [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md).
-- On SQL Server 2016 or 2017, set `dataLineageViz.tableStatistics.useApproxDistinct` to `false`; `APPROX_COUNT_DISTINCT` requires SQL Server 2019 or later.
+Statistics need a live database project and are unavailable for DACPAC sources. On SQL Server 2016 or 2017, set `dataLineageViz.tableStatistics.useApproxDistinct` to `false`; `APPROX_COUNT_DISTINCT` needs SQL Server 2019 or later. See [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md).
 
 ## Bug reports
 
-Run **Data Lineage: Copy Debug Info** and include the relevant section from **Output → Data Lineage Viz**. Review and redact project, source, schema, object, filter, and model identifiers before sharing. Do not attach customer dacpacs.
+Open an [issue](https://github.com/ChrisDevRepo/vscode_data_lineage/issues) with the output of **Data Lineage: Copy Debug Info** and the relevant Output log. Review and redact project, schema and object names first, and never attach customer `.dacpac` files. Security problems: [`SECURITY.md`](../SECURITY.md).

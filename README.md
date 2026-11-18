@@ -25,11 +25,11 @@ No data? Click **Try with demo data** or run **Data Lineage: Open Demo** to expl
 
 ## Database projects
 
-Connect to SQL Server, Azure SQL, Fabric Data Warehouse, or Synapse Dedicated SQL Pool using built-in connections. They support SQL login or Microsoft Entra ID where supported by the platform; Fabric requires Entra ID.
+Connect to SQL Server, Azure SQL, Fabric Data Warehouse, or Synapse Dedicated SQL Pool using SQL login or Microsoft Entra ID where supported by the platform; Fabric requires Entra ID. Windows authentication is not supported.
 
-Save, reuse, and manage connections from the wizard. Passwords for built-in connections are kept in VS Code’s secure storage.
+Save, reuse, and manage connections from the wizard. Passwords are kept in VS Code’s secure storage.
 
-Live projects read database metadata for lineage and can optionally profile table data. Use a login with read permissions only. See the [Developer Guide](docs/DEVELOPER_GUIDE.md#two-ingestion-paths-one-model) for connection providers and [Troubleshooting](docs/TROUBLESHOOTING.md#import-and-connection) for setup, permissions, and connection help.
+Live projects read database metadata for lineage and can optionally profile table data. Use a login with read permissions only. See [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md) for every query the import runs, and [Troubleshooting](docs/TROUBLESHOOTING.md#import-and-connection) for setup, permissions, and connection help.
 
 ## Explore your lineage
 
@@ -74,6 +74,12 @@ provider, such as
 or a compatible BYOK provider. The visual graph, search, trace, SQL preview,
 demo data, profiling, and export features work without one.
 
+## Requirements, settings and privacy
+
+- VS Code 1.101 or later. `@lineage` additionally needs a VS Code Language Model Chat provider. A database import needs a login with `VIEW DEFINITION` (and `SELECT` on a table to profile it); see [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md).
+- Settings: search "dataLineageViz" in VS Code Settings or run **Data Lineage: Settings**; every setting is described in [`docs/FEATURES.md`](docs/FEATURES.md#settings-reference).
+- Privacy: the extension has no telemetry and sends nothing to its author. A `.dacpac` is parsed locally. A database import and table statistics run only when you start them, with the SQL listed in [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md) and [`docs/PROFILING_PATTERNS.md`](docs/PROFILING_PATTERNS.md). Only `@lineage` sends data to a model: your question, recent `@lineage` chat, and the SQL or metadata its tools read from the loaded graph go to the chat model you selected in VS Code. Set `dataLineageViz.ai.enabled` to `false` to remove it. Details: [`SECURITY.md`](SECURITY.md).
+
 ## Features
 
 - **Interactive graph** — search objects, trace upstream or downstream, and find shortest paths between nodes.
@@ -107,24 +113,18 @@ Supported platforms are SQL Server, Azure SQL, Fabric Data Warehouse and Synapse
 **Do I need a `.dacpac` file?**
 No — connect directly to a database. If you prefer a `.dacpac`, extract one from Visual Studio, SSMS, Azure Data Studio, or the Fabric portal. See [Microsoft's documentation](https://learn.microsoft.com/sql/relational-databases/data-tier-applications/data-tier-applications).
 
-**Why are some dependencies missing?**
-Dynamic SQL cannot be analysed statically. Only dependencies visible in compiled metadata or parseable SQL bodies are detected.
-
-**Why are unqualified references unreliable?**
-Unqualified names depend on caller default schema and context. Schema-qualified names are the only reliable source for static lineage.
-
 ## Documentation
 
-- [`docs/FEATURES.md`](docs/FEATURES.md) — full feature catalogue, settings, customisation paths.
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — Map & Router engine, BB and column-trace exploration modes, memory model.
-- [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md) — fork starting point, repo layout, build / test.
-- [`docs/EDH_TESTING.md`](docs/EDH_TESTING.md) — local test commands and Extension Development Host smoke lanes.
-- [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md) — DBA contract for live-database ingestion (no black box).
-- [`docs/PROFILING_PATTERNS.md`](docs/PROFILING_PATTERNS.md) — generated SQL for table profiling.
-- [`docs/PARSE_RULES.md`](docs/PARSE_RULES.md) — YAML reference for the SQL parser.
-- [`docs/AI_PROMPTS.md`](docs/AI_PROMPTS.md) — prompt architecture + YAML reference for `@lineage` capture / render templates.
+- [`docs/FEATURES.md`](docs/FEATURES.md) — full feature catalogue and settings reference.
 - [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) — common issues.
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) — coding standards and testing protocol.
+- [`SECURITY.md`](SECURITY.md) — what is read, run and sent; how to report a vulnerability.
+- [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md) — DBA reference: every query a database import runs and the permissions it needs.
+- [`docs/PROFILING_PATTERNS.md`](docs/PROFILING_PATTERNS.md) — SQL sent for table statistics.
+- [`docs/PARSE_RULES.md`](docs/PARSE_RULES.md) — YAML reference for the SQL parser and its limits.
+- [`docs/AI_PROMPTS.md`](docs/AI_PROMPTS.md) — `@lineage` output templates and prompt owners.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — lineage engine, data access, `@lineage` runtime, code map.
+- [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md) — build, run, package; [`docs/testing/README.md`](docs/testing/README.md) — tests.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
 ## Contributing
 

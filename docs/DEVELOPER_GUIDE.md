@@ -1,43 +1,32 @@
 # Developer Guide
 
-How to build, run, and change this extension after a fork. Engine concepts:
-[`ARCHITECTURE.md`](ARCHITECTURE.md). YAML knobs: [`AI_PROMPTS.md`](AI_PROMPTS.md)
-and [`PARSE_RULES.md`](PARSE_RULES.md). Coding standards:
-[`../CONTRIBUTING.md`](../CONTRIBUTING.md).
+How to build, run and change this extension in a clone. Concepts: [`ARCHITECTURE.md`](ARCHITECTURE.md). User-replaceable YAML: [`PARSE_RULES.md`](PARSE_RULES.md), [`DMV_QUERIES.md`](DMV_QUERIES.md), [`AI_PROMPTS.md`](AI_PROMPTS.md). How to propose a change: [`../CONTRIBUTING.md`](../CONTRIBUTING.md).
 
 ## Toolchain
 
 | Tool | Requirement | Declared in |
-|------|-------------|-------------|
+|---|---|---|
 | Node.js | `>=20` | `engines.node` in [`package.json`](../package.json) |
-| npm | `>=10` | `engines.npm` in [`package.json`](../package.json) |
-| VS Code | `^1.101.0` | `engines.vscode` in [`package.json`](../package.json) |
+| npm | `>=10` | `engines.npm` |
+| VS Code | `^1.101.0` | `engines.vscode` |
 
-Install with `npm ci` after cloning and after any pull that touches
-`package.json` or `package-lock.json`. Use `npm ci` to replace a stale or copied `node_modules` tree.
+Run `npm ci` after cloning, after any pull that changes `package.json` or `package-lock.json`, and to replace a stale or copied `node_modules`.
 
-The repo replaces LangChain's transitive `langsmith` dependency with an inert
-local stub via npm `overrides`. Some npm 10.x releases leave
-`node_modules/langsmith` as a dangling symlink; the `postinstall` script
-[`scripts/repair-langsmith-stub.mjs`](../scripts/repair-langsmith-stub.mjs)
-copies the stub into place. Run it by hand if `node_modules` was copied
-instead of installed, or if the bundle fails with `Could not resolve "langsmith"`.
-
-LangChain's core dependency is pinned. Runtime tracing guards reject enabled
-LangSmith/LangChain tracing, and the bundle gate checks that the real LangSmith
-client is absent. See [`ARCHITECTURE.md`](ARCHITECTURE.md#history-privacy-and-no-egress-boundary).
+LangChain's transitive `langsmith` dependency is replaced by an inert local stub through npm `overrides`, so the extension never contacts LangSmith. The `postinstall` script [`scripts/repair-langsmith-stub.mjs`](../scripts/repair-langsmith-stub.mjs) copies the stub into place; run it by hand if `node_modules` was copied or the bundle fails with `Could not resolve "langsmith"`.
 
 ## Repository layout
 
-| Path | Owns |
-|------|------|
-| [`src/ai/`](../src/ai/) | `@lineage` chat participant, navigation engine (`smBase.ts`), tool provider, memory manager, prompt builders. |
-| [`src/engine/`](../src/engine/) | DACPAC + DMV ingestion, regex SQL parser, profiling engine, connection manager, graph builder, display-mode policy, node decoration, column-trace projection. Engine-owned node-data types (`CustomNodeData`, `ColumnTraceNodeData`) live here; the webview imports them. |
-| [`src/components/`](../src/components/) | React webview — graph canvas (React Flow), filters, detail panel, AI report column, column-trace nodes/edges. |
-| [`src/engine/shared/bridgeContract.ts`](../src/engine/shared/bridgeContract.ts) | Zod-validated message contract between extension host and webview. |
-| [`src/utils/`](../src/utils/) | Logger, sanitizers, theming helpers. |
-| [`assets/`](../assets/) | YAML knobs: `defaultParseRules.yaml`, `dmvQueries.yaml`, `aiOutputTemplates.yaml`, plus the demo `.dacpac`. |
-| [`tests/`](../tests/) | `unit/` Vitest suites, `integration/` Electron smoke lanes, plus `fixtures/`, `stubs/`, and `tools/`. |
+| Path | Contents |
+|---|---|
+| [`src/engine/`](../src/engine/) | DACPAC and DMV ingestion, regex SQL parser, model and graph builders, tracing, profiling, connection manager. |
+| [`src/engine/db/`](../src/engine/db/) | Built-in `tedious` connection provider, saved connections, Entra ID sign-in, connection errors. |
+| [`src/engine/shared/`](../src/engine/shared/) | Zod message contract between host and webview (`bridgeContract.ts`), shared types, SQL identifier and metadata helpers. |
+| [`src/bridge/`](../src/bridge/) | Host handlers for webview messages. |
+| `src/components/`, `src/hooks/`, `src/contexts/`, `src/detail/` | React webview: graph canvas (React Flow), filters, detail panel, AI report column. |
+| [`src/ai/`](../src/ai/) | `@lineage` participant, phase graph, navigation engine, tools, prompts, session state. |
+| [`src/utils/`](../src/utils/) | Logging, notifications, redaction, layout worker. |
+| [`assets/`](../assets/) | `defaultParseRules.yaml`, `dmvQueries.yaml`, `aiOutputTemplates.yaml`, demo `.dacpac`. |
+| [`tests/`](../tests/) | `unit/` Vitest suites, `integration/` VS Code host lanes, `fixtures/`, `stubs/`, `harness/`, `scale/`, `tools/` (gate and runners). |
 
 ## Build and run
 
@@ -45,243 +34,67 @@ client is absent. See [`ARCHITECTURE.md`](ARCHITECTURE.md#history-privacy-and-no
 git clone https://github.com/ChrisDevRepo/vscode_data_lineage.git
 cd vscode_data_lineage
 npm ci
-```
-
-Press <kbd>F5</kbd> to build the extension host and webview bundles and launch
-the Extension Development Host. **Run Extension (Watch)** builds the webview
-once, then starts the extension-bundle watcher; rebuild the webview with
-`npm run build:webview` after React/CSS changes.
-
-Machine requirements for each test tier, including headless Linux, are in
-[`testing/ENVIRONMENTS.md`](testing/ENVIRONMENTS.md).
-
-```bash
-npm run typecheck             # type-check only
+npm run typecheck             # type-check only; there is no lint script
 npm run build                 # esbuild extension + Vite webview
-npm run package               # package with the pinned local @vscode/vsce
+npm run gate                  # every deterministic check
+npm run package               # VSIX with the pinned local @vscode/vsce
 ```
 
-`@vscode/vsce` is an exact-version development dependency. Packaging uses
-`--no-dependencies`: every production dependency is bundled into `out/` and
-`dist/` before packaging, and `vsce`'s `npm ls` pass misreports npm
-`overrides` as `invalid`. Pass `--no-dependencies` to a direct `vsce package`
-or `vsce publish` as well.
+Press <kbd>F5</kbd> (**Run Extension**) to build both bundles and launch the Extension Development Host. **Run Extension (Watch)** builds the webview once, then watches the extension bundle; run `npm run build:webview` after React or CSS changes.
 
-**Excluding a file from the VSIX takes three edits.** `vsce` never reads
-`.gitignore`. A new pattern needs an entry in [`.gitignore`](../.gitignore),
-[`.vscodeignore`](../.vscodeignore), and the forbidden list in
-[`tests/tools/assert-package-contents.mjs`](../tests/tools/assert-package-contents.mjs).
+### Packaging
 
-## Two ingestion paths, one model
+- `@vscode/vsce` is an exact-version development dependency. Packaging uses `--no-dependencies`: every production dependency is bundled into `out/` and `dist/`, and `vsce`'s `npm ls` pass misreports npm `overrides` as invalid. Pass it to a direct `vsce package` or `vsce publish` too.
+- [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) must match the bundles; the gate checks it. After a dependency change run `npm run build`, then `node scripts/generate-third-party-notices.mjs`.
+- `vsce` never reads `.gitignore`. Excluding a file from the VSIX needs an entry in [`.gitignore`](../.gitignore), [`.vscodeignore`](../.vscodeignore) and the forbidden list in [`tests/tools/assert-package-contents.mjs`](../tests/tools/assert-package-contents.mjs).
 
-Both paths produce the same `DatabaseModel` consumed by `graphBuilder.ts`.
+## Ingestion: two paths, one model
 
 ```mermaid
 flowchart LR
-    subgraph DACPAC[DACPAC lane — file-based]
-        DP[.dacpac file] -->|dacpacExtractor.ts<br/>unzip| MX[model.xml]
-        MX --> DX["DSP + objects + dependencies<br/>full allObjects catalog retained"]
+    subgraph DACPAC[DACPAC: file]
+        DP[.dacpac file] -->|unzip| MX[model.xml]
+        MX --> DX[Objects, dependencies,<br/>full object catalog]
     end
-    subgraph LIVE[Live database lane — DMV-based]
-        SRV[(SQL Server*)] -->|Phase 1| CAT[Schema preview]
-        CAT --> SELECT[Schema selection]
-        SELECT --> PI["Platform detection<br/>platform-info → getServerInfo → explicit Unknown"]
-        SRV --> PI
-        PI -->|before model build| DDL["Phase 2<br/>nodes + columns + dependencies"]
-        DDL --> MERGE[Merge + normalize]
+    subgraph LIVE[Live database: DMV queries]
+        SRV[(Database)] -->|Phase 1| CAT[Schema preview + platform-info]
+        CAT --> SEL[Schema selection]
+        SEL --> DDL[Phase 2: platform-info, all-objects,<br/>nodes, columns, constraints, dependencies]
     end
-    DX --> PARSE[[Regex parser<br/>sqlBodyParser.ts]]
-    MERGE --> PARSE
-    PARSE --> DM[DatabaseModel<br/>shared schema]
-    DM --> GB[graphBuilder] --> G[Directed graph<br/>graphology]
-
-    style DACPAC stroke:#0288d1,stroke-width:2px
-    style LIVE stroke:#ef6c00,stroke-width:2px
+    DX --> PARSE[[Regex parser]]
+    DDL --> PARSE
+    PARSE --> DM[DatabaseModel]
+    DM --> GB[Graph builder] --> G[Directed graph<br/>graphology]
 ```
 
-*The live lane supports SQL Server, Azure SQL, Fabric Data Warehouse, and
-Synapse Dedicated SQL Pool. Platform-specific query availability is covered in
-[`DMV_QUERIES.md`](DMV_QUERIES.md).
+Both paths produce a `DatabaseModel` through the same preprocessing, parse rules, normalization and edge-direction logic; the parser does not know the source. Each extractor stamps `DatabaseModel.source` (`'dacpac'` or `'database'`).
 
-The parser has no awareness of the source. Both lanes use the same
-preprocessing, YAML extraction rules, normalization, and edge-direction logic.
+- **DACPAC:** [`dacpacExtractor.ts`](../src/engine/dacpacExtractor.ts) reads `model.xml` from the ZIP, derives the platform label from its DSP and keeps the lightweight object catalog.
+- **Live database:** [`dmvExtractor.ts`](../src/engine/dmvExtractor.ts) and [`connectionManager.ts`](../src/engine/connectionManager.ts) run the queries in [`assets/dmvQueries.yaml`](../assets/dmvQueries.yaml) ([`DMV_QUERIES.md`](DMV_QUERIES.md#query-execution)). Platform detection finishes before the model is built: `platform-info`, or an explicit `Unknown database platform`. A change to SQL sent to a live database updates `DMV_QUERIES.md` (or `PROFILING_PATTERNS.md`) in the same change.
+- **Connections:** [`src/engine/db/`](../src/engine/db/). `connectDatabase` returns a `DbSession` from the built-in `tedious` provider with `ReadOnly` application intent; saved connections live in `dataLineageViz.database.connections` and passwords in `SecretStorage`. Connection failures are presented only by `connectionErrors.ts`.
+- **Persistence:** [`projectStore.ts`](../src/engine/projectStore.ts). On read, unknown fields are dropped and a project is discarded only when a required field is missing or mistyped. A change to `Project` or `FilterProfile` needs a migration in `migrateProjectStore()`. `StoredConnectionInfoSchema` stays `.strict()` so credentials never enter the store.
+- **AI run records:** [`src/ai/session/runStore.ts`](../src/ai/session/runStore.ts) keeps one record per AI-authored bookmark in `globalState` under `dataLineageViz.aiRun.<bookmarkId>`; deleting the bookmark or project clears it, and a record of another `schemaVersion` reads as absent.
 
-Each extractor stamps `DatabaseModel.source` (`'dacpac'` or `'database'`) on
-the model it returns; `buildModel` itself stays lane-agnostic. Read that field
-rather than inferring provenance from other metadata — `dbPlatform` is not a
-proxy, because a DACPAC derives a platform label from its DSP exactly as a
-live import derives one from the server.
+## SQL parsing
 
-- **DACPAC** — [`src/engine/dacpacExtractor.ts`](../src/engine/dacpacExtractor.ts).
-  Reads `model.xml` from the `.dacpac` ZIP archive, derives `dbPlatform` from
-  its DSP, and retains the full lightweight `allObjects` catalog. Known DSPs
-  map to platform labels; unrecognized DSP text is preserved raw.
-- **DMV** — [`src/engine/dmvExtractor.ts`](../src/engine/dmvExtractor.ts) +
-  [`src/engine/connectionManager.ts`](../src/engine/connectionManager.ts).
-  After schema selection, platform detection completes before the
-  selected-schema model is built: `platform-info` is preferred, the session's
-  `getServerInfo` is the non-failing fallback, and failure of both records
-  `Unknown database platform`. A built-in session skips the fallback, because its
-  `getServerInfo` sends the same `platform-info` query. Query definitions live in
-  [`assets/dmvQueries.yaml`](../assets/dmvQueries.yaml) and
-  [`DMV_QUERIES.md`](DMV_QUERIES.md). A change to the SQL sent to a live
-  database ships the matching `DMV_QUERIES.md` update in the same commit.
-  Each import reads the YAML again; the panel keeps the last load for the
-  built-in provider's server-info lookup (table statistics) and drops it when
-  `dataLineageViz.dmvQueriesFile` names another file.
-- **Connections** — [`src/engine/db/`](../src/engine/db/). `connectDatabase`
-  returns a `DbSession` from the built-in `tedious` provider; saved
-  built-in connections live in `dataLineageViz.database.connections` with
-  passwords in `SecretStorage`. Connection errors are presented only by
-  `connectionErrors.ts`. Tests: [`tests/unit/engine/db/`](../tests/unit/engine/db/);
-  `mssqlReconnectNotice.test.ts` pins the reconnect notice for a project saved
-  with the retired mssql extension. Runtime
-  contract: [`ARCHITECTURE.md`](ARCHITECTURE.md) §Database connection providers.
-- **Persistence** — [`src/engine/projectStore.ts`](../src/engine/projectStore.ts).
-  On read, unrecognized fields are dropped; a project is discarded only when a
-  required field is missing or of the wrong type. On write,
-  `StoredConnectionInfoSchema` ([`bridgeContract.ts`](../src/engine/shared/bridgeContract.ts)) stays `.strict()` so undeclared connection
-  fields (including credentials) never enter the store. Any change to
-  `Project` or `FilterProfile` needs a migration in `migrateProjectStore()`.
-- **AI run records** — [`src/ai/session/runStore.ts`](../src/ai/session/runStore.ts).
-  One record per AI-authored bookmark, held in `globalState` under
-  `dataLineageViz.aiRun.<bookmarkId>`. `present_result` stamps the run ID onto
-  the view metadata and, once the presentation commits, captures the engine
-  checkpoint onto the session's presentation artifact; a failed capture is
-  logged at debug and never fails the answer. A bookmark save writes the record
-  only when the profile is AI-authored and its run ID matches the captured
-  presentation; a failed write logs a warning and the bookmark still saves.
-  `delete-view` and `delete-project` clear the record, and a new route that
-  removes a saved view must clear it too. Reads tolerate top-level keys from a
-  newer build; a record of another `schemaVersion` or with an invalid snapshot
-  reads as absent. A recall with `ids` or `filter` then uses the session's
-  completed run, and `lineage_get_screen_state` answers `no_run_memory` only when
-  neither exists. The record is never truncated for size.
-  `lineage_get_screen_state` is the only reader.
-
-## SQL parsing pipeline
-
-```mermaid
-flowchart LR
-    IN[Raw SQL body] --> C1[Pass 0 — strip block comments]
-    C1 --> C2[Pass 1 — leftmost regex<br/>brackets / strings / line comments]
-    C2 --> C3[Pass 1.5 — ANSI-92 comma-join normalisation]
-    C3 --> C4[Pass 1.6 — CTE alias substitution]
-    C4 --> PRE[Optional YAML preprocessing rules]
-    PRE --> RE[YAML rule extraction]
-    RE --> SUP[Metadata suppression<br/>CLR methods, system schemas]
-    SUP --> CAP[Normalised captures<br/>object refs + edge direction]
-```
-
-Extraction regexes live in
-[`assets/defaultParseRules.yaml`](../assets/defaultParseRules.yaml).
-`src/engine/sqlBodyParser.ts` owns the built-in preprocessing passes,
-normalization, rule execution, and dependency resolution. The full reference
-is [`PARSE_RULES.md`](PARSE_RULES.md). Metadata suppression lives in
-[`src/engine/shared/sqlMetadata.ts`](../src/engine/shared/sqlMetadata.ts).
+Extraction regexes are in [`assets/defaultParseRules.yaml`](../assets/defaultParseRules.yaml). [`src/engine/sqlBodyParser.ts`](../src/engine/sqlBodyParser.ts) owns the built-in cleansing passes, rule execution and dependency resolution; the pipeline and its limits are in [`PARSE_RULES.md`](PARSE_RULES.md#how-sql-is-read). Run `npm run test:parser` after a change.
 
 ## Host/webview boundary
 
-```mermaid
-flowchart LR
-    WV[Webview React app] <-->|postMessage<br/>Zod-validated| BC[bridgeContract.ts<br/>schemas]
-    BC <--> EXT[Extension host<br/>panelProvider.ts]
-```
+Every message crossing the boundary is parsed with the Zod schemas in [`src/engine/shared/bridgeContract.ts`](../src/engine/shared/bridgeContract.ts) before a handler sees it. Main-panel routing starts in [`src/panelProvider.ts`](../src/panelProvider.ts); handlers are in [`src/bridge/`](../src/bridge/).
 
-Messages crossing the host/webview boundary are parsed with the Zod schemas in
-[`src/engine/shared/bridgeContract.ts`](../src/engine/shared/bridgeContract.ts)
-before handlers consume them. Main-panel routing starts in
-[`src/panelProvider.ts`](../src/panelProvider.ts); detail-panel handlers live
-under [`src/bridge/`](../src/bridge/).
+- `src/engine/` never imports `src/components/` (a gate step checks this) and never names the browser `window`.
+- `src/ai/` reaches the engine through `src/engine/shared/`; the imports that predate the rule are listed in `tests/unit/ai-core/rule-gates.test.ts` and the list may only shrink.
+- Log through [`src/utils/log.ts`](../src/utils/log.ts). User-facing errors go through [`src/utils/notifications.ts`](../src/utils/notifications.ts), which logs the detail and removes credentials. Database, schema and object names belong in debug lines; info lines carry counts and timing.
 
-Use the helpers in [`src/utils/log.ts`](../src/utils/log.ts) for extension
-logging. User-facing errors and warnings must go through the notification
-helpers (`notifyError`, `notifyWarning`, `notifyInfo` in
-[`src/utils/notifications.ts`](../src/utils/notifications.ts)) rather than raw
-output-channel calls; each logs the full detail at the matching level before it
-shows the toast, with credential-shaped context removed by `redactSecrets`
-([`src/utils/redact.ts`](../src/utils/redact.ts)). Database, schema and object
-identifiers belong in debug lines; info lines carry counts, modes and timing.
-Webview errors funnel through the bridge `'error'` message.
+## AI runtime
 
-`src/engine/` code never names `window` directly: a layout or build diagnostic
-raised in `graphBuilder.ts` goes through a `setGraphLogSink` callback the
-webview entry point installs at startup. The layer-direction gate step
-enforces the other half: `src/engine/**` must never import from
-`src/components/**`.
-
-`src/ai/**` reaches `src/engine/**` only through `src/engine/shared/*`. Imports
-that predate the rule are listed in `tests/unit/ai-core/rule-gates.test.ts`; the
-list may only shrink, and a new import of an engine module outside `shared/`
-fails that suite.
-
-## AI runtime boundary
-
-`@lineage` always uses the exact `ChatRequest.model` selected by VS Code. The
-extension has no provider, endpoint, credential, fallback-model, or
-model-picker configuration. AI dependencies receive the loaded lineage
-snapshot only; they cannot connect to a database, execute SQL, refresh
-ingestion, or start profiling.
-
-The participant in
-[`src/ai/participant/lineageParticipant.ts`](../src/ai/participant/lineageParticipant.ts)
-adapts native requests, history, cancellation, progress, and buttons. The
-outer graph in [`src/ai/agent/graph.ts`](../src/ai/agent/graph.ts) owns
-phases, semantic retries, interrupts, and synthesis; `NavigationEngine` in
-[`src/ai/sm/smBase.ts`](../src/ai/sm/smBase.ts) owns agenda, topology, gates,
-validation, and termination.
-
-Prompt builders live under [`src/ai/prompting/`](../src/ai/prompting/), with
-stage assembly in
-[`src/ai/agent/stagePrompts.ts`](../src/ai/agent/stagePrompts.ts) and one-call
-planning in
-[`src/ai/agent/instructionPlan.ts`](../src/ai/agent/instructionPlan.ts). Tool
-calls go through the canonical registry, phase policy, and strict Zod
-dispatcher under [`src/ai/tools/`](../src/ai/tools/).
-
-The AI authors semantic findings and structured presentation fields. The
-engine validates all mutations, keeps the final graph connected to its
-origin, and assembles the rendered description from structured result parts.
-See [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`AI_PROMPTS.md`](AI_PROMPTS.md).
+`@lineage` uses the chat model selected in VS Code (`ChatRequest.model`) and receives the loaded lineage model only; it cannot connect to a database, run SQL, re-import or start profiling. Code: [`src/ai/`](../src/ai/) (participant, phase graph, navigation engine, tools, prompts); see the [architecture overview](ARCHITECTURE.md#optional-ai-lineage). The model writes findings and the engine validates them; validation does not prove the model read the SQL correctly. After changing the tool catalog, run `npm run generate:tool-manifest`.
 
 ## Testing
 
-See [`testing/README.md`](testing/README.md) for test tiers and optional
-configuration, and [`EDH_TESTING.md`](EDH_TESTING.md) for VS Code host lanes.
-
-| Command | Scope |
-|---------|-------|
-| `npm run gate` | Deterministic checks, coverage floors, builds, and package checks. Run before push. |
-| `npm test` | Maintained unit suite. |
-| `npm run test:core` | Parser, engine, and webview tests. |
-| `npm run coverage:core` | Protected core coverage floors. |
-| `npm run test:runtime` | Agent-runtime and state-machine tests with a stubbed VS Code API. |
-| `npm run typecheck:tests` | Unit-test TypeScript checking. |
-| `npm run test:edh` | Smoke lanes in a real VS Code host. |
-
-For AI changes, review answers against the loaded SQL and graph as well as
-running the deterministic checks. See [Testing](testing/README.md) for the
-optional real-model smoke lane.
+Tiers, lanes and optional configuration: [`testing/README.md`](testing/README.md). Machine needs, including headless Linux: [`testing/ENVIRONMENTS.md`](testing/ENVIRONMENTS.md). Run `npm run gate` before a push; it needs no database, model provider or display. For AI changes, also check answers against the loaded SQL and graph.
 
 ## Diagnostics
 
-**Data Lineage: Enable AI Trace Logging for This Session** writes NDJSON under
-the workspace `tmp/lm-trace/` until the extension host restarts. An open
-workspace folder is required. The files contain prompts, model responses,
-tool payloads, and SQL — enable only while gathering evidence, never commit
-them, and review before sharing.
-
-**Data Lineage: Dump AI State Machine** writes the current exploration state
-to `tmp/sm-dumps/` (an open workspace and an active hop-by-hop exploration
-are required; a bounded graph preview has no state machine to dump).
-
-## Where to look first
-
-| Changing… | Read these |
-|-----------|------------|
-| SQL parsing rules | [`PARSE_RULES.md`](PARSE_RULES.md), [`assets/defaultParseRules.yaml`](../assets/defaultParseRules.yaml), [`src/engine/sqlBodyParser.ts`](../src/engine/sqlBodyParser.ts). Run `npm run test:parser`. |
-| AI behaviour or prompts | [`AI_PROMPTS.md`](AI_PROMPTS.md), [`ARCHITECTURE.md`](ARCHITECTURE.md), [`src/ai/prompting/`](../src/ai/prompting/), [`assets/aiOutputTemplates.yaml`](../assets/aiOutputTemplates.yaml). |
-| Tool surface, phase routing, or process guards | [`src/ai/tools/toolProvider.ts`](../src/ai/tools/toolProvider.ts), [`src/ai/tools/toolPolicy.ts`](../src/ai/tools/toolPolicy.ts), [`src/ai/session/sessionPhase.ts`](../src/ai/session/sessionPhase.ts), [`src/ai/interaction/rules/`](../src/ai/interaction/rules/). |
-| Webview (React Flow, filters, themes) | [`src/panelProvider.ts`](../src/panelProvider.ts), [`src/engine/shared/bridgeContract.ts`](../src/engine/shared/bridgeContract.ts), [`src/engine/graphDisplayMode.ts`](../src/engine/graphDisplayMode.ts), [`src/engine/nodeDecoration.ts`](../src/engine/nodeDecoration.ts), [`src/engine/columnTraceView.ts`](../src/engine/columnTraceView.ts), [`src/engine/traceTree.ts`](../src/engine/traceTree.ts) (trace navigator levels), [`src/components/`](../src/components/). |
-| DMV ingestion / DBA contract | [`DMV_QUERIES.md`](DMV_QUERIES.md), [`assets/dmvQueries.yaml`](../assets/dmvQueries.yaml), [`src/engine/dmvExtractor.ts`](../src/engine/dmvExtractor.ts). |
-| Profiling SQL | [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md), [`src/engine/profilingEngine.ts`](../src/engine/profilingEngine.ts). |
+**Data Lineage: Enable AI Trace Logging for This Session** writes NDJSON under the workspace `tmp/lm-trace/` until the extension host restarts; it needs an open workspace folder. **Data Lineage: Dump AI State Machine** writes the exploration state to `tmp/sm-dumps/` (needs an active hop-by-hop exploration). Both can contain schema names, SQL, prompts and responses: never commit them and review them before sharing. The extension never uploads them.
