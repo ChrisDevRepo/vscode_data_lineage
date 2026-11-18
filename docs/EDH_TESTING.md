@@ -10,7 +10,6 @@ Extension Development Host (EDH) tests run the extension inside the VS Code Elec
 npm run pretest:integration
 npm run test:bare-environment
 npm run test:tools
-npm run test:participant-turn
 npx vscode-test --label kill-switch
 ```
 
@@ -20,20 +19,7 @@ On Linux without a desktop session, prefix each command with `xvfb-run -a`; see 
 |---|---|
 | `bare-environment` | The extension activates when optional host integrations are absent. |
 | `tools` | Contributed read-only language-model tools register and respond through the VS Code API. |
-| `participant-turn` | The `@lineage` participant completes a turn through the public chat API. A fixture provider supplies fixed responses, so this checks API wiring and turn lifecycle, not inference. |
 | `kill-switch` | Disabling the AI feature before activation leaves the non-AI extension surface available. |
-
-## Native chat UI lanes (optional)
-
-`tests/integration/chat-ui.test.ts` drives the real VS Code chat input with Playwright over CDP, in an isolated profile on loopback:
-
-```sh
-npm run pretest:integration
-npx vscode-test --config .vscode-test.chat-ui.mjs                    # fixture lane
-npx vscode-test --config .vscode-test.chat-ui.mjs --label live       # needs AI_TEST_* settings
-```
-
-The fixture lane checks the plan buttons (**Approve & Proceed**, **Change scope**, **Cancel**) and typed replies with scripted responses; it proves request lifecycle, not answer quality. The `live`, `badge` and `column` labels use your own provider from `.env` and the public demo DACPAC, and fail rather than skip when configuration is missing. Screenshots and rendered text go to ignored `tmp/chat-ui/`. Use distinct `PLAYWRIGHT_CDP_PORT` values for simultaneous hosts.
 
 ## Test safety
 

@@ -84,7 +84,6 @@ Extraction regexes are in [`assets/defaultParseRules.yaml`](../assets/defaultPar
 Every message crossing the boundary is parsed with the Zod schemas in [`src/engine/shared/bridgeContract.ts`](../src/engine/shared/bridgeContract.ts) before a handler sees it. Main-panel routing starts in [`src/panelProvider.ts`](../src/panelProvider.ts); handlers are in [`src/bridge/`](../src/bridge/).
 
 - `src/engine/` never imports `src/components/` (a gate step checks this) and never names the browser `window`.
-- `src/ai/` reaches the engine through `src/engine/shared/`; the imports that predate the rule are listed in `tests/unit/ai-core/rule-gates.test.ts` and the list may only shrink.
 - Log through [`src/utils/log.ts`](../src/utils/log.ts). User-facing errors go through [`src/utils/notifications.ts`](../src/utils/notifications.ts), which logs the detail and removes credentials. Database, schema and object names belong in debug lines; info lines carry counts and timing.
 
 ## AI runtime
