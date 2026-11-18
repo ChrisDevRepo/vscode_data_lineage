@@ -171,7 +171,8 @@ export const StartExplorationInputSchema = z.object({
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['supplement'],
-      message: 'origin and supplement cannot be sent together: send supplement alone to add objects to the completed analysis, or origin without supplement to start a new exploration.',
+      message: 'origin and supplement cannot be sent together.',
+      params: { hint: 'Send supplement alone to add objects to the completed analysis, or origin without supplement to start a new exploration.' },
     });
   }
   if (data.origin && !isProposalRefine && !data.analysisMode) {

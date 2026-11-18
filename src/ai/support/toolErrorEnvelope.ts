@@ -734,6 +734,11 @@ function sizeBoundRepairHint(error: z.ZodError): string | undefined {
   return undefined;
 }
 
+/** Whether a schema refinement states the repair of its custom issue on `params.hint`. */
+function issueOwnsRepair(issue: z.core.$ZodIssue): boolean {
+  return issue.code === 'custom' && typeof (issue.params as { hint?: unknown } | undefined)?.hint === 'string';
+}
+
 /**
  * The repair instruction a schema refinement states itself, on `params.hint` of its custom issue.
  *
@@ -744,9 +749,9 @@ function sizeBoundRepairHint(error: z.ZodError): string | undefined {
 function issueOwnedRepairHint(error: z.ZodError): string | undefined {
   const hints: string[] = [];
   for (const issue of error.issues) {
-    if (issue.code !== 'custom') continue;
-    const hint = (issue.params as { hint?: unknown } | undefined)?.hint;
-    if (typeof hint === 'string' && !hints.includes(hint)) hints.push(hint);
+    if (issue.code !== 'custom' || !issueOwnsRepair(issue)) continue;
+    const hint = (issue.params as { hint: string }).hint;
+    if (!hints.includes(hint)) hints.push(hint);
   }
   return hints.length > 0 ? hints.join(' ') : undefined;
 }
@@ -927,7 +932,11 @@ export function rejectionFromZodError(
   return makeRejection({
     code: opts.code,
     reason: z.prettifyError(new z.ZodError(collapsed)),
-    hint: opts.hint ?? [zodFieldRepairHint(error, opts.input, opts.schema), INVALID_TOOL_INPUT_REPAIR_HINT].filter(Boolean).join(' '),
+    hint: opts.hint ?? [
+      zodFieldRepairHint(error, opts.input, opts.schema),
+      // A refinement that states its own repair may contradict the generic resend rule.
+      error.issues.every(issueOwnsRepair) ? undefined : INVALID_TOOL_INPUT_REPAIR_HINT,
+    ].filter(Boolean).join(' '),
     issuePaths,
     errors,
   });
