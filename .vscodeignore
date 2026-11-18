@@ -79,7 +79,6 @@ dist/assets/KaTeX_*.ttf
 GLM*
 .GLM*
 .glm-skills/**
-.agents/**
 CODEX*
 .CODEX*
 codex.md

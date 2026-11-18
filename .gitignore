@@ -50,16 +50,6 @@ codex.md
 .cursorrules
 .aider*
 .continue/
-.agents/
-!.agents/skills/testing/SKILL.md
-!.agents/skills/trace-debug/SKILL.md
-!.agents/skills/prompt-playground/SKILL.md
-!.agents/skills/prompt-change/SKILL.md
-.agents/skills/*/*
-!.agents/skills/testing/SKILL.md
-!.agents/skills/trace-debug/SKILL.md
-!.agents/skills/prompt-playground/SKILL.md
-!.agents/skills/prompt-change/SKILL.md
 .muse/
 
 # Public vendor-neutral agent entry point.
