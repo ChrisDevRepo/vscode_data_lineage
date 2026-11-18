@@ -519,7 +519,7 @@ export function createMessageHandlers(
               }
             } else if (m.type === 'table-stats-request') {
               if (detailPanel && !getSession().isDbSession) {
-                void postToDetail(detailPanel, { type: 'table-stats-error', message: 'Table statistics need a database project.' }, bridgeLogger);
+                void postToDetail(detailPanel, { type: 'table-stats-error', objectRef: { schema: m.schema, objectName: m.objectName }, message: 'Table statistics need a database project.' }, bridgeLogger);
               } else if (detailPanel) {
                 await handleTableStatsRequestHost(host, dbEnv, lastConnectionInfo, detailPanel, m.schema, m.objectName, m.mode, m.columns ?? [], outputChannel);
               }
@@ -1264,12 +1264,14 @@ async function handleTableStatsRequestHost(
   outputChannel: vscode.LogOutputChannel
 ): Promise<void> {
   const logger = Logger.create(outputChannel, 'Stats');
+  const objectRef = { schema, objectName };
   const cfg = host.getConfiguration();
   if (!cfg.get('tableStatistics.enabled', DEFAULT_CONFIG.tableStatistics.enabled)) {
     logger.info('Profiling disabled — request rejected');
     logger.debug(`Rejected profiling target: ${schema}.${objectName}`);
     void postToDetail(panel, {
       type: 'table-stats-error',
+      objectRef,
       message: 'Table profiling is disabled by dataLineageViz.tableStatistics.enabled.',
     }, logger);
     return;
@@ -1288,7 +1290,7 @@ async function handleTableStatsRequestHost(
   try {
     session = await connectDatabase(dbEnv, storedConnectionInfo);
     if (!session) {
-      void postToDetail(panel, { type: 'table-stats-error', message: 'Connection cancelled.' }, logger);
+      void postToDetail(panel, { type: 'table-stats-error', objectRef, message: 'Connection cancelled.' }, logger);
       return;
     }
     const serverInfo = await session.getServerInfo();
@@ -1306,6 +1308,7 @@ async function handleTableStatsRequestHost(
       logger.info('No profileable columns — nothing to query');
       void postToDetail(panel, {
         type: 'table-stats-error',
+        objectRef,
         message: `No profileable columns in ${schema}.${objectName} — the column types are not supported by statistics, or dataLineageViz.tableStatistics.maxColumns excludes them all.`,
       }, logger);
       return;
@@ -1337,17 +1340,17 @@ async function handleTableStatsRequestHost(
     const samplePercent = needsSampling ? computeSamplePercent(sampleSize, rowCount) : undefined;
     const stats = parseProfilingResult(resultRow, cols, rowCount, needsSampling, samplePercent);
     logger.info(`Table statistics ready — rows=${rowCount}${needsSampling ? ` (sampled ${samplePercent}%)` : ''} (${((Date.now() - t0) / 1000).toFixed(2)}s)`);
-    void postToDetail(panel, { type: 'table-stats-result', stats, mode }, logger);
+    void postToDetail(panel, { type: 'table-stats-result', objectRef, stats, mode }, logger);
   } catch (err) {
     const failure = connectionFailure(err);
     if (failure) {
       const reported = reportConnectionError(failure.error, failure.target, logger, connectionErrorHooks(dbEnv, failure.target.connectionId, undefined));
-      void postToDetail(panel, { type: 'table-stats-error', message: reported.message }, logger);
+      void postToDetail(panel, { type: 'table-stats-error', objectRef, message: reported.message }, logger);
       return;
     }
     host.log('error', 'Stats', 'Profiling failed');
     host.log('debug', 'Stats', `Profiling failed — ${redactSecrets(err instanceof Error ? err.message : String(err))}`);
-    void postToDetail(panel, { type: 'table-stats-error', message: redactSecrets(err instanceof Error ? err.message : String(err)) }, logger);
+    void postToDetail(panel, { type: 'table-stats-error', objectRef, message: redactSecrets(err instanceof Error ? err.message : String(err)) }, logger);
   } finally {
     if (session) {
       await releaseSession(session).catch((err: unknown) =>

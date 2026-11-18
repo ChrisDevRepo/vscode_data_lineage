@@ -32,12 +32,12 @@ window.addEventListener('error', (event) => {
 /** Coordinates detail-webview messages, DDL/column views, and profiling state. */
 export function DetailApp() {
   const vscodeApi  = useRef(_vscodeApi);
-  const nodeIdRef  = useRef<string | undefined>(undefined);
+  const nodeRef    = useRef<DetailState['node'] | undefined>(undefined);
   const [detail, setDetail] = useState<DetailState | null>(null);
   const [statsState, setStatsState] = useState<TableStatsState>({ phase: 'idle' });
   const [detailMode, setDetailMode] = useState<'columns' | 'ddl'>('ddl');
 
-  nodeIdRef.current = detail?.node?.id;
+  nodeRef.current = detail?.node;
 
   useEffect(() => {
     function handler(e: MessageEvent) {
@@ -59,7 +59,7 @@ export function DetailApp() {
       const msg = frame.data;
 
       if (msg.type === 'detail-update') {
-        setStatsState(prev => nodeIdRef.current !== msg.node?.id ? { phase: 'idle' } : prev);
+        setStatsState(prev => nodeRef.current?.id !== msg.node?.id ? { phase: 'idle' } : prev);
         setDetail({
           node:      msg.node,
           findQuery: msg.findQuery,
@@ -68,10 +68,12 @@ export function DetailApp() {
       } else if (msg.type === 'detail-clear') {
         setStatsState({ phase: 'idle' });
         setDetail(null);
-      } else if (msg.type === 'table-stats-result') {
-        setStatsState({ phase: 'result', stats: msg.stats, mode: msg.mode });
-      } else if (msg.type === 'table-stats-error') {
-        setStatsState({ phase: 'error', message: msg.message });
+      } else if (msg.type === 'table-stats-result' || msg.type === 'table-stats-error') {
+        const { schema, objectName } = msg.objectRef;
+        if (schema !== nodeRef.current?.schema || objectName !== nodeRef.current?.name) return;
+        setStatsState(msg.type === 'table-stats-result'
+          ? { phase: 'result', stats: msg.stats, mode: msg.mode }
+          : { phase: 'error', message: msg.message });
       }
     }
     window.addEventListener('message', handler);

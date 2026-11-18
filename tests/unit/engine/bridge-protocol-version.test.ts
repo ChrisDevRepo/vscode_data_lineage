@@ -66,10 +66,10 @@ describe('bridge protocol envelope', () => {
 
   it('stamps detail frames without disturbing their payload fields', async () => {
     const { sent, panel } = fakePanel();
-    await postToDetail(panel as never, { type: 'table-stats-error', message: 'boom' }, silentLogger);
+    await postToDetail(panel as never, { type: 'table-stats-error', objectRef: { schema: 'dbo', objectName: 'a' }, message: 'boom' }, silentLogger);
 
     const parsed = ExtensionToDetailMsgSchema.safeParse(sent[0]);
-    expect(parsed.success && parsed.data).toEqual({ type: 'table-stats-error', message: 'boom' });
+    expect(parsed.success && parsed.data).toEqual({ type: 'table-stats-error', objectRef: { schema: 'dbo', objectName: 'a' }, message: 'boom' });
   });
 
   /** The webview-side rule: host always stamps, so absent or different is a rejection. */

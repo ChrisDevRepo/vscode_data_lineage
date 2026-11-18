@@ -844,6 +844,9 @@ const TableStatsSchema: z.ZodType<TableStats> = z.object({
   warnings: z.array(z.string()).optional(),
 });
 
+/** The object a table-stats reply answers, so the panel applies it only to that node. */
+const TableStatsObjectRefSchema = z.object({ schema: z.string(), objectName: z.string() });
+
 /**
  * Zod schema for messages from the host **to the detail-panel webview**, mirroring
  * {@link DetailPanelToExtensionMsgSchema} for the reverse direction. Sends go through the
@@ -853,8 +856,8 @@ const TableStatsSchema: z.ZodType<TableStats> = z.object({
 export const ExtensionToDetailMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('detail-update'), node: LineageNodeSchema, findQuery: z.string().optional(), config: DetailConfigSchema }),
   z.object({ type: z.literal('detail-clear') }),
-  z.object({ type: z.literal('table-stats-result'), stats: TableStatsSchema, mode: z.enum(['quick', 'standard']) }),
-  z.object({ type: z.literal('table-stats-error'), message: z.string() }),
+  z.object({ type: z.literal('table-stats-result'), objectRef: TableStatsObjectRefSchema, stats: TableStatsSchema, mode: z.enum(['quick', 'standard']) }),
+  z.object({ type: z.literal('table-stats-error'), objectRef: TableStatsObjectRefSchema, message: z.string() }),
 ]);
 
 /** Messages sent from the extension host to the detail-panel webview. */
