@@ -25,7 +25,7 @@ import {
 } from '../prompting/prompts';
 import { TurnEventSink, type TurnEvent } from '../runtime/turnEventSink';
 import type { AiSession } from '../session/session';
-import { renderFullPlanMd, renderScopeCardMd, GATE_CARD_HEADER, HOLD_GATE_NOTICE } from '../prompting/scopeSummaryRenderer';
+import { renderFullPlanMd, renderScopeCardMd, gateCardMd } from '../prompting/scopeSummaryRenderer';
 import { sanitizeDescriptionForChat, sanitizeProviderError } from '../support/text';
 import {
   createTurnTokenBudget,
@@ -483,7 +483,7 @@ export class LineageParticipant {
         };
         this.pendingGate = pending;
         const card = proposal ? renderScopeCardMd(proposal) : event.summary;
-        stream.markdown(`${GATE_CARD_HEADER}${card}${HOLD_GATE_NOTICE}\n\n`);
+        stream.markdown(gateCardMd(card, this.getSession().resultGraph != null));
         this.writeGateButtons(stream, event.gateId);
         void this.runtime.resumeGate(event.gateId, { kind: 'hold' })
           .then((resumed) => {

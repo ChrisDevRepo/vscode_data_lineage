@@ -24,7 +24,7 @@ import {
   MAX_DISCOVERY_TRANSCRIPT_TURNS,
 } from '../session/session';
 import { contextBlockBytes, type TurnTokenBudget } from '../support/tokenBudget';
-import { GATE_CARD_HEADER, HOLD_GATE_NOTICE, UNREAD_GATE_REPLY } from '../prompting/scopeSummaryRenderer';
+import { GATE_CARD_HEADER, HOLD_GATE_NOTICE, REPLACE_ANALYSIS_NOTICE, UNREAD_GATE_REPLY } from '../prompting/scopeSummaryRenderer';
 
 /** Replaces evicted turns so the model knows the transcript is a tail, not the whole chat. */
 const HISTORY_EVICTION_STUB = '[Earlier turns were evicted to keep the conversation within the model context budget.]';
@@ -172,6 +172,7 @@ function neutralizeGateCardArtifacts(markdown: string): string {
   return markdown
     .split(GATE_CARD_HEADER).join(GATE_CARD_REPLAY_LEAD_IN)
     .split(HOLD_GATE_NOTICE).join('')
+    .split(REPLACE_ANALYSIS_NOTICE).join('')
     .split(UNREAD_GATE_REPLY).join('');
 }
 
