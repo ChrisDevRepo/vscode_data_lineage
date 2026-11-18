@@ -8,7 +8,7 @@ import { bidirectional } from 'graphology-shortest-path/unweighted';
 import { bfsFromNode } from 'graphology-traversal';
 import type { DatabaseModel, LineageNode } from '../../engine/types';
 import type { ColumnStore } from '../../engine/columnStore';
-import { ASYMMETRIC_DEPTH_BOTH_ZERO, bothSidesClosed, directionFromDepth, type DepthSideValue } from '../../engine/shared/explorationDepthContract';
+import { bothSidesClosed, directionFromDepth, type DepthSideValue } from '../../engine/shared/explorationDepthContract';
 import type { SerializedFilterState } from '../../engine/projectStore';
 import { buildEdgeTypeMap, buildHopFocusNode, buildUnrelatedMap } from '../tools/tools';
 import { buildNodeMap, getNodeColumns, getNodeDdl, SCRIPT_TYPES } from '../support/graphUtils';
@@ -1743,7 +1743,7 @@ export class NavigationEngine implements IHopStateMachine {
     const depthIntent: DepthIntent = params.depthIntent;
     if (bothSidesClosed(depthIntent.upstream, depthIntent.downstream)) {
       return makeRejection({
-        code: ASYMMETRIC_DEPTH_BOTH_ZERO,
+        code: REJECTION_CODES.asymmetricDepthBothZero,
         hint: 'This refine closes the last open side: resend depth with at least one side ≥ 1 or "all".',
       });
     }

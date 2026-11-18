@@ -369,6 +369,11 @@ export const ISSUES = {
     label: 'not an object in the loaded model',
     correction: 'Name an object of the loaded model by its id.',
   },
+  [REJECTION_CODES.asymmetricDepthBothZero]: {
+    category: 'value',
+    label: 'both depth sides are 0',
+    correction: 'Set at least one depth side above 0.',
+  },
 } as const satisfies Record<RegistryCode | SchemaIssueCode, IssueText>;
 
 /** Closed set of issue codes a fault may carry. */

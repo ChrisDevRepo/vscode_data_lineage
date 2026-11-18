@@ -9,14 +9,13 @@ import { DEFAULT_EXPLORATION_QUESTION, type DepthIntent } from '../../sm/smTypes
 import { depthSidesDiffer, directionFromDepth } from '../../../engine/shared/explorationDepthContract';
 import { sanitizeForLog, trunc } from '../../../utils/log';
 import { schemaKey } from '../../../utils/sql';
-import { StartExplorationInputSchema } from '../../tools/toolSchemas';
+import { parseToolInput, StartExplorationInputSchema } from '../../tools/toolSchemas';
 import { PendingGateSchema } from '../../session/sessionPhase';
 import { nodeFiltersRemovedByOrigin, renderScopeSummaryMd, schemaFiltersRemovedByOrigin } from '../../prompting/scopeSummaryRenderer';
 import { redactMissionBriefForLog } from '../../support/missionBriefDiagnostics';
 import { toEngineLog } from '../../support/engineLog';
 import { isCancellationOutcome } from '../../support/cancellation';
 import {
-  buildStartExplorationReject,
   evaluateBbTargetColumnsRule,
   evaluateAlreadyStartedRule,
   evaluateParallelStartRule,
@@ -53,11 +52,8 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
         }
       }
 
-      const parsed = StartExplorationInputSchema.safeParse(input);
-      if (!parsed.success) {
-        const rawObject = input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {};
-        return s.logAndReturn('lineage_start_exploration', buildStartExplorationReject(parsed.error, rawObject), loggedInput);
-      }
+      const parsed = parseToolInput(StartExplorationInputSchema, input);
+      if (!parsed.ok) return s.logAndReturn('lineage_start_exploration', parsed.error, loggedInput);
       const data = parsed.data;
       if (data.mission_brief !== undefined) {
         s.logger.debug(`[Mission] provenance=tool_payload len=${data.mission_brief.length}`);

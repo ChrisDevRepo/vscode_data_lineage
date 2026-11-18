@@ -1,17 +1,8 @@
 import type { InteractionRuleResult } from '../types';
-import type { ZodError, ZodIssue } from 'zod';
 import { DEFAULT_EXPLORATION_QUESTION } from '../../sm/smTypes';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
-import { INVALID_TOOL_INPUT_REPAIR_HINT, makeRejection } from '../../support/toolErrorEnvelope';
-import {
-  ASYMMETRIC_DEPTH_BOTH_ZERO,
-} from '../../../engine/shared/explorationDepthContract';
-import { CT_TARGET_COLUMNS_RECOVERY } from '../../tools/toolSchemas';
-
-type StartRejectIssue = { code: string; path: string; message: string; action: string };
-
-/** The repair of an issue whose message already states the fact: the one generic resend rule. */
-const RESEND = INVALID_TOOL_INPUT_REPAIR_HINT;
+import { makeRejection } from '../../support/toolErrorEnvelope';
+import { BB_TARGET_COLUMNS_RECOVERY } from '../../tools/toolSchemas';
 
 /**
  * Resolves the canonical user question for an exploration. User-authored text always wins over the
@@ -42,54 +33,10 @@ export function resolveCanonicalQuestion(sources: {
     ?? pick(sources.modelQuestion);
 }
 
-const BB_ACTION = 'Omit targetColumns and resubmit the BB specification.';
-
-function mapStartIssue(issue: ZodIssue, input?: Record<string, unknown>): StartRejectIssue {
-  const path = issue.path.join('.') || '(root)';
-  const tag = issue.code === 'custom' ? issue.params?.startIssue : undefined;
-  if (tag === 'bb_target_columns_forbidden') return { code: REJECTION_CODES.ctFieldForbiddenInBb, path, message: issue.message, action: BB_ACTION };
-  if (tag === 'ct_target_columns_required') return { code: REJECTION_CODES.missingField, path, message: issue.message, action: CT_TARGET_COLUMNS_RECOVERY };
-  if (tag === 'start_shape_conflict') return { code: 'invalid_value', path, message: issue.message, action: issue.message };
-  if (tag === ASYMMETRIC_DEPTH_BOTH_ZERO) return { code: ASYMMETRIC_DEPTH_BOTH_ZERO, path, message: issue.message, action: 'At least one side must be ≥ 1 or "all"; both 0 would create an empty scope.' };
-  if (issue.code === 'unrecognized_keys') return { code: 'unknown_field', path: issue.keys.join(',') || path, message: issue.message, action: 'Remove the unknown field and resubmit.' };
-  if (issue.code === 'invalid_type') return { code: issue.expected === 'undefined' ? REJECTION_CODES.missingField : 'invalid_type', path, message: issue.message, action: RESEND };
-  if (issue.code === 'invalid_value' && ['analysisMode', 'classification'].includes(path)) {
-    if (input && !Object.prototype.hasOwnProperty.call(input, path)) return { code: REJECTION_CODES.missingField, path, message: issue.message, action: RESEND };
-    return { code: 'invalid_enum', path, message: issue.message, action: RESEND };
-  }
-  return { code: tag === 'analysis_mode_required' || tag === 'classification_required' || tag === 'start_shape_required' || tag === 'depth_required' ? REJECTION_CODES.missingField : 'invalid_value', path, message: issue.message, action: RESEND };
-}
-
-/**
- * Builds a stable, bounded rejection envelope from start-exploration Zod issues.
- *
- * @param input - Raw payload used to distinguish absent enum fields from invalid values.
- * @returns An envelope with at most three unique field issues: `reason` states every issue as
- *   `path: message` (the path alone when the message is itself a repair the `hint` serves), and
- *   `hint` serves each distinct repair once, the generic resend rule last.
- */
-export function buildStartExplorationReject(error: ZodError, input?: Record<string, unknown>): NonNullable<InteractionRuleResult> {
-  const unique = new Map<string, StartRejectIssue>();
-  for (const issue of error.issues) {
-    const mapped = mapStartIssue(issue, input);
-    unique.set(`${mapped.code}:${mapped.path}`, mapped);
-    if (unique.size === 3) break;
-  }
-  const issues = [...unique.values()];
-  const actions = [...new Set(issues.map(issue => issue.action))].sort((a, b) => Number(a === RESEND) - Number(b === RESEND));
-  return makeRejection({
-    code: issues[0]?.code ?? 'invalid_value',
-    reason: issues.map(issue => (actions.includes(issue.message) ? issue.path : `${issue.path}: ${issue.message}`)).join('\n'),
-    hint: actions.join(' ') || RESEND,
-    detail: { issues: issues.map(({ action: _action, ...issue }) => issue) },
-    issuePaths: issues.map(issue => issue.path),
-  });
-}
-
 /** Rejects named columns inherited into a BB refine without mutating state; `null` if none. */
 export function evaluateBbTargetColumnsRule(targetColumns: readonly string[] | undefined): InteractionRuleResult {
   if (!targetColumns?.length) return null;
-  return makeRejection({ code: REJECTION_CODES.ctFieldForbiddenInBb, hint: BB_ACTION });
+  return makeRejection({ code: REJECTION_CODES.ctFieldForbiddenInBb, hint: BB_TARGET_COLUMNS_RECOVERY });
 }
 
 /**

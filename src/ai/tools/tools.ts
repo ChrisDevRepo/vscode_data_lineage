@@ -32,7 +32,6 @@ import {
   presentSchema, presentNeighbor, presentFilter, presentForeignKeys,
 } from '../support/aiPresenter';
 import { type GetScopeBundleInput } from './toolSchemas';
-import { ASYMMETRIC_DEPTH_BOTH_ZERO } from '../../engine/shared/explorationDepthContract';
 
 
 import {
@@ -532,7 +531,7 @@ export function getScopeBundle(
 
   if (direction === 'bidirectional' && upstreamDepth === 0 && downstreamDepth === 0) {
     return makeRejection({
-      code: ASYMMETRIC_DEPTH_BOTH_ZERO,
+      code: REJECTION_CODES.asymmetricDepthBothZero,
       hint: 'upstream_depth and downstream_depth are both 0, which would return only the origin node with no neighbors. Set at least one side above 0, or call lineage_get_object_detail for a single object.',
     });
   }

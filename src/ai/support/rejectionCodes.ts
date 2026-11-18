@@ -196,4 +196,6 @@ export const REJECTION_CODES = {
   unknownColumns: 'unknown_columns',
   /** `excludeNodeIds`/`passNodeIds` name nodes absent from the loaded model (`smBase.ts`). */
   unknownNodeIds: 'unknown_node_ids',
+  /** A depth with both sides at 0 levels, which would seed an empty scope (`tools.ts`, `smBase.ts`). */
+  asymmetricDepthBothZero: 'asymmetric_depth_both_zero',
 } as const;

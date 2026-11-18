@@ -92,6 +92,9 @@ const START_SHAPE_REQUIRED_MESSAGE = "Either 'origin' (fresh proposal) or 'suppl
 export const CT_TARGET_COLUMNS_RECOVERY =
   'Name the columns to trace; for all columns, read them with lineage_get_object_detail and send each one. Then resubmit CT.';
 
+/** Repair of a whole-object (BB) call that names columns. */
+export const BB_TARGET_COLUMNS_RECOVERY = 'Omit targetColumns and resubmit the BB specification.';
+
 /** `targetColumns` on every exploration phase: column trace names them; blackboard forbids it. */
 const TARGET_COLUMNS_PHASE_DESCRIPTION =
   'CT only: name each column to trace. When the user asked for every column, read them with lineage_get_object_detail and send each one. BB forbids this property.';
@@ -103,7 +106,7 @@ const StartPassNodeIdsSchema = z.array(z.string()).optional().describe('Resolved
 
 /**
  * Strict domain boundary for fresh, refine and completed-session exploration requests. Parsed here
- * so a malformed payload (e.g. missing `origin`) yields a structured `missing_field` error. Either
+ * so a malformed payload (e.g. missing `origin`) yields one rejection naming every fault. Either
  * `origin` (fresh) or a `supplement` with explicit node ids must be present; a supplement reuses
  * the existing `NavigationEngine` and archive, appending ids to the agenda and merging new
  * `DetailSlot` entries.
@@ -158,7 +161,7 @@ export const StartExplorationInputSchema = z.object({
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: START_SHAPE_REQUIRED_MESSAGE,
-      params: { startIssue: 'start_shape_required' },
+      params: { code: REJECTION_CODES.missingField },
     });
   }
   if (isProposalRefine && data.supplement) {
@@ -169,7 +172,6 @@ export const StartExplorationInputSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ['supplement'],
       message: 'origin and supplement cannot be sent together: send supplement alone to add objects to the completed analysis, or origin without supplement to start a new exploration.',
-      params: { startIssue: 'start_shape_conflict' },
     });
   }
   if (data.origin && !isProposalRefine && !data.analysisMode) {
@@ -177,7 +179,7 @@ export const StartExplorationInputSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ['analysisMode'],
       message: 'analysisMode is required for fresh exploration. Use "bb" when unclear; use "ct" only for explicit column tracing.',
-      params: { startIssue: 'analysis_mode_required' },
+      params: { code: REJECTION_CODES.missingField },
     });
   }
   if (data.origin && !isProposalRefine && !data.classification) {
@@ -185,7 +187,7 @@ export const StartExplorationInputSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ['classification'],
       message: 'classification is required for a fresh exploration proposal.',
-      params: { startIssue: 'classification_required' },
+      params: { code: REJECTION_CODES.missingField },
     });
   }
   if (data.analysisMode === 'ct' && (data.origin || data.targetColumns !== undefined) && (!data.targetColumns || data.targetColumns.length === 0)) {
@@ -193,7 +195,7 @@ export const StartExplorationInputSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ['targetColumns'],
       message: CT_TARGET_COLUMNS_RECOVERY,
-      params: { startIssue: 'ct_target_columns_required' },
+      params: { code: REJECTION_CODES.missingField },
     });
   }
   if (data.analysisMode === 'bb' && data.targetColumns && data.targetColumns.length > 0) {
@@ -201,7 +203,7 @@ export const StartExplorationInputSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ['targetColumns'],
       message: 'analysisMode "bb" is whole-object lineage and does not accept targetColumns.',
-      params: { startIssue: 'bb_target_columns_forbidden' },
+      params: { code: REJECTION_CODES.ctFieldForbiddenInBb, hint: BB_TARGET_COLUMNS_RECOVERY },
     });
   }
   if (data.origin && !isProposalRefine && !data.depth) {
@@ -209,7 +211,7 @@ export const StartExplorationInputSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ['depth'],
       message: 'depth is required for a fresh exploration proposal: send levels and exactness for both upstream and downstream.',
-      params: { startIssue: 'depth_required' },
+      params: { code: REJECTION_CODES.missingField },
     });
   }
 });
