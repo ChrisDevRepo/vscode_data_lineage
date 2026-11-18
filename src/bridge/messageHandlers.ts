@@ -490,14 +490,16 @@ export function createMessageHandlers(
       const store = loadProjectStore(context);
       const sess = getSession();
       postProjectsList(host, store);
-      if (sess.model && store.lastOpenedId) {
+      // Every `ready` (first, or after a webview reload) re-syncs the session's model: a load a command installed
+      // before the webview could receive it, or a post lost across a reload, is delivered here.
+      if (sess.model) {
         const project = store.projects.find(p => p.id === store.lastOpenedId);
         if (project) {
           sess.currentProjectId = project.id;
           sess.projectName = project.name;
           sess.isDbSession = project.connection.type === 'database';
         }
-        host.log('info', 'Bridge', 'Restoring session for the last opened project');
+        host.log('info', 'Bridge', 'Restoring the session model');
         host.log('debug', 'Bridge', `Restoring session for project: ${sess.projectName}`);
         host.postMessage({ type: 'dacpac-model', model: sess.model, config, sourceName: sess.projectName ?? 'Project', autoVisualize: true });
       }

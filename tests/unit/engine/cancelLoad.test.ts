@@ -76,6 +76,7 @@ function build(store: ProjectStore, readFile: () => Promise<Uint8Array>) {
     log: vi.fn(),
     getConfiguration: vi.fn().mockReturnValue({ get: (_key: string, fallback?: unknown) => fallback }),
     getExtensionUri: vi.fn().mockReturnValue('ext'),
+    getGlobalState: vi.fn().mockReturnValue({ get: () => undefined }),
     readFile: vi.fn(readFile),
     withProgress: vi.fn((_o: unknown, task: (p: unknown, t: unknown) => unknown) =>
       task({ report() {} }, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) })),
@@ -361,5 +362,43 @@ describe('load messages in the bridge contract', () => {
 
   it('has no host-assigned load announcement', () => {
     expect(ExtensionToWebviewMsgSchema.safeParse({ type: 'load-started', loadId: 'A' }).success).toBe(false);
+  });
+});
+
+describe('ready re-syncs the session model', () => {
+  const store = projectOf({ type: 'dacpac', path: '/tmp/x.dacpac' });
+  const loaded = (session: { model: unknown; projectName?: string }, projectName: string) => {
+    session.model = { nodes: [], edges: [], schemas: [] };
+    session.projectName = projectName;
+  };
+  const models = (posted: Array<Posted & { sourceName?: string }>) => posted.filter((m) => m.type === 'dacpac-model').map((m) => m.sourceName);
+
+  it('delivers a model a command installed before the webview was ready', async () => {
+    const { session, send, posted } = build(store, async () => new Uint8Array());
+    loaded(session, 'External');
+
+    await send('ready');
+
+    expect(models(posted())).toEqual(['External']);
+  });
+
+  it('delivers it once when a project was also last opened', async () => {
+    const { session, send, posted } = build({ ...store, lastOpenedId: 'p1' } as ProjectStore, async () => new Uint8Array());
+    loaded(session, 'External');
+
+    await send('ready');
+
+    expect(posted().filter((m) => m.type === 'dacpac-model')).toHaveLength(1);
+  });
+
+  it('delivers the current model again after a webview reload sends ready a second time', async () => {
+    const { session, send, posted } = build(store, async () => new Uint8Array());
+    await send('ready');
+    expect(models(posted())).toEqual([]);
+
+    loaded(session, 'AfterReload');
+    await send('ready');
+
+    expect(models(posted())).toEqual(['AfterReload']);
   });
 });
