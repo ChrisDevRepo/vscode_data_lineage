@@ -9,55 +9,7 @@
 import { ENGINE_EDITION_FABRIC, type ColumnDef } from './types';
 import type { SimpleExecuteResult } from '../types/database';
 import { quoteIdentifier } from '../utils/sql';
-
-/** Statistical profile for a single column. */
-export interface ColumnStats {
-  /** The original column name. */
-  name: string;
-  /** The SQL data type (e.g., 'nvarchar(50)'). */
-  type: string;
-  /** Number of unique values (may be approximated). */
-  distinctCount: number;
-  nullCount: number | null;
-  /** Percentage of rows containing NULL. */
-  nullPercent: number | null;
-  /** Ratio of non-NULL values to total rows. */
-  completeness: number;
-  /** Ratio of distinct values to total rows. */
-  uniqueness: number;
-  /** Minimum value (formatted as string). */
-  min?: string;
-  /** Maximum value (formatted as string). */
-  max?: string;
-  /** Numeric mean. */
-  mean?: number;
-  /** Sample standard deviation (`STDEV`). */
-  stdDev?: number;
-  /** Minimum string length. */
-  minLength?: number;
-  /** Maximum string length. */
-  maxLength?: number;
-  /** Count of values equal to 0 (numeric only). */
-  zeroCount?: number;
-  /** Count of empty strings (string only). */
-  emptyCount?: number;
-  /** Whether profiling was skipped (e.g., for XML/LOB types). */
-  skipped?: boolean;
-}
-
-/** Comprehensive statistical profile for a database table. */
-export interface TableStats {
-  /** Total rows evaluated (or sampled). */
-  rowCount: number;
-  /** Metrics for each individual column. */
-  columns: ColumnStats[];
-  /** Whether the data was sampled or fully scanned. */
-  sampled: boolean;
-  /** The percentage of the table that was sampled. */
-  samplePercent?: number;
-  /** Warnings encountered during parsing. */
-  warnings?: string[];
-}
+import type { ColumnStats, TableStats } from './shared/bridgeContract';
 
 /** Available profiling depths. */
 export type StatsMode = 'quick' | 'standard';

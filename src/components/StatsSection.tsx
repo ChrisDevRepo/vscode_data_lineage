@@ -1,5 +1,6 @@
 import { Fragment, useState, useCallback, useMemo } from 'react';
-import type { TableStats, ColumnStats, StatsMode } from '../engine/profilingEngine';
+import type { StatsMode } from '../engine/profilingEngine';
+import type { TableStats, ColumnStats } from '../engine/shared/bridgeContract';
 import type { TableStatsState } from './TableDetailPanel';
 import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';

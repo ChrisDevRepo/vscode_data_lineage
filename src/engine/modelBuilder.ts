@@ -704,7 +704,8 @@ function lastUrlSegment(url: string, maxLen = 40): string {
  *
  * @param crossDbRegexRefs - 3-part references found by regex.
  * @param crossDbMetaDeps - 3-part references found in model metadata.
- * @param externalRefsEnabled - When false, only references to the current database become local edges.
+ * @param externalRefsEnabled - When false, only references to the current database become local
+ *   edges.
  */
 function createVirtualNodes(
   nodes: LineageNode[],

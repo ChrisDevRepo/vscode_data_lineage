@@ -251,7 +251,10 @@ export function createMessageHandlers(
 
   type DacpacPreview = Awaited<ReturnType<typeof extractSchemaPreview>>;
   let cachedDacpac: DacpacPreview | null = null;
-  /** Builds the selected schemas of a parsed dacpac and installs the model, unless it is over the object limit. */
+  /**
+   * Builds the selected schemas of a parsed dacpac and installs the model, unless it is over the
+   * object limit.
+   */
   function installFilteredDacpac(
     host: BridgeHost,
     dacpac: DacpacPreview,
@@ -591,7 +594,7 @@ export function createMessageHandlers(
         }
       }
     },
-    'open-dacpac': loadHandler(async (host) => {
+    'open-dacpac': loadHandler(async (host, token) => {
       host.log('info', 'Bridge', 'Opening dacpac picker');
       const uris = await host.showOpenDialog({
         canSelectMany: false,
@@ -614,6 +617,7 @@ export function createMessageHandlers(
           host.postMessage({ type: 'db-error', message: `Could not open ${path.basename(uris[0].fsPath)}: ${reason}` });
           return;
         }
+        if (token.isCancellationRequested) return;
         const { preview } = extracted;
         cachedDacpac = extracted;
         host.postMessage({
@@ -657,8 +661,8 @@ export function createMessageHandlers(
           const schemas = project.connection.schemas;
 
           const extracted = await extractSchemaPreview(data);
+          if (token.isCancellationRequested) return;
           if (schemas && schemas.length > 0) {
-            if (token.isCancellationRequested) return;
             host.log('debug', 'Bridge', `Extracting filtered dacpac for schemas: ${trunc(schemas, LOG_TRUNC_LIST)}`);
             const name = project.connection.displayName;
             installFilteredDacpac(host, extracted, schemas, config, { id: project.id, name }, name);
@@ -1349,7 +1353,7 @@ async function handleTableStatsRequestHost(
       void postToDetail(panel, { type: 'table-stats-error', objectRef, message: reported.message }, logger);
       return;
     }
-    host.log('error', 'Stats', 'Profiling failed');
+    host.log('error', 'Stats', 'Profiling failed', err instanceof Error ? err.name : typeof err);
     host.log('debug', 'Stats', `Profiling failed — ${redactSecrets(err instanceof Error ? err.message : String(err))}`);
     void postToDetail(panel, { type: 'table-stats-error', objectRef, message: redactSecrets(err instanceof Error ? err.message : String(err)) }, logger);
   } finally {

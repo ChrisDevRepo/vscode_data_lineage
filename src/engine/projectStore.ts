@@ -64,7 +64,8 @@ const MAX_REPORTED_ISSUE_PATHS = 10;
  * rejecting the record, since an older build's project carries keys this one never declared); a
  * record is discarded only when a required field is missing or mistyped.
  *
- * An unreadable saved view inside a readable project is skipped alone and counted in `droppedViews`.
+ * An unreadable saved view inside a readable project is skipped alone and counted in
+ * `droppedViews`.
  *
  * Free of VS Code imports: discarded records surface through the optional `onDropped` callback (at
  * most once per call, only when something was discarded), so the host owns logging and notification

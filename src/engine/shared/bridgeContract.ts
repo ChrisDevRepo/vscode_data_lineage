@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { ExplorationDepthSelectionSchema } from './explorationDepthContract';
-import type { ColumnStats, TableStats } from '../profilingEngine';
 import { OBJECT_TYPES, type ExtensionConfig, type SchemaPreview, type TraceAffordanceSnapshot } from '../types';
 
 /**
@@ -26,8 +25,8 @@ export const AI_REPORT_MARKDOWN_MAX_CHARS = 200_000;
 
 /**
  * Upper bound, in characters, on the file text the webview hands to the host for `export-file`.
- * Draw.io export measured about 1.6 KB per object (236,627 chars for 148 nodes and 164 edges, 396,332
- * for 249 and 303): 8-10 MB at the 5000-object limit, so 50 MB keeps at least 5x margin.
+ * Draw.io export measured about 1.6 KB per object (236,627 chars for 148 nodes and 164 edges,
+ * 396,332 for 249 and 303): 8-10 MB at the 5000-object limit, so 50 MB keeps at least 5x margin.
  */
 export const EXPORT_FILE_MAX_CHARS = 50 * 1024 * 1024;
 
@@ -545,7 +544,8 @@ const FilterProfileReadSchema = z.object({
 
 /**
  * Persisted counterpart of {@link ProjectSchema}; see {@link StoredConnectionInfoReadSchema}. A
- * saved view that fails its schema is skipped alone, so one unreadable view never drops its project.
+ * saved view that fails its schema is skipped alone, so one unreadable view never drops its
+ * project.
  */
 export const ProjectReadSchema = z.object({
   ...ProjectSchema.shape,
@@ -562,7 +562,7 @@ export const ProjectReadSchema = z.object({
  * message shape changes in a way an older peer bundle would misread; a stale webview then fails
  * loudly at the receive site instead of silently mis-rendering.
  */
-export const BRIDGE_PROTOCOL_VERSION = 1;
+export const BRIDGE_PROTOCOL_VERSION = 2;
 
 /** Envelope shape read at receive sites before the payload union is parsed. */
 export type BridgeEnvelope = { protocolVersion?: unknown };
@@ -720,7 +720,10 @@ export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('rebuild-config'), config: ExtensionConfigSchema }),
   z.object({ type: z.literal('focus-object'), schema: z.string(), name: z.string() }),
   z.object({ type: z.literal('reload-source') }),
-  /** Open Wizard while a graph is loaded: runs the toolbar Back action, with its unsaved-changes bar. */
+  /**
+   * Open Wizard while a graph is loaded: runs the toolbar Back action, with its unsaved-changes
+   * bar.
+   */
   z.object({ type: z.literal('request-back') }),
   z.object({ type: z.literal('ai-view-preview'), name: z.string(), nodeIds: z.array(z.string()), aiMetadata: AIViewMetadataSchema }),
 ]);
@@ -819,32 +822,60 @@ const DetailConfigSchema = z.object({
 /** Detail-panel settings carried by `detail-update`. */
 export type DetailConfig = z.infer<typeof DetailConfigSchema>;
 
-const ColumnStatsSchema: z.ZodType<ColumnStats> = z.object({
+/** Statistical profile for a single column. */
+const ColumnStatsSchema = z.object({
+  /** The original column name. */
   name: z.string(),
+  /** The SQL data type (e.g., 'nvarchar(50)'). */
   type: z.string(),
+  /** Number of unique values (may be approximated). */
   distinctCount: z.number(),
   nullCount: z.number().nullable(),
+  /** Percentage of rows containing NULL. */
   nullPercent: z.number().nullable(),
+  /** Ratio of non-NULL values to total rows. */
   completeness: z.number(),
+  /** Ratio of distinct values to total rows. */
   uniqueness: z.number(),
+  /** Minimum value (formatted as string). */
   min: z.string().optional(),
+  /** Maximum value (formatted as string). */
   max: z.string().optional(),
+  /** Numeric mean. */
   mean: z.number().optional(),
+  /** Sample standard deviation (`STDEV`). */
   stdDev: z.number().optional(),
+  /** Minimum string length. */
   minLength: z.number().optional(),
+  /** Maximum string length. */
   maxLength: z.number().optional(),
+  /** Count of values equal to 0 (numeric only). */
   zeroCount: z.number().optional(),
+  /** Count of empty strings (string only). */
   emptyCount: z.number().optional(),
+  /** Whether profiling was skipped (e.g., for XML/LOB types). */
   skipped: z.boolean().optional(),
 });
 
-const TableStatsSchema: z.ZodType<TableStats> = z.object({
+/** Statistical profile for a single column; one schema serves the host build and the panel. */
+export type ColumnStats = z.infer<typeof ColumnStatsSchema>;
+
+/** Comprehensive statistical profile for a database table. */
+const TableStatsSchema = z.object({
+  /** Total rows evaluated (or sampled). */
   rowCount: z.number(),
+  /** Metrics for each individual column. */
   columns: z.array(ColumnStatsSchema),
+  /** Whether the data was sampled or fully scanned. */
   sampled: z.boolean(),
+  /** The percentage of the table that was sampled. */
   samplePercent: z.number().optional(),
+  /** Warnings encountered during parsing. */
   warnings: z.array(z.string()).optional(),
 });
+
+/** Comprehensive statistical profile for a database table. */
+export type TableStats = z.infer<typeof TableStatsSchema>;
 
 /** The object a table-stats reply answers, so the panel applies it only to that node. */
 const TableStatsObjectRefSchema = z.object({ schema: z.string(), objectName: z.string() });
