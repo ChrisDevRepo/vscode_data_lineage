@@ -710,9 +710,14 @@ export class NavigationEngine implements IHopStateMachine {
     const focus = resolveModelNodeId(raw.focus_node_id, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(raw.focus_node_id);
     if (focus !== this.currentFocusNodeId) return this.heldPartsOfCurrentFocus();
     const failed = new Set(failedPaths.map(path => path.split('.')[0]));
-    const sections = failed.has('sections')
+    // A failed angle is not held; the angles that passed are.
+    const failedAngles = new Set(failedPaths.flatMap(path => {
+      const [field, angle] = path.split('.');
+      return field === 'sections' && angle ? [angle] : [];
+    }));
+    const sections = failedPaths.includes('sections')
       ? []
-      : extractRawSectionAngles(raw.sections);
+      : extractRawSectionAngles(raw.sections).filter(section => !failedAngles.has(section.angle ?? ''));
     const summary = !failed.has('summary') && typeof raw.summary === 'string' ? raw.summary.trim() : '';
     const fields: Partial<HopFindingKept> = {};
     for (const field of HELD_CARRIED_FIELDS) {
