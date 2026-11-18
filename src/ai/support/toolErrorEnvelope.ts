@@ -553,6 +553,30 @@ export function makeRejection(input: {
 }
 
 /**
+ * Unions independently assessed faults into one rejection (one rejection is its own union): reasons
+ * one per line, distinct hints, every path, entry id, detail and fault. An `invalid_input` fault owns the outcome code, else the
+ * first rejection's code does.
+ */
+export function combineToolRejections(rejections: readonly ToolRejection[]): ToolRejection {
+  if (rejections.length === 0) throw new Error('Cannot combine an empty rejection set.');
+  if (rejections.length === 1) return rejections[0];
+  const details = rejections.flatMap(rejection =>
+    (rejection.detail === undefined ? [] : Array.isArray(rejection.detail) ? rejection.detail : [rejection.detail]));
+  const hints = [...new Set(rejections.flatMap(rejection => rejection.hint ?? []))];
+  return makeRejection({
+    code: rejections.some(rejection => rejection.code === REJECTION_CODES.invalidInput)
+      ? REJECTION_CODES.invalidInput
+      : rejections[0].code,
+    reason: [...new Set(rejections.map(rejection => rejection.reason))].join('\n'),
+    ...(hints.length > 0 ? { hint: hints.join(' ') } : {}),
+    issuePaths: rejections.flatMap(rejection => rejection.issuePaths ?? []),
+    entryIds: rejections.flatMap(rejection => rejection.entryIds ?? []),
+    ...(details.length > 0 ? { detail: [...new Map(details.map(detail => [JSON.stringify(detail), detail])).values()] } : {}),
+    errors: rejections.flatMap(rejection => rejection.errors ?? []),
+  });
+}
+
+/**
  * Narrowed view of a Zod v4 `invalid_union` issue. Its `errors` field holds one sub-issue array per
  * union branch — the raw material {@link describeInvalidUnion} expands into a per-branch required-
  * field breakdown. (Zod v4 renamed the v3 `unionErrors: ZodError[]` shape to `errors:

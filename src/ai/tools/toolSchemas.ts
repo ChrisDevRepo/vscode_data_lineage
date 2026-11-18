@@ -816,6 +816,11 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
   return hop.outCols?.length === 0 ? flow.max(0) : flow;
 }
 
+/** The `column_flow` field a hop serves, for checking that field on its own. */
+export function hopColumnFlowSchema(hop?: SubmitFindingsHopColumns) {
+  return hop ? columnFlowSchemaForHop(hop) : ColumnFlowSchema;
+}
+
 /**
  * Selects the strict, mode-and-classification-locked `submit_findings` schema advertised during an
  * active SM hop. BB returns {@link SubmitFindingsBbInputSchema} (no `column_flow`); CT returns
@@ -887,7 +892,7 @@ function internalKeptFindingSchema(
   const base = mode === 'ct' ? HopFindingCtBaseSchema : HopFindingBaseSchema;
   const angles = classification ? CLASSIFICATION_KEPT_ANGLES[classification] : CLASSIFICATION_KEPT_ANGLES.both;
   const section = z.object({ angle: z.enum(angles), text: z.string() }).strict();
-  const flow = hop ? columnFlowSchemaForHop(hop) : ColumnFlowSchema;
+  const flow = hopColumnFlowSchema(hop);
   return base.omit({ reason: true }).extend({
     verdict: z.enum(['analyze', 'passthrough']),
     summary: HopFindingBaseSchema.shape.summary.unwrap(),

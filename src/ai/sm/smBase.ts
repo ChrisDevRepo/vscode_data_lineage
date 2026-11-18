@@ -1,7 +1,7 @@
 import { EngineAspectMode, InvalidRoute, type DepthIntent, type HeldSubmissionParts } from './smTypes';
 import { buildRouteValidationRejection, isAbsentKind, ROUTE_REJECTION_CODE, ROUTE_REJECTION_DIRECTIVE } from './smRouteValidation';
 import { activeSubmitFindingsRecoveryHint, extractRawSectionAngles, validateSectionsAgainstClassification } from '../interaction/rules/submitFindingsRules';
-import { heldSubmissionRepairHint, validateHopSubmissionShape, type SubmitFindingsHopColumns } from '../tools/toolSchemas';
+import { heldSubmissionRepairHint, hopColumnFlowSchema, validateHopSubmissionShape, type SubmitFindingsHopColumns } from '../tools/toolSchemas';
 
 import type Graph from 'graphology';
 import { bidirectional } from 'graphology-shortest-path/unweighted';
@@ -30,7 +30,7 @@ import { TaskLedger, type InvestigationTaskInput } from './taskLedger';
 import { resolveScalarReturnTarget, resolveFunctionCallerTarget, functionCallerDdlHash, uniqueScalarReturnTargets } from './scalarReturnBinding';
 import { parseNavigationSnapshot, InvalidEngineCheckpointError } from './navigationSnapshotSchema';
 import { REJECTION_CODES } from '../support/rejectionCodes';
-import { makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
+import { combineToolRejections, makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 
 /**
  * A hop neighbour plus the engine decisions already taken about it. A non-bodied carrier contracted
@@ -607,6 +607,36 @@ export class NavigationEngine implements IHopStateMachine {
     if (!held || !authorization || authorization.focusId !== this.currentFocusNodeId
       || authorization.hop !== this.hopCount || authorization.mode !== this.currentHopAnalysisMode) return null;
     return authorization.focusId;
+  }
+
+  /** Whether the current tasks trace columns on both sides of the focus. */
+  private mixedColumnSides(): boolean {
+    return new Set(this.getCurrentTasks().flatMap(task => task.kind === 'column_lineage' && task.traversalSide ? [task.traversalSide] : [])).size > 1;
+  }
+
+  /** The column reference check of one `column_flow` at the focus: routes, entry sides, edges. */
+  private validateFindingColumnFlow(tracer: ColumnTracer, focusId: string, finding: Pick<HopFindingKept, 'column_flow'>) {
+    const mixedSides = this.mixedColumnSides();
+    const callerTargets = this.getCurrentTasks().flatMap(task => task.callerContext && task.nodeId && this.validFunctionCallerContext(task.nodeId, task.callerContext) ? [{ node: task.callerContext.node, col: task.callerContext.col }] : []);
+    const validated = tracer.validateColumnFlow(focusId, finding, this.nodeMap, this.model, this.store ?? null, this.log, this.removedSet, this.columnTraceDirection(), this.incomingColumnRefs(mixedSides ? 'upstream' : undefined), this.currentReturnTargets(), callerTargets, mixedSides ? this.incomingColumnRefs('downstream') : [], this.columnRoots(), this.columnContributorIds(focusId));
+    return { ...validated, invalidRoutes: [...validated.invalidRoutes, ...this.columnRefsOutOfScope(focusId, finding, validated.invalidRoutes)] };
+  }
+
+  /**
+   * A rejected call's rejection plus the column reference faults of its `column_flow`, when that
+   * field passes its own schema and the call names the current focus; a focus fault leaves them out.
+   */
+  public withColumnFlowFaults(rejection: ToolRejection, input: unknown): ToolRejection {
+    if (!this.tracer || typeof input !== 'object' || input === null) return rejection;
+    const { focus_node_id: rawFocus, column_flow: rawFlow } = input as Record<string, unknown>;
+    const focusId = typeof rawFocus === 'string'
+      ? resolveModelNodeId(rawFocus, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(rawFocus)
+      : undefined;
+    const flow = hopColumnFlowSchema(this.hopSubmitColumns).safeParse(rawFlow);
+    if (focusId === undefined || focusId !== this.currentFocusNodeId || !flow.success) return rejection;
+    const routes = this.validateFindingColumnFlow(this.tracer, focusId, { column_flow: flow.data }).invalidRoutes
+      .filter(route => !isAbsentKind(route.kind));
+    return routes.length > 0 ? combineToolRejections([rejection, buildRouteValidationRejection(routes)]) : rejection;
   }
 
   /**
@@ -1330,7 +1360,7 @@ export class NavigationEngine implements IHopStateMachine {
    * the cause. A reference `prior` already refuses keeps its own refusal; every other reference is
    * still checked.
    */
-  private columnRefsOutOfScope(focusId: string, finding: HopFindingKept, prior: readonly InvalidRoute[]): InvalidRoute[] {
+  private columnRefsOutOfScope(focusId: string, finding: Pick<HopFindingKept, 'column_flow'>, prior: readonly InvalidRoute[]): InvalidRoute[] {
     const refused = new Set(prior.map(route => /^column_flow\.\d+\.(upstream_columns\.\d+|writes_to)/.exec(route.path ?? '')?.[0]));
     const originWrites = this.originWrittenCarrierIds();
     const refs = (finding.column_flow ?? []).flatMap((entry, index) => [
@@ -2583,24 +2613,26 @@ export class NavigationEngine implements IHopStateMachine {
     const archivedAngles = this.memory.getArchivedAngles(this.currentFocusNodeId ?? '');
     const shape = validateHopSubmissionShape(params, this.currentHopAnalysisMode, this.classification,
       this.heldFindingFocus !== this.currentFocusNodeId && archivedAngles.size === 0);
-    if (!shape.ok) return shape.error;
+    if (!shape.ok) return this.withColumnFlowFaults(shape.error, params);
     const merged = this.applyHeldContent(shape.data);
     if ('code' in merged) return merged;
     params = merged;
+    // Independent faults collect into one rejection; a focus or caller fault leaves routes unchecked.
+    const faults: ToolRejection[] = [];
     const classViolation = validateSectionsAgainstClassification(params.sections,
       this.classification, archivedAngles);
     if (classViolation) {
       const held = this.heldPartsOfCurrentFocus();
-      return makeRejection({
+      faults.push(makeRejection({
         code: REJECTION_CODES.invalidInput,
         reason: `sections: ${classViolation}`,
         ...(held ? { hint: heldSubmissionRepairHint(held) } : {}),
         issuePaths: ['sections'],
-      });
+      }));
     }
 
     if (this.getCurrentTasks().some(task => task.callerContext && (!task.nodeId || task.parentTaskId !== task.callerContext.callerTaskId || !this.validFunctionCallerContext(task.nodeId, task.callerContext)))) {
-      return makeRejection({ code: REJECTION_CODES.routeValidationFailed, hint: 'Caller SQL or task provenance changed after this function investigation was declared. Nothing was committed; start a new exploration.' });
+      return combineToolRejections([...faults, makeRejection({ code: REJECTION_CODES.routeValidationFailed, hint: 'Caller SQL or task provenance changed after this function investigation was declared. Nothing was committed; start a new exploration.' })]);
     }
     try {
       const invalidRoutes: InvalidRoute[] = [];
@@ -2608,21 +2640,21 @@ export class NavigationEngine implements IHopStateMachine {
       const rawFocusId = params.focus_node_id;
       const focusId = resolveModelNodeId(rawFocusId, this.nodeMap, this.model.identifierCaseSensitive) ?? (rawFocusId === undefined ? undefined : this.identifierKey(rawFocusId));
       if (!focusId || !this.nodeMap.has(focusId)) {
-        return makeRejection({
+        return combineToolRejections([...faults, makeRejection({
           code: REJECTION_CODES.invalidInput,
           reason: `focus_node_id \`${rawFocusId ?? ''}\` not found in the loaded model.`,
           hint: activeSubmitFindingsRecoveryHint(this.currentFocusNodeId ?? undefined),
-        });
+        })]);
       }
       if (focusId !== this.currentFocusNodeId) {
         const expected = this.currentFocusNodeId ?? '';
-        return makeRejection({
+        return combineToolRejections([...faults, makeRejection({
           code: REJECTION_CODES.focusNodeIdMismatch,
           reason: `focus_node_id names \`${focusId}\`; the current object is \`${expected}\`.`,
           hint: `Resend the same call with focus_node_id \`${expected}\`.`,
           issuePaths: ['focus_node_id'],
           detail: { expected, got: focusId },
-        });
+        })]);
       }
       const finding: HopFindingKept = params;
       const acceptedNids = new Set<string>();
@@ -2647,14 +2679,11 @@ export class NavigationEngine implements IHopStateMachine {
         else legs.push({ sourceRefs: [{ ...ref }], traversalSide });
         routeContexts.set(nid, legs);
       };
-      const incomingRefs = this.incomingColumnRefs();
-      const taskSides = new Set(this.getCurrentTasks().flatMap(task => task.kind === 'column_lineage' && task.traversalSide ? [task.traversalSide] : []));
-      const mixedSides = taskSides.size > 1;
-      const downstreamRefs = mixedSides ? this.incomingColumnRefs('downstream') : incomingRefs;
+      const downstreamRefs = this.mixedColumnSides() ? this.incomingColumnRefs('downstream') : this.incomingColumnRefs();
       let entrySides: Array<{ index: number; upstream: boolean; downstream: boolean }> | undefined;
       if (this.tracer && (finding.column_flow || this.currentReturnTargets().length)) {
-        const validated = this.tracer.validateColumnFlow(focusId, finding, this.nodeMap, this.model, this.store ?? null, this.log, this.removedSet, traceDirection, mixedSides ? this.incomingColumnRefs('upstream') : incomingRefs, this.currentReturnTargets(), this.getCurrentTasks().flatMap(task => task.callerContext && task.nodeId && this.validFunctionCallerContext(task.nodeId, task.callerContext) ? [{ node: task.callerContext.node, col: task.callerContext.col }] : []), mixedSides ? downstreamRefs : [], this.columnRoots(), this.columnContributorIds(focusId));
-        invalidRoutes.push(...validated.invalidRoutes, ...this.columnRefsOutOfScope(focusId, finding, validated.invalidRoutes));
+        const validated = this.validateFindingColumnFlow(this.tracer, focusId, finding);
+        invalidRoutes.push(...validated.invalidRoutes);
         entrySides = validated.entrySides;
         for (const edge of validated.stagedEdges) edge.hop = this.hopCount;
         stagedColumnEdges.push(...validated.stagedEdges);
@@ -2945,7 +2974,7 @@ export class NavigationEngine implements IHopStateMachine {
 
       const fatalRoutes = invalidRoutes.filter(r => !isAbsentKind(r.kind));
       if (fatalRoutes.length > 0) {
-        const rejection = buildRouteValidationRejection(fatalRoutes);
+        const rejection = combineToolRejections([...faults, buildRouteValidationRejection(fatalRoutes)]);
         this.lastRoutedRejected = fatalRoutes.length;
         for (const r of fatalRoutes) this.memory.recordRejection(r.id, r.reason, this.hopCount);
         // Neither action in a prune/question conflict is valid held content.
@@ -2956,6 +2985,7 @@ export class NavigationEngine implements IHopStateMachine {
         this.holdFinding(finding, issuePaths.map(path => path.split('.')[0]));
         return { ...rejection, issuePaths };
       }
+      if (faults.length > 0) return combineToolRejections(faults);
 
       const notices = [...actionPolicy.notices, ...invalidRoutes.filter(r => isAbsentKind(r.kind))];
       for (const notice of notices) {

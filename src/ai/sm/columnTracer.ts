@@ -240,7 +240,7 @@ export class ColumnTracer {
    */
   validateColumnFlow(
     focusId: string,
-    finding: HopFinding,
+    finding: Pick<HopFinding, 'column_flow'>,
     nodeMap: Map<string, LineageNode>,
     model: DatabaseModel,
     store: ColumnStore | null,

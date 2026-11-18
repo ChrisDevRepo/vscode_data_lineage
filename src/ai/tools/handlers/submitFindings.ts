@@ -50,7 +50,7 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       const schema = submitFindingsSchemaForMode(engine.currentHopAnalysisMode, sess.classification ?? undefined, fresh, engine.hopSubmitColumns);
       const parsed = schema.safeParse(input);
       if (!parsed.success) {
-        const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
+        const rejection = engine.withColumnFlowFaults(rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema }), input);
         const held = engine.holdRejectedSubmission(input, rejection.issuePaths ?? []);
         if (held) rejection.hint = [zodFieldRepairHint(parsed.error, input, schema), heldSubmissionRepairHint(held)].filter(Boolean).join(' ');
         return s.logAndReturn('lineage_submit_findings', rejection, input);
