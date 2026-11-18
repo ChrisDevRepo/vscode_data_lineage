@@ -31,6 +31,8 @@ export function getActivePanel() { return activePanel; }
  * HTML, scripts and styles, and cleans panel-scoped state on disposal.
  *
  * @param loadDemo - Start the "AdventureWorks Demo" load on initialization.
+ * @param replace - Close a panel with a loaded graph and open a new one (the webview reload); without it,
+ *   a loaded panel is revealed and asked to go back.
  */
 export function openPanel(
   context: vscode.ExtensionContext,
