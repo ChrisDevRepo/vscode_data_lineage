@@ -118,6 +118,9 @@ export function migrateProjectStore(
     schemaVersion: 1,
     projects,
     lastOpenedId: typeof obj.lastOpenedId === 'string' ? obj.lastOpenedId : null,
+    ...(obj.lastWizardView === 'main' || obj.lastWizardView === 'projects'
+      ? { lastWizardView: obj.lastWizardView }
+      : {}),
   };
 }
 
