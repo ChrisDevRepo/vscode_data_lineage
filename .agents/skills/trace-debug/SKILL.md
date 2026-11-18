@@ -15,7 +15,7 @@ description: Load when investigating a specific AI turn, state-machine dump, NDJ
 ## Artifact Reading
 
 - A state-machine dump (`sm-dump`) is a point-in-time view of navigation/runtime state; it is not the full model transcript.
-- NDJSON is an event stream. Preserve line order and correlate messages, tool calls, tool results and state changes; do not flatten it into one answer string before checking sequence. Check the opening `trace-open` record: `origin` identifies the producer, and `verbose` indicates whether full system prompts and provider payloads were captured. Default traces omit those verbose payloads; record missing evidence instead of claiming an exact reconstruction.
+- NDJSON is an event stream. Preserve line order and correlate messages, tool calls, tool results and state changes; do not flatten it into one answer string before checking sequence. Check the opening `trace-open` record: `origin` identifies the producer, and `verbose` indicates whether full system prompts and provider payloads were captured. A `generation` record's `finishReason` is `unknown` when the provider streamed no usage part, and its `usage` holds the streamed token counts when there was one. Default traces omit those verbose payloads; record missing evidence instead of claiming an exact reconstruction.
 - Langfuse is useful for span relationships and provider-side timing. It does not replace the request payload or prove that the model received an artifact absent from the trace.
 
 The public extension writes local NDJSON diagnostics; it does not export Langfuse traces.

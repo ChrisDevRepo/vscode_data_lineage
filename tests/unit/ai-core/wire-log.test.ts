@@ -6,7 +6,9 @@ import { z } from 'zod';
 import * as vscode from 'vscode';
 import { AIMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
 import { VscodeModelPort } from '../../../src/ai/model/vscodeModelPort';
-import { AiTraceWriter } from '../../../src/ai/observability/aiTraceWriter';
+import { AiTraceWriter, type AiTraceRecord } from '../../../src/ai/observability/aiTraceWriter';
+import { LineageRuntime } from '../../../src/ai/runtime/lineageRuntime';
+import { AiSession } from '../../../src/ai/session/session';
 import {
   safeTraceStringify,
   systemPromptHash,
@@ -145,13 +147,53 @@ describe('model wire log', () => {
       generation: 1,
       phase: 'synthesis',
       modelId: 'publisher.exact',
-      finishReason: 'tool-calls',
+      // The stream carried no usage part: the provider's own finish is unknown, not 'tool-calls'.
+      finishReason: 'unknown',
     });
     expect(typeof generation.latencyMs).toBe('number');
     expect(generation.latencyMs as number).toBeGreaterThanOrEqual(0);
-    // Structurally unavailable on this lane: `vscode.lm` reports no token counts, and a zeroed
-    // usage block would be indistinguishable from a provider that genuinely billed nothing.
+    // No usage part streamed: a zeroed usage block would look like a provider that billed nothing.
     expect(generation).not.toHaveProperty('usage');
+  });
+
+  it('records the streamed token usage and names the finish once a usage part arrives', async () => {
+    const usagePart = (json: string) => ({ mimeType: 'usage', data: new TextEncoder().encode(json) });
+    const run = async (parts: readonly unknown[]) => {
+      const records: WireRecord[] = [];
+      const debugLog = vi.fn();
+      const model = {
+        id: 'publisher.usage', name: 'Usage', vendor: 'test', family: 'scripted', version: '1',
+        sendRequest: vi.fn().mockResolvedValue({ stream: asyncIterable(parts) }),
+      };
+      await new VscodeModelPort(model as never, { requestId: 'request-usage', wireLog: (r) => records.push(r), debugLog })
+        .generateToolTurn({ messages: [new HumanMessage('q')], tools: [], phase: 'synthesis' });
+      return { generation: records.find((r) => r.type === 'generation'), debugLog };
+    };
+
+    const readable = await run([
+      new vscode.LanguageModelTextPart('answer'),
+      usagePart(JSON.stringify({
+        prompt_tokens: 120, completion_tokens: 30, total_tokens: 150,
+        completion_tokens_details: { reasoning_tokens: 7 }, prompt_tokens_details: { cached_tokens: 64 },
+      })),
+    ]);
+    expect(readable.generation).toMatchObject({
+      finishReason: 'stop',
+      usage: { inputTokens: 120, outputTokens: 30, totalTokens: 150, reasoningTokens: 7, cachedTokens: 64 },
+    });
+    expect(readable.debugLog.mock.calls.map(([line]) => line as string)).toContainEqual(
+      expect.stringContaining('input_tokens=120 output_tokens=30 total_tokens=150 reasoning_tokens=7 cached_tokens=64'),
+    );
+
+    // An unreadable payload still proves the provider ended the stream; it just carries no counts.
+    for (const data of ['not json', '[1]', '{"prompt_tokens":-1,"total_tokens":"9"}']) {
+      const unreadable = await run([new vscode.LanguageModelTextPart('answer'), usagePart(data)]);
+      expect(unreadable.generation).toMatchObject({ finishReason: 'stop' });
+      expect(unreadable.generation).not.toHaveProperty('usage');
+      expect(unreadable.debugLog.mock.calls.map(([line]) => line as string)).toContainEqual(
+        expect.stringContaining('(provider usage unavailable)'),
+      );
+    }
   });
 
   it('captures the verbatim system instruction only while the trace runs verbose', async () => {
@@ -205,8 +247,8 @@ describe('model wire log', () => {
       type: 'generation',
       generation: 1,
       modelId: 'publisher.counted',
-      // No tool call in the response, so the generation stopped rather than dispatched.
-      finishReason: 'stop',
+      // No usage part arrived, so the log cannot say how the provider ended the stream.
+      finishReason: 'unknown',
     });
   });
 
@@ -311,6 +353,45 @@ describe('model wire log', () => {
 
     expect(result.status).toBe('cancelled');
     expect(records.map((record) => record.type)).toEqual(['wire-request']);
+  });
+});
+
+describe('turn settlement', () => {
+  it('settles only after the terminal trace record is written', async () => {
+    const written: string[] = [];
+    let releaseTerminal!: () => void;
+    const traceWriter = {
+      write: vi.fn((record: AiTraceRecord) => {
+        written.push(record.type);
+        return record.type === 'turn-terminal'
+          ? new Promise<void>((resolve) => { releaseTerminal = resolve; })
+          : Promise.resolve();
+      }),
+    };
+    const session = new AiSession();
+    const runtime = new LineageRuntime({
+      getSession: () => session,
+      createRegistry: () => { throw new Error('suggestions use no registry'); },
+      traceWriter: traceWriter as never,
+    });
+    const model = {
+      identity: { id: 'm' },
+      modelCalls: 1,
+      generateToolTurn: vi.fn(async () => ({ status: 'completed' })),
+    };
+    let settled = false;
+    const turn = runtime.runSuggestions({
+      model: model as never,
+      request: { id: 'request-1', prompt: 'q' },
+      sink: { stream: vi.fn(), result: vi.fn() } as never,
+    }).then(() => { settled = true; });
+
+    await vi.waitFor(() => expect(written).toEqual(['turn-start', 'turn-terminal']));
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    releaseTerminal();
+    await turn;
+    expect(settled).toBe(true);
   });
 });
 

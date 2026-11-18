@@ -20,7 +20,7 @@ import {
   messageProviderParts,
 } from './modelPort';
 import { VscodeLangChainBridge, type VscodeBridgeRunnable } from './vscodeLangChainBridge';
-import { systemPromptHash, type WireEvent, type WireRecord } from '../observability/wireLog';
+import { systemPromptHash, type TokenUsage, type WireEvent, type WireRecord } from '../observability/wireLog';
 import { toModelJsonSchema } from '../tools/jsonSchema';
 import {
   formatProviderErrorDiagnostic,
@@ -152,7 +152,7 @@ export class VscodeModelPort implements ModelPort {
     const startedAt = Date.now();
     try {
       this.modelCalls += 1;
-      const { message, toolCalls: emittedCalls, nonTextChars } = await this.collectGeneration(
+      const { message, toolCalls: emittedCalls, nonTextChars, finishReason, usage } = await this.collectGeneration(
         input.messages,
         input.system,
         definitions,
@@ -204,13 +204,16 @@ export class VscodeModelPort implements ModelPort {
         );
       }
 
-      const finishReason = toolCalls.length > 0 ? 'tool-calls' : 'stop';
       this.options.debugLog?.(
         `[AI] usage phase=${input.phase} outcome=${finishReason} call=${this.modelCalls}`
         + ` observed_parts=${content.length} observed_text_chars=${text.length}`
         + ` observed_nontext_chars=${nonTextChars} provider_parts=${providerParts.length}`
         + ` tool_calls=${toolCalls.length} duration_ms=${Date.now() - startedAt}`
-        + ' (provider usage unavailable)',
+        + (usage
+          ? ` input_tokens=${usage.inputTokens ?? 'n/a'} output_tokens=${usage.outputTokens ?? 'n/a'}`
+            + ` total_tokens=${usage.totalTokens ?? 'n/a'} reasoning_tokens=${usage.reasoningTokens ?? 'n/a'}`
+            + ` cached_tokens=${usage.cachedTokens ?? 'n/a'}`
+          : ' (provider usage unavailable)'),
       );
       return {
         status: 'completed',
@@ -322,6 +325,9 @@ export class VscodeModelPort implements ModelPort {
     /** The message's tool calls, each verified to carry a call ID. */
     toolCalls: readonly IdentifiedToolCall[];
     nonTextChars: number;
+    finishReason: 'tool-calls' | 'stop' | 'unknown';
+    /** Provider-reported usage of the last readable 'usage' stream part; absent when none. */
+    usage?: TokenUsage;
   }> {
     const cancellation = bindCancellation(signal);
     const wireLog = this.options.wireLog;
@@ -367,6 +373,8 @@ export class VscodeModelPort implements ModelPort {
         : [...history];
       let message = new AIMessageChunk({ content: '' });
       let nonTextChars = 0;
+      let usageReceived = false;
+      let usage: TokenUsage | undefined;
       const stream = await runnable.stream(messages, { signal });
       for await (const chunk of stream) {
         if (signal?.aborted) throw cancelledError();
@@ -374,6 +382,9 @@ export class VscodeModelPort implements ModelPort {
         if (typeof chunk.content === 'string' && chunk.content) onTextDelta?.(chunk.content);
         const streamedNonText = chunk.response_metadata?.nonTextChars;
         if (typeof streamedNonText === 'number') nonTextChars += streamedNonText;
+        if (chunk.response_metadata?.usageParts) usageReceived = true;
+        const streamedUsage = chunk.response_metadata?.providerUsage;
+        if (streamedUsage) usage = streamedUsage as TokenUsage;
       }
       if (signal?.aborted) throw cancelledError();
       if ((message.invalid_tool_calls?.length ?? 0) > 0) {
@@ -389,13 +400,15 @@ export class VscodeModelPort implements ModelPort {
           'Language model returned an incomplete tool call.',
         );
       }
+      const finishReason = observedFinishReason(usageReceived, toolCalls.length);
       emitWire?.({
         type: 'generation',
         modelId: this.model.id,
-        finishReason: (message.tool_calls?.length ?? 0) > 0 ? 'tool-calls' : 'stop',
+        finishReason,
         latencyMs: Date.now() - startedAt,
+        ...(usage ? { usage } : {}),
       });
-      return { message, toolCalls, nonTextChars };
+      return { message, toolCalls, nonTextChars, finishReason, usage };
     } catch (error) {
       if (emitWire && requestEmitted && !signal?.aborted && !isCancellation(error)) {
         emitWire({
@@ -408,6 +421,16 @@ export class VscodeModelPort implements ModelPort {
       cancellation.dispose();
     }
   }
+}
+
+/**
+ * The finish the trace states. `vscode.lm` passes no provider finish reason; a usage data part is
+ * the one sign the provider ended the stream itself. Without it the stream may have been cut, so
+ * the call count alone must not name a finish.
+ */
+function observedFinishReason(usageReceived: boolean, toolCallCount: number): 'tool-calls' | 'stop' | 'unknown' {
+  if (!usageReceived) return 'unknown';
+  return toolCallCount > 0 ? 'tool-calls' : 'stop';
 }
 
 /** A LangChain tool call whose provider call ID is present. */

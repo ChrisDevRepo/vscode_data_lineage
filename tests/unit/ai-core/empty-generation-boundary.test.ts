@@ -18,7 +18,7 @@ describe('empty provider generation boundary', () => {
     // An empty completion is repairable, not terminal: it must reach the graph as a completed turn
     // with zero tool calls so `missing_required_tool_call` fires instead of failing the provider.
     expect(result.status).toBe('completed');
-    expect(result).toMatchObject({ content: [], text: '', toolCalls: [], finishReason: 'stop' });
+    expect(result).toMatchObject({ content: [], text: '', toolCalls: [], finishReason: 'unknown' });
     // The condition stays triageable from the Output channel at DEBUG — model behaviour, never warn.
     expect(debugLog.mock.calls.map(([line]) => line as string)).toContainEqual(
       expect.stringContaining('[AI] empty-generation phase=discover'),
