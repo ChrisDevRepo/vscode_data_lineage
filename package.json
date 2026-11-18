@@ -625,7 +625,7 @@
         "toolReferenceName": "lineage_search_objects",
         "displayName": "Search Objects",
         "userDescription": "Search for database objects by name or column.",
-        "modelDescription": "Search database objects by name (substring or regex) or by column (substring only). Returns object IDs, metadata and `name_match` (`unique` or `ambiguous` ids for an exact name).",
+        "modelDescription": "Search database objects by name (substring or regex) or by column (substring only). Returns object IDs, metadata, per-kind `by_type` counts, `in_user_filter`, and `name_match` `{status: unique|ambiguous, ids}` for an exact name.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",
@@ -672,7 +672,7 @@
             "cursor": {
               "type": "string",
               "pattern": "^\\d+$",
-              "description": "The previous result's `next_cursor`, unchanged. Omit for the first page."
+              "description": "Page cursor: the next_cursor of the previous result, sent unchanged to read the next page of the same list. Omit for the first page."
             }
           },
           "required": [
@@ -686,7 +686,7 @@
         "toolReferenceName": "lineage_get_object_detail",
         "displayName": "Get Object Detail",
         "userDescription": "Get full details for a specific database object.",
-        "modelDescription": "Single-object lookup: DDL, columns and direct neighbors.",
+        "modelDescription": "Primary single-object lookup. Use this when the user asks about one specific object (DDL, columns, direct neighbors).",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",
@@ -704,7 +704,7 @@
             "cursor": {
               "type": "string",
               "pattern": "^\\d+$",
-              "description": "The previous result's `next_cursor`, unchanged. Omit for the first page."
+              "description": "Page cursor: the next_cursor of the previous result, sent unchanged to read the next page of the same list. Omit for the first page."
             }
           },
           "required": [
@@ -831,7 +831,7 @@
         "toolReferenceName": "lineageView",
         "displayName": "Get Screen State",
         "userDescription": "Shows what is currently on screen: active trace, analysis, or applied bookmark.",
-        "modelDescription": "Returns what is on screen: active trace, graph analysis, applied bookmark, and view. `ids` or `filter` recall objects from a stored AI run and answer `no_run_memory` without one; no input returns the screen card.",
+        "modelDescription": "Returns what is on screen: active trace, graph analysis, applied bookmark, and view. `ids` or `filter` recall the stored run.",
         "canBeReferencedInPrompt": true,
         "tags": [
           "lineage",
@@ -863,7 +863,7 @@
             "cursor": {
               "type": "string",
               "pattern": "^\\d+$",
-              "description": "The previous result's `next_cursor`, unchanged. Omit for the first page."
+              "description": "Page cursor: the next_cursor of the previous result, sent unchanged to read the next page of the same list. Omit for the first page."
             }
           },
           "additionalProperties": false

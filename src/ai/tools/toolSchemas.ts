@@ -25,7 +25,7 @@ export const ColumnIdentifierSchema = z.string().trim().min(1).regex(/^[^*%?]+$/
 const MissionBriefValueSchema = z.string()
   .min(1, 'Mission brief must not be empty.')
   .regex(/\S/, 'Mission brief must contain non-whitespace content.')
-  .describe('Investigation goal and relevance criteria, a few sentences, preserved verbatim across exploration hops.');
+  .describe('Compact investigation goal and relevance criteria preserved verbatim across exploration hops. Keep it compact (a few sentences); length is never a rejection axis.');
 
 const ScopeNotesValueSchema = z.array(z.string().min(1).regex(/\S/, 'A scope note must contain non-whitespace content.'))
   .max(8)
@@ -432,7 +432,7 @@ const KEPT_VERDICT_ONLY = 'Only with analyze or passthrough: ';
  * schemas and the permissive participant union so the two cannot drift.
  */
 const PRUNE_NEIGHBORS_DESCRIPTION =
-  'Name each `can_prune: true` neighbor this node\'s SQL shows is off the path; that neighbor and whatever only it leads to are removed. '
+  'Name each `can_prune: true` neighbor this node\'s SQL shows is off the path. A named neighbor is removed, with whatever only it leads to, once every branch that reaches it also prunes it. '
   + 'The focus stays on the graph, including when every neighbor is named (a dead end). A neighbor named here gets no questions entry.';
 
 /** One `prune_neighbors[]` entry: the neighbour and why this node's SQL shows it is off-answer. */
@@ -985,7 +985,7 @@ export const GetContextInputSchema = z.object({}).strict();
  * Optional page cursor: the previous result's `next_cursor`, echoed unchanged for the next page.
  */
 const CursorSchema = z.string().regex(/^\d+$/, 'cursor must be the next_cursor value of the previous result, unchanged')
-  .describe("The previous result's `next_cursor`, unchanged. Omit for the first page.");
+  .describe('Page cursor: the next_cursor of the previous result, sent unchanged to read the next page of the same list. Omit for the first page.');
 
 /**
  * `lineage_get_screen_state` input: no field returns the screen card; `ids`/`filter` recalls the
