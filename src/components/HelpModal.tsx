@@ -143,7 +143,7 @@ function TabOverview({ openExternal }: { openExternal: (url: string) => void }) 
           <FeatureCard
             icon="M21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"
             title="Detail Search"
-            desc="Full-text search inside SQL bodies and columns — distinct from Quick Search."
+            desc="Full-text search inside SQL bodies and columns — distinct from Quick Jump."
           />
           <FeatureCard
             icon="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z"
@@ -177,7 +177,7 @@ function TabAnalysis() {
     {
       icon: 'M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z',
       title: 'Hubs',
-      desc: 'Nodes with the highest number of connections (total degree: in + out).',
+      desc: 'Objects with many connections (in + out); the threshold is a setting.',
       tip: 'High-degree SPs and views are change-risk hotspots — modifying them ripples widely.',
     },
     {
@@ -196,7 +196,7 @@ function TabAnalysis() {
       icon: 'M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182',
       title: 'Cycles',
       desc: 'Circular dependencies where data flows back to its own origin.',
-      tip: 'Cycles block incremental deployment and can cause infinite loops in data pipelines.',
+      tip: 'Mutually dependent objects are hard to reason about and to deploy in order.',
     },
     {
       icon: 'M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25',
@@ -238,7 +238,7 @@ function TabDatabase({ openExternal }: { openExternal: (url: string) => void }) 
           title="Import"
         />
         <p className="text-sm ln-text-muted mb-2">
-          Requires a database connection (<strong>Add Database Connection</strong>) and <code>VIEW DEFINITION</code> permission on the database.
+          Database import needs a connection (<strong>Add Database Connection</strong>) and <code>VIEW DEFINITION</code> permission on the database. A <code>.dacpac</code> needs neither.
         </p>
         <div className="grid grid-cols-2 gap-2">
           <div className="rounded-lg p-3 ln-help-analysis-card">
@@ -264,13 +264,13 @@ function TabDatabase({ openExternal }: { openExternal: (url: string) => void }) 
           title="Table Profiling"
         />
         <p className="text-sm ln-text-muted">
-          On-demand column statistics — min, max, nulls, distinct counts, top values.
+          On-demand column statistics: row count, nulls, distinct counts, completeness and uniqueness (Quick); plus min/max, averages and string lengths (Standard).
         </p>
         <p className="text-xs ln-text-muted mt-1.5">
           Runs only on explicit click via a separate database connection. Large tables are sampled. External tables are skipped by default.
         </p>
         <p className="text-xs ln-text-muted mt-2">
-          All generated SQL is logged to the Output channel (<code>View → Output → Data Lineage Viz</code>).{' '}
+          At Debug log level, <code>View → Output → Data Lineage Viz</code> shows each statement (first 300 characters).{' '}
           <ExtLink url="https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/PROFILING_PATTERNS.md" openExternal={openExternal}>Profiling patterns guide ↗</ExtLink>
         </p>
       </section>
@@ -281,7 +281,7 @@ function TabDatabase({ openExternal }: { openExternal: (url: string) => void }) 
           title="Platforms"
         />
         <p className="text-sm ln-text-muted">
-          Tested on SQL Server 2025, Azure SQL Database, Fabric Data Warehouse, and Synapse Dedicated SQL Pool.
+          SQL Server 2016 or later, Azure SQL, Fabric Data Warehouse and Synapse Dedicated SQL Pool. Synapse serverless SQL pool is not supported.
         </p>
       </section>
 
@@ -299,13 +299,14 @@ function TabDatabase({ openExternal }: { openExternal: (url: string) => void }) 
           </div>
           <div className="rounded-lg p-2.5 ln-help-analysis-card">
             <span className="font-semibold ln-text">Parse Rules</span>
-            <p className="mt-0.5">Customize regex rules for SP dependency extraction.{' '}
+            <p className="mt-0.5">Customize the regex rules that extract dependencies from SQL bodies.{' '}
               <ExtLink url="https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/PARSE_RULES.md" openExternal={openExternal}>Guide ↗</ExtLink>
             </p>
           </div>
         </div>
         <p className="mt-2 text-xs ln-text-muted">
-          Search <code className="font-mono px-1 py-0.5 rounded-sm ln-kbd">dataLineageViz</code> in VS Code Settings for all options including import caps, timeouts, layout, and trace depth.
+          Search <code className="font-mono px-1 py-0.5 rounded-sm ln-kbd">dataLineageViz</code> in VS Code Settings for all options, described in the{' '}
+          <ExtLink url="https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/FEATURES.md#settings-reference" openExternal={openExternal}>settings reference ↗</ExtLink>.
         </p>
       </section>
     </div>
@@ -321,11 +322,10 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 ln-text-link shrink-0">
             <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z" />
           </svg>
-          <h3 className="text-sm font-semibold ln-text">GitHub Copilot Chat</h3>
-          <span className="ml-auto text-xs font-bold px-2 py-0.5 rounded-full ln-help-badge">NEW</span>
+          <h3 className="text-sm font-semibold ln-text">VS Code Chat</h3>
         </div>
         <p className="text-sm mb-3 ln-text-muted">
-          Type <span className="font-bold font-mono ln-text-link">@lineage</span> in GitHub Copilot Chat to query your loaded graph. Answers come from your actual data — never from general knowledge.
+          Type <span className="font-bold font-mono ln-text-link">@lineage</span> in VS Code Chat to query your loaded graph. Lineage answers use the loaded model and SQL; general SQL questions can also use the model&apos;s knowledge.
         </p>
         <div className="rounded-sm p-3 space-y-1.5 font-mono text-xs ln-help-code-block">
           {[
@@ -345,12 +345,12 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
         <FeatureCard
           icon="M11.42 15.17 17.25 21A2.652 2.652 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 0 0 4.486-6.336l-3.276 3.277a3.004 3.004 0 0 1-2.25-2.25l3.276-3.276a4.5 4.5 0 0 0-6.336 4.486c.049.58.025 1.192-.14 1.743"
           title="Built-in Tools"
-          desc="Built-in tools covering search, trace, DDL, analysis, screen state, and deep multi-hop exploration with column-level tracking."
+          desc="Tools for object search, DDL, columns, graph patterns and the on-screen view, plus a hop-by-hop deep analysis with column tracing."
         />
         <FeatureCard
           icon="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5m.75-9 3-3 2.148 2.148A12.061 12.061 0 0 1 16.5 7.605"
           title="Any Model"
-          desc="Works with any model in your Copilot chat dropdown. Auto-scales to context window."
+          desc="Uses the model selected in VS Code Chat. Context is budgeted to that model's input window."
         />
       </div>
 
@@ -359,8 +359,8 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
         <ul className="text-xs ln-text-muted space-y-1 list-disc pl-4">
           <li><span className="font-medium ln-text">AI lineage guidance.</span> Ask <code>@lineage</code> where a field comes from, then verify with your database DDL.</li>
           <li><span className="font-medium ln-text">Trace a column.</span> Ask &quot;where does <code>TotalDue</code> on <code>Sales.SalesOrderHeader</code> come from?&quot; — triggers column-level tracing through views and procedures.</li>
-          <li><span className="font-medium ln-text">Create a focused view.</span> Ask for full lineage of an object in the app to generate an annotated bookmark view.</li>
-          <li><span className="font-medium ln-text">Refine a bookmark.</span> With a view open, ask &quot;add <code>Sales.Customer</code> to this view&quot; or &quot;remove unused tables&quot; to patch the bookmark in place.</li>
+          <li><span className="font-medium ln-text">Create a focused view.</span> Ask to see an object&apos;s lineage as a graph, then choose <em>Save as Bookmark</em> on the AI Preview.</li>
+          <li><span className="font-medium ln-text">Refine a plan.</span> Before approving a deep analysis, choose <em>Change scope</em> or reply in words, for example &quot;go upstream only&quot;.</li>
           <li><span className="font-medium ln-text">Column detail.</span> When an AI preview or AI bookmark carries column findings, switch its banner from <em>Objects</em> to <em>Detail</em> to see the traced columns on the graph.</li>
           <li><span className="font-medium ln-text">Recall an analysis.</span> With an AI bookmark applied, ask &quot;what did you find about X?&quot; to recall the saved run instead of repeating it.</li>
           <li><span className="font-medium ln-text">Use context questions.</span> Try &quot;what am I looking at?&quot; or &quot;what&apos;s filtered out?&quot;.</li>
@@ -370,7 +370,7 @@ function TabAI({ openExternal }: { openExternal: (url: string) => void }) {
       </div>
 
       <p className="text-xs ln-text-muted">
-        Disable AI features entirely via <code>ai.enabled</code> in VS Code Settings.
+        Turn AI features off with <code>dataLineageViz.ai.enabled</code> in VS Code Settings, then reload the window.
       </p>
     </div>
   );

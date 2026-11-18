@@ -148,7 +148,7 @@ All keys start with `dataLineageViz.`.
 
 | Setting | Default | Detail |
 |---|---|---|
-| `maxNodes` | 2000 (10–5000) | Objects loaded, including external references. |
+| `maxNodes` | 2000 (10–5000) | Objects loaded, including external references; a larger selection is refused. |
 | `renderLimit` | 750 (100–1500) | Nodes drawn at once; above it the graph shows a notice instead. |
 | `excludePatterns` | `[]` | Patterns hidden on every load; same syntax as [Exclusion rules](#exclusion-rules). |
 | `externalRefs.enabled` | on | Shows `OPENROWSET` paths and cross-database names as virtual external nodes. Off suppresses those nodes, not catalog external tables. |
