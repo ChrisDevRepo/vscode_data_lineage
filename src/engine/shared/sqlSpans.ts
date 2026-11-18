@@ -2,7 +2,7 @@
 export const SQL_CODE = 0;
 /** Mask value of a character inside a `/* … *\/` block comment, delimiters included. */
 export const SQL_BLOCK_COMMENT = 1;
-/** Mask value of a character inside a `--` line comment, up to but excluding the newline. */
+/** Mask value of a character inside a `--` line comment, up to but excluding the line break. */
 export const SQL_LINE_COMMENT = 2;
 /** Mask value of a character inside a `'…'`, `"…"` or `[…]` span, delimiters included. */
 const SQL_LITERAL = 3;
@@ -36,7 +36,7 @@ export function sqlCommentMask(sql: string, options?: { readonly markLiterals?: 
       continue;
     }
     if (ch === '-' && next === '-') {
-      while (i < sql.length && sql[i] !== '\n') mask[i++] = SQL_LINE_COMMENT;
+      while (i < sql.length && sql[i] !== '\n' && sql[i] !== '\r') mask[i++] = SQL_LINE_COMMENT;
       continue;
     }
     if (ch === '/' && next === '*') {

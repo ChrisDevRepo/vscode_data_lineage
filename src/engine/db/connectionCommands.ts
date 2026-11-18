@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import * as vscode from 'vscode';
 import { Logger } from '../../utils/log';
 import { openBuiltInSession, type BuiltInEnv } from './builtInProvider';
-import { CONNECTION_ERROR_LABELS, confirmTrustServerCertificate, describeConnectionError } from './connectionErrors';
+import { builtInTarget, CONNECTION_ERROR_LABELS, confirmTrustServerCertificate, describeConnectionError } from './connectionErrors';
 import { defaultTenantId, listTenants, pickAccount } from './entraSignIn';
 import {
   AddConnectionArgsSchema, BuiltInConnectionSchema, deleteBuiltInConnection, describeConnection, dropTcpPrefix,
@@ -311,11 +311,7 @@ export async function runAddConnectionFlow(
           await session.dispose();
           return undefined;
         } catch (err) {
-          return describeConnectionError(err, {
-            provider: 'builtIn', name: connection.name, server: connection.server, port: connection.port,
-            database: connection.database, user: connection.user, authenticationType: connection.authenticationType,
-            connectionId: connection.id, tenantId: connection.tenantId,
-          });
+          return describeConnectionError(err, builtInTarget(connection, connection.database));
         }
       });
       if (failure === 'cancelled') return undefined;

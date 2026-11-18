@@ -197,12 +197,9 @@ const DatabaseModelSchema = z.object({
  * Zod schema carrying the host's settings snapshot across the bridge, pinned to
  * {@link ExtensionConfig} so a parsed message keeps its field types instead of degrading to `any`.
  * `Partial` is the honest shape: the host is the sole producer, so a mismatch is a host refactor
- * bug that must fail at the boundary. `parseRules` alone stays structural.
+ * bug that must fail at the boundary.
  */
 const ExtensionConfigSchema: z.ZodType<Partial<ExtensionConfig>> = z.object({
-  parseRules: z.custom<NonNullable<ExtensionConfig['parseRules']>>(
-    (v) => typeof v === 'object' && v !== null && Array.isArray((v as { rules?: unknown }).rules),
-  ).optional(),
   excludePatterns: z.array(z.string()).optional(),
   maxNodes: z.number().optional(),
   dmvQueryTimeout: z.number().optional(),

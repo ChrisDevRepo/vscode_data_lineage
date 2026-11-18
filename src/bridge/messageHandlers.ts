@@ -26,7 +26,7 @@ import {
 } from '../engine/connectionManager';
 import type { DbSession } from '../engine/db/dbSession';
 import { usesMssqlExtension } from '../engine/db/mssqlRetiring';
-import { isDbConnectionError, isDriverError, reportConnectionError, targetFromSession } from '../engine/db/connectionErrors';
+import { connectionFailure, reportConnectionError } from '../engine/db/connectionErrors';
 import { redactSecrets } from '../utils/redact';
 import { type SimpleExecuteResult } from '../types/database';
 import { buildColumnAggregations, buildProfilingQuery, buildRowCountQuery, parseProfilingResult, computeSamplePercent, profilingRowFromResult } from '../engine/profilingEngine';
@@ -1224,14 +1224,15 @@ async function withDbProgressHost(
         host.postMessage({ type: 'db-cancelled' });
       }
     } catch (err) {
-      const target = isDbConnectionError(err) ? err.target : session && isDriverError(err) ? targetFromSession(session) : undefined;
-      if (target) {
+      const failure = connectionFailure(err, session);
+      if (failure) {
+        const { target } = failure;
         // A retry reconnects the connection that failed, so a record stored by the retired mssql
         // extension is not asked to reconnect twice.
         const failed: Partial<StoredConnectionInfo> | undefined = target.connectionId ? { provider: 'builtIn', connectionId: target.connectionId } : undefined;
         const retry = (patch?: Partial<StoredConnectionInfo>) => withDbProgressHost(host, env, title, (_patch, token) => connectFn({ ...failed, ...patch }, token), phaseFn);
         const reported = reportConnectionError(
-          isDbConnectionError(err) ? err.original : err,
+          failure.error,
           target,
           Logger.create(env.outputChannel, 'DB'),
           connectionErrorHooks(env, target.connectionId, token.isCancellationRequested ? undefined : retry),
@@ -1338,8 +1339,9 @@ async function handleTableStatsRequestHost(
     logger.info(`Table statistics ready — rows=${rowCount}${needsSampling ? ` (sampled ${samplePercent}%)` : ''} (${((Date.now() - t0) / 1000).toFixed(2)}s)`);
     void postToDetail(panel, { type: 'table-stats-result', stats, mode }, logger);
   } catch (err) {
-    if (isDbConnectionError(err)) {
-      const reported = reportConnectionError(err.original, err.target, logger, connectionErrorHooks(dbEnv, err.target.connectionId, undefined));
+    const failure = connectionFailure(err);
+    if (failure) {
+      const reported = reportConnectionError(failure.error, failure.target, logger, connectionErrorHooks(dbEnv, failure.target.connectionId, undefined));
       void postToDetail(panel, { type: 'table-stats-error', message: reported.message }, logger);
       return;
     }

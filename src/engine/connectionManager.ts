@@ -14,16 +14,16 @@ import { expandSchemaPlaceholder, validateSchemaPlaceholder } from '../utils/sql
 import { Logger, trunc, sanitizeForLog } from '../utils/log';
 import { notifyWarning } from '../utils/notifications';
 import { StoredConnectionInfoSchema, type StoredConnectionInfo } from './shared/bridgeContract';
-import { DbConnectionError, type ConnectionErrorTarget, type DbSession } from './db/dbSession';
+import { DbConnectionError, type DbSession } from './db/dbSession';
 import { MSSQL_RECONNECT_ACTION, MSSQL_RECONNECT_NOTICE, usesMssqlExtension } from './db/mssqlRetiring';
 import { openBuiltInSession, type BuiltInEnv } from './db/builtInProvider';
 import { describeConnection, readBuiltInConnections, type BuiltInConnection } from './db/connectionSettings';
 import { parseServerInput, runAddConnectionFlow } from './db/connectionCommands';
-import type { ConnectionErrorHooks } from './db/connectionErrors';
+import { builtInTarget, type ConnectionErrorHooks } from './db/connectionErrors';
 
 const DmvQueriesConfigSchema = z.object({
   version: z.coerce.number().optional(),
-  queries: z.array(z.record(z.string(), z.any())).optional()
+  queries: z.array(z.unknown()).optional()
 }).passthrough();
 
 /** A Dynamic Management View (DMV) query used to extract metadata from SQL Server. */
@@ -51,9 +51,8 @@ export interface DmvQuery {
 }
 
 /** The fields the import path requires; every other {@link DmvQuery} field degrades gracefully. */
-function hasRequiredQueryFields(q: Record<string, any>): q is DmvQuery {
-  return typeof q.name === 'string' && q.name !== '' && typeof q.sql === 'string' && q.sql !== '';
-}
+const DmvQuerySchema = z.object({ name: z.string().min(1), sql: z.string().min(1) });
+const isDmvQuery = (q: unknown): q is DmvQuery => DmvQuerySchema.safeParse(q).success;
 
 /** Root configuration structure for DMV query definition files. */
 export interface DmvQueriesConfig {
@@ -106,15 +105,12 @@ export async function loadDmvQueries(
         }
 
         if (parsed?.queries && Array.isArray(parsed.queries)) {
-          const skipped: string[] = [];
+          let skipped = 0;
           const valid = parsed.queries.filter((q, i): q is DmvQuery => {
-            if (!hasRequiredQueryFields(q)) {
-              const label = q?.name || `query[${i}]`;
-              logger.debug(`Skipped DMV query '${label}': missing ${!q?.name ? "'name'" : "'sql'"} field`);
-              skipped.push(label);
-              return false;
-            }
-            return true;
+            if (isDmvQuery(q)) return true;
+            logger.debug(`Skipped DMV query[${i}]: 'name' and 'sql' must be non-empty strings`);
+            skipped++;
+            return false;
           });
           if (valid.length > 0) {
             const KNOWN_NAMES = ['schema-preview', 'nodes', 'columns', 'dependencies'];
@@ -129,7 +125,7 @@ export async function loadDmvQueries(
               );
             }
             await persistAbsolutePath('dmvQueriesFile', customPath, resolved);
-            logger.info(`Applied DMV queries: ${valid.length} loaded from custom, ${skipped.length} skipped`);
+            logger.info(`Applied DMV queries: ${valid.length} loaded from custom, ${skipped} skipped`);
             return valid;
           }
         }
@@ -251,7 +247,7 @@ async function loadBuiltInDmvConfig(
   if (version === undefined) {
     throw new Error('Built-in dmvQueries.yaml is invalid — missing "version"');
   }
-  const validQueries = queries.filter(hasRequiredQueryFields);
+  const validQueries = queries.filter(isDmvQuery);
   if (validQueries.length !== queries.length) {
     throw new Error('Built-in dmvQueries.yaml is invalid — a query is missing "name" or "sql"');
   }
@@ -429,20 +425,6 @@ export async function connectDatabase(env: DbConnectEnv, stored?: StoredConnecti
   } catch (err) {
     throw new DbConnectionError(builtInTarget(connection, database), err);
   }
-}
-
-function builtInTarget(connection: BuiltInConnection, database: string | undefined): ConnectionErrorTarget {
-  return {
-    provider: 'builtIn',
-    name: connection.name,
-    server: connection.server,
-    port: connection.port,
-    database,
-    user: connection.user,
-    authenticationType: connection.authenticationType,
-    connectionId: connection.id,
-    tenantId: connection.tenantId,
-  };
 }
 
 /**

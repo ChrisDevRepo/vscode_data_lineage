@@ -258,9 +258,28 @@ export function reportConnectionError(
   return { message, actions, answered };
 }
 
-/** Builds the error target for a session that is already open. */
-export function targetFromSession(session: DbSession): ConnectionErrorTarget {
-  return targetFromStored(session.connectionInfo, session.provider);
+/** The error target of a saved built-in connection opened on `database`. */
+export function builtInTarget(connection: BuiltInConnection, database: string | undefined): ConnectionErrorTarget {
+  return {
+    provider: 'builtIn',
+    name: connection.name,
+    server: connection.server,
+    port: connection.port,
+    database,
+    user: connection.user,
+    authenticationType: connection.authenticationType,
+    connectionId: connection.id,
+    tenantId: connection.tenantId,
+  };
+}
+
+/**
+ * The error and target to report for a failed connect, or for a driver error on the open `session`;
+ * `undefined` for any other error.
+ */
+export function connectionFailure(err: unknown, session?: DbSession): { error: unknown; target: ConnectionErrorTarget } | undefined {
+  if (err instanceof DbConnectionError) return { error: err.original, target: err.target };
+  return session && isDriverError(err) ? { error: err, target: targetFromStored(session.connectionInfo, session.provider) } : undefined;
 }
 
 /** Builds the error target for a stored connection record and the provider that is connecting. */
@@ -279,9 +298,4 @@ export function targetFromStored(info: StoredConnectionInfo, provider: Connectio
     connectionId: info.connectionId,
     tenantId: info.tenantId,
   };
-}
-
-/** Narrows an error to the connect failure {@link DbConnectionError}. */
-export function isDbConnectionError(err: unknown): err is DbConnectionError {
-  return err instanceof DbConnectionError;
 }

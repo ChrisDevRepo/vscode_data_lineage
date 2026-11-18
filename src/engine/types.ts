@@ -538,8 +538,6 @@ export interface OverviewConfig {
  * paths and AI settings stay at their owning boundaries.
  */
 export interface ExtensionConfig {
-  /** Optional custom regex rules for SQL parsing. */
-  parseRules?: import('./sqlBodyParser').ParseRulesConfig;
   /** Regex patterns, with `%` wildcard compatibility, excluded from the webview model. */
   excludePatterns: string[];
   /** Hard cap on objects admitted to the working graph; a selection over it is refused, not cut. */

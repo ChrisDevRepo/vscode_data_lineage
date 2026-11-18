@@ -74,17 +74,10 @@ interface ParseRule {
   description: string;
 }
 
-/** Configuration wrapper for loading multiple parse rules. */
-export interface ParseRulesConfig {
-  /** An array of parse rules to load into the engine. */
-  rules: ParseRule[];
-}
-
 /**
  * Raw, unvalidated configuration accepted by {@link loadRules}. `loadRules` is the per-rule
  * validator, so its input is loose (YAML-shaped candidates; invalid entries are skipped with
- * diagnostics) and callers need not pre-assert the strict {@link ParseRulesConfig}, which stays
- * assignable here.
+ * diagnostics).
  */
 export interface RawParseRulesConfig {
   /** Candidate rules; each entry stays `unknown` until `validateRule` accepts it. */
@@ -105,10 +98,8 @@ interface LoadRulesResult {
   skipped: string[];
   /** Detailed error messages for the rules that failed validation. */
   errors: string[];
-  /** True if the engine fell back to default rules due to critical errors. */
+  /** True when the configuration held no valid rule, so the fallback rules (if any) were loaded. */
   usedDefaults: boolean;
-  /** Counts of loaded rules grouped by their category for monitoring. */
-  categoryCounts: Record<string, number>;
 }
 
 /** Active parsing rules, replaced atomically by {@link loadRules}. */
@@ -158,59 +149,52 @@ function validateRule(rule: unknown, index: number): { valid: true; name: string
 
 /**
  * Loads and validates rules from a parsed configuration (built-in or custom), sorted by priority so
- * execution order is independent of source-file order.
+ * execution order is independent of source-file order. A configuration with no valid rule loads
+ * `fallback` instead; with none, no rule stays active.
  *
- * @returns Success counts and any validation errors.
+ * @returns Success counts and any validation errors, the fallback's included.
  */
-export function loadRules(config: RawParseRulesConfig): LoadRulesResult {
-  const result: LoadRulesResult = { loaded: 0, skipped: [], errors: [], usedDefaults: false, categoryCounts: {} };
+export function loadRules(config: RawParseRulesConfig, fallback?: RawParseRulesConfig): LoadRulesResult {
+  const result: LoadRulesResult = { loaded: 0, skipped: [], errors: [], usedDefaults: false };
+  const validRules: ParseRule[] = [];
 
   if (!config?.rules || !Array.isArray(config.rules)) {
     result.errors.push('YAML missing "rules" array');
-    result.usedDefaults = true;
-    resetRules();
-    return result;
-  }
+  } else {
+    for (let i = 0; i < config.rules.length; i++) {
+      const raw = config.rules[i];
 
-  const validRules: ParseRule[] = [];
-  for (let i = 0; i < config.rules.length; i++) {
-    const raw = config.rules[i];
+      if (raw && typeof raw === 'object' && (raw as ParseRule).enabled === false) continue;
 
-    if (raw && typeof raw === 'object' && (raw as ParseRule).enabled === false) continue;
-
-    const check = validateRule(raw, i);
-    if (check.valid) {
-      validRules.push({ ...(raw as ParseRule) });
-    } else {
-      result.skipped.push(check.name);
-      result.errors.push(check.error);
+      const check = validateRule(raw, i);
+      if (check.valid) {
+        validRules.push({ ...(raw as ParseRule) });
+      } else {
+        result.skipped.push(check.name);
+        result.errors.push(check.error);
+      }
     }
+    if (validRules.length === 0) result.errors.push('No valid rules found');
   }
 
   if (validRules.length === 0) {
-    result.errors.push('No valid rules found');
     result.usedDefaults = true;
-    resetRules();
-    return result;
+    if (!fallback) {
+      activeRules = [];
+      return result;
+    }
+    const replacement = loadRules(fallback);
+    return {
+      ...replacement,
+      skipped: [...result.skipped, ...replacement.skipped],
+      errors: [...result.errors, ...replacement.errors],
+      usedDefaults: true,
+    };
   }
 
   activeRules = validRules.sort((a, b) => a.priority - b.priority);
   result.loaded = validRules.length;
-  for (const r of validRules) {
-    result.categoryCounts[r.category] = (result.categoryCounts[r.category] || 0) + 1;
-  }
   return result;
-}
-
-/**
- * Clears all active parsing rules from memory.
- *
- * @remarks
- * Used during teardown or when switching project configurations. The extension host is
- * responsible for providing a new configuration after resetting.
- */
-function resetRules(): void {
-  activeRules = [];
 }
 
 /** Index of the `)` closing the `(` at `open`, skipping quoted spans; `-1` when unbalanced. */
@@ -616,21 +600,15 @@ function normalizeAnsiCommaJoins(sql: string): string {
 }
 
 /**
- * Removes every block comment, nested ones included, leaving line comments and literals in place.
+ * Masks every block comment, nested ones included, with spaces (line breaks kept), so a comment
+ * between two tokens still separates them. Line comments and literals stay in place.
  *
  * @param sql - Raw SQL text.
- * @returns SQL with all block comments removed.
+ * @returns SQL of the same length with every block comment blanked.
  */
-function removeBlockComments(sql: string): string {
+function maskBlockComments(sql: string): string {
   const mask = sqlCommentMask(sql);
-  let out = '';
-  let start = -1;
-  for (let i = 0; i <= sql.length; i++) {
-    const keep = i < sql.length && mask[i] !== SQL_BLOCK_COMMENT;
-    if (keep && start < 0) start = i;
-    else if (!keep && start >= 0) { out += sql.substring(start, i); start = -1; }
-  }
-  return out;
+  return sql.replace(/[^\r\n]/g, (ch, i: number) => (mask[i] === SQL_BLOCK_COMMENT ? ' ' : ch));
 }
 
 /**
@@ -672,7 +650,7 @@ function unmaskIdentifier(text: string): string {
 
 /**
  * Parses a raw T-SQL string to extract dependencies using the active ruleset. Passes, in order: 0
- * nested-aware block comment removal; 1 neutralization of string literals and line comments
+ * nested-aware block comment masking; 1 neutralization of string literals and line comments
  * (leftmost match; delimited identifier content masked); 1.4 whitespace around the period of a
  * multipart name removed (`dbo . T` to `dbo.T`); 1.45 `IS DISTINCT FROM` / `TRIM(... FROM ...)`
  * `FROM` becomes a comma; 1.47 `TOP (expression) [PERCENT]` leaves INSERT/UPDATE/MERGE; 1.48
@@ -689,7 +667,7 @@ export function parseSqlBody(
   onRuleFire?: (ruleName: string, category: string, added: number) => void,
   identifierCaseSensitive = false,
 ): ParsedDependencies {
-  let clean = removeBlockComments(sql);
+  let clean = maskBlockComments(sql);
 
   clean = clean.replace(PASS1_CLEANSE_RE, (match) => {
     if (match.startsWith('[')) return match.endsWith(']') ? maskDelimitedContent(match) : maskText(match);   // preserve [bracket identifiers]

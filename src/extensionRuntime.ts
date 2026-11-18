@@ -415,6 +415,7 @@ async function loadParseRules(
     );
   }
 
+  const builtIn = config ?? undefined;
   const cfg = vscode.workspace.getConfiguration('dataLineageViz');
   const customPath = cfg.get<string>('parseRulesFile', '');
   if (customPath) {
@@ -455,7 +456,8 @@ async function loadParseRules(
     return;
   }
 
-  const result = loadRules(config);
+  const result = loadRules(config, source === 'custom' ? builtIn : undefined);
+  const appliedFrom = result.usedDefaults && source === 'custom' ? 'built-in (fallback)' : source;
   const sess = getSession();
   if (result.usedDefaults) {
     sess.parseRulesLabel = 'built-in rules (fallback)';
@@ -464,18 +466,19 @@ async function loadParseRules(
   }
 
   for (const err of result.errors) logger.info(`Skipped parse rule: ${err}`);
-  logger.info(`Applied parse rules: ${result.loaded} loaded from ${source}, ${result.skipped.length} skipped`);
-  if (result.skipped.length > 0) {
-    const allSkipped = result.loaded === 0;
+  logger.info(`Applied parse rules: ${result.loaded} loaded from ${appliedFrom}, ${result.skipped.length} skipped`);
+  if (result.skipped.length > 0 || result.usedDefaults) {
     notifyWarning(
       logger,
       'Apply parse rules',
-      allSkipped
+      result.loaded === 0
         ? 'Data Lineage: Parse rules config invalid — check Output channel.'
-        : `Data Lineage: ${result.skipped.length} parse rule(s) skipped as invalid — extraction runs with the remaining ${result.loaded}. Check Output channel.`,
+        : result.usedDefaults
+          ? 'Data Lineage: the custom parse rules file has no valid rule — extraction uses the built-in rules. Check Output channel.'
+          : `Data Lineage: ${result.skipped.length} parse rule(s) skipped as invalid — extraction runs with the remaining ${result.loaded}. Check Output channel.`,
       {
-        source,
-        reason: allSkipped ? 'no valid rules in config' : 'invalid rules skipped',
+        source: appliedFrom,
+        reason: result.loaded === 0 || result.usedDefaults ? 'no valid rules in config' : 'invalid rules skipped',
         skipped: result.skipped.length,
         loaded: result.loaded,
       },
