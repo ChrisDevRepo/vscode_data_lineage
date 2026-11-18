@@ -65,7 +65,7 @@ describe("tool-error-envelope", () => {
   });
 
   describe('rejectionFromZodError: invalid_union with a single repeated missing field', () => {
-    it('states a lone missing field as required and missing, not a bare dotted name', () => {
+    it('states a lone missing field as required and missing, not a bare path', () => {
       const levelsSchema = z.union([z.number().int().min(0), z.literal('all')]);
       const sideSchema = z.object({ levels: levelsSchema, exactness: z.enum(['exact', 'approximate']) }).strict();
       const bbVariant = z.object({
@@ -83,8 +83,8 @@ describe("tool-error-envelope", () => {
       expect(result.success, 'a call omitting depth.upstream.levels fails both variants').toBe(false);
       if (result.success) return;
       const rejection = rejectionFromZodError(result.error, { code: 'invalid_tool_input', input: payload });
-      expect(rejection.reason.includes('depth.upstream.levels is required and missing entirely from this call'), 'the sole missing field states it is required and missing').toBe(true);
-      expect(rejection.reason.match(/depth\.upstream\.levels/g)?.length, 'the identical bb/ct verdict collapses to one variant instead of repeating per branch').toBe(1);
+      expect(rejection.reason.includes('/depth/upstream/levels is required and missing entirely from this call'), 'the sole missing field states it is required and missing').toBe(true);
+      expect(rejection.reason.match(/\/depth\/upstream\/levels/g)?.length, 'the identical bb/ct verdict collapses to one variant instead of repeating per branch').toBe(1);
     });
 
     it('a branch naming several fields keeps the plain comma-joined listing untouched', () => {
@@ -94,7 +94,7 @@ describe("tool-error-envelope", () => {
       expect(result.success, 'empty-object args fail the union as expected').toBe(false);
       if (result.success) return;
       const rejection = rejectionFromZodError(result.error, { code: 'invalid_tool_input', input: {} });
-      expect(rejection.reason.includes('variant 1: origin, classification, analysisMode'), 'a multi-field bare listing is not rewritten').toBe(true);
+      expect(rejection.reason.includes('variant 1: /origin, /classification, /analysisMode'), 'a multi-field bare listing is not rewritten').toBe(true);
       expect(rejection.reason.includes('is required and missing entirely'), 'the multi-field wording addition never fires').toBe(false);
     });
   });
@@ -153,8 +153,8 @@ describe("tool-error-envelope", () => {
 
     it('the allowed values are stated once: in the hint, not again in the reason line', () => {
       const rejection = rejectionFor({ verdict: 'pass', flow: [{ out: 'Qty', src: 'x' }, { out: 'Other', src: 'y' }, { out: 'More', src: 'z' }] });
-      expect(rejection.reason).toContain('at flow[1].out');
-      expect(rejection.reason, 'the second offending entry is still named').toContain('flow[2].out');
+      expect(rejection.reason).toContain('→ at /flow/1/out');
+      expect(rejection.reason, 'the second offending entry is still named').toContain('(same at /flow/2/out)');
       expect(rejection.reason, 'the reason names the defect without the values').not.toContain('"Qty"');
       expect(rejection.hint).toContain('one of "Qty"');
       const enumRejection = rejectionFor({ verdict: 'maybe' });

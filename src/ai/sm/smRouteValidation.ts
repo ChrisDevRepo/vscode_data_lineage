@@ -10,7 +10,7 @@ import type { InvalidRouteKind, InvalidRoute } from './smTypes';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { keyedResendRule } from '../support/repairDraftStore';
 import { HELD_FINDING_CALL_ORDER } from '../tools/toolSchemas';
-import { ISSUES, makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
+import { ISSUES, jsonPointer, makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 
 /** True for nonfatal drop/refuse-with-notice kinds. */
 export function isAbsentKind(kind: InvalidRouteKind): boolean {
@@ -108,7 +108,7 @@ export const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
 /** One model-facing reason line per validation failure: the offending path and what was wrong. */
 function routeErrorLine(error: InvalidRoute): string {
   return [
-    error.path ? `${error.path}: ${error.reason}` : error.reason,
+    error.path ? `${jsonPointer(error.path.split('.'))}: ${error.reason}` : error.reason,
     ...(error.available_routes ? [`available routes: ${error.available_routes.join(', ') || '(none)'}`] : []),
   ].join('; ');
 }

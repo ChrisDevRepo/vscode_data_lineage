@@ -612,7 +612,7 @@ function faultCorrection(error: ToolError, schema: z.ZodType | undefined): strin
 }
 
 /**
- * The model-facing lines of a rejection's faults: one `path: label. correction` line per path that
+ * The model-facing lines of a rejection's faults: one `<pointer>: label. correction` line per path that
  * has a correction the rejection does not already state ({@link ToolError}`.stated`), with every
  * label of that path; paths with the same text share one line.
  *
@@ -631,10 +631,7 @@ export function renderFaults(rejection: ToolRejection, schema?: () => z.ZodType 
     const text = [`${labels}.`, ...corrections].join(' ');
     lines.set(text, [...(lines.get(text) ?? []), path]);
   }
-  return [...lines].map(([text, paths]) => {
-    const named = paths.filter(Boolean).join(', ');
-    return `${named ? `${named}: ` : ''}${text}`;
-  });
+  return [...lines].map(([text, paths]) => [paths.filter(Boolean).map(path => jsonPointer(path.split('.'))).join(', '), text].filter(Boolean).join(': '));
 }
 
 /**
@@ -713,10 +710,10 @@ function enrichedIssueMessage(issue: z.core.$ZodIssue, received: unknown): strin
 /**
  * Describes one union branch: its deduped required-field names (first-seen order, prefixed with the
  * union issue's own path so a nested union reads as a full path from the payload root) and one
- * model-facing line per sub-issue: the bare dotted path when absent from `input` (the missing name
+ * model-facing line per sub-issue: the bare JSON Pointer when absent from `input` (the missing name
  * is the defect), else `"<path>: <enriched message>"` when present but matching no branch (e.g.
- * `depth: Invalid input: expected number, received string`). Without the defect message a scalar
- * union collapses to `variant 1: depth; variant 2: depth`, naming the field but not the defect, and
+ * `/depth: Invalid input: expected number, received string`). Without the defect message a scalar
+ * union collapses to `variant 1: /depth; variant 2: /depth`, naming the field but not the defect, and
  * the model regenerates the identical call blind.
  */
 function describeUnionBranch(
@@ -731,7 +728,7 @@ function describeUnionBranch(
     const field = full.join('.') || '(root)';
     if (!fields.includes(field)) fields.push(field);
     const received = input === undefined ? undefined : resolveAtPath(input, full);
-    descriptors.push(received === undefined ? field : `${field}: ${enrichedIssueMessage(sub, received)}`);
+    descriptors.push(`${jsonPointer(full) || '(root)'}${received === undefined ? '' : `: ${enrichedIssueMessage(sub, received)}`}`);
   }
   return { fields, descriptors };
 }
@@ -780,7 +777,7 @@ const MISSING_FIELD_FRAGMENT = 'missing entirely from this call';
 /**
  * One union branch's text: the comma-joined descriptors, except a branch reducing to exactly one
  * bare (missing) field, which states that the field is required and absent rather than leaving a
- * lone dotted name to be read as the defect. Several fields, or one present-but-wrong-type field,
+ * lone field pointer to be read as the defect. Several fields, or one present-but-wrong-type field,
  * keep {@link describeUnionBranch}'s listing.
  */
 function describeUnionBranchText(descriptors: string[]): string {
@@ -848,10 +845,13 @@ interface JsonSchemaShape {
   minItems?: number;
 }
 
-/** A Zod issue path as the model reads it: `sections[2].blocks`. */
+/** A Zod issue path as a repair hint names its list: `sections[2].blocks`. */
 function dottedPath(path: readonly PropertyKey[]): string {
   return path.reduce<string>((acc, key) => (typeof key === 'number' ? `${acc}[${key}]` : acc ? `${acc}.${String(key)}` : String(key)), '');
 }
+
+/** The RFC 6901 JSON Pointer a served reason or fault line names: `/sections/2/blocks`; `''` is the call. */
+export const jsonPointer = (path: readonly PropertyKey[]): string => path.map(key => `/${String(key).replace(/~/g, '~0').replace(/\//g, '~1')}`).join('');
 
 /** The JSON Schema node `path` addresses in `schema`; `undefined` if the path leaves the schema. */
 function jsonSchemaNodeAt(schema: z.ZodType | undefined, path: readonly PropertyKey[]): JsonSchemaShape | undefined {
@@ -1165,7 +1165,7 @@ function issueErrors(issue: z.core.$ZodIssue, input: unknown): ToolError[] {
 /**
  * Sole producer of auto-generated {@link ToolRejection} reasons from a Zod validation error.
  *
- * @remarks The reason is `z.prettifyError` over the issues, each carrying its enriched message: an
+ * @remarks The reason is one `✖` line per issue with its `→ at` JSON Pointer, each carrying its enriched message: an
  *   `invalid_union` expands via {@link describeInvalidUnion} into a per-branch required-field
  *   breakdown, and when `input` is supplied a size issue names the measured size — Zod v4 issues
  *   carry no input, so the enrichment happens here; a sent value is never echoed. Issues identical
@@ -1212,15 +1212,14 @@ export function rejectionFromZodError(
     }
     const shape = `${issue.code}|${message}|${issue.path.map(key => (typeof key === 'number' ? '*' : String(key))).join('.')}`;
     const first = shown.get(shape);
-    if (first) first.others.push(dottedPath(issue.path));
+    if (first) first.others.push(jsonPointer(issue.path));
     else shown.set(shape, { issue, message, others: [] });
   }
-  const collapsed = [...shown.values()].map(({ issue, message, others }) => (
-    { ...issue, message: others.length > 0 ? `${message} (same at ${others.join(', ')})` : message }
-  ));
+  const lines = [...shown.values()].sort((a, b) => a.issue.path.length - b.issue.path.length).map(({ issue, message, others }) =>
+    `✖ ${message}${others.length > 0 ? ` (same at ${others.join(', ')})` : ''}${issue.path.length > 0 ? `\n  → at ${jsonPointer(issue.path)}` : ''}`);
   return makeRejection({
     code: opts.code,
-    reason: z.prettifyError(new z.ZodError(collapsed)),
+    reason: lines.join('\n'),
     hint: opts.hint ?? [
       zodFieldRepairHint(error, opts.input, opts.schema),
       // A refinement that owns its repair may contradict the generic resend rule.
