@@ -8,7 +8,7 @@ import {
   numericStringDepth,
 } from '../../engine/shared/explorationDepthContract';
 import { REJECTION_CODES } from '../support/rejectionCodes';
-import { rejectionFromZodError, type ToolRejection } from '../support/toolErrorEnvelope';
+import { jsonPointer, rejectionFromZodError, type ToolRejection } from '../support/toolErrorEnvelope';
 import { CLASSIFICATION_KEPT_ANGLES, type ClassificationValue } from '../session/classification';
 import { extractRawSectionAngles } from '../interaction/rules/submitFindingsRules';
 import type { HeldSubmissionParts, HopFinding, HopFindingKept, HopSubmission } from '../sm/smTypes';
@@ -633,7 +633,7 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
   if (bothAnglesRequired && filled.size > 0) {
     for (const angle of CLASSIFICATION_KEPT_ANGLES.both) {
       if (filled.has(angle)) continue;
-      ctx.addIssue({ code: 'custom', path: ['sections', angle], message: 'required with a both classification when sections is not empty.', params: { hint: `Send sections.${angle}.` } });
+      ctx.addIssue({ code: 'custom', path: ['sections', angle], message: 'required with a both classification when sections is not empty.', params: { hint: `Send ${jsonPointer(['sections', angle])}.` } });
     }
   }
   if (fresh && (value.summary === undefined || (typeof value.summary === 'string' && value.summary.trim() === ''))) {

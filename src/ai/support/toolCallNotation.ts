@@ -5,6 +5,7 @@
  * carrying the notation. A closing `</parameter>` counts only where an argument or the call ends
  * there, so the same tag inside quoted XML is ordinary text.
  */
+import { jsonPointer } from './toolErrorEnvelope';
 
 /**
  * Tool-call notation inside a text value: the start of a named argument or call, the end of a call,
@@ -25,7 +26,7 @@ export interface ToolCallNotationFault {
   readonly hint: string;
 }
 
-/** Repair sentence for one value: names the argument attached after the value's text, if any. */
+/** Repair sentence for one value at its JSON Pointer: names the argument attached after the value's text, if any. */
 function repairSentence(path: string, value: string): string {
   const first = NOTATION.exec(value)!;
   const attached = /<parameter\s+name="([A-Za-z_]\w*)"\s*>/.exec(value)?.[1];
@@ -34,13 +35,13 @@ function repairSentence(path: string, value: string): string {
     : `Send \`${path}\` as its own value only, without the notation.`;
 }
 
-function collect(value: unknown, path: string, found: Array<{ path: string; value: string }>): void {
+function collect(value: unknown, path: readonly PropertyKey[], found: Array<{ path: readonly PropertyKey[]; value: string }>): void {
   if (typeof value === 'string') {
     if (NOTATION.test(value)) found.push({ path, value });
   } else if (Array.isArray(value)) {
-    value.forEach((item, index) => collect(item, path ? `${path}.${index}` : String(index), found));
+    value.forEach((item, index) => collect(item, [...path, index], found));
   } else if (value !== null && typeof value === 'object') {
-    for (const [key, item] of Object.entries(value)) collect(item, path ? `${path}.${key}` : key, found);
+    for (const [key, item] of Object.entries(value)) collect(item, [...path, key], found);
   }
 }
 
@@ -49,12 +50,12 @@ function collect(value: unknown, path: string, found: Array<{ path: string; valu
  * for tool-call notation; returns the rejection content naming each offending path, or `null`.
  */
 export function toolCallNotationFault(input: unknown): ToolCallNotationFault | null {
-  const found: Array<{ path: string; value: string }> = [];
-  collect(input, '', found);
+  const found: Array<{ path: readonly PropertyKey[]; value: string }> = [];
+  collect(input, [], found);
   if (found.length === 0) return null;
   return {
-    issuePaths: found.map(item => item.path),
-    reason: found.map(item => `${item.path}: ${NOTATION_RULE}`).join('\n'),
-    hint: found.map(item => repairSentence(item.path, item.value)).join(' '),
+    issuePaths: found.map(item => item.path.join('.')),
+    reason: found.map(item => `${jsonPointer(item.path)}: ${NOTATION_RULE}`).join('\n'),
+    hint: found.map(item => repairSentence(jsonPointer(item.path), item.value)).join(' '),
   };
 }
