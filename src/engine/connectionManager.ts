@@ -378,8 +378,9 @@ async function pickDatabase(connection: BuiltInConnection): Promise<string | und
 /**
  * Opens a database session through the built-in connection. A stored connection reconnects silently
  * by its saved `connectionId`, else by the matching saved connection, else through the picker. A
- * record written for the retired mssql extension is not supported: it shows one non-modal warning
- * and opens no connection, so the user connects through Add Database Connection.
+ * record written for the retired mssql extension never reconnects silently: it shows one non-modal
+ * warning and opens Add Database Connection prefilled with the stored server, port, user and
+ * database, so the project is stored with the new connection only after the user made it.
  *
  * @param stored - Connection saved with a project, when reconnecting.
  * @param token - Cancels a connect in progress.
@@ -388,21 +389,23 @@ async function pickDatabase(connection: BuiltInConnection): Promise<string | und
  */
 export async function connectDatabase(env: DbConnectEnv, stored?: StoredConnectionInfo, token?: vscode.CancellationToken): Promise<DbSession | undefined> {
   const logger = Logger.create(env.outputChannel, 'DB');
-  if (stored && usesMssqlExtension(stored)) {
-    logger.info('Project saved with the retired mssql extension connection — not supported');
-    void vscode.window.showWarningMessage(MSSQL_RECONNECT_NOTICE);
-    return undefined;
-  }
-  const connections = readBuiltInConnections(logger);
   let connection: BuiltInConnection | undefined;
-  if (stored) {
-    connection = findBuiltInMatch(connections, stored);
-    if (!connection) {
-      logger.warn('Direct reconnect: no matching saved built-in connection — falling back to picker');
-      logger.debug(`Unmatched reconnect server: ${stored.server}`);
+  if (stored && usesMssqlExtension(stored)) {
+    logger.info('Project saved with the retired mssql extension connection — opening Add Database Connection');
+    logger.debug(`Retired mssql connection server: ${stored.server}`);
+    void vscode.window.showWarningMessage(MSSQL_RECONNECT_NOTICE);
+    connection = await runAddConnectionFlow(env, undefined, { server: stored.server, port: stored.port, user: stored.user, database: stored.database });
+  } else {
+    const connections = readBuiltInConnections(logger);
+    if (stored) {
+      connection = findBuiltInMatch(connections, stored);
+      if (!connection) {
+        logger.warn('Direct reconnect: no matching saved built-in connection — falling back to picker');
+        logger.debug(`Unmatched reconnect server: ${stored.server}`);
+      }
     }
+    connection ??= await pickBuiltInConnection(env, connections, stored);
   }
-  connection ??= await pickBuiltInConnection(env, connections, stored);
   if (!connection) {
     logger.info('User cancelled connection picker');
     return undefined;

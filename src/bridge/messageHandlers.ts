@@ -25,6 +25,7 @@ import {
   executeSimpleQuery, isPhase2Query, type DmvQuery, type DbConnectEnv,
 } from '../engine/connectionManager';
 import type { DbSession } from '../engine/db/dbSession';
+import { usesMssqlExtension } from '../engine/db/mssqlRetiring';
 import { connectionFailure, reportConnectionError } from '../engine/db/connectionErrors';
 import { redactSecrets } from '../utils/redact';
 import { type SimpleExecuteResult } from '../types/database';
@@ -682,6 +683,7 @@ export function createMessageHandlers(
         }
       } else if (project.connection.type === 'database') {
         const dbConn = project.connection;
+        const wasLegacy = usesMssqlExtension(dbConn.connectionInfo);
         const storeReconnected = async (session: DbSession) => {
           if (token.isCancellationRequested) return;
           const updatedStore = updateProject(store, {
@@ -697,6 +699,7 @@ export function createMessageHandlers(
           const schemas = dbConn.schemas;
           if (!schemas || schemas.length === 0) {
             await runDbPhase1Host(host, session, outputChannel, dmvQueries.reload);
+            if (wasLegacy) await storeReconnected(session);
           } else {
             await runDbPhase2Host(host, session, schemas, outputChannel, dmvQueries.reload, getSession, session.connectionInfo.database, dbConn.sourceName, unlessCancelled(token, (m) => {
               setCurrentModel(m, true, { id: project.id, name: project.name });
@@ -1225,7 +1228,8 @@ async function withDbProgressHost(
       const failure = connectionFailure(err, session);
       if (failure) {
         const { target } = failure;
-        // A retry reconnects the connection that failed instead of asking for one again.
+        // A retry reconnects the connection that failed, so a record stored by the retired mssql
+        // extension is not asked to reconnect twice.
         const failed: Partial<StoredConnectionInfo> | undefined = target.connectionId ? { provider: 'builtIn', connectionId: target.connectionId } : undefined;
         const retry = (patch?: Partial<StoredConnectionInfo>) => withDbProgressHost(host, env, title, (_patch, token) => connectFn({ ...failed, ...patch }, token), phaseFn);
         const reported = reportConnectionError(

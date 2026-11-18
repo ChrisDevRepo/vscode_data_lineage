@@ -32,7 +32,7 @@ The core is a deterministic object-lineage engine and a graph view. Search, trac
 | Table statistics | Row-count and aggregate `SELECT`s | When you request them for one table |
 | `@lineage` | Nothing against a database; its tools read the loaded model | Optional, per chat request |
 
-Live connections use the built-in `tedious` provider with SQL login or Microsoft Entra ID, `ReadOnly` application intent, and passwords in VS Code `SecretStorage`. A project saved with the retired SQL Server (mssql) extension shows one non-modal warning and does not connect. Data boundaries: [`SECURITY.md`](../SECURITY.md).
+Live connections use the built-in `tedious` provider with SQL login or Microsoft Entra ID, `ReadOnly` application intent, and passwords in VS Code `SecretStorage`. A project saved with the retired SQL Server (mssql) extension shows one non-modal warning and opens **Add Database Connection** prefilled with its server and database. Data boundaries: [`SECURITY.md`](../SECURITY.md).
 
 ## Code map
 
