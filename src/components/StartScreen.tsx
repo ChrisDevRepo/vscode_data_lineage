@@ -157,7 +157,7 @@ export const StartScreen = memo(function StartScreen({
           </button>
           </Tooltip>
           <span className="text-sm font-medium flex-1">Saved Projects</span>
-          <span className="text-xs mr-2" style={{ opacity: 0.45 }}>{sorted.length}</span>
+          <span className="text-xs mr-2" style={{ color: 'var(--ln-wizard-fg-dim)' }}>{sorted.length}</span>
           {sorted.length > 1 && !confirmDeleteAll && (
             <button
               ref={deleteAllFocus.triggerRef('all')}
