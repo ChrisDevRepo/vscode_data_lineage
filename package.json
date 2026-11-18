@@ -221,7 +221,7 @@
             "default": 150,
             "minimum": 10,
             "maximum": 1000,
-            "markdownDescription": "Object count above which a graph opens in Schema View instead of Object View. [Details](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/FEATURES.md#settings-reference)",
+            "markdownDescription": "Object count above which a graph opens in Schema View instead of Object View; the effective value is capped at `renderLimit`. [Details](https://github.com/ChrisDevRepo/vscode_data_lineage/blob/main/docs/FEATURES.md#settings-reference)",
             "scope": "resource"
           },
           "dataLineageViz.overview.schemaDoubleClickBehavior": {

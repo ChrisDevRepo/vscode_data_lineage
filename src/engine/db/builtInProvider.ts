@@ -9,6 +9,7 @@ import type { Connection } from 'tedious';
 import type { DbCellValue, IDbColumn, IServerInfo, SimpleExecuteResult } from '../../types/database';
 import { Logger } from '../../utils/log';
 import { DEFAULT_CONFIG } from '../types';
+import { readDeclaredNumericSetting } from '../../configCore';
 import { StoredConnectionInfoSchema, type StoredConnectionInfo } from '../shared/bridgeContract';
 import { readSavedPassword, savePassword, passwordTooLong, describeConnection, resolveServerAddress, type BuiltInConnection } from './connectionSettings';
 import { redactSecrets } from '../../utils/redact';
@@ -274,8 +275,8 @@ class BuiltInSession implements DbSession {
 }
 
 function defaultRequestTimeoutMs(): number {
-  const seconds = vscode.workspace.getConfiguration('dataLineageViz').get<number>('dmvQueryTimeout', DEFAULT_CONFIG.dmvQueryTimeout);
-  return (Number.isFinite(seconds) && seconds > 0 ? seconds : DEFAULT_CONFIG.dmvQueryTimeout) * MS_PER_SECOND;
+  const cfg = vscode.workspace.getConfiguration('dataLineageViz');
+  return readDeclaredNumericSetting(cfg, 'dmvQueryTimeout', DEFAULT_CONFIG.dmvQueryTimeout) * MS_PER_SECOND;
 }
 
 /** Asks for a SQL login password once, and whether to keep it in the secret store. */
