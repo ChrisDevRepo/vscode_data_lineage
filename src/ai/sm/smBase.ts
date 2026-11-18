@@ -623,20 +623,19 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * A rejected call's rejection plus the column reference faults of its `column_flow`, when that
-   * field passes its own schema and the call names the current focus; a focus fault leaves them out.
+   * The column reference faults of a rejected call's `column_flow`, when that field passes its own
+   * schema and the call names the current focus; a focus fault leaves them out.
    */
-  public withColumnFlowFaults(rejection: ToolRejection, input: unknown): ToolRejection {
-    if (!this.tracer || typeof input !== 'object' || input === null) return rejection;
+  public columnFlowFaults(input: unknown): InvalidRoute[] {
+    if (!this.tracer || typeof input !== 'object' || input === null) return [];
     const { focus_node_id: rawFocus, column_flow: rawFlow } = input as Record<string, unknown>;
     const focusId = typeof rawFocus === 'string'
       ? resolveModelNodeId(rawFocus, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(rawFocus)
       : undefined;
     const flow = hopColumnFlowSchema(this.hopSubmitColumns).safeParse(rawFlow);
-    if (focusId === undefined || focusId !== this.currentFocusNodeId || !flow.success) return rejection;
-    const routes = this.validateFindingColumnFlow(this.tracer, focusId, { column_flow: flow.data }).invalidRoutes
+    if (focusId === undefined || focusId !== this.currentFocusNodeId || !flow.success) return [];
+    return this.validateFindingColumnFlow(this.tracer, focusId, { column_flow: flow.data }).invalidRoutes
       .filter(route => !isAbsentKind(route.kind));
-    return routes.length > 0 ? combineToolRejections([rejection, buildRouteValidationRejection(routes)]) : rejection;
   }
 
   /**
@@ -2618,7 +2617,10 @@ export class NavigationEngine implements IHopStateMachine {
     const archivedAngles = this.memory.getArchivedAngles(this.currentFocusNodeId ?? '');
     const shape = validateHopSubmissionShape(params, this.currentHopAnalysisMode, this.classification,
       this.heldFindingFocus !== this.currentFocusNodeId && archivedAngles.size === 0);
-    if (!shape.ok) return this.withColumnFlowFaults(shape.error, params);
+    if (!shape.ok) {
+      const routes = this.columnFlowFaults(params);
+      return routes.length > 0 ? combineToolRejections([shape.error, buildRouteValidationRejection(routes)]) : shape.error;
+    }
     const merged = this.applyHeldContent(shape.data);
     if ('code' in merged) return merged;
     params = merged;

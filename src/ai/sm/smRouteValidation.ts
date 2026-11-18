@@ -121,6 +121,17 @@ function routeErrorLine(error: InvalidRoute): string {
   ].join('; ');
 }
 
+/** The verb-led corrective order of each distinct failure kind, without the held-correction order. */
+export function routeDirectives(errors: readonly InvalidRoute[]): string[] {
+  const kinds = [...new Set(errors.map(e => e.kind))];
+  return [
+    ...kinds.filter(kind => kind !== 'untracked_out_col'
+      || errors.some(error => error.kind === kind && error.path?.endsWith('.out_col')))
+      .map(kind => ROUTE_REJECTION_DIRECTIVE[kind]),
+    errors.some(error => error.kind === 'untracked_out_col' && error.path?.endsWith('.upstream_columns')) ? DETACHED_LINK_DIRECTIVE : '',
+  ].filter(Boolean);
+}
+
 /**
  * Builds the content/action rejection envelope after nonfatal notices were removed. Each kind is
  * emitted by one policy owner, so no message-text inference or mode branch is needed. `code` is the
@@ -133,13 +144,7 @@ function routeErrorLine(error: InvalidRoute): string {
 export function buildRouteValidationRejection(errors: InvalidRoute[]): ToolRejection {
   const distinctKinds = [...new Set(errors.map(e => e.kind))];
   const code = distinctKinds.length === 1 ? ROUTE_REJECTION_CODE[distinctKinds[0]] : REJECTION_CODES.routeValidationFailed;
-  const hint = [
-    ...distinctKinds.filter(kind => kind !== 'untracked_out_col'
-      || errors.some(error => error.kind === kind && error.path?.endsWith('.out_col')))
-      .map(kind => ROUTE_REJECTION_DIRECTIVE[kind]),
-    errors.some(error => error.kind === 'untracked_out_col' && error.path?.endsWith('.upstream_columns')) ? DETACHED_LINK_DIRECTIVE : '',
-    HELD_CORRECTION_ORDER,
-  ].filter(Boolean).join(' ');
+  const hint = [...routeDirectives(errors), HELD_CORRECTION_ORDER].join(' ');
   return makeRejection({
     code,
     reason: errors.map(routeErrorLine).join('\n'),

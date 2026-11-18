@@ -7,7 +7,8 @@ import { NavigationEngine } from '../../sm/smBase';
 import { sanitizeForLog } from '../../../utils/log';
 import { toHopFinding, submitFindingsSchemaForMode, heldSubmissionRepairHint } from '../../tools/toolSchemas';
 import { buildSmCompletionEnvelope } from '../../prompting/smPrompts';
-import { makeRejection, rejectionFromZodError, zodFieldRepairHint } from '../../support/toolErrorEnvelope';
+import { combineToolRejections, makeRejection, rejectionFromZodError, zodFieldRepairHint } from '../../support/toolErrorEnvelope';
+import { buildRouteValidationRejection, routeDirectives } from '../../sm/smRouteValidation';
 import {
   normalizeSubmitFindingsInputIds,
   type SubmitFindingsInputObject,
@@ -50,9 +51,11 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
       const schema = submitFindingsSchemaForMode(engine.currentHopAnalysisMode, sess.classification ?? undefined, fresh, engine.hopSubmitColumns);
       const parsed = schema.safeParse(input);
       if (!parsed.success) {
-        const rejection = engine.withColumnFlowFaults(rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema }), input);
+        const schemaFault = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
+        const routes = engine.columnFlowFaults(input);
+        const rejection = routes.length > 0 ? combineToolRejections([schemaFault, buildRouteValidationRejection(routes)]) : schemaFault;
         const held = engine.holdRejectedSubmission(input, rejection.issuePaths ?? []);
-        if (held) rejection.hint = [zodFieldRepairHint(parsed.error, input, schema), heldSubmissionRepairHint(held)].filter(Boolean).join(' ');
+        if (held) rejection.hint = [zodFieldRepairHint(parsed.error, input, schema), ...routeDirectives(routes), heldSubmissionRepairHint(held)].filter(Boolean).join(' ');
         return s.logAndReturn('lineage_submit_findings', rejection, input);
       }
       const rawInput: SubmitFindingsInputObject = parsed.data;
