@@ -463,30 +463,8 @@ const CtNeighborQuestionSchema = NeighborQuestionSchema.extend({
 const IGNORED_REASON_DESCRIPTION =
   'Unused; omit it.';
 
-/**
- * States a content cap in the JSON schema the model reads (`maxLength` / `maxItems`) without
- * enforcing it at parse. The engine (`NavigationEngine.submitFindings`) enforces it, rejecting the
- * offending field alone as repairable with the measured size and a held draft; a parse-time cap
- * would reject at the model port with none of that, forcing a full resend of an otherwise correct
- * answer. Structural constraints (`min`, non-whitespace refinements, type, enum) stay real
- * parse-time checks. The projection carries the same keyword and value as the equivalent `.max()`
- * (only key order differs).
- */
-function advertisedMax<T extends z.ZodType>(
-  schema: T,
-  bound: { readonly maxLength: number } | { readonly maxItems: number },
-): T {
-  return schema.meta({ ...bound });
-}
-
-/**
- * Hard cap on `badge_label`.
- *
- * @remarks
- * Advertised on the model-facing `submit_findings` schemas through {@link advertisedMax} and
- * enforced by `NavigationEngine.submitFindings`, before any mutation.
- */
-export const SUBMIT_FINDINGS_BADGE_LABEL_MAX = 50;
+/** Hard cap on `badge_label`, a schema bound. */
+const SUBMIT_FINDINGS_BADGE_LABEL_MAX = 50;
 
 /**
  * Single source for the `badge_label` describe text, shared by the strict per-mode
@@ -496,14 +474,8 @@ export const SUBMIT_FINDINGS_BADGE_LABEL_MAX = 50;
  */
 const BADGE_LABEL_DESCRIPTION = KEPT_VERDICT_ONLY + '2-4 word label for this node.';
 
-/**
- * Hard cap on `column_flow[].upstream_columns[].note`.
- *
- * @remarks
- * Advertised on the model-facing `submit_findings` schemas through {@link advertisedMax} and
- * enforced by `NavigationEngine.submitFindings`, before any mutation.
- */
-export const COLUMN_FLOW_NOTE_MAX = 200;
+/** Hard cap on `column_flow[].upstream_columns[].note`, a schema bound. */
+const COLUMN_FLOW_NOTE_MAX = 200;
 
 const ColumnRefSchema = z.object({
   node: z.string(),
@@ -515,7 +487,7 @@ const ColumnRefSchema = z.object({
     'selecting contributing rows. Grouping, partition and ordering keys are not aggregate value inputs; ' +
     'display-only sorting contributes no role.',
   ),
-  note: advertisedMax(z.string(), { maxLength: COLUMN_FLOW_NOTE_MAX }).optional().describe(
+  note: z.string().max(COLUMN_FLOW_NOTE_MAX).optional().describe(
     'The deciding expression, at most ~12 words.',
   ),
 }).strict();
@@ -576,7 +548,7 @@ const HopFindingBaseSchema = z.object({
   focus_node_id: z.string().describe('`focus_node.id` from `<hop_context>`.'),
   verdict: HopVerdictSchema,
   summary: z.string().optional().describe(SUMMARY_DESCRIPTION),
-  badge_label: advertisedMax(z.string(), { maxLength: SUBMIT_FINDINGS_BADGE_LABEL_MAX }).min(1)
+  badge_label: z.string().max(SUBMIT_FINDINGS_BADGE_LABEL_MAX).min(1)
     .refine(value => value.trim().length > 0, 'badge_label must contain non-whitespace text')
     .optional()
     .describe(BADGE_LABEL_DESCRIPTION),
@@ -1538,7 +1510,7 @@ export const SubmitFindingsModelSchema = z.object({
   prune_neighbors: z.array(PruneNeighborSchema).max(MAX_ID_LIST_LENGTH).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),
   questions: z.array(CtNeighborQuestionSchema).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION),
   column_flow: ColumnFlowSchema.optional(),
-  badge_label: advertisedMax(z.string(), { maxLength: SUBMIT_FINDINGS_BADGE_LABEL_MAX }).min(1)
+  badge_label: z.string().max(SUBMIT_FINDINGS_BADGE_LABEL_MAX).min(1)
     .refine(value => value.trim().length > 0, 'badge_label must contain non-whitespace text')
     .optional()
     .describe(BADGE_LABEL_DESCRIPTION),

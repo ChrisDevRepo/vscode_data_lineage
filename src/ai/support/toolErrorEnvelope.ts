@@ -240,11 +240,6 @@ export const ISSUES = {
     label: 'column outside the approved scope',
     correction: 'column_flow names only in-scope objects. Drop the outside entry from upstream_columns, or set writes_to to null; use column_flow: [] if no entry remains. State the fact about the outside object in sections; further work on it goes in questions.',
   },
-  [REJECTION_CODES.fieldLengthExceeded]: {
-    category: 'value',
-    label: 'outside its length bound',
-    correction: 'Shorten the listed field(s).',
-  },
   [REJECTION_CODES.emptyStructuredOutput]: {
     category: 'stage',
     label: 'required call arrived with empty arguments',

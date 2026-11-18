@@ -1,7 +1,7 @@
 import { EngineAspectMode, InvalidRoute, type DepthIntent, type HeldSubmissionParts } from './smTypes';
-import { buildRouteValidationRejection, HELD_CORRECTION_ORDER, isAbsentKind, ROUTE_REJECTION_CODE, ROUTE_REJECTION_DIRECTIVE } from './smRouteValidation';
+import { buildRouteValidationRejection, isAbsentKind, ROUTE_REJECTION_CODE, ROUTE_REJECTION_DIRECTIVE } from './smRouteValidation';
 import { activeSubmitFindingsRecoveryHint, extractRawSectionAngles, validateSectionsAgainstClassification } from '../interaction/rules/submitFindingsRules';
-import { COLUMN_FLOW_NOTE_MAX, SUBMIT_FINDINGS_BADGE_LABEL_MAX, heldSubmissionRepairHint, validateHopSubmissionShape, type SubmitFindingsHopColumns } from '../tools/toolSchemas';
+import { heldSubmissionRepairHint, validateHopSubmissionShape, type SubmitFindingsHopColumns } from '../tools/toolSchemas';
 
 import type Graph from 'graphology';
 import { bidirectional } from 'graphology-shortest-path/unweighted';
@@ -2625,32 +2625,6 @@ export class NavigationEngine implements IHopStateMachine {
         });
       }
       const finding: HopFindingKept = params;
-      const lengthViolations: Array<{ path: string; chars: number; limit: number }> = [];
-      if (finding.badge_label !== undefined && finding.badge_label.length > SUBMIT_FINDINGS_BADGE_LABEL_MAX) {
-        lengthViolations.push({ path: 'badge_label', chars: finding.badge_label.length, limit: SUBMIT_FINDINGS_BADGE_LABEL_MAX });
-      }
-      (finding.column_flow ?? []).forEach((entry, entryIndex) => {
-        (entry.upstream_columns ?? []).forEach((ref, refIndex) => {
-          if (ref.note !== undefined && ref.note.length > COLUMN_FLOW_NOTE_MAX) {
-            lengthViolations.push({
-              path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.note`,
-              chars: ref.note.length,
-              limit: COLUMN_FLOW_NOTE_MAX,
-            });
-          }
-        });
-      });
-      if (lengthViolations.length > 0) {
-        const measured = lengthViolations.map(v => `${v.path}: ${v.chars} chars, limit ${v.limit}`).join('; ');
-        this.memory.recordRejection(focusId, `${REJECTION_CODES.fieldLengthExceeded}: ${measured}`, this.hopCount);
-        this.holdFinding(finding, lengthViolations.map(v => v.path.split('.')[0]));
-        return makeRejection({
-          code: REJECTION_CODES.fieldLengthExceeded,
-          hint: `${measured}. Nothing was committed. Shorten the listed field(s) for ${focusId}. ${HELD_CORRECTION_ORDER}`,
-          detail: lengthViolations.map(v => ({ path: v.path, chars: v.chars, limit: v.limit })),
-          issuePaths: lengthViolations.map(v => v.path),
-        });
-      }
       const acceptedNids = new Set<string>();
       const scopeAddNids = new Set<string>();
       const deferredRoutes: ValidatedHop['deferredRoutes'] = [];

@@ -81,7 +81,7 @@ const DETACHED_LINK_DIRECTIVE =
  * reference the reason names). The engine holds the draft for that set, so the model's prose
  * survives the correction instead of being re-authored.
  */
-export const HELD_CORRECTION_ORDER =
+const HELD_CORRECTION_ORDER =
   `Your analysis is held: ${HELD_FINDING_CALL_ORDER}. ${keyedResendRule('sections', 'angle')} Omit summary to keep the held summary.`;
 
 /**

@@ -108,8 +108,6 @@ export const REJECTION_CODES = {
   prunedContributor: 'pruned_contributor',
   /** A `column_flow` node outside the approved scope. */
   columnOutOfScope: 'column_out_of_scope',
-  /** A `submit_findings` field (`badge_label`, `column_flow` note) over its length bound. */
-  fieldLengthExceeded: 'field_length_exceeded',
   /**
    * The provider emitted the synthetic structured-output/terminal tool call with empty required
    * arguments (`structuredOutput.ts`, `vscodeModelPort.ts`, `graph.ts`).
