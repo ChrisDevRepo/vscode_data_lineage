@@ -43,6 +43,8 @@ export interface GeneralPromptContext {
   readonly totalSchemaCount: number;
   readonly visibleNodes: number;
   readonly totalNodes: number;
+  /** Present when the view's filters hide an object: the hidden types and name-exclusion patterns (schemas have their own line). */
+  readonly filterHides?: { readonly types: readonly string[]; readonly namePatterns: readonly string[] };
   /** Checked source catalog policy; absent retains the legacy CI prompt. */
   readonly identifierCaseSensitive?: boolean;
   /** One phrase naming the trace, analysis or bookmark applied on screen; absent if none. */
@@ -51,7 +53,7 @@ export interface GeneralPromptContext {
 
 /**
  * Builds the base system prompt for all phases: role definition, injected app context (platform,
- * schemas, node counts) and core grounding rules. LaTeX is absent; the capture recipe and synthesis
+ * schemas, node counts, what the view's filters hide) and core grounding rules. LaTeX is absent; the capture recipe and synthesis
  * block state it where formulas are authored.
  *
  * The rendering rule lives here because it holds in every phase and matters most in discovery: a
@@ -63,7 +65,7 @@ export interface GeneralPromptContext {
  *   through).
  */
 export function buildGeneralSystemPrompt(ctx: GeneralPromptContext): string {
-  const { dbPlatform, filterSchemas, totalSchemaCount, visibleNodes, totalNodes, screen } = ctx;
+  const { dbPlatform, filterSchemas, totalSchemaCount, visibleNodes, totalNodes, filterHides, screen } = ctx;
   const isFiltered = filterSchemas.length > 0 && filterSchemas.length < totalSchemaCount;
   const schemasLine = isFiltered
     ? `- Schemas: ${filterSchemas.join(', ')} (${filterSchemas.length} of ${totalSchemaCount} schemas)`
@@ -81,8 +83,23 @@ export function buildGeneralSystemPrompt(ctx: GeneralPromptContext): string {
     ...(ctx.identifierCaseSensitive ? ['- Identifiers are case-sensitive. Use the exact object IDs and column names supplied by tools; case-only variants identify different objects or columns.'] : []),
     schemasLine,
     `- Visible objects: ${visibleNodes} of ${totalNodes}`,
+    ...(filterHides ? buildFilterHidesLines(filterHides) : []),
     ...(screen ? buildScreenStateSlot(screen) : []),
   ].join('\n');
+}
+
+/**
+ * Renders the context line naming the types and name-exclusion patterns the view's filters hide;
+ * none when only schemas are hidden (the schemas line names those).
+ *
+ * @param hides - Hidden types and name-exclusion patterns.
+ */
+function buildFilterHidesLines(hides: NonNullable<GeneralPromptContext['filterHides']>): string[] {
+  const parts = [
+    ...(hides.types.length ? [`types ${hides.types.join(', ')}`] : []),
+    ...(hides.namePatterns.length ? [`names like ${hides.namePatterns.map(escapePromptText).join(', ')}`] : []),
+  ];
+  return parts.length ? [`- Also hidden: ${parts.join('; ')}.`] : [];
 }
 
 /**
@@ -110,12 +127,14 @@ export function buildScreenStateSlot(screen: string): string[] {
  * @param analysisMode - Hop or session analysis mode. Synthesis composes CT as the BB protocol plus
  *   a column rider; the active protocol adds the CT scope rule for out-of-scope neighbors (its
  *   column aspect renders in `buildSmProtocol`).
+ * @param filterHidesObjects - The view's filters hide an object (discovery only).
  */
 export function buildPhasePrompt(
   phase: PromptPhase,
   analysisMode: 'bb' | 'ct' = 'bb',
+  filterHidesObjects = false,
 ): string {
-  if (phase === 'discover') return buildDiscoveryPrompt();
+  if (phase === 'discover') return buildDiscoveryPrompt(filterHidesObjects);
   if (phase === 'visual_preview') return buildVisualPreviewPrompt();
   if (phase === 'active') return buildActivePhasePrompt(analysisMode);
   if (phase === 'synthesis') return buildSynthesisPrompt(analysisMode);
@@ -143,11 +162,15 @@ const CHAT_MARKDOWN_FORMAT = [
  * fire it, that call site always wires the mechanical `detectReroute` detector
  * (`detectOverBudgetFromResult`, `agent/discoveryCapture.ts`), and graph dispatch hands the turn to
  * SM entry and its consent gate, so prose about that path is never reachable.
+ *
+ * @param filterHidesObjects - The view's filters hide an object: adds how a question about one is
+ *   answered. Discovery only, so a trace request at SM entry still reaches the proposal.
  */
-function buildDiscoveryPrompt(): string {
+function buildDiscoveryPrompt(filterHidesObjects: boolean): string {
   return [
     '## Task: answer in chat',
     'Facts about this database come from what the read tools returned in this conversation. When those facts already answer the question, or it needs none (a greeting, what you can do, general SQL or data-modelling knowledge), reply directly without a tool call; otherwise choose the tool whose description matches the question. A column trace naming columns on more than one object gets a short reply asking which object to trace first. For lineage — sources, consumers, neighbours — one `lineage_get_scope_bundle` call scoped to the question, with `include_ddl` when the logic matters. When an AI bookmark is applied on screen, a question about it is answered from the stored run (`lineage_get_screen_state`).',
+    ...(filterHidesObjects ? ['A question about a hidden object is answered as outside the current filters, asking whether to include it or widen to the full database.'] : []),
   ].join('\n');
 }
 

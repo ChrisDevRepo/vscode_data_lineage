@@ -21,7 +21,7 @@ import { schemaKey } from '../../utils/sql';
 import { sanitizeForLog } from '../../utils/log';
 import { runAnalysis as runGraphAnalysis } from '../../engine/graphAnalysis';
 import { ColumnStore } from '../../engine/columnStore';
-import { applyIsolationFilter } from '../../engine/shared/modelFilters';
+import { countVisibleNodes, userFilterAdmits } from '../../engine/shared/modelFilters';
 import { searchCatalog, searchColumns, compileSearchRegex, regexRejectHint, SEARCH_LINE_MAX_CHARS, type SearchableNode } from '../../utils/modelSearch';
 import { executeIsolatedRegexSearch, RegexSearchExecutionError } from '../support/isolatedRegexSearch';
 import { normalizeSearchQueryInput } from '../support/inputNormalization';
@@ -150,23 +150,6 @@ export function buildHopFocusNode(
   }
 
   return result;
-}
-
-
-/** Objects shown by the source-aware schema/type filter, then Hide Isolated. */
-function countVisibleNodes(model: DatabaseModel, activeFilter: SerializedFilterState): number {
-  const scoped = model.nodes.filter(n => {
-    const schemaOk = !activeFilter.schemas?.length || activeFilter.schemas.some(s => schemaKey(s, model.identifierCaseSensitive) === schemaKey(n.schema, model.identifierCaseSensitive));
-    const typeOk = !activeFilter.types?.length || activeFilter.types.includes(n.type);
-    return schemaOk && typeOk;
-  });
-  const scopedIds = new Set(scoped.map(n => n.id));
-  const scopedModel = {
-    ...model,
-    nodes: scoped,
-    edges: model.edges.filter(e => scopedIds.has(e.source) && scopedIds.has(e.target)),
-  };
-  return applyIsolationFilter(scopedModel, activeFilter.hideIsolated ?? false).nodes.length;
 }
 
 /**
@@ -353,17 +336,18 @@ export async function searchObjects(
       })),
   ];
 
-  const filterSchemaSet = activeFilter?.schemas?.length
-    ? new Set(activeFilter.schemas.map(s => schemaKey(s, model.identifierCaseSensitive)))
-    : null;
+  const admits = activeFilter ? userFilterAdmits(model, activeFilter) : null;
+  const hitIds = new Set([...nameHits, ...columnHits.map(h => h.node)].map(n => n.id));
+  const hitNodes = new Map(admits ? model.nodes.filter(n => hitIds.has(n.id)).map(n => [n.id, n]) : []);
   const typeCounts = new Map<string, number>();
   const taggedResults = results.map(r => {
     const row = r as Record<string, unknown>;
     const type = String(row.t);
     typeCounts.set(type, (typeCounts.get(type) ?? 0) + 1);
+    const node = hitNodes.get(String(row.id));
     return {
       ...r,
-      in_user_filter: filterSchemaSet ? filterSchemaSet.has(schemaKey((row.s as string) ?? '', model.identifierCaseSensitive)) : true,
+      in_user_filter: admits && node ? admits(node) : true,
     };
   });
   const byType = Object.fromEntries(

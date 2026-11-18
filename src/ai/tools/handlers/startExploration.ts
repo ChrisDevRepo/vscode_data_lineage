@@ -178,9 +178,14 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
 
       const pendingInit = sess.pendingExploration?.init;
       const listOr = (sent: readonly string[] | undefined, fallback: readonly string[] = []): string[] => [...(sent ?? fallback)];
-      const excludeTypes = listOr(data.excludeTypes, pendingInit?.excludeTypes ?? engine.getGuiHiddenTypes());
-      const excludeSchemas = listOr(data.excludeSchemas, pendingInit?.excludeSchemas ?? engine.getGuiHiddenSchemas());
-      const excludeNodeIds = listOr(data.excludeNodeIds, pendingInit?.excludeNodeIds ?? engine.getGuiExcludedNodeIds());
+      // Exclusions start from the view's filters: a first proposal only adds to them, since
+      // the AI never widens the scope by itself; a revision's lists replace them (the user's Change).
+      const exclusions = (sent: readonly string[] | undefined, pending: readonly string[] | undefined, view: readonly string[],
+        key: (value: string) => string): string[] =>
+        isRefining ? listOr(sent, pending ?? view) : [...new Map([...view, ...(sent ?? [])].map(value => [key(value), value])).values()];
+      const excludeTypes = exclusions(data.excludeTypes, pendingInit?.excludeTypes, engine.getGuiHiddenTypes(), type => type.toLowerCase());
+      const excludeSchemas = exclusions(data.excludeSchemas, pendingInit?.excludeSchemas, engine.getGuiHiddenSchemas(), identifierKey);
+      const excludeNodeIds = exclusions(data.excludeNodeIds, pendingInit?.excludeNodeIds, engine.getGuiExcludedNodeIds(), identifierKey);
       const passNodeIds = listOr(data.passNodeIds, pendingInit?.passNodeIds);
       const scopeNotes = listOr(data.scopeNotes, pendingInit?.scopeNotes);
       const refineOrigin = isRefining ? (data.origin ?? pendingInit?.origin ?? '') : (data.origin ?? '');

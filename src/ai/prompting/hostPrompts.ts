@@ -14,7 +14,8 @@ import {
   type GeneralPromptContext,
   type PromptPhase,
 } from './prompts';
-import { UNKNOWN_DB_PLATFORM, type DatabaseModel } from '../../engine/types';
+import { OBJECT_TYPES, UNKNOWN_DB_PLATFORM, type DatabaseModel } from '../../engine/types';
+import { countVisibleNodes, userFilterAdmits } from '../../engine/shared/modelFilters';
 import type { SerializedFilterState } from '../../engine/projectStore';
 import type { AiGateRefine } from '../../engine/shared/bridgeContract';
 import { describeScreen } from '../tools/screenStatePresenter';
@@ -28,8 +29,9 @@ import { escapePromptText } from '../support/text';
 export type StagePromptContext = GeneralPromptContext;
 
 /**
- * Derives the {@link StagePromptContext} from the loaded model + active filter. With a schema
- * filter, `visibleNodes` counts only nodes in those schemas. With no model it degrades to zeros so
+ * Derives the {@link StagePromptContext} from the loaded model + active filter. `visibleNodes`
+ * counts what the view shows (the count `lineage_get_context` serves); `filterHides` is set when the
+ * view's filters hide an object. With no model it degrades to zeros so
  * discovery still renders; `dbPlatform` stays platform-typed rather than carrying a "no model"
  * sentence, since it renders under a `- Platform:` label where a non-platform value reads as a
  * category error and the zero counts already say nothing is loaded.
@@ -48,15 +50,21 @@ export function deriveStagePromptContext(
   }
   const filterSchemas = filter?.schemas ?? [];
   const totalNodes = model.nodes.length;
-  const visibleNodes = filterSchemas.length > 0
-    ? model.nodes.filter((n) => filterSchemas.includes(n.schema)).length
-    : totalNodes;
+  const visibleNodes = filter ? countVisibleNodes(model, filter) : totalNodes;
+  const admits = filter ? userFilterAdmits(model, filter) : null;
+  const filterHides = filter && admits && model.nodes.some((n) => !admits(n))
+    ? {
+      types: filter.types?.length ? OBJECT_TYPES.filter((t) => !filter.types.includes(t)) : [],
+      namePatterns: filter.exclusionPatterns ?? [],
+    }
+    : undefined;
   return {
     dbPlatform: model.dbPlatform?.trim() || UNKNOWN_DB_PLATFORM,
     filterSchemas,
     totalSchemaCount: model.schemas.length,
     visibleNodes,
     totalNodes,
+    ...(filterHides && { filterHides }),
     ...(model.identifierCaseSensitive && { identifierCaseSensitive: true }),
     ...(screen ? { screen } : {}),
   };
@@ -74,7 +82,7 @@ export function buildHostStageSystemPrompt(
   analysisMode: 'bb' | 'ct' = 'bb',
 ): string {
   const base = buildGeneralSystemPrompt(ctx);
-  const phaseSpecific = buildPhasePrompt(phase, analysisMode);
+  const phaseSpecific = buildPhasePrompt(phase, analysisMode, ctx.filterHides !== undefined);
   return [base, phaseSpecific].filter(Boolean).join('\n\n');
 }
 
