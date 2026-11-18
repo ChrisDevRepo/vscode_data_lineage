@@ -47,6 +47,8 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
     'Set writes_to to the table and column this hop\'s SQL writes, or to null when it writes no table. A downstream reader is never a write destination: remove that node from writes_to; every open neighbor you do not prune is visited anyway.',
   pruned_contributor:
     'This upstream node was already pruned earlier this run and cannot supply the column — a removed node stays removed. Name a different, still-reachable supplier for this upstream_columns entry, or submit upstream_columns: [] and account for the column ending here.',
+  column_out_of_scope:
+    'Remove the outside column or its entry if it is the sole supplier or output destination; use column_flow: [] if none remain. Ask the outside object in questions and record the fact in sections.',
   prune_absent:
     'This id is not in the loaded model — there is nothing to prune. Remove it from prune_neighbors.',
   prune_noop_removed:
@@ -99,6 +101,7 @@ export const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   bad_caller_context: REJECTION_CODES.routeValidationFailed,
   bad_writes_to_target: REJECTION_CODES.writesToNamesReader,
   pruned_contributor: REJECTION_CODES.prunedContributor,
+  column_out_of_scope: REJECTION_CODES.columnOutOfScope,
   prune_absent: REJECTION_CODES.routeValidationFailed,
   prune_noop_removed: REJECTION_CODES.routeValidationFailed,
   prune_noop_visited: REJECTION_CODES.routeValidationFailed,
@@ -148,6 +151,7 @@ export function buildRouteValidationRejection(errors: InvalidRoute[]): ToolRejec
       ...(e.available_columns ? { available_columns: e.available_columns } : {}),
       ...(e.actual_columns ? { actual_columns: e.actual_columns } : {}),
       ...(e.available_routes ? { available_routes: e.available_routes } : {}),
+      ...(e.alternatives ? { alternatives: e.alternatives } : {}),
     })),
     issuePaths: errors.flatMap(e => (e.path ? [e.path] : [])),
   });

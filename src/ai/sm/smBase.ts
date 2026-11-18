@@ -1304,6 +1304,41 @@ export class NavigationEngine implements IHopStateMachine {
     };
   }
 
+  /**
+   * Spec 07:9: each `column_flow` object (`upstream_columns[].node`, `writes_to.node`) outside the
+   * approved scope, as a fatal `column_out_of_scope`. The focus, the scope, visited nodes and the
+   * unexcluded tables the origin writes (a procedure origin's columns live there, spec 01) are inside; any
+   * other object must pass {@link admitsRoute}; the refusal names the cause. A reference `prior`
+   * already refuses keeps its own refusal; every other reference is still checked.
+   */
+  private columnRefsOutOfScope(focusId: string, finding: HopFindingKept, prior: readonly InvalidRoute[]): InvalidRoute[] {
+    const refused = new Set(prior.map(route => /^column_flow\.\d+\.(upstream_columns\.\d+|writes_to)/.exec(route.path ?? '')?.[0]));
+    const originWrites = this.originNodeId ? this.writtenCarrierIds(this.originNodeId) : new Set<string>();
+    const refs = (finding.column_flow ?? []).flatMap((entry, index) => [
+      ...entry.upstream_columns.map((ref, refIndex) => ({ node: ref.node, at: `column_flow.${index}.upstream_columns.${refIndex}` })),
+      ...(entry.writes_to ? [{ node: entry.writes_to.node, at: `column_flow.${index}.writes_to` }] : []),
+    ]).filter(ref => !refused.has(ref.at));
+    return refs.flatMap(({ node: raw, at }) => {
+      const id = resolveModelNodeId(raw, this.nodeMap, this.model.identifierCaseSensitive);
+      const node = id ? this.nodeMap.get(id) : undefined;
+      if (!id || !node || id === focusId || this.scopeNodeIds.has(id) || this.visited.has(id)
+        || (originWrites.has(id) && this.checkBorder(id, node, 'supplement').kind === 'in_border')) return [];
+      const { border, depthBreach, admitted } = this.admitsRoute(id, node, focusId);
+      if (admitted) return [];
+      const cause = border.kind === 'excluded' ? `excluded ${border.axis === 'node_id' ? 'object' : border.axis}`
+        : border.kind === 'out_of_direction' ? 'out of direction'
+          : `at depth ${depthBreach}, past the limit ${this.breachedDepthLimit(id, depthBreach)}`;
+      return [{ kind: 'column_out_of_scope' as const, id, path: `${at}.node`, reason: `The object is out of scope (${cause}).`, alternatives: ['questions', 'sections'] }];
+    });
+  }
+
+  /** The limit of the side {@link depthBorderBreach} judged `depth` by; for a hop-relative depth, the smaller limit. */
+  private breachedDepthLimit(nodeId: string, depth: number | null): number {
+    const sides = this.directedDepthsFor(nodeId);
+    const side = (['upstream', 'downstream'] as const).find(name => sides?.[name] === depth);
+    return side ? this.depthLimits[side] : Math.min(this.depthLimits.upstream, this.depthLimits.downstream);
+  }
+
   public get scopeSize(): number {
     return this.scopeNodeIds.size;
   }
@@ -2612,7 +2647,7 @@ export class NavigationEngine implements IHopStateMachine {
       let entrySides: Array<{ index: number; upstream: boolean; downstream: boolean }> | undefined;
       if (this.tracer && (finding.column_flow || this.currentReturnTargets().length)) {
         const validated = this.tracer.validateColumnFlow(focusId, finding, this.nodeMap, this.model, this.store ?? null, this.log, this.removedSet, traceDirection, mixedSides ? this.incomingColumnRefs('upstream') : incomingRefs, this.currentReturnTargets(), this.getCurrentTasks().flatMap(task => task.callerContext && task.nodeId && this.validFunctionCallerContext(task.nodeId, task.callerContext) ? [{ node: task.callerContext.node, col: task.callerContext.col }] : []), mixedSides ? downstreamRefs : [], this.columnRoots(), this.columnContributorIds(focusId));
-        invalidRoutes.push(...validated.invalidRoutes);
+        invalidRoutes.push(...validated.invalidRoutes, ...this.columnRefsOutOfScope(focusId, finding, validated.invalidRoutes));
         entrySides = validated.entrySides;
         for (const edge of validated.stagedEdges) edge.hop = this.hopCount;
         stagedColumnEdges.push(...validated.stagedEdges);

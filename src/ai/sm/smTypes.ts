@@ -971,6 +971,7 @@ export type InvalidRouteKind = | 'absent_contributor'
       | 'bad_return_target'
       | 'bad_caller_context'
       | 'pruned_contributor'
+      | 'column_out_of_scope'
       | 'prune_absent'
       | 'prune_noop_removed'
       | 'prune_noop_visited'
@@ -1000,6 +1001,8 @@ export interface InvalidRoute {
     actual_columns?: string[];
     /** Carrier-side neighbours a body-less focus may name (`non_writer_continuation`). */
     available_routes?: string[];
+    /** Fields that carry the fact instead of the refused reference (`column_out_of_scope`). */
+    alternatives?: string[];
 }
 
 /** Discriminated union representing the engine's current aspect mode. */
