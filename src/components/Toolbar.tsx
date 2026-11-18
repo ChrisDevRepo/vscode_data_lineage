@@ -1,4 +1,4 @@
-import { memo, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { FloatingFocusManager, FloatingPortal, useInteractions, useListNavigation } from '@floating-ui/react';
 import { useKeyboardShortcut } from '../hooks/useKeyboardShortcut';
 import { useDropdown } from '../hooks/useDropdown';
@@ -100,6 +100,8 @@ interface ToolbarProps {
   onUpdateView?: (profileId: string) => void;
   /** Whether the filters have been modified since the last project load/save. */
   isFilterDirty?: boolean;
+  /** Increments when the extension asks to go back; runs the Back button action, with its unsaved-changes bar. */
+  backRequest?: number;
   /** Whether UI interactions that would change the graph structure are disabled. */
   isModeLocked?: boolean;
   /** Whether a fresh trace/path/analysis mode can be started from the current view. */
@@ -228,6 +230,7 @@ export const Toolbar = memo(function Toolbar({
   onDeleteView,
   onUpdateView,
   isFilterDirty = false,
+  backRequest = 0,
   isModeLocked = false,
   canStartNewScopedMode = !isModeLocked,
   canSwitchGraphMode = !isModeLocked,
@@ -251,6 +254,13 @@ export const Toolbar = memo(function Toolbar({
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [confirmingBack, setConfirmingBack] = useState(false);
   const backButtonRef = useRef<HTMLButtonElement>(null);
+  const requestBack = () => (isFilterDirty ? setConfirmingBack(true) : onBack());
+  const handledBackRequest = useRef(backRequest);
+  useEffect(() => {
+    if (backRequest === handledBackRequest.current) return;
+    handledBackRequest.current = backRequest;
+    requestBack();
+  });
   const analysis = useDropdown();
   const analysisItemsRef = useRef<Array<HTMLElement | null>>([]);
   const [analysisActiveIndex, setAnalysisActiveIndex] = useState<number | null>(null);
@@ -312,7 +322,7 @@ export const Toolbar = memo(function Toolbar({
     <>
       <div className="ln-toolbar flex items-center gap-2 px-4 py-2.5">
         <Tooltip content="Load New Project">
-          <Button ref={backButtonRef} onClick={() => isFilterDirty ? setConfirmingBack(true) : onBack()} variant="icon" aria-label="Load New Project">
+          <Button ref={backButtonRef} onClick={requestBack} variant="icon" aria-label="Load New Project">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 0 0-1.883 2.542l.857 6a2.25 2.25 0 0 0 2.227 1.932H19.05a2.25 2.25 0 0 0 2.227-1.932l.857-6a2.25 2.25 0 0 0-1.883-2.542m-16.5 0V6A2.25 2.25 0 0 1 6 3.75h3.879a1.5 1.5 0 0 1 1.06.44l2.122 2.12a1.5 1.5 0 0 0 1.06.44H18A2.25 2.25 0 0 1 20.25 9v.776" />
             </svg>

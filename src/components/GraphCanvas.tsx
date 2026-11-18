@@ -605,6 +605,8 @@ interface GraphCanvasProps {
   onUpdateView?: (profileId: string) => void;
   /** Whether any filters have changed relative to the default or last saved state. */
   isFilterDirty?: boolean;
+  /** Increments when the extension asks to go back; passed to the toolbar. */
+  backRequest?: number;
   /** When true, analysis and trace-start are disabled (trace/analysis/bookmark mode active). */
   isModeLocked?: boolean;
   /** Whether the current scoped view supports removing individual nodes via the node X. */
@@ -769,6 +771,7 @@ export function GraphCanvas({
   onDeleteView,
   onUpdateView,
   isFilterDirty,
+  backRequest,
   isModeLocked = false,
   canRemoveNodeFromScopedView = false,
   canEditTraceScope = false,
@@ -2007,6 +2010,7 @@ export function GraphCanvas({
         onDeleteView={onDeleteView}
         onUpdateView={onUpdateView}
         isFilterDirty={isFilterDirty}
+        backRequest={backRequest}
         isModeLocked={isModeLocked}
         canStartNewScopedMode={canStartNewScopedMode}
         canSwitchGraphMode={canSwitchGraphMode}

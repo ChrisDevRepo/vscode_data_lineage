@@ -7,7 +7,7 @@
 - The **with positions** bookmark option. Bookmarks keep their filters and view; node positions saved by earlier versions are ignored.
 
 ### Changed
-- No confirmation dialogs remain outside the AI chat: **Open Wizard** replaces an open view, **Remove Database Connection** removes the picked connection and its saved password and shows a notice, and the **Trust Server Certificate** button on a certificate error trusts the server at once.
+- No confirmation dialogs remain outside the AI chat: **Open Wizard** with a loaded view takes the view back to the start screen, with its unsaved-changes prompt, **Remove Database Connection** removes the picked connection and its saved password and shows a notice, and the **Trust Server Certificate** button on a certificate error trusts the server at once.
 - Opening a file, project or database while another load runs cancels the earlier load, and **Cancel** stops a load at once: a late result no longer replaces the graph.
 - Info, warning and error lines in the output channel no longer show file paths or project, view or object names; those appear at debug level. Credentials are removed from every log line and notification.
 - The AI trace file records the token usage the model reports for each reply.

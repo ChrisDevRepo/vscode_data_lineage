@@ -30,7 +30,7 @@ Include:
 ## Connections
 
 - SQL login or Microsoft Entra ID, with read-only application intent, encrypted by default.
-- **Trust Server Certificate** turns off certificate checks; the extension asks before enabling it.
+- **Trust Server Certificate** turns off certificate checks for that connection. Only your own choice sets it: the button on a certificate error, or the setting. Editing the connection's server or port turns it off again.
 - Passwords are kept in VS Code secret storage, never in saved connections.
 
 ## Local files

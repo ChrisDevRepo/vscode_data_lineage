@@ -884,7 +884,7 @@ export function createMessageHandlers(
     },
     'reload': () => {
       host.log('debug', 'Bridge', 'Reloading panel');
-      host.executeCommand('dataLineageViz.open');
+      host.executeCommand('dataLineageViz.open', { replace: true });
     },
     'request-projects': () => {
       host.log('debug', 'Bridge', 'Projects list requested');

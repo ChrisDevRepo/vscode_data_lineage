@@ -82,7 +82,7 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
     context,
     getSession,
     outputChannel,
-    (ctx, title, demo) => {
+    (ctx, title, demo, replace) => {
       Logger.create(outputChannel, 'Bridge').debug(`Command executed: openPanel (demo=${demo})`);
       return openPanel(
         ctx,
@@ -92,7 +92,8 @@ export async function activateRuntime(context: vscode.ExtensionContext) {
         loadStore,
         saveStore,
         async (c) => { await migrateFromWorkspaceState(c, PROJECT_STORE_KEY, outputChannel, reportDroppedProjects); },
-        demo
+        demo,
+        replace
       );
     },
     (ctx) => buildDebugDump(ctx, getSession),

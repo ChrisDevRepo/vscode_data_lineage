@@ -5,7 +5,7 @@ import { notifyError } from './utils/notifications';
 import { getUri } from './utils/getUri';
 import { getNonce } from './utils/getNonce';
 import { createBridgeHost, type BridgeHost } from './bridge/host';
-import { summarizeZodError } from './bridge/host';
+import { postToWebview, summarizeZodError } from './bridge/host';
 import { createMessageHandlers, PROJECT_STORE_KEY, type ReportDocumentRef } from './bridge/messageHandlers';
 import {
   MainPanelToExtensionMsgSchema,
@@ -40,17 +40,24 @@ export function openPanel(
   loadProjectStore: (context: vscode.ExtensionContext) => any,
   saveProjectStore: (context: vscode.ExtensionContext, store: any) => Promise<void>,
   migrateFromWorkspaceState: (context: vscode.ExtensionContext) => Promise<void>,
-  loadDemo = false
+  loadDemo = false,
+  replace = false
 ) {
   const bridgeLogger = Logger.create(outputChannel, 'Bridge');
 
   if (activePanel) {
     if (!loadDemo && getSession().graph) {
-      const existing = activePanel;
-      bridgeLogger.info('Open Wizard invoked with a panel open — replacing the existing panel.');
-      const disposed = new Promise<void>((resolve) => existing.onDidDispose(() => resolve()));
-      existing.dispose();
-      void disposed.then(() => openPanel(context, title, getSession, outputChannel, loadProjectStore, saveProjectStore, migrateFromWorkspaceState));
+      if (replace) {
+        const existing = activePanel;
+        bridgeLogger.info('Reload requested — replacing the existing panel.');
+        const disposed = new Promise<void>((resolve) => existing.onDidDispose(() => resolve()));
+        existing.dispose();
+        void disposed.then(() => openPanel(context, title, getSession, outputChannel, loadProjectStore, saveProjectStore, migrateFromWorkspaceState));
+        return;
+      }
+      bridgeLogger.info('Open Wizard invoked with a panel open — asking the view to go back.');
+      activePanel.reveal();
+      void postToWebview(activePanel, { type: 'request-back' }, bridgeLogger);
       return;
     }
     bridgeLogger.info('Revealing existing panel');

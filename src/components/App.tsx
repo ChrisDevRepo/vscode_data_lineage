@@ -386,6 +386,7 @@ export function App() {
    * no stored path is warned.
    */
   const reloadSourceRef = useRef<() => void>(() => {});
+  const [backRequest, setBackRequest] = useState(0);
   reloadSourceRef.current = () => {
     if (view !== 'graph') return;
     if (!activeProjectId && !dacpacLoader.isDemo) {
@@ -1255,6 +1256,8 @@ export function App() {
         }
       } else if (msg.type === 'reload-source') {
         reloadSourceRef.current();
+      } else if (msg.type === 'request-back') {
+        setBackRequest((n) => n + 1);
       } else if (msg.type === 'ai-view-preview') {
         const renderModel = modelRef.current;
         let resolvedIds = msg.nodeIds;
@@ -1684,6 +1687,7 @@ export function App() {
         onDeleteView={handleDeleteView}
         onUpdateView={handleUpdateView}
         isFilterDirty={isFilterDirty}
+        backRequest={backRequest}
         isModeLocked={isModeLocked}
         canRemoveNodeFromScopedView={modeCapabilities.canRemoveNodeFromScopedView}
         canEditTraceScope={modeCapabilities.canEditTraceScope}

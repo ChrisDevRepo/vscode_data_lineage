@@ -17,7 +17,7 @@ export function registerCommands(
   context: vscode.ExtensionContext,
   getSession: () => AiSession,
   outputChannel: vscode.LogOutputChannel,
-  openPanel: (context: vscode.ExtensionContext, title: string, loadDemo?: boolean) => void,
+  openPanel: (context: vscode.ExtensionContext, title: string, loadDemo?: boolean, replace?: boolean) => void,
   buildDebugDump: (context: vscode.ExtensionContext) => string,
   traceWriter: AiTraceWriter,
 ): vscode.Disposable[] {
@@ -26,7 +26,7 @@ export function registerCommands(
 
   return [
     ...registerConnectionCommands(context, outputChannel, () => loadDmvQueries(outputChannel, context.extensionUri)),
-    vscode.commands.registerCommand('dataLineageViz.open', () => openPanel(context, 'Data Lineage Viz')),
+    vscode.commands.registerCommand('dataLineageViz.open', (arg?: { replace?: boolean }) => openPanel(context, 'Data Lineage Viz', false, arg?.replace === true)),
     vscode.commands.registerCommand('dataLineageViz.openDemo', () => openPanel(context, 'Data Lineage Viz', true)),
 
     /**
