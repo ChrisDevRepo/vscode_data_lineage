@@ -428,9 +428,6 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
               paths: [fieldPath],
             });
           }
-          for (const entry of expanded.normalized) {
-            s.logger.debug(`presentResult normalization: evidence reference ${entry} — ${fieldLabel}`);
-          }
           return expanded.text;
         };
         const expandOptional = (text: string | undefined, fieldLabel: string): string | undefined =>
