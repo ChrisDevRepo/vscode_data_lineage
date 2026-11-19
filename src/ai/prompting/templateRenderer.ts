@@ -99,7 +99,7 @@ function captureRecipeHeader(classification: ClassificationValue | undefined): s
     ? 'an object keyed by angle (`{business, technical}`), one key per angle this mission fires'
     : kept.length === 2
       ? '`{"business": …, "technical": …}` — classification=both keeps both keys, one key per angle'
-      : '`{"' + kept[0] + '": …}` — classification=' + classification + ' keeps only this key';
+      : '`{"' + kept[0] + '": …}`';
   return [
     '### Capture recipe',
     `Submit \`sections\` as ${shape}, and put every applicable item from the active capture instructions inside that key's string value. Markdown without headings. Back each grain predicate, formula and any evidence-supported ⚠️ line with one short \`\`\`sql fence of its deciding expression, an exact substring of \`bb_ddl\`; what the SQL does not establish reads \`not established from the available SQL\`. Skip an item the SQL lacks.`,

@@ -185,7 +185,7 @@ function buildActivePhasePrompt(analysisMode: 'bb' | 'ct'): string {
   return [
     '# Active hop',
     'This hop reads one SQL object, `focus_node` in `<hop_context>`, against `<current_task>`. Read its `bb_ddl`, where present. Neighbors carry no SQL; a question about a neighbor\'s logic belongs to its own hop. `<short_term_memory>` is context from earlier hops, not evidence for this one.',
-    'Ground claims in supplied evidence: do not infer execution counts, uniqueness, validity policy or business obligations without evidence; check numeric limits against declared precision and scale.',
+    'Ground claims in supplied evidence: do not infer execution counts, uniqueness, validity policy or business obligations without evidence.',
     '',
     'Deliver one `lineage_submit_findings` call; judge `verdict` from the focus itself.',
     '',
