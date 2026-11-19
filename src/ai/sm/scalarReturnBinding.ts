@@ -38,12 +38,12 @@ export function uniqueScalarReturnTargets(targets: readonly ScalarReturnTarget[]
 /**
  * Resolves a declared caller destination structurally, without reading its SQL or adding an edge.
  */
-export function resolveFunctionCallerTarget(functionId: string, target: ScalarReturnTarget, nodeMap: Parameters<typeof getNodeColumns>[1], model: { readonly identifierCaseSensitive?: boolean; readonly edges: readonly { readonly source: string; readonly target: string; readonly type: Parameters<typeof edgeApiType>[0] }[] }, store?: Parameters<typeof getNodeColumns>[2] | null): ScalarReturnTarget | null {
+export function resolveFunctionCallerTarget(functionId: string, target: ScalarReturnTarget, nodeMap: Parameters<typeof getNodeColumns>[1], model: { readonly identifierCaseSensitive?: boolean; readonly edges: readonly ({ readonly source: string; readonly target: string } & Parameters<typeof edgeApiType>[0])[] }, store?: Parameters<typeof getNodeColumns>[2] | null): ScalarReturnTarget | null {
   const identity = (name: string): string => referenceKey(name, model.identifierCaseSensitive === true);
   const fn = nodeMap.get(functionId);
   const callerId = resolveModelNodeId(target.node, nodeMap, model.identifierCaseSensitive);
   if (fn?.type !== 'function' || !callerId || callerId === functionId || identity(target.node) !== identity(callerId)) return null;
-  if (!model.edges.some(edge => edge.source === functionId && edge.target === callerId && edgeApiType(edge.type, fn.type) === 'read')) return null;
+  if (!model.edges.some(edge => edge.source === functionId && edge.target === callerId && edgeApiType(edge, fn.type) === 'read')) return null;
   const column = getNodeColumns(callerId, nodeMap, store ?? undefined)?.find(value => normalizeColName(value.name, model.identifierCaseSensitive) === normalizeColName(target.col, model.identifierCaseSensitive));
   return column ? { node: callerId, col: column.name } : null;
 }
