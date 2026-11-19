@@ -89,8 +89,7 @@ export function externalRefAdmits(showExternalRefs: boolean, externalRefTypes: R
 
 /**
  * The type, External References and name-exclusion parts of the user filter as one node
- * predicate; the schema part is {@link filterBySchemas} (edge-aware) or the per-node test in
- * {@link userFilterAdmits}.
+ * predicate; the schema part is {@link filterBySchemas} (edge-aware).
  */
 function attributeAdmits(activeFilter: SerializedFilterState): (n: LineageNode) => boolean {
   const types = activeFilter.types?.length ? new Set<string>(activeFilter.types) : null;
@@ -100,14 +99,16 @@ function attributeAdmits(activeFilter: SerializedFilterState): (n: LineageNode) 
 }
 
 /**
- * The graph view's user filter as one per-node predicate: the schema filter, the object-type
- * filter, the External References filter and the name-exclusion patterns. Hide Isolated is a
- * view-layout rule and stays out.
+ * The graph view's user filter as one per-node predicate over the scope {@link countVisibleNodes}
+ * counts: the schema scope ({@link filterBySchemas}, with the external references it touches),
+ * the allowlist, the object-type filter, the External References filter and the name-exclusion
+ * patterns. Hide Isolated is a view-layout rule and stays out.
  */
 export function userFilterAdmits(model: DatabaseModel, activeFilter: SerializedFilterState): (n: LineageNode) => boolean {
-  const schemaKeys = activeFilter.schemas?.length ? new Set(activeFilter.schemas.map(s => schemaKey(s, model.identifierCaseSensitive))) : null;
+  const inSchemaScope = activeFilter.schemas?.length ? new Set(filterBySchemas(model, new Set(activeFilter.schemas)).nodes.map(n => n.id)) : null;
+  const allowlist = activeFilter.allowlistNodeIds && new Set(activeFilter.allowlistNodeIds);
   const attributes = attributeAdmits(activeFilter);
-  return n => (!schemaKeys || schemaKeys.has(schemaKey(n.schema, model.identifierCaseSensitive))) && attributes(n);
+  return n => (!inSchemaScope || inSchemaScope.has(n.id)) && (!allowlist || allowlist.has(n.id)) && attributes(n);
 }
 
 /**
