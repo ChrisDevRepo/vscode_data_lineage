@@ -18,9 +18,6 @@ export type SmStatus = 'created' | 'initialized' | 'exploring' | 'awaiting_findi
 /** Live hop-loop progress: completed AI hops, queued nodes, display-safe total work, prunes. */
 export type HopProgress = { current: number; open: number; total: number; pruned: number; added: number };
 
-/** Flags identifying structural boundaries encountered during graph traversal. */
-export type BoundaryFlag = 'none' | 'source' | 'sink' | 'external' | 'cycle';
-
 /**
  * The focus node's self-status submitted each hop. Two states: `analyze` = the node applies
  * business logic on the data path (sections stored, featured in the answer); `passthrough` = the
@@ -169,10 +166,6 @@ export interface HopNeighbor {
   edge_direction: 'upstream' | 'downstream';
   /** The type of dependency (e.g., 'SELECT', 'INSERT', 'FK'). */
   edge_type: string;
-  /** Indicates if this node is a traversal boundary. */
-  boundary: BoundaryFlag;
-  /** Human-readable explanation for the boundary flag. */
-  boundary_reason?: string;
   /** Current state of this node within the navigation engine's agenda. */
   scope?: 'visited' | 'agenda' | 'pruned' | 'available' | 'external';
   /** List of columns pertinent to the current trace, if applicable. */

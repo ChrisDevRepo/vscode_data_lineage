@@ -35,7 +35,13 @@ function buildWorkerHopMessage(hop: HopContext | null, focusId: string): string 
   if (hop) {
     const hopForJson = { ...hop };
     delete hopForJson.current_task;
-    escapedBody = escapeDelimitedJson(hopForJson, 2);
+    const { neighbors } = hopForJson;
+    escapedBody = escapeDelimitedJson(neighbors?.length ? { ...hopForJson, neighbors: [] } : hopForJson, 2);
+    if (neighbors?.length) {
+      // One compact line per neighbor inside the pretty array: same keys and values, fewer whitespace tokens.
+      const lines = neighbors.map(neighbor => `    ${escapeDelimitedJson(neighbor)}`).join(',\n');
+      escapedBody = escapedBody.replace('"neighbors": []', () => `"neighbors": [\n${lines}\n  ]`);
+    }
   } else {
     escapedBody = escapeDelimitedJson({ focus_node_id: focusId });
   }
@@ -177,8 +183,8 @@ function buildStableContextBlocks(sess: AiSession, engine: NavigationEngine | nu
 }
 
 /**
- * Composes the lean per-hop worker user message: the focus task, focus DDL + neighbours, and
- * rolling memory. The only per-hop-volatile content; the stable mission/rules ride in the cached
+ * Composes the lean per-hop worker user message: the capture recipe, the focus task, focus DDL +
+ * neighbours, and rolling memory, stable block first. The only per-hop-volatile content; the stable mission/rules ride in the cached
  * system prompt ({@link buildActiveInstruction}), keeping the prefix byte-identical across hops.
  *
  * Blinkered-worker scope: what to analyse, the node + neighbours, and continuity memory (short-term
@@ -212,13 +218,13 @@ export function buildActiveHopInstruction(sess: AiSession, engine: NavigationEng
   const recentRejections = sess.memory.getRecentRejections().filter(rejection => rejection.atHop < engine.currentHop);
   const memory = buildMemoryBlock(sess.memory.getShortTermMemory(), recentRejections);
   const memorySections: string[] = [];
-  if (currentTask) memorySections.push('current_task');
   if (captureRecipe.prompt) memorySections.push('capture_recipe');
+  if (currentTask) memorySections.push('current_task');
   if (focus) memorySections.push('hop_context');
   memorySections.push('short_term_memory');
   if (recentRejections.length > 0) memorySections.push('recent_rejections');
   return {
-    message: [currentTask, captureRecipe.prompt, focus, memory].filter(Boolean).join('\n\n'),
+    message: [captureRecipe.prompt, currentTask, focus, memory].filter(Boolean).join('\n\n'),
     templateKeys: captureRecipe.shippedKeys,
     memorySections,
     classificationGatedKeys: classificationGatedKeys(captureRecipe),
