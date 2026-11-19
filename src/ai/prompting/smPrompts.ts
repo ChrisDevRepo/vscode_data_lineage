@@ -152,7 +152,7 @@ function buildDirectionLines(
     `Edge direction relative to ${originNodeId} (engine-computed; the analyzed-node list is in hop order, not flow order):`,
     `- upstream (data flows INTO the origin): ${direction.upstream.join(', ') || '(none)'}`,
     `- downstream (data flows OUT of the origin): ${direction.downstream.join(', ') || '(none)'}`,
-    `- side branches (read a traced node, on no path to or from the origin): ${direction.sideBranch.join(', ') || '(none)'}`,
+    `- side branches (read a traced node, on no path to or from the origin; neither a source nor a consumer of the origin): ${direction.sideBranch.join(', ') || '(none)'}`,
     ...(direction.deleteOnly.length > 0
       ? [`- delete-only writers (write to a traced node only by deleting rows; supply it no data): ${direction.deleteOnly.join(', ')}`]
       : []),
