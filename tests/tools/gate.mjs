@@ -15,9 +15,8 @@ const LOG_DIR = join('test-results', 'gate');
  * @returns Exit status, spawn error, and the combined output.
  *
  * @remarks
- * `stdio: 'inherit'` cannot tee, so a failed step's diagnostics survived only in terminal
- * scrollback — worthless for an intermittent failure, which is the case that most needs them.
- * Streaming keeps the live view a long step depends on.
+ * `stdio: 'inherit'` cannot tee, so output is piped, streamed live and kept for the failure log
+ * of an intermittent step.
  */
 function runStep(step) {
   return new Promise((resolve) => {

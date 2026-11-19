@@ -125,7 +125,7 @@ function projectMessage(
       role: 'assistant',
       // Tool-only turns send `null`: some servers reject `''` there. An empty turn with no
       // tool_calls must send a string — Azure 400s `expected a string, got null` on
-      // `messages[n].content` otherwise (m22-head T7, empty_generation retry).
+      // `messages[n].content` otherwise.
       content: text || (calls.length > 0 ? null : ''),
       ...(calls.length > 0 ? { tool_calls: calls } : {}),
       ...(reasoning ? { reasoning_content: reasoning } : {}),
@@ -242,7 +242,7 @@ const TOOL_CALL_IN_TEXT_MARKERS: readonly RegExp[] = [
  * Whether a text-only generation looks like a tool call the server failed to parse.
  *
  * @remarks
- * A *suspicion*, never a status: DD-5 pins this as a flag in the run summary only. A completed text
+ * A *suspicion*, never a status: it is a flag in the run summary only. A completed text
  * generation stays completed, because the harness records what a provider does and does not invent
  * product behaviour for it. False positives are acceptable (a model may legitimately quote a tool
  * schema); a status change on a guess would not be. A quoted JSON object flags too, which the same
@@ -254,8 +254,8 @@ export function suspectsToolCallAsText(text: string): boolean {
   if (/"name"\s*:\s*"[A-Za-z0-9_.-]+"/.test(text) && /"(arguments|parameters)"\s*:/.test(text)) {
     return true;
   }
-  // The `{name, arguments}` wrapper is one spelling among several, and flagged none of the 27
-  // recorded occurrences: those are bare JSON records — fenced, unfenced, or Hermes/XML.
+  // The `{name, arguments}` wrapper is one spelling among several; observed occurrences are bare
+  // JSON records, fenced or unfenced, or Hermes/XML.
   return readProseToolCandidate(text) !== null;
 }
 

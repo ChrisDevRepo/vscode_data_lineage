@@ -47,8 +47,8 @@ suite('Bare environment — no chat model or database extension', () => {
     const extension = vscode.extensions.getExtension(EXTENSION_ID);
     assert.ok(extension, 'extension must be present in the Extension Development Host');
 
-    // The assertion that matters: `activate()` resolves rather than rejecting. Were the optional
-    // AI surface able to fail activation, this is where it would surface.
+    // `activate()` must resolve rather than reject; an optional AI surface failure would surface
+    // here.
     await extension.activate();
     assert.strictEqual(extension.isActive, true, 'extension must be active in a bare host');
   });
@@ -57,9 +57,8 @@ suite('Bare environment — no chat model or database extension', () => {
     await vscode.extensions.getExtension(EXTENSION_ID)?.activate();
     const commands = await vscode.commands.getCommands(true);
 
-    // Core lineage commands — these are the product, and none of them depends on AI or a database.
-    // `openDemo` is the strongest of these: it loads a bundled `.dacpac` and renders the graph
-    // with no external dependency of any kind, which is exactly the journey that must survive.
+    // Core lineage commands depend on neither AI nor a database. `openDemo` is the strongest: it
+    // loads a bundled `.dacpac` and renders the graph with no external dependency.
     for (const command of [
       'dataLineageViz.open',
       'dataLineageViz.openDemo',
@@ -83,10 +82,8 @@ suite('Bare environment — no chat model or database extension', () => {
       'the session-scoped AI trace command must be registered without a model provider',
     );
 
-    // `dataLineageViz.ai.enabled` defaults to true, so the AI surface DOES register here — the
-    // point is that registering it against a host with no model provider is survivable. If the
-    // registration had thrown, the previous test's `activate()` would have rejected and the core
-    // commands above would be missing.
+    // `dataLineageViz.ai.enabled` defaults to true, so the AI surface does register here; a throw
+    // would have rejected the earlier `activate()`.
     assert.ok(
       commands.includes('dataLineageViz.aiResumeNativeGate'),
       'the participant registers even with no chat model present',

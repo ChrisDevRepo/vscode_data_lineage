@@ -1,12 +1,10 @@
 /**
- * Shared fixture builders for tests/unit/sm/**.
+ * Shared fixture builders for the NavigationEngine tests under tests/unit/ai-core/.
  *
- * NOT a test file itself — imported by tests/unit/sm/*.test.ts files.
+ * NOT a test file itself.
  *
- * These synthetic NavigationEngine test graphs predate `LineageNode.fullName`,
- * `DatabaseModel.schemas: SchemaInfo[]`, and the `'body' | 'exec'` LineageEdge.type
- * union — fields tightened after these fixtures were written (fixture-shape drift,
- * not a behavioral gap).
+ * The synthetic NavigationEngine test graphs carry no `LineageNode.fullName`,
+ * `DatabaseModel.schemas: SchemaInfo[]`, or `'body' | 'exec'` LineageEdge.type.
  *
  * None of these tests read `fullName`, per-schema `nodeCount`/`types` breakdowns, or
  * a populated `catalog`/`neighborIndex` — they drive NavigationEngine purely off the

@@ -2,7 +2,7 @@
  * Schema View and Expanded Schema View construction.
  *
  * @remarks
- * Split out of graphBuilder.test.ts. Covers `projectSchemaQuotient`, `buildSchemaGraph`
+ * Covers `projectSchemaQuotient`, `buildSchemaGraph`
  * and `buildExpandedSchemaViewGraph` — the collapse of an object graph into schema
  * clusters, and the bridge edges that keep an expanded schema connected to the clusters
  * around it. A dropped bridge renders a node as an orphan despite its model edges, so
