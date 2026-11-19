@@ -54,6 +54,7 @@ export const REQUIRED_AI_TEMPLATE_KEYS: (keyof AiOutputTemplates)[] = [
   'business_capture',
   'technical_capture',
   'structural_callouts',
+  'shared_capture',
   'structural_summary',
   'general',
   'loading_pattern',

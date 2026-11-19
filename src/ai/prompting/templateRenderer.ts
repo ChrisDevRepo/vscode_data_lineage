@@ -32,6 +32,7 @@ const STAGE_BY_KEY: Readonly<Record<keyof AiOutputTemplates, readonly TemplateSt
   closing:              ['synthesis'],
   highlights:           ['synthesis'],
   notes:                ['synthesis'],
+  shared_capture:       ['active'],
   business_capture:     ['active'],
   technical_capture:    ['active'],
   structural_callouts:  ['active'],
@@ -71,6 +72,7 @@ const PER_FOCUS_KEYS: ReadonlySet<keyof AiOutputTemplates> = new Set([
   'business_capture',
   'technical_capture',
   'structural_callouts',
+  'shared_capture',
   'structural_summary',
 ]);
 
@@ -167,8 +169,9 @@ export interface StagePromptResult {
  * <key>: <instruction>` (walking `STAGE_BY_KEY`). A capture key is labelled with its `sections` key
  * instead (`CAPTURE_ANGLE`); a per-focus recipe key with no angle of its own (e.g.
  * `structural_callouts`) folds into whichever angle fired, per {@link captureRecipeHeader}, never
- * its own line. One heading hierarchy, no per-key `####` wrappers. The non-bodied per-focus render
- * is the exception: `structural_summary` ships bare with no `### ` header, keeping only
+ * its own line; `shared_capture` precedes the recipes once, unlabelled. One heading
+ * hierarchy, no per-key `####` wrappers. The non-bodied per-focus render is the exception:
+ * `structural_summary` ships bare with no `### ` header, keeping only
  * {@link bareSummaryAngleClause} ahead of it. At synthesis a known `classification` adds a
  * code-resolved `**Mission type:** <value>` line before the list.
  *
@@ -233,7 +236,7 @@ export function resolveStagePrompt(
         gatedOut.push({ key, reason: 'focus_scope' });
         continue;
       }
-      if ((key === 'business_capture' || key === 'technical_capture' || key === 'structural_callouts') && render.focusKind === 'non_bodied') {
+      if ((key === 'business_capture' || key === 'technical_capture' || key === 'structural_callouts' || key === 'shared_capture') && render.focusKind === 'non_bodied') {
         gatedOut.push({ key, reason: 'focus_scope' });
         continue;
       }

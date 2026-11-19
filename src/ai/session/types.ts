@@ -127,6 +127,11 @@ export interface AiOutputTemplates {
    * and the one-line form both angles cite.
    */
   structural_callouts: string;
+  /**
+   * Coverage shared by every fired capture recipe, served once per bodied hop ahead of the
+   * recipes so classification `both` does not repeat it per angle.
+   */
+  shared_capture: string;
   /** Reduced active-phase template for non-bodied origin nodes (Purpose/Columns/Upstream/...). */
   structural_summary: string;
   /**
@@ -191,6 +196,7 @@ export const EMPTY_AI_TEMPLATES: AiOutputTemplates = {
   business_capture: '',
   technical_capture: '',
   structural_callouts: '',
+  shared_capture: '',
   structural_summary: '',
   general: '',
   loading_pattern: '',

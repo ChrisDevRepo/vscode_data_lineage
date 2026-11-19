@@ -19,6 +19,7 @@ Templates control the tone, structure and detail of answers, not which objects a
 | Discovery chat | `discovery_chat` | Tone, structure and detail of chat answers |
 | Per-hop capture | `business_capture`, `technical_capture` | What is recorded about an object with a SQL body |
 | | `structural_callouts`, `structural_summary` | Warnings backed by the SQL; objects without a SQL body |
+| | `shared_capture` | Coverage common to every selected angle, served once per object with a SQL body |
 | | `column_trace_capture` | How column provenance is explained (column traces only) |
 | Final report | `summary`, `title`, `intro`, `closing` | Info card line, title, opening, closing (`closing` is skipped for small results) |
 | | `highlights`, `notes`, `loading_pattern`, `general` | Highlight groups, per-node notes, load patterns, section structure and list, table and SQL rules |
