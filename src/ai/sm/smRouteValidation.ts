@@ -55,6 +55,8 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
     'A questions[] entry can only name a neighbor listed in `<hop_context>` for this focus; this node is not adjacent to it. Attach the question to the neighbor it is reached through, or remove the entry from questions.',
   prune_question_conflict:
     'Choose one action for this neighbor: remove it from prune_neighbors to investigate it, or remove its questions entry to prune it.',
+  prune_column_conflict:
+    'Choose one action for this neighbor: remove it from prune_neighbors to keep its column_flow mapping, or remove its column_flow entries to prune it.',
   question_closed:
     'Remove questions[] entries for visited or pruned nodes. Attach new checks only to eligible unvisited neighbors; queued unvisited work can receive a question.',
 };
@@ -92,6 +94,7 @@ export const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   prune_noop_out_of_scope: REJECTION_CODES.routeValidationFailed,
   question_not_neighbor: REJECTION_CODES.routeValidationFailed,
   prune_question_conflict: REJECTION_CODES.routeValidationFailed,
+  prune_column_conflict: REJECTION_CODES.routeValidationFailed,
   question_closed: REJECTION_CODES.routeValidationFailed,
 };
 

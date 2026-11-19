@@ -96,6 +96,11 @@ export class ColumnTracer {
     return this.aspect.edges;
   }
 
+  /** Distinct nodes at either end of a committed edge. */
+  committedNodeIds(): ReadonlySet<string> {
+    return new Set(this.aspect.edges.flatMap(edge => [edge.from_node, edge.to_node]));
+  }
+
   /** Replaces the active column set after a hop commits new edges. */
   setActiveColumns(columns: string[]): void {
     this.aspect.active_columns = columns;

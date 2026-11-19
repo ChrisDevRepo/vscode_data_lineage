@@ -975,6 +975,7 @@ export type InvalidRouteKind = | 'absent_contributor'
       | 'prune_noop_queued'
       | 'prune_noop_out_of_scope'
       | 'prune_question_conflict'
+      | 'prune_column_conflict'
       | 'question_not_neighbor'
       | 'question_closed';
 

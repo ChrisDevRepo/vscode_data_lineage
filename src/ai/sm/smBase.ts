@@ -1754,7 +1754,7 @@ export class NavigationEngine implements IHopStateMachine {
   private removalSupport(removedBefore: ReadonlySet<string>, removedAfter: ReadonlySet<string>): RemovalAnalysis {
     const analysis = analyzeRemoval(this.graph, {
       originId: this.originNodeId ?? '', scope: this.scopeNodeIds, removedBefore, removedAfter,
-      visited: this.visited, currentNodeId: this.currentFocusNodeId ?? undefined, sides: this.allowedNoteSides(),
+      visited: new Set([...this.visited, ...(this.tracer?.committedNodeIds() ?? [])]), currentNodeId: this.currentFocusNodeId ?? undefined, sides: this.allowedNoteSides(),
     });
     if (analysis.rejection || !this.originNodeId || this.supplementNodeIds.size === 0) return analysis;
     const connectedBefore = bfsReachable(this.graph, this.originNodeId, removedBefore, undefined, this.scopeNodeIds);
@@ -2820,6 +2820,17 @@ export class NavigationEngine implements IHopStateMachine {
       }));
       const pruneNeighborIds = new Set(pruneTargets.map(t => t.resolved ?? this.identifierKey(t.raw)));
 
+      const columnEndpoints = new Set(stagedColumnEdges.flatMap(edge => [edge.from_node, edge.to_node]));
+      for (const target of pruneTargets) {
+        if (!target.resolved || target.resolved === focusId || !columnEndpoints.has(target.resolved)) continue;
+        invalidRoutes.push({
+          kind: 'prune_column_conflict',
+          id: target.resolved,
+          path: target.path,
+          reason: `\`${target.resolved}\` is also named in column_flow; the same submission cannot map and prune it.`,
+        });
+      }
+
       const routeRequests: ValidatedHop['routeRequests'] = [];
       const requested = new Set<string>();
       const unresolvedQuestions: string[] = [];
@@ -3036,11 +3047,11 @@ export class NavigationEngine implements IHopStateMachine {
         const routeRejection = buildRouteValidationRejection(fatalRoutes);
         this.lastRoutedRejected = fatalRoutes.length;
         for (const r of fatalRoutes) this.memory.recordRejection(r.id, r.reason, this.hopCount);
-        // Neither action in a prune/question conflict is valid held content.
+        // Neither action in a prune conflict (question or column_flow) is valid held content.
         const issuePaths = [...new Set([
           ...(classViolation ? ['sections'] : []),
           ...(routeRejection.issuePaths ?? []),
-          ...fatalRoutes.flatMap(route => route.kind === 'prune_question_conflict' ? ['prune_neighbors'] : []),
+          ...fatalRoutes.flatMap(route => route.kind === 'prune_column_conflict' ? ['prune_neighbors', 'column_flow'] : route.kind === 'prune_question_conflict' ? ['prune_neighbors'] : []),
         ])];
         this.holdFinding(finding, issuePaths.map(path => path.split('.')[0]));
         // A section fault's own rejection already states the held line.
@@ -3505,7 +3516,7 @@ export class NavigationEngine implements IHopStateMachine {
     const retain = (nodeId: string, analysis: RemovalAnalysis): void => {
       const refusal = analysis.rejection
         ? REMOVAL_REFUSAL[analysis.rejection]
-        : `retained because removing it would disconnect previously visited analysis: ${analysis.disconnectedVisited.join(', ')}.`;
+        : `retained because removing it would disconnect previously visited analysis or saved column endpoints: ${analysis.disconnectedVisited.join(', ')}.`;
       this.memory.recordRejection(nodeId, `\`${nodeId}\`: ${refusal}`, this.hopCount);
       this.log('debug', `[Prune] reject id=${nodeId} reason=${analysis.rejection ?? 'visited_support'} count=${analysis.disconnectedVisited.length}`);
       // A refused prune leaves the object in scope: it is routed like any other kept neighbour (visit-once and scope checks stay in enqueueHop).
