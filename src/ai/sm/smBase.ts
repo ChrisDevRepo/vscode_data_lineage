@@ -756,7 +756,7 @@ export class NavigationEngine implements IHopStateMachine {
    * What the transcript replays of a rejected `lineage_submit_findings` call: `focus_node_id`,
    * `verdict`, `column_flow`, `prune_neighbors` and `questions` as sent, plus the fields the held
    * draft failed; a failed `sections` keeps only the angles that are not held. The retry must see
-   * the prune and the questions together: a prune of a question target is refused (spec 06). The
+   * the prune and the questions together: a prune of a question target is refused. The
    * rest is held, so the model no longer sees it.
    *
    * @returns The reduced arguments, or `null` when no draft is held for the call's focus: the call
