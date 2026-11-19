@@ -93,7 +93,7 @@ export const Legend = memo(function Legend({
                   return (
                     <div key={schema} className="flex items-center gap-2">
                       <div
-                        className="w-4 h-4 rounded-sm shrink-0 ln-legend-swatch"
+                        className="w-4 h-4 rounded-sm shrink-0"
                         style={{ backgroundColor: color }}
                       />
                       <span

@@ -327,13 +327,6 @@ const SELECTION_ACTIVE_CLASS_NAME = 'ln-has-selection';
 /** Canvas-root class applying the `--ln-edge-density` fade and thinning to object-view edges. */
 const EDGE_DENSITY_CLASS_NAME = 'ln-edge-density';
 
-/**
- * CSS custom property on the `ReactFlow` root holding the current canvas zoom. It is set straight on
- * the element from the viewport callback, not through React state, so a zoom gesture restyles nodes
- * without re-rendering the canvas; `src/index.css` reads it to keep node borders visible zoomed out.
- */
-const ZOOM_CSS_VAR = '--ln-zoom';
-
 /** Stable empty route-target list for the navigator outside a focus. */
 const NO_FOCUS_TARGETS: readonly string[] = [];
 
@@ -1470,9 +1463,6 @@ export function GraphCanvas({
   const onCameraChangeRef = useRef(onCameraChange);
   onCameraChangeRef.current = onCameraChange;
 
-  /** The `ReactFlow` root element, where the canvas zoom is published as {@link ZOOM_CSS_VAR}. */
-  const flowRootRef = useRef<HTMLDivElement>(null);
-
   /**
    * Shows or hides AI notes as the canvas crosses the legibility zoom. The band is wider than one
    * threshold, since `notesVisible` feeds every node's decoration and a gesture resting on one zoom
@@ -1485,7 +1475,6 @@ export function GraphCanvas({
       if (!prev && vp.zoom > NOTES_ZOOM_IN) return true;
       return prev;
     });
-    flowRootRef.current?.style.setProperty(ZOOM_CSS_VAR, String(vp.zoom));
     onCameraChangeRef.current?.(vp);
   }, []);
 
@@ -2138,7 +2127,6 @@ export function GraphCanvas({
           >
             <ColumnHoverProvider value={columnHover}>
               <ReactFlow
-                ref={flowRootRef}
                 className={columnViewActive ? undefined : [EDGE_DENSITY_CLASS_NAME, (highlightedNodeId || isFocusPaths) && SELECTION_ACTIVE_CLASS_NAME].filter(Boolean).join(' ')}
                 style={columnViewActive ? undefined : ({ '--ln-edge-density': edgeDensity(displayEdges.length) } as StyleWithVars)}
                 nodes={displayNodes}
