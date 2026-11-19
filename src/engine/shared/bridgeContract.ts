@@ -724,7 +724,7 @@ export const LOAD_RESULT_TYPES = [
  * all outgoing communication is validated against it.
  */
 export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('dacpac-model'), model: DatabaseModelSchema, config: ExtensionConfigSchema, sourceName: z.string(), autoVisualize: z.boolean().optional(), isDemo: z.boolean().optional(), loadId: z.string().optional() }),
+  z.object({ type: z.literal('dacpac-model'), model: DatabaseModelSchema, config: ExtensionConfigSchema, sourceName: z.string(), autoVisualize: z.boolean().optional(), isDemo: z.boolean().optional(), loadId: z.string().optional(), projectId: z.string().optional() }),
   z.object({ type: z.literal('db-model'), model: DatabaseModelSchema, config: ExtensionConfigSchema, sourceName: z.string(), loadId: z.string().optional() }),
   z.object({ type: z.literal('projects-list'), projects: z.array(ProjectSchema), lastOpenedId: z.string().nullable(), lastWizardView: z.enum(['main', 'projects']).nullish() }),
   z.object({ type: z.literal('detail-closed') }),

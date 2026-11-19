@@ -216,6 +216,7 @@ export function applyModelToSession(
       }
     }
   } else {
+    sess.currentProjectId = null;
     sess.sourceLabel = isDb ? 'database' : 'dacpac';
   }
   void vscode.commands.executeCommand('setContext', 'dataLineageViz.modelLoaded', true);
@@ -487,15 +488,9 @@ export function createMessageHandlers(
       // command installed before the webview could receive it, or a post lost across a reload, is
       // delivered here.
       if (sess.model) {
-        const project = store.projects.find(p => p.id === store.lastOpenedId);
-        if (project) {
-          sess.currentProjectId = project.id;
-          sess.projectName = project.name;
-          sess.isDbSession = project.connection.type === 'database';
-        }
         host.log('info', 'Bridge', 'Restoring the session model');
         host.log('debug', 'Bridge', `Restoring session for project: ${sess.projectName}`);
-        host.postMessage({ type: 'dacpac-model', model: sess.model, config, sourceName: sess.projectName ?? 'Project', autoVisualize: true });
+        host.postMessage({ type: 'dacpac-model', model: sess.model, config, sourceName: sess.projectName ?? 'Project', autoVisualize: true, projectId: sess.currentProjectId ?? undefined });
       }
     },
     'show-detail': async (msg) => {
@@ -729,6 +724,8 @@ export function createMessageHandlers(
       const profileIds = (store.projects.find(p => p.id === msg.id)?.filterProfiles ?? []).map(fp => fp.id);
       const updated = deleteProject(store, msg.id);
       await saveProjectStore(context, updated);
+      const sess = getSession();
+      if (sess.currentProjectId === msg.id) sess.currentProjectId = null;
       postProjectsList(host, updated);
       for (const profileId of profileIds) {
         await clearStoredRunLogged(profileId);
