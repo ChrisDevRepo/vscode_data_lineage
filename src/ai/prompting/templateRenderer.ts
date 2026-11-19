@@ -19,10 +19,9 @@ type TemplateStage = 'discover' | 'active' | 'synthesis';
  * ⚠️ sits once in its section.
  *
  * `description` is absent on purpose: it is engine output (`orderAndAssemble` in
- * `presentResult.ts`), not an AI-writeable field; do not add it back without restoring the AI-input
- * plumbing in `tools.ts` and resolving the conflict with engine assembly. `sections`,
- * `business_subsection` and `technical_subsection` are absent too: their lift+group+label rule
- * lives in `buildSynthesisPrompt()`.
+ * `presentResult.ts`), not an AI-writeable field. `sections`, `business_subsection` and
+ * `technical_subsection` are absent too: their lift+group+label rule lives in
+ * `buildSynthesisPrompt()`.
  */
 const STAGE_BY_KEY: Readonly<Record<keyof AiOutputTemplates, readonly TemplateStage[]>> = {
   discovery_chat:       ['discover'],
