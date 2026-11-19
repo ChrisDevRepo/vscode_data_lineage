@@ -17,19 +17,15 @@ import { schemaKey } from '../utils/sql';
 import { Tooltip } from './ui/Tooltip';
 
 interface NodeInfoBarProps {
-  /** ID of the node currently under inspection. */
   nodeId: string;
   /** Source metadata controls exact identifier matching for parse diagnostics. */
   identifierCaseSensitive?: boolean;
-  /** Full catalog of all objects in the model. */
   catalog: Record<string, CatalogEntry>;
   /** Index of all input/output edges in the graph. */
   neighborIndex: NeighborIndex;
   /** Set of node IDs currently visible in the graph view. */
   visibleNodeIds: Set<string>;
-  /** Optional parsing statistics for SP dependency analysis. */
   parseStats?: ParseStats;
-  /** Callback fired when the user closes the info bar. */
   onClose: () => void;
 }
 

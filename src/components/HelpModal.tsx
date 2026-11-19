@@ -7,9 +7,7 @@ import { CloseIcon } from './ui/CloseIcon';
 import { Tooltip } from './ui/Tooltip';
 
 interface HelpModalProps {
-  /** Whether the help modal is currently visible. */
   isOpen: boolean;
-  /** Callback fired when the user requests to close the modal. */
   onClose: () => void;
 }
 

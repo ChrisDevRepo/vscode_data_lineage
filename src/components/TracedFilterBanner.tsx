@@ -4,7 +4,6 @@ import { Tooltip } from './ui/Tooltip';
 import { TRACE_ALL_LEVELS } from '../engine/shared/bridgeContract';
 
 interface TracedFilterBannerProps {
-  /** The display name of the starting node for the lineage trace. */
   startNodeName: string;
   /** The number of levels to traverse upstream (parents). */
   upstreamLevels: number;
@@ -19,15 +18,11 @@ interface TracedFilterBannerProps {
    * filter on the global graph.
    */
   mode: 'applied' | 'filtered';
-  /** Optional callback to end the tracing mode. */
   onEnd?: () => void;
-  /** Callback to reset/clear the trace filter. */
   onReset: () => void;
-  /** Optional callback to save the current traced view as a persistent bookmark. */
   onSaveAsBookmark?: (name: string) => void;
   /** Whether the trace should ignore existing schema/type filters and use the full model. */
   useFullModel: boolean;
-  /** Callback triggered when the "Include objects outside the filters" checkbox is toggled. */
   onToggleFullModel: () => void;
   /** The number of nodes that are hidden due to active schema/type filters. */
   filteredOutCount: number;

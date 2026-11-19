@@ -17,13 +17,10 @@ import type { FilterProfile } from '../engine/projectStore';
 import { SHORTCUT_KEYS, ESC_PRIORITY } from '../ui/keyboardShortcuts';
 
 interface ToolbarProps {
-  /** The set of object types (table, view, etc.) currently active in the filter. */
   types: Set<ObjectType>;
-  /** Callback to toggle a specific object type in the filter. */
   onToggleType: (type: ObjectType) => void;
   /** Whether nodes with no edges are currently hidden. */
   hideIsolated: boolean;
-  /** Callback to toggle the visibility of isolated nodes. */
   onToggleIsolated: () => void;
   /** Set of schemas that are currently highlighted or "focused" in the graph. */
   focusSchemas: Set<string>;
@@ -31,9 +28,7 @@ interface ToolbarProps {
   selectedSchemas?: Set<string>;
   /** Callback to toggle visibility for a specific schema. */
   onToggleSchema?: (schema: string) => void;
-  /** Callback to select all available schemas. */
   onSelectAllSchemas?: (schemas: string[]) => void;
-  /** Callback to deselect all schemas. */
   onSelectNoneSchemas?: (schemas: string[]) => void;
   /** List of all unique schema names present in the current model. */
   availableSchemas?: string[];
@@ -43,44 +38,31 @@ interface ToolbarProps {
   onRebuild?: () => void;
   /** Whether a rebuild (re-extract or config-triggered) is currently in flight. */
   isRebuilding?: boolean;
-  /** Callback to return to the project selection screen. */
   onBack: () => void;
-  /** Callback to open the DDL/SQL source viewer for the selected node. */
   onOpenDdlViewer?: () => void;
-  /** Callback to export the current graph state as a Draw.io XML file. */
   onExportDrawio?: () => void;
   /** Whether a node is currently selected/highlighted in the canvas. */
   hasHighlightedNode?: boolean;
-  /** Callback to execute a search and highlight matching nodes. */
   onExecuteSearch?: (name: string, schema?: string) => void;
-  /** Callback to initiate a column-level or table-level lineage trace. */
   onStartTrace?: (nodeId: string) => void;
   /**
    * Nodes in the working set but collapsed inside a schema cluster; {@link SearchWithAutocomplete}
    * uses them for three-state search partitioning.
    */
   collapsedSchemaNodeIds?: Set<string>;
-  /** Callback to toggle the full-text SQL search sidebar. */
   onToggleDetailSearch?: () => void;
-  /** Whether the detail search sidebar is currently visible. */
   isDetailSearchOpen?: boolean;
   /** Whether an analysis mode (islands, hubs, etc.) is currently active. */
   isAnalysisActive?: boolean;
-  /** The specific type of analysis currently being performed. */
   analysisType?: AnalysisType | null;
-  /** Callback to switch to a specific analysis mode. */
   onOpenAnalysis?: (type: AnalysisType) => void;
   /** Whether external references (cross-DB, files) are shown. */
   showExternalRefs?: boolean;
-  /** The specific subtypes of external references to display. */
   externalRefTypes?: Set<'file' | 'db'>;
-  /** Callback to toggle the global external references filter. */
   onToggleExternalRefs?: () => void;
-  /** Callback to toggle a specific external reference subtype. */
   onToggleExternalRefType?: (subType: 'file' | 'db') => void;
   /** List of glob patterns used to exclude objects by name. */
   exclusionPatterns?: string[];
-  /** Callback to add a new name-based exclusion pattern. */
   onAddExclusionPattern?: (pattern: string) => void;
   onRemoveExclusionPattern?: (pattern: string) => void;
   /** List of saved filter profiles (bookmarks) for the current project. */
@@ -91,12 +73,9 @@ interface ToolbarProps {
   activeViewId?: string | null;
   /** Whether the current filter state differs from the applied saved view. */
   isViewModified?: boolean;
-  /** Callback to save the current filter state as a new view. */
   onSaveView?: (name: string) => void;
   onApplyView?: (profile: FilterProfile) => void;
-  /** Callback to delete a saved filter profile. */
   onDeleteView?: (profileId: string) => void;
-  /** Callback to update an existing saved filter profile. */
   onUpdateView?: (profileId: string) => void;
   /** Whether the filters have been modified since the last project load/save. */
   isFilterDirty?: boolean;
@@ -115,7 +94,6 @@ interface ToolbarProps {
   isOverview?: boolean;
   /** Explicit Object View / Schema View state. */
   graphMode?: GraphMode;
-  /** Callback to switch between Object View and Schema View. */
   onGraphModeChange?: (mode: GraphMode) => void;
   /** Whether overview currently renders schema clusters and object nodes. */
   isExpandedSchemaViewActive?: boolean;

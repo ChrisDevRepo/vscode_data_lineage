@@ -4,7 +4,6 @@ import { schemaKey } from '../utils/sql';
 import { TRACE_NAVIGATOR_WIDTH } from './TraceTreePanel';
 
 interface LegendProps {
-  /** A list of database schema names to display in the legend. */
   schemas: string[];
   /** Color assignments from the current loaded schema set. */
   schemaColorMap?: SchemaColorMap;

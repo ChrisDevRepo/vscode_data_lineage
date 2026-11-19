@@ -65,13 +65,10 @@ export interface AiReportSection {
 }
 
 interface AiDescriptionOverlayProps {
-  /** The name of the AI-generated view or analysis. */
   viewName: string;
-  /** The markdown-formatted description text to display. */
   description: string;
   /** Whether the report column is expanded — controlled by the canvas so it can reserve width. */
   expanded: boolean;
-  /** Called when the user expands or collapses the column. */
   onExpandedChange?: (expanded: boolean) => void;
   /** Numbered sections for the navigation chips; absent when no badges were bridged. */
   sections?: readonly AiReportSection[];
@@ -83,7 +80,6 @@ interface AiDescriptionOverlayProps {
   onFocusNode?: (nodeId: string) => void;
   /** Which edge the column is docked against — defaults to `'right'`. */
   dockPosition?: AiDockPosition;
-  /** Called with the position picked from the dock menu. */
   onDockPositionChange?: (position: AiDockPosition) => void;
   /** Called with the panel's measured content-box size after a resize drag or dock switch. */
   onPanelResize?: (width: number, height: number) => void;

@@ -474,29 +474,19 @@ function serializeTraceAffordances(nodeId: string, controls: TraceNodeControls):
 }
 
 interface GraphCanvasProps {
-  /** Array of nodes formatted for React Flow. */
   flowNodes: FlowNode[];
-  /** Array of edges formatted for React Flow. */
   flowEdges: FlowEdge[];
-  /** Current state of the lineage trace or pathfinding operation. */
   trace: TraceState;
-  /** Current filter settings (schemas, types, search term, etc.). */
   filter: FilterState;
-  /** High-level metrics about the current graph subset. */
   metrics: { totalNodes: number; totalEdges: number; rootNodes: number; leafNodes: number } | null;
-  /** ID of the node currently highlighted/selected by the user. */
   highlightedNodeId?: string | null;
   /** The underlying graphology instance for structural analysis. */
   graph?: Graph | null;
-  /** Extension configuration settings. */
   config: ExtensionConfig;
-  /** Callback fired when a node is clicked. */
   onNodeClick: (nodeId: string, findQuery?: string) => void;
   /** Callback that drops the node selection — the canvas's click-away reset. */
   onClearSelection?: () => void;
-  /** Callback fired when a schema cluster is selected. */
   onSchemaNodeSelect?: (nodeId: string) => void;
-  /** Callback fired when a node is right-clicked. */
   onNodeContextMenu: (node: FlowNode, x: number, y: number) => void;
   /**
    * Fired on object-node double-click; opens the detail view like the context menu's Show Details.
@@ -505,30 +495,21 @@ interface GraphCanvasProps {
   onStartTraceImmediate: (nodeId: string) => void;
   /** Callback to apply a trace configuration (upstream/downstream levels). */
   onTraceApply: (config: { upstreamLevels: number; downstreamLevels: number }) => void;
-  /** Callback to end the current trace/path mode. */
   onTraceEnd: (onComplete?: () => void) => void;
   /** Callback to reset all filters and traces. */
   onResetAll: () => void;
-  /** Callback to toggle visibility of a specific object type. */
   onToggleType: (type: ObjectType) => void;
   /** Callback to toggle 'Isolated Nodes' filter. */
   onToggleIsolated: () => void;
   onToggleFocusSchema: (schema: string) => void;
-  /** Callback to toggle visibility of a specific schema. */
   onToggleSchema?: (schema: string) => void;
-  /** Callback to select all schemas in the filter. */
   onSelectAllSchemas?: (schemas: string[]) => void;
-  /** Callback to deselect all schemas in the filter. */
   onSelectNoneSchemas?: (schemas: string[]) => void;
-  /** Callback to toggle visibility of external references. */
   onToggleExternalRefs?: () => void;
-  /** Callback to toggle a specific external reference sub-type. */
   onToggleExternalRefType?: (subType: 'file' | 'db') => void;
-  /** Array of active exclusion patterns. */
   exclusionPatterns?: string[];
   onAddExclusionPattern?: (pattern: string) => void;
   onRemoveExclusionPattern?: (pattern: string) => void;
-  /** List of all schemas available in the model. */
   availableSchemas?: string[];
   /** Schemas with at least one node after all filters — for legend display. */
   renderedSchemas?: string[];
@@ -540,16 +521,12 @@ interface GraphCanvasProps {
   onRefresh: () => void;
   /** Callback to trigger a full graph rebuild (e.g. after filter change). */
   onRebuild?: () => void;
-  /** Callback to navigate back to the previous screen. */
   onBack: () => void;
-  /** Callback to open the DDL viewer for the selected object. */
   onOpenDdlViewer?: () => void;
-  /** Whether the detailed search sidebar is currently open. */
   isDetailSearchOpen?: boolean;
   onToggleDetailSearch?: () => void;
   /** Whether the trace navigator is collapsed to its reopen button. */
   isTraceTreeCollapsed?: boolean;
-  /** Callback to toggle the trace navigator. */
   onToggleTraceTreeCollapsed?: () => void;
   /** Traversal graph over the trace scope, shared by tree path lighting and focus paths. */
   traceScopeGraph?: Graph | null;
@@ -569,23 +546,17 @@ interface GraphCanvasProps {
   onResetTrace?: () => void;
   /** Loads one level from the given grow candidates. */
   onAddTraceNeighbors?: (candidateIds: string[]) => void;
-  /** The full database model (catalog and graph). */
   model?: DatabaseModel | null;
   infoBarNodeId?: string | null;
   onCloseInfoBar?: () => void;
   /** Current state of the graph analysis (SCC, Hubs, etc.). */
   analysisMode?: AnalysisMode | null;
-  /** Callback to start a specific analysis. */
   onOpenAnalysis?: (type: AnalysisType) => void;
-  /** Callback to exit analysis mode. */
   onCloseAnalysis?: () => void;
-  /** Callback to focus a specific group within the analysis results. */
   onSelectAnalysisGroup?: (groupId: string) => void;
-  /** Callback to clear the active analysis group focus. */
   onClearAnalysisGroup?: () => void;
   /** Callback to find and apply a path between two nodes. */
   onApplyPath?: (targetNodeId: string) => boolean;
-  /** Whether the graph is currently being rebuilt. */
   isRebuilding?: boolean;
   /** Node count a trace at the given upstream/downstream depth would render, before it runs. */
   estimateTraceSize?: (upstreamLevels: number, downstreamLevels: number) => number;
@@ -597,12 +568,9 @@ interface GraphCanvasProps {
   activeViewId?: string | null;
   /** Whether the current view has unsaved changes. */
   isViewModified?: boolean;
-  /** Callback to save the current view. */
   onSaveView?: (name: string) => void;
   onApplyView?: (profile: FilterProfile) => void;
-  /** Callback to delete a saved view. */
   onDeleteView?: (profileId: string) => void;
-  /** Callback to update an existing saved view. */
   onUpdateView?: (profileId: string) => void;
   /** Whether any filters have changed relative to the default or last saved state. */
   isFilterDirty?: boolean;
@@ -620,7 +588,6 @@ interface GraphCanvasProps {
   canSwitchGraphMode?: boolean;
   /** The current graph abstraction level (full object graph or overview schema graph). */
   graphMode?: GraphMode;
-  /** Callback to switch between Object View and Schema View. */
   onGraphModeChange?: (mode: GraphMode) => void;
   /**
    * Set on initial load/reset: `true` when the model is below the overview threshold. Disables the
@@ -641,9 +608,7 @@ interface GraphCanvasProps {
   ) => void;
   /** Transient AI preview — shown before user decides to save. */
   aiPreview?: { name: string; nodeIds: Set<string>; aiMetadata: AIViewMetadata } | null;
-  /** Called when user saves an AI preview as a bookmark. */
   onSaveAiBookmark?: (name: string) => void;
-  /** Called when user discards the AI preview. */
   onDiscardAiPreview?: () => void;
   /** Called when user clicks the "×" remove-from-view button (advanced bookmark mode). */
   onRemoveFromView?: (nodeId: string) => void;
@@ -667,7 +632,6 @@ interface GraphCanvasProps {
   onToggleFullModel?: () => void;
   /** Number of trace nodes hidden by the active filter. */
   filteredOutCount?: number;
-  /** Adds a direct neighbor to the current trace scope. */
   onTraceAddNeighbor?: (nodeId: string) => void;
   /** Prunes one safe node from the current trace scope. */
   onTracePruneNode?: (nodeId: string) => void;

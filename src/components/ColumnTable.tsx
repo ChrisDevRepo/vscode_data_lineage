@@ -3,14 +3,12 @@ import { highlightText } from './highlight';
 import { Tooltip } from './ui/Tooltip';
 
 interface ColumnTableProps {
-  /** The array of column definitions to render. */
   columns: ColumnDef[];
   /**
    * The parent object is a "virtual" external reference; a message then says metadata is
    * unavailable.
    */
   isVirtualExt: boolean;
-  /** Optional search query to highlight matching text within column names. */
   findQuery?: string;
   /**
    * Hides the 'Null' and 'Flags' columns to save space, for views or functions where they do not

@@ -52,7 +52,6 @@ export const CreateFlow = memo(function CreateFlow({
   }, [schemaOrModel, loader.selectedSchemas]);
   const overLimit = exceedsObjectLimit(selectedCount, maxNodes);
 
-  /** Generates a default project name based on the current connection metadata. */
   const autoName = useCallback(() => {
     if (!loader.fileName) return '';
     if (loader.filePath) {
@@ -75,7 +74,6 @@ export const CreateFlow = memo(function CreateFlow({
 
   const displayName = projectName || autoName();
 
-  /** Handles the final 'Visualize' action. */
   const handleVisualize = useCallback(() => {
     const name = displayName.trim() || autoName().trim() || loader.fileName || 'Project';
     if (loader.filePath) {
@@ -146,14 +144,12 @@ export const CreateFlow = memo(function CreateFlow({
             {isPhase1Loading && loader.loadingContext === 'dacpac' && <InlineSpinner />}
           </button>
 
-          {/* "or" divider */}
           <div className="flex items-center gap-2">
             <div className="flex-1 ln-border-top" />
             <span className="text-xs ln-text-muted">or</span>
             <div className="flex-1 ln-border-top" />
           </div>
 
-          {/* Connect to Database — full width */}
           <button
             className="w-full flex items-center gap-2 px-3 py-2.5 rounded-sm text-sm text-left ln-file-picker ln-list-item"
             onClick={loader.connectToDatabase}

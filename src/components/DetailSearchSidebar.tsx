@@ -6,24 +6,17 @@ import { highlightText } from './highlight';
 
 /** Search projection containing the node fields used by the detail sidebar. */
 export interface DetailSearchNode {
-  /** The unique ID of the object. */
   id: string;
-  /** The human-readable name of the object. */
   name: string;
-  /** The schema the object belongs to. */
   schema: string;
-  /** The classification of the object. */
   type: ObjectType;
   /** The raw SQL body script (stored procedure definition, view definition, etc.). */
   bodyScript?: string;
-  /** The array of column definitions for the object. */
   columns?: ColumnDef[];
 }
 
 interface DetailSearchSidebarProps {
-  /** Callback triggered to close the sidebar. */
   onClose: () => void;
-  /** The complete set of searchable nodes. */
   allNodes: DetailSearchNode[];
   /** Called when a search result is clicked, with the target node ID and the searched term. */
   onResultClick: (nodeId: string, searchTerm: string) => void;
@@ -39,11 +32,8 @@ interface DetailSearchSidebarProps {
   collapsedSchemaNodeIds?: Set<string>;
 }
 
-/** Internal representation of a search match. */
 interface SearchResult {
-  /** The node that matched the query. */
   node: DetailSearchNode;
-  /** A textual snippet containing the match. */
   snippet: string;
 }
 
@@ -57,7 +47,6 @@ interface ResultRowProps {
   clustered?: boolean;
 }
 
-/** Display labels for grouped search results. */
 const TYPE_LABELS: Partial<Record<ObjectType, string>> = {
   procedure: 'Procedures',
   view: 'Views',

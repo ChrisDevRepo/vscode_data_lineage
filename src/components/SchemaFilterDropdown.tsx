@@ -9,19 +9,15 @@ interface SchemaFilterDropdownProps {
   selectedSchemas: Set<string>;
   /** Set of schema names currently "focused" (highlighted/prioritized) in the view. */
   focusSchemas: Set<string>;
-  /** Optional callback to toggle a schema's visibility. */
   onToggleSchema?: (schema: string) => void;
   /** Optional callback to select several schemas at once (e.g. "Select All"). */
   onSelectAll?: (schemas: string[]) => void;
-  /** Optional callback to deselect several schemas at once. */
   onSelectNone?: (schemas: string[]) => void;
-  /** Callback to toggle a schema's focus state. */
   onToggleFocusSchema: (schema: string) => void;
   /** Whether the current filter state is "narrowed" (affects visual indicators). */
   isNarrowed?: boolean;
   /** When true, the trigger renders disabled and never opens the panel. */
   disabled?: boolean;
-  /** Tooltip text shown on the trigger while {@link disabled}. */
   disabledReason?: string;
 }
 

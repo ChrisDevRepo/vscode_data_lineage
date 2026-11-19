@@ -13,7 +13,6 @@ import { SHORTCUT_KEYS } from '../ui/keyboardShortcuts';
 interface SearchWithAutocompleteProps {
   /** Callback to execute a node search/jump; `schema` disambiguates results with the same name. */
   onExecuteSearch?: (name: string, schema?: string) => void;
-  /** Optional callback to initiate a trace directly from the search result. */
   onStartTrace?: (nodeId: string) => void;
   /** When set, Start Trace renders disabled with this reason instead of starting a trace. */
   startTraceDisabledReason?: string;

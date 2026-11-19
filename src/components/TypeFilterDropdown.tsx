@@ -6,13 +6,11 @@ import { ToolbarDropdown } from './ui/ToolbarDropdown';
 interface TypeFilterDropdownProps {
   /** The set of object types (table, view, etc.) currently active in the filter. */
   types: Set<ObjectType>;
-  /** Callback to toggle a specific object type in the filter. */
   onToggleType: (type: ObjectType) => void;
   /** Whether the filter is currently active (narrowing the results). */
   isNarrowed?: boolean;
   /** When true, the trigger renders disabled and never opens the panel. */
   disabled?: boolean;
-  /** Tooltip text shown on the trigger while {@link disabled}. */
   disabledReason?: string;
 }
 

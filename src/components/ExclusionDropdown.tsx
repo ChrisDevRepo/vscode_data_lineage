@@ -10,13 +10,10 @@ import { compileExclusionPattern } from '../utils/sql';
 interface ExclusionDropdownProps {
   /** Array of active exclusion patterns (SQL-like or Regex). */
   exclusionPatterns: string[];
-  /** Callback fired when a new pattern is added. */
   onAddPattern: (pattern: string) => void;
-  /** Callback fired when an existing pattern is removed. */
   onRemovePattern: (pattern: string) => void;
   /** When true, the trigger renders disabled and never opens the panel. */
   disabled?: boolean;
-  /** Tooltip text shown on the trigger while {@link disabled}. */
   disabledReason?: string;
 }
 
@@ -86,7 +83,6 @@ export const ExclusionDropdown = memo(function ExclusionDropdown({
             aria-haspopup="dialog"
           style={isOpen ? { background: 'var(--ln-toolbar-active-bg)' } : undefined}
         >
-          {/* no-symbol icon */}
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
             <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" />
           </svg>
