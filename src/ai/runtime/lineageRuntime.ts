@@ -32,7 +32,6 @@ export interface LineageRuntimeRequest {
 export interface LineageRuntimeRunInput {
   /** The exact native request model, already wrapped as a provider-neutral port. */
   readonly model: ModelPort;
-  /** Request identity, prompt, and optional history for this turn. */
   readonly request: LineageRuntimeRequest;
   /** Native event sink that receives this turn's events and its one terminal result. */
   readonly sink: TurnEventSink;
@@ -56,13 +55,11 @@ export interface LineageRuntimeDeps {
   readonly getSession: () => AiSession;
   /** Builds the strict direct-dispatch registry for the captured turn lease and request model. */
   readonly createRegistry: (lease: TurnLease, model: ModelPort) => IToolRegistry<string>;
-  /** Optional logger forwarded to the agent runtime. */
   readonly logger?: Logger;
   /** Optional per-turn model-step cap forwarded to the agent runtime. */
   readonly maxRounds?: number;
   /** Optional trace writer receiving this runtime's lifecycle and tool records. */
   readonly traceWriter?: AiTraceWriter;
-  /** Optional AI preview clear; forwarded to the agent runtime. */
   readonly clearPreview?: () => void;
 }
 

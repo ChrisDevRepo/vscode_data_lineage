@@ -51,7 +51,6 @@ export interface CapturedSection {
  */
 export interface DetailSlot {
   nodeId: string;
-  /** Schema of the database object. */
   schema: string;
   name: string;
   /** Object type (e.g. 'table', 'view', 'procedure'). */
@@ -81,7 +80,6 @@ export interface DetailSlot {
 export interface WorkingMemory {
   /** The user's original question, echoed verbatim every hop. */
   user_question: string;
-  /** Progress metrics for this session. */
   checklist: {
     /** Current hop index (1-based). */
     current_hop: number;
@@ -121,7 +119,6 @@ export interface MemoryStateSnapshot {
   missionBrief: string;
   /** User-stated analysis constraints no filter expresses, surviving sliding-memory wipes. */
   scopeNotes: string[];
-  /** Running verdict tally. */
   verdictCounts: { analyze: number; passthrough: number; prune: number };
   /** Ring buffer (≤5) of recent route rejections surfaced in working memory. */
   recentRejections: Array<{ nodeId: string; reason: string; atHop: number }>;
@@ -377,7 +374,6 @@ export class AiMemoryManager {
     this.recentRejections = restored.recentRejections;
   }
 
-  /** Count of nodes currently stored in the detail archive. */
   public get slotCount(): number {
     return this.detailSlots.size;
   }

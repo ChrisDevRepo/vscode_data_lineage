@@ -74,7 +74,6 @@ export function buildEdgeTypeMap(model: DatabaseModel): Map<string, string> {
 /** {@link buildEdgeTypeMap} per loaded model instance; a newly loaded model is a new key. */
 const edgeTypeMapCache = new WeakMap<DatabaseModel, Map<string, string>>();
 
-/** Returns the memoized edge-type map for `model`, building it once per model instance. */
 function getModelEdgeTypeMap(model: DatabaseModel): Map<string, string> {
   let map = edgeTypeMapCache.get(model);
   if (!map) {

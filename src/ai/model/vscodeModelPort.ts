@@ -48,7 +48,6 @@ export class VscodeModelPort implements ModelPort {
   /** Request-scoped adapter identifier derived from the selected model ID. */
   public readonly id: string;
 
-  /** Metadata copied from the exact model selected for this request. */
   public readonly identity: ModelIdentity;
 
   /** Number of native provider requests attempted through this port. */

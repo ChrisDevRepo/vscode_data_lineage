@@ -6,7 +6,6 @@ import { heldHopFindingSchemaForMode } from '../tools/toolSchemas';
 
 /** Stable failure of the navigation-snapshot shape check; engine invariants use error status. */
 export class InvalidEngineCheckpointError extends Error {
-  /** Stable machine code exposed to the checkpoint caller. */
   public readonly code = 'invalid_engine_checkpoint' as const;
   /** Validation paths safe to include in debug output without checkpoint values. */
   public readonly issuePaths: readonly string[];
@@ -307,7 +306,6 @@ export const NavigationSnapshotSchema: z.ZodType<SmState> = z.object({
   renderDroppedNodeIds: z.array(NonEmptyString).optional(),
 }).strict();
 
-/** A strongly typed snapshot of an active NavigationEngine session. */
 type NavigationSnapshot = z.infer<typeof NavigationSnapshotSchema>;
 
 /**

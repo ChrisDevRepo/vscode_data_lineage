@@ -3,7 +3,6 @@ import type { InteractionRuleResult } from '../types';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
 import { makeRejection } from '../../support/toolErrorEnvelope';
 
-/** Tool-specific routing hint for off-policy responses. */
 function offPolicyHint(toolName: string, stage: LmStage): string {
   if (stage.kind !== 'active') return 'Wait for the appropriate phase or call a different tool.';
   switch (toolName) {

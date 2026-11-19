@@ -11,7 +11,6 @@ export interface DiscoveryScopeArtifact {
   readonly turnEpoch: number;
   /** Canonical id of the node the BFS walked from. */
   readonly origin: string;
-  /** Direction the scope was walked in. */
   readonly direction: 'upstream' | 'downstream' | 'bidirectional';
   /** Ids of every node in the scope, origin included. */
   readonly nodeIds: readonly string[];
@@ -21,13 +20,11 @@ export interface DiscoveryScopeArtifact {
 
 /** Validated presentation committed by either a bounded preview or SM synthesis. */
 export interface PresentationArtifact {
-  /** Display name of the presented view. */
   readonly name: string;
   /** Canonical node ids rendered in the view. */
   readonly nodeIds: readonly string[];
   /** Validated AI view metadata; `summary` and `description` are always present. */
   readonly aiMetadata: AIViewMetadata & { readonly summary: string; readonly description: string };
-  /** Identifier of the run that authored this presentation. */
   readonly runId?: string;
   /** Serialized engine state captured at present time; absent when no engine was live. */
   readonly checkpoint?: SmState;
@@ -38,7 +35,6 @@ export interface PresentationArtifact {
  * or `Blackboard` modes and consumed by `present_result` synthesis to build the interactive report.
  */
 export interface ResultGraph {
-  /** IDs of nodes that are part of the result scope. */
   nodeIds: string[];
   /** Tuple representation of edges: [sourceNodeId, targetNodeId, edgeType]. */
   edges: [string, string, string][];
@@ -96,7 +92,6 @@ export const AI_TEMPLATE_SCHEMA_VERSION = 2;
 export interface AiOutputTemplates {
   /** Discovery-phase chat output: tunes answer length, citation, format; NOT a capture template. */
   discovery_chat: string;
-  /** Instructions for generating the high-level summary. */
   summary: string;
   /** Instructions for the document heading rendered as `# …` above sections. */
   title: string;
@@ -104,9 +99,7 @@ export interface AiOutputTemplates {
   intro: string;
   /** Instructions for the 1-2 sentence closing rendered after the sections. */
   closing: string;
-  /** Instructions for identifying critical highlights and takeaways. */
   highlights: string;
-  /** Instructions for extracting and formatting node-level notes. */
   notes: string;
   /**
    * Business-angle capture rules, fired at ACTIVE phase: govern the body of the section submitted
@@ -178,7 +171,6 @@ export const SECTIONS_PLACEHOLDER = '{{sections}}';
 
 /** Loader result: the instruction strings plus the section labels declared beside them. */
 export interface AiOutputTemplateSet {
-  /** Instruction string per template key. */
   readonly templates: AiOutputTemplates;
   /** Section labels per capture angle. */
   readonly sections: AiOutputSections;

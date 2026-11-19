@@ -229,9 +229,7 @@ export interface InstructionContext {
 
 /** Provider-neutral tool metadata supplied to a tool-capable generation. */
 export interface ModelToolDefinition {
-  /** Tool name the model must address the call by. */
   readonly name: string;
-  /** Natural-language description of what the tool does. */
   readonly description: string;
   readonly inputSchema: ZodType;
 }
@@ -252,7 +250,6 @@ export interface ToolGenerationInput {
   readonly tools: readonly ModelToolDefinition[];
   /** Optional policy narrowing which tools the model may call. */
   readonly toolChoice?: ModelToolChoice;
-  /** Optional abort signal cancelling the generation. */
   readonly signal?: AbortSignal;
   /** Graph phase label carried into diagnostics and trace records. */
   readonly phase: string;
@@ -264,7 +261,6 @@ export interface ToolGenerationInput {
 
 /** A registered native tool call ready for argument validation at its execution boundary. */
 export interface ValidGeneratedToolCall {
-  /** Literal `true` discriminator for the valid arm. */
   readonly valid: true;
   /** Provider call identifier, echoed into the paired tool-result message. */
   readonly callId: string;
@@ -276,7 +272,6 @@ export interface ValidGeneratedToolCall {
 
 /** A provider tool call rejected before dispatch. */
 export interface InvalidGeneratedToolCall {
-  /** Literal `false` discriminator for the invalid arm. */
   readonly valid: false;
   /** Provider call identifier exactly as the provider emitted it. */
   readonly callId: string;
@@ -322,9 +317,7 @@ export type ToolGenerationContent =
 export interface ModelIdentity {
   /** Model identifier as the hosting platform reports it. */
   readonly id: string;
-  /** Human-readable model name. */
   readonly name: string;
-  /** Vendor that serves the model. */
   readonly vendor: string;
   /** Model family the platform groups it under. */
   readonly family: string;
@@ -371,11 +364,9 @@ export interface GenerateStructuredInput<T> {
   readonly system?: string;
   /** Zod schema the model output must parse against; the parsed value is the returned result. */
   readonly schema: ZodType<T>;
-  /** Optional abort signal cancelling the generation. */
   readonly signal?: AbortSignal;
   /** Optional graph phase label for diagnostics. */
   readonly phase?: string;
-  /** Optional audit context for this generation. */
   readonly instructionContext?: InstructionContext;
 }
 
@@ -385,11 +376,9 @@ export interface CompleteTextInput {
   readonly messages: readonly ModelMessage[];
   /** Optional system instruction prepended ahead of `messages`. */
   readonly system?: string;
-  /** Optional abort signal cancelling the completion. */
   readonly signal?: AbortSignal;
   /** Optional graph phase label for diagnostics. */
   readonly phase?: string;
-  /** Optional audit context for this completion. */
   readonly instructionContext?: InstructionContext;
 }
 

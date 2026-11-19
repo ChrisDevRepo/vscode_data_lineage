@@ -2,7 +2,7 @@
  * @module ConnectionErrors
  * One place that turns a failed connect or query into the text and actions the user sees. The
  * driver's own message is shown verbatim behind the connection name; only the actions are chosen,
- * by error number, code or message pattern. Both providers use it.
+ * by error number, code or message pattern.
  */
 
 import * as vscode from 'vscode';
@@ -110,9 +110,9 @@ function grantStatement(user: string | undefined): string {
 /**
  * Describes a connection or query failure for the user. `message` is `<connection name>: <original
  * driver text>` with credential-shaped text removed, plus one hint when the server rejects a
- * Microsoft token. Actions depend on the error class: those managing a saved built-in connection
- * are offered only for the built-in provider, Retry only when the caller supplies a retry hook.
- * Each action runs on the user's click and any retry is a single attempt, never a loop.
+ * Microsoft token. Actions depend on the error class: those updating a saved connection require a
+ * saved `builtIn` `connectionId`, and Retry is offered only when the caller supplies a retry
+ * hook. Each action runs on the user's click and any retry is a single attempt, never a loop.
  *
  * @param hooks - Caller-supplied capabilities the actions use.
  */

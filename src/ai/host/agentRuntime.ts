@@ -77,7 +77,6 @@ export interface AgentRuntimeDeps {
    * undefined unless the host enabled the diagnostic trace.
    */
   readonly traceSyntheticRejection?: SyntheticRejectionTrace;
-  /** Optional AI preview clear; forwarded to the graph. */
   readonly clearPreview?: () => void;
 }
 

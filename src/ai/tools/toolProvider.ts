@@ -451,7 +451,6 @@ class ToolHandler implements ToolServices {
 /** Provider-neutral JSON text returned by every canonical lineage tool. */
 type LineageToolOutput = string;
 
-/** Executes one catalog tool from its raw model payload. */
 type ToolExecutor = (input: unknown) => LineageToolOutput | Promise<LineageToolOutput>;
 
 /**

@@ -249,7 +249,6 @@ export interface ToolAttemptResult {
    * errored or output-limited before any call dispatched.
    */
   readonly messages: readonly ModelMessage[];
-  /** Model prose emitted by this generation. */
   readonly text: string;
   /** Consent payload when a successful call opened a gate. */
   readonly gate?: unknown;
@@ -309,7 +308,6 @@ interface ToolGenerationAttemptInput {
   readonly detectRefusal?: (toolName: string, resultText: string) => string | null;
   /** Reads authoritative session state after dispatch to detect completion. */
   readonly isPhaseComplete?: () => boolean;
-  /** Provider-neutral tool-selection request for this generation. */
   readonly toolChoice?: ModelToolChoice;
   /** Tool whose successful dispatch closes the phase batch. */
   readonly requiredTerminalTool?: string;
@@ -704,7 +702,6 @@ interface RecordedToolOutcome {
   readonly resultText: string;
   /** Standard tool-result status: `'success'` for an executed call, `'error'` otherwise. */
   readonly status: 'success' | 'error';
-  /** The compact typed rejection recorded, when this outcome was a rejection. */
   readonly rejection?: ToolAttemptRejection;
   /**
    * The whole rejection, carried on the paired `ToolMessage.artifact` (`@langchain/core`'s

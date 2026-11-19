@@ -25,9 +25,7 @@ export interface ScreenStateInput {
   readonly uiState: unknown;
   /** Latest `render-state` buffer. */
   readonly renderState: unknown;
-  /** Current graph rendering mode. */
   readonly graphMode: 'full' | 'overview';
-  /** Node count after all active filters. */
   readonly filteredCount: number;
   /** Node count of the loaded model. */
   readonly totalNodes: number;

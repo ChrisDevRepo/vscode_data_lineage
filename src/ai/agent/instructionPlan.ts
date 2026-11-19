@@ -278,11 +278,8 @@ function buildContext(
   return Object.freeze(context);
 }
 
-/** @param draft - Structured-output call ingredients. @returns A readonly structured plan. */
 export function compileInstructionPlan<T>(draft: StructuredPlanDraft<T>): StructuredInstructionPlan<T>;
-/** @param draft - Tool-generation ingredients. @returns A readonly converse plan. */
 export function compileInstructionPlan(draft: ConversePlanDraft): ConverseInstructionPlan;
-/** @param draft - Internal text-completion ingredients. @returns A readonly text plan. */
 export function compileInstructionPlan(draft: TextPlanDraft): TextInstructionPlan;
 /** Compiles the plan, keeping result types; `draft` holds the active node's trusted call data. */
 export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): InstructionPlan<T> {

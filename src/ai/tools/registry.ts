@@ -57,7 +57,6 @@ export interface IToolRegistry<O = unknown> {
   /** All registered tools, in registration order. */
   getTools(): readonly RegisteredTool<O>[];
   get(name: string): RegisteredTool<O> | undefined;
-  /** Whether a tool is registered under `name`. */
   has(name: string): boolean;
 }
 

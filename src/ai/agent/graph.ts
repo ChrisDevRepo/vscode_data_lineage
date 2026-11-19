@@ -308,7 +308,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
   /**
    * The one provider-failure exit every phase funnels through. The model port logs only at debug,
    * so the turn-ending diagnostic it sanitized is emitted here where the {@link Logger} lives; a
-   * failed generation leaves the turn with no result, which `logging.md` puts at ERROR.
+   * failed generation leaves the turn with no result and is logged at error level.
    *
    * @param fallbackMessage - Phase-specific text used when the port supplied none; also the log op.
    */

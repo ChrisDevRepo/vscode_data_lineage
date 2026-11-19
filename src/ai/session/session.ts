@@ -71,9 +71,7 @@ interface MemoryWipeEvent {
    * Only `sliding` exists: the graph swaps history for a continuation anchor after an accepted hop.
    */
   kind: 'sliding';
-  /** What triggered the wipe. */
   trigger: string;
-  /** Hop at which the wipe fired. */
   hop: number;
   /** Threaded message count discarded by the wipe. */
   messagesBefore: number;
@@ -151,7 +149,6 @@ export class AiSession {
   public model: DatabaseModel | null = null;
   /** Topology-only graph used for AI navigation. */
   public graph: Graph | null = null;
-  /** Active schema/object filters applied by the user. */
   public filter: SerializedFilterState | null = null;
   /** The name or ID of the language model active for the current turn. */
   public modelName?: string;
@@ -169,19 +166,16 @@ export class AiSession {
    * against `RenderStateSnapshotSchema` and consumed by the screen-state presenter.
    */
   public renderState: unknown = null;
-  /** Current graph rendering mode: 'full' or 'overview'. */
   public graphMode: 'full' | 'overview' = 'full';
   /** Total count of nodes after all active filters are applied (from webview). */
   public filteredCount = 0;
   /** >0 when the render limit was exceeded (from webview). */
   public renderLimitHit = 0;
-  /** Friendly label for the currently loaded parse rules. */
   public parseRulesLabel = 'built-in rules';
   /** Human-readable label for the data source origin (filename or server/db). */
   public sourceLabel = 'N/A';
   /** Statistics from the last SQL parsing run. */
   public parseStats: { resolvedEdges: number; parsedRefs: number; droppedRefs: number } | null = null;
-  /** Human-readable name of the active project. */
   public projectName: string | null = null;
   /** Persistent identifier for the current project. */
   public currentProjectId: string | null = null;
@@ -194,7 +188,6 @@ export class AiSession {
   public stateMachine: IHopStateMachine | null = null;
   /** Latest AI/user-refined proposal awaiting approval; never an active RuntimeFrame. */
   public pendingExploration: PendingExplorationProposal | null = null;
-  /** The synthesized findings of the session, ready for visualization. */
   public resultGraph: ResultGraph | null = null;
   /**
    * Latest bounded discovery scope from `lineage_get_scope_bundle`; backs
@@ -241,7 +234,6 @@ export class AiSession {
   private _presentResultFailureCountThisTurn = 0;
   /** Count of failed `present_result` invocations in the current turn. */
   public get presentResultFailureCountThisTurn(): number { return this._presentResultFailureCountThisTurn; }
-  /** Last `present_result` failure reason captured this turn. */
   private _presentResultLastFailureReasonThisTurn: string | null = null;
   /** Last `present_result` failure reason captured in the current turn; `null` when none failed. */
   public get presentResultLastFailureReasonThisTurn(): string | null { return this._presentResultLastFailureReasonThisTurn; }
@@ -449,12 +441,6 @@ export class AiSession {
     return { kind: 'accepted' };
   }
 
-  /**
-   * Creates a new AiSession.
-   *
-   * @param templates - Optional report generation templates.
-   * @param sections - Optional section labels declared by the capture recipes.
-   */
   constructor(templates?: AiOutputTemplates, sections?: AiOutputSections) {
     this.id = this.generateId();
     this.memory = new AiMemoryManager();

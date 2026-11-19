@@ -160,7 +160,6 @@ export class TaskLedger {
     );
   }
 
-  /** Returns a task by stable id, or `undefined`. */
   public getTask(taskId: string): InvestigationTask | undefined {
     return this.tasks.get(taskId);
   }

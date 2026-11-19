@@ -11,7 +11,6 @@ import { schemaKey } from '../../utils/sql';
 export interface AgendaEntry {
   /** Stable task identities answered by this node's single hop. */
   taskIds: string[];
-  /** The unique identifier of the node to visit. */
   nodeId: string;
   /**
    * Priority of this visit: 0 default BFS discovery, 2 AI-requested detour, 3 origin/root node or
@@ -289,7 +288,6 @@ export class AgendaManager {
     return entry;
   }
 
-  /** Clears the agenda completely. */
   public clear(): void {
     this._entries = [];
     this._byId.clear();

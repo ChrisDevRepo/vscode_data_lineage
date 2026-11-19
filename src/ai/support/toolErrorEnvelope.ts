@@ -374,7 +374,6 @@ export const ISSUES = {
   },
 } as const satisfies Record<RegistryCode | SchemaIssueCode, IssueText>;
 
-/** Closed set of issue codes a fault may carry. */
 export type IssueCode = keyof typeof ISSUES;
 const ISSUE_CODES = Object.keys(ISSUES) as [IssueCode, ...IssueCode[]];
 
@@ -393,7 +392,7 @@ const ToolErrorShape = z.object({
   stated: z.literal(true).optional(),
 }).strict();
 
-/** One fault of a rejection. */
+/** One independently decidable fault of a rejection. */
 export type ToolError = z.infer<typeof ToolErrorShape>;
 
 /** The one rejection shape: what was wrong (`reason`), how to repair it (`hint`), machine facts. */

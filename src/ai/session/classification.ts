@@ -14,7 +14,6 @@ import { z } from 'zod';
 /** Zod enum for the mission-type classification value. */
 export const ClassificationSchema = z.enum(['business', 'technical', 'both']);
 
-/** Resolved mission-type classification value. */
 export type ClassificationValue = z.infer<typeof ClassificationSchema>;
 
 /** Short label per classification, for confirm-SM-start messages, banners and status lines. */

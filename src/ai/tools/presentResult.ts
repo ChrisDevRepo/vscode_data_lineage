@@ -278,9 +278,7 @@ export function assemblePreviewSections(
  * graph — are passed in instead, so every rule reports through one accumulator and one rejection.
  */
 export interface PresentResultViolation {
-  /** Input field the violation is attributed to. */
   readonly field: PresentResultFailedField;
-  /** Rejection messages reported through the validator's accumulator. */
   readonly messages: readonly string[];
   /** Fields this violation authorizes for a repair resend. */
   readonly repairFields: readonly PresentResultRepairField[];

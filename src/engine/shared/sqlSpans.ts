@@ -13,7 +13,7 @@ const SQL_LITERAL = 3;
  * honour doubled escapes; an unterminated block comment runs to the end. The parser and DDL search
  * share this one reading so both agree on what is commented out.
  *
- * @param options - `markLiterals` marks quoted spans {@link SQL_LITERAL} instead of
+ * @param options - `markLiterals` marks quoted spans `SQL_LITERAL` instead of
  *   {@link SQL_CODE}.
  */
 export function sqlCommentMask(sql: string, options?: { readonly markLiterals?: boolean }): Uint8Array {

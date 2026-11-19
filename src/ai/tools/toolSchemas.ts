@@ -381,7 +381,6 @@ export const GetScopeBundleInputSchema = z.object({
   }
 });
 
-/** Inferred type of {@link GetScopeBundleInputSchema}. */
 export type GetScopeBundleInput = z.infer<typeof GetScopeBundleInputSchema>;
 
 /**

@@ -17,13 +17,14 @@ export const REJECTION_CODES = {
    */
   duplicateCallId: 'duplicate_call_id',
   /**
-   * Provider returned neither a tool call nor any text under `toolChoice: 'required'` — a transport
-   * artifact, never charged to the model's semantic budget.
+   * Provider returned neither a tool call nor any text; recorded as a rejection and counted toward
+   * `noProgressCalls` in `toolAttempt.ts`.
    */
   emptyGeneration: 'empty_generation',
   /**
    * A read call identical (after key canonicalization) to one accepted in an earlier attempt of the
-   * same phase; its result is already in the observations. Never charged.
+   * same phase; its result is already in the observations. Counts toward `noProgressCalls` when
+   * the reply yields no new observation.
    */
   duplicateRead: 'duplicate_read',
   /** `lineage_get_screen_state` recall query while no AI run is stored for the applied view. */

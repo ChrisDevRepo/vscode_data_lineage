@@ -41,9 +41,7 @@ import { STRUCTURED_OUTPUT_TOOL_DESCRIPTION } from '../providers/structuredOutpu
 
 /** Canonical tool metadata accepted by the bridge. The bridge never invokes the tool. */
 export interface VscodeBridgeToolDefinition {
-  /** Tool name the model addresses the call by. */
   readonly name: string;
-  /** Natural-language tool description shown to the model. */
   readonly description: string;
   /** JSON Schema object describing the tool's input. */
   readonly inputSchema: Record<string, unknown>;
