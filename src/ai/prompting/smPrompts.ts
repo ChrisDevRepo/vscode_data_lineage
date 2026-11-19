@@ -25,6 +25,18 @@ export function buildPassthroughReAnchor(passthroughId: string, focusId: string,
 }
 
 /**
+ * Spec-02 relevance check for a writer reached through a passthrough table whose write to the table
+ * only deletes rows: that write supplies no data, so the writer gets the check, not the column task.
+ * It is the whole sub-question: the inherited question is addressed to the passthrough table.
+ *
+ * @param columns - Columns forwarded to the passthrough; empty: the column clause is omitted.
+ */
+export function buildDeleteOnlyRelevanceCheck(passthroughId: string, focusId: string, columns: readonly string[]): string {
+  const touch = columns.length > 0 ? `; does it touch the forwarded columns [${columns.join(', ')}]` : '';
+  return `(Relevance check through passthrough ${passthroughId}: ${focusId} writes to it only by deleting rows. Does ${focusId} matter for the question at all${touch}?)`;
+}
+
+/**
  * Builds the static active-phase SM protocol block: the column aspect of the hop, rendered only
  * when the hop carries tracked columns (task and deliverable live in the active phase prompt).
  * Returns `''` for a BB hop.
@@ -86,18 +98,25 @@ function computeFlowRoleGroups(
  * Buckets every traced node by its DIRECTED relation to the origin. The Column Trace Chain renders
  * in hop order, not direction order, so these buckets state direction explicitly. `sideBranch`
  * matters: a node that reads a traced node but lies on no path to or from the origin is neither
- * upstream nor downstream, and calling it upstream inverts a real edge.
+ * upstream nor downstream, and calling it upstream inverts a real edge. A `delete` edge carries no
+ * data, so it is no path: a node whose only traced edges are its deletes is `deleteOnly`; a node
+ * that also reads or writes data stays where those edges put it.
  */
 function computeDirectionGroups(
   originNodeId: string,
-  edges: ReadonlyArray<{ from: string; to: string }>,
-): { upstream: string[]; downstream: string[]; sideBranch: string[] } {
+  edges: ReadonlyArray<{ from: string; to: string; kind?: string }>,
+): { upstream: string[]; downstream: string[]; sideBranch: string[]; deleteOnly: string[] } {
   const forward = new Map<string, string[]>();
   const backward = new Map<string, string[]>();
   const reached = new Set<string>([originNodeId]);
+  const deleteWriters = new Set<string>();
+  const onFlow = new Set<string>();
   for (const e of edges) {
     reached.add(e.from);
     reached.add(e.to);
+    if (e.kind === 'delete') { deleteWriters.add(e.from); continue; }
+    onFlow.add(e.from);
+    onFlow.add(e.to);
     (forward.get(e.from) ?? forward.set(e.from, []).get(e.from)!).push(e.to);
     (backward.get(e.to) ?? backward.set(e.to, []).get(e.to)!).push(e.from);
   }
@@ -114,9 +133,10 @@ function computeDirectionGroups(
   };
   const downstream = walk(forward);
   const upstream = walk(backward);
+  const deleteOnly = new Set([...deleteWriters].filter(n => n !== originNodeId && !onFlow.has(n)));
   const sideBranch = [...reached]
-    .filter(n => n !== originNodeId && !upstream.has(n) && !downstream.has(n));
-  return { upstream: [...upstream].sort(), downstream: [...downstream].sort(), sideBranch: sideBranch.sort() };
+    .filter(n => n !== originNodeId && !upstream.has(n) && !downstream.has(n) && !deleteOnly.has(n));
+  return { upstream: [...upstream].sort(), downstream: [...downstream].sort(), sideBranch: sideBranch.sort(), deleteOnly: [...deleteOnly].sort() };
 }
 
 /**
@@ -133,6 +153,9 @@ function buildDirectionLines(
     `- upstream (data flows INTO the origin): ${direction.upstream.join(', ') || '(none)'}`,
     `- downstream (data flows OUT of the origin): ${direction.downstream.join(', ') || '(none)'}`,
     `- side branches (read a traced node, on no path to or from the origin): ${direction.sideBranch.join(', ') || '(none)'}`,
+    ...(direction.deleteOnly.length > 0
+      ? [`- delete-only writers (write to a traced node only by deleting rows; supply it no data): ${direction.deleteOnly.join(', ')}`]
+      : []),
   ];
 }
 
@@ -153,9 +176,9 @@ function buildFlowRoleHighlightLines(groups: FlowRoleGroups, presented: Readonly
   ];
 }
 
-/** Projects node-level `[from, to, kind]` edges to the `{from, to}` flow shared buckets read. */
-function asFlowEdges(edges: ReadonlyArray<[string, string, string]>): Array<{ from: string; to: string }> {
-  return edges.map(([from, to]) => ({ from, to }));
+/** Projects node-level `[from, to, kind]` edges to the flow edges the shared buckets read. */
+function asFlowEdges(edges: ReadonlyArray<[string, string, string]>): Array<{ from: string; to: string; kind: string }> {
+  return edges.map(([from, to, kind]) => ({ from, to, kind }));
 }
 
 /**
@@ -164,7 +187,7 @@ function asFlowEdges(edges: ReadonlyArray<[string, string, string]>): Array<{ fr
  */
 function renderFlowRoleAndDirection(
   originNodeId: string,
-  flowEdges: ReadonlyArray<{ from: string; to: string }>,
+  flowEdges: ReadonlyArray<{ from: string; to: string; kind?: string }>,
   presentedNodeIds: ReadonlySet<string> | null,
   hopNodes?: ReadonlySet<string>,
 ): string {

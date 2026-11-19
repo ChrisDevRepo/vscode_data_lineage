@@ -3,7 +3,7 @@
  * domain decisions; tool handlers share these projections so field naming and compaction stay
  * consistent.
  */
-import type { LineageNode, ColumnDef, SchemaInfo, NeighborIndex, ForeignKeyInfo } from '../../engine/types';
+import type { LineageEdge, LineageNode, ColumnDef, SchemaInfo, NeighborIndex, ForeignKeyInfo } from '../../engine/types';
 import type { SerializedFilterState } from '../../engine/projectStore';
 
 
@@ -21,14 +21,15 @@ const EDGE_TYPE_MAP: Record<string, string> = { body: 'read', exec: 'exec' };
 const NULLABLE_VALUES = new Set(['true', 'True', 'NULL']);
 
 /**
- * Standardizes internal edge types into the AI-facing nomenclature ('read', 'write', 'exec').
- * `LineageEdge.type` records provenance (`body` vs `exec`), never direction: the engine orders a
- * `body` edge's endpoints by write-vs-read but discards the verb. Only a procedure emits an
- * outbound `body` edge for a mutation; every other `body` source is a read.
+ * Standardizes internal edge types into the AI-facing nomenclature ('read', 'write', 'delete',
+ * 'exec'). `LineageEdge.type` records provenance (`body` vs `exec`), never direction: the engine
+ * orders a `body` edge's endpoints by write-vs-read but discards the verb. Only a procedure emits
+ * an outbound `body` edge for a mutation; every other `body` source is a read. A write marked
+ * `deleteOnly` is a `delete`: it removes rows and supplies no data.
  */
-export function edgeApiType(type: string, sourceNodeType: string): string {
-  if (type === 'body' && sourceNodeType === 'procedure') return 'write';
-  return EDGE_TYPE_MAP[type] ?? 'read';
+export function edgeApiType(edge: Pick<LineageEdge, 'type' | 'deleteOnly'>, sourceNodeType: string): string {
+  if (edge.type === 'body' && sourceNodeType === 'procedure') return edge.deleteOnly ? 'delete' : 'write';
+  return EDGE_TYPE_MAP[edge.type] ?? 'read';
 }
 
 
