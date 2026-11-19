@@ -282,6 +282,29 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] {
   --ln-minimap-cluster-stroke: var(--vscode-contrastBorder);
 }
 
+/* Light theme graph contrast (WCAG 2.2 SC 1.4.11). Nodes lead: the default grey node border (15% black)
+   sits near 1.4:1 on a white canvas, so it is the editor foreground mixed toward the canvas (3:1 or more
+   and still tracking a custom light theme), and its width is held near 2 device px as the canvas zooms
+   out (`--ln-zoom`, published by GraphCanvas.tsx) so node boundaries stay visible. Edges are a softer,
+   moderate mix: the density fade and natural thinning on zoom-out stay, so a dense graph recedes behind
+   its nodes. Dark and High Contrast keep their own tokens above. */
+body[data-vscode-theme-kind="vscode-light"] {
+  --ln-node-border: color-mix(in srgb, var(--ln-fg) 70%, var(--ln-bg));
+  --ln-edge-color-base: color-mix(in srgb, var(--ln-fg) 60%, var(--ln-bg));
+  --ln-edge-color: var(--ln-edge-color-base);
+}
+/* `transition-property` leaves border-width out of the card's `transition-all` so zooming never animates it. */
+body[data-vscode-theme-kind="vscode-light"] .react-flow .ln-node-card {
+  border-top-width: clamp(2px, calc(2px / var(--ln-zoom, 1)), 10px);
+  border-right-width: clamp(2px, calc(2px / var(--ln-zoom, 1)), 10px);
+  border-bottom-width: clamp(2px, calc(2px / var(--ln-zoom, 1)), 10px);
+  transition-property: color, background-color, border-color, box-shadow, opacity, transform;
+}
+/* Schema swatches are pale in the light palette; an outline keeps each one visible on the legend surface. */
+body[data-vscode-theme-kind="vscode-light"] .ln-legend-swatch {
+  box-shadow: inset 0 0 0 1px var(--ln-node-border);
+}
+
 /* #endregion */
 
 /* #region Global Resets */
