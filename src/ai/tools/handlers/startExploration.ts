@@ -11,7 +11,7 @@ import { sanitizeForLog, trunc } from '../../../utils/log';
 import { schemaKey } from '../../../utils/sql';
 import { parseToolInput, StartExplorationInputSchema } from '../../tools/toolSchemas';
 import { PendingGateSchema } from '../../session/sessionPhase';
-import { nodeFiltersRemovedByOrigin, renderScopeSummaryMd, schemaFiltersRemovedByOrigin } from '../../prompting/scopeSummaryRenderer';
+import { renderScopeSummaryMd } from '../../prompting/scopeSummaryRenderer';
 import { redactMissionBriefForLog } from '../../support/missionBriefDiagnostics';
 import { toEngineLog } from '../../support/engineLog';
 import { isCancellationOutcome } from '../../support/cancellation';
@@ -298,11 +298,7 @@ export async function executeStartExploration(input: unknown, s: ToolServices): 
 
       if (sess.phase.kind === 'idle' || sess.phase.kind === 'completed' || isRefining) {
         const classes = ['sliding_memory'];
-        const removedSchemaFilters = schemaFiltersRemovedByOrigin(excludeSchemas, summary.activeFilters.schemas, m.identifierCaseSensitive);
-
-        const removedNodeFilters = nodeFiltersRemovedByOrigin(excludeNodeIds, summary.origin, summary.activeFilters.nodeIds, m.identifierCaseSensitive);
-
-        const baseDetail = renderScopeSummaryMd(summary, proposalRevision, classification, removedSchemaFilters, removedNodeFilters);
+        const baseDetail = renderScopeSummaryMd(summary, proposalRevision, classification);
         let discoverySummary: string | undefined;
         if (sess.lastDiscoveryQuestion && sess.lastDiscoveryAnswer && s.textModel) {
           discoverySummary = await composeDiscoverySummaryText(

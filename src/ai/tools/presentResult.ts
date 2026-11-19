@@ -678,11 +678,6 @@ export function assignEvidenceIds(
   return { slots, blocks };
 }
 
-/** Whitespace-insensitive identity of a fence body, so a re-typed copy of a block matches it. */
-function fenceBodyKey(lines: readonly string[]): string {
-  return lines.join('\n').replace(/\s+/g, ' ').trim();
-}
-
 /** Where a fence stands on its line, widened over a parenthesis pair that wraps only the fence. */
 interface FenceExtent {
   readonly lineStart: number;
@@ -692,8 +687,6 @@ interface FenceExtent {
   readonly from: number;
   /** End of the fence, or just past the `)` that wraps it. */
   readonly to: number;
-  /** Only the container prefix precedes `from` and only whitespace follows `to` on the line. */
-  readonly ownLine: boolean;
 }
 
 /** Locates `fence` on its line; a `(` before and `)` after it, nothing between, join the extent. */
@@ -706,17 +699,7 @@ function fenceExtent(text: string, fence: LocatedSqlFence): FenceExtent {
   const wrapped = open !== null && close !== null;
   const from = wrapped ? fence.start - open[0].length : fence.start;
   const to = wrapped ? fence.end + close[0].length : fence.end;
-  return { lineStart, lineEnd, from, to, ownLine: text.slice(lineStart, from) === fence.container && text.slice(to, lineEnd).trim() === '' };
-}
-
-/**
- * The span of the whole lines a fence occupies — container prefix and one newline included — when
- * nothing else shares them; otherwise the fence alone, with a wrapping `( )` pair.
- */
-function fenceLineSpan(text: string, fence: LocatedSqlFence): [number, number] {
-  const { lineStart, lineEnd, from, to, ownLine } = fenceExtent(text, fence);
-  if (!ownLine) return [from, to];
-  return lineEnd === text.length ? [Math.max(0, lineStart - 1), text.length] : [lineStart, lineEnd + 1];
+  return { lineStart, lineEnd, from, to };
 }
 
 /**
@@ -756,8 +739,8 @@ function placeFenceBlock(
  *
  * A reference is optional shorthand; the model may write SQL itself. Fences are located by the rule
  * {@link assignEvidenceIds} numbers with, so a mid-line fence never pairs with a later reference.
- * Normalized and reported in `normalized`: a fence with an id and a body keeps its body and loses
- * the id (SQL never shown twice); a reference to a block the section already shows renders nothing.
+ * A fence that carries its own SQL stays as written, id included, and a reference expands even
+ * when the section already shows that SQL.
  * An id naming no captured block is returned in `unknownIds` and the fence is left as written for
  * the caller to reject. Unclosed blocks go to `malformedRefs`; their text is never consumed as
  * another block. Only a rendering copy is expanded: the held repair draft keeps short references.
@@ -772,7 +755,7 @@ function placeFenceBlock(
 export function expandEvidenceRefs(
   text: string,
   blocks: ReadonlyMap<string, EvidenceBlock>,
-): { text: string; unknownIds: string[]; normalized: string[]; malformedRefs: string[] } {
+): { text: string; unknownIds: string[]; malformedRefs: string[] } {
   const fences = [...locateSqlFences(text)];
   const byStart = new Map(fences.map(fence => [fence.start, fence]));
   const malformedRefs: string[] = [];
@@ -783,47 +766,22 @@ export function expandEvidenceRefs(
     if (valid) coveredUntil = valid.end;
     else malformedRefs.push(EVIDENCE_ID_INFO.exec(marker[1])?.[1] ?? 'unlabelled SQL');
   }
-  const shown = new Set(fences.filter(fence => fence.lines.length > 0).map(fence => fenceBodyKey(fence.lines)));
   const unknownIds: string[] = [];
-  const normalized: string[] = [];
   let out = '';
   let cursor = 0;
   for (const fence of fences) {
     const id = EVIDENCE_ID_INFO.exec(fence.info)?.[1];
-    if (!id) continue;
+    if (!id || fence.lines.length > 0) continue;
     const block = blocks.get(id);
-    if (fence.lines.length > 0) {
-      const info = fence.info.slice(0, fence.info.lastIndexOf(id)).trimEnd();
-      const extent = fenceExtent(text, fence);
-      if (extent.ownLine) {
-        const infoStart = fence.start + '```sql'.length;
-        out += text.slice(cursor, infoStart) + info;
-        cursor = infoStart + fence.info.length;
-      } else {
-        const placed = placeFenceBlock(text, cursor, fence, extent, [`\`\`\`sql${info}`, ...fence.lines, '```']);
-        out += placed.out;
-        cursor = placed.cursor;
-      }
-      normalized.push(`${id} dropped from a fence that carries its own SQL`);
-    } else if (!block) {
+    if (!block) {
       unknownIds.push(id);
-    } else {
-      const blockLines = block.raw.split('\n');
-      const key = fenceBodyKey(blockLines.slice(1, -1));
-      if (shown.has(key)) {
-        const [from, to] = fenceLineSpan(text, fence);
-        out += text.slice(cursor, Math.max(cursor, from));
-        cursor = to;
-        normalized.push(`${id} not rendered — the section already shows that SQL`);
-        continue;
-      }
-      shown.add(key);
-      const placed = placeFenceBlock(text, cursor, fence, fenceExtent(text, fence), blockLines);
-      out += placed.out;
-      cursor = placed.cursor;
+      continue;
     }
+    const placed = placeFenceBlock(text, cursor, fence, fenceExtent(text, fence), block.raw.split('\n'));
+    out += placed.out;
+    cursor = placed.cursor;
   }
-  return { text: out + text.slice(cursor), unknownIds, normalized, malformedRefs };
+  return { text: out + text.slice(cursor), unknownIds, malformedRefs };
 }
 
 /**
