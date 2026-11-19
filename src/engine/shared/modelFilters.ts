@@ -26,26 +26,105 @@ export function applyIsolationFilter(model: DatabaseModel, hideIsolated: boolean
 }
 
 /**
- * The graph view's user filter as one node predicate: the schema filter, the object-type filter and
- * the name-exclusion patterns. Hide Isolated is a view-layout rule and stays out.
+ * Filters the model to the nodes explicitly present in the allowlist; an empty allowlist keeps no
+ * node.
+ */
+export function applyAllowlistFilter(model: DatabaseModel, allowlist: Set<string> | undefined): DatabaseModel {
+  if (!allowlist) return model;
+  const nodes = model.nodes.filter((n) => allowlist.has(n.id));
+  const nodeIds = new Set(nodes.map((n) => n.id));
+  const edges = model.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
+  return { ...model, nodes, edges };
+}
+
+/**
+ * Filters an existing DatabaseModel in memory to objects from specific schemas. Retains every
+ * matching object and every external reference it touches; it never truncates. Callers that must
+ * honor `dataLineageViz.maxNodes` check the result with {@link checkObjectLimit} before loading or
+ * rendering it.
+ */
+export function filterBySchemas(
+  model: DatabaseModel,
+  selectedSchemas: Set<string>,
+): DatabaseModel {
+  const lowerSelected = new Set(Array.from(selectedSchemas).map(s => schemaKey(s, model.identifierCaseSensitive)));
+  const schemaNodes = model.nodes.filter((n) => lowerSelected.has(schemaKey(n.schema, model.identifierCaseSensitive)));
+  const schemaNodeIds = new Set(schemaNodes.map(n => n.id));
+
+  const connectedVirtualIds = new Set<string>();
+  for (const e of model.edges) {
+    if (schemaNodeIds.has(e.target)) connectedVirtualIds.add(e.source);
+    if (schemaNodeIds.has(e.source)) connectedVirtualIds.add(e.target);
+  }
+  const virtualNodes = model.nodes.filter((n) =>
+    n.type === 'external' && connectedVirtualIds.has(n.id) && !schemaNodeIds.has(n.id)
+  );
+  const filtered = [...schemaNodes, ...virtualNodes];
+  const nodeIds = new Set(filtered.map((n) => n.id));
+
+  const edges = model.edges.filter(
+    (e) => nodeIds.has(e.source) && nodeIds.has(e.target)
+  );
+
+  return {
+    nodes: filtered,
+    edges,
+    schemas: model.schemas.filter((s) => lowerSelected.has(schemaKey(s.name, model.identifierCaseSensitive))),
+    catalog: model.catalog,
+    neighborIndex: model.neighborIndex,
+    parseStats: model.parseStats,
+    warnings: model.warnings,
+    identifierCaseSensitive: model.identifierCaseSensitive,
+  };
+}
+
+/**
+ * Whether a node survives the External References filter: a real object always, a virtual `file`
+ * or `db` reference only when external refs are shown and its kind is selected. The one rule the
+ * webview build and {@link userFilterAdmits} share.
+ */
+export function externalRefAdmits(showExternalRefs: boolean, externalRefTypes: ReadonlySet<string>): (n: LineageNode) => boolean {
+  return n => (n.externalType !== 'file' && n.externalType !== 'db') || (showExternalRefs && externalRefTypes.has(n.externalType));
+}
+
+/**
+ * The type, External References and name-exclusion parts of the user filter as one node
+ * predicate; the schema part is {@link filterBySchemas} (edge-aware) or the per-node test in
+ * {@link userFilterAdmits}.
+ */
+function attributeAdmits(activeFilter: SerializedFilterState): (n: LineageNode) => boolean {
+  const types = activeFilter.types?.length ? new Set<string>(activeFilter.types) : null;
+  const isExcluded = compileExclusionMatcher(activeFilter.exclusionPatterns ?? []);
+  const externalAdmits = externalRefAdmits(activeFilter.showExternalRefs, new Set(activeFilter.externalRefTypes));
+  return n => (!types || types.has(n.type)) && externalAdmits(n) && !isExcluded?.(n);
+}
+
+/**
+ * The graph view's user filter as one per-node predicate: the schema filter, the object-type
+ * filter, the External References filter and the name-exclusion patterns. Hide Isolated is a
+ * view-layout rule and stays out.
  */
 export function userFilterAdmits(model: DatabaseModel, activeFilter: SerializedFilterState): (n: LineageNode) => boolean {
   const schemaKeys = activeFilter.schemas?.length ? new Set(activeFilter.schemas.map(s => schemaKey(s, model.identifierCaseSensitive))) : null;
-  const types = activeFilter.types?.length ? new Set<string>(activeFilter.types) : null;
-  const isExcluded = compileExclusionMatcher(activeFilter.exclusionPatterns ?? []);
-  return n => (!schemaKeys || schemaKeys.has(schemaKey(n.schema, model.identifierCaseSensitive)))
-    && (!types || types.has(n.type))
-    && !isExcluded?.(n);
+  const attributes = attributeAdmits(activeFilter);
+  return n => (!schemaKeys || schemaKeys.has(schemaKey(n.schema, model.identifierCaseSensitive))) && attributes(n);
 }
 
-/** Objects shown by the user filter ({@link userFilterAdmits}), then Hide Isolated. */
-export function countVisibleNodes(model: DatabaseModel, activeFilter: SerializedFilterState): number {
-  const scoped = model.nodes.filter(userFilterAdmits(model, activeFilter));
+/**
+ * Objects shown by the user filter ({@link userFilterAdmits}), then Hide Isolated, then the
+ * allowlist, over the same schema scope the webview builds ({@link filterBySchemas}); every
+ * object when no filter is active.
+ */
+export function countVisibleNodes(model: DatabaseModel, activeFilter?: SerializedFilterState | null): number {
+  if (!activeFilter) return model.nodes.length;
+  const bySchema = activeFilter.schemas?.length ? filterBySchemas(model, new Set(activeFilter.schemas)) : model;
+  const scoped = bySchema.nodes.filter(attributeAdmits(activeFilter));
   const scopedIds = new Set(scoped.map(n => n.id));
   const scopedModel = {
     ...model,
     nodes: scoped,
-    edges: model.edges.filter(e => scopedIds.has(e.source) && scopedIds.has(e.target)),
+    edges: bySchema.edges.filter(e => scopedIds.has(e.source) && scopedIds.has(e.target)),
   };
-  return applyIsolationFilter(scopedModel, activeFilter.hideIsolated ?? false).nodes.length;
+  const allowlist = activeFilter.allowlistNodeIds && new Set(activeFilter.allowlistNodeIds);
+  return applyAllowlistFilter(applyIsolationFilter(scopedModel, activeFilter.hideIsolated ?? false), allowlist).nodes.length;
 }

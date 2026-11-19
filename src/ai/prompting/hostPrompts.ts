@@ -50,7 +50,7 @@ export function deriveStagePromptContext(
   }
   const filterSchemas = filter?.schemas ?? [];
   const totalNodes = model.nodes.length;
-  const visibleNodes = filter ? countVisibleNodes(model, filter) : totalNodes;
+  const visibleNodes = countVisibleNodes(model, filter);
   const admits = filter ? userFilterAdmits(model, filter) : null;
   const filterHides = filter && admits && model.nodes.some((n) => !admits(n))
     ? {

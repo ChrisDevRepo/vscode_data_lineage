@@ -4,7 +4,7 @@ import type { Node as FlowNode, Edge as FlowEdge } from '@xyflow/react';
 import { DatabaseModel, FilterState, ExtensionConfig, DEFAULT_CONFIG, type CustomNodeData } from '../engine/types';
 import { buildGraph, buildGraphNoLayout, getGraphMetrics, hasCachedLayout, layoutCacheKey, objectLayoutInputForGraph, seedLayoutCache } from '../engine/graphBuilder';
 import { refuseOverObjectLimit } from '../utils/objectLimitGuard';
-import { filterBySchemas, applyExclusionFilter, applyIsolationFilter, applyAllowlistFilter } from '../engine/modelFilters';
+import { filterBySchemas, applyExclusionFilter, applyIsolationFilter, applyAllowlistFilter, externalRefAdmits } from '../engine/modelFilters';
 import { createSchemaColorMap, getSchemaColorFromMap } from '../utils/schemaColors';
 import { createLayoutWorkerClient } from '../utils/layoutWorkerClient';
 import LayoutWorker from '../utils/layout.worker?worker&inline';
@@ -91,16 +91,8 @@ export function useGraphology(): UseGraphologyReturn {
     const filtered = filterBySchemas(model, filter.schemas);
     if (refuseOverObjectLimit(filtered, config.maxNodes, 'Filter') !== null) return -1;
 
-    const isVirtual = (n: { externalType?: string }) =>
-      n.externalType === 'file' || n.externalType === 'db';
-    const allExtRefsVisible = filter.showExternalRefs && filter.externalRefTypes.has('file') && filter.externalRefTypes.has('db');
-
-    const fusedNodes = filtered.nodes.filter((n) => {
-      if (!filter.types.has(n.type)) return false;
-      if (allExtRefsVisible || !isVirtual(n)) return true;
-      if (!filter.showExternalRefs) return false;
-      return filter.externalRefTypes.has(n.externalType as 'file' | 'db');
-    });
+    const externalAdmits = externalRefAdmits(filter.showExternalRefs, filter.externalRefTypes);
+    const fusedNodes = filtered.nodes.filter((n) => filter.types.has(n.type) && externalAdmits(n));
     const fusedNodeIds = new Set(fusedNodes.map((n) => n.id));
     const fusedEdges = filtered.edges.filter((e) => fusedNodeIds.has(e.source) && fusedNodeIds.has(e.target));
 

@@ -809,13 +809,12 @@ export function createMessageHandlers(
     'filter-changed': (msg) => {
       const sess = getSession();
       const { uiState } = msg;
-      const prevCount = sess.filteredCount;
+      const prevCount = (sess.uiState as { filteredCount?: number } | null)?.filteredCount;
       const prevHit = sess.renderLimitHit;
       sess.uiState = uiState;
       sess.filter = uiState.filter;
       sess.traceState = uiState.trace;
       sess.graphMode = uiState.graphMode;
-      sess.filteredCount = uiState.filteredCount;
       sess.renderLimitHit = uiState.renderLimitHit;
       getUiDiagnostics(sess).lastUiSyncAt = Date.now();
       if (prevCount !== uiState.filteredCount || prevHit !== uiState.renderLimitHit) {
