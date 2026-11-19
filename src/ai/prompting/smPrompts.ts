@@ -211,7 +211,7 @@ export function buildCtSynthesisBlock(
 ): string {
   const lines = ['## Column Trace Chain'];
   if (edges.length === 0) {
-    lines.push('No edges recorded — verify column_flow was submitted at each hop.');
+    lines.push('No column edges were recorded.');
     lines.push('Structure present_result as a zero-trace answer: explain that no column-flow edge was proven, link the origin/result node in sections[], and include highlight_groups.target for that origin/result node.');
     return lines.join('\n');
   }
