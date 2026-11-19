@@ -56,7 +56,7 @@ export interface DacpacLoaderState {
   clearAutoVisualize: () => void;
   clearPendingVisualize: () => void;
   /** Starts the Phase 2 extraction for the selected schemas. */
-  visualize: (selectedSchemas: Set<string>, projectName?: string) => void;
+  visualize: (selectedSchemas: Set<string>, projectName?: string, projectId?: string) => void;
   toggleSchema: (name: string) => void;
   selectAllSchemas: (names: string[]) => void;
   clearAllSchemas: (names: string[]) => void;
@@ -222,6 +222,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
       }
 
       if (msg.type === 'db-model') {
+        projectIdRef.current = msg.projectId ?? null;
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'Database';
         applyModel(msg.model as DatabaseModel, name);
@@ -244,10 +245,10 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
     return () => window.removeEventListener('message', handler);
   }, [onConfigReceived, applyModel, applySchemaPreview, vscodeApi]);
 
-  const visualize = useCallback((schemas: Set<string>, projectName?: string) => {
+  const visualize = useCallback((schemas: Set<string>, projectName?: string, projectId?: string) => {
     const named = projectName ? { projectName } : {};
     if (schemaPreview !== null && model === null && loadingContext !== 'database') {
-      vscodeApi.postMessage({ type: 'dacpac-visualize', schemas: Array.from(schemas), ...named, loadId: beginLoad() });
+      vscodeApi.postMessage({ type: 'dacpac-visualize', schemas: Array.from(schemas), ...named, ...(projectId ? { projectId } : {}), loadId: beginLoad() });
       setIsLoading(true);
       setLoadingContext('dacpac');
       return;

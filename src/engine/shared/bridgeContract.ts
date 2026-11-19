@@ -718,7 +718,7 @@ export const LOAD_RESULT_TYPES = [
  */
 export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('dacpac-model'), model: DatabaseModelSchema, config: ExtensionConfigSchema, sourceName: z.string(), autoVisualize: z.boolean().optional(), isDemo: z.boolean().optional(), loadId: z.string().optional(), projectId: z.string().optional() }),
-  z.object({ type: z.literal('db-model'), model: DatabaseModelSchema, config: ExtensionConfigSchema, sourceName: z.string(), loadId: z.string().optional() }),
+  z.object({ type: z.literal('db-model'), model: DatabaseModelSchema, config: ExtensionConfigSchema, sourceName: z.string(), loadId: z.string().optional(), projectId: z.string().optional() }),
   z.object({ type: z.literal('projects-list'), projects: z.array(ProjectSchema), lastOpenedId: z.string().nullable(), lastWizardView: z.enum(['main', 'projects']).nullish() }),
   z.object({ type: z.literal('detail-closed') }),
   z.object({ type: z.literal('dacpac-schema-preview'), preview: SchemaPreviewSchema, config: ExtensionConfigSchema, sourceName: z.string(), filePath: z.string().optional(), loadId: z.string().optional() }),
@@ -772,7 +772,7 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('save-project'), project: ProjectSchema }),
   z.object({ type: z.literal('delete-project'), id: z.string() }),
   z.object({ type: z.literal('load-demo'), loadId: z.string().optional() }),
-  z.object({ type: z.literal('dacpac-visualize'), schemas: z.array(z.string()), projectName: z.string().optional(), loadId: z.string().optional() }),
+  z.object({ type: z.literal('dacpac-visualize'), schemas: z.array(z.string()), projectName: z.string().optional(), projectId: z.string().optional(), loadId: z.string().optional() }),
   z.object({ type: z.literal('db-visualize'), schemas: z.array(z.string()), projectName: z.string().optional(), loadId: z.string().optional() }),
   z.object({ type: z.literal('filter-changed'), uiState: UiStateSnapshotSchema }),
   z.object({ type: z.literal('render-state'), renderState: RenderStateSnapshotSchema }),
