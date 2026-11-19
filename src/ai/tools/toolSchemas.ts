@@ -431,6 +431,7 @@ const KEPT_VERDICT_ONLY = 'Only with analyze or passthrough: ';
  */
 const PRUNE_NEIGHBORS_DESCRIPTION =
   'Name each `can_prune: true` neighbor this node\'s SQL shows is off the path. A named neighbor is removed, with whatever only it leads to, once every branch that reaches it also prunes it. '
+  + 'An open neighbor named nowhere here is kept and visited. '
   + 'The focus stays on the graph, including when every neighbor is named (a dead end). A neighbor named here gets no questions entry.';
 
 /** Single source for the neighbor id describe text of `prune_neighbors[].id` and `questions[].nodeId`. */
