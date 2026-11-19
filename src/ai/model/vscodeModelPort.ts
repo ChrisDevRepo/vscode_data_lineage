@@ -377,14 +377,14 @@ export class VscodeModelPort implements ModelPort {
         if (streamedUsage) usage = streamedUsage as TokenUsage;
       }
       if (signal?.aborted) throw cancelledError();
-      // A non-object input is LangChain's invalid call; it stays a call of the turn, so the
-      // receiving boundary rejects it by its call ID instead of the turn failing.
-      const nonObjectCalls = (message.invalid_tool_calls ?? []).map((call) => ({
-        id: call.id,
-        name: call.name ?? '',
-        args: call.args === undefined ? undefined : JSON.parse(call.args) as unknown,
+      // The chunks keep the provider's call order and every call, including one whose input is no
+      // JSON object (LangChain files it apart from `tool_calls`); the receiving boundary rejects
+      // that call by its ID instead of the turn failing.
+      const toolCalls: Array<{ id?: string; name: string; args: unknown }> = (message.tool_call_chunks ?? []).map((chunk) => ({
+        id: chunk.id,
+        name: chunk.name ?? '',
+        args: chunk.args ? JSON.parse(chunk.args) as unknown : {},
       }));
-      const toolCalls: Array<{ id?: string; name: string; args: unknown }> = [...(message.tool_calls ?? []), ...nonObjectCalls];
       if (!toolCalls.every(hasCallId)) {
         throw new ModelPortError(
           'unsupported_response',

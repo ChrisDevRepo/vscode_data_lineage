@@ -70,7 +70,7 @@ export function transcriptTurn(
     tool_calls: [
       ...projected,
       ...missing.map((call) => ({ id: call.callId, name: call.toolName, args: {}, type: 'tool_call' as const })),
-    ],
+    ].sort((a, b) => calls.findIndex((call) => call.callId === a.id) - calls.findIndex((call) => call.callId === b.id)),
   });
 }
 
