@@ -9,7 +9,6 @@ import { OBJECT_TYPES, type ExtensionConfig, type SchemaPreview, type TraceAffor
  * @packageDocumentation
  */
 
-/** Zod schema defining the valid types of database objects in the lineage graph. */
 const ObjectTypeSchema = z.enum(OBJECT_TYPES);
 
 /** Upper bound on object ids in a tool call or bridge message: an input-size check, not a scope. */
@@ -151,7 +150,6 @@ const LineageEdgeSchema = z.object({
   type: z.enum(['body', 'dependency', 'exec']).optional(),
 });
 
-/** Zod schema for a schema's node counts and object-type breakdown, used for UI filtering. */
 const SchemaInfoSchema = z.object({
   name: z.string(),
   nodeCount: z.number(),
@@ -280,7 +278,6 @@ const SerializedFilterStateSchema = z.object({
 /** Serialized visual filter configuration state, persisted and restored across sessions. */
 export type SerializedFilterState = z.infer<typeof SerializedFilterStateSchema>;
 
-/** Semantic highlight color applied to an AI-flagged node or edge. */
 const AIHighlightColorSchema = z.enum(['source', 'transform', 'target', 'good', 'warn', 'fail']);
 
 const AIHighlightGroupSchema = z.object({
@@ -303,7 +300,6 @@ const AINodeTextSchema = z.object({
  */
 export const COLUMN_TRANSFORM_CLASSES = ['pass_through', 'compute', 'aggregate', 'combine', 'filter'] as const;
 
-/** One column-transform class from {@link COLUMN_TRANSFORM_CLASSES}. */
 export type ColumnTransformClass = typeof COLUMN_TRANSFORM_CLASSES[number];
 
 /**
@@ -347,7 +343,6 @@ const ColumnAspectEdgeSchema = z.object({
   note: z.string().optional(),
 }).strict();
 
-/** Inferred shape of {@link ColumnAspectEdgeSchema}. */
 export type ColumnAspectEdge = z.infer<typeof ColumnAspectEdgeSchema>;
 
 const ColumnAspectSchema = z.object({
@@ -359,7 +354,6 @@ const NodeVerdictSchema = z.object({
   verdict: z.enum(['analyze', 'passthrough', 'prune']),
 }).strict();
 
-/** Inferred shape of {@link NodeVerdictSchema}. */
 export type NodeVerdict = z.infer<typeof NodeVerdictSchema>;
 
 /** Zod schema of AI-generated lineage metadata: grouping, badging, highlighting, descriptions. */
@@ -383,7 +377,6 @@ const AIViewMetadataSchema = z.object({
   nodeVerdicts: z.array(NodeVerdictSchema).optional(),
 }).strict();
 
-/** AI-generated metadata layered onto the lineage graph UI: grouping, badges, highlights, text. */
 export type AIViewMetadata = z.infer<typeof AIViewMetadataSchema>;
 
 const ExpandedSchemaViewSchema = z.object({
@@ -746,7 +739,6 @@ export const ExtensionToWebviewMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ai-view-clear') }),
 ]);
 
-/** Type inferred from {@link ExtensionToWebviewMsgSchema}: every valid message to the Webview. */
 export type ExtensionToWebviewMsg = z.infer<typeof ExtensionToWebviewMsgSchema>;
 
 /** Structured webview crash diagnostic accepted from both primary and detail panels. */
@@ -859,13 +851,10 @@ const ColumnStatsSchema = z.object({
   min: z.string().optional(),
   /** Maximum value (formatted as string). */
   max: z.string().optional(),
-  /** Numeric mean. */
   mean: z.number().optional(),
   /** Sample standard deviation (`STDEV`). */
   stdDev: z.number().optional(),
-  /** Minimum string length. */
   minLength: z.number().optional(),
-  /** Maximum string length. */
   maxLength: z.number().optional(),
   /** Count of values equal to 0 (numeric only). */
   zeroCount: z.number().optional(),
@@ -882,17 +871,14 @@ export type ColumnStats = z.infer<typeof ColumnStatsSchema>;
 const TableStatsSchema = z.object({
   /** Total rows evaluated (or sampled). */
   rowCount: z.number(),
-  /** Metrics for each individual column. */
   columns: z.array(ColumnStatsSchema),
   /** Whether the data was sampled or fully scanned. */
   sampled: z.boolean(),
   /** The percentage of the table that was sampled. */
   samplePercent: z.number().optional(),
-  /** Warnings encountered during parsing. */
   warnings: z.array(z.string()).optional(),
 });
 
-/** Comprehensive statistical profile for a database table. */
 export type TableStats = z.infer<typeof TableStatsSchema>;
 
 /** The object a table-stats reply answers, so the panel applies it only to that node. */

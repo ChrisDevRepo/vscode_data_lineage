@@ -259,7 +259,6 @@ function addEdge(
   }
 }
 
-/** Builds the primary list of LineageNodes from extracted object metadata. */
 function buildNodeList(objects: ExtractedObject[], identifierCaseSensitive: boolean): { nodes: LineageNode[]; nodeIds: Set<string> } {
   const nodes: LineageNode[] = [];
   const nodeIds = new Set<string>();
@@ -379,15 +378,12 @@ interface EdgeContext {
   allObjectMeta: Map<string, { schema: string; name: string; type: ObjectType }>;
   /** Lookup map for nodes in the current filtered scope. */
   nodeMap: Map<string, LineageNode>;
-  /** The collection of graph edges being built. */
   edges: LineageEdge[];
   /** Set used to deduplicate edges. */
   edgeKeys: Set<string>;
-  /** Performance and diagnostic statistics. */
   stats: ParseStats;
   /** Pairs to be added to the O(1) neighbor index. */
   neighborPairs: Array<{ source: string; target: string }>;
-  /** The categorized extraction results. */
   grouped: GroupedDeps;
   /** Tracked cross-DB references discovered during regex analysis. */
   crossDbRegexRefs: Map<string, { sources: string[]; targets: string[] }>;

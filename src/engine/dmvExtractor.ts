@@ -28,15 +28,11 @@ import { quoteIdentifier, schemaKey } from '../utils/sql';
 export interface DmvResults {
   /** Core object definitions (tables, views, procedures) and their body scripts. */
   nodes: SimpleExecuteResult;
-  /** Column metadata including types, lengths, and nullability. */
   columns: SimpleExecuteResult;
-  /** Raw cross-object dependency edges. */
   dependencies: SimpleExecuteResult;
   /** Full cross-schema catalog for dependency resolution. */
   allObjects?: SimpleExecuteResult;
-  /** metadata for Foreign Key, Unique, and Check constraints. */
   constraints?: SimpleExecuteResult;
-  /** Server-level platform and version metadata. */
   platformInfo?: SimpleExecuteResult;
   /** Explicit platform label used when the platform query is unavailable. */
   serverPlatform?: string;
@@ -207,7 +203,6 @@ function cellValue(row: DbCellValue[], colIndex: Map<string, number>, name: stri
   return cell && !cell.isNull ? cell.displayValue : '';
 }
 
-/** Builds a fast-lookup map for column names to their array indices. */
 function buildColumnIndex(result: SimpleExecuteResult): Map<string, number> {
   const map = new Map<string, number>();
   for (let i = 0; i < result.columnInfo.length; i++) {
@@ -271,7 +266,6 @@ function buildConstraintMaps(result: SimpleExecuteResult, identifierCaseSensitiv
   return { uqColMap, ckColMap, fkMap, pkOrdinalMap: new Map() };
 }
 
-/** Extracts normalized objects and their columns from raw result sets. */
 function extractObjects(results: DmvResults, identifierCaseSensitive: boolean): ExtractedObject[] {
   const nodeColIdx = buildColumnIndex(results.nodes);
   const colColIdx = buildColumnIndex(results.columns);

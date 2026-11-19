@@ -41,7 +41,6 @@ export interface DmvQuery {
   name: string;
   /** A human-readable description of the query's purpose. Never consumed by the import path. */
   description?: string;
-  /** The raw SQL statement to execute. */
   sql: string;
   /**
    * Execution phase: `1` preliminary (unfiltered), `2` main extraction (typically schema-filtered).
@@ -56,9 +55,7 @@ const isDmvQuery = (q: unknown): q is DmvQuery => DmvQuerySchema.safeParse(q).su
 
 /** Root configuration structure for DMV query definition files. */
 export interface DmvQueriesConfig {
-  /** Schema version of the configuration file. */
   version: number;
-  /** The collection of queries defined in the file. */
   queries: DmvQuery[];
 }
 
@@ -156,7 +153,6 @@ export async function loadDmvQueries(
   return loadBuiltInDmvQueries(outputChannel, extensionUri);
 }
 
-/** Setting that names a custom DMV queries YAML. */
 const DMV_QUERIES_FILE_SETTING = 'dataLineageViz.dmvQueriesFile';
 
 /** The file `dataLineageViz.dmvQueriesFile` resolves to, or `''` for the built-in queries. */

@@ -67,7 +67,6 @@ export const MAX_TCP_PORT = 65535;
 
 /** SQL Server `sysname` length: bounds logins and database names. */
 export const MAX_SYSNAME_LENGTH = 128;
-/** SQL Server maximum password length. */
 const MAX_PASSWORD_LENGTH = 128;
 /** Input-box validation message for a password SQL Server cannot accept, or `undefined`. */
 export function passwordTooLong(value: string): string | undefined {
@@ -136,7 +135,6 @@ export const BuiltInConnectionSchema = z.object({ id: z.string().min(1).max(MAX_
 /** {@link BuiltInConnectionSchema} with an optional id, for callers letting the host assign one. */
 const BuiltInConnectionInputSchema = z.object({ id: z.string().min(1).max(MAX_SYSNAME_LENGTH).optional(), ...connectionFields });
 
-/** A validated built-in connection. */
 export type BuiltInConnection = z.infer<typeof BuiltInConnectionSchema>;
 
 /** Argument of `dataLineageViz.addDatabaseConnection` that skips every prompt. */

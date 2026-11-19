@@ -9,7 +9,6 @@ import { schemaKey } from '../utils/sql';
  */
 export const OBJECT_TYPES = ['table', 'view', 'procedure', 'function', 'external'] as const;
 
-/** Supported lineage object kinds. */
 export type ObjectType = typeof OBJECT_TYPES[number];
 
 /**
@@ -28,7 +27,6 @@ export interface LineageNode {
   name: string;
   /** Full schema-qualified name as found in the source (e.g., `[dbo].[Table]`). */
   fullName: string;
-  /** The specific type of the database object. */
   type: ObjectType;
   /** True if the ColumnStore contains DDL source for this node. */
   hasDdl?: boolean;
@@ -75,7 +73,6 @@ export interface LineageEdge {
 
 /** Summary information for a single SQL schema. */
 export interface SchemaInfo {
-  /** The schema name. */
   name: string;
   /** Total number of nodes belonging to this schema in the current model. */
   nodeCount: number;
@@ -117,13 +114,9 @@ export interface ParseStats {
 
 /** Lightweight entry for the global object catalog. */
 export type CatalogEntry = {
-  /** SQL schema name. */
   schema: string;
-  /** Short object name. */
   name: string;
-  /** Object classification. */
   type: ObjectType;
-  /** External classification if applicable. */
   externalType?: 'et' | 'file' | 'db'
 };
 
@@ -186,7 +179,6 @@ export interface SchemaPreview {
 export interface XmlElement {
   /** The internal SQL object type (e.g., 'SqlTable'). */
   '@_Type': string;
-  /** The name of the object. */
   '@_Name'?: string;
   /** Reference to an external source for cross-database or external table objects. */
   '@_ExternalSource'?: string;
@@ -212,7 +204,6 @@ export interface XmlAnnotation {
 
 /** A key-value pair representing a property on an XML element or annotation. */
 export interface XmlProperty {
-  /** The unique name of the property. */
   '@_Name': string;
   /** The value of the property, if provided as an attribute. */
   '@_Value'?: string;
@@ -238,7 +229,6 @@ export interface XmlEntry {
 
 /** A reference pointer to another element in the SQL model. */
 export interface XmlReference {
-  /** The name of the referenced object. */
   '@_Name': string;
   /** The external source of the reference, if applicable. */
   '@_ExternalSource'?: string;
@@ -263,7 +253,6 @@ export const TRACKED_ELEMENT_TYPES = new Set(Object.keys(ELEMENT_TYPE_MAP));
 
 /** Database column definition, used by the "Column Mode" detail view and schema exploration. */
 export interface ColumnDef {
-  /** The display name of the column. */
   name: string;
   /** The formatted SQL data type (e.g., 'nvarchar(50)'). */
   type: string;
@@ -293,13 +282,11 @@ export interface ColumnExpressionDependency {
 
 /** Foreign key constraint metadata — attached to table ExtractedObject (dacpac + DMV paths). */
 export interface ForeignKeyInfo {
-  /** The name of the foreign key constraint. */
   name: string;
   /** The list of column names in the child table. */
   columns: string[];
   /** The schema of the referenced (parent) table. */
   refSchema: string;
-  /** The name of the referenced (parent) table. */
   refTable: string;
   /** The list of column names in the parent table. */
   refColumns: string[];
@@ -421,7 +408,6 @@ export function createEmptySchemaInfo(name: string): SchemaInfo {
 export interface ExtractedObject {
   /** Full schema-qualified name (e.g., "[dbo].[Table]"). */
   fullName: string;
-  /** The specific type of the database object. */
   type: ObjectType;
   /** The raw SQL DDL or body script of the object. */
   bodyScript?: string;
@@ -443,7 +429,6 @@ export interface ExtractedDependency {
 
 /** External file/URL reference detected by pre-cleansing regex pass. */
 export interface ExternalRef {
-  /** The full URL or file path. */
   url: string;
   /** The classification of the reference (e.g., 'datalake', 'blob'). */
   kind: string;
@@ -469,17 +454,12 @@ export interface LayoutConfig {
   rankSeparation: number;
   /** Spacing between nodes within the same rank. */
   nodeSeparation: number;
-  /** Whether to animate edge transitions. */
   edgeAnimation: boolean;
-  /** Whether to animate node highlights. */
   highlightAnimation: boolean;
-  /** Whether the minimap is enabled in the UI. */
   minimapEnabled: boolean;
-  /** The visual style of edges (e.g., smooth curves or orthogonal steps). */
   edgeStyle: EdgeStyle;
 }
 
-/** Supported edge rendering styles. */
 export type EdgeStyle = 'default' | 'smoothstep' | 'step' | 'straight';
 
 /** Configuration for interactive lineage tracing. */
@@ -500,13 +480,10 @@ export interface AnalysisConfig {
 
 /** Configuration for the table profiling/statistics engine. */
 export interface TableStatsConfig {
-  /** Whether profiling is enabled. */
   enabled: boolean;
   /** Whether standard profiling (MIN/MAX, string length range, AVG, STDEV, empty counts) is on. */
   standardModeEnabled: boolean;
-  /** Whether to skip profiling for external tables. */
   excludeExternalTables: boolean;
-  /** Maximum number of columns to profile per table. */
   maxColumns: number;
   /** Threshold above which sampling is used instead of a full scan. */
   sampleThreshold: number;
@@ -544,15 +521,10 @@ export interface ExtensionConfig {
   maxNodes: number;
   /** Maximum duration (in seconds) for DMV metadata queries. */
   dmvQueryTimeout: number;
-  /** Visual layout settings. */
   layout: LayoutConfig;
-  /** Lineage tracing settings. */
   trace: TraceConfig;
-  /** Graph analysis settings. */
   analysis: AnalysisConfig;
-  /** Profiling and statistics settings. */
   tableStatistics: TableStatsConfig;
-  /** External reference settings. */
   externalRefs: ExternalRefsConfig;
   /** Schema View settings stored under the legacy `overview` configuration key. */
   overview: OverviewConfig;
@@ -563,7 +535,6 @@ export interface ExtensionConfig {
 /** Fabric Data Warehouse engineEditionId — used for platform-specific query branching. */
 export const ENGINE_EDITION_FABRIC = 11;
 
-/** Default extension configuration values. */
 export const DEFAULT_CONFIG = {
   excludePatterns: [],
   maxNodes: 2000,
@@ -584,11 +555,9 @@ export type GraphMode = 'full' | 'overview';
 /** Data for a schema-level super-node rendered in Schema View. */
 export interface SchemaNodeData extends Record<string, unknown> {
   schemaName: string;
-  /** Number of objects represented by the schema node. */
   objectCount: number;
   /** Object counts keyed by lineage object type. */
   typeBreakdown: Partial<Record<ObjectType, number>>;
-  /** Display color for the schema node. */
   color: string;
   /** True for a node of only external objects; those clusters use the fixed external color. */
   isExternalOnly?: boolean;
@@ -602,9 +571,7 @@ export interface SchemaNodeData extends Record<string, unknown> {
 export type TraceNeighborOption = {
   /** Stable node ID passed back to trace edit handlers. */
   id: string;
-  /** Display name shown in the neighbor picker. */
   label: string;
-  /** Schema displayed with the neighbor label. */
   schema: string;
   /** Object kind used for compact type badges in the picker. */
   objectType: ObjectType;
@@ -634,7 +601,6 @@ export type TraceNodeControls = {
   in: TraceSideControls;
   /** Controls for downstream direct-neighbor trace edits. */
   out: TraceSideControls;
-  /** Adds the selected direct neighbor to the current trace scope. */
   onAdd: (nodeId: string) => void;
   /** Removes the selected node from the current trace scope when safe. */
   onPrune: (nodeId: string) => void;
@@ -642,7 +608,6 @@ export type TraceNodeControls = {
 
 /** The business data associated with a single node in the React Flow canvas. */
 export type CustomNodeData = {
-  /** Display label rendered inside the node. */
   label: string;
   /** Schema name used for grouping, color selection, and tooltips. */
   schema: string;
@@ -656,11 +621,8 @@ export type CustomNodeData = {
   outDegree: number;
   /** Highlight state applied by search, trace, or AI presentation. */
   highlighted?: boolean | 'yellow';
-  /** External reference subtype for file, database, or external-table nodes. */
   externalType?: 'et' | 'file' | 'db';
-  /** File or URL target displayed for file-based external references. */
   externalUrl?: string;
-  /** Database name displayed for cross-database external references. */
   externalDatabase?: string;
   /** Definition not readable: the node has no edges and shows a warning marker. */
   definitionUnreadable?: boolean;
@@ -676,7 +638,6 @@ export type CustomNodeData = {
   showRemoveButton?: boolean;
   /** Removes the node from the active allowlist-backed view. */
   onRemoveFromView?: (nodeId: string) => void;
-  /** Interactive trace controls for adding or pruning direct neighbors. */
   traceControls?: TraceNodeControls;
 };
 
@@ -687,7 +648,6 @@ export type CustomNodeData = {
  * looking at.
  */
 export type AiBadge = {
-  /** Section label text. */
   text: string;
   /** `lit` for the focused section's own labels, `dim` for every other label. */
   emphasis?: 'lit' | 'dim';
@@ -703,7 +663,6 @@ export type ColumnTraceNodeData = {
   showRemoveButton?: boolean;
   /** Removes the node from the active allowlist-backed view. */
   onRemoveFromView?: (nodeId: string) => void;
-  /** Interactive trace controls for adding or pruning direct neighbors. */
   traceControls?: TraceNodeControls;
   /**
    * Per-row line state for the state dot, keyed by row name; populated by the caller from edges
@@ -729,21 +688,13 @@ export type ColumnTraceNodeData = {
 
 /** Durable graph filter state applied to the current model. */
 export interface FilterState {
-  /** Schemas currently included by the filter. */
   schemas: Set<string>;
-  /** Object types currently included by the filter. */
   types: Set<ObjectType>;
-  /** Free-text search term applied to the graph. */
   searchTerm: string;
-  /** Whether isolated nodes are hidden. */
   hideIsolated: boolean;
-  /** Schemas emphasized in the current view. */
   focusSchemas: Set<string>;
-  /** Whether external reference nodes are shown. */
   showExternalRefs: boolean;
-  /** Enabled categories of external references. */
   externalRefTypes: Set<'file' | 'db'>;
-  /** User-defined exclusion patterns. */
   exclusionPatterns: string[];
   /**
    * When non-empty, only these node IDs are shown (applied after all other filters); empty or
@@ -754,16 +705,13 @@ export interface FilterState {
 
 /** Interactive trace state for the current graph session. */
 export interface TraceState {
-  /** Current trace mode. */
   mode: 'none' | 'configuring' | 'applied' | 'filtered' | 'pathfinding' | 'path-applied' | 'analysis';
   /** Analysis type when the trace is in analysis mode. */
   analysisType?: AnalysisType;
   /** Origin node ID for the trace. */
   selectedNodeId: string | null;
   targetNodeId: string | null;
-  /** Configured upstream traversal depth. */
   upstreamLevels: number;
-  /** Configured downstream traversal depth. */
   downstreamLevels: number;
   /** Original BFS node scope before interactive trace add/prune edits. */
   baseNodeIds: Set<string>;
@@ -773,9 +721,7 @@ export interface TraceState {
   manualAddedNodeIds: Set<string>;
   /** Nodes manually removed from the active trace. */
   manualPrunedNodeIds: Set<string>;
-  /** Node IDs currently included in the rendered trace. */
   tracedNodeIds: Set<string>;
-  /** Edge IDs currently included in the rendered trace. */
   tracedEdgeIds: Set<string>;
   /** BFS auto-promoted to fullGraph because the target node was filtered out. */
   autoPromoted?: boolean;
@@ -815,24 +761,18 @@ export interface TraceAffordanceSnapshot {
 }
 
 
-/** Supported graph analysis modes. */
 export type AnalysisType = 'islands' | 'hubs' | 'orphans' | 'longest-path' | 'cycles' | 'external-refs';
 
 /** Grouped analysis result for a related set of nodes. */
 export interface AnalysisGroup {
-  /** Stable identifier for the analysis group. */
   id: string;
-  /** Display label for the analysis group. */
   label: string;
-  /** Node IDs assigned to the group. */
   nodeIds: string[];
-  /** Optional metadata for the analysis group. */
   meta?: Record<string, string | number>;
 }
 
 /** Result payload returned by a graph analysis run. */
 export interface AnalysisResult {
-  /** Analysis type that produced this result. */
   type: AnalysisType;
   groups: AnalysisGroup[];
   /** Human-readable summary of the analysis result. */
@@ -841,9 +781,7 @@ export interface AnalysisResult {
 
 /** Active analysis view state. */
 export interface AnalysisMode {
-  /** Analysis type currently displayed. */
   type: AnalysisType;
-  /** Analysis result currently displayed. */
   result: AnalysisResult;
   /** Selected analysis group, or `null` when none is active. */
   activeGroupId: string | null;

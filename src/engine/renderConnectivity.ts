@@ -10,15 +10,12 @@ export interface RenderConnectivityNode {
 
 /** Minimal directed edge shape for rendered-connectivity analysis. */
 export interface RenderConnectivityEdge {
-  /** Source node id. */
   source: string;
-  /** Target node id. */
   target: string;
 }
 
 /** A weakly-connected group of rendered nodes. */
 export interface RenderComponent {
-  /** Number of nodes in the component. */
   size: number;
   /** Member labels (falls back to id when no label), sorted ascending. */
   nodes: string[];

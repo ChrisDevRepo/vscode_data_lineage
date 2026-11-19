@@ -254,7 +254,6 @@ function walkFromEntry(graph: Graph, members: readonly string[], entry: string):
 
 /** One `(component, realized entry node)` state of the chain DP. */
 interface ChainState {
-  /** Component the chain is in. */
   component: number;
   /** Member the chain arrives at. */
   entry: string;

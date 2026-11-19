@@ -14,7 +14,6 @@ const BRACKET_IDENT = /\[(?:[^\]]|\]\])+\]/;
 /** Matches a regular SQL identifier: Unicode letters, then letters/digits or _/@/#/$. */
 const WORD_IDENT = /[\p{L}_@#][\p{L}\p{Nd}_@$#]*/u;
 
-/** Matches either a bracketed or plain identifier. */
 export const ANY_IDENT = new RegExp(`(?:${BRACKET_IDENT.source}|${WORD_IDENT.source})`, 'u');
 
 /** Matches a schema-qualified name like `[s].[t]`, `s.t`, `[s].t`, or `s.[t]`. */

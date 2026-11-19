@@ -19,9 +19,7 @@ import type { DmvQuery } from '../connectionManager';
 
 /** Everything the provider needs from the extension host. */
 export interface BuiltInEnv {
-  /** Secret store that holds SQL login passwords. */
   secrets: vscode.SecretStorage;
-  /** Output channel for debug and info logging. */
   outputChannel: vscode.LogOutputChannel;
   /** Loads the DMV queries YAML; every statement the built-in connection sends comes from it. */
   loadQueries: () => Promise<DmvQuery[]>;

@@ -53,7 +53,6 @@ interface ParsedDependencies {
 interface ParseRule {
   /** Unique identifier for the rule. Used for debugging and configuration overrides. */
   name: string;
-  /** Whether the rule is actively applied during parsing. */
   enabled: boolean;
   /** Execution order (lower runs earlier); matters for rules depending on earlier preprocessing. */
   priority: number;
@@ -70,7 +69,6 @@ interface ParseRule {
   replacement?: string;
   /** Defines the type of external reference. Required if category is 'external_ref'. */
   kind?: string;
-  /** Human-readable explanation of the rule's purpose. */
   description: string;
 }
 
@@ -92,7 +90,6 @@ export interface RawParseRulesConfig {
  * details on any validation failures.
  */
 interface LoadRulesResult {
-  /** The number of rules successfully validated and loaded. */
   loaded: number;
   /** Names of rules that failed validation and were skipped. */
   skipped: string[];

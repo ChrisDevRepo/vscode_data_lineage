@@ -15,7 +15,6 @@ export type TraceTreeSide = 'up' | 'down' | 'connected';
 
 /** A group of tree nodes with their per-node grow candidates. */
 export interface TraceTreeGroup {
-  /** Tree placement of this group. */
   side: TraceTreeSide;
   /** Visible node ids in first-visit order. */
   nodeIds: string[];

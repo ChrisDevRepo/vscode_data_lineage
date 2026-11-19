@@ -22,10 +22,8 @@ export interface ExpandedSchemaViewRenderOptions {
 
 /** Schema-level aggregate node derived from object-level graph nodes. */
 export interface SchemaProjectionNode {
-  /** Schema name represented by this aggregate node. */
   schemaName: string;
   objectCount: number;
-  /** Object counts keyed by lineage object type. */
   typeBreakdown: Partial<Record<ObjectType, number>>;
 }
 
@@ -59,7 +57,6 @@ export interface ExpandedSchemaProjection extends ExpandedSchemaViewResult {
   individualEdges: Array<{ source: string; target: string }>;
   /** Bridge edges between expanded objects and collapsed schema clusters. */
   bridges: Map<string, SchemaBridgeEdge>;
-  /** Aggregated edges between collapsed schema clusters. */
   schemaClusterEdges: SchemaProjectionEdge[];
 }
 
