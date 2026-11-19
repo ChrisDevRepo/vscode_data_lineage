@@ -221,6 +221,11 @@ export interface ToolAttemptObservation {
   readonly input: unknown;
   /** Private identity used to reuse an equivalent accepted read without dispatching it again. */
   readonly acceptedCallKey?: string;
+  /**
+   * Set when the body was refused storage for size: the observation holds no evidence and adds no
+   * progress.
+   */
+  readonly refused?: boolean;
 }
 
 /** Ordered disposition of one provider-emitted call. */
@@ -459,7 +464,8 @@ export function recordToolAttempt(
   terminalTool?: string,
 ): ToolPhaseAttemptState {
   const providerCalls = state.providerCalls + attempt.providerCalls;
-  const noProgressCalls = attempt.observations.length === 0 ? state.noProgressCalls + attempt.providerCalls : 0;
+  const stored = attempt.observations.some(observation => !observation.refused);
+  const noProgressCalls = stored ? 0 : state.noProgressCalls + attempt.providerCalls;
   const observations = [...state.observations, ...attempt.observations];
   const rejections = [...state.rejections, ...attempt.rejections];
   const messages = [...state.messages, ...attempt.messages];
@@ -779,11 +785,12 @@ function recordToolOutcome(
         result: outcome.detail.result,
         input: outcome.detail.input,
         ...(outcome.detail.acceptedCallKey ? { acceptedCallKey: outcome.detail.acceptedCallKey } : {}),
+        ...(outcome.detail.refused ? { refused: true } : {}),
       });
     }
     if (outcome.detail.refused) {
       const refusal = readToolError(JSON.parse(outcome.detail.result));
-      if (refusal) return { resultText: rejectionText(refusal), status: 'error', artifact: refusal };
+      if (refusal) return { resultText: rejectionText(refusal, priorState), status: 'error', artifact: refusal };
     }
     return { resultText: renderObservationResultContent(outcome.detail.result), status: 'success' };
   }
@@ -1197,7 +1204,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
           input: call.input,
           ...(observe && reusableKey ? { acceptedCallKey: reusableKey } : {}),
         },
-      }, calls, observations, rejections);
+      }, calls, observations, rejections, undefined, input.priorState);
       toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
       if (observe && reusableKey && !reusableObservations.has(reusableKey)) {
         reusableObservations.set(reusableKey, observations[observations.length - 1]);
