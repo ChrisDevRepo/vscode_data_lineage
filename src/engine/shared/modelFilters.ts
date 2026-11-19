@@ -112,9 +112,9 @@ export function userFilterAdmits(model: DatabaseModel, activeFilter: SerializedF
 }
 
 /**
- * Objects shown by the user filter ({@link userFilterAdmits}), then Hide Isolated, then the
- * allowlist, over the same schema scope the webview builds ({@link filterBySchemas}); every
- * object when no filter is active.
+ * Objects shown over the same schema scope and attributes as {@link userFilterAdmits}
+ * ({@link filterBySchemas}), with Hide Isolated applied before the allowlist; every object when
+ * no filter is active.
  */
 export function countVisibleNodes(model: DatabaseModel, activeFilter?: SerializedFilterState | null): number {
   if (!activeFilter) return model.nodes.length;
