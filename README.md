@@ -31,17 +31,6 @@ Save, reuse, and manage connections from the wizard. Passwords are kept in VS Co
 
 Live projects read database metadata for lineage and can optionally profile table data. Use a login with read permissions only. See [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md) for every query the import runs, and [Troubleshooting](docs/TROUBLESHOOTING.md#import-and-connection) for setup, permissions, and connection help.
 
-## Explore your lineage
-
-Once your model loads, the visual graph is ready to use — no Copilot required:
-
-- **Data Lineage: Search Objects** finds any table, view, procedure, or function instantly and focuses it in the graph.
-- **Trace dependencies** — follow sources upstream or consumers downstream from any node.
-- **See the blast radius** — spot hubs, islands, orphans, and circular dependencies before you change anything.
-- **Read the SQL** — right-click an object to open its DDL or table details; full-text search across procedure and view bodies.
-
-![Interactive dependency graph with schema-coloured nodes](images/viz-screenshot.png)
-
 ## Optional AI lineage with `@lineage`
 
 With a VS Code Language Model Chat provider, `@lineage` adds natural-language
@@ -55,44 +44,33 @@ model.
 @lineage which objects are hubs with the most connections?
 ```
 
-Use it to ask dependency questions, preview graph scopes, save useful previews as
-bookmarks, ask about what is on screen (*"explain this trace"*, or `#lineageView`),
-recall what an earlier analysis found from its saved AI bookmark, and — where the
-metadata allows — follow column mappings or explain SQL logic.
-
 ![AI lineage analysis — annotated graph with column mappings and join paths](images/viz-ai-screenshot.png)
 
-`@lineage` has three user-visible paths:
+`@lineage` answers in chat from deterministic tools by default (`/search` pins this), offers a **Show graph preview** in the side panel, and for `/trace`, a named-column trace or an over-budget question shows the planned scope and waits for your approval before it walks the graph hop by hop. Details: [`docs/FEATURES.md`](docs/FEATURES.md#lineage-ai). Column mappings are model interpretations; verify them against the SQL.
 
-- **Discovery (chat)** — the default. Catalog lookups, DDL search, graph-pattern questions, bounded upstream/downstream scope questions, and explicit source-to-target path questions are answered directly in chat from deterministic tools. `/search` pins this path. An explicit graph/render request is answered here too; **Show graph preview** draws it.
-- **Graph preview** — the **Show graph preview** follow-up opens a bounded transient preview in the side panel. Save it explicitly if you want a bookmark.
-- **Structured walkthrough** — `/trace`, a named-column trace, a discovery scope that exceeds the configured budget, or the **Start deeper hop-by-hop analysis** follow-up first shows the planned scope and asks for confirmation. Once approved, the assistant walks the graph hop-by-hop and colours source / transform / target nodes in the result.
-
-Only the `@lineage` chat experience requires a VS Code Language Model Chat
-provider, such as
-[GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot)
-or a compatible BYOK provider. The visual graph, search, trace, SQL preview,
-demo data, profiling, and export features work without one.
+The graph, search, trace, SQL preview, demo data, profiling and export work without a model provider.
 
 ## Requirements, settings and privacy
 
-- VS Code 1.101 or later. `@lineage` additionally needs a VS Code Language Model Chat provider. A database import needs a login with `VIEW DEFINITION` (and `SELECT` on a table to profile it); see [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md).
+- VS Code 1.101 or later. `@lineage` additionally needs a VS Code Language Model Chat provider, such as [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot) or a compatible BYOK provider. A database import needs a login with `VIEW DEFINITION` (and `SELECT` on a table to profile it); see [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md).
 - Settings: search "dataLineageViz" in VS Code Settings or run **Data Lineage: Settings**; every setting is described in [`docs/FEATURES.md`](docs/FEATURES.md#settings-reference).
 - Privacy: the extension has no telemetry and sends nothing to its author. A `.dacpac` is parsed locally. A database import and table statistics run only when you start them, with the SQL listed in [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md) and [`docs/PROFILING_PATTERNS.md`](docs/PROFILING_PATTERNS.md). Only `@lineage` sends data to a model: your question, recent `@lineage` chat, and the SQL or metadata its tools read from the loaded graph go to the chat model you selected in VS Code. Set `dataLineageViz.ai.enabled` to `false` to remove it. Details: [`SECURITY.md`](SECURITY.md).
 
 ## Features
 
-- **Interactive graph** — search objects, trace upstream or downstream, and find shortest paths between nodes.
-- **Graph analysis** — identify islands, hubs, orphans, circular dependencies, and long dependency chains.
+![Interactive dependency graph with schema-coloured nodes](images/viz-screenshot.png)
+
+- **Interactive graph** — **Data Lineage: Search Objects** finds any table, view, procedure or function; trace upstream or downstream from any node; find shortest paths between nodes.
+- **Graph analysis** — spot islands, hubs, orphans, circular dependencies and long chains before you change anything.
 - **Schema View** — large graphs auto-summarise at schema level; double-click to drill in.
-- **SQL preview** — inspect DDL with syntax highlighting and search across procedure / view bodies.
-- **Optional `@lineage` AI** — use VS Code Chat to ask lineage questions, preview graph scopes, save previews as bookmarks, and follow column mappings where the metadata allows. The assistant can read what is currently on screen, and a bookmark saved from an AI-authored view keeps that run's findings so a later question can recall them.
+- **SQL preview** — open an object's DDL or table details; full-text search across procedure and view bodies.
+- **Optional `@lineage` AI** — natural-language questions about the loaded model; `#lineageView` shares what is on screen; a bookmark saved from an AI view keeps that run's findings for later recall.
 - **Multiple sources** — SSDT and SDK-style `.dacpac` files, live database connections, external tables, and virtual external refs (OPENROWSET, cross-DB, CETAS).
-- **Projects & views** — save connections, schema selections, and named filter states for one-click reopen.
+- **Projects & views** — save connections, schema selections and named filter states for one-click reopen.
 - **Table profiling** — on-demand column statistics for live databases (null %, distinct, min / max, AVG, STDEV).
 - **Export** — Draw.io diagram generation.
 
-For the full feature catalogue, settings, and customisation paths see [`docs/FEATURES.md`](docs/FEATURES.md).
+The full catalogue and settings: [`docs/FEATURES.md`](docs/FEATURES.md).
 
 ## Limitations
 
@@ -115,20 +93,11 @@ No — connect directly to a database. If you prefer a `.dacpac`, extract one fr
 
 ## Documentation
 
-- [`docs/FEATURES.md`](docs/FEATURES.md) — full feature catalogue and settings reference.
-- [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) — common issues.
-- [`SECURITY.md`](SECURITY.md) — what is read, run and sent; how to report a vulnerability.
-- [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md) — DBA reference: every query a database import runs and the permissions it needs.
-- [`docs/PROFILING_PATTERNS.md`](docs/PROFILING_PATTERNS.md) — SQL sent for table statistics.
-- [`docs/PARSE_RULES.md`](docs/PARSE_RULES.md) — YAML reference for the SQL parser and its limits.
-- [`docs/AI_PROMPTS.md`](docs/AI_PROMPTS.md) — `@lineage` output templates and prompt owners.
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — lineage engine, data access, `@lineage` runtime, code map.
-- [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md) — build, run, package; [`docs/testing/README.md`](docs/testing/README.md) — tests.
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+- Users: [`docs/FEATURES.md`](docs/FEATURES.md) (features, settings), [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md), [`CHANGELOG.md`](CHANGELOG.md).
+- DBAs and security reviewers: [`SECURITY.md`](SECURITY.md) (what is read, run and sent; reporting), [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md) (import queries, permissions), [`docs/PROFILING_PATTERNS.md`](docs/PROFILING_PATTERNS.md) (statistics SQL), [`docs/PARSE_RULES.md`](docs/PARSE_RULES.md) (parser and limits), [`docs/AI_PROMPTS.md`](docs/AI_PROMPTS.md) (`@lineage` templates).
+- Developers: [`CONTRIBUTING.md`](CONTRIBUTING.md) (build, test, propose a change), [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/testing/README.md`](docs/testing/README.md), [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
-## Contributing
-
-Bug reports welcome. For custom features, fork and extend under the MIT license. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Bug reports are welcome; for custom features, fork and extend under the MIT license.
 
 ---
 

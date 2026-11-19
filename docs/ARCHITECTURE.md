@@ -32,7 +32,7 @@ The core is a deterministic object-lineage engine and a graph view. Search, trac
 | Table statistics | Row-count and aggregate `SELECT`s | When you request them for one table |
 | `@lineage` | Nothing against a database; its tools read the loaded model | Optional, per chat request |
 
-Live connections use the built-in `tedious` provider with SQL login or Microsoft Entra ID, `ReadOnly` application intent, and passwords in VS Code `SecretStorage`. A project saved with the retired SQL Server (mssql) extension shows one non-modal warning and opens **Add Database Connection** prefilled with its server and database. Data boundaries: [`SECURITY.md`](../SECURITY.md).
+Live connections use the built-in `tedious` provider with SQL login or Microsoft Entra ID, `ReadOnly` application intent, and passwords in VS Code `SecretStorage`. Data boundaries: [`SECURITY.md`](../SECURITY.md).
 
 ## Code map
 
@@ -46,6 +46,7 @@ Live connections use the built-in `tedious` provider with SQL login or Microsoft
 | [`src/ai/`](../src/ai/) | `@lineage` participant, phase graph, navigation engine, tools, prompts, session memory |
 | `src/export/`, `src/utils/` | Draw.io export; logging, notifications, redaction, layout worker |
 | [`assets/`](../assets/) | Parse rules, DMV queries, AI output templates, demo DACPAC |
+| [`tests/`](../tests/) | `unit/` (Vitest), `integration/` (VS Code host), `fixtures/`, `scale/`, `tools/` (gate and runners) |
 
 ## Optional AI: `@lineage`
 
@@ -70,17 +71,17 @@ flowchart LR
 
 ### Discovery and visual preview
 
-A question is first answered in chat from deterministic catalog tools (objects, DDL, neighbors, graph patterns); `/search` pins this path. The **Show graph preview** follow-up opens a bounded, transient **AI Preview** in the graph view. A discovery request above `dataLineageViz.ai.discoveryNodeCap` or `dataLineageViz.ai.discoveryTokenBudget` is offered as deep analysis instead.
+A question is first answered in chat from deterministic catalog tools; `/search` pins this path. **Show graph preview** opens a bounded, transient **AI Preview**. A request above `dataLineageViz.ai.discoveryNodeCap` or `dataLineageViz.ai.discoveryTokenBudget` is offered as deep analysis instead. User view: [`FEATURES.md`](FEATURES.md#how-it-answers).
 
 ### Consent gate and exploration
 
-`/trace`, a named-column trace, the **Start deeper hop-by-hop analysis** follow-up or an over-budget request first shows the plan (depth, scope, mode, columns, exclusions). **Approve & Proceed**, **Change scope** and **Cancel** (or a typed reply) resolve it; no hop runs before approval. The approved scope must fit `dataLineageViz.ai.maxRounds` and, for column traces, `dataLineageViz.ai.maxTraceColumns`.
+`/trace`, a named-column trace, the **Start deeper hop-by-hop analysis** follow-up or an over-budget request first shows the plan; no hop runs before approval, and the approved scope must fit `dataLineageViz.ai.maxRounds` and `dataLineageViz.ai.maxTraceColumns`.
 
 An exploration walks the approved scope one SQL object at a time (a **hop**): the model reads the object's definition and records findings, and the engine validates each reply and routes the next objects. Tables and other objects without a SQL body get no analysis hop of their own. Two modes: **BB** follows whole objects; **CT** (column trace) adds column tracking on the same object graph, and follows only columns whose value produces the traced column; join, filter, group and order columns are explained, not traced. The engine checks identities and routes; the model owns whether its SQL reading is complete, so verify column mappings against the SQL.
 
 ### Memory and bookmarks
 
-Findings accumulate in `AiSession` ([`src/ai/session/`](../src/ai/session/)). A bookmark saved from an AI view keeps that run's findings and a hash of each object's DDL, so a later question can recall them and flag stale ones.
+Findings accumulate in `AiSession` ([`src/ai/session/`](../src/ai/session/)); a bookmark saved from an AI view keeps them with a hash of each object's DDL, so a later question can recall them and flag stale ones.
 
 ## Design boundaries
 
@@ -91,5 +92,4 @@ Findings accumulate in `AiSession` ([`src/ai/session/`](../src/ai/session/)). A 
 ## History, privacy, and no-egress boundary
 
 - Chat history is projected as ordered user and assistant text, bounded by turn count and bytes. Tool calls and results are not replayed across turns or stored in VS Code's chat store; a later turn re-reads facts through the read tools.
-- The extension makes no network calls of its own besides database connections and the selected model through `vscode.lm`. An npm override resolves LangChain's transitive `langsmith` to the inert stub in `stubs/langsmith/`, runtime tracing flags fail closed, and the gate checks the real client is absent from the bundle. [`scripts/repair-langsmith-stub.mjs`](../scripts/repair-langsmith-stub.mjs) repairs the override after a copied `node_modules`.
-- VS Code owns Stop and Retry; the extension cuts no generation.
+- The extension makes no network calls of its own besides database connections and the selected model through `vscode.lm`. LangChain's transitive `langsmith` resolves to the inert stub in `stubs/langsmith/` ([`DEVELOPER_GUIDE.md`](DEVELOPER_GUIDE.md#toolchain)), and the gate checks the real client is absent from the bundle.

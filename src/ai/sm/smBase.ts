@@ -51,8 +51,6 @@ export interface HopNeighborDisclosure extends HopNeighbor {
    * on it is a no-op.
    */
   out_of_direction?: boolean;
-  /** An open target can receive an in-scope subquestion or an out-of-scope deferred proposal. */
-  can_question: boolean;
   /** A queued, visited, removed or protected target cannot be neighbor-pruned. */
   can_prune: boolean;
 }
@@ -104,11 +102,8 @@ const REMOVAL_REFUSAL: Record<NonNullable<RemovalAnalysis['rejection']>, string>
   'unknown-node': 'not removed — it is not in the loaded model, so there is nothing to prune.',
   'visited': 'not removed — it was already visited on an earlier hop and is retained.',
 };
-/**
- * Kept-verdict fields a held draft restores when a retry omits them; CT `column_flow` is always
- * resent.
- */
-const HELD_CARRIED_FIELDS = ['badge_label', 'prune_neighbors', 'questions'] as const;
+/** Kept-verdict fields a held draft restores when a retry omits them; `reason` is never held. */
+const HELD_CARRIED_FIELDS = ['badge_label', 'prune_neighbors', 'questions', 'column_flow'] as const;
 
 /** Defines the core interface for the state machine handling exploration modes. */
 export interface IHopStateMachine {
@@ -609,9 +604,12 @@ export class NavigationEngine implements IHopStateMachine {
     return authorization.focusId;
   }
 
-  /** Whether the held finding of the current focus holds a summary a retry may omit. */
-  public get heldSummary(): boolean {
-    return this.heldFindingFocus !== null && (this.heldFindingDraft.get()?.summary.trim() ?? '') !== '';
+  /**
+   * The top-level fields the held finding of the current focus failed, which a retry must send
+   * (every other field is held); `null` without a held finding.
+   */
+  public get heldFailed(): readonly string[] | null {
+    return this.heldFindingFocus === null ? null : this.heldFindingDraft.getAuthorization()?.failed ?? null;
   }
 
   /** Whether the current tasks trace columns on both sides of the focus. */
@@ -644,49 +642,50 @@ export class NavigationEngine implements IHopStateMachine {
   }
 
   /**
-   * Overlays a correction retry on the held draft of the same focus: sections merge by angle
-   * ({@link RepairDraftStore.mergeByKey}), an omitted angle keeps its held body, an empty summary
-   * keeps the held one. Other omitted fields (`badge_label`, `prune_neighbors`, `questions`) are
-   * restored unless the rejection named them as failed; a field the retry sends replaces the held
-   * one.
-   *
-   * @returns The submission to apply, or a `missing_field` rejection when neither the retry nor a
-   *   held draft supplies a non-empty summary, or a kept verdict has no sections, no summary and no
-   *   held draft. Empty sections with an authored summary pass: a revisit credits archived angles.
+   * Overlays a correction retry on the held draft of the same focus, before the shape check: a
+   * field the retry omits is restored unless the rejection named it as failed (`focus_node_id`,
+   * `verdict` and every {@link HELD_CARRIED_FIELDS} field), sections merge by angle
+   * ({@link RepairDraftStore.mergeByKey}) and an empty summary keeps the held one. A field the
+   * retry sends replaces the held one. Without a held draft of the focus the call passes unchanged.
    */
-  public applyHeldContent(incoming: HopSubmission): HopSubmission | ToolRejection {
-    const held = this.heldFindingDraft.get();
-    const inFocus = resolveModelNodeId(incoming.focus_node_id, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(incoming.focus_node_id);
-    const heldForFocus = this.heldFindingFocus === inFocus && held
-      && (resolveModelNodeId(held.focus_node_id, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(held.focus_node_id)) === inFocus
-      && inFocus === this.currentFocusNodeId
-      ? held
-      : null;
-    if (!heldForFocus) {
-      if (incoming.sections.length === 0 && !incoming.summary.trim()) {
-        return makeRejection({
-          code: REJECTION_CODES.missingField,
-          hint: 'sections is empty and no draft is held for this node; resend the full call with authored sections and a non-empty summary.',
-        });
-      }
-      return incoming.summary.trim() ? incoming : this.emptySummaryRejection();
-    }
+  public applyHeldContent(incoming: Partial<HopSubmission>): Partial<HopSubmission> {
+    const heldFocus = this.heldFindingFocus;
+    const held = heldFocus === null ? null : this.heldFindingDraft.get();
+    if (!held) return incoming;
+    const inFocus = incoming.focus_node_id === undefined
+      ? heldFocus
+      : resolveModelNodeId(incoming.focus_node_id, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(incoming.focus_node_id);
+    if (inFocus !== heldFocus || (resolveModelNodeId(held.focus_node_id, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(held.focus_node_id)) !== inFocus) return incoming;
     this.log('debug', `[Hold] held sections restored hop=${this.hopCount} focus=${inFocus}`);
     const failed = this.heldFindingDraft.getAuthorization()?.failed ?? [];
     const carried: Partial<HopFindingKept> = {};
-    for (const field of HELD_CARRIED_FIELDS) {
-      if (incoming[field] === undefined && heldForFocus[field] !== undefined && !failed.includes(field)) {
-        Object.assign(carried, { [field]: heldForFocus[field] });
+    for (const field of ['focus_node_id', 'verdict', ...HELD_CARRIED_FIELDS] as const) {
+      if (incoming[field] === undefined && held[field] !== undefined && !failed.includes(field)) {
+        Object.assign(carried, { [field]: held[field] });
       }
     }
-    const summary = incoming.summary.trim() ? incoming.summary : heldForFocus.summary;
-    if (!summary.trim()) return this.emptySummaryRejection();
     return {
       ...incoming,
       ...carried,
-      sections: RepairDraftStore.mergeByKey(heldForFocus.sections, incoming.sections, section => section.angle ?? ''),
-      summary,
+      sections: RepairDraftStore.mergeByKey(held.sections, incoming.sections ?? [], section => section.angle ?? ''),
+      summary: incoming.summary?.trim() ? incoming.summary : held.summary,
     };
+  }
+
+  /**
+   * The rejection of a kept submission that stays empty after the held merge: no summary, and with
+   * no draft held no sections either. Empty sections with an authored summary pass: a revisit
+   * credits archived angles.
+   */
+  private emptyContentRejection(merged: HopSubmission): ToolRejection | null {
+    if (merged.summary.trim()) return null;
+    if (merged.sections.length === 0 && this.heldFindingFocus === null) {
+      return makeRejection({
+        code: REJECTION_CODES.missingField,
+        hint: 'sections is empty and no draft is held for this node; resend the full call with authored sections and a non-empty summary.',
+      });
+    }
+    return this.emptySummaryRejection();
   }
 
   /** A kept verdict whose summary is empty with no held summary to restore. */
@@ -709,9 +708,13 @@ export class NavigationEngine implements IHopStateMachine {
    */
   public holdRejectedSubmission(input: unknown, failedPaths: readonly string[]): HeldSubmissionParts | null {
     if (typeof input !== 'object' || input === null || Array.isArray(input)) return this.heldPartsOfCurrentFocus();
-    const raw = input as Record<string, unknown> & { focus_node_id?: unknown; verdict?: unknown };
-    if ((raw.verdict !== 'analyze' && raw.verdict !== 'passthrough') || typeof raw.focus_node_id !== 'string') return this.heldPartsOfCurrentFocus();
-    const focus = resolveModelNodeId(raw.focus_node_id, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(raw.focus_node_id);
+    const raw = input as Record<string, unknown>;
+    // A retry omits focus_node_id and verdict like any other held field.
+    const current = this.heldFindingFocus === null ? null : this.heldFindingDraft.get();
+    const focusId = raw.focus_node_id ?? current?.focus_node_id;
+    const verdict = raw.verdict ?? current?.verdict;
+    if ((verdict !== 'analyze' && verdict !== 'passthrough') || typeof focusId !== 'string') return this.heldPartsOfCurrentFocus();
+    const focus = resolveModelNodeId(focusId, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(focusId);
     if (focus !== this.currentFocusNodeId) return this.heldPartsOfCurrentFocus();
     const failed = new Set(failedPaths.map(path => path.split('.')[0]));
     // A failed angle is not held; the angles that passed are.
@@ -738,8 +741,8 @@ export class NavigationEngine implements IHopStateMachine {
       ...(held ?? {}),
       ...Object.fromEntries(priorFailed.filter(field => (HELD_CARRIED_FIELDS as readonly string[]).includes(field)).map(field => [field, undefined])),
       ...fields,
-      focus_node_id: raw.focus_node_id,
-      verdict: raw.verdict,
+      focus_node_id: focusId,
+      verdict,
       sections: held ? RepairDraftStore.mergeByKey(held.sections, sections, section => section.angle ?? '') : sections,
       summary: summary || (held?.summary ?? ''),
     };
@@ -749,10 +752,43 @@ export class NavigationEngine implements IHopStateMachine {
     return { sections: draft.sections.map(section => section.angle ?? ''), summary: draft.summary.trim().length > 0, fields: restored };
   }
 
-  /** Holds repair content under the exact dispatched contract that authorized it. */
+  /**
+   * What the transcript replays of a rejected `lineage_submit_findings` call: `focus_node_id`,
+   * `verdict` and `column_flow` as sent, plus the fields the held draft failed; a failed `sections`
+   * keeps only the angles that are not held. The rest is held, so the model no longer sees it.
+   *
+   * @returns The reduced arguments, or `null` when no draft is held for the call's focus: the call
+   *   is then replayed as sent.
+   */
+  public projectRejectedSubmission(input: unknown): Record<string, unknown> | null {
+    const held = this.heldFindingDraft.get();
+    const failed = this.heldFailed;
+    if (!held || failed === null || typeof input !== 'object' || input === null || Array.isArray(input)) return null;
+    const raw = input as Record<string, unknown>;
+    if (typeof raw.focus_node_id === 'string'
+      && (resolveModelNodeId(raw.focus_node_id, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(raw.focus_node_id)) !== this.heldFindingFocus) return null;
+    const heldAngles = new Set<string>(held.sections.map(section => section.angle));
+    return Object.fromEntries(Object.entries(raw).flatMap(([key, value]): Array<[string, unknown]> => {
+      if (!this.heldSchemaFields.includes(key) || !['focus_node_id', 'verdict', 'column_flow', ...failed].includes(key)) return [];
+      if (key !== 'sections' || typeof value !== 'object' || value === null || Array.isArray(value)) return [[key, value]];
+      const failedAngles = Object.entries(value).filter(([angle]) => !heldAngles.has(angle));
+      return failedAngles.length > 0 ? [[key, Object.fromEntries(failedAngles)]] : [];
+    }));
+  }
+
+  /** The fields the current hop's served `submit_findings` schema defines, `reason` aside. */
+  private get heldSchemaFields(): readonly string[] {
+    return ['focus_node_id', 'verdict', 'sections', 'summary', ...HELD_CARRIED_FIELDS.filter(field => field !== 'column_flow' || this.currentHopAnalysisMode === 'ct')];
+  }
+
+  /**
+   * Holds repair content under the exact dispatched contract that authorized it. `failed` keeps the
+   * schema fields once each: a field named by several paths counts once, an unknown key is no
+   * field a retry resends.
+   */
   private holdFinding(finding: HopFindingKept, failed: readonly string[]): void {
     if (!this.currentFocusNodeId) return;
-    this.heldFindingDraft.hold(structuredClone(finding), { failed: [...failed], focusId: this.currentFocusNodeId, hop: this.hopCount, mode: this.currentHopAnalysisMode });
+    this.heldFindingDraft.hold(structuredClone(finding), { failed: this.heldSchemaFields.filter(field => failed.includes(field)), focusId: this.currentFocusNodeId, hop: this.hopCount, mode: this.currentHopAnalysisMode });
   }
 
   /** The parts a draft already held for the current focus restores, unchanged; `null` if none. */
@@ -2627,15 +2663,16 @@ export class NavigationEngine implements IHopStateMachine {
     }
 
     const archivedAngles = this.memory.getArchivedAngles(this.currentFocusNodeId ?? '');
-    const shape = validateHopSubmissionShape(params, this.currentHopAnalysisMode, this.classification,
+    const merged = this.applyHeldContent(params);
+    const shape = validateHopSubmissionShape(merged, this.currentHopAnalysisMode, this.classification,
       this.heldFindingFocus !== this.currentFocusNodeId && archivedAngles.size === 0);
     if (!shape.ok) {
-      const routes = this.columnFlowFaults(params);
+      const routes = this.columnFlowFaults(merged);
       return routes.length > 0 ? combineToolRejections([shape.error, buildRouteValidationRejection(routes)]) : shape.error;
     }
-    const merged = this.applyHeldContent(shape.data);
-    if ('code' in merged) return merged;
-    params = merged;
+    const empty = this.emptyContentRejection(shape.data);
+    if (empty) return empty;
+    params = shape.data;
     // Independent faults collect into one rejection; a focus or caller fault leaves routes unchecked.
     const classViolation = validateSectionsAgainstClassification(params.sections,
       this.classification, archivedAngles);
@@ -2646,7 +2683,7 @@ export class NavigationEngine implements IHopStateMachine {
       return [makeRejection({
         code: REJECTION_CODES.invalidInput,
         reason: `sections: ${classViolation}`,
-        ...(held ? { hint: heldSubmissionRepairHint(held) } : {}),
+        ...(held ? { hint: heldSubmissionRepairHint() } : {}),
         issuePaths: ['sections'],
       })];
     };
@@ -3004,7 +3041,9 @@ export class NavigationEngine implements IHopStateMachine {
           ...fatalRoutes.flatMap(route => route.kind === 'prune_question_conflict' ? ['prune_neighbors'] : []),
         ])];
         this.holdFinding(finding, issuePaths.map(path => path.split('.')[0]));
-        return { ...combineToolRejections([...faults(), routeRejection]), issuePaths };
+        // A section fault's own rejection already states the held line.
+        const held = classViolation ? routeRejection : { ...routeRejection, hint: [routeRejection.hint, heldSubmissionRepairHint()].filter(Boolean).join(' ') };
+        return { ...combineToolRejections([...faults(), held]), issuePaths };
       }
       const sectionFaults = faults();
       if (sectionFaults.length > 0) return combineToolRejections(sectionFaults);
@@ -3904,7 +3943,6 @@ export class NavigationEngine implements IHopStateMachine {
     const originWrites = this.originWrittenCarrierIds();
     return ids.map(nid => {
       const n = this.nodeMap.get(nid)!;
-      const boundary = this.visited.has(nid) ? 'cycle' : 'none';
       const edgeDirection = inSet.has(nid) ? 'upstream' : 'downstream';
       const cols = this.tracer
         ? getNodeColumns(nid, this.nodeMap, this.store ?? undefined)?.map(c => c.name)
@@ -3915,8 +3953,8 @@ export class NavigationEngine implements IHopStateMachine {
       const neighbor: HopNeighborDisclosure = {
         id: nid, s: n.schema, n: n.name, t: n.type,
         edge_direction: edgeDirection,
-        edge_type: edgeVerb.get(nid) ?? 'read', boundary, ...(cols?.length ? { cols } : {}),
-        ...this.neighborCapabilities(focusId, nid),
+        edge_type: edgeVerb.get(nid) ?? 'read', ...(cols?.length ? { cols } : {}),
+        can_prune: this.neighborCapabilities(focusId, nid).can_prune,
         ...(this.isCarrierInto(nid, focusId) ? { prune_protected: true } : {}),
         ...(this.visited.has(nid) ? { already_visited: true } : {}),
         ...(this.removedSet.has(nid) ? { already_removed: true } : {}),
@@ -3933,8 +3971,12 @@ export class NavigationEngine implements IHopStateMachine {
     });
   }
 
-  /** Question eligibility includes deferred proposals; pruning still requires routing admission. */
-  private neighborCapabilities(focusId: string, nodeId: string): Pick<HopNeighborDisclosure, 'can_question' | 'can_prune'> {
+  /**
+   * Question eligibility includes deferred proposals; pruning still requires routing admission. Only
+   * `can_prune` is served: an open neighbor (neither `already_visited` nor `already_removed`) is
+   * the question-eligible one, so `can_question` stays an internal capability for route validation.
+   */
+  private neighborCapabilities(focusId: string, nodeId: string): { can_question: boolean; can_prune: boolean } {
     const node = this.nodeMap.get(nodeId);
     const open = !!node && !this.visited.has(nodeId) && !this.removedSet.has(nodeId);
     return { can_question: open,

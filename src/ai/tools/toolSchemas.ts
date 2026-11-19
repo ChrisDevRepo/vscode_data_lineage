@@ -11,8 +11,7 @@ import { REJECTION_CODES } from '../support/rejectionCodes';
 import { jsonPointer, rejectionFromZodError, type ToolRejection } from '../support/toolErrorEnvelope';
 import { CLASSIFICATION_KEPT_ANGLES, type ClassificationValue } from '../session/classification';
 import { extractRawSectionAngles } from '../interaction/rules/submitFindingsRules';
-import type { HeldSubmissionParts, HopFinding, HopFindingKept, HopSubmission } from '../sm/smTypes';
-import { keyedResendRule } from '../support/repairDraftStore';
+import type { HopFinding, HopFindingKept, HopSubmission } from '../sm/smTypes';
 
 /**
  * A column identifier the user actually named. Wildcards are rejected at the boundary: a
@@ -675,17 +674,20 @@ export function toHopFinding(value: FlatSubmitFindings): HopFindingKept {
  * Applies the verdict-shape check to one flat per-mode object. A pure validator: it returns the
  * same flat shape unconverted (`z.output` equals `z.input`, `sections` still angle-keyed), so
  * re-parsing a validated payload is a no-op. {@link toHopFinding} is the separate conversion step.
- * `summary` is required, served and checked, unless a held draft holds one.
+ * `summary` is required, served and checked, unless a held draft holds one. With a held draft
+ * (`heldFailed` set) only the fields it failed are served as required; the engine restores the rest.
  */
 function finalizeSubmitFindingsSchema(
   schema: typeof HopFindingBaseSchema | typeof HopFindingCtBaseSchema,
   fresh: boolean,
   classification?: ClassificationValue,
-  summaryHeld = false,
+  heldFailed: readonly string[] | null = null,
 ): z.ZodType<FlatSubmitFindings> {
   const keptAngles = classification ? CLASSIFICATION_KEPT_ANGLES[classification] : undefined;
-  const summaryRequired = fresh || !summaryHeld;
-  const source = fresh
+  const summaryRequired = fresh || heldFailed === null || heldFailed.includes('summary');
+  const fields = Object.keys(schema.shape);
+  const failed = heldFailed?.filter(field => fields.includes(field)) ?? null;
+  const base = fresh
     ? schema.extend({
       sections: schema.shape.sections.unwrap().meta(keptAngles
         ? { required: [...keptAngles] }
@@ -693,9 +695,13 @@ function finalizeSubmitFindingsSchema(
         .optional().describe(schema.shape.sections.description ?? ''),
     }).strict()
     : schema;
+  const source = failed
+    ? base.extend(Object.fromEntries(fields.filter(field => !failed.includes(field))
+      .map(field => [field, base.shape[field as keyof typeof base.shape].optional()]))).strict()
+    : base;
   const validated = source
     .check(superRefineAll((value, ctx) => refineSubmitFindingsShape(value as FlatSubmitFindings, ctx, fresh, classification, summaryRequired))) as z.ZodType<FlatSubmitFindings>;
-  if (!summaryRequired) return validated;
+  if (failed) return validated.meta({ required: failed });
   const required = Object.entries(schema.shape)
     .filter(([, field]) => !field.isOptional())
     .map(([key]) => key);
@@ -858,7 +864,8 @@ export function hopColumnFlowSchema(hop?: SubmitFindingsHopColumns) {
  * @param hop - CT only: the active hop's column facts; narrows `column_flow[].out_col`, offers
  *   `writes_to` for a procedure focus alone and, with column-source metadata, restricts
  *   `upstream_columns[].node` to the hop's column-carrying sources.
- * @param summaryHeld - A held draft of this focus holds a summary, so a retry may omit it.
+ * @param heldFailed - The fields a held draft of this focus failed: a retry must send those and may
+ *   omit every other field, which the engine restores. `null` without a held draft.
  * @returns The strict provider schema; a pure validator whose output is the flat, angle-keyed shape
  *   it accepts ({@link toHopFinding} is the caller's separate step).
  */
@@ -867,13 +874,13 @@ export function submitFindingsSchemaForMode(
   classification?: ClassificationValue,
   freshSubmission = false,
   hop?: SubmitFindingsHopColumns,
-  summaryHeld = false,
+  heldFailed: readonly string[] | null = null,
 ): z.ZodType<FlatSubmitFindings> {
   const hopKey = mode === 'ct' && hop ? `${hop.writesTo}:${JSON.stringify(hop.outCols)}:${JSON.stringify(hop.returnTargets ?? [])}:${JSON.stringify(hop.callerContextNodeIds ?? null)}:${JSON.stringify(hop.columnSourceNodeIds ?? null)}:${JSON.stringify(hop.outOfScopeNodeIds ?? null)}:${JSON.stringify(hop.writesToNodeIds ?? null)}` : '';
   if (!classification && !hopKey && freshSubmission) {
     return mode === 'ct' ? SubmitFindingsCtInputSchema : SubmitFindingsBbInputSchema;
   }
-  const cacheKey = `${mode}:${classification ?? ''}:${freshSubmission}:${summaryHeld}:${hopKey}`;
+  const cacheKey = `${mode}:${classification ?? ''}:${freshSubmission}:${JSON.stringify(heldFailed)}:${hopKey}`;
   const cached = submitFindingsSchemaCache.get(cacheKey);
   if (cached) return cached;
   let narrowed = (mode === 'ct' ? HopFindingCtBaseSchema : HopFindingBaseSchema) as typeof HopFindingCtBaseSchema;
@@ -896,7 +903,7 @@ export function submitFindingsSchemaForMode(
       .describe(sectionsDescribe);
     narrowed = narrowed.extend({ sections: narrowedSections }).strict() as typeof HopFindingCtBaseSchema;
   }
-  const schema = finalizeSubmitFindingsSchema(narrowed, freshSubmission, classification, summaryHeld);
+  const schema = finalizeSubmitFindingsSchema(narrowed, freshSubmission, classification, heldFailed);
   submitFindingsSchemaCache.set(cacheKey, schema);
   return schema;
 }
@@ -952,22 +959,9 @@ export function validateHopSubmissionShape(
     : { ok: false, error: rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema }) };
 }
 
-/** Required call envelope retained by every held findings repair. */
-export const HELD_FINDING_CALL_ORDER =
-  'Resend the full call: always focus_node_id, verdict and every other required field; the failed field(s) corrected';
-
-/** The shared resend rule for a finding rejection whose schema-valid content remains held. */
-export function heldSubmissionRepairHint(held: HeldSubmissionParts): string {
-  const labels = [
-    ...(held.sections.length > 0 ? [`sections (${held.sections.join(', ')})`] : []),
-    ...(held.summary ? ['summary'] : []),
-    ...held.fields,
-  ].join(', ');
-  const omittable = [...(held.summary ? ['summary'] : []), ...held.fields];
-  return `Held: ${labels}. ${HELD_FINDING_CALL_ORDER}`
-    + (omittable.length > 0 ? `; omit ${omittable.join(', ')} to keep the held ${omittable.length > 1 ? 'values' : 'value'}` : '')
-    + '.'
-    + (held.sections.length > 0 ? ` ${keyedResendRule('sections', 'angle')}` : '');
+/** The resend rule for a finding rejection whose other fields remain held. */
+export function heldSubmissionRepairHint(): string {
+  return 'Send only the failed fields; every other field is held.';
 }
 
 /**

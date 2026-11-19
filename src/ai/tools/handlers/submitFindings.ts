@@ -48,14 +48,14 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
 
       const focus = engine.currentFocus;
       const fresh = engine.heldFindingFocus === null && (!focus || sess.memory.getArchivedAngles(focus).size === 0);
-      const schema = submitFindingsSchemaForMode(engine.currentHopAnalysisMode, sess.classification ?? undefined, fresh, engine.hopSubmitColumns, engine.heldSummary);
+      const schema = submitFindingsSchemaForMode(engine.currentHopAnalysisMode, sess.classification ?? undefined, fresh, engine.hopSubmitColumns, engine.heldFailed);
       const parsed = schema.safeParse(input);
       if (!parsed.success) {
         const schemaFault = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
         const routes = engine.columnFlowFaults(input);
         const rejection = routes.length > 0 ? combineToolRejections([schemaFault, buildRouteValidationRejection(routes)]) : schemaFault;
         const held = engine.holdRejectedSubmission(input, rejection.issuePaths ?? []);
-        if (held) rejection.hint = [zodFieldRepairHint(parsed.error, input, schema), ...routeDirectives(routes), heldSubmissionRepairHint(held)].filter(Boolean).join(' ');
+        if (held) rejection.hint = [zodFieldRepairHint(parsed.error, input, schema), ...routeDirectives(routes), heldSubmissionRepairHint()].filter(Boolean).join(' ');
         return s.logAndReturn('lineage_submit_findings', rejection, input);
       }
       const rawInput: SubmitFindingsInputObject = parsed.data;

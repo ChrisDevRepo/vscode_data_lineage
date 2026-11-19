@@ -40,6 +40,7 @@ import { type ToolServices, getModelNodeMap } from './toolServices';
 import type { ResultGraph, PresentationArtifact } from '../../session/types';
 import type { SmState } from '../../sm/smTypes';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
+import { isCancellationOutcome } from '../../support/cancellation';
 
 function findUncoveredCtChainNodes(
   resultGraph: AiSession['resultGraph'],
@@ -597,16 +598,21 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
 
       let autoDispatched = false;
       let previewFailure: 'preview_post_failed' | 'preview_dispatch' | null = null;
+      s.signal?.throwIfAborted();
       try {
         const delivery = await s.deliverPreview(
           { type: 'ai-view-preview', name: validation.name, nodeIds: validation.node_ids, aiMetadata },
         );
         autoDispatched = delivery === 'delivered';
+        // A cancel ends the turn, but a preview the canvas already shows is committed first so the
+        // session matches the screen; an undrawn preview is dropped.
+        if (!autoDispatched) s.signal?.throwIfAborted();
         if (delivery === 'post_failed') {
           s.logger.warn('AI preview post failed');
           previewFailure = 'preview_post_failed';
         }
       } catch (error) {
+        if (isCancellationOutcome(error, s.signal)) throw error;
         s.logger.warn(`AI preview dispatch failed: ${error instanceof Error ? error.name : 'Error'}`);
         previewFailure = 'preview_dispatch';
       }
@@ -647,7 +653,10 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       s.logger.debug(`AI view name="${trunc(validation.name, 60)}"`);
       s.logger.info(`AI view displayed — nodes=${validation.node_ids.length} sections=${presentInput.sections?.length ?? 0} highlights=${validation.highlight_groups.length} badges=${validation.badges.length} classification=${sess.classification ?? '(none)'} attempts=${sess.presentResultAttemptCountThisTurn} failures=${sess.presentResultFailureCountThisTurn}`);
       return s.logAndReturn('lineage_present_result', { success: true, view_name: validation.name, node_count: validation.node_ids.length, graph_source: graphSource }, rawInput);
-    } catch (err) { return s.toolError('present_result', err); }
+    } catch (err) {
+      if (isCancellationOutcome(err, s.signal)) throw err;
+      return s.toolError('present_result', err);
+    }
 }
 
 /**

@@ -189,7 +189,7 @@ function buildActivePhasePrompt(analysisMode: 'bb' | 'ct'): string {
     '',
     'Deliver one `lineage_submit_findings` call; judge `verdict` from the focus itself.',
     '',
-    'Flags on `neighbors[]` are committed: `already_visited` and `already_removed` neighbors take no decision; neighbors with `can_prune: false` are not pruned. `can_question` permits a subquestion in approved scope or an optional deferred follow-up outside it, including `out_of_direction`; it never widens scope.'
+    'Flags on `neighbors[]` are committed: `already_visited` and `already_removed` neighbors take no decision; neighbors with `can_prune: false` are not pruned. Every other neighbor may get a subquestion; for one with `in_approved_scope: false` or `out_of_direction` it is an optional deferred follow-up; this never widens scope.'
       + (analysisMode === 'ct' ? ' A neighbor with `in_approved_scope: false` lies outside the approved scope: `column_flow` names it neither as an `upstream_columns` source nor as `writes_to`. In-scope sources and destinations stay as the SQL proves them. State a relevant fact about it in `sections`; further work on it is a `questions` follow-up.' : ''),
   ].join('\n');
 }
@@ -649,8 +649,8 @@ export function buildMissionBriefBlock(brief: string, question: string, scopeNot
 
 /**
  * Renders the `<current_task>` XML block: per-hop dynamic content, the sub-question for the hop's
- * focus node, so it leads the per-hop worker user message, never the cacheable stable prefix. The
- * input is exactly one task-ledger question; root tasks carry the `Root Question:` prefix, routed
+ * focus node, so it follows the capture recipe in the per-hop worker user message, never the
+ * cacheable stable prefix. The input is exactly one task-ledger question; root tasks carry the `Root Question:` prefix, routed
  * questions render as the hop's sub-question. Prior tasks live in structured memory, not a
  * delimiter-bearing string.
  *

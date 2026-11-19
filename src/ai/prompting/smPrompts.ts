@@ -194,8 +194,8 @@ export function buildBbSynthesisBlock(
 }
 
 /**
- * Renders the CT synthesis evidence block from validated column edges: a flat directed edge list so
- * `present_result` follows the actual traced path. Appended to the synthesis reminder when CT was
+ * Renders the CT synthesis evidence block from validated column edges: the edges grouped by target
+ * (each target and hop stated once) so `present_result` follows the actual traced path. Appended to the synthesis reminder when CT was
  * active and edges were recorded; off-trace nodes excluded by the scope filter are not listed.
  *
  * @param nodeEdges - Node-level flow edges used to tell written intermediates from base feeds.
@@ -215,13 +215,16 @@ export function buildCtSynthesisBlock(
     lines.push('Structure present_result as a zero-trace answer: explain that no column-flow edge was proven, link the origin/result node in sections[], and include highlight_groups.target for that origin/result node.');
     return lines.join('\n');
   }
+  const sources = new Map<string, string[]>();
   for (const e of edges) {
+    const target = `  ${e.to_node}.${e.to_col} (hop ${e.hop}) ←`;
     const metadata = [
       ...(e.transforms?.length ? [`transforms: ${e.transforms.join(', ')}`] : []),
       ...(e.note ? [`expression: ${escapePromptText(e.note)}`] : []),
     ];
-    lines.push(`  ${e.from_node}.${e.from_col} → ${e.to_node}.${e.to_col} (hop ${e.hop})${metadata.length ? ` — ${metadata.join('; ')}` : ''}`);
+    sources.set(target, [...(sources.get(target) ?? []), `    ${e.from_node}.${e.from_col}${metadata.length ? ` — ${metadata.join('; ')}` : ''}`]);
   }
+  lines.push(...[...sources].flat(2));
   lines.push('');
   const directionEdges = nodeEdges.length > 0
     ? asFlowEdges(nodeEdges)
@@ -353,7 +356,7 @@ const PREDICATE_START = /^(?:where|on|having|and|or|join)\b/i;
 /**
  * Enumerates the value computations and filter conditions the hops captured (`$$ … $$` blocks plus
  * the SQL that computes a value or filters rows), each keyed by the node whose detail slot holds
- * it, in the self-check shape {@link buildPassthroughFlowFacts} uses.
+ * it: one `- <node>` line, then one line per formula.
  *
  * Formulas and predicates otherwise reach the model only inside slot prose it must re-scan. Only
  * delimited artifacts are read; a formula left in plain prose is not enumerated. A fenced line or
@@ -367,7 +370,7 @@ const PREDICATE_START = /^(?:where|on|having|and|or|join)\b/i;
  */
 function buildCapturedFormulaFacts(result: SmResult, identifierCaseSensitive = false): string {
   const seen = new Set<string>();
-  const lines: string[] = [];
+  const byNode = new Map<string, string[]>();
   const collapse = (text: string): string => text.split(/\s+/).filter(Boolean).join(' ');
   const isEnumerable = (artifact: string): boolean =>
     (CALL_TOKEN.test(artifact) || PREDICATE_START.test(artifact)) && !STATEMENT_START.test(artifact);
@@ -377,7 +380,7 @@ function buildCapturedFormulaFacts(result: SmResult, identifierCaseSensitive = f
       const key = `${nodeId}\u0000${formula}`;
       if (formula.length === 0 || seen.has(key)) return;
       seen.add(key);
-      lines.push(`- ${nodeId} — ${rendered}`);
+      byNode.set(nodeId, [...(byNode.get(nodeId) ?? []), rendered]);
     };
     for (const section of slot.sections) {
       for (const match of section.text.matchAll(CAPTURED_ARTIFACT)) {
@@ -399,10 +402,10 @@ function buildCapturedFormulaFacts(result: SmResult, identifierCaseSensitive = f
       }
     }
   }
-  if (lines.length === 0) return '';
+  if (byNode.size === 0) return '';
   return [
     'Captured formulas and predicates (hop evidence) — each reappears in the text of the section that links its node:',
-    ...lines,
+    ...[...byNode].flatMap(([nodeId, formulas]) => [`- ${nodeId}`, ...formulas.map(formula => `  ${formula}`)]),
   ].join('\n');
 }
 

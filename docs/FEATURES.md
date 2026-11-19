@@ -127,10 +127,6 @@ The assistant sees the trace, analysis or bookmark on screen; type `#lineageView
 
 The plan shows upstream and downstream depth separately; `0` turns a direction off, and a number you give is a hard limit. With none, the assistant picks a start and may go further inside the approved schema and exclusion boundaries; "all" starts with the full reachable scope. The graph's trace-level settings do not affect AI depth. Objects beyond a stated depth or schema boundary can appear as follow-up leads; naming one object in a follow-up brings in that object, not its schema.
 
-### Requirements and turning it off
-
-You need VS Code 1.101 or later and a VS Code Language Model Chat provider, such as [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot). To remove `@lineage` and its language-model tools, set `dataLineageViz.ai.enabled` to `false` and reload the window. The graph features stay available.
-
 ## Advanced settings
 
 Run **Data Lineage: Settings** or search "dataLineageViz" in VS Code Settings.
@@ -138,7 +134,7 @@ Run **Data Lineage: Settings** or search "dataLineageViz" in VS Code Settings.
 - Reload the data source after changing `maxNodes`, `excludePatterns`, `externalRefs.enabled`, `parseRulesFile` or `dmvQueriesFile`.
 - `ai.enabled` needs a window reload; the other AI limits are read on each request.
 
-To debug AI answers, run **Data Lineage: Enable AI Trace Logging for This Session** (needs an open workspace folder). Logging stops when the extension host restarts. The log can hold SQL, object names, prompts, responses and tool payloads; never commit it and review it before sharing. See [Diagnostics](DEVELOPER_GUIDE.md#diagnostics).
+To debug AI answers, run **Data Lineage: Enable AI Trace Logging for This Session** (needs an open workspace folder); it can hold SQL, prompts and responses, so review it before sharing ([`SECURITY.md`](../SECURITY.md#local-files)).
 
 ### Settings reference
 
@@ -201,7 +197,7 @@ Live database only; see [`PROFILING_PATTERNS.md`](PROFILING_PATTERNS.md).
 
 | Setting | Default | Detail |
 |---|---|---|
-| `ai.enabled` | on | Turns `@lineage` on or off. Reload the window after changing it. |
+| `ai.enabled` | on | Turns `@lineage` and its language-model tools on or off. Reload the window after changing it. |
 | `ai.maxRounds` | 50 (5–100) | Rounds per deep analysis: one per procedure, view or function read. |
 | `ai.maxTraceColumns` | 10 (min 1) | Starting columns one trace may follow. |
 | `ai.discoveryNodeCap` | 10 (1–30) | Scope objects per discovery catalog request before deep analysis is offered. |

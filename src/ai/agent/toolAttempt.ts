@@ -264,6 +264,9 @@ export interface ToolAttemptResult {
 /** Holds the valid parts of a rejected `lineage_submit_findings` payload; `null` if none. */
 export type HoldRejectedSubmission = (input: unknown, issuePaths: readonly string[]) => HeldSubmissionParts | null;
 
+/** The arguments a rejected `lineage_submit_findings` call keeps in the transcript; `null` keeps it as sent. */
+export type ProjectRejectedSubmission = (input: unknown) => Record<string, unknown> | null;
+
 /**
  * Holds the valid fields of a rejected `lineage_present_result` payload; returns the repair
  * sentence.
@@ -322,6 +325,8 @@ interface ToolGenerationAttemptInput {
   readonly presentResultRepairDraftContext?: () => HeldDraftRepairContent | null | undefined;
   /** See {@link ToolAttemptExecutionOptions.holdRejectedSubmission}. */
   readonly holdRejectedSubmission?: HoldRejectedSubmission;
+  /** See {@link ToolAttemptExecutionOptions.projectRejectedSubmission}. */
+  readonly projectRejectedSubmission?: ProjectRejectedSubmission;
   /** See {@link ToolAttemptExecutionOptions.holdRejectedPresentResult}. */
   readonly holdRejectedPresentResult?: HoldRejectedPresentResult;
 }
@@ -364,6 +369,11 @@ interface ToolAttemptExecutionOptions {
    * content. Returns `null` when nothing is held.
    */
   readonly holdRejectedSubmission?: HoldRejectedSubmission;
+  /**
+   * Reduces a rejected `lineage_submit_findings` call in the transcript to the fields a retry
+   * resends, the rest being held by the session. Returns `null` when nothing is held for the call.
+   */
+  readonly projectRejectedSubmission?: ProjectRejectedSubmission;
   /**
    * Holds the valid fields of a schema-rejected `lineage_present_result` call in the session's held
    * draft and returns the repair sentence for the rejection hint, or `null` when nothing was held.
@@ -887,6 +897,7 @@ export async function executeToolAttempt(
     traceSyntheticRejection: options.traceSyntheticRejection,
     presentResultRepairDraftContext: options.presentResultRepairDraftContext,
     holdRejectedSubmission: options.holdRejectedSubmission,
+    projectRejectedSubmission: options.projectRejectedSubmission,
     holdRejectedPresentResult: options.holdRejectedPresentResult,
     priorObservations: priorState?.observations,
     priorState,
@@ -1079,7 +1090,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
       let resend: string | undefined = argumentRejected ? INVALID_TOOL_INPUT_REPAIR_HINT : undefined;
       if (schemaRejected && call.toolName === SUBMIT_FINDINGS_TOOL && input.holdRejectedSubmission) {
         const held = input.holdRejectedSubmission(call.input, call.issuePaths ?? []);
-        if (held) resend = heldSubmissionRepairHint(held);
+        if (held) resend = heldSubmissionRepairHint();
       } else if (schemaRejected && call.toolName === PRESENT_RESULT_TOOL && input.holdRejectedPresentResult) {
         const repair = input.holdRejectedPresentResult(call.input, call.issuePaths ?? []);
         if (repair) resend = repair;
@@ -1286,7 +1297,11 @@ async function executeToolGenerationAttempt(
   const rejections = batch.rejections;
   const messages: ModelMessage[] = [];
   if (generated.toolCalls.length > 0 && !cancelled) {
-    messages.push(transcriptTurn(generated.message, generated.toolCalls), ...toolMessages);
+    const rejectedSubmissions = new Set(calls.filter(call => call.status === 'rejected' && call.toolName === SUBMIT_FINDINGS_TOOL).map(call => call.callId));
+    messages.push(
+      transcriptTurn(generated.message, generated.toolCalls, call => (call.id && rejectedSubmissions.has(call.id) ? input.projectRejectedSubmission?.(call.args) ?? null : null)),
+      ...toolMessages,
+    );
   }
 
   if (generated.toolCalls.length === 0 && input.requiredTerminalTool) {

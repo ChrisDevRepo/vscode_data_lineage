@@ -41,6 +41,8 @@ export interface DacpacLoaderState {
   pendingVisualize: boolean;
   /** Whether the currently loaded model is the AdventureWorks demo. */
   isDemo: boolean;
+  /** The saved project the last `dacpac-model` named as its source; null when it named none. */
+  projectId: string | null;
   /** Triggers the VS Code file picker to open a .dacpac. */
   openFile: () => void;
   /** Resets the internal loader state to the starting screen. */
@@ -83,6 +85,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   const [pendingAutoVisualize, setPendingAutoVisualize] = useState(false);
   const [pendingVisualize, setPendingVisualize] = useState(false);
   const isDemoRef = useRef(false);
+  const projectIdRef = useRef<string | null>(null);
   /**
    * The last load this webview sent, and whether the user cancelled it. A result naming another
    * load or the cancelled one is dropped; with no load sent yet (fresh webview after reload) or a
@@ -199,6 +202,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
 
       if (msg.type === 'dacpac-model') {
         isDemoRef.current = msg.isDemo === true;
+        projectIdRef.current = msg.projectId ?? null;
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'dacpac';
         setSchemaPreview(null);  // clear Phase 1 state once Phase 2 model arrives
@@ -344,7 +348,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
 
   return {
     model, schemaPreview, selectedSchemas, isLoading, loadingContext, fileName, filePath, status,
-    pendingAutoVisualize, pendingVisualize, isDemo: isDemoRef.current,
+    pendingAutoVisualize, pendingVisualize, isDemo: isDemoRef.current, projectId: projectIdRef.current,
     openFile, resetToStart, loadProject, loadDemo, connectToDatabase, cancelLoading,
     clearAutoVisualize, clearPendingVisualize, visualize,
     toggleSchema, selectAllSchemas, clearAllSchemas,

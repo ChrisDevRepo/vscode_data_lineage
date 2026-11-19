@@ -1,8 +1,9 @@
-import { RemoveMessage } from '@langchain/core/messages';
+import { AIMessage, RemoveMessage } from '@langchain/core/messages';
 import { END, REMOVE_ALL_MESSAGES, START, MemorySaver, StateGraph, interrupt } from '@langchain/langgraph';
 import {
   modelAssistantMessage,
   modelUserMessage,
+  messageContentToText,
   ModelPortError,
   type ModelMessage,
   type ModelPort,
@@ -476,6 +477,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
         return holdRejectedPresentResult(sess.presentResultRepairDraft, input, issuePaths, 'synthesis', sess.retainableReportSections());
       },
       holdRejectedSubmission: (input, issuePaths) => (deps.getSession().stateMachine as NavigationEngine | null)?.holdRejectedSubmission(input, issuePaths) ?? null,
+      projectRejectedSubmission: input => (deps.getSession().stateMachine as NavigationEngine | null)?.projectRejectedSubmission(input) ?? null,
     });
     const first = await attempt();
     if (first.stop !== 'error' || !first.providerError) return first;
@@ -570,7 +572,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
    * When discovery's no-progress stop trips with at least one accepted observation held, one
    * further generation with tools disabled (`toolChoice: 'none'`) asks the model to answer from
    * what it holds instead of ending the turn without an answer. Mirrors
-   * {@link renderHeldSynthesisDraft}'s "committed work survives a breaker trip" for a phase whose
+   * {@link renderFailedSynthesisAnswer}'s "committed work survives a breaker trip" for a phase whose
    * committed work is accepted observations. The common trigger is a duplicate-read stop: the model
    * keeps re-issuing the read despite the hint that its held observations answer it, and
    * `toolChoice: 'none'` removes that tool so the only legal move is to answer from what
@@ -1179,7 +1181,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       requiredTerminalTool: 'lineage_submit_findings',
       proseGate: 'buffer-until-tool',
       freshSubmission: () => engine.heldFindingFocus === null && sess.memory.getArchivedAngles(focusId).size === 0,
-      summaryHeld: () => engine.heldSummary,
+      heldFailed: () => engine.heldFailed,
       hopColumns: () => engine.hopSubmitColumns,
       isPhaseComplete: () => submitted,
       onToolResult: (toolName, input, isError) => {
@@ -1324,7 +1326,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       isPhaseComplete: () => sess.presentResultCalledThisTurn,
     }, ['Synthesis failed', 'Synthesis', 'without rendering a result']);
     if (attempt.terminal) {
-      if (attempt.nextAttempt.stopReason === 'no_progress') renderHeldSynthesisDraft(deps, sess);
+      if (attempt.nextAttempt.stopReason === 'no_progress') renderFailedSynthesisAnswer(deps, sess, attempt.nextAttempt.messages);
       sess.presentResultRepairDraft.clear();
       return attempt.terminal;
     } else if (!sess.presentResultCalledThisTurn) {
@@ -1716,28 +1718,40 @@ function presentedChatAnswer(sess: AiSession): string | null {
 }
 
 /**
- * Renders the synthesis phase's held `lineage_present_result` draft into chat when a breaker trip
- * ends the turn with no committed result. The last render step failing never discards the model's
- * own final text, and the backend never resends a stripped patch to coax a narrower validation past
- * (a content-shaping resend the model never sent is not ACCEPT / REJECT / NORMALIZE-WITH-LOG). The
- * held intro, sections and closing render through the preview's assembler
- * ({@link orderAndAssemble}) unaltered, followed by one line saying the AI preview could not be
- * rendered; `sess.markSynthesisRenderDegraded` records the cause for the participant's one-shot
- * warning toast.
+ * Renders the synthesis phase's held `lineage_present_result` draft, or its latest authored prose
+ * when none is held, into chat when a breaker trip ends the turn with no committed result. The last
+ * render step failing never discards the model's own final text, and the backend never resends a
+ * stripped patch to coax a narrower validation past (a content-shaping resend the model never sent
+ * is not ACCEPT / REJECT / NORMALIZE-WITH-LOG). A held draft's intro, sections and closing render
+ * through the preview's assembler ({@link orderAndAssemble}) unaltered; either text is followed by
+ * one line saying the AI preview could not be rendered. `sess.markSynthesisRenderDegraded` records
+ * the cause for the participant's one-shot warning toast.
+ *
+ * @param messages - The synthesis attempt's messages; the newest non-blank assistant text is the
+ * fallback when no draft is held.
  */
-function renderHeldSynthesisDraft(deps: AgentGraphDeps, sess: AiSession): void {
+function renderFailedSynthesisAnswer(
+  deps: AgentGraphDeps,
+  sess: AiSession,
+  messages: readonly ModelMessage[],
+): void {
   const draft = sess.presentResultRepairDraft.get();
-  if (!draft) return;
-  const assembled = orderAndAssemble(draft.sections ?? [], {
-    title: draft.title,
-    intro: draft.intro,
-    closing: draft.closing,
-  });
-  const closing = sess.takeClosingNotices() + (assembled.description ? '\n\n' + assembled.description : '');
+  const answer = draft
+    ? orderAndAssemble(draft.sections ?? [], {
+        title: draft.title,
+        intro: draft.intro,
+        closing: draft.closing,
+      }).description
+    : [...messages]
+        .reverse()
+        .filter(AIMessage.isInstance)
+        .map((message) => messageContentToText(message.content))
+        .find((text) => text.trim());
+  const closing = sess.takeClosingNotices() + (answer ? '\n\n' + answer : '');
   if (closing) deps.sink.stream(closing);
   deps.sink.stream(`\n\n${SYNTHESIS_RENDER_FAILED_NOTICE}`);
   deps.logger?.debug(
-    '[AI] [Repair] synthesis breaker tripped with a held draft — held text rendered to chat.',
+    `[AI] [Repair] synthesis breaker tripped — authoredText=${Boolean(answer)} heldDraft=${Boolean(draft)}.`,
   );
   sess.markSynthesisRenderDegraded('synthesis_breaker');
 }
