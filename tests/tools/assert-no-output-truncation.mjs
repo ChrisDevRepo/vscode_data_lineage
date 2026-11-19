@@ -1,12 +1,10 @@
 #!/usr/bin/env node
-import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** Root walked for `.ts`/`.tsx` sources. */
 const SRC_ROOT = 'src';
-/** Default known-offenders list; only ever shrinks. */
-const DEFAULT_BASELINE = 'tests/tools/output-truncation-baseline.json';
 /** Lines of continuation scanned after a cut call for an ellipsis in the same expression. */
 const EXPRESSION_LOOKAHEAD = 2;
 
@@ -119,39 +117,16 @@ export function findSites(file, text) {
   return sites;
 }
 
-/**
- * @param {{file: string, line: number, text: string}[]} sites - Sites found.
- * @param {{file: string, text: string}[]} baseline - Known offenders.
- * @returns {{fresh: {file: string, line: number, text: string}[], stale: {file: string, text: string}[]}} Sites absent from the baseline, and baseline entries no site matches.
- */
-export function compare(sites, baseline) {
-  const key = (e) => `${e.file}\u0000${e.text}`;
-  const known = new Set(baseline.map(key));
-  const seen = new Set(sites.map(key));
-  return { fresh: sites.filter((s) => !known.has(key(s))), stale: baseline.filter((b) => !seen.has(key(b))) };
-}
-
 /** Scans the whole source tree. */
 export function scanTree() {
   return listSourceFiles(SRC_ROOT).flatMap((f) => findSites(f, readFileSync(f, 'utf8')));
 }
 
 function main() {
-  const args = process.argv.slice(2);
-  const bi = args.indexOf('--baseline');
-  const baselinePath = bi >= 0 ? args[bi + 1] : DEFAULT_BASELINE;
   const sites = scanTree();
-  if (args.includes('--write-baseline')) {
-    const entries = [...new Map(sites.map((s) => [`${s.file}\u0000${s.text}`, { file: s.file, text: s.text }])).values()];
-    writeFileSync(baselinePath, JSON.stringify(entries, null, 2) + '\n');
-    console.log(`wrote ${entries.length} baseline entries to ${baselinePath}`);
-    return;
-  }
-  const { fresh, stale } = compare(sites, JSON.parse(readFileSync(baselinePath, 'utf8')));
-  for (const s of fresh) console.error(`FAIL  ${s.file}:${s.line}  new output truncation: ${s.text}`);
-  for (const s of stale) console.error(`FAIL  ${s.file}  stale baseline entry, remove: ${s.text}`);
-  if (fresh.length > 0 || stale.length > 0) process.exit(1);
-  console.log(`PASS  no new user- or model-facing truncation in src/ (${sites.length} known offender site(s) in the baseline).`);
+  for (const s of sites) console.error(`FAIL  ${s.file}:${s.line}  new output truncation: ${s.text}`);
+  if (sites.length > 0) process.exit(1);
+  console.log('PASS  no output truncation sites in src/ outside the allowlist.');
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

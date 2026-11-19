@@ -67,7 +67,8 @@
   /* Warning colors */
   --ln-warning-bg: var(--vscode-editorWarning-background, rgba(255, 200, 0, 0.1));
   --ln-warning-border: var(--vscode-editorWarning-border, #cca700);
-  --ln-warning-fg: var(--vscode-editorWarning-foreground, #cca700);
+  /* List text token: readable on light themes; high contrast has none, so it falls back. */
+  --ln-warning-fg: var(--vscode-list-warningForeground, var(--vscode-editorWarning-foreground, #cca700));
 
   /* Analysis colors */
   --ln-analysis-bg: var(--vscode-editorInfo-background, rgba(0, 120, 215, 0.08));
@@ -279,6 +280,15 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] {
   --ln-minimap-mask-stroke: var(--vscode-contrastBorder);
   --ln-minimap-mask-stroke-width: 2;
   --ln-minimap-cluster-stroke: var(--vscode-contrastBorder);
+}
+
+/* Light theme graph contrast (WCAG 2.2 SC 1.4.11): the default node border (15% black) and slate edges
+   sit near 1.4:1 and 2.6:1 on a white canvas, so both mix the editor foreground toward the canvas, nodes
+   stronger than edges; the edge density fade still softens dense graphs. Only colours differ by theme. */
+body[data-vscode-theme-kind="vscode-light"] {
+  --ln-node-border: color-mix(in srgb, var(--ln-fg) 70%, var(--ln-bg));
+  --ln-edge-color-base: color-mix(in srgb, var(--ln-fg) 60%, var(--ln-bg));
+  --ln-edge-color: var(--ln-edge-color-base);
 }
 
 /* #endregion */

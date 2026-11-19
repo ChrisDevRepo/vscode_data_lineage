@@ -12,7 +12,7 @@ import { bothSidesClosed, directionFromDepth, type DepthSideValue } from '../../
 import type { SerializedFilterState } from '../../engine/projectStore';
 import { buildEdgeTypeMap, buildHopFocusNode, buildUnrelatedMap } from '../tools/tools';
 import { buildNodeMap, getNodeColumns, getNodeDdl, SCRIPT_TYPES } from '../support/graphUtils';
-import { buildPassthroughReAnchor } from '../prompting/smPrompts';
+import { buildDeleteOnlyRelevanceCheck, buildPassthroughReAnchor } from '../prompting/smPrompts';
 import { edgeApiType } from '../support/aiPresenter';
 import { analyzeRemoval, bfsDepthMap, bfsReachable, type LogFn, type RemovalAnalysis } from '../../engine/graphGuards';
 import { trunc, LOG_TRUNC_CONTENT, LOG_TRUNC_LIST } from '../../utils/log';
@@ -3778,13 +3778,16 @@ export class NavigationEngine implements IHopStateMachine {
       const neighborCarry = forwardedCarry.kind === 'row_role_only' || deleteOnly
         ? { kind: 'row_role_only' as const }
         : continues ? forwardedCarry : { kind: 'carry' as const, columns: [] };
-      const reAnchor = continues && neighbor && SCRIPT_TYPES.has(neighbor.type)
-        ? buildPassthroughReAnchor(targetId, nid, this.carryAnalysisMode(neighborCarry), question.trim().length > 0)
-        : '';
+      const questioned = question.trim().length > 0;
+      const reAnchor = deleteOnly
+        ? buildDeleteOnlyRelevanceCheck(targetId, nid, carried ?? [])
+        : continues && neighbor && SCRIPT_TYPES.has(neighbor.type)
+          ? buildPassthroughReAnchor(targetId, nid, this.carryAnalysisMode(neighborCarry), questioned)
+          : '';
       if (!continues) {
-        this.log('debug', `[Agenda] question not forwarded hop=${this.hopCount} id=${nid} ← ${targetId} reason=${deleteOnly ? 'delete_only' : 'other_side'}`);
+        this.log('debug', `[Agenda] ${deleteOnly ? 'relevance check only' : 'question not forwarded'} hop=${this.hopCount} id=${nid} ← ${targetId} reason=${deleteOnly ? 'delete_only' : 'other_side'}`);
       }
-      const forwarded = continues ? `${question}${reAnchor}` : '';
+      const forwarded = continues ? `${question}${reAnchor}` : deleteOnly ? reAnchor : '';
       this.enqueueHop(nid, forwarded, depth + 1, priority, {
         carry: neighborCarry, lineageQuestions: continues ? lineageQuestions : undefined,
         visitedRefs: new Set(visitedRefs), contractedContexts, parentTaskId, callerContext, sourceRefs: continues && carriedRefs?.length ? carriedRefs : undefined,
@@ -3937,7 +3940,7 @@ export class NavigationEngine implements IHopStateMachine {
     for (const e of this.model.edges) {
       if (e.source !== focusId && e.target !== focusId) continue;
       const other = e.source === focusId ? e.target : e.source;
-      const verb = edgeApiType(e.type, this.nodeMap.get(e.source)?.type ?? '');
+      const verb = edgeApiType(e, this.nodeMap.get(e.source)?.type ?? '');
       if (verb !== 'read' || !edgeVerb.has(other)) edgeVerb.set(other, verb);
     }
     const originWrites = this.originWrittenCarrierIds();
@@ -4141,7 +4144,7 @@ export class NavigationEngine implements IHopStateMachine {
     const finalEdges: Array<[string, string, string]> = [];
     for (const e of this.model.edges) {
       if (finalNodeIds.has(e.source) && finalNodeIds.has(e.target)) {
-        finalEdges.push([e.source, e.target, edgeApiType(e.type, this.nodeMap.get(e.source)?.type ?? '')]);
+        finalEdges.push([e.source, e.target, edgeApiType(e, this.nodeMap.get(e.source)?.type ?? '')]);
       }
     }
 

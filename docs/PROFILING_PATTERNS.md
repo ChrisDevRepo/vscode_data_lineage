@@ -1,37 +1,47 @@
-# Table profiling
+# Table Profiling
 
-Reference for DBAs: the statements sent when someone requests table statistics. Profiling works on database imports only and runs nothing until statistics are requested for one table in its details view. Settings are in [Table statistics](FEATURES.md#table-statistics).
+Table profiling runs on demand against a live database. It does not run for DACPAC
+sources and does not start until the user opens table details and requests
+statistics. This document describes the SQL a request sends and what it costs.
 
-## Connection
+## Prerequisites and safety
 
-| Item | Value |
-|---|---|
-| Connection | A new connection per request, with the import's connection settings (`ReadOnly` intent; see [`DMV_QUERIES.md`](DMV_QUERIES.md#connection)); closed afterwards |
-| Permission | `SELECT` on the table, and catalog visibility of the table (`VIEW DEFINITION`) for the row count |
-| Statements | With the built-in queries: three `SELECT` statements, in order; no writes. A sampling fallback can issue a fourth statement. |
-| Timeout | `dataLineageViz.tableStatistics.queryTimeout` (default 60 s) for statements 2 and 3; `dataLineageViz.dmvQueryTimeout` for statement 1 |
-| Off switch | `dataLineageViz.tableStatistics.enabled` = `false`; requests are then rejected by the extension before connecting |
+- The active database connection needs `SELECT` permission on profiled tables
+  and catalog visibility for row-count metadata.
+- A connection is opened for each profiling request and closed when it
+  finishes. See [Connections](../SECURITY.md#connections).
+- External tables can query remote systems. They are excluded by default and
+  should be enabled only when their cost and latency are understood. The
+  exclusion is a user-interface setting: it hides the statistics section for
+  external tables in the detail panel.
+- Approximate distinct counts require a database version that supports
+  `APPROX_COUNT_DISTINCT`. Disable
+  `dataLineageViz.tableStatistics.useApproxDistinct` on older SQL Server
+  versions.
 
-External tables can query remote systems (object storage, other databases), so they are not offered for profiling while `dataLineageViz.tableStatistics.excludeExternalTables` is on (default). Turn it off only when their cost and latency are understood.
-
-A custom DMV queries file changes only statement 1; statements 2 and 3 are fixed. Custom SQL is executable input, so review that file before use; the read-only description above applies to the built-in queries.
+Profiling issues read-only row-count and aggregate `SELECT` queries. Before
+them, every request runs the `platform-info` query from the DMV queries YAML
+(the custom file, if configured). Its `engine_edition` decides between `TOP` and
+`TABLESAMPLE` sampling, so `platform-info` is required for table statistics. See
+[`DMV_QUERIES.md`](DMV_QUERIES.md). The row-count and aggregate SQL is built
+into the extension and is not in the YAML.
 
 ## Modes and metrics
 
-| Mode | Metrics per column |
-|---|---|
-| Quick | Null count and NULL %, distinct count, completeness, uniqueness |
-| Standard | Quick, plus by type: numeric min, max, mean, standard deviation and zero count; string length range and empty count; date and time range |
+Quick mode reports row count, null count, distinct count, completeness, and
+uniqueness. Standard mode adds type-appropriate detail such as numeric range,
+mean and standard deviation, string length and empty-string counts, and date
+range. Completeness and uniqueness are calculated in the extension from the row
+count and the per-column aggregates.
 
-The table header shows the row count. Completeness is 1 − nulls / rows; uniqueness is distinct / rows, capped at 100 %. Distinct counts are approximate or exact as set by `dataLineageViz.tableStatistics.useApproxDistinct`.
+Non-profileable types and computed columns are shown as not profiled and do not
+count towards the column limit. Profileable columns beyond
+`dataLineageViz.tableStatistics.maxColumns` are left out of the SQL and also
+shown as not profiled.
 
-## Statements
+## Query shapes
 
-### 1. Platform
-
-The [`platform-info`](DMV_QUERIES.md#platform-info) query from the active DMV queries. `engine_edition` selects the sampling method. If the query is missing or fails, the request fails.
-
-### 2. Row count
+Row count, from the catalog (`index_id` 0 is a heap, 1 the clustered index):
 
 ```sql
 SELECT SUM(p.rows) AS row_count
@@ -40,48 +50,63 @@ WHERE p.object_id = OBJECT_ID(N'[schema].[table]')
   AND p.index_id IN (0, 1)
 ```
 
-Reads partition metadata only. The result is the reported row count and decides whether to sample.
+Aggregates, one row from a single `SELECT` over the table. Each profiled column
+adds the fragments for its type:
 
-### 3. Column aggregates
-
-One statement over the table:
+| Mode | Fragments per column |
+|------|----------------------|
+| Quick | distinct count (`APPROX_COUNT_DISTINCT` or `COUNT(DISTINCT)`); null count when the column is nullable |
+| Standard, numeric | Quick, plus `MIN`, `MAX`, `AVG`, `STDEV`; zero count when nullable |
+| Standard, date and time | Quick, plus `MIN`, `MAX` |
+| Standard, string | Quick, plus `MIN` and `MAX` of `LEN`; empty-string count |
 
 ```sql
-SELECT [TOP n] [COUNT_BIG(*) AS [__rows],] <column fragments>
-FROM [schema].[table] [TABLESAMPLE(p PERCENT)]
+SELECT [TOP n] [COUNT_BIG(*) AS __rows,]
+  APPROX_COUNT_DISTINCT([col]) AS c0_d,
+  SUM(CASE WHEN [col] IS NULL THEN 1 ELSE 0 END) AS c0_n
+  -- more fragments per column
+FROM [schema].[table] [TABLESAMPLE(n PERCENT)]
 ```
 
-Per profiled column `[c]`:
-
-| Mode | Column type | Fragments |
-|---|---|---|
-| Quick and Standard | All profiled | `APPROX_COUNT_DISTINCT([c])`, or `COUNT(DISTINCT [c])` when `dataLineageViz.tableStatistics.useApproxDistinct` is `false` |
-| Quick and Standard | Nullable | `SUM(CASE WHEN [c] IS NULL THEN 1 ELSE 0 END)` |
-| Standard | Integer, decimal, float, money | `MIN([c])`, `MAX([c])`, `AVG(CAST([c] AS float))`, `STDEV(CAST([c] AS float))`; nullable columns also `SUM(CASE WHEN [c] = 0 THEN 1 ELSE 0 END)` |
-| Standard | Date and time | `MIN([c])`, `MAX([c])` |
-| Standard | `char`, `nchar`, `varchar`, `nvarchar` | `MIN(LEN([c]))`, `MAX(LEN([c]))`, and an empty count: `DATALENGTH([c]) = 0` for `varchar`/`nvarchar`, `[c] = ''` for `char`/`nchar` |
-
-Completeness and uniqueness are computed by the extension from these counts and the row count; no further statement is sent.
-
-For `float` columns, `AVG` and `STDEV` are wrapped in a `CASE` that returns NULL when `MAX(ABS([c]))` exceeds the conservative `1E+150` threshold used to avoid overflow in the moments.
-
-Not profiled, and shown as not profiled: computed columns; `binary`, `varbinary`, `image`, `text`, `ntext`, `xml`, `geography`, `geometry`, `hierarchyid`, `sql_variant`, `timestamp`/`rowversion`, `sysname` and other unlisted types; columns beyond `dataLineageViz.tableStatistics.maxColumns` (default 50). Types that are never profiled and computed columns do not count towards that limit. If no column is left, no aggregate statement is sent and the request reports that there are no profileable columns. `bit` and `uniqueidentifier` get only the distinct and null counts. Standard mode is unavailable when `dataLineageViz.tableStatistics.standardModeEnabled` is `false`.
-
-`APPROX_COUNT_DISTINCT` needs SQL Server 2019 or later; on 2016 or 2017 set `useApproxDistinct` to `false`.
 
 ## Sampling
 
-Sampling applies when the row count exceeds `dataLineageViz.tableStatistics.sampleThreshold` (default 100,000; `0` samples nonempty tables).
+Tables above the configured threshold use a platform-specific sampling clause:
 
-| Platform | Statement | Effect |
-|---|---|---|
-| Fabric Data Warehouse | `TOP <sampleSize>` | Does not limit an aggregate; the full table is scanned. |
-| Other platforms | `TABLESAMPLE(p PERCENT)` with p = min(100, ceil(`sampleSize` / row count × 100)), plus `COUNT_BIG(*)` for the rows read | Metrics describe the sample. |
+- Fabric Data Warehouse uses a `TOP` clause, which in practice scans the whole
+  table (see the limitation below).
+- Other detected editions use `TABLESAMPLE`.
+- A sampled query that fails with a `TABLESAMPLE` error is retried once as a
+  full scan.
 
-`sampleSize` is `dataLineageViz.tableStatistics.sampleSize` (default 10,000). If the server rejects `TABLESAMPLE`, the statement is sent once more without it as a full scan; the result still carries the sampling indicator although the whole table was read.
+With `TABLESAMPLE`, the target sample size is converted to a whole percent of
+the table: `ceil(sampleSize / rowCount * 100)`, at least 1 and at most 100. The
+sample is therefore approximate and can read more rows than `sampleSize`.
+On a `TABLESAMPLE` run the query also returns the number of rows it read, and
+NULL %, completeness and uniqueness are computed against that number.
 
-Row-count headers show the catalog row count. On a `TABLESAMPLE` run, NULL %, completeness and uniqueness are computed against the rows the sample read, so they describe the sample; an empty sample falls back to the catalog row count as the denominator. On Fabric Data Warehouse the metrics are full-scan aggregates although the statistics show a sampling indicator.
+Limitation: on Fabric the `TOP` clause limits result rows rather than the
+aggregate input, so the query scans the full table.
+
+## Settings
+
+Defaults and ranges are listed in
+[`FEATURES.md`](FEATURES.md#table-statistics). The profiling controls cover:
+
+- enabling the feature and Standard mode;
+- excluding external tables;
+- per-query timeout;
+- sampling threshold and target size;
+- approximate or full distinct counts; and
+- maximum profiled columns.
 
 ## Diagnostics
 
-In **View → Output → Data Lineage Viz** at **Debug** level, `[Stats]` and `[DB]` entries show each request and statement. `[DB]` entries show the first 300 characters of each statement. Logs may contain object and column names; review them before sharing.
+Open **View -> Output -> Data Lineage Viz** and set the channel log level to
+**Debug**. `[Stats]` entries describe the profiling lifecycle and `[DB]` entries
+show the first 300 characters of each query. Object and column identifiers may
+appear in the log.
+
+## Reference
+
+- User-facing feature guide: [`FEATURES.md`](FEATURES.md#table-profiling)

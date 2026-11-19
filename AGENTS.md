@@ -17,11 +17,11 @@ npm run gate         # every deterministic check; run before reporting a change 
 npm run package      # create the VSIX
 ```
 
-`npm run lint` and `npm run knip` are report-only and not part of the gate. Test tiers and optional checks: [`docs/testing/README.md`](docs/testing/README.md). Machine needs: [`docs/testing/ENVIRONMENTS.md`](docs/testing/ENVIRONMENTS.md).
+`npm run lint` and `npm run knip` are report-only and not part of the gate.
 
 ## Map
 
-Layer owners and code map: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#code-map). Build and layout: [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md). Prompts and templates: [`docs/AI_PROMPTS.md`](docs/AI_PROMPTS.md).
+Architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Build: [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md). Prompts and templates: [`docs/AI_PROMPTS.md`](docs/AI_PROMPTS.md).
 
 ## Rules
 
@@ -31,5 +31,5 @@ Layer owners and code map: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#code-ma
 - `@lineage` tools read the loaded model only; they cannot connect to a database, run SQL, import or profile.
 - Add a focused test for changed behavior, including failure and malformed input, in `*.test.ts` or `*.test.tsx`. Use the demo DACPAC or synthetic SQL. A fixed-response model fixture proves API wiring, not answer quality.
 - Never put credentials, customer data, raw conversations, traces or generated test output in tracked files. Optional test settings live in `.env` (template `.env.example`, never committed); report a tier whose prerequisites are missing as not runnable.
-- Do not change `package.json` or lockfile versions unless asked. After changing a tool description or schema, run `npm run generate:tool-manifest`. Prompt and template changes: [`docs/AI_PROMPTS.md`](docs/AI_PROMPTS.md#change-a-prompt-or-tool-description).
-- TSDoc, `.md` upkeep and changelog conventions: [`CONTRIBUTING.md`](CONTRIBUTING.md#propose-a-change).
+- Do not change `package.json` or lockfile versions unless asked. After changing a tool description or schema, run `npm run generate:tool-manifest`.
+- Bug reports and forking: [`CONTRIBUTING.md`](CONTRIBUTING.md).

@@ -273,7 +273,7 @@ export function createMessageHandlers(
     logger.info(`Dacpac filtered — ${model.nodes.length} nodes, ${model.edges.length} edges`);
     setCurrentModel(model, false, project);
     if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
-    host.postMessage({ type: 'dacpac-model', model, config, sourceName });
+    host.postMessage({ type: 'dacpac-model', model, config, sourceName, projectId: project?.id });
   }
 
   let lastConnectionInfo: StoredConnectionInfo | undefined;
@@ -702,7 +702,7 @@ export function createMessageHandlers(
           } else {
             await runDbPhase2Host(host, session, schemas, outputChannel, dmvQueries.reload, getSession, session.connectionInfo.database, dbConn.sourceName, unlessCancelled(token, (m) => {
               setCurrentModel(m, true, { id: project.id, name: project.name });
-            }));
+            }), project.id);
             await storeReconnected(session);
           }
         });
@@ -750,7 +750,7 @@ export function createMessageHandlers(
       const sess = getSession();
       const projectName = msg.projectName ?? sess.projectName ?? 'dacpac';
       try {
-        installFilteredDacpac(host, cachedDacpac, msg.schemas, config, sess.currentProjectId ? { id: sess.currentProjectId, name: projectName } : null, projectName);
+        installFilteredDacpac(host, cachedDacpac, msg.schemas, config, msg.projectId ? { id: msg.projectId, name: projectName } : null, projectName);
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
         host.log('error', 'Dacpac', 'Dacpac visualize', err);
@@ -796,7 +796,7 @@ export function createMessageHandlers(
             setCurrentModel(m, true, null);
             getSession().projectName = sourceName;
           }
-        }));
+        }), pendingProject?.id);
 
         if (pendingProject && !progressToken.isCancellationRequested) {
           const store = loadProjectStore(context);
@@ -1112,7 +1112,7 @@ async function runDbPhase1Host(host: BridgeHost, session: DbSession, outputChann
   host.log('info', 'DB', `Phase 1 Complete — ${preview.schemas.length} schemas, ${preview.totalObjects} objects`);
 }
 
-async function runDbPhase2Host(host: BridgeHost, session: DbSession, schemas: string[], outputChannel: vscode.LogOutputChannel, loadQueries: () => Promise<DmvQuery[]>, getSession: () => AiSession, currentDatabase?: string, sourceName?: string, onModelBuilt?: (model: DatabaseModel) => void) {
+async function runDbPhase2Host(host: BridgeHost, session: DbSession, schemas: string[], outputChannel: vscode.LogOutputChannel, loadQueries: () => Promise<DmvQuery[]>, getSession: () => AiSession, currentDatabase?: string, sourceName?: string, onModelBuilt?: (model: DatabaseModel) => void, projectId?: string) {
   const queries = await loadQueries();
   host.log('info', 'DB', `Running Phase 2 queries for ${schemas.length} schema(s)`);
   host.log('debug', 'DB', `Running Phase 2 queries for schemas: ${schemas.join(', ')}`);
@@ -1159,7 +1159,7 @@ async function runDbPhase2Host(host: BridgeHost, session: DbSession, schemas: st
 
   onModelBuilt?.(model);
   if (model.parseStats) handleParseStats(model.parseStats, outputChannel, getSession, model.nodes.length, model.edges.length, model.schemas.length);
-  host.postMessage({ type: 'db-model', model, config, sourceName: sourceName ?? 'Database' });
+  host.postMessage({ type: 'db-model', model, config, sourceName: sourceName ?? 'Database', projectId });
 }
 
 /**

@@ -239,6 +239,7 @@ export function App() {
       if (view !== 'visualizing') return; // guard: ignore stale responses after cancel
       setLoadingPhase('parse');
       handleVisualize(dacpacLoader.model, dacpacLoader.selectedSchemas);
+      setActiveProjectId(dacpacLoader.projectId);
       dacpacLoader.clearPendingVisualize();
     }
   }, [
@@ -410,7 +411,7 @@ export function App() {
       setActiveProjectId(project.id);
 
       vscodeApi.postMessage({ type: 'save-project', project });
-      dacpacLoader.visualize(dacpacLoader.selectedSchemas, projectName);
+      dacpacLoader.visualize(dacpacLoader.selectedSchemas, projectName, project.id);
     } else {
       dacpacLoader.visualize(dacpacLoader.selectedSchemas, projectName);
     }
@@ -1173,9 +1174,6 @@ export function App() {
         setLastOpenedId(msg.lastOpenedId ?? null);
         if (msg.lastWizardView) setLastWizardView(msg.lastWizardView);
         setLoadingProjectId(null);
-        if (view === 'visualizing' && msg.lastOpenedId) {
-          setActiveProjectId(msg.lastOpenedId);
-        }
       } else if (msg.type === 'rebuild-config') {
         clearRebuildTimeout();
         if (!msg.config) {

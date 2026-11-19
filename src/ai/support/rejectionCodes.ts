@@ -169,7 +169,7 @@ export const REJECTION_CODES = {
   invalidPendingLead: 'invalid_pending_lead',
   /**
    * `lineage_present_result` ran with no presentation source: no loaded scope and no completed
-   * exploration (`presentResultRules.ts`).
+   * exploration (`handlers/presentResult.ts`).
    */
   missingResultGraph: 'missing_result_graph',
   /** A refine proposal identical to the reviewed pending proposal (`startExploration.ts`). */

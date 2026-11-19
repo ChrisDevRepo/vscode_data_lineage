@@ -2112,9 +2112,12 @@ export function GraphCanvas({
           </div>
         )}
         {flowNodes.length === 0 && !isRebuilding ? (
-          <div className="flex items-center justify-center h-full text-sm" style={{ color: 'var(--ln-fg-muted)' }}>
-            No objects match current filters. Adjust type toggles or search term.
-          </div>
+          // The render-limit card covers this area and already says why nothing is drawn.
+          !renderLimitNotice && (
+            <div className="flex items-center justify-center h-full text-sm" style={{ color: 'var(--ln-fg-muted)' }}>
+              No objects match current filters. Adjust type toggles or search term.
+            </div>
+          )
         ) : (
           <div
             style={{

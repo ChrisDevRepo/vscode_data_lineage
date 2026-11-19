@@ -342,7 +342,7 @@ export class ColumnTracer {
         const verbs = new Set<string>();
         for (const e of model.edges) {
           if (identifierKey(e.source) === focusLower && identifierKey(e.target) === toLower) {
-            verbs.add(edgeApiType(e.type, focusNode.type));
+            verbs.add(edgeApiType(e, focusNode.type));
           }
         }
         if (verbs.size === 0) {
@@ -355,7 +355,7 @@ export class ColumnTracer {
         }
       }
       if (entry.writes_to === null && focusNode.type === 'procedure'
-        && model.edges.some(e => identifierKey(e.source) === identifierKey(focusId) && edgeApiType(e.type, focusNode.type) === 'write')) {
+        && model.edges.some(e => identifierKey(e.source) === identifierKey(focusId) && edgeApiType(e, focusNode.type) === 'write')) {
         log?.('debug', `[CT] writes_to null on writer focus="${focusId}" out_col="${entry.out_col}" — no writer edge staged`);
       }
       const toCol = resolvedTarget?.attributionCol ?? entry.out_col;
@@ -390,7 +390,7 @@ export class ColumnTracer {
           && (edge.target === focusId || (entry.returns_to
             ? edge.target === toNodeForEdge
             : callerTargets.some(target => edge.target === target.node)))
-          && edgeApiType(edge.type, neighbor.type) === 'read')) {
+          && edgeApiType(edge, neighbor.type) === 'read')) {
           invalidRoutes.push({ kind: 'absent_contributor', id: neighbor.id, path: `column_flow.${entryIndex}.upstream_columns.${refIndex}.node`, reason: 'A caller-context investigation accepts real read contributors of the function or its declared callers, not unrelated loaded objects.' });
           continue;
         }

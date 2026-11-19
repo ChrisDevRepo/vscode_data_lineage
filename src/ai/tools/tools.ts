@@ -66,7 +66,7 @@ export function buildEdgeTypeMap(model: DatabaseModel): Map<string, string> {
   const nodeTypeById = buildNodeTypeById(model);
   const m = new Map<string, string>();
   for (const e of model.edges) {
-    m.set(`${e.source}→${e.target}`, edgeApiType(e.type, nodeTypeById.get(e.source) ?? ''));
+    m.set(`${e.source}→${e.target}`, edgeApiType(e, nodeTypeById.get(e.source) ?? ''));
   }
   return m;
 }
@@ -600,7 +600,7 @@ export function getScopeBundle(
 
   const edges = model.edges
     .filter(e => scopeIds.has(e.source) && scopeIds.has(e.target))
-    .map(e => [e.source, e.target, edgeApiType(e.type, nodeMap.get(e.source)?.type ?? '')] as [string, string, string]);
+    .map(e => [e.source, e.target, edgeApiType(e, nodeMap.get(e.source)?.type ?? '')] as [string, string, string]);
 
   const edgeTypeMap = getModelEdgeTypeMap(model);
   const nodes = [...scopeIds]

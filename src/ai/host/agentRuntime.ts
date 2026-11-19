@@ -4,7 +4,7 @@
  * (`buildAgentGraph` compiles against a fresh in-memory saver per graph): enough to pause at a
  * consent interrupt and resume through `Command({ resume })` **within a single turn**, nothing
  * more; no state survives a host restart or outlives the turn. Cross-turn state is `AiSession` by
- * design (`docs/ARCHITECTURE.md` §Memory and state ownership).
+ * design.
  *
  * This wrapper owns only platform-facing turn lifecycle: `thread_id`, native gate event emission,
  * user resume delivery, cancellation, and the single terminal result the {@link TurnEventSink}
