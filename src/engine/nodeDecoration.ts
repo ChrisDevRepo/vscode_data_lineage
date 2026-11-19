@@ -22,7 +22,6 @@ export interface NodeDecorationInputs {
   litOverride?: ReadonlySet<string>;
   /** Current trace mode, which decides whether the trace origin keeps its highlight. */
   traceMode: TraceState['mode'];
-  /** Origin node of the active trace. */
   traceSelectedNodeId: string | null;
   /** Whether an allowlist-backed bookmark view is on stage. */
   isBookmarkMode: boolean;
@@ -139,15 +138,12 @@ export interface NodeDecoration {
    * {@link LIT_CLASS_NAME}) that changes identity only for nodes entering or leaving the lit set.
    */
   lit: boolean;
-  /** Whether the scoped-view remove control is shown. */
   removable: boolean;
   /** Remove-from-view callback, attached only while the control is shown. */
   onRemoveFromView: ((nodeId: string) => void) | undefined;
   /** Interactive trace controls, populated for the highlighted node only. */
   traceControls: TraceNodeControls | undefined;
-  /** AI-authored highlight styling for this node. */
   aiHighlight: { color: string; glow: string; shadow: string } | undefined;
-  /** AI-authored badge for this node. */
   aiBadge: AiBadge | undefined;
   /** AI-authored note for this node, dropped while notes are hidden. */
   aiNote: { text: string } | undefined;

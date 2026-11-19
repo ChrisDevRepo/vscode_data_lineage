@@ -11,7 +11,6 @@ const SCHEMA_EDGE_KEY_SEPARATOR = '\u0000';
 export interface CollapsedSchemaEdge {
   /** Source schema (lexicographically first when bidirectional). */
   sourceSchema: string;
-  /** Target schema for the aggregated dependency edge. */
   targetSchema: string;
   /** Directed edge count from `sourceSchema` to `targetSchema`. */
   count: number;

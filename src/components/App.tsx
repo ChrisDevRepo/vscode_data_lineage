@@ -51,14 +51,12 @@ const RENDER_LIMIT_SURFACE_STYLE: CSSProperties = {
 
 /** Transient AI-curated view shown before it is saved as a bookmark. */
 interface AiPreview {
-  /** The name of the AI view. */
   name: string;
   nodeIds: Set<string>;
   /** Metadata provided by the AI regarding the purpose and logic of this view. */
   aiMetadata: AIViewMetadata;
 }
 
-/** Top-level navigation states. */
 type AppView = 'start' | 'create' | 'visualizing' | 'graph';
 
 /** Timeout for dacpac file loading operations. */
@@ -95,19 +93,12 @@ interface ObjectContextMenuState {
   x: number;
   /** Y-coordinate in pixels. */
   y: number;
-  /** ID of the node being interacted with. */
   nodeId: string;
-  /** Human-readable label of the node. */
   nodeName: string;
-  /** Schema name of the node. */
   schema: string;
-  /** Specific type for external references (e.g., file source or cross-DB). */
   externalType?: 'et' | 'file' | 'db';
-  /** URL for external resources if applicable. */
   externalUrl?: string;
-  /** Fully qualified name of the object. */
   fullName?: string;
-  /** General classification of the object (table, view, etc.). */
   objectType: ObjectType;
 }
 
@@ -118,9 +109,7 @@ interface SchemaContextMenuState {
   x: number;
   /** Y-coordinate in pixels. */
   y: number;
-  /** Schema name the cluster represents. */
   schema: string;
-  /** Whether this schema is currently expanded in Expanded Schema View. */
   isExpanded: boolean;
 }
 
@@ -207,7 +196,6 @@ export function App() {
     [buildFromModel, refusesBuild, config, graphMode]
   );
 
-  /** Starts the visualization phase for a newly loaded model. */
   const handleVisualize = useCallback(
     (dacpacModel: DatabaseModel, selectedSchemas: Set<string>) => {
       const trimmed = scopeModelForVisualize(dacpacModel, selectedSchemas, config.excludePatterns, notifyUser);
@@ -324,7 +312,6 @@ export function App() {
   }, [config, isLoadPending, model, view, filter, rebuild]);
 
 
-  /** Transitions to the creation wizard screen. */
   const handleCreateNew = useCallback(() => {
     dacpacLoader.resetToStart();
     setStartScreenMessage(null);
@@ -349,27 +336,23 @@ export function App() {
     setView('visualizing');
   }, [projects, dacpacLoader.loadProject, vscodeApi]);
 
-  /** Re-opens the most recently used project. */
   const handleOpenLatest = useCallback(() => {
     if (!lastOpenedId) return;
     handleOpenProject(lastOpenedId);
   }, [lastOpenedId, handleOpenProject]);
 
-  /** Deletes a project and its associated data. */
   const handleDeleteProject = useCallback((id: string) => {
     setProjects(prev => prev.filter(p => p.id !== id));
     if (activeProjectId === id) setActiveProjectId(null);
     vscodeApi.postMessage({ type: 'delete-project', id });
   }, [activeProjectId, vscodeApi]);
 
-  /** Deletes all saved projects. */
   const handleDeleteAllProjects = useCallback(() => {
     setProjects([]);
     setActiveProjectId(null);
     projects.forEach(p => vscodeApi.postMessage({ type: 'delete-project', id: p.id }));
   }, [projects, vscodeApi]);
 
-  /** Loads the sample AdventureWorks demo project. */
   const handleDemoClick = useCallback(() => {
     setLoadingPhase('load');
     setLoadingStats(null);
@@ -398,7 +381,6 @@ export function App() {
     else handleDemoClick();
   };
 
-  /** Aborts an active loading or parsing operation. */
   const handleCancelVisualizing = useCallback(() => {
     dacpacLoader.cancelLoading();
     setView('start');
@@ -417,7 +399,6 @@ export function App() {
     setActiveProjectId(null);
   }, [loadingError, dacpacLoader.resetToStart]);
 
-  /** Finalizes project creation and starts visualization. */
   const handleCreateVisualize = useCallback((projectName: string, conn: DacpacConnection | DatabaseConnection | null) => {
     setLoadingPhase('load');
     setLoadingStats(null);
@@ -620,7 +601,6 @@ export function App() {
     vscodeApi.postMessage({ type: 'rebuild' });
   }, [vscodeApi]);
 
-  /** Resets everything back to the default state for the current model. */
   const handleResetAll = useCallback(() => {
     if (model) {
       viewSnapshotRef.current = null;
@@ -734,7 +714,6 @@ export function App() {
     startTraceImmediate(nodeId);
   }, [startTraceImmediate, handleClearSelection]);
 
-  /** Displays the context menu at the specified coordinates for a node. */
   const handleNodeContextMenu = useCallback(
     (node: FlowNode, x: number, y: number) => {
       if (node.type === 'schemaNode') {
@@ -783,7 +762,6 @@ export function App() {
     [expandedSchemaView]
   );
 
-  /** Opens the DDL/definition viewer for a specific node. */
   const handleViewDdl = useCallback(
     (nodeId: string) => {
       const node = model?.nodes.find(n => n.id === nodeId);
@@ -794,7 +772,6 @@ export function App() {
     [model, vscodeApi]
   );
 
-  /** Toggles the visibility of a specific object type (table, view, etc.). */
   const handleToggleType = useCallback(
     (type: ObjectType) => {
       const types = new Set(filter.types);
@@ -914,14 +891,12 @@ export function App() {
     expandAllSchemas(model?.schemas.map(s => s.name) ?? []);
   }, [expandAllSchemas, model]);
 
-  /** Toggles whether external references (file sources, cross-DB) are visible. */
   const handleToggleExternalRefs = useCallback(() => {
     const next = { ...filter, showExternalRefs: !filter.showExternalRefs };
     setFilter(() => next);
     if (model) rebuild(model, next, config);
   }, [filter, model, config, rebuild]);
 
-  /** Toggles visibility of a specific sub-type of external reference. */
   const handleToggleExternalRefType = useCallback((subType: 'file' | 'db') => {
     const externalRefTypes = new Set(filter.externalRefTypes);
     if (externalRefTypes.has(subType)) externalRefTypes.delete(subType);
@@ -942,7 +917,6 @@ export function App() {
     }
   }, [preserveViewportOnNextGraphChange]);
 
-  /** Removes a previously added exclusion pattern. */
   const handleRemoveExclusionPattern = useCallback((pattern: string) => {
     const next = { ...filter, exclusionPatterns: filter.exclusionPatterns.filter(p => p !== pattern) };
     setFilter(() => next);
@@ -955,7 +929,6 @@ export function App() {
     return { ...prev, schemas: nextSchemas, focusSchemas: new Set<string>() };
   }, [model, guardSchemaSelection]);
 
-  /** Toggles visibility of a specific schema. */
   const handleToggleSchema = useCallback((schema: string) => {
     const prev = filterRef.current;
     const schemas = new Set(prev.schemas);
@@ -966,7 +939,6 @@ export function App() {
     if (next !== prev && modelRef.current) rebuildRef.current(modelRef.current, next, configRef.current);
   }, [commitSchemaSelection]);
 
-  /** Selects multiple schemas at once. */
   const handleSelectAllSchemas = useCallback((schemas: string[]) => {
     const prev = filterRef.current;
     const next = commitSchemaSelection(prev, new Set([...prev.schemas, ...schemas]));
@@ -974,7 +946,6 @@ export function App() {
     if (next !== prev && modelRef.current) rebuildRef.current(modelRef.current, next, configRef.current);
   }, [commitSchemaSelection]);
 
-  /** Deselects multiple schemas at once. */
   const handleSelectNoneSchemas = useCallback((schemas: string[]) => {
     const prev = filterRef.current;
     const nextSchemas = new Set(prev.schemas);
@@ -984,7 +955,6 @@ export function App() {
     if (next !== prev && modelRef.current) rebuildRef.current(modelRef.current, next, configRef.current);
   }, [commitSchemaSelection]);
 
-  /** Initiates a structural analysis mode. */
   const openAnalysis = useCallback((type: AnalysisType) => {
     endTrace();
     setIsDetailSearchOpen(false);
@@ -1034,7 +1004,6 @@ export function App() {
     setAnalysisMode(null);
   }, [endTrace]);
 
-  /** Focuses the view on a specific group discovered during analysis. */
   const selectAnalysisGroup = useCallback((groupId: string) => {
     if (!analysisMode || !graph) return;
     const group = analysisMode.result.groups.find(g => g.id === groupId);
@@ -1086,7 +1055,6 @@ export function App() {
     setPendingViewport(undefined);
   }, []);
 
-  /** Removes a specific node from the current bookmark view. */
   const handleRemoveFromView = useCallback((nodeId: string) => {
     const current = filterRef.current;
     if (!current.allowlistNodeIds || !current.allowlistNodeIds.has(nodeId)) return;
@@ -1146,7 +1114,6 @@ export function App() {
     }
   }, false, { allowEmptyTextEntry: true });
 
-  /** Applies a saved view profile (filters). */
   const handleApplyView = useCallback((profile: FilterProfile) => {
     const isAdvanced = (profile.filter.allowlistNodeIds?.length ?? 0) > 0;
     const restored = deserializeFilter(profile.filter);
@@ -1400,7 +1367,6 @@ export function App() {
     }
   }, [activeProjectId, lastOpenedId, vscodeApi, graphMode, showExpandedSchemaClusters, expandedSchemaView]);
 
-  /** Saves the current filter state as a new named view. */
   const handleSaveView = useCallback((name: string) => {
     if (!activeProjectId) {
       vscodeApi.postMessage({ type: 'log', text: '[SaveView] No active project — view not saved' });
@@ -1450,7 +1416,6 @@ export function App() {
     saveAllowlistBookmark(name, nodeIds, 'analysis');
   }, [saveAllowlistBookmark]);
 
-  /** Saves a transient AI preview as a permanent bookmark. */
   const handleSaveAiBookmark = useCallback((name: string) => {
     if (!aiPreview || !model) return;
     const display = aiPreviewDisplayFilter(filter, true, model.schemas.map(s => s.name));
@@ -1469,7 +1434,6 @@ export function App() {
     persistFilterProfile(profile, { clearAiPreview: true, activateProfile: true });
   }, [filter, aiPreview, model, persistFilterProfile]);
 
-  /** Deletes a saved view profile. */
   const handleDeleteView = useCallback((profileId: string) => {
     if (!activeProjectId) return;
     if (activeViewId === profileId) setActiveViewId(null);

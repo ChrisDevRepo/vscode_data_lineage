@@ -3,12 +3,10 @@ import type { SchemaInfo } from '../engine/types';
 import { createSchemaColorMap, getSchemaDisplayColor, isExternalOnlyTypeBreakdown } from '../utils/schemaColors';
 
 interface SchemaSelectorProps {
-  /** Array of schema information objects to display in the list. */
   schemas: SchemaInfo[];
   /** Checked source catalog comparison policy for palette identity. */
   identifierCaseSensitive?: boolean;
   selectedSchemas: Set<string>;
-  /** Callback function to toggle the selection of a specific schema. */
   onToggle: (name: string) => void;
   /** Callback function to select all schemas in the current filtered list. */
   onSelectAll: (names: string[]) => void;
@@ -27,7 +25,6 @@ export const SchemaSelector = memo(function SchemaSelector({
 }: SchemaSelectorProps) {
   const [searchTerm, setSearchTerm] = useState('');
 
-  /** Filters the schema list based on the user's search term. */
   const filteredSchemas = searchTerm
     ? schemas.filter((s) => s.name.toLowerCase().includes(searchTerm.toLowerCase()))
     : schemas;

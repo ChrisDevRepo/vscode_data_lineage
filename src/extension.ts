@@ -25,7 +25,6 @@ export async function activate(context: vscode.ExtensionContext) {
   return runtime.activateRuntime(context);
 }
 
-/** VS Code extension teardown hook. */
 export async function deactivate(): Promise<void> {
   await runtime?.deactivate();
 }

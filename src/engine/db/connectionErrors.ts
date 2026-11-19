@@ -21,9 +21,7 @@ export type ConnectionErrorActionId =
 
 /** A button offered next to a connection error. */
 export interface ConnectionErrorAction {
-  /** Stable identifier. */
   id: ConnectionErrorActionId;
-  /** Button text. */
   label: string;
   /** Performs the action once, on the user's click. */
   run(): Promise<void>;
@@ -33,9 +31,7 @@ export interface ConnectionErrorAction {
 export interface ConnectionErrorHooks {
   /** Repeats the failed operation once; `patch` overrides stored connection fields for it. */
   retry?: (patch?: Partial<StoredConnectionInfo>) => Promise<void> | void;
-  /** Asks the user for a database name. */
   chooseDatabase?: () => Promise<string | undefined>;
-  /** Reveals the extension's log. */
   showLog?: () => void;
 }
 

@@ -2,7 +2,6 @@ import { memo } from 'react';
 import { Tooltip } from './ui/Tooltip';
 
 interface ColumnViewToggleProps {
-  /** Whether the column view is the one currently rendered. */
   active?: boolean;
   /** Switches between the object view and the column view of the same scope. */
   onToggle: (columnView: boolean) => void;

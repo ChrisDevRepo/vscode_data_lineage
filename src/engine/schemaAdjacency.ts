@@ -13,7 +13,6 @@ import { addRawSchemaEdge, collapseRawSchemaEdges } from './schemaEdgeHelpers';
 export interface SchemaInterEdge {
   /** Schema on the source side (lexicographically first when bidirectional). */
   source: string;
-  /** Schema on the target side. */
   target: string;
   /** Object-level edge count in the `source → target` direction. */
   count: number;

@@ -10,42 +10,30 @@ import { ForeignKeysSection } from './ForeignKeysSection';
 import { StatsSection } from './StatsSection';
 
 
-/** Represents the lifecycle and data state of table statistics profiling. */
 export type TableStatsState =
   | { phase: 'idle' }
   | { phase: 'loading'; mode: StatsMode }
   | { phase: 'result'; stats: TableStats; mode: StatsMode }
   | { phase: 'error'; message: string };
 
-/** Data, configuration, and callbacks required by {@link TableDetailPanel}. */
 export interface TableDetailPanelProps {
-  /** Database schema name (e.g., 'dbo'). */
   schema: string;
-  /** Name of the table, view, or function. */
   objectName: string;
-  /** The primary classification of the object. */
   objectType: 'table' | 'external' | 'view' | 'function';
   /** Optional subtype for external or virtual tables. */
   externalType?: 'et' | 'file' | 'db';
-  /** List of columns with their data types and primary key status. */
   columns: ColumnDef[];
   /** Foreign key relationships where this table is the source. */
   fks: ForeignKeyInfo[];
-  /** Current state of data profiling for this table. */
   statsState: TableStatsState;
-  /** Callback to close the panel. */
   onClose: () => void;
-  /** Callback to trigger a statistics profiling run. */
   onRequestStats: (mode: StatsMode) => void;
-  /** Whether the application is connected to a live database. */
   isDbMode: boolean;
-  /** Whether the statistics feature is enabled in user settings. */
   statsEnabled: boolean;
   /** Whether to suppress stats for external tables (polybase, etc.). */
   excludeExternalTables: boolean;
   /** Whether deep profiling (standard mode) is permitted. */
   standardModeEnabled: boolean;
-  /** Term used to highlight matches in column names or references. */
   findQuery?: string;
   /** If true, hides non-essential columns (e.g., Null/Flags) for compact views. */
   compactColumns?: boolean;

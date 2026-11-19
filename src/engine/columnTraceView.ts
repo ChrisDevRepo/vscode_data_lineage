@@ -39,9 +39,7 @@ export interface ColumnTraceRow {
 export interface ColumnTraceViewObject {
   /** Canonical node id, matching the ids used in the column relations. */
   id: string;
-  /** Display label for the node header. */
   label: string;
-  /** Schema the object belongs to. */
   schema: string;
   /** Object type as carried by the graph model. */
   objectType: string;
@@ -77,13 +75,11 @@ export interface ColumnTraceViewNode extends ColumnTraceViewObject {
 export interface ColumnTraceViewEdge {
   /** Stable edge id, unique across the view. */
   id: string;
-  /** Source node id. */
   source: string;
   /** Handle id on the source node, from {@link columnHandleId}. */
   sourceHandle: string;
   /** Source row's display name, for callers that follow a thread across edges. */
   sourceColumn: string;
-  /** Target node id. */
   target: string;
   /** Handle id on the target node, from {@link columnHandleId}. */
   targetHandle: string;
@@ -113,9 +109,7 @@ export interface ColumnTraceViewEdge {
 export interface ColumnTraceViewObjectEdge {
   /** Stable edge id, unique in the view and distinct from every {@link ColumnTraceViewEdge} id. */
   id: string;
-  /** Source node id. */
   source: string;
-  /** Target node id. */
   target: string;
   /** Handle on the source node: its first row's handle, absent on a node without rows. */
   sourceHandle?: string;
@@ -145,9 +139,7 @@ export interface ColumnTracePortBridge {
 /** The complete column-level rendering of one trace. */
 interface ColumnTraceView {
   identifierCaseSensitive?: boolean;
-  /** Positioned nodes. */
   nodes: ColumnTraceViewNode[];
-  /** Per-column edges between row handles. */
   edges: ColumnTraceViewEdge[];
   /** Object-level edges that join an object without traced columns to its neighbours. */
   objectEdges: ColumnTraceViewObjectEdge[];
@@ -161,7 +153,6 @@ interface ColumnTraceView {
  */
 export type ColumnTraceRelation = ColumnAspectEdge;
 
-/** Input to {@link buildColumnTraceView}. */
 export interface ColumnTraceViewInput {
   /** Checked model catalog policy; missing metadata retains CI. */
   identifierCaseSensitive?: boolean;

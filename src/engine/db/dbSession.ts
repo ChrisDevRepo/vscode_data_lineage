@@ -24,13 +24,11 @@ export interface DbQueryOptions {
  * `displayValue` strings.
  */
 export interface DbSession {
-  /** The provider that opened this session. */
   readonly provider: ConnectionProviderId;
   /** Persistable, credential-free description of the connection. */
   readonly connectionInfo: StoredConnectionInfo;
   /** Runs one SQL batch and resolves with its first result set. */
   executeSimpleQuery(sql: string, options?: DbQueryOptions): Promise<SimpleExecuteResult>;
-  /** Reads server version and edition metadata. */
   getServerInfo(): Promise<IServerInfo>;
   /** Releases what this extension opened; safe to call more than once. */
   dispose(): Promise<void>;
@@ -38,23 +36,17 @@ export interface DbSession {
 
 /** Identifies the connection an error belongs to; carries no credential. */
 export interface ConnectionErrorTarget {
-  /** Provider that was connecting. */
   provider: ConnectionProviderId;
   /** Display name shown in front of the driver message. */
   name: string;
-  /** Server host name or address. */
   server: string;
   /** TCP port, when not the default. */
   port?: number;
-  /** Database the connection was opening. */
   database?: string;
-  /** SQL login user name. */
   user?: string;
   /** `sqlLogin` or `entraId` for built-in connections. */
   authenticationType?: string;
-  /** Id of the saved built-in connection. */
   connectionId?: string;
-  /** Microsoft tenant id used for sign-in. */
   tenantId?: string;
 }
 

@@ -6,17 +6,12 @@ import { Tooltip } from './ui/Tooltip';
 import { ANALYSIS_TYPE_INFO, ALL_ANALYSIS_TYPES } from '../utils/analysisInfo';
 
 interface AnalysisSidebarProps {
-  /** The current active analysis state. */
   analysis: AnalysisMode;
   /** The full graph instance, used for deriving additional metadata about hubs or paths. */
   graph?: Graph | null;
-  /** Callback triggered when a group is selected from the list. */
   onSelectGroup: (groupId: string) => void;
-  /** Callback triggered to clear the current group selection. */
   onClearGroup: () => void;
-  /** Callback triggered to close the sidebar entirely. */
   onClose: () => void;
-  /** Optional callback to switch to a different analysis algorithm. */
   onSwitchAnalysis?: (type: AnalysisType) => void;
 }
 
@@ -167,15 +162,10 @@ export const AnalysisSidebar = memo(function AnalysisSidebar({
 
 
 interface AnalysisGroupItemProps {
-  /** The analysis group data to render. */
   group: AnalysisGroup;
-  /** The type of analysis this group belongs to. */
   analysisType: AnalysisType;
-  /** Whether this group is currently selected/active. */
   isActive: boolean;
-  /** Callback triggered when the item is clicked. */
   onClick: () => void;
-  /** Optional graph instance for additional metadata lookups. */
   graph?: Graph | null;
 }
 

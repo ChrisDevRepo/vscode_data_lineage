@@ -1,11 +1,8 @@
 import { Component, type ReactNode, type ErrorInfo } from 'react';
 
 interface ErrorBoundaryProps {
-  /** The child components to be rendered and monitored for errors. */
   children: ReactNode;
-  /** Optional custom fallback UI to display when an error occurs. */
   fallback?: ReactNode | ((args: { error: Error | null; reset: () => void }) => ReactNode);
-  /** Optional callback triggered when an error is caught. */
   onError?: (error: Error, errorInfo: ErrorInfo) => void;
   /** Changes when the guarded surface should retry after a previous render failure. */
   resetKey?: string;
@@ -13,11 +10,8 @@ interface ErrorBoundaryProps {
   context?: Record<string, unknown>;
 }
 
-/** State for the {@link ErrorBoundary} component. */
 interface ErrorBoundaryState {
-  /** Indicates if an error has occurred within the child component tree. */
   hasError: boolean;
-  /** The error object captured from the failing component. */
   error: Error | null;
   resetKey?: string;
 }
@@ -49,7 +43,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     return null;
   }
 
-  /** Logs the caught error and component stack. */
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     const vscodeApi = window.vscode;
     if (vscodeApi && typeof vscodeApi.postMessage === 'function') {
@@ -67,7 +60,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     this.props.onError?.(error, errorInfo);
   }
 
-  /** Renders the children, or the fallback UI after an error. */
   render() {
     if (this.state.hasError) {
       if (this.props.fallback) {

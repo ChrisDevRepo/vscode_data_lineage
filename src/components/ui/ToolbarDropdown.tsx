@@ -5,23 +5,18 @@ import { Tooltip } from './Tooltip';
 import { disabledControl } from './disabledControl';
 import { useDropdown } from '../../hooks/useDropdown';
 
-/** Props for the {@link ToolbarDropdown} component. */
 interface ToolbarDropdownProps {
-  /** Tooltip text shown on the trigger button. */
   tooltipContent: string;
   /** When true, shows the blue filter-active dot on the trigger. */
   isNarrowed?: boolean;
-  /** SVG icon element rendered inside the trigger button. */
   icon: ReactNode;
   /** Tailwind width class of the floating panel; narrowed to classes Tailwind emitted. */
   panelWidth: 'w-56' | 'w-96';
-  /** Accessible label for the floating panel. */
   ariaLabel: string;
   /** When true, the trigger renders disabled and never opens the panel. */
   disabled?: boolean;
   /** Trigger tooltip in place of {@link tooltipContent} while {@link disabled}. */
   disabledReason?: string;
-  /** Extra Tailwind classes appended to the panel element. */
   panelClassName?: string;
   /** Rows and controls for the panel body; positioning and dismissal are not their concern. */
   children: ReactNode;

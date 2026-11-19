@@ -65,9 +65,7 @@ const SCHEMA_RANK_SEPARATION = 160;
 /** Node separation for Schema View; see {@link SCHEMA_RANK_SEPARATION}. */
 const SCHEMA_NODE_SEPARATION = 80;
 
-/** Typed tuple for React Flow edge label background padding. */
 const LABEL_BG_PAD: [number, number] = [4, 4];
-/** Default column count for grid-based analysis layouts. */
 const GRID_DEFAULT_COLS = 4;
 /** Padding between nodes in grid layout (px). */
 const GRID_CELL_PADDING = 40;
@@ -87,11 +85,8 @@ function collectTraceEdges(graph: Graph, nodeIds: Set<string>): Set<string> {
   return edgeIds;
 }
 
-/** Structured result of graph compilation. */
 interface GraphResult {
-  /** Nodes formatted for React Flow. */
   flowNodes: FlowNode[];
-  /** Edges formatted for React Flow. */
   flowEdges: FlowEdge[];
   /** Underlying computational graph. */
   graph: Graph;
@@ -162,7 +157,6 @@ export function buildGraphologyGraph(model: DatabaseModel): Graph {
   return graph;
 }
 
-/** Converts internal model and graph state into React Flow structures. */
 function toFlowResult(
   model: DatabaseModel,
   graph: Graph,
@@ -267,7 +261,6 @@ export function computeShortestPath(
   return { nodeIds, edgeIds };
 }
 
-/** Lays out nodes in a uniform grid. */
 function gridLayout(nodeIds: string[], cols: number = GRID_DEFAULT_COLS): Map<string, { x: number; y: number }> {
   const positions = new Map<string, { x: number; y: number }>();
   const cellW = NODE_WIDTH + GRID_CELL_PADDING;

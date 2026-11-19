@@ -28,7 +28,6 @@ export function sqlResource(): string {
 
 /** A directory the signed-in account can use. */
 export interface EntraTenant {
-  /** Directory (tenant) id. */
   tenantId: string;
   /** Display name, or the id when the directory has none. */
   displayName: string;

@@ -401,9 +401,7 @@ function StatsResults({ stats, mode }: {
 
 
 interface StatsSectionProps {
-  /** The current state of table statistics (loading, error, or result). */
   statsState: TableStatsState;
-  /** Callback triggered when the user requests a specific profiling mode. */
   onRequestStats: (mode: StatsMode) => void;
   /** Whether standard-mode profiling (deeper scan) is enabled for the current connection. */
   standardModeEnabled: boolean;

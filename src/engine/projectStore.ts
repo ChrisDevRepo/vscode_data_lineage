@@ -28,7 +28,6 @@ export type {
 export interface ProjectStore {
   /** The current schema version of the store. Used for migrations. */
   schemaVersion: 1;
-  /** The list of saved projects. */
   projects: Project[];
   /** The ID of the last opened project, or null if none was opened. */
   lastOpenedId: string | null;
@@ -172,7 +171,6 @@ export function generateProjectName(connection: DacpacConnection | DatabaseConne
     : `${connection.sourceName} ${ts}`;
 }
 
-/** Zero-pads a number below 10 to two characters. */
 function pad(n: number): string {
   return n.toString().padStart(2, '0');
 }

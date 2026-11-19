@@ -4,11 +4,8 @@ import { ANALYSIS_TYPE_INFO, ANALYSIS_TYPE_LABELS } from '../utils/analysisInfo'
 import { ModeBanner } from './ModeBanner';
 
 interface AnalysisBannerProps {
-  /** The current active analysis state, including the type and calculated result. */
   analysis: AnalysisMode;
-  /** Callback triggered when the user chooses to exit the analysis mode. */
   onClose: () => void;
-  /** Optional callback to save the current analysis result as a bookmark under the given name. */
   onSaveAsBookmark?: (name: string) => void;
 }
 

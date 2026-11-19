@@ -11,15 +11,12 @@ import { Spinner } from './ui/Spinner';
 export type LoadingPhase = 'load' | 'parse' | 'generate';
 
 interface VisualizingScreenProps {
-  /** The name or path of the data source currently being processed. */
   sourceName: string;
-  /** The current active phase of the loading process. */
   phase: LoadingPhase;
   /** Optional real-time progress text (e.g., table count) from the extractor. */
   progressText: string | null;
   /** High-level summary stats (node/edge count) shown once parsing is complete. */
   stats: string | null;
-  /** Error message to display if the process fails. */
   error: string | null;
   /** Callback to cancel the current loading operation and stop extraction. */
   onCancel: () => void;

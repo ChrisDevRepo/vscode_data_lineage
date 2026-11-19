@@ -4,11 +4,8 @@ import { CloseIcon } from './ui/CloseIcon';
 interface SidePanelProps {
   /** The header title; plain text or a control such as the trace starting point. */
   title: ReactNode;
-  /** Optional icon displayed next to the title. */
   icon?: ReactNode;
-  /** Callback function triggered when the close button is clicked. */
   onClose: () => void;
-  /** Content to be rendered within the panel body. */
   children: ReactNode;
   /** Extra class on the shell, for panels that size their own body. */
   className?: string;
@@ -20,7 +17,6 @@ interface SidePanelProps {
   style?: CSSProperties;
 }
 
-/** Renders the shared titled, closable sidebar shell. */
 export function SidePanel({ title, icon, onClose, children, className, closeLabel = 'Close panel', actions, style }: SidePanelProps) {
   return (
     <div className={className ? `ln-sidebar ${className}` : 'ln-sidebar'} style={style}>

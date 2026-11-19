@@ -3,7 +3,6 @@ import type { FilterProfile } from '../engine/projectStore';
 import { BOOKMARK_SOURCE_DESCRIPTIONS } from '../engine/shared/bridgeContract';
 
 interface BookmarkInfoCardProps {
-  /** The saved view profile whose information is being displayed. */
   profile: FilterProfile;
   /** Total number of nodes currently present in the model that match this view. */
   nodeCount: number;
@@ -24,7 +23,6 @@ function formatDate(iso: string): string {
   });
 }
 
-/** A floating information card that provides technical metadata about a saved bookmark. */
 export const BookmarkInfoCard = memo(function BookmarkInfoCard({
   profile,
   nodeCount,

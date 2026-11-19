@@ -37,7 +37,6 @@ interface DacpacExtractionOptions {
   identifierCaseSensitive?: boolean;
 }
 
-/** Counts extracted objects by canonical type for summary logging. */
 function countObjectsByType(objs: ExtractedObject[]): Record<'table' | 'view' | 'procedure' | 'function', number> {
   const c = { table: 0, view: 0, procedure: 0, function: 0 };
   for (const o of objs) {
@@ -159,7 +158,6 @@ function buildDacpacModel(
   };
 }
 
-/** Computes schema-level statistics and the total object count from parsed XML elements. */
 function computeSchemaPreviewFromElements(elements: XmlElement[], identifierCaseSensitive: boolean): SchemaPreview {
   const schemaMap = new Map<string, SchemaInfo>();
   const seen = new Set<string>();
@@ -432,7 +430,6 @@ function resolveComputedColumnTypes(objects: ExtractedObject[], computedSources:
   }
 }
 
-/** Extracts object-level dependencies between XML elements. */
 function extractDependencies(elements: XmlElement[]): ExtractedDependency[] {
   const deps: ExtractedDependency[] = [];
 
@@ -627,7 +624,6 @@ const DEPENDENCY_RELATIONSHIPS = new Set([
   'CheckExpressionDependencies',
 ]);
 
-/** Extracts dependencies from an element's script or body. */
 function extractBodyDependencies(el: XmlElement): string[] {
   const deps: string[] = [];
   collectDeps(el, deps);

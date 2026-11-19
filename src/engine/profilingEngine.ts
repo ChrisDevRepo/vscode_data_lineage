@@ -11,7 +11,6 @@ import type { SimpleExecuteResult } from '../types/database';
 import { quoteIdentifier } from '../utils/sql';
 import type { ColumnStats, TableStats } from './shared/bridgeContract';
 
-/** Available profiling depths. */
 export type StatsMode = 'quick' | 'standard';
 
 /** Internal classification for determining applicable aggregations. */
@@ -74,11 +73,8 @@ function floatMomentFragment(aggregate: 'AVG' | 'STDEV', qn: string, alias: stri
 
 /** Pair of column name and its generated SQL aggregation fragments. */
 export interface ColumnAggregation {
-  /** Column name represented by this aggregation bucket. */
   colName: string;
-  /** Expression fragments collected for the column. */
   fragments: string[];
-  /** Derived aggregation category for the column. */
   category: ColCategory;
 }
 

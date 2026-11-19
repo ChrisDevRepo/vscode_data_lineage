@@ -10,13 +10,11 @@ interface InlineTraceControlsProps {
   defaultUpstream?: number;
   /** Initial downstream depth to show in the input. */
   defaultDownstream?: number;
-  /** Callback fired when the user applies the trace configuration. */
   onApply: (config: {
     startNodeId: string;
     upstreamLevels: number;
     downstreamLevels: number;
   }) => void;
-  /** Callback fired to cancel the trace configuration. */
   onClose: () => void;
   /**
    * BFS-only probe of the object count the current upstream/downstream choice would produce (count

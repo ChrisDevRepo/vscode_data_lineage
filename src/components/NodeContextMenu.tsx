@@ -61,17 +61,11 @@ function useContextMenuFloating(x: number, y: number, onClose: () => void) {
 }
 
 interface NodeContextMenuProps {
-  /** X-coordinate for the menu origin. */
   x: number;
-  /** Y-coordinate for the menu origin. */
   y: number;
-  /** ID of the node the menu was opened for. */
   nodeId: string;
-  /** Name of the database object. */
   nodeName: string;
-  /** Schema of the database object. */
   schema: string;
-  /** The specific type of database object (e.g. table, view, proc). */
   objectType: ObjectType;
   /** Optional subtype for external references. */
   externalType?: 'et' | 'file' | 'db';
@@ -81,15 +75,10 @@ interface NodeContextMenuProps {
   fullName?: string;
   /** Whether a trace/path mode is currently active. */
   isTracing: boolean;
-  /** Callback fired when the menu is closed. */
   onClose: () => void;
-  /** Callback to initiate a level-based trace from this node. */
   onTrace: (nodeId: string) => void;
-  /** Callback to initiate pathfinding from this node. */
   onFindPath: (nodeId: string) => void;
-  /** Callback to open the DDL viewer for this node. */
   onViewDdl: (nodeId: string) => void;
-  /** Callback to show the detailed info bar for this node. */
   onShowDetails: (nodeId: string) => void;
   /**
    * What "remove from what is on screen" does for this node, from
@@ -282,17 +271,13 @@ export const NodeContextMenu = memo(function NodeContextMenu({
 });
 
 interface SchemaContextMenuProps {
-  /** X-coordinate for the menu origin. */
   x: number;
-  /** Y-coordinate for the menu origin. */
   y: number;
-  /** Schema name the right-clicked cluster represents. */
   schema: string;
   /** Whether this schema is currently expanded in Expanded Schema View. */
   isExpanded: boolean;
   /** Reason Expand/Collapse is disabled this render, or `undefined` when allowed. */
   disabledReason?: string;
-  /** Callback fired when the menu is closed. */
   onClose: () => void;
   onExpand: (schema: string) => void;
   /** Collapses this schema out of Expanded Schema View. */

@@ -17,7 +17,6 @@ interface GraphModeInput {
 
 /** Display surface decision plus the projected node count that produced it. */
 export interface GraphDisplayState {
-  /** The display surface the canvas should render. */
   mode: GraphDisplayMode;
   /**
    * Projected React Flow node count of the surface that will render, the number the render-limit

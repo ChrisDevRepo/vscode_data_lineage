@@ -6,23 +6,17 @@ import { CloseIcon } from './ui/CloseIcon';
 export type BannerVariant = 'trace' | 'analysis' | 'ai' | 'bookmark';
 
 interface ModeBannerProps {
-  /** The visual style of the banner. */
   variant: BannerVariant;
   /** SVG path data for the leading icon. */
   icon: string;
-  /** Bold primary title text. */
   title: string;
-  /** Secondary information or summary text. */
   subtitle: ReactNode;
-  /** Callback fired when the user closes the banner. */
   onClose: () => void;
-  /** Optional callback to save the current mode's result as a permanent bookmark. */
   onSaveAsBookmark?: (name: string) => void;
   /** Extra controls rendered in the action area (before Save as Bookmark). */
   extraControls?: ReactElement | null;
 }
 
-/** Maps banner variants to their corresponding CSS class names. */
 const VARIANT_CLASS: Record<BannerVariant, string> = {
   trace: 'ln-mode-banner--trace',
   analysis: 'ln-mode-banner--analysis',
