@@ -47,7 +47,8 @@ suite('Bare environment — no chat model or database extension', () => {
     const extension = vscode.extensions.getExtension(EXTENSION_ID);
     assert.ok(extension, 'extension must be present in the Extension Development Host');
 
-    // `activate()` must resolve rather than reject; an optional AI surface failure would surface here.
+    // `activate()` must resolve rather than reject; an optional AI surface failure would surface
+    // here.
     await extension.activate();
     assert.strictEqual(extension.isActive, true, 'extension must be active in a bare host');
   });
@@ -56,8 +57,8 @@ suite('Bare environment — no chat model or database extension', () => {
     await vscode.extensions.getExtension(EXTENSION_ID)?.activate();
     const commands = await vscode.commands.getCommands(true);
 
-    // Core lineage commands depend on neither AI nor a database. `openDemo` is the strongest: it loads
-    // a bundled `.dacpac` and renders the graph with no external dependency.
+    // Core lineage commands depend on neither AI nor a database. `openDemo` is the strongest: it
+    // loads a bundled `.dacpac` and renders the graph with no external dependency.
     for (const command of [
       'dataLineageViz.open',
       'dataLineageViz.openDemo',

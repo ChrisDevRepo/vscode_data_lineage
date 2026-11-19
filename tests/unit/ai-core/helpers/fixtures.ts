@@ -1,7 +1,7 @@
 /**
- * Shared fixture builders for tests/unit/sm/**.
+ * Shared fixture builders for the NavigationEngine tests under tests/unit/ai-core/.
  *
- * NOT a test file itself — imported by tests/unit/sm/*.test.ts files.
+ * NOT a test file itself.
  *
  * The synthetic NavigationEngine test graphs carry no `LineageNode.fullName`,
  * `DatabaseModel.schemas: SchemaInfo[]`, or `'body' | 'exec'` LineageEdge.type.

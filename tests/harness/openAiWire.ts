@@ -242,7 +242,7 @@ const TOOL_CALL_IN_TEXT_MARKERS: readonly RegExp[] = [
  * Whether a text-only generation looks like a tool call the server failed to parse.
  *
  * @remarks
- * A *suspicion*, never a status: DD-5 pins this as a flag in the run summary only. A completed text
+ * A *suspicion*, never a status: it is a flag in the run summary only. A completed text
  * generation stays completed, because the harness records what a provider does and does not invent
  * product behaviour for it. False positives are acceptable (a model may legitimately quote a tool
  * schema); a status change on a guess would not be. A quoted JSON object flags too, which the same

@@ -15,8 +15,8 @@ const LOG_DIR = join('test-results', 'gate');
  * @returns Exit status, spawn error, and the combined output.
  *
  * @remarks
- * `stdio: 'inherit'` cannot tee, so output is piped, streamed live and kept for the failure log of an
- * intermittent step.
+ * `stdio: 'inherit'` cannot tee, so output is piped, streamed live and kept for the failure log
+ * of an intermittent step.
  */
 function runStep(step) {
   return new Promise((resolve) => {

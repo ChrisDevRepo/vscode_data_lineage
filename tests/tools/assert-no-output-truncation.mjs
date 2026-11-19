@@ -16,8 +16,9 @@ const TRUNC_DEFINITION = /\bfunction\s+trunc(?:AtWordBoundary)?\(/;
 const LOG_CALL = /\.(?:debug|info|warn|error|trace|log)\(|\b(?:log|debugLog|onDebugLog|debugLogger)\??\(/;
 
 /**
- * Visible elisions accepted as intentional, plus the log helper file. One entry per line: file, a substring
- * that must appear in the offending line, and the reason. Never widened without a register row.
+ * Visible elisions accepted as intentional, plus the log helper file. One entry per line: file, a
+ * substring that must appear in the offending line, and the reason. Never widened without a
+ * register row.
  */
 export const ALLOWLIST = [
   { file: 'src/ai/prompting/scopeSummaryRenderer.ts', symbol: 'CARD_OBJECT_TYPE_LIMIT', reason: 'card-summary-view: visible "…" line, full list in the full view' },

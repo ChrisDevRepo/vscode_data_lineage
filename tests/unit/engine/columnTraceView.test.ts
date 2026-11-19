@@ -309,8 +309,9 @@ describe('columnTraceView', () => {
 /**
  * Lane for the transform node's place in the chain.
  *
- * A relation names the hop that produced it, so the path is drawn through that hop: a source drawn
- * straight to the target would leave the hop with no inbound edge and dagre would rank it as a source.
+ * A relation names the hop that produced it, so the path is drawn through that hop: a source
+ * drawn straight to the target would leave the hop with no inbound edge and dagre would rank it
+ * as a source.
  */
 describe('buildColumnTraceView — routing through the analysing hop', () => {
   const objects = mkObjects(mkObj('dbo.s1'), mkObj('dbo.s2'), mkObj('dbo.p', 'procedure'), mkObj('dbo.t'));

@@ -54,7 +54,7 @@ export interface HttpResponseLike {
   readonly status: number;
   readonly statusText: string;
   text(): Promise<string>;
-  /** Standard `Headers.get`; optional so a canned test response need not supply one (DD-4a). */
+  /** Standard `Headers.get`; optional so a canned test response need not supply one. */
   readonly headers?: { get(name: string): string | null };
 }
 
@@ -76,10 +76,10 @@ export interface HttpRequestInit {
  * not arrived within its own hard-coded 300 s `headersTimeout` — invisible to the port's own
  * `requestTimeoutMs` deadline and fatal for local thinking models whose single non-streamed
  * generation legitimately runs longer (surfacing as `UND_ERR_HEADERS_TIMEOUT`). When the `undici`
- * package is resolvable (transitively present via tooling dependencies), the port uses undici's own `fetch` with an
- * `Agent` whose `headersTimeout` and `bodyTimeout` equal the lane deadline, so the ONLY deadline
- * is the port's. Without undici, global `fetch` is kept and the 300 s header cap applies — the
- * warning names it.
+ * package is resolvable (transitively present via tooling dependencies), the port uses undici's
+ * own `fetch` with an `Agent` whose `headersTimeout` and `bodyTimeout` equal the lane deadline,
+ * so the ONLY deadline is the port's. Without undici, global `fetch` is kept and the 300 s header
+ * cap applies — the warning names it.
  */
 function resolveTransport(
   timeoutMs: number,
@@ -138,7 +138,7 @@ function providerRoutingPayload(routing: OpenRouterProviderRouting | undefined):
 /** Provider capabilities that change what the port sends or keeps. */
 export interface OpenAiLaneCapabilities {
   /**
-   * Whether a previous turn's `reasoning_content` is echoed back (DD-3).
+   * Whether a previous turn's `reasoning_content` is echoed back.
    *
    * @remarks
    * DeepSeek returns `500` for a follow-up request whose assistant turn lost it. The cache is
@@ -147,7 +147,7 @@ export interface OpenAiLaneCapabilities {
   readonly echoReasoning?: boolean;
   /** Preserve the complete opaque OpenRouter reasoning_details sequence on assistant replay. */
   readonly echoReasoningDetails?: boolean;
-  /** Reserved seam. `true` is rejected: the harness captures whole bodies, not deltas (DD-1). */
+  /** Reserved seam. `true` is rejected: the harness captures whole bodies, not deltas. */
   readonly stream?: boolean;
   /** A lane without native tool calling is a configuration error, never a runtime fallback. */
   readonly nativeToolCalling?: boolean;
@@ -293,7 +293,7 @@ export interface OpenAiGenerationSummary {
   readonly finishReason: string;
   readonly latencyMs: number;
   readonly usage?: TokenUsage;
-  /** DD-5 heuristic flag — a suspicion recorded for analysis, never a status. */
+  /** Heuristic flag — a suspicion recorded for analysis, never a status. */
   readonly suspectedToolCallAsText: boolean;
   readonly toolCalls: number;
   readonly textChars: number;
@@ -303,17 +303,17 @@ export interface OpenAiGenerationSummary {
 const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
 
 /**
- * DD-4a transient-transport retry, {@link OpenAiCompatiblePort.send} only.
+ * Transient-transport retry, {@link OpenAiCompatiblePort.send} only.
  *
  * @remarks
  * Node's global `fetch` (and undici's) surface a connection-level failure as
  * `TypeError: fetch failed` with the real error on `.cause`; these codes never reached a provider
- * response at all, so retrying them cannot corrupt a measured model answer (DD-4).
+ * response at all, so retrying them cannot corrupt a measured model answer.
  */
 const TRANSIENT_TRANSPORT_ERROR_CODES = new Set([
   'ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'UND_ERR_SOCKET',
 ]);
-/** HTTP statuses retried under DD-4a; 429 honors `Retry-After` like every other entry here. */
+/** HTTP statuses retried as transient; 429 honors `Retry-After` like every other entry here. */
 const TRANSIENT_TRANSPORT_HTTP_STATUSES = new Set([429, 502, 503, 504]);
 /** Total attempts including the first. */
 const MAX_TRANSPORT_ATTEMPTS = 3;
@@ -352,7 +352,7 @@ function retryAfterDelayMs(response: HttpResponseLike): number | undefined {
  * The transient status of an upstream failure delivered inside HTTP 200: `choices[0].finish_reason`
  * is `"error"`, `choices[0].error.code` is in {@link TRANSIENT_TRANSPORT_HTTP_STATUSES}, and the
  * choice carries no text and no tool call. A choice with any model output is never reported, so a
- * retry cannot replace a measured answer (DD-4).
+ * retry cannot replace a measured answer.
  */
 function transientEnvelopeStatus(body: unknown): number | undefined {
   const choices = asRecord(body)?.choices;
@@ -434,7 +434,7 @@ export class OpenAiCompatiblePort implements ModelPort {
 
   /**
    * Turn-scoped `reasoning_content` cache, keyed by every tool-call id the generation emitted and
-   * by its text (DD-3). Port-owned so the provider-specific field never reaches graph history.
+   * by its text. Port-owned so the provider-specific field never reaches graph history.
    */
   private readonly reasoning = new Map<string, string>();
   private readonly reasoningDetails = new Map<string, readonly unknown[]>();
@@ -579,7 +579,7 @@ export class OpenAiCompatiblePort implements ModelPort {
             reason: 'Tool is not available in this phase.',
           };
         } else if (part.argumentsIssue) {
-          // DIVERGENCE (DD-5): a routine provider failure class on this lane, so it is charged to
+          // DIVERGENCE: a routine provider failure class on this lane, so it is charged to
           // the call and repaired next round, not raised as a whole-generation provider error.
           // `input` carries the raw `arguments` text here — never a parsed object, since none
           // exists — the same "payload exactly as the provider sent it" contract every other arm
@@ -919,12 +919,12 @@ export class OpenAiCompatiblePort implements ModelPort {
    * The timeout covers the body read as well as the response headers: a provider that answers and
    * then stalls mid-body is the same measurement failure as one that never answers. The caller's
    * signal is forwarded rather than composed with `AbortSignal.any`, which is not available in every
-   * lib configuration this file compiles under. DD-4a (module remarks) retries a connection-level
-   * failure, an attempt that exceeded its deadline, or a 429/502/503/504 up to
+   * lib configuration this file compiles under. A connection-level
+   * failure, an attempt that exceeded its deadline, or a 429/502/503/504 is retried up to
    * {@link MAX_TRANSPORT_ATTEMPTS} times. The deadline is per attempt, as in the OpenAI SDKs: one
    * whole-request deadline let a single provider stall consume the budget every retry needed, so a
    * stall was never retried at all. Every other outcome — including every status this method
-   * returns rather than throws — is exactly one attempt, unchanged from DD-4.
+   * returns rather than throws — is exactly one attempt.
    */
   private async send(
     url: string,

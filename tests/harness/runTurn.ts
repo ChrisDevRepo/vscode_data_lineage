@@ -202,8 +202,9 @@ export async function runHarnessTurn(options: HarnessTurnOptions): Promise<Harne
         ...(storedRun ? { getStoredRun: (id: string) => (id === bookmarkId ? storedRun : undefined) } : {}),
       },
     ),
-    // Without a logger the graph's `deps.logger` is undefined, so toolAttempt.ts debugLog calls are
-    // optional-chained away and rejection codes are counted in run.json but never written to host.log.
+    // Without a logger the graph's `deps.logger` is undefined, so toolAttempt.ts debugLog calls
+    // are optional-chained away and rejection codes are counted in run.json but never written to
+    // host.log.
     logger: Logger.create(options.logger as unknown as import('vscode').LogOutputChannel, 'AI'),
     ...(options.maxRounds !== undefined ? { maxRounds: options.maxRounds } : {}),
     ...(options.traceWriter ? { traceWriter: options.traceWriter } : {}),
