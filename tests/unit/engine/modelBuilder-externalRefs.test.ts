@@ -4,7 +4,6 @@
  * the CETAS external-table target.
  *
  * @remarks
- * Split out of graphBuilder.test.ts, where these lived despite exercising `buildModel`.
  * The suppression rules matter most: a T-SQL CLR method call such as
  * `EMP_cte.OrganizationNode.GetAncestor(...)` is textually identical to
  * `[db].[schema].[object]`, and admitting one invents a database that does not exist.

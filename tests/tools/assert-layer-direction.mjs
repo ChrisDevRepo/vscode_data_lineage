@@ -34,9 +34,7 @@ function listSourceFiles(dir) {
  * @remarks
  * Covers `import x from '…'`, `import type {…} from '…'`, bare `import '…'`, and
  * `export … from '…'` re-exports — every form that creates a module dependency. Comments and
- * string literals elsewhere on the line are not distinguished; a false-positive match on a
- * non-import line is vanishingly unlikely given the required `import`/`export` keyword anchor and
- * would still name a real quoted path for a human to dismiss.
+ * string literals are not distinguished; a false positive would still name a real quoted path.
  */
 const IMPORT_SPECIFIER_RE = /(?:import|export)(?:[^'";]*?\bfrom\s*)?\s*['"]([^'"]+)['"]/g;
 

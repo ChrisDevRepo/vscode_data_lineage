@@ -150,7 +150,7 @@ const implemented: Record<string, unknown> = {
  * Assigned over `module.exports` rather than declared with `export =` so this file can keep its own
  * named exports for harness callers while still handing `require('vscode')` a proxy. Plain named
  * exports alone would answer `undefined` for every unimplemented member, which is exactly the silent
- * gap Phase 0 exists to eliminate.
+ * gap the shim exists to eliminate.
  */
 module.exports = new Proxy(implemented, {
   get: (target, property): unknown => {

@@ -3,10 +3,8 @@
  *
  * COMPARES AGAINST: tests/fixtures/graph-baseline-aw.json (verified with NetworkX)
  *
- * `longestPath.maxDepth` is the exception: it was re-derived after the strongly-connected-component
- * condensation replaced the memoised DFS in `analyzeLongestPath`, which had truncated the chain at
- * a cycle exit. The 13-node value was validated hop by hop against the graph — every consecutive
- * pair is a real edge and no node repeats — rather than against the previous implementation.
+ * `longestPath.maxDepth` is the exception to the NetworkX check: the 13-node value was validated
+ * hop by hop against the graph — every consecutive pair is a real edge and no node repeats.
  *
  * The baseline carries no write edge `[ai].[spImportOrders] → [ai].[ActiveRegions]`: the procedure
  * only reads that table, inside `IN (SELECT …)` and `NOT EXISTS (SELECT …)` subqueries, so the two
