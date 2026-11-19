@@ -1,5 +1,5 @@
 /** Deterministic production tool-error-envelope contract. */
-import { readToolError, isConsentGateRejection, makeRejection, rejectionFromZodError } from '../../../src/ai/support/toolErrorEnvelope';
+import { readToolError, isConsentGateRejection, makeRejection, rejectionFromZodError, renderFaults } from '../../../src/ai/support/toolErrorEnvelope';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
@@ -195,6 +195,23 @@ describe("tool-error-envelope", () => {
       const rejection = rejectionFromZodError(schema.safeParse(input).error!, { code: 'invalid_tool_input', input, schema });
       expect(rejection.reason).toContain('9 items, limit 8');
       expect(rejection.reason).toContain('9 chars, limit 8');
+    });
+  });
+
+  describe('renderFaults: a mistyped list', () => {
+    const schema = z.object({ flow: z.array(z.object({ out: z.string() })), title: z.string() });
+    const render = (input: unknown) => {
+      const rejection = rejectionFromZodError(schema.safeParse(input).error!, { code: 'invalid_input', input, schema });
+      return renderFaults(rejection, () => schema);
+    };
+
+    it('a list sent as an object or text is told to be sent as the array', () => {
+      expect(render({ flow: { out: 'a' }, title: 't' })).toEqual(['/flow: wrong JSON type. Send the array directly.']);
+      expect(render({ flow: '[{"out":"a"}]', title: 't' })).toEqual(['/flow: wrong JSON type. Send the array directly.']);
+    });
+
+    it('a mistyped scalar keeps the reason alone', () => {
+      expect(render({ flow: [], title: 5 })).toEqual([]);
     });
   });
 

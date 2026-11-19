@@ -598,14 +598,16 @@ function schemaPath(path: string): PropertyKey[] {
 }
 
 /**
- * The repair of one fault: the shape of a mistyped object, else its table correction, and for a
- * mistyped or missing field that accepts `null` the null exit after it.
+ * The repair of one fault: the shape of a mistyped object, the direct send of a mistyped array, else
+ * its table correction, and for a mistyped or missing field that accepts `null` the null exit after it.
  */
 function faultCorrection(error: ToolError, schema: z.ZodType | undefined): string[] {
   const node = error.code === 'type' || error.code === 'missing' ? jsonSchemaNodeAt(schema, schemaPath(error.path)) : undefined;
   const object = error.code === 'type' && node && unwrapNullable(node).properties ? unwrapNullable(node) : undefined;
   const row: IssueText = ISSUES[error.code];
-  const correction = object ? `Send the object directly, shaped like ${JSON.stringify(exampleOf(object))}.` : row.correction;
+  const correction = object
+    ? `Send the object directly, shaped like ${JSON.stringify(exampleOf(object))}.`
+    : error.code === 'type' && error.types?.[0] === 'array' ? 'Send the array directly.' : row.correction;
   const lines = correction === undefined ? [] : [correction];
   return node && acceptsNull(node) ? [...lines, NULL_EXIT] : lines;
 }
