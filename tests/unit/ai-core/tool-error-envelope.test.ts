@@ -215,4 +215,42 @@ describe("tool-error-envelope", () => {
     });
   });
 
+  // A structured field sent as text is a type fault. The reason names the needed
+  // type (from the schema, not the text's first char); it makes no JSON-validity claim and gives
+  // no re-escape instruction that would contradict the fault line's direct-send repair.
+  describe('reason: a structured field sent as text names the type fault', () => {
+    const schema = z.object({ sections: z.object({ technical: z.string() }), flow: z.array(z.object({ out: z.string() })) });
+    const reason = (input: unknown) => rejectionFromZodError(schema.safeParse(input).error!, { code: 'invalid_input', input, schema }).reason;
+
+    it('names the needed type with no JSON-validity claim and no re-escape instruction', () => {
+      for (const sections of ['{"technical":"cut', '[{"technical":"x"}]']) {
+        const text = reason({ sections, flow: [{ out: 'a' }] });
+        expect(text).toContain('received text where an object is needed.');
+        expect(text).not.toContain('not valid JSON');
+        expect(text).not.toContain('line breaks inside strings');
+        expect(text).not.toContain('characters of text');
+      }
+      for (const flow of ['[{"out":"a\nb"}]', '{"out":"a"}']) {
+        const text = reason({ sections: { technical: 'x' }, flow });
+        expect(text).toContain('received text where an array is needed.');
+        expect(text).not.toContain('not valid JSON');
+        expect(text).not.toContain('line breaks inside strings');
+      }
+    });
+
+    it('the needed type comes from the schema, not the received text first char', () => {
+      expect(reason({ sections: '[{"technical":"x"}]', flow: [{ out: 'a' }] })).toContain('received text where an object is needed.');
+      expect(reason({ sections: { technical: 'x' }, flow: '{"out":"a"}' })).toContain('received text where an array is needed.');
+    });
+
+    it('the reason and the fault line agree on the direct-send repair', () => {
+      const input = { sections: '{"technical":"cut', flow: [{ out: 'a' }] };
+      const rejection = rejectionFromZodError(schema.safeParse(input).error!, { code: 'invalid_input', input, schema });
+      const served = [rejection.reason, ...renderFaults(rejection, () => schema)].join('\n');
+      expect(served).toContain('received text where an object is needed.');
+      expect(served).toContain('Send the object directly');
+      expect(served).not.toContain('Send it again as one complete JSON');
+    });
+  });
+
 });
