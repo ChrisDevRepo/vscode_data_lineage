@@ -358,7 +358,9 @@ export function renderScopeCardMd(
     : (summary.direction === 'bidirectional' ? ['upstream', 'downstream'] as const : [summary.direction])
       .map(side => `${depthValue(summary.depthIntent[side].levels, summary.depthIntent[side].exactness === 'exact')} ${side}`)
       .join(' · ');
-  lines.push(`- **Depth:** ${depth}`);
+  const shown = summary.direction === 'bidirectional' ? [upstream, downstream] : [summary.depthIntent[summary.direction]];
+  const approximate = shown.some(side => side.exactness === 'approximate' && typeof side.levels === 'number' && side.levels > 0);
+  lines.push(`- **Depth:** ${depth}${approximate ? ' (≈ is not a limit)' : ''}`);
   lines.push(`- **Scope:** ≈${plural(summary.hopCount, 'hop')} · ≈${plural(summary.scopeCount, 'node')}`);
   lines.push(`- **Schemas:** ${schemasLine(summary, CARD_SCHEMA_NAMES)}`);
   const columns = summary.analysisMode === 'ct' && summary.targetColumns?.length
