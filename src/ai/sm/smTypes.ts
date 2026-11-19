@@ -347,7 +347,7 @@ export interface RouteOutcome {
    *   already analyzed on an earlier hop; visit-once, no new hop.
    * - `already_pruned` — same as `already_visited`, for a node pruned on an earlier hop.
    */
-  reason?: 'depth' | 'non_bodied_passthrough' | 'unresolved' | 'out_of_direction' | 'excluded' | 'schema' | SettledRouteReason;
+  reason?: 'depth' | 'non_bodied_passthrough' | 'out_of_direction' | 'excluded' | 'schema' | SettledRouteReason;
 }
 
 /** Route reasons for a target an earlier hop already settled (visit-once). */

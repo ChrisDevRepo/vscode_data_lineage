@@ -2833,14 +2833,9 @@ export class NavigationEngine implements IHopStateMachine {
 
       const routeRequests: ValidatedHop['routeRequests'] = [];
       const requested = new Set<string>();
-      const unresolvedQuestions: string[] = [];
       const focusNeighborIds = this.graph.hasNode(focusId) ? new Set(this.graph.neighbors(focusId)) : new Set<string>();
       (finding.questions ?? []).forEach((q, index) => {
-        const nid = resolveModelNodeId(q.nodeId, this.nodeMap, this.model.identifierCaseSensitive);
-        if (!nid) {
-          unresolvedQuestions.push(q.nodeId);
-          return;
-        }
+        const nid = resolveModelNodeId(q.nodeId, this.nodeMap, this.model.identifierCaseSensitive) ?? q.nodeId;
         if (!focusNeighborIds.has(nid)) {
           invalidRoutes.push({
             kind: 'question_not_neighbor',
@@ -3065,11 +3060,6 @@ export class NavigationEngine implements IHopStateMachine {
       for (const notice of notices) {
         this.memory.recordRejection(notice.id, `\`${notice.id}\`: ${ROUTE_REJECTION_DIRECTIVE[notice.kind]}`, this.hopCount);
         this.log('debug', `[Notice] hop=${this.hopCount} id=${notice.id} kind=${notice.kind} code=${ROUTE_REJECTION_CODE[notice.kind]}`);
-      }
-      for (const raw of unresolvedQuestions) {
-        this.log('debug', `[Agenda] question dropped hop=${this.hopCount} id=${raw} ← ${focusId} reason=unresolved`);
-        this.memory.recordRejection(raw, `\`${raw}\`: not in the loaded model — the question was dropped.`, this.hopCount);
-        routeOutcomes.push({ nodeId: raw, accepted: false, reason: 'unresolved' });
       }
 
       return this.applyValidatedHop({

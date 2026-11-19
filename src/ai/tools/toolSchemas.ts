@@ -696,8 +696,13 @@ function finalizeSubmitFindingsSchema(
     }).strict()
     : schema;
   const source = failed
-    ? base.extend(Object.fromEntries(fields.filter(field => !failed.includes(field))
-      .map(field => [field, base.shape[field as keyof typeof base.shape].optional()]))).strict()
+    ? base.extend(Object.fromEntries(fields.map(field => {
+      const shape = base.shape[field as keyof typeof base.shape];
+      if (!failed.includes(field)) return [field, shape.optional()];
+      // The describe text sits on the outer optional; unwrapping keeps it on the required field.
+      const required = shape instanceof z.ZodOptional ? shape.unwrap() : shape;
+      return [field, shape.description ? required.describe(shape.description) : required];
+    }))).strict()
     : base;
   const validated = source
     .check(superRefineAll((value, ctx) => refineSubmitFindingsShape(value as FlatSubmitFindings, ctx, fresh, classification, summaryRequired))) as z.ZodType<FlatSubmitFindings>;
