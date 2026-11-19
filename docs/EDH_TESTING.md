@@ -21,6 +21,4 @@ On Linux without a desktop session, prefix each command with `xvfb-run -a`; see 
 | `tools` | Contributed read-only language-model tools register and respond through the VS Code API. |
 | `kill-switch` | Disabling the AI feature before activation leaves the non-AI extension surface available. |
 
-## Test safety
-
-The default lanes need no database or credentials and use the bundled public demo fixture. Keep credentials in the ignored `.env`. Do not commit credentials, customer SQL, database archives, raw conversations, traces or generated test output. A fixed-response lane is not evidence of model quality; review live answers against the SQL yourself.
+The default lanes need no database or credentials and use the bundled demo fixture. A fixed-response lane is not evidence of model quality; test-data rules are in [`AGENTS.md`](../AGENTS.md#rules).

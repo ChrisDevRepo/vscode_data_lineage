@@ -28,12 +28,4 @@ apt-get install -y xvfb libgtk-3-0t64 libnss3 libgbm1 libasound2t64 libxss1 \
 
 Prefix Electron and Playwright commands with `xvfb-run -a`, for example `xvfb-run -a npm run test:edh`. Keep the clone path short: VS Code fails with `listen EINVAL` when its profile socket path exceeds 107 characters.
 
-## Verify a new machine
-
-```sh
-npm ci
-npm run gate
-npm run test:edh              # or: xvfb-run -a npm run test:edh
-```
-
-The machine is ready when the gate is green and every Electron lane reports `passing`. Report a tier whose prerequisites are missing as not runnable, never as passed.
+A machine is ready when `npm run gate` is green and every Electron lane (`npm run test:edh`, under `xvfb-run -a` on headless Linux) reports `passing`. Report a tier whose prerequisites are missing as not runnable, never as passed.
