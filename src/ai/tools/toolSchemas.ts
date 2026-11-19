@@ -351,7 +351,7 @@ export const StartExplorationProviderInputSchema = z.union([
 /** A `get_scope_bundle` depth: a non-negative integer, a canonical digit string, or `"all"`. */
 const ScopeDepthSchema = numericStringDepth(z.union([z.number().int().min(0), z.literal('all')]));
 const ScopeOriginSchema = z.string().min(1).describe('Canonical object ID at the center of the requested lineage scope.');
-const ScopeIncludeDdlSchema = z.boolean().optional().describe('Whether to include SQL bodies for nodes in the returned scope.');
+const ScopeIncludeDdlSchema = z.boolean().optional().describe('Whether to include SQL bodies for nodes in the returned scope. Omit to attach them when they fit the discovery budget; over it the reply carries `ddl_withheld`. `true` requires them (refused over budget); `false` excludes them.');
 
 /**
  * Parameters of the `get_scope_bundle` discovery tool; both the model-facing and the dispatcher

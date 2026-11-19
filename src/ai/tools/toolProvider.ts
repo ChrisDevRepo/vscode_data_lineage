@@ -311,7 +311,7 @@ class ToolHandler implements ToolServices {
       const parsed = parseToolInput(SearchObjectsInputSchema, input);
       if (!parsed.ok) return this.logAndReturn('lineage_search_objects', parsed.error, input);
       const { query, types, schemas, mode, cursor } = parsed.data;
-      return this.logAndReturn('lineage_search_objects', await searchObjects(this.requireModel(), query, types, schemas, mode ?? 'substring', this.getSession().filter, msg => this.logger.debug(msg), cursor, this.signal), input);
+      return this.logAndReturn('lineage_search_objects', await searchObjects(this.requireModel(), getAllowedLmToolNames(this.deriveLmStage(this.getSession())), query, types, schemas, mode ?? 'substring', this.getSession().filter, msg => this.logger.debug(msg), cursor, this.signal), input);
     } catch (err) {
       if ((err instanceof RegexSearchExecutionError && err.reason === 'cancelled') || this.turnLease?.signal.aborted || this.signal?.aborted) throw err;
       if (this.turnLease) assertActiveTurnLease(this.turnLease, this.getSession().turnEpoch);
@@ -398,7 +398,7 @@ class ToolHandler implements ToolServices {
       const parsed = parseToolInput(SearchDdlInputSchema, input);
       if (!parsed.ok) return this.logAndReturn('lineage_search_ddl', parsed.error, input);
       const { query, types } = parsed.data;
-      return this.logAndReturn('lineage_search_ddl', await searchDdl(this.requireModel(), query, this.budget, types, this.getSession().columnStore, msg => this.logger.debug(msg), this.signal), input);
+      return this.logAndReturn('lineage_search_ddl', await searchDdl(this.requireModel(), getAllowedLmToolNames(this.deriveLmStage(this.getSession())), query, this.budget, types, this.getSession().columnStore, msg => this.logger.debug(msg), this.signal), input);
     } catch (err) {
       if ((err instanceof RegexSearchExecutionError && err.reason === 'cancelled') || this.turnLease?.signal.aborted || this.signal?.aborted) throw err;
       if (this.turnLease) assertActiveTurnLease(this.turnLease, this.getSession().turnEpoch);

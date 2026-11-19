@@ -3,7 +3,7 @@
  * reusable across tool handlers, state-machine init and prompt rendering.
  */
 import { resolveModelNodeId } from '../../engine/shared/nodeIdResolution';
-import { splitSqlName, stripBrackets } from '../../utils/sql';
+import { quoteIdentifier, schemaKey, splitSqlName, stripBrackets } from '../../utils/sql';
 
 /**
  * Re-exported so AI callers keep importing node-id resolution from here; the implementation lives
@@ -110,6 +110,16 @@ export function normalizeSubmitFindingsInputIds(
   return { input, normalizations };
 }
 
+/** Catalog facts {@link normalizeSearchQueryInput} uses to confirm a reading of a dotted name. */
+export interface SearchQueryCatalog {
+  /** Canonical node id to node. */
+  readonly nodeMap: Map<string, { name: string; schema: string; columns?: readonly { name: string }[] }>;
+  /** Schema names of the model. */
+  readonly schemas: readonly string[];
+  /** Proven source policy; missing/false compares names case-insensitively. */
+  readonly identifierCaseSensitive?: boolean;
+}
+
 /**
  * Normalizes a free-form `lineage_search_objects.query` string. Accepts id-like forms the AI may
  * emit (`[dbo].[FactSales]`, `dbo.FactSales`, `[db].[dbo].[FactSales]`) and extracts `query` (the
@@ -117,16 +127,38 @@ export function normalizeSubmitFindingsInputIds(
  * are split and undelimited by {@link splitSqlName} and {@link stripBrackets}, so a dot or escaped
  * `]]` inside a bracketed or quoted part stays in the name. With more than three parts it returns
  * the trimmed input and no schema hint.
+ *
+ * With `catalog`, a dotted name the catalog confirms as a column reference reads as one: three
+ * parts `schema.object.column` when `schema.object` is an object, two parts `object.column` when
+ * the first part is no schema and the object has that column. The column token is dropped like the
+ * `db` token; the object is searched (an object that is also a schema name wins, deterministically).
+ * Several schemas holding that object and column leave the schema out. Anything the catalog does not
+ * confirm keeps the reading above.
  */
-export function normalizeSearchQueryInput(raw: string): { query: string; schemaHint?: string } {
+export function normalizeSearchQueryInput(raw: string, catalog?: SearchQueryCatalog): { query: string; schemaHint?: string } {
   const input = (raw ?? '').trim();
   if (!input) return { query: '' };
 
   const parts = splitSqlName(input).map(p => stripBrackets(p.trim()).trim()).filter(Boolean);
+  const caseSensitive = catalog?.identifierCaseSensitive ?? false;
+  const same = (a: string, b: string): boolean => schemaKey(a, caseSensitive) === schemaKey(b, caseSensitive);
 
   if (parts.length === 1) return { query: parts[0] };
-  if (parts.length === 2) return { query: parts[1], schemaHint: parts[0] };
-  if (parts.length === 3) return { query: parts[2], schemaHint: parts[1] };
+  if (parts.length === 2) {
+    const [first, second] = parts;
+    if (catalog && !catalog.schemas.some(schema => same(schema, first))) {
+      const owners = [...catalog.nodeMap.values()].filter(n => same(n.name, first) && n.columns?.some(c => same(c.name, second)));
+      if (owners.length > 0) {
+        const schemas = new Set(owners.map(n => n.schema));
+        return schemas.size === 1 ? { query: owners[0].name, schemaHint: owners[0].schema } : { query: owners[0].name };
+      }
+    }
+    return { query: second, schemaHint: first };
+  }
+  if (parts.length === 3) {
+    const object = catalog && catalog.nodeMap.get(resolveModelNodeId(`${quoteIdentifier(parts[0])}.${quoteIdentifier(parts[1])}`, catalog.nodeMap, caseSensitive) ?? '');
+    return object ? { query: object.name, schemaHint: object.schema } : { query: parts[2], schemaHint: parts[1] };
+  }
 
   return { query: input };
 }

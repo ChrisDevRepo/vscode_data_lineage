@@ -223,6 +223,8 @@ function validateQuery(query: string): ToolRejection | null {
  * user's filtered scope when any sits in it, as `unique` or `ambiguous` with ids; absent for regex,
  * list-all and substring-only hits.
  *
+ * @param offeredTools - The tools the current stage serves (`getAllowedLmToolNames`); a hint names
+ *   only these.
  * @param activeFilter - Current UI filter state to tag results.
  * @param onDebug - Optional debug sink; logs a `[Normalize]` line when `normalizeSearchQueryInput`
  *   rewrites the query (e.g. `[dbo].[FactSales]` into schema `dbo` and name `FactSales`).
@@ -230,6 +232,7 @@ function validateQuery(query: string): ToolRejection | null {
  */
 export async function searchObjects(
   model: DatabaseModel,
+  offeredTools: ReadonlySet<string>,
   query: string,
   types?: ObjectType[],
   schemas?: string[],
@@ -240,7 +243,9 @@ export async function searchObjects(
   signal?: AbortSignal,
 ) {
   const isRegex = mode === 'regex';
-  const normalizedQuery = isRegex ? { query, schemaHint: undefined } : normalizeSearchQueryInput(query);
+  const normalizedQuery = isRegex
+    ? { query, schemaHint: undefined }
+    : normalizeSearchQueryInput(query, { nodeMap: getModelNodeMap(model), schemas: [...new Set(model.nodes.map(n => n.schema))], identifierCaseSensitive: model.identifierCaseSensitive });
   if (normalizedQuery.schemaHint || normalizedQuery.query !== query.trim()) {
     onDebug?.(`[Normalize] tool=search_objects field=query from=${JSON.stringify(query)} to=${JSON.stringify(normalizedQuery.query)}${normalizedQuery.schemaHint ? ` schema_hint=${JSON.stringify(normalizedQuery.schemaHint)}` : ''}`);
   }
@@ -386,16 +391,22 @@ export async function searchObjects(
         ? [...new Set(crossHits.map(n => n.schema))]
         : [];
       const schemaHint = foundSchemas.length > 0
-        ? ` "${effectiveQuery}" exists in [${foundSchemas.join(', ')}] — retry without schema filter or use search_ddl.`
+        ? ` "${effectiveQuery}" exists in [${foundSchemas.join(', ')}] — retry without schema filter${offeredTools.has('lineage_search_ddl') ? ' or use search_ddl' : ''}.`
         : '';
       return {
         ...base,
         ai_hint: `0 results in schemas [${appliedSchemaFilter.join(', ')}].${schemaHint}`,
       };
     }
+    const options = [
+      ...(offeredTools.has('lineage_search_ddl') ? ['try search_ddl for DDL body matches'] : []),
+      ...(isRegex ? [] : ['try regex mode']),
+      'broaden with fewer filters',
+    ];
+    const advice = options.length > 1 ? `${options.slice(0, -1).join(', ')}, or ${options[options.length - 1]}` : options[0];
     return {
       ...base,
-      ai_hint: `No results for "${effectiveQuery}". Try search_ddl for DDL body matches${isRegex ? '' : ', try regex mode'}, or broaden with fewer filters.`,
+      ai_hint: `No results for "${effectiveQuery}". ${advice[0].toUpperCase()}${advice.slice(1)}.`,
     };
   }
   return base;
@@ -493,7 +504,9 @@ export function getObjectDetail(
 /**
  * A bounded BFS scope in one call, optionally with all DDL, so the AI can answer multi-object
  * lineage asks without chaining per-node detail calls. With `include_ddl` the discovery scope
- * budget guard is enforced before the payload is materialized.
+ * budget guard is enforced before the payload is materialized. An omitted `include_ddl` attaches
+ * the bodies only when they fit; otherwise the reply carries `ddl_withheld: 'over_budget'`, the
+ * only signal that bodies exist but were held back, so the deeper analysis can be offered.
  *
  * @param budget - The calling turn's budget the discovery guard is measured against.
  * @param onDebug - Optional debug sink; logs a `[Normalize]` line when `origin` resolves to a
@@ -629,11 +642,12 @@ export function getScopeBundle(
     upstream_depth: direction === 'bidirectional' ? (upstreamDepth ?? null) : undefined,
     downstream_depth: direction === 'bidirectional' ? (downstreamDepth ?? null) : undefined,
     include_ddl: effectiveIncludeDdl,
+    ...(includeDdl === undefined && ddlChars > 0 && !ddlFits ? { ddl_withheld: 'over_budget' as const } : {}),
     scope: {
       nodes: nodes.length,
       edges: edges.length,
       estimated_ddl_chars: ddlChars,
-      estimated_ddl_tokens: effectiveIncludeDdl ? estimateTokens(ddlChars) : 0,
+      estimated_ddl_tokens: estimateTokens(ddlChars),
     },
     nodes,
     edges,
@@ -792,6 +806,8 @@ const LONG_LINE_HINT = `These lines match but are longer than ${SEARCH_LINE_MAX_
  * included; omitted when none is that long. Where the list would push the reply past the discovery
  * budget it is stated as counts (`object_count`, `line_count`, `objects_omitted`) with a hint.
  *
+ * @param offeredTools - The tools the current stage serves (`getAllowedLmToolNames`); a hint names
+ *   only these.
  * @param budget - The calling turn's budget the discovery guard is measured against.
  * @param onDebug - Optional sink for a debug line when `query` is rewritten or the result is over
  *   budget.
@@ -800,6 +816,7 @@ const LONG_LINE_HINT = `These lines match but are longer than ${SEARCH_LINE_MAX_
  */
 export async function searchDdl(
   model: DatabaseModel,
+  offeredTools: ReadonlySet<string>,
   query: string,
   budget: TurnTokenBudget,
   types?: ('view' | 'procedure' | 'function')[],
@@ -895,7 +912,9 @@ export async function searchDdl(
     objects,
     searched,
     results_omitted: true as const,
-    hint: 'The matches exceed the discovery token budget and were not inlined. Narrow the pattern, restrict types[], or explore the objects with lineage_start_exploration.',
+    hint: `The matches exceed the discovery token budget and were not inlined. ${offeredTools.has('lineage_start_exploration')
+      ? 'Narrow the pattern, restrict types[], or explore the objects with lineage_start_exploration.'
+      : 'Narrow the pattern or restrict types[].'}`,
   }));
 
   const countAdmission = rowAdmission(scanned.total);
