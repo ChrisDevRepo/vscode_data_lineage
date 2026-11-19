@@ -4,7 +4,6 @@ import * as vscode from 'vscode';
 export class SidebarProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
   getTreeItem(element: vscode.TreeItem): vscode.TreeItem { return element; }
 
-  /** Returns the static entry list rendered in the view. */
   getChildren(): vscode.TreeItem[] {
     return [
       this.item('Open Wizard', 'dataLineageViz.open', 'graph'),

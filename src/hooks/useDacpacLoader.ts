@@ -48,20 +48,15 @@ export interface DacpacLoaderState {
   loadProject: (id: string) => void;
   /** Loads the built-in demo project. */
   loadDemo: () => void;
-  /** Starts the database connection flow. */
   connectToDatabase: () => void;
   /** Aborts the current load: tells the host to stop and drops any result it still posts. */
   cancelLoading: () => void;
   clearAutoVisualize: () => void;
-  /** Clears the transition trigger flag. */
   clearPendingVisualize: () => void;
   /** Starts the Phase 2 extraction for the selected schemas. */
   visualize: (selectedSchemas: Set<string>, projectName?: string) => void;
-  /** Toggles a schema's selection status. */
   toggleSchema: (name: string) => void;
-  /** Selects all available schemas in a list. */
   selectAllSchemas: (names: string[]) => void;
-  /** Deselects all available schemas in a list. */
   clearAllSchemas: (names: string[]) => void;
 }
 

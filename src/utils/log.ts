@@ -74,7 +74,6 @@ function logWarn(ch: LogOutputChannel, cat: LogCategory, msg: string): void {
  * Logger scoped to a channel and category, so services and classes need not repeat the parameters.
  */
 export class Logger {
-  /** Creates a new Logger instance. */
   constructor(
     private readonly ch: LogOutputChannel,
     private readonly cat: LogCategory
@@ -85,11 +84,8 @@ export class Logger {
     return new Logger(ch, cat);
   }
 
-  /** Logs an info-level message. */
   info(msg: string): void { logInfo(this.ch, this.cat, msg); }
-  /** Logs a debug-level message. */
   debug(msg: string): void { logDebug(this.ch, this.cat, msg); }
-  /** Logs a warning-level message. */
   warn(msg: string): void { logWarn(this.ch, this.cat, msg); }
   /**
    * Logs an error-level message with full stack detail; the stack is extracted from `err` when
@@ -168,8 +164,8 @@ export function trunc(val: string | any[], max: number): string {
  */
 export function sanitizeForLog(s: string): string {
   return s
-    .replace(/[\u0000-\u001F\u007F]/g, ' ') // ASCII control chars → space
-    .replace(/\s+/g, ' ')          // collapse all whitespace runs
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
