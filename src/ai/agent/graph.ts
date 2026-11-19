@@ -476,6 +476,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
         return holdRejectedPresentResult(sess.presentResultRepairDraft, input, issuePaths, 'synthesis', sess.retainableReportSections());
       },
       holdRejectedSubmission: (input, issuePaths) => (deps.getSession().stateMachine as NavigationEngine | null)?.holdRejectedSubmission(input, issuePaths) ?? null,
+      projectRejectedSubmission: input => (deps.getSession().stateMachine as NavigationEngine | null)?.projectRejectedSubmission(input) ?? null,
     });
     const first = await attempt();
     if (first.stop !== 'error' || !first.providerError) return first;
@@ -1179,7 +1180,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
       requiredTerminalTool: 'lineage_submit_findings',
       proseGate: 'buffer-until-tool',
       freshSubmission: () => engine.heldFindingFocus === null && sess.memory.getArchivedAngles(focusId).size === 0,
-      summaryHeld: () => engine.heldSummary,
+      heldFailed: () => engine.heldFailed,
       hopColumns: () => engine.hopSubmitColumns,
       isPhaseComplete: () => submitted,
       onToolResult: (toolName, input, isError) => {

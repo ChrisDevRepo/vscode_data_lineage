@@ -8,8 +8,6 @@
 
 import type { InvalidRouteKind, InvalidRoute } from './smTypes';
 import { REJECTION_CODES } from '../support/rejectionCodes';
-import { keyedResendRule } from '../support/repairDraftStore';
-import { HELD_FINDING_CALL_ORDER } from '../tools/toolSchemas';
 import { ISSUES, jsonPointer, makeRejection, type ToolRejection } from '../support/toolErrorEnvelope';
 
 /** True for nonfatal drop/refuse-with-notice kinds. */
@@ -69,14 +67,6 @@ const DETACHED_LINK_DIRECTIVE =
   'Attach each named tuple to a tracked column, or leave it out of column_flow and keep it in sections; do not invent a write.';
 
 /**
- * Resubmission order for a rejection made only of field-scoped content errors (a column or prune
- * reference the reason names). The engine holds the draft for that set, so the model's prose
- * survives the correction instead of being re-authored.
- */
-const HELD_CORRECTION_ORDER =
-  `Your analysis is held: ${HELD_FINDING_CALL_ORDER}. ${keyedResendRule('sections', 'angle')} Omit summary to keep the held summary.`;
-
-/**
  * Machine error code per validation kind, used when one kind dominates the rejection (mixed kinds
  * fall back to the generic code). Exported so a nonfatal (absent-kind) notice is logged to
  * `host.log` with the code the model would have received had it been fatal: one machine-code source
@@ -113,7 +103,7 @@ function routeErrorLine(error: InvalidRoute): string {
   ].join('; ');
 }
 
-/** The verb-led corrective order of each distinct failure kind, without the held-correction order. */
+/** The verb-led corrective order of each distinct failure kind. */
 export function routeDirectives(errors: readonly InvalidRoute[]): string[] {
   const kinds = [...new Set(errors.map(e => e.kind))];
   return [
@@ -127,8 +117,8 @@ export function routeDirectives(errors: readonly InvalidRoute[]): string[] {
 /**
  * Builds the content/action rejection envelope after nonfatal notices were removed. Each kind is
  * emitted by one policy owner, so no message-text inference or mode branch is needed. `code` is the
- * per-kind code when one kind dominates; `hint` is the verb-led order(s) plus the held-correction
- * order, since the engine holds the draft of every rejected submission; `reason` states each
+ * per-kind code when one kind dominates; `hint` is the verb-led order(s), the held line being the
+ * engine's to add where it holds the draft; `reason` states each
  * failure with its valid set, one line per error; `detail` carries the same facts as data.
  *
  * @param errors - Field-resolved validation failures accumulated before commit; at least one.
@@ -136,7 +126,7 @@ export function routeDirectives(errors: readonly InvalidRoute[]): string[] {
 export function buildRouteValidationRejection(errors: InvalidRoute[]): ToolRejection {
   const distinctKinds = [...new Set(errors.map(e => e.kind))];
   const code = distinctKinds.length === 1 ? ROUTE_REJECTION_CODE[distinctKinds[0]] : REJECTION_CODES.routeValidationFailed;
-  const hint = [...routeDirectives(errors), HELD_CORRECTION_ORDER].join(' ');
+  const hint = routeDirectives(errors).join(' ');
   return makeRejection({
     code,
     reason: errors.map(routeErrorLine).join('\n'),

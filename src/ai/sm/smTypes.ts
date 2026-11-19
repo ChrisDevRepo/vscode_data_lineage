@@ -1018,6 +1018,6 @@ export type EngineAspectMode =  { kind: 'bb' } | { kind: 'ct' };
 export interface HeldSubmissionParts {
   readonly sections: readonly string[];
   readonly summary: boolean;
-  /** Names of the other held fields (`badge_label`, `prune_neighbors`, `questions`). */
+  /** Names of the other held fields (`badge_label`, `prune_neighbors`, `questions`, `column_flow`). */
   readonly fields: readonly string[];
 }

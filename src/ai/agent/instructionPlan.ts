@@ -147,8 +147,8 @@ export type ConversePlanDraft = Omit<ConversePlanInput, 'phase' | 'instructionCo
   readonly presentResultPreviewBlockCount?: number;
   /** Whether the next `submit_findings` is fresh (no held draft or archived angle); read live. */
   readonly freshSubmission?: () => boolean;
-  /** Whether a held draft of the focus holds a summary a retry may omit; read live. */
-  readonly summaryHeld?: () => boolean;
+  /** The fields a held draft of the focus failed, which a retry must send; `null` without one; read live. */
+  readonly heldFailed?: () => readonly string[] | null;
   /** The CT hop's tracked-column facts narrowing the served `column_flow`; read live. */
   readonly hopColumns?: () => SubmitFindingsHopColumns;
 };
@@ -321,7 +321,7 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
     presentResultRepairHighlightLabelIndexes,
     presentResultRepairSectionTextLeaves,
     freshSubmission,
-    summaryHeld,
+    heldFailed,
     hopColumns,
     presentResultRetainableSections,
     presentResultPreviewBlockCount,
@@ -347,7 +347,7 @@ export function compileInstructionPlan<T>(draft: InstructionPlanDraft<T>): Instr
     const submitMode = stage.mode === 'sm_ct' ? 'ct' : 'bb';
     liveResolvers.set(
       'lineage_submit_findings',
-      () => submitFindingsSchemaForMode(submitMode, frozenFacts?.classification, freshSubmission?.() ?? true, hopColumns?.(), summaryHeld?.() ?? false),
+      () => submitFindingsSchemaForMode(submitMode, frozenFacts?.classification, freshSubmission?.() ?? true, hopColumns?.(), heldFailed?.() ?? null),
     );
   }
   const liveRepairResolver = stageSupportsPresentResultRepair(stage) && presentResultRepairFields;
