@@ -26,7 +26,8 @@ export interface ScreenStateInput {
   /** Latest `render-state` buffer. */
   readonly renderState: unknown;
   readonly graphMode: 'full' | 'overview';
-  readonly filteredCount: number;
+  /** Objects the user filter shows, derived from the model (the count the host prompt states). */
+  readonly visibleNodes: number;
   /** Node count of the loaded model. */
   readonly totalNodes: number;
   /** Resolver for the AI run behind an applied AI-authored bookmark. */
@@ -268,7 +269,7 @@ export function presentScreenState(input: ScreenStateInput): {
     ),
     view: {
       level: input.graphMode === 'overview' ? 'overview' : 'object',
-      visible_nodes: asCount(input.filteredCount),
+      visible_nodes: asCount(input.visibleNodes),
       total_nodes: asCount(input.totalNodes),
     },
     ...(page.more ? { next_cursor: String(page.offset + SCREEN_STATE_MAX_IDS) } : {}),

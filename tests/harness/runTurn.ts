@@ -175,7 +175,6 @@ export async function runHarnessTurn(options: HarnessTurnOptions): Promise<Harne
     if ('renderState' in buffer) options.session.renderState = buffer.renderState;
     if ('filter' in buffer) options.session.filter = buffer.filter as AiSession['filter'];
     if (buffer.graphMode === 'full' || buffer.graphMode === 'overview') options.session.graphMode = buffer.graphMode;
-    if (typeof buffer.filteredCount === 'number') options.session.filteredCount = buffer.filteredCount;
   }
   const bookmarkId = bookmarkIdFromUiState(options.uiState);
   const storedRun = options.storedRun;

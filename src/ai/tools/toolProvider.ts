@@ -30,6 +30,7 @@ import {
 import { DEFAULT_CONFIG, type DatabaseModel } from '../../engine/types';
 import { readDeclaredNumericSetting } from '../../configCore';
 import { type SerializedFilterState } from '../../engine/projectStore';
+import { countVisibleNodes } from '../../engine/shared/modelFilters';
 import { getAllowedLmToolNames, activeModeOf, type LmStage } from '../tools/toolPolicy';
 import { ToolRegistry, filterRegistry } from '../tools/registry';
 import { TOOL_DEFS, type ToolName } from '../tools/toolDefs';
@@ -293,7 +294,7 @@ class ToolHandler implements ToolServices {
         uiState: sess.uiState,
         renderState: sess.renderState,
         graphMode: sess.graphMode,
-        filteredCount: sess.filteredCount,
+        visibleNodes: countVisibleNodes(model, sess.filter),
         totalNodes: model.nodes.length,
         getStoredRun: this.getStoredRun,
         getDdl,

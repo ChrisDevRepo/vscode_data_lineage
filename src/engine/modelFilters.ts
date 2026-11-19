@@ -8,8 +8,9 @@
 import { DatabaseModel } from './types';
 import { compileExclusionMatcher, schemaKey } from '../utils/sql';
 import { computeSchemas } from './shared/modelSchemas';
+import { filterBySchemas } from './shared/modelFilters';
 
-export { applyIsolationFilter } from './shared/modelFilters';
+export { applyIsolationFilter, applyAllowlistFilter, externalRefAdmits, filterBySchemas } from './shared/modelFilters';
 
 /**
  * The admit/refuse comparison behind {@link checkObjectLimit}, for a surface with only a count (the
@@ -70,59 +71,6 @@ export function applyExclusionFilter(
   const nodeIds = new Set(nodes.map((n) => n.id));
   const edges = model.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
   return { ...model, nodes, edges };
-}
-
-/**
- * Filters the model to the nodes explicitly present in the allowlist; an empty allowlist keeps no
- * node.
- */
-export function applyAllowlistFilter(model: DatabaseModel, allowlist: Set<string> | undefined): DatabaseModel {
-  if (!allowlist) return model;
-  const nodes = model.nodes.filter((n) => allowlist.has(n.id));
-  const nodeIds = new Set(nodes.map((n) => n.id));
-  const edges = model.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
-  return { ...model, nodes, edges };
-}
-
-/**
- * Filters an existing DatabaseModel in memory to objects from specific schemas. Retains every
- * matching object and every external reference it touches; it never truncates. Callers that must
- * honor `dataLineageViz.maxNodes` check the result with {@link checkObjectLimit} before loading or
- * rendering it.
- */
-export function filterBySchemas(
-  model: DatabaseModel,
-  selectedSchemas: Set<string>,
-): DatabaseModel {
-  const lowerSelected = new Set(Array.from(selectedSchemas).map(s => schemaKey(s, model.identifierCaseSensitive)));
-  const schemaNodes = model.nodes.filter((n) => lowerSelected.has(schemaKey(n.schema, model.identifierCaseSensitive)));
-  const schemaNodeIds = new Set(schemaNodes.map(n => n.id));
-
-  const connectedVirtualIds = new Set<string>();
-  for (const e of model.edges) {
-    if (schemaNodeIds.has(e.target)) connectedVirtualIds.add(e.source);
-    if (schemaNodeIds.has(e.source)) connectedVirtualIds.add(e.target);
-  }
-  const virtualNodes = model.nodes.filter((n) =>
-    n.type === 'external' && connectedVirtualIds.has(n.id) && !schemaNodeIds.has(n.id)
-  );
-  const filtered = [...schemaNodes, ...virtualNodes];
-  const nodeIds = new Set(filtered.map((n) => n.id));
-
-  const edges = model.edges.filter(
-    (e) => nodeIds.has(e.source) && nodeIds.has(e.target)
-  );
-
-  return {
-    nodes: filtered,
-    edges,
-    schemas: model.schemas.filter((s) => lowerSelected.has(schemaKey(s.name, model.identifierCaseSensitive))),
-    catalog: model.catalog,
-    neighborIndex: model.neighborIndex,
-    parseStats: model.parseStats,
-    warnings: model.warnings,
-    identifierCaseSensitive: model.identifierCaseSensitive,
-  };
 }
 
 /**

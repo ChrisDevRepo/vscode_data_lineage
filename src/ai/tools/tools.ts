@@ -161,9 +161,7 @@ export function getContext(
   activeFilter: SerializedFilterState | null,
   projectName: string | null,
 ) {
-  const visibleNodes = activeFilter
-    ? countVisibleNodes(model, activeFilter)
-    : model.nodes.length;
+  const visibleNodes = countVisibleNodes(model, activeFilter);
 
   return {
     project_name:  projectName,
@@ -358,9 +356,7 @@ export async function searchObjects(
   const inScopeRows = exactNameRows.filter(r => r.in_user_filter);
   const resolvedIds = (inScopeRows.length > 0 ? inScopeRows : exactNameRows).map(r => String((r as Record<string, unknown>).id));
 
-  const visibleNodeCount = activeFilter
-    ? countVisibleNodes(model, activeFilter)
-    : model.nodes.length;
+  const visibleNodeCount = countVisibleNodes(model, activeFilter);
   const filterContext = {
     active_schemas: activeFilter?.schemas?.length ? activeFilter.schemas : null,
     active_types: activeFilter?.types?.length ? activeFilter.types : null,

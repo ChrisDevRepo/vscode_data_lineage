@@ -167,8 +167,6 @@ export class AiSession {
    */
   public renderState: unknown = null;
   public graphMode: 'full' | 'overview' = 'full';
-  /** Total count of nodes after all active filters are applied (from webview). */
-  public filteredCount = 0;
   /** >0 when the render limit was exceeded (from webview). */
   public renderLimitHit = 0;
   public parseRulesLabel = 'built-in rules';
