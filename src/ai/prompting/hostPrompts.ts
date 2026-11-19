@@ -106,9 +106,7 @@ export function buildEntryDetectorSystemPrompt(ctx: StagePromptContext): string 
 
 /**
  * System prompt for one bounded discovery preview call, composed like every other stage via
- * {@link buildHostStageSystemPrompt} rather than appending its own directive; building the block
- * here instead let the preview stage drift out of the shared presentation contract while still
- * being judged by it.
+ * {@link buildHostStageSystemPrompt}, so it stays under the shared presentation contract.
  */
 export function buildVisualPreviewSystemPrompt(ctx: StagePromptContext): string {
   return buildHostStageSystemPrompt('visual_preview', ctx);
@@ -173,8 +171,7 @@ export function buildGateRefinePrompt(
 
 /**
  * The leading user anchor the active-phase thread is reseeded to at approval and after every
- * committed hop. The graph replaces the thread with `[anchor]` alone
- * (`RemoveMessage(REMOVE_ALL_MESSAGES)` + this message); per-hop task, focus context and
+ * committed hop; the thread then holds this message alone. Per-hop task, focus context and
  * `<short_term_memory>` ride the following worker message, hop protocol and session memo stay in
  * the stable `system`. The anchor keeps the conversation leading with a `user` turn (strict
  * providers reject a leading assistant turn), so it stays a one-line continuation directive, not

@@ -154,8 +154,7 @@ const CHAT_MARKDOWN_FORMAT = [
  * {@link buildGeneralSystemPrompt} and each tool's modelDescription owns which question it answers,
  * so this block states only the task (answer directly or call a read tool), the one lineage call
  * answering a dependency question, and the applied-bookmark rule: a question about a bookmarked
- * graph reads a stored run, and answering it with a scope walk turned "what do I see here" into a
- * fresh approval gate. Chat format lives in the YAML `discovery_chat` template; scope-depth
+ * graph reads a stored run, not a scope walk that would open a fresh approval gate. Chat format lives in the YAML `discovery_chat` template; scope-depth
  * mechanics in `lineage_get_scope_bundle`'s `.describe()` texts.
  *
  * The `over_discovery_budget` guard is unmentioned on purpose: only `lineage_get_scope_bundle` can
@@ -434,9 +433,8 @@ export const SHOW_FULL_PLAN_TRIGGER = 'Show the full exploration plan';
 /**
  * Stable first line of the seeded trace envelope, matched by the graph to route straight to SM.
  *
- * @remarks Matching our own generated prefix, never user text — this is what makes the re-entry
- *   deterministic and saves an entry-detector model call. Mechanical enforcement over prompt
- *   language.
+ * @remarks Matches our own generated prefix, never user text, so the re-entry is deterministic and
+ *   needs no entry-detector model call.
  */
 export const TRACE_REQUEST_MARKER = 'The user clicked the post-discovery "Run trace" link.';
 
@@ -518,7 +516,7 @@ function buildRunTraceTriggerPrompt(
 /**
  * System prompt for the discovery-summary composition round. The memo it produces rides every later
  * hop's stable prefix as established fact, so grounding and formatting instructions belong at the
- * system layer like every other stage (compose was the one model call without a system key).
+ * system layer like every other stage.
  */
 export const DISCOVERY_SUMMARY_COMPOSE_SYSTEM_PROMPT = [
   'You are the @lineage assistant in the Data Lineage Viz VS Code extension, composing one internal memo for your own later hops.',
