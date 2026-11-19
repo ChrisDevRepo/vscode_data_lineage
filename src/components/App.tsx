@@ -245,7 +245,7 @@ export function App() {
       setView('visualizing');
       setLoadingPhase('parse');
       handleVisualize(dacpacLoader.model, new Set(dacpacLoader.model.schemas.map(s => s.name)));
-      if (!dacpacLoader.isDemo && lastOpenedId) setActiveProjectId(lastOpenedId);
+      setActiveProjectId(dacpacLoader.projectId);
       dacpacLoader.clearAutoVisualize();
     } else if (dacpacLoader.pendingVisualize) {
       if (view !== 'visualizing') return; // guard: ignore stale responses after cancel
