@@ -990,7 +990,7 @@ const CursorSchema = z.string().regex(/^\d+$/, 'cursor must be the next_cursor v
  */
 export const GetScreenStateInputSchema = z.object({
   ids: z.array(z.string()).min(1).max(SCREEN_STATE_MAX_IDS).optional()
-    .describe('Canonical object ids to recall, taken from the screen card\'s node_ids.'),
+    .describe('Canonical object ids to recall, taken from the screen card\'s ai_run.analyzed_ids or node_ids.'),
   filter: z.enum(['pruned', 'open_leads', 'stale']).optional()
     .describe('Class of the stored run to list.'),
   cursor: CursorSchema.optional(),

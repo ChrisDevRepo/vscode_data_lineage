@@ -32,6 +32,8 @@ export interface ScreenStateInput {
   readonly totalNodes: number;
   /** Resolver for the AI run behind an applied AI-authored bookmark. */
   readonly getStoredRun?: StoredRunReader;
+  /** The session's completed run, shown as `ai_run` when no AI bookmark is applied. */
+  readonly liveRun?: StoredAiRun;
   /** Resolver for an object's current DDL text; drives the staleness comparison. */
   readonly getDdl?: (id: string) => string | undefined;
   /** Zero-based offset of the id-list page to serve; `0` (default) is the first page. */
@@ -221,30 +223,22 @@ function presentAnalysis(page: ListPage, analytics: ScreenStateExtras['analytics
   };
 }
 
-function presentBookmark(
-  page: ListPage,
-  bookmark: ScreenStateExtras['bookmark'],
-  getStoredRun: StoredRunReader | undefined,
-  getDdl: ((id: string) => string | undefined) | undefined,
-): Record<string, unknown> | null {
+function presentBookmark(page: ListPage, bookmark: ScreenStateExtras['bookmark']): Record<string, unknown> | null {
   const entry = asRecord(bookmark);
   const name = asString(entry?.name);
   if (!entry || name === null) return null;
-  const source = asString(entry.source);
-  const id = asString(entry.id);
-  const run = source === 'ai' && id !== null ? getStoredRun?.(id) : undefined;
   const nodeIds = asStringList(entry.allowlistNodeIds);
   return {
     name,
-    source,
+    source: asString(entry.source),
     nodes: nodeIds.length,
     ...spreadPaged(page, 'node_ids', nodeIds),
-    ai_run: presentAiRun(page, run, getDdl),
   };
 }
 
 /**
- * Renders what the user currently sees: the active trace, graph analysis, applied bookmark and view
+ * Renders what the user currently sees: the active trace, graph analysis, applied bookmark, the AI
+ * run behind the graph (the applied AI bookmark's, else the session's completed one) and view
  * level; absent sections render `null`. Returns the payload with its token estimate.
  */
 export function presentScreenState(input: ScreenStateInput): {
@@ -261,12 +255,8 @@ export function presentScreenState(input: ScreenStateInput): {
       asRecord(renderState?.traceScope) as RenderStateSnapshot['traceScope'],
     ),
     analysis: presentAnalysis(page, asRecord(extras?.analytics) as ScreenStateExtras['analytics']),
-    bookmark: presentBookmark(
-      page,
-      asRecord(extras?.bookmark) as ScreenStateExtras['bookmark'],
-      input.getStoredRun,
-      input.getDdl,
-    ),
+    bookmark: presentBookmark(page, asRecord(extras?.bookmark) as ScreenStateExtras['bookmark']),
+    ai_run: presentAiRun(page, resolveAppliedRun(input), input.getDdl),
     view: {
       level: input.graphMode === 'overview' ? 'overview' : 'object',
       visible_nodes: asCount(input.visibleNodes),
@@ -302,7 +292,7 @@ function optionalNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
-function resolveAppliedRun(input: RunRecallInput): StoredAiRun | undefined {
+function resolveAppliedRun(input: Pick<RunRecallInput, 'uiState' | 'getStoredRun' | 'liveRun'>): StoredAiRun | undefined {
   const entry = asRecord(screenStateParts(input.uiState).extras?.bookmark);
   const id = asString(entry?.id);
   const bookmarked = entry && id !== null && asString(entry.source) === 'ai' ? input.getStoredRun?.(id) : undefined;

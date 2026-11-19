@@ -843,7 +843,7 @@
           "type": "object",
           "properties": {
             "ids": {
-              "description": "Canonical object ids to recall, taken from the screen card's node_ids.",
+              "description": "Canonical object ids to recall, taken from the screen card's ai_run.analyzed_ids or node_ids.",
               "minItems": 1,
               "maxItems": 20,
               "type": "array",

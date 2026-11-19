@@ -274,13 +274,14 @@ class ToolHandler implements ToolServices {
       const sess = this.getSession();
       const model = this.requireModel();
       const getDdl = (id: string) => sess.columnStore.getDdl(id);
+      const liveRun = sess.phase.kind === 'completed' ? buildLiveRun(sess.presentationArtifact) : undefined;
       const { ids, filter, cursor } = parsed.data;
       if (ids || filter) {
         const nodeMap = getModelNodeMap(model);
         return this.logAndReturn('lineage_get_screen_state', presentRunRecall({
           uiState: sess.uiState,
           getStoredRun: this.getStoredRun,
-          liveRun: sess.phase.kind === 'completed' ? buildLiveRun(sess.presentationArtifact) : undefined,
+          liveRun,
           budget: this.budget,
           ids,
           filter,
@@ -297,6 +298,7 @@ class ToolHandler implements ToolServices {
         visibleNodes: countVisibleNodes(model, sess.filter),
         totalNodes: model.nodes.length,
         getStoredRun: this.getStoredRun,
+        liveRun,
         getDdl,
         offset: cursorOffset(cursor),
       });
