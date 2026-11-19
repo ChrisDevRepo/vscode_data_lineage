@@ -18,15 +18,14 @@ No database, model provider or credentials are needed to build, run or pass `npm
 
 ## Test
 
-`npm run gate` is the complete pre-push check; it needs no database, model provider or display. GitHub does not run the test suite (its workflow only runs repository security checks), so run the gate locally. Test tiers, optional live checks and machine requirements: [`docs/testing/README.md`](docs/testing/README.md).
+`npm run gate` is the complete pre-push check; it needs no database, model provider or display. The Gate workflow runs it on pull requests and on `testing*` pushes, so run it locally first. Test tiers, optional live checks and machine requirements: [`docs/testing/README.md`](docs/testing/README.md).
 
-Parser changes: run `npm run test:parser`, add a focused regression case, and review the resulting dependency edges against the affected SQL.
+Parser changes (regexes in `assets/defaultParseRules.yaml`): run `npm run test:parser`, add a focused regression case, and review the resulting dependency edges against the affected SQL.
 
 ## Propose a change
 
-- Change behavior in the layer that owns it ([`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)) and add a focused test, including failure and malformed-input paths.
-- SQL extraction regexes live in `assets/defaultParseRules.yaml`; TypeScript owns preprocessing, normalization, rule execution and dependency resolution.
-- Strict TypeScript, ESM imports. Validate IPC and tool-call input with Zod. Log through `src/utils/log.ts` with a category tag. Document exported contracts with TSDoc that explains the why, not the types.
+- Change behavior in the layer that owns it ([`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#code-map)) and add a focused test, including failure and malformed-input paths.
+- Strict TypeScript, ESM imports. Validate IPC and tool-call input with Zod. Log through `src/utils/log.ts` with a category tag. Document exported contracts with TSDoc that explains the why, not the types; comments carry no history or author markers.
 - Keep the `.md` files true for what you changed, and list user-visible changes under `[Unreleased]` in `CHANGELOG.md`.
 - Leave `package.json` and lockfile versions unchanged unless the change needs them. Every `overrides` entry in `package.json` is deliberate: `langsmith` points at the inert stub in `stubs/langsmith/` and stays; the others lift transitive packages past known advisories and go when their dependents do. Vendored source is registered in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 

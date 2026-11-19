@@ -21,8 +21,6 @@ Start with **View → Output → Data Lineage Viz**; set its log level to **Debu
 
 The connection retries transient errors (4060, 10928, 10929, 40197, 40501, 40613) up to three times with five-second waits, so a mistyped database name can add 15 seconds before the error shows. A `tcp:` server prefix is accepted. **Update Database Password** applies to SQL logins; **Remove Database Connection** deletes the stored password with the connection.
 
-A project saved with the retired SQL Server (mssql) extension shows one warning when it opens and opens **Add Database Connection** prefilled with its server and database; the project keeps its schemas.
-
 **Permissions.** `VIEW DEFINITION` on the database for lineage; `SELECT` on the tables for table statistics. See [`DMV_QUERIES.md`](DMV_QUERIES.md). `@lineage` reads only the loaded model and never opens a connection.
 
 **Import times out.** Raise `dataLineageViz.dmvQueryTimeout` or select fewer schemas. The limit is per query; a Phase 2 import sends several.
@@ -61,4 +59,4 @@ Statistics need a live database project and are unavailable for DACPAC sources. 
 
 ## Bug reports
 
-Open an [issue](https://github.com/ChrisDevRepo/vscode_data_lineage/issues) with the output of **Data Lineage: Copy Debug Info** and the relevant Output log. Review and redact project, schema and object names first, and never attach customer `.dacpac` files. Security problems: [`SECURITY.md`](../SECURITY.md).
+See [`CONTRIBUTING.md`](../CONTRIBUTING.md) for what to attach and leave out; security problems: [`SECURITY.md`](../SECURITY.md).
