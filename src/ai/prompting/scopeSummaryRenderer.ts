@@ -180,7 +180,7 @@ function planHeading(revision?: number): string {
 }
 
 /**
- * Renders a self-contained main-equivalent approval summary for native chat.
+ * Renders the self-contained approval summary for native chat.
  *
  * @param revision - Stamped in the heading from the second round on, so a re-approval is
  *   distinguishable from the first.
@@ -335,15 +335,13 @@ function renderPlanMd(
  * the model-authored prose (goal, discovery summary, noted constraints) and every in-scope object.
  *
  * No AI-authored text reaches the card: `mission_brief`, the discovery summary and `scopeNotes` are
- * full-plan-only. There is no separate direction line: the depth line names the side(s) it covers
- * (`N upstream`, `N upstream · N downstream`, or `N each way` for equal sides); the scope line
- * carries only estimated counts (`≈N hops · ≈N nodes`). Schemas are stated from the shorter side
+ * full-plan-only. There is no separate direction line: the depth line names the side(s) it covers,
+ * and the scope line carries only estimated counts. Schemas are stated from the shorter side
  * (`schemasLine`), as a count past {@link CARD_SCHEMA_NAMES} names, so `Excluded` never repeats
- * them. In-scope objects group by type across every schema, one line per type with its total and
- * names capped at {@link NAMES_PER_TYPE}. `Excluded` carries the GUI exclusion rule count, excluded
- * object types and the count excluded by name; the full plan names them. Keep-but-skip renders in
- * full. A name recurring in more than one schema is schema-qualified (`objectsByType`) so two
- * distinct objects never read as one bare name.
+ * them. In-scope objects group by type across every schema, names capped at
+ * {@link NAMES_PER_TYPE}; `Excluded` carries counts and the full plan names them. Keep-but-skip
+ * renders in full. A name recurring in more than one schema is schema-qualified (`objectsByType`)
+ * so two distinct objects never read as one bare name.
  */
 export function renderScopeCardMd(
   proposal: Pick<PendingExplorationProposal, 'revision' | 'init' | 'classification' | 'summary'>,
