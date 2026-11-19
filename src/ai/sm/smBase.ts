@@ -754,8 +754,10 @@ export class NavigationEngine implements IHopStateMachine {
 
   /**
    * What the transcript replays of a rejected `lineage_submit_findings` call: `focus_node_id`,
-   * `verdict` and `column_flow` as sent, plus the fields the held draft failed; a failed `sections`
-   * keeps only the angles that are not held. The rest is held, so the model no longer sees it.
+   * `verdict`, `column_flow`, `prune_neighbors` and `questions` as sent, plus the fields the held
+   * draft failed; a failed `sections` keeps only the angles that are not held. The retry must see
+   * the prune and the questions together: a prune of a question target is refused (spec 06). The
+   * rest is held, so the model no longer sees it.
    *
    * @returns The reduced arguments, or `null` when no draft is held for the call's focus: the call
    *   is then replayed as sent.
@@ -769,7 +771,7 @@ export class NavigationEngine implements IHopStateMachine {
       && (resolveModelNodeId(raw.focus_node_id, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(raw.focus_node_id)) !== this.heldFindingFocus) return null;
     const heldAngles = new Set<string>(held.sections.map(section => section.angle));
     return Object.fromEntries(Object.entries(raw).flatMap(([key, value]): Array<[string, unknown]> => {
-      if (!this.heldSchemaFields.includes(key) || !['focus_node_id', 'verdict', 'column_flow', ...failed].includes(key)) return [];
+      if (!this.heldSchemaFields.includes(key) || !['focus_node_id', 'verdict', 'column_flow', 'prune_neighbors', 'questions', ...failed].includes(key)) return [];
       if (key !== 'sections' || typeof value !== 'object' || value === null || Array.isArray(value)) return [[key, value]];
       const failedAngles = Object.entries(value).filter(([angle]) => !heldAngles.has(angle));
       return failedAngles.length > 0 ? [[key, Object.fromEntries(failedAngles)]] : [];
