@@ -75,10 +75,8 @@ export interface HttpRequestInit {
  * Node's global `fetch` is undici's, and undici aborts a request whose response **headers** have
  * not arrived within its own hard-coded 300 s `headersTimeout` — invisible to the port's own
  * `requestTimeoutMs` deadline and fatal for local thinking models whose single non-streamed
- * generation legitimately runs longer (measured 2026-08-30: Qwen3.8-27B via LM Studio needed
- * ~280 s of decode for one planning turn, and the 300 s header cap fired exactly as the model
- * finished, surfacing as `UND_ERR_HEADERS_TIMEOUT`). When the `undici` package is resolvable
- * (transitively present via tooling dependencies), the port uses undici's own `fetch` with an
+ * generation legitimately runs longer (surfacing as `UND_ERR_HEADERS_TIMEOUT`). When the `undici`
+ * package is resolvable (transitively present via tooling dependencies), the port uses undici's own `fetch` with an
  * `Agent` whose `headersTimeout` and `bodyTimeout` equal the lane deadline, so the ONLY deadline
  * is the port's. Without undici, global `fetch` is kept and the 300 s header cap applies — the
  * warning names it.
@@ -174,11 +172,9 @@ export interface OpenAiLaneCapabilities {
 }
 
 /**
- * Provider-specific request-body tuning. Every field lands verbatim in the request body, so a
- * verbose trace's `provider-raw` capture always shows exactly what tuning was active for a run.
- */
-/**
  * The ONLY request knob the harness may set: thinking level, plus which dialect carries it.
+ * Every field lands verbatim in the request body, so a verbose trace's `provider-raw` capture shows
+ * the tuning that was active.
  *
  * @remarks
  * The harness exists to reproduce what the extension does inside Copilot Chat, where the model is
@@ -198,14 +194,10 @@ export interface OpenAiRequestTuning {
    *
    * @remarks
    * DeepSeek-family models reason by default, and with `stream: false` the time-to-first-byte is
-   * the full reasoning duration (deepseek-ai/DeepSeek-V3#1464 measured 31.8s → 2.7s for the same
-   * call once thinking was disabled). The cancelled T6 run spent 150–182s per late hop generating
-   * up to ~2,000 reasoning tokens per call; this field attacks exactly that.
-   *
-   * Measured on 2026-08-07 (T6, deepseek-v4-flash): `{ enabled: false }` cut per-generation
-   * latency ~10x but cost the model its ability to repair strict-schema rejections — two runs in
-   * a row burned the 3-failure semantic budget re-sending the same over-length `badge_label`.
-   * `{ effort: 'low' }` is the compromise: bounded thinking kept for self-correction.
+   * the full reasoning duration. `{ enabled: false }` cuts per-generation latency about 10x but
+   * costs the model its ability to repair strict-schema rejections: it re-sends the same invalid
+   * value until the 3-failure semantic budget is spent. `{ effort: 'low' }` is the compromise:
+   * bounded thinking kept for self-correction.
    */
   readonly reasoning?: { readonly enabled: false } | { readonly effort: 'low' | 'medium' | 'high' };
   /**
@@ -276,7 +268,7 @@ export interface OpenAiCompatiblePortOptions {
    * Mode is chosen by the model, not the harness — `smBase.ts` infers `bb`/`ct` from whether
    * `targetColumns` is non-empty and rejects a mismatched pair. So a forced call must rewrite both
    * fields together, or the engine rejects it. This exists so a CT question can be measured as BB
-   * without rewording it: the PM wants the byte-identical question run once under each mode so the
+   * without rewording it: the byte-identical question runs once under each mode so the
    * BFS is comparable. Each rewrite logs one `[ForceBB]` debug line naming what changed.
    */
   readonly forceBb?: boolean;
@@ -323,7 +315,7 @@ const TRANSIENT_TRANSPORT_ERROR_CODES = new Set([
 ]);
 /** HTTP statuses retried under DD-4a; 429 honors `Retry-After` like every other entry here. */
 const TRANSIENT_TRANSPORT_HTTP_STATUSES = new Set([429, 502, 503, 504]);
-/** Total attempts including the first, bounded per row early-stop (INSTRUMENT-BATCH-M8). */
+/** Total attempts including the first. */
 const MAX_TRANSPORT_ATTEMPTS = 3;
 const TRANSPORT_RETRY_BASE_DELAY_MS = 500;
 const TRANSPORT_RETRY_MAX_DELAY_MS = 5_000;
@@ -356,7 +348,6 @@ function retryAfterDelayMs(response: HttpResponseLike): number | undefined {
   return Number.isNaN(at) ? undefined : Math.max(0, at - Date.now());
 }
 
-/** Bounded exponential backoff with full jitter, capped at {@link TRANSPORT_RETRY_MAX_DELAY_MS}. */
 /**
  * The transient status of an upstream failure delivered inside HTTP 200: `choices[0].finish_reason`
  * is `"error"`, `choices[0].error.code` is in {@link TRANSIENT_TRANSPORT_HTTP_STATUSES}, and the
@@ -374,6 +365,7 @@ function transientEnvelopeStatus(body: unknown): number | undefined {
   return readContentText(message?.content) || hasToolCalls ? undefined : code;
 }
 
+/** Bounded exponential backoff with full jitter, capped at {@link TRANSPORT_RETRY_MAX_DELAY_MS}. */
 function transportRetryDelayMs(attempt: number, retryAfterMs: number | undefined): number {
   if (retryAfterMs !== undefined) return Math.min(retryAfterMs, TRANSPORT_RETRY_MAX_DELAY_MS);
   const exponential = TRANSPORT_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);

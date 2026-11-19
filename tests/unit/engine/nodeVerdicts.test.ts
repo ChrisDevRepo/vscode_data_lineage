@@ -1,5 +1,5 @@
 /**
- * CT-only additive fields on `AIViewMetadata`: per-node `nodeVerdicts` (host-wire package P2) and
+ * CT-only additive fields on `AIViewMetadata`: per-node `nodeVerdicts` and
  * the per-edge `columnAspect.edges[].transforms` classification.
  *
  * @remarks

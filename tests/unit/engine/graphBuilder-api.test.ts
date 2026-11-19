@@ -1,5 +1,5 @@
 /**
- * Covers the host-side exported `graphBuilder` surface that no test named: pathfinding,
+ * Covers the host-side exported `graphBuilder` surface: pathfinding,
  * the layout engine and its cache (including worker-computed seeding), graph metrics, and
  * the no-layout build.
  *

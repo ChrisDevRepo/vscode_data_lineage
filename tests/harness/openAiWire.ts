@@ -125,7 +125,7 @@ function projectMessage(
       role: 'assistant',
       // Tool-only turns send `null`: some servers reject `''` there. An empty turn with no
       // tool_calls must send a string — Azure 400s `expected a string, got null` on
-      // `messages[n].content` otherwise (m22-head T7, empty_generation retry).
+      // `messages[n].content` otherwise.
       content: text || (calls.length > 0 ? null : ''),
       ...(calls.length > 0 ? { tool_calls: calls } : {}),
       ...(reasoning ? { reasoning_content: reasoning } : {}),
@@ -254,8 +254,8 @@ export function suspectsToolCallAsText(text: string): boolean {
   if (/"name"\s*:\s*"[A-Za-z0-9_.-]+"/.test(text) && /"(arguments|parameters)"\s*:/.test(text)) {
     return true;
   }
-  // The `{name, arguments}` wrapper is one spelling among several, and flagged none of the 27
-  // recorded occurrences: those are bare JSON records — fenced, unfenced, or Hermes/XML.
+  // The `{name, arguments}` wrapper is one spelling among several; observed occurrences are bare
+  // JSON records, fenced or unfenced, or Hermes/XML.
   return readProseToolCandidate(text) !== null;
 }
 

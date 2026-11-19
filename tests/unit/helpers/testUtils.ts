@@ -1,8 +1,5 @@
 /**
- * Shared test utilities for all unit test files.
- * NOT a test file itself — imported by tests/unit/*.test.ts files.
- *
- * Location: tests/unit/helpers/testUtils.ts
+ * Shared test utilities for all unit test files; not a test file itself.
  * - testPath() resolves paths relative to tests/fixtures/
  * - rootPath() resolves paths relative to project root
  */
