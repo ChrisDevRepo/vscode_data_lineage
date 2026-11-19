@@ -35,7 +35,6 @@ import { prunePreserveOnly } from '../../support/viewPrune';
 import { resolveModelNodeId, resolveModelNodeIds } from '../../support/inputNormalization';
 import { makeRejection, rejectionFromZodError, zodFieldRepairHint, type ToolRejection } from '../../support/toolErrorEnvelope';
 import { quoteIds } from '../../support/text';
-import { evaluatePresentResultPreconditionsRule } from '../../interaction/rules/presentResultRules';
 import { type ToolServices, getModelNodeMap } from './toolServices';
 import type { ResultGraph, PresentationArtifact } from '../../session/types';
 import type { SmState } from '../../sm/smTypes';
@@ -281,7 +280,11 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
       } : null;
       const resultGraph = previewGraph ?? sess.resultGraph;
       if (!resultGraph) {
-        return reject(evaluatePresentResultPreconditionsRule(false)!);
+        return reject(makeRejection({
+          code: REJECTION_CODES.missingResultGraph,
+          reason: 'No presentation source is available.',
+          hint: 'Load one bounded scope for a visual preview or complete the active exploration first.',
+        }));
       }
 
       let resolvedNodeIds: string[] = [...resultGraph.nodeIds];
