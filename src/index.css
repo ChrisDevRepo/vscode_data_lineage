@@ -283,11 +283,11 @@ body[data-vscode-theme-kind="vscode-high-contrast-light"] {
 }
 
 /* Light theme graph contrast (WCAG 2.2 SC 1.4.11): the default node border (15% black) and slate edges
-   sit near 1.4:1 and 2.6:1 on a white canvas, so both mix the editor foreground toward the canvas, nodes
-   stronger than edges; the edge density fade still softens dense graphs. Only colours differ by theme. */
+   sit near 1.4:1 and 2.6:1 on a white canvas. Both stay fixed light-theme colours: a neutral grey node border
+   at 3:1 and the slate edge hue darkened to 3.5:1 on white; the edge density fade still softens dense graphs. */
 body[data-vscode-theme-kind="vscode-light"] {
-  --ln-node-border: color-mix(in srgb, var(--ln-fg) 70%, var(--ln-bg));
-  --ln-edge-color-base: color-mix(in srgb, var(--ln-fg) 60%, var(--ln-bg));
+  --ln-node-border: #939393;
+  --ln-edge-color-base: #7c8ba1;
   --ln-edge-color: var(--ln-edge-color-base);
 }
 
