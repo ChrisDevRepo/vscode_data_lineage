@@ -607,10 +607,12 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
   if (typeof value !== 'object' || value === null || !HopVerdictSchema.safeParse(value.verdict).success) return;
   const keptAngles = classification ? CLASSIFICATION_KEPT_ANGLES[classification] : undefined;
   const bothAnglesRequired = fresh && keptAngles?.length === CLASSIFICATION_KEPT_ANGLES.both.length;
-  if (keptAngles?.length === 1 && typeof value.sections === 'object' && value.sections !== null) {
+  const sections = typeof value.sections === 'object' && value.sections !== null && !Array.isArray(value.sections) ? value.sections as Record<string, unknown> : undefined;
+  const sectionsWrongType = value.sections !== undefined && sections === undefined; // the base schema's type fault at /sections is then the one fault
+  if (keptAngles?.length === 1 && sections) {
     const [onlyAngle] = keptAngles;
     const offAngle = onlyAngle === 'business' ? 'technical' : 'business';
-    const surplus = Object.keys(value.sections).filter((key) => key !== onlyAngle);
+    const surplus = Object.keys(sections).filter((key) => key !== onlyAngle);
     if (surplus.includes(offAngle)) {
       ctx.addIssue({
         code: 'custom',
@@ -622,9 +624,9 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
     const unknown = surplus.filter((key) => key !== offAngle);
     if (unknown.length > 0) ctx.addIssue({ code: 'unrecognized_keys', path: ['sections'], keys: unknown, message: 'Unrecognized keys' });
   }
-  const filled = new Set(Object.entries(value.sections ?? {})
+  const filled = new Set(Object.entries(sections ?? {})
     .filter(([, body]) => typeof body === 'string' && body.trim() !== '').map(([angle]) => angle));
-  if (fresh && filled.size === 0) {
+  if (fresh && filled.size === 0 && !sectionsWrongType) {
     ctx.addIssue({
       code: 'custom',
       path: ['sections'],
@@ -634,7 +636,8 @@ function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementC
   }
   if (bothAnglesRequired && filled.size > 0) {
     for (const angle of CLASSIFICATION_KEPT_ANGLES.both) {
-      if (filled.has(angle)) continue;
+      const sent = sections?.[angle];
+      if (filled.has(angle) || (sent !== undefined && typeof sent !== 'string')) continue; // a wrong-typed angle is already its own type fault
       ctx.addIssue({ code: 'custom', path: ['sections', angle], message: 'required with a both classification when sections is not empty.', params: { hint: `Send ${jsonPointer(['sections', angle])}.` } });
     }
   }
