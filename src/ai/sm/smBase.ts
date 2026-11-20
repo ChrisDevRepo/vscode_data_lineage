@@ -8,6 +8,7 @@ import { bidirectional } from 'graphology-shortest-path/unweighted';
 import { bfsFromNode } from 'graphology-traversal';
 import type { DatabaseModel, LineageNode } from '../../engine/types';
 import type { ColumnStore } from '../../engine/columnStore';
+import { computeSchemas } from '../../engine/shared/modelSchemas';
 import { bothSidesClosed, directionFromDepth, type DepthSideValue } from '../../engine/shared/explorationDepthContract';
 import type { SerializedFilterState } from '../../engine/projectStore';
 import { buildEdgeTypeMap, buildHopFocusNode, buildUnrelatedMap } from '../tools/tools';
@@ -541,9 +542,9 @@ export class NavigationEngine implements IHopStateMachine {
     }
 
     if (schemas.length > 0) {
-      const allSchemas = new Set<string>();
-      for (const n of this.nodeMap.values()) allSchemas.add(this.identifierKey(n.schema));
-      this.guiHiddenSchemas = new Set(Array.from(allSchemas).filter(s => !schemas.includes(s)));
+      // Only the schemas the GUI lists can be filtered out; a cross-database or file external node has no schema.
+      const listedSchemas = computeSchemas(model.nodes, model.identifierCaseSensitive).map(s => this.identifierKey(s.name));
+      this.guiHiddenSchemas = new Set(listedSchemas.filter(s => !schemas.includes(s)));
     }
 
     const isGuiExcluded = compileExclusionMatcher(config.activeFilter?.exclusionPatterns ?? [], (pattern, err) => {
