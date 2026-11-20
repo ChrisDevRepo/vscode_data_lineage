@@ -221,7 +221,7 @@ async function extractModelXml(buffer: Uint8Array | ArrayBuffer): Promise<string
   } catch (err) {
     const msg = err instanceof Error ? err.message : '';
     if (msg.includes('end of central directory') || msg.includes('is this a zip file'))
-      throw Object.assign(new Error('Not a valid .dacpac file (invalid ZIP archive)'), { cause: err });
+      throw Object.assign(new Error('Not a valid .dacpac file'), { cause: err });
     if (msg.includes('End of data reached') || msg.includes('Corrupted zip'))
       throw Object.assign(new Error('File appears to be corrupted or truncated'), { cause: err });
     throw new Error(`Invalid .dacpac file: ${msg || 'unknown error'}`);
