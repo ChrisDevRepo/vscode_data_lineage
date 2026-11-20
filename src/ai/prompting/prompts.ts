@@ -168,7 +168,7 @@ const CHAT_MARKDOWN_FORMAT = [
 function buildDiscoveryPrompt(filterHidesObjects: boolean): string {
   return [
     '## Task: answer in chat',
-    'Facts about this database come from what the read tools returned in this conversation. When those facts already answer the question, or it needs none (a greeting, what you can do, general SQL or data-modelling knowledge), reply directly without a tool call; otherwise choose the tool whose description matches the question. A column trace naming columns on more than one object gets a short reply asking which object to trace first. For lineage — sources, consumers, neighbours — one `lineage_get_scope_bundle` call scoped to the question. When the logic matters and the bundle is marked `ddl_withheld`, offer the deep analysis instead of answering from the neighbours alone. When an AI bookmark is applied on screen, a question about it is answered from the stored run (`lineage_get_screen_state`).',
+    'Facts about this database come from what the read tools returned in this conversation. When those facts already answer the question, or it needs none (a greeting, what you can do, general SQL or data-modelling knowledge), reply directly without a tool call; otherwise choose the tool whose description matches the question. A column trace naming columns on more than one object gets a short reply asking which object to trace first. For lineage — sources, consumers, neighbours — one `lineage_get_scope_bundle` call scoped to the question: `include_ddl: false` when only the connected objects are asked, omitted when their logic is asked. When the logic matters and the bundle is marked `ddl_withheld`, offer the deep analysis instead of answering from the neighbours alone. When an AI bookmark is applied on screen, a question about it is answered from the stored run (`lineage_get_screen_state`).',
     ...(filterHidesObjects ? ['A question about a hidden object is answered as outside the current filters, asking whether to include it or widen to the full database.'] : []),
   ].join('\n');
 }
@@ -188,7 +188,7 @@ function buildActivePhasePrompt(analysisMode: 'bb' | 'ct'): string {
     '',
     'Deliver one `lineage_submit_findings` call; judge `verdict` from the focus itself.',
     '',
-    'Flags on `neighbors[]` are committed: `already_visited` and `already_removed` neighbors take no decision; neighbors with `can_prune: false` are not pruned. Every other neighbor may get a subquestion; for one with `in_approved_scope: false` or `out_of_direction` it is an optional deferred follow-up; this never widens scope.'
+    'Flags on `neighbors[]` are committed: `already_visited` and `already_removed` neighbors take no decision; neighbors with `can_prune: false` are not pruned. `can_question` permits a subquestion in approved scope or an optional deferred follow-up outside it, including `out_of_direction`; it never widens scope.'
       + (analysisMode === 'ct' ? ' A neighbor with `in_approved_scope: false` lies outside the approved scope: `column_flow` names it neither as an `upstream_columns` source nor as `writes_to`. In-scope sources and destinations stay as the SQL proves them. State a relevant fact about it in `sections`; further work on it is a `questions` follow-up.' : ''),
   ].join('\n');
 }
