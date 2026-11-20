@@ -63,7 +63,7 @@ Run `npm run build:webview` after any React or CSS change.
 
 Set breakpoints in `src/` files; the build writes source maps next to the
 bundles in `out/`. After a change to host code, restart the host
-(<kbd>Ctrl+Shift+F5</kbd>). After a webview change, rebuild it and reload the
+(<kbd>Ctrl+Shift+F5</kbd>, <kbd>Cmd+Shift+F5</kbd> on macOS). After a webview change, rebuild it and reload the
 Extension Development Host window.
 
 To debug the webview, run **Developer: Open Webview Developer Tools** in the
@@ -105,9 +105,9 @@ flowchart LR
         MX --> DX[Objects, dependencies,<br/>full object catalog]
     end
     subgraph LIVE[Live database: catalog queries]
-        SRV[(Database*)] -->|Phase 1| CAT[Schema preview, object catalog,<br/>platform-info]
+        SRV[(Database*)] -->|Phase 1| CAT[Schema preview,<br/>platform-info]
         CAT --> SEL[Schema selection]
-        SEL --> DDL[Phase 2: nodes, columns,<br/>constraints, dependencies]
+        SEL --> DDL[Phase 2: object catalog, nodes,<br/>columns, constraints, dependencies]
     end
     DX --> PARSE[[Regex parser]]
     DDL --> PARSE
@@ -141,8 +141,9 @@ label.
   `dataLineageViz.database.connections` setting; passwords go to VS Code
   `SecretStorage`. See [`../SECURITY.md`](../SECURITY.md#connections).
 - **Saved projects:** [`src/engine/projectStore.ts`](../src/engine/projectStore.ts).
-  A change to the stored `Project` or `FilterProfile` shape needs a step in
-  `migrateProjectStore()`.
+  A change to the stored `Project` or `FilterProfile` shape must stay readable
+  by `ProjectReadSchema` in `migrateProjectStore()`; records it cannot read are
+  discarded with a warning.
 
 ## SQL parsing pipeline
 
@@ -219,7 +220,7 @@ No VS Code window opens.
 | `npm run test:scale` | Layout of a 1,500-node graph. |
 | `npm run gate` | The full pre-push check, described below. |
 
-`npm run gate` runs both type checks, lint, knip, the tool-manifest and
+`npm run gate` runs both type checks, lint, the tool-manifest and
 template-version checks, the layer-direction check, core coverage, the runtime
 tests, the build, and the package-content and LangSmith-absence checks. Run it
 before you push. CI runs it on pull requests.
@@ -241,12 +242,11 @@ A green parser run does not prove the output is unchanged if the SQL you
 changed has no test case. Add a focused case in `tests/unit/parser/`, then
 review the resulting dependency edges against the SQL.
 
-## Lint, unused code and package
+## Lint and package
 
 | Command | What it does |
 |---------|--------------|
 | `npm run lint` | ESLint; checks TSDoc comment syntax. |
-| `npm run knip` | Finds unused files, exports and dependencies. |
 | `npm run package` | Builds and writes a `.vsix` file with the local `@vscode/vsce`. |
 
 Packaging uses `--no-dependencies` because every production dependency is

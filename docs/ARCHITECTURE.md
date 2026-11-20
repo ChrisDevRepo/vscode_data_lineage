@@ -46,7 +46,7 @@ flowchart LR
     Q([User request]) --> D[Discovery]
     D -->|direct answer| END(((End)))
     D -->|answer offers a preview| P[Graph preview] --> END
-    D -->|deep analysis or column trace| G[/Approval/]
+    D -->|over budget or deeper-analysis follow-up| G[/Approval/]
     G -->|change scope| G
     G -->|cancel| END
     G -->|approve| A[Hop-by-hop exploration]
@@ -58,7 +58,7 @@ flowchart LR
   bounded, transient preview in the graph view. A request above
   `dataLineageViz.ai.discoveryNodeCap` or `dataLineageViz.ai.discoveryTokenBudget`
   is offered as a deep analysis instead.
-- **Approval.** `/trace`, a named-column trace, the **Start deeper hop-by-hop
+- **Approval.** `/trace`, the **Start deeper hop-by-hop
   analysis** follow-up or an over-budget request first shows the plan; no hop
   runs before approval. The plan must fit `dataLineageViz.ai.maxRounds` and
   `dataLineageViz.ai.maxTraceColumns`.

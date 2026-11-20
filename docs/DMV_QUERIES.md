@@ -45,7 +45,7 @@ Queries run during an import and when table statistics are requested:
 
 Connections and sessions:
 
-- The import wizard opens one connection for Phase 1 and a new one for Phase 2. Reopening a saved project runs both phases on one connection. Each statistics request opens its own connection and closes it afterwards.
+- The import wizard opens one connection for Phase 1 and a new one for Phase 2. Reopening a saved project runs one phase on one connection: Phase 2 when schemas are stored, otherwise Phase 1. Each statistics request opens its own connection and closes it afterwards.
 - When a query times out, the extension cancels it on the server.
 - Sessions report the application name `Data Lineage Viz` and set `ApplicationIntent=ReadOnly`. This is a routing hint for availability groups and read scale-out; it does not block writes, so use a login with read permissions only.
 
@@ -103,7 +103,7 @@ reachable through the others.
 | Query | Built-in predicate | Restricted |
 |---|---|---|
 | `schema-preview`, `all-objects` | `s.name NOT IN ('sys','INFORMATION_SCHEMA')` | `s.name NOT IN ('sys','INFORMATION_SCHEMA', N'Audit')` |
-| `nodes`, `columns`, `constraints` | `s.name IN ({{SCHEMAS}})` | `s.name IN ({{SCHEMAS}}) AND s.name NOT IN (N'Audit')` |
+| `nodes`, `columns`, `constraints` (in each of its three CTEs) | `s.name IN ({{SCHEMAS}})` | `s.name IN ({{SCHEMAS}}) AND s.name NOT IN (N'Audit')` |
 | `dependencies` | `(s1.name IN ({{SCHEMAS}}) OR d.referenced_schema_name IN ({{SCHEMAS}}))` | add `AND s1.name NOT IN (N'Audit') AND d.referenced_schema_name NOT IN (N'Audit')` |
 
 Keep `{{SCHEMAS}}` in every Phase 2 query: a query without it runs as written and
@@ -111,7 +111,7 @@ ignores the wizard's schema selection (a warning is logged).
 
 ## Expected columns — the contract
 
-A query is expected to return the columns below. Column names are matched case-insensitively and extra columns are ignored. Only `platform-info` is checked for its columns before use. For the other queries, a missing column can give empty or incomplete results, so test a custom query on a small database first.
+A query is expected to return the columns below. During import, column names are matched case-insensitively; table statistics read the `platform-info` column names exactly as listed below. Extra columns are ignored. Only `platform-info` is checked for its columns before use. For the other queries, a missing column can give empty or incomplete results, so test a custom query on a small database first.
 
 ### `schema-preview` — schema object counts (Phase 1)
 

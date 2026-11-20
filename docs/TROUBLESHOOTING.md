@@ -11,7 +11,7 @@
 - **Cross-database references are missing.** Three- and four-part names can appear as external nodes, but the other database is not imported. Unqualified names may not resolve.
 - **DMV query timed out.** Raise `dataLineageViz.dmvQueryTimeout`. The timeout applies to each query, and an import runs several.
 - **Custom YAML is rejected.** Its structure must match the built-in file. See [`DMV_QUERIES.md`](DMV_QUERIES.md) and [`PARSE_RULES.md`](PARSE_RULES.md).
-- **"Saved projects could not be read and were skipped".** A saved project has missing or invalid fields. Recreate it in the wizard.
+- **A notice that saved projects could not be read and were skipped.** A saved project has missing or invalid fields. Recreate it in the wizard.
 
 ## Graph
 

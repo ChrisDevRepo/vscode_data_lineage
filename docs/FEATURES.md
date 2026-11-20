@@ -48,12 +48,12 @@ trace).
 
 ## Schema View
 
-When a loaded graph has more objects than `dataLineageViz.overview.threshold`, the extension starts in **Schema View**: one cluster node per schema, with object counts and type distribution. Otherwise it starts in Object View. After that, the toolbar **Schema View** toggle switches between the two views; filters and exclusions do not re-check the threshold.
+When a loaded graph has more objects than `dataLineageViz.overview.threshold` (capped at `renderLimit`), the extension starts in **Schema View**: one cluster node per schema, with object counts and type distribution. Otherwise it starts in Object View. After that, the toolbar **Schema View** toggle switches between the two views, except while a trace, analysis, bookmark or AI preview is active or when the model has no more objects than the threshold, where it is disabled; filters and exclusions do not re-check the threshold.
 
 - Double-clicking a schema cluster expands that schema as object nodes. By default (`expandOnly`) the clicked schema becomes the only expanded one; set `dataLineageViz.overview.schemaDoubleClickBehavior` to `expand` to add it alongside schemas already expanded.
 - Selecting a schema cluster shows **Expand** (keeps other expanded schemas open) and **Expand Only** (collapses the others).
 - Quick Jump and Detail Search group results as **Visible**, **In Schema Cluster**, and **Not in Current Filter**. Selecting an object in a schema cluster expands that schema.
-- **Refresh View** resets the schema, type, and focus schema filters, collapses expanded schemas, and re-applies the initial Object View / Schema View decision. Exclusion rules and the Hide Isolated toggle persist.
+- **Refresh View** resets the schema, type, external-reference, and focus schema filters, collapses expanded schemas, and re-applies the initial Object View / Schema View decision. Exclusion rules and the Hide Isolated toggle persist.
 - Settings: `dataLineageViz.overview.enabled`, `dataLineageViz.overview.threshold`, `dataLineageViz.overview.schemaDoubleClickBehavior`.
 
 ### Rendering limits
@@ -75,9 +75,9 @@ When a loaded graph has more objects than `dataLineageViz.overview.threshold`, t
 
 ### Bookmarks
 
-Save the current filter state as a named bookmark. Bookmarks keep schema, object-type, isolation, external-reference, focus, and exclusion choices; trace, analysis, path, and AI views can also be saved. Restore them from the toolbar dropdown. Bookmarks are saved per project.
+Save the current filter state as a named bookmark. Bookmarks keep schema, object-type, isolation, external-reference, focus, and exclusion choices; trace, analysis, and AI views can also be saved. Restore them from the toolbar dropdown. Bookmarks are saved per project.
 
-A bookmark saved from an AI view also keeps that run's findings. With that bookmark applied, `@lineage` can recall them instead of repeating the work. Findings on objects whose DDL changed since are flagged as stale and rechecked. Older bookmarks may have no saved run. Deleting a bookmark or its project deletes its run record.
+A bookmark saved from an AI view also keeps that run's findings. With that bookmark applied, `@lineage` can recall them instead of repeating the work. Findings on objects whose DDL changed since are flagged as stale. Older bookmarks may have no saved run. Deleting a bookmark or its project deletes its run record.
 
 ---
 
@@ -90,7 +90,7 @@ To hide objects on every load, list the same patterns in `dataLineageViz.exclude
 ### Three ways to add a rule
 
 1. Open the exclusion dropdown (ban icon in toolbar) and type a pattern.
-2. Right-click any node and select **Exclude from view**.
+2. Right-click any object node and select **Exclude from view**.
 3. Select a node and press <kbd>Delete</kbd>.
 
 ### Pattern syntax
@@ -145,7 +145,7 @@ Right-click a node and select **Find Path**, then type the name of a second node
 
 ## Detail search
 
-Full-text search inside SQL bodies (procedures, views, functions) and column definitions. Toolbar search icon. This is distinct from **Quick Jump** (<kbd>/</kbd>), which matches object names only, and from Command Palette **Data Lineage: Search Objects**, which opens a VS Code Quick Pick over loaded object names.
+Case-insensitive search inside SQL bodies (procedures, views) and column names (tables, external tables). Toolbar search icon. This is distinct from **Quick Jump** (<kbd>/</kbd>), which matches object names only, and from Command Palette **Data Lineage: Search Objects**, which opens a VS Code Quick Pick over loaded object names.
 
 ---
 
@@ -200,7 +200,7 @@ How to use it:
 - Load a graph, then type `@lineage` in VS Code Chat and ask a question, for example *"what does spProcA do?"* or *"what reads from the Employee table?"*. The answer appears in chat.
 - `/search` looks up objects by name. `/trace` starts a deeper analysis of an object or column.
 - **Show graph preview** opens a temporary **AI Preview** in the graph view. **Save as Bookmark** keeps it; **Data Lineage: Show AI Trace in Graph** reopens the session's current AI view. When a run records column findings, the preview offers an **Objects / Detail** switch that shows traced columns and their connections.
-- Deep analysis (`/trace`, a named-column trace, the **Start deeper hop-by-hop analysis** follow-up, or a question over the discovery budget) shows a plan first. A hop is one procedure, view or function read in one step. The plan lists depth, scope (estimated hops and nodes), schemas, objects in scope, exclusions, the tracing type (object or column trace) and the analysis type (business, technical or both, which sets the sections of the written result). Choose **Approve & Proceed**, **Change scope** or **Cancel**, or reply in words. After approval, chat shows a hop counter and a short finding per hop.
+- Deep analysis (`/trace`, the **Start deeper hop-by-hop analysis** follow-up, or a question over the discovery budget) shows a plan first. A hop is one procedure, view or function read in one step. The plan lists depth, scope (estimated hops and nodes), schemas, objects in scope, exclusions, the tracing type (object or column trace) and the analysis type (business, technical or both, which sets the sections of the written result). Choose **Approve & Proceed**, **Change scope** or **Cancel**, or reply in words. After approval, chat shows a hop counter and a short finding per hop.
 - The plan shows upstream and downstream depth separately; `0` turns a direction off. A level count you give is the limit; if you give none, the assistant picks a starting depth. The trace-level settings do not affect AI depth.
 - A deep analysis must fit `dataLineageViz.ai.maxRounds` and, for column traces, `dataLineageViz.ai.maxTraceColumns`. Otherwise chat names the setting so you can narrow the scope or raise the limit. Discovery answers are limited by `dataLineageViz.ai.discoveryNodeCap` and `dataLineageViz.ai.discoveryTokenBudget`; larger requests are offered as a deep analysis. See the [settings reference](#settings-reference).
 - The assistant sees the trace, analysis or bookmark on screen. Type `#lineageView` in the chat input to attach it explicitly, then ask *"explain this"*.

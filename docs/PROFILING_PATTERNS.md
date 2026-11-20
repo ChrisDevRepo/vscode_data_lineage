@@ -12,8 +12,8 @@ statistics. This document describes the SQL a request sends and what it costs.
   finishes. See [Connections](../SECURITY.md#connections).
 - External tables can query remote systems. They are excluded by default and
   should be enabled only when their cost and latency are understood. The
-  exclusion is a user-interface setting: it hides the statistics section for
-  external tables in the detail panel.
+  exclusion hides the statistics section for external tables in the detail
+  panel, and a request for one is refused.
 - Approximate distinct counts require a database version that supports
   `APPROX_COUNT_DISTINCT`. Disable
   `dataLineageViz.tableStatistics.useApproxDistinct` on older SQL Server

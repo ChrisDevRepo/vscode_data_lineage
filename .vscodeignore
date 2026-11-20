@@ -25,6 +25,7 @@ tsconfig.integration.json
 vite.config.ts
 vitest.config.ts
 esbuild.config.mjs
+eslint.config.mjs
 
 # Dev artifacts
 node_modules/**

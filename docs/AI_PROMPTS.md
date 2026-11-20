@@ -62,7 +62,7 @@ Each key is used only at its own step:
 ### What can be changed
 
 The wording of every `instruction` and the `sections` label lists. The
-extension builds the document title, section headings, numbering, graph
+extension builds the title markup, section headings, numbering, graph
 badges, object links and the column chain of a column trace itself; an
 instruction that asks for a different structure does not change them.
 
