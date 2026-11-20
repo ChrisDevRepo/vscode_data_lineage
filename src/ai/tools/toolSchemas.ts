@@ -1,6 +1,6 @@
 /** Zod input schemas and lightweight runtime validation for the AI tools; no VS Code imports. */
 import { z } from 'zod';
-import { resolveModelNodeId } from '../support/inputNormalization';
+import { quotedWindow, resolveModelNodeId, WINDOW_AFTER } from '../support/inputNormalization';
 import { MAX_ID_LIST_LENGTH, SCREEN_STATE_MAX_IDS, ColumnTransformClassSchema } from '../../engine/shared/bridgeContract';
 import {
   ExplorationDepthLimitSchema,
@@ -400,10 +400,30 @@ export const GetScopeBundleModelSchema = z.object({
   include_ddl: ScopeIncludeDdlSchema,
 }).strict();
 
-/** Characters quoted before and after an offending control character, and offenders a rejection names. */
-const CONTROL_CONTEXT_BEFORE = 20;
-const CONTROL_CONTEXT_AFTER = 14;
+/** Offending control characters a rejection names. */
 const MAX_CONTROL_OFFENDERS = 3;
+
+/** The escape letter and the name of the C0 control characters a JSON escape (`\b`, `\t`, `\f`, `\r`) decodes to. */
+const CONTROL_ESCAPES: Readonly<Record<string, readonly [letter: string, name: string]>> = {
+  '\b': ['b', 'BACKSPACE'], '\t': ['t', 'TAB'], '\f': ['f', 'FORM FEED'], '\r': ['r', 'CARRIAGE RETURN'],
+};
+
+/**
+ * Names the invisible offender by the visible characters right after it (within the quoted window): the
+ * JSON-escaped window shows a TAB as `\t`, which reads like the text the model meant. RFC 8259 section 7
+ * forbids an unescaped control character inside a JSON string, so a decoded BACKSPACE, TAB, FORM FEED or CR
+ * of a tool argument can only come from its escape; the reason says so, and nothing about intent.
+ */
+function directlyBefore(chars: readonly string[], index: number): string {
+  const after = chars.slice(index + 1, index + 1 + WINDOW_AFTER);
+  const end = after.findIndex(char => /[\s),]/.test(char));
+  const next = JSON.stringify((end < 0 ? after : after.slice(0, end)).join(''));
+  if (next === '""') return '';
+  const escape = CONTROL_ESCAPES[chars[index]];
+  return escape
+    ? ` (the ${escape[1]} comes from "\\${escape[0]}" in your JSON text before ${next}; write "\\\\" for a backslash)`
+    : ` (directly before ${next})`;
+}
 
 /**
  * One `sections` angle body. LF is its only allowed C0 control character: any other, such as the
@@ -417,17 +437,17 @@ const SectionBodySchema = z.string().superRefine((body, ctx) => {
   const offenders = chars.flatMap((char, index) => (char < ' ' && char !== '\n' ? [index] : []));
   if (offenders.length === 0) return;
   const named = offenders.slice(0, MAX_CONTROL_OFFENDERS).map(index => {
-    const from = Math.max(0, index - CONTROL_CONTEXT_BEFORE);
-    const to = Math.min(chars.length, index + 1 + CONTROL_CONTEXT_AFTER);
-    const context = JSON.stringify(chars.slice(from, to).join('')).slice(1, -1);
     const hex = chars[index].charCodeAt(0).toString(16).toUpperCase().padStart(4, '0');
-    return `U+${hex} in "${from > 0 ? '…' : ''}${context}${to < chars.length ? '…' : ''}"`;
+    return `U+${hex} in ${quotedWindow(chars, index)} at character ${index + 1} of ${chars.length}${directlyBefore(chars, index)}`;
   });
   const rest = offenders.length - named.length;
+  const escapes = [...new Set(offenders.map(index => chars[index]))].map(char => JSON.stringify(char).slice(1, -1));
   ctx.addIssue({
     code: 'custom',
     message: `contains control character${offenders.length > 1 ? 's' : ''} ${named.join(', ')}${rest > 0 ? `, and ${rest} more` : ''}.`,
-    params: { hint: 'Section text allows only line breaks (\\n) as control characters: indent with spaces, and write each backslash as \\\\ in the JSON string (e.g. \\\\text).' },
+    params: {
+      help: `${escapes.map(escape => `${escape} decodes to a control character; write \\${escape} for a backslash and ${escape.slice(1)}`).join('; ')}.`,
+      hint: 'Section text allows only line breaks (\\n) as control characters: indent with spaces, and write each backslash as \\\\ in the JSON string (e.g. \\\\text).' },
   });
 });
 

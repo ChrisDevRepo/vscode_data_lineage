@@ -222,19 +222,20 @@ describe("tool-error-envelope", () => {
     const schema = z.object({ sections: z.object({ technical: z.string() }), flow: z.array(z.object({ out: z.string() })) });
     const reason = (input: unknown) => rejectionFromZodError(schema.safeParse(input).error!, { code: 'invalid_input', input, schema }).reason;
 
-    it('names the needed type with no JSON-validity claim and no re-escape instruction', () => {
-      for (const sections of ['{"technical":"cut', '[{"technical":"x"}]']) {
-        const text = reason({ sections, flow: [{ out: 'a' }] });
-        expect(text).toContain('received text where an object is needed.');
+    it('names the needed type for text that parses and the JSON fault for text that does not, with no re-escape instruction', () => {
+      for (const [sections, flow] of [['[{"technical":"x"}]', [{ out: 'a' }]], [{ technical: 'x' }, '{"out":"a"}']] as const) {
+        const text = reason({ sections, flow });
+        expect(text).toContain(`received text where ${typeof sections === 'string' ? 'an object' : 'an array'} is needed.`);
         expect(text).not.toContain('not valid JSON');
         expect(text).not.toContain('line breaks inside strings');
         expect(text).not.toContain('characters of text');
       }
-      for (const flow of ['[{"out":"a\nb"}]', '{"out":"a"}']) {
-        const text = reason({ sections: { technical: 'x' }, flow });
-        expect(text).toContain('received text where an array is needed.');
-        expect(text).not.toContain('not valid JSON');
-        expect(text).not.toContain('line breaks inside strings');
+      for (const [sections, flow] of [['{"technical":"cut', [{ out: 'a' }]], [{ technical: 'x' }, '[{"out":"a\nb"}]']] as const) {
+        const text = reason({ sections, flow });
+        expect(text).toContain('not valid JSON: ');
+        expect(text).toMatch(/at character \d+ of \d+/);
+        expect(text).not.toContain('text where');
+        expect(text).not.toContain('characters of text');
       }
     });
 
@@ -247,7 +248,7 @@ describe("tool-error-envelope", () => {
       const input = { sections: '{"technical":"cut', flow: [{ out: 'a' }] };
       const rejection = rejectionFromZodError(schema.safeParse(input).error!, { code: 'invalid_input', input, schema });
       const served = [rejection.reason, ...renderFaults(rejection, () => schema)].join('\n');
-      expect(served).toContain('received text where an object is needed.');
+      expect(served).toContain('not valid JSON: the text ends before the object closes');
       expect(served).toContain('Send the object directly');
       expect(served).not.toContain('Send it again as one complete JSON');
     });

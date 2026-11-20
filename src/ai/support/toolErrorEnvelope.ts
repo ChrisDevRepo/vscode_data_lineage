@@ -8,6 +8,7 @@
  */
 import { z } from 'zod';
 import { toModelJsonSchema } from '../tools/jsonSchema';
+import { locateJsonTextFault, parseJson } from './inputNormalization';
 import { REJECTION_CODES } from './rejectionCodes';
 
 const ISSUE_CATEGORIES = ['shape', 'required', 'reference', 'value', 'protocol', 'stage'] as const;
@@ -25,7 +26,7 @@ interface IssueText {
 
 type RegistryCode = (typeof REJECTION_CODES)[keyof typeof REJECTION_CODES];
 /** Codes of a schema fault, mapped from Zod issue codes by {@link rejectionFromZodError}. */
-type SchemaIssueCode = 'type' | 'unknown_key' | 'never' | 'missing' | 'enum' | 'size' | 'invalid';
+type SchemaIssueCode = 'type' | 'json_text' | 'unknown_key' | 'never' | 'missing' | 'enum' | 'size' | 'invalid';
 
 const BACKEND_FAULT = {
   category: 'stage',
@@ -69,6 +70,10 @@ export const ISSUES = {
   type: {
     category: 'shape',
     label: 'wrong JSON type',
+  },
+  json_text: {
+    category: 'shape',
+    label: 'text that is not valid JSON',
   },
   unknown_key: {
     category: 'shape',
@@ -382,7 +387,8 @@ const ISSUE_CODES = Object.keys(ISSUES) as [IssueCode, ...IssueCode[]];
  * One independently decidable fault: its dotted path and issue code, with the backend facts it
  * concerns (allowed `values`, accepted `types`, a size `bound`), never a submitted value. `stated`
  * marks a fault whose table correction the rejection's reason or hint already replaces (a
- * refinement's own hint, the variants of a union, a route fault's own reason).
+ * refinement's own hint, the variants of a union, a route fault's own reason). `help` is the line the
+ * check adds to the last feedback.
  */
 const ToolErrorShape = z.object({
   path: z.string(),
@@ -391,6 +397,7 @@ const ToolErrorShape = z.object({
   types: z.array(z.string()).optional(),
   bound: z.object({ keyword: z.string().min(1), limit: z.number(), sent: z.number().int().nonnegative().optional() }).strict().optional(),
   stated: z.literal(true).optional(),
+  help: z.string().optional(),
 }).strict();
 
 /** One independently decidable fault of a rejection. */
@@ -603,12 +610,12 @@ function schemaPath(path: string): PropertyKey[] {
  * its table correction, and for a mistyped or missing field that accepts `null` the null exit after it.
  */
 function faultCorrection(error: ToolError, schema: z.ZodType | undefined): string[] {
-  const node = error.code === 'type' || error.code === 'missing' ? jsonSchemaNodeAt(schema, schemaPath(error.path)) : undefined;
-  const object = error.code === 'type' && node && unwrapNullable(node).properties ? unwrapNullable(node) : undefined;
+  const node = error.code === 'type' || error.code === 'json_text' || error.code === 'missing' ? jsonSchemaNodeAt(schema, schemaPath(error.path)) : undefined;
+  const object = (error.code === 'type' || error.code === 'json_text') && node && unwrapNullable(node).properties ? unwrapNullable(node) : undefined;
   const row: IssueText = ISSUES[error.code];
   const correction = object
     ? `Send the object directly, shaped like ${JSON.stringify(exampleOf(object))}.`
-    : error.code === 'type' && error.types?.[0] === 'array' ? 'Send the array directly.' : row.correction;
+    : (error.code === 'type' || error.code === 'json_text') && error.types?.[0] === 'array' ? 'Send the array directly.' : row.correction;
   const lines = correction === undefined ? [] : [correction];
   return node && acceptsNull(node) ? [...lines, NULL_EXIT] : lines;
 }
@@ -653,6 +660,12 @@ export function renderLastFeedbackHelp(rejection: ToolRejection, schema?: () => 
     lines.push(REFERENCE_FALLBACK);
   }
   for (const error of errors) {
+    if (error.help && !lines.includes(error.help)) lines.push(error.help); // one fault per section body: the same help once
+    if (error.code === 'json_text' && /^[^.]+$/.test(error.path)) {
+      const node = jsonSchemaNodeAt(schema?.(), [error.path]);
+      const shape = node && unwrapNullable(node).properties ? ` as ${JSON.stringify(exampleOf(unwrapNullable(node)))}` : '';
+      lines.push(`Resend only ${error.path}${shape}.`);
+    }
     if ((error.code !== 'type' && error.code !== 'missing') || !error.types?.length || !/^[^.]+$/.test(error.path)) continue;
     const node = jsonSchemaNodeAt(schema?.(), [error.path]);
     lines.push(`${error.path} takes ${node ? nextLevel(node) : error.types.join(' or ')}.`);
@@ -692,18 +705,31 @@ function nextLevel(node: JsonSchemaShape): string {
  */
 type InvalidUnionIssue = Extract<z.core.$ZodIssue, { code: 'invalid_union' }>;
 
+/** Whether a received value is text that opens an object or array, where the schema needs one. */
+function isStructuredText(issue: z.core.$ZodIssue, received: unknown): issue is Extract<z.core.$ZodIssue, { code: 'invalid_type' }> {
+  return issue.code === 'invalid_type' && typeof received === 'string' && /^\s*[[{]/.test(received)
+    && (issue.expected === 'object' || issue.expected === 'array');
+}
+
+/** Whether that text is not valid JSON. */
+const isUnparsedJsonText = (issue: z.core.$ZodIssue, received: unknown) => isStructuredText(issue, received) && parseJson(received as string) === undefined;
+
 /**
  * Enriches one Zod issue's message with the measured size against the bound for
  * `too_big`/`too_small` (models cannot count characters), and names a structured field that
- * arrived as text where a JSON object or array is needed. The received value is never echoed: the
- * rejected call stays in the transcript with its arguments.
+ * arrived as text where a JSON object or array is needed: text that is not valid JSON says so with
+ * its first fault by position, short window and edit ({@link locateJsonTextFault}). Beyond that window the received value is
+ * never echoed: the rejected call stays in the transcript with its arguments.
  */
 function enrichedIssueMessage(issue: z.core.$ZodIssue, received: unknown): string {
   if (issue.code === 'too_big' || issue.code === 'too_small') {
     return describeSizeIssue(issue, received) ?? issue.message;
   }
-  if (issue.code === 'invalid_type' && typeof received === 'string' && /^\s*[[{]/.test(received)
-    && (issue.expected === 'object' || issue.expected === 'array')) {
+  if (isStructuredText(issue, received)) {
+    if (parseJson(received as string) === undefined) {
+      const fault = locateJsonTextFault(received as string);
+      return `not valid JSON${fault ? `: ${fault}` : ''}.`;
+    }
     return `received text where ${issue.expected === 'array' ? 'an array' : 'an object'} is needed.`;
   }
   return baseIssueMessage(issue);
@@ -1119,7 +1145,7 @@ function sizeKeyword(issue: Extract<z.core.$ZodIssue, { code: 'too_big' | 'too_s
  * The typed faults of one Zod issue: `invalid_type` is `missing` for an absent field, `never` for a
  * forbidden one, else `type`; `unrecognized_keys` one `unknown_key` per key; `invalid_value` is
  * `enum` (`missing` when absent); `too_big`/`too_small` `size` with its bound; a custom issue the
- * issue code on its `params.code`; every other issue `invalid`. A union names the faults of its
+ * issue code on its `params.code` and, on its `params.help`, the help the last feedback adds; every other issue `invalid`. A union names the faults of its
  * flattened branches, the accepted types of one path merged into one fault. A fault whose repair the
  * reason or hint states is `stated`: a union's variants, a refinement's `params.hint`.
  */
@@ -1145,7 +1171,7 @@ function issueErrors(issue: z.core.$ZodIssue, input: unknown): ToolError[] {
     case 'invalid_type':
       return [issue.expected === 'never'
         ? { path, code: 'never' }
-        : { path, code: absent ? 'missing' : 'type', types: [issue.expected] }];
+        : { path, code: absent ? 'missing' : isUnparsedJsonText(issue, resolveAtPath(input, issue.path)) ? 'json_text' : 'type', types: [issue.expected] }];
     case 'invalid_value':
       return [absent ? { path, code: 'missing', values: issue.values.map(String) } : { path, code: 'enum', values: issue.values.map(String) }];
     case 'too_big':
@@ -1156,8 +1182,14 @@ function issueErrors(issue: z.core.$ZodIssue, input: unknown): ToolError[] {
       return [{ path, code: 'size', bound: { keyword: sizeKeyword(issue), limit, ...(size !== undefined ? { sent: size } : {}) } }];
     }
     case 'custom': {
-      const code = (issue.params as { code?: unknown } | undefined)?.code;
-      return [{ path, code: typeof code === 'string' && code in ISSUES ? code as IssueCode : 'invalid', ...(issueStatesRepair(issue) ? { stated: true as const } : {}) }];
+      const params = issue.params as { code?: unknown; help?: unknown } | undefined;
+      const code = params?.code;
+      return [{
+        path,
+        code: typeof code === 'string' && code in ISSUES ? code as IssueCode : 'invalid',
+        ...(issueStatesRepair(issue) ? { stated: true as const } : {}),
+        ...(typeof params?.help === 'string' ? { help: params.help } : {}),
+      }];
     }
     default:
       return [{ path, code: 'invalid' }];

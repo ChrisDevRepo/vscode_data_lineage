@@ -181,6 +181,8 @@ interface ToolAttemptRejection {
   readonly hint?: string;
   readonly detail?: unknown;
   readonly issuePaths?: string[];
+  /** The issue codes of its faults (`errors[].code`), sorted: with the paths, what makes one reply's fault the same as the next one's. */
+  readonly issueCodes?: readonly string[];
   /** Offending entry ids the rejection names (`detail.entry_ids`). */
   readonly entryIds?: readonly string[];
 }
@@ -411,6 +413,8 @@ export interface ToolPhaseAttemptState {
    * whether or not the same reply carried an accepted read. Zero when no terminal tool is tracked.
    */
   readonly rejectedTerminalCalls: number;
+  /** Rejections the newest reply drew: the tail of {@link rejections} that answers it. */
+  readonly lastReplyRejections?: number;
   /**
    * `'backend_fault'` once a rejection of that group was recorded, `'no_progress'` once
    * {@link MAX_TOOL_PROVIDER_CALLS} replies passed without progress or without an accepted
@@ -484,6 +488,7 @@ export function recordToolAttempt(
     providerCalls,
     noProgressCalls,
     rejectedTerminalCalls,
+    lastReplyRejections: attempt.rejections.length,
     observations,
     rejections,
     messages,
@@ -727,7 +732,7 @@ interface RecordedToolOutcome {
  *
  * @param schema - The tool's input schema as served when the rejection renders.
  */
-function rejectionText(rejection: ToolRejection, priorState?: ToolPhaseAttemptState, schema?: () => z.ZodType | undefined): string {
+function rejectionText(rejection: ToolRejection, priorState?: ToolPhaseAttemptState, schema?: () => z.ZodType | undefined, toolName?: string): string {
   const repliesLeft = repliesLeftAfter(priorState);
   const finalRejection = repliesLeft !== undefined && repliesLeft <= 1;
   const inventories = finalRejection && Array.isArray(rejection.detail)
@@ -746,8 +751,46 @@ function rejectionText(rejection: ToolRejection, priorState?: ToolPhaseAttemptSt
     ...(finalRejection ? renderLastFeedbackHelp(rejection, schema) : []),
     ...(heldLabels ? [`Held sections: ${heldLabels}.`] : []),
     ...(owed.length > 0 ? [`Fields to correct in this reply: ${owed.join(', ')}.`] : []),
+    ...(finalRejection && toolName !== undefined ? repeatedFaultLine(toolName, rejection, priorState) : []),
     ...replyBudgetLine(repliesLeft),
   ].join('\n');
+}
+
+/**
+ * The last feedback's statement that the reply repeated the fault of the one before it.
+ * @internal
+ */
+export const REPEATED_FAULT_LINE = 'Same fault at the same place as in your previous reply.';
+
+/** The character position a located parse fault names in its reason. */
+const FAULT_POSITION = /at character (\d+) of \d+/;
+
+/** Rejections the previous reply of the step drew. */
+function previousReplyRejections(priorState?: ToolPhaseAttemptState): readonly ToolAttemptRejection[] {
+  const count = priorState?.lastReplyRejections ?? 0;
+  return priorState && count > 0 ? priorState.rejections.slice(-count) : [];
+}
+
+/** The sorted issue codes of a rejection's faults. */
+const issueCodes = (errors: readonly ToolError[]): string[] => [...new Set(errors.map(({ code }) => code))].sort();
+
+/**
+ * What the last feedback adds when the reply drew the fault of the one before it (same tool, code,
+ * paths and issue codes): the repeat, or the move when a located fault (one that names a character
+ * position) changed place. A different fault adds nothing, and neither does a fault located on only one side.
+ */
+function repeatedFaultLine(toolName: string, rejection: ToolRejection, priorState?: ToolPhaseAttemptState): string[] {
+  const key = (values?: readonly string[]) => [...(values ?? [])].sort().join(',');
+  const codes = issueCodes(rejection.errors ?? []);
+  const previous = previousReplyRejections(priorState).find(prior =>
+    prior.toolName === toolName && prior.code === rejection.code && key(prior.issuePaths) === key(rejection.issuePaths)
+    && key(prior.issueCodes) === key(codes));
+  if (!previous) return [];
+  const before = FAULT_POSITION.exec(previous.reason);
+  const now = FAULT_POSITION.exec(rejection.reason);
+  if (!before !== !now) return [];
+  if (before && now && before[1] !== now[1]) return [`The fault moved from character ${before[1]} to character ${now[1]}.`];
+  return [REPEATED_FAULT_LINE];
 }
 
 /** Replies the step has left once the current reply is counted; undefined without step state. */
@@ -787,7 +830,7 @@ function recordToolOutcome(
     }
     if (outcome.detail.refused) {
       const refusal = readToolError(JSON.parse(outcome.detail.result));
-      if (refusal) return { resultText: rejectionText(refusal, priorState), status: 'error', artifact: refusal };
+      if (refusal) return { resultText: rejectionText(refusal, priorState, undefined, call.toolName), status: 'error', artifact: refusal };
     }
     return { resultText: renderObservationResultContent(outcome.detail.result), status: 'success' };
   }
@@ -800,13 +843,14 @@ function recordToolOutcome(
       ...(outcome.correction.hint ? { hint: outcome.correction.hint } : {}),
       ...(outcome.detail !== undefined ? { detail: outcome.detail } : {}),
       ...(outcome.correction.issuePaths ? { issuePaths: outcome.correction.issuePaths } : {}),
+      ...(outcome.correction.errors ? { issueCodes: issueCodes(outcome.correction.errors) } : {}),
       ...(outcome.correction.entryIds ? { entryIds: outcome.correction.entryIds } : {}),
     };
     calls.push({ callId: outcome.callId, toolName: outcome.toolName, status: outcome.status });
     rejections.push(rejection);
     trace?.({ toolName: outcome.toolName, code: outcome.code });
     const artifact = { ...rejection, ...(outcome.correction.errors ? { errors: outcome.correction.errors } : {}) };
-    return { resultText: rejectionText(artifact, priorState, call.schema), status: 'error', rejection, artifact };
+    return { resultText: rejectionText(artifact, priorState, call.schema, call.toolName), status: 'error', rejection, artifact };
   }
   calls.push({ callId: outcome.callId, toolName: outcome.toolName, status: outcome.status, closedByCallId: outcome.closedByCallId });
   trace?.({ toolName: outcome.toolName, code: outcome.rejection.code });

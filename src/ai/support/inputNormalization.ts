@@ -193,12 +193,75 @@ function declaredTypes(schema: JsonSchemaNode | undefined): Set<string> {
 }
 
 /** Parses a JSON text with the platform parser; `undefined` when the text is not valid JSON. */
-function parseJson(text: string): unknown {
+export function parseJson(text: string): unknown {
   try {
     return JSON.parse(text);
   } catch {
     return undefined;
   }
+}
+
+/** Characters quoted before and after a located character. */
+const WINDOW_BEFORE = 20;
+export const WINDOW_AFTER = 14;
+
+/**
+ * The short window around one character of a text, in its canonical JSON escape (a TAB shows as `\t`,
+ * a line break as `\n`, a backslash as `\\`): the offender is invisible or uncountable to a model, so
+ * the rejection quotes it by its neighbours, never more than the window.
+ *
+ * @param chars - The text as code points.
+ * @param index - Offset of the located character in `chars`.
+ * @returns The quoted window, with an ellipsis where the text goes on.
+ */
+export function quotedWindow(chars: readonly string[], index: number): string {
+  const from = Math.max(0, index - WINDOW_BEFORE);
+  const to = Math.min(chars.length, index + 1 + WINDOW_AFTER);
+  const context = JSON.stringify(chars.slice(from, to).join('')).slice(1, -1);
+  return `"${from > 0 ? '…' : ''}${context}${to < chars.length ? '…' : ''}"`;
+}
+
+const JSON_ESCAPES = new Set(['"', '\\', '/', 'b', 'f', 'n', 'r', 't', 'u']);
+
+/**
+ * Locates the first fault of a text that opens an object or array but is not valid JSON, for the
+ * reason of a rejection (the text itself is never completed or repaired): the text ends before the
+ * value closes, a closing bracket follows its end, a raw line break sits inside a string, or a
+ * backslash escape is invalid. Any other fault is not located.
+ *
+ * @returns The fault kind with its character position, window and the edit that removes it, or
+ *   `undefined` for valid JSON or an unlocated fault.
+ */
+export function locateJsonTextFault(text: string): string | undefined {
+  if (parseJson(text) !== undefined) return undefined;
+  const chars = [...text];
+  const closers: string[] = [];
+  let inString = false;
+  let ended = false;
+  const noun = text.trimStart().startsWith('[') ? 'array' : 'object';
+  const at = (kind: string, index: number, edit: string): string => `${kind} at character ${index + 1} of ${chars.length} (${quotedWindow(chars, index)}): ${edit}`;
+  for (let index = 0; index < chars.length; index++) {
+    const char = chars[index];
+    if (inString) {
+      if (char === '\\') {
+        if (!JSON_ESCAPES.has(chars[index + 1] ?? '')) return at('an invalid backslash escape', index, 'write \\\\');
+        index++;
+      } else if (char === '"') inString = false;
+      else if (char === '\n' || char === '\r') return at('a raw line break inside a string', index, 'write \\n');
+      else if (char < ' ') return undefined;
+    } else if (char === '"') inString = true;
+    else if (char === '{' || char === '[') {
+      if (ended) return undefined;
+      closers.push(char === '{' ? '}' : ']');
+    } else if (char === '}' || char === ']') {
+      if (ended) return at(`an extra "${char}" after the end of the ${noun}`, index, 'remove it');
+      if (closers.pop() !== char) return undefined;
+      ended = closers.length === 0;
+    }
+  }
+  return closers.length > 0
+    ? at(`the text ends before the ${noun} closes`, chars.length - 1, `add \`${inString ? '"' : ''}${closers.reverse().join('')}\` at the end`)
+    : undefined;
 }
 
 function coerce(value: unknown, schema: JsonSchemaNode | undefined, path: string, paths: string[]): unknown {
