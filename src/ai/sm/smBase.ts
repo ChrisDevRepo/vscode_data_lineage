@@ -2493,6 +2493,8 @@ export class NavigationEngine implements IHopStateMachine {
             parentTaskId: task.id, traversalSide: task.traversalSide, sourceRefs: this.qualifiedTaskRefs(task)!,
           });
         }
+        // After the fold, which skips a visited target: the table is done, so no later hop folds it again.
+        this.visited.add(candidate.nodeId);
         this.completeTasks(candidate.taskIds);
         this._totalNodes--;
         continue;
@@ -3811,13 +3813,15 @@ export class NavigationEngine implements IHopStateMachine {
     });
     const side = traversalSide ?? (this.tracer && carried?.length ? this.columnTraceDirection() : undefined);
     const atOrigin = targetId === this.originNodeId;
-    // A bidirectional origin has no arriving side: each neighbour continues on the side it lies on.
-    const upstreamOfOrigin = side && !traversalSide && atOrigin && this.effectiveDirection() === 'bidirectional'
-      ? new Set(this.directionalNeighbors(targetId, 'upstream')) : null;
-    const columnContinuation = side && !upstreamOfOrigin ? new Set(this.directionalNeighbors(targetId, side)) : null;
-    for (const nid of this.directionalNeighbors(targetId, this._direction)) {
+    // A bidirectional origin has no arriving side: each neighbour continues on every side it lies on (a writer that also reads gets both).
+    const bothSidesOfOrigin = !!side && !traversalSide && atOrigin && this.effectiveDirection() === 'bidirectional';
+    const columnContinuation = side && !bothSidesOfOrigin ? new Set(this.directionalNeighbors(targetId, side)) : null;
+    // Downstream first: a delete-only writer's upstream leg is a relevance check only, so the question-carrying leg is its first task.
+    const legs: Array<[string, typeof side]> = bothSidesOfOrigin
+      ? (['downstream', 'upstream'] as const).flatMap(leg => this.directionalNeighbors(targetId, leg).map((nid): [string, typeof side] => [nid, leg]))
+      : this.directionalNeighbors(targetId, this._direction).map(nid => [nid, side]);
+    for (const [nid, nidSide] of legs) {
       const neighbor = this.nodeMap.get(nid);
-      const nidSide = upstreamOfOrigin ? (upstreamOfOrigin.has(nid) ? 'upstream' : 'downstream') : side;
       // Only a walk toward the writers reaches `nid` through its delete: downstream, the same node is a reader of `targetId`.
       const deleteOnly = !!this.tracer && (nidSide ?? this.columnTraceDirection()) === 'upstream' && this.isDeleteOnlyWrite(nid, targetId);
       const continues = !deleteOnly && (columnContinuation === null || columnContinuation.has(nid));
