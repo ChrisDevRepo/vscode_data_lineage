@@ -142,7 +142,7 @@ export function buildGateRefineSystemPrompt(ctx: StagePromptContext): string {
     '## Refine the pending exploration',
     'Revise the interrupted proposal and call `lineage_start_exploration`.',
     'The current proposal, revision, and requested edit are supplied in the trailing user message.',
-    'Reuse canonical IDs already present there. Do not search for or re-resolve the unchanged origin.',
+    'Do not search for or re-resolve the unchanged origin.',
     'Use `lineage_search_objects` only when the requested edit needs resolution, such as a typo, ambiguous name, name pattern, or newly named object.',
     'Call `lineage_start_exploration` with the current proposalRevision and only fields changed by the edit; an omitted field keeps the reviewed value, except mission_brief as the trailing message states.',
     'A successful patch re-emits the consent gate. That is expected control flow, not an error to retry around.',
