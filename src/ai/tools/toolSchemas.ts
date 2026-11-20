@@ -510,7 +510,8 @@ const ColumnFlowEntrySchema = z.object({
     'A column used only to join, filter, group, partition or order rows is not a source: omit it here and state it in sections. ' +
     'Exclude the entry’s own writes_to column and unused expressions. Resolve parameters and computed aliases to their source columns. ' +
     'At a bodyless focus, follow carrier-side neighbours (writers upstream, readers downstream) with the ' +
-    'tracked column unchanged. [] when out_col has no in-scope source: it originates here or its source lies outside the approved scope.',
+    'tracked column unchanged; a focus with an in-scope carrier-side neighbour is not an origin. ' +
+    '[] only when out_col has no in-scope source: no column computes it, it has no carrier-side neighbour, or its source lies outside the approved scope.',
   ),
 }).strict();
 
