@@ -7,16 +7,10 @@
 - The **with positions** bookmark option.
 
 ### Changed
-- Confirmation dialogs removed outside the AI chat.
-- A new load cancels the previous one.
-- Logs show names and paths at debug level only and never show credentials.
-- AI analysis enforces the approved scope.
+- Several improvements in the GUI and in AI analysis.
 
 ### Fixed
-- Fixes in column statistics, name unescaping, filters, notifications and keyboard access.
-- Draw.io export places schema clusters around their nodes.
-- External files with different URLs no longer merge into one node; a saved view drops an external file it listed by ID.
-- Several fixes in AI analysis.
+- Several bug fixes in the GUI and in AI analysis.
 
 ### Dependencies
 - Security updates: dompurify, zod, fast-xml-parser, @azure/msal-node.
