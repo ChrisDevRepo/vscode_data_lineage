@@ -1,5 +1,6 @@
 /** Shared OpenAI-compatible ModelPort: production validation with headless HTTP transport. */
 import type { BaseMessage, MessageContent } from '@langchain/core/messages';
+import { Agent, fetch as undiciFetch } from 'undici';
 import {
   type CompleteTextInput,
   type GeneratedToolCall,
@@ -64,46 +65,28 @@ export interface HttpRequestInit {
   readonly headers: Readonly<Record<string, string>>;
   readonly body: string;
   readonly signal?: AbortSignal;
-  /** Undici `Agent` dispatcher when the transport upgrade resolved; ignored by fake transports. */
+  /** Undici `Agent` dispatcher of the default transport; ignored by fake transports. */
   readonly dispatcher?: unknown;
 }
 
 /**
- * Resolves the transport provider requests are issued through.
+ * Builds the default transport: undici's `fetch` with an `Agent` whose timeouts equal the lane deadline.
  *
  * @remarks
  * Node's global `fetch` is undici's, and undici aborts a request whose response **headers** have
  * not arrived within its own hard-coded 300 s `headersTimeout` — invisible to the port's own
  * `requestTimeoutMs` deadline and fatal for local thinking models whose single non-streamed
- * generation legitimately runs longer (surfacing as `UND_ERR_HEADERS_TIMEOUT`). When the `undici`
- * package is resolvable (transitively present via tooling dependencies), the port uses undici's
- * own `fetch` with an `Agent` whose `headersTimeout` and `bodyTimeout` equal the lane deadline,
- * so the ONLY deadline is the port's. Without undici, global `fetch` is kept and the 300 s header
- * cap applies — the warning names it.
+ * generation legitimately runs longer (surfacing as `UND_ERR_HEADERS_TIMEOUT`). The global does
+ * not expose its `Agent`, so the `undici` devDependency supplies one whose `headersTimeout` and
+ * `bodyTimeout` equal the lane deadline, so the ONLY deadline is the port's.
  */
-function resolveTransport(
-  timeoutMs: number,
-  debugLog: ((message: string) => void) | undefined,
-): { fetchImpl: FetchLike; dispatcher: unknown } {
-  try {
-    // Lazy, optional transport upgrade: undici is not a direct dependency, so resolve it at
-    // runtime and fall back to global fetch when it is not installed.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const undici = require('undici') as {
-      fetch: (url: string, init: HttpRequestInit) => Promise<HttpResponseLike>;
-      Agent: new (options: { headersTimeout: number; bodyTimeout: number }) => unknown;
-    };
-    const agent = new undici.Agent({ headersTimeout: timeoutMs, bodyTimeout: timeoutMs });
-    return {
-      fetchImpl: (url, init) => undici.fetch(url, { ...init, dispatcher: agent }),
-      dispatcher: agent,
-    };
-  } catch {
-    debugLog?.(
-      '[AI] undici is not resolvable; using global fetch — undici\'s built-in 300s headers timeout will abort long non-streamed generations.',
-    );
-    return { fetchImpl: (url, init) => globalThis.fetch(url, init as RequestInit) as Promise<HttpResponseLike>, dispatcher: undefined };
-  }
+function createUndiciTransport(timeoutMs: number): { fetchImpl: FetchLike; dispatcher: unknown } {
+  const agent = new Agent({ headersTimeout: timeoutMs, bodyTimeout: timeoutMs });
+  return {
+    fetchImpl: (url, init) =>
+      undiciFetch(url, { ...init, dispatcher: agent }) as Promise<HttpResponseLike>,
+    dispatcher: agent,
+  };
 }
 
 /** The injectable transport. Production passes global `fetch`; tests pass canned responses. */
@@ -493,10 +476,7 @@ export class OpenAiCompatiblePort implements ModelPort {
       this.fetchImpl = options.fetchImpl;
       this.dispatcher = undefined;
     } else {
-      const transport = resolveTransport(
-        config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
-        options.debugLog,
-      );
+      const transport = createUndiciTransport(config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
       this.fetchImpl = transport.fetchImpl;
       this.dispatcher = transport.dispatcher;
     }
