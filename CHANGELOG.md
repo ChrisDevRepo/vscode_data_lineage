@@ -8,7 +8,7 @@
 
 ### Fixed
 - GUI: light-theme colors and contrast, settings, loading and notifications.
-- Several fixes in AI analysis.
+- AI analysis: clearer rejection feedback and retries, analysis kept inside the approved scope, column traces, shorter prompts.
 
 ### Dependencies
 - Security updates: dompurify, zod, fast-xml-parser, @azure/msal-node.
