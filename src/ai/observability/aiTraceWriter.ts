@@ -83,6 +83,8 @@ export type RuntimeLifecycleRecord =
       readonly runFingerprint: string;
       readonly seq: number;
       readonly phase: string;
+      /** Provider call id; absent for a rejection raised without a call. */
+      readonly callId?: string;
       readonly toolName: string;
       /** Dispatch outcome; `gate` is a consent gate, not charged to the semantic budget. */
       readonly status: 'accepted' | 'rejected' | 'gate' | 'dispatch_error';

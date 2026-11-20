@@ -158,13 +158,14 @@ export class LineageRuntime {
         })
       : registry;
     const traceSyntheticRejection = traceWriter
-      ? (rejection: { toolName: string; code: string }): void => {
+      ? (rejection: { callId?: string; toolName: string; code: string }): void => {
           void traceWriter.write({
             type: 'tool',
             requestId: input.request.id,
             runFingerprint,
             seq: ++toolSequence,
             phase,
+            ...(rejection.callId ? { callId: rejection.callId } : {}),
             toolName: rejection.toolName,
             status: 'rejected',
             rejectionCode: rejection.code,
@@ -284,7 +285,7 @@ function instrumentRegistry(
     getTools: () => registry.getTools(),
     get: (name) => registry.get(name),
     has: (name) => registry.has(name),
-    invoke: async (name, payload) => {
+    invoke: async (name, payload, callId) => {
       const startedAt = performance.now();
       const sequence = instrumentation.nextSequence();
       const base = {
@@ -293,10 +294,11 @@ function instrumentRegistry(
         runFingerprint: instrumentation.runFingerprint,
         seq: sequence,
         phase: instrumentation.currentPhase(),
+        ...(callId ? { callId } : {}),
         toolName: name,
       };
       try {
-        const result = await registry.invoke(name, payload);
+        const result = await registry.invoke(name, payload, callId);
         const rejection = parseRejection(result);
         const issuePaths = rejection?.issuePaths ?? [];
         void instrumentation.writer.write({

@@ -53,7 +53,7 @@ export interface IToolRegistry<O = unknown> {
   /** Registers a tool; throws on a duplicate name (drift/typo guard). */
   register(tool: RegisteredTool<O>): void;
   /** Dispatches `name` with the raw input and returns the handler's result; throws if unknown. */
-  invoke(name: string, input: unknown): O | Promise<O>;
+  invoke(name: string, input: unknown, callId?: string): O | Promise<O>;
   /** All registered tools, in registration order. */
   getTools(): readonly RegisteredTool<O>[];
   get(name: string): RegisteredTool<O> | undefined;
@@ -73,7 +73,7 @@ export class ToolRegistry<O = unknown> implements IToolRegistry<O> {
   }
 
   /** {@inheritDoc IToolRegistry.invoke} */
-  public invoke(name: string, input: unknown): O | Promise<O> {
+  public invoke(name: string, input: unknown, _callId?: string): O | Promise<O> {
     const tool = this.tools.get(name);
     if (!tool) throw new Error(`ToolRegistry: no tool registered under "${name}"`);
     return tool.execute(input);
@@ -108,7 +108,7 @@ export function filterRegistry<O>(reg: IToolRegistry<O>, allowed: ReadonlySet<st
   };
   return {
     register: () => { throw new Error('filterRegistry: view is read-only'); },
-    invoke: (name, input) => { ensure(name); return reg.invoke(name, input); },
+    invoke: (name, input, callId) => { ensure(name); return reg.invoke(name, input, callId); },
     getTools: () => reg.getTools().filter((t) => allowed.has(t.name)),
     get: (name) => (allowed.has(name) ? reg.get(name) : undefined),
     has: (name) => allowed.has(name) && reg.has(name),
@@ -140,8 +140,8 @@ export function trackInFlightDispatch<O>(reg: IToolRegistry<O>): TrackedRegistry
   const inFlight = new Set<Promise<unknown>>();
   const registry: IToolRegistry<O> = {
     register: (tool) => reg.register(tool),
-    invoke: (name, input) => {
-      const call = Promise.resolve(reg.invoke(name, input));
+    invoke: (name, input, callId) => {
+      const call = Promise.resolve(reg.invoke(name, input, callId));
       inFlight.add(call);
       call.catch(() => undefined).finally(() => inFlight.delete(call));
       return call;
@@ -186,7 +186,7 @@ export function resolveRegistrySchemas<O>(
   };
   return {
     register: () => { throw new Error('resolveRegistrySchemas: view is read-only'); },
-    invoke: (name, input) => reg.invoke(name, input),
+    invoke: (name, input, callId) => reg.invoke(name, input, callId),
     getTools: () => reg.getTools().map(projected),
     get: (name) => {
       const tool = reg.get(name);

@@ -344,7 +344,7 @@ interface ToolGenerationAttemptInput {
  * tool name only; the reason prose stays on {@link ToolGenerationAttemptInput.debugLog}, keeping
  * this module free of observability imports.
  */
-export type SyntheticRejectionTrace = (rejection: { toolName: string; code: string }) => void;
+export type SyntheticRejectionTrace = (rejection: { callId?: string; toolName: string; code: string }) => void;
 
 /** Optional graph-owned state and diagnostics supplied when executing a compiled plan. */
 interface ToolAttemptExecutionOptions {
@@ -813,7 +813,7 @@ function recordToolOutcome(
   calls: ToolAttemptCall[],
   observations: ToolAttemptObservation[],
   rejections: ToolAttemptRejection[],
-  trace?: (rejection: { toolName: string; code: string }) => void,
+  trace?: SyntheticRejectionTrace,
   priorState?: ToolPhaseAttemptState,
 ): RecordedToolOutcome {
   const outcome = { callId: call.callId, toolName: call.toolName, ...data } as ToolOutcome;
@@ -849,12 +849,12 @@ function recordToolOutcome(
     };
     calls.push({ callId: outcome.callId, toolName: outcome.toolName, status: outcome.status });
     rejections.push(rejection);
-    trace?.({ toolName: outcome.toolName, code: outcome.code });
+    trace?.({ callId: outcome.callId, toolName: outcome.toolName, code: outcome.code });
     const artifact = { ...rejection, ...(outcome.correction.errors ? { errors: outcome.correction.errors } : {}) };
     return { resultText: rejectionText(artifact, priorState, call.schema, call.toolName), status: 'error', rejection, artifact };
   }
   calls.push({ callId: outcome.callId, toolName: outcome.toolName, status: outcome.status, closedByCallId: outcome.closedByCallId });
-  trace?.({ toolName: outcome.toolName, code: outcome.rejection.code });
+  trace?.({ callId: outcome.callId, toolName: outcome.toolName, code: outcome.rejection.code });
   return { resultText: rejectionText(outcome.rejection, priorState), status: 'error', artifact: outcome.rejection };
 }
 
@@ -910,7 +910,7 @@ async function dispatchRegistryTool(
   call: Extract<GeneratedToolCall, { valid: true }>,
 ): Promise<DispatchOutcome> {
   try {
-    return { resultText: await input.registry.invoke(call.toolName, call.input), cancelled: false, failed: false };
+    return { resultText: await input.registry.invoke(call.toolName, call.input, call.callId), cancelled: false, failed: false };
   } catch (error) {
     if (isCancellationOutcome(error, input.signal)) {
       return { resultText: '', cancelled: true, failed: false };
