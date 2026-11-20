@@ -400,16 +400,33 @@ export const GetScopeBundleModelSchema = z.object({
   include_ddl: ScopeIncludeDdlSchema,
 }).strict();
 
+/** Characters quoted before and after an offending control character, and offenders a rejection names. */
+const CONTROL_CONTEXT_BEFORE = 20;
+const CONTROL_CONTEXT_AFTER = 14;
+const MAX_CONTROL_OFFENDERS = 3;
+
 /**
  * One `sections` angle body. LF is its only allowed C0 control character: any other, such as the
  * TAB a single JSON backslash makes of `\text`, rejects the angle instead of reaching the report.
+ * An offender is located by the text around it in its canonical JSON escape (a TAB shows as `\t`
+ * beside a correctly escaped `\\text`): it is invisible and models cannot count lines or columns.
+ * The quote is bounded to the window around the offender.
  */
 const SectionBodySchema = z.string().superRefine((body, ctx) => {
-  const control = [...body].find(char => char < ' ' && char !== '\n');
-  if (control === undefined) return;
+  const chars = [...body];
+  const offenders = chars.flatMap((char, index) => (char < ' ' && char !== '\n' ? [index] : []));
+  if (offenders.length === 0) return;
+  const named = offenders.slice(0, MAX_CONTROL_OFFENDERS).map(index => {
+    const from = Math.max(0, index - CONTROL_CONTEXT_BEFORE);
+    const to = Math.min(chars.length, index + 1 + CONTROL_CONTEXT_AFTER);
+    const context = JSON.stringify(chars.slice(from, to).join('')).slice(1, -1);
+    const hex = chars[index].charCodeAt(0).toString(16).toUpperCase().padStart(4, '0');
+    return `U+${hex} in "${from > 0 ? '…' : ''}${context}${to < chars.length ? '…' : ''}"`;
+  });
+  const rest = offenders.length - named.length;
   ctx.addIssue({
     code: 'custom',
-    message: `contains control character U+${control.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}.`,
+    message: `contains control character${offenders.length > 1 ? 's' : ''} ${named.join(', ')}${rest > 0 ? `, and ${rest} more` : ''}.`,
     params: { hint: 'Section text allows only line breaks (\\n) as control characters: indent with spaces, and write each backslash as \\\\ in the JSON string (e.g. \\\\text).' },
   });
 });
