@@ -172,7 +172,7 @@ function buildFlowRoleHighlightLines(groups: FlowRoleGroups, presented: Readonly
   const linkable = (ids: readonly string[]): string[] => presented ? ids.filter(id => presented.has(id)) : [...ids];
   return [
     `- highlight_groups.target (the queried origin): ${linkable(groups.target).join(', ')}`,
-    `- highlight_groups.source candidates (upstream endpoints reached within this trace): ${linkable(groups.source).join(', ') || '(none)'}`,
+    `- highlight_groups.source candidates (the only nodes to color source): ${linkable(groups.source).join(', ') || '(none)'}`,
   ];
 }
 
