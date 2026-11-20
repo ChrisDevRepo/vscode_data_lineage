@@ -81,7 +81,7 @@ export interface SchemaInfo {
 }
 
 /** Detailed parsing metrics for a single scripted object (procedure, view, function). */
-export interface SpParseDetail {
+interface SpParseDetail {
   /** Full schema-qualified name of the object. */
   name: string;
   /** Count of successfully resolved source (read) references. */
@@ -152,7 +152,7 @@ export interface DatabaseModel {
 }
 
 /** Ingestion lane that produced a {@link DatabaseModel}. */
-export type ModelSource = 'dacpac' | 'database';
+type ModelSource = 'dacpac' | 'database';
 
 /**
  * Label recorded when no source can identify the database platform. Single-sourced because it is
@@ -193,7 +193,7 @@ export interface XmlElement {
 }
 
 /** Metadata annotation on an XML element, often holding property values such as data types. */
-export interface XmlAnnotation {
+interface XmlAnnotation {
   /** The type of annotation (e.g., 'SqlColumn.Type'). */
   '@_Type': string;
   /** Optional name for identifying specific annotations. */
@@ -212,7 +212,7 @@ export interface XmlProperty {
 }
 
 /** Defines a structural relationship between elements in the DACPAC XML. */
-export interface XmlRelationship {
+interface XmlRelationship {
   /** The name of the relationship (e.g., 'Columns', 'QueryDependencies'). */
   '@_Name': string;
   /** The target entries participating in this relationship. */
@@ -220,7 +220,7 @@ export interface XmlRelationship {
 }
 
 /** A single entry within a {@link XmlRelationship}. */
-export interface XmlEntry {
+interface XmlEntry {
   /** References to other top-level elements. */
   References?: XmlReference | XmlReference[];
   /** Inline child elements defined specifically for this entry. */
@@ -271,7 +271,7 @@ export interface ColumnDef {
 }
 
 /** Exact source metadata for a column expression reference, without inferred SQL semantics. */
-export interface ColumnExpressionDependency {
+interface ColumnExpressionDependency {
   /** Source reference identity with column qualification; DACPAC References.Name stays verbatim. */
   reference: string;
   /** Exact local source type: DACPAC XML Type or DMV sys.objects.type, when resolved. */
@@ -447,7 +447,7 @@ export const DMV_TYPE_MAP: Record<string, ObjectType> = {
 };
 
 /** Configuration for graph layout algorithms (dagre). */
-export interface LayoutConfig {
+interface LayoutConfig {
   /** The flow direction of the graph: Top-to-Bottom (TB) or Left-to-Right (LR). */
   direction: 'TB' | 'LR';
   /** Spacing between hierarchical ranks. */
@@ -460,10 +460,10 @@ export interface LayoutConfig {
   edgeStyle: EdgeStyle;
 }
 
-export type EdgeStyle = 'default' | 'smoothstep' | 'step' | 'straight';
+type EdgeStyle = 'default' | 'smoothstep' | 'step' | 'straight';
 
 /** Configuration for interactive lineage tracing. */
-export interface TraceConfig {
+interface TraceConfig {
   defaultUpstreamLevels: number;
   defaultDownstreamLevels: number;
 }
@@ -479,7 +479,7 @@ export interface AnalysisConfig {
 }
 
 /** Configuration for the table profiling/statistics engine. */
-export interface TableStatsConfig {
+interface TableStatsConfig {
   enabled: boolean;
   /** Whether standard profiling (MIN/MAX, string length range, AVG, STDEV, empty counts) is on. */
   standardModeEnabled: boolean;
@@ -496,13 +496,13 @@ export interface TableStatsConfig {
 }
 
 /** Configuration for external reference detection and display. */
-export interface ExternalRefsConfig {
+interface ExternalRefsConfig {
   /** Whether to detect and display cross-database and file-based references. */
   enabled: boolean;
 }
 
 /** Configuration for Schema View. */
-export interface OverviewConfig {
+interface OverviewConfig {
   /** When false, Schema View is off and new loads open in Object View until the hard limit. */
   enabled: boolean;
   /** Loaded-model object count above which the initial graph opens in Schema View. */

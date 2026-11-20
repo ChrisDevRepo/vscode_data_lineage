@@ -35,7 +35,7 @@ export type StoredRunReader = (bookmarkId: string) => StoredAiRun | undefined;
 /** Global-state key prefix under which one {@link StoredAiRun} is persisted per bookmark. */
 const AI_RUN_KEY_PREFIX = 'dataLineageViz.aiRun.';
 
-/** Builds the global-state key holding the {@link StoredAiRun} for one bookmark. */
+/** Builds the global-state key holding the {@link StoredAiRun} for one bookmark. @internal */
 export function aiRunStorageKey(bookmarkId: string): string {
   return `${AI_RUN_KEY_PREFIX}${bookmarkId}`;
 }

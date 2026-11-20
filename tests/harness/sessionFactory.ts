@@ -78,7 +78,7 @@ async function loadOutputTemplates(path: string): Promise<AiOutputTemplateSet> {
  * @param contextWindow - Model input window in tokens; `POSITIVE_INFINITY` when unknown.
  * @returns The frozen budget the turn's model port carries.
  */
-export function calibrateTokenBudgets(contextWindow: number): TurnTokenBudget {
+function calibrateTokenBudgets(contextWindow: number): TurnTokenBudget {
   const window = contextWindow > 0 ? contextWindow : Number.POSITIVE_INFINITY;
   const settings = {
     discoveryNodeCap: DEFAULT_DISCOVERY_NODE_CAP,

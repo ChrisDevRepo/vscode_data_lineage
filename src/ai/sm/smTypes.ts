@@ -26,7 +26,7 @@ export type HopProgress = { current: number; open: number; total: number; pruned
  * *through* it, or it carries nothing further (a dead end). Off-path neighbors leave through
  * `prune_neighbors` (recorded as node action `prune`).
  */
-export type Verdict = 'analyze' | 'passthrough';
+type Verdict = 'analyze' | 'passthrough';
 
 /** Engine-owned lifecycle action for a node in an SM result. Mirrors {@link Verdict}. */
 export type SmNodeAction = 'analyze' | 'passthrough' | 'prune';
@@ -232,7 +232,7 @@ export interface HopContext {
 }
 
 /** One `prune_neighbors` entry: an unvisited neighbor removed on this node's SQL alone. */
-export interface PruneNeighbor {
+interface PruneNeighbor {
   /** Neighbor id from `<hop_context>`. */
   id: string;
   /** Why this node's SQL shows the neighbor is off the answer. */
@@ -240,7 +240,7 @@ export interface PruneNeighbor {
 }
 
 /** One `questions` entry: a specific check the neighbor's own hop should establish. */
-export interface NeighborQuestion {
+interface NeighborQuestion {
   /** Neighbor id from `<hop_context>`. */
   nodeId: string;
   /** The rule, filter or calculation to establish at that neighbor. */

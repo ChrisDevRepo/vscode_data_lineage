@@ -153,7 +153,7 @@ function renderNumber(n: number, typeName: string, meta: CellMetadata): string {
  * binary as `0x` hex, decimals with their declared scale, temporal values in UTC with the fraction
  * their type carries, and `NULL` as `isNull` with the text `NULL`.
  */
-export function mapCell(value: unknown, meta: CellMetadata): DbCellValue {
+function mapCell(value: unknown, meta: CellMetadata): DbCellValue {
   if (value === null || value === undefined) return NULL_CELL;
   const typeName = meta.type.name;
   if (value instanceof Date) return { displayValue: renderTemporal(value, typeName, meta), isNull: false };

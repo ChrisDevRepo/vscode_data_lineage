@@ -11,7 +11,7 @@ import { ModelPortError } from '../../src/ai/model/modelPort';
 import type { TokenUsage, WireMessage, WirePart } from '../../src/ai/observability/wireLog';
 
 /** One assistant tool call in the `/chat/completions` request and response shape. */
-export interface OpenAiToolCall {
+interface OpenAiToolCall {
   readonly id: string;
   readonly type: 'function';
   readonly function: { readonly name: string; readonly arguments: string };
@@ -273,7 +273,7 @@ const XML_TOOL_PARAMETER = /<parameter=([A-Za-z0-9_]+)>\n?([\s\S]*?)\n?<\/parame
  * Harness diagnostics only: it feeds {@link suspectsToolCallAsText}. Zero `<parameter=…>` pairs is
  * not this envelope.
  */
-export function readProseToolCandidate(text: string): Record<string, unknown> | null {
+function readProseToolCandidate(text: string): Record<string, unknown> | null {
   const match = FENCED_JSON_BLOCK.exec(text);
   let candidate: unknown;
   try {

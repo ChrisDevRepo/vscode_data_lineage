@@ -207,6 +207,7 @@ function renderFlowRoleAndDirection(
  * @param edges - Node-level lineage edges `[from, to, kind]` from `SmResult.edges`.
  * @param presentedNodeIds - Ids the render carries, bounding the enumerated candidates; omitted:
  *   bounds nothing.
+ * @internal
  */
 export function buildBbSynthesisBlock(
   originNodeId: string,
@@ -225,6 +226,7 @@ export function buildBbSynthesisBlock(
  * @param presentedNodeIds - Ids the render carries, bounding the enumerated highlight candidates;
  *   omitted: bounds nothing. The recorded edge list is never bounded (the trace is the evidence; an
  *   endpoint outside the render is stated in prose).
+ * @internal
  */
 export function buildCtSynthesisBlock(
   originNodeId: string,
@@ -325,7 +327,7 @@ function renderFlowFactsFragment(facts: NodeFlowFacts | undefined): string {
  *
  * @returns A markdown bullet list, or an empty string when every kept node is slotted.
  */
-export function buildPassthroughFlowFacts(result: SmResult, identifierCaseSensitive = false): string {
+function buildPassthroughFlowFacts(result: SmResult, identifierCaseSensitive = false): string {
   const lc = (s: string): string => schemaKey(s, identifierCaseSensitive);
   const slottedIds = new Set(result.detail_slots.map(s => lc(s.nodeId)));
   const prunedIds = new Set(result.node_states.filter(s => s.action === 'prune').map(s => lc(s.nodeId)));

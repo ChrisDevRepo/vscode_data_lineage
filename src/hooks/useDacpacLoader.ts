@@ -5,7 +5,7 @@ import { ExtensionToWebviewMsgSchema, validateBridgeFrame } from '../engine/shar
 import { DEFAULT_CONFIG } from '../engine/types';
 
 /** Status notification shown during project loading or processing. */
-export type StatusMessage = {
+type StatusMessage = {
   /** The descriptive text of the status message. */
   text: string;
   /** The semantic type of the message, affecting UI styling (color, icons). */
@@ -13,7 +13,7 @@ export type StatusMessage = {
 };
 
 /** The source context currently being loaded. */
-export type LoadingContext = 'dacpac' | 'database' | null;
+type LoadingContext = 'dacpac' | 'database' | null;
 
 /**
  * State and actions of the project loader hook, bridging the webview and the extension host for

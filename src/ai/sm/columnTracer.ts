@@ -584,7 +584,7 @@ export class ColumnTracer {
 }
 
 /** One directed endpoint pair of a column edge, keyed by {@link columnEndpointKeyFactory}. */
-export interface ColumnEndpointLink {
+interface ColumnEndpointLink {
   /** Canonical source endpoint of the recorded data flow. */
   readonly from: string;
   /** Canonical destination endpoint of the recorded data flow. */
@@ -606,6 +606,7 @@ export function columnEndpointKeyFactory(nodeMap: Map<string, LineageNode>, iden
  * Upstream closure follows inbound links; admission also accepts a submitted link from a reached
  * source endpoint. Downstream follows data-flow direction: another input to a tracked output cannot
  * promote that input's unrelated outputs. Seeds stay reachable with no recorded links.
+ * @internal
  */
 export function reachableColumnEndpoints(
   seeds: ReadonlySet<string>,

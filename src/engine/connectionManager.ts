@@ -54,7 +54,7 @@ const DmvQuerySchema = z.object({ name: z.string().min(1), sql: z.string().min(1
 const isDmvQuery = (q: unknown): q is DmvQuery => DmvQuerySchema.safeParse(q).success;
 
 /** Root configuration structure for DMV query definition files. */
-export interface DmvQueriesConfig {
+interface DmvQueriesConfig {
   version: number;
   queries: DmvQuery[];
 }

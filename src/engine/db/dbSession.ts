@@ -6,8 +6,6 @@
 import type { SimpleExecuteResult, IServerInfo } from '../../types/database';
 import type { ConnectionProviderId, StoredConnectionInfo } from '../shared/bridgeContract';
 
-export type { ConnectionProviderId };
-
 /** Configuration section that owns the connection settings. */
 export const DATABASE_CONFIG_SECTION = 'dataLineageViz.database';
 

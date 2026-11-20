@@ -79,6 +79,7 @@ function markedTransformClasses(transforms: readonly ColumnTransformClass[] | un
  * A `pass_through`-only edge never reaches here (it renders no chip). `filter`/`combine` are
  * INDIRECT, so the fallback describes what the edge does to the row set, not a value change.
  * Exported so the contract is testable without hover.
+ * @internal
  */
 export function describeColumnEdge(data: Pick<ColumnTraceEdgeData, 'sourceColumn' | 'targetColumn' | 'transforms' | 'note'>): string {
   const classes = markedTransformClasses(data.transforms);
@@ -170,6 +171,7 @@ function TransformClassGlyph({ transformClass }: { transformClass: ColumnTransfo
  * Open ring drawn in an unclassified chip. It has no orientation, so it cannot read as a direction,
  * and stays unfilled because the legend uses a filled dot for a view. r=7 in the 24-unit box lands
  * as a ~5.8px ring in the 20px glyph box.
+ * @internal
  */
 export function ColumnTransformGlyph() {
   return (

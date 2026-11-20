@@ -284,6 +284,7 @@ export class VscodeLangChainBridge extends BaseChatModel<
  * A `ToolMessage`'s `status` is not projected: `vscode.LanguageModelToolResultPart` has no error
  * flag, and the bridge adds no prose. A failed call reaches the model through its content alone,
  * which for every rejection or dispatch error is the shared error envelope naming its code.
+ * @internal
  */
 export function toVscodeMessage(message: BaseMessage): vscode.LanguageModelChatMessage {
   if (SystemMessage.isInstance(message) || HumanMessage.isInstance(message)) {

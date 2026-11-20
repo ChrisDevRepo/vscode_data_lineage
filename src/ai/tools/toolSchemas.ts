@@ -33,7 +33,7 @@ const ScopeNotesValueSchema = z.array(z.string().min(1).regex(/\S/, 'A scope not
     + "each in the user's terms; echoed at the approval gate and carried to every hop.",
   );
 
-/** Canonical answer-lens values and primary-intent instruction shared by the tool schemas. */
+/** Canonical answer-lens values and primary-intent instruction shared by the tool schemas. @internal */
 export const ClassificationValueSchema = z.enum(['business', 'technical', 'both'])
   .describe(
     'Choose the answer lens from the primary user intent: "business" for meaning, purpose, impact or business rules, '
@@ -88,7 +88,7 @@ const ANALYSIS_MODE_DESCRIPTION =
 const START_SHAPE_REQUIRED_MESSAGE = "Either 'origin' (fresh proposal) or 'supplement' with nodeIds must be provided.";
 
 /** Recovery for a column trace without named columns; schema issue and hint are one string. */
-export const CT_TARGET_COLUMNS_RECOVERY =
+const CT_TARGET_COLUMNS_RECOVERY =
   'Name the columns to trace; for all columns, read them with lineage_get_object_detail and send each one. Then resubmit CT.';
 
 /** `targetColumns` on every exploration phase: column trace names them; blackboard forbids it. */
@@ -736,6 +736,7 @@ function finalizeSubmitFindingsSchema(
  * stays. Every open neighbour not named in `prune_neighbors` is enqueued and `questions` attach a
  * check to one of them; naming every neighbor leaves the focus a visible dead end. No CT-only
  * `column_flow`.
+ * @internal
  */
 export const SubmitFindingsBbInputSchema = finalizeSubmitFindingsSchema(HopFindingBaseSchema, true);
 
@@ -743,6 +744,7 @@ export const SubmitFindingsBbInputSchema = finalizeSubmitFindingsSchema(HopFindi
  * CT-mode submit_findings input: BB plus column tracking, so every BB field is present.
  * `column_flow` is documented on {@link ColumnFlowSchema}; its `upstream_columns` are the carry
  * each enqueued neighbour receives.
+ * @internal
  */
 export const SubmitFindingsCtInputSchema = finalizeSubmitFindingsSchema(HopFindingCtBaseSchema, true);
 
@@ -1430,6 +1432,7 @@ const repairPatchSchemaCache = new Map<string, z.ZodType>();
  * @param highlightLabelIndexes - Highlight entries restricted to `{index, label}` leaf repair.
  * @param sectionTextLeaves - Section entries restricted to indexed `label`/`text` leaf repair.
  * @param retainable - Whether a committed report exists whose sections an omitted `sections` keeps.
+ * @internal
  */
 export function presentResultRepairPatchSchemaForFields(
   fields: readonly PresentResultRepairField[],

@@ -10,7 +10,7 @@ import { addRawSchemaEdge, collapseRawSchemaEdges } from './schemaEdgeHelpers';
  * being depended upon, `target` the dependent). Antiparallel relations are
  * collapsed into a single entry with {@link bidirectional} set.
  */
-export interface SchemaInterEdge {
+interface SchemaInterEdge {
   /** Schema on the source side (lexicographically first when bidirectional). */
   source: string;
   target: string;
@@ -25,7 +25,7 @@ export interface SchemaInterEdge {
 }
 
 /** A weakly-connected group of schemas in the model's schema-level graph. */
-export interface SchemaComponent {
+interface SchemaComponent {
   /** Member schema names, sorted ascending. */
   schemas: string[];
   /** True when the component is a single schema with no inter-schema edge. */

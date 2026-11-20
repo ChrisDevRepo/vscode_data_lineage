@@ -266,16 +266,16 @@ export interface ToolAttemptResult {
 }
 
 /** Holds the valid parts of a rejected `lineage_submit_findings` payload; `null` if none. */
-export type HoldRejectedSubmission = (input: unknown, issuePaths: readonly string[]) => HeldSubmissionParts | null;
+type HoldRejectedSubmission = (input: unknown, issuePaths: readonly string[]) => HeldSubmissionParts | null;
 
 /** The arguments a rejected `lineage_submit_findings` call keeps in the transcript; `null` keeps it as sent. */
-export type ProjectRejectedSubmission = (input: unknown) => Record<string, unknown> | null;
+type ProjectRejectedSubmission = (input: unknown) => Record<string, unknown> | null;
 
 /**
  * Holds the valid fields of a rejected `lineage_present_result` payload; returns the repair
  * sentence.
  */
-export type HoldRejectedPresentResult = (input: unknown, issuePaths: readonly string[]) => string | null;
+type HoldRejectedPresentResult = (input: unknown, issuePaths: readonly string[]) => string | null;
 
 const SUBMIT_FINDINGS_TOOL = 'lineage_submit_findings';
 
@@ -283,7 +283,7 @@ const SUBMIT_FINDINGS_TOOL = 'lineage_submit_findings';
  * The held `lineage_present_result` repair draft as the model sees it on a present_result
  * rejection: the labels a resend keys on, each with its first block for a preview section.
  */
-export interface HeldDraftRepairContent {
+interface HeldDraftRepairContent {
   readonly sections: ReadonlyArray<{ readonly label: string; readonly start?: string }>;
 }
 

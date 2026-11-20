@@ -1,5 +1,5 @@
 /** Stable IDs for documented keyboard shortcuts. */
-export type KeyboardShortcutId =
+type KeyboardShortcutId =
   | 'quickJump'
   | 'fitView'
   | 'openHelp'

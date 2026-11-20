@@ -8,7 +8,7 @@ import { traceNodeIdsWithLevels } from './graphBuilder';
  * clusters), `scoped` (trace/path/analysis scope, which takes precedence over base graph size),
  * `renderLimit` (too many nodes: show the limit message).
  */
-export type GraphDisplayMode = 'full' | 'schemaOverview' | 'schemaExpanded' | 'scoped' | 'renderLimit';
+type GraphDisplayMode = 'full' | 'schemaOverview' | 'schemaExpanded' | 'scoped' | 'renderLimit';
 
 interface GraphModeInput {
   filteredCount: number;

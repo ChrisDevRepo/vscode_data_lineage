@@ -15,7 +15,7 @@ export interface RenderConnectivityEdge {
 }
 
 /** A weakly-connected group of rendered nodes. */
-export interface RenderComponent {
+interface RenderComponent {
   size: number;
   /** Member labels (falls back to id when no label), sorted ascending. */
   nodes: string[];

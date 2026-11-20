@@ -20,6 +20,8 @@
   ],
   // Exports tagged @internal are test seams, not product API.
   "tags": ["-internal"],
+  // Loaded by a runtime require() or from tests outside this repository, which knip cannot see.
+  "ignore": ["tests/fixtures/lm-provider-extension/*.js", "tests/harness/scriptedModelPort.ts"],
   // VS Code supplies this module; @types/vscode provides the build-time API.
   "ignoreDependencies": ["@types/vscode"],
 }

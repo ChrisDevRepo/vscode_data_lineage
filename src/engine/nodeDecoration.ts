@@ -72,12 +72,14 @@ export const LIT_CLASS_NAME = 'ln-lit';
 /**
  * Node count above which React Flow's `onlyRenderVisibleElements` culling pays for itself; below it
  * the per-frame visibility bookkeeping costs more than the render work it skips.
+ * @internal
  */
 export const VIRTUALIZATION_NODE_THRESHOLD = 300;
 
 /**
  * Edge count above which a connected edge's dash animation is off regardless of `config.layout`, so
  * a dense graph is not repainted every frame for a flourish nobody can track.
+ * @internal
  */
 export const EDGE_ANIMATION_COUNT_THRESHOLD = 200;
 

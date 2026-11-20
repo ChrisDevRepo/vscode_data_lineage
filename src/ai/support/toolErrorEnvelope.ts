@@ -374,6 +374,7 @@ export const ISSUES = {
   },
 } as const satisfies Record<RegistryCode | SchemaIssueCode, IssueText>;
 
+/** @internal */
 export type IssueCode = keyof typeof ISSUES;
 const ISSUE_CODES = Object.keys(ISSUES) as [IssueCode, ...IssueCode[]];
 

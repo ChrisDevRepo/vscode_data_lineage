@@ -19,6 +19,7 @@ export const MAX_ID_LIST_LENGTH = 500;
  * editor". The `ai-open-in-editor` payload is otherwise the one unbounded string the webview can
  * post (no field cap composes into a total); a report is one model turn's prose, so a larger
  * payload is a malformed or hostile frame.
+ * @internal
  */
 export const AI_REPORT_MARKDOWN_MAX_CHARS = 200_000;
 
@@ -26,11 +27,12 @@ export const AI_REPORT_MARKDOWN_MAX_CHARS = 200_000;
  * Upper bound, in characters, on the file text the webview hands to the host for `export-file`.
  * Draw.io export measured about 1.6 KB per object (236,627 chars for 148 nodes and 164 edges,
  * 396,332 for 249 and 303): 8-10 MB at the 5000-object limit, so 50 MB keeps at least 5x margin.
+ * @internal
  */
 export const EXPORT_FILE_MAX_CHARS = 50 * 1024 * 1024;
 
 /** Upper bound, in characters, on one webview `log` line; real lines are a few hundred. */
-export const WEBVIEW_LOG_MAX_CHARS = 100_000;
+const WEBVIEW_LOG_MAX_CHARS = 100_000;
 
 /**
  * Link scheme of the engine-assembled object links in AI report markdown,
@@ -432,7 +434,7 @@ export const BOOKMARK_SOURCE_DESCRIPTIONS: Record<NonNullable<FilterProfile['sou
  * Identifier of the implementation that opens database connections. `mssqlExtension` is read only
  * to detect a project saved with the retired mssql extension connection.
  */
-export const ConnectionProviderIdSchema = z.enum(['mssqlExtension', 'builtIn']);
+const ConnectionProviderIdSchema = z.enum(['mssqlExtension', 'builtIn']);
 export type ConnectionProviderId = z.infer<typeof ConnectionProviderIdSchema>;
 
 /**
@@ -652,7 +654,7 @@ const RenderTraceScopeSchema = z.looseObject({
  * so an unrecognized field never fails the frame. A frame whose walked fields are malformed is
  * rejected and logged at the receive site and never reaches a reader.
  */
-export const RenderStateSnapshotSchema = z.looseObject({
+const RenderStateSnapshotSchema = z.looseObject({
   highlightedNodeId: z.string().nullable().optional(),
   affordances: TraceAffordanceSnapshotSchema.nullable().optional(),
   traceScope: RenderTraceScopeSchema.nullable().optional(),
@@ -666,7 +668,7 @@ export type RenderStateSnapshot = z.infer<typeof RenderStateSnapshotSchema>;
  * Zod schema of the analytics/bookmark extras on `uiState.screenState`, not in `render-state`. Same
  * tolerance as {@link RenderStateSnapshotSchema}: walked fields typed, extras kept.
  */
-export const ScreenStateExtrasSchema = z.looseObject({
+const ScreenStateExtrasSchema = z.looseObject({
   analytics: z.looseObject({
     type: z.string(),
     activeGroupId: z.string().nullable(),
@@ -690,7 +692,7 @@ export type ScreenStateExtras = z.infer<typeof ScreenStateExtrasSchema>;
  * screen-state readers walk `trace` and `screenState`, so those are typed; the filter reuses the
  * persisted {@link SerializedFilterState} contract. Unknown keys are kept literally.
  */
-export const UiStateSnapshotSchema = z.looseObject({
+const UiStateSnapshotSchema = z.looseObject({
   filter: SerializedFilterStateSchema,
   expandedSchemaView: ExpandedSchemaViewSchema.nullable().optional(),
   trace: z.looseObject({
@@ -816,7 +818,7 @@ export const DetailPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   WebviewWarningMessageSchema,
 ]);
 
-/** Messages sent from the detail-panel webview to the extension host. */
+/** Messages sent from the detail-panel webview to the extension host. @public */
 export type DetailPanelToExtensionMsg = z.infer<typeof DetailPanelToExtensionMsgSchema>;
 
 /**
@@ -824,6 +826,7 @@ export type DetailPanelToExtensionMsg = z.infer<typeof DetailPanelToExtensionMsg
  * so each dispatcher stays exhaustive. One `acquireVsCodeApi()` handle type serves both bundles, so
  * `postMessage` is typed with this union: a shape neither dispatcher can receive fails to compile
  * instead of being dropped at the Zod seam.
+ * @public
  */
 export type WebviewToExtensionMsg = MainPanelToExtensionMsg | DetailPanelToExtensionMsg;
 

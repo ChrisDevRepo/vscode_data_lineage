@@ -106,7 +106,7 @@ export interface ColumnTraceViewEdge {
  * dependency the Objects view draws, added only when an endpoint carries no column relation, so it
  * never duplicates a column thread.
  */
-export interface ColumnTraceViewObjectEdge {
+interface ColumnTraceViewObjectEdge {
   /** Stable edge id, unique in the view and distinct from every {@link ColumnTraceViewEdge} id. */
   id: string;
   source: string;
@@ -127,7 +127,7 @@ export interface ColumnTraceViewObjectEdge {
  * One entry per relation, never a mesh across the hub: two relations meeting at one output port
  * stay two bridges, so unrelated threads through the same procedure do not merge.
  */
-export interface ColumnTracePortBridge {
+interface ColumnTracePortBridge {
   /** Node whose two ports the bridge links. */
   nodeId: string;
   /** Column name of the port the relation enters on. */

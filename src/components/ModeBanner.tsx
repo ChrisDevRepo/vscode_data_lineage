@@ -3,7 +3,7 @@ import { Tooltip } from './ui/Tooltip';
 import { CloseIcon } from './ui/CloseIcon';
 
 /** Visual variants of the {@link ModeBanner}, each with its own styling and icon colors. */
-export type BannerVariant = 'trace' | 'analysis' | 'ai' | 'bookmark';
+type BannerVariant = 'trace' | 'analysis' | 'ai' | 'bookmark';
 
 interface ModeBannerProps {
   variant: BannerVariant;

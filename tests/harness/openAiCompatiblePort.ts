@@ -50,7 +50,7 @@ import {
 } from './openAiWire';
 
 /** Minimal HTTP response surface the port consumes; keeps the module free of DOM/node lib skew. */
-export interface HttpResponseLike {
+interface HttpResponseLike {
   readonly ok: boolean;
   readonly status: number;
   readonly statusText: string;
@@ -60,7 +60,7 @@ export interface HttpResponseLike {
 }
 
 /** Request shape handed to {@link FetchLike}; headers exist here and nowhere else. */
-export interface HttpRequestInit {
+interface HttpRequestInit {
   readonly method: string;
   readonly headers: Readonly<Record<string, string>>;
   readonly body: string;
@@ -118,7 +118,7 @@ function providerRoutingPayload(routing: OpenRouterProviderRouting | undefined):
   return { provider: { order: [...routing.order], allow_fallbacks: routing.allowFallbacks } };
 }
 
-/** Provider capabilities that change what the port sends or keeps. */
+/** Provider capabilities that change what the port sends or keeps. @internal */
 export interface OpenAiLaneCapabilities {
   /**
    * Whether a previous turn's `reasoning_content` is echoed back.
@@ -171,7 +171,7 @@ export interface OpenAiLaneCapabilities {
  * An OpenRouter upstream allow-list is not that sort: it is
  * {@link OpenAiCompatiblePortConfig.providerRouting}, and only the openrouter lane sets it.
  */
-export interface OpenAiRequestTuning {
+interface OpenAiRequestTuning {
   /**
    * Thinking level, rendered in the lane's {@link OpenAiRequestTuning.reasoningStyle} dialect.
    *
@@ -207,7 +207,7 @@ export interface OpenAiRequestTuning {
  * Names match the `provider` field OpenRouter returns on a completion. A lane that omits this
  * sends no `provider` object, so OpenRouter keeps its own load balancing.
  */
-export interface OpenRouterProviderRouting {
+interface OpenRouterProviderRouting {
   /** Upstream names in try order. */
   readonly order: readonly string[];
   readonly allowFallbacks: false;

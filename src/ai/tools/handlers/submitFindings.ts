@@ -22,6 +22,7 @@ import { type ToolServices, getModelNodeMap } from './toolServices';
  * Hop-log counters over the submitted column refs: `refs_no_note` counts refs without a `note`,
  * `role_mixed` counts refs pairing an INDIRECT class with a DIRECT one; zero when `column_flow` is
  * absent. Returns the suffix for the `[Hop N]` log line.
+ * @internal
  */
 export function columnRefSuffix(columnFlow: readonly ColumnFlowEntry[] | undefined): string {
   const refs = (columnFlow ?? []).flatMap(entry => entry.upstream_columns);

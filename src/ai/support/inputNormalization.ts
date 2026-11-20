@@ -20,7 +20,7 @@ export type SubmitFindingsInputObject = Record<string, unknown> & {
 };
 
 /** One field-level ID canonicalization applied to a cloned `submit_findings` payload. */
-export interface SubmitFindingsIdNormalization {
+interface SubmitFindingsIdNormalization {
   /** Dot-path of the normalized field in the cloned input. */
   readonly field: string;
   /** Original model-supplied ID spelling. */

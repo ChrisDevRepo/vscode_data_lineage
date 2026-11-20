@@ -39,7 +39,7 @@ export const DEFAULT_DISCOVERY_TOKEN_BUDGET = 10_000;
 
 
 /** The discovery phase's (nodeCap, tokenBudget) pair, clamped at construction. */
-export interface PhaseScopeBudget {
+interface PhaseScopeBudget {
   /** Maximum scope nodes the phase admits. */
   readonly nodeCap: number;
   /** Maximum estimated DDL tokens the phase admits. */
@@ -47,7 +47,7 @@ export interface PhaseScopeBudget {
 }
 
 /** The limits an exploration proposal is admitted under: rounds and starting trace columns. */
-export interface ExplorationLimits {
+interface ExplorationLimits {
   /** Maximum rounds of one exploration (`ai.maxRounds`); each procedure/view/function takes one. */
   readonly maxRounds: number;
   /** Maximum starting columns one column trace may select (`ai.maxTraceColumns`). */
@@ -211,7 +211,7 @@ export interface ProposedScope {
 }
 
 /** Which admission limit refused a scope. */
-export type ScopeRefusalLimit = 'rounds' | 'columns';
+type ScopeRefusalLimit = 'rounds' | 'columns';
 
 /** An over-limit scope: the axis that refused it and the plain-words texts the user reads. */
 export interface ScopeRefusal {

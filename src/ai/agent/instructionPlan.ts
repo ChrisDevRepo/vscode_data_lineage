@@ -95,7 +95,7 @@ export function explorationFacts(
 }
 
 /** Couples a structured schema with the stable identity emitted to traces. */
-export interface StructuredContract<T> {
+interface StructuredContract<T> {
   /** Stable trace/debug identity for the schema. */
   readonly id: string;
   /** Zod boundary shipped to the selected model port. */
@@ -205,7 +205,7 @@ export type InstructionPlan<T = unknown> =
   | TextInstructionPlan;
 
 /** Ephemeral runtime projection used to derive one provider call. */
-export interface RuntimeFrame {
+interface RuntimeFrame {
   /** Model-call phase selected by LangGraph. */
   readonly phase: InstructionPhase;
   /** Approved mission facts relevant to this call. */

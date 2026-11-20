@@ -1,7 +1,7 @@
 import type { InvalidRoute } from './smTypes';
 
 /** One model-authored prune target after identifier resolution. */
-export interface CurrentHopActionTarget {
+interface CurrentHopActionTarget {
   /** Verbatim model-authored identifier used in notices. */
   raw: string;
   /** Canonical model id, or null when the reference is unresolved. */

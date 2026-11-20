@@ -5,7 +5,7 @@ import { searchBodyScripts, searchColumns } from '../utils/modelSearch';
 import { highlightText } from './highlight';
 
 /** Search projection containing the node fields used by the detail sidebar. */
-export interface DetailSearchNode {
+interface DetailSearchNode {
   id: string;
   name: string;
   schema: string;

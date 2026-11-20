@@ -75,7 +75,7 @@ function xmlEscape(value: string): string {
  * @param model - The generated model to serialize.
  * @returns The `model.xml` document text and the real (non-external) declared-dependency edge count.
  */
-export function serializeDwhModelToXml(model: DatabaseModel): { xml: string; edgeCount: number } {
+function serializeDwhModelToXml(model: DatabaseModel): { xml: string; edgeCount: number } {
   const byId = new Map(model.nodes.map(n => [n.id, n]));
 
   const externalUrlByCarrier = new Map<string, string>();

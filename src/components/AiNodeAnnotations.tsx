@@ -8,6 +8,7 @@ import type { AiBadge } from '../engine/types';
  * so a change needs a matching change there. The badge or footnote is a child of the node's own
  * `position: relative` box (not a `NodeToolbar` portal), so the gap is a CSS pixel value in the
  * node's zoom-scaled space, not a screen value that matches the reservation only at zoom 1.
+ * @internal
  */
 export const AI_ANNOTATION_NODE_GAP = 6;
 

@@ -21,7 +21,7 @@ const PUBLIC_SQL_RESOURCE = 'https://database.windows.net/';
  *
  * @throws When VS Code selects a custom cloud that is not configured.
  */
-export function sqlResource(): string {
+function sqlResource(): string {
   const suffix = getConfiguredAzureEnv().sqlServerHostnameSuffix?.replace(/^\./, '');
   return suffix ? `https://${suffix}/` : PUBLIC_SQL_RESOURCE;
 }

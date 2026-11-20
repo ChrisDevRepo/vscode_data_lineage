@@ -31,6 +31,7 @@ export const SHORT_TYPE_LABELS: Record<ObjectType, string> = {
 /**
  * 15-entry categorical palette for light themes: ten saturated base hues, then lighter variants of
  * Orange, Green, Pink, Brown and Gray.
+ * @internal
  */
 export const SCHEMA_COLORS_LIGHT = [
   '#4E79A7', // 1  Blue

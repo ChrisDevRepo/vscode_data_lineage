@@ -52,7 +52,7 @@ export function escapeMarkdownText(value: string): string {
 }
 
 /** Truncates `text` to `max` characters (default 60, inclusive) with a trailing `…`. */
-export function trunc(text: string, max = 60): string {
+function trunc(text: string, max = 60): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 

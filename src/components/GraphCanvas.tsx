@@ -108,13 +108,14 @@ const AI_PANEL_DEFAULT_HEIGHT = 'min(360px, 45vh)';
 /** `window.vscode` state key the dock position is persisted under, beside other keys. */
 const AI_DOCK_STATE_KEY = 'aiDockPosition';
 
-/** Reverse of `aiSections`' per-section `nodeIds`: every section that badged `nodeId`, in order. */
+/** Reverse of `aiSections`' per-section `nodeIds`: every section that badged `nodeId`, in order. @internal */
 export function sectionsForNode(sections: readonly AiReportSection[], nodeId: string): number[] {
   return sections.filter(s => s.nodeIds.includes(nodeId)).map(s => s.n);
 }
 
 /**
  * Cache key of the AI pane's open state and pinned section: origin id ('preview' if none) + view.
+ * @internal
  */
 export function aiLayoutCacheKey(originId: string | undefined, viewName: string): string {
   return `${originId ?? 'preview'}::${viewName}`;
@@ -150,6 +151,7 @@ const AI_PANEL_REFIT_DELAY = 80;
  * @param maxDeferredFrames - Frame budget for `ready()`; once spent the fit stops without calling
  *   `fire`, so an unmeasured graph is not framed.
  * @returns A cancel that clears the latest scheduled callback (effect cleanup / unmount).
+ * @internal
  */
 export function scheduleFit(
   generationRef: { current: number },
@@ -180,6 +182,7 @@ export function scheduleFit(
 /**
  * Resumes a graph fit blocked by rebuilding, only while its generation still owns the camera. The
  * returned scheduler's cleanup also cancels a resumed fit.
+ * @internal
  */
 export function useRebuildResumableFit(
   isRebuilding: boolean,
@@ -215,7 +218,7 @@ export function useRebuildResumableFit(
   }, [armFit, generationRef]);
 }
 
-/** Reframes pane size changes unless a saved camera restore owns the view; user gestures win. */
+/** Reframes pane size changes unless a saved camera restore owns the view; user gestures win. @internal */
 export function useCanvasResizeFit(width: number, height: number, fitGraph: () => () => void, restoringViewport = false): void {
   const previousSize = useRef({ width, height });
   useEffect(() => {
@@ -227,7 +230,7 @@ export function useCanvasResizeFit(width: number, height: number, fitGraph: () =
   }, [width, height, fitGraph, restoringViewport]);
 }
 
-/** Whether React Flow has received and measured the graph a pending fit will frame. */
+/** Whether React Flow has received and measured the graph a pending fit will frame. @internal */
 export function graphReadyForFit(
   expectedNodes: readonly FlowNode[], expectedEdges: readonly FlowEdge[],
   renderedNodes: readonly FlowNode[], renderedEdges: readonly FlowEdge[],
@@ -248,7 +251,7 @@ export function graphReadyForFit(
   });
 }
 
-/** Skip fits until the graph-data update paired with a saved viewport arrives. */
+/** Skip fits until the graph-data update paired with a saved viewport arrives. @internal */
 export function skipFitForPendingViewport(
   preserveVersion: number, consumedVersion: { current: number }, nodeDataChanged: boolean,
 ): boolean {
@@ -265,6 +268,7 @@ const MAX_CANVAS_ZOOM = 2;
  * needs in a `paneWidth` × `paneHeight` pane at `padding`, so a fit is never clamped short of the
  * graph. Bounds come from `getNodesBounds` (measured, else declared, else zero size), so an
  * unmeasured node still contributes its position.
+ * @internal
  */
 export function canvasMinZoom(
   nodes: readonly FlowNode[],
@@ -282,6 +286,7 @@ export function canvasMinZoom(
 /**
  * Whether a `ReactFlow` `onMoveStart` event is a user gesture: a real `event` for user pan/zoom,
  * `null` for programmatic `fitView`/`setViewport`/`setCenter`.
+ * @internal
  */
 export function isUserMoveEvent(event: MouseEvent | TouchEvent | null): boolean {
   return event !== null;
@@ -291,6 +296,7 @@ export function isUserMoveEvent(event: MouseEvent | TouchEvent | null): boolean 
  * Applies a viewport armed at `armedGeneration` only if {@link fitGenerationRef} still holds it. A
  * user pan/zoom or newer fit in the gap before the graph data (deferred via `startTransition`)
  * catches up bumps the generation, so the stale viewport no-ops. Returns whether it was applied.
+ * @internal
  */
 export function applyPendingViewport(
   pending: { x: number; y: number; zoom: number },
@@ -354,6 +360,7 @@ function withEdgeBaseWidthVar(edge: FlowEdge): FlowEdge {
 /**
  * Merges a rebuilt node list with the local nodes mid-drag: a node in `draggingIds` keeps its
  * position from `currentNodes`, and every other field of every node comes from `incomingNodes`.
+ * @internal
  */
 export function mergeIncomingNodesPreservingDrag(
   incomingNodes: FlowNode[],

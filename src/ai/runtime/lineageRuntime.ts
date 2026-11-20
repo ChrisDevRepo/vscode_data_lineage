@@ -19,7 +19,7 @@ import { readToolError, isConsentGateRejection } from '../support/toolErrorEnvel
 import { REJECTION_CODES } from '../support/rejectionCodes';
 
 /** Immutable request identity, prompt, and optional history for one lineage turn. */
-export interface LineageRuntimeRequest {
+interface LineageRuntimeRequest {
   /** Request identifier; must be unique among this session's currently active turns. */
   readonly id: string;
   /** Verbatim user prompt for this turn. */

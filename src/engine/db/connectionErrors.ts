@@ -80,6 +80,7 @@ function errorNumber(err: unknown): number | undefined {
  * Whether an error came from the SQL driver rather than this extension's own logic: driver errors
  * carry a numeric SQL Server error number or an `E…` code (`ELOGIN`, `ETIMEOUT`, `ESOCKET`,
  * `EREQUEST`).
+ * @internal
  */
 export function isDriverError(err: unknown): boolean {
   return errorNumber(err) !== undefined || /^E[A-Z]+$/.test(errorCode(err) ?? '');
@@ -266,7 +267,7 @@ export function connectionFailure(err: unknown, session?: DbSession): { error: u
   return session && isDriverError(err) ? { error: err, target: targetFromStored(session.connectionInfo, session.provider) } : undefined;
 }
 
-/** Builds the error target for a stored connection record and the provider that is connecting. */
+/** Builds the error target for a stored connection record and the provider that is connecting. @internal */
 export function targetFromStored(info: StoredConnectionInfo, provider: ConnectionErrorTarget['provider']): ConnectionErrorTarget {
   const saved = provider === 'builtIn' && info.connectionId
     ? readBuiltInConnections().find((c) => c.id === info.connectionId)

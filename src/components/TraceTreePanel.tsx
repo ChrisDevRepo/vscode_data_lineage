@@ -7,7 +7,7 @@ import { SidePanel } from './SidePanel';
 import { TRACE_ICON } from './TracedFilterBanner';
 import { Tooltip } from './ui/Tooltip';
 
-/** Display metadata for one tree row, resolved from the canvas node lists. */
+/** Display metadata for one tree row, resolved from the canvas node lists. @internal */
 export interface TraceTreeNodeMeta {
   /** Human-readable object name. */
   name: string;

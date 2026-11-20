@@ -111,13 +111,13 @@ export type PresentResultInput = z.infer<typeof PresentResultModelSchema>;
 type PresentResultBaseRepairPatch = z.infer<typeof PresentResultAuthorizableRepairSchema>;
 
 /** One repair-only replacement for a held highlight label. */
-export interface PresentResultHighlightLabelPatch {
+interface PresentResultHighlightLabelPatch {
   readonly index: number;
   readonly label: string;
 }
 
 /** Repair-only text leaves for one held section. */
-export interface PresentResultSectionTextPatch {
+interface PresentResultSectionTextPatch {
   readonly index: number;
   readonly label?: string;
   readonly text?: string;

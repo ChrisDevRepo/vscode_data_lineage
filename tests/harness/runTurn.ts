@@ -39,7 +39,7 @@ function bookmarkIdFromUiState(uiState: unknown): string | undefined {
  * entry *N*, clamped to the last entry once the list is exhausted, so a trailing `approve` or `deny`
  * terminates any further round without needing one entry per possible gate.
  */
-export type GateRoundPolicy =
+type GateRoundPolicy =
   | { readonly kind: 'approve'; readonly expect?: string }
   | { readonly kind: 'deny' }
   | { readonly kind: 'refine'; readonly instruction: string };
@@ -55,7 +55,7 @@ export type GateRoundPolicy =
  * the finished graph: approving a proposal that contradicts the instruction and then scoring the
  * result conflates a wrong proposal with a wrongly accepted one.
  */
-export function evaluateGateExpectation(expr: string, session: AiSession): boolean {
+function evaluateGateExpectation(expr: string, session: AiSession): boolean {
   const proposal = session.pendingExploration;
   if (!proposal) return false;
   const negated = expr.startsWith('!');
@@ -123,7 +123,7 @@ export interface HarnessTurnOptions {
 }
 
 /** One consent gate and the decision the run policy applied to it. */
-export interface HarnessGateDecision {
+interface HarnessGateDecision {
   readonly gateId: string;
   readonly gate: string;
   readonly decision: 'approve' | 'deny' | 'refine';

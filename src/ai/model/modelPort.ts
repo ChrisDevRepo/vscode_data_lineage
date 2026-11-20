@@ -259,7 +259,7 @@ export interface ToolGenerationInput {
   readonly onTextDelta?: (text: string) => void;
 }
 
-/** A registered native tool call ready for argument validation at its execution boundary. */
+/** A registered native tool call ready for argument validation at its execution boundary. @internal */
 export interface ValidGeneratedToolCall {
   readonly valid: true;
   /** Provider call identifier, echoed into the paired tool-result message. */
@@ -271,7 +271,7 @@ export interface ValidGeneratedToolCall {
 }
 
 /** A provider tool call rejected before dispatch. */
-export interface InvalidGeneratedToolCall {
+interface InvalidGeneratedToolCall {
   readonly valid: false;
   /** Provider call identifier exactly as the provider emitted it. */
   readonly callId: string;

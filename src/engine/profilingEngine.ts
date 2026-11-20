@@ -35,12 +35,12 @@ const TYPE_CATEGORIES: Record<string, ColCategory> = {
 /** String types whose `= ''` also matches whitespace-only values, so emptiness uses byte length. */
 const VARIABLE_LENGTH_STRINGS: ReadonlySet<string> = new Set(['varchar', 'nvarchar']);
 
-/** Lowercase base type name without length/precision ('varchar(max)' -> 'varchar'). */
+/** Lowercase base type name without length/precision ('varchar(max)' -> 'varchar'). @internal */
 export function extractBaseType(typeStr: string): string {
   return typeStr.replace(/\(.*$/, '').trim().toLowerCase();
 }
 
-/** Classifies a column definition into a profiling category; `skip` for computed/unprofilable. */
+/** Classifies a column definition into a profiling category; `skip` for computed/unprofilable. @internal */
 export function classifyColumn(col: ColumnDef): ColCategory {
   if (col.extra === 'COMPUTED') return 'skip';
   const base = extractBaseType(col.type);
@@ -146,7 +146,7 @@ export function buildColumnAggregations(
   return result;
 }
 
-/** Result column that carries the number of rows a `TABLESAMPLE` query actually read. */
+/** Result column that carries the number of rows a `TABLESAMPLE` query actually read. @internal */
 export const SAMPLE_ROWS_ALIAS = '__rows';
 
 /**
@@ -211,6 +211,7 @@ export function computeSamplePercent(sampleSize: number, rowCount: number): numb
 /**
  * Formats a raw database datetime string compactly: date only when the time is midnight, otherwise
  * `date hh:mm`; non-datetime input is returned unchanged.
+ * @internal
  */
 export function compactDate(raw: string): string {
   if (!raw || raw === 'NULL') return raw;

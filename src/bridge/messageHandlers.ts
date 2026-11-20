@@ -62,7 +62,7 @@ import { readDeclaredNumericSetting } from '../configCore';
  * Handler per main-panel message type, with `msg` narrowed to the matching
  * {@link MainPanelToExtensionMsg} variant.
  */
-export type WebviewMessageHandlers = {
+type WebviewMessageHandlers = {
   [K in MainPanelToExtensionMsg['type']]: (
     msg: Extract<MainPanelToExtensionMsg, { type: K }>,
   ) => Promise<void> | void;
@@ -102,6 +102,7 @@ function parseWebviewLog(text: string): { category: LogCategory; message: string
  * Splits a project list into records the webview contract accepts and those it rejects. The send
  * validates the whole frame, so one bad record would cost every project; partitioning keeps the
  * rest and names the rejected one in the log. {@link ProjectSchema} stays strict.
+ * @internal
  */
 export function partitionSendableProjects(
   projects: readonly Project[],
