@@ -52,6 +52,8 @@ export interface HopNeighborDisclosure extends HopNeighbor {
    * on it is a no-op.
    */
   out_of_direction?: boolean;
+  /** An open target can receive an in-scope subquestion or an out-of-scope deferred proposal. */
+  can_question: boolean;
   /** A queued, visited, removed or protected target cannot be neighbor-pruned. */
   can_prune: boolean;
 }
@@ -4007,7 +4009,7 @@ export class NavigationEngine implements IHopStateMachine {
         id: nid, s: n.schema, n: n.name, t: n.type,
         edge_direction: edgeDirection,
         edge_type: edgeVerb.get(nid) ?? 'read', ...(cols?.length ? { cols } : {}),
-        can_prune: this.neighborCapabilities(focusId, nid).can_prune,
+        ...this.neighborCapabilities(focusId, nid),
         ...(this.isCarrierInto(nid, focusId) ? { prune_protected: true } : {}),
         ...(this.visited.has(nid) ? { already_visited: true } : {}),
         ...(this.removedSet.has(nid) ? { already_removed: true } : {}),
@@ -4024,12 +4026,8 @@ export class NavigationEngine implements IHopStateMachine {
     });
   }
 
-  /**
-   * Question eligibility includes deferred proposals; pruning still requires routing admission. Only
-   * `can_prune` is served: an open neighbor (neither `already_visited` nor `already_removed`) is
-   * the question-eligible one, so `can_question` stays an internal capability for route validation.
-   */
-  private neighborCapabilities(focusId: string, nodeId: string): { can_question: boolean; can_prune: boolean } {
+  /** Question eligibility includes deferred proposals; pruning still requires routing admission. */
+  private neighborCapabilities(focusId: string, nodeId: string): Pick<HopNeighborDisclosure, 'can_question' | 'can_prune'> {
     const node = this.nodeMap.get(nodeId);
     const open = !!node && !this.visited.has(nodeId) && !this.removedSet.has(nodeId);
     return { can_question: open,
