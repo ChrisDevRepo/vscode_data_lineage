@@ -184,6 +184,19 @@ export const SearchWithAutocomplete = memo(function SearchWithAutocomplete({
           />
         </FloatingPortal>
       )}
+
+      {!isOpen && searchTerm.length >= 2 && allSuggestions.length === 0 && (
+        <FloatingPortal>
+          <div
+            ref={refs.setFloating}
+            role="status"
+            style={floatingStyles}
+            className="z-50 rounded-md shadow-lg ln-dropdown px-3 py-2 text-xs ln-text-muted"
+          >
+            No results found.
+          </div>
+        </FloatingPortal>
+      )}
     </div>
   );
 });

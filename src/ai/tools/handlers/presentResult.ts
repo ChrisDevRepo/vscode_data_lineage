@@ -345,8 +345,8 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         if (outOfScope.length > 0) {
           return rejectGraphEdit('add_node_ids', makeRejection({
             code: REJECTION_CODES.validation,
-            reason: `add_node_ids names objects this exploration has not analysed: ${quoteIds(outOfScope)}.`,
-            hint: 'Rendering reveals analysed objects only. If the user asked to add these objects, call lineage_start_exploration {"supplement":{"nodeIds":[...]}} — that analyses them into this graph — then render. Otherwise do not render them: name them in your chat answer and ask which to add.',
+            reason: `add_node_ids names objects outside the approved exploration scope: ${quoteIds(outOfScope)}.`,
+            hint: 'If the user asked to add these objects, call lineage_start_exploration {"supplement":{"nodeIds":[...]}} — that analyses them into this graph — then render. Otherwise do not render them: name them in your chat answer and ask which to add.',
             issuePaths: ['add_node_ids'],
           }));
         }

@@ -651,10 +651,14 @@ function buildFlowEdges(edges: ReadonlyArray<{ source: string; target: string }>
   return result;
 }
 
-/** Stroke properties from the schema-to-schema connection count. */
-function schemaEdgeStroke(count: number): { strokeWidth: number; opacity: number } {
+/**
+ * Stroke width from the schema-to-schema connection count. Edge strength is not set here: an inline
+ * opacity would multiply with the themed `--ln-edge-color` (and its density fade) and drop the light
+ * theme below 3:1 (WCAG 2.2 SC 1.4.11).
+ */
+function schemaEdgeStroke(count: number): { strokeWidth: number } {
   const t = Math.min(Math.log2(Math.max(count, 1)) / 6, 1);
-  return { strokeWidth: 0.8 + t * 2.2, opacity: 0.55 + t * 0.45 };
+  return { strokeWidth: 0.8 + t * 2.2 };
 }
 
 function schemaNamesFromGraph(graph: Graph): string[] {
@@ -735,7 +739,7 @@ export function buildSchemaGraph(
     const tgtId = `__schema__${edge.targetSchema}`;
     if (!schemaIdSet.has(edge.sourceSchema) || !schemaIdSet.has(edge.targetSchema)) continue;
 
-    const { strokeWidth, opacity } = schemaEdgeStroke(edge.totalCount);
+    const { strokeWidth } = schemaEdgeStroke(edge.totalCount);
     edges.push({
       id: edge.bidirectional
         ? `__schema__${edge.sourceSchema}↔${edge.targetSchema}`
@@ -747,7 +751,7 @@ export function buildSchemaGraph(
       labelStyle: { fontSize: 11, fill: 'var(--ln-fg-muted)' },
       labelBgStyle: { fill: 'var(--ln-bg)', opacity: 0.8 },
       labelBgPadding: LABEL_BG_PAD,
-      style: { stroke: 'var(--ln-edge-color)', strokeWidth, opacity },
+      style: { stroke: 'var(--ln-edge-color)', strokeWidth },
       markerEnd: { type: 'arrowclosed' as const, width: 18, height: 18, color: 'var(--ln-edge-color)' },
       ...(edge.bidirectional && {
         markerStart: { type: 'arrow' as const, width: 14, height: 14, color: 'var(--ln-edge-color)' },
@@ -953,7 +957,7 @@ function buildMixedBridgeEdges(bridges: Iterable<SchemaBridgeEdge>): FlowEdge[] 
       labelStyle: { fontSize: 11, fill: 'var(--ln-fg-muted)' },
       labelBgStyle: { fill: 'var(--ln-bg)', opacity: 0.8 },
       labelBgPadding: LABEL_BG_PAD,
-      style: { stroke: 'var(--ln-edge-color)', strokeWidth: 1.0, strokeDasharray: '4 3', opacity: 0.5 },
+      style: { stroke: 'var(--ln-edge-color)', strokeWidth: 1.0, strokeDasharray: '4 3' },
       markerEnd: { type: 'arrowclosed' as const, width: 18, height: 18, color: 'var(--ln-edge-color)' },
     };
   });
@@ -965,7 +969,7 @@ function buildMixedClusterEdges(
   return schemaClusterEdges.map((edge) => {
     const source = expandedSchemaViewClusterId(edge.sourceSchema);
     const target = expandedSchemaViewClusterId(edge.targetSchema);
-    const { strokeWidth, opacity } = schemaEdgeStroke(edge.totalCount);
+    const { strokeWidth } = schemaEdgeStroke(edge.totalCount);
     return {
       id: edge.bidirectional ? `__clusteredge__${edge.sourceSchema}↔${edge.targetSchema}` : `__clusteredge__${edge.sourceSchema}→${edge.targetSchema}`,
       source,
@@ -974,7 +978,7 @@ function buildMixedClusterEdges(
       labelStyle: { fontSize: 11, fill: 'var(--ln-fg-muted)' },
       labelBgStyle: { fill: 'var(--ln-bg)', opacity: 0.8 },
       labelBgPadding: LABEL_BG_PAD,
-      style: { stroke: 'var(--ln-edge-color)', strokeWidth, strokeDasharray: '4 3', opacity },
+      style: { stroke: 'var(--ln-edge-color)', strokeWidth, strokeDasharray: '4 3' },
       markerEnd: { type: 'arrowclosed' as const, width: 18, height: 18, color: 'var(--ln-edge-color)' },
       ...(edge.bidirectional && {
         markerStart: { type: 'arrow' as const, width: 14, height: 14, color: 'var(--ln-edge-color)' },

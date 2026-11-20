@@ -323,6 +323,19 @@ describe('buildExpandedSchemaViewGraph — additive expansion', () => {
       edge.source === ref.id && edge.target === '[sales].[orders]')).toBe(true);
   });
 
+  it('leaves edge strength to the themed --ln-edge-color: no schema, bridge or cluster edge sets an inline opacity', () => {
+    const cluster = buildExpandedSchemaViewGraph(graph(), new Set(['sales']), null).flowEdges;
+    const overview = buildSchemaGraph(graph()).edges;
+
+    // Every edge kind must be present, or the loop below would pass on an empty list.
+    expect(cluster.some(edge => edge.id.startsWith('__bridge__'))).toBe(true);
+    expect(cluster.some(edge => edge.id.startsWith('__clusteredge__'))).toBe(true);
+    expect(overview.length).toBeGreaterThan(0);
+    for (const edge of [...cluster, ...overview].filter(e => e.id.startsWith('__'))) {
+      expect(edge.style?.opacity, edge.id).toBeUndefined();
+    }
+  });
+
   it('hides clusters and their bridges, keeping real edges, when hideClusters is set', () => {
     const result = buildExpandedSchemaViewGraph(graph(), new Set(['sales']), null, undefined, { hideClusters: true });
 
