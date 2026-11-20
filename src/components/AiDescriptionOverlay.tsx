@@ -203,6 +203,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   const html = useMemo(() => renderAiMarkdown(description), [description]);
   const mdRef = useRef<HTMLDivElement | null>(null);
   // SQL blocks are colored by the Monaco tokenizer already bundled for the detail view, loaded only when a block exists.
+  // The body mounts only while expanded, so expanding re-runs this for the new body.
   useEffect(() => {
     const root = mdRef.current;
     if (!root?.querySelector('code[data-lang="sql"]')) return;
@@ -215,7 +216,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
       observer.observe(document.body, { attributes: true, attributeFilter: ['data-vscode-theme-kind'] });
     });
     return () => { disposed = true; observer?.disconnect(); };
-  }, [html]);
+  }, [html, expanded]);
   const railName = viewName || 'AI Report';
   const overlayClassName = [
     'ln-ai-description-overlay',
