@@ -62,12 +62,6 @@ When a loaded graph has more objects than `dataLineageViz.overview.threshold`, t
 
 `dataLineageViz.renderLimit` limits the nodes drawn at once. When a selection would draw more, the graph shows a *Render limit reached* notice instead. A trace, path, analysis or AI preview counts only its own nodes; in Schema View each collapsed schema counts as one. Search, DDL and `@lineage` use the whole loaded model.
 
----------|----------|
-| `dataLineageViz.maxNodes` | Objects (including virtual external-reference nodes) admitted to the working graph |
-| `dataLineageViz.renderLimit` | Nodes the graph draws at once |
-
-A selection with more objects than `maxNodes` is refused: nothing is loaded, the prior view stays, and an error names the count, the limit and the setting. When a selection within `maxNodes` would draw more than `renderLimit` nodes, the graph shows a *Render limit reached* notice instead of drawing it. A trace, path, analysis or AI preview counts only its own nodes; in Schema View each collapsed schema counts as one. Search, DDL and `@lineage` use the whole loaded model.
-
 ---
 
 ## Filters & bookmarks

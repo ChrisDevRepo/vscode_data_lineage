@@ -107,7 +107,7 @@ const SCHEMA_PLACEHOLDER = '{{SCHEMAS}}';
 export function expandSchemaPlaceholder(sql: string, schemas: string[]): string {
   if (!sql.includes(SCHEMA_PLACEHOLDER)) return sql;
   const list = schemas.map(s => `N'${s.replace(/'/g, "''")}'`).join(', ');
-  return sql.replace(/\{\{SCHEMAS\}\}/g, list);
+  return sql.replace(/\{\{SCHEMAS\}\}/g, () => list);
 }
 
 /**

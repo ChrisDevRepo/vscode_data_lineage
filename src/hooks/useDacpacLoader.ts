@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useVsCode } from '../contexts/VsCodeContext';
 import type { DatabaseModel, SchemaInfo, SchemaPreview, ExtensionConfig } from '../engine/types';
-import { BRIDGE_PROTOCOL_VERSION, ExtensionToWebviewMsgSchema, validateBridgeFrame } from '../engine/shared/bridgeContract';
+import { ExtensionToWebviewMsgSchema, validateBridgeFrame } from '../engine/shared/bridgeContract';
 import { DEFAULT_CONFIG } from '../engine/types';
 
 /** Status notification shown during project loading or processing. */
@@ -136,15 +136,8 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   useEffect(() => {
     const handler = (event: MessageEvent) => {
       const frame = validateBridgeFrame(ExtensionToWebviewMsgSchema, event.data);
-      if (!frame.ok) {
-        if (frame.reason === 'version') {
-          window.vscode?.postMessage({
-            type: 'error',
-            error: `[Bridge] Protocol mismatch on "${frame.msgType}": host sent v${String(frame.version)}, webview expects v${BRIDGE_PROTOCOL_VERSION}. Reload the window.`,
-          });
-        }
-        return;
-      }
+      // `App` listens to the same frames and reports an invalid one; reporting it here too would show two toasts.
+      if (!frame.ok) return;
       const msg = frame.data;
 
       const { id: sentId, cancelled } = loadRef.current;

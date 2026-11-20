@@ -124,10 +124,10 @@ export function migrateProjectStore(
 }
 
 /** Creates a Project record with a generated UUID and current timestamps. */
-export function createProject(
+export function createProject<C extends DacpacConnection | DatabaseConnection>(
   name: string,
-  connection: DacpacConnection | DatabaseConnection,
-): Project {
+  connection: C,
+): Project & { connection: C } {
   const now = new Date().toISOString();
   return { id: crypto.randomUUID(), name, createdAt: now, updatedAt: now, connection };
 }

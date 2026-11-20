@@ -503,6 +503,12 @@ export const ProjectSchema = z.object({
 export type Project = z.infer<typeof ProjectSchema>;
 
 /**
+ * The project a `save-project` frame carries. The webview saves only dacpac projects; a database
+ * connection record is written by the host alone, through `stripSensitiveFields`.
+ */
+const DacpacProjectSchema = ProjectSchema.extend({ connection: DacpacConnectionSchema });
+
+/**
  * Reading counterpart of {@link ProjectSchema} for records already on disk. Same fields, but
  * unknown ones are dropped instead of rejecting the record: an older build's record legitimately
  * carries keys this one never declared, and discarding the whole project over one is silent
@@ -769,7 +775,7 @@ export const MainPanelToExtensionMsgSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('update-detail'), node: LineageNodeSchema.optional(), findQuery: z.string().optional() }),
   z.object({ type: z.literal('open-dacpac'), loadId: z.string().optional() }),
   z.object({ type: z.literal('load-project'), id: z.string(), loadId: z.string().optional() }),
-  z.object({ type: z.literal('save-project'), project: ProjectSchema }),
+  z.object({ type: z.literal('save-project'), project: DacpacProjectSchema }),
   z.object({ type: z.literal('delete-project'), id: z.string() }),
   z.object({ type: z.literal('load-demo'), loadId: z.string().optional() }),
   z.object({ type: z.literal('dacpac-visualize'), schemas: z.array(z.string()), projectName: z.string().optional(), projectId: z.string().optional(), loadId: z.string().optional() }),

@@ -14,7 +14,7 @@ Defaults and thresholds change between versions — check **Settings → Data Li
 | 4060 / 916 `Cannot open database` | Database missing or the login has no user in it | Choose Database · Edit Connection |
 | 40613 / 40197 / 40501 / 40532 | Azure database unavailable, busy or resuming | Retry |
 | `ETIMEOUT`, `ESOCKET`, `ENOTFOUND`, `ECONNREFUSED` | Wrong server or port, server stopped, network blocked | Edit Connection · Retry |
-| Certificate not trusted (self-signed) | Server certificate is not trusted by this machine | Trust Server Certificate (asks first; also offered when a new connection is tested) · Edit Connection |
+| Certificate not trusted (self-signed) | Server certificate is not trusted by this machine | Trust Server Certificate (trusts the server at once and saves the choice with the connection; also offered when a new connection is tested) · Edit Connection |
 | Sign-in cancelled | Microsoft sign-in window closed | Sign In · Sign in with another account |
 | 229 / 297 / 300 | Login cannot read metadata | Copy GRANT Statement |
 | anything else | — | Show Log · Edit Connection |

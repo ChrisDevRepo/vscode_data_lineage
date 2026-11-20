@@ -539,7 +539,7 @@ export function createMessageHandlers(
               if (detailPanel && !getSession().isDbSession) {
                 void postToDetail(detailPanel, { type: 'table-stats-error', objectRef: { schema: m.schema, objectName: m.objectName }, message: 'Table statistics need a database project.' }, bridgeLogger);
               } else if (detailPanel) {
-                await handleTableStatsRequestHost(host, dbEnv, lastConnectionInfo, detailPanel, m.schema, m.objectName, m.mode, m.columns ?? [], outputChannel);
+                await handleTableStatsRequestHost(host, dbEnv, lastConnectionInfo, detailPanel, m.schema, m.objectName, m.mode, m.columns ?? [], outputChannel, getSession().model);
               }
             } else if (m.type === 'close-detail') {
               detailPanel?.dispose();
@@ -1008,10 +1008,7 @@ export function createMessageHandlers(
     cleanup: async () => {
       dmvQueries.dispose();
     },
-    triggerDemoLoad: () => handleLoadDemo(host, getSession, outputChannel, (m) => {
-      setCurrentModel(m, false, null);
-      getSession().projectName = 'Demo';
-    }),
+    triggerDemoLoad: async () => handlers['load-demo']({ type: 'load-demo' }),
   };
 }
 
@@ -1262,18 +1259,25 @@ async function handleTableStatsRequestHost(
   objectName: string,
   mode: StatsMode,
   cols: ColumnDef[],
-  outputChannel: vscode.LogOutputChannel
+  outputChannel: vscode.LogOutputChannel,
+  model: DatabaseModel | null,
 ): Promise<void> {
   const logger = Logger.create(outputChannel, 'Stats');
   const objectRef = { schema, objectName };
   const cfg = host.getConfiguration();
-  if (!cfg.get('tableStatistics.enabled', DEFAULT_CONFIG.tableStatistics.enabled)) {
-    logger.info('Profiling disabled — request rejected');
+  const defaults = DEFAULT_CONFIG.tableStatistics;
+  const isExternalTable = model?.nodes.some(n => n.schema === schema && n.name === objectName && n.type === 'external') ?? false;
+  const refusedBy = !cfg.get('tableStatistics.enabled', defaults.enabled) ? 'enabled'
+    : mode === 'standard' && !cfg.get('tableStatistics.standardModeEnabled', defaults.standardModeEnabled) ? 'standardModeEnabled'
+    : isExternalTable && cfg.get('tableStatistics.excludeExternalTables', defaults.excludeExternalTables) ? 'excludeExternalTables'
+    : undefined;
+  if (refusedBy) {
+    logger.info(`Profiling refused by tableStatistics.${refusedBy} — request rejected`);
     logger.debug(`Rejected profiling target: ${schema}.${objectName}`);
     void postToDetail(panel, {
       type: 'table-stats-error',
       objectRef,
-      message: 'Table profiling is disabled by dataLineageViz.tableStatistics.enabled.',
+      message: `Table profiling is disabled by dataLineageViz.tableStatistics.${refusedBy}.`,
     }, logger);
     return;
   }

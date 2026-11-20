@@ -18,7 +18,7 @@ Import from `.dacpac` files or connect directly to SQL Server, Azure SQL, Fabric
 ## Get started
 
 1. Run **Data Lineage: Open Wizard** (`Ctrl+Shift+P`).
-2. Pick a `.dacpac` file — or **Connect to Database** (see [Database projects](#database-projects)).
+2. Click **+ Create New Project**, then **Open .dacpac file…** or **Connect to database…** (see [Database projects](#database-projects)).
 3. Select schemas and click **Visualize**.
 
 No data? Click **Try with demo data** or run **Data Lineage: Open Demo** to explore the AdventureWorks sample.

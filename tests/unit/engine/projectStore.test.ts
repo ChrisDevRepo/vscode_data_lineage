@@ -383,17 +383,23 @@ describe('project bridge contract', () => {
   });
 
   it('rejects save-project messages containing unknown connection fields', () => {
-    const project = createProject('Unsafe', dbConn);
+    const project = createProject('Unsafe', dacpacConn);
     const parsed = MainPanelToExtensionMsgSchema.safeParse({
       type: 'save-project',
-      project: {
-        ...project,
-        connection: {
-          ...project.connection,
-          connectionInfo: { ...dbConn.connectionInfo, password: 'secret' },
-        },
-      },
+      project: { ...project, connection: { ...project.connection, password: 'secret' } },
     });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it('accepts a dacpac project in a save-project message', () => {
+    const parsed = MainPanelToExtensionMsgSchema.safeParse({ type: 'save-project', project: createProject('AW', dacpacConn) });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it('rejects a database connection in a save-project message: the host alone writes connection records', () => {
+    const parsed = MainPanelToExtensionMsgSchema.safeParse({ type: 'save-project', project: createProject('Live', dbConn) });
 
     expect(parsed.success).toBe(false);
   });

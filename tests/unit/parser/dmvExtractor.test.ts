@@ -599,6 +599,9 @@ function testExpandSchemaPlaceholder() {
   const injected = expandSchemaPlaceholder(sql, ["O'Brien"]);
   expect(injected.includes("N'O''Brien'"), 'SQL injection: single quote escaped').toBe(true);
 
+  const dollar = expandSchemaPlaceholder(sql, ["x$'y$&"]);
+  expect(dollar.includes("N'x$''y$&'"), 'Replacement patterns: $\' and $& in a schema name stay literal').toBe(true);
+
   const unicode = expandSchemaPlaceholder(sql, ['Ärger日本']);
   expect(unicode.includes("N'Ärger日本'"), 'Unicode: a non-ASCII schema name keeps its characters (N literal)').toBe(true);
 
