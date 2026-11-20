@@ -381,8 +381,9 @@ export interface SupplementSkip {
    * typed; `hint` accompanies it.
    * - `not_connected_to_trace`: exists and not excluded but has no dependency path to the traced
    * graph (wire form of `REJECTION_CODES.notConnectedToTrace`); `hint` accompanies it.
-   * - `past_exact_depth`: a node the router would defer for crossing a depth ceiling the user
-   * fixed; `hint` accompanies it.
+   * - `past_exact_depth`: a node that would need a new hop past a depth ceiling the user fixed
+   * (the router would defer it); a non-bodied node proved by an analysed neighbour is admitted
+   * instead; `hint` accompanies it.
    *
    * `excluded` and `out_of_allowlist` are a hard wall for every supplement id, named or
    * chain-reached: a follow-up for an out-of-filter object reopens approval for it instead of

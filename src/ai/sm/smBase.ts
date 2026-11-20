@@ -2101,8 +2101,9 @@ export class NavigationEngine implements IHopStateMachine {
    * Finds follow-up targets that clear the border but have no dependency path to the traced graph.
    * Unresolvable and excluded ids are left to the caller, which reports them with their own
    * reasons. A target past an exact depth is refused by the router's own depth check
-   * ({@link admitsRoute}), so the AI never widens a fixed depth. A target is connected when the
-   * retained trace reaches it ({@link tracedGraphReachable}) or pruned connectors bridge it
+   * ({@link admitsRoute}), so the AI never widens a fixed depth; a non-bodied node an analysed
+   * SQL neighbour proves ({@link provedByAnalysedNeighbour}) needs no hop and is not past it. A
+   * target is connected when the retained trace reaches it ({@link tracedGraphReachable}) or pruned connectors bridge it
    * ({@link prunedConnectorsTo}): a target the user names wins over the AI's earlier prune,
    * and its connectors come back with it. A
    * resolved, non-excluded id with no path even through pruned objects is refused, since
@@ -2122,7 +2123,7 @@ export class NavigationEngine implements IHopStateMachine {
       if (!node) continue;
       const border = this.checkBorder(node.id, node, 'supplement');
       if (border.kind === 'excluded') continue;
-      if (this.admitsRoute(node.id, node, this.originNodeId!).depthBreach !== null) {
+      if (this.admitsRoute(node.id, node, this.originNodeId!).depthBreach !== null && !this.provedByAnalysedNeighbour(node)) {
         skipped.push({
           nodeId: node.id,
           reason: 'past_exact_depth',
@@ -2151,6 +2152,26 @@ export class NavigationEngine implements IHopStateMachine {
     }
     if (admitted.length > 0) this.log('info', `[Border] supplement admit ids=[${admitted.join(',')}]`);
     return { admitted, connectors: [...connectors], skipped };
+  }
+
+  /**
+   * Whether a non-bodied node needs no new hop because an already-analysed SQL node proves its
+   * edge: a table has no hop, so it joins the trace through its visited, retained neighbour on a
+   * side the approved direction allows, the contraction {@link enqueueHop} applies. A bodied node,
+   * or a table whose only SQL neighbours are unvisited, pruned or on a closed side, is not proved.
+   */
+  private provedByAnalysedNeighbour(node: LineageNode): boolean {
+    if (SCRIPT_TYPES.has(node.type)) return false;
+    const reachedSides = this.directedDepthsFor(node.id);
+    return this.allowedNoteSides().some(side => {
+      if (reachedSides?.[side] === undefined) return false;
+      const towardOrigin = side === 'downstream' ? 'upstream' : 'downstream';
+      return this.directionalNeighbors(node.id, towardOrigin).some(nid => {
+        const neighbour = this.nodeMap.get(nid);
+        return !!neighbour && SCRIPT_TYPES.has(neighbour.type) && this.visited.has(nid) && !this.removedSet.has(nid)
+          && this.directedDepthsFor(nid)?.[side] !== undefined;
+      });
+    });
   }
 
   /**
