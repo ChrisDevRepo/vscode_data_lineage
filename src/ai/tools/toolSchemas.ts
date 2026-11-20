@@ -421,7 +421,7 @@ function directlyBefore(chars: readonly string[], index: number): string {
   if (next === '""') return '';
   const escape = CONTROL_ESCAPES[chars[index]];
   return escape
-    ? ` (the ${escape[1]} comes from "\\${escape[0]}" in your JSON text before ${next}; write "\\\\" for a backslash)`
+    ? ` (the ${escape[1]} comes from "\\${escape[0]}" in your JSON text before ${next})`
     : ` (directly before ${next})`;
 }
 
@@ -441,13 +441,10 @@ const SectionBodySchema = z.string().superRefine((body, ctx) => {
     return `U+${hex} in ${quotedWindow(chars, index)} at character ${index + 1} of ${chars.length}${directlyBefore(chars, index)}`;
   });
   const rest = offenders.length - named.length;
-  const escapes = [...new Set(offenders.map(index => chars[index]))].map(char => JSON.stringify(char).slice(1, -1));
   ctx.addIssue({
     code: 'custom',
     message: `contains control character${offenders.length > 1 ? 's' : ''} ${named.join(', ')}${rest > 0 ? `, and ${rest} more` : ''}.`,
-    params: {
-      help: `${escapes.map(escape => `${escape} decodes to a control character; write \\${escape} for a backslash and ${escape.slice(1)}`).join('; ')}.`,
-      hint: 'Section text allows only line breaks (\\n) as control characters: indent with spaces, and write each backslash as \\\\ in the JSON string (e.g. \\\\text).' },
+    params: { hint: 'Section text allows only line breaks (\\n) as control characters: indent with spaces, and write each backslash as \\\\ in the JSON string (e.g. \\\\text).' },
   });
 });
 

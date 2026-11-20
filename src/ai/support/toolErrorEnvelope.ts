@@ -387,8 +387,7 @@ const ISSUE_CODES = Object.keys(ISSUES) as [IssueCode, ...IssueCode[]];
  * One independently decidable fault: its dotted path and issue code, with the backend facts it
  * concerns (allowed `values`, accepted `types`, a size `bound`), never a submitted value. `stated`
  * marks a fault whose table correction the rejection's reason or hint already replaces (a
- * refinement's own hint, the variants of a union, a route fault's own reason). `help` is the line the
- * check adds to the last feedback.
+ * refinement's own hint, the variants of a union, a route fault's own reason).
  */
 const ToolErrorShape = z.object({
   path: z.string(),
@@ -397,7 +396,6 @@ const ToolErrorShape = z.object({
   types: z.array(z.string()).optional(),
   bound: z.object({ keyword: z.string().min(1), limit: z.number(), sent: z.number().int().nonnegative().optional() }).strict().optional(),
   stated: z.literal(true).optional(),
-  help: z.string().optional(),
 }).strict();
 
 /** One independently decidable fault of a rejection. */
@@ -660,12 +658,6 @@ export function renderLastFeedbackHelp(rejection: ToolRejection, schema?: () => 
     lines.push(REFERENCE_FALLBACK);
   }
   for (const error of errors) {
-    if (error.help && !lines.includes(error.help)) lines.push(error.help); // one fault per section body: the same help once
-    if (error.code === 'json_text' && /^[^.]+$/.test(error.path)) {
-      const node = jsonSchemaNodeAt(schema?.(), [error.path]);
-      const shape = node && unwrapNullable(node).properties ? ` as ${JSON.stringify(exampleOf(unwrapNullable(node)))}` : '';
-      lines.push(`Resend only ${error.path}${shape}.`);
-    }
     if ((error.code !== 'type' && error.code !== 'missing') || !error.types?.length || !/^[^.]+$/.test(error.path)) continue;
     const node = jsonSchemaNodeAt(schema?.(), [error.path]);
     lines.push(`${error.path} takes ${node ? nextLevel(node) : error.types.join(' or ')}.`);
@@ -1145,7 +1137,7 @@ function sizeKeyword(issue: Extract<z.core.$ZodIssue, { code: 'too_big' | 'too_s
  * The typed faults of one Zod issue: `invalid_type` is `missing` for an absent field, `never` for a
  * forbidden one, else `type`; `unrecognized_keys` one `unknown_key` per key; `invalid_value` is
  * `enum` (`missing` when absent); `too_big`/`too_small` `size` with its bound; a custom issue the
- * issue code on its `params.code` and, on its `params.help`, the help the last feedback adds; every other issue `invalid`. A union names the faults of its
+ * issue code on its `params.code`; every other issue `invalid`. A union names the faults of its
  * flattened branches, the accepted types of one path merged into one fault. A fault whose repair the
  * reason or hint states is `stated`: a union's variants, a refinement's `params.hint`.
  */
@@ -1182,13 +1174,12 @@ function issueErrors(issue: z.core.$ZodIssue, input: unknown): ToolError[] {
       return [{ path, code: 'size', bound: { keyword: sizeKeyword(issue), limit, ...(size !== undefined ? { sent: size } : {}) } }];
     }
     case 'custom': {
-      const params = issue.params as { code?: unknown; help?: unknown } | undefined;
+      const params = issue.params as { code?: unknown } | undefined;
       const code = params?.code;
       return [{
         path,
         code: typeof code === 'string' && code in ISSUES ? code as IssueCode : 'invalid',
         ...(issueStatesRepair(issue) ? { stated: true as const } : {}),
-        ...(typeof params?.help === 'string' ? { help: params.help } : {}),
       }];
     }
     default:

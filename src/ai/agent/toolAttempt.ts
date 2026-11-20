@@ -726,7 +726,7 @@ interface RecordedToolOutcome {
  * multi-error validation), its fault lines ({@link renderFaults}), its hint and, when a
  * `present_result` repair draft is held, its section labels. The reason states the identity fault;
  * verified column inventories, the help of the faults ({@link renderLastFeedbackHelp}) and the
- * top-level fields to correct are disclosed on the rejection the last budgeted reply answers. The
+ * fields to correct (a `sections` angle by its path) are disclosed on the rejection the last budgeted reply answers. The
  * last line states the replies the step has left, so the budget is known before it is spent. Code,
  * issue paths and detail stay on the paired `ToolMessage.artifact`.
  *
@@ -741,7 +741,8 @@ function rejectionText(rejection: ToolRejection, priorState?: ToolPhaseAttemptSt
   const held = rejection.detail && typeof rejection.detail === 'object'
     ? (rejection.detail as { held_draft?: HeldDraftRepairContent }).held_draft
     : undefined;
-  const owed = finalRejection ? [...new Set((rejection.issuePaths ?? []).map(path => path.split('.')[0]))] : [];
+  // A field is named whole, except a `sections` angle: its other angles may be held.
+  const owed = finalRejection ? [...new Set((rejection.issuePaths ?? []).map(path => path.match(/^sections\.[^.\d][^.]*/)?.[0] ?? path.split('.')[0]))] : [];
   const heldLabels = held?.sections.map(({ label, start }) => `"${label}"${start ? ` (from ${start})` : ''}`).join(', ');
   return [
     rejection.reason,

@@ -252,6 +252,11 @@ describe("tool-error-envelope", () => {
       expect(served).toContain('Send the object directly');
       expect(served).not.toContain('Send it again as one complete JSON');
     });
+
+    it('asks for the rest of a string cut off, and only a closer for text that ends between values', () => {
+      expect(reason({ sections: '{"technical":"cut', flow: [{ out: 'a' }] })).toContain('finish the cut string, then add `"}` at the end');
+      expect(reason({ sections: '{"technical":"cut"', flow: [{ out: 'a' }] })).toContain('add `}` at the end');
+    });
   });
 
 });

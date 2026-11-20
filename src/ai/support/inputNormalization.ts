@@ -259,8 +259,9 @@ export function locateJsonTextFault(text: string): string | undefined {
       ended = closers.length === 0;
     }
   }
+  // Text cut inside a string asks for the rest of the sentence first: a bare closer would keep the cut sentence.
   return closers.length > 0
-    ? at(`the text ends before the ${noun} closes`, chars.length - 1, `add \`${inString ? '"' : ''}${closers.reverse().join('')}\` at the end`)
+    ? at(`the text ends before the ${noun} closes`, chars.length - 1, `${inString ? 'finish the cut string, then add `"' : 'add `'}${closers.reverse().join('')}\` at the end`)
     : undefined;
 }
 
