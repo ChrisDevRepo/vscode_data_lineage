@@ -24,7 +24,7 @@ const indentOf = (line: string): number => line.length - line.trimStart().length
 /**
  * Aligns a quoted SQL excerpt for display: the indentation its code lines share with the source
  * body is removed, and each comment-only line takes the indentation of the next code line (or the
- * previous one at the end). Text and line order stay as captured.
+ * previous one at the end). Text and line order stay as captured. @internal
  */
 export function alignSqlExcerpt(sql: string): string {
   const lines = sql.split('\n');

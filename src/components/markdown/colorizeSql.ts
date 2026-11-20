@@ -3,7 +3,7 @@ import 'monaco-editor/languages/definitions/sql/register';
 import { getMonacoTheme } from '../../detail/monacoTheme';
 
 /** Attribute `renderAiMarkdown` puts on a SQL block not yet colored. */
-export const SQL_BLOCK_ATTRIBUTE = 'data-lang';
+const SQL_BLOCK_ATTRIBUTE = 'data-lang';
 
 /**
  * Colors every SQL block under `root` that `renderAiMarkdown` marked, with the Monaco SQL tokenizer
