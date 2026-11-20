@@ -124,10 +124,19 @@ shared_capture:
     For grouping or ranked-row removal, derive the survivors per grouping or
     partition key from the retained count or rank; ordering selects a survivor,
     not a new partition grain. Equality keys used to delete existing matches
-    are deletion criteria, not automatically the output grain. Add a ```sql
-    snippet to support the explanation of logic too complex to state fully in
-    prose or a formula; the snippet is the deciding expression, never a whole
-    statement.
+    are deletion criteria, not automatically the output grain.
+    SQL snippet rule: write each item for a business reader first (explanation,
+    then formula when it adds meaning, several related formulas as a table). End
+    the item with one ```sql block for a DBA when its logic ranks or
+    deduplicates rows, matches rows on several keys, branches into several
+    outcomes, or combines several conditions in one predicate; simple filters,
+    renames, direct assignments and logic the formula already states get none.
+    The block keeps only the lines that decide that logic, verbatim from
+    `bb_ddl` in source order: the clauses of one logic stay together from where
+    a value is defined to where it filters or removes rows, each kept clause
+    keeps the first line of its statement, omitted lines become `-- ...`, never
+    a whole statement or column list, and the deciding lines end in a short
+    `-- ` recap comment.
     Distinguish input rows from surviving rows at each cardinality-changing step.
     For a step whose supplied SQL defines a calculation, explain that definition under Steps with its formula, input rows and meaning; naming the computation without explaining it leaves Steps incomplete.
 
@@ -142,7 +151,7 @@ business_capture:
   instruction: |
     What the node does to the meaning of the data.
     1. Purpose: the domain role and the decision it serves.
-    2. Rules and branches: each declared value of a mode, status or strategy switch and what it changes; a commented-out branch is declared, not active. Explain calculations within the rule they implement, with their formula, business meaning, terms and consequences; add SQL only to support complex logic under the snippet rule.
+    2. Rules and branches: each declared value of a mode, status or strategy switch and what it changes; a commented-out branch is declared, not active. Explain calculations within the rule they implement, with their formula, business meaning, terms and consequences; add SQL only under the SQL snippet rule.
     3. Grain: for conditional eligibility, evaluate the complete predicate with the declared defaults and with each override separately, and qualify survival claims by that condition. A warning-only check does not override a later row-eligibility filter.
     4. Calculation logic: what happens to the data the question asks about as it moves through the supplied SQL, from one CTE, temp table or statement to the next.
     5. Steps: explain the logical data transformations and status transitions in order. This business section stands alone even when a technical section is also requested.
@@ -168,7 +177,7 @@ technical_capture:
   instruction: |
     The mechanics, and which rows survive them.
     1. Purpose: the execution role.
-    2. Rules and branches: each switch value and the statement it runs. Explain calculations within the rule they implement, with their formula, branch behavior and consequences. Explain the logic that decides row survival or load behavior; add SQL only to support complex logic under the snippet rule.
+    2. Rules and branches: each switch value and the statement it runs. Explain calculations within the rule they implement, with their formula, branch behavior and consequences. Explain the logic that decides row survival or load behavior; add SQL only under the SQL snippet rule.
     3. Join shape and grain: JOIN and WHERE predicates and join hints.
     4. Steps: the SQL statements and logical data changes, in order. This technical section stands alone even when a business section is also requested.
     5. Loading: `reload`, `append`, `upsert`, `historization`, `purge` or `orchestration`; none for a view or function.
