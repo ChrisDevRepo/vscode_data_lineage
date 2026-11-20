@@ -1,31 +1,26 @@
 # Changelog
 
-## [Unreleased]
+## [1.2.6] - Unreleased
 
 ### Removed
-- Connecting through the SQL Server (mssql) extension, whose connection API Microsoft deprecated, and the `dataLineageViz.database.connectionProvider` setting. The mssql connection is removed: a project saved with it shows a warning and opens **Add Database Connection** prefilled with the saved server and database; the project keeps its schemas.
-- The **with positions** bookmark option. Bookmarks keep their filters and view; node positions saved by earlier versions are ignored.
+- SQL Server (mssql) extension connection and the `dataLineageViz.database.connectionProvider` setting; a saved mssql project asks to reconnect.
+- The **with positions** bookmark option.
 
 ### Changed
-- No confirmation dialogs remain outside the AI chat: **Open Wizard** with a loaded view takes the view back to the start screen, with its unsaved-changes prompt, **Remove Database Connection** removes the picked connection and its saved password and shows a notice, and the **Trust Server Certificate** button on a certificate error trusts the server at once.
-- Opening a file, project or database while another load runs cancels the earlier load, and **Cancel** stops a load at once: a late result no longer replaces the graph.
-- Info, warning and error lines in the output channel no longer show file paths or project, view or object names; those appear at debug level. Credentials are removed from every log line and notification.
-- The AI trace file records the token usage the model reports for each reply.
+- Confirmation dialogs removed outside the AI chat.
+- A new load cancels the previous one.
+- Logs show names and paths at debug level only and never show credentials.
+- AI analysis enforces the approved scope.
 
 ### Fixed
-- Column statistics show large numbers (bigint, decimal(38)) exactly instead of rounded.
-- Names with escaped brackets or quotes inside them are unescaped correctly.
-- **Reset All** no longer brings back the previous filter.
-- A view the schema selection refuses is no longer marked active and leaves the graph unchanged.
-- Trace notices and detail-panel errors show one notification instead of several; **Change scope** shows where to type the change.
-- A `$` right after a word in AI descriptions no longer starts a formula.
-- Two external files whose URLs hashed alike no longer merge into one node. External-file node IDs change once, so a saved view drops an external file it listed by ID.
-- The AI view banner and the view cards show the right object count when the graph is over the render limit.
-- Statistics column headers can be sorted with the keyboard, and node information pop-ups open on keyboard focus.
+- Fixes in column statistics, name unescaping, filters, notifications and keyboard access.
 - Draw.io export places schema clusters around their nodes.
+- External files with different URLs no longer merge into one node; a saved view drops an external file it listed by ID.
+- Several fixes in AI analysis.
 
 ### Dependencies
-- Security updates: dompurify, zod, fast-xml-parser, undici, @azure/msal-node, markdown-it, fast-uri, serialize-javascript and qs; development tools vite, vitest, minimatch and glob.
+- Security updates: dompurify, zod, fast-xml-parser, @azure/msal-node.
+- Dependency updates (patch and minor releases).
 
 ## [1.2.5] - 2026-10-07
 
