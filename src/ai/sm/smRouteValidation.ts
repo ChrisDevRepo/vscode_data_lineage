@@ -68,6 +68,12 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
 const DETACHED_LINK_DIRECTIVE =
   'Attach each named tuple to a tracked column, or leave it out of column_flow and keep it in sections; do not invent a write.';
 
+/** Served kinds whose directive removes a list entry; the retry resends that failed list. */
+const ENTRY_REMOVAL_KINDS: ReadonlySet<InvalidRouteKind> = new Set(['question_not_neighbor', 'prune_question_conflict', 'prune_column_conflict', 'question_closed']);
+
+/** How a removal directive's list is sent once it has no entries left. */
+const EMPTIED_LIST_DIRECTIVE = 'Send a list left with no entries as [].';
+
 /**
  * Machine error code per validation kind, used when one kind dominates the rejection (mixed kinds
  * fall back to the generic code). Exported so a nonfatal (absent-kind) notice is logged to
@@ -114,6 +120,7 @@ export function routeDirectives(errors: readonly InvalidRoute[]): string[] {
       || errors.some(error => error.kind === kind && error.path?.endsWith('.out_col')))
       .map(kind => ROUTE_REJECTION_DIRECTIVE[kind]),
     errors.some(error => error.kind === 'untracked_out_col' && error.path?.endsWith('.upstream_columns')) ? DETACHED_LINK_DIRECTIVE : '',
+    kinds.some(kind => ENTRY_REMOVAL_KINDS.has(kind)) ? EMPTIED_LIST_DIRECTIVE : '',
   ].filter(Boolean);
 }
 
