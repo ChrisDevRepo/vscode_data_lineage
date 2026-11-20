@@ -8,6 +8,13 @@
  *
  *  Modifications: namespace flattened to module exports, VS Code-internal imports replaced
  *  with the `marked`/`katex` packages and a local `htmlAttributeEncodeValue`.
+ *
+ *  Block math follows the dialect of @vscode/markdown-it-katex (microsoft/vscode-markdown-it-katex,
+ *  src/index.ts `blockMath`), not UziTech's, which needs a newline right after the opener (its known
+ *  limitation, UziTech/marked-katex-extension#363): a `$$` block starts at a line start, its opener may
+ *  carry formula text, and the closer may stand alone or be glued to the last content line. Deviations
+ *  from that dialect: a line that opens and closes `$$` stays an inline display formula in its paragraph
+ *  (as in this renderer before), and the single-`$` block still needs its own opener line.
  *  See THIRD_PARTY_NOTICES.md.
  *--------------------------------------------------------------------------------------------*/
 import type { KatexOptions } from 'katex';
@@ -35,10 +42,12 @@ const katexContainerLatexAttributeName = 'data-latex';
 /** {@link mathInlineRegExp} anchored at `lastIndex`, so its lookbehind sees the preceding text. */
 const inlineRule = new RegExp(mathInlineRegExp.source, 'y');
 /**
- * A block closes on its own line or glued to the last line of the formula, as models write
- * `\end{cases}$$`.
+ * A block opens with `$$` (formula text may follow on the same line, as models write
+ * `$$\begin{aligned}`) or with a lone `$` line, and closes on its own line or glued to the last line of
+ * the formula, as models write `\end{cases}$$`. The body holds no unescaped delimiter, so the first
+ * closer ends it. A line that closes its own opener (`$$x$$`, `$$a$$ and $$b$$`) is left to the inline rule.
  */
-const blockRule = /^(\${1,2})\n((?:\\[^]|[^\\])+?)\n?\1(?:\n|$)/;
+const blockRule = /^(\$\$|\$(?=\n))(?![^\n]*\1[ \t]*(?:\n|$))[ \t]*\n?((?:\\[^]|(?!\1)[^\\])+?)\n?[ \t]*\1[ \t]*(?:\n|$)/;
 
 interface MarkedKatexOptions extends KatexOptions { }
 
