@@ -401,6 +401,20 @@ export const GetScopeBundleModelSchema = z.object({
 }).strict();
 
 /**
+ * One `sections` angle body. LF is its only allowed C0 control character: any other, such as the
+ * TAB a single JSON backslash makes of `\text`, rejects the angle instead of reaching the report.
+ */
+const SectionBodySchema = z.string().superRefine((body, ctx) => {
+  const control = [...body].find(char => char < ' ' && char !== '\n');
+  if (control === undefined) return;
+  ctx.addIssue({
+    code: 'custom',
+    message: `contains control character U+${control.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}.`,
+    params: { hint: 'Section text allows only line breaks (\\n) as control characters: indent with spaces, and write each backslash as \\\\ in the JSON string (e.g. \\\\text).' },
+  });
+});
+
+/**
  * `submit_findings.sections`, keyed by angle so the same angle cannot be sent twice. Each fired
  * `*_capture` template yields one keyed entry (`business` and/or `technical`). This base shape
  * backs the permissive participant union ({@link SubmitFindingsModelSchema}) and stays angle-open;
@@ -411,9 +425,9 @@ export const GetScopeBundleModelSchema = z.object({
  */
 const CapturedSectionsSchema = z.object({
   /** Pre-formatted section body written per `business_capture`. */
-  business: z.string().optional(),
+  business: SectionBodySchema.optional(),
   /** Pre-formatted section body written per `technical_capture`. */
-  technical: z.string().optional(),
+  technical: SectionBodySchema.optional(),
 }).strict();
 
 /** Model-facing output of {@link CapturedSectionsSchema}: at most one string per angle. */
@@ -756,12 +770,12 @@ function capturedSectionSchemaForClassification(
 ): z.ZodType<CapturedSectionsWire> {
   const kept = CLASSIFICATION_KEPT_ANGLES[classification];
   if (kept.length === CLASSIFICATION_KEPT_ANGLES.both.length) {
-    const plainBody = z.string().optional();
+    const plainBody = SectionBodySchema.optional();
     return z.strictObject({ business: plainBody, technical: plainBody });
   }
   const [onlyAngle] = kept;
   const offAngle = onlyAngle === 'business' ? 'technical' : 'business';
-  const body = z.string().optional().describe(
+  const body = SectionBodySchema.optional().describe(
     `The only angle classification=${classification} keeps; fold any ${offAngle} content into this key — a separate "${offAngle}" key is rejected.`,
   );
   return z.strictObject({ [onlyAngle]: body }) as unknown as z.ZodType<CapturedSectionsWire>;
