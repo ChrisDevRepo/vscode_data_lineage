@@ -417,6 +417,11 @@ export interface ToolRejection {
   entryIds?: readonly string[];
   /** Every independent fault, by path and issue code. */
   errors?: ToolError[];
+  /**
+   * Fields the session holds for the retry (a `sections` angle by its path); the last feedback
+   * names them.
+   */
+  held?: string[];
 }
 
 /**
@@ -451,6 +456,7 @@ const RejectionShape = z.object({
   issuePaths: z.array(z.string()).optional(),
   entryIds: z.array(z.string()).optional(),
   errors: z.array(ToolErrorShape).optional(),
+  held: z.array(z.string()).optional(),
 }).strict();
 
 /**
@@ -872,6 +878,23 @@ function dottedPath(path: readonly PropertyKey[]): string {
 
 /** The RFC 6901 JSON Pointer a served reason or fault line names: `/sections/2/blocks`; `''` is the call. */
 export const jsonPointer = (path: readonly PropertyKey[]): string => path.map(key => `/${String(key).replace(/~/g, '~0').replace(/\//g, '~1')}`).join('');
+
+/** Whether the served schema has the dotted `path` (a top-level field, or a `sections` angle). */
+export function isServedField(schema: () => z.ZodType | undefined, path: string): boolean {
+  return jsonSchemaNodeAt(schema(), path.split('.')) !== undefined;
+}
+
+/** The angles the served schema's `sections` object defines. */
+export function servedSectionAngles(schema: () => z.ZodType | undefined): string[] {
+  const node = jsonSchemaNodeAt(schema(), ['sections']);
+  return [...new Set([node, ...(node?.anyOf ?? []), ...(node?.oneOf ?? [])].flatMap(variant => Object.keys(variant?.properties ?? {})))];
+}
+
+/** The top-level fields the served schema requires that `input` does not send. */
+export function unsentRequiredFields(schema: () => z.ZodType | undefined, input: unknown): string[] {
+  const sent = input !== null && typeof input === 'object' ? input as Record<string, unknown> : {};
+  return (jsonSchemaNodeAt(schema(), [])?.required ?? []).filter(field => sent[field] === undefined);
+}
 
 /** The JSON Schema node `path` addresses in `schema`; `undefined` if the path leaves the schema. */
 function jsonSchemaNodeAt(schema: z.ZodType | undefined, path: readonly PropertyKey[]): JsonSchemaShape | undefined {

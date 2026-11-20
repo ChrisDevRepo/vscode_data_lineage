@@ -11,7 +11,7 @@ import { REJECTION_CODES } from '../support/rejectionCodes';
 import { jsonPointer, rejectionFromZodError, type ToolRejection } from '../support/toolErrorEnvelope';
 import { CLASSIFICATION_KEPT_ANGLES, type ClassificationValue } from '../session/classification';
 import { extractRawSectionAngles } from '../interaction/rules/submitFindingsRules';
-import type { HopFinding, HopFindingKept, HopSubmission } from '../sm/smTypes';
+import type { HeldSubmissionParts, HopFinding, HopFindingKept, HopSubmission } from '../sm/smTypes';
 
 /**
  * A column identifier the user actually named. Wildcards are rejected at the boundary: a
@@ -426,8 +426,9 @@ function directlyBefore(chars: readonly string[], index: number): string {
 }
 
 /**
- * One `sections` angle body. LF is its only allowed C0 control character: any other, such as the
- * TAB a single JSON backslash makes of `\text`, rejects the angle instead of reaching the report.
+ * One report text body: a `submit_findings` `sections` angle and a `present_result` section text,
+ * intro or closing. LF is its only allowed C0 control character: any other, such as the TAB a single
+ * JSON backslash makes of `\text`, rejects the field instead of reaching the report.
  * An offender is located by the text around it in its canonical JSON escape (a TAB shows as `\t`
  * beside a correctly escaped `\\text`): it is invisible and models cannot count lines or columns.
  * The quote is bounded to the window around the offender.
@@ -1023,6 +1024,11 @@ export function heldSubmissionRepairHint(): string {
   return 'Send only the failed fields; every other field is held.';
 }
 
+/** The fields a held finding restores on the retry, by name: a `sections` angle by its path. */
+export function heldSubmissionFields(held: HeldSubmissionParts): string[] {
+  return ['focus_node_id', 'verdict', ...held.fields, ...(held.summary ? ['summary'] : []), ...held.sections.map(angle => `sections.${angle}`)];
+}
+
 /**
  * Zod schema for `get_neighbor_columns` tool input.
  *
@@ -1218,7 +1224,7 @@ const HighlightGroupSchema = z.object({
 const PresentResultSectionSchema = z.object({
   label: z.string().max(PRESENT_RESULT_SECTION_LABEL_MAX, overLength(PRESENT_RESULT_SECTION_LABEL_MAX)).trim().min(1, 'Section label is required — provide a short final label for this detail section').describe('What the section\'s nodes share, as heading and badge (30 chars). No object names.'),
   node_ids: z.array(NodeIdSchema).describe('Nodes this section documents; put each node in one section. Empty array when it documents none.'),
-  text: z.string().trim().min(1, 'Section is missing text — every final section label requires one detail body').describe('Required detail body for this section label.'),
+  text: SectionBodySchema.trim().min(1, 'Section is missing text — every final section label requires one detail body').describe('Required detail body for this section label.'),
 }, {
   error: (issue) => issue.code === 'unrecognized_keys'
     ? 'A section holds only label, node_ids and text. Below-node captions go in the top-level notes array as {node_id, caption} objects, never inside a section.'
@@ -1300,8 +1306,8 @@ export const PresentResultModelSchema = z.object({
   name: z.string().max(PRESENT_RESULT_NAME_MAX, overLength(PRESENT_RESULT_NAME_MAX)).trim().min(1, 'name is required').describe('Short name for the generated lineage view — aim for ~60 chars.'),
   summary: z.string().trim().min(1, 'summary is required — one-line graph purpose (~120 chars)').describe('One-line summary shown with the generated view.'),
   title: z.string().max(PRESENT_RESULT_TITLE_MAX, overLength(PRESENT_RESULT_TITLE_MAX)).optional().describe('Optional report heading.'),
-  intro: z.string().optional().describe('Optional grounded introduction to the final report.'),
-  closing: z.string().optional().describe('Closing synthesis. Length is never a rejection axis.'),
+  intro: SectionBodySchema.optional().describe('Optional grounded introduction to the final report.'),
+  closing: SectionBodySchema.optional().describe('Closing synthesis. Length is never a rejection axis.'),
   prune_node_ids: z.array(NodeIdSchema).optional().describe('ONLY permitted during Completed Phase follow-ups. Strictly forbidden during the initial Synthesis Phase.'),
   add_node_ids: z.array(NodeIdSchema).optional().describe('ONLY permitted during Completed Phase follow-ups. Strictly forbidden during the initial Synthesis Phase.'),
   layout_direction: z.enum(['LR', 'TB']).optional().describe('Graph layout: left-to-right or top-to-bottom.'),
@@ -1323,7 +1329,7 @@ export const PresentResultModelSchema = z.object({
  */
 const PresentResultRetainedSectionSchema = PresentResultSectionSchema.extend({
   node_ids: z.array(NodeIdSchema).optional().describe('Nodes this section documents; put each node in one section. Omit to keep the committed links for this label; an empty array unlinks them.'),
-  text: z.string().optional().describe('Detail body. Omit to keep the committed text for this label; supply it only to rewrite that section.'),
+  text: SectionBodySchema.optional().describe('Detail body. Omit to keep the committed text for this label; supply it only to rewrite that section.'),
 });
 
 /**

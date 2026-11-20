@@ -477,6 +477,7 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
         return holdRejectedPresentResult(sess.presentResultRepairDraft, input, issuePaths, 'synthesis', sess.retainableReportSections());
       },
       holdRejectedSubmission: (input, issuePaths) => (deps.getSession().stateMachine as NavigationEngine | null)?.holdRejectedSubmission(input, issuePaths) ?? null,
+      heldSubmission: () => (deps.getSession().stateMachine as NavigationEngine | null)?.heldSubmission ?? null,
       projectRejectedSubmission: input => (deps.getSession().stateMachine as NavigationEngine | null)?.projectRejectedSubmission(input) ?? null,
     });
     const first = await attempt();

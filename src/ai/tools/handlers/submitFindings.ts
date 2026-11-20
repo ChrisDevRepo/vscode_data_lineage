@@ -5,7 +5,7 @@
  */
 import { NavigationEngine } from '../../sm/smBase';
 import { sanitizeForLog } from '../../../utils/log';
-import { toHopFinding, submitFindingsSchemaForMode, heldSubmissionRepairHint } from '../../tools/toolSchemas';
+import { toHopFinding, submitFindingsSchemaForMode, heldSubmissionFields } from '../../tools/toolSchemas';
 import { buildSmCompletionEnvelope } from '../../prompting/smPrompts';
 import { combineToolRejections, makeRejection, rejectionFromZodError, zodFieldRepairHint } from '../../support/toolErrorEnvelope';
 import { buildRouteValidationRejection, routeDirectives } from '../../sm/smRouteValidation';
@@ -56,7 +56,10 @@ export function executeSubmitFindings(input: unknown, s: ToolServices): string {
         const routes = engine.columnFlowFaults(input);
         const rejection = routes.length > 0 ? combineToolRejections([schemaFault, buildRouteValidationRejection(routes)]) : schemaFault;
         const held = engine.holdRejectedSubmission(input, rejection.issuePaths ?? []);
-        if (held) rejection.hint = [zodFieldRepairHint(parsed.error, input, schema), ...routeDirectives(routes), heldSubmissionRepairHint()].filter(Boolean).join(' ');
+        if (held) {
+          rejection.hint = [zodFieldRepairHint(parsed.error, input, schema), ...routeDirectives(routes)].filter(Boolean).join(' ');
+          rejection.held = heldSubmissionFields(held);
+        }
         return s.logAndReturn('lineage_submit_findings', rejection, input);
       }
       const rawInput: SubmitFindingsInputObject = parsed.data;

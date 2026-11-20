@@ -615,6 +615,11 @@ export class NavigationEngine implements IHopStateMachine {
     return this.heldFindingFocus === null ? null : this.heldFindingDraft.getAuthorization()?.failed ?? null;
   }
 
+  /** What the held finding of the current focus restores on a retry, read only; `null` if none. */
+  public get heldSubmission(): HeldSubmissionParts | null {
+    return this.heldFindingFocus === null ? null : this.heldPartsOfCurrentFocus();
+  }
+
   /** Whether the current tasks trace columns on both sides of the focus. */
   private mixedColumnSides(): boolean {
     return new Set(this.getCurrentTasks().flatMap(task => task.kind === 'column_lineage' && task.traversalSide ? [task.traversalSide] : [])).size > 1;

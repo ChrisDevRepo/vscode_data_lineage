@@ -51,13 +51,16 @@ import {
   readToolError,
   renderFaults,
   renderLastFeedbackHelp,
+  isServedField,
+  servedSectionAngles,
+  unsentRequiredFields,
   type ToolError,
   type ToolRejection,
   UNKNOWN_TOOL_REPAIR_HINT,
 } from '../support/toolErrorEnvelope';
 import { REJECTION_CODES } from '../support/rejectionCodes';
 import { toolCallNotationFault } from '../support/toolCallNotation';
-import { heldSubmissionRepairHint } from '../tools/toolSchemas';
+import { heldSubmissionFields, heldSubmissionRepairHint } from '../tools/toolSchemas';
 import {
   contextBlockBytes,
   estimateTokens,
@@ -199,6 +202,12 @@ type ToolOutcomeData =
       readonly issuePaths?: string[];
       readonly entryIds?: readonly string[];
       readonly errors?: ToolError[];
+      readonly held?: string[];
+      /**
+       * Required fields a call rejected before its schema check left unsent; the last feedback
+       * names them.
+       */
+      readonly unsent?: readonly string[];
     };
     readonly detail?: unknown;
   }
@@ -270,6 +279,9 @@ export interface ToolAttemptResult {
 /** Holds the valid parts of a rejected `lineage_submit_findings` payload; `null` if none. */
 type HoldRejectedSubmission = (input: unknown, issuePaths: readonly string[]) => HeldSubmissionParts | null;
 
+/** What the held `lineage_submit_findings` draft of the focus restores, read only, or `null`. */
+type HeldSubmission = () => HeldSubmissionParts | null;
+
 /** The arguments a rejected `lineage_submit_findings` call keeps in the transcript; `null` keeps it as sent. */
 type ProjectRejectedSubmission = (input: unknown) => Record<string, unknown> | null;
 
@@ -330,6 +342,8 @@ interface ToolGenerationAttemptInput {
   readonly presentResultRepairDraftContext?: () => HeldDraftRepairContent | null | undefined;
   /** See {@link ToolAttemptExecutionOptions.holdRejectedSubmission}. */
   readonly holdRejectedSubmission?: HoldRejectedSubmission;
+  /** See {@link ToolAttemptExecutionOptions.heldSubmission}. */
+  readonly heldSubmission?: HeldSubmission;
   /** See {@link ToolAttemptExecutionOptions.projectRejectedSubmission}. */
   readonly projectRejectedSubmission?: ProjectRejectedSubmission;
   /** See {@link ToolAttemptExecutionOptions.holdRejectedPresentResult}. */
@@ -374,6 +388,11 @@ interface ToolAttemptExecutionOptions {
    * content. Returns `null` when nothing is held.
    */
   readonly holdRejectedSubmission?: HoldRejectedSubmission;
+  /**
+   * Reads the session's held finding draft without changing it, for a `lineage_submit_findings`
+   * call rejected before its schema check (tool-call notation): its repair names the held fields.
+   */
+  readonly heldSubmission?: HeldSubmission;
   /**
    * Reduces a rejected `lineage_submit_findings` call in the transcript to the fields a retry
    * resends, the rest being held by the session. Returns `null` when nothing is held for the call.
@@ -646,7 +665,8 @@ function isArgumentRejection(code: string): boolean {
 /**
  * Applies the tool-call notation check to one provider call.
  *
- * @returns The call unchanged, or its invalid form naming each text value that carries notation.
+ * @returns The call unchanged, or its invalid form naming each argument name or text value that
+ *   carries notation.
  */
 function checkToolCallNotation(call: GeneratedToolCall): GeneratedToolCall {
   const fault = call.valid ? toolCallNotationFault(call.input) : null;
@@ -700,6 +720,7 @@ function rejectionFromResult(resultText: string): ToolOutcomeData | null {
         ...(rejection.issuePaths ? { issuePaths: rejection.issuePaths } : {}),
         ...(rejection.entryIds ? { entryIds: rejection.entryIds } : {}),
         ...(rejection.errors ? { errors: rejection.errors } : {}),
+        ...(rejection.held ? { held: rejection.held } : {}),
       },
     };
   } catch {
@@ -726,13 +747,16 @@ interface RecordedToolOutcome {
  * multi-error validation), its fault lines ({@link renderFaults}), its hint and, when a
  * `present_result` repair draft is held, its section labels. The reason states the identity fault;
  * verified column inventories, the help of the faults ({@link renderLastFeedbackHelp}) and the
- * fields to correct (a `sections` angle by its path) are disclosed on the rejection the last budgeted reply answers. The
- * last line states the replies the step has left, so the budget is known before it is spent. Code,
- * issue paths and detail stay on the paired `ToolMessage.artifact`.
+ * fields to correct ({@link fieldsToCorrect}, {@link fieldsToCorrectLine}) are disclosed on the
+ * rejection the last budgeted reply answers. A rejection with held fields names them by the
+ * minimal call of that line, else by the held repair sentence ({@link heldSubmissionRepairHint}).
+ * The last line states the replies the step has left, so the budget is known before it is spent.
+ * Code, issue paths and detail stay on the paired `ToolMessage.artifact`.
  *
  * @param schema - The tool's input schema as served when the rejection renders.
+ * @param unsent - Required fields a call rejected before its schema check left unsent.
  */
-function rejectionText(rejection: ToolRejection, priorState?: ToolPhaseAttemptState, schema?: () => z.ZodType | undefined, toolName?: string): string {
+function rejectionText(rejection: ToolRejection, toolName: string, priorState?: ToolPhaseAttemptState, schema?: () => z.ZodType | undefined, unsent: readonly string[] = []): string {
   const repliesLeft = repliesLeftAfter(priorState);
   const finalRejection = repliesLeft !== undefined && repliesLeft <= 1;
   const inventories = finalRejection && Array.isArray(rejection.detail)
@@ -741,20 +765,54 @@ function rejectionText(rejection: ToolRejection, priorState?: ToolPhaseAttemptSt
   const held = rejection.detail && typeof rejection.detail === 'object'
     ? (rejection.detail as { held_draft?: HeldDraftRepairContent }).held_draft
     : undefined;
-  // A field is named whole, except a `sections` angle: its other angles may be held.
-  const owed = finalRejection ? [...new Set((rejection.issuePaths ?? []).map(path => path.match(/^sections\.[^.\d][^.]*/)?.[0] ?? path.split('.')[0]))] : [];
+  const owed = finalRejection && schema ? fieldsToCorrect(rejection.issuePaths ?? [], schema, unsent, rejection.held ?? []) : { fields: [], minimal: false };
+  const leftOut = owed.minimal ? (rejection.held ?? []).filter(field => !owed.fields.includes(field)) : [];
+  const heldRepair = (rejection.held ?? []).length > 0 && leftOut.length === 0 ? heldSubmissionRepairHint() : undefined;
+  const hint = [rejection.hint, heldRepair].filter(Boolean).join(' ');
   const heldLabels = held?.sections.map(({ label, start }) => `"${label}"${start ? ` (from ${start})` : ''}`).join(', ');
   return [
     rejection.reason,
     ...renderFaults(rejection, schema),
     ...inventories,
-    ...(rejection.hint !== undefined ? [rejection.hint] : []),
+    ...(hint ? [hint] : []),
     ...(finalRejection ? renderLastFeedbackHelp(rejection, schema) : []),
     ...(heldLabels ? [`Held sections: ${heldLabels}.`] : []),
-    ...(owed.length > 0 ? [`Fields to correct in this reply: ${owed.join(', ')}.`] : []),
-    ...(finalRejection && toolName !== undefined ? repeatedFaultLine(toolName, rejection, priorState) : []),
+    ...(owed.fields.length > 0 ? [fieldsToCorrectLine(owed.fields, leftOut, toolName)] : []),
+    ...(finalRejection ? repeatedFaultLine(toolName, rejection, priorState) : []),
     ...replyBudgetLine(repliesLeft),
   ].join('\n');
+}
+
+/**
+ * The last feedback's fields to correct: each failed path the served schema has (a field whole, a
+ * `sections` angle by its path, since its other angles may be held) and the required fields the
+ * call left unsent; a failed `sections` with angles held is owed by the served angles not held. A
+ * key the schema lacks is no field to send; when only keys under a served field are left (an
+ * unknown `sections` angle), that field is named and no minimal call is given.
+ */
+function fieldsToCorrect(issuePaths: readonly string[], schema: () => z.ZodType | undefined, unsent: readonly string[], held: readonly string[]): { fields: string[]; minimal: boolean } {
+  const paths = [...new Set(issuePaths.map(path => path.match(/^sections\.[^.\d][^.]*/)?.[0] ?? path.split('.')[0]))];
+  const unheld = held.some(field => field.startsWith('sections.'))
+    ? servedSectionAngles(schema).map(angle => `sections.${angle}`).filter(angle => !held.includes(angle)) : [];
+  const fields = [...new Set([...paths.filter(path => isServedField(schema, path)), ...unsent]
+    .flatMap(field => (field === 'sections' && unheld.length > 0 ? unheld : [field])))];
+  if (fields.length > 0) return { fields, minimal: true };
+  return { fields: [...new Set(paths.map(path => path.split('.')[0]).filter(field => isServedField(schema, field)))], minimal: false };
+}
+
+/**
+ * The last feedback's fields to correct: with held fields left out, the minimal call (the tool and
+ * only these fields, a `sections` angle under `sections`) and those held fields, by name.
+ */
+function fieldsToCorrectLine(owed: readonly string[], leftOut: readonly string[], toolName: string): string {
+  if (leftOut.length === 0) return `Fields to correct in this reply: ${owed.join(', ')}.`;
+  const keys = new Map<string, string[]>();
+  for (const path of owed) {
+    const [field, angle] = path.split('.');
+    keys.set(field, [...(keys.get(field) ?? []), ...(angle ? [angle] : [])]);
+  }
+  const call = [...keys].map(([field, angles]) => `"${field}": ${angles.length > 0 ? `{${angles.map(angle => `"${angle}": …`).join(', ')}}` : '…'}`).join(', ');
+  return `Send exactly: ${toolName} {${call}}; held, do not resend: ${leftOut.join(', ')}.`;
 }
 
 /**
@@ -831,7 +889,7 @@ function recordToolOutcome(
     }
     if (outcome.detail.refused) {
       const refusal = readToolError(JSON.parse(outcome.detail.result));
-      if (refusal) return { resultText: rejectionText(refusal, priorState, undefined, call.toolName), status: 'error', artifact: refusal };
+      if (refusal) return { resultText: rejectionText(refusal, call.toolName, priorState), status: 'error', artifact: refusal };
     }
     return { resultText: renderObservationResultContent(outcome.detail.result), status: 'success' };
   }
@@ -850,12 +908,12 @@ function recordToolOutcome(
     calls.push({ callId: outcome.callId, toolName: outcome.toolName, status: outcome.status });
     rejections.push(rejection);
     trace?.({ callId: outcome.callId, toolName: outcome.toolName, code: outcome.code });
-    const artifact = { ...rejection, ...(outcome.correction.errors ? { errors: outcome.correction.errors } : {}) };
-    return { resultText: rejectionText(artifact, priorState, call.schema, call.toolName), status: 'error', rejection, artifact };
+    const artifact = { ...rejection, ...(outcome.correction.errors ? { errors: outcome.correction.errors } : {}), ...(outcome.correction.held ? { held: outcome.correction.held } : {}) };
+    return { resultText: rejectionText(artifact, call.toolName, priorState, call.schema, outcome.correction.unsent), status: 'error', rejection, artifact };
   }
   calls.push({ callId: outcome.callId, toolName: outcome.toolName, status: outcome.status, closedByCallId: outcome.closedByCallId });
   trace?.({ callId: outcome.callId, toolName: outcome.toolName, code: outcome.rejection.code });
-  return { resultText: rejectionText(outcome.rejection, priorState), status: 'error', artifact: outcome.rejection };
+  return { resultText: rejectionText(outcome.rejection, call.toolName, priorState), status: 'error', artifact: outcome.rejection };
 }
 
 /** Bounds and normalizes a provider-controlled call id for single-line log surfaces. */
@@ -946,6 +1004,7 @@ export async function executeToolAttempt(
     traceSyntheticRejection: options.traceSyntheticRejection,
     presentResultRepairDraftContext: options.presentResultRepairDraftContext,
     holdRejectedSubmission: options.holdRejectedSubmission,
+    heldSubmission: options.heldSubmission,
     projectRejectedSubmission: options.projectRejectedSubmission,
     holdRejectedPresentResult: options.holdRejectedPresentResult,
     priorObservations: priorState?.observations,
@@ -1070,8 +1129,9 @@ interface ToolCallDispatchLoopResult {
  *
  * A second call of a {@link ONE_CALL_PER_REPLY_TOOLS} tool is recorded the same way, so it can
  * neither be held as the repair draft nor answer the first call's rejection within one reply. A
- * call whose text values carry tool-call notation ({@link toolCallNotationFault}) is rejected
- * before dispatch and none of its fields is held (no schema checked them). A backend-fault
+ * call whose argument names or text values carry tool-call notation ({@link toolCallNotationFault})
+ * is rejected before dispatch and none of its fields is held (no schema checked them); a draft
+ * already held stays as it is and the repair names its fields. A backend-fault
  * rejection closes the batch like a phase completion. Every call, dispatched or synthetically
  * closed, appends exactly one `ToolMessage` to {@link ToolCallDispatchLoopResult.toolMessages}, so
  * the caller's leading `AIMessage` pairs with as many results as calls. A cancellation is the one
@@ -1136,18 +1196,31 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
       const rejected = rejectionFromInvalid(call, input.registry);
       const argumentRejected = isArgumentRejection(call.code);
       const schemaRejected = call.code === REJECTION_CODES.invalidToolInput;
+      const schema = () => input.registry.get(call.toolName)?.inputSchema;
       let resend: string | undefined = argumentRejected ? INVALID_TOOL_INPUT_REPAIR_HINT : undefined;
-      if (schemaRejected && call.toolName === SUBMIT_FINDINGS_TOOL && input.holdRejectedSubmission) {
-        const held = input.holdRejectedSubmission(call.input, call.issuePaths ?? []);
-        if (held) resend = heldSubmissionRepairHint();
+      let heldFields: string[] | undefined;
+      if (argumentRejected && call.toolName === SUBMIT_FINDINGS_TOOL) {
+        // A schema fault holds the call's valid parts; notation, found before the schema check,
+        // holds nothing and reads the held draft.
+        const held = schemaRejected ? input.holdRejectedSubmission?.(call.input, call.issuePaths ?? []) : input.heldSubmission?.();
+        if (held) {
+          resend = undefined;
+          heldFields = heldSubmissionFields(held);
+        }
       } else if (schemaRejected && call.toolName === PRESENT_RESULT_TOOL && input.holdRejectedPresentResult) {
         const repair = input.holdRejectedPresentResult(call.input, call.issuePaths ?? []);
         if (repair) resend = repair;
         else if (input.presentResultRepairDraftContext?.()) resend = undefined;
       }
       let data = resend ? withRepairHint(rejected, resend) : rejected;
+      if (heldFields && data.status === 'rejected') data = { ...data, correction: { ...data.correction, held: heldFields } };
+      // Notation in a key is found before the schema check: the key is no field to send, the
+      // required fields it left unsent are.
+      if (call.code === REJECTION_CODES.toolCallNotation && data.status === 'rejected' && (call.issuePaths ?? []).some(path => !isServedField(schema, path.split('.')[0]))) {
+        data = { ...data, correction: { ...data.correction, unsent: unsentRequiredFields(schema, call.input) } };
+      }
       data = withHeldDraftDetail(data, call.toolName, input.presentResultRepairDraftContext);
-      const outcome = recordToolOutcome(call, data, calls, observations, rejections, input.traceSyntheticRejection, input.priorState);
+      const outcome = recordToolOutcome({ ...call, schema }, data, calls, observations, rejections, input.traceSyntheticRejection, input.priorState);
       const rejection = outcome.rejection!;
       toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
       input.debugLog?.(

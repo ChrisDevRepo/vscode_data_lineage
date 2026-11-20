@@ -65,32 +65,6 @@ export function resolveModelNodeIds(
   return { resolved, unresolved };
 }
 
-/** The escape letter a JSON string decodes to each C0 control character LaTeX commands start with. */
-const ESCAPE_LETTER: Readonly<Record<string, string>> = { '\b': 'b', '\t': 't', '\f': 'f', '\r': 'r' };
-
-/**
- * Restores single-backslash LaTeX in every string of an AI tool input. RFC 8259 section 7
- * lets a JSON string hold a BACKSPACE, TAB, FORM FEED or CR only through its escape, so a model's
- * `\text`, `\times`, `\beta` or `\frac` arrives as that control character plus the rest of the
- * command; the backslash and letter are put back. A CR before LF is a line ending and is dropped;
- * LF and every other character stay. Returns the value itself when nothing changes.
- */
-export function restoreEscapedControlCharacters<T>(value: T): T {
-  if (typeof value === 'string') {
-    if (!/[\b\t\f\r]/u.test(value)) return value;
-    return value.replace(/[\b\t\f\r]/gu, (char, offset: number) => (char === '\r' && value[offset + 1] === '\n' ? '' : `\\${ESCAPE_LETTER[char]}`)) as T;
-  }
-  if (Array.isArray(value)) {
-    const items = value.map(item => restoreEscapedControlCharacters(item));
-    return (items.some((item, index) => item !== value[index]) ? items : value) as T;
-  }
-  if (value !== null && typeof value === 'object') {
-    const entries = Object.entries(value).map(([key, item]) => [key, restoreEscapedControlCharacters(item)] as const);
-    return (entries.some(([key, item]) => item !== (value as Record<string, unknown>)[key]) ? Object.fromEntries(entries) : value) as T;
-  }
-  return value;
-}
-
 /**
  * Normalizes submit_findings node-id encodings into a cloned input object. Deliberately narrow:
  * canonicalizes bracket/case/name encodings only and never removes unknown fields or changes the
