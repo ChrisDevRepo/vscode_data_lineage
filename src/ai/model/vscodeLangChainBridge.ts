@@ -168,6 +168,9 @@ export class VscodeLangChainBridge extends BaseChatModel<
     let replyReceived = false;
     try {
       const nativeMessages = messages.map(toVscodeMessage);
+      if (isCopilotAuto(this.model) && ToolMessage.isInstance(messages.at(-1))) {
+        nativeMessages.push(vscode.LanguageModelChatMessage.User(COPILOT_AUTO_ROUTING_TEXT));
+      }
       this.wire?.({
         type: 'wire-request',
         messages: nativeMessages.map(toWireMessage),
@@ -318,6 +321,18 @@ export function toVscodeMessage(message: BaseMessage): vscode.LanguageModelChatM
     'invalid_request',
     `Unsupported LangChain message type: ${message.getType()}.`,
   );
+}
+
+/**
+ * Copilot "Auto" routes on the text of the last User message and fails a follow-up that ends in tool results
+ * ("Auto mode needs a prompt or a command to route a request."): https://github.com/microsoft/vscode/issues/340675,
+ * workaround from github-copilot-api-vscode#178. Remove once Auto routes a request whose last message carries only
+ * tool results.
+ */
+const COPILOT_AUTO_ROUTING_TEXT = 'Continue.';
+
+function isCopilotAuto(model: vscode.LanguageModelChat): boolean {
+  return model.vendor === 'copilot' && model.id === 'auto';
 }
 
 /** The data part VS Code's built-in providers stream for token usage. */

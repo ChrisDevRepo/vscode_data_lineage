@@ -222,12 +222,19 @@ export function quotedWindow(chars: readonly string[], index: number): string {
 }
 
 const JSON_ESCAPES = new Set(['"', '\\', '/', 'b', 'f', 'n', 'r', 't', 'u']);
+const JSON_WHITESPACE = new Set([' ', '\t', '\n', '\r']);
+/**
+ * What may follow a closed string: a separator, a closer, or the next key or value when a comma is
+ * missing.
+ */
+const AFTER_STRING = new Set([',', ':', '}', ']', '"', '{', '[']);
 
 /**
  * Locates the first fault of a text that opens an object or array but is not valid JSON, for the
  * reason of a rejection (the text itself is never completed or repaired): the text ends before the
- * value closes, a closing bracket follows its end, a raw line break sits inside a string, or a
- * backslash escape is invalid. Any other fault is not located.
+ * value closes, a closing bracket follows its end, a raw line break sits inside a string, a
+ * backslash escape is invalid, or an unescaped `"` closes a string early (other text follows it).
+ * Any other fault is not located.
  *
  * @returns The fault kind with its character position, window and the edit that removes it, or
  *   `undefined` for valid JSON or an unlocated fault.
@@ -246,8 +253,12 @@ export function locateJsonTextFault(text: string): string | undefined {
       if (char === '\\') {
         if (!JSON_ESCAPES.has(chars[index + 1] ?? '')) return at('an invalid backslash escape', index, 'write \\\\');
         index++;
-      } else if (char === '"') inString = false;
-      else if (char === '\n' || char === '\r') return at('a raw line break inside a string', index, 'write \\n');
+      } else if (char === '"') {
+        inString = false;
+        let next = index + 1;
+        while (JSON_WHITESPACE.has(chars[next] ?? '')) next++;
+        if (next < chars.length && !AFTER_STRING.has(chars[next])) return at('an unescaped `"` inside a string', index, 'write \\"');
+      } else if (char === '\n' || char === '\r') return at('a raw line break inside a string', index, 'write \\n');
       else if (char < ' ') return undefined;
     } else if (char === '"') inString = true;
     else if (char === '{' || char === '[') {
