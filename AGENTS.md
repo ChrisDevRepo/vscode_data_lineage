@@ -17,7 +17,7 @@ npm run gate         # every deterministic check; run before reporting a change 
 npm run package      # create the VSIX
 ```
 
-`npm run lint` and `npm run knip` are report-only and not part of the gate.
+The gate includes `npm run lint` (errors only) and `npm run knip`.
 
 ## Map
 
