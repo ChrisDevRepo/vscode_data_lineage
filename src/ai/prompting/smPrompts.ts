@@ -76,19 +76,21 @@ interface FlowRoleGroups {
  * it so both bucket identically.
  *
  * `source` = a reached node data only flows OUT of (never a flow target in the trace and, CT only
- * via `hopNodes`, never a focus, since `writes_to` makes writer procs appear as `from` only).
+ * via `hopNodes`, never a focus, since `writes_to` makes writer procs appear as `from` only) and not
+ * a `borderCut` leaf: the approved border stopped the walk there, so more upstream lies beyond it.
  * `target` = the queried origin. `transform` = every other reached node.
  */
 function computeFlowRoleGroups(
   originNodeId: string,
   edges: ReadonlyArray<{ from: string; to: string }>,
   hopNodes?: ReadonlySet<string>,
+  borderCut?: ReadonlySet<string>,
 ): FlowRoleGroups {
   const toNodes = new Set(edges.map(e => e.to));
   const reached = new Set<string>([originNodeId]);
   for (const e of edges) { reached.add(e.from); reached.add(e.to); }
   const source = [...new Set(edges.map(e => e.from))]
-    .filter(n => n !== originNodeId && !toNodes.has(n) && !hopNodes?.has(n));
+    .filter(n => n !== originNodeId && !toNodes.has(n) && !hopNodes?.has(n) && !borderCut?.has(n));
   const sourceSet = new Set(source);
   const transform = [...reached].filter(n => n !== originNodeId && !sourceSet.has(n));
   return { source, target: [originNodeId], transform };
@@ -189,9 +191,9 @@ function renderFlowRoleAndDirection(
   originNodeId: string,
   flowEdges: ReadonlyArray<{ from: string; to: string; kind?: string }>,
   presentedNodeIds: ReadonlySet<string> | null,
-  hopNodes?: ReadonlySet<string>,
+  borderCut?: ReadonlySet<string>,
 ): string {
-  const groups = computeFlowRoleGroups(originNodeId, flowEdges, hopNodes);
+  const groups = computeFlowRoleGroups(originNodeId, flowEdges, undefined, borderCut);
   return [
     '## Flow roles',
     ...buildFlowRoleHighlightLines(groups, presentedNodeIds),
@@ -207,13 +209,15 @@ function renderFlowRoleAndDirection(
  * @param edges - Node-level lineage edges `[from, to, kind]` from `SmResult.edges`.
  * @param presentedNodeIds - Ids the render carries, bounding the enumerated candidates; omitted:
  *   bounds nothing.
+ * @param borderCut - Ids the approved border cut (deferred leads); never listed as source candidates.
  */
 export function buildBbSynthesisBlock(
   originNodeId: string,
   edges: ReadonlyArray<[string, string, string]>,
   presentedNodeIds: ReadonlySet<string> | null = null,
+  borderCut?: ReadonlySet<string>,
 ): string {
-  return renderFlowRoleAndDirection(originNodeId, asFlowEdges(edges), presentedNodeIds);
+  return renderFlowRoleAndDirection(originNodeId, asFlowEdges(edges), presentedNodeIds, borderCut);
 }
 
 /**
@@ -225,12 +229,14 @@ export function buildBbSynthesisBlock(
  * @param presentedNodeIds - Ids the render carries, bounding the enumerated highlight candidates;
  *   omitted: bounds nothing. The recorded edge list is never bounded (the trace is the evidence; an
  *   endpoint outside the render is stated in prose).
+ * @param borderCut - Ids the approved border cut (deferred leads); never listed as source candidates.
  */
 export function buildCtSynthesisBlock(
   originNodeId: string,
   edges: ColumnEdge[],
   nodeEdges: ReadonlyArray<[string, string, string]> = [],
   presentedNodeIds: ReadonlySet<string> | null = null,
+  borderCut?: ReadonlySet<string>,
 ): string {
   const lines = ['## Column Trace Chain'];
   if (edges.length === 0) {
@@ -255,7 +261,7 @@ export function buildCtSynthesisBlock(
   const direction = computeDirectionGroups(originNodeId, directionEdges);
   lines.push(...buildDirectionLines(originNodeId, direction));
   const groups = computeFlowRoleGroups(originNodeId, directionEdges,
-    nodeEdges.length > 0 ? undefined : new Set(edges.map(e => e.hop_node)));
+    nodeEdges.length > 0 ? undefined : new Set(edges.map(e => e.hop_node)), borderCut);
   lines.push('');
   lines.push('A chain node that does not carry, persist or terminate the traced column gets one line on what it does to the rows: join, filter, predicate or set operation.');
   lines.push('');
@@ -480,10 +486,11 @@ export function buildSmCompletionEnvelope(
 ): SmCompletionEnvelope {
   const presentedNodeIds = result.fullNodes.map(node => node.id);
   const presented = new Set(presentedNodeIds);
+  const borderCut = new Set(deferred.map(d => d.nodeId));
   const flowBlock = result.columnAspect && result.columnAspect.edges.length > 0
-    ? '\n' + buildCtSynthesisBlock(result.originNodeId, result.columnAspect.edges, result.edges, presented)
+    ? '\n' + buildCtSynthesisBlock(result.originNodeId, result.columnAspect.edges, result.edges, presented, borderCut)
     : result.edges.length > 0
-      ? '\n' + buildBbSynthesisBlock(result.originNodeId, result.edges, presented)
+      ? '\n' + buildBbSynthesisBlock(result.originNodeId, result.edges, presented, borderCut)
       : '';
   const passthroughFacts = buildPassthroughFlowFacts(result, identifierCaseSensitive);
   const passthroughBlock = passthroughFacts ? '\n' + passthroughFacts : '';
