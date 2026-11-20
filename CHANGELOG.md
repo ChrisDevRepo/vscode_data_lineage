@@ -6,9 +6,6 @@
 - SQL Server (mssql) extension connection and the `dataLineageViz.database.connectionProvider` setting; a saved mssql project asks to reconnect.
 - The **with positions** bookmark option.
 
-### Changed
-- Several improvements in the GUI and in AI analysis.
-
 ### Fixed
 - Several bug fixes in the GUI and in AI analysis.
 
