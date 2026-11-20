@@ -75,7 +75,7 @@ Guidance for a junior DBA. The file keeps the scaffolded `schemaVersion` and
 changes only the keys that carry the guidance.
 
 ```yaml
-schemaVersion: 2
+schemaVersion: 3
 discovery_chat:
   instruction: "Write for a junior DBA: define each technical term the first time it appears."
 business_capture:
@@ -106,10 +106,10 @@ the built-in list stays.
 ## Upgrading a custom overlay
 
 A custom file is applied only when its `schemaVersion` equals the version the
-installed release expects. The version changes when the shipped file changes
-in a way an older copy cannot fit, such as a removed or renamed key. A new key
-or a wording change does not change it, and a copy that lacks a new key uses
-the built-in text for it.
+installed release expects. The version changes whenever the shipped file adds,
+removes, renames or retypes a key or field; a wording change does not.
+Version 3 adds `shared_capture` and moves the grain and plan-evidence coverage
+into it, so a version 2 file is rejected with the warning.
 
 On a mismatch the extension shows a warning that names the expected version
 and uses the built-in templates until the file is updated.

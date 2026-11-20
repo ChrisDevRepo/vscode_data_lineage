@@ -62,15 +62,3 @@ export function structureDiff(before, after) {
   }
   return lines;
 }
-
-/**
- * The breaking subset of a {@link structureDiff} result: removals and retypes — every change where
- * a previous release's overlay no longer fits the current shape. A key rename appears here as the
- * removal of the old key. Additions (`+` lines) are backward compatible: an older overlay merges
- * over the built-in file, which fills the keys the overlay lacks, so they never force a bump.
- *
- * @param {string[]} diff Lines as produced by {@link structureDiff}.
- * @returns {string[]} Only the lines that require a schemaVersion bump.
- */
-export const breakingStructureChanges = (diff) =>
-  diff.filter((line) => line.startsWith('-') || line.startsWith('~'));
