@@ -2451,6 +2451,19 @@ export class NavigationEngine implements IHopStateMachine {
         continue;
       }
 
+      // A table has no SQL to analyse: its tasks fold to the next SQL nodes through enqueueHop.
+      if (!SCRIPT_TYPES.has(this.nodeMap.get(candidate.nodeId)!.type)) {
+        for (const task of candidate.taskIds.flatMap(id => this.taskLedger.getTask(id) ?? [])) {
+          this.enqueueHop(candidate.nodeId, task.question, candidate.depth, 2, {
+            carry: candidate.columnCarry ?? { kind: 'carry', columns: candidate.activeColumns ?? [] },
+            parentTaskId: task.id, traversalSide: task.traversalSide, sourceRefs: this.qualifiedTaskRefs(task) ?? undefined,
+          });
+        }
+        this.completeTasks(candidate.taskIds);
+        this._totalNodes--;
+        continue;
+      }
+
       for (const taskId of candidate.taskIds) {
         const task = this.taskLedger.getTask(taskId);
         if (task?.callerContext && (task.parentTaskId !== task.callerContext.callerTaskId || !this.validFunctionCallerContext(candidate.nodeId, task.callerContext))) {
@@ -3772,11 +3785,16 @@ export class NavigationEngine implements IHopStateMachine {
       atHop: this.hopCount,
     });
     const side = traversalSide ?? (this.tracer && carried?.length ? this.columnTraceDirection() : undefined);
-    const columnContinuation = side ? new Set(this.directionalNeighbors(targetId, side)) : null;
+    const atOrigin = targetId === this.originNodeId;
+    // A bidirectional origin has no arriving side: each neighbour continues on the side it lies on.
+    const upstreamOfOrigin = side && !traversalSide && atOrigin && this.effectiveDirection() === 'bidirectional'
+      ? new Set(this.directionalNeighbors(targetId, 'upstream')) : null;
+    const columnContinuation = side && !upstreamOfOrigin ? new Set(this.directionalNeighbors(targetId, side)) : null;
     for (const nid of this.directionalNeighbors(targetId, this._direction)) {
       const neighbor = this.nodeMap.get(nid);
+      const nidSide = upstreamOfOrigin ? (upstreamOfOrigin.has(nid) ? 'upstream' : 'downstream') : side;
       // Only a walk toward the writers reaches `nid` through its delete: downstream, the same node is a reader of `targetId`.
-      const deleteOnly = !!this.tracer && (side ?? this.columnTraceDirection()) === 'upstream' && this.isDeleteOnlyWrite(nid, targetId);
+      const deleteOnly = !!this.tracer && (nidSide ?? this.columnTraceDirection()) === 'upstream' && this.isDeleteOnlyWrite(nid, targetId);
       const continues = !deleteOnly && (columnContinuation === null || columnContinuation.has(nid));
       const neighborCarry = forwardedCarry.kind === 'row_role_only' || deleteOnly
         ? { kind: 'row_role_only' as const }
@@ -3784,7 +3802,7 @@ export class NavigationEngine implements IHopStateMachine {
       const questioned = question.trim().length > 0;
       const reAnchor = deleteOnly
         ? buildDeleteOnlyRelevanceCheck(targetId, nid, carried ?? [])
-        : continues && neighbor && SCRIPT_TYPES.has(neighbor.type)
+        : continues && neighbor && SCRIPT_TYPES.has(neighbor.type) && !atOrigin
           ? buildPassthroughReAnchor(targetId, nid, this.carryAnalysisMode(neighborCarry), questioned)
           : '';
       if (!continues) {
@@ -3794,7 +3812,7 @@ export class NavigationEngine implements IHopStateMachine {
       this.enqueueHop(nid, forwarded, depth + 1, priority, {
         carry: neighborCarry, lineageQuestions: continues ? lineageQuestions : undefined,
         visitedRefs: new Set(visitedRefs), contractedContexts, parentTaskId, callerContext, sourceRefs: continues && carriedRefs?.length ? carriedRefs : undefined,
-        traversalSide: continues ? side : undefined, admitContractedBodiedTarget, dispositions,
+        traversalSide: continues ? nidSide : undefined, admitContractedBodiedTarget, dispositions,
       });
     }
   }

@@ -25,7 +25,7 @@ const SECRET = 'hunter2-Zk93';
 
 function completedWorld() {
   const built = buildModel({
-    nodes: [node('dbo.O', 'table'), node('dbo.TA', 'view'), node('dbo.VA', 'view'), node('dbo.ISLAND', 'view')],
+    nodes: [node('dbo.O', 'view'), node('dbo.TA', 'view'), node('dbo.VA', 'view'), node('dbo.ISLAND', 'view')],
     edges: [edge('dbo.TA', 'dbo.O'), edge('dbo.VA', 'dbo.TA')], origin: 'dbo.O',
   });
   const engine = new NavigationEngine(built.model, built.graph, () => {}, {});
@@ -74,7 +74,7 @@ describe('tool handler info-log redaction', () => {
     (services as { deliverPreview: unknown }).deliverPreview = vi.fn().mockResolvedValue('delivered');
     const result = JSON.parse(await executePresentResult({
       name: 'Confidential payroll view', title: 'Payroll heading secret', summary: 'Origin only.',
-      sections: [{ label: 'Origin', node_ids: ['dbo.O'], text: 'The origin table.' }],
+      sections: [{ label: 'Origin', node_ids: ['dbo.O'], text: 'The origin view.' }],
       highlight_groups: [{ label: 'Origin', color: 'target', node_ids: ['dbo.O'] }],
     }, services));
     expect(result).toMatchObject({ success: true });
