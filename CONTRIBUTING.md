@@ -14,7 +14,20 @@ You need [Git](https://git-scm.com/), [Node.js](https://nodejs.org/) 20 or newer
 2. Open the folder in VS Code and press `F5` (**Run Extension**). It builds the extension and opens the Extension Development Host.
 3. In the host, run **Data Lineage: Open Demo**, or open a folder with a `.dacpac`.
 
-No database or credentials are needed to build and run. A VS Code chat model provider such as GitHub Copilot is only needed to try `@lineage`. Build and packaging are described in [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md).
+No database or credentials are needed to build and run. A VS Code chat model provider such as GitHub Copilot is only needed to try `@lineage`. The full setup, project layout and commands are in [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md).
+
+## Make a change
+
+1. Create a branch in your fork.
+2. Keep the change small and focused. A parse rule or DMV query change usually needs only a YAML edit plus a test: see [Common changes](docs/DEVELOPER_GUIDE.md#common-changes).
+3. Add or update a test that fails without your change. Parser changes get a case in `tests/unit/parser/`.
+4. Run `npm run gate` and fix what it reports. It type-checks, lints, runs the unit tests, builds and checks the package contents.
+5. Update the documentation that describes the behaviour you changed, for example [`docs/PARSE_RULES.md`](docs/PARSE_RULES.md) or [`docs/DMV_QUERIES.md`](docs/DMV_QUERIES.md).
+6. Open a pull request. Say what changed and why, and how you checked it. The same `npm run gate` runs in CI on pull requests.
+
+## Coding conventions
+
+Follow the [coding conventions](docs/DEVELOPER_GUIDE.md#coding-conventions).
 
 ---
 

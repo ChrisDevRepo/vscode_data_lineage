@@ -107,7 +107,7 @@ process.stdout.write('MODEL CALLS: 0 — every step above is deterministic; noth
 process.stdout.write(
   'Additional checks: npm run test:edh exercises the VS Code host with fixed responses; '
   + 'npm run test:ai:smoke optionally calls a configured provider through that host. '
-  + 'Review model answer correctness against the source SQL and graph. See docs/testing/README.md.\n',
+  + 'Review model answer correctness against the source SQL and graph. See docs/DEVELOPER_GUIDE.md.\n',
 );
 
 process.exit(failed.length === 0 ? 0 : 1);
