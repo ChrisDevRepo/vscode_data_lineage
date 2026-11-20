@@ -32,7 +32,7 @@ import {
 import { MergedSectionsSchema, PRESENT_RESULT_REPAIR_FIELDS, normalizePresentSectionLabel, presentResultSchemaForPhase } from '../../tools/toolSchemas';
 import { edgeApiType } from '../../support/aiPresenter';
 import { prunePreserveOnly } from '../../support/viewPrune';
-import { resolveModelNodeId, resolveModelNodeIds } from '../../support/inputNormalization';
+import { resolveModelNodeId, resolveModelNodeIds, restoreEscapedControlCharacters } from '../../support/inputNormalization';
 import { makeRejection, rejectionFromZodError, zodFieldRepairHint, type ToolRejection } from '../../support/toolErrorEnvelope';
 import { quoteIds } from '../../support/text';
 import { type ToolServices, getModelNodeMap } from './toolServices';
@@ -177,6 +177,7 @@ export async function executePresentResult(input: unknown, s: ToolServices): Pro
         previewNarrative?.blocks.length ?? 0, sess.presentResultRepairHighlightLabelIndexes ?? undefined,
         sess.presentResultRepairSectionTextLeaves ?? undefined,
       );
+      input = restoreEscapedControlCharacters(input);
       const parsed = schema.safeParse(input);
       if (!parsed.success) {
         const rejection = rejectionFromZodError(parsed.error, { code: REJECTION_CODES.invalidInput, input, schema });
