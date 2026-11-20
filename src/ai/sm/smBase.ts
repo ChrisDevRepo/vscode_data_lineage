@@ -2164,11 +2164,27 @@ export class NavigationEngine implements IHopStateMachine {
     }) ? connectors : null;
   }
 
-  /** Returns pruned connectors to the kept set, so a named target arrives with its joining path. */
-  private restoreConnectors(ids: readonly string[]): void {
+  /**
+   * The pruned SQL nodes a supplemented table hands its question to: a table has no hop, so the
+   * fold ({@link getHopContext}) forwards the task to the SQL neighbours on its side, and skips a
+   * pruned one. Empty for a SQL node, which is dispatched itself.
+   *
+   * @param side - The side the task continues on; the approved direction when absent.
+   */
+  private prunedSqlNeighboursOf(tableId: string, side: 'upstream' | 'downstream' | undefined): string[] {
+    const table = this.nodeMap.get(tableId);
+    if (!table || SCRIPT_TYPES.has(table.type)) return [];
+    return this.directionalNeighbors(tableId, side ?? this._direction).filter(nid => {
+      const next = this.nodeMap.get(nid);
+      return !!next && SCRIPT_TYPES.has(next.type) && this.removedSet.has(nid) && this.checkBorder(nid, next, 'supplement').kind === 'in_border';
+    });
+  }
+
+  /** Returns pruned objects to the kept set, so a named target arrives with what it needs; `why` names the reason in the log. */
+  private restoreConnectors(ids: readonly string[], why: string): void {
     const restored = ids.filter(id => this.removedSet.has(id));
     for (const id of restored) this.unprune(id);
-    if (restored.length > 0) this.log('info', `[Supplement] restore pruned connector(s) ids=[${restored.join(', ')}] — on the path joining the named target to the trace; state prune → kept`);
+    if (restored.length > 0) this.log('info', `[Supplement] restore pruned connector(s) ids=[${restored.join(', ')}] — ${why}; state prune → kept`);
   }
 
   /**
@@ -2356,7 +2372,14 @@ export class NavigationEngine implements IHopStateMachine {
         hint: `The recorded scalar caller binding of ${unbound.join(', ')} no longer resolves in the loaded model, so this follow-up cannot continue it. Nothing was changed; start a new exploration for that function.`,
       });
     }
-    this.restoreConnectors(admission.connectors);
+    this.restoreConnectors(admission.connectors, 'on the path joining the named target to the trace');
+    this.restoreConnectors(
+      prepared.flatMap(request => {
+        const id = resolveModelNodeId(request.nodeId, this.nodeMap, this.model.identifierCaseSensitive);
+        return id && admittedIds.has(id) ? this.prunedSqlNeighboursOf(id, request.leg?.traversalSide) : [];
+      }),
+      'the SQL nodes a named table hands its question to',
+    );
     const agendaBefore = this._agenda.length;
     let skipped = admission.skipped.length;
     const skippedDetails: SupplementSkip[] = [...admission.skipped];
