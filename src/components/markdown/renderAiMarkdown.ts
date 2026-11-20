@@ -1,10 +1,13 @@
 import DOMPurify, { type DOMPurify as DOMPurifyInstance } from 'dompurify';
 import katex from 'katex';
-import { Marked, type Tokens } from 'marked';
+import { Marked, type Token, type Tokens } from 'marked';
 import { markedKatexExtension } from './markedKatexExtension';
 
 /** Leading text of the engine-assembled `### Objects <links>` footnote line. */
 const OBJECTS_HEADING_PREFIX = 'Objects ';
+
+/** Unnumbered heading of the engine-assembled CT column chain, collapsed as supporting evidence. */
+const COLUMN_CHAIN_HEADING = 'Column Chain';
 
 /** `id` prefix the section-chip navigation scrolls to; the engine numbers `## N` sections. */
 export const AI_SECTION_ID_PREFIX = 'ln-ai-sec-';
@@ -16,6 +19,27 @@ const HTML_ESCAPES: Readonly<Record<string, string>> = {
 const marked = new Marked({ gfm: true, breaks: false })
   .use(markedKatexExtension(katex))
   .use({
+    hooks: {
+      // The chain section (up to the next `#`/`##` heading) becomes one closed evidence token.
+      processAllTokens(tokens: Token[]): Token[] {
+        const at = tokens.findIndex(t => t.type === 'heading' && t.depth === 2 && t.text === COLUMN_CHAIN_HEADING);
+        if (at < 0) return tokens;
+        const next = tokens.findIndex((t, i) => i > at && t.type === 'heading' && t.depth <= 2);
+        const end = next < 0 ? tokens.length : next;
+        const raw = tokens.slice(at, end).map(t => t.raw).join('');
+        tokens.splice(at, end - at, { type: 'columnEvidence', raw, tokens: tokens.slice(at + 1, end) });
+        return tokens;
+      },
+    },
+    extensions: [{
+      name: 'columnEvidence',
+      renderer(token: Tokens.Generic): string {
+        const rows = (token.tokens ?? []).flatMap(t => (t.type === 'table' ? t.rows : []));
+        const outputs = rows.filter(row => row[0]?.text).length;
+        const count = (n: number, noun: string): string => `${n} ${noun}${n === 1 ? '' : 's'}`;
+        return `<details class="ln-ai-column-evidence"><summary>Column evidence: ${count(outputs, 'output')}, ${count(rows.length, 'link')}</summary>\n${this.parser.parse(token.tokens ?? [])}</details>\n`;
+      },
+    }],
     renderer: {
       html(token: Tokens.HTML | Tokens.Tag): string {
         return token.text.replace(/[&<>"']/g, ch => HTML_ESCAPES[ch]);

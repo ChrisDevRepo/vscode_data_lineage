@@ -891,14 +891,19 @@ export type ColumnChainEdge = {
 
 /**
  * Builds the engine-owned "Column Chain" preface of a CT result from validated column-flow edges,
- * as a deterministic table at the top of the document, so it cannot drift from the recorded edges.
- * Each output column is named once above its source table; outputs are ordered by first capture,
- * rows by hop (hop numbers identify evidence capture, not storage steps). The unnumbered `## Column
- * Chain` heading takes no section number or navigation chip.
+ * as one deterministic Output | Source | Role table, so it cannot drift from the recorded edges.
+ * Rows are grouped by output in first-capture order, then by hop; each output is named on its
+ * first row only. The hop index is not shown: it identifies evidence capture, not a storage step.
+ * The unnumbered `## Column Chain` heading takes no section number or navigation chip; the
+ * renderer collapses it into supporting evidence.
  *
+ * @param nodeMap - Catalog nodes by id; a known node is shown by its source-case `fullName`.
  * @returns The preface markdown, or `undefined` when no edge was recorded.
  */
-export function buildColumnChainPreface(edges: readonly ColumnChainEdge[]): string | undefined {
+export function buildColumnChainPreface(
+  edges: readonly ColumnChainEdge[],
+  nodeMap?: ReadonlyMap<string, { fullName: string }>,
+): string | undefined {
   if (edges.length === 0) return undefined;
   const outputs = new Map<string, ColumnChainEdge[]>();
   for (const edge of [...edges].sort((a, b) => a.hop - b.hop)) {
@@ -907,19 +912,10 @@ export function buildColumnChainPreface(edges: readonly ColumnChainEdge[]): stri
     if (group) group.push(edge);
     else outputs.set(key, [edge]);
   }
-  const parts = ['## Column Chain'];
-  for (const group of outputs.values()) {
-    const output = group[0]!;
-    parts.push(
-      `**Output:** ${columnChainCode(`${output.to_node}.${output.to_col}`)}`,
-      [
-        '| Source column | Captured at hop | Contributor roles |',
-        '| --- | ---: | --- |',
-        ...group.map(edge => `| ${columnChainCode(`${edge.from_node}.${edge.from_col}`)} | ${edge.hop} | ${edge.transforms?.map(role => columnChainCode(role)).join(', ') ?? ''} |`),
-      ].join('\n'),
-    );
-  }
-  return parts.join('\n\n');
+  const column = (node: string, col: string) => columnChainCode(`${nodeMap?.get(node)?.fullName ?? node}.${col}`);
+  const rows = [...outputs.values()].flatMap(group => group.map((edge, i) =>
+    `| ${i === 0 ? column(edge.to_node, edge.to_col) : ''} | ${column(edge.from_node, edge.from_col)} | ${edge.transforms?.map(role => columnChainCode(role)).join(', ') ?? ''} |`));
+  return ['## Column Chain', ['| Output | Source | Role |', '| --- | --- | --- |', ...rows].join('\n')].join('\n\n');
 }
 
 /** Keeps quoted database identifiers inside one code span and one Markdown table cell. */

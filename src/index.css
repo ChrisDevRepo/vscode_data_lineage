@@ -832,6 +832,23 @@ body.vscode-reduce-motion *::after {
   margin-right: 6px;
   color: var(--ln-fg-muted);
 }
+/* Engine-assembled CT column chain: collapsed supporting evidence, smaller and muted so the
+   written report leads. The summary keeps the global focus ring. */
+.ln-ai-description-md .ln-ai-column-evidence {
+  font-size: .85em;
+  color: var(--ln-fg-muted);
+  margin: 8px 0;
+}
+.ln-ai-description-md .ln-ai-column-evidence summary {
+  cursor: pointer;
+}
+.ln-ai-description-md .ln-ai-column-evidence th,
+.ln-ai-description-md .ln-ai-column-evidence td {
+  padding: 2px 6px;
+}
+.ln-ai-description-md .ln-ai-column-evidence :is(th, td, code) {
+  font-size: inherit;
+}
 
 body[data-vscode-theme-kind="vscode-high-contrast"] .ln-ai-description-overlay,
 body[data-vscode-theme-kind="vscode-high-contrast-light"] .ln-ai-description-overlay {
