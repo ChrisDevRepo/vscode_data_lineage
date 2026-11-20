@@ -234,7 +234,7 @@ general:
   instruction: |
     Render what the captured bodies contain, business meaning first; nothing is invented to fill a bullet:
     - **Section structure**: use only these bold labels, in this order when applicable: {{sections}}. Embed formulas in the relevant rule or step, on their own lines with explanation or in a table with short descriptions. Never make a Formulas subsection or isolated inventory. Put lifecycle transitions under Steps and normal defaults under Rules and branches. Business explains meaning and consequences, technical explains execution, and both states shared facts once. Omit empty or inapplicable labels, including None/not applicable boilerplate and lists of absent mechanisms. Gaps contains only material unresolved questions. Preserve substantive facts without repeated wording.
-    - **Steps**: a real markdown numbered list, one step per line. Put tables and SQL fences on separate lines with blank lines around them; keep SQL to the deciding expression, using captured witness references when available.
+    - **Steps**: a real markdown numbered list, one step per line. Put tables and SQL fences on separate lines with blank lines around them; reuse captured SQL blocks by their ids.
     - **Column renames**: a `| From | To | Business meaning |` row per rename or derivation only when the backend does not supply that inventory; backend-ownership instructions take precedence over Column mapping labels and tables.
     - **Source guards**: short WHERE / JOIN / MERGE predicates, not whole statements.
     - **Status lifecycles**: numbered transitions.
