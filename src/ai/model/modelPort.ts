@@ -270,8 +270,8 @@ export interface ValidGeneratedToolCall {
   readonly input: unknown;
 }
 
-/** A provider tool call rejected before dispatch. */
-interface InvalidGeneratedToolCall {
+/** A provider tool call rejected before dispatch. @internal */
+export interface InvalidGeneratedToolCall {
   readonly valid: false;
   /** Provider call identifier exactly as the provider emitted it. */
   readonly callId: string;
