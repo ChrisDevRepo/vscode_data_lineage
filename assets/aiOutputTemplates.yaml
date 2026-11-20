@@ -130,20 +130,24 @@ shared_capture:
     execution plans, chosen physical join strategies or runtime costs require
     matching catalog, plan or runtime evidence; SQL hints alone do not
     establish what the engine executed or its performance.
+    Distinguish input rows from surviving rows at each cardinality-changing step.
+    For a step whose supplied SQL defines a calculation, explain that definition under Steps with its formula, input rows, meaning and deciding SQL; naming the computation without explaining it leaves Steps incomplete.
+
+    Where it eases scanning, use bullets for parallel facts, `name` — effect for switches and parameters, tables for shared attributes; Steps is a numbered list, and identifiers and literals go in backticks.
   example: ""
 
 # `sections` lists the bold labels this recipe writes, in order. Synthesis serves the labels of the active
 # angle(s) in `general` (Section structure), so a label is declared here once and nowhere else.
 business_capture:
   stages: [active]
-  sections: [Purpose, Rules and branches, Grain, Column mapping, Steps, Loading, Error handling, Gaps]
+  sections: [Purpose, Rules and branches, Grain, Calculation logic, Steps, Loading, Error handling, Gaps]
   instruction: |
     What the node does to the meaning of the data.
     1. Purpose: the domain role and the decision it serves.
     2. Rules and branches: each declared value of a mode, status or strategy switch and what it changes; a commented-out branch is declared, not active. Explain calculations within the rule they implement, with their formula, business meaning, terms and consequences.
-    3. Grain: distinguish input rows from surviving rows at each cardinality-changing step. For conditional eligibility, evaluate the complete predicate with the declared defaults and with each override separately, and qualify survival claims by that condition. A warning-only check does not override a later row-eligibility filter.
-    4. Column mapping: `| From | To | Business meaning |`.
-    5. Steps: explain the logical data transformations and status transitions in order. For a step whose supplied SQL defines a calculation, explain that definition with its formula, input rows, meaning and deciding SQL here; naming the computation without explaining it leaves this section incomplete. This business section stands alone even when a technical section is also requested.
+    3. Grain: for conditional eligibility, evaluate the complete predicate with the declared defaults and with each override separately, and qualify survival claims by that condition. A warning-only check does not override a later row-eligibility filter.
+    4. Calculation logic: what happens to the data the question asks about as it moves through the supplied SQL, from one CTE, temp table or statement to the next.
+    5. Steps: explain the logical data transformations and status transitions in order. This business section stands alone even when a technical section is also requested.
     6. Loading: whether target rows are replaced, extended or removed.
     7. Error handling: what a failure leaves in the rows.
     8. Gaps.
@@ -167,8 +171,8 @@ technical_capture:
     The mechanics, and which rows survive them.
     1. Purpose: the execution role.
     2. Rules and branches: each switch value and the statement it runs. Explain calculations within the rule they implement, with their formula, deciding SQL, branch behavior and consequences.
-    3. Join shape and grain: JOIN and WHERE predicates and join hints; distinguish input rows from surviving rows at each cardinality-changing step.
-    4. Steps as a numbered walk of SQL statements and logical data changes. For a step whose supplied SQL defines a calculation, explain that definition with its formula, input rows, meaning and deciding SQL here; naming the computation without explaining it leaves this section incomplete. This technical section stands alone even when a business section is also requested. Do not invent physical access or execution steps from SQL syntax: describe a join hint as a requested strategy, not an observed operator; without a plan, do not label a step scan, seek, hash build or probe.
+    3. Join shape and grain: JOIN and WHERE predicates and join hints.
+    4. Steps: the SQL statements and logical data changes, in order. This technical section stands alone even when a business section is also requested. Do not invent physical access or execution steps from SQL syntax: describe a join hint as a requested strategy, not an observed operator; without a plan, do not label a step scan, seek, hash build or probe.
     5. Loading: `reload`, `append`, `upsert`, `historization`, `purge` or `orchestration`; none for a view or function.
     6. Error handling: TRY/CATCH, retry, locking.
     7. Evidence boundary, not an output item: do not add an evidence-review section or ⚠️ line merely because this recipe lists this rule. Put filters, literals, defaults, time functions, predicate shapes and assignments under Rules or Steps as factual behavior. Describe explicit SQL join hints, grouping and row grain as SQL facts. A literal or default is not a defect without supplied schema or business evidence for a requirement it violates. Use ⚠️ only when the supplied SQL alone proves a specific row or value consequence, or supplied evidence proves a violated requirement; quote the deciding expression and that evidence. If the user requested an unavailable dimension, state once in factual prose that its evidence was not supplied.
