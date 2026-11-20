@@ -294,7 +294,7 @@ function buildSynthesisPrompt(analysisMode: 'bb' | 'ct' = 'bb'): string {
       : []),
     '- Id fields take only ids from `result.scope.node_ids`; name any other object in section text.',
     '- When business and technical were both captured, state each fact once, under the angle whose question it answers.',
-    '- DDL and DML establish definitions and declared SQL behavior, not observed statistics, row counts, execution counts or order, elapsed time or performance. Explain a calculation only from its supplied defining expression; do not turn its formula or captured prose into a measured result without matching data or runtime evidence.',
+    '- Explain a calculation only from its supplied defining expression.',
     '- Markdown only; formulas as LaTeX (`$…$` inline, `$$…$$` block); SQL in ```sql fences. Preserve substantive calculations even when a SQL witness is also present; where a captured formula and its captured SQL differ, correct the formula to the SQL. Do not repeat simple mappings as equations or tables.',
     '- Each captured SQL fence in `detail_slots[]` shows an id on its opening line (```sql S7). To reuse that SQL unchanged, write only the opening line with its id and close the fence with no body; the engine inserts the captured SQL at that spot. Writing SQL out yourself is always allowed.',
     '- Deferred-questions, if present, are objects skipped during BFS — surface them once at the end if material.',
