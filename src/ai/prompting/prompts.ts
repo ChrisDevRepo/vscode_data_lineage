@@ -26,7 +26,7 @@ export type PromptPhase = 'discover' | 'visual_preview' | 'active' | 'synthesis'
  * renamed `preview`, since this axis is about what the stage may do with the text. `discover` and
  * `active` never call the tool.
  */
-export type PresentationStage = 'preview' | 'synthesis' | 'completed';
+type PresentationStage = 'preview' | 'synthesis' | 'completed';
 
 /**
  * Grounding values injected into the base system prompt.
@@ -213,7 +213,7 @@ function buildActivePhasePrompt(analysisMode: 'bb' | 'ct'): string {
  * @param mode - Which stage receives the contract; selects the depth line. Defaults to
  *   `'synthesis'`.
  */
-export function buildPresentationDetailContract(
+function buildPresentationDetailContract(
   evidence?: string,
   mode: PresentationStage = 'synthesis',
 ): string {
