@@ -684,14 +684,14 @@ export function buildCurrentTaskBlock(
     lines.push(
       `  <column_trace>`,
       `    Active columns: [${columnTraceColumns.map(escapePromptText).join(', ')}]`,
-      `    These are the incoming column tasks. Record their real contributors and resolved outputs in \`column_flow\`, including downstream renames proved by the SQL; keep unrelated column analysis in \`sections\`.`,
+      `    These are the incoming column tasks. Record their in-scope contributors and resolved outputs in \`column_flow\`, including downstream renames proved by the SQL; keep out-of-scope sources and unrelated column analysis in \`sections\`.`,
       `  </column_trace>`,
     );
   }
   if (columnTraceColumns?.length && columnLineageQuestions?.length) {
     lines.push(
       `  <lineage_questions>`,
-      `    Column-chain continuations opened on an earlier hop for this focus. Address them:`,
+      `    Column-chain continuations opened on an earlier hop for this focus. Address them; a source on a neighbor with \`in_approved_scope: false\` ends the chain here: no \`upstream_columns\` entry, the fact in \`sections\`:`,
       ...columnLineageQuestions.map(q => `    - ${escapePromptText(q)}`),
       `  </lineage_questions>`,
     );
