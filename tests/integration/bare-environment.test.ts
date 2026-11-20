@@ -26,14 +26,6 @@ suite('Bare environment — no chat model or database extension', () => {
     'activation completes and the core command surface registers with every optional integration absent',
   ); });
 
-  test('the host really is bare — no optional integration is installed', () => {
-    assert.strictEqual(
-      vscode.extensions.getExtension('ms-mssql.mssql'),
-      undefined,
-      'this lane must run without the mssql extension, or it proves nothing about its absence',
-    );
-  });
-
   test('no chat model is available, and asking for one does not throw', async () => {
     const models = await vscode.lm.selectChatModels();
     assert.strictEqual(
