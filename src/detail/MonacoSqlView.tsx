@@ -5,18 +5,10 @@ import 'monaco-editor/languages/definitions/sql/register';
 import 'monaco-editor/features/folding/register';
 import type * as Monaco from 'monaco-editor';
 import type { LineageNode } from '../engine/types';
+import { getMonacoTheme } from './monacoTheme';
 
 /** Configures the React loader with the core editor and SQL tokenizer only. */
 loader.config({ monaco: monacoEditor });
-
-/** Maps the VS Code theme kind to a Monaco Editor theme. */
-function getMonacoTheme(): string {
-  const kind = document.body.getAttribute('data-vscode-theme-kind');
-  if (kind === 'vscode-high-contrast') return 'hc-black';
-  if (kind === 'vscode-high-contrast-light') return 'hc-light';
-  if (kind === 'vscode-dark') return 'vs-dark';
-  return 'vs';
-}
 
 interface MonacoSqlViewProps {
   /** The SQL lineage node containing the DDL script to display. */

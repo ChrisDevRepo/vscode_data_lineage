@@ -201,6 +201,21 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
   }
 
   const html = useMemo(() => renderAiMarkdown(description), [description]);
+  const mdRef = useRef<HTMLDivElement | null>(null);
+  // SQL blocks are colored by the Monaco tokenizer already bundled for the detail view, loaded only when a block exists.
+  useEffect(() => {
+    const root = mdRef.current;
+    if (!root?.querySelector('code[data-lang="sql"]')) return;
+    let observer: MutationObserver | undefined;
+    let disposed = false;
+    void import('./markdown/colorizeSql').then(({ colorizeSqlBlocks, applySqlTheme }) => {
+      if (disposed) return;
+      void colorizeSqlBlocks(root);
+      observer = new MutationObserver(applySqlTheme);
+      observer.observe(document.body, { attributes: true, attributeFilter: ['data-vscode-theme-kind'] });
+    });
+    return () => { disposed = true; observer?.disconnect(); };
+  }, [html]);
   const railName = viewName || 'AI Report';
   const overlayClassName = [
     'ln-ai-description-overlay',
@@ -359,6 +374,7 @@ export const AiDescriptionOverlay = memo(function AiDescriptionOverlay({
           onScroll={(e) => { savedScrollTop.current = e.currentTarget.scrollTop; }}
         >
           <div
+            ref={mdRef}
             className="ln-ai-description-md"
             onClick={handleMarkdownClick}
             onKeyDown={handleMarkdownKeyDown}

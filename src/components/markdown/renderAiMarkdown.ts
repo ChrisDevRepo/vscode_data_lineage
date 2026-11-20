@@ -16,6 +16,32 @@ const HTML_ESCAPES: Readonly<Record<string, string>> = {
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 };
 
+/** A SQL line holding only a `--` comment (an omission marker or a recap). */
+const SQL_COMMENT_LINE = /^\s*--/;
+
+const indentOf = (line: string): number => line.length - line.trimStart().length;
+
+/**
+ * Aligns a quoted SQL excerpt for display: the indentation its code lines share with the source
+ * body is removed, and each comment-only line takes the indentation of the next code line (or the
+ * previous one at the end). Text and line order stay as captured.
+ */
+export function alignSqlExcerpt(sql: string): string {
+  const lines = sql.split('\n');
+  const isCode = (line: string): boolean => line.trim() !== '' && !SQL_COMMENT_LINE.test(line);
+  const codeIndents = lines.filter(isCode).map(indentOf);
+  if (codeIndents.length === 0) return sql;
+  const shared = Math.min(...codeIndents);
+  const aligned = lines.map(line => (isCode(line) ? line.slice(shared) : line));
+  return aligned.map((line, index) => {
+    if (!SQL_COMMENT_LINE.test(line)) return line;
+    const anchor = aligned.slice(index + 1).find(isCode) ?? aligned.slice(0, index).reverse().find(isCode) ?? '';
+    return ' '.repeat(indentOf(anchor)) + line.trimStart();
+  }).join('\n');
+}
+
+const escapeHtml = (text: string): string => text.replace(/[&<>"']/g, ch => HTML_ESCAPES[ch]);
+
 const marked = new Marked({ gfm: true, breaks: false })
   .use(markedKatexExtension(katex))
   .use({
@@ -42,7 +68,12 @@ const marked = new Marked({ gfm: true, breaks: false })
     }],
     renderer: {
       html(token: Tokens.HTML | Tokens.Tag): string {
-        return token.text.replace(/[&<>"']/g, ch => HTML_ESCAPES[ch]);
+        return escapeHtml(token.text);
+      },
+      // A SQL block is aligned and marked for the overlay's Monaco colorizer (`colorizeSql.ts`); other blocks keep the default.
+      code(token: Tokens.Code): string | false {
+        if (token.lang?.trim().toLowerCase() !== 'sql') return false;
+        return `<pre><code class="language-sql" data-lang="sql">${escapeHtml(alignSqlExcerpt(token.text))}</code></pre>\n`;
       },
       heading(token: Tokens.Heading): string {
         const body = this.parser.parseInline(token.tokens);
