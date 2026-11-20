@@ -5,8 +5,7 @@
 ## Import and connection
 
 - **`.dacpac` will not load.** The file must be a valid ZIP archive that contains `model.xml`. If the error mentions a file lock, close the program that holds the file.
-- **Database connection fails.** Add or fix the connection with **Data Lineage: Add Database Connection**. The error notification offers buttons that fit the cause, for example **Update Password**, **Choose Database**, **Trust Server Certificate** (self-signed certificate), **Retry** (Azure database busy or resuming) or **Copy GRANT Statement** (login cannot read metadata). Details are in the Output channel. Credentials are never shown. See [`SECURITY.md`](../SECURITY.md#connections).
-- **Login fails with 18456.** SQL Server gives this error for a wrong password, a wrong user, and a database the login cannot open. Check all three.
+- **Database connection fails.** Add or fix the connection with **Data Lineage: Add Database Connection**. The error notification offers buttons that fit the cause, for example **Update Password**, **Choose Database**, **Trust Server Certificate** (self-signed certificate), **Retry** (Azure database busy or resuming) or **Copy GRANT Statement** (login cannot read metadata). A failed login can mean a wrong password, a wrong user or a database the login cannot open. Details are in the Output channel. Credentials are never shown. See [`SECURITY.md`](../SECURITY.md#connections).
 - **Permissions.** Lineage needs `VIEW DEFINITION` on the database. Table statistics need `SELECT` on the tables. See [`DMV_QUERIES.md`](DMV_QUERIES.md).
 - **Project saved with the retired SQL Server (mssql) extension connection.** A warning appears and **Add Database Connection** opens with the saved server and database. The project keeps its schemas.
 - **Cross-database references are missing.** Three- and four-part names can appear as external nodes, but the other database is not imported. Unqualified names may not resolve.
