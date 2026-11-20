@@ -2451,19 +2451,6 @@ export class NavigationEngine implements IHopStateMachine {
         continue;
       }
 
-      // A table has no SQL to analyse: its tasks fold to the next SQL nodes through enqueueHop.
-      if (!SCRIPT_TYPES.has(this.nodeMap.get(candidate.nodeId)!.type)) {
-        for (const task of candidate.taskIds.flatMap(id => this.taskLedger.getTask(id) ?? [])) {
-          this.enqueueHop(candidate.nodeId, task.question, candidate.depth, 2, {
-            carry: candidate.columnCarry ?? { kind: 'carry', columns: candidate.activeColumns ?? [] },
-            parentTaskId: task.id, traversalSide: task.traversalSide, sourceRefs: this.qualifiedTaskRefs(task) ?? undefined,
-          });
-        }
-        this.completeTasks(candidate.taskIds);
-        this._totalNodes--;
-        continue;
-      }
-
       for (const taskId of candidate.taskIds) {
         const task = this.taskLedger.getTask(taskId);
         if (task?.callerContext && (task.parentTaskId !== task.callerContext.callerTaskId || !this.validFunctionCallerContext(candidate.nodeId, task.callerContext))) {
@@ -2473,6 +2460,20 @@ export class NavigationEngine implements IHopStateMachine {
           return this.failInvariant(candidate.nodeId, 'sourceRefs', COLUMN_SOURCE_MISSING);
         }
       }
+
+      // A table has no SQL to analyse: its tasks fold to the next SQL nodes through enqueueHop.
+      if (!SCRIPT_TYPES.has(this.nodeMap.get(candidate.nodeId)!.type)) {
+        for (const task of candidate.taskIds.flatMap(id => this.taskLedger.getTask(id) ?? [])) {
+          this.enqueueHop(candidate.nodeId, task.question, candidate.depth, 2, {
+            carry: candidate.columnCarry ?? { kind: 'carry', columns: candidate.activeColumns ?? [] },
+            parentTaskId: task.id, traversalSide: task.traversalSide, sourceRefs: this.qualifiedTaskRefs(task)!,
+          });
+        }
+        this.completeTasks(candidate.taskIds);
+        this._totalNodes--;
+        continue;
+      }
+
       if (candidate.columnCarry?.kind === 'scalar_return') {
         for (const target of candidate.columnCarry.outputs) {
           if (!this.scopeNodeIds.has(target.node) || !this.resolveReturnTarget(candidate.nodeId, target, candidate.taskIds)) {
