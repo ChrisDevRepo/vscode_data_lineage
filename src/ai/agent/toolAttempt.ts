@@ -864,7 +864,6 @@ function repliesLeftAfter(priorState?: ToolPhaseAttemptState): number | undefine
 /**
  * The escalation level of the reply a rejection answers: its ordinal among the step's rejected
  * replies, 1 to {@link MAX_TOOL_PROVIDER_CALLS}, counted by the same state as {@link repliesLeftAfter}.
- * `tools/compare-runs.mjs` reads it as `escalationStage`.
  */
 export function rejectionLevel(priorState: ToolPhaseAttemptState): number {
   return Math.min(MAX_TOOL_PROVIDER_CALLS, Math.max(priorState.noProgressCalls, priorState.rejectedTerminalCalls) + 1);
