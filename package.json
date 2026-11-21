@@ -944,7 +944,7 @@
     "@vitest/coverage-v8": "^5.1.1",
     "@vscode/test-cli": "^0.0.15",
     "@vscode/test-electron": "^3.1.0",
-    "@vscode/vsce": "3.9.2",
+    "@vscode/vsce": "4.1.1",
     "esbuild": "^0.28.2",
     "eslint": "10.15.0",
     "eslint-plugin-tsdoc": "0.5.4",
