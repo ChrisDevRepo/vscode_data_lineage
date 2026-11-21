@@ -206,7 +206,8 @@ export class AgentRuntime {
           activeStop?: string | null;
         };
         if (state.error) return this.close('error', state.error, { code: state.errorCode ?? undefined, stop: state.activeStop ?? undefined });
-        // `fail` writes `outcome: 'error'` together with its `TurnStop`; one without is a graph bug.
+        // `fail` writes `outcome: 'error'` together with its `TurnStop`; one without is a graph
+        // bug.
         if (state.outcome === 'error') throw new Error('Graph ended in error without a TurnStop.');
         return this.close(state.outcome ?? 'ok');
       }
@@ -254,7 +255,10 @@ export class AgentRuntime {
     });
   }
 
-  /** Claims the turn's terminal; an error close always carries its `TurnStop`, rendered once here. */
+  /**
+   * Claims the turn's terminal; an error close always carries its `TurnStop`, rendered once
+   * here.
+   */
   private close(
     ...[status, error, detail]: [status: 'ok' | 'cancelled'] | [status: 'error', error: TurnStop, detail?: { readonly code?: AgentErrorCode; readonly stop?: string }]
   ): TurnOutcome {

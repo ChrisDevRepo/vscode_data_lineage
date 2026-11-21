@@ -1,6 +1,6 @@
-/* React Flow 13 ships its styles in the `xyflow` layer: after Tailwind's base reset, below utilities.
-   The import lives here, after the layer statement: a separate vendor stylesheet would load first
-   in the HTML and pin `xyflow` below Tailwind's base layer. */
+/* React Flow 13 ships its styles in the `xyflow` layer: after Tailwind's base reset, below
+   utilities. The import lives here, after the layer statement: a separate vendor stylesheet would
+   load first in the HTML and pin `xyflow` below Tailwind's base layer. */
 @layer theme, base, xyflow, components, utilities;
 
 @import 'tailwindcss';

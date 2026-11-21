@@ -978,8 +978,9 @@ export function requiredDetailSlotIds(
 
 /**
  * Column-chain node ids a present call must cover with a section link or a note: nodes of the
- * direct and indirect column edges the render keeps that have no detail slot and are not pruned. The synthesis envelope lists this set
- * and the present handler enforces it (one source for list and check).
+ * direct and indirect column edges the render keeps that have no detail slot and are not pruned.
+ * The synthesis envelope lists this set and the present handler enforces it (one source for list
+ * and check).
  *
  * @param exemptNodeIds - Node ids with a detail slot or a prune state.
  * @param keyOf - Identifier key under the model's case sensitivity.

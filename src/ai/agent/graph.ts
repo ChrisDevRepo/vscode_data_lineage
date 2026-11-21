@@ -518,7 +518,10 @@ export function buildAgentGraph(deps: AgentGraphDeps) {
     } };
   };
 
-  /** Rejected model replies of a phase whose last reply ended (`res.stop`) without its `missing` result. */
+  /**
+   * Rejected model replies of a phase whose last reply ended (`res.stop`) without its `missing`
+   * result.
+   */
   const repliesStop = (nextAttempt: ToolPhaseAttemptState, res: ToolAttemptResult, subject: string, missing: string): TurnStop =>
     ({ source: 'model_replies', code: `stop_${res.stop}`, phase: nextAttempt.phase, detail: `in ${subject} (no ${missing})` });
 
