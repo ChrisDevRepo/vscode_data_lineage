@@ -925,7 +925,7 @@
     "marked": "18.2.1",
     "monaco-editor": "0.57.0",
     "react": "19.3.1",
-    "react-arborist": "3.16.0",
+    "react-arborist": "4.0.1",
     "react-dom": "19.3.1",
     "tedious": "20.3.9",
     "zod": "4.6.7"
