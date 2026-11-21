@@ -8,9 +8,9 @@
 import type { LineageNode } from '../../engine/types';
 
 /**
- * Node summaries carried forward in the `<short_term_memory>` window. Three because the window
- * shows how the *immediately preceding* hops connect; widening it trades prompt budget for context
- * the model already committed to engine memory.
+ * Neighbor summaries carried in `<short_term_memory>`. At most three: the most recent stored
+ * summaries of the focus's neighbors. A non-neighbor does not bear on this hop, and widening
+ * past three trades prompt budget for context the engine already stores.
  */
 const RECENT_SUMMARY_WINDOW = 3;
 
@@ -388,14 +388,18 @@ export class AiMemoryManager {
   }
 
   /**
-   * Returns the last {@link RECENT_SUMMARY_WINDOW} node summaries for the per-hop
-   * `<short_term_memory>` block; the same window as `getWorkingMemory`, exposed so prompt builders
-   * need not build the full envelope.
+   * Summaries for `<short_term_memory>`: the last {@link RECENT_SUMMARY_WINDOW} stored slots
+   * whose node id is in `neighborIds`, in insertion order. Empty when none of those neighbors
+   * have a stored summary.
+   *
+   * @param neighborIds - Node ids of this hop's focus neighbors.
    */
-  public getShortTermMemory(): Array<{ nodeId: string; summary: string }> {
+  public getShortTermMemory(neighborIds: readonly string[]): Array<{ nodeId: string; summary: string }> {
+    const neighbors = new Set(neighborIds);
     return Array.from(this.detailSlots.values())
+      .filter(slot => neighbors.has(slot.nodeId))
       .slice(-RECENT_SUMMARY_WINDOW)
-      .map(s => ({ nodeId: s.nodeId, summary: s.summary }));
+      .map(slot => ({ nodeId: slot.nodeId, summary: slot.summary }));
   }
 
   /**

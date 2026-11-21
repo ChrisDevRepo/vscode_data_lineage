@@ -214,9 +214,11 @@ export function buildActiveHopInstruction(sess: AiSession, engine: NavigationEng
     scope: 'per_focus',
     focusKind: focusIsNonBodied(sess, engine) ? 'non_bodied' : 'bodied',
   });
-  const focus = buildWorkerHopMessage(engine.peekHopContext(), focusId);
+  const hop = engine.peekHopContext();
+  const focus = buildWorkerHopMessage(hop, focusId);
   const recentRejections = sess.memory.getRecentRejections().filter(rejection => rejection.atHop < engine.currentHop);
-  const memory = buildMemoryBlock(sess.memory.getShortTermMemory(), recentRejections);
+  const neighborIds = hop?.neighbors?.map(neighbor => neighbor.id) ?? [];
+  const memory = buildMemoryBlock(sess.memory.getShortTermMemory(neighborIds), recentRejections);
   const memorySections: string[] = [];
   if (captureRecipe.prompt) memorySections.push('capture_recipe');
   if (currentTask) memorySections.push('current_task');

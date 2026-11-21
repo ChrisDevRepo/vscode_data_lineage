@@ -183,7 +183,7 @@ function buildDiscoveryPrompt(filterHidesObjects: boolean): string {
 function buildActivePhasePrompt(analysisMode: 'bb' | 'ct'): string {
   return [
     '# Active hop',
-    'This hop reads one SQL object, `focus_node` in `<hop_context>`, against `<current_task>`. Read its `bb_ddl`, where present. Neighbors carry no SQL; a question about a neighbor\'s logic belongs to its own hop. `<short_term_memory>` is context from earlier hops, not evidence for this one.',
+    'This hop reads one SQL object, `focus_node` in `<hop_context>`, against `<current_task>`. Read its `bb_ddl`, where present. Neighbors carry no SQL; a question about a neighbor\'s logic belongs to its own hop. `<short_term_memory>` is neighbor summaries only, not evidence for this one.',
     'Ground claims in supplied evidence: do not infer execution counts, uniqueness, validity policy or business obligations without evidence.',
     '',
     'Deliver one `lineage_submit_findings` call; judge `verdict` from the focus itself.',
@@ -703,7 +703,7 @@ export function buildCurrentTaskBlock(
 
 
 /**
- * Renders the `<short_term_memory>` block (last 3 node summaries) plus, when present, a
+ * Renders the `<short_term_memory>` block (selected neighbor summaries) plus, when present, a
  * `<recent_rejections>` block (the engine's rejection ring) for SM active hops. The worker is
  * handed `peekHopContext`, which omits `working_memory`, so this block of the per-hop worker
  * message is the only channel carrying the rejection ring, which lets it self-correct from prior
@@ -717,7 +717,7 @@ export function buildMemoryBlock(
 ): string {
   const stmText = stm.length > 0
     ? stm.map(s => `- ${s.nodeId}: ${s.summary}`).join('\n')
-    : 'No nodes visited yet.';
+    : 'No neighbor summary.';
   const blocks = [
     '<short_term_memory>',
     stmText,
