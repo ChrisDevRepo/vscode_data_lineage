@@ -33,6 +33,8 @@ export interface BuiltInOpenOptions {
   database?: string;
   /** Cancels a connect in progress; the socket is closed and the open resolves `undefined`. */
   token?: vscode.CancellationToken;
+  /** Told, once the sign-in is done and before the first attempt, what the wait is for. */
+  onConnecting?: (label: string) => void;
 }
 
 /** Application name SQL Server reports for these connections. */
@@ -43,10 +45,24 @@ const MS_PER_SECOND = 1000;
  * Connect retries on the transient errors the driver recognises (the SqlClient list: 4060, 10928,
  * 10929, 40197, 40501, 40613), waiting at least the five seconds Microsoft recommends.
  */
-const CONNECT_RETRY_INTERVAL_MS = 5 * MS_PER_SECOND;
-const CONNECT_MAX_RETRIES = 3;
+const CONNECT_RETRY_INTERVAL_MS = 10 * MS_PER_SECOND;
+/**
+ * How long a connect keeps retrying: Azure SQL serverless takes "generally about one minute to
+ * auto-resume" and answers the first login with transient error 40613
+ * (learn.microsoft.com/azure/azure-sql/database/serverless-tier-auto-pause-resume). The interval
+ * stays above the 5 s minimum
+ * (learn.microsoft.com/azure/azure-sql/database/troubleshoot-common-connectivity-issues).
+ * The driver retries only its transient errors, so a failed login (18456) is not repeated.
+ */
+const CONNECT_RETRY_WINDOW_MS = 60 * MS_PER_SECOND;
+const CONNECT_MAX_RETRIES = CONNECT_RETRY_WINDOW_MS / CONNECT_RETRY_INTERVAL_MS;
 /** Login budget of one connect attempt; Microsoft recommends 30 s for Azure SQL and Synapse. */
 const CONNECT_TIMEOUT_MS = 30 * MS_PER_SECOND;
+
+/** Host names of Azure SQL in the public, US government and China clouds. */
+const AZURE_SQL_HOST = /\.database\.(windows\.net|usgovcloudapi\.net|chinacloudapi\.cn)$/i;
+/** Progress text while an idle Azure SQL database resumes (source: CONNECT_RETRY_WINDOW_MS). */
+const WAKING_LABEL = 'Waking up the database. An idle Azure SQL database can take about a minute to resume.';
 
 /** Engine editions that run in a Microsoft cloud service. */
 const CLOUD_ENGINE_EDITIONS: ReadonlySet<number> = new Set([5, 6, 8, 11, 12]);
@@ -395,6 +411,7 @@ export async function openBuiltInSession(
   });
   const session = new BuiltInSession(raw, lib, connectionInfo, label, logger, env.loadQueries);
 
+  options.onConnecting?.(connection.authenticationType === 'entraId' || AZURE_SQL_HOST.test(address.host) ? WAKING_LABEL : `Connecting to ${address.host}…`);
   logger.info(`Connecting (${connection.authenticationType})`);
   logger.debug(`Connection target: ${label}${database ? ` / ${database}` : ''}`);
   const started = Date.now();
