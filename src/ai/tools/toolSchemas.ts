@@ -798,8 +798,8 @@ function columnFlowSchemaForHop(hop: SubmitFindingsHopColumns) {
     : ColumnFlowEntrySchema.shape.upstream_columns;
   const writeTargets = hop.writesToNodeIds;
   const anyWrite = ColumnFlowEntrySchema.shape.writes_to.unwrap();
-  // No served node enum: nested in the null anyOf, the probable inducer of bare-object column_flow
-  // on small local models (DEF-656); the scope check refuses an out-of-scope destination on its own.
+  // No served node enum: nested in the null anyOf it induced bare-object column_flow on small
+  // local models; the scope check refuses an out-of-scope destination on its own.
   const writesTo = writeTargets?.length === 0 ? anyWrite.meta({ anyOf: [{ type: 'null' }] }) : anyWrite;
   const shape = {
     out_col: outCol,
