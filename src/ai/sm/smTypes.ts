@@ -998,8 +998,6 @@ export interface InvalidRoute {
     actual_columns?: string[];
     /** Neighbours the focus may still question (`question_closed`). */
     available_routes?: string[];
-    /** Fields that carry the fact instead of the refused reference (`column_out_of_scope`). */
-    alternatives?: string[];
 }
 
 /** Discriminated union representing the engine's current aspect mode. */
