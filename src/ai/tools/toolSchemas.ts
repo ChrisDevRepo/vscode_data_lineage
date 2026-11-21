@@ -494,9 +494,8 @@ const PruneNeighborSchema = z.object({
 
 /** Single source of the `questions` describe text, shared by per-mode schemas and the union. */
 const QUESTIONS_DESCRIPTION =
-  'A self-contained subquestion, tied to the user question, for each eligible in-scope neighbor you keep. '
-  + 'For an eligible out-of-scope neighbor, an optional follow-up, deferred until scope approval. '
-  + 'No questions to visited or pruned neighbors.';
+  'A question is optional. Ask an open neighbor (neither `already_visited` nor `already_removed`) only what its SQL must answer beyond the column continuation. '
+  + 'An out-of-scope neighbor you ask is a follow-up after the answer. No question to a pruned neighbor.';
 
 /** One `questions[]` entry, attached to that neighbour's queued hop. */
 const NeighborQuestionSchema = z.object({
