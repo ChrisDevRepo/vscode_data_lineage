@@ -14,6 +14,7 @@ import { DbConnectionError, MicrosoftSignInError, type ConnectionErrorTarget, ty
 import { pickAccount, signInForSql } from './entraSignIn';
 import { redactSecrets } from '../../utils/redact';
 import { errorMessage } from '../../utils/errorMessage';
+import { quoteIdentifier } from '../../utils/sql';
 
 /** Identifier of an action a connection error can offer. */
 export type ConnectionErrorActionId =
@@ -91,7 +92,10 @@ export function isDriverError(err: unknown): boolean {
   return errorNumber(err) !== undefined || /^E[A-Z]+$/.test(errorCode(err) ?? '');
 }
 
-/** Whether the error is the user cancelling a Microsoft sign-in (including declining consent), not a failure. */
+/**
+ * Whether the error is the user cancelling a Microsoft sign-in (including declining consent), not a
+ * failure.
+ */
 export function isSignInCancelled(err: unknown): boolean {
   return classify(err) === 'signInCancelled';
 }
@@ -111,10 +115,8 @@ function classify(err: unknown): ErrorKind {
   return 'other';
 }
 
-const bracket = (identifier: string): string => `[${identifier.replace(/\]/g, ']]')}]`;
-
 function grantStatement(grant: string, user: string | undefined): string {
-  const principal = user ? bracket(user) : '[user_or_group]';
+  const principal = user ? quoteIdentifier(user) : '[user_or_group]';
   return `GRANT ${grant} TO ${principal};`;
 }
 

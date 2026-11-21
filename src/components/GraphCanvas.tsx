@@ -118,7 +118,10 @@ export function aiLayoutCacheKey(originId: string | undefined, viewName: string)
   return `${originId ?? 'preview'}::${viewName}`;
 }
 
-/** Padding applied when fitting the graph view; a percentage keeps the v12 relative factor (v13 reads a unitless number as pixels). */
+/**
+ * Padding applied when fitting the graph view; a percentage keeps the v12 relative factor (v13
+ * reads a unitless number as pixels).
+ */
 const FIT_VIEW_PADDING = '15%';
 
 type FitViewPadding = NonNullable<FitViewOptions['padding']>;

@@ -209,7 +209,10 @@ export interface TurnStop {
   readonly code: string;
   /** Model-call or attempt phase in which the turn stopped, when known. */
   readonly phase?: string;
-  /** Data Lineage's own reason (stop reason, last rejection, catalog name); plain text, escaped when rendered. */
+  /**
+   * Data Lineage's own reason (stop reason, last rejection, catalog name); plain text, escaped when
+   * rendered.
+   */
   readonly detail?: string;
   /** Sanitized error chain; its message is quoted verbatim for an external source. */
   readonly diagnostic?: ProviderErrorDiagnostic;
@@ -228,7 +231,7 @@ const STOP_LINE: Readonly<Record<StopSource, { readonly verb: 'failed' | 'stoppe
   model_replies: { verb: 'stopped', label: 'model replies rejected' },
 };
 
-/** Closing sentence of every {@link describeTurnStop} line; replayed history drops a line that ends in it. */
+/** Closing sentence of every {@link describeTurnStop} line; replayed history drops such lines. */
 export const TURN_STOP_LINE_END = `Details: Output › ${OUTPUT_CHANNEL_NAME}.`;
 
 /**

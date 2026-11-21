@@ -1473,7 +1473,7 @@ export class NavigationEngine implements IHopStateMachine {
       const cause = border.kind === 'excluded' ? `excluded ${border.axis === 'node_id' ? 'object' : border.axis}`
         : border.kind === 'out_of_direction' ? 'out of direction'
           : `at depth ${depthBreach}, past the limit ${this.breachedDepthLimit(id, depthBreach)}`;
-      return [{ kind: 'column_out_of_scope' as const, id, path: `${at}.node`, reason: `The object is out of scope (${cause}).`, alternatives: ['questions', 'sections'] }];
+      return [{ kind: 'column_out_of_scope' as const, id, path: `${at}.node`, reason: `The object is out of scope (${cause}).` }];
     });
   }
 

@@ -104,10 +104,10 @@ export function notifyWarning(
   showWarningMessage(noticeDetailAndToast(logger, operation, userMessage, context));
 }
 
-/** Toasts already shown this session, keyed on operation and text; the logger still records every occurrence. */
+/** Toasts already shown this session, keyed on operation and text; the logger records every one. */
 const shownToasts = new Set<string>();
 
-/** Forgets the shown toasts, so a setting change that fixes and then re-breaks a config shows again. */
+/** Forgets the shown toasts, so a setting change that fixes then re-breaks a config shows again. */
 export function clearOnceToasts(): void {
   shownToasts.clear();
 }

@@ -146,7 +146,6 @@ export function buildRouteValidationRejection(errors: InvalidRoute[]): ToolRejec
       ...(e.available_columns ? { available_columns: e.available_columns } : {}),
       ...(e.actual_columns ? { actual_columns: e.actual_columns } : {}),
       ...(e.available_routes ? { available_routes: e.available_routes } : {}),
-      ...(e.alternatives ? { alternatives: e.alternatives } : {}),
     })),
     issuePaths: errors.flatMap(e => (e.path ? [e.path] : [])),
   });

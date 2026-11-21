@@ -391,9 +391,9 @@ export class LineageParticipant {
       }
 
       const { message, turnStop, code, stop } = result.failure;
-      // The error line carries enumerated fields; a provider or network stop adds the external message
-      // the chat line quotes (redacted, length-capped), an internal stop never a message. The chat
-      // text and the sanitized cause chain (names, codes, messages) go to debug.
+      // The error line carries enumerated fields; a provider or network stop adds the external
+      // message the chat line quotes (redacted, length-capped), an internal stop never a message.
+      // The chat text and the sanitized cause chain (names, codes, messages) go to debug.
       const quoted = quotedExternalMessage(turnStop);
       this.logger.error(
         `[${session.id}] native turn terminal status=error source=${turnStop.source}`
