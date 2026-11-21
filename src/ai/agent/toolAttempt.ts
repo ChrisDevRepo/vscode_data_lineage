@@ -215,6 +215,7 @@ type ToolOutcomeData =
     readonly status: 'phase_closed';
     readonly closedByCallId: string;
     readonly rejection: ToolRejection;
+    readonly traceStatus?: 'closed';
   };
 
 /** Canonical per-call outcome before projection into the stable graph-visible attempt shape. */
@@ -354,11 +355,17 @@ interface ToolGenerationAttemptInput {
  * Sink for a rejection this module raises itself, with no tool dispatch behind it.
  * Registry-dispatched rejections are captured by the observability decorator on
  * `IToolRegistry.invoke`; one raised here never reaches it, so without this hook the failures the
- * model was charged for would be invisible to a trace consumer. Carries the enumerated code and
- * tool name only; the reason prose stays on {@link ToolGenerationAttemptInput.debugLog}, keeping
- * this module free of observability imports.
+ * model was charged for would be invisible to a trace consumer. Carries the enumerated code, tool
+ * name and trace disposition; the reason prose stays on {@link ToolGenerationAttemptInput.debugLog},
+ * keeping this module free of observability imports.
  */
-export type SyntheticRejectionTrace = (rejection: { callId?: string; toolName: string; code: string }) => void;
+export type SyntheticRejectionTrace = (rejection: {
+  callId?: string;
+  toolName: string;
+  code: string;
+  /** Default `rejected`; `closed`: a sibling answered without evaluation. */
+  status?: 'rejected' | 'closed';
+}) => void;
 
 /** Optional graph-owned state and diagnostics supplied when executing a compiled plan. */
 interface ToolAttemptExecutionOptions {
@@ -912,7 +919,7 @@ function recordToolOutcome(
     return { resultText: rejectionText(artifact, call.toolName, priorState, call.schema, outcome.correction.unsent), status: 'error', rejection, artifact };
   }
   calls.push({ callId: outcome.callId, toolName: outcome.toolName, status: outcome.status, closedByCallId: outcome.closedByCallId });
-  trace?.({ callId: outcome.callId, toolName: outcome.toolName, code: outcome.rejection.code });
+  trace?.({ callId: outcome.callId, toolName: outcome.toolName, code: outcome.rejection.code, ...(outcome.traceStatus ? { status: outcome.traceStatus } : {}) });
   return { resultText: rejectionText(outcome.rejection, call.toolName, priorState), status: 'error', artifact: outcome.rejection };
 }
 
@@ -1148,7 +1155,8 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
   let refusal: string | null = null;
   let phaseComplete = false;
   let cancelled = false;
-  let closedBy: { readonly callId: string; readonly toolName: string } | null = null;
+  // The closer's kind: an accepted commit or control signal, versus a backend-fault rejection.
+  let closedBy: { readonly callId: string; readonly toolName: string; readonly accepted: boolean } | null = null;
   let heldObservationBytes = loop.heldObservationBytes;
   const evaluatedOncePerReply = new Map<string, string>();
 
@@ -1162,6 +1170,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
       const outcome = recordToolOutcome(call, {
         status: 'phase_closed',
         closedByCallId: closedBy.callId,
+        ...(closedBy.accepted ? { traceStatus: 'closed' as const } : {}),
         rejection: makeRejection({
           code: REJECTION_CODES.phaseClosed,
           reason: 'This sibling was not executed because an earlier call in the same provider batch closed the phase.',
@@ -1289,7 +1298,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
       const data = withHeldDraftDetail(resultRejection, call.toolName, input.presentResultRepairDraftContext);
       const outcome = recordToolOutcome({ ...call, schema: () => definition?.inputSchema }, data, calls, observations, rejections, undefined, input.priorState);
       toolMessages.push(modelToolResultMessage(call.callId, call.toolName, outcome.resultText, outcome.status, outcome.artifact));
-      if (classifyRejectionCode(outcome.rejection!.code) === 'backend_fault') closedBy = { callId: call.callId, toolName: call.toolName };
+      if (classifyRejectionCode(outcome.rejection!.code) === 'backend_fault') closedBy = { callId: call.callId, toolName: call.toolName, accepted: false };
     } else {
       const observe = !controlSuccess && !terminalSuccess;
       let storedResult = resultText;
@@ -1331,7 +1340,7 @@ async function dispatchToolCallBatch(loop: ToolCallDispatchLoopInput): Promise<T
     if (detectedRefusal !== null) refusal = detectedRefusal;
     if (terminalSuccess) phaseComplete = true;
     if (!isError && (controlSuccess || terminalSuccess)) {
-      closedBy = { callId: call.callId, toolName: call.toolName };
+      closedBy = { callId: call.callId, toolName: call.toolName, accepted: true };
     }
   }
 

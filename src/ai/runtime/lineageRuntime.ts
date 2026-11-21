@@ -13,6 +13,7 @@ import type { TurnLease } from '../session/turnLease';
 import type { IToolRegistry } from '../tools/registry';
 import type { TurnEventSink } from './turnEventSink';
 import type { GateDecision } from '../agent/state';
+import type { SyntheticRejectionTrace } from '../agent/toolAttempt';
 import type { TurnOutcome } from '../core/agentCore';
 import type { ToolRejection } from '../support/toolErrorEnvelope';
 import { readToolError, isConsentGateRejection } from '../support/toolErrorEnvelope';
@@ -157,8 +158,8 @@ export class LineageRuntime {
           nextSequence: () => ++toolSequence,
         })
       : registry;
-    const traceSyntheticRejection = traceWriter
-      ? (rejection: { callId?: string; toolName: string; code: string }): void => {
+    const traceSyntheticRejection: SyntheticRejectionTrace | undefined = traceWriter
+      ? (rejection): void => {
           void traceWriter.write({
             type: 'tool',
             requestId: input.request.id,
@@ -167,7 +168,7 @@ export class LineageRuntime {
             phase,
             ...(rejection.callId ? { callId: rejection.callId } : {}),
             toolName: rejection.toolName,
-            status: 'rejected',
+            status: rejection.status ?? 'rejected',
             rejectionCode: rejection.code,
             durationMs: 0,
           }).catch(() => {});

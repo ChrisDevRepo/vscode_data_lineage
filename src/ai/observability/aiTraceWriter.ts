@@ -86,8 +86,11 @@ export type RuntimeLifecycleRecord =
       /** Provider call id; absent for a rejection raised without a call. */
       readonly callId?: string;
       readonly toolName: string;
-      /** Dispatch outcome; `gate` is a consent gate, not charged to the semantic budget. */
-      readonly status: 'accepted' | 'rejected' | 'gate' | 'dispatch_error';
+      /**
+       * Dispatch outcome; `gate` is a consent gate, not charged to the semantic budget. `closed` is
+       * a sibling answered without evaluation after an accepted commit.
+       */
+      readonly status: 'accepted' | 'rejected' | 'gate' | 'dispatch_error' | 'closed';
       readonly rejectionCode?: string;
       /** Dotted field paths the rejection blamed, when any; identifiers, never prose. */
       readonly issuePaths?: readonly string[];
