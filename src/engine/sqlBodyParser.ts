@@ -41,7 +41,18 @@ interface ParsedDependencies {
   crossDbSources: string[];
   /** Full 3-part names of cross-database targets (`db.schema.object`), for cross-DB lineage. */
   crossDbTargets: string[];
+  /** Labels of {@link PARTIAL_SUPPORT} constructs in the body. */
+  unsupported: string[];
 }
+
+/**
+ * Body constructs that are not analysed; the references the other rules capture around them still
+ * count.
+ */
+const PARTIAL_SUPPORT: ReadonlyArray<readonly [label: string, pattern: RegExp]> = [
+  ['Cursor', /(?<![[@\w])CURSOR\b(?!\])/i],
+  ['Dynamic SQL', /\bEXEC(?:UTE)?\s*\(|\bsp_executesql\b/i],
+];
 
 /**
  * Defines a single regex-based extraction rule for SQL parsing.
@@ -674,6 +685,7 @@ export function parseSqlBody(
   });
 
   clean = clean.replace(NAME_PERIOD_SPACING_RE, (_match, bracketed: string | undefined) => bracketed ?? '.');
+  const unsupported = PARTIAL_SUPPORT.filter(([, pattern]) => pattern.test(clean)).map(([label]) => label);
 
   clean = neutraliseOperandFrom(clean);
 
@@ -746,6 +758,7 @@ export function parseSqlBody(
     execCalls: Array.from(execCalls),
     crossDbSources: Array.from(crossDbSources),
     crossDbTargets: Array.from(crossDbTargets),
+    unsupported,
   };
 }
 

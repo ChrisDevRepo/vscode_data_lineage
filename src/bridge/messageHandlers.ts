@@ -16,7 +16,6 @@ import { isFirstToast, notifyError, notifyWarning, notifyWarningOnce } from '../
 import { type BridgeHost } from './host';
 import {
   type DatabaseModel, type LineageNode, type ColumnDef, type ParseStats, DEFAULT_CONFIG,
-  UNKNOWN_DB_PLATFORM,
 } from '../engine/types';
 import { extractDacpac, extractSchemaPreview, extractDacpacFiltered } from '../engine/dacpacExtractor';
 import { checkObjectLimit, formatObjectLimitMessage } from '../engine/modelFilters';
@@ -58,6 +57,7 @@ import {
 } from '../engine/shared/bridgeContract';
 import { summarizeZodError, postToDetail } from './host';
 import { readDeclaredNumericSetting } from '../configCore';
+import { quoteIdentifier } from '../utils/sql';
 
 /**
  * Handler per main-panel message type, with `msg` narrowed to the matching
@@ -1180,7 +1180,7 @@ async function loadDatabasePlatform(
   queries: DmvQuery[],
   outputChannel: vscode.LogOutputChannel,
   timeoutMs: number,
-): Promise<Pick<DmvResults, 'platformInfo' | 'serverPlatform'>> {
+): Promise<Pick<DmvResults, 'platformInfo'>> {
   const logger = Logger.create(outputChannel, 'DB');
   const platformQuery = queries.find(q => q.name === 'platform-info');
   const probeTimeoutMs = Math.min(timeoutMs, PLATFORM_PROBE_TIMEOUT_MS);
@@ -1202,7 +1202,7 @@ async function loadDatabasePlatform(
   } else {
     logger.debug(`Custom DMV configuration has no platform-info query — ${fallback}`);
   }
-  return { serverPlatform: UNKNOWN_DB_PLATFORM };
+  return {};
 }
 
 async function withDbProgressHost(
@@ -1355,9 +1355,12 @@ async function handleTableStatsRequestHost(
     logger.info(`Table statistics ready — rows=${rowCount}${needsSampling ? ` (sampled ${samplePercent}%)` : ''} (${((Date.now() - t0) / 1000).toFixed(2)}s)`);
     void postToDetail(panel, { type: 'table-stats-result', objectRef, stats, mode }, logger);
   } catch (err) {
-    const failure = connectionFailure(err);
+    const failure = connectionFailure(err, session);
     if (failure) {
-      const reported = reportConnectionError(failure.error, failure.target, logger, connectionErrorHooks(dbEnv, failure.target.connectionId, undefined));
+      const reported = reportConnectionError(failure.error, failure.target, logger, {
+        ...connectionErrorHooks(dbEnv, failure.target.connectionId, undefined),
+        grant: `SELECT ON ${quoteIdentifier(schema)}.${quoteIdentifier(objectName)}`,
+      });
       void postToDetail(panel, { type: 'table-stats-error', objectRef, message: reported.message }, logger);
       return;
     }
@@ -1393,6 +1396,13 @@ function handleParseStats(stats: ParseStats, outputChannel: vscode.LogOutputChan
   if (stats.unreadableDefinitions?.length) {
     logger.warn(`Definition not readable (encrypted or no VIEW DEFINITION permission) — ${stats.unreadableDefinitions.length} object(s) loaded without edges`);
     logger.debug(`Definitions not readable: ${stats.unreadableDefinitions.join(', ')}`);
+  }
+
+  for (const [label, names] of Object.entries(stats.unsupported ?? {})) {
+    if (!names.length) continue;
+    const text = `${label} not fully supported — loaded with the references the parser captures`;
+    logger.warn(`${text}: ${names.length} module(s), named in the debug log`);
+    logger.debug(`${text}: ${trunc(names, LOG_TRUNC_LIST)}`);
   }
 
   if (spCount === 0) {

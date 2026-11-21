@@ -34,8 +34,6 @@ export interface DmvResults {
   allObjects?: SimpleExecuteResult;
   constraints?: SimpleExecuteResult;
   platformInfo?: SimpleExecuteResult;
-  /** Explicit platform label used when the platform query is unavailable. */
-  serverPlatform?: string;
 }
 
 /** Shown when the catalog has no objects: an empty database or a login lacking VIEW DEFINITION. */
@@ -109,10 +107,7 @@ export function buildModelFromDmv(
     onDebugLog(`DMV extract — ${objects.length} objects, ${deps.length} deps (table=${c.table}, view=${c.view}, procedure=${c.procedure}, function=${c.function}, columns=${colCount}, fks=${fkCount})`);
   }
   const model = buildModel(objects, deps, allObjects, currentDatabase, externalRefsEnabled, onDebugLog, identifierCaseSensitive);
-  const queryPlatform = results.platformInfo ? mapEnginePlatform(results.platformInfo) : UNKNOWN_DB_PLATFORM;
-  const dbPlatform = queryPlatform !== UNKNOWN_DB_PLATFORM
-    ? queryPlatform
-    : results.serverPlatform?.trim() || UNKNOWN_DB_PLATFORM;
+  const dbPlatform = results.platformInfo ? mapEnginePlatform(results.platformInfo) : UNKNOWN_DB_PLATFORM;
 
   const warnings: string[] = [];
   if (objects.length === 0) {
