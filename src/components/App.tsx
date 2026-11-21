@@ -61,8 +61,11 @@ type AppView = 'start' | 'create' | 'visualizing' | 'graph';
 
 /** Timeout for dacpac file loading operations. */
 const DACPAC_TIMEOUT_MS = 20_000;
-/** Timeout for live database connection and extraction operations. */
-const DB_TIMEOUT_MS = 60_000;
+/**
+ * Timeout for live database connection and extraction operations. It outlasts the host's connect
+ * retry window (`CONNECT_RETRY_WINDOW_MS`) plus a sign-in and one login attempt.
+ */
+const DB_TIMEOUT_MS = 150_000;
 /** Minimum time to show the loading spinner to prevent visual flickering. */
 const MIN_SPINNER_MS = 1200;
 /** Watchdog for the host's `rebuild-config` reply; only that reply clears the rebuild spinner. */
@@ -145,6 +148,11 @@ export function App() {
   const [loadingPhase, setLoadingPhase] = useState<LoadingPhase>('load');
   const [loadingStats, setLoadingStats] = useState<string | null>(null);
   const [loadingError, setLoadingError] = useState<string | null>(null);
+  /** What the visualizing screen is loading: Retry runs it again, Cancel returns to its source. */
+  type LastLoad = { kind: 'project'; id: string } | { kind: 'create'; name: string; conn: DacpacConnection | DatabaseConnection | null };
+  const [lastLoad, setLastLoad] = useState<LastLoad | null>(null);
+  /** Line the create form shows after a cancelled load. */
+  const [createNotice, setCreateNotice] = useState<string | null>(null);
   const [startScreenMessage, setStartScreenMessage] = useState<string | null>(null);
 
   const [sourceName, setSourceName] = useState<string | null>(isAutoVisualize ? 'AdventureWorks (demo)' : null);
@@ -316,6 +324,8 @@ export function App() {
   const handleCreateNew = useCallback(() => {
     dacpacLoader.resetToStart();
     setStartScreenMessage(null);
+    setLastLoad(null);
+    setCreateNotice(null);
     setView('create');
   }, [dacpacLoader.resetToStart]);
 
@@ -333,6 +343,7 @@ export function App() {
     }
 
     vscodeApi.postMessage({ type: 'save-wizard-view', view: 'projects' });
+    setLastLoad({ kind: 'project', id });
     dacpacLoader.loadProject(id);
     setView('visualizing');
   }, [projects, dacpacLoader.loadProject, vscodeApi]);
@@ -361,6 +372,7 @@ export function App() {
     setStartScreenMessage(null);
     setActiveProjectId(null);
     setSourceName('AdventureWorks (demo)');
+    setLastLoad(null);
     dacpacLoader.loadDemo();
     setView('visualizing');
   }, [dacpacLoader.loadDemo]);
@@ -382,13 +394,20 @@ export function App() {
     else handleDemoClick();
   };
 
+  /**
+   * Cancels the load. One started from the create form returns to that form with its values (the
+   * loader keeps the source and the schema choice; `lastLoad` carries the project name); any other
+   * load returns to the start view.
+   */
   const handleCancelVisualizing = useCallback(() => {
+    const toForm = lastLoad?.kind === 'create';
     dacpacLoader.cancelLoading();
-    setView('start');
+    setCreateNotice(toForm ? 'Connection canceled. Your details are still filled in.' : null);
+    setView(toForm ? 'create' : 'start');
     setLoadingProjectId(null);
     setLoadingError(null);
     setActiveProjectId(null);
-  }, [dacpacLoader.cancelLoading]);
+  }, [dacpacLoader.cancelLoading, lastLoad]);
 
   /** Returns to start after an error, preserving the error message. */
   const handleBackFromError = useCallback(() => {
@@ -404,6 +423,7 @@ export function App() {
     setLoadingPhase('load');
     setLoadingStats(null);
     setLoadingError(null);
+    setCreateNotice(null);
     setSourceName(projectName);
 
     if (conn && conn.type === 'dacpac') {
@@ -416,8 +436,16 @@ export function App() {
       dacpacLoader.visualize(dacpacLoader.selectedSchemas, projectName);
     }
 
+    setLastLoad({ kind: 'create', name: projectName, conn });
     setView('visualizing');
   }, [dacpacLoader.visualize, dacpacLoader.selectedSchemas, vscodeApi]);
+
+  /** Re-runs the failed load; only a saved project or a live database can run again. */
+  const retryLoad = useMemo(() => {
+    if (lastLoad?.kind === 'project') return () => handleOpenProject(lastLoad.id);
+    if (lastLoad?.kind === 'create' && lastLoad.conn === null) return () => handleCreateVisualize(lastLoad.name, null);
+    return null;
+  }, [lastLoad, handleOpenProject, handleCreateVisualize]);
 
 
   const [isRebuilding, setIsRebuilding] = useState(false);
@@ -1522,6 +1550,8 @@ export function App() {
     return (
       <CreateFlow
         loader={dacpacLoader}
+        initialProjectName={lastLoad?.kind === 'create' ? lastLoad.name : ''}
+        notice={createNotice}
         maxNodes={config.maxNodes}
         onBack={() => { dacpacLoader.resetToStart(); setView('start'); }}
         onVisualize={handleCreateVisualize}
@@ -1539,6 +1569,7 @@ export function App() {
         error={loadingError}
         onCancel={handleCancelVisualizing}
         onBack={handleBackFromError}
+        onRetry={retryLoad}
       />
     );
   }

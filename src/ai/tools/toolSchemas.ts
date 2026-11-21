@@ -1237,7 +1237,7 @@ const PresentResultSectionSchema = z.object({
  */
 const PresentResultSectionDeletionSchema = z.object({
   label: PresentResultSectionSchema.shape.label,
-  remove: z.literal(true).describe('true drops the held section under this label; omit replacement content.'),
+  remove: z.literal(true).describe('true drops the section under this label; omit replacement content.'),
 }).strict();
 const PresentResultSectionPatchSchema = z.union([
   PresentResultSectionSchema.extend({
@@ -1326,10 +1326,13 @@ export const PresentResultModelSchema = z.object({
  * One section of a report that is already committed: `text` and `node_ids` may each be omitted to
  * keep the committed body or links under that label.
  */
-const PresentResultRetainedSectionSchema = PresentResultSectionSchema.extend({
-  node_ids: z.array(NodeIdSchema).optional().describe('Nodes this section documents; put each node in one section. Omit to keep the committed links for this label; an empty array unlinks them.'),
-  text: SectionBodySchema.optional().describe('Detail body. Omit to keep the committed text for this label; supply it only to rewrite that section.'),
-});
+const PresentResultRetainedSectionSchema = z.union([
+  PresentResultSectionSchema.extend({
+    node_ids: z.array(NodeIdSchema).optional().describe('Nodes this section documents; put each node in one section. Omit to keep the committed links for this label; an empty array unlinks them.'),
+    text: SectionBodySchema.optional().describe('Detail body. Omit to keep the committed text for this label; supply it only to rewrite that section.'),
+  }),
+  PresentResultSectionDeletionSchema,
+]);
 
 /**
  * Projects a `present_result` schema onto a render that amends a committed report. DERIVED by
@@ -1342,7 +1345,7 @@ const PresentResultRetainedSectionSchema = PresentResultSectionSchema.extend({
 function withRetainableSections<T extends z.ZodObject<z.ZodRawShape>>(schema: T) {
   return schema.extend({
     sections: sectionList(PresentResultRetainedSectionSchema).optional()
-      .describe('Final report sections. Omit entirely to keep the committed report; list a label with no text to keep that section unchanged.'),
+      .describe('Sections to change, keyed by label; unnamed ones are kept.'),
   });
 }
 

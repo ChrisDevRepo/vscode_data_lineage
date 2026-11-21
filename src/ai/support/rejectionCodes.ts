@@ -93,11 +93,6 @@ export const REJECTION_CODES = {
    */
   contributorColNotOnSource: 'contributor_col_not_on_source',
   /**
-   * A bodyless focus's `column_flow` names a neighbour other than its carrier side
-   * (`non_writer_continuation`).
-   */
-  continuationNotWriter: 'continuation_not_writer',
-  /**
    * An `upstream_columns` entry names the same node.col as this submission's own `writes_to` target
    * (`self_loop_column` kind, `smRouteValidation.ts`).
    */

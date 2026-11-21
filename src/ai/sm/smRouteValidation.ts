@@ -30,7 +30,6 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
   bad_out_col: ISSUES[REJECTION_CODES.outColNotOnNode].correction,
   untracked_out_col: ISSUES[REJECTION_CODES.outColNotTracked].correction,
   bad_contributor_col: ISSUES[REJECTION_CODES.contributorColNotOnSource].correction,
-  non_writer_continuation: ISSUES[REJECTION_CODES.continuationNotWriter].correction,
   self_loop_column: ISSUES[REJECTION_CODES.columnSelfLoop].correction,
   bad_return_target:
     'Supply one column_flow entry for each exact caller_output_targets destination, with returns_to matching that node and column and out_col matching its column. Do not use writes_to on scalar-return tasks; identify real contributors from the supplied caller and function SQL.',
@@ -85,7 +84,6 @@ export const ROUTE_REJECTION_CODE: Record<InvalidRouteKind, string> = {
   bad_out_col: REJECTION_CODES.outColNotOnNode,
   untracked_out_col: REJECTION_CODES.outColNotTracked,
   bad_contributor_col: REJECTION_CODES.contributorColNotOnSource,
-  non_writer_continuation: REJECTION_CODES.continuationNotWriter,
   self_loop_column: REJECTION_CODES.columnSelfLoop,
   bad_return_target: REJECTION_CODES.routeValidationFailed,
   bad_caller_context: REJECTION_CODES.routeValidationFailed,

@@ -1,7 +1,7 @@
 import { EngineAspectMode, InvalidRoute, type DepthIntent, type HeldSubmissionParts } from './smTypes';
 import { buildRouteValidationRejection, isAbsentKind, ROUTE_REJECTION_CODE, ROUTE_REJECTION_DIRECTIVE } from './smRouteValidation';
 import { activeSubmitFindingsRecoveryHint, extractRawSectionAngles, validateSectionsAgainstClassification } from '../interaction/rules/submitFindingsRules';
-import { heldSubmissionRepairHint, hopColumnFlowSchema, validateHopSubmissionShape, type SubmitFindingsHopColumns } from '../tools/toolSchemas';
+import { heldSubmissionFields, hopColumnFlowSchema, validateHopSubmissionShape, type SubmitFindingsHopColumns } from '../tools/toolSchemas';
 
 import type Graph from 'graphology';
 import { bidirectional } from 'graphology-shortest-path/unweighted';
@@ -11,10 +11,10 @@ import type { ColumnStore } from '../../engine/columnStore';
 import { computeSchemas } from '../../engine/shared/modelSchemas';
 import { bothSidesClosed, directionFromDepth, type DepthSideValue } from '../../engine/shared/explorationDepthContract';
 import type { SerializedFilterState } from '../../engine/projectStore';
-import { buildEdgeTypeMap, buildHopFocusNode, buildUnrelatedMap } from '../tools/tools';
+import { buildHopFocusNode, buildUnrelatedMap } from '../tools/tools';
 import { buildNodeMap, getNodeColumns, getNodeDdl, SCRIPT_TYPES } from '../support/graphUtils';
 import { buildDeleteOnlyRelevanceCheck, buildPassthroughReAnchor } from '../prompting/smPrompts';
-import { edgeApiType } from '../support/aiPresenter';
+import { edgeApiType, presentColumnCompact } from '../support/aiPresenter';
 import { analyzeRemoval, bfsDepthMap, bfsReachable, type LogFn, type RemovalAnalysis } from '../../engine/graphGuards';
 import { trunc, LOG_TRUNC_CONTENT, LOG_TRUNC_LIST } from '../../utils/log';
 import { compileExclusionMatcher, normalizeColName, quoteIdentifier, schemaKey, splitSqlName, stripBrackets } from '../../utils/sql';
@@ -107,6 +107,27 @@ const REMOVAL_REFUSAL: Record<NonNullable<RemovalAnalysis['rejection']>, string>
 };
 /** Kept-verdict fields a held draft restores when a retry omits them; `reason` is never held. */
 const HELD_CARRIED_FIELDS = ['badge_label', 'prune_neighbors', 'questions', 'column_flow'] as const;
+/** Carried fields history shows until the draft already holds that same value. */
+const REPLAY_UNLESS_HELD = ['column_flow', 'prune_neighbors', 'questions'] as const;
+
+type HeldDraftAuthorization = {
+  readonly failed: readonly string[];
+  readonly focusId: string;
+  readonly hop: number;
+  readonly mode: 'bb' | 'ct';
+  /** Carried values the previous hold stored, so a replay can omit an unchanged one. */
+  readonly priorCarried: Partial<Pick<HopFindingKept, (typeof REPLAY_UNLESS_HELD)[number]>>;
+};
+
+/** Structural equality that ignores object key order; array order stays significant. */
+function sameJson(left: unknown, right: unknown): boolean {
+  const order = (_key: string, value: unknown): unknown => {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
+    const record = value as Record<string, unknown>;
+    return Object.fromEntries(Object.entries(record).sort(([a], [b]) => (a < b ? -1 : 1)));
+  };
+  return JSON.stringify(left, order) === JSON.stringify(right, order);
+}
 
 /** Defines the core interface for the state machine handling exploration modes. */
 export interface IHopStateMachine {
@@ -293,8 +314,6 @@ export class NavigationEngine implements IHopStateMachine {
   /** Logging function for tracing engine activity. */
   protected readonly log: LogFn;
   protected readonly nodeMap: Map<string, LineageNode>;
-  /** Map for resolving edge types based on connected node schemas. */
-  protected readonly edgeTypeMap: Map<string, string>;
   protected memory: AiMemoryManager;
 
   /** Optional session identifier for tracking logs across rounds. */
@@ -424,7 +443,7 @@ export class NavigationEngine implements IHopStateMachine {
    * boundary, route/column fault, over-cap field) so {@link applyHeldContent} restores what the
    * retry omits. Other rejections hold nothing.
    */
-  private readonly heldFindingDraft = new RepairDraftStore<HopFindingKept, { readonly failed: readonly string[]; readonly focusId: string; readonly hop: number; readonly mode: 'bb' | 'ct' }>();
+  private readonly heldFindingDraft = new RepairDraftStore<HopFindingKept, HeldDraftAuthorization>();
 
   /** Direction set by `init`; `enqueueHop` reads it when contracting reference nodes. */
   protected _direction: 'upstream' | 'downstream' | 'bidirectional' = 'bidirectional';
@@ -531,7 +550,6 @@ export class NavigationEngine implements IHopStateMachine {
     this.log = log;
     this.store = store ?? null;
     this.nodeMap = buildNodeMap(model);
-    this.edgeTypeMap = buildEdgeTypeMap(model);
     this.memory = config.memory ?? new AiMemoryManager();
     const schemas = config.activeFilter?.schemas?.map(s => this.identifierKey(s)) ?? [];
     this.userSchemas = new Set(schemas);
@@ -693,7 +711,7 @@ export class NavigationEngine implements IHopStateMachine {
         hint: 'sections is empty and no draft is held for this node; resend the full call with authored sections and a non-empty summary.',
       });
     }
-    return this.emptySummaryRejection();
+    return this.withRecordedHeld(this.emptySummaryRejection());
   }
 
   /** A kept verdict whose summary is empty with no held summary to restore. */
@@ -762,10 +780,11 @@ export class NavigationEngine implements IHopStateMachine {
 
   /**
    * What the transcript replays of a rejected `lineage_submit_findings` call: `focus_node_id`,
-   * `verdict`, `column_flow`, `prune_neighbors` and `questions` as sent, plus the fields the held
-   * draft failed; a failed `sections` keeps the angles that are not held and those resent with other text than the held one. The retry must see
-   * the prune and the questions together: a prune of a question target is refused. The
-   * rest is held, so the model no longer sees it.
+   * `verdict` and the fields the held draft failed, plus `column_flow`, `prune_neighbors` and
+   * `questions` unless the draft already held that same value. A failed `sections` keeps the angles
+   * that are not held and an angle resent with other text than the held one. The rejection that
+   * first holds a prune still shows it beside the questions sent with it: a prune of a question
+   * target is refused. A value already held is not shown again.
    *
    * @returns The reduced arguments, or `null` when no draft is held for the call's focus: the call
    *   is then replayed as sent.
@@ -778,8 +797,14 @@ export class NavigationEngine implements IHopStateMachine {
     if (typeof raw.focus_node_id === 'string'
       && (resolveModelNodeId(raw.focus_node_id, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(raw.focus_node_id)) !== this.heldFindingFocus) return null;
     const heldText = new Map<string, string>(held.sections.map(section => [section.angle ?? '', section.text]));
+    const prior = this.heldFindingDraft.getAuthorization()?.priorCarried ?? {};
+    const shown = ['focus_node_id', 'verdict', ...REPLAY_UNLESS_HELD, ...failed];
     return Object.fromEntries(Object.entries(raw).flatMap(([key, value]): Array<[string, unknown]> => {
-      if (!this.heldSchemaFields.includes(key) || !['focus_node_id', 'verdict', 'column_flow', 'prune_neighbors', 'questions', ...failed].includes(key)) return [];
+      if (!this.heldSchemaFields.includes(key) || !shown.includes(key)) return [];
+      const carriedKey = (REPLAY_UNLESS_HELD as readonly string[]).includes(key);
+      const unchangedHeld = carriedKey && !failed.includes(key) && key in prior
+        && sameJson(prior[key as keyof typeof prior], value);
+      if (unchangedHeld) return [];
       if (key !== 'sections' || typeof value !== 'object' || value === null || Array.isArray(value)) return [[key, value]];
       // An angle is held under the text that passed; a resent angle with other text failed and stays visible.
       const failedAngles = Object.entries(value).filter(([angle, text]) => heldText.get(angle) !== text);
@@ -799,7 +824,30 @@ export class NavigationEngine implements IHopStateMachine {
    */
   private holdFinding(finding: HopFindingKept, failed: readonly string[]): void {
     if (!this.currentFocusNodeId) return;
-    this.heldFindingDraft.hold(structuredClone(finding), { failed: this.heldSchemaFields.filter(field => failed.includes(field)), focusId: this.currentFocusNodeId, hop: this.hopCount, mode: this.currentHopAnalysisMode });
+    const previous = this.heldFindingFocus === null ? null : this.heldFindingDraft.get();
+    const priorCarried: HeldDraftAuthorization['priorCarried'] = {};
+    if (previous?.column_flow !== undefined) {
+      priorCarried.column_flow = structuredClone(previous.column_flow);
+    }
+    if (previous?.prune_neighbors !== undefined) {
+      priorCarried.prune_neighbors = structuredClone(previous.prune_neighbors);
+    }
+    if (previous?.questions !== undefined) {
+      priorCarried.questions = structuredClone(previous.questions);
+    }
+    this.heldFindingDraft.hold(structuredClone(finding), {
+      failed: this.heldSchemaFields.filter(field => failed.includes(field)),
+      focusId: this.currentFocusNodeId,
+      hop: this.hopCount,
+      mode: this.currentHopAnalysisMode,
+      priorCarried,
+    });
+  }
+
+  /** Names the fields a held draft restores. Builders omit `held`, so it is attached here. */
+  private withRecordedHeld(rejection: ToolRejection): ToolRejection {
+    const parts = this.heldSubmission;
+    return parts ? { ...rejection, held: heldSubmissionFields(parts) } : rejection;
   }
 
   /** The parts a draft already held for the current focus restores, unchanged; `null` if none. */
@@ -2618,8 +2666,7 @@ export class NavigationEngine implements IHopStateMachine {
     const node = this.nodeMap.get(entry.nodeId)!;
 
     const focusNode = buildHopFocusNode(
-      node, this.nodeMap, buildUnrelatedMap(this.model), this.store ?? undefined, 'bb_ddl',
-      this.model.neighborIndex, this.edgeTypeMap, this.identifierCaseSensitive,
+      node, this.nodeMap, buildUnrelatedMap(this.model), this.store ?? undefined, 'bb_ddl', this.identifierCaseSensitive,
     );
 
     if (this.depthBudget !== null) {
@@ -2735,8 +2782,7 @@ export class NavigationEngine implements IHopStateMachine {
     const node = this.nodeMap.get(focusId);
     if (!node) return null;
     const focusNode = buildHopFocusNode(
-      node, this.nodeMap, buildUnrelatedMap(this.model), this.store ?? undefined, 'bb_ddl',
-      this.model.neighborIndex, this.edgeTypeMap, this.identifierCaseSensitive,
+      node, this.nodeMap, buildUnrelatedMap(this.model), this.store ?? undefined, 'bb_ddl', this.identifierCaseSensitive,
     );
     if (this.depthBudget !== null) {
       const d = this.depthFromOrigin.get(focusId);
@@ -2794,14 +2840,11 @@ export class NavigationEngine implements IHopStateMachine {
     // Independent faults collect into one rejection; a focus or caller fault leaves routes unchecked.
     const classViolation = validateSectionsAgainstClassification(params.sections,
       this.classification, archivedAngles);
-    // Built when returned, so its held line states the draft after any hold this call makes.
     const faults = (): ToolRejection[] => {
       if (!classViolation) return [];
-      const held = this.heldPartsOfCurrentFocus();
       return [makeRejection({
         code: REJECTION_CODES.invalidInput,
         reason: `sections: ${classViolation}`,
-        ...(held ? { hint: heldSubmissionRepairHint() } : {}),
         issuePaths: ['sections'],
       })];
     };
@@ -3165,12 +3208,15 @@ export class NavigationEngine implements IHopStateMachine {
           ...fatalRoutes.flatMap(route => route.kind === 'prune_column_conflict' ? ['prune_neighbors', 'column_flow'] : route.kind === 'prune_question_conflict' ? ['prune_neighbors'] : []),
         ])];
         this.holdFinding(finding, issuePaths.map(path => path.split('.')[0]));
-        // A section fault's own rejection already states the held line.
-        const held = classViolation ? routeRejection : { ...routeRejection, hint: [routeRejection.hint, heldSubmissionRepairHint()].filter(Boolean).join(' ') };
-        return { ...combineToolRejections([...faults(), held]), issuePaths };
+        return this.withRecordedHeld({
+          ...combineToolRejections([...faults(), routeRejection]),
+          issuePaths,
+        });
       }
       const sectionFaults = faults();
-      if (sectionFaults.length > 0) return combineToolRejections(sectionFaults);
+      if (sectionFaults.length > 0) {
+        return this.withRecordedHeld(combineToolRejections(sectionFaults));
+      }
 
       const notices = [...actionPolicy.notices, ...invalidRoutes.filter(r => isAbsentKind(r.kind))];
       for (const notice of notices) {
@@ -4064,8 +4110,10 @@ export class NavigationEngine implements IHopStateMachine {
     return ids.map(nid => {
       const n = this.nodeMap.get(nid)!;
       const edgeDirection = inSet.has(nid) ? 'upstream' : 'downstream';
+      // A visited table was folded (no hop of its own), so this line is the only place its column types and nullability reach the model.
+      const foldedTable = !SCRIPT_TYPES.has(n.type) && this.visited.has(nid);
       const cols = this.tracer
-        ? getNodeColumns(nid, this.nodeMap, this.store ?? undefined)?.map(c => c.name)
+        ? getNodeColumns(nid, this.nodeMap, this.store ?? undefined)?.map(c => foldedTable ? presentColumnCompact(c) : c.name)
         : undefined;
       const attributedColumns = this.tracer
         ? this.tracer.determineActiveColumnsForCandidate(nid, [], undefined, this.log, this.columnTraceDirection())
