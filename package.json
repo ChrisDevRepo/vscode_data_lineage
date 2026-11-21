@@ -888,6 +888,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "typecheck:tests": "tsc -p tests/unit/tsconfig.json --noEmit",
+    "typecheck:harness": "tsc -p tests/harness/tsconfig.json --noEmit",
     "generate:tool-manifest": "node scripts/generate-tool-manifest.mjs",
     "pretest:integration": "npm run build && tsc -p tsconfig.integration.json",
     "pretest:edh": "npm run pretest:integration",

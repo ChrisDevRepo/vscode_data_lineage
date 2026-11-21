@@ -39,6 +39,7 @@ const npmRun = (name, script) => ({ name, ...npmCommand('npm', ['run', script]) 
 const STEPS = [
   npmRun('typecheck', 'typecheck'),
   npmRun('typecheck:tests', 'typecheck:tests'),
+  npmRun('typecheck:harness', 'typecheck:harness'),
   npmRun('lint (errors only)', 'lint'),
   { name: 'tool manifest codegen', cmd: nodeBin, args: ['scripts/generate-tool-manifest.mjs', '--check'] },
   { name: 'output template schema version', cmd: nodeBin, args: ['tests/tools/assert-template-schema-version.mjs'] },

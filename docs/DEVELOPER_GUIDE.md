@@ -220,7 +220,7 @@ No VS Code window opens.
 | `npm run test:scale` | Layout of a 1,500-node graph. |
 | `npm run gate` | The full pre-push check, described below. |
 
-`npm run gate` runs both type checks, lint, the tool-manifest and
+`npm run gate` runs the product, unit and harness type checks, lint, the tool-manifest and
 template-version checks, the layer-direction check, core coverage, the runtime
 tests, the build, and the package-content and LangSmith-absence checks. Run it
 before you push. CI runs it on pull requests.
