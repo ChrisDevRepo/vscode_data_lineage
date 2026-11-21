@@ -34,6 +34,8 @@ export interface ConnectionErrorHooks {
   retry?: (patch?: Partial<StoredConnectionInfo>) => Promise<void> | void;
   chooseDatabase?: () => Promise<string | undefined>;
   showLog?: () => void;
+  /** The permission clause the failed operation needs; `VIEW DEFINITION` when absent. */
+  grant?: string;
 }
 
 /** Button labels, one per action id. */
@@ -111,9 +113,9 @@ function classify(err: unknown): ErrorKind {
 
 const bracket = (identifier: string): string => `[${identifier.replace(/\]/g, ']]')}]`;
 
-function grantStatement(user: string | undefined): string {
+function grantStatement(grant: string, user: string | undefined): string {
   const principal = user ? bracket(user) : '[user_or_group]';
-  return `GRANT VIEW DEFINITION TO ${principal};`;
+  return `GRANT ${grant} TO ${principal};`;
 }
 
 /**
@@ -179,7 +181,7 @@ export function describeConnectionError(
     }),
     retry: () => make('retry', () => retry()),
     copyGrantStatement: () => make('copyGrantStatement', async () => {
-      await vscode.env.clipboard.writeText(grantStatement(target.user));
+      await vscode.env.clipboard.writeText(grantStatement(hooks.grant ?? 'VIEW DEFINITION', target.user));
     }),
     showLog: () => make('showLog', async () => {
       if (hooks.showLog) hooks.showLog();

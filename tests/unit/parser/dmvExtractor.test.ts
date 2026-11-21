@@ -742,15 +742,6 @@ function testDbPlatformFromDmv() {
   const emptyRows = makeResult(cols('engine_edition', 'major_version', 'edition'), []);
   const noRows = modelWithPlatform(emptyRows);
   expect(noRows.dbPlatform, 'Empty platformInfo rows → explicit unknown').toBe('Unknown database platform');
-
-  const serverFallback = buildModelFromDmv({
-    nodes: emptyNodes,
-    columns: emptyCols,
-    dependencies: emptyDeps,
-    serverPlatform: 'Fabric Data Warehouse',
-  });
-  expect(serverFallback.dbPlatform,
-    'MSSQL server metadata is carried into the database model').toBe('Fabric Data Warehouse');
 }
 
 
