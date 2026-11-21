@@ -5,6 +5,7 @@
 ### Changed
 - Column traces show join and filter columns as indirect sources.
 - AI follow-ups that name a border table bring in its next-level objects.
+- AI chat: an error that ends a request is one line naming its source (model provider, network or Data Lineage) with the provider's own message.
 
 ### Fixed
 - Database connect waits for an idle Azure SQL database to resume, with progress, retry and cancel.
@@ -22,7 +23,6 @@
 
 ### Changed
 - AI output templates version 3: re-create custom template files.
-- AI chat: an error that ends a request is one line naming its source (model provider, network or Data Lineage) with the provider's own message.
 
 ### Fixed
 - GUI: light-theme colors and contrast, settings, loading and notifications.
