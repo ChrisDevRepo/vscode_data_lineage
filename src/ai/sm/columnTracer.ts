@@ -226,7 +226,8 @@ export class ColumnTracer {
    * @param removedSet - Node ids already pruned this run (PRUNE-BEFORE-DEMAND); naming one as an
    *   `upstream_columns` supplier is rejected at declare time, rather than staging a demand
    *   `enqueueHop` can never dispatch.
-   * @param traceDirection - The side the task traces: upstream (producers) or downstream (consumers).
+   * @param traceDirection - The side the task traces: upstream (producers) or downstream
+   *   (consumers).
    * @param incomingRefs - Transient qualified endpoints from the task context. Omitted: committed
    *   endpoints anchor validation, or the initial focus columns when none are committed. They
    *   select entry sides; attachment is decided by the {@link columnAttachment} of `roots` alone.
@@ -447,8 +448,9 @@ export class ColumnTracer {
           continue;
         }
 
-        // A column that only joins, filters, groups or orders rows is a stored indirect fact of this
-        // output: one per hop, endpoint pair and class set; it never carries or continues the trace.
+        // A column that only joins, filters, groups or orders rows is a stored indirect fact of
+        // this output: one per hop, endpoint pair and class set; it never carries or continues the
+        // trace.
         const edgeIndirect = isIndirectOnly(cont.transforms);
         indirectSeen ||= edgeIndirect;
         if (edgeIndirect && [...this.aspect.edges, ...stagedEdges].some(edge => edge.hop_node === focusId
@@ -694,12 +696,12 @@ export interface ColumnFlowTargetResolution {
  * Resolves where one `column_flow` entry's recorded columns land. Attribution edges (one per
  * upstream real column) land on `writes_to.node` when named, else on the focus.
  * {@link ColumnFlowTargetResolution.writerEdge} is the writer→carrier relation, staged only for a
- * source-free entry, an anchored focus output or an entry whose sources are all indirect (never beside a direct pair);
- * explicit `null` declares no table write, and omission defaults
+ * source-free entry, an anchored focus output or an entry whose sources are all indirect (never
+ * beside a direct pair); explicit `null` declares no table write, and omission defaults
  * attribution to the focus without inferring a write target from topology or column names.
  *
- * @returns The attribution target and the writer edge available to stage, or `null` when `writes_to` names a node
- *   absent from the loaded model.
+ * @returns The attribution target and the writer edge available to stage, or `null` when
+ *   `writes_to` names a node absent from the loaded model.
  */
 export function resolveColumnFlowTarget(
   entry: ColumnFlowEntry,

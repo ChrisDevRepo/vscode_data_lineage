@@ -172,21 +172,21 @@ export function sanitizeForLog(s: string): string {
     .trim();
 }
 
-/** An error class name or code kept on the error line only when it is a short identifier, never prose. */
+/** An error class name or code kept on the error line only when a short identifier, never prose. */
 function identifierOrUndefined(value: unknown): string | undefined {
   const text = typeof value === 'number' ? String(value) : value;
   return typeof text === 'string' && /^[A-Za-z0-9_$.-]{1,64}$/.test(text) ? text : undefined;
 }
 
-/** A caller-composed enumerated detail such as `code=ECONNRESET number=-` or one bare token: no prose. */
+/** A caller-composed enumerated detail such as `code=ECONNRESET number=-`, or a bare token. */
 const ENUMERATED_DETAIL = /^(?:[\w.$-]+|[\w.$-]+=[\w.$-]+(?: [\w.$-]+=[\w.$-]+)*)$/;
 
 /**
  * Logs a critical failure or unhandled exception. The **error** line names the operation, the error
- * class and the code only (`FAILED: op — Class code=X`), so an internal error never shows its text
- * or location there; the message, the stack and the `diagnostic` issue paths go to one debug line.
- * A string `err` that is an enumerated detail (`code=… number=…`) stays on the error line; any other
- * string is prose and goes to debug.
+ * class and the code only (`FAILED: op — Class code=X`), so an internal error never shows its
+ * text or location there; the message, the stack and the `diagnostic` issue paths go to one debug
+ * line. A string `err` that is an enumerated detail (`code=… number=…`) stays on the error line;
+ * any other string is prose and goes to debug.
  */
 function logError(ch: LogOutputChannel, cat: LogCategory, op: string, err: unknown): void {
   const operation = normalizeCategorizedLogMessage(cat, op);

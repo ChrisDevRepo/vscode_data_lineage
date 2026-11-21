@@ -343,7 +343,7 @@ interface ToolGenerationAttemptInput {
   readonly proseGate?: 'buffer-until-tool';
   /** Secret-safe single-line diagnostic sink for unexpected dispatch errors. */
   readonly debugLog?: (message: string) => void;
-  /** Error-level sink for an unexpected dispatch exception: tool and error class only, no message. */
+  /** Error-level sink for an unexpected dispatch exception: tool and error class, no message. */
   readonly errorLog?: (message: string) => void;
   /** See {@link ToolAttemptExecutionOptions.traceSyntheticRejection}. */
   readonly traceSyntheticRejection?: SyntheticRejectionTrace;
@@ -364,8 +364,8 @@ interface ToolGenerationAttemptInput {
  * Registry-dispatched rejections are captured by the observability decorator on
  * `IToolRegistry.invoke`; one raised here never reaches it, so without this hook the failures the
  * model was charged for would be invisible to a trace consumer. Carries the enumerated code, tool
- * name and trace disposition; the reason prose stays on {@link ToolGenerationAttemptInput.debugLog},
- * keeping this module free of observability imports.
+ * name and trace disposition; the reason prose stays on
+ * {@link ToolGenerationAttemptInput.debugLog}, keeping this module free of observability imports.
  */
 export type SyntheticRejectionTrace = (rejection: {
   callId?: string;
@@ -381,7 +381,7 @@ interface ToolAttemptExecutionOptions {
   readonly priorState?: ToolPhaseAttemptState;
   /** Secret-safe single-line diagnostic sink for unexpected dispatch errors. */
   readonly debugLog?: (message: string) => void;
-  /** Error-level sink for an unexpected dispatch exception: tool and error class only, no message. */
+  /** Error-level sink for an unexpected dispatch exception: tool and error class, no message. */
   readonly errorLog?: (message: string) => void;
   /**
    * Observability sink for rejections this module raises without dispatching a tool.
@@ -863,7 +863,8 @@ function repliesLeftAfter(priorState?: ToolPhaseAttemptState): number | undefine
 
 /**
  * The escalation level of the reply a rejection answers: its ordinal among the step's rejected
- * replies, 1 to {@link MAX_TOOL_PROVIDER_CALLS}, counted by the same state as {@link repliesLeftAfter}.
+ * replies, 1 to {@link MAX_TOOL_PROVIDER_CALLS}, counted by the same state as
+ * {@link repliesLeftAfter}.
  */
 export function rejectionLevel(priorState: ToolPhaseAttemptState): number {
   return Math.min(MAX_TOOL_PROVIDER_CALLS, Math.max(priorState.noProgressCalls, priorState.rejectedTerminalCalls) + 1);

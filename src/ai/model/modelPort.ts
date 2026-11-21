@@ -349,7 +349,10 @@ export type ToolGenerationResult =
       readonly content: readonly [];
       readonly text: '';
       readonly toolCalls: readonly [];
-      /** Source, code and sanitized chain of the failure, decided once by {@link classifyTurnStop}. */
+      /**
+       * Source, code and sanitized chain of the failure, decided once by
+       * {@link classifyTurnStop}.
+       */
       readonly turnStop: TurnStop;
     };
 

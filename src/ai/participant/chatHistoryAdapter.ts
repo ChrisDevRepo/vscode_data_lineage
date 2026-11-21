@@ -167,7 +167,8 @@ function groupBytes(group: readonly ModelMessage[]): number {
  * template ("Approve, change or cancel with the buttons below") with no origin, columns or tool
  * call, which the model then completes as text instead of calling `lineage_start_exploration`
  * again. The plan between header and trailer is kept; only the interactive frame is not context.
- * A recoverable stop line (ends in {@link TURN_STOP_LINE_END}) quotes provider text: it is dropped too.
+ * A recoverable stop line (ends in {@link TURN_STOP_LINE_END}) quotes provider text: it is dropped
+ * too.
  */
 function neutralizeGateCardArtifacts(markdown: string): string {
   if (!markdown) return markdown;

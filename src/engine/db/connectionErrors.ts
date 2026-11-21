@@ -92,7 +92,10 @@ export function isDriverError(err: unknown): boolean {
   return errorNumber(err) !== undefined || /^E[A-Z]+$/.test(errorCode(err) ?? '');
 }
 
-/** Whether the error is the user cancelling a Microsoft sign-in (including declining consent), not a failure. */
+/**
+ * Whether the error is the user cancelling a Microsoft sign-in (including declining consent), not a
+ * failure.
+ */
 export function isSignInCancelled(err: unknown): boolean {
   return classify(err) === 'signInCancelled';
 }
