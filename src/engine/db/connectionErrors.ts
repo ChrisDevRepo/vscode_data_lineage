@@ -124,7 +124,7 @@ export function describeConnectionError(
 ): { message: string; actions: ConnectionErrorAction[] } {
   const kind = classify(err);
   const message = `${target.name}: ${redactSecrets(errorMessage(err))}${kind === 'tokenRejected' ? ` ${TOKEN_REJECTED_HINT}` : ''}`;
-  const builtIn = target.provider === 'builtIn' && !!target.connectionId;
+  const builtIn = target.provider === 'builtIn';
   const connectionId = target.connectionId;
 
   const make = (id: ConnectionErrorActionId, run: () => Promise<void>): ConnectionErrorAction => ({
