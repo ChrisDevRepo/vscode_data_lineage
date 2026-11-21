@@ -40,6 +40,7 @@ import type { ResultGraph, PresentationArtifact } from '../../session/types';
 import type { SmState } from '../../sm/smTypes';
 import { REJECTION_CODES } from '../../support/rejectionCodes';
 import { isCancellationOutcome } from '../../support/cancellation';
+import { RepairDraftStore } from '../../support/repairDraftStore';
 
 function findUncoveredCtChainNodes(
   resultGraph: AiSession['resultGraph'],
@@ -62,40 +63,30 @@ function findUncoveredCtChainNodes(
 }
 
 /**
- * Fills a render that amends a committed report back out to a complete section array. An omitted
- * `sections` array or empty section text retains the committed body under that label, and omitted
- * `node_ids` retain its committed links, narrowed to nodes this render still shows so a retained
- * section cannot re-link a node the same call pruned. Supplied node ids are left alone. Committed
- * text is stored with evidence references already expanded, so a retained body keeps its SQL
- * verbatim.
+ * Merges a render that amends a committed report into a complete section array by the one keyed
+ * rule a held-draft repair uses ({@link RepairDraftStore.mergeByKey}): every committed section
+ * stays in its committed order, a supplied label that names one replaces it in place, `remove`
+ * drops it, and a label not on file is appended. An omitted `sections` keeps the committed report.
+ * A named section with empty or omitted text keeps its committed body, and omitted `node_ids` keep
+ * its committed links, narrowed to nodes this render still shows so a retained section cannot
+ * re-link a node the same call pruned. Supplied node ids are left alone. Committed text is stored
+ * with evidence references already expanded, so a retained body keeps its SQL verbatim.
  *
- * @returns The complete sections, or the labels that asked to retain a body that does not exist.
+ * @returns The complete sections, or the labels that have no text to send or keep.
  */
 function resolveRetainedSections(
-  supplied: ReadonlyArray<{ label: string; node_ids?: string[]; text?: string }> | undefined,
+  supplied: ReadonlyArray<{ label: string; node_ids?: string[]; text?: string; remove?: boolean }> | undefined,
   committed: NonNullable<ResultGraph['sections']>,
   renderedNodeIds: ReadonlySet<string>,
 ): { sections: Array<{ label: string; node_ids: string[]; text: string }>; unknownLabels: string[] } {
-  const byLabel = new Map(committed.map(sec => [normalizePresentSectionLabel(sec.label), sec]));
-  const source: ReadonlyArray<{ label: string; node_ids?: string[]; text?: string }> = supplied?.length
-    ? supplied
-    : committed.map(sec => ({ label: sec.label }));
-  const sections: Array<{ label: string; node_ids: string[]; text: string }> = [];
-  const unknownLabels: string[] = [];
-  for (const sec of source) {
-    const kept = byLabel.get(normalizePresentSectionLabel(sec.label));
-    const nodeIds = sec.node_ids ?? kept?.node_ids?.filter(id => renderedNodeIds.has(id)) ?? [];
-    if (typeof sec.text === 'string' && sec.text.trim().length > 0) {
-      sections.push({ label: sec.label, node_ids: nodeIds, text: sec.text });
-      continue;
-    }
-    if (!kept?.text) {
-      unknownLabels.push(sec.label);
-      continue;
-    }
-    sections.push({ label: sec.label, node_ids: nodeIds, text: kept.text });
-  }
-  return { sections, unknownLabels };
+  const base = committed.map(sec => ({
+    label: sec.label,
+    node_ids: sec.node_ids?.filter(id => renderedNodeIds.has(id)) ?? [],
+    text: sec.text ?? '',
+  }));
+  const patch = (supplied ?? []).map(({ text, ...sec }) => (text?.trim() ? { ...sec, text } : sec));
+  const sections = RepairDraftStore.mergeByKey(base, patch, sec => normalizePresentSectionLabel(sec.label ?? ''));
+  return { sections, unknownLabels: sections.filter(sec => !sec.text).map(sec => sec.label) };
 }
 
 /**
