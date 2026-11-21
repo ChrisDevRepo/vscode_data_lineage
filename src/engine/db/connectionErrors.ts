@@ -1,8 +1,9 @@
 /**
  * @module ConnectionErrors
  * One place that turns a failed connect or query into the text and actions the user sees. The
- * driver's own message is shown verbatim behind the connection name; only the actions are chosen,
- * by error number, code or message pattern.
+ * driver's own message is shown verbatim behind the connection name, except when the server may
+ * still be starting (one plain sentence, the driver text goes to the log); only the actions are
+ * chosen, by error number, code or message pattern.
  */
 
 import * as vscode from 'vscode';
@@ -52,7 +53,9 @@ type ErrorKind =
   | 'tokenRejected' | 'loginFailed' | 'cannotOpenDatabase' | 'unavailable' | 'certificate' | 'network'
   | 'signInCancelled' | 'permission' | 'other';
 
-const UNAVAILABLE_NUMBERS: ReadonlySet<number> = new Set([40613, 40197, 40501, 40532]);
+const UNAVAILABLE_NUMBERS: ReadonlySet<number> = new Set([40613, 40197, 40501, 40532, 10928, 10929]);
+/** Codes of a connect that timed out or dropped, as a server that is still starting also causes. */
+const STARTING_CODES: ReadonlySet<string> = new Set(['ETIMEOUT', 'ESOCKET']);
 const PERMISSION_NUMBERS: ReadonlySet<number> = new Set([229, 297, 300]);
 const NETWORK_CODES: ReadonlySet<string> = new Set(['ETIMEOUT', 'ESOCKET', 'ENOTFOUND', 'ECONNREFUSED']);
 
@@ -111,7 +114,9 @@ function grantStatement(user: string | undefined): string {
 /**
  * Describes a connection or query failure for the user. `message` is `<connection name>: <original
  * driver text>` with credential-shaped text removed, plus one hint when the server rejects a
- * Microsoft token. Actions depend on the error class: those updating a saved connection require a
+ * Microsoft token; for a server that may still be starting (unavailable, or a timed-out or dropped
+ * connect) it is "Couldn't connect to <database>. It might still be starting." Actions depend
+ * on the error class: those updating a saved connection require a
  * saved `builtIn` `connectionId`, and Retry is offered only when the caller supplies a retry
  * hook. Each action runs on the user's click and any retry is a single attempt, never a loop.
  *
@@ -123,7 +128,10 @@ export function describeConnectionError(
   hooks: ConnectionErrorHooks = {},
 ): { message: string; actions: ConnectionErrorAction[] } {
   const kind = classify(err);
-  const message = `${target.name}: ${redactSecrets(errorMessage(err))}${kind === 'tokenRejected' ? ` ${TOKEN_REJECTED_HINT}` : ''}`;
+  const starting = kind === 'unavailable' || (kind === 'network' && STARTING_CODES.has(errorCode(err) ?? ''));
+  const message = starting
+    ? `Couldn't connect to ${target.database ?? target.name}. It might still be starting.`
+    : `${target.name}: ${redactSecrets(errorMessage(err))}${kind === 'tokenRejected' ? ` ${TOKEN_REJECTED_HINT}` : ''}`;
   const builtIn = target.provider === 'builtIn';
   const connectionId = target.connectionId;
 
@@ -222,12 +230,12 @@ export function describeConnectionError(
 export function reportConnectionError(
   err: unknown,
   target: ConnectionErrorTarget,
-  logger: Pick<Logger, 'info' | 'warn' | 'debug'>,
+  logger: Pick<Logger, 'error' | 'debug'>,
   hooks: ConnectionErrorHooks = {},
   present: (message: string, ...labels: string[]) => Thenable<string | undefined> = vscode.window.showErrorMessage,
 ): { message: string; actions: ConnectionErrorAction[]; answered: Promise<void> } {
   const { message, actions } = describeConnectionError(err, target, hooks);
-  logger.info('Database connection failed');
+  logger.error('Database connection failed', `code=${errorCode(err) ?? '-'} number=${errorNumber(err) ?? '-'}`);
   logger.debug(`Connection error on ${target.name} — code=${errorCode(err) ?? '-'} number=${errorNumber(err) ?? '-'} raw="${redactSecrets(errorMessage(err))}"`);
   const answered = (async () => {
     const choice = await present(message, ...actions.map((a) => a.label));
@@ -236,7 +244,7 @@ export function reportConnectionError(
     try {
       await chosen.run();
     } catch (actionErr) {
-      logger.warn(`Action "${chosen.label}" failed`);
+      logger.error('Connection action failed', chosen.id);
       logger.debug(`Connection action error: ${redactSecrets(errorMessage(actionErr))}`);
     }
   })();

@@ -1,12 +1,13 @@
 # Changelog
 
-## [1.3.0] - Unreleased
+## [1.2.7] - Unreleased
 
 ### Changed
 - Column traces show join and filter columns as indirect sources.
 - AI follow-ups that name a border table bring in its next-level objects.
 
 ### Fixed
+- Database connect waits for an idle Azure SQL database to resume, with progress, retry and cancel.
 - Saved connections and column-trace edges.
 - AI analysis: indirect lineage in answers, neighbor questions and column roles.
 

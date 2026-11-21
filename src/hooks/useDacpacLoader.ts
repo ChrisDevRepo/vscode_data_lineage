@@ -80,6 +80,12 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   const [pendingAutoVisualize, setPendingAutoVisualize] = useState(false);
   const [pendingVisualize, setPendingVisualize] = useState(false);
   const isDemoRef = useRef(false);
+  /**
+   * Set once a live database offers its schemas, until the source changes. `loadingContext` clears
+   * on an error or a cancel, so `visualize` reads this to send a failed or cancelled database load
+   * back to the database, not to the dacpac path.
+   */
+  const isDatabaseSourceRef = useRef(false);
   const projectIdRef = useRef<string | null>(null);
   /**
    * The last load this webview sent, and whether the user cancelled it. A result naming another
@@ -166,7 +172,8 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
       }
 
       if (msg.type === 'db-progress') {
-        setStatus({ text: `${msg.label} (${msg.step}/${msg.total})`, type: 'info' });
+        setStatus({ text: msg.step !== undefined && msg.total !== undefined ? `${msg.label} (${msg.step}/${msg.total})` : msg.label, type: 'info' });
+        setLoadingContext('database');
         return;
       }
 
@@ -209,6 +216,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
         if (msg.config) applyConfig(msg.config);
         const name = msg.sourceName || 'Database';
         applySchemaPreview(msg.preview, name);
+        isDatabaseSourceRef.current = true;
         setIsLoading(false);
         setLoadingContext('database');
         return;
@@ -240,7 +248,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
 
   const visualize = useCallback((schemas: Set<string>, projectName?: string, projectId?: string) => {
     const named = projectName ? { projectName } : {};
-    if (schemaPreview !== null && model === null && loadingContext !== 'database') {
+    if (schemaPreview !== null && model === null && !isDatabaseSourceRef.current) {
       vscodeApi.postMessage({ type: 'dacpac-visualize', schemas: Array.from(schemas), ...named, ...(projectId ? { projectId } : {}), loadId: beginLoad() });
       setIsLoading(true);
       setLoadingContext('dacpac');
@@ -251,7 +259,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
     setIsLoading(true);
     setLoadingContext('database');
     setStatus({ text: 'Loading selected schemas from database...', type: 'info' });
-  }, [vscodeApi, beginLoad, schemaPreview, model, loadingContext]);
+  }, [vscodeApi, beginLoad, schemaPreview, model]);
 
   const openFile = useCallback(() => {
     isDemoRef.current = false;
@@ -259,6 +267,7 @@ export function useDacpacLoader(onConfigReceived: (config: ExtensionConfig) => v
   }, [vscodeApi, beginLoad]);
 
   const resetToStart = useCallback(() => {
+    isDatabaseSourceRef.current = false;
     setModel(null);
     setSchemaPreview(null);
     setSelectedSchemas(new Set());

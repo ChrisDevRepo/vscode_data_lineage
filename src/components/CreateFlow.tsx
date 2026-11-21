@@ -13,6 +13,10 @@ import { exceedsObjectLimit, formatObjectLimitMessage } from '../engine/modelFil
 interface CreateFlowProps {
   /** The state object from the `useDacpacLoader` hook, managing the connection lifecycle. */
   loader: DacpacLoaderState;
+  /** Project name to start with; a load that was cancelled returns here with the name entered. */
+  initialProjectName: string;
+  /** Line shown under Back, e.g. after a cancelled load. */
+  notice: string | null;
   /** The global maximum node limit, used for displaying warnings in the schema selector. */
   maxNodes: number;
   /** Callback triggered to return to the previous screen (StartScreen). */
@@ -32,11 +36,13 @@ interface CreateFlowProps {
  */
 export const CreateFlow = memo(function CreateFlow({
   loader,
+  initialProjectName,
+  notice,
   maxNodes,
   onBack,
   onVisualize,
 }: CreateFlowProps) {
-  const [projectName, setProjectName] = useState('');
+  const [projectName, setProjectName] = useState(initialProjectName);
   const projectNameInputId = useId();
 
   const schemaOrModel = loader.schemaPreview ?? loader.model;
@@ -108,6 +114,8 @@ export const CreateFlow = memo(function CreateFlow({
         </svg>
         Back
       </button>
+
+      {notice && <StatusMessage text={notice} type="info" />}
 
       {/* Source selection — locked once source is loaded */}
       {hasSource && !isPhase1Loading ? (
