@@ -6,7 +6,7 @@
  */
 
 import type { ClassificationValue } from '../session/classification';
-import type { CapturedSection, DetailSlot, MemoryStateSnapshot } from '../session/memoryManager';
+import type { CaptureAngle, CapturedSection, DetailSlot, MemoryStateSnapshot } from '../session/memoryManager';
 import type { ColumnTransformClass } from '../../engine/shared/bridgeContract';
 import type { DepthSideValue } from '../../engine/shared/explorationDepthContract';
 import type { ToolRejection } from '../support/toolErrorEnvelope';
@@ -577,8 +577,8 @@ export interface ScopeSummary {
   scopeNotes: string[];
   /**
    * Gate-locked mission-type verdict. Surfaced at the approval gate because it is the field that
-   * constrains captured analysis: the per-dispatch `submit_findings` schema narrows the `sections`
-   * keys to the angle(s) this value keeps, so a section of another angle is never authored.
+   * constrains captured analysis: the per-dispatch `submit_findings` schema serves only the section
+   * field(s) of the angle(s) this value keeps, so a section of another angle is never authored.
    * Undefined until the AI sets it.
    */
   classification?: ClassificationValue;
@@ -1010,7 +1010,7 @@ export type EngineAspectMode =  { kind: 'bb' } | { kind: 'ct' };
  * angles, whether the summary, other field names.
  */
 export interface HeldSubmissionParts {
-  readonly sections: readonly string[];
+  readonly sections: readonly CaptureAngle[];
   readonly summary: boolean;
   /** Names of the other held fields (`badge_label`, `prune_neighbors`, `questions`, `column_flow`). */
   readonly fields: readonly string[];

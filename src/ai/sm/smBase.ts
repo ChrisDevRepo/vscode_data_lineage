@@ -19,7 +19,7 @@ import { analyzeRemoval, bfsDepthMap, bfsReachable, type LogFn, type RemovalAnal
 import { trunc, LOG_TRUNC_CONTENT, LOG_TRUNC_LIST } from '../../utils/log';
 import { compileExclusionMatcher, normalizeColName, quoteIdentifier, schemaKey, splitSqlName, stripBrackets } from '../../utils/sql';
 import { AiMemoryManager, type DetailSlot, type WorkingMemory } from '../session/memoryManager';
-import type { ClassificationValue } from '../session/classification';
+import { CLASSIFICATION_KEPT_ANGLES, sectionField, type ClassificationValue } from '../session/classification';
 import { RepairDraftStore } from '../support/repairDraftStore';
 import { resolveModelNodeId } from '../support/inputNormalization';
 import { evaluateCurrentHopActionPolicy } from './currentHopActionPolicy';
@@ -711,7 +711,7 @@ export class NavigationEngine implements IHopStateMachine {
     if (merged.sections.length === 0 && this.heldFindingFocus === null) {
       return makeRejection({
         code: REJECTION_CODES.missingField,
-        hint: 'sections is empty and no draft is held for this node; resend the full call with authored sections and a non-empty summary.',
+        hint: 'No section field is filled and no draft is held for this node; resend the full call with the required section field(s) and a non-empty summary.',
       });
     }
     return this.withRecordedHeld(this.emptySummaryRejection());
@@ -747,13 +747,7 @@ export class NavigationEngine implements IHopStateMachine {
     if (focus !== this.currentFocusNodeId) return this.heldPartsOfCurrentFocus();
     const failed = new Set(failedPaths.map(path => path.split('.')[0]));
     // A failed angle is not held; the angles that passed are.
-    const failedAngles = new Set(failedPaths.flatMap(path => {
-      const [field, angle] = path.split('.');
-      return field === 'sections' && angle ? [angle] : [];
-    }));
-    const sections = failedPaths.includes('sections')
-      ? []
-      : extractRawSectionAngles(raw.sections).filter(section => !failedAngles.has(section.angle ?? ''));
+    const sections = extractRawSectionAngles(raw).filter(section => !failed.has(sectionField(section.angle)));
     const summary = !failed.has('summary') && typeof raw.summary === 'string' ? raw.summary.trim() : '';
     const fields: Partial<HopFindingKept> = {};
     for (const field of HELD_CARRIED_FIELDS) {
@@ -778,16 +772,15 @@ export class NavigationEngine implements IHopStateMachine {
     const restored = HELD_CARRIED_FIELDS.filter(field => draft[field] !== undefined && !failed.has(field));
     if (draft.sections.length === 0 && !draft.summary.trim() && restored.length === 0) return null;
     this.holdFinding(draft, [...failed]);
-    return { sections: draft.sections.map(section => section.angle ?? ''), summary: draft.summary.trim().length > 0, fields: restored };
+    return { sections: draft.sections.map(section => section.angle), summary: draft.summary.trim().length > 0, fields: restored };
   }
 
   /**
    * What the transcript replays of a rejected `lineage_submit_findings` call: `focus_node_id`,
    * `verdict` and the fields the held draft failed, plus `column_flow`, `prune_neighbors` and
-   * `questions` unless the draft already held that same value. A failed `sections` keeps the angles
-   * that are not held and an angle resent with other text than the held one. The rejection that
-   * first holds a prune still shows it beside the questions sent with it: a prune of a question
-   * target is refused. A value already held is not shown again.
+   * `questions` unless the draft already held that same value. The rejection that first holds a
+   * prune still shows it beside the questions sent with it: a prune of a question target is
+   * refused. A value already held is not shown again.
    *
    * @returns The reduced arguments, or `null` when no draft is held for the call's focus: the call
    *   is then replayed as sent.
@@ -799,7 +792,6 @@ export class NavigationEngine implements IHopStateMachine {
     const raw = input as Record<string, unknown>;
     if (typeof raw.focus_node_id === 'string'
       && (resolveModelNodeId(raw.focus_node_id, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(raw.focus_node_id)) !== this.heldFindingFocus) return null;
-    const heldText = new Map<string, string>(held.sections.map(section => [section.angle ?? '', section.text]));
     const prior = this.heldFindingDraft.getAuthorization()?.priorCarried ?? {};
     const shown = ['focus_node_id', 'verdict', ...REPLAY_UNLESS_HELD, ...failed];
     return Object.fromEntries(Object.entries(raw).flatMap(([key, value]): Array<[string, unknown]> => {
@@ -807,17 +799,14 @@ export class NavigationEngine implements IHopStateMachine {
       const carriedKey = (REPLAY_UNLESS_HELD as readonly string[]).includes(key);
       const unchangedHeld = carriedKey && !failed.includes(key) && key in prior
         && sameJson(prior[key as keyof typeof prior], value);
-      if (unchangedHeld) return [];
-      if (key !== 'sections' || typeof value !== 'object' || value === null || Array.isArray(value)) return [[key, value]];
-      // An angle is held under the text that passed; a resent angle with other text failed and stays visible.
-      const failedAngles = Object.entries(value).filter(([angle, text]) => heldText.get(angle) !== text);
-      return failedAngles.length > 0 ? [[key, Object.fromEntries(failedAngles)]] : [];
+      return unchangedHeld ? [] : [[key, value]];
     }));
   }
 
   /** The fields the current hop's served `submit_findings` schema defines, `reason` aside. */
   private get heldSchemaFields(): readonly string[] {
-    return ['focus_node_id', 'verdict', 'sections', 'summary', ...HELD_CARRIED_FIELDS.filter(field => field !== 'column_flow' || this.currentHopAnalysisMode === 'ct')];
+    const angles = this.classification ? CLASSIFICATION_KEPT_ANGLES[this.classification] : CLASSIFICATION_KEPT_ANGLES.both;
+    return ['focus_node_id', 'verdict', ...angles.map(sectionField), 'summary', ...HELD_CARRIED_FIELDS.filter(field => field !== 'column_flow' || this.currentHopAnalysisMode === 'ct')];
   }
 
   /**
@@ -859,7 +848,7 @@ export class NavigationEngine implements IHopStateMachine {
     if (held === null || (resolveModelNodeId(held.focus_node_id, this.nodeMap, this.model.identifierCaseSensitive) ?? this.identifierKey(held.focus_node_id)) !== this.currentFocusNodeId) return null;
     const failed = this.heldFindingDraft.getAuthorization()?.failed ?? [];
     return {
-      sections: held.sections.map(section => section.angle ?? ''),
+      sections: held.sections.map(section => section.angle),
       summary: held.summary.trim().length > 0,
       fields: HELD_CARRIED_FIELDS.filter(field => held[field] !== undefined && !failed.includes(field)),
     };
@@ -2847,8 +2836,8 @@ export class NavigationEngine implements IHopStateMachine {
       if (!classViolation) return [];
       return [makeRejection({
         code: REJECTION_CODES.invalidInput,
-        reason: `sections: ${classViolation}`,
-        issuePaths: ['sections'],
+        reason: classViolation.reason,
+        issuePaths: classViolation.fields,
       })];
     };
 
@@ -3206,7 +3195,7 @@ export class NavigationEngine implements IHopStateMachine {
         for (const r of fatalRoutes) this.memory.recordRejection(r.id, r.reason, this.hopCount);
         // Neither action in a prune conflict (question or column_flow) is valid held content.
         const issuePaths = [...new Set([
-          ...(classViolation ? ['sections'] : []),
+          ...(classViolation?.fields ?? []),
           ...(routeRejection.issuePaths ?? []),
           ...fatalRoutes.flatMap(route => route.kind === 'prune_column_conflict' ? ['prune_neighbors', 'column_flow'] : route.kind === 'prune_question_conflict' ? ['prune_neighbors'] : []),
         ])];

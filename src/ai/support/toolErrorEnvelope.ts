@@ -56,7 +56,7 @@ export const UNKNOWN_TOOL_REPAIR_HINT = 'Call one of the tools already offered i
 export const DUPLICATE_CALL_ID_REPAIR_HINT = 'Use a new, unique call id for this tool call.';
 
 /** The sections exit of a column fault, shared by its table row and {@link REFERENCE_FALLBACK}. */
-const SECTIONS_EXIT = 'in sections; further work on it goes in questions.';
+const SECTIONS_EXIT = 'in the section fields; further work on it goes in questions.';
 
 /** Stable message shared by {@link NoProjectLoadedError} and {@link buildNoProjectLoadedError}. */
 const NO_PROJECT_LOADED_MESSAGE =
@@ -226,7 +226,7 @@ export const ISSUES = {
   [REJECTION_CODES.columnSelfLoop]: {
     category: 'value',
     label: 'upstream entry identical to its output destination',
-    correction: 'Remove the upstream_columns entry identical to its output destination; keep a SQL-proved writes_to unchanged and explain any existing-destination read in sections.',
+    correction: 'Remove the upstream_columns entry identical to its output destination; keep a SQL-proved writes_to unchanged and explain any existing-destination read in the section fields.',
   },
   [REJECTION_CODES.writesToNamesReader]: {
     category: 'reference',
@@ -412,10 +412,7 @@ export interface ToolRejection {
   entryIds?: readonly string[];
   /** Every independent fault, by path and issue code. */
   errors?: ToolError[];
-  /**
-   * Fields the session holds for the retry (a `sections` angle by its path); the last feedback
-   * names them.
-   */
+  /** Fields the session holds for the retry; the last feedback names them. */
   held?: string[];
 }
 
@@ -874,15 +871,9 @@ function dottedPath(path: readonly PropertyKey[]): string {
 /** The RFC 6901 JSON Pointer a served reason or fault line names: `/sections/2/blocks`; `''` is the call. */
 export const jsonPointer = (path: readonly PropertyKey[]): string => path.map(key => `/${String(key).replace(/~/g, '~0').replace(/\//g, '~1')}`).join('');
 
-/** Whether the served schema has the dotted `path` (a top-level field, or a `sections` angle). */
+/** Whether the served schema has the dotted `path`. */
 export function isServedField(schema: () => z.ZodType | undefined, path: string): boolean {
   return jsonSchemaNodeAt(schema(), path.split('.')) !== undefined;
-}
-
-/** The angles the served schema's `sections` object defines. */
-export function servedSectionAngles(schema: () => z.ZodType | undefined): string[] {
-  const node = jsonSchemaNodeAt(schema(), ['sections']);
-  return [...new Set([node, ...(node?.anyOf ?? []), ...(node?.oneOf ?? [])].flatMap(variant => Object.keys(variant?.properties ?? {})))];
 }
 
 /** The top-level fields the served schema requires that `input` does not send. */

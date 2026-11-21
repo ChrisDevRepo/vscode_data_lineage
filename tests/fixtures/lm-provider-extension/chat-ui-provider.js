@@ -40,7 +40,7 @@ async function respond(request, progress) {
     call('lineage_submit_findings', {
       focus_node_id: session.stateMachine.currentFocus, verdict: 'analyze',
       summary: 'Calculates the dealer price from the effective list price.', badge_label: 'Dealer price',
-      sections: { technical: 'The function returns sixty percent of the effective list price.' }, questions: [],
+      technical_section: 'The function returns sixty percent of the effective list price.', questions: [],
     });
     return;
   }

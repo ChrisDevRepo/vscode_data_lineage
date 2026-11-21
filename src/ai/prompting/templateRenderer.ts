@@ -2,11 +2,11 @@
 
 import { AI_SECTION_KEY_BY_ANGLE, SECTIONS_PLACEHOLDER, type AiOutputSections, type AiOutputTemplates, type AiSectionAngle } from '../session/types';
 import type { ClassificationValue } from '../session/classification';
-import { CLASSIFICATION_KEPT_ANGLES } from '../session/classification';
+import { CLASSIFICATION_KEPT_ANGLES, sectionField } from '../session/classification';
 
 /**
  * Stages at which a YAML instruction may be injected into the AI system prompt: `discover` (inline
- * chat first response, no SM engaged), `active` (per-hop `sections` writing; one capture key per
+ * chat first response, no SM engaged), `active` (per-hop section writing; one capture key per
  * fired `*_capture`), `synthesis` (present_result assembly; slot bodies arrive pre-formatted from
  * capture and are lifted as written, synthesis only assembles, groups and frames).
  */
@@ -76,32 +76,34 @@ const PER_FOCUS_KEYS: ReadonlySet<keyof AiOutputTemplates> = new Set([
 ]);
 
 /**
- * The `sections` key each capture key writes. The per-focus recipe labels its bullet with this
- * value, not the YAML key, so the label is the literal the `submit_findings` schema accepts.
+ * The `submit_findings` section field each capture key writes. The per-focus recipe labels its
+ * bullet with this value, not the YAML key, so the label is the literal the schema accepts.
  */
-const CAPTURE_ANGLE: Readonly<Partial<Record<keyof AiOutputTemplates, 'business' | 'technical'>>> = {
-  business_capture:  'business',
-  technical_capture: 'technical',
+const CAPTURE_FIELD: Readonly<Partial<Record<keyof AiOutputTemplates, string>>> = {
+  business_capture:  sectionField('business'),
+  technical_capture: sectionField('technical'),
 };
 
 /**
+ * The section fields the dispatched `submit_findings` schema serves, read from the same
+ * {@link CLASSIFICATION_KEPT_ANGLES}, so prompt and schema never name different fields (a locked
+ * mission told both would guess the excluded one and be rejected).
+ */
+function servedSectionFields(classification: ClassificationValue | undefined): string {
+  const kept = classification ? CLASSIFICATION_KEPT_ANGLES[classification] : CLASSIFICATION_KEPT_ANGLES.both;
+  return kept.map(angle => `\`${sectionField(angle)}\``).join(' and ');
+}
+
+/**
  * Header of the bodied per-focus capture recipe, shared by every capture key: the one home of the
- * one-key-per-schema-angle rule, the exact-substring quoting rule and the `not established`
- * wording, so no capture key restates them. The `sections` shape is read from the same
- * {@link CLASSIFICATION_KEPT_ANGLES} the dispatched `submit_findings` schema narrows to, so prompt
- * and schema never name different angles (a locked mission told both keys would guess the excluded
- * one and be rejected).
+ * one-field-per-angle rule, the exact-substring quoting rule and the `not established` wording, so
+ * no capture key restates them.
  */
 function captureRecipeHeader(classification: ClassificationValue | undefined): string {
-  const kept = classification ? CLASSIFICATION_KEPT_ANGLES[classification] : undefined;
-  const shape = !kept
-    ? 'an object keyed by angle (`{business, technical}`), one key per angle this mission fires'
-    : kept.length === 2
-      ? '`{"business": …, "technical": …}` — classification=both keeps both keys, one key per angle'
-      : '`{"' + kept[0] + '": …}`';
+  const target = classification && classification !== 'both' ? "that field's" : "each field's";
   return [
     '### Capture recipe',
-    `Submit \`sections\` as ${shape}, and put every applicable item from the active capture instructions inside that key's string value. Markdown without headings. Back each evidence-supported ⚠️ line with one short \`\`\`sql fence of its deciding expression, copied from \`bb_ddl\`; other SQL follows the SQL snippet rule; what the SQL does not establish reads \`not established from the available SQL\`. Skip an item the SQL lacks.`,
+    `Submit ${servedSectionFields(classification)}, and put every applicable item from the active capture instructions inside ${target} string value. Markdown without headings. Back each evidence-supported ⚠️ line with one short \`\`\`sql fence of its deciding expression, copied from \`bb_ddl\`; other SQL follows the SQL snippet rule; what the SQL does not establish reads \`not established from the available SQL\`. Skip an item the SQL lacks.`,
     'The recipe items are a coverage checklist, not disconnected output fragments. Write each substantive calculation, and each intermediate result another calculation builds on, once within its natural rule or transformation step: explain the inputs and affected rows, show the formula, explain its defined meaning and consequences there. In every angle, use a LaTeX `$$ … $$` block on its own lines, or a LaTeX `$ … $` formula in a table with a short description of its meaning; short formulas may also sit inline within their explanatory sentence. Describe a calculated value only when its defining expression is supplied. A formula carries every term and branch of the SQL it restates. A list of calculation names is not their explanation. Simple renames need no equation. Describe intermediate and final surviving grain separately; later deletion or validation can leave zero rows from an earlier partition.',
   ].join('\n\n');
 }
@@ -111,26 +113,9 @@ function captureRecipeHeader(classification: ClassificationValue | undefined): s
  * SQL-evidence rules do not apply to a schema-only node). Without it the model free-labels the
  * entry from the summary's own bullet names (`Purpose`, `Upstream sources`, ...), which
  * `lineage_submit_findings` rejects.
- *
- * Unlocked (`classification` undefined) it states every angle the mode accepts. A locked
- * classification with one kept angle ({@link CLASSIFICATION_KEPT_ANGLES}) states only that one,
- * since the per-dispatch schema (`capturedSectionSchemaForClassification`) hard-rejects the other
- * and naming it would buy a rejection the model cannot act on. `both` names both keys, which the
- * validator requires on a fresh submission.
- */
-const BARE_SUMMARY_ANGLE_CLAUSE_UNLOCKED =
-  'Submit this under the matching `sections` key (`business`, `technical`, or both) — never a descriptive label.';
-
-/**
- * Resolves {@link BARE_SUMMARY_ANGLE_CLAUSE_UNLOCKED} to the angle(s) the locked classification
- * keeps, from the same {@link CLASSIFICATION_KEPT_ANGLES} the dispatched schema narrows to, so
- * prompt and schema never name different angles.
  */
 function bareSummaryAngleClause(classification: ClassificationValue | undefined): string {
-  if (!classification) return BARE_SUMMARY_ANGLE_CLAUSE_UNLOCKED;
-  const kept = CLASSIFICATION_KEPT_ANGLES[classification];
-  if (kept.length === 2) return 'Submit this under both `sections` keys, `business` and `technical` — never a descriptive label.';
-  return `Submit this under \`sections.${kept[0]}\` — never a descriptive label.`;
+  return `Submit this under ${servedSectionFields(classification)} — never a descriptive label.`;
 }
 
 /**
@@ -165,8 +150,8 @@ export interface StagePromptResult {
 
 /**
  * Assembles the stage-scoped template block for the AI system prompt: one bullet per active key, `-
- * <key>: <instruction>` (walking `STAGE_BY_KEY`). A capture key is labelled with its `sections` key
- * instead (`CAPTURE_ANGLE`); a per-focus recipe key with no angle of its own (e.g.
+ * <key>: <instruction>` (walking `STAGE_BY_KEY`). A capture key is labelled with its section field
+ * instead (`CAPTURE_FIELD`); a per-focus recipe key with no angle of its own (e.g.
  * `structural_callouts`) folds into whichever angle fired, per {@link captureRecipeHeader}, never
  * its own line; `shared_capture` precedes the recipes once, unlabelled. One heading
  * hierarchy, no per-key `####` wrappers. The non-bodied per-focus render is the exception:
@@ -254,8 +239,8 @@ export function resolveStagePrompt(
       const instruction = templates[key].trim().split(SECTIONS_PLACEHOLDER).join(activeSectionLabels(sections, classification));
       return `- ${key}: ${instruction}`;
     }
-    const angle = CAPTURE_ANGLE[key];
-    if (angle) return `- ${angle}: ${templates[key].trim()}`;
+    const field = CAPTURE_FIELD[key];
+    if (field) return `- ${field}: ${templates[key].trim()}`;
     if (render.scope === 'per_focus') return `- ${templates[key].trim()}`;
     return `- ${key}: ${templates[key].trim()}`;
   });

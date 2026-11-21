@@ -110,10 +110,10 @@ notes:
   example: "Aggregates monthly invoices"
 
 # ── Per-hop capture (active phase) ───────────────────────────────────────────
-# Each fired *_capture template produces ONE `sections` key for its angle.
-# Under classification `both` both recipes fire (two keys); a single-angle
-# lock fires one recipe (one key). Shape: { business?: string, technical?: string }. Recipes are independent specs
-# with no cross-references; only `shared_capture` (below) applies to every key. Each key is self-contained;
+# Each fired *_capture template produces ONE `<angle>_section` field of submit_findings.
+# Under classification `both` both recipes fire (two fields); a single-angle
+# lock fires one recipe (one field): business_section / technical_section. Recipes are independent specs
+# with no cross-references; only `shared_capture` (below) applies to every field. Each is self-contained;
 # synthesis groups across nodes at the next phase.
 
 # Coverage that applies to every fired recipe, served once ahead of the recipes (a per-recipe copy repeats it
@@ -203,7 +203,7 @@ structural_callouts:
 structural_summary:
   stages: [active]
   instruction: >
-    This focus has no SQL body, so each `sections` value follows this instead of the recipe: **Purpose**, the node's role from its id and type; **Upstream sources**, one line per `in[]` writer and its role; **Downstream consumers**, one line per `out[]` reader and its role. An empty list reads "none in the graph".
+    This focus has no SQL body, so each section field follows this instead of the recipe: **Purpose**, the node's role from its id and type; **Upstream sources**, one line per `in[]` writer and its role; **Downstream consumers**, one line per `out[]` reader and its role. An empty list reads "none in the graph".
 
 # ── Column Trace capture (active phase, CT mode only) ────────────────────────
 # Fires additively alongside business_capture / technical_capture when the
@@ -214,7 +214,7 @@ structural_summary:
 column_trace_capture:
   stages: [active]
   instruction: |
-    Resolve this hop's column tasks from the SQL and record the confirmed object/column relations in `column_flow`. Explain the full transformation sequence, including intermediate CTE renames, calculations, predicates and grain, in the shared `sections`. Continue through the same neighbor decisions as whole-object analysis; columns add precision, not a different graph. Unresolved mappings remain questions.
+    Resolve this hop's column tasks from the SQL and record the confirmed object/column relations in `column_flow`. Explain the full transformation sequence, including intermediate CTE renames, calculations, predicates and grain, in the shared section fields. Continue through the same neighbor decisions as whole-object analysis; columns add precision, not a different graph. Unresolved mappings remain questions.
 
 # Per-angle section assembly (business / technical / both) is governed by
 # buildSynthesisPrompt() in src/ai/prompting/prompts.ts. No separate per-angle templates

@@ -24,14 +24,19 @@ export const CLASSIFICATION_LABEL: Record<ClassificationValue, string> = {
 };
 
 /**
- * `submit_findings.sections[].angle` value(s) a locked classification keeps. The single source for
- * both readers that must never drift: the per-dispatch `submit_findings` schema
- * (`submitFindingsSchemaForMode`) narrows the advertised `angle` enum to this set, and the
- * classification-lock validator (`submitFindingsRules.ts`) checks the required angle(s) are present
- * from the same set.
+ * Capture angle(s) a locked classification keeps. The single source for both readers that must
+ * never drift: the per-dispatch `submit_findings` schema (`submitFindingsSchemaForMode`) serves
+ * only their {@link sectionField}s, and the classification-lock validator
+ * (`submitFindingsRules.ts`) checks the required angle(s) are present from the same set.
  */
 export const CLASSIFICATION_KEPT_ANGLES: Record<ClassificationValue, readonly ('business' | 'technical')[]> = {
   business: ['business'],
   technical: ['technical'],
   both: ['business', 'technical'],
 };
+
+/**
+ * The top-level `submit_findings` string field of one angle's section body: a string parameter, so
+ * a provider that writes arguments as raw parameter text never JSON-escapes the prose.
+ */
+export const sectionField = (angle: 'business' | 'technical') => `${angle}_section` as const;

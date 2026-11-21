@@ -65,7 +65,7 @@ export const ROUTE_REJECTION_DIRECTIVE: Record<InvalidRouteKind, string> = {
  * `.upstream_columns`).
  */
 const DETACHED_LINK_DIRECTIVE =
-  'Attach each named tuple to a tracked column, or leave it out of column_flow and keep it in sections; do not invent a write.';
+  'Attach each named tuple to a tracked column, or leave it out of column_flow and keep it in the section fields; do not invent a write.';
 
 /** Served kinds whose directive removes a list entry; the retry resends that failed list. */
 const ENTRY_REMOVAL_KINDS: ReadonlySet<InvalidRouteKind> = new Set(['question_not_neighbor', 'prune_question_conflict', 'prune_column_conflict', 'question_closed']);

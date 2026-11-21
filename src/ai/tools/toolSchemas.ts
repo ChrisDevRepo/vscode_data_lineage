@@ -8,8 +8,8 @@ import {
   numericStringDepth,
 } from '../../engine/shared/explorationDepthContract';
 import { REJECTION_CODES } from '../support/rejectionCodes';
-import { jsonPointer, rejectionFromZodError, type ToolRejection } from '../support/toolErrorEnvelope';
-import { CLASSIFICATION_KEPT_ANGLES, type ClassificationValue } from '../session/classification';
+import { rejectionFromZodError, type ToolRejection } from '../support/toolErrorEnvelope';
+import { CLASSIFICATION_KEPT_ANGLES, sectionField, type ClassificationValue } from '../session/classification';
 import { extractRawSectionAngles } from '../interaction/rules/submitFindingsRules';
 import type { HeldSubmissionParts, HopFinding, HopFindingKept, HopSubmission } from '../sm/smTypes';
 
@@ -426,7 +426,7 @@ function directlyBefore(chars: readonly string[], index: number): string {
 }
 
 /**
- * One report text body: a `submit_findings` `sections` angle and a `present_result` section text,
+ * One report text body: a `submit_findings` section field and a `present_result` section text,
  * intro or closing. LF is its only allowed C0 control character: any other, such as the TAB a single
  * JSON backslash makes of `\text`, rejects the field instead of reaching the report.
  * An offender is located by the text around it in its canonical JSON escape (a TAB shows as `\t`
@@ -450,23 +450,14 @@ const SectionBodySchema = z.string().superRefine((body, ctx) => {
 });
 
 /**
- * `submit_findings.sections`, keyed by angle so the same angle cannot be sent twice. Each fired
- * `*_capture` template yields one keyed entry (`business` and/or `technical`). This base shape
- * backs the permissive participant union ({@link SubmitFindingsModelSchema}) and stays angle-open;
- * `submitFindingsSchemaForMode` narrows it to the locked classification's angle key(s) before each
- * hop, so an off-lock angle fails as an unrecognized key and the model folds its content into a
- * kept key. `validateSectionsAgainstClassification` then checks that every required kept angle is
- * present.
+ * One top-level string field per fired `*_capture` template ({@link sectionField}), written per
+ * that angle's recipe. `submitFindingsSchemaForMode` omits the field a locked classification does
+ * not keep, so the strict object rejects it as an unknown key.
  */
-const CapturedSectionsSchema = z.object({
-  /** Pre-formatted section body written per `business_capture`. */
-  business: SectionBodySchema.optional(),
-  /** Pre-formatted section body written per `technical_capture`. */
-  technical: SectionBodySchema.optional(),
-}).strict();
-
-/** Model-facing output of {@link CapturedSectionsSchema}: at most one string per angle. */
-type CapturedSectionsWire = z.infer<typeof CapturedSectionsSchema>;
+const SECTION_FIELDS = {
+  business_section: SectionBodySchema.optional().describe('Pre-formatted section body for the `business_section` recipe.'),
+  technical_section: SectionBodySchema.optional().describe('Pre-formatted section body for the `technical_section` recipe.'),
+};
 
 /**
  * Applicability prefix for `badge_label`, which only a kept verdict carries. Without it the model
@@ -581,9 +572,6 @@ const COLUMN_FLOW_DESCRIPTION = 'One entry per tracked column this node carries;
 
 const ColumnFlowSchema = z.array(ColumnFlowEntrySchema).describe(COLUMN_FLOW_DESCRIPTION);
 
-/** Single source of the `sections` describe text, shared by per-mode schemas and the union. */
-const SECTIONS_DESCRIPTION = 'Pre-formatted section body per fired capture recipe, keyed by angle: `{business, technical}`; a locked classification keeps only its angle key(s).';
-
 /** Single source of the `summary` describe text, shared by per-mode schemas and the union. */
 const SUMMARY_DESCRIPTION =
   'One sentence, readable without this hop: what this node does to the data and what it hands to which node.';
@@ -604,26 +592,21 @@ const HopFindingBaseSchema = z.object({
   prune_neighbors: z.array(PruneNeighborSchema).max(MAX_ID_LIST_LENGTH).optional().describe(PRUNE_NEIGHBORS_DESCRIPTION),
   questions: z.array(NeighborQuestionSchema).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION),
   reason: z.string().optional().describe(IGNORED_REASON_DESCRIPTION),
-  /**
-   * One string per fired `*_capture` template, keyed by angle. One key (`business` /
-   * `technical` classification) or two (`both`) — required with a kept verdict. Declared last:
-   * a model emits arguments in schema order, so the long prose closes the object after every
-   * short field.
-   */
-  sections: CapturedSectionsSchema.optional().describe(SECTIONS_DESCRIPTION),
+  // Declared last: a model emits arguments in schema order, so the long prose closes the object.
+  ...SECTION_FIELDS,
 }).strict();
 
-const { sections, summary, badge_label, prune_neighbors, reason } = HopFindingBaseSchema.shape;
+const { summary, badge_label, prune_neighbors, reason } = HopFindingBaseSchema.shape;
 
 /**
  * CT form: the BB form plus `column_flow` (served-required — always in the served `required` list,
  * `[]` allowed for a verdict that needs no entries), declared right after `verdict`, ahead of
- * `sections`/`summary`, so the short required structured field is emitted before the long capture
- * prose: a model emits arguments in schema order, and a required field placed after several
- * thousand characters of section text tends to drop on the longest `analyze` generations.
+ * `summary` and the section fields, so the short required structured field is emitted before the
+ * long capture prose: a model emits arguments in schema order, and a required field placed after
+ * several thousand characters of section text tends to drop on the longest `analyze` generations.
  */
 const HopFindingCtBaseSchema = HopFindingBaseSchema
-  .omit({ sections: true, summary: true, badge_label: true, prune_neighbors: true, questions: true, reason: true })
+  .omit({ business_section: true, technical_section: true, summary: true, badge_label: true, prune_neighbors: true, questions: true, reason: true })
   .extend({
     column_flow: ColumnFlowSchema,
     summary,
@@ -631,13 +614,13 @@ const HopFindingCtBaseSchema = HopFindingBaseSchema
     prune_neighbors,
     questions: z.array(CtNeighborQuestionSchema).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION),
     reason,
-    sections,
+    ...SECTION_FIELDS,
   })
   .strict();
 
 /**
  * The flat, wire-shaped `submit_findings` payload once shape- and classification-validated —
- * `sections` still keyed by angle, before {@link toHopFinding} converts it to the engine's
+ * one string field per angle, before {@link toHopFinding} converts it to the engine's
  * internal union. This is what {@link submitFindingsSchemaForMode} itself parses to: the schema is
  * a validator only, so parsing an already-valid `FlatSubmitFindings` a second time is a no-op.
  */
@@ -645,49 +628,20 @@ export type FlatSubmitFindings = z.output<typeof HopFindingBaseSchema> & { colum
 
 /**
  * Enforces the fresh kept shape of one flat `submit_findings` payload. A kept verdict carries
- * `sections` and `summary` (and, in CT, `column_flow`); a `reason` sent with it is accepted and
- * dropped by {@link toHopFinding}. `summary` may be empty only when a held draft holds one
- * (`summaryRequired` unset); the engine keeps the held summary. A fresh kept verdict under a `both`
- * lock with non-empty `sections` names each missing angle in the same parse as any shape fault. An invalid or
- * missing `verdict` is reported once by its own enum issue and skips verdict-dependent checks. Each
- * fault is one issue on its own path, naming the exact field to drop or add.
+ * `summary` and its section field(s) (and, in CT, `column_flow`); a `reason` sent with it is
+ * accepted and dropped by {@link toHopFinding}. `summary` may be empty only when a held draft holds
+ * one (`summaryRequired` unset); the engine keeps the held summary. A fresh submission names each
+ * kept section field it leaves unsent or blank (unlocked, only when it sends none); a wrong-typed
+ * field is its own type fault. An invalid or missing `verdict` is reported once by its own enum
+ * issue and skips verdict-dependent checks. Each fault is one issue on its own path.
  */
 function refineSubmitFindingsShape(value: FlatSubmitFindings, ctx: z.RefinementCtx, fresh: boolean, classification?: ClassificationValue, summaryRequired = fresh): void {
   if (typeof value !== 'object' || value === null || !HopVerdictSchema.safeParse(value.verdict).success) return;
-  const keptAngles = classification ? CLASSIFICATION_KEPT_ANGLES[classification] : undefined;
-  const bothAnglesRequired = fresh && keptAngles?.length === CLASSIFICATION_KEPT_ANGLES.both.length;
-  const sections = typeof value.sections === 'object' && value.sections !== null && !Array.isArray(value.sections) ? value.sections as Record<string, unknown> : undefined;
-  const sectionsWrongType = value.sections !== undefined && sections === undefined; // the base schema's type fault at /sections is then the one fault
-  if (keptAngles?.length === 1 && sections) {
-    const [onlyAngle] = keptAngles;
-    const offAngle = onlyAngle === 'business' ? 'technical' : 'business';
-    const surplus = Object.keys(sections).filter((key) => key !== onlyAngle);
-    if (surplus.includes(offAngle)) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['sections'],
-        message: `"${offAngle}" is not kept under classification=${classification}`,
-        params: { hint: `Fold the ${offAngle} content into "${onlyAngle}" and drop the "${offAngle}" key.` },
-      });
-    }
-    const unknown = surplus.filter((key) => key !== offAngle);
-    if (unknown.length > 0) ctx.addIssue({ code: 'unrecognized_keys', path: ['sections'], keys: unknown, message: 'Unrecognized keys' });
-  }
-  const filled = new Set(Object.entries(sections ?? {})
-    .filter(([, body]) => typeof body === 'string' && body.trim() !== '').map(([angle]) => angle));
-  if (fresh && filled.size === 0 && !sectionsWrongType) {
-    ctx.addIssue({
-      code: 'custom',
-      path: ['sections'],
-      message: `required with verdict ${value.verdict}.`,
-      params: { hint: 'Send sections: the section body keyed by angle.' },
-    });
-  }
-  if (bothAnglesRequired && filled.size > 0) {
-    for (const angle of CLASSIFICATION_KEPT_ANGLES.both) {
-      const sent = sections?.[angle];
-      if (filled.has(angle) || (sent !== undefined && typeof sent !== 'string')) continue; // a wrong-typed angle is already its own type fault
-      ctx.addIssue({ code: 'custom', path: ['sections', angle], message: 'required with a both classification when sections is not empty.', params: { hint: `Send ${jsonPointer(['sections', angle])}.` } });
+  const kept = (classification ? CLASSIFICATION_KEPT_ANGLES[classification] : CLASSIFICATION_KEPT_ANGLES.both).map(sectionField);
+  const unsent = kept.filter(field => value[field] === undefined || (typeof value[field] === 'string' && value[field].trim() === ''));
+  if (fresh && (classification || unsent.length === kept.length)) {
+    for (const field of unsent) {
+      ctx.addIssue({ code: 'custom', path: [field], message: `required with verdict ${value.verdict}.`, params: { hint: `Send ${field}.` } });
     }
   }
   if (summaryRequired && (value.summary === undefined || (typeof value.summary === 'string' && value.summary.trim() === ''))) {
@@ -712,7 +666,7 @@ export function toHopFinding(value: FlatSubmitFindings): HopFindingKept {
   const kept: HopFindingKept = {
     focus_node_id: value.focus_node_id,
     verdict: value.verdict,
-    sections: extractRawSectionAngles(value.sections ?? {}),
+    sections: extractRawSectionAngles(value),
     summary: value.summary ?? '',
   };
   if (value.badge_label !== undefined) kept.badge_label = value.badge_label;
@@ -724,7 +678,7 @@ export function toHopFinding(value: FlatSubmitFindings): HopFindingKept {
 
 /**
  * Applies the verdict-shape check to one flat per-mode object. A pure validator: it returns the
- * same flat shape unconverted (`z.output` equals `z.input`, `sections` still angle-keyed), so
+ * same flat shape unconverted (`z.output` equals `z.input`, one string field per angle), so
  * re-parsing a validated payload is a no-op. {@link toHopFinding} is the separate conversion step.
  * `summary` is required, served and checked, unless a held draft holds one. With a held draft
  * (`heldFailed` set) only the fields it failed are served as required; the engine restores the rest.
@@ -735,34 +689,26 @@ function finalizeSubmitFindingsSchema(
   classification?: ClassificationValue,
   heldFailed: readonly string[] | null = null,
 ): z.ZodType<FlatSubmitFindings> {
-  const keptAngles = classification ? CLASSIFICATION_KEPT_ANGLES[classification] : undefined;
   const summaryRequired = fresh || heldFailed === null || heldFailed.includes('summary');
   const fields = Object.keys(schema.shape);
   const failed = heldFailed?.filter(field => fields.includes(field)) ?? null;
-  const base = fresh
-    ? schema.extend({
-      sections: schema.shape.sections.unwrap().meta(keptAngles
-        ? { required: [...keptAngles] }
-        : { anyOf: CLASSIFICATION_KEPT_ANGLES.both.map(angle => ({ required: [angle] })) })
-        .optional().describe(schema.shape.sections.description ?? ''),
-    }).strict()
-    : schema;
   const source = failed
-    ? base.extend(Object.fromEntries(fields.map(field => {
-      const shape = base.shape[field as keyof typeof base.shape];
+    ? schema.extend(Object.fromEntries(fields.map(field => {
+      const shape = schema.shape[field as keyof typeof schema.shape];
       if (!failed.includes(field)) return [field, shape.optional()];
       // The describe text sits on the outer optional; unwrapping keeps it on the required field.
       const required = shape instanceof z.ZodOptional ? shape.unwrap() : shape;
       return [field, shape.description ? required.describe(shape.description) : required];
     }))).strict()
-    : base;
+    : schema;
   const validated = source
     .check(superRefineAll((value, ctx) => refineSubmitFindingsShape(value as FlatSubmitFindings, ctx, fresh, classification, summaryRequired))) as z.ZodType<FlatSubmitFindings>;
   if (failed) return validated.meta({ required: failed });
   const required = Object.entries(schema.shape)
     .filter(([, field]) => !field.isOptional())
     .map(([key]) => key);
-  return validated.meta({ required: [...required, 'summary', ...(fresh ? ['sections'] : [])] });
+  const sections = fresh && classification ? CLASSIFICATION_KEPT_ANGLES[classification].map(sectionField) : [];
+  return validated.meta({ required: [...required, 'summary', ...sections] });
 }
 
 /**
@@ -787,35 +733,6 @@ export const SubmitFindingsCtInputSchema = finalizeSubmitFindingsSchema(HopFindi
  * {@link submitFindingsSchemaForMode}.
  */
 const submitFindingsSchemaCache = new Map<string, z.ZodType<FlatSubmitFindings>>();
-
-/**
- * Narrows {@link CapturedSectionsSchema} to the angle key(s) a locked classification keeps
- * ({@link CLASSIFICATION_KEPT_ANGLES}). A one-angle lock drops the other key; sending it on a kept
- * verdict raises a custom issue from {@link refineSubmitFindingsShape} saying to fold that content
- * into the kept angle (the same guidance sits on the kept key's description). `both` keeps both
- * angles, each optional: a fresh kept submission requires both through
- * {@link finalizeSubmitFindingsSchema}'s conditional requiredness, while a retry with a held draft
- * names only the angle it changes. `validateSectionsAgainstClassification` requires every kept
- * angle in `NavigationEngine.submitFindings`, after held and archived angles count. The parent
- * field is served optional and non-nullable.
- *
- * @param classification - The locked classification this dispatch narrows to.
- */
-function capturedSectionSchemaForClassification(
-  classification: ClassificationValue,
-): z.ZodType<CapturedSectionsWire> {
-  const kept = CLASSIFICATION_KEPT_ANGLES[classification];
-  if (kept.length === CLASSIFICATION_KEPT_ANGLES.both.length) {
-    const plainBody = SectionBodySchema.optional();
-    return z.strictObject({ business: plainBody, technical: plainBody });
-  }
-  const [onlyAngle] = kept;
-  const offAngle = onlyAngle === 'business' ? 'technical' : 'business';
-  const body = SectionBodySchema.optional().describe(
-    `The only angle classification=${classification} keeps; fold any ${offAngle} content into this key — a separate "${offAngle}" key is rejected.`,
-  );
-  return z.strictObject({ [onlyAngle]: body }) as unknown as z.ZodType<CapturedSectionsWire>;
-}
 
 /**
  * Per-hop column facts that narrow the served CT `column_flow` entry. `outCols` is the hop's
@@ -912,13 +829,12 @@ export function hopColumnFlowSchema(hop?: SubmitFindingsHopColumns) {
  * Selects the strict, mode-and-classification-locked `submit_findings` schema advertised during an
  * active SM hop. BB returns {@link SubmitFindingsBbInputSchema} (no `column_flow`); CT returns
  * {@link SubmitFindingsCtInputSchema} (`column_flow` always in the served `required` list, `[]`
- * allowed). With `classification`, `sections` narrows to its kept angle key(s)
- * ({@link capturedSectionSchemaForClassification}), so a surplus angle fails Zod here instead of
- * being dropped at commit. The host uses this at the last seam before the model sees the tool set,
- * so the contract is the form's shape, not prompt prose. The static catalog and `package.json`
- * manifest keep the permissive union.
+ * allowed). With `classification`, only its kept section field(s) are served, so a surplus angle
+ * fails Zod here as an unknown key instead of being dropped at commit. The host uses this at the
+ * last seam before the model sees the tool set, so the contract is the form's shape, not prompt
+ * prose. The static catalog and `package.json` manifest keep the permissive union.
  *
- * @param freshSubmission - Refuse `{}` sections and an empty `summary` on a kept verdict; unset so
+ * @param freshSubmission - Refuse a missing kept section field and an empty `summary`; unset so
  *   a held draft or archived angle still validates.
  * @param hop - CT only: the active hop's column facts; narrows `column_flow[].out_col`, offers
  *   `writes_to` for a procedure focus alone and, with column-source metadata, restricts
@@ -953,14 +869,9 @@ export function submitFindingsSchemaForMode(
     narrowed = narrowed.extend({ questions: z.array(question).max(MAX_ID_LIST_LENGTH).optional().describe(QUESTIONS_DESCRIPTION) }).strict() as typeof HopFindingCtBaseSchema;
   }
   if (classification) {
-    const kept = CLASSIFICATION_KEPT_ANGLES[classification];
-    const sectionsDescribe = kept.length === CLASSIFICATION_KEPT_ANGLES.both.length
-      ? 'Pre-formatted section body for the `business` and `technical` recipes.'
-      : `Pre-formatted section body for the \`${kept[0]}\` recipe.`;
-    const narrowedSections = capturedSectionSchemaForClassification(classification)
-      .optional()
-      .describe(sectionsDescribe);
-    narrowed = narrowed.extend({ sections: narrowedSections }).strict() as typeof HopFindingCtBaseSchema;
+    const dropped = CLASSIFICATION_KEPT_ANGLES.both.filter(angle => !CLASSIFICATION_KEPT_ANGLES[classification].includes(angle));
+    const mask: Partial<Record<keyof typeof SECTION_FIELDS, true>> = Object.fromEntries(dropped.map(angle => [sectionField(angle), true]));
+    narrowed = narrowed.omit(mask) as unknown as typeof HopFindingCtBaseSchema;
   }
   const schema = finalizeSubmitFindingsSchema(narrowed, freshSubmission, classification, heldFailed);
   submitFindingsSchemaCache.set(cacheKey, schema);
@@ -983,7 +894,7 @@ function internalKeptFindingSchema(
   const angles = classification ? CLASSIFICATION_KEPT_ANGLES[classification] : CLASSIFICATION_KEPT_ANGLES.both;
   const section = z.object({ angle: z.enum(angles), text: z.string() }).strict();
   const flow = hopColumnFlowSchema(hop);
-  return base.omit({ reason: true }).extend({
+  return base.omit({ reason: true, business_section: true, technical_section: true }).extend({
     verdict: z.enum(['analyze', 'passthrough']),
     summary: HopFindingBaseSchema.shape.summary.unwrap(),
     sections: z.array(section),
@@ -994,7 +905,7 @@ function internalKeptFindingSchema(
       if (seen.has(entry.angle)) ctx.addIssue({ code: 'custom', path: ['sections', index, 'angle'], message: 'Each capture angle occurs once.' });
       seen.add(entry.angle);
     });
-    refineSubmitFindingsShape({ ...value, sections: Object.fromEntries(value.sections.map(entry => [entry.angle, entry.text])) } as FlatSubmitFindings, ctx, freshSubmission, classification);
+    refineSubmitFindingsShape({ ...value, ...Object.fromEntries(value.sections.map(entry => [sectionField(entry.angle), entry.text])) } as FlatSubmitFindings, ctx, freshSubmission, classification);
   });
 }
 
@@ -1023,9 +934,9 @@ export function heldSubmissionRepairHint(): string {
   return 'Send only the failed fields; every other field is held.';
 }
 
-/** The fields a held finding restores on the retry, by name: a `sections` angle by its path. */
+/** The fields a held finding restores on the retry, by name. */
 export function heldSubmissionFields(held: HeldSubmissionParts): string[] {
-  return ['focus_node_id', 'verdict', ...held.fields, ...(held.summary ? ['summary'] : []), ...held.sections.map(angle => `sections.${angle}`)];
+  return ['focus_node_id', 'verdict', ...held.fields, ...(held.summary ? ['summary'] : []), ...held.sections.map(sectionField)];
 }
 
 /**
@@ -1606,7 +1517,7 @@ export const SubmitFindingsModelSchema = z.object({
     .optional()
     .describe(BADGE_LABEL_DESCRIPTION),
   reason: z.string().optional().describe(IGNORED_REASON_DESCRIPTION),
-  sections: CapturedSectionsSchema.optional().describe(SECTIONS_DESCRIPTION),
+  ...SECTION_FIELDS,
 }).strict();
 
 /**

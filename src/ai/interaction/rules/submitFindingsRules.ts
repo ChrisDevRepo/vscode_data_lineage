@@ -1,81 +1,48 @@
 import type { ClassificationValue } from '../../session/classification';
-import { CLASSIFICATION_KEPT_ANGLES } from '../../session/classification';
+import { CLASSIFICATION_KEPT_ANGLES, sectionField } from '../../session/classification';
 import type { CapturedSection } from '../../session/memoryManager';
 
 /**
- * Required section angles by locked classification, read from the same
- * {@link CLASSIFICATION_KEPT_ANGLES} the per-dispatch `submit_findings` schema
- * (`tools/toolSchemas.ts`) narrows the `sections` keys to. An off-lock angle fails that schema
- * before this validator runs, so this rule only catches a locked angle that is missing, not a
- * surplus one.
- */
-const SECTION_RULES: Record<ClassificationValue, {
-  required: readonly ('business' | 'technical')[];
-  missingMsg: string;
-}> = {
-  business: {
-    required: CLASSIFICATION_KEPT_ANGLES.business,
-    missingMsg: 'classification=business requires sections.business.',
-  },
-  technical: {
-    required: CLASSIFICATION_KEPT_ANGLES.technical,
-    missingMsg: 'classification=technical requires sections.technical.',
-  },
-  both: {
-    required: CLASSIFICATION_KEPT_ANGLES.both,
-    missingMsg: 'classification=both requires both sections.business and sections.technical.',
-  },
-};
-
-/**
- * Validates findings carry the `sections.business`/`sections.technical` keys the locked
- * classification requires.
+ * Validates findings carry the section field(s) the locked classification requires, read from the
+ * same {@link CLASSIFICATION_KEPT_ANGLES} the per-dispatch `submit_findings` schema serves. An
+ * off-lock field fails that schema before this validator runs, so this rule only catches a locked
+ * angle that is missing, not a surplus one.
  *
  * @param archivedAngles - Angles already archived for this focus node from an earlier visit
  *   (`AiMemoryManager.getArchivedAngles`). A `supplementAgenda` follow-up revisits a node whose
  *   earlier sections `storeDetail` appended (never replaced), so an angle present there satisfies
  *   the lock though this submission does not re-carry it.
+ * @returns The reason and the missing fields, or `null` when the lock is met.
  */
 export function validateSectionsAgainstClassification(
   sections: CapturedSection[] | undefined,
   classification: ClassificationValue | undefined,
   archivedAngles?: ReadonlySet<'business' | 'technical'>,
-): string | null {
-  const list = sections ?? [];
+): { readonly reason: string; readonly fields: string[] } | null {
+  const angles = new Set((sections ?? []).map(s => s.angle));
   if (!classification) {
-    return list.length === 0 ? 'sections must contain at least one of sections.business or sections.technical when verdict is analyze or passthrough.' : null;
+    const fields = CLASSIFICATION_KEPT_ANGLES.both.map(sectionField);
+    return angles.size === 0 ? { reason: `At least one of ${fields.join(' or ')} is required when verdict is analyze or passthrough.`, fields } : null;
   }
-  const rule = SECTION_RULES[classification];
-  const angles = new Set(list.map(s => s.angle));
-  const missing = rule.required.filter(req => !angles.has(req) && !archivedAngles?.has(req));
-  if (missing.length === 0) return null;
-  const kept = rule.required.filter(req => angles.has(req));
-  const missingText = missing.map(a => `missing sections.${a}`).join(', ');
-  const keepText = kept.length > 0
-    ? ` Add the missing key and keep ${kept.map(a => `sections.${a}`).join(', ')} already sent, both in the same sections object.`
-    : '';
-  return `${rule.missingMsg} This submission is ${missingText}.${keepText}`;
+  const required = CLASSIFICATION_KEPT_ANGLES[classification];
+  const fields = required.filter(angle => !angles.has(angle) && !archivedAngles?.has(angle)).map(sectionField);
+  if (fields.length === 0) return null;
+  return { reason: `classification=${classification} requires ${required.map(sectionField).join(' and ')}. This submission is missing ${fields.join(' and ')}.`, fields };
 }
 
 /**
- * Converts a `sections` object keyed by angle into angle-bearing entries, for a validated payload
- * (`toHopFinding` in `toolSchemas.ts`). Tolerant on purpose: only `business`/`technical` keys are
- * read, and a blank or non-string body is absent, so it never counts toward coverage and never
- * overwrites a held body. Anything not shaped like `{ business?: string, technical?: string }` is
- * dropped.
+ * Reads the section fields of a `submit_findings` payload into angle-bearing entries, for a
+ * validated payload (`toHopFinding` in `toolSchemas.ts`) and a rejected one being held. Tolerant on
+ * purpose: a blank or non-string body is absent, so it never counts toward coverage and never
+ * overwrites a held body.
  *
- * @param rawSections - The unparsed `sections` value from the raw or normalized tool input.
+ * @param input - The raw or normalized tool input.
  */
-export function extractRawSectionAngles(rawSections: unknown): CapturedSection[] {
-  if (typeof rawSections !== 'object' || rawSections === null || Array.isArray(rawSections)) return [];
-  const record = rawSections as Record<string, unknown>;
-  const out: CapturedSection[] = [];
-  for (const angle of ['business', 'technical'] as const) {
-    if (!(angle in record)) continue;
-    const text = record[angle];
-    if (typeof text === 'string' && text.trim() !== '') out.push({ angle, text });
-  }
-  return out;
+export function extractRawSectionAngles(input: Readonly<Record<string, unknown>>): CapturedSection[] {
+  return CLASSIFICATION_KEPT_ANGLES.both.flatMap(angle => {
+    const text = input[sectionField(angle)];
+    return typeof text === 'string' && text.trim() !== '' ? [{ angle, text }] : [];
+  });
 }
 
 /**

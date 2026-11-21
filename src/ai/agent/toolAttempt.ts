@@ -52,7 +52,6 @@ import {
   renderFaults,
   renderLastFeedbackHelp,
   isServedField,
-  servedSectionAngles,
   unsentRequiredFields,
   type ToolError,
   type ToolRejection,
@@ -783,8 +782,8 @@ function rejectionText(rejection: ToolRejection, toolName: string, priorState?: 
   const held = rejection.detail && typeof rejection.detail === 'object'
     ? (rejection.detail as { held_draft?: HeldDraftRepairContent }).held_draft
     : undefined;
-  const owed = finalRejection && schema ? fieldsToCorrect(rejection.issuePaths ?? [], schema, unsent, rejection.held ?? []) : { fields: [], minimal: false };
-  const leftOut = owed.minimal ? (rejection.held ?? []).filter(field => !owed.fields.includes(field)) : [];
+  const owed = finalRejection && schema ? fieldsToCorrect(rejection.issuePaths ?? [], schema, unsent) : [];
+  const leftOut = owed.length > 0 ? (rejection.held ?? []).filter(field => !owed.includes(field)) : [];
   const heldRepair = (rejection.held ?? []).length > 0 && leftOut.length === 0 ? heldSubmissionRepairHint() : undefined;
   const hint = [rejection.hint, heldRepair].filter(Boolean).join(' ');
   const heldLabels = held?.sections.map(({ label, start }) => `"${label}"${start ? ` (from ${start})` : ''}`).join(', ');
@@ -795,42 +794,27 @@ function rejectionText(rejection: ToolRejection, toolName: string, priorState?: 
     ...(hint ? [hint] : []),
     ...(finalRejection ? renderLastFeedbackHelp(rejection, schema) : []),
     ...(heldLabels ? [`Held sections: ${heldLabels}.`] : []),
-    ...(owed.fields.length > 0 ? [fieldsToCorrectLine(owed.fields, leftOut, toolName)] : []),
+    ...(owed.length > 0 ? [fieldsToCorrectLine(owed, leftOut, toolName)] : []),
     ...(finalRejection ? repeatedFaultLine(toolName, rejection, priorState) : []),
     ...replyBudgetLine(repliesLeft),
   ].join('\n');
 }
 
 /**
- * The last feedback's fields to correct: each failed path the served schema has (a field whole, a
- * `sections` angle by its path, since its other angles may be held) and the required fields the
- * call left unsent; a failed `sections` with angles held is owed by the served angles not held. A
- * key the schema lacks is no field to send; when only keys under a served field are left (an
- * unknown `sections` angle), that field is named and no minimal call is given.
+ * The last feedback's fields to correct: the top-level field of each failed path the served schema
+ * has, and the required fields the call left unsent. A key the schema lacks is no field to send.
  */
-function fieldsToCorrect(issuePaths: readonly string[], schema: () => z.ZodType | undefined, unsent: readonly string[], held: readonly string[]): { fields: string[]; minimal: boolean } {
-  const paths = [...new Set(issuePaths.map(path => path.match(/^sections\.[^.\d][^.]*/)?.[0] ?? path.split('.')[0]))];
-  const unheld = held.some(field => field.startsWith('sections.'))
-    ? servedSectionAngles(schema).map(angle => `sections.${angle}`).filter(angle => !held.includes(angle)) : [];
-  const fields = [...new Set([...paths.filter(path => isServedField(schema, path)), ...unsent]
-    .flatMap(field => (field === 'sections' && unheld.length > 0 ? unheld : [field])))];
-  if (fields.length > 0) return { fields, minimal: true };
-  return { fields: [...new Set(paths.map(path => path.split('.')[0]).filter(field => isServedField(schema, field)))], minimal: false };
+function fieldsToCorrect(issuePaths: readonly string[], schema: () => z.ZodType | undefined, unsent: readonly string[]): string[] {
+  return [...new Set([...issuePaths.map(path => path.split('.')[0]).filter(field => isServedField(schema, field)), ...unsent])];
 }
 
 /**
  * The last feedback's fields to correct: with held fields left out, the minimal call (the tool and
- * only these fields, a `sections` angle under `sections`) and those held fields, by name.
+ * only these fields) and those held fields, by name.
  */
 function fieldsToCorrectLine(owed: readonly string[], leftOut: readonly string[], toolName: string): string {
   if (leftOut.length === 0) return `Fields to correct in this reply: ${owed.join(', ')}.`;
-  const keys = new Map<string, string[]>();
-  for (const path of owed) {
-    const [field, angle] = path.split('.');
-    keys.set(field, [...(keys.get(field) ?? []), ...(angle ? [angle] : [])]);
-  }
-  const call = [...keys].map(([field, angles]) => `"${field}": ${angles.length > 0 ? `{${angles.map(angle => `"${angle}": …`).join(', ')}}` : '…'}`).join(', ');
-  return `Send exactly: ${toolName} {${call}}; held, do not resend: ${leftOut.join(', ')}.`;
+  return `Send exactly: ${toolName} {${owed.map(field => `"${field}": …`).join(', ')}}; held, do not resend: ${leftOut.join(', ')}.`;
 }
 
 /**

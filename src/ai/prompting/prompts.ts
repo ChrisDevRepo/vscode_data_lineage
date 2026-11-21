@@ -76,7 +76,7 @@ export function buildGeneralSystemPrompt(ctx: GeneralPromptContext): string {
     '',
     "You are @lineage, the data-lineage assistant in the Data Lineage Viz extension for VS Code. The extension parses SQL objects into a dependency graph the user sees as a diagram.",
     'Use only object ids, columns and relationships that tools returned. The extension draws the graph; describe lineage in tables, lists and prose. You read the lineage graph only and execute nothing: a request for query results, row values, or running a statement gets a short decline, never an exploration.',
-    'When calling tools, emit strictly valid raw JSON: use standard double quotes for structure, escape line breaks, double quotes and backslashes in string values so SQL and LaTeX decode unchanged, omit trailing commas, and match the served schema types precisely.',
+    'When calling tools, match the served schema types precisely.',
     '',
     '## Context',
     `- Platform: ${dbPlatform}`,
@@ -189,7 +189,7 @@ function buildActivePhasePrompt(analysisMode: 'bb' | 'ct'): string {
     'Deliver one `lineage_submit_findings` call; judge `verdict` from the focus itself.',
     '',
     'Flags on `neighbors[]` are committed: `already_visited` and `already_removed` neighbors take no decision; neighbors with `can_prune: false` are not pruned. `can_question` permits a subquestion in approved scope or an optional deferred follow-up outside it, including `out_of_direction`; it never widens scope.'
-      + (analysisMode === 'ct' ? ' A neighbor with `in_approved_scope: false` lies outside the approved scope: `column_flow` names it neither as an `upstream_columns` source nor as `writes_to`. In-scope sources and destinations stay as the SQL proves them. State a relevant fact about it in `sections`; further work on it is a `questions` follow-up.' : ''),
+      + (analysisMode === 'ct' ? ' A neighbor with `in_approved_scope: false` lies outside the approved scope: `column_flow` names it neither as an `upstream_columns` source nor as `writes_to`. In-scope sources and destinations stay as the SQL proves them. State a relevant fact about it in the section fields; further work on it is a `questions` follow-up.' : ''),
   ].join('\n');
 }
 
@@ -600,7 +600,7 @@ export function buildOriginalQuestionBlock(question: string | null): string {
 /**
  * Renders the CT stable-prefix anchor injected into the active-phase system prompt when
  * `targetColumns` are set. Names the traced columns only; what `column_flow` holds and how it
- * differs from `sections` is owned by the `column_trace_capture` template and the
+ * differs from the section fields is owned by the `column_trace_capture` template and the
  * `upstream_columns` schema description.
  *
  * @param targetColumns - The columns being traced, as confirmed at gate approval.
@@ -684,14 +684,14 @@ export function buildCurrentTaskBlock(
     lines.push(
       `  <column_trace>`,
       `    Active columns: [${columnTraceColumns.map(escapePromptText).join(', ')}]`,
-      `    These are the incoming column tasks. Record their in-scope contributors and resolved outputs in \`column_flow\`, including downstream renames proved by the SQL; keep out-of-scope sources and unrelated column analysis in \`sections\`.`,
+      `    These are the incoming column tasks. Record their in-scope contributors and resolved outputs in \`column_flow\`, including downstream renames proved by the SQL; keep out-of-scope sources and unrelated column analysis in the section fields.`,
       `  </column_trace>`,
     );
   }
   if (columnTraceColumns?.length && columnLineageQuestions?.length) {
     lines.push(
       `  <lineage_questions>`,
-      `    Column-chain continuations opened on an earlier hop for this focus. Address them; a source on a neighbor with \`in_approved_scope: false\` ends the chain here: no \`upstream_columns\` entry, the fact in \`sections\`:`,
+      `    Column-chain continuations opened on an earlier hop for this focus. Address them; a source on a neighbor with \`in_approved_scope: false\` ends the chain here: no \`upstream_columns\` entry, the fact in the section fields:`,
       ...columnLineageQuestions.map(q => `    - ${escapePromptText(q)}`),
       `  </lineage_questions>`,
     );
